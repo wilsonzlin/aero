@@ -288,6 +288,11 @@ pub struct NetTraceConfig {
     /// - When exceeded, new frames/records are dropped.
     /// - `0` disables capture (all records are dropped).
     pub max_bytes: usize,
+    /// Hard cap on the number of buffered records.
+    ///
+    /// - When exceeded, new records are dropped.
+    /// - `0` disables capture (all records are dropped).
+    pub max_records: usize,
     pub capture_ethernet: bool,
     pub capture_tcp_proxy: bool,
     pub capture_udp_proxy: bool,
@@ -320,6 +325,7 @@ impl Default for NetTraceConfig {
     fn default() -> Self {
         Self {
             max_bytes: DEFAULT_MAX_BYTES,
+            max_records: DEFAULT_MAX_RECORDS,
             capture_ethernet: true,
             capture_tcp_proxy: false,
             capture_udp_proxy: false,
@@ -329,6 +335,7 @@ impl Default for NetTraceConfig {
 }
 
 const DEFAULT_MAX_BYTES: usize = 16 * 1024 * 1024;
+const DEFAULT_MAX_RECORDS: usize = 100_000;
 const PROXY_PSEUDO_HEADER_LEN: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -336,13 +343,13 @@ enum TraceRecord {
     Ethernet {
         timestamp_ns: u64,
         direction: FrameDirection,
-        frame: Vec<u8>,
+        frame: Arc<[u8]>,
     },
     TcpProxy {
         timestamp_ns: u64,
         direction: ProxyDirection,
         connection_id: u32,
-        data: Vec<u8>,
+        data: Arc<[u8]>,
     },
     UdpProxy {
         timestamp_ns: u64,
@@ -351,7 +358,7 @@ enum TraceRecord {
         remote_ip: Ipv4Addr,
         src_port: u16,
         dst_port: u16,
-        data: Vec<u8>,
+        data: Arc<[u8]>,
     },
 }
 
@@ -428,27 +435,20 @@ impl NetTracer {
             return;
         }
 
-        let frame = match &self.cfg.redactor {
-            Some(redactor) => match redactor.redact_ethernet(direction, frame) {
-                Some(frame) => frame,
-                None => return,
-            },
-            None => frame.to_vec(),
-        };
-
-        let len = frame.len();
-        let mut state = self.state.lock().expect("net trace lock poisoned");
-        if len > self.cfg.max_bytes || state.bytes.saturating_add(len) > self.cfg.max_bytes {
-            state.dropped_records = state.dropped_records.saturating_add(1);
-            state.dropped_bytes = state.dropped_bytes.saturating_add(len as u64);
-            return;
-        }
-        state.records.push(TraceRecord::Ethernet {
-            timestamp_ns,
-            direction,
-            frame,
+        let attempted_len = frame.len();
+        let strict_precheck = self.cfg.redactor.is_none();
+        self.try_push_record(attempted_len, strict_precheck, || {
+            let frame = self.redact_ethernet(direction, frame)?;
+            let len = frame.len();
+            Some((
+                len,
+                TraceRecord::Ethernet {
+                    timestamp_ns,
+                    direction,
+                    frame,
+                },
+            ))
         });
-        state.bytes = state.bytes.saturating_add(len);
     }
 
     pub fn record_tcp_proxy(&self, direction: ProxyDirection, connection_id: u32, data: &[u8]) {
@@ -467,28 +467,21 @@ impl NetTracer {
             return;
         }
 
-        let data = match &self.cfg.redactor {
-            Some(redactor) => match redactor.redact_tcp_proxy(direction, connection_id, data) {
-                Some(data) => data,
-                None => return,
-            },
-            None => data.to_vec(),
-        };
-
-        let len = PROXY_PSEUDO_HEADER_LEN.saturating_add(data.len());
-        let mut state = self.state.lock().expect("net trace lock poisoned");
-        if len > self.cfg.max_bytes || state.bytes.saturating_add(len) > self.cfg.max_bytes {
-            state.dropped_records = state.dropped_records.saturating_add(1);
-            state.dropped_bytes = state.dropped_bytes.saturating_add(len as u64);
-            return;
-        }
-        state.records.push(TraceRecord::TcpProxy {
-            timestamp_ns,
-            direction,
-            connection_id,
-            data,
+        let attempted_len = PROXY_PSEUDO_HEADER_LEN.saturating_add(data.len());
+        let strict_precheck = self.cfg.redactor.is_none();
+        self.try_push_record(attempted_len, strict_precheck, || {
+            let data = self.redact_tcp_proxy(direction, connection_id, data)?;
+            let len = PROXY_PSEUDO_HEADER_LEN.saturating_add(data.len());
+            Some((
+                len,
+                TraceRecord::TcpProxy {
+                    timestamp_ns,
+                    direction,
+                    connection_id,
+                    data,
+                },
+            ))
         });
-        state.bytes = state.bytes.saturating_add(len);
     }
 
     pub fn record_udp_proxy(
@@ -526,38 +519,31 @@ impl NetTracer {
         }
 
         let (src_port, dst_port) = ports;
-        let data = match &self.cfg.redactor {
-            Some(redactor) => match redactor.redact_udp_proxy(
+        let attempted_len = PROXY_PSEUDO_HEADER_LEN.saturating_add(data.len());
+        let strict_precheck = self.cfg.redactor.is_none();
+        self.try_push_record(attempted_len, strict_precheck, || {
+            let data = self.redact_udp_proxy(
                 direction,
                 transport.clone(),
                 remote_ip,
                 src_port,
                 dst_port,
                 data,
-            ) {
-                Some(data) => data,
-                None => return,
-            },
-            None => data.to_vec(),
-        };
-
-        let len = PROXY_PSEUDO_HEADER_LEN.saturating_add(data.len());
-        let mut state = self.state.lock().expect("net trace lock poisoned");
-        if len > self.cfg.max_bytes || state.bytes.saturating_add(len) > self.cfg.max_bytes {
-            state.dropped_records = state.dropped_records.saturating_add(1);
-            state.dropped_bytes = state.dropped_bytes.saturating_add(len as u64);
-            return;
-        }
-        state.records.push(TraceRecord::UdpProxy {
-            timestamp_ns,
-            direction,
-            transport,
-            remote_ip,
-            src_port,
-            dst_port,
-            data,
+            )?;
+            let len = PROXY_PSEUDO_HEADER_LEN.saturating_add(data.len());
+            Some((
+                len,
+                TraceRecord::UdpProxy {
+                    timestamp_ns,
+                    direction,
+                    transport,
+                    remote_ip,
+                    src_port,
+                    dst_port,
+                    data,
+                },
+            ))
         });
-        state.bytes = state.bytes.saturating_add(len);
     }
 
     pub fn export_pcapng(&self) -> Vec<u8> {
@@ -572,6 +558,9 @@ impl NetTracer {
         let records = {
             let mut guard = self.state.lock().expect("net trace lock poisoned");
             if drain {
+                // `take_pcapng()` drains buffered records and resets the live `bytes` counter, but
+                // deliberately keeps the drop counters. This matches the web tracer
+                // (`web/src/net/net_tracer.ts`).
                 guard.bytes = 0;
                 std::mem::take(&mut guard.records)
             } else {
@@ -650,6 +639,113 @@ impl NetTracer {
 
         writer.into_bytes()
     }
+
+    fn redact_ethernet(&self, direction: FrameDirection, frame: &[u8]) -> Option<Arc<[u8]>> {
+        match &self.cfg.redactor {
+            Some(redactor) => redactor
+                .redact_ethernet(direction, frame)
+                .map(|frame| frame.into()),
+            None => Some(Arc::from(frame.to_vec())),
+        }
+    }
+
+    fn redact_tcp_proxy(
+        &self,
+        direction: ProxyDirection,
+        connection_id: u32,
+        data: &[u8],
+    ) -> Option<Arc<[u8]>> {
+        match &self.cfg.redactor {
+            Some(redactor) => redactor
+                .redact_tcp_proxy(direction, connection_id, data)
+                .map(|data| data.into()),
+            None => Some(Arc::from(data.to_vec())),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn redact_udp_proxy(
+        &self,
+        direction: ProxyDirection,
+        transport: UdpTransport,
+        remote_ip: Ipv4Addr,
+        src_port: u16,
+        dst_port: u16,
+        data: &[u8],
+    ) -> Option<Arc<[u8]>> {
+        match &self.cfg.redactor {
+            Some(redactor) => redactor
+                .redact_udp_proxy(
+                    direction,
+                    transport,
+                    remote_ip,
+                    src_port,
+                    dst_port,
+                    data,
+                )
+                .map(|data| data.into()),
+            None => Some(Arc::from(data.to_vec())),
+        }
+    }
+
+    fn try_push_record(
+        &self,
+        attempted_len: usize,
+        strict_precheck: bool,
+        make: impl FnOnce() -> Option<(usize, TraceRecord)>,
+    ) {
+        // Fast path: avoid allocating/storing anything when the cap is already hit.
+        {
+            let mut state = self.state.lock().expect("net trace lock poisoned");
+            if state.records.len() >= self.cfg.max_records || state.bytes >= self.cfg.max_bytes {
+                state.dropped_records = state.dropped_records.saturating_add(1);
+                state.dropped_bytes = state
+                    .dropped_bytes
+                    .saturating_add(attempted_len as u64);
+                return;
+            }
+            if strict_precheck && would_exceed_bytes(state.bytes, self.cfg.max_bytes, attempted_len)
+            {
+                state.dropped_records = state.dropped_records.saturating_add(1);
+                state.dropped_bytes = state
+                    .dropped_bytes
+                    .saturating_add(attempted_len as u64);
+                return;
+            }
+        }
+
+        let Some((len, record)) = make() else {
+            // Redacted out.
+            return;
+        };
+
+        let mut state = self.state.lock().expect("net trace lock poisoned");
+        if should_drop_record(&state, &self.cfg, len) {
+            state.dropped_records = state.dropped_records.saturating_add(1);
+            state.dropped_bytes = state.dropped_bytes.saturating_add(len as u64);
+            return;
+        }
+
+        state.records.push(record);
+        state.bytes = state.bytes.saturating_add(len);
+    }
+}
+
+fn would_exceed_bytes(cur: usize, max: usize, len: usize) -> bool {
+    if len > max {
+        return true;
+    }
+    match cur.checked_add(len) {
+        Some(sum) => sum > max,
+        None => true,
+    }
+}
+
+fn should_drop_record(state: &TraceState, cfg: &NetTraceConfig, len: usize) -> bool {
+    if state.records.len() >= cfg.max_records {
+        return true;
+    }
+    would_exceed_bytes(state.bytes, cfg.max_bytes, len)
 }
 
 pub struct TracedNetworkStack {
@@ -1025,6 +1121,7 @@ mod tests {
                 max_tcp_proxy_bytes: 3,
                 max_udp_proxy_bytes: 2,
             })),
+            ..NetTraceConfig::default()
         });
         tracer.enable();
 
@@ -1043,15 +1140,15 @@ mod tests {
         assert_eq!(guard.records.len(), 3);
 
         match &guard.records[0] {
-            TraceRecord::Ethernet { frame, .. } => assert_eq!(frame.as_slice(), &[1, 2, 3, 4]),
+            TraceRecord::Ethernet { frame, .. } => assert_eq!(frame.as_ref(), &[1, 2, 3, 4]),
             other => panic!("unexpected record: {other:?}"),
         }
         match &guard.records[1] {
-            TraceRecord::TcpProxy { data, .. } => assert_eq!(data.as_slice(), &[10, 11, 12]),
+            TraceRecord::TcpProxy { data, .. } => assert_eq!(data.as_ref(), &[10, 11, 12]),
             other => panic!("unexpected record: {other:?}"),
         }
         match &guard.records[2] {
-            TraceRecord::UdpProxy { data, .. } => assert_eq!(data.as_slice(), &[0xff, 0xfe]),
+            TraceRecord::UdpProxy { data, .. } => assert_eq!(data.as_ref(), &[0xff, 0xfe]),
             other => panic!("unexpected record: {other:?}"),
         }
     }
@@ -1092,6 +1189,7 @@ mod tests {
             capture_tcp_proxy: true,
             capture_udp_proxy: true,
             redactor: Some(Arc::new(DropAll)),
+            ..NetTraceConfig::default()
         });
         tracer.enable();
 
