@@ -170,7 +170,11 @@ impl VbeDevice {
             display_start_x: 0,
             display_start_y: 0,
             dac_width_bits: 6,
-            palette: [0; 256 * 4],
+            // Initialize the VBE palette to a VGA-like default so INT 10h AX=4F09 "Get Palette
+            // Data" returns meaningful values (even before the guest programs the palette).
+            //
+            // Entry layout is B, G, R, 0 with 6-bit components by default.
+            palette: default_vga_palette_bgr0_6bit(),
             modes: MODES,
         }
     }
@@ -325,4 +329,66 @@ impl VbeDevice {
         let max_lines = (16u32 * 1024 * 1024) / bytes_per_line;
         max_lines.min(u16::MAX as u32) as u16
     }
+}
+
+fn default_vga_palette_bgr0_6bit() -> [u8; 256 * 4] {
+    // VGA BIOSes typically initialize the 256-color DAC with:
+    // - EGA 16-color palette in indices 0..=15
+    // - a 6×6×6 color cube in indices 16..=231
+    // - a grayscale ramp in indices 232..=255
+    //
+    // We store palette entries as B, G, R, 0 with 6-bit components (0..=63), matching the BIOS
+    // default `dac_width_bits=6`.
+    let mut pal = [0u8; 256 * 4];
+
+    let mut set = |idx: usize, r8: u8, g8: u8, b8: u8| {
+        let base = idx * 4;
+        pal[base] = b8 >> 2;
+        pal[base + 1] = g8 >> 2;
+        pal[base + 2] = r8 >> 2;
+        // base+3 is reserved/unused (kept at 0).
+    };
+
+    // Standard EGA 16 colors (in 8-bit form, downscaled to 6-bit).
+    let ega: [(u8, u8, u8); 16] = [
+        (0x00, 0x00, 0x00), // 0 black
+        (0x00, 0x00, 0xAA), // 1 blue
+        (0x00, 0xAA, 0x00), // 2 green
+        (0x00, 0xAA, 0xAA), // 3 cyan
+        (0xAA, 0x00, 0x00), // 4 red
+        (0xAA, 0x00, 0xAA), // 5 magenta
+        (0xAA, 0x55, 0x00), // 6 brown
+        (0xAA, 0xAA, 0xAA), // 7 light grey
+        (0x55, 0x55, 0x55), // 8 dark grey
+        (0x55, 0x55, 0xFF), // 9 bright blue
+        (0x55, 0xFF, 0x55), // 10 bright green
+        (0x55, 0xFF, 0xFF), // 11 bright cyan
+        (0xFF, 0x55, 0x55), // 12 bright red
+        (0xFF, 0x55, 0xFF), // 13 bright magenta
+        (0xFF, 0xFF, 0x55), // 14 yellow
+        (0xFF, 0xFF, 0xFF), // 15 white
+    ];
+    for (i, (r, g, b)) in ega.into_iter().enumerate() {
+        set(i, r, g, b);
+    }
+
+    // 6×6×6 color cube (indices 16..231), similar to the classic VGA palette.
+    let mut idx = 16usize;
+    for r in 0..6u8 {
+        for g in 0..6u8 {
+            for b in 0..6u8 {
+                let scale = |v: u8| -> u8 { ((v as u16 * 255) / 5) as u8 };
+                set(idx, scale(r), scale(g), scale(b));
+                idx += 1;
+            }
+        }
+    }
+
+    // Grayscale ramp (232..255).
+    for i in 0..24u8 {
+        let v = ((i as u16 * 255) / 23) as u8;
+        set(232 + i as usize, v, v, v);
+    }
+
+    pal
 }
