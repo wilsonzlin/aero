@@ -340,6 +340,29 @@ pub enum Sm4Inst {
         dst: DstOperand,
         src: SrcOperand,
     },
+    /// `itof dest, src`
+    ///
+    /// Converts the signed integer bit pattern in `src` into a float numeric value.
+    Itof {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    /// `ftoi dest, src`
+    ///
+    /// Converts a float numeric value into a signed integer and writes the resulting integer bit
+    /// pattern into the untyped register file.
+    Ftoi {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    /// `ftou dest, src`
+    ///
+    /// Converts a float numeric value into an unsigned integer and writes the resulting integer
+    /// bit pattern into the untyped register file.
+    Ftou {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
     /// Bitwise AND (`and dest, a, b`).
     ///
     /// SM4/SM5 register files are untyped; integer values are typically represented as raw bits in
@@ -577,18 +600,6 @@ pub enum Sm4Inst {
         src: SrcOperand,
     },
     Rsq {
-        dst: DstOperand,
-        src: SrcOperand,
-    },
-    Itof {
-        dst: DstOperand,
-        src: SrcOperand,
-    },
-    Ftoi {
-        dst: DstOperand,
-        src: SrcOperand,
-    },
-    Ftou {
         dst: DstOperand,
         src: SrcOperand,
     },

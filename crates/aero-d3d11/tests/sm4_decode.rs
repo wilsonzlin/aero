@@ -283,6 +283,272 @@ fn decodes_gs_instance_count_decl() {
 }
 
 #[test]
+fn decodes_integer_alu_and_conversions() {
+    let mut body = Vec::<u32>::new();
+
+    // iadd r0, r1, r2
+    let mut iadd = vec![opcode_token(OPCODE_IADD, 1 + 2 + 2 + 2)];
+    iadd.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    iadd.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    iadd.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&iadd);
+
+    // imul r3, r0, l(3)
+    let imm3 = imm32_scalar(3);
+    let mut imul = vec![opcode_token(OPCODE_IMUL, (1 + 2 + 2 + imm3.len()) as u32)];
+    imul.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
+    imul.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    imul.extend_from_slice(&imm3);
+    body.extend_from_slice(&imul);
+
+    // and r4, r0, r1
+    let mut and = vec![opcode_token(OPCODE_AND, 1 + 2 + 2 + 2)];
+    and.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    and.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    and.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&and);
+
+    // or r5, r0, r1
+    let mut or = vec![opcode_token(OPCODE_OR, 1 + 2 + 2 + 2)];
+    or.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 5, WriteMask::XYZW));
+    or.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    or.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&or);
+
+    // xor r6, r0, r1
+    let mut xor = vec![opcode_token(OPCODE_XOR, 1 + 2 + 2 + 2)];
+    xor.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    xor.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    xor.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&xor);
+
+    // ishl r7, r0, l(1)
+    let imm1 = imm32_scalar(1);
+    let mut ishl = vec![opcode_token(OPCODE_ISHL, (1 + 2 + 2 + imm1.len()) as u32)];
+    ishl.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 7, WriteMask::XYZW));
+    ishl.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ishl.extend_from_slice(&imm1);
+    body.extend_from_slice(&ishl);
+
+    // ushr r8, r0, l(2)
+    let imm2 = imm32_scalar(2);
+    let mut ushr = vec![opcode_token(OPCODE_USHR, (1 + 2 + 2 + imm2.len()) as u32)];
+    ushr.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 8, WriteMask::XYZW));
+    ushr.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ushr.extend_from_slice(&imm2);
+    body.extend_from_slice(&ushr);
+
+    // ishr r9, r0, l(2)
+    let mut ishr = vec![opcode_token(OPCODE_ISHR, (1 + 2 + 2 + imm2.len()) as u32)];
+    ishr.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 9, WriteMask::XYZW));
+    ishr.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ishr.extend_from_slice(&imm2);
+    body.extend_from_slice(&ishr);
+
+    // itof r10, r0
+    let mut itof = vec![opcode_token(OPCODE_ITOF, 1 + 2 + 2)];
+    itof.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 10, WriteMask::XYZW));
+    itof.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&itof);
+
+    // utof r11, r0
+    let mut utof = vec![opcode_token(OPCODE_UTOF, 1 + 2 + 2)];
+    utof.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 11, WriteMask::XYZW));
+    utof.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&utof);
+
+    // ftoi r12, l(1.5)
+    let imm_f = imm32_scalar(1.5f32.to_bits());
+    let mut ftoi = vec![opcode_token(OPCODE_FTOI, (1 + 2 + imm_f.len()) as u32)];
+    ftoi.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 12, WriteMask::XYZW));
+    ftoi.extend_from_slice(&imm_f);
+    body.extend_from_slice(&ftoi);
+
+    // ftou r13, l(2.5)
+    let imm_fu = imm32_scalar(2.5f32.to_bits());
+    let mut ftou = vec![opcode_token(OPCODE_FTOU, (1 + 2 + imm_fu.len()) as u32)];
+    ftou.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 13, WriteMask::XYZW));
+    ftou.extend_from_slice(&imm_fu);
+    body.extend_from_slice(&ftou);
+
+    // movc r14, r0, r1, r2
+    let mut movc = vec![opcode_token(OPCODE_MOVC, 1 + 2 + 2 + 2 + 2)];
+    movc.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 14, WriteMask::XYZW));
+    movc.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    movc.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    movc.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&movc);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    let imm_scalar = |v: u32| SrcOperand {
+        kind: SrcKind::ImmediateF32([v, v, v, v]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    };
+
+    assert_eq!(
+        module.instructions,
+        vec![
+            Sm4Inst::IAdd {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 1),
+                b: src_reg(RegFile::Temp, 2),
+            },
+            Sm4Inst::IMul {
+                dst_lo: dst(RegFile::Temp, 3, WriteMask::XYZW),
+                dst_hi: None,
+                a: src_reg(RegFile::Temp, 0),
+                b: imm_scalar(3),
+            },
+            Sm4Inst::And {
+                dst: dst(RegFile::Temp, 4, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 0),
+                b: src_reg(RegFile::Temp, 1),
+            },
+            Sm4Inst::Or {
+                dst: dst(RegFile::Temp, 5, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 0),
+                b: src_reg(RegFile::Temp, 1),
+            },
+            Sm4Inst::Xor {
+                dst: dst(RegFile::Temp, 6, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 0),
+                b: src_reg(RegFile::Temp, 1),
+            },
+            Sm4Inst::IShl {
+                dst: dst(RegFile::Temp, 7, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 0),
+                b: imm_scalar(1),
+            },
+            Sm4Inst::UShr {
+                dst: dst(RegFile::Temp, 8, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 0),
+                b: imm_scalar(2),
+            },
+            Sm4Inst::IShr {
+                dst: dst(RegFile::Temp, 9, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 0),
+                b: imm_scalar(2),
+            },
+            Sm4Inst::Itof {
+                dst: dst(RegFile::Temp, 10, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Utof {
+                dst: dst(RegFile::Temp, 11, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ftoi {
+                dst: dst(RegFile::Temp, 12, WriteMask::XYZW),
+                src: imm_scalar(1.5f32.to_bits()),
+            },
+            Sm4Inst::Ftou {
+                dst: dst(RegFile::Temp, 13, WriteMask::XYZW),
+                src: imm_scalar(2.5f32.to_bits()),
+            },
+            Sm4Inst::Movc {
+                dst: dst(RegFile::Temp, 14, WriteMask::XYZW),
+                cond: src_reg(RegFile::Temp, 0),
+                a: src_reg(RegFile::Temp, 1),
+                b: src_reg(RegFile::Temp, 2),
+            },
+            Sm4Inst::Ret,
+        ]
+    );
+}
+
+#[test]
 fn decodes_arithmetic_and_skips_decls() {
     const DCL_DUMMY: u32 = 0x100;
 
@@ -2690,7 +2956,8 @@ fn rejects_sm5_thread_group_decl_with_too_small_declared_len() {
 fn decodes_atomic_add_via_structural_fallback() {
     // Pick an opcode that is not otherwise recognized by the decoder and rely on the structural
     // decoding path.
-    const OPCODE_UNKNOWN_ATOMIC_IADD: u32 = 0x60;
+    // Note: this value must not collide with any opcode we explicitly support (e.g. integer ops).
+    const OPCODE_UNKNOWN_ATOMIC_IADD: u32 = 0x74;
 
     let mut body = Vec::<u32>::new();
 
