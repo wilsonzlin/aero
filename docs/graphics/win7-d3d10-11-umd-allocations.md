@@ -558,6 +558,12 @@ See:
 * `docs/graphics/win7-wddm11-aerogpu-driver.md` (§5)
 * `drivers/aerogpu/kmd/src/aerogpu_kmd.c` (`DXGKQAITYPE_QUERYSEGMENT`)
 
+**Segment size / budget hint (AeroGPU):**
+
+Even though allocations are backed by guest system RAM, Win7’s `dxgkrnl` still enforces a per-adapter **segment budget** based on the KMD-reported non-local segment size. If the budget is too small, resource creation can fail with `E_OUTOFMEMORY` / `D3DERR_OUTOFVIDEOMEMORY` even when the guest still has free RAM.
+
+To tune the reported budget, set `HKR\Parameters\NonLocalMemorySizeMB` (see `docs/graphics/win7-aerogpu-validation.md` appendix and `drivers/aerogpu/kmd/README.md`).
+
 **Implication for UMD allocation flags:**
 
 * You do not need complex residency/eviction policy to get correctness.
