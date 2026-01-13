@@ -42,6 +42,54 @@
       }
     },
     {
+      "name": "48kHz_backwards_time_is_ignored",
+      "sample_rate_hz": 48000,
+      "start_time_ns": "1000",
+      "now_ns": [
+        "21833",
+        "21834",
+        "21000",
+        "21835"
+      ],
+      "expected_frames": [
+        0,
+        1,
+        0,
+        0
+      ],
+      "expected_end": {
+        "last_time_ns": "21835",
+        "frac_fp": "80000"
+      }
+    },
+    {
+      "name": "48kHz_jittery_ticks_60Hz_16666666_16666667",
+      "sample_rate_hz": 48000,
+      "start_time_ns": "0",
+      "now_ns": [
+        "16666666",
+        "33333333",
+        "50000000",
+        "66666666",
+        "83333333",
+        "100000000",
+        "116666666"
+      ],
+      "expected_frames": [
+        799,
+        800,
+        801,
+        799,
+        800,
+        801,
+        799
+      ],
+      "expected_end": {
+        "last_time_ns": "116666666",
+        "frac_fp": "999968000"
+      }
+    },
+    {
       "name": "48kHz_jittery_ticks_variable_frames",
       "sample_rate_hz": 48000,
       "start_time_ns": "0",
@@ -165,6 +213,27 @@
       "expected_end": {
         "last_time_ns": "10000000",
         "frac_fp": "0"
+      }
+    },
+    {
+      "name": "96kHz_multi_second_deltas_with_remainder",
+      "sample_rate_hz": 96000,
+      "start_time_ns": "0",
+      "now_ns": [
+        "2000000000",
+        "2000000001",
+        "5000000000",
+        "5000000123"
+      ],
+      "expected_frames": [
+        192000,
+        0,
+        288000,
+        0
+      ],
+      "expected_end": {
+        "last_time_ns": "5000000123",
+        "frac_fp": "11808000"
       }
     }
   ]

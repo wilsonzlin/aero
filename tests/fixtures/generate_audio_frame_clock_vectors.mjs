@@ -45,6 +45,23 @@ const cases = [
     now_ns: ["0", "1", "101", "20934", "20935", "41768", "61768", "61769", "62769", "62769", "30062769", "30062769", "30083602"],
   },
   {
+    name: "48kHz_backwards_time_is_ignored",
+    sample_rate_hz: 48000,
+    start_time_ns: "1000",
+    // Includes a backwards step (`21000` < `21834`). This must return 0 frames and must not
+    // modify `last_time_ns` or `frac_fp`.
+    now_ns: ["21833", "21834", "21000", "21835"],
+  },
+  {
+    name: "48kHz_jittery_ticks_60Hz_16666666_16666667",
+    sample_rate_hz: 48000,
+    start_time_ns: "0",
+    // ~60Hz jitter pattern where 1/60s (16_666_666.666...) is represented via a mix of
+    // 16_666_666 and 16_666_667 ns steps. Frame output is intentionally non-uniform to verify
+    // remainder carry semantics (799/800/801 frames at 48kHz).
+    now_ns: ["16666666", "33333333", "50000000", "66666666", "83333333", "100000000", "116666666"],
+  },
+  {
     name: "48kHz_jittery_ticks_variable_frames",
     sample_rate_hz: 48000,
     start_time_ns: "0",
@@ -79,6 +96,14 @@ const cases = [
     sample_rate_hz: 44100,
     start_time_ns: "0",
     now_ns: ["0", "1000000", "2000000", "3000000", "4000000", "5000000", "6000000", "7000000", "8000000", "9000000", "10000000"],
+  },
+  {
+    name: "96kHz_multi_second_deltas_with_remainder",
+    sample_rate_hz: 96000,
+    start_time_ns: "0",
+    // Large multi-second deltas plus a 1ns step to ensure remainder carry is preserved across
+    // very different step sizes.
+    now_ns: ["2000000000", "2000000001", "5000000000", "5000000123"],
   },
 ];
 
