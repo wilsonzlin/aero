@@ -49,7 +49,6 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         usbUhciRuntime,
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
-        usbXhciControllerBridge: null,
         i8042,
         audioHda,
         netE1000,
@@ -153,7 +152,6 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
-        usbXhciControllerBridge: null,
         i8042: { load_state: i8042Load },
         audioHda: { load_state: hdaLoad },
         netE1000: { load_state: e1000Load },
@@ -251,7 +249,6 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         usbUhciRuntime: { save_state: () => usbState },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
-        usbXhciControllerBridge: null,
         i8042: { save_state: () => i8042State },
         audioHda: { save_state: () => hdaState },
         netE1000: { save_state: () => e1000State },
@@ -316,7 +313,6 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
-        usbXhciControllerBridge: null,
         i8042: { load_state: i8042Load },
         audioHda: { load_state: hdaLoad },
         netE1000: { load_state: e1000Load },
@@ -351,18 +347,17 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
           api,
           path: "state/test.snap",
           guestBase: 0,
-          guestSize: 0x1000,
-          runtimes: {
-            usbXhciControllerBridge: null,
-            usbUhciRuntime: null,
-            usbUhciControllerBridge: null,
-            usbEhciControllerBridge: null,
-            usbXhciControllerBridge: null,
-            netE1000: null,
-            netStack: null,
-          },
-        }),
-      ).resolves.toMatchObject({ cpu: expect.any(ArrayBuffer), mmu: expect.any(ArrayBuffer) });
+           guestSize: 0x1000,
+           runtimes: {
+             usbXhciControllerBridge: null,
+             usbUhciRuntime: null,
+             usbUhciControllerBridge: null,
+             usbEhciControllerBridge: null,
+             netE1000: null,
+             netStack: null,
+           },
+         }),
+       ).resolves.toMatchObject({ cpu: expect.any(ArrayBuffer), mmu: expect.any(ArrayBuffer) });
 
       expect(warn.mock.calls.some((args) => String(args[0]).includes("net.stack"))).toBe(true);
     } finally {
@@ -376,11 +371,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const xhciBytes = new Uint8Array([0x06]);
 
     const usbBlob = snapshotUsbDeviceState({
-      usbXhciControllerBridge: null,
+      usbXhciControllerBridge: { save_state: () => xhciBytes },
       usbUhciRuntime: { save_state: () => uhciBytes },
       usbUhciControllerBridge: null,
       usbEhciControllerBridge: { save_state: () => ehciBytes },
-      usbXhciControllerBridge: { save_state: () => xhciBytes },
     });
 
     expect(usbBlob?.kind).toBe("usb.uhci");
@@ -391,11 +385,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const xhciLoad = vi.fn();
     restoreUsbDeviceState(
       {
-        usbXhciControllerBridge: null,
+        usbXhciControllerBridge: { load_state: xhciLoad },
         usbUhciRuntime: { load_state: uhciLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: { load_state: ehciLoad },
-        usbXhciControllerBridge: { load_state: xhciLoad },
       },
       usbBlob!.bytes,
     );
