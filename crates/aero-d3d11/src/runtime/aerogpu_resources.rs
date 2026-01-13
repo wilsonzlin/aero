@@ -884,20 +884,21 @@ pub fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat> {
 }
 
 pub fn map_buffer_usage_flags(usage_flags: u32) -> wgpu::BufferUsages {
-    let mut out = wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
-    let mut needs_storage = false;
+    // Be conservative about allowed usages: our guest buffer usage flags currently don't
+    // distinguish between "regular" buffers and SRV/UAV/structured buffers, but the SM5 shader
+    // translator will represent raw/structured resources as `var<storage>` in WGSL. wgpu validates
+    // that any buffer bound in a storage binding was created with `BufferUsages::STORAGE`.
+    //
+    // Additionally, D3D11 IA buffers can be consumed as `var<storage>` in compute prepasses (vertex
+    // pulling). Until the AeroGPU protocol grows a more precise usage bit, include STORAGE
+    // unconditionally to keep buffer creation compatible with future bindings.
+    let mut out =
+        wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE;
     if (usage_flags & AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER) != 0 {
         out |= wgpu::BufferUsages::VERTEX;
-        needs_storage = true;
     }
     if (usage_flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0 {
         out |= wgpu::BufferUsages::INDEX;
-        needs_storage = true;
-    }
-    // D3D11 IA buffers are also consumed as `var<storage>` in compute prepasses (vertex pulling),
-    // so ensure they're created with `STORAGE`.
-    if needs_storage {
-        out |= wgpu::BufferUsages::STORAGE;
     }
     if (usage_flags & AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER) != 0 {
         out |= wgpu::BufferUsages::UNIFORM;
@@ -1562,6 +1563,14 @@ mod tests {
         assert!(tu.contains(wgpu::TextureUsages::COPY_SRC));
         assert!(tu.contains(wgpu::TextureUsages::COPY_DST));
         assert!(tu.contains(wgpu::TextureUsages::RENDER_ATTACHMENT));
+    }
+
+    #[test]
+    fn map_buffer_usage_flags_includes_storage_for_uav_srv_buffers() {
+        // SM5 compute shaders translate raw/structured buffers into `var<storage>` bindings in WGSL.
+        // wgpu validates that any buffer used in a storage binding was created with
+        // `wgpu::BufferUsages::STORAGE`, even for read-only storage buffers (SRVs).
+        assert!(map_buffer_usage_flags(0).contains(wgpu::BufferUsages::STORAGE));
     }
 
     #[test]
