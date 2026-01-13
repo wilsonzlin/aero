@@ -578,6 +578,42 @@ fn pae_pdpt_reserved_bits_cause_rsvd_page_fault() {
 }
 
 #[test]
+fn max_phys_bits_high_address_bits_cause_rsvd_page_fault() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x20000);
+    mmu.set_max_phys_bits(36);
+
+    let pdpt_base = 0x1000u64;
+    let pd_base = 0x2000u64;
+    let pt_base = 0x3000u64;
+    let page_base = 0x4000u64;
+
+    // Set a physical-address bit above MAXPHYADDR (bit 40) in the final PTE.
+    // With max_phys_bits=36, this must be treated as a reserved-bit violation.
+    let above_maxphyaddr_bit = 1u64 << 40;
+
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64);
+    mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(
+        pt_base,
+        page_base | above_maxphyaddr_bit | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+
+    mmu.set_cr3(pdpt_base);
+    mmu.set_cr4(CR4_PAE);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x123u64;
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 0),
+        Err(TranslateFault::PageFault(PageFault {
+            addr: vaddr,
+            error_code: pf_error_code(true, AccessType::Read, false, true),
+        }))
+    );
+}
+
+#[test]
 fn long4_large_pages_2mb_and_1gb_translation() {
     // 2MB translation via PDE.PS
     {
@@ -628,6 +664,74 @@ fn long4_large_pages_2mb_and_1gb_translation() {
             Ok(vaddr)
         );
     }
+}
+
+#[test]
+fn long4_2mb_large_page_misaligned_base_causes_rsvd_page_fault() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+
+    mem.write_u64_raw(pml4_base, pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+
+    // PDE.PS=1 selects a 2MB page; the physical base must be 2MB-aligned.
+    // Set bit 13 (one of the low 21 address bits) to make the base misaligned.
+    let misaligned_base = 1u64 << 13;
+    mem.write_u64_raw(
+        pd_base,
+        misaligned_base | PTE_P64 | PTE_RW64 | PTE_US64 | PTE_PS64,
+    );
+
+    mmu.set_cr3(pml4_base);
+    mmu.set_cr4(CR4_PAE | CR4_PSE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x0010_5678u64;
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 0),
+        Err(TranslateFault::PageFault(PageFault {
+            addr: vaddr,
+            error_code: pf_error_code(true, AccessType::Read, false, true),
+        }))
+    );
+}
+
+#[test]
+fn long4_1gb_large_page_misaligned_base_causes_rsvd_page_fault() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+
+    mem.write_u64_raw(pml4_base, pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+
+    // PDPTE.PS=1 selects a 1GB page; the physical base must be 1GB-aligned.
+    // Set bit 13 (one of the low 30 address bits) to make the base misaligned.
+    let misaligned_base = 1u64 << 13;
+    mem.write_u64_raw(
+        pdpt_base,
+        misaligned_base | PTE_P64 | PTE_RW64 | PTE_US64 | PTE_PS64,
+    );
+
+    mmu.set_cr3(pml4_base);
+    mmu.set_cr4(CR4_PAE | CR4_PSE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x0020_1234u64;
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 0),
+        Err(TranslateFault::PageFault(PageFault {
+            addr: vaddr,
+            error_code: pf_error_code(true, AccessType::Read, false, true),
+        }))
+    );
 }
 
 #[test]
