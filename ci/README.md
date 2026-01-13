@@ -201,6 +201,8 @@ Safety notes:
 
 - Hidden files/dirs are skipped (for stable outputs across hosts).
 - Private key material extensions are refused (`*.pfx`, `*.pvk`, `*.snk`, `*.key`, `*.pem`).
+- `aero_packager` applies the same default exclusions as the driver tree (e.g. `*.pdb`, `*.obj`, source files),
+  so those build artifacts will not be included in the packaged `tools/` directory.
 
 ### Spec selection (CI vs local)
 

@@ -96,6 +96,21 @@ function Test-PrivateKeyExtension {
   return $ExtensionNoDotLower -in @("pfx", "pvk", "snk", "key", "pem")
 }
 
+function Test-DefaultExcludedToolsExtension {
+  param([Parameter(Mandatory = $true)][string] $ExtensionNoDotLower)
+
+  # Keep this list aligned with `aero_packager`'s `is_default_excluded_driver_extension`.
+  return $ExtensionNoDotLower -in @(
+    # Debug symbols.
+    "pdb", "ipdb", "iobj",
+    # Build metadata.
+    "obj", "lib", "exp", "ilk", "tlog", "log",
+    # Source / project files.
+    "c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx", "idl", "inl", "rc", "s", "asm",
+    "sln", "vcxproj", "props", "targets"
+  )
+}
+
 function Test-HiddenRelPath {
   param([Parameter(Mandatory = $true)][string] $RelPath)
 
@@ -156,6 +171,12 @@ function Copy-TreeWithSafetyFilters {
     # Ignore common Windows shell metadata files.
     $nameLower = $f.Name.ToLowerInvariant()
     if ($nameLower -in @("thumbs.db", "ehthumbs.db", "desktop.ini")) {
+      continue
+    }
+
+    # Match `aero_packager`'s default exclusions for the optional `tools/` tree: avoid copying
+    # debug symbols, build outputs, and source/project files that will not be packaged anyway.
+    if (-not [string]::IsNullOrEmpty($extNoDotLower) -and (Test-DefaultExcludedToolsExtension -ExtensionNoDotLower $extNoDotLower)) {
       continue
     }
 
