@@ -1068,6 +1068,22 @@ static void test_consumer_control_reports(void) {
   expect_report(&cap, 6, expect7, sizeof(expect7));
 }
 
+static void test_consumer_control_disabled_does_not_emit(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Disable consumer-control output. */
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
+
+  /* Consumer key events should be ignored (no consumer report emission). */
+  send_key(&t, VIRTIO_INPUT_KEY_VOLUMEUP, 1);
+  send_syn(&t);
+  assert(cap.count == 0);
+}
+
 static void test_mouse_horizontal_wheel_reports(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -1391,6 +1407,7 @@ int main(void) {
   test_mouse_buttons_reports();
   test_mouse_buttons_reports_le();
   test_consumer_control_reports();
+  test_consumer_control_disabled_does_not_emit();
   test_reset_emits_release_reports();
   test_keyboard_only_enable();
   test_mouse_only_enable();
