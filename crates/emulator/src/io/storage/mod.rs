@@ -12,6 +12,7 @@ pub mod error;
 pub mod formats;
 pub mod ide;
 pub mod nvme;
+pub mod pci_compat;
 
 pub const SECTOR_SIZE: usize = 512;
 
