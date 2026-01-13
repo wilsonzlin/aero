@@ -1,9 +1,6 @@
 package relay
 
 import (
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
@@ -143,108 +140,4 @@ func (c Config) withDefaults() Config {
 // defaults.
 func (c Config) WithDefaults() Config {
 	return c.withDefaults()
-}
-
-// ConfigFromEnv returns Config using defaults overridden by environment
-// variables.
-//
-// Environment variables:
-//   - PREFER_V2 (bool) - prefer v2 relay->client frames once the client has demonstrated v2 support
-//   - MAX_DATAGRAM_PAYLOAD_BYTES (int)
-//   - MAX_UDP_BINDINGS_PER_SESSION (int)
-//   - UDP_BINDING_IDLE_TIMEOUT (duration, e.g. 60s)
-//   - UDP_READ_BUFFER_BYTES (int)
-//   - DATACHANNEL_SEND_QUEUE_BYTES (int)
-//   - MAX_ALLOWED_REMOTES_PER_BINDING (int)
-//   - L2_BACKEND_WS_URL (string)
-//   - L2_BACKEND_FORWARD_ORIGIN (bool; defaults true when L2_BACKEND_WS_URL is set)
-//   - L2_BACKEND_AUTH_FORWARD_MODE (string: none|query|subprotocol; default query)
-//   - L2_BACKEND_ORIGIN (string; alias for L2_BACKEND_ORIGIN_OVERRIDE)
-//   - L2_BACKEND_ORIGIN_OVERRIDE (string; preferred)
-//   - L2_BACKEND_WS_ORIGIN (string; legacy)
-//   - L2_BACKEND_TOKEN (string; preferred)
-//   - L2_BACKEND_WS_TOKEN (string; legacy)
-//   - L2_BACKEND_FORWARD_AERO_SESSION (bool; optional)
-//   - L2_MAX_MESSAGE_BYTES (int)
-func ConfigFromEnv() Config {
-	c := DefaultConfig()
-	c.PreferV2 = udpproto.PreferV2FromEnv()
-	c.L2BackendWSURL = os.Getenv("L2_BACKEND_WS_URL")
-	c.L2BackendWSOrigin = os.Getenv("L2_BACKEND_ORIGIN")
-	if c.L2BackendWSOrigin == "" {
-		c.L2BackendWSOrigin = os.Getenv("L2_BACKEND_ORIGIN_OVERRIDE")
-	}
-	if c.L2BackendWSOrigin == "" {
-		c.L2BackendWSOrigin = os.Getenv("L2_BACKEND_WS_ORIGIN")
-	}
-	c.L2BackendWSToken = os.Getenv("L2_BACKEND_TOKEN")
-	if c.L2BackendWSToken == "" {
-		c.L2BackendWSToken = os.Getenv("L2_BACKEND_WS_TOKEN")
-	}
-	if v := strings.TrimSpace(os.Getenv("L2_BACKEND_AUTH_FORWARD_MODE")); v != "" {
-		switch strings.ToLower(v) {
-		case string(config.L2BackendAuthForwardModeNone):
-			c.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeNone
-		case string(config.L2BackendAuthForwardModeQuery):
-			c.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeQuery
-		case string(config.L2BackendAuthForwardModeSubprotocol):
-			c.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
-		}
-	}
-	if v := strings.TrimSpace(os.Getenv("L2_BACKEND_FORWARD_ORIGIN")); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			c.L2BackendForwardOrigin = b
-		}
-	} else if strings.TrimSpace(c.L2BackendWSURL) != "" {
-		// Default to forwarding Origin when L2 is enabled.
-		c.L2BackendForwardOrigin = true
-	}
-	if v := strings.TrimSpace(os.Getenv("L2_BACKEND_FORWARD_AERO_SESSION")); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			c.L2BackendForwardAeroSession = b
-		}
-	}
-	if v := os.Getenv("L2_MAX_MESSAGE_BYTES"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil && i > 0 {
-			c.L2MaxMessageBytes = i
-		}
-	}
-	if v := os.Getenv("MAX_DATAGRAM_PAYLOAD_BYTES"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil && i > 0 {
-			c.MaxDatagramPayloadBytes = i
-		}
-	}
-	udpReadBufferSet := false
-	if v := os.Getenv("MAX_UDP_BINDINGS_PER_SESSION"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil && i > 0 {
-			c.MaxUDPBindingsPerSession = i
-		}
-	}
-	if v := os.Getenv("UDP_BINDING_IDLE_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			c.UDPBindingIdleTimeout = d
-		}
-	}
-	if v := os.Getenv("UDP_READ_BUFFER_BYTES"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil && i > 0 {
-			c.UDPReadBufferBytes = i
-			udpReadBufferSet = true
-		}
-	}
-	if v := os.Getenv("DATACHANNEL_SEND_QUEUE_BYTES"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil && i > 0 {
-			c.DataChannelSendQueueBytes = i
-		}
-	}
-	if v := os.Getenv("MAX_ALLOWED_REMOTES_PER_BINDING"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil && i > 0 {
-			c.MaxAllowedRemotesPerBinding = i
-		}
-	}
-	// When UDP_READ_BUFFER_BYTES is unset, default it relative to the (possibly
-	// overridden) max payload.
-	if !udpReadBufferSet {
-		c.UDPReadBufferBytes = c.MaxDatagramPayloadBytes + 1
-	}
-	return c
 }

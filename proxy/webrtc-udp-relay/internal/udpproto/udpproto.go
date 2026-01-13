@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"os"
-	"strconv"
 )
 
 const (
@@ -30,12 +28,6 @@ const (
 
 	// v2 message types.
 	V2TypeDatagram = 0x00
-
-	// PREFER_V2 controls whether the server prefers encoding outbound (UDP→client)
-	// packets as v2 when it is safe to do so.
-	//
-	// Note: v2 is required for IPv6; this flag only affects IPv4.
-	PREFER_V2 = "PREFER_V2"
 )
 
 var (
@@ -90,20 +82,6 @@ func EncodeDatagram(d Datagram, dst []byte) ([]byte, error) {
 
 func DecodeDatagram(b []byte) (Datagram, error) {
 	return DefaultCodec.DecodeDatagram(b)
-}
-
-// PreferV2FromEnv returns true when the PREFER_V2 env var is set to a truthy
-// value (as parsed by strconv.ParseBool).
-func PreferV2FromEnv() bool {
-	v, ok := os.LookupEnv(PREFER_V2)
-	if !ok {
-		return false
-	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return false
-	}
-	return b
 }
 
 // Decode parses a datagram frame using the v2 prefix heuristic:
