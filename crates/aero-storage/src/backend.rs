@@ -390,9 +390,15 @@ impl StorageBackend for StdFileBackend {
             let off = offset
                 .checked_add(u64::try_from(read).map_err(|_| DiskError::OffsetOverflow)?)
                 .ok_or(DiskError::OffsetOverflow)?;
-            let n = self
-                .pread(&mut buf[read..], off)
-                .map_err(|e| self.io_err_at("read_at", off, buf.len() - read, e))?;
+            let n = loop {
+                match self.pread(&mut buf[read..], off) {
+                    Ok(n) => break n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        return Err(self.io_err_at("read_at", off, buf.len() - read, e));
+                    }
+                }
+            };
             if n == 0 {
                 // For regular files this typically indicates EOF (short read).
                 return Err(DiskError::OutOfBounds {
@@ -422,9 +428,15 @@ impl StorageBackend for StdFileBackend {
             let off = offset
                 .checked_add(u64::try_from(written).map_err(|_| DiskError::OffsetOverflow)?)
                 .ok_or(DiskError::OffsetOverflow)?;
-            let n = self
-                .pwrite(&buf[written..], off)
-                .map_err(|e| self.io_err_at("write_at", off, buf.len() - written, e))?;
+            let n = loop {
+                match self.pwrite(&buf[written..], off) {
+                    Ok(n) => break n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        return Err(self.io_err_at("write_at", off, buf.len() - written, e));
+                    }
+                }
+            };
             if n == 0 {
                 return Err(DiskError::Io(format!(
                     "write_at wrote 0 bytes (path={} offset={} remaining={})",
