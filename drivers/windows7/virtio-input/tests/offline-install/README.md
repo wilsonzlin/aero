@@ -105,6 +105,15 @@ List 3rd-party drivers in the mounted image:
 dism /Image:%MOUNT% /Get-Drivers /Format:Table
 ```
 
+For a quick yes/no check (handy for CI), run the verifier script in this directory:
+
+```bat
+powershell -ExecutionPolicy Bypass -File Verify-VirtioInputStaged.ps1 -ImagePath %MOUNT%
+echo %ERRORLEVEL%
+```
+
+It exits `0` when `aero_virtio_input.inf` is present in the offline DriverStore, and non-zero otherwise.
+
 Then locate the `oem#.inf` entry corresponding to virtio-input and inspect it:
 
 ```bat
@@ -178,6 +187,13 @@ dism /Image:%OFFLINE% /Add-Driver /Driver:%VIRTIO_INPUT_PKG% /Recurse
 
 ```bat
 dism /Image:%OFFLINE% /Get-Drivers /Format:Table
+```
+
+Or use the quick verifier script:
+
+```bat
+powershell -ExecutionPolicy Bypass -File Verify-VirtioInputStaged.ps1 -ImagePath %OFFLINE%
+echo %ERRORLEVEL%
 ```
 
 4) Detach the disk when done:
