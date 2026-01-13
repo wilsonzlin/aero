@@ -6,6 +6,15 @@ using aerogpu_test::kmt::D3DKMT_FUNCS;
 using aerogpu_test::kmt::D3DKMT_HANDLE;
 using aerogpu_test::kmt::NTSTATUS;
 
+static volatile LONG g_emergency_restore_needed = 0;
+static volatile LONG g_emergency_restore_attempted = 0;
+static DEVMODEW g_emergency_restore_mode;
+
+static bool ApplyDisplayModeAndWaitEx(const DEVMODEW& target,
+                                      DWORD timeout_ms,
+                                      bool* out_change_timed_out,
+                                      std::string* err);
+
 static const char* DispChangeCodeToString(LONG code) {
   switch (code) {
     case DISP_CHANGE_SUCCESSFUL:
@@ -27,6 +36,44 @@ static const char* DispChangeCodeToString(LONG code) {
     default:
       return "DISP_CHANGE_<unknown>";
   }
+}
+
+static void AttemptEmergencyModeRestore() {
+  if (InterlockedCompareExchange(&g_emergency_restore_needed, 0, 0) == 0) {
+    return;
+  }
+  if (InterlockedCompareExchange(&g_emergency_restore_attempted, 1, 0) != 0) {
+    return;
+  }
+
+  bool timed_out = false;
+  std::string err;
+  (void)ApplyDisplayModeAndWaitEx(g_emergency_restore_mode, 2000, &timed_out, &err);
+  if (timed_out) {
+    // Avoid potentially deadlocking teardown paths if the restore attempt itself timed out.
+    InterlockedExchange(&aerogpu_test::kmt::g_skip_close_adapter, 1);
+  }
+}
+
+static BOOL WINAPI ConsoleCtrlHandler(DWORD ctrl_type) {
+  switch (ctrl_type) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+      AttemptEmergencyModeRestore();
+      break;
+    default:
+      break;
+  }
+  // Return FALSE so default handling (process termination) still occurs.
+  return FALSE;
+}
+
+static LONG WINAPI UnhandledExceptionFilterProc(EXCEPTION_POINTERS* /*info*/) {
+  AttemptEmergencyModeRestore();
+  return EXCEPTION_CONTINUE_SEARCH;
 }
 
 struct ChangeDisplaySettingsCtx {
@@ -487,8 +534,15 @@ struct ScopedModeRestore {
 
   explicit ScopedModeRestore(const DEVMODEW& dm) : original(dm), armed(false) {}
 
-  void Arm() { armed = true; }
-  void Disarm() { armed = false; }
+  void Arm() {
+    g_emergency_restore_mode = original;
+    InterlockedExchange(&g_emergency_restore_needed, 1);
+    armed = true;
+  }
+  void Disarm() {
+    armed = false;
+    InterlockedExchange(&g_emergency_restore_needed, 0);
+  }
 
   bool RestoreNow(std::string* err) {
     if (!armed) {
@@ -504,6 +558,7 @@ struct ScopedModeRestore {
         // Mirror the safety behavior in aerogpu_test_kmt.h: if a timed call may still be executing
         // inside gdi/user32 paths, avoid teardown that can deadlock (CloseAdapter/FreeLibrary).
         InterlockedExchange(&aerogpu_test::kmt::g_skip_close_adapter, 1);
+        InterlockedExchange(&g_emergency_restore_needed, 0);
       }
       if (err) {
         *err = tmp;
@@ -511,6 +566,7 @@ struct ScopedModeRestore {
       return false;
     }
     armed = false;
+    InterlockedExchange(&g_emergency_restore_needed, 0);
     return true;
   }
 
@@ -561,6 +617,12 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
     return reporter.Fail("expected a 32bpp desktop mode (dmBitsPerPel=32), but got %lu",
                          (unsigned long)original.dmBitsPerPel);
   }
+
+  // Best-effort: attempt to restore the original mode if the process receives Ctrl-C/close or
+  // crashes with an unhandled exception.
+  g_emergency_restore_mode = original;
+  (void)SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
+  (void)SetUnhandledExceptionFilter(UnhandledExceptionFilterProc);
 
   DEVMODEW alternate;
   std::string alt_err;
