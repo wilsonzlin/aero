@@ -19,8 +19,9 @@ Note: the shipped Win7 driver packages (`drivers/aerogpu/packaging/win7`) bind t
 HWID only. Installing against the legacy bring-up device model requires the legacy INFs under
 `drivers/aerogpu/packaging/win7/legacy/` and enabling the emulator legacy device model (feature `emulator/aerogpu-legacy`).
 
-`--query-version` (alias: `--query-device`), `--query-fence`, `--dump-ring`, and `--selftest` rely on dbgctl escape
-packets implemented by the installed KMD. The tool is primarily developed against the versioned ("AGPU") path, but
+Most commands rely on dbgctl escape packets implemented by the installed KMD (for example `--query-version` (alias:
+`--query-device`), `--query-fence`, `--dump-ring`, etc.). The tool is primarily developed against the versioned ("AGPU")
+path, but
 keeps best-effort compatibility decoding for legacy ("ARGP") devices and older KMD builds.
 
 ## Features
