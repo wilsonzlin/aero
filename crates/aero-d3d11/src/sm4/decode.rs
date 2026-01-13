@@ -210,6 +210,43 @@ mod tests {
     }
 
     #[test]
+    fn dcl_thread_group_is_decoded() {
+        // Build a minimal cs_5_0 token stream:
+        // - dcl_thread_group 8,4,2
+        // - ret
+        let version_token = 0x0005_0050u32; // cs_5_0
+
+        let decl_opcode = OPCODE_DCL_THREAD_GROUP;
+        let decl_len = 4u32;
+
+        let ret_len = 1u32;
+
+        let mut tokens = vec![
+            version_token,
+            0, // declared length patched below
+            opcode_token(decl_opcode, decl_len),
+            8u32,
+            4u32,
+            2u32,
+            opcode_token(OPCODE_RET, ret_len),
+        ];
+        tokens[1] = tokens.len() as u32;
+
+        let program = Sm4Program {
+            stage: ShaderStage::Compute,
+            model: ShaderModel { major: 5, minor: 0 },
+            tokens,
+        };
+
+        let module = super::decode_program(&program).expect("decode should succeed");
+        assert!(matches!(
+            module.decls.as_slice(),
+            [Sm4Decl::ThreadGroupSize { x: 8, y: 4, z: 2 }]
+        ));
+        assert!(matches!(module.instructions.as_slice(), [Sm4Inst::Ret]));
+    }
+
+    #[test]
     fn customdata_non_comment_is_skipped_from_instructions() {
         // Build a minimal ps_5_0 token stream:
         // - a declaration
@@ -781,27 +818,6 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
 
     if r.is_eof() {
         return Ok(Sm4Decl::Unknown { opcode });
-    }
-
-    // `dcl_thread_group x, y, z` is a compute-stage declaration that encodes the thread-group
-    // dimensions as three immediate DWORDs (no operand token). Most other declarations begin with an
-    // operand token, which has index-dimension bits set at bit 20 and therefore tends to be a large
-    // value (>= 1<<20). Use this to distinguish thread-group-size declarations from
-    // resource/sampler/etc declarations that can also be 4 DWORDs long.
-    //
-    // Note: This is intentionally heuristic (we don't currently key off the declaration opcode),
-    // but it is sufficient for real-world DXBC where the dimensions are small constants.
-    if r.toks.len().saturating_sub(r.pos) == 3 {
-        let x = r.toks[r.pos];
-        let y = r.toks[r.pos + 1];
-        let z = r.toks[r.pos + 2];
-        if x < (1 << 20) && y < (1 << 20) && z < (1 << 20) {
-            let x = r.read_u32()?;
-            let y = r.read_u32()?;
-            let z = r.read_u32()?;
-            r.expect_eof()?;
-            return Ok(Sm4Decl::ThreadGroupSize { x, y, z });
-        }
     }
 
     let op = decode_raw_operand(&mut r)?;
