@@ -1,10 +1,10 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aero_storage::{AeroSparseConfig, AeroSparseDisk, DiskImage, StorageBackend, VirtualDisk};
+use aero_storage::{AeroSparseConfig, AeroSparseDisk, DiskImage, StdFileBackend, VirtualDisk};
 use anyhow::{anyhow, bail, Context};
 use clap::Parser;
 use serde::Serialize;
@@ -101,9 +101,8 @@ fn main() -> anyhow::Result<()> {
 fn run(args: Args) -> anyhow::Result<()> {
     validate_block_size(args.block_size_bytes)?;
 
-    let input_file =
-        File::open(&args.input).with_context(|| format!("open input {}", args.input.display()))?;
-    let input_backend = FileBackend::new(input_file, true);
+    let input_backend = StdFileBackend::open(&args.input, true)
+        .with_context(|| format!("open input {}", args.input.display()))?;
     let mut input_disk =
         DiskImage::open_auto(input_backend).context("open input disk (auto-detect)")?;
 
@@ -423,7 +422,7 @@ fn is_all_zero(buf: &[u8]) -> bool {
         && suffix.iter().all(|&b| b == 0)
 }
 
-fn open_output_file(path: &Path, force: bool) -> anyhow::Result<FileBackend> {
+fn open_output_file(path: &Path, force: bool) -> anyhow::Result<StdFileBackend> {
     let mut opts = OpenOptions::new();
     opts.read(true).write(true);
     if force {
@@ -432,119 +431,10 @@ fn open_output_file(path: &Path, force: bool) -> anyhow::Result<FileBackend> {
         opts.create_new(true);
     }
     let file = opts.open(path)?;
-    Ok(FileBackend::new(file, false))
+    Ok(StdFileBackend::from_file_with_path(file, path))
 }
 
 fn default_overlay_path(base: &Path, disk_id: &str) -> PathBuf {
     let parent = base.parent().unwrap_or_else(|| Path::new(""));
     parent.join(format!("{disk_id}.overlay.aerospar"))
-}
-
-struct FileBackend {
-    file: File,
-    read_only: bool,
-}
-
-impl FileBackend {
-    fn new(file: File, read_only: bool) -> Self {
-        Self { file, read_only }
-    }
-}
-
-#[cfg(unix)]
-fn file_read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    use std::os::unix::fs::FileExt;
-    file.read_at(buf, offset)
-}
-
-#[cfg(windows)]
-fn file_read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    use std::os::windows::fs::FileExt;
-    file.seek_read(buf, offset)
-}
-
-#[cfg(unix)]
-fn file_write_at(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
-    use std::os::unix::fs::FileExt;
-    file.write_at(buf, offset)
-}
-
-#[cfg(windows)]
-fn file_write_at(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
-    use std::os::windows::fs::FileExt;
-    file.seek_write(buf, offset)
-}
-
-impl StorageBackend for FileBackend {
-    fn len(&mut self) -> aero_storage::Result<u64> {
-        self.file
-            .metadata()
-            .map(|m| m.len())
-            .map_err(|e| aero_storage::DiskError::Io(e.to_string()))
-    }
-
-    fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
-        if self.read_only {
-            return Err(aero_storage::DiskError::NotSupported(
-                "read-only backend".to_string(),
-            ));
-        }
-        self.file
-            .set_len(len)
-            .map_err(|e| aero_storage::DiskError::Io(e.to_string()))
-    }
-
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
-        let capacity = self.len()?;
-        let end = offset
-            .checked_add(buf.len() as u64)
-            .ok_or(aero_storage::DiskError::OffsetOverflow)?;
-        if end > capacity {
-            return Err(aero_storage::DiskError::OutOfBounds {
-                offset,
-                len: buf.len(),
-                capacity,
-            });
-        }
-
-        let mut pos = 0usize;
-        while pos < buf.len() {
-            let read = file_read_at(&self.file, &mut buf[pos..], offset + pos as u64)
-                .map_err(|e| aero_storage::DiskError::Io(e.to_string()))?;
-            if read == 0 {
-                return Err(aero_storage::DiskError::OutOfBounds {
-                    offset,
-                    len: buf.len(),
-                    capacity,
-                });
-            }
-            pos += read;
-        }
-        Ok(())
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
-        if self.read_only {
-            return Err(aero_storage::DiskError::NotSupported(
-                "read-only backend".to_string(),
-            ));
-        }
-
-        let mut pos = 0usize;
-        while pos < buf.len() {
-            let wrote = file_write_at(&self.file, &buf[pos..], offset + pos as u64)
-                .map_err(|e| aero_storage::DiskError::Io(e.to_string()))?;
-            if wrote == 0 {
-                return Err(aero_storage::DiskError::Io("short write".to_string()));
-            }
-            pos += wrote;
-        }
-        Ok(())
-    }
-
-    fn flush(&mut self) -> aero_storage::Result<()> {
-        self.file
-            .sync_all()
-            .map_err(|e| aero_storage::DiskError::Io(e.to_string()))
-    }
 }

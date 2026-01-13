@@ -217,6 +217,23 @@ impl StdFileBackend {
         self.file
     }
 
+    /// Wrap an already-open [`std::fs::File`].
+    ///
+    /// Note: the returned backend has no path metadata (used only for error messages).
+    #[must_use]
+    pub fn from_file(file: File) -> Self {
+        Self { file, path: None }
+    }
+
+    /// Wrap an already-open [`std::fs::File`] and attach a display path for error messages.
+    #[must_use]
+    pub fn from_file_with_path<P: AsRef<Path>>(file: File, path: P) -> Self {
+        Self {
+            file,
+            path: Some(path.as_ref().to_path_buf()),
+        }
+    }
+
     fn path_str(&self) -> String {
         self.path
             .as_ref()
