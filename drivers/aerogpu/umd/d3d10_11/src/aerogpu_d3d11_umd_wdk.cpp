@@ -1801,8 +1801,8 @@ static bool UnmapLocked(Device* dev, Resource* res) {
 
               if (row_bytes != 0 && rows != 0 && src_pitch != 0 && dst_pitch != 0 &&
                   src_pitch >= row_bytes && dst_pitch >= row_bytes &&
-                  src_needed <= size && dst_needed <= size &&
-                  size <= static_cast<uint64_t>(remaining)) {
+                  dst_needed <= static_cast<uint64_t>(remaining) &&
+                  (res->mapped_wddm_slice_pitch == 0 || src_needed <= res->mapped_wddm_slice_pitch)) {
                 const uint8_t* src = src_base + static_cast<size_t>(off);
                 uint8_t* dst = res->storage.data() + static_cast<size_t>(off);
                 for (uint32_t y = 0; y < rows; y++) {
