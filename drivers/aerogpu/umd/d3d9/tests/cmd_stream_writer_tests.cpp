@@ -31,6 +31,9 @@ constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
 constexpr uint32_t kD3d9ShaderStageVs = 0u;
 constexpr D3DDDIFORMAT kD3dFmtIndex16 = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
 
+// ABI-compatible D3DVERTEXELEMENT9 encoding (8 bytes, packed). The UMD treats
+// vertex decls as opaque blobs at the DDI boundary, so tests define a portable
+// layout here.
 #pragma pack(push, 1)
 struct D3DVERTEXELEMENT9_COMPAT {
   uint16_t Stream;
@@ -44,18 +47,23 @@ struct D3DVERTEXELEMENT9_COMPAT {
 
 static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9 must be 8 bytes");
 
+// D3D9 vertex declaration + FVF numeric constants (from d3d9types.h).
 constexpr uint8_t kD3dDeclTypeFloat2 = 1;
 constexpr uint8_t kD3dDeclTypeFloat3 = 2;
 constexpr uint8_t kD3dDeclTypeFloat4 = 3;
 constexpr uint8_t kD3dDeclTypeD3dColor = 4;
 constexpr uint8_t kD3dDeclTypeUnused = 17;
-
 constexpr uint8_t kD3dDeclMethodDefault = 0;
 
 constexpr uint8_t kD3dDeclUsagePosition = 0;
 constexpr uint8_t kD3dDeclUsageTexcoord = 5;
 constexpr uint8_t kD3dDeclUsagePositionT = 9;
 constexpr uint8_t kD3dDeclUsageColor = 10;
+
+constexpr uint32_t kD3dFvfXyz = 0x00000002u;
+constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
+constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -4978,6 +4986,158 @@ bool TestDestroyBoundVertexDeclUnbinds() {
     return false;
   }
   return Check(set_layout.offset < destroy.offset, "unbind occurs before destroy");
+}
+
+bool TestSetVertexDeclDerivesFixedFunctionFvf() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateVertexDecl != nullptr, "CreateVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetVertexDecl != nullptr, "SetVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDestroyVertexDecl != nullptr, "DestroyVertexDecl must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  auto run_case = [&](const D3DVERTEXELEMENT9_COMPAT* elems,
+                      size_t elem_count,
+                      uint32_t expected_fvf,
+                      const char* name) -> bool {
+    D3D9DDI_HVERTEXDECL hDecl{};
+    const uint32_t decl_size = static_cast<uint32_t>(elem_count * sizeof(D3DVERTEXELEMENT9_COMPAT));
+    HRESULT hr = cleanup.device_funcs.pfnCreateVertexDecl(create_dev.hDevice, elems, decl_size, &hDecl);
+    if (!Check(hr == S_OK, name)) {
+      return false;
+    }
+    if (!Check(hDecl.pDrvPrivate != nullptr, "CreateVertexDecl returned handle")) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnSetVertexDecl(create_dev.hDevice, hDecl);
+    if (!Check(hr == S_OK, "SetVertexDecl")) {
+      cleanup.device_funcs.pfnDestroyVertexDecl(create_dev.hDevice, hDecl);
+      return false;
+    }
+    if (!Check(dev->fvf == expected_fvf, "derived dev->fvf matches expected")) {
+      cleanup.device_funcs.pfnDestroyVertexDecl(create_dev.hDevice, hDecl);
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnDestroyVertexDecl(create_dev.hDevice, hDecl);
+    if (!Check(hr == S_OK, "DestroyVertexDecl")) {
+      return false;
+    }
+    return true;
+  };
+
+  // Existing bring-up path: XYZRHW|DIFFUSE (POSITIONT float4 + COLOR0 D3DCOLOR).
+  const D3DVERTEXELEMENT9_COMPAT decl_xyzrhw_diffuse[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, /*Usage=*/0, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  // XYZRHW|DIFFUSE|TEX1: + TEXCOORD0 float2 at offset 20.
+  const D3DVERTEXELEMENT9_COMPAT decl_xyzrhw_diffuse_tex1[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  // XYZ|DIFFUSE: POSITION float3 + COLOR0 D3DCOLOR.
+  const D3DVERTEXELEMENT9_COMPAT decl_xyz_diffuse[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*Usage=*/0, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  // XYZ|DIFFUSE|TEX1: + TEXCOORD0 float2 at offset 16.
+  const D3DVERTEXELEMENT9_COMPAT decl_xyz_diffuse_tex1[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*Usage=*/0, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  if (!run_case(decl_xyzrhw_diffuse,
+                sizeof(decl_xyzrhw_diffuse) / sizeof(decl_xyzrhw_diffuse[0]),
+                kD3dFvfXyzRhw | kD3dFvfDiffuse,
+                "CreateVertexDecl(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+  if (!run_case(decl_xyzrhw_diffuse_tex1,
+                sizeof(decl_xyzrhw_diffuse_tex1) / sizeof(decl_xyzrhw_diffuse_tex1[0]),
+                kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1,
+                "CreateVertexDecl(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  if (!run_case(decl_xyz_diffuse,
+                sizeof(decl_xyz_diffuse) / sizeof(decl_xyz_diffuse[0]),
+                kD3dFvfXyz | kD3dFvfDiffuse,
+                "CreateVertexDecl(XYZ|DIFFUSE)")) {
+    return false;
+  }
+  return run_case(decl_xyz_diffuse_tex1,
+                  sizeof(decl_xyz_diffuse_tex1) / sizeof(decl_xyz_diffuse_tex1[0]),
+                  kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1,
+                  "CreateVertexDecl(XYZ|DIFFUSE|TEX1)");
 }
 
 bool TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
@@ -10599,6 +10759,7 @@ int main() {
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
+  failures += !aerogpu::TestSetVertexDeclDerivesFixedFunctionFvf();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestUnsupportedFvfDrawPrimitiveUpRejectsWithoutShaders();
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
