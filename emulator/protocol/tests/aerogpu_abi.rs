@@ -2393,6 +2393,7 @@ fn rust_layout_matches_c_headers() {
     );
     assert_eq!(abi.size("aerogpu_escape_selftest_inout"), 32);
     assert_eq!(abi.size("aerogpu_escape_query_vblank_out"), 56);
+    assert_eq!(abi.size("aerogpu_escape_query_cursor_out"), 72);
     assert_eq!(abi.size("aerogpu_escape_map_shared_handle_inout"), 32);
 
     assert_eq!(abi.offset("aerogpu_escape_header", "version"), 0);
@@ -2449,6 +2450,45 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(
         abi.offset("aerogpu_escape_query_vblank_out", "vblank_interrupt_type"),
         52
+    );
+
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_cursor_out", "flags"),
+        16
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_cursor_out", "enable"),
+        24
+    );
+    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "x"), 28);
+    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "y"), 32);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_cursor_out", "hot_x"),
+        36
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_cursor_out", "hot_y"),
+        40
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_cursor_out", "width"),
+        44
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_cursor_out", "height"),
+        48
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_cursor_out", "format"),
+        52
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_cursor_out", "fb_gpa"),
+        56
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_cursor_out", "pitch_bytes"),
+        64
     );
     assert_eq!(
         abi.offset("aerogpu_escape_map_shared_handle_inout", "shared_handle"),
@@ -3602,6 +3642,7 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_SELFTEST"), 4);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_VBLANK"), 5);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_DUMP_RING_V2"), 6);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_CURSOR"), 11);
 
     assert_eq!(abi.konst("AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN"), 0);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_RING_FORMAT_LEGACY"), 1);
@@ -3618,6 +3659,14 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID"),
         2
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID"),
+        1u64 << 31
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED"),
+        1
     );
 }
 

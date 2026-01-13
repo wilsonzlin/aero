@@ -33,10 +33,11 @@ Minimum supported commands:
 - `aerogpu_dbgctl --query-version` (alias: `--query-device`)  
   Prints the detected AeroGPU device ABI (**legacy ARGP** vs **new AGPU**), ABI version, and (when exposed) device feature bits.
   Also prints an UMDRIVERPRIVATE summary (type + ABI + features), a fence snapshot, a ring0 snapshot, a scanout0 snapshot (cached vs MMIO),
+  a cursor MMIO summary (when supported),
   a scanout0 vblank timing snapshot (when available), and a short CreateAllocation trace summary (`write_index` / `entry_count`).
 
 - `aerogpu_dbgctl --status` *(alias for `--query-version`)*  
-  Prints a short combined snapshot (device/ABI + UMDRIVERPRIVATE summary + fences + ring0 + scanout0 vblank + CreateAllocation trace summary).
+  Prints a short combined snapshot (device/ABI + UMDRIVERPRIVATE summary + fences + ring0 + scanout0 + cursor + scanout0 vblank + CreateAllocation trace summary).
 
 - `aerogpu_dbgctl --query-umd-private`  
   Calls `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` and prints the `aerogpu_umd_private_v1` blob used by UMDs to discover the active ABI + feature bits.
@@ -50,6 +51,13 @@ Minimum supported commands:
   - best-effort MMIO snapshot (`SCANOUT0_*` registers), including the current framebuffer GPA
   
   Useful for diagnosing mode/pitch mismatches (e.g. scanline bounds issues or a blank display even though fences advance).
+
+- `aerogpu_dbgctl --query-cursor` *(alias: `--dump-cursor`)*  
+  Dumps cursor MMIO state (`CURSOR_*` registers), including:
+  - enable, position, hot spot
+  - size, format, pitch, framebuffer GPA
+  
+  Useful for diagnosing Win7 hardware cursor bring-up (e.g. cursor enabled but off-screen, wrong hot spot, wrong pitch).
 
 - `aerogpu_dbgctl --dump-ring`  
   Dumps ring head/tail + recent submissions. Fields include:
@@ -107,10 +115,11 @@ Examples:
 ```
 aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --status
-aerogpu_dbgctl --query-version
+aerogpu_dbgctl --query-device
 aerogpu_dbgctl --query-umd-private
 aerogpu_dbgctl --query-fence
 aerogpu_dbgctl --query-scanout
+aerogpu_dbgctl --query-cursor
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --dump-createalloc
 aerogpu_dbgctl --dump-vblank
@@ -168,12 +177,13 @@ The AeroGPU KMD is expected to implement `DxgkDdiEscape` handling for these pack
 Escape ops used:
 
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (fallback: `AEROGPU_ESCAPE_OP_QUERY_DEVICE`) → `--query-version` / `--query-device`
- - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
- - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`
- - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` → `--dump-createalloc`
- - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
- - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` → `--map-shared-handle`
- - `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
+- `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
+- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`
+- `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` → `--dump-createalloc`
+- `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
+- `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`
+- `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` → `--map-shared-handle`
+- `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
 
 Additional WDDM queries (do not use the escape channel):
 

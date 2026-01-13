@@ -33,6 +33,7 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE 8u
 #define AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION 9u
 #define AEROGPU_ESCAPE_OP_QUERY_SCANOUT 10u
+#define AEROGPU_ESCAPE_OP_QUERY_CURSOR 11u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 #define AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS 32u
@@ -277,6 +278,50 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_hei
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_format) == 56);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_pitch_bytes) == 60);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_fb_gpa) == 64);
+
+typedef struct aerogpu_escape_query_cursor_out {
+  aerogpu_escape_header hdr;
+  /*
+   * Flags:
+   * - Bit 31: flags are valid (newer KMDs). If clear, tooling should assume the
+   *   cursor MMIO registers are supported because older KMDs would only return
+   *   success on devices that implemented the cursor register block.
+   * - Bit 0: cursor MMIO registers are supported/valid.
+   */
+  aerogpu_escape_u32 flags;
+  aerogpu_escape_u32 reserved0;
+
+  /* MMIO cursor registers (best-effort; 0 if not available). */
+  aerogpu_escape_u32 enable;
+  aerogpu_escape_u32 x;     /* signed 32-bit */
+  aerogpu_escape_u32 y;     /* signed 32-bit */
+  aerogpu_escape_u32 hot_x;
+  aerogpu_escape_u32 hot_y;
+  aerogpu_escape_u32 width;
+  aerogpu_escape_u32 height;
+  aerogpu_escape_u32 format; /* enum aerogpu_format */
+  aerogpu_escape_u64 fb_gpa;
+  aerogpu_escape_u32 pitch_bytes;
+  aerogpu_escape_u32 reserved1;
+} aerogpu_escape_query_cursor_out;
+
+#define AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID (1u << 31)
+#define AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED (1u << 0)
+
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_cursor_out) == 72);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, flags) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, enable) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, x) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, y) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, hot_x) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, hot_y) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, width) == 44);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, height) == 48);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, format) == 52);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, fb_gpa) == 56);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, pitch_bytes) == 64);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, reserved1) == 68);
 
 /*
  * Recent CreateAllocation trace entry (DxgkDdiCreateAllocation inputs/outputs).

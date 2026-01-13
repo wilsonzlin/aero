@@ -578,6 +578,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_escape_dump_ring_v2_inout"), 52 + 32 * 40);
   assert.equal(size("aerogpu_escape_selftest_inout"), 32);
   assert.equal(size("aerogpu_escape_query_vblank_out"), 56);
+  assert.equal(size("aerogpu_escape_query_cursor_out"), 72);
   assert.equal(size("aerogpu_escape_map_shared_handle_inout"), 32);
 
   // Coverage guard: `aerogpu_pci.h` currently defines constants/enums only (no ABI structs).
@@ -862,6 +863,17 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_escape_query_vblank_out", "last_vblank_time_ns"), 40);
   assert.equal(off("aerogpu_escape_query_vblank_out", "vblank_period_ns"), 48);
   assert.equal(off("aerogpu_escape_query_vblank_out", "vblank_interrupt_type"), 52);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "flags"), 16);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "enable"), 24);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "x"), 28);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "y"), 32);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "hot_x"), 36);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "hot_y"), 40);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "width"), 44);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "height"), 48);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "format"), 52);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "fb_gpa"), 56);
+  assert.equal(off("aerogpu_escape_query_cursor_out", "pitch_bytes"), 64);
   assert.equal(off("aerogpu_escape_map_shared_handle_inout", "shared_handle"), 16);
   assert.equal(off("aerogpu_escape_map_shared_handle_inout", "debug_token"), 24);
   assert.equal(off("aerogpu_escape_map_shared_handle_inout", "share_token"), 24);
@@ -1111,6 +1123,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_ESCAPE_OP_SELFTEST"), 4n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_VBLANK"), 5n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_RING_V2"), 6n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_CURSOR"), 11n);
 
   assert.equal(konst("AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN"), 0n);
   assert.equal(konst("AEROGPU_DBGCTL_RING_FORMAT_LEGACY"), 1n);
@@ -1119,6 +1132,8 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID"), 1n << 31n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED"), 1n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID"), 2n);
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID"), 1n << 31n);
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED"), 1n);
 
   // -------------------------- Exhaustive ABI constant coverage --------------------------
   //

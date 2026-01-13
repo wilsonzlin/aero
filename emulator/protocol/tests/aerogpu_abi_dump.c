@@ -83,8 +83,9 @@ int main(void) {
   PRINT_SIZE("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout);
   PRINT_SIZE("aerogpu_escape_selftest_inout", aerogpu_escape_selftest_inout);
   PRINT_SIZE("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out);
+  PRINT_SIZE("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out);
   PRINT_SIZE("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout);
-
+ 
   /* -------------------------------- Offsets ------------------------------ */
   PRINT_OFF("aerogpu_cmd_stream_header", struct aerogpu_cmd_stream_header, magic);
   PRINT_OFF("aerogpu_cmd_stream_header", struct aerogpu_cmd_stream_header, abi_version);
@@ -494,6 +495,17 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, last_vblank_time_ns);
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vblank_period_ns);
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vblank_interrupt_type);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, flags);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, enable);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, x);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, y);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, hot_x);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, hot_y);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, width);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, height);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, format);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, fb_gpa);
+  PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, pitch_bytes);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, shared_handle);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, debug_token);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, share_token);
@@ -763,6 +775,7 @@ int main(void) {
   PRINT_CONST(AEROGPU_ESCAPE_OP_SELFTEST);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_VBLANK);
   PRINT_CONST(AEROGPU_ESCAPE_OP_DUMP_RING_V2);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_CURSOR);
 
   PRINT_CONST(AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN);
   PRINT_CONST(AEROGPU_DBGCTL_RING_FORMAT_LEGACY);
@@ -771,6 +784,8 @@ int main(void) {
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID);
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED);
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID);
+  PRINT_CONST(AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID);
+  PRINT_CONST(AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED);
 
   return 0;
 }

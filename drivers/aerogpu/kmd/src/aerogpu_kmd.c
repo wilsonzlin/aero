@@ -5297,6 +5297,74 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         return STATUS_SUCCESS;
     }
 
+    if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_CURSOR) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_query_cursor_out)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        aerogpu_escape_query_cursor_out* out = (aerogpu_escape_query_cursor_out*)pEscape->pPrivateDriverData;
+
+        out->hdr.version = AEROGPU_ESCAPE_VERSION;
+        out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_CURSOR;
+        out->hdr.size = sizeof(*out);
+        out->hdr.reserved0 = 0;
+
+        out->flags = AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID;
+        out->reserved0 = 0;
+
+        out->enable = 0;
+        out->x = 0;
+        out->y = 0;
+        out->hot_x = 0;
+        out->hot_y = 0;
+        out->width = 0;
+        out->height = 0;
+        out->format = 0;
+        out->fb_gpa = 0;
+        out->pitch_bytes = 0;
+        out->reserved1 = 0;
+
+        if (!adapter->Bar0) {
+            return STATUS_SUCCESS;
+        }
+
+        const BOOLEAN haveCursorRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG));
+        if (!haveCursorRegs) {
+            return STATUS_SUCCESS;
+        }
+
+        BOOLEAN cursorSupported = TRUE;
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG))) {
+            const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                                       ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+            cursorSupported = (features & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0;
+        }
+
+        if (!cursorSupported) {
+            return STATUS_SUCCESS;
+        }
+
+        out->flags |= AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED;
+
+        out->enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE);
+        out->x = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X);
+        out->y = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y);
+        out->hot_x = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X);
+        out->hot_y = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y);
+        out->width = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH);
+        out->height = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT);
+        out->format = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT);
+
+        {
+            const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO);
+            const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI);
+            out->fb_gpa = ((uint64_t)hi << 32) | (uint64_t)lo;
+        }
+
+        out->pitch_bytes = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES);
+
+        return STATUS_SUCCESS;
+    }
+
     if (hdr->op == AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION) {
         if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_dump_createallocation_inout)) {
             return STATUS_BUFFER_TOO_SMALL;

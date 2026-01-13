@@ -137,11 +137,12 @@ static void PrintUsage() {
            L"  --query-umd-private\n"
            L"  --query-fence\n"
            L"  --query-scanout\n"
+           L"  --query-cursor  (alias: --dump-cursor)\n"
            L"  --dump-ring\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
-              L"  --dump-vblank  (alias: --query-vblank)\n"
-              L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
-              L"  --query-scanline  (D3DKMTGetScanLine)\n"
+               L"  --dump-vblank  (alias: --query-vblank)\n"
+               L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
+               L"  --query-scanline  (D3DKMTGetScanLine)\n"
               L"  --map-shared-handle HANDLE\n"
              L"  --selftest\n");
 }
@@ -674,8 +675,45 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long)qs.mmio_width,
             (unsigned long)qs.mmio_height,
             (unsigned long)qs.mmio_format,
-            (unsigned long)qs.mmio_pitch_bytes,
-            (unsigned long long)qs.mmio_fb_gpa);
+             (unsigned long)qs.mmio_pitch_bytes,
+             (unsigned long long)qs.mmio_fb_gpa);
+  };
+
+  const auto DumpCursorSummary = [&]() {
+    aerogpu_escape_query_cursor_out qc;
+    ZeroMemory(&qc, sizeof(qc));
+    qc.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qc.hdr.op = AEROGPU_ESCAPE_OP_QUERY_CURSOR;
+    qc.hdr.size = sizeof(qc);
+    qc.hdr.reserved0 = 0;
+
+    NTSTATUS stCursor = SendAerogpuEscape(f, hAdapter, &qc, sizeof(qc));
+    if (!NT_SUCCESS(stCursor)) {
+      // Older KMDs may not implement this escape; keep --status output stable.
+      return;
+    }
+
+    bool supported = true;
+    if ((qc.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+      supported = (qc.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
+    }
+    if (!supported) {
+      return;
+    }
+
+    const int32_t x = (int32_t)qc.x;
+    const int32_t y = (int32_t)qc.y;
+    wprintf(L"Cursor: enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%lu pitch=%lu fb_gpa=0x%I64x\n",
+            (unsigned long)qc.enable,
+            (long)x,
+            (long)y,
+            (unsigned long)qc.hot_x,
+            (unsigned long)qc.hot_y,
+            (unsigned long)qc.width,
+            (unsigned long)qc.height,
+            (unsigned long)qc.format,
+            (unsigned long)qc.pitch_bytes,
+            (unsigned long long)qc.fb_gpa);
   };
 
   const auto DumpVblankSnapshot = [&]() {
@@ -789,6 +827,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     DumpUmdPrivateSummary();
     DumpRingSummary();
     DumpScanoutSnapshot();
+    DumpCursorSummary();
     DumpVblankSnapshot();
     DumpCreateAllocationSummary();
     return 0;
@@ -850,6 +889,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   DumpUmdPrivateSummary();
   DumpRingSummary();
   DumpScanoutSnapshot();
+  DumpCursorSummary();
   DumpVblankSnapshot();
   DumpCreateAllocationSummary();
 
@@ -915,7 +955,51 @@ static int DoQueryScanout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
           (unsigned long)q.mmio_height,
           (unsigned long)q.mmio_format,
           (unsigned long)q.mmio_pitch_bytes,
-          (unsigned long long)q.mmio_fb_gpa);
+           (unsigned long long)q.mmio_fb_gpa);
+  return 0;
+}
+
+static int DoQueryCursor(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
+  aerogpu_escape_query_cursor_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_CURSOR;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    if (st == STATUS_NOT_SUPPORTED) {
+      wprintf(L"Cursor: (not supported)\n");
+      return 2;
+    }
+    PrintNtStatus(L"D3DKMTEscape(query-cursor) failed", f, st);
+    return 2;
+  }
+
+  bool supported = true;
+  if ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+    supported = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
+  }
+
+  if (!supported) {
+    wprintf(L"Cursor: (not supported)\n");
+    return 2;
+  }
+
+  const int32_t x = (int32_t)q.x;
+  const int32_t y = (int32_t)q.y;
+  wprintf(L"Cursor: enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%lu pitch=%lu fb_gpa=0x%I64x\n",
+          (unsigned long)q.enable,
+          (long)x,
+          (long)y,
+          (unsigned long)q.hot_x,
+          (unsigned long)q.hot_y,
+          (unsigned long)q.width,
+          (unsigned long)q.height,
+          (unsigned long)q.format,
+          (unsigned long)q.pitch_bytes,
+          (unsigned long long)q.fb_gpa);
   return 0;
 }
 
@@ -1748,6 +1832,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_UMD_PRIVATE,
     CMD_QUERY_FENCE,
     CMD_QUERY_SCANOUT,
+    CMD_QUERY_CURSOR,
     CMD_DUMP_RING,
     CMD_DUMP_CREATEALLOCATION,
     CMD_DUMP_VBLANK,
@@ -1873,6 +1958,12 @@ int wmain(int argc, wchar_t **argv) {
       }
       continue;
     }
+    if (wcscmp(a, L"--query-cursor") == 0 || wcscmp(a, L"--dump-cursor") == 0) {
+      if (!SetCommand(CMD_QUERY_CURSOR)) {
+        return 1;
+      }
+      continue;
+    }
     if (wcscmp(a, L"--dump-ring") == 0) {
       if (!SetCommand(CMD_DUMP_RING)) {
         return 1;
@@ -1983,6 +2074,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_QUERY_SCANOUT:
     rc = DoQueryScanout(&f, open.hAdapter, (uint32_t)open.VidPnSourceId);
+    break;
+  case CMD_QUERY_CURSOR:
+    rc = DoQueryCursor(&f, open.hAdapter);
     break;
   case CMD_DUMP_RING:
     rc = DoDumpRing(&f, open.hAdapter, ringId);
