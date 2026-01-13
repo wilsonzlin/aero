@@ -19,6 +19,7 @@
 #include "aerogpu_pci.h"
 #include "aerogpu_dbgctl_escape.h"
 #include "aerogpu_umd_private.h"
+#include "aerogpu_fence_watch_math.h"
 
 typedef LONG NTSTATUS;
 
@@ -186,7 +187,8 @@ static void PrintUsage() {
   fwprintf(stderr,
            L"Usage:\n"
            L"  aerogpu_dbgctl [--display \\\\.\\DISPLAY1] [--ring-id N] [--timeout-ms N]\n"
-           L"               [--vblank-samples N] [--vblank-interval-ms N] <command>\n"
+           L"               [--vblank-samples N] [--vblank-interval-ms N]\n"
+           L"               [--samples N] [--interval-ms N] <command>\n"
            L"\n"
            L"Commands:\n"
            L"  --list-displays\n"
@@ -194,6 +196,7 @@ static void PrintUsage() {
            L"  --query-version  (alias: --query-device)\n"
            L"  --query-umd-private\n"
            L"  --query-fence\n"
+           L"  --watch-fence  (requires: --samples N --interval-ms M)\n"
            L"  --query-scanout\n"
            L"  --query-cursor  (alias: --dump-cursor)\n"
            L"  --dump-ring\n"
@@ -974,6 +977,138 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.last_submitted_fence);
   wprintf(L"Last completed fence: 0x%I64x (%I64u)\n", (unsigned long long)q.last_completed_fence,
           (unsigned long long)q.last_completed_fence);
+  return 0;
+}
+
+static int DoWatchFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t samples, uint32_t intervalMs,
+                        uint32_t overallTimeoutMs) {
+  // Stall threshold: warn after ~2 seconds of no completed-fence progress while work is pending.
+  static const uint32_t kStallWarnTimeMs = 2000;
+
+  if (samples == 0) {
+    fwprintf(stderr, L"--samples must be > 0\n");
+    return 1;
+  }
+  if (samples > 1000000) {
+    samples = 1000000;
+  }
+
+  LARGE_INTEGER freq;
+  if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0) {
+    fwprintf(stderr, L"QueryPerformanceFrequency failed\n");
+    return 1;
+  }
+
+  const uint32_t stallWarnIntervals =
+      (intervalMs != 0) ? ((kStallWarnTimeMs + intervalMs - 1) / intervalMs) : 3;
+
+  LARGE_INTEGER start;
+  QueryPerformanceCounter(&start);
+
+  bool havePrev = false;
+  uint64_t prevSubmitted = 0;
+  uint64_t prevCompleted = 0;
+  LARGE_INTEGER prevTime;
+  ZeroMemory(&prevTime, sizeof(prevTime));
+  uint32_t stallIntervals = 0;
+
+  for (uint32_t i = 0; i < samples; ++i) {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    const double elapsedMs =
+        (double)(before.QuadPart - start.QuadPart) * 1000.0 / (double)freq.QuadPart;
+
+    if (overallTimeoutMs != 0 && elapsedMs >= (double)overallTimeoutMs) {
+      fwprintf(stderr, L"watch-fence: overall timeout after %lu ms (printed %lu/%lu samples)\n",
+               (unsigned long)overallTimeoutMs, (unsigned long)i, (unsigned long)samples);
+      return 2;
+    }
+
+    aerogpu_escape_query_fence_out q;
+    ZeroMemory(&q, sizeof(q));
+    q.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+    q.hdr.size = sizeof(q);
+    q.hdr.reserved0 = 0;
+
+    NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+    if (!NT_SUCCESS(st)) {
+      PrintNtStatus(L"D3DKMTEscape(query-fence) failed", f, st);
+      return 2;
+    }
+
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    const double tMs = (double)(now.QuadPart - start.QuadPart) * 1000.0 / (double)freq.QuadPart;
+
+    aerogpu_fence_delta_stats delta;
+    ZeroMemory(&delta, sizeof(delta));
+    double dtMs = 0.0;
+    if (havePrev) {
+      const double dtSeconds = (double)(now.QuadPart - prevTime.QuadPart) / (double)freq.QuadPart;
+      dtMs = dtSeconds * 1000.0;
+      delta = aerogpu_fence_compute_delta(prevSubmitted, prevCompleted, q.last_submitted_fence, q.last_completed_fence,
+                                          dtSeconds);
+    } else {
+      delta.delta_submitted = 0;
+      delta.delta_completed = 0;
+      delta.completed_per_s = 0.0;
+      delta.reset = 0;
+    }
+
+    const bool hasPending =
+        (q.last_submitted_fence > q.last_completed_fence) && (!delta.reset || !havePrev);
+    if (havePrev && !delta.reset && hasPending && delta.delta_completed == 0) {
+      stallIntervals += 1;
+    } else {
+      stallIntervals = 0;
+    }
+
+    const bool warnStall = (stallIntervals != 0 && stallIntervals >= stallWarnIntervals);
+    const wchar_t *warn = L"-";
+    if (havePrev && delta.reset) {
+      warn = L"RESET";
+    } else if (warnStall) {
+      warn = L"STALL";
+    }
+
+    const uint64_t pending =
+        (q.last_submitted_fence >= q.last_completed_fence) ? (q.last_submitted_fence - q.last_completed_fence) : 0;
+
+    wprintf(L"watch-fence sample=%lu/%lu t_ms=%.3f submitted=0x%I64x completed=0x%I64x pending=%I64u d_sub=%I64u d_comp=%I64u dt_ms=%.3f rate_comp_per_s=%.3f stall_intervals=%lu warn=%s\n",
+            (unsigned long)(i + 1), (unsigned long)samples, tMs, (unsigned long long)q.last_submitted_fence,
+            (unsigned long long)q.last_completed_fence, (unsigned long long)pending,
+            (unsigned long long)delta.delta_submitted, (unsigned long long)delta.delta_completed, dtMs,
+            delta.completed_per_s, (unsigned long)stallIntervals, warn);
+
+    prevSubmitted = q.last_submitted_fence;
+    prevCompleted = q.last_completed_fence;
+    prevTime = now;
+    havePrev = true;
+
+    if (i + 1 < samples && intervalMs != 0) {
+      DWORD sleepMs = intervalMs;
+      if (overallTimeoutMs != 0) {
+        LARGE_INTEGER preSleep;
+        QueryPerformanceCounter(&preSleep);
+        const double elapsedMs2 =
+            (double)(preSleep.QuadPart - start.QuadPart) * 1000.0 / (double)freq.QuadPart;
+        if (elapsedMs2 >= (double)overallTimeoutMs) {
+          fwprintf(stderr, L"watch-fence: overall timeout after %lu ms (printed %lu/%lu samples)\n",
+                   (unsigned long)overallTimeoutMs, (unsigned long)(i + 1), (unsigned long)samples);
+          return 2;
+        }
+        const double remainingMs = (double)overallTimeoutMs - elapsedMs2;
+        if (remainingMs < (double)sleepMs) {
+          sleepMs = (DWORD)remainingMs;
+        }
+      }
+      if (sleepMs != 0) {
+        Sleep(sleepMs);
+      }
+    }
+  }
+
   return 0;
 }
 
@@ -1936,8 +2071,13 @@ int wmain(int argc, wchar_t **argv) {
   const wchar_t *displayNameOpt = NULL;
   uint32_t ringId = 0;
   uint32_t timeoutMs = 2000;
+  bool timeoutMsSet = false;
   uint32_t vblankSamples = 1;
   uint32_t vblankIntervalMs = 250;
+  uint32_t watchSamples = 0;
+  uint32_t watchIntervalMs = 0;
+  bool watchSamplesSet = false;
+  bool watchIntervalSet = false;
   uint64_t mapSharedHandle = 0;
   const wchar_t *createAllocCsvPath = NULL;
   enum {
@@ -1946,6 +2086,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_VERSION,
     CMD_QUERY_UMD_PRIVATE,
     CMD_QUERY_FENCE,
+    CMD_WATCH_FENCE,
     CMD_QUERY_SCANOUT,
     CMD_QUERY_CURSOR,
     CMD_DUMP_RING,
@@ -2001,6 +2142,7 @@ int wmain(int argc, wchar_t **argv) {
         return 1;
       }
       timeoutMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      timeoutMsSet = true;
       continue;
     }
 
@@ -2043,6 +2185,28 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
 
+    if (wcscmp(a, L"--samples") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--samples requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      watchSamples = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      watchSamplesSet = true;
+      continue;
+    }
+
+    if (wcscmp(a, L"--interval-ms") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--interval-ms requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      watchIntervalMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      watchIntervalSet = true;
+      continue;
+    }
+
     if (wcscmp(a, L"--csv") == 0) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--csv requires an argument\n");
@@ -2078,6 +2242,12 @@ int wmain(int argc, wchar_t **argv) {
     }
     if (wcscmp(a, L"--query-fence") == 0) {
       if (!SetCommand(CMD_QUERY_FENCE)) {
+        return 1;
+      }
+      continue;
+    }
+    if (wcscmp(a, L"--watch-fence") == 0) {
+      if (!SetCommand(CMD_WATCH_FENCE)) {
         return 1;
       }
       continue;
@@ -2164,6 +2334,19 @@ int wmain(int argc, wchar_t **argv) {
     return ListDisplays();
   }
 
+  if (cmd == CMD_WATCH_FENCE) {
+    if (!watchSamplesSet) {
+      fwprintf(stderr, L"--watch-fence requires --samples N\n");
+      PrintUsage();
+      return 1;
+    }
+    if (!watchIntervalSet) {
+      fwprintf(stderr, L"--watch-fence requires --interval-ms M\n");
+      PrintUsage();
+      return 1;
+    }
+  }
+
   D3DKMT_FUNCS f;
   if (!LoadD3DKMT(&f)) {
     return 1;
@@ -2207,6 +2390,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_QUERY_FENCE:
     rc = DoQueryFence(&f, open.hAdapter);
+    break;
+  case CMD_WATCH_FENCE:
+    rc = DoWatchFence(&f, open.hAdapter, watchSamples, watchIntervalMs, timeoutMsSet ? timeoutMs : 0);
     break;
   case CMD_QUERY_SCANOUT:
     rc = DoQueryScanout(&f, open.hAdapter, (uint32_t)open.VidPnSourceId);

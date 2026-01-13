@@ -45,6 +45,13 @@ Minimum supported commands:
 - `aerogpu_dbgctl --query-fence`  
   Prints the last submitted fence and last completed fence.
 
+- `aerogpu_dbgctl --watch-fence --samples N --interval-ms M [--timeout-ms T]`  
+  Polls `--query-fence` in a loop and prints **one line per sample** with:
+  - the current submitted/completed fences,
+  - deltas since the previous sample,
+  - an observed completed-fence rate (fences/sec), and
+  - a stall warning if the completed fence does not advance for multiple intervals while work is pending.
+
 - `aerogpu_dbgctl --query-scanout`  
   Dumps scanout 0 state as seen by the KMD, including:
   - cached mode (`CurrentWidth/Height/Format/Pitch`) and visibility (`enable`)
@@ -110,7 +117,8 @@ Minimum supported commands:
 
 ```
 aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] \
-               [--vblank-samples N] [--vblank-interval-ms N] <command>
+               [--vblank-samples N] [--vblank-interval-ms N] \
+               [--samples N] [--interval-ms N] <command>
 ```
 
 Examples:
@@ -121,6 +129,7 @@ aerogpu_dbgctl --status
 aerogpu_dbgctl --query-device
 aerogpu_dbgctl --query-umd-private
 aerogpu_dbgctl --query-fence
+aerogpu_dbgctl --watch-fence --samples 120 --interval-ms 250 --timeout-ms 30000
 aerogpu_dbgctl --query-scanout
 aerogpu_dbgctl --query-cursor
 aerogpu_dbgctl --dump-ring --ring-id 0
