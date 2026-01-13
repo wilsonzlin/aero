@@ -3710,31 +3710,6 @@ impl Machine {
         Ok(())
     }
 
-    /// Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk,
-    /// reporting create/resize progress via a JS callback, and set the snapshot overlay reference
-    /// (`DISKS` entry) for `disk_id=0`.
-    ///
-    /// This helper sets:
-    /// - `base_image = path`
-    /// - `overlay_image = ""`
-    ///
-    /// This method is intentionally separate from [`Machine::set_disk_opfs_with_progress`] so
-    /// callers do not silently overwrite previously configured overlay refs unless they opt in.
-    #[cfg(target_arch = "wasm32")]
-    pub async fn set_disk_opfs_with_progress_and_set_overlay_ref(
-        &mut self,
-        path: String,
-        create: bool,
-        size_bytes: u64,
-        progress: js_sys::Function,
-    ) -> Result<(), JsValue> {
-        let overlay_path = path.clone();
-        self.set_disk_opfs_with_progress(path, create, size_bytes, progress)
-            .await?;
-        self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
-        Ok(())
-    }
-
     /// Open an existing OPFS-backed disk image (using the file's current size) and attach it as the
     /// machine's canonical disk.
     ///
