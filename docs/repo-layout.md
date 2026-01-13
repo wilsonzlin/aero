@@ -35,6 +35,12 @@ The Rust codebase is a workspace rooted at:
 - `Cargo.toml` (workspace)
 - `crates/` (workspace members)
 
+For VM/machine wiring specifically, there is exactly one canonical integration layer:
+`crates/aero-machine` (`aero_machine::Machine`). See:
+
+- [`docs/vm-crate-map.md`](./vm-crate-map.md) (what is canonical vs legacy)
+- [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md) (`crates/emulator` → canonical stack plan + deletion targets)
+
 #### Crate naming convention (important)
 
 Crates should use `aero-foo` **lowercase kebab-case** package names and matching `crates/aero-foo/`

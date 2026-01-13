@@ -107,6 +107,8 @@ and block devices.
 **How it fits**
 - Not the canonical VM *wiring* crate (it does not define the stable `Machine` API that `aero-wasm` consumes).
 - Provides richer device stacks and conformance harnesses that will eventually be integrated with `aero-machine`.
+- See [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md) for the explicit
+  subsystem-by-subsystem mapping and the concrete deletion/extraction targets inside `crates/emulator`.
 - Some low-level, cross-runtime primitives are intentionally factored out of `emulator` into small shared crates.
   For networking, the minimal `NetworkBackend` trait plus the L2 tunnel backends (`L2TunnelBackend`,
   `L2TunnelRingBackend`) live in `crates/aero-net-backend` and are re-exported by `emulator::io::net`
