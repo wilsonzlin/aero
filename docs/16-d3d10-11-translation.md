@@ -343,7 +343,8 @@ The base offsets are defined in `crates/aero-d3d11/src/binding_model.rs`:
 - `BINDING_BASE_CBUFFER = 0` for constant buffers (`cb#` / `b#`)
 - `BINDING_BASE_TEXTURE = 32` for SRV textures (`t#`)
 - `BINDING_BASE_SAMPLER = 160` for samplers (`s#`)
-- `BINDING_BASE_UAV` for UAV buffers/textures (`u#`, SM5)
+- `BINDING_BASE_UAV = 176` for UAV buffers/textures (`u#`, SM5), i.e.
+  `BINDING_BASE_SAMPLER + MAX_SAMPLER_SLOTS`
 
 The chosen bases intentionally carve out disjoint ranges that align with D3D11 per-stage slot
 counts:
@@ -351,7 +352,7 @@ counts:
 - Constant buffers: 14 slots (0–13) fit within `[0, 32)`.
 - SRVs: 128 slots (0–127) map to `[32, 160)`.
 - Samplers: 16 slots (0–15) map to `[160, 176)`.
-- UAVs: `MAX_UAV_SLOTS` slots (0..`MAX_UAV_SLOTS - 1`) map to
+- UAVs: `MAX_UAV_SLOTS = 8` slots (0..`MAX_UAV_SLOTS - 1`, i.e. `u0..u7`) map to
   `[BINDING_BASE_UAV, BINDING_BASE_UAV + MAX_UAV_SLOTS)`.
 
 Examples:
