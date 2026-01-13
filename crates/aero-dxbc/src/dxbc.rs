@@ -7,6 +7,12 @@ use core::fmt;
 
 const DXBC_MAGIC: FourCC = FourCC(*b"DXBC");
 const DXBC_HEADER_LEN: usize = 4 + 16 + 4 + 4 + 4; // magic + checksum + reserved + total_size + chunk_count
+// Hard cap on chunk count to avoid O(n) parsing work and pathological offset tables on hostile input.
+//
+// Real-world DXBC containers contain a small handful of chunks (single digits). This value is
+// intentionally generous while still preventing multi-megabyte offset tables and extremely large
+// validation loops.
+const MAX_DXBC_CHUNK_COUNT: u32 = 4096;
 
 /// The fixed header of a `DXBC` container.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +90,11 @@ impl<'a> DxbcFile<'a> {
         let chunk_count = read_u32_le(bytes, 28).map_err(|e| {
             DxbcError::malformed_header(format!("failed to read chunk_count: {}", e.context()))
         })?;
+        if chunk_count > MAX_DXBC_CHUNK_COUNT {
+            return Err(DxbcError::malformed_offsets(format!(
+                "chunk_count {chunk_count} exceeds maximum {MAX_DXBC_CHUNK_COUNT}"
+            )));
+        }
 
         if total_size < DXBC_HEADER_LEN as u32 {
             return Err(DxbcError::malformed_header(format!(

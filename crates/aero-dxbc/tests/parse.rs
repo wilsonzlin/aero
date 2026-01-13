@@ -119,3 +119,23 @@ fn malformed_chunk_size_out_of_bounds_is_error() {
         DxbcError::MalformedOffsets { .. } | DxbcError::OutOfBounds { .. }
     ));
 }
+
+#[test]
+fn rejects_excessive_chunk_count() {
+    // DXBC header with an absurd chunk_count. The parser should reject this without attempting to
+    // validate an enormous chunk-offset table.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"DXBC");
+    bytes.extend_from_slice(&[0u8; 16]); // checksum
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    bytes.extend_from_slice(&32u32.to_le_bytes()); // total size
+    bytes.extend_from_slice(&5000u32.to_le_bytes()); // chunk_count
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::MalformedOffsets { .. }), "{err:?}");
+    assert!(
+        err.context().contains("exceeds maximum"),
+        "unexpected error context: {}",
+        err.context()
+    );
+}
