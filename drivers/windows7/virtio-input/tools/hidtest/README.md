@@ -204,7 +204,7 @@ The virtio-input Win7 minidriver maintains a set of best-effort counters that tr
 - **HIDCLASS IOCTL traffic** (what Windows is asking the driver to do)
 - **READ_REPORT lifecycle** (pended/completed/cancelled)
 - **Translation-layer buffering** (`virtio_input_device.report_ring` inside the translation layer)
-- **Pending READ_REPORT buffering** (reports queued while HIDCLASS is not issuing enough `IOCTL_HID_READ_REPORT`s)
+- **Pending READ_REPORT buffering** (`PendingReportRing[]`, used to satisfy `IOCTL_HID_READ_REPORT`)
 - **Virtio event flow** (events arriving from the device model / virtqueue)
 - **statusq / keyboard LED writes** (driver -> device output path)
 
@@ -217,8 +217,8 @@ During normal use (typing/mouse movement), you should typically see:
 
 Indicators of drops/overruns:
 
-- `PendingRingDrops` increasing indicates the driver had to drop input because Windows was not issuing `READ_REPORT` requests fast enough (consumer not keeping up).
-- `ReportRingDrops` or `VirtioEventDrops` increasing indicates the driver had to drop input earlier in the pipeline (typically internal buffering pressure).
+- `PendingRingDrops` increasing indicates reports were buffered faster than `IOCTL_HID_READ_REPORT` was consuming them, so the driver dropped the **oldest pending report**.
+- `ReportRingDrops` or `VirtioEventDrops` increasing indicates the translation layer report ring filled up (the driver could not drain/process translated reports fast enough).
 - `ReportRingOverruns` or `VirtioEventOverruns` should remain **0**; any non-zero value indicates reports/events exceeded the expected maximum size.
 
 Write keyboard LEDs (NumLock|CapsLock|ScrollLock):
