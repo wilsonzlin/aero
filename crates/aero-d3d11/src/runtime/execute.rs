@@ -140,6 +140,10 @@ impl D3D11Runtime {
         &self.device
     }
 
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
     pub fn supports_compute(&self) -> bool {
         self.supports_compute
     }

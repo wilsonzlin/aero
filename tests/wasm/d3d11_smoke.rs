@@ -27,6 +27,115 @@ async fn new_runtime(test_name: &str) -> Option<D3D11Runtime> {
     }
 }
 
+// ---- Compute shader execution tests (stage-scoped binding model) ----
+//
+// The Aero D3D11 translator uses a stage-scoped bind group scheme:
+//   @group(0) = VS, @group(1) = PS, @group(2) = CS.
+//
+// The `protocol_d3d11` command-stream runtime (`D3D11Runtime`) binds only bind group 0, so we
+// can't execute translator-produced compute WGSL (which uses `@group(2)`) through that path.
+//
+// Instead we use a minimal wgpu harness:
+// - Build an explicit pipeline layout containing empty groups 0/1.
+// - Bind resources at group 2.
+//
+// This avoids relying on any implicit group remapping.
+
+async fn read_mapped_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u8> {
+    let slice = buffer.slice(..);
+    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+    slice.map_async(wgpu::MapMode::Read, move |v| {
+        sender.send(v).ok();
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    device.poll(wgpu::Maintain::Wait);
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
+
+    receiver
+        .receive()
+        .await
+        .expect("map_async dropped")
+        .expect("map_async failed");
+
+    let data = slice.get_mapped_range().to_vec();
+    buffer.unmap();
+    data
+}
+
+async fn read_texture_rgba8(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    let bytes_per_pixel = 4u32;
+    let unpadded_bytes_per_row = width * bytes_per_pixel;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
+    let buffer_size = padded_bytes_per_row as u64 * height as u64;
+
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("d3d11_smoke read_texture_rgba8 staging"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("d3d11_smoke read_texture_rgba8 encoder"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::ImageCopyTexture {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::ImageCopyBuffer {
+            buffer: &staging,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+
+    let slice = staging.slice(..);
+    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+    slice.map_async(wgpu::MapMode::Read, move |v| {
+        sender.send(v).ok();
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    device.poll(wgpu::Maintain::Wait);
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
+
+    receiver
+        .receive()
+        .await
+        .expect("map_async dropped")
+        .expect("map_async failed");
+
+    let mapped = slice.get_mapped_range();
+    let mut out = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
+    for row in 0..height as usize {
+        let start = row * padded_bytes_per_row as usize;
+        out.extend_from_slice(&mapped[start..start + unpadded_bytes_per_row as usize]);
+    }
+    drop(mapped);
+    staging.unmap();
+    out
+}
+
 #[test]
 fn d3d11_render_textured_quad() {
     pollster::block_on(async {
@@ -280,7 +389,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 fn d3d11_compute_writes_storage_buffer() {
     pollster::block_on(async {
         let test_name = concat!(module_path!(), "::d3d11_compute_writes_storage_buffer");
-        let Some(mut rt) = new_runtime(test_name).await else {
+        let Some(rt) = new_runtime(test_name).await else {
             return;
         };
         if !rt.supports_compute() {
@@ -288,17 +397,12 @@ fn d3d11_compute_writes_storage_buffer() {
             return;
         }
 
-        const OUT: u32 = 101;
-        const READBACK: u32 = 102;
-        const SHADER: u32 = 103;
-        const PIPE: u32 = 104;
-
         let wgsl = r#"
 struct Output {
     values: array<u32>,
 }
 
-@group(0) @binding(0) var<storage, read_write> out_buf: Output;
+@group(2) @binding(0) var<storage, read_write> out_buf: Output;
 
 @compute @workgroup_size(64)
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -309,41 +413,106 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
-        let bindings = [BindingDesc {
-            binding: 0,
-            ty: BindingType::StorageBufferReadWrite,
-            visibility: ShaderStageFlags::COMPUTE,
-            storage_texture_format: None,
-        }];
-
         let second_dispatch_offset = 256u64;
         let size = second_dispatch_offset + 16u64 * 4;
-        let mut w = CmdWriter::new();
-        w.create_buffer(
-            OUT,
-            size,
-            BufferUsage::STORAGE | BufferUsage::COPY_SRC | BufferUsage::COPY_DST,
-        );
-        w.create_buffer(
-            READBACK,
-            size,
-            BufferUsage::MAP_READ | BufferUsage::COPY_DST,
-        );
-        w.create_shader_module_wgsl(SHADER, wgsl);
-        w.create_compute_pipeline(PIPE, SHADER, &bindings);
-        w.begin_compute_pass();
-        w.set_pipeline(PipelineKind::Compute, PIPE);
-        w.set_bind_buffer(0, OUT, 0, 0);
-        w.dispatch(1, 1, 1);
-        w.set_bind_buffer(0, OUT, second_dispatch_offset, 0);
-        w.dispatch(1, 1, 1);
-        w.end_compute_pass();
-        w.copy_buffer_to_buffer(OUT, 0, READBACK, 0, size);
+        let device = rt.device();
+        let queue = rt.queue();
 
-        rt.execute(&w.finish()).unwrap();
-        rt.poll_wait();
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("d3d11_smoke cs storage buffer shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
 
-        let bytes = rt.read_buffer(READBACK, 0, size).await.unwrap();
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("d3d11_smoke empty bind group layout"),
+            entries: &[],
+        });
+        let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("d3d11_smoke cs bind group layout (@group(2))"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("d3d11_smoke cs pipeline layout (@group(2))"),
+            bind_group_layouts: &[&empty_layout, &empty_layout, &group2_layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("d3d11_smoke cs pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "cs_main",
+            compilation_options: Default::default(),
+        });
+
+        let out = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("d3d11_smoke cs out buffer"),
+            size,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("d3d11_smoke cs readback buffer"),
+            size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let binding_size = wgpu::BufferSize::new(16 * 4).expect("binding size");
+        let bg_first = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("d3d11_smoke cs bind group (offset 0)"),
+            layout: &group2_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &out,
+                    offset: 0,
+                    size: Some(binding_size),
+                }),
+            }],
+        });
+        let bg_second = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("d3d11_smoke cs bind group (offset 256)"),
+            layout: &group2_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &out,
+                    offset: second_dispatch_offset,
+                    size: Some(binding_size),
+                }),
+            }],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("d3d11_smoke cs encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("d3d11_smoke cs pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(2, &bg_first, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+            pass.set_bind_group(2, &bg_second, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, size);
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_mapped_buffer(device, &readback).await;
         let words: Vec<u32> = bytes
             .chunks_exact(4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -363,7 +532,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn d3d11_compute_writes_storage_texture() {
     pollster::block_on(async {
         let test_name = concat!(module_path!(), "::d3d11_compute_writes_storage_texture");
-        let Some(mut rt) = new_runtime(test_name).await else {
+        let Some(rt) = new_runtime(test_name).await else {
             return;
         };
         if !rt.supports_compute() {
@@ -371,13 +540,8 @@ fn d3d11_compute_writes_storage_texture() {
             return;
         }
 
-        const TEX: u32 = 201;
-        const VIEW: u32 = 202;
-        const SHADER: u32 = 203;
-        const PIPE: u32 = 204;
-
         let wgsl = r#"
-@group(0) @binding(0) var out_tex: texture_storage_2d<rgba8unorm, write>;
+@group(2) @binding(0) var out_tex: texture_storage_2d<rgba8unorm, write>;
 
 @compute @workgroup_size(1, 1, 1)
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -387,39 +551,84 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
-        let bindings = [BindingDesc {
-            binding: 0,
-            ty: BindingType::StorageTexture2DWriteOnly,
-            visibility: ShaderStageFlags::COMPUTE,
-            storage_texture_format: Some(DxgiFormat::R8G8B8A8Unorm),
-        }];
+        let device = rt.device();
+        let queue = rt.queue();
 
-        let mut w = CmdWriter::new();
-        w.create_texture2d(
-            TEX,
-            Texture2dDesc {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("d3d11_smoke cs storage texture shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("d3d11_smoke empty bind group layout"),
+            entries: &[],
+        });
+        let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("d3d11_smoke cs storage texture layout (@group(2))"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            }],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("d3d11_smoke cs storage texture pipeline layout"),
+            bind_group_layouts: &[&empty_layout, &empty_layout, &group2_layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("d3d11_smoke cs storage texture pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "cs_main",
+            compilation_options: Default::default(),
+        });
+
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("d3d11_smoke cs storage texture output"),
+            size: wgpu::Extent3d {
                 width: 4,
                 height: 4,
-                array_layers: 1,
-                mip_level_count: 1,
-                format: DxgiFormat::R8G8B8A8Unorm,
-                usage: TextureUsage::STORAGE_BINDING | TextureUsage::COPY_SRC,
+                depth_or_array_layers: 1,
             },
-        );
-        w.create_texture_view(VIEW, TEX, 0, 1, 0, 1);
-        w.create_shader_module_wgsl(SHADER, wgsl);
-        w.create_compute_pipeline(PIPE, SHADER, &bindings);
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        w.begin_compute_pass();
-        w.set_pipeline(PipelineKind::Compute, PIPE);
-        w.set_bind_texture_view(0, VIEW);
-        w.dispatch(4, 4, 1);
-        w.end_compute_pass();
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("d3d11_smoke cs storage texture bind group"),
+            layout: &group2_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            }],
+        });
 
-        rt.execute(&w.finish()).unwrap();
-        rt.poll_wait();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("d3d11_smoke cs storage texture encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("d3d11_smoke cs storage texture pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(2, &bg, &[]);
+            pass.dispatch_workgroups(4, 4, 1);
+        }
+        queue.submit([encoder.finish()]);
 
-        let pixels = rt.read_texture_rgba8(TEX).await.unwrap();
+        let pixels = read_texture_rgba8(device, queue, &tex, 4, 4).await;
         assert_eq!(pixels.len(), 4 * 4 * 4);
         assert_eq!(&pixels[0..4], &[0, 0, 255, 255]);
         assert_eq!(&pixels[(3 * 4 + 3) * 4..(3 * 4 + 4) * 4], &[0, 0, 255, 255]);
