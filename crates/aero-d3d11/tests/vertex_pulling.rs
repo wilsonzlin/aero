@@ -1,0 +1,329 @@
+mod common;
+
+use aero_d3d11::input_layout::{InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement};
+use aero_d3d11::runtime::vertex_pulling::{VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP};
+use anyhow::{anyhow, Context, Result};
+
+async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+
+        if needs_runtime_dir {
+            let dir = std::env::temp_dir()
+                .join(format!("aero-d3d11-vertex-pulling-xdg-runtime-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        }
+    }
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::PRIMARY
+        },
+        ..Default::default()
+    });
+
+    let adapter = match instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        })
+        .await
+    {
+        Some(adapter) => Some(adapter),
+        None => {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+        }
+    }
+    .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
+
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("aero-d3d11 vertex pulling test device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        )
+        .await
+        .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
+
+    Ok((device, queue))
+}
+
+async fn read_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    size: u64,
+) -> Result<Vec<u8>> {
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("vertex pulling readback staging"),
+        size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("vertex pulling readback encoder"),
+    });
+    encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, size);
+    queue.submit([encoder.finish()]);
+
+    let slice = staging.slice(..);
+    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+    slice.map_async(wgpu::MapMode::Read, move |v| {
+        sender.send(v).ok();
+    });
+
+    #[cfg(not(target_arch = "wasm32"))]
+    device.poll(wgpu::Maintain::Wait);
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
+
+    receiver
+        .receive()
+        .await
+        .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+        .context("wgpu: map_async failed")?;
+
+    let data = slice.get_mapped_range().to_vec();
+    staging.unmap();
+    Ok(data)
+}
+
+#[test]
+fn compute_vertex_pulling_reads_pos3_color4() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(e) => {
+                common::skip_or_panic(
+                    module_path!(),
+                    &format!("wgpu unavailable ({e:#})"),
+                );
+                return Ok(());
+            }
+        };
+
+        // ILAY_POS3_COLOR fixture: POSITION0 (float3) + COLOR0 (float4).
+        let layout = InputLayoutDesc::parse(include_bytes!("fixtures/ilay_pos3_color.bin"))
+            .context("parse ILAY")?;
+
+        // Signature locations: POSITION0 -> location0, COLOR0 -> location1.
+        let signature = [
+            VsInputSignatureElement {
+                semantic_name_hash: layout.elements[0].semantic_name_hash,
+                semantic_index: layout.elements[0].semantic_index,
+                input_register: 0,
+                mask: 0xF,
+                shader_location: 0,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: layout.elements[1].semantic_name_hash,
+                semantic_index: layout.elements[1].semantic_index,
+                input_register: 1,
+                mask: 0xF,
+                shader_location: 1,
+            },
+        ];
+
+        let stride = 28u32; // float3 (12) + float4 (16)
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &signature).context("build pulling")?;
+        assert_eq!(pulling.slot_count(), 1);
+        assert_eq!(pulling.attributes.len(), 2);
+
+        // Build a single vertex worth of data.
+        let pos = [1.0f32, 2.0, 3.0];
+        let col = [4.0f32, 5.0, 6.0, 7.0];
+        let mut vb_bytes = Vec::with_capacity(stride as usize);
+        for f in pos {
+            vb_bytes.extend_from_slice(&f.to_le_bytes());
+        }
+        for f in col {
+            vb_bytes.extend_from_slice(&f.to_le_bytes());
+        }
+        assert_eq!(vb_bytes.len(), stride as usize);
+
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling test vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams::default(),
+        );
+        assert_eq!(uniform_bytes.len() as u64, pulling.uniform_size_bytes());
+
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling test uniform"),
+            size: uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &uniform_bytes);
+
+        // Output buffer: 7 f32s (pos.xyz + color.xyzw).
+        let out_f32_count = 7u64;
+        let out_size = out_f32_count * 4;
+        let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling out"),
+            size: out_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let pos_off = pulling
+            .attributes
+            .iter()
+            .find(|a| a.shader_location == 0)
+            .context("missing attribute at location 0")?
+            .offset_bytes;
+        let col_off = pulling
+            .attributes
+            .iter()
+            .find(|a| a.shader_location == 1)
+            .context("missing attribute at location 1")?
+            .offset_bytes;
+
+        let prelude = pulling.wgsl_prelude();
+        let wgsl = format!(
+            r#"
+{prelude}
+
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+  // One invocation == one vertex.
+  let vertex: u32 = aero_vp_ia.first_vertex + gid.x;
+  let base: u32 = aero_vp_ia.slots[0].base_offset_bytes + vertex * aero_vp_ia.slots[0].stride_bytes;
+
+  let pos: vec3<f32> = load_attr_f32x3(0u, base + {pos_off}u);
+  let col: vec4<f32> = load_attr_f32x4(0u, base + {col_off}u);
+
+  out[0] = pos.x;
+  out[1] = pos.y;
+  out[2] = pos.z;
+  out[3] = col.x;
+  out[4] = col.y;
+  out[5] = col.z;
+  out[6] = col.w;
+}}
+"#,
+            pos_off = pos_off,
+            col_off = col_off,
+        );
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("vertex pulling shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        let out_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex pulling out bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let out_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling out bg"),
+            layout: &out_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: out_buf.as_entire_binding(),
+            }],
+        });
+
+        let empty_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex pulling empty bgl"),
+            entries: &[],
+        });
+
+        let ia_bgl = pulling.create_bind_group_layout(&device);
+        let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
+
+        // Pipeline layout must include group layouts for groups 0..VERTEX_PULLING_GROUP.
+        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
+        assert_eq!(VERTEX_PULLING_GROUP, 3);
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("vertex pulling pipeline layout"),
+            bind_group_layouts: &layouts,
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("vertex pulling pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+            compilation_options: Default::default(),
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("vertex pulling encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("vertex pulling pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &out_bg, &[]);
+            pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_buffer(&device, &queue, &out_buf, out_size).await?;
+        let mut got = Vec::new();
+        for chunk in bytes.chunks_exact(4) {
+            got.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        assert_eq!(got.len(), out_f32_count as usize);
+
+        let expected = [
+            1.0f32, 2.0, 3.0, // pos
+            4.0, 5.0, 6.0, 7.0, // color
+        ];
+        assert_eq!(got, expected);
+
+        Ok::<_, anyhow::Error>(())
+    })
+    .unwrap();
+}

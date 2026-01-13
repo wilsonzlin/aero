@@ -407,65 +407,112 @@ struct VertexFormatInfo {
     align: u32,
 }
 
-fn dxgi_format_to_vertex_format(dxgi_format: u32) -> Result<VertexFormatInfo, InputLayoutError> {
-    // Numeric values are `DXGI_FORMAT` from dxgiformat.h.
+/// Scalar component type for a `DXGI_FORMAT` used in an ILAY vertex input element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DxgiFormatComponentType {
+    F32,
+    F16,
+    U32,
+    U16,
+    Unorm8,
+}
+
+/// Metadata about a `DXGI_FORMAT` relevant for both WebGPU vertex input and compute-side vertex
+/// pulling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DxgiFormatInfo {
+    /// WebGPU vertex format used when binding this attribute normally (raster path).
+    pub wgpu_vertex_format: wgpu::VertexFormat,
+    /// Total size of the attribute in bytes.
+    pub size_bytes: u32,
+    /// Offset alignment used when resolving `D3D11_APPEND_ALIGNED_ELEMENT`.
+    ///
+    /// D3D10/11's "append aligned" rule aligns each element to a 4-byte boundary, so we keep this
+    /// at 4 even for 8-bit/16-bit formats.
+    pub align_bytes: u32,
+    /// The scalar component type as it appears in memory (e.g. `F32` for `R32G32_FLOAT`).
+    pub component_type: DxgiFormatComponentType,
+    /// Number of components (lanes) in the attribute.
+    pub component_count: u32,
+}
+
+/// Map a numeric `DXGI_FORMAT` (from `dxgiformat.h`) to WebGPU vertex format + metadata.
+pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutError> {
     Ok(match dxgi_format {
         // R32G32B32A32_FLOAT
-        2 => VertexFormatInfo {
-            format: wgpu::VertexFormat::Float32x4,
-            size: 16,
-            align: 4,
+        2 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Float32x4,
+            size_bytes: 16,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::F32,
+            component_count: 4,
         },
         // R32G32B32_FLOAT
-        6 => VertexFormatInfo {
-            format: wgpu::VertexFormat::Float32x3,
-            size: 12,
-            align: 4,
+        6 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Float32x3,
+            size_bytes: 12,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::F32,
+            component_count: 3,
         },
         // R32G32_FLOAT
-        16 => VertexFormatInfo {
-            format: wgpu::VertexFormat::Float32x2,
-            size: 8,
-            align: 4,
+        16 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Float32x2,
+            size_bytes: 8,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::F32,
+            component_count: 2,
         },
         // R32_FLOAT
-        41 => VertexFormatInfo {
-            format: wgpu::VertexFormat::Float32,
-            size: 4,
-            align: 4,
+        41 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Float32,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::F32,
+            component_count: 1,
         },
         // R8G8B8A8_UNORM
-        28 => VertexFormatInfo {
-            format: wgpu::VertexFormat::Unorm8x4,
-            size: 4,
-            align: 4,
+        28 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Unorm8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Unorm8,
+            component_count: 4,
         },
         // B8G8R8A8_UNORM
         //
         // WebGPU does not have a dedicated BGRA vertex format in wgpu 0.20, so we expose this as
         // `Unorm8x4` and rely on higher-level shader translation to swizzle channels when needed.
-        87 => VertexFormatInfo {
-            format: wgpu::VertexFormat::Unorm8x4,
-            size: 4,
-            align: 4,
+        87 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Unorm8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Unorm8,
+            component_count: 4,
         },
         // R16G16_FLOAT
-        34 => VertexFormatInfo {
-            format: wgpu::VertexFormat::Float16x2,
-            size: 4,
-            align: 4,
+        34 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Float16x2,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::F16,
+            component_count: 2,
         },
         // R16G16B16A16_FLOAT
-        10 => VertexFormatInfo {
-            format: wgpu::VertexFormat::Float16x4,
-            size: 8,
-            align: 4,
+        10 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Float16x4,
+            size_bytes: 8,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::F16,
+            component_count: 4,
         },
         // R32_UINT
-        42 => VertexFormatInfo {
-            format: wgpu::VertexFormat::Uint32,
-            size: 4,
-            align: 4,
+        42 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Uint32,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U32,
+            component_count: 1,
         },
         // R16_UINT
         //
@@ -473,12 +520,23 @@ fn dxgi_format_to_vertex_format(dxgi_format: u32) -> Result<VertexFormatInfo, In
         // `uint16x2` which consumes 4 bytes. This matches D3D's 4-byte alignment rules but requires
         // shader translation to only consume the `.x` component (the `.y` value comes from padding
         // / undefined bytes).
-        57 => VertexFormatInfo {
-            format: wgpu::VertexFormat::Uint16x2,
-            size: 4,
-            align: 4,
+        57 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Uint16x2,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U16,
+            component_count: 2,
         },
         _ => return Err(InputLayoutError::UnsupportedDxgiFormat(dxgi_format)),
+    })
+}
+
+fn dxgi_format_to_vertex_format(dxgi_format: u32) -> Result<VertexFormatInfo, InputLayoutError> {
+    let info = dxgi_format_info(dxgi_format)?;
+    Ok(VertexFormatInfo {
+        format: info.wgpu_vertex_format,
+        size: info.size_bytes,
+        align: info.align_bytes,
     })
 }
 

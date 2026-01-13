@@ -9,6 +9,7 @@ pub mod pipeline_layout_cache;
 mod reflection_bindings;
 pub mod resources;
 pub mod state;
+pub mod vertex_pulling;
 mod wgsl_link;
 
 fn wgpu_texture_compression_disabled() -> bool {
