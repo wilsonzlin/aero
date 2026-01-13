@@ -30,9 +30,13 @@ pub const OPCODE_DP4: u32 = 0x09;
 pub const OPCODE_MIN: u32 = 0x0a;
 pub const OPCODE_MAX: u32 = 0x0b;
 
-// ---- Comparisons ----
+// ---- Float comparisons ----
 //
-// These opcodes write `0.0/1.0` float masks into the untyped register file.
+// SM4/SM5 float compares (`lt/ge/eq/ne`) produce per-component predicate masks in the
+// untyped register file: 0xffffffff for true, 0x00000000 for false.
+//
+// The translator bitcasts these masks to `f32` lanes so subsequent `movc`/`if_nz` style
+// control flow can treat the register file as untyped like real DXBC.
 pub const OPCODE_LT: u32 = 0x0c;
 pub const OPCODE_GE: u32 = 0x0d;
 pub const OPCODE_EQ: u32 = 0x0e;

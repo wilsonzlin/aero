@@ -1,9 +1,9 @@
 use aero_d3d11::sm4::decode::Sm4DecodeErrorKind;
 use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
-    BufferKind, BufferRef, HsDomain, HsOutputTopology, HsPartitioning, OperandModifier, RegFile,
-    RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand,
-    Swizzle, TextureRef, UavRef, WriteMask,
+    BufferKind, BufferRef, CmpOp, CmpType, HsDomain, HsOutputTopology, HsPartitioning,
+    OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program,
+    SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -3100,6 +3100,59 @@ fn decodes_ld_structured_uav_via_structural_fallback() {
         "expected structural fallback to decode LdStructuredUav, got {:?}",
         module.instructions[0]
     );
+}
+
+#[test]
+fn decodes_float_cmp_opcodes() {
+    let mut body = Vec::<u32>::new();
+
+    let ops = [
+        (OPCODE_EQ, CmpOp::Eq),
+        (OPCODE_NE, CmpOp::Ne),
+        (OPCODE_LT, CmpOp::Lt),
+        (OPCODE_GE, CmpOp::Ge),
+    ];
+
+    let mut expected = Vec::<Sm4Inst>::new();
+    for (dst_idx, (opcode, op)) in ops.iter().copied().enumerate() {
+        let dst_idx = dst_idx as u32;
+
+        // <cmp> rN, r1, r2
+        let mut inst = vec![opcode_token(opcode, 1 + 2 + 2 + 2)];
+        inst.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, dst_idx, WriteMask::XYZW));
+        inst.extend_from_slice(&reg_src(
+            OPERAND_TYPE_TEMP,
+            &[1],
+            Swizzle::XYZW,
+            OperandModifier::None,
+        ));
+        inst.extend_from_slice(&reg_src(
+            OPERAND_TYPE_TEMP,
+            &[2],
+            Swizzle::XYZW,
+            OperandModifier::None,
+        ));
+        body.extend_from_slice(&inst);
+
+        expected.push(Sm4Inst::Cmp {
+            op,
+            ty: CmpType::F32,
+            dst: dst(RegFile::Temp, dst_idx, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 1),
+            b: src_reg(RegFile::Temp, 2),
+        });
+    }
+
+    body.push(opcode_token(OPCODE_RET, 1));
+    expected.push(Sm4Inst::Ret);
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(module.instructions, expected);
 }
 
 #[test]

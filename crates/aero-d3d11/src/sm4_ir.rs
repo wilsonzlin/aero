@@ -504,6 +504,21 @@ pub enum Sm4Inst {
         a: SrcOperand,
         b: SrcOperand,
     },
+    /// Component-wise comparison.
+    ///
+    /// DXBC comparisons produce *predicate masks* (`0xffffffff` for true, `0x00000000` for false)
+    /// in the destination register, not `1.0`/`0.0`.
+    ///
+    /// The operand interpretation is selected via [`CmpType`], but the result is always a
+    /// predicate mask stored into the untyped register file (which this IR models as
+    /// `vec4<f32>` bits).
+    Cmp {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+        op: CmpOp,
+        ty: CmpType,
+    },
     /// Signed integer minimum: `imin dst, a, b`
     IMin {
         dst: DstOperand,
@@ -608,18 +623,6 @@ pub enum Sm4Inst {
         width: SrcOperand,
         offset: SrcOperand,
         src: SrcOperand,
-    },
-    /// Compare (`lt/ge/eq/ne` and the integer compare family).
-    ///
-    /// Output encoding depends on [`CmpType`]:
-    /// - `F32`: float mask (`1.0` for true, `0.0` for false).
-    /// - `I32`/`U32`: D3D predicate mask bits (`0xffffffff` for true, `0x00000000` for false).
-    Cmp {
-        dst: DstOperand,
-        a: SrcOperand,
-        b: SrcOperand,
-        op: CmpOp,
-        ty: CmpType,
     },
     /// `bfrev dest, src` (bit reverse).
     Bfrev {
@@ -969,7 +972,6 @@ pub enum CmpType {
     I32,
     U32,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RegFile {
     Temp,

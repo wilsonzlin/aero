@@ -4727,6 +4727,40 @@ fn emit_instructions(
                 let expr = format!("bitcast<vec4<f32>>(vec4<u32>(-({src})))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ineg", ctx)?;
             }
+            Sm4Inst::Cmp { dst, a, b, op, ty } => {
+                let opcode = "cmp";
+                let cmp_expr = |a: &str, b: &str| match op {
+                    CmpOp::Eq => format!("({a}) == ({b})"),
+                    CmpOp::Ne => format!("({a}) != ({b})"),
+                    CmpOp::Lt => format!("({a}) < ({b})"),
+                    CmpOp::Le => format!("({a}) <= ({b})"),
+                    CmpOp::Gt => format!("({a}) > ({b})"),
+                    CmpOp::Ge => format!("({a}) >= ({b})"),
+                };
+
+                let cmp = match ty {
+                    CmpType::F32 => {
+                        let a = emit_src_vec4(a, inst_index, opcode, ctx)?;
+                        let b = emit_src_vec4(b, inst_index, opcode, ctx)?;
+                        cmp_expr(&a, &b)
+                    }
+                    CmpType::I32 => {
+                        let a = emit_src_vec4_i32(a, inst_index, opcode, ctx)?;
+                        let b = emit_src_vec4_i32(b, inst_index, opcode, ctx)?;
+                        cmp_expr(&a, &b)
+                    }
+                    CmpType::U32 => {
+                        let a = emit_src_vec4_u32(a, inst_index, opcode, ctx)?;
+                        let b = emit_src_vec4_u32(b, inst_index, opcode, ctx)?;
+                        cmp_expr(&a, &b)
+                    }
+                };
+
+                // Convert the bool vector result into D3D-style predicate mask bits.
+                let mask = format!("select(vec4<u32>(0u), vec4<u32>(0xffffffffu), {cmp})");
+                let expr = format!("bitcast<vec4<f32>>({mask})");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, opcode, ctx)?;
+            }
             Sm4Inst::Rcp { dst, src } => {
                 let src = emit_src_vec4(src, inst_index, "rcp", ctx)?;
                 let expr = maybe_saturate(dst, format!("1.0 / ({src})"));
@@ -4832,57 +4866,6 @@ fn emit_instructions(
                 }
                 let expr = format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3]);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ibfe", ctx)?;
-            }
-            Sm4Inst::Cmp { dst, a, b, op, ty } => {
-                match ty {
-                    CmpType::F32 => {
-                        let a = emit_src_vec4(a, inst_index, "cmp", ctx)?;
-                        let b = emit_src_vec4(b, inst_index, "cmp", ctx)?;
-
-                        let cmp = match op {
-                            CmpOp::Eq => format!("({a}) == ({b})"),
-                            CmpOp::Ne => format!("({a}) != ({b})"),
-                            CmpOp::Lt => format!("({a}) < ({b})"),
-                            CmpOp::Le => format!("({a}) <= ({b})"),
-                            CmpOp::Gt => format!("({a}) > ({b})"),
-                            CmpOp::Ge => format!("({a}) >= ({b})"),
-                        };
-
-                        // SM4 `lt/ge/eq/ne` produce float masks: `1.0` for true, `0.0` for false.
-                        let expr = maybe_saturate(
-                            dst,
-                            format!("select(vec4<f32>(0.0), vec4<f32>(1.0), {cmp})"),
-                        );
-                        emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "cmp", ctx)?;
-                    }
-                    CmpType::I32 | CmpType::U32 => {
-                        let (a, b) = match ty {
-                            CmpType::I32 => (
-                                emit_src_vec4_i32(a, inst_index, "cmp", ctx)?,
-                                emit_src_vec4_i32(b, inst_index, "cmp", ctx)?,
-                            ),
-                            CmpType::U32 => (
-                                emit_src_vec4_u32(a, inst_index, "cmp", ctx)?,
-                                emit_src_vec4_u32(b, inst_index, "cmp", ctx)?,
-                            ),
-                            CmpType::F32 => unreachable!("handled above"),
-                        };
-
-                        let cmp = match op {
-                            CmpOp::Eq => format!("({a}) == ({b})"),
-                            CmpOp::Ne => format!("({a}) != ({b})"),
-                            CmpOp::Lt => format!("({a}) < ({b})"),
-                            CmpOp::Le => format!("({a}) <= ({b})"),
-                            CmpOp::Gt => format!("({a}) > ({b})"),
-                            CmpOp::Ge => format!("({a}) >= ({b})"),
-                        };
-
-                        // Convert the bool vector result into D3D-style predicate mask bits.
-                        let mask = format!("select(vec4<u32>(0u), vec4<u32>(0xffffffffu), {cmp})");
-                        let expr = format!("bitcast<vec4<f32>>({mask})");
-                        emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "cmp", ctx)?;
-                    }
-                }
             }
             Sm4Inst::Bfrev { dst, src } => {
                 let src_u = emit_src_vec4_u32(src, inst_index, "bfrev", ctx)?;

@@ -1123,8 +1123,11 @@ pub fn decode_instruction(
             })
         }
         OPCODE_IEQ | OPCODE_INE | OPCODE_ILT | OPCODE_IGE | OPCODE_ULT | OPCODE_UGE => {
-            let mut dst = decode_dst(&mut r)?;
-            dst.saturate = saturate;
+            // Integer compares write predicate masks (0xffffffff/0) into the untyped register file.
+            // Saturate would clamp the numeric float interpretation of those bits, corrupting the
+            // predicate payload, so ignore it here (while still consuming any extended opcode
+            // tokens above).
+            let dst = decode_dst(&mut r)?;
             let a = decode_src(&mut r)?;
             let b = decode_src(&mut r)?;
             r.expect_eof()?;
@@ -1456,11 +1459,13 @@ fn decode_bufinfo(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm
 
 fn decode_cmp(
     op: CmpOp,
-    saturate: bool,
+    _saturate: bool,
     r: &mut InstrReader<'_>,
 ) -> Result<Sm4Inst, Sm4DecodeError> {
-    let mut dst = decode_dst(r)?;
-    dst.saturate = saturate;
+    // SM4/SM5 float compares (`lt/ge/eq/ne`) write predicate masks (0xffffffff/0) into the untyped
+    // register file. Saturate modifiers are only meaningful for float *numeric* results, so ignore
+    // it here (while still consuming any extended opcode tokens above).
+    let dst = decode_dst(r)?;
     let a = decode_src(r)?;
     let b = decode_src(r)?;
     r.expect_eof()?;

@@ -1238,6 +1238,91 @@ fn translates_isubc_uses_raw_bits_without_float_int_heuristics() {
 }
 
 #[test]
+fn translates_float_cmp_to_predicate_mask_bits() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let a = src_imm([1.0, 2.0, 3.0, 4.0]);
+    let b = src_imm([1.0, 1.0, 4.0, 0.0]);
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Cmp {
+                op: CmpOp::Eq,
+                ty: CmpType::F32,
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                a: a.clone(),
+                b: b.clone(),
+            },
+            Sm4Inst::Cmp {
+                op: CmpOp::Ne,
+                ty: CmpType::F32,
+                dst: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                a: a.clone(),
+                b: b.clone(),
+            },
+            Sm4Inst::Cmp {
+                op: CmpOp::Lt,
+                ty: CmpType::F32,
+                dst: dst(RegFile::Temp, 2, WriteMask::XYZW),
+                a: a.clone(),
+                b: b.clone(),
+            },
+            Sm4Inst::Cmp {
+                op: CmpOp::Ge,
+                ty: CmpType::F32,
+                dst: dst(RegFile::Temp, 3, WriteMask::XYZW),
+                a: a.clone(),
+                b: b.clone(),
+            },
+            Sm4Inst::Cmp {
+                op: CmpOp::Gt,
+                ty: CmpType::F32,
+                dst: dst(RegFile::Temp, 4, WriteMask::XYZW),
+                a: a.clone(),
+                b: b.clone(),
+            },
+            Sm4Inst::Cmp {
+                op: CmpOp::Le,
+                ty: CmpType::F32,
+                dst: dst(RegFile::Temp, 5, WriteMask::XYZW),
+                a,
+                b,
+            },
+            // Ensure the predicate value is observed by the output path.
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("0xffffffffu"),
+        "expected predicate-mask constant in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<f32>>"),
+        "expected predicate-mask bitcast in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn rdef_cbuffer_size_overrides_used_registers() {
     // Shader reads only cb0[0], but RDEF declares the cbuffer to be 128 bytes (8 registers).
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
