@@ -280,10 +280,40 @@ set "GT_VERSION="
 set "GT_BUILD_ID="
 set "GT_SIGNING_POLICY="
 set "GT_CERTS_REQUIRED="
+
+rem Prefer PowerShell JSON parsing (robust to schema/formatting changes). Fall back to
+rem the legacy line-based parser if PowerShell is unavailable or parsing fails.
+set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PWSH%" set "PWSH=powershell.exe"
+set "PWSH_OK=0"
+set "PWSH_OUT=%TEMP%\aerogt_manifest_parse_%RANDOM%.txt"
+set "AEROGT_MANIFEST=!MANIFEST!"
+"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "try{ $p=$env:AEROGT_MANIFEST; [void][System.Reflection.Assembly]::LoadWithPartialName('System.Web.Extensions'); $json=[System.IO.File]::ReadAllText($p); $ser=New-Object System.Web.Script.Serialization.JavaScriptSerializer; $ser.MaxJsonLength=10485760; $o=$ser.DeserializeObject($json); function g($d,$k){ if($d -is [System.Collections.IDictionary] -and $d.Contains($k)){ $d[$k] } else { $null } }; $pkg=g $o 'package'; $v=g $pkg 'version'; if($v -eq $null){ $v=g $o 'version' }; $b=g $pkg 'build_id'; if($b -eq $null){ $b=g $o 'build_id' }; $sp=g $o 'signing_policy'; $cr=g $o 'certs_required'; Write-Output 'AEROGT_POWERSHELL_OK=1'; Write-Output ('GT_VERSION=' + $v); Write-Output ('GT_BUILD_ID=' + $b); Write-Output ('GT_SIGNING_POLICY=' + $sp); Write-Output ('GT_CERTS_REQUIRED=' + $cr); exit 0 }catch{ exit 1 }" >"%PWSH_OUT%" 2>nul
+if "%ERRORLEVEL%"=="0" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("%PWSH_OUT%") do (
+    if /i "%%A"=="AEROGT_POWERSHELL_OK" if "%%B"=="1" set "PWSH_OK=1"
+    if /i "%%A"=="GT_VERSION" set "GT_VERSION=%%B"
+    if /i "%%A"=="GT_BUILD_ID" set "GT_BUILD_ID=%%B"
+    if /i "%%A"=="GT_SIGNING_POLICY" set "GT_SIGNING_POLICY=%%B"
+    if /i "%%A"=="GT_CERTS_REQUIRED" set "GT_CERTS_REQUIRED=%%B"
+  )
+)
+del /q "%PWSH_OUT%" >nul 2>&1
+if not "%PWSH_OK%"=="1" (
+  call :log "WARNING: Failed to parse manifest.json via PowerShell; falling back to legacy parser."
+  set "GT_VERSION="
+  set "GT_BUILD_ID="
+  set "GT_SIGNING_POLICY="
+  set "GT_CERTS_REQUIRED="
+  goto log_manifest_legacy_parse
+)
+goto log_manifest_normalize
+
+:log_manifest_legacy_parse
 for /f "usebackq tokens=1,* delims=:" %%A in ("!MANIFEST!") do (
-  set "KEY=%%A"
-  set "VAL=%%B"
-  set "KEY=!KEY: =!"
+   set "KEY=%%A"
+   set "VAL=%%B"
+   set "KEY=!KEY: =!"
   set "KEY=!KEY:"=!"
   set "KEY=!KEY:{=!"
   set "KEY=!KEY:}=!"
@@ -316,8 +346,10 @@ for /f "usebackq tokens=1,* delims=:" %%A in ("!MANIFEST!") do (
     if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
     set "VAL=!VAL:"=!"
     set "GT_CERTS_REQUIRED=!VAL!"
-  )
+   )
 )
+
+:log_manifest_normalize
 
 rem Back-compat: old manifests don't include signing_policy/certs_required.
 if not defined GT_SIGNING_POLICY set "GT_SIGNING_POLICY=test"
