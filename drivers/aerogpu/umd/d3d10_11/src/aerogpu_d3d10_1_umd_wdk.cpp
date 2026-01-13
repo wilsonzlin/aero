@@ -6608,7 +6608,9 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
           static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
       const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
       std::memcpy(res->storage.data() + dst_off, src_bytes + src_off, row_bytes);
-      if (full_row_update && dst_layout.row_pitch_bytes > row_bytes) {
+      // For boxed updates, preserve any per-row padding outside the updated
+      // rectangle. Only clear padding for full-subresource uploads.
+      if (!pArgs->pDstBox && full_row_update && dst_layout.row_pitch_bytes > row_bytes) {
         const size_t dst_row_start = dst_base + static_cast<size_t>(block_top + y) * dst_layout.row_pitch_bytes;
         std::memset(res->storage.data() + dst_row_start + row_bytes, 0, dst_layout.row_pitch_bytes - row_bytes);
       }
@@ -6657,7 +6659,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
           static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
       const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
       std::memcpy(dst_alloc_base + dst_off, src_bytes + src_off, row_bytes);
-      if (full_row_update && dst_pitch > row_bytes) {
+      if (!pArgs->pDstBox && full_row_update && dst_pitch > row_bytes) {
         const size_t dst_row_start = static_cast<size_t>(block_top + y) * dst_pitch;
         std::memset(dst_alloc_base + dst_row_start + row_bytes, 0, dst_pitch - row_bytes);
       }
