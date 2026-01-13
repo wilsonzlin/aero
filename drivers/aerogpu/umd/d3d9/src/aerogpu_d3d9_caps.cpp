@@ -203,7 +203,12 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->PixelShaderVersion = D3DPS_VERSION(2, 0);
   out->MaxVertexShaderConst = 256;
 
-  out->PrimitiveMiscCaps = D3DPMISCCAPS_CLIPTLVERTS;
+  out->PrimitiveMiscCaps = D3DPMISCCAPS_CLIPTLVERTS |
+                           // Blend ops (D3DRS_BLENDOP/BLENDOPALPHA) and separate
+                           // alpha blending are exercised by DWM-style workloads
+                           // and are implemented by the AeroGPU shader pipeline.
+                           D3DPMISCCAPS_BLENDOP |
+                           D3DPMISCCAPS_SEPARATEALPHABLEND;
 
   // DWM relies heavily on scissoring for window clipping. Include depth-test and
   // cull bits as they are commonly queried by apps and are expected for a HAL
@@ -219,7 +224,9 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                   D3DPCMPCAPS_GREATER | D3DPCMPCAPS_NOTEQUAL | D3DPCMPCAPS_GREATEREQUAL | D3DPCMPCAPS_ALWAYS;
   out->AlphaCmpCaps = out->ZCmpCaps;
 
-  out->SrcBlendCaps = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA;
+  out->SrcBlendCaps = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA |
+                      D3DPBLENDCAPS_DESTALPHA | D3DPBLENDCAPS_INVDESTALPHA |
+                      D3DPBLENDCAPS_BLENDFACTOR | D3DPBLENDCAPS_INVBLENDFACTOR;
   out->DestBlendCaps = out->SrcBlendCaps;
 
   out->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
@@ -293,11 +300,14 @@ void log_caps_once(const D3DCAPS9& caps) {
        (unsigned long)caps.MaxTextureHeight,
        (unsigned long)caps.Caps2,
        (unsigned long)caps.DevCaps);
-  logf("aerogpu-d3d9: caps bits: RasterCaps=0x%08lX ZCmpCaps=0x%08lX AlphaCmpCaps=0x%08lX TextureCaps=0x%08lX\n",
+  logf("aerogpu-d3d9: caps bits: PrimitiveMiscCaps=0x%08lX RasterCaps=0x%08lX ZCmpCaps=0x%08lX AlphaCmpCaps=0x%08lX\n",
+       (unsigned long)caps.PrimitiveMiscCaps,
        (unsigned long)caps.RasterCaps,
        (unsigned long)caps.ZCmpCaps,
-       (unsigned long)caps.AlphaCmpCaps,
-       (unsigned long)caps.TextureCaps);
+       (unsigned long)caps.AlphaCmpCaps);
+  logf("aerogpu-d3d9: caps tex: TextureCaps=0x%08lX TextureAddressCaps=0x%08lX\n",
+       (unsigned long)caps.TextureCaps,
+       (unsigned long)caps.TextureAddressCaps);
   logf("aerogpu-d3d9: caps limits: MaxSimulTex=%lu MaxTexStages=%lu MaxStreams=%lu MaxVol=%lu\n",
        (unsigned long)caps.MaxSimultaneousTextures,
        (unsigned long)caps.MaxTextureBlendStages,
