@@ -26,6 +26,12 @@ use crate::time::TimeSource;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CpuExit {
     /// Failure to deliver an exception (including #DF) that results in a reset.
+    ///
+    /// This is also used as a hard stop for non-architectural interpreter bookkeeping
+    /// overflows (e.g. pathological interrupt nesting that would otherwise grow an
+    /// internal stack without bound). Such scenarios imply we can no longer model
+    /// architectural behavior reliably, so we "reset" the vCPU rather than
+    /// continuing with corrupted state.
     TripleFault,
     /// Non-architectural memory/bus fault (e.g. unmapped physical memory / MMIO failure).
     MemoryFault,
@@ -234,6 +240,8 @@ pub struct PendingEventState {
     pending_event: Option<PendingEvent>,
     /// FIFO of externally injected interrupts (PIC/APIC).
     pub external_interrupts: VecDeque<u8>,
+    /// Number of externally injected vectors dropped due to queue overflow.
+    dropped_external_interrupts: u64,
 
     /// Interrupt shadow counter (STI / MOV SS / POP SS).
     interrupt_inhibit: u8,
@@ -247,6 +255,21 @@ pub struct PendingEventState {
 }
 
 impl PendingEventState {
+    /// Hard cap on queued externally injected interrupt vectors.
+    ///
+    /// This is a non-architectural safety bound: if a host/device model (or a
+    /// malicious guest indirectly influencing it) injects interrupts faster than
+    /// the guest can consume them, we must not allow unbounded growth of
+    /// interpreter bookkeeping structures.
+    pub const MAX_EXTERNAL_INTERRUPTS: usize = 1024;
+    /// Hard cap on the internal interrupt/IRET bookkeeping stack.
+    ///
+    /// Every delivered interrupt/exception pushes one frame to this stack; the
+    /// corresponding `IRET*` pops it. If the guest keeps taking interrupts (or
+    /// faults while delivering interrupts) but never completes the return path,
+    /// this can grow without bound unless we enforce a limit.
+    pub const MAX_INTERRUPT_FRAMES: usize = 1024;
+
     /// Queue a faulting exception for delivery at the next instruction boundary.
     ///
     /// For page faults this will also update CR2 in [`state::CpuState`].
@@ -282,7 +305,19 @@ impl PendingEventState {
 
     /// Inject an external interrupt vector (e.g. from PIC/APIC).
     pub fn inject_external_interrupt(&mut self, vector: u8) {
+        if self.external_interrupts.len() >= Self::MAX_EXTERNAL_INTERRUPTS {
+            // We intentionally drop the *new* vector to preserve FIFO order for
+            // already-queued interrupts. Either policy is lossy, but dropping
+            // newest avoids starvation of earlier queued interrupts.
+            self.dropped_external_interrupts = self.dropped_external_interrupts.saturating_add(1);
+            return;
+        }
         self.external_interrupts.push_back(vector);
+    }
+
+    /// Number of externally injected interrupts dropped due to queue overflow.
+    pub fn dropped_external_interrupts(&self) -> u64 {
+        self.dropped_external_interrupts
     }
 
     /// Inhibit maskable interrupts for exactly one instruction.
@@ -345,6 +380,20 @@ impl PendingEventState {
     /// calling [`deliver_pending_event`] will actually deliver anything.
     pub fn has_pending_event(&self) -> bool {
         self.pending_event.is_some()
+    }
+
+    fn push_interrupt_frame(&mut self, frame: InterruptFrame) -> Result<(), CpuExit> {
+        if self.interrupt_frames.len() >= Self::MAX_INTERRUPT_FRAMES {
+            // `interrupt_frames` is purely interpreter bookkeeping used to pick
+            // the correct `IRET*` semantics. If it overflows we can no longer
+            // correctly model architectural state transitions, so fail closed.
+            //
+            // We treat this as a triple fault (reset) rather than trying to
+            // limp forward with incorrect state.
+            return Err(CpuExit::TripleFault);
+        }
+        self.interrupt_frames.push(frame);
+        Ok(())
     }
 }
 
@@ -847,8 +896,7 @@ fn deliver_real_mode<B: CpuBus>(
     state.write_reg(Register::CS, segment as u64);
     state.set_ip(offset);
 
-    pending.interrupt_frames.push(InterruptFrame::Real16);
-    Ok(())
+    pending.push_interrupt_frame(InterruptFrame::Real16)
 }
 
 fn deliver_protected_mode<B: CpuBus>(
@@ -982,10 +1030,7 @@ fn deliver_protected_mode<B: CpuBus>(
     state.segments.cs.selector = gate.selector;
     state.set_ip(gate.offset as u64);
 
-    pending
-        .interrupt_frames
-        .push(InterruptFrame::Protected32 { stack_switched });
-    Ok(())
+    pending.push_interrupt_frame(InterruptFrame::Protected32 { stack_switched })
 }
 
 fn deliver_long_mode<B: CpuBus>(
@@ -1166,10 +1211,7 @@ fn deliver_long_mode<B: CpuBus>(
     state.segments.cs.selector = gate.selector;
     state.set_ip(gate.offset);
 
-    pending
-        .interrupt_frames
-        .push(InterruptFrame::Long64 { stack_switched });
-    Ok(())
+    pending.push_interrupt_frame(InterruptFrame::Long64 { stack_switched })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
