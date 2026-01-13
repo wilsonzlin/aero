@@ -9,8 +9,8 @@ use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::opcode::opcode_name;
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    BufferKind, CmpOp, CmpType, ComputeBuiltin, OperandModifier, RegFile, RegisterRef, Sm4Decl,
-    Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
+    BufferKind, CmpOp, CmpType, ComputeBuiltin, OperandModifier, PredicateDstOperand, RegFile,
+    RegisterRef, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
 };
 use crate::DxbcFile;
 use aero_dxbc::RdefChunk;
@@ -1231,6 +1231,12 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 inputs.insert(reg.index);
             }
         };
+
+        let mut inst = inst;
+        while let Sm4Inst::Predicated { inner, .. } = inst {
+            inst = inner;
+        }
+
         match inst {
             Sm4Inst::If { cond, .. } => scan_src_regs(cond, &mut scan_reg),
             Sm4Inst::Discard { cond, .. } => scan_src_regs(cond, &mut scan_reg),
@@ -1350,6 +1356,10 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);
             }
+            Sm4Inst::Setp { a, b, .. } => {
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+            }
             Sm4Inst::ResInfo {
                 dst: _,
                 mip_level,
@@ -1395,6 +1405,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             | Sm4Inst::BufInfoStructuredUav { .. }
             | Sm4Inst::Unknown { .. }
             | Sm4Inst::Ret => {}
+            Sm4Inst::Predicated { .. } => unreachable!("predication wrapper was stripped above"),
         }
     }
     inputs
@@ -1419,6 +1430,11 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
         }
     };
     for inst in &module.instructions {
+        let mut inst = inst;
+        while let Sm4Inst::Predicated { inner, .. } = inst {
+            inst = inner.as_ref();
+        }
+
         match inst {
             Sm4Inst::If { cond, .. } => scan_src(cond),
             Sm4Inst::Discard { cond, .. } => scan_src(cond),
@@ -1430,6 +1446,10 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
             | Sm4Inst::Ftou { dst: _, src } => scan_src(src),
             Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src(cond);
+                scan_src(a);
+                scan_src(b);
+            }
+            Sm4Inst::Setp { a, b, .. } => {
                 scan_src(a);
                 scan_src(b);
             }
@@ -1605,6 +1625,7 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
             | Sm4Inst::BufInfoStructuredUav { .. }
             | Sm4Inst::Unknown { .. }
             | Sm4Inst::Ret => {}
+            Sm4Inst::Predicated { .. } => unreachable!("predication wrapper was stripped above"),
         }
     }
     out
@@ -2691,6 +2712,12 @@ fn scan_resources(
             }
             Ok(())
         };
+
+        let mut inst = inst;
+        while let Sm4Inst::Predicated { inner, .. } = inst {
+            inst = inner;
+        }
+
         match inst {
             Sm4Inst::If { cond, .. } => scan_src(cond)?,
             Sm4Inst::Discard { cond, .. } => scan_src(cond)?,
@@ -2702,7 +2729,7 @@ fn scan_resources(
                 scan_src(a)?;
                 scan_src(b)?;
             }
-            Sm4Inst::Add { dst: _, a, b }
+            Sm4Inst::Setp { a, b, .. } | Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
             | Sm4Inst::Dp3 { dst: _, a, b }
             | Sm4Inst::Dp4 { dst: _, a, b }
@@ -2938,6 +2965,7 @@ fn scan_resources(
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } | Sm4Inst::EmitThenCut { .. } => {}
             Sm4Inst::Ret => {}
+            Sm4Inst::Predicated { .. } => unreachable!("predication wrapper was stripped above"),
         }
     }
 
@@ -3079,6 +3107,7 @@ fn emit_temp_and_output_decls(
     io: &IoMaps,
 ) -> Result<(), ShaderTranslateError> {
     let mut temps = BTreeSet::<u32>::new();
+    let mut predicates = BTreeSet::<u32>::new();
     let mut outputs = BTreeSet::<u32>::new();
     let mut needs_depth_reg = false;
     let depth_reg = io.ps_sv_depth.as_ref().map(|p| p.param.register);
@@ -3104,6 +3133,17 @@ fn emit_temp_and_output_decls(
             }
             RegFile::Input => {}
         };
+
+        let mut inst = inst;
+        loop {
+            match inst {
+                Sm4Inst::Predicated { pred, inner } => {
+                    predicates.insert(pred.reg.index);
+                    inst = inner;
+                }
+                _ => break,
+            }
+        }
 
         match inst {
             Sm4Inst::If { cond, .. } => {
@@ -3162,6 +3202,11 @@ fn emit_temp_and_output_decls(
             } => {
                 scan_reg(dst_diff.reg);
                 scan_reg(dst_borrow.reg);
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+            }
+            Sm4Inst::Setp { dst, op: _, a, b } => {
+                predicates.insert(dst.reg.index);
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
             }
@@ -3339,6 +3384,7 @@ fn emit_temp_and_output_decls(
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } | Sm4Inst::EmitThenCut { .. } => {}
             Sm4Inst::Ret => {}
+            Sm4Inst::Predicated { .. } => unreachable!("predication wrapper was stripped above"),
         }
     }
 
@@ -3363,6 +3409,13 @@ fn emit_temp_and_output_decls(
         w.line(&format!("var r{idx}: vec4<f32> = vec4<f32>(0.0);"));
     }
     if has_temps {
+        w.line("");
+    }
+    let has_preds = !predicates.is_empty();
+    for &idx in &predicates {
+        w.line(&format!("var p{idx}: vec4<bool> = vec4<bool>(false);"));
+    }
+    if has_preds {
         w.line("");
     }
     let has_outputs = !outputs.is_empty() || needs_depth_reg;
@@ -3747,6 +3800,84 @@ fn emit_instructions(
                     });
                 }
             },
+            Sm4Inst::Predicated { pred, inner } => {
+                match inner.as_ref() {
+                    Sm4Inst::If { .. } => {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "predicated_if".to_owned(),
+                        })
+                    }
+                    Sm4Inst::Else => {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "predicated_else".to_owned(),
+                        })
+                    }
+                    Sm4Inst::EndIf => {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "predicated_endif".to_owned(),
+                        })
+                    }
+                    Sm4Inst::Ret => {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "predicated_ret".to_owned(),
+                        })
+                    }
+                    _ => {}
+                }
+
+                let base = format!("p{}.{}", pred.reg.index, component_char(pred.component));
+                let cond = if pred.invert {
+                    format!("!({base})")
+                } else {
+                    base
+                };
+                w.line(&format!("if ({cond}) {{"));
+                w.indent();
+                let inner_module = Sm4Module {
+                    stage: module.stage,
+                    model: module.model,
+                    decls: Vec::new(),
+                    instructions: vec![inner.as_ref().clone()],
+                };
+                emit_instructions(w, &inner_module, ctx)?;
+                w.dedent();
+                w.line("}");
+            }
+            Sm4Inst::Setp { dst, op, a, b } => {
+                let unsigned = matches!(
+                    op,
+                    Sm4CmpOp::EqU
+                        | Sm4CmpOp::NeU
+                        | Sm4CmpOp::LtU
+                        | Sm4CmpOp::GeU
+                        | Sm4CmpOp::LeU
+                        | Sm4CmpOp::GtU
+                );
+                let a_expr = if unsigned {
+                    emit_src_vec4_u32(a, inst_index, "setp", ctx)?
+                } else {
+                    emit_src_vec4(a, inst_index, "setp", ctx)?
+                };
+                let b_expr = if unsigned {
+                    emit_src_vec4_u32(b, inst_index, "setp", ctx)?
+                } else {
+                    emit_src_vec4(b, inst_index, "setp", ctx)?
+                };
+                let cmp = match op {
+                    Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
+                    Sm4CmpOp::Ne | Sm4CmpOp::NeU => "!=",
+                    Sm4CmpOp::Lt | Sm4CmpOp::LtU => "<",
+                    Sm4CmpOp::Ge | Sm4CmpOp::GeU => ">=",
+                    Sm4CmpOp::Le | Sm4CmpOp::LeU => "<=",
+                    Sm4CmpOp::Gt | Sm4CmpOp::GtU => ">",
+                };
+                let expr = format!("({a_expr}) {cmp} ({b_expr})");
+                emit_write_masked_bool(w, *dst, expr, inst_index, "setp")?;
+            }
             Sm4Inst::Mov { dst, src } => {
                 let rhs = emit_src_vec4(src, inst_index, "mov", ctx)?;
                 let rhs = maybe_saturate(dst, rhs);
@@ -5133,6 +5264,34 @@ fn emit_write_masked(
             inst_index,
             opcode,
             mask,
+        });
+    }
+
+    let comps = [('x', 1u8), ('y', 2u8), ('z', 4u8), ('w', 8u8)];
+    for (c, bit) in comps {
+        if (mask_bits & bit) != 0 {
+            w.line(&format!("{dst_expr}.{c} = ({rhs}).{c};"));
+        }
+    }
+    Ok(())
+}
+
+fn emit_write_masked_bool(
+    w: &mut WgslWriter,
+    dst: PredicateDstOperand,
+    rhs: String,
+    inst_index: usize,
+    opcode: &'static str,
+) -> Result<(), ShaderTranslateError> {
+    let dst_expr = format!("p{}", dst.reg.index);
+
+    // Mask is 4 bits.
+    let mask_bits = dst.mask.0 & 0xF;
+    if mask_bits == 0 {
+        return Err(ShaderTranslateError::UnsupportedWriteMask {
+            inst_index,
+            opcode,
+            mask: dst.mask,
         });
     }
 

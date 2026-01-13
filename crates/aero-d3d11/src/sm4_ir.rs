@@ -210,6 +210,13 @@ pub enum ComputeBuiltin {
 /// A single SM4/SM5 instruction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sm4Inst {
+    /// Predicated instruction.
+    ///
+    /// Encodes SM4/SM5 instruction-level predication (e.g. `(+p0.x) mov ...`).
+    Predicated {
+        pred: PredicateOperand,
+        inner: Box<Sm4Inst>,
+    },
     /// Structured `if` (`if_z` / `if_nz`).
     ///
     /// The source operand is scalar; the current IR still models everything as a `vec4`, so it is
@@ -232,6 +239,15 @@ pub enum Sm4Inst {
     Movc {
         dst: DstOperand,
         cond: SrcOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// `setp p#, a, b, <cmp>`
+    ///
+    /// Writes a predicate register based on the result of a comparison.
+    Setp {
+        dst: PredicateDstOperand,
+        op: Sm4CmpOp,
         a: SrcOperand,
         b: SrcOperand,
     },
@@ -790,6 +806,45 @@ pub enum RegFile {
 pub struct RegisterRef {
     pub file: RegFile,
     pub index: u32,
+}
+
+/// Predicate register reference (`p#`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PredicateRef {
+    pub index: u32,
+}
+
+/// Scalar predicate operand (used for instruction-level predication).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PredicateOperand {
+    pub reg: PredicateRef,
+    /// Component selector (0=x, 1=y, 2=z, 3=w).
+    pub component: u8,
+    /// Invert the predicate value.
+    pub invert: bool,
+}
+
+/// Predicate destination operand (used by `setp`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PredicateDstOperand {
+    pub reg: PredicateRef,
+    pub mask: WriteMask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sm4CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Ge,
+    Le,
+    Gt,
+    EqU,
+    NeU,
+    LtU,
+    GeU,
+    LeU,
+    GtU,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

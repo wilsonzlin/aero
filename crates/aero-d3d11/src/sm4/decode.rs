@@ -2,9 +2,10 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use crate::sm4_ir::{
-    BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, OperandModifier, RegFile,
-    RegisterRef, SamplerRef, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand,
-    Swizzle, TextureRef, UavRef, WriteMask,
+    BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, OperandModifier,
+    PredicateDstOperand, PredicateOperand, PredicateRef, RegFile, RegisterRef, SamplerRef, Sm4CmpOp,
+    Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef,
+    WriteMask,
 };
 
 use super::opcode::*;
@@ -636,17 +637,83 @@ pub fn decode_instruction(
     let opcode_token = r.read_u32()?;
     let saturate = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
 
-    match opcode {
+    // ---- Predication ----
+    //
+    // SM4/SM5 instruction predication is encoded by adding a predicate operand (`p#`) before the
+    // regular operand list (e.g. `(+p0.x) mov ...`).
+    //
+    // `setp` itself writes to the predicate register file, so it can appear in both predicated and
+    // non-predicated forms. Detect the predicated form by looking for two consecutive predicate
+    // operands (first = condition, second = destination).
+    let peek_operand_type = |r: &InstrReader<'_>| {
+        r.peek_u32()
+            .map(|t| (t >> OPERAND_TYPE_SHIFT) & OPERAND_TYPE_MASK)
+    };
+
+    let mut predication: Option<PredicateOperand> = None;
+
+    if opcode == OPCODE_SETP {
+        // Non-predicated `setp` starts with a single predicate operand (destination).
+        // Predicated `setp` starts with two predicate operands (condition, then destination).
+        if peek_operand_type(&r) == Some(OPERAND_TYPE_PREDICATE) {
+            let first_at = r.base_at + r.pos;
+            let first = decode_raw_operand(&mut r)?;
+            if peek_operand_type(&r) == Some(OPERAND_TYPE_PREDICATE) {
+                predication = Some(predicate_operand_from_raw(first, first_at)?);
+                // Destination follows.
+                let dst = decode_predicate_dst(&mut r)?;
+                let Some(op) = decode_setp_cmp(opcode_token) else {
+                    return Ok(Sm4Inst::Unknown { opcode });
+                };
+                let a = decode_src(&mut r)?;
+                let b = decode_src(&mut r)?;
+                r.expect_eof()?;
+                let inst = Sm4Inst::Setp { dst, op, a, b };
+                if let Some(pred) = predication {
+                    return Ok(Sm4Inst::Predicated {
+                        pred,
+                        inner: Box::new(inst),
+                    });
+                }
+                return Ok(inst);
+            }
+
+            // First predicate operand is destination.
+            let dst = predicate_dst_from_raw(first, first_at)?;
+            let Some(op) = decode_setp_cmp(opcode_token) else {
+                return Ok(Sm4Inst::Unknown { opcode });
+            };
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            return Ok(Sm4Inst::Setp { dst, op, a, b });
+        }
+
+        return Ok(Sm4Inst::Unknown { opcode });
+    }
+
+    // All other instructions: if the first operand is a predicate register, treat it as the
+    // predication operand.
+    if peek_operand_type(&r) == Some(OPERAND_TYPE_PREDICATE) {
+        predication = Some(decode_predicate_operand(&mut r)?);
+    }
+
+    let inst = match opcode {
         OPCODE_IF => {
             let test_raw = (opcode_token >> OPCODE_TEST_BOOLEAN_SHIFT) & OPCODE_TEST_BOOLEAN_MASK;
             let test = match test_raw {
-                0 => Sm4TestBool::Zero,
-                1 => Sm4TestBool::NonZero,
-                _ => return Ok(Sm4Inst::Unknown { opcode }),
+                0 => Some(Sm4TestBool::Zero),
+                1 => Some(Sm4TestBool::NonZero),
+                _ => None,
             };
-            let cond = decode_src(&mut r)?;
-            r.expect_eof()?;
-            Ok(Sm4Inst::If { cond, test })
+
+            if let Some(test) = test {
+                let cond = decode_src(&mut r)?;
+                r.expect_eof()?;
+                Ok(Sm4Inst::If { cond, test })
+            } else {
+                Ok(Sm4Inst::Unknown { opcode })
+            }
         }
         OPCODE_ELSE => {
             r.expect_eof()?;
@@ -1180,26 +1247,51 @@ pub fn decode_instruction(
         other => {
             // Structural fallback for sample/sample_l when opcode IDs differ.
             if let Some(sample) = try_decode_sample_like(saturate, inst_toks, at)? {
-                return Ok(sample);
-            }
+                Ok(sample)
             // Structural fallback for texture load (ld) when opcode IDs differ.
-            if let Some(ld) = try_decode_ld_like(saturate, inst_toks, at)? {
-                return Ok(ld);
-            }
+            } else if let Some(ld) = try_decode_ld_like(saturate, inst_toks, at)? {
+                Ok(ld)
             // Structural fallback for `bufinfo` when opcode IDs differ.
-            if let Some(bufinfo) = try_decode_bufinfo_like(saturate, inst_toks, at)? {
-                return Ok(bufinfo);
-            }
+            } else if let Some(bufinfo) = try_decode_bufinfo_like(saturate, inst_toks, at)? {
+                Ok(bufinfo)
             // Structural fallback for UAV raw load (ld_uav_raw) when opcode IDs differ.
-            if let Some(ld_uav_raw) = try_decode_ld_uav_raw_like(saturate, inst_toks, at)? {
-                return Ok(ld_uav_raw);
-            }
+            } else if let Some(ld_uav_raw) = try_decode_ld_uav_raw_like(saturate, inst_toks, at)? {
+                Ok(ld_uav_raw)
             // Structural fallback for atomic add on UAV buffers (`InterlockedAdd`).
-            if let Some(atomic) = try_decode_atomic_add_like(saturate, inst_toks, at)? {
-                return Ok(atomic);
+            } else if let Some(atomic) = try_decode_atomic_add_like(saturate, inst_toks, at)? {
+                Ok(atomic)
+            } else {
+                Ok(Sm4Inst::Unknown { opcode: other })
             }
-            Ok(Sm4Inst::Unknown { opcode: other })
         }
+    }?;
+
+    if let Some(pred) = predication {
+        Ok(Sm4Inst::Predicated {
+            pred,
+            inner: Box::new(inst),
+        })
+    } else {
+        Ok(inst)
+    }
+}
+
+fn decode_setp_cmp(opcode_token: u32) -> Option<Sm4CmpOp> {
+    let raw = (opcode_token >> SETP_CMP_SHIFT) & SETP_CMP_MASK;
+    match raw {
+        0 => Some(Sm4CmpOp::Eq),
+        1 => Some(Sm4CmpOp::Ne),
+        2 => Some(Sm4CmpOp::Lt),
+        3 => Some(Sm4CmpOp::Ge),
+        4 => Some(Sm4CmpOp::Le),
+        5 => Some(Sm4CmpOp::Gt),
+        8 => Some(Sm4CmpOp::EqU),
+        9 => Some(Sm4CmpOp::NeU),
+        10 => Some(Sm4CmpOp::LtU),
+        11 => Some(Sm4CmpOp::GeU),
+        12 => Some(Sm4CmpOp::LeU),
+        13 => Some(Sm4CmpOp::GtU),
+        _ => None,
     }
 }
 
@@ -1925,6 +2017,125 @@ fn decode_dst(r: &mut InstrReader<'_>) -> Result<DstOperand, Sm4DecodeError> {
     })
 }
 
+fn decode_predicate_operand(r: &mut InstrReader<'_>) -> Result<PredicateOperand, Sm4DecodeError> {
+    let at = r.base_at + r.pos;
+    let op = decode_raw_operand(r)?;
+    predicate_operand_from_raw(op, at)
+}
+
+fn decode_predicate_dst(r: &mut InstrReader<'_>) -> Result<PredicateDstOperand, Sm4DecodeError> {
+    let at = r.base_at + r.pos;
+    let op = decode_raw_operand(r)?;
+    predicate_dst_from_raw(op, at)
+}
+
+fn predicate_operand_from_raw(
+    op: RawOperand,
+    at_dword: usize,
+) -> Result<PredicateOperand, Sm4DecodeError> {
+    if op.imm32.is_some() {
+        return Err(Sm4DecodeError {
+            at_dword,
+            kind: Sm4DecodeErrorKind::UnsupportedOperand("predicate operand cannot be immediate"),
+        });
+    }
+    if op.ty != OPERAND_TYPE_PREDICATE {
+        return Err(Sm4DecodeError {
+            at_dword,
+            kind: Sm4DecodeErrorKind::UnsupportedOperandType { ty: op.ty },
+        });
+    }
+
+    let index = one_index(op.ty, &op.indices, at_dword)?;
+
+    // Resolve which component the predication operand selects.
+    let component = match op.selection_mode {
+        OPERAND_SEL_SELECT1 => (op.component_sel & 0x3) as u8,
+        OPERAND_SEL_SWIZZLE => {
+            let swz = decode_swizzle(op.component_sel).0;
+            if swz.iter().all(|&c| c == swz[0]) {
+                swz[0]
+            } else {
+                return Err(Sm4DecodeError {
+                    at_dword,
+                    kind: Sm4DecodeErrorKind::UnsupportedOperand(
+                        "predicate operand must be scalar (replicated swizzle)",
+                    ),
+                });
+            }
+        }
+        OPERAND_SEL_MASK => {
+            let bits = (op.component_sel & 0xF) as u8;
+            match bits {
+                0b0001 => 0,
+                0b0010 => 1,
+                0b0100 => 2,
+                0b1000 => 3,
+                _ => {
+                    return Err(Sm4DecodeError {
+                        at_dword,
+                        kind: Sm4DecodeErrorKind::UnsupportedOperand(
+                            "predicate operand must select exactly one component",
+                        ),
+                    })
+                }
+            }
+        }
+        _ => {
+            return Err(Sm4DecodeError {
+                at_dword,
+                kind: Sm4DecodeErrorKind::UnsupportedOperand(
+                    "unknown component selection mode for predicate operand",
+                ),
+            })
+        }
+    };
+
+    let invert = matches!(op.modifier, OperandModifier::Neg | OperandModifier::AbsNeg);
+
+    Ok(PredicateOperand {
+        reg: PredicateRef { index },
+        component,
+        invert,
+    })
+}
+
+fn predicate_dst_from_raw(
+    op: RawOperand,
+    at_dword: usize,
+) -> Result<PredicateDstOperand, Sm4DecodeError> {
+    if op.imm32.is_some() {
+        return Err(Sm4DecodeError {
+            at_dword,
+            kind: Sm4DecodeErrorKind::UnsupportedOperand(
+                "predicate destination cannot be immediate",
+            ),
+        });
+    }
+    if op.ty != OPERAND_TYPE_PREDICATE {
+        return Err(Sm4DecodeError {
+            at_dword,
+            kind: Sm4DecodeErrorKind::UnsupportedOperandType { ty: op.ty },
+        });
+    }
+
+    let index = one_index(op.ty, &op.indices, at_dword)?;
+
+    let mask = match op.selection_mode {
+        OPERAND_SEL_MASK => WriteMask((op.component_sel & 0xF) as u8),
+        OPERAND_SEL_SELECT1 => {
+            let c = (op.component_sel & 0x3) as u8;
+            WriteMask(1 << c)
+        }
+        _ => WriteMask::XYZW,
+    };
+
+    Ok(PredicateDstOperand {
+        reg: PredicateRef { index },
+        mask,
+    })
+}
+
 fn decode_src(r: &mut InstrReader<'_>) -> Result<SrcOperand, Sm4DecodeError> {
     let op = decode_raw_operand(r)?;
 
@@ -2334,6 +2545,10 @@ impl<'a> InstrReader<'a> {
             })?;
         self.pos += 1;
         Ok(v)
+    }
+
+    fn peek_u32(&self) -> Option<u32> {
+        self.toks.get(self.pos).copied()
     }
 
     fn is_eof(&self) -> bool {

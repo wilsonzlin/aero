@@ -12101,7 +12101,6 @@ fn wgsl_gs_passthrough_vertex_shader(varying_locations: &BTreeSet<u32>) -> Resul
     }
 
     let mut out = String::new();
-
     out.push_str("struct VsIn {\n");
     out.push_str(&format!("    @location({pos_location}) pos: vec4<f32>,\n"));
     for &loc in varying_locations {

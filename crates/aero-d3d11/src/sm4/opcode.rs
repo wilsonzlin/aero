@@ -51,6 +51,11 @@ pub const OPCODE_IF: u32 = 0x28;
 pub const OPCODE_ELSE: u32 = 0x29;
 pub const OPCODE_ENDIF: u32 = 0x2a;
 
+/// `setp` (set predicate register).
+///
+/// D3D10+ tokenized program format: `D3D10_SB_OPCODE_TYPE_SETP`.
+pub const OPCODE_SETP: u32 = 0x2c;
+
 // ---- Integer arithmetic ----
 pub const OPCODE_IABS: u32 = 0x61;
 pub const OPCODE_INEG: u32 = 0x62;
@@ -271,6 +276,10 @@ pub const OPCODE_DCL_UAV_STRUCTURED: u32 = 0x208;
 pub const OPCODE_TEST_BOOLEAN_SHIFT: u32 = 24;
 pub const OPCODE_TEST_BOOLEAN_MASK: u32 = 0x3;
 
+// `setp` comparison op field (opcode-token control bits).
+pub const SETP_CMP_SHIFT: u32 = 24;
+pub const SETP_CMP_MASK: u32 = 0x0f;
+
 // ---- Operand token bitfields ----
 
 pub const OPERAND_NUM_COMPONENTS_MASK: u32 = 0x3;
@@ -297,6 +306,10 @@ pub const OPERAND_TYPE_IMMEDIATE32: u32 = 4;
 pub const OPERAND_TYPE_SAMPLER: u32 = 6;
 pub const OPERAND_TYPE_RESOURCE: u32 = 7;
 pub const OPERAND_TYPE_CONSTANT_BUFFER: u32 = 8;
+/// Predicate register (`p#`).
+///
+/// D3D10+ tokenized program format: `D3D10_SB_OPERAND_TYPE_PREDICATE`.
+pub const OPERAND_TYPE_PREDICATE: u32 = 11;
 /// Pixel shader depth output (`oDepth`).
 ///
 /// Upstream: `D3D10_SB_OPERAND_TYPE_OUTPUT_DEPTH`.
