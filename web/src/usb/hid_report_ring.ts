@@ -93,6 +93,11 @@ export class HidReportRing {
 
   push(deviceId: number, reportType: HidReportType, reportId: number, payload: Uint8Array): boolean {
     const payloadLen = payload.byteLength >>> 0;
+    if (payloadLen > 0xffff) {
+      // The on-wire ring format encodes `len` as a u16; larger payloads are not representable.
+      Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+      return false;
+    }
     const recordSize = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
     if (recordSize > this.#cap) {
       Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);

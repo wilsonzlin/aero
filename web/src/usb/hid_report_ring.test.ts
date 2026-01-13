@@ -57,4 +57,14 @@ describe("HidReportRing", () => {
     expect(ring.push(1, HidReportType.Input, 3, payload8)).toBe(false);
     expect(ring.dropped()).toBe(1);
   });
+
+  it("rejects payloads larger than 65535 bytes (u16 length field)", () => {
+    const sab = createHidReportRingBuffer(128 * 1024);
+    const ring = new HidReportRing(sab);
+
+    const payload = new Uint8Array(70_000);
+    expect(ring.dropped()).toBe(0);
+    expect(ring.push(1, HidReportType.Input, 1, payload)).toBe(false);
+    expect(ring.dropped()).toBe(1);
+  });
 });
