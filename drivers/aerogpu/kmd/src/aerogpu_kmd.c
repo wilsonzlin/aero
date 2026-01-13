@@ -5916,19 +5916,45 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         return STATUS_INVALID_PARAMETER;
     }
 
-    const ULONGLONG fence = (ULONGLONG)pSubmitCommand->SubmissionFenceId;
-
     ULONG dmaSizeBytes = (ULONG)pSubmitCommand->DmaBufferSize;
     ULONG type = (dmaSizeBytes != 0) ? AEROGPU_SUBMIT_RENDER : AEROGPU_SUBMIT_PAGING;
     ULONG contextId = 0;
-    AEROGPU_SUBMISSION_META* meta = NULL;
+    ULONGLONG metaHandle = 0;
     if (pSubmitCommand->pDmaBufferPrivateData &&
         pSubmitCommand->DmaBufferPrivateDataSize >= sizeof(AEROGPU_DMA_PRIV)) {
         const AEROGPU_DMA_PRIV* priv = (const AEROGPU_DMA_PRIV*)pSubmitCommand->pDmaBufferPrivateData;
         type = priv->Type;
         contextId = priv->Reserved0;
-        meta = AeroGpuMetaHandleTake(adapter, priv->MetaHandle);
-        if (priv->MetaHandle != 0 && !meta) {
+        metaHandle = priv->MetaHandle;
+    }
+
+    /*
+     * If the adapter is not in D0 / not accepting submissions, fail fast.
+     *
+     * Note: if a Render/Present path already built a per-submit allocation table
+     * and stored it behind a MetaHandle, take + free it here so we don't leak
+     * when SubmitCommand is rejected.
+     */
+    const BOOLEAN poweredOn =
+        ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+    const BOOLEAN accepting = (InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) != 0);
+    if (!poweredOn || !accepting || !adapter->Bar0) {
+        if (metaHandle != 0) {
+            AEROGPU_SUBMISSION_META* metaEarly = AeroGpuMetaHandleTake(adapter, metaHandle);
+            if (!metaEarly) {
+                return STATUS_INVALID_PARAMETER;
+            }
+            AeroGpuFreeSubmissionMeta(metaEarly);
+        }
+        return STATUS_DEVICE_NOT_READY;
+    }
+
+    const ULONGLONG fence = (ULONGLONG)pSubmitCommand->SubmissionFenceId;
+
+    AEROGPU_SUBMISSION_META* meta = NULL;
+    if (metaHandle != 0) {
+        meta = AeroGpuMetaHandleTake(adapter, metaHandle);
+        if (!meta) {
             return STATUS_INVALID_PARAMETER;
         }
     }
