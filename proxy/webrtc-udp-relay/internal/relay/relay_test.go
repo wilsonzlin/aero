@@ -222,7 +222,7 @@ func TestUdpPortBinding_DropsOversizeDatagramInsteadOfForwardingTruncated(t *tes
 	cfg.MaxDatagramPayloadBytes = 5
 	cfg.UDPReadBufferBytes = 5
 
-	r := NewSessionRelay(dc, cfg, p, nil)
+	r := NewSessionRelay(dc, cfg, p, nil, nil)
 	t.Cleanup(r.Close)
 
 	remote, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})

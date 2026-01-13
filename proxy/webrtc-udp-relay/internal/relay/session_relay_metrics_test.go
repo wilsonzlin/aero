@@ -21,7 +21,7 @@ func TestSessionRelay_WebRTCUDPMetrics_MalformedFrame(t *testing.T) {
 	}
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
-	r := NewSessionRelay(dc, DefaultConfig(), policy.NewDevDestinationPolicy(), sess)
+	r := NewSessionRelay(dc, DefaultConfig(), policy.NewDevDestinationPolicy(), sess, nil)
 	t.Cleanup(r.Close)
 
 	r.HandleDataChannelMessage([]byte{0x00})
@@ -46,7 +46,7 @@ func TestSessionRelay_WebRTCUDPMetrics_OversizedPayload(t *testing.T) {
 	relayCfg.MaxDatagramPayloadBytes = 1
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
-	r := NewSessionRelay(dc, relayCfg, policy.NewDevDestinationPolicy(), sess)
+	r := NewSessionRelay(dc, relayCfg, policy.NewDevDestinationPolicy(), sess, nil)
 	t.Cleanup(r.Close)
 
 	// Construct a v1 frame whose payload is larger than MaxDatagramPayloadBytes.
@@ -77,7 +77,7 @@ func TestSessionRelay_WebRTCUDPMetrics_BackpressureDrop(t *testing.T) {
 	relayCfg.DataChannelSendQueueBytes = 1
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
-	r := NewSessionRelay(dc, relayCfg, policy.NewDevDestinationPolicy(), sess)
+	r := NewSessionRelay(dc, relayCfg, policy.NewDevDestinationPolicy(), sess, nil)
 	t.Cleanup(r.Close)
 	r.EnableWebRTCUDPMetrics()
 

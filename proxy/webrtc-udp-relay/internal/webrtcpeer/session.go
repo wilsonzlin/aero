@@ -72,6 +72,15 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				return
 			}
 
+			// Defensive cap on inbound DataChannel message size. The UDP relay frames
+			// themselves are bounded by the application-level payload limit plus the
+			// framing overhead (v2 IPv6 is the worst case at 24 bytes).
+			//
+			// Note: This runs after pion has already allocated msg.Data, so it is not
+			// a replacement for SCTP-level receive caps. It is still valuable to
+			// quickly tear down misbehaving peers that send oversized messages.
+			udpMaxMsgBytes := relayCfg.WithDefaults().MaxDatagramPayloadBytes + (4 + 2 + 16 + 2)
+
 			r := relay.NewSessionRelay(dc, relayCfg, destPolicy, quota, nil)
 			r.EnableWebRTCUDPMetrics()
 
@@ -93,6 +102,20 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			})
 			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 				if msg.IsString {
+					return
+				}
+				if udpMaxMsgBytes > 0 && len(msg.Data) > udpMaxMsgBytes {
+					var sessionID any
+					if s.quota != nil {
+						sessionID = s.quota.ID()
+					}
+					slog.Warn("rejecting oversized udp datachannel message",
+						"session_id", sessionID,
+						"msg_bytes", len(msg.Data),
+						"max_bytes", udpMaxMsgBytes,
+					)
+					// Close asynchronously so we never block a pion callback on teardown.
+					go func() { _ = dc.Close() }()
 					return
 				}
 				r.HandleDataChannelMessage(msg.Data)
