@@ -543,6 +543,14 @@ impl HdaCodec {
         }
     }
 
+    fn pack_power_state_response(state: u8) -> u32 {
+        // Intel HDA `GET_POWER_STATE` (0xF05) returns a packed status word. We only model
+        // the current state ([1:0]) and target state ([5:4]). For this minimal codec model,
+        // transitions are instantaneous so current == target.
+        let state = (state & 0x3) as u32;
+        state | (state << 4)
+    }
+
     fn handle_root_verb(&mut self, verb_id: u16, payload8: u8) -> u32 {
         match verb_id {
             0xF00 => self.get_parameter_root(payload8),
@@ -560,7 +568,7 @@ impl HdaCodec {
             }
             0xF05 => {
                 // GET_POWER_STATE
-                self.afg_power_state as u32
+                Self::pack_power_state_response(self.afg_power_state)
             }
             _ => 0,
         }
@@ -633,7 +641,7 @@ impl HdaCodec {
                 self.output_pin.power_state = payload8 & 0x3;
                 0
             }
-            0xF05 => self.output_pin.power_state as u32,
+            0xF05 => Self::pack_power_state_response(self.output_pin.power_state),
             0xF09 => {
                 // GET_PIN_SENSE: report presence detect (bit31).
                 1 << 31
@@ -661,7 +669,7 @@ impl HdaCodec {
                 self.mic_pin.power_state = payload8 & 0x3;
                 0
             }
-            0xF05 => self.mic_pin.power_state as u32,
+            0xF05 => Self::pack_power_state_response(self.mic_pin.power_state),
             0xF09 => 1 << 31,
             0xF1C => self.mic_pin.config_default,
             _ => 0,

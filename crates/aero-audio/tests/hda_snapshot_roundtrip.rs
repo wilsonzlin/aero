@@ -353,7 +353,7 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
     );
     assert_eq!(
         restored.codec_mut().execute_verb(5, verb_12(0xF05, 0)),
-        0x03
+        0x33
     );
 }
 
