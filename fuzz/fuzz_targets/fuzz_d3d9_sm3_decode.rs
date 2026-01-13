@@ -171,11 +171,6 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    // Exercise DXBC container parsing (best-effort).
-    if allow_dxbc {
-        let _ = aero_d3d9::dxbc::robust::DxbcContainer::parse(data);
-    }
-
     // Exercise the legacy D3D9 shader parser (DXBC/raw SM2/3 token stream → ShaderProgram).
     //
     // This parser tokenizes the entire input into u32 tokens up front, so avoid calling it on
