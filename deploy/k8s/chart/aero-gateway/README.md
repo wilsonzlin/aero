@@ -147,7 +147,7 @@ Enable capture by setting a writable directory inside the container:
 l2Proxy:
   capture:
     dir: /tmp/aero-l2-captures
-    maxBytes: 104857600 # 100 MiB per capture file (0 disables the cap)
+    maxBytes: 67108864 # 64 MiB per capture file (0 disables the cap)
     flushIntervalMs: 1000
 ```
 

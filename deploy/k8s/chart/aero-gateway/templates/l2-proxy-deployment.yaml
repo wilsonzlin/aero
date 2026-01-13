@@ -107,7 +107,7 @@ spec:
             - name: AERO_L2_CAPTURE_DIR
               value: {{ $captureDir | quote }}
             - name: AERO_L2_CAPTURE_MAX_BYTES
-              value: {{ (.Values.l2Proxy.capture.maxBytes | default 104857600) | quote }}
+              value: {{ (.Values.l2Proxy.capture.maxBytes | default 67108864) | quote }}
             - name: AERO_L2_CAPTURE_FLUSH_INTERVAL_MS
               value: {{ (.Values.l2Proxy.capture.flushIntervalMs | default 1000) | quote }}
             {{- end }}

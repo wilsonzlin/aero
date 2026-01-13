@@ -171,7 +171,7 @@ l2Proxy:
     # When empty, capture is disabled.
     dir: ""
     # Max bytes per capture file (`0` disables the cap).
-    maxBytes: 104857600 # 100 MiB
+    maxBytes: 67108864 # 64 MiB
     # Flush interval for capture writers (`0` flushes every packet).
     flushIntervalMs: 1000
 

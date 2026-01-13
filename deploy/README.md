@@ -210,7 +210,7 @@ cp deploy/.env.example deploy/.env
   - **Privacy warning:** captures contain raw network traffic and may include sensitive user data (DNS queries,
     plaintext protocols, credentials, etc.). Treat capture files as secrets and avoid enabling capture on
     internet-exposed production deployments unless you have an explicit retention/privacy plan.
-- `AERO_L2_CAPTURE_MAX_BYTES` (default in compose: `104857600` / 100 MiB)
+- `AERO_L2_CAPTURE_MAX_BYTES` (default in compose: `67108864` / 64 MiB)
   - Max bytes per capture file (`0` disables the cap).
 - `AERO_L2_CAPTURE_FLUSH_INTERVAL_MS` (default in compose: `1000`)
   - Flush interval for capture writers (`0` flushes every packet). Larger values reduce disk I/O but may lose

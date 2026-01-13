@@ -35,7 +35,7 @@ l2Proxy:
   # Optional: L2 tunnel capture (PCAPNG) (debugging only; treat files as sensitive).
   #capture:
   #  dir: /tmp/aero-l2-captures
-  #  maxBytes: 104857600 # 100 MiB per capture file (0 disables the cap)
+  #  maxBytes: 67108864 # 64 MiB per capture file (0 disables the cap)
   #  flushIntervalMs: 1000
 
 # Optional: override L2 tunnel payload limits (bytes).
