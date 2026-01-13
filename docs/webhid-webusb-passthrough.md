@@ -300,9 +300,9 @@ Note: `SharedArrayBuffer` requires cross-origin isolation (COOP/COEP) in modern 
 page is not `crossOriginIsolated`, the runtime automatically falls back to the `postMessage` path.
 See [`docs/11-browser-apis.md`](./11-browser-apis.md).
 
-When rings were previously attached but later become unavailable (e.g., worker restart/reattach, or
-detected ring corruption), the runtime should treat this as a performance downgrade only and
-continue operating via the `postMessage` path.
+When rings were previously attached but later become unavailable (e.g., worker restart/reattach),
+the runtime should treat this as a performance downgrade only and continue operating via the
+`postMessage` path.
 
 ## Guest-side model (UHCI + generic HID passthrough device)
 
