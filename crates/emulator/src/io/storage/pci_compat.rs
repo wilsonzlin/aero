@@ -11,7 +11,7 @@
 //! read-modify-write for such accesses.
 
 use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
-use aero_devices::pci::PciConfigSpace;
+use aero_devices::pci::{PciBarDefinition, PciConfigSpace};
 use std::cell::RefCell;
 
 const PCI_BAR_OFF_START: u16 = 0x10;
@@ -25,6 +25,55 @@ fn is_pci_bar_offset(offset: u16) -> bool {
 #[inline]
 fn align_pci_dword(offset: u16) -> u16 {
     offset & !0x3
+}
+
+#[inline]
+fn pci_bar_index(aligned_offset: u16) -> Option<u8> {
+    if !is_pci_bar_offset(aligned_offset) || (aligned_offset & 0x3) != 0 {
+        return None;
+    }
+    Some(((aligned_offset - PCI_BAR_OFF_START) / 4) as u8)
+}
+
+fn read_bar_dword_programmed(cfg: &mut PciConfigSpace, aligned_offset: u16) -> u32 {
+    let Some(bar_index) = pci_bar_index(aligned_offset) else {
+        return 0;
+    };
+
+    // When a BAR is being probed, canonical `PciConfigSpace::read` returns the probe mask rather
+    // than the programmed base. For subword BAR writes we want to merge against the programmed
+    // base, matching real hardware.
+    if let Some(def) = cfg.bar_definition(bar_index) {
+        let base = cfg.bar_range(bar_index).map(|r| r.base).unwrap_or(0);
+        return match def {
+            PciBarDefinition::Io { .. } => (base as u32 & 0xFFFF_FFFC) | 0x1,
+            PciBarDefinition::Mmio32 { prefetchable, .. } => {
+                let mut val = base as u32 & 0xFFFF_FFF0;
+                if prefetchable {
+                    val |= 1 << 3;
+                }
+                val
+            }
+            PciBarDefinition::Mmio64 { prefetchable, .. } => {
+                let mut val = base as u32 & 0xFFFF_FFF0;
+                val |= 0b10 << 1;
+                if prefetchable {
+                    val |= 1 << 3;
+                }
+                val
+            }
+        };
+    }
+
+    // High dword of a 64-bit BAR.
+    if bar_index > 0 && matches!(cfg.bar_definition(bar_index - 1), Some(PciBarDefinition::Mmio64 { .. }))
+    {
+        let base = cfg.bar_range(bar_index - 1).map(|r| r.base).unwrap_or(0);
+        return (base >> 32) as u32;
+    }
+
+    // Unknown BAR definition: defer to the canonical config bytes (not affected by BAR probe).
+    cfg.read(aligned_offset, 4)
 }
 
 /// Wraps a canonical [`aero_devices::pci::PciConfigSpace`] to be safely accessed through the
@@ -85,7 +134,7 @@ impl PciConfigSpaceCompat {
                 return;
             }
 
-            let old = cfg.read(aligned, 4);
+            let old = read_bar_dword_programmed(&mut cfg, aligned);
             let shift = u32::from(offset - aligned) * 8;
             let mask = match size {
                 1 => 0xFF,
@@ -148,5 +197,27 @@ mod tests {
         compat.write_u32(0x10, 4, 0xFFFF_FFFF);
         assert_eq!(compat.read_u32(0x10, 4), 0xFFFF_F000);
     }
-}
 
+    #[test]
+    fn bar_subword_writes_after_probe_use_programmed_base_not_probe_mask() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+
+        let compat = PciConfigSpaceCompat::new(cfg);
+
+        // BAR size probe returns the size mask, but does not overwrite the programmed base.
+        compat.write_u32(0x10, 4, 0xFFFF_FFFF);
+        assert_eq!(compat.read_u32(0x10, 4), 0xFFFF_F000);
+
+        // Program only the high 16 bits via a subword write. The low 16 bits must remain from the
+        // programmed base (0), not from the probe response (0xFFFF_F000).
+        compat.write_u32(0x12, 2, 0xE000);
+        assert_eq!(compat.read_u32(0x10, 4), 0xE000_0000);
+    }
+}
