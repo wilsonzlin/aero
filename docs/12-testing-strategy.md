@@ -756,7 +756,16 @@ The repository includes an initial differential testing harness at `crates/confo
 compares a small deterministic corpus against native host execution on `x86_64` (user-mode
 instructions only).
 
-Run it locally with:
+Run it locally (recommended) with:
+
+```bash
+cargo xtask conformance --cases 512
+```
+
+Note: the native reference backend currently requires a unix `x86_64` host. On other platforms,
+`cargo xtask conformance` prints a friendly "skipped" message and exits 0.
+
+You can also invoke the tests directly via Cargo:
 
 ```bash
 cargo test --locked -p conformance --test conformance -- --nocapture
@@ -766,8 +775,19 @@ Tuning / reproducing failures:
 
 - `AERO_CONFORMANCE_CASES=<n>` to increase/decrease the corpus size (default `512`).
 - `AERO_CONFORMANCE_SEED=<n>` to reproduce a specific random corpus.
+- `AERO_CONFORMANCE_FILTER=<expr>` to select a subset of the corpus/templates (e.g. `add`).
 - `AERO_CONFORMANCE_REPORT_PATH=<path>` to write a JSON report (written on failure; also written on success when set).
 - `AERO_CONFORMANCE_REFERENCE_ISOLATE=0` to disable `fork()` isolation in the native reference backend (can help in sandboxed environments).
+
+Using the xtask wrapper is just a convenient way to set these env vars:
+
+```bash
+cargo xtask conformance \
+  --cases 5000 \
+  --seed 0x52c671d9a4f231b9 \
+  --filter add \
+  --report target/conformance.json
+```
 
 CI runs a fast subset on PRs and a larger corpus on a schedule via
 `.github/workflows/conformance.yml`.

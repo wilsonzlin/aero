@@ -9,6 +9,7 @@ mod cmd_snapshot;
 mod cmd_test_all;
 mod cmd_wasm;
 mod cmd_web;
+mod cmd_conformance;
 mod error;
 
 // Fixture "sources" live under `tests/fixtures/` so they can be consumed by
@@ -38,6 +39,7 @@ fn try_main() -> Result<()> {
 
     match cmd.as_str() {
         "fixtures" => cmd_fixtures(args.collect()),
+        "conformance" => cmd_conformance::cmd(args.collect()),
         "snapshot" => cmd_snapshot::cmd(args.collect()),
         "test-all" => cmd_test_all::cmd(args.collect()),
         "wasm" => cmd_wasm::cmd(args.collect()),
@@ -52,6 +54,7 @@ fn help() -> Result<()> {
         "\
 Usage:
   cargo xtask fixtures [--check]
+  cargo xtask conformance [options]
   cargo xtask snapshot inspect <path>
   cargo xtask snapshot validate [--deep] <path>
   cargo xtask test-all [options] [-- <extra playwright args>]
@@ -60,6 +63,7 @@ Usage:
 
 Commands:
   fixtures   Generate tiny, deterministic in-repo fixtures (boot sectors + firmware blobs).
+  conformance Run instruction conformance / differential tests (x86_64 unix only).
   snapshot   Inspect/validate an `aero-snapshot` file without loading multi-GB RAM payloads.
   test-all   Run the full test stack (Rust, WASM, TypeScript, Playwright).
   wasm       Build the Rust→WASM packages used by the web app.
