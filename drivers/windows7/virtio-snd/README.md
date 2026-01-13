@@ -264,11 +264,16 @@ is disabled by default to avoid accidentally installing **two** INFs that match 
 
 ## Bring-up toggles (registry)
 
-For diagnostics, the driver exposes a per-device bring-up switch:
+For diagnostics, the driver exposes per-device bring-up switches:
 
 - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\ForceNullBackend` (`REG_DWORD`)
   - Default: `0` (use virtio backend; bring-up failures surface as Code 10)
   - Set to `1` to force the silent “null” backend, allowing the PortCls/WaveRT stack to start even if virtio transport bring-up fails.
+
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` (`REG_DWORD`)
+  - Default: `0` (INTx-strict per Aero contract v1; missing/unsupported INTx fails START_DEVICE)
+  - Set to `1` to allow the driver to start when INTx cannot be discovered/connected (for example MSI-only environments), relying on periodic used-ring polling (driven by the WaveRT period timer DPC).
+
   - Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
 
 ## Offline / slipstream installation (optional)

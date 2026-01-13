@@ -140,35 +140,48 @@ static BOOLEAN VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
 
 static BOOLEAN VirtIoSndReadAllowPollingOnly(_In_ PDEVICE_OBJECT DeviceObject)
 {
-    HANDLE key;
-    UNICODE_STRING valueName;
-    UCHAR buf[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
-    PKEY_VALUE_PARTIAL_INFORMATION info;
-    ULONG resultLen;
+    HANDLE rootKey;
+    HANDLE paramsKey;
+    UNICODE_STRING paramsSubkeyName;
+    OBJECT_ATTRIBUTES oa;
+    ULONG value;
     BOOLEAN allowPollingOnly;
 
     allowPollingOnly = FALSE;
-    key = NULL;
+    rootKey = NULL;
+    paramsKey = NULL;
+    value = 0;
 
     if (DeviceObject == NULL) {
         return FALSE;
     }
 
-    if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &key)) || key == NULL) {
+    /*
+     * Preferred location (INF creates this by default):
+     *   HKR\Parameters\AllowPollingOnly (REG_DWORD)
+     *
+     * Also accept a root value for compatibility with older/test setups.
+     */
+    if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &rootKey)) || rootKey == NULL) {
         return FALSE;
     }
 
-    RtlInitUnicodeString(&valueName, L"AllowPollingOnly");
-    info = (PKEY_VALUE_PARTIAL_INFORMATION)buf;
-    RtlZeroMemory(buf, sizeof(buf));
-    resultLen = 0;
-
-    if (NT_SUCCESS(ZwQueryValueKey(key, &valueName, KeyValuePartialInformation, info, sizeof(buf), &resultLen)) &&
-        info->Type == REG_DWORD && info->DataLength >= sizeof(ULONG)) {
-        allowPollingOnly = (*(UNALIGNED const ULONG*)info->Data) ? TRUE : FALSE;
+    if (VirtIoSndQueryDwordValue(rootKey, L"AllowPollingOnly", &value)) {
+        allowPollingOnly = value ? TRUE : FALSE;
+        ZwClose(rootKey);
+        return allowPollingOnly;
     }
 
-    ZwClose(key);
+    RtlInitUnicodeString(&paramsSubkeyName, L"Parameters");
+    InitializeObjectAttributes(&oa, &paramsSubkeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, rootKey, NULL);
+    if (NT_SUCCESS(ZwOpenKey(&paramsKey, KEY_READ, &oa)) && paramsKey != NULL) {
+        if (VirtIoSndQueryDwordValue(paramsKey, L"AllowPollingOnly", &value)) {
+            allowPollingOnly = value ? TRUE : FALSE;
+        }
+        ZwClose(paramsKey);
+    }
+
+    ZwClose(rootKey);
     return allowPollingOnly;
 }
 

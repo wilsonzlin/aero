@@ -163,7 +163,7 @@ Backend layer (WaveRT ↔ virtio-snd):
     - The shipped INFs create `ForceNullBackend` with a default value of `0` (normal virtio backend).
   - When `ForceNullBackend=1`, the adapter will also tolerate virtio transport start failures (no Code 10) so PortCls/WaveRT behavior can be tested even if the virtio-snd device/emulator is unavailable.
   - With the Null backend, both render and capture endpoints remain functional from the Windows audio stack’s perspective, but record/play silence.
-- Optional bring-up flag: `AllowPollingOnly` (`REG_DWORD`) under the device's **Device Parameters** key (default `0`, set by the INF).
+- Optional bring-up flag: `AllowPollingOnly` (`REG_DWORD`) under the same per-instance **Parameters** key (default `0`, created by the INF).
   - When `AllowPollingOnly=1`, the driver may start even if INTx resource discovery fails (no line-based interrupt resource / MSI-only), and it will rely on polling used rings (driven by the WaveRT period timer DPC) instead of virtio ISR/DPC delivery.
   - This is intended for early emulator/device-model bring-up and debugging; the default behavior remains INTx-strict per the Aero contract v1.
 
