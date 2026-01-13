@@ -45,38 +45,6 @@ normalize_all() {
   tr -d '\r\t ' < "$1" | tr 'A-Z' 'a-z'
 }
 
-normalize_nocomment() {
-  # Lowercase + strip CRLF + whitespace, but ignore comment-only lines.
-  #
-  # This avoids false positives where a directive is present but commented out
-  # (e.g. `; Include = ks.inf, wdmaudio.inf`).
-  awk '
-    {
-      sub(/\r$/, "")
-      if ($0 ~ /^[[:space:]]*;/) next
-      print
-    }
-  ' "$1" | tr -d '\t ' | tr 'A-Z' 'a-z'
-}
-
-require_contains_norm() {
-  file="$1"
-  needle="$2"
-  msg="$3"
-  if ! normalize_nocomment "$file" | grep -Fq "$needle"; then
-    fail "$msg"
-  fi
-}
-
-require_not_contains_norm() {
-  file="$1"
-  needle="$2"
-  msg="$3"
-  if normalize_nocomment "$file" | grep -Fq "$needle"; then
-    fail "$msg"
-  fi
-}
-
 require_not_contains_norm_all() {
   file="$1"
   needle="$2"
@@ -247,6 +215,12 @@ section_contains_norm \
   'AeroVirtioSnd_InterruptManagement_AddReg' \
   'messagenumberlimit,0x00010001,8' \
   "inf/aero_virtio_snd.inf must set MessageNumberLimit=8 under Interrupt Management"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'Version' \
+  'signature="$windowsnt$"' \
+  'inf/aero_virtio_snd.inf must declare: Signature = "$WINDOWS NT$"'
 
 section_contains_norm \
   "$INF_CONTRACT" \
