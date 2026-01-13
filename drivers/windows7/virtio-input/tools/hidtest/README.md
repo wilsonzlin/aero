@@ -186,6 +186,23 @@ Cycle LEDs (guaranteed visible changes):
 hidtest.exe --led-cycle
 ```
 
+### Stress-testing StatusQ / LED writes
+
+The driver exposes an optional registry knob to change how the virtio **statusq**
+behaves when it is full:
+
+`HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters\StatusQDropOnFull` (DWORD)
+
+When set to nonzero, pending LED writes are dropped instead of being held until
+the queue drains. You can enable it and then stress the write path with:
+
+```bat
+hidtest.exe --keyboard --led-cycle --count 10000
+hidtest.exe --keyboard --counters
+```
+
+Watch the `VirtioStatusDrops` counter to confirm drop-on-full behavior.
+
 Dump the raw HID report descriptor bytes:
 
 ```bat
