@@ -4189,6 +4189,138 @@ bool TestHostOwnedUpdateSubresourceUPTextureUploads() {
   return true;
 }
 
+bool TestHostOwnedUpdateSubresourceUPTexture2DMipArrayUploads() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev,
+                            /*want_backing_allocations=*/false,
+                            /*async_fences=*/false),
+             "InitTestDevice(UpdateSubresourceUP mip+array tex2d host-owned)")) {
+    return false;
+  }
+
+  static constexpr uint32_t kWidth = 4;
+  static constexpr uint32_t kHeight = 4;
+  static constexpr uint32_t kMipLevels = 3;
+  static constexpr uint32_t kArraySize = 2;
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2DWithFormatAndDesc(&dev,
+                                                     kWidth,
+                                                     kHeight,
+                                                     kDxgiFormatB8G8R8A8Unorm,
+                                                     /*cpu_access_flags=*/0,
+                                                     kMipLevels,
+                                                     kArraySize,
+                                                     &tex),
+             "CreateStagingTexture2DWithFormatAndDesc(mip+array)")) {
+    return false;
+  }
+
+  // subresource=4 corresponds to mip1 layer1 when mip_levels=3.
+  const uint32_t subresource = 4;
+  const uint32_t mip1_row_bytes = DxgiTextureMinRowPitchBytes(kDxgiFormatB8G8R8A8Unorm, /*width=*/2);
+  const uint32_t mip1_rows = DxgiTextureNumRows(kDxgiFormatB8G8R8A8Unorm, /*height=*/2);
+  const size_t mip1_size = static_cast<size_t>(mip1_row_bytes) * static_cast<size_t>(mip1_rows);
+
+  std::vector<uint8_t> sysmem(mip1_size);
+  for (size_t i = 0; i < sysmem.size(); ++i) {
+    sysmem[i] = static_cast<uint8_t>(0xA0u + (i & 0x3Fu));
+  }
+
+  dev.device_funcs.pfnUpdateSubresourceUP(dev.hDevice,
+                                          tex.hResource,
+                                          subresource,
+                                          /*pDstBox=*/nullptr,
+                                          sysmem.data(),
+                                          /*SysMemPitch=*/mip1_row_bytes,
+                                          /*SysMemSlicePitch=*/0);
+
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after UpdateSubresourceUP(mip+array)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+             "host-owned tex2d UpdateSubresourceUP(mip+array) should not emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1,
+             "host-owned tex2d UpdateSubresourceUP(mip+array) should emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+  if (!Check(create_cmd->backing_alloc_id == 0, "CREATE_TEXTURE2D backing_alloc_id == 0 (host-owned)")) {
+    return false;
+  }
+  if (!Check(create_cmd->mip_levels == kMipLevels, "CREATE_TEXTURE2D mip_levels matches")) {
+    return false;
+  }
+  if (!Check(create_cmd->array_layers == kArraySize, "CREATE_TEXTURE2D array_layers matches")) {
+    return false;
+  }
+
+  // Validate the upload offset matches the expected mip-major layout within each array layer.
+  const uint32_t row_pitch0 = create_cmd->row_pitch_bytes;
+  const uint32_t mip0_rows = DxgiTextureNumRows(kDxgiFormatB8G8R8A8Unorm, kHeight);
+  const uint64_t mip0_size = static_cast<uint64_t>(row_pitch0) * static_cast<uint64_t>(mip0_rows);
+
+  const uint32_t mip1_row_pitch = DxgiTextureMinRowPitchBytes(kDxgiFormatB8G8R8A8Unorm, 2);
+  const uint32_t mip1_rows2 = DxgiTextureNumRows(kDxgiFormatB8G8R8A8Unorm, 2);
+  const uint64_t mip1_size_u64 = static_cast<uint64_t>(mip1_row_pitch) * static_cast<uint64_t>(mip1_rows2);
+
+  const uint32_t mip2_row_pitch = DxgiTextureMinRowPitchBytes(kDxgiFormatB8G8R8A8Unorm, 1);
+  const uint32_t mip2_rows = DxgiTextureNumRows(kDxgiFormatB8G8R8A8Unorm, 1);
+  const uint64_t mip2_size = static_cast<uint64_t>(mip2_row_pitch) * static_cast<uint64_t>(mip2_rows);
+
+  const uint64_t layer_stride = mip0_size + mip1_size_u64 + mip2_size;
+  const uint64_t expected_offset = layer_stride + mip0_size;
+
+  CmdLoc upload_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload_loc.hdr != nullptr, "UPLOAD_RESOURCE emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(stream + upload_loc.offset);
+  if (!Check(upload_cmd->offset_bytes == expected_offset, "UPLOAD_RESOURCE offset_bytes matches subresource layout")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == mip1_size_u64, "UPLOAD_RESOURCE size_bytes matches subresource size")) {
+    return false;
+  }
+
+  const size_t payload_offset = upload_loc.offset + sizeof(*upload_cmd);
+  const size_t payload_size = static_cast<size_t>(upload_cmd->size_bytes);
+  if (!Check(payload_offset + payload_size <= stream_len, "UPLOAD_RESOURCE payload fits")) {
+    return false;
+  }
+  if (!Check(payload_size == sysmem.size(), "UPLOAD_RESOURCE payload size == sysmem size")) {
+    return false;
+  }
+  if (!Check(std::memcmp(stream + payload_offset, sysmem.data(), sysmem.size()) == 0, "UPLOAD_RESOURCE payload bytes")) {
+    return false;
+  }
+
+  if (!Check(dev.harness.last_allocs.empty(), "host-owned tex2d submit alloc list should be empty")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestGuestBackedUpdateSubresourceUPTextureDirtyRange() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(UpdateSubresourceUP tex2d guest-backed)")) {
@@ -7965,6 +8097,7 @@ int main() {
   ok &= TestHostOwnedUpdateSubresourceUPBufferUploads();
   ok &= TestGuestBackedUpdateSubresourceUPBufferDirtyRange();
   ok &= TestHostOwnedUpdateSubresourceUPTextureUploads();
+  ok &= TestHostOwnedUpdateSubresourceUPTexture2DMipArrayUploads();
   ok &= TestGuestBackedUpdateSubresourceUPTextureDirtyRange();
   ok &= TestHostOwnedUpdateSubresourceUPBcTextureUploads();
   ok &= TestGuestBackedUpdateSubresourceUPBcTextureDirtyRange();
