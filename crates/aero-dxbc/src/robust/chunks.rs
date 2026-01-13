@@ -60,3 +60,4 @@ pub struct DxbcChunk<'a> {
     pub size: u32,
     pub data: &'a [u8],
 }
+

@@ -1,22 +1,43 @@
 use std::fmt;
 
-use thiserror::Error;
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ByteReaderError {
-    #[error("unexpected end of input at offset {offset} (needed {needed} bytes, remaining {remaining} bytes)")]
     UnexpectedEof {
         offset: usize,
         needed: usize,
         remaining: usize,
     },
-    #[error("offset {offset} is out of bounds (len {len})")]
     OffsetOutOfBounds { offset: usize, len: usize },
-    #[error("string at offset {offset} is not valid UTF-8")]
     InvalidUtf8 { offset: usize },
-    #[error("c-string starting at offset {offset} is missing a null terminator")]
     UnterminatedCString { offset: usize },
 }
+
+impl fmt::Display for ByteReaderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ByteReaderError::UnexpectedEof {
+                offset,
+                needed,
+                remaining,
+            } => write!(
+                f,
+                "unexpected end of input at offset {offset} (needed {needed} bytes, remaining {remaining} bytes)"
+            ),
+            ByteReaderError::OffsetOutOfBounds { offset, len } => {
+                write!(f, "offset {offset} is out of bounds (len {len})")
+            }
+            ByteReaderError::InvalidUtf8 { offset } => {
+                write!(f, "string at offset {offset} is not valid UTF-8")
+            }
+            ByteReaderError::UnterminatedCString { offset } => write!(
+                f,
+                "c-string starting at offset {offset} is missing a null terminator"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ByteReaderError {}
 
 #[derive(Clone, Copy)]
 pub struct ByteReader<'a> {
@@ -138,3 +159,4 @@ impl fmt::Debug for ByteReader<'_> {
             .finish()
     }
 }
+

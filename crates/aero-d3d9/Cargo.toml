@@ -5,9 +5,9 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [features]
-# Enables the large DXBC reflection/disassembler implementation under `dxbc::robust`.
-# This is only needed for the robust DXBC parser tests and debugging tools.
-dxbc-robust = []
+# Enables the robust DXBC parser tests and utilities (via `aero-dxbc`'s `robust`
+# feature).
+dxbc-robust = ["aero-dxbc/robust"]
 
 [dependencies]
 anyhow = "1"

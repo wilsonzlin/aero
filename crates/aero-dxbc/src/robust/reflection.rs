@@ -303,3 +303,4 @@ fn parse_bound_resources(
 
     Ok(out)
 }
+

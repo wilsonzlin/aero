@@ -1,3 +1,11 @@
+//! Higher-level DXBC parsing helpers.
+//!
+//! This module contains the "robust" DXBC container/reflection implementation
+//! that originally lived in `aero-d3d9`. It is exposed behind the `robust`
+//! feature so both the D3D9 and D3D11 stacks can share a single implementation.
+
+#![allow(missing_docs)]
+
 mod byte_reader;
 mod chunks;
 mod container;
@@ -127,7 +135,9 @@ impl fmt::Display for DxbcError {
             DxbcError::InvalidShaderBytecode { reason } => {
                 write!(f, "invalid shader bytecode: {reason}")
             }
-            DxbcError::InvalidChunk { fourcc, reason } => write!(f, "invalid {fourcc} chunk: {reason}"),
+            DxbcError::InvalidChunk { fourcc, reason } => {
+                write!(f, "invalid {fourcc} chunk: {reason}")
+            }
         }
     }
 }
@@ -402,3 +412,4 @@ fn parse_version_token(token: Option<u32>) -> Option<(ShaderType, ShaderModel)> 
     };
     Some((shader_type, ShaderModel { major, minor }))
 }
+

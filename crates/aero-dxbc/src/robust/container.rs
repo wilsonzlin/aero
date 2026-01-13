@@ -126,3 +126,4 @@ impl<'a> DxbcContainer<'a> {
         self.chunks.iter().find(|c| &c.fourcc == fourcc)
     }
 }
+

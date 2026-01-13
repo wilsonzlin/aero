@@ -29,6 +29,13 @@ pub mod ctab;
 /// stable parsing API.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
+/// Advanced DXBC parsing helpers (reflection, disassembly, shader model extraction).
+///
+/// This module is gated behind the `robust` feature because it provides
+/// higher-level parsing helpers that allocate and are not required for all
+/// consumers.
+#[cfg(feature = "robust")]
+pub mod robust;
 
 pub use crate::dxbc::{DxbcChunk, DxbcFile, DxbcHeader};
 pub use crate::error::DxbcError;

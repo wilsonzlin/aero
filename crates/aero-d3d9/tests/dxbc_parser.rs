@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use aero_d3d9::dxbc::robust::{DxbcError, DxbcShader, FourCc, ShaderModel, ShaderType};
+use aero_dxbc::robust::{DxbcError, DxbcShader, FourCc, ShaderModel, ShaderType};
 
 fn load_fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/dxbc/{name}", env!("CARGO_MANIFEST_DIR"));
