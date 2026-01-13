@@ -23,7 +23,10 @@ pub use report_descriptor::{
     ValidationSummary,
 };
 
-pub use passthrough::{UsbHidPassthrough, UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
+pub use passthrough::{
+    UsbHidPassthrough, UsbHidPassthroughFeatureReportRequest, UsbHidPassthroughHandle,
+    UsbHidPassthroughOutputReport,
+};
 
 const USB_DESCRIPTOR_TYPE_DEVICE: u8 = 0x01;
 const USB_DESCRIPTOR_TYPE_CONFIGURATION: u8 = 0x02;

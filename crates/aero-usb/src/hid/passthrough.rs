@@ -114,6 +114,17 @@ pub struct UsbHidPassthroughOutputReport {
     pub data: Vec<u8>,
 }
 
+/// Host-side request emitted when the guest issues a `GET_REPORT (Feature)` class request.
+///
+/// The host runtime (e.g. WebHID) should service this by calling
+/// `UsbHidPassthroughHandle::complete_feature_report_request` or
+/// `UsbHidPassthroughHandle::fail_feature_report_request`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UsbHidPassthroughFeatureReportRequest {
+    pub request_id: u32,
+    pub report_id: u8,
+}
+
 #[derive(Debug)]
 pub struct UsbHidPassthrough {
     address: u8,
@@ -144,7 +155,13 @@ pub struct UsbHidPassthrough {
     last_input_reports: BTreeMap<u8, Vec<u8>>,
     last_output_reports: BTreeMap<u8, Vec<u8>>,
     last_feature_reports: BTreeMap<u8, Vec<u8>>,
+    cached_feature_reports: BTreeMap<u8, Vec<u8>>,
     pending_output_reports: VecDeque<UsbHidPassthroughOutputReport>,
+
+    next_feature_report_request_id: u32,
+    feature_report_request_queue: VecDeque<UsbHidPassthroughFeatureReportRequest>,
+    feature_report_requests_pending: BTreeMap<u8, u32>,
+    feature_report_requests_failed: BTreeMap<u8, u32>,
 }
 
 /// Shareable handle for a USB HID passthrough device model.
@@ -273,6 +290,38 @@ impl UsbHidPassthroughHandle {
         self.inner.borrow_mut().pending_output_reports.pop_front()
     }
 
+    /// Drain the next pending host-side `GET_REPORT (Feature)` request issued by the guest.
+    pub fn pop_feature_report_request(&self) -> Option<UsbHidPassthroughFeatureReportRequest> {
+        self.inner
+            .borrow_mut()
+            .feature_report_request_queue
+            .pop_front()
+    }
+
+    /// Complete a pending feature report request with the report payload bytes.
+    ///
+    /// `data` should NOT include the report ID prefix; the device model will add it when
+    /// `report_id != 0` to match USB HID `GET_REPORT` semantics expected by Windows.
+    pub fn complete_feature_report_request(
+        &self,
+        request_id: u32,
+        report_id: u8,
+        data: &[u8],
+    ) -> bool {
+        self.inner
+            .borrow_mut()
+            .complete_feature_report_request(request_id, report_id, data)
+    }
+
+    /// Fail a pending feature report request.
+    ///
+    /// The guest control transfer will complete with a timeout-style error on the next poll.
+    pub fn fail_feature_report_request(&self, request_id: u32, report_id: u8) -> bool {
+        self.inner
+            .borrow_mut()
+            .fail_feature_report_request(request_id, report_id)
+    }
+
     pub fn set_max_pending_input_reports(&self, max: usize) {
         self.inner.borrow_mut().set_max_pending_input_reports(max);
     }
@@ -397,7 +446,13 @@ impl UsbHidPassthrough {
             last_input_reports: BTreeMap::new(),
             last_output_reports: BTreeMap::new(),
             last_feature_reports: BTreeMap::new(),
+            cached_feature_reports: BTreeMap::new(),
             pending_output_reports: VecDeque::new(),
+
+            next_feature_report_request_id: 1,
+            feature_report_request_queue: VecDeque::new(),
+            feature_report_requests_pending: BTreeMap::new(),
+            feature_report_requests_failed: BTreeMap::new(),
         }
     }
 
@@ -491,10 +546,72 @@ impl UsbHidPassthrough {
                     report.report_id,
                     bytes_with_report_id(report.report_id, &report.data),
                 );
+                // Feature reports are used as configuration channels; once the guest mutates a
+                // report via SET_REPORT we no longer know whether any previously cached host-provided
+                // image is still valid.
+                self.cached_feature_reports.remove(&report.report_id);
             }
             _ => {}
         }
         self.pending_output_reports.push_back(report);
+        true
+    }
+
+    fn alloc_feature_report_request_id(&mut self) -> u32 {
+        let id = self.next_feature_report_request_id;
+        self.next_feature_report_request_id = self
+            .next_feature_report_request_id
+            .wrapping_add(1)
+            .max(1);
+        id
+    }
+
+    fn enqueue_feature_report_request(&mut self, report_id: u8) {
+        if self.feature_report_requests_pending.contains_key(&report_id) {
+            return;
+        }
+        let request_id = self.alloc_feature_report_request_id();
+        self.feature_report_requests_pending.insert(report_id, request_id);
+        self.feature_report_request_queue
+            .push_back(UsbHidPassthroughFeatureReportRequest {
+                request_id,
+                report_id,
+            });
+    }
+
+    fn complete_feature_report_request(
+        &mut self,
+        request_id: u32,
+        report_id: u8,
+        data: &[u8],
+    ) -> bool {
+        let Some(&pending_id) = self.feature_report_requests_pending.get(&report_id) else {
+            return false;
+        };
+        if pending_id != request_id {
+            return false;
+        }
+
+        self.feature_report_requests_pending.remove(&report_id);
+        self.feature_report_requests_failed.remove(&report_id);
+        self.feature_report_request_queue
+            .retain(|req| req.request_id != request_id);
+
+        self.cached_feature_reports
+            .insert(report_id, bytes_with_report_id(report_id, data));
+        true
+    }
+
+    fn fail_feature_report_request(&mut self, request_id: u32, report_id: u8) -> bool {
+        let Some(&pending_id) = self.feature_report_requests_pending.get(&report_id) else {
+            return false;
+        };
+        if pending_id != request_id {
+            return false;
+        }
+        self.feature_report_requests_failed.insert(report_id, request_id);
+        self.feature_report_request_queue
+            .retain(|req| req.request_id != request_id);
         true
     }
 
@@ -637,6 +754,11 @@ impl UsbDeviceModel for UsbHidPassthrough {
         self.last_input_reports.clear();
         self.last_output_reports.clear();
         self.last_feature_reports.clear();
+        self.cached_feature_reports.clear();
+        self.next_feature_report_request_id = 1;
+        self.feature_report_request_queue.clear();
+        self.feature_report_requests_pending.clear();
+        self.feature_report_requests_failed.clear();
     }
 
     fn handle_control_request(
@@ -893,13 +1015,32 @@ impl UsbDeviceModel for UsbHidPassthrough {
                             .unwrap_or_else(|| {
                                 self.default_report(report_type, report_id, setup.w_length)
                             }),
-                        3 => self
-                            .last_feature_reports
-                            .get(&report_id)
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                self.default_report(report_type, report_id, setup.w_length)
-                            }),
+                        3 => {
+                            if let Some(data) = self.cached_feature_reports.get(&report_id).cloned() {
+                                data
+                            } else {
+                                // If the host previously failed this request, surface the failure
+                                // as a timeout-style error (UHCI TD timeout/CRC) so the guest can
+                                // retry or recover.
+                                if let Some(&pending_id) =
+                                    self.feature_report_requests_pending.get(&report_id)
+                                {
+                                    if self
+                                        .feature_report_requests_failed
+                                        .get(&report_id)
+                                        .is_some_and(|&failed_id| failed_id == pending_id)
+                                    {
+                                        self.feature_report_requests_pending.remove(&report_id);
+                                        self.feature_report_requests_failed.remove(&report_id);
+                                        return ControlResponse::Timeout;
+                                    }
+                                    return ControlResponse::Nak;
+                                }
+
+                                self.enqueue_feature_report_request(report_id);
+                                return ControlResponse::Nak;
+                            }
+                        }
                         _ => return ControlResponse::Stall,
                     };
                     ControlResponse::Data(clamp_response(data, setup.w_length))
@@ -1530,7 +1671,7 @@ fn decode_report_map(
 
 impl IoSnapshot for UsbHidPassthrough {
     const DEVICE_ID: [u8; 4] = *b"HIDP";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 2);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 3);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_ADDRESS: u16 = 1;
@@ -1547,6 +1688,11 @@ impl IoSnapshot for UsbHidPassthrough {
         const TAG_LAST_OUTPUT_REPORTS: u16 = 12;
         const TAG_LAST_FEATURE_REPORTS: u16 = 13;
         const TAG_PENDING_OUTPUT_REPORTS: u16 = 14;
+        const TAG_CACHED_FEATURE_REPORTS: u16 = 25;
+        const TAG_NEXT_FEATURE_REPORT_REQUEST_ID: u16 = 26;
+        const TAG_FEATURE_REPORT_REQUEST_QUEUE: u16 = 27;
+        const TAG_FEATURE_REPORT_REQUESTS_PENDING: u16 = 28;
+        const TAG_FEATURE_REPORT_REQUESTS_FAILED: u16 = 29;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -1583,6 +1729,10 @@ impl IoSnapshot for UsbHidPassthrough {
             TAG_LAST_FEATURE_REPORTS,
             encode_report_map(&self.last_feature_reports),
         );
+        w.field_bytes(
+            TAG_CACHED_FEATURE_REPORTS,
+            encode_report_map(&self.cached_feature_reports),
+        );
 
         let mut pending_out = Encoder::new().u32(self.pending_output_reports.len() as u32);
         for report in &self.pending_output_reports {
@@ -1593,6 +1743,32 @@ impl IoSnapshot for UsbHidPassthrough {
                 .bytes(&report.data);
         }
         w.field_bytes(TAG_PENDING_OUTPUT_REPORTS, pending_out.finish());
+
+        w.field_u32(
+            TAG_NEXT_FEATURE_REPORT_REQUEST_ID,
+            self.next_feature_report_request_id,
+        );
+
+        let mut feature_queue =
+            Encoder::new().u32(self.feature_report_request_queue.len() as u32);
+        for req in &self.feature_report_request_queue {
+            feature_queue = feature_queue.u32(req.request_id).u8(req.report_id);
+        }
+        w.field_bytes(TAG_FEATURE_REPORT_REQUEST_QUEUE, feature_queue.finish());
+
+        let mut feature_pending =
+            Encoder::new().u32(self.feature_report_requests_pending.len() as u32);
+        for (&report_id, &request_id) in &self.feature_report_requests_pending {
+            feature_pending = feature_pending.u8(report_id).u32(request_id);
+        }
+        w.field_bytes(TAG_FEATURE_REPORT_REQUESTS_PENDING, feature_pending.finish());
+
+        let mut feature_failed =
+            Encoder::new().u32(self.feature_report_requests_failed.len() as u32);
+        for (&report_id, &request_id) in &self.feature_report_requests_failed {
+            feature_failed = feature_failed.u8(report_id).u32(request_id);
+        }
+        w.field_bytes(TAG_FEATURE_REPORT_REQUESTS_FAILED, feature_failed.finish());
 
         // Static metadata required for reconstruction.
         if let Some((vendor_id, product_id, max_packet_size)) =
@@ -1648,6 +1824,11 @@ impl IoSnapshot for UsbHidPassthrough {
         const TAG_LAST_OUTPUT_REPORTS: u16 = 12;
         const TAG_LAST_FEATURE_REPORTS: u16 = 13;
         const TAG_PENDING_OUTPUT_REPORTS: u16 = 14;
+        const TAG_CACHED_FEATURE_REPORTS: u16 = 25;
+        const TAG_NEXT_FEATURE_REPORT_REQUEST_ID: u16 = 26;
+        const TAG_FEATURE_REPORT_REQUEST_QUEUE: u16 = 27;
+        const TAG_FEATURE_REPORT_REQUESTS_PENDING: u16 = 28;
+        const TAG_FEATURE_REPORT_REQUESTS_FAILED: u16 = 29;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -1665,6 +1846,11 @@ impl IoSnapshot for UsbHidPassthrough {
         self.last_input_reports.clear();
         self.last_output_reports.clear();
         self.last_feature_reports.clear();
+        self.cached_feature_reports.clear();
+        self.next_feature_report_request_id = 1;
+        self.feature_report_request_queue.clear();
+        self.feature_report_requests_pending.clear();
+        self.feature_report_requests_failed.clear();
 
         self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
         self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
@@ -1737,6 +1923,84 @@ impl IoSnapshot for UsbHidPassthrough {
         }
         if let Some(buf) = r.bytes(TAG_LAST_FEATURE_REPORTS) {
             decode_report_map(&mut self.last_feature_reports, buf, "last feature reports")?;
+        }
+        if let Some(buf) = r.bytes(TAG_CACHED_FEATURE_REPORTS) {
+            decode_report_map(
+                &mut self.cached_feature_reports,
+                buf,
+                "cached feature reports",
+            )?;
+        }
+
+        self.next_feature_report_request_id = r
+            .u32(TAG_NEXT_FEATURE_REPORT_REQUEST_ID)?
+            .unwrap_or(1)
+            .max(1);
+
+        if let Some(buf) = r.bytes(TAG_FEATURE_REPORT_REQUEST_QUEUE) {
+            const MAX_PENDING: usize = 1024;
+
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "feature report request queue",
+                ));
+            }
+            for _ in 0..count {
+                let request_id = d.u32()?;
+                let report_id = d.u8()?;
+                self.feature_report_request_queue
+                    .push_back(UsbHidPassthroughFeatureReportRequest {
+                        request_id,
+                        report_id,
+                    });
+            }
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_FEATURE_REPORT_REQUESTS_PENDING) {
+            const MAX_PENDING: usize = 1024;
+
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "feature report requests pending",
+                ));
+            }
+            for _ in 0..count {
+                let report_id = d.u8()?;
+                let request_id = d.u32()?;
+                self.feature_report_requests_pending
+                    .insert(report_id, request_id);
+            }
+            d.finish()?;
+        } else {
+            // Backwards-compatible: older snapshots may only store the queue. Derive the pending
+            // set from queued requests so repeated GET_REPORT polls won't enqueue duplicates.
+            for req in &self.feature_report_request_queue {
+                self.feature_report_requests_pending
+                    .insert(req.report_id, req.request_id);
+            }
+        }
+
+        if let Some(buf) = r.bytes(TAG_FEATURE_REPORT_REQUESTS_FAILED) {
+            const MAX_PENDING: usize = 1024;
+
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "feature report requests failed",
+                ));
+            }
+            for _ in 0..count {
+                let report_id = d.u8()?;
+                let request_id = d.u32()?;
+                self.feature_report_requests_failed.insert(report_id, request_id);
+            }
+            d.finish()?;
         }
 
         Ok(())
@@ -2726,7 +2990,7 @@ mod tests {
     }
 
     #[test]
-    fn get_report_feature_returns_full_w_length() {
+    fn get_report_feature_completes_asynchronously_and_preserves_w_length() {
         let report = sample_report_descriptor_with_ids();
         let mut dev = UsbHidPassthroughHandle::new(
             0x1234,
@@ -2742,6 +3006,28 @@ mod tests {
         );
 
         let w_length = 200;
+        let setup = SetupPacket {
+            bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+            b_request: HID_REQUEST_GET_REPORT,
+            w_value: (3u16 << 8) | 1u16, // Feature, report ID 1
+            w_index: 0,
+            w_length,
+        };
+
+        let resp = dev.handle_control_request(
+            setup,
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Nak);
+
+        let req = dev
+            .pop_feature_report_request()
+            .expect("expected host feature report request");
+        assert_eq!(req.report_id, 1);
+
+        // Host returns payload bytes (report ID prefix is injected by the device model).
+        dev.complete_feature_report_request(req.request_id, req.report_id, &vec![0; 199]);
+
         let resp = dev.handle_control_request(
             SetupPacket {
                 bm_request_type: 0xa1, // DeviceToHost | Class | Interface
