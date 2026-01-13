@@ -97,6 +97,9 @@ The canonical INF (`inf/aero_virtio_input.inf`) intentionally matches only **Aer
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
 - `PCI\VEN_1AF4&DEV_1052&REV_01` (fallback for environments that do not expose the Aero subsystem IDs)
 
+The two subsystem-gated IDs use distinct `DeviceDesc` strings, so **keyboard and mouse appear as separate named devices**
+in Device Manager.
+
 It does **not** match:
 
 - the transitional virtio-input PCI ID (`DEV_1011`), or
