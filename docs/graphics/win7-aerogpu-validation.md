@@ -485,7 +485,11 @@ For the canonical, up-to-date command list and global options, see:
 | `--dump-last-cmd [--index-from-tail K] --out <path> [--force]` | dumps the most recent cmd stream submission to a file; also writes `<path>.txt` metadata; on AGPU may also dump `<path>.alloc_table.bin` | capture bytes for offline cmd-stream/alloc-table decode |
 | `--watch-ring --samples N --interval-ms M [--ring-id N]` | polls ring head/tail in a loop and prints one line per sample (pending count + last fence/flags when available) | diagnose “ring not draining” / stuck submit paths |
 | `--query-scanout` | cached scanout mode/visibility vs best-effort MMIO snapshot (`SCANOUT0_*`, including framebuffer GPA) | diagnosing blank output, mode/pitch mismatches, scanline bounds issues |
+| `--dump-scanout-bmp <path>` | dumps the current scanout framebuffer to an uncompressed 32bpp BMP (requires `AEROGPU_ESCAPE_OP_READ_GPA`) | capture pixels without host-side capture (blank/corrupt display debugging) |
+| `--dump-scanout-png <path>` | dumps the current scanout framebuffer to a PNG (RGBA8; requires `AEROGPU_ESCAPE_OP_READ_GPA`) | same as above, but smaller artifact |
 | `--query-cursor` (alias: `--dump-cursor`) | cursor MMIO state (`CURSOR_*` registers) | diagnosing cursor bring-up issues |
+| `--dump-cursor-bmp <path>` | dumps the current cursor image to an uncompressed 32bpp BMP (requires `AEROGPU_ESCAPE_OP_READ_GPA`) | capture cursor pixels (cursor image/pitch/fb_gpa debugging) |
+| `--dump-cursor-png <path>` | dumps the current cursor image to a PNG (RGBA8; requires `AEROGPU_ESCAPE_OP_READ_GPA`) | same as above, but smaller artifact |
 | `--dump-createalloc` *(aliases: `--dump-createallocation`, `--dump-allocations`)* | recent `DxgkDdiCreateAllocation` trace entries (optionally `--csv <path>` for stable machine parsing) | diagnosing allocation flag mismatches and shared-surface ID issues |
 | `--dump-vblank` (alias: `--query-vblank`) | IRQ enable/status + vblank seq/time/period; prints `vblank_interrupt_type` when dxgkrnl has enabled vblank delivery via `DxgkDdiControlInterrupt` | DWM stutter / Basic fallback |
 | `--wait-vblank` | WDDM vblank wait pacing via `D3DKMTWaitForVerticalBlankEvent` (bounded by `--timeout-ms`) | verifying vblank interrupts/waits work |
