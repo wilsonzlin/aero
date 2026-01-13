@@ -194,6 +194,11 @@ impl PcMachine {
             &JsValue::from_str("rx_corrupt"),
             &BigInt::from(stats.rx_corrupt).into(),
         );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_broken"),
+            &JsValue::from_bool(stats.rx_broken),
+        );
 
         obj.into()
     }

@@ -147,6 +147,7 @@ function loadPinnedNightlyToolchain() {
 }
 
 let wasmThreadedToolchain = null;
+let wasmThreadedToolchainBinDir = null;
 
 function parseKeyValueLines(output) {
     const values = {};
@@ -300,8 +301,8 @@ if (needsThreadedToolchain) {
     // The shared-memory build requires nightly + rust-src (for build-std). We pin the nightly
     // toolchain to keep threaded WASM builds reproducible (see scripts/toolchains.json).
     checkCommand(
-        "rustc",
-        [`+${wasmThreadedToolchain}`, "--version"],
+        "rustup",
+        ["run", wasmThreadedToolchain, "rustc", "--version"],
         `Threaded WASM build requires the pinned nightly Rust toolchain (${wasmThreadedToolchain}).\n\nRun:\n  rustup toolchain install ${wasmThreadedToolchain}`,
     );
 
@@ -326,6 +327,19 @@ if (needsThreadedToolchain) {
             `Threaded WASM build requires wasm32-unknown-unknown on ${wasmThreadedToolchain}.\n\nRun:\n  rustup target add wasm32-unknown-unknown --toolchain ${wasmThreadedToolchain}`,
         );
     }
+
+    // When this script is launched via `cargo xtask`, rustup commonly prepends the *stable*
+    // toolchain bin dir to $PATH. wasm-pack then resolves `cargo` from that directory, bypassing
+    // rustup's toolchain selection logic (and breaking `-Z build-std`).
+    //
+    // Resolve the pinned nightly toolchain's bin dir so we can force it to the front of PATH for
+    // threaded builds.
+    const nightlyCargoPath = checkCommand(
+        "rustup",
+        ["which", "cargo", "--toolchain", wasmThreadedToolchain],
+        `Threaded WASM build requires the pinned nightly Rust toolchain (${wasmThreadedToolchain}).\n\nRun:\n  rustup toolchain install ${wasmThreadedToolchain}`,
+    );
+    wasmThreadedToolchainBinDir = path.dirname(nightlyCargoPath);
 }
 
 const baseTargetFeatures = ["+bulk-memory"];
@@ -459,6 +473,9 @@ for (const pkg of packagesToBuild) {
         // Threaded/shared-memory builds use the pinned nightly toolchain so `-Z build-std`
         // is reproducible (see scripts/toolchains.json).
         pkgEnv.RUSTUP_TOOLCHAIN = wasmThreadedToolchain;
+        if (wasmThreadedToolchainBinDir) {
+            pkgEnv.PATH = `${wasmThreadedToolchainBinDir}${path.delimiter}${baseEnv.PATH ?? ""}`;
+        }
     }
     const rustflags = rustflagsForPkg(pkg, pkgUsesThreads);
     if (rustflags) {

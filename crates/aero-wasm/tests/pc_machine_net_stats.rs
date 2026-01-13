@@ -125,6 +125,9 @@ fn pc_machine_net_stats_smoke() {
         assert_eq!(s, "0", "{key} should start at 0");
     }
 
+    let rx_broken = Reflect::get(&stats, &JsValue::from_str("rx_broken")).expect("Reflect::get");
+    assert_eq!(rx_broken.as_bool(), Some(false), "rx_broken should start false");
+
     // Detach via alias and ensure stats are no longer reported.
     m.detach_net_rings();
     assert!(m.net_stats().is_null());
