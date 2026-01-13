@@ -5,6 +5,7 @@ use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::*;
 use aero_devices::pci::PciBarDefinition;
 use aero_devices::pci::PciBdf;
+use aero_protocol::aerogpu::aerogpu_pci as protocol_pci;
 
 #[test]
 fn canonical_ids_and_class_codes() {
@@ -78,6 +79,38 @@ fn canonical_ids_and_class_codes() {
     // AERO-W7-VIRTIO v1: virtio-input is exposed as keyboard + mouse functions.
     assert_eq!(VIRTIO_INPUT_KEYBOARD.subsystem_id, 0x0010);
     assert_eq!(VIRTIO_INPUT_MOUSE.subsystem_id, 0x0011);
+}
+
+#[test]
+fn aerogpu_profile_matches_protocol_constants() {
+    // Keep the canonical PCI profile in sync with the driver-visible ABI constants
+    // (`drivers/aerogpu/protocol/aerogpu_pci.h`, mirrored via `aero-protocol`).
+    assert_eq!(PCI_VENDOR_ID_AERO, protocol_pci::AEROGPU_PCI_VENDOR_ID);
+    assert_eq!(PCI_DEVICE_ID_AERO_AEROGPU, protocol_pci::AEROGPU_PCI_DEVICE_ID);
+    assert_eq!(
+        AEROGPU.subsystem_vendor_id,
+        protocol_pci::AEROGPU_PCI_SUBSYSTEM_VENDOR_ID
+    );
+    assert_eq!(AEROGPU.subsystem_id, protocol_pci::AEROGPU_PCI_SUBSYSTEM_ID);
+    assert_eq!(
+        AEROGPU.class.base_class,
+        protocol_pci::AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER
+    );
+    assert_eq!(
+        AEROGPU.class.sub_class,
+        protocol_pci::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE
+    );
+    assert_eq!(AEROGPU.class.prog_if, protocol_pci::AEROGPU_PCI_PROG_IF);
+
+    assert_eq!(u32::from(AEROGPU_BAR0_INDEX), protocol_pci::AEROGPU_PCI_BAR0_INDEX);
+    assert_eq!(
+        AEROGPU_BAR0_SIZE,
+        u64::from(protocol_pci::AEROGPU_PCI_BAR0_SIZE_BYTES)
+    );
+
+    // BAR1 (VRAM aperture) is not part of the stable PCI/MMIO ABI header yet, but it is part of
+    // the canonical machine contract. Keep its size stable.
+    assert_eq!(AEROGPU_VRAM_SIZE, 64 * 1024 * 1024);
 }
 
 #[test]
