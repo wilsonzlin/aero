@@ -171,6 +171,8 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
+    // DXBC parsing is exercised via `dxbc::extract_shader_bytecode` / `shader::parse` below. Keep
+    // this target in pure parsing/IR code without requiring optional DXBC parsing features.
     // Exercise the legacy D3D9 shader parser (DXBC/raw SM2/3 token stream → ShaderProgram).
     //
     // This parser tokenizes the entire input into u32 tokens up front, so avoid calling it on

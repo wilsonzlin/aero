@@ -71,6 +71,7 @@ path = "../crates/aero-net-stack"
 
 [dependencies.aero-net-e1000]
 path = "../crates/aero-net-e1000"
+
 [[bin]]
 name = "fuzz_mmu_translate"
 path = "fuzz_targets/fuzz_mmu_translate.rs"
