@@ -207,6 +207,43 @@ section_contains_norm \
   'addinterface=%kscategory_capture%' \
   "inf/aero_virtio_snd.inf must AddInterface for KSCATEGORY_CAPTURE"
 
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT.Interfaces' \
+  'addinterface=%kscategory_render%,%ksname_wave%,aerovirtiosnd.wave.interface' \
+  "inf/aero_virtio_snd.inf must register KSCATEGORY_RENDER on the Wave interface"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT.Interfaces' \
+  'addinterface=%kscategory_capture%,%ksname_wave%,aerovirtiosnd.capture.interface' \
+  "inf/aero_virtio_snd.inf must register KSCATEGORY_CAPTURE on the Capture interface"
+
+note "checking KS interface section wiring..."
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.Wave.Interface' \
+  'addreg=aerovirtiosnd.wave.interface.addreg' \
+  "inf/aero_virtio_snd.inf must define [AeroVirtioSnd.Wave.Interface] -> AddReg"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.Capture.Interface' \
+  'addreg=aerovirtiosnd.capture.interface.addreg' \
+  "inf/aero_virtio_snd.inf must define [AeroVirtioSnd.Capture.Interface] -> AddReg"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.Wave.Interface.AddReg' \
+  'hkr,,friendlyname,,%aerovirtiosnd.endpointdesc%' \
+  "inf/aero_virtio_snd.inf must set a FriendlyName for the render endpoint"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.Capture.Interface.AddReg' \
+  'hkr,,friendlyname,,%aerovirtiosnd.captureendpointdesc%' \
+  "inf/aero_virtio_snd.inf must set a FriendlyName for the capture endpoint"
+
 note "checking KS category GUID constants..."
 section_contains_norm \
   "$INF_CONTRACT" \
