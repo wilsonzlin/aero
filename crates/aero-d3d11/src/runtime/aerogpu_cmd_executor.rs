@@ -14581,6 +14581,23 @@ mod tests {
     }
 
     #[test]
+    fn map_buffer_usage_flags_adds_storage_for_vertex_index_when_compute_supported() {
+        let vb = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, true);
+        assert!(vb.contains(wgpu::BufferUsages::VERTEX));
+        assert!(vb.contains(wgpu::BufferUsages::STORAGE));
+
+        let ib = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, true);
+        assert!(ib.contains(wgpu::BufferUsages::INDEX));
+        assert!(ib.contains(wgpu::BufferUsages::STORAGE));
+
+        let vb_no_compute = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, false);
+        assert!(!vb_no_compute.contains(wgpu::BufferUsages::STORAGE));
+
+        let ib_no_compute = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, false);
+        assert!(!ib_no_compute.contains(wgpu::BufferUsages::STORAGE));
+    }
+
+    #[test]
     fn storage_usage_flag_makes_buffer_bindable_as_storage() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
