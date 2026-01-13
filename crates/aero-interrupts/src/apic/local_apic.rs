@@ -884,6 +884,13 @@ mod tests {
         assert_eq!(apic.get_pending_vector(), None);
         assert!(!apic.is_pending(0x80));
 
+        // Internal timer deadline bookkeeping is reset (not just the visible registers).
+        assert_eq!(
+            apic.state.lock().unwrap().next_timer_deadline_ns,
+            None,
+            "timer deadline should be cleared by reset_state"
+        );
+
         // Registers are reset to their defaults.
         assert_eq!(read_u32(&apic, REG_ID), 0x03_00_00_00);
         assert_eq!(read_u32(&apic, REG_TPR), 0);
