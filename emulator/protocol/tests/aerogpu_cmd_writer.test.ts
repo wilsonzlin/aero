@@ -45,6 +45,7 @@ test("AerogpuCmdWriter emits aligned packets and updates stream header size", ()
 
   w.createBuffer(1, 0xdeadbeef, 1024n, 0, 0);
   w.createShaderDxbc(2, AerogpuShaderStage.Vertex, new Uint8Array([0xaa, 0xbb, 0xcc]));
+  w.createShaderDxbcEx(4, AerogpuShaderStageEx.Geometry, new Uint8Array([0xdd, 0xee]));
   w.createInputLayout(3, new Uint8Array([0x11]));
   w.uploadResource(1, 16n, new Uint8Array([1, 2, 3, 4, 5]));
   w.setVertexBuffers(0, [
@@ -81,6 +82,7 @@ test("AerogpuCmdWriter emits aligned packets and updates stream header size", ()
   const expected: Array<[number, number]> = [
     [AerogpuCmdOpcode.CreateBuffer, 40],
     [AerogpuCmdOpcode.CreateShaderDxbc, alignUp(24 + 3, 4)],
+    [AerogpuCmdOpcode.CreateShaderDxbc, alignUp(24 + 2, 4)],
     [AerogpuCmdOpcode.CreateInputLayout, alignUp(20 + 1, 4)],
     [AerogpuCmdOpcode.UploadResource, alignUp(32 + 5, 4)],
     [AerogpuCmdOpcode.SetVertexBuffers, 16 + 2 * 16],
@@ -101,6 +103,18 @@ test("AerogpuCmdWriter emits aligned packets and updates stream header size", ()
     opcodes,
     expected.map(([opcode]) => opcode),
   );
+
+  // Validate CREATE_SHADER_DXBC reserved0 invariants and stage_ex encoding.
+  const shader0Base = AEROGPU_CMD_STREAM_HEADER_SIZE + expected[0][1];
+  // legacy CREATE_SHADER_DXBC leaves reserved0=0.
+  assert.equal(view.getUint32(shader0Base + 20, true), 0);
+
+  const shader1Base = shader0Base + expected[1][1];
+  assert.equal(view.getUint32(shader1Base + 8, true), 4); // shader_handle
+  assert.equal(view.getUint32(shader1Base + 12, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(shader1Base + 16, true), 2); // dxbc_size_bytes
+  assert.equal(view.getUint32(shader1Base + 20, true), AerogpuShaderStageEx.Geometry);
+  assert.deepEqual(Array.from(bytes.subarray(shader1Base + 24, shader1Base + 26)), [0xdd, 0xee]);
 });
 
 test("AerogpuCmdWriter emits pipeline and binding packets", () => {

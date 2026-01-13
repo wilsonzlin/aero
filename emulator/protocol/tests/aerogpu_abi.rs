@@ -22,7 +22,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuConstantBufferBinding, AerogpuCullMode,
     AerogpuDepthStencilState, AerogpuFillMode, AerogpuIndexFormat, AerogpuInputLayoutBlobHeader,
     AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology, AerogpuRasterizerState,
-    AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuUnorderedAccessBufferBinding,
+    AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
+    AerogpuUnorderedAccessBufferBinding,
     AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
     AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_NONE, AEROGPU_COPY_FLAG_WRITEBACK_DST,
     AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
@@ -2841,6 +2842,11 @@ fn rust_layout_matches_c_headers() {
         ));
         names.extend(parse_c_enum_const_names(
             &cmd_header_path,
+            "enum aerogpu_shader_stage_ex",
+            "AEROGPU_SHADER_STAGE_EX_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &cmd_header_path,
             "enum aerogpu_index_format",
             "AEROGPU_INDEX_FORMAT_",
         ));
@@ -3685,6 +3691,37 @@ fn rust_layout_matches_c_headers() {
         &mut cmd_consts_seen,
         "AEROGPU_SHADER_STAGE_GEOMETRY",
         AerogpuShaderStage::Geometry as u64,
+    );
+
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_SHADER_STAGE_EX_PIXEL",
+        AerogpuShaderStageEx::Pixel as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_SHADER_STAGE_EX_VERTEX",
+        AerogpuShaderStageEx::Vertex as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_SHADER_STAGE_EX_GEOMETRY",
+        AerogpuShaderStageEx::Geometry as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_SHADER_STAGE_EX_HULL",
+        AerogpuShaderStageEx::Hull as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_SHADER_STAGE_EX_DOMAIN",
+        AerogpuShaderStageEx::Domain as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_SHADER_STAGE_EX_COMPUTE",
+        AerogpuShaderStageEx::Compute as u64,
     );
 
     check_const(

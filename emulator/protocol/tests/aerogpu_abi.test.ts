@@ -109,6 +109,7 @@ import {
   AerogpuIndexFormat,
   AerogpuPrimitiveTopology,
   AerogpuShaderStage,
+  AerogpuShaderStageEx,
   decodeCmdHdr,
   decodeCmdStreamHeader,
 } from "../aerogpu/aerogpu_cmd.ts";
@@ -1221,6 +1222,7 @@ test("TypeScript layout matches C headers", () => {
     ...parseCEnumConstNames(cmdHeader, "enum aerogpu_cmd_stream_flags", "AEROGPU_CMD_STREAM_FLAG_"),
     ...parseCEnumConstNames(cmdHeader, "enum aerogpu_cmd_opcode", "AEROGPU_CMD_"),
     ...parseCEnumConstNames(cmdHeader, "enum aerogpu_shader_stage", "AEROGPU_SHADER_STAGE_"),
+    ...parseCEnumConstNames(cmdHeader, "enum aerogpu_shader_stage_ex", "AEROGPU_SHADER_STAGE_EX_"),
     ...parseCEnumConstNames(cmdHeader, "enum aerogpu_index_format", "AEROGPU_INDEX_FORMAT_"),
     ...parseCEnumConstNames(cmdHeader, "enum aerogpu_primitive_topology", "AEROGPU_TOPOLOGY_"),
     ...parseCEnumConstNames(cmdHeader, "enum aerogpu_resource_usage_flags", "AEROGPU_RESOURCE_USAGE_"),
@@ -1289,6 +1291,12 @@ test("TypeScript layout matches C headers", () => {
       continue;
     }
 
+    if (name.startsWith("AEROGPU_SHADER_STAGE_EX_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_SHADER_STAGE_EX_/, ""));
+      cmdSeen.push(name);
+      assert.equal(BigInt((AerogpuShaderStageEx as unknown as Record<string, number>)[key]!), expected);
+      continue;
+    }
     if (name.startsWith("AEROGPU_SHADER_STAGE_")) {
       const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_SHADER_STAGE_/, ""));
       cmdSeen.push(name);
