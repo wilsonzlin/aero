@@ -204,6 +204,25 @@ int virtqueue_split_add_sg(virtqueue_split_t *vq,
 virtio_bool_t virtqueue_split_kick_prepare(virtqueue_split_t *vq);
 
 /*
+ * Disable/enable device->driver used-buffer notifications ("interrupts").
+ *
+ * Split rings support two mechanisms for interrupt suppression:
+ *  - VRING_AVAIL_F_NO_INTERRUPT (always present)
+ *  - EVENT_IDX (VIRTIO_F_RING_EVENT_IDX / VIRTIO_RING_F_EVENT_IDX)
+ *
+ * The driver can call virtqueue_split_disable_interrupts() while it drains
+ * completions and then call virtqueue_split_enable_interrupts() when it is
+ * ready to receive the next notification.
+ *
+ * virtqueue_split_enable_interrupts() returns VIRTIO_TRUE if the device has
+ * already produced used entries (vq->used->idx != vq->last_used_idx) by the
+ * time interrupts were re-enabled. In that case, callers should drain again
+ * instead of waiting for another interrupt.
+ */
+void virtqueue_split_disable_interrupts(virtqueue_split_t *vq);
+virtio_bool_t virtqueue_split_enable_interrupts(virtqueue_split_t *vq);
+
+/*
  * Pop one used completion if available.
  *
  * Returns VIRTIO_TRUE if a completion was popped, VIRTIO_FALSE if none.

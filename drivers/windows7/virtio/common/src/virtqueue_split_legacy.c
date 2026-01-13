@@ -569,6 +569,58 @@ virtio_bool_t virtqueue_split_kick_prepare(virtqueue_split_t *vq)
     return VIRTIO_TRUE;
 }
 
+void virtqueue_split_disable_interrupts(virtqueue_split_t *vq)
+{
+    if (vq == NULL || vq->avail == NULL) {
+        return;
+    }
+
+    /*
+     * Best-effort: always set the legacy NO_INTERRUPT flag.
+     *
+     * When EVENT_IDX is negotiated, the spec says this flag is ignored in favour
+     * of used_event, but keeping it in sync is harmless and can help with
+     * devices that implement only the legacy suppression behaviour.
+     */
+    vq->avail->flags = (uint16_t)(vq->avail->flags | VRING_AVAIL_F_NO_INTERRUPT);
+
+    /*
+     * For EVENT_IDX, used_event acts as the notification threshold. Placing the
+     * event index behind last_used_idx suppresses interrupts until it wraps.
+     */
+    if (vq->event_idx != VIRTIO_FALSE && vq->used_event != NULL) {
+        *vq->used_event = (uint16_t)(vq->last_used_idx - 1u);
+    }
+
+    virtio_wmb(vq->os, vq->os_ctx);
+}
+
+virtio_bool_t virtqueue_split_enable_interrupts(virtqueue_split_t *vq)
+{
+    uint16_t used_idx;
+
+    if (vq == NULL || vq->avail == NULL || vq->used == NULL) {
+        return VIRTIO_FALSE;
+    }
+
+    /*
+     * Re-arm interrupts for the next used entry. For EVENT_IDX this means
+     * publishing the current shadow used index into used_event, while for
+     * legacy rings it means clearing VRING_AVAIL_F_NO_INTERRUPT.
+     */
+    if (vq->event_idx != VIRTIO_FALSE && vq->used_event != NULL) {
+        *vq->used_event = vq->last_used_idx;
+    }
+
+    vq->avail->flags = (uint16_t)(vq->avail->flags & (uint16_t)~VRING_AVAIL_F_NO_INTERRUPT);
+    virtio_wmb(vq->os, vq->os_ctx);
+
+    used_idx = vq->used->idx;
+    virtio_rmb(vq->os, vq->os_ctx);
+
+    return (used_idx != vq->last_used_idx) ? VIRTIO_TRUE : VIRTIO_FALSE;
+}
+
 virtio_bool_t virtqueue_split_pop_used(virtqueue_split_t *vq, void **out_cookie, uint32_t *out_len)
 {
     uint16_t used_idx;

@@ -35,6 +35,8 @@ typedef struct vring_device_sim {
     uint16_t notify_batch;
 } vring_device_sim_t;
 
+static void sim_process(vring_device_sim_t *sim);
+
 static uint32_t rng_state = 0x12345678u;
 
 static uint32_t rng_next(void)
@@ -46,6 +48,57 @@ static uint32_t rng_next(void)
     x ^= x << 5;
     rng_state = x;
     return x;
+}
+
+static size_t align_up_size(size_t v, size_t align)
+{
+    return (v + (align - 1u)) & ~(align - 1u);
+}
+
+static void test_ring_size_event_idx(void)
+{
+    /*
+     * Validate virtqueue_split_ring_size() math with and without EVENT_IDX.
+     *
+     * Using queue_align=4 ensures the EVENT_IDX fields affect the used ring
+     * offset and overall size (unlike 4096 where everything rounds up).
+     */
+    const uint16_t qsz = 8;
+    const uint32_t align = 4;
+
+    size_t got_no_event;
+    size_t got_event;
+    size_t desc_size;
+    size_t avail_no;
+    size_t avail_event;
+    size_t used_no;
+    size_t used_event;
+    size_t used_off_no;
+    size_t used_off_event;
+    size_t exp_no;
+    size_t exp_event;
+
+    got_no_event = virtqueue_split_ring_size(qsz, align, VIRTIO_FALSE);
+    got_event = virtqueue_split_ring_size(qsz, align, VIRTIO_TRUE);
+
+    desc_size = sizeof(vring_desc_t) * (size_t)qsz;
+    avail_no = sizeof(uint16_t) * 2u + sizeof(uint16_t) * (size_t)qsz;
+    avail_event = avail_no + sizeof(uint16_t);
+    used_no = sizeof(uint16_t) * 2u + sizeof(vring_used_elem_t) * (size_t)qsz;
+    used_event = used_no + sizeof(uint16_t);
+
+    used_off_no = align_up_size(desc_size + avail_no, align);
+    used_off_event = align_up_size(desc_size + avail_event, align);
+    exp_no = align_up_size(used_off_no + used_no, align);
+    exp_event = align_up_size(used_off_event + used_event, align);
+
+    assert(got_no_event == exp_no);
+    assert(got_event == exp_event);
+    assert(got_event >= got_no_event);
+
+    /* With legacy 4K alignment, the sizes round up to page multiples. */
+    assert(virtqueue_split_ring_size(qsz, 4096, VIRTIO_FALSE) == 8192);
+    assert(virtqueue_split_ring_size(qsz, 4096, VIRTIO_TRUE) == 8192);
 }
 
 static void validate_queue(const virtqueue_split_t *vq)
@@ -89,6 +142,153 @@ static void validate_queue(const virtqueue_split_t *vq)
     if (seen != stack_seen) {
         free(seen);
     }
+}
+
+static void test_wraparound_event_idx(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    vring_device_sim_t sim;
+    uint32_t i;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 8, 4096, VIRTIO_TRUE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                8,
+                                4096,
+                                &ring,
+                                VIRTIO_TRUE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_OK);
+
+    memset(&sim, 0, sizeof(sim));
+    sim.vq = &vq;
+    sim.notify_batch = 1;
+
+    for (i = 0; i < 70000u; i++) {
+        virtio_sg_entry_t sg;
+        uint16_t head;
+        void *cookie_in;
+        void *cookie_out;
+        uint32_t used_len;
+
+        sg.addr = 0x220000u + ((uint64_t)i * 0x100u);
+        sg.len = 512;
+        sg.device_writes = VIRTIO_FALSE;
+
+        cookie_in = (void *)(uintptr_t)(i + 1u);
+        assert(virtqueue_split_add_sg(&vq, &sg, 1, cookie_in, VIRTIO_FALSE, &head) == VIRTIO_OK);
+        assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+
+        sim_process(&sim);
+        assert(virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_TRUE);
+        assert(cookie_out == cookie_in);
+        assert(used_len == sg.len);
+
+        assert(vq.num_free == vq.queue_size);
+        validate_queue(&vq);
+    }
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
+static void test_event_idx_notify_suppression(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    vring_device_sim_t sim;
+    uintptr_t expected[256];
+    size_t exp_head;
+    size_t exp_tail;
+    uint32_t i;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 32, 4096, VIRTIO_TRUE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                32,
+                                4096,
+                                &ring,
+                                VIRTIO_TRUE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_OK);
+
+    memset(&sim, 0, sizeof(sim));
+    sim.vq = &vq;
+    sim.notify_batch = 4;
+
+    exp_head = 0;
+    exp_tail = 0;
+
+    /* Prime avail_event for event idx batching. */
+    assert(vq.avail_event != NULL);
+    *vq.avail_event = (uint16_t)(sim.notify_batch - 1u);
+
+    for (i = 0; i < 100u; i++) {
+        virtio_sg_entry_t sg;
+        uint16_t head;
+        void *cookie;
+
+        sg.addr = 0x500000u + ((uint64_t)i * 0x1000u);
+        sg.len = 512;
+        sg.device_writes = VIRTIO_FALSE;
+
+        cookie = (void *)(uintptr_t)(i + 1u);
+        assert(virtqueue_split_add_sg(&vq, &sg, 1, cookie, VIRTIO_FALSE, &head) == VIRTIO_OK);
+        expected[exp_tail++ % VIRTIO_ARRAY_SIZE(expected)] = (uintptr_t)cookie;
+
+        if (virtqueue_split_kick_prepare(&vq) != VIRTIO_FALSE) {
+            sim_process(&sim);
+        }
+
+        /* Drain any completions the simulated device has produced. */
+        for (;;) {
+            void *out_cookie;
+            uint32_t out_len;
+            if (virtqueue_split_pop_used(&vq, &out_cookie, &out_len) == VIRTIO_FALSE) {
+                break;
+            }
+            assert(exp_head != exp_tail);
+            assert((uintptr_t)out_cookie == expected[exp_head % VIRTIO_ARRAY_SIZE(expected)]);
+            assert(out_len == sg.len);
+            exp_head++;
+        }
+
+        validate_queue(&vq);
+    }
+
+    /* Drain remaining submissions. */
+    sim_process(&sim);
+    for (;;) {
+        void *out_cookie;
+        uint32_t out_len;
+        if (virtqueue_split_pop_used(&vq, &out_cookie, &out_len) == VIRTIO_FALSE) {
+            break;
+        }
+        assert(exp_head != exp_tail);
+        assert((uintptr_t)out_cookie == expected[exp_head % VIRTIO_ARRAY_SIZE(expected)]);
+        assert(out_len == 512);
+        exp_head++;
+    }
+    assert(exp_head == exp_tail);
+    assert(vq.num_free == vq.queue_size);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
 static uint32_t sim_sum_desc_len(vring_device_sim_t *sim, uint16_t head)
@@ -1196,7 +1396,9 @@ static void test_pci_legacy_integration(void)
 
 int main(void)
 {
+    test_ring_size_event_idx();
     test_wraparound();
+    test_wraparound_event_idx();
     test_small_queue_align();
     test_event_idx_ring_size_and_kick();
     test_invalid_queue_align();
@@ -1207,6 +1409,7 @@ int main(void)
     test_reset_event_idx_queue_align4();
     test_reset_invalid_queue_align_fallback();
     test_reset_ring_size_overflow_fallback();
+    test_event_idx_notify_suppression();
     test_fuzz();
     test_pci_legacy_integration();
     printf("virtio_common_tests: PASS\n");

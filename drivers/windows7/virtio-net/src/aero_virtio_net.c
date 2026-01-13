@@ -1193,6 +1193,7 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
   NTSTATUS NtStatus;
   int VqRes;
   virtio_bool_t UseIndirect;
+  virtio_bool_t EventIdx;
   volatile UINT16* NotifyAddr;
   volatile UINT16* ExpectedNotifyAddr;
   ULONGLONG NotifyOffset;
@@ -1233,7 +1234,9 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
 
   Vq->QueueSize = QueueSize;
 
-  VqRes = virtqueue_split_alloc_ring(&Adapter->VirtioOps, &Adapter->VirtioOpsCtx, QueueSize, 16, VIRTIO_FALSE, &Vq->RingDma);
+  EventIdx = (Adapter->GuestFeatures & AEROVNET_FEATURE_RING_EVENT_IDX) ? VIRTIO_TRUE : VIRTIO_FALSE;
+
+  VqRes = virtqueue_split_alloc_ring(&Adapter->VirtioOps, &Adapter->VirtioOpsCtx, QueueSize, 16, EventIdx, &Vq->RingDma);
   if (VqRes != VIRTIO_OK) {
     return NDIS_STATUS_RESOURCES;
   }
@@ -1242,13 +1245,13 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
   VqRes = virtqueue_split_init(&Vq->Vq,
                                &Adapter->VirtioOps,
                                &Adapter->VirtioOpsCtx,
-                               QueueIndex,
-                               QueueSize,
-                               16,
-                               &Vq->RingDma,
-                               VIRTIO_FALSE,
-                               UseIndirect,
-                               (uint16_t)IndirectMaxDesc);
+                                QueueIndex,
+                                QueueSize,
+                                16,
+                                &Vq->RingDma,
+                                EventIdx,
+                                UseIndirect,
+                                (uint16_t)IndirectMaxDesc);
 
   if (VqRes != VIRTIO_OK && UseIndirect != VIRTIO_FALSE) {
     // Indirect is optional; fall back to direct descriptors if we couldn't allocate tables.
@@ -1256,13 +1259,13 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
     VqRes = virtqueue_split_init(&Vq->Vq,
                                  &Adapter->VirtioOps,
                                  &Adapter->VirtioOpsCtx,
-                                 QueueIndex,
-                                 QueueSize,
-                                 16,
-                                 &Vq->RingDma,
-                                 VIRTIO_FALSE,
-                                 VIRTIO_FALSE,
-                                 0);
+                                  QueueIndex,
+                                  QueueSize,
+                                  16,
+                                  &Vq->RingDma,
+                                  EventIdx,
+                                  VIRTIO_FALSE,
+                                  0);
   }
 
   if (VqRes != VIRTIO_OK) {
@@ -1638,22 +1641,26 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   /*
    * Contract v1 ring invariants (docs/windows7-virtio-driver-contract.md §2.3):
    * - MUST offer INDIRECT_DESC
-   * - EVENT_IDX/PACKED are not negotiated by the driver (split ring, always-notify)
+   * - PACKED is not negotiated by the driver (split ring only)
    *
-   * Some hypervisors (notably QEMU) may still advertise EVENT_IDX/PACKED even
-   * when the guest chooses not to negotiate them, so do not fail init just
-   * because those bits are present in the offered feature set.
+   * Aero contract v1 does not offer EVENT_IDX, but other hypervisors (notably
+   * QEMU) may. Negotiate EVENT_IDX opportunistically when available to reduce
+   * kicks/interrupts, while keeping the contract-v1 behaviour unchanged when it
+   * is not offered.
    */
   Adapter->HostFeatures = VirtioPciReadDeviceFeatures(&Adapter->Vdev);
 
   // Contract v1 features (docs/windows7-virtio-driver-contract.md §3.2.3):
   // - required: VERSION_1 + INDIRECT_DESC + MAC + STATUS
   RequiredFeatures = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | AEROVNET_FEATURE_RING_INDIRECT_DESC;
-  // Optional: allow the device to report receive checksum status via virtio-net
-  // header flags (e.g. VIRTIO_NET_HDR_F_DATA_VALID).
-  // Also request the optional control virtqueue so we can issue runtime MAC/VLAN commands when supported.
-  WantedFeatures = VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 | VIRTIO_NET_F_CTRL_VQ |
-                  VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN;
+  // Optional:
+  // - EVENT_IDX: suppress kicks/interrupts when supported by the device.
+  // - allow the device to report receive checksum status via virtio-net header
+  //   flags (e.g. VIRTIO_NET_HDR_F_DATA_VALID).
+  // - request the optional control virtqueue so we can issue runtime MAC/VLAN
+  //   commands when supported.
+  WantedFeatures = AEROVNET_FEATURE_RING_EVENT_IDX | VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 |
+                  VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN;
   NegotiatedFeatures = 0;
 
   NtStatus = VirtioPciNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
@@ -2018,115 +2025,151 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
     return;
   }
 
-  // TX completions.
+  /*
+   * Drain RX/TX queues while (best-effort) suppressing further interrupts.
+   *
+   * When EVENT_IDX is negotiated, the driver must update used_event to re-arm
+   * interrupts; failing to do so can stall completions.
+   */
   for (;;) {
-    PVOID Cookie;
-    AEROVNET_TX_REQUEST* TxReq;
+    virtio_bool_t TxNeedsDrain;
+    virtio_bool_t RxNeedsDrain;
 
-    Cookie = NULL;
-
-    if (Adapter->TxVq.QueueSize == 0) {
-      break;
+    // RX interrupt suppression (best-effort).
+    if (Adapter->RxVq.QueueSize != 0) {
+      virtqueue_split_disable_interrupts(&Adapter->RxVq.Vq);
     }
 
-    if (virtqueue_split_pop_used(&Adapter->TxVq.Vq, &Cookie, NULL) == VIRTIO_FALSE) {
-      break;
-    }
+    // TX completions.
+    for (;;) {
+      PVOID Cookie;
+      AEROVNET_TX_REQUEST* TxReq;
 
-    TxReq = (AEROVNET_TX_REQUEST*)Cookie;
+      Cookie = NULL;
 
-    if (TxReq) {
-      Adapter->StatTxPackets++;
-      Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
-
-      if (TxReq->State == AerovNetTxSubmitted) {
-        RemoveEntryList(&TxReq->Link);
+      if (Adapter->TxVq.QueueSize == 0) {
+        break;
       }
-      InsertTailList(&CompleteTxReqs, &TxReq->Link);
 
-      AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_SUCCESS, &CompleteNblHead, &CompleteNblTail);
+      if (virtqueue_split_pop_used(&Adapter->TxVq.Vq, &Cookie, NULL) == VIRTIO_FALSE) {
+        break;
+      }
+
+      TxReq = (AEROVNET_TX_REQUEST*)Cookie;
+
+      if (TxReq) {
+        Adapter->StatTxPackets++;
+        Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
+
+        if (TxReq->State == AerovNetTxSubmitted) {
+          RemoveEntryList(&TxReq->Link);
+        }
+        InsertTailList(&CompleteTxReqs, &TxReq->Link);
+
+        AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_SUCCESS, &CompleteNblHead, &CompleteNblTail);
+      }
     }
-  }
 
-  // Submit any TX requests that were waiting on descriptors.
-  if (Adapter->State == AerovNetAdapterRunning) {
-    AerovNetFlushTxPendingLocked(Adapter, &CompleteTxReqs, &CompleteNblHead, &CompleteNblTail);
-  }
+    // Submit any TX requests that were waiting on descriptors.
+    if (Adapter->State == AerovNetAdapterRunning) {
+      AerovNetFlushTxPendingLocked(Adapter, &CompleteTxReqs, &CompleteNblHead, &CompleteNblTail);
+    }
 
-  // RX completions.
-  for (;;) {
-    PVOID Cookie;
-    uint32_t UsedLen;
-    AEROVNET_RX_BUFFER* Rx;
-    ULONG PayloadLen;
+    // RX completions.
+    for (;;) {
+      PVOID Cookie;
+      uint32_t UsedLen;
+      AEROVNET_RX_BUFFER* Rx;
+      ULONG PayloadLen;
 
-    Cookie = NULL;
-    UsedLen = 0;
+      Cookie = NULL;
+      UsedLen = 0;
 
-    if (Adapter->RxVq.QueueSize == 0) {
+      if (Adapter->RxVq.QueueSize == 0) {
+        break;
+      }
+
+      if (virtqueue_split_pop_used(&Adapter->RxVq.Vq, &Cookie, &UsedLen) == VIRTIO_FALSE) {
+        break;
+      }
+
+      Rx = (AEROVNET_RX_BUFFER*)Cookie;
+
+      if (!Rx) {
+        continue;
+      }
+
+      if (UsedLen < sizeof(VIRTIO_NET_HDR) || UsedLen > Rx->BufferBytes) {
+        Adapter->StatRxErrors++;
+        InsertTailList(&Adapter->RxFreeList, &Rx->Link);
+        continue;
+      }
+
+      PayloadLen = UsedLen - sizeof(VIRTIO_NET_HDR);
+
+      // Contract v1: drop undersized/oversized Ethernet frames but always recycle.
+      if (PayloadLen < 14 || PayloadLen > 1522) {
+        Adapter->StatRxErrors++;
+        InsertTailList(&Adapter->RxFreeList, &Rx->Link);
+        continue;
+      }
+
+      if (Adapter->State != AerovNetAdapterRunning) {
+        InsertTailList(&Adapter->RxFreeList, &Rx->Link);
+        continue;
+      }
+
+      if (!AerovNetAcceptFrame(Adapter, Rx->BufferVa + sizeof(VIRTIO_NET_HDR), PayloadLen)) {
+        InsertTailList(&Adapter->RxFreeList, &Rx->Link);
+        continue;
+      }
+
+      Rx->Indicated = TRUE;
+
+      NET_BUFFER_DATA_OFFSET(Rx->Nb) = sizeof(VIRTIO_NET_HDR);
+      NET_BUFFER_DATA_LENGTH(Rx->Nb) = PayloadLen;
+      NET_BUFFER_LIST_STATUS(Rx->Nbl) = NDIS_STATUS_SUCCESS;
+      NET_BUFFER_LIST_NEXT_NBL(Rx->Nbl) = NULL;
+      NET_BUFFER_LIST_INFO(Rx->Nbl, TcpIpChecksumNetBufferListInfo) = (PVOID)0;
+
+      // Translate virtio-net checksum validation results (if present) into NDIS
+      // checksum offload indicators so the Windows network stack can skip
+      // software checksum validation.
+      {
+        const VIRTIO_NET_HDR* VirtioHdr = (const VIRTIO_NET_HDR*)Rx->BufferVa;
+        ULONG CsumValue = AerovNetGetRxChecksumValue(VirtioHdr, Rx->BufferVa + sizeof(VIRTIO_NET_HDR), PayloadLen);
+        if (CsumValue != 0) {
+          NET_BUFFER_LIST_INFO(Rx->Nbl, TcpIpChecksumNetBufferListInfo) = (PVOID)(ULONG_PTR)CsumValue;
+        }
+      }
+
+      AerovNetIndicateRxChecksum(Adapter, Rx->Nbl, Rx->BufferVa + sizeof(VIRTIO_NET_HDR), PayloadLen, (const VIRTIO_NET_HDR*)Rx->BufferVa);
+
+      if (IndicateTail) {
+        NET_BUFFER_LIST_NEXT_NBL(IndicateTail) = Rx->Nbl;
+        IndicateTail = Rx->Nbl;
+      } else {
+        IndicateHead = Rx->Nbl;
+        IndicateTail = Rx->Nbl;
+      }
+
+      IndicateCount++;
+      Adapter->StatRxPackets++;
+      Adapter->StatRxBytes += PayloadLen;
+    }
+
+    // Refill RX queue with any buffers we dropped.
+    if (Adapter->State == AerovNetAdapterRunning) {
+      AerovNetFillRxQueueLocked(Adapter);
+    }
+
+    // Rearm interrupts and detect any completions that raced with re-arming.
+    TxNeedsDrain = (Adapter->TxVq.QueueSize != 0) ? virtqueue_split_enable_interrupts(&Adapter->TxVq.Vq) : VIRTIO_FALSE;
+    RxNeedsDrain = (Adapter->RxVq.QueueSize != 0) ? virtqueue_split_enable_interrupts(&Adapter->RxVq.Vq) : VIRTIO_FALSE;
+
+    if (TxNeedsDrain == VIRTIO_FALSE && RxNeedsDrain == VIRTIO_FALSE) {
       break;
     }
-
-    if (virtqueue_split_pop_used(&Adapter->RxVq.Vq, &Cookie, &UsedLen) == VIRTIO_FALSE) {
-      break;
-    }
-
-    Rx = (AEROVNET_RX_BUFFER*)Cookie;
-
-    if (!Rx) {
-      continue;
-    }
-
-    if (UsedLen < sizeof(VIRTIO_NET_HDR) || UsedLen > Rx->BufferBytes) {
-      Adapter->StatRxErrors++;
-      InsertTailList(&Adapter->RxFreeList, &Rx->Link);
-      continue;
-    }
-
-    PayloadLen = UsedLen - sizeof(VIRTIO_NET_HDR);
-
-    // Contract v1: drop undersized/oversized Ethernet frames but always recycle.
-    if (PayloadLen < 14 || PayloadLen > 1522) {
-      Adapter->StatRxErrors++;
-      InsertTailList(&Adapter->RxFreeList, &Rx->Link);
-      continue;
-    }
-
-    if (Adapter->State != AerovNetAdapterRunning) {
-      InsertTailList(&Adapter->RxFreeList, &Rx->Link);
-      continue;
-    }
-
-    if (!AerovNetAcceptFrame(Adapter, Rx->BufferVa + sizeof(VIRTIO_NET_HDR), PayloadLen)) {
-      InsertTailList(&Adapter->RxFreeList, &Rx->Link);
-      continue;
-    }
-
-    Rx->Indicated = TRUE;
-
-    NET_BUFFER_DATA_OFFSET(Rx->Nb) = sizeof(VIRTIO_NET_HDR);
-    NET_BUFFER_DATA_LENGTH(Rx->Nb) = PayloadLen;
-    NET_BUFFER_LIST_STATUS(Rx->Nbl) = NDIS_STATUS_SUCCESS;
-    NET_BUFFER_LIST_NEXT_NBL(Rx->Nbl) = NULL;
-
-    AerovNetIndicateRxChecksum(Adapter, Rx->Nbl, Rx->BufferVa + sizeof(VIRTIO_NET_HDR), PayloadLen, (const VIRTIO_NET_HDR*)Rx->BufferVa);
-
-    if (IndicateTail) {
-      NET_BUFFER_LIST_NEXT_NBL(IndicateTail) = Rx->Nbl;
-      IndicateTail = Rx->Nbl;
-    } else {
-      IndicateHead = Rx->Nbl;
-      IndicateTail = Rx->Nbl;
-    }
-
-    IndicateCount++;
-    Adapter->StatRxPackets++;
-    Adapter->StatRxBytes += PayloadLen;
-  }
-
-  // Refill RX queue with any buffers we dropped.
-  if (Adapter->State == AerovNetAdapterRunning) {
-    AerovNetFillRxQueueLocked(Adapter);
   }
 
   // Link state change handling (config interrupt).
