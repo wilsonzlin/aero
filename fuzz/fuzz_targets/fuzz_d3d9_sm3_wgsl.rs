@@ -23,6 +23,100 @@ const MAX_FORCED_VERSION_BYTES: usize = 64 * 1024; // 64 KiB
 /// allocations/time in those stages.
 const MAX_INSTRUCTIONS: usize = 4096;
 
+fn encode_regtype(raw: u8) -> u32 {
+    let low = (raw & 0x7) as u32;
+    let high = (raw & 0x18) as u32;
+    (low << 28) | (high << 8)
+}
+
+fn dst_token(regtype: u8, index: u8, mask: u8) -> u32 {
+    let mut t = encode_regtype(regtype) | (index as u32);
+    t |= ((mask & 0xF) as u32) << 16;
+    t
+}
+
+fn src_token(regtype: u8, index: u8, swizzle: u8, modifier: u8) -> u32 {
+    encode_regtype(regtype)
+        | (index as u32)
+        | ((swizzle as u32) << 16)
+        | ((modifier as u32) << 24)
+}
+
+fn u32_from_seed(seed: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        *seed.get(offset).unwrap_or(&0),
+        *seed.get(offset + 1).unwrap_or(&0),
+        *seed.get(offset + 2).unwrap_or(&0),
+        *seed.get(offset + 3).unwrap_or(&0),
+    ])
+}
+
+fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
+    let stage_is_pixel = seed.get(0).copied().unwrap_or(0) & 1 != 0;
+    let major = 2u32 + ((seed.get(1).copied().unwrap_or(0) as u32) & 1); // {2,3}
+    let minor = 0u32;
+    let high = if stage_is_pixel {
+        0xFFFF_0000
+    } else {
+        0xFFFE_0000
+    };
+    let version_token = high | (major << 8) | minor;
+
+    let op_sel = seed.get(2).copied().unwrap_or(0) % 3;
+    let swz = 0xE4u8; // xyzw
+
+    let (dst_regtype, dst_index) = if stage_is_pixel { (8u8, 0u8) } else { (4u8, 0u8) };
+    let dst = dst_token(dst_regtype, dst_index, 0);
+
+    let c0 = seed.get(3).copied().unwrap_or(0) % 8;
+    let c1 = seed.get(4).copied().unwrap_or(1) % 8;
+    let src0 = src_token(2, c0, swz, 0);
+    let src1 = src_token(2, c1, swz, 0);
+
+    let include_def = seed.get(5).copied().unwrap_or(0) & 1 != 0;
+    let def_dst = dst_token(2, c0, 0);
+
+    let mut tokens: Vec<u32> = Vec::with_capacity(16);
+    tokens.push(version_token);
+    if include_def {
+        tokens.push((5u32 << 24) | 81u32);
+        tokens.push(def_dst);
+        tokens.push(u32_from_seed(seed, 8));
+        tokens.push(u32_from_seed(seed, 12));
+        tokens.push(u32_from_seed(seed, 16));
+        tokens.push(u32_from_seed(seed, 20));
+    }
+
+    match op_sel {
+        0 => {
+            tokens.push((2u32 << 24) | 1u32);
+            tokens.push(dst);
+            tokens.push(src0);
+        }
+        1 => {
+            tokens.push((3u32 << 24) | 2u32);
+            tokens.push(dst);
+            tokens.push(src0);
+            tokens.push(src1);
+        }
+        _ => {
+            tokens.push((4u32 << 24) | 88u32);
+            tokens.push(dst);
+            tokens.push(src0);
+            tokens.push(src0);
+            tokens.push(src1);
+        }
+    }
+
+    tokens.push(0x0000_FFFF);
+
+    let mut out = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        out.extend_from_slice(&t.to_le_bytes());
+    }
+    out
+}
+
 fn decode_build_wgsl(bytes: &[u8]) {
     let Ok(decoded) = decode_u8_le_bytes(bytes) else {
         return;
@@ -47,6 +141,11 @@ fuzz_target!(|data: &[u8]| {
     if data.len() > MAX_INPUT_SIZE_BYTES {
         return;
     }
+
+    // Always exercise a tiny, self-consistent shader derived from the input to reach deep
+    // decode/IR/WGSL paths quickly.
+    let patched = build_patched_shader(data);
+    decode_build_wgsl(&patched);
 
     // Fast reject: avoid doing a full tokenization when the first token cannot possibly be a
     // version token.
