@@ -1009,6 +1009,33 @@ pub struct WgslOutput {
     pub bind_group_layout: BindGroupLayout,
 }
 
+/// Options that affect the emitted WGSL *semantics*.
+///
+/// These must participate in any shader cache key derivation because toggling them changes the
+/// generated WGSL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WgslOptions {
+    /// When enabled, apply the classic D3D9 half-pixel center adjustment in the vertex shader.
+    ///
+    /// D3D9's viewport transform effectively subtracts 0.5 from the final window-space X/Y
+    /// coordinate (see the "half-pixel offset" discussion in D3D9 docs / many D3D9->D3D10 porting
+    /// guides). WebGPU follows the D3D10+ convention (no -0.5 bias), so we emulate D3D9 by
+    /// translating clip-space XY by:
+    ///
+    ///   pos.xy += vec2(-1/viewport_width, +1/viewport_height) * pos.w
+    ///
+    /// This shifts the final rasterization by (-0.5, -0.5) pixels in window space.
+    pub half_pixel_center: bool,
+}
+
+impl Default for WgslOptions {
+    fn default() -> Self {
+        Self {
+            half_pixel_center: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindGroupLayout {
     /// Bind group index used for texture/sampler bindings in this shader stage.
@@ -1023,6 +1050,13 @@ pub struct BindGroupLayout {
 }
 
 pub fn generate_wgsl(ir: &ShaderIr) -> Result<WgslOutput, ShaderError> {
+    generate_wgsl_with_options(ir, WgslOptions::default())
+}
+
+pub fn generate_wgsl_with_options(
+    ir: &ShaderIr,
+    options: WgslOptions,
+) -> Result<WgslOutput, ShaderError> {
     let mut wgsl = String::new();
 
     // Constants: D3D9 has separate `c#` register files for each shader stage. The minimal D3D9
@@ -1073,6 +1107,15 @@ pub fn generate_wgsl(ir: &ShaderIr) -> Result<WgslOutput, ShaderError> {
     }
     if !ir.used_samplers.is_empty() {
         wgsl.push('\n');
+    }
+
+    if ir.version.stage == ShaderStage::Vertex && options.half_pixel_center {
+        // Separate bind group so the half-pixel fix is opt-in and cache-keyed.
+        //
+        // NOTE: group(1) and group(2) are reserved for VS/PS sampler bindings respectively, so the
+        // half-pixel uniform lives in group(3).
+        wgsl.push_str("struct HalfPixel { inv_viewport: vec2<f32>, _pad: vec2<f32>, };\n");
+        wgsl.push_str("@group(3) @binding(0) var<uniform> half_pixel: HalfPixel;\n\n");
     }
 
     let const_base = match ir.version.stage {
@@ -1160,6 +1203,13 @@ pub fn generate_wgsl(ir: &ShaderIr) -> Result<WgslOutput, ShaderError> {
             debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
 
             wgsl.push_str("  var out: VsOutput;\n  out.pos = oPos;\n");
+            if options.half_pixel_center {
+                wgsl.push_str(
+                    "  // D3D9 half-pixel center adjustment: emulate the D3D9 viewport transform's\n  // -0.5 window-space bias by nudging clip-space XY by (-1/width, +1/height) * w.\n",
+                );
+                wgsl.push_str("  out.pos.x = out.pos.x - half_pixel.inv_viewport.x * out.pos.w;\n");
+                wgsl.push_str("  out.pos.y = out.pos.y + half_pixel.inv_viewport.y * out.pos.w;\n");
+            }
             for &reg in &ir.used_outputs {
                 if reg.file == RegisterFile::RastOut {
                     continue;
@@ -1699,12 +1749,30 @@ impl std::ops::Deref for ShaderCacheLookup<'_> {
     }
 }
 
-#[derive(Default)]
 pub struct ShaderCache {
     map: HashMap<Hash, CachedShader>,
+    wgsl_options: WgslOptions,
 }
 
 impl ShaderCache {
+    pub fn new(wgsl_options: WgslOptions) -> Self {
+        Self {
+            map: HashMap::new(),
+            wgsl_options,
+        }
+    }
+
+    pub fn wgsl_options(&self) -> WgslOptions {
+        self.wgsl_options
+    }
+
+    pub fn set_wgsl_options(&mut self, wgsl_options: WgslOptions) {
+        if self.wgsl_options != wgsl_options {
+            self.wgsl_options = wgsl_options;
+            self.map.clear();
+        }
+    }
+
     pub fn get_or_translate(&mut self, bytes: &[u8]) -> Result<ShaderCacheLookup<'_>, ShaderError> {
         use std::collections::hash_map::Entry;
 
@@ -1717,7 +1785,7 @@ impl ShaderCache {
             Entry::Vacant(e) => {
                 let program = parse(bytes)?;
                 let ir = to_ir(&program);
-                let wgsl = generate_wgsl(&ir)?;
+                let wgsl = generate_wgsl_with_options(&ir, self.wgsl_options)?;
                 let hash = *e.key();
                 Ok(ShaderCacheLookup {
                     source: ShaderCacheLookupSource::Translated,
@@ -1725,5 +1793,11 @@ impl ShaderCache {
                 })
             }
         }
+    }
+}
+
+impl Default for ShaderCache {
+    fn default() -> Self {
+        Self::new(WgslOptions::default())
     }
 }

@@ -10,7 +10,10 @@ fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
 }
 
 fn opcode_token(op: u16, operand_tokens: u8) -> u32 {
-    (op as u32) | ((operand_tokens as u32) << 24)
+    // SM2/3 encodes the *total* instruction length (in DWORD tokens), including the opcode token,
+    // in bits 24..27. For test readability we accept the operand token count (excluding the opcode
+    // token) and add 1 here.
+    (op as u32) | (((operand_tokens as u32) + 1) << 24)
 }
 
 fn reg_token(regtype: u8, index: u32) -> u32 {

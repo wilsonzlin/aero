@@ -23,7 +23,9 @@ use wasm_bindgen::prelude::*;
 ///
 /// Note: This is separate from the JS-side `CACHE_SCHEMA_VERSION` because it is easy to forget
 /// to bump that global cache version when only the D3D9 translator changes.
-pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 3;
+// v4: shader translation now optionally applies the D3D9 half-pixel center convention when
+// `ShaderTranslationFlags::half_pixel_center` is enabled.
+pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 4;
 
 fn default_d3d9_translator_cache_version() -> u32 {
     D3D9_TRANSLATOR_CACHE_VERSION

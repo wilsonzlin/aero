@@ -83,6 +83,15 @@ pub struct AerogpuD3d9Executor {
     input_layouts: HashMap<u32, InputLayout>,
 
     constants_buffer: wgpu::Buffer,
+    /// Whether translated vertex shaders should apply the D3D9 half-pixel center convention.
+    ///
+    /// When enabled, the shader translator emits an extra uniform bind group and nudges the final
+    /// clip-space position by (-1/viewport_width, +1/viewport_height) * w to emulate D3D9's
+    /// viewport transform bias.
+    half_pixel_center: bool,
+    half_pixel_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    half_pixel_uniform_buffer: Option<wgpu::Buffer>,
+    half_pixel_bind_group: Option<wgpu::BindGroup>,
 
     dummy_texture_view: wgpu::TextureView,
     downlevel_flags: wgpu::DownlevelFlags,
@@ -157,6 +166,8 @@ struct ContextState {
     samplers_bind_group_vs: Option<wgpu::BindGroup>,
     samplers_bind_group_ps: Option<wgpu::BindGroup>,
     samplers_bind_groups_dirty: bool,
+    half_pixel_uniform_buffer: Option<wgpu::Buffer>,
+    half_pixel_bind_group: Option<wgpu::BindGroup>,
     samplers_vs: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
     sampler_state_vs: [D3d9SamplerState; MAX_SAMPLERS],
     samplers_ps: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
@@ -169,16 +180,34 @@ impl ContextState {
         device: &wgpu::Device,
         constants_bind_group_layout: &wgpu::BindGroupLayout,
         default_sampler: Arc<wgpu::Sampler>,
+        half_pixel_bind_group_layout: Option<&wgpu::BindGroupLayout>,
     ) -> Self {
         let constants_buffer = create_constants_buffer(device);
         let constants_bind_group =
             create_constants_bind_group(device, constants_bind_group_layout, &constants_buffer);
+        let (half_pixel_uniform_buffer, half_pixel_bind_group) =
+            if let Some(layout) = half_pixel_bind_group_layout {
+                let buffer = create_half_pixel_uniform_buffer(device);
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu-d3d9.half_pixel.bind_group"),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                });
+                (Some(buffer), Some(bind_group))
+            } else {
+                (None, None)
+            };
         Self {
             constants_buffer,
             constants_bind_group,
             samplers_bind_group_vs: None,
             samplers_bind_group_ps: None,
             samplers_bind_groups_dirty: true,
+            half_pixel_uniform_buffer,
+            half_pixel_bind_group,
             samplers_vs: std::array::from_fn(|_| default_sampler.clone()),
             sampler_state_vs: std::array::from_fn(|_| D3d9SamplerState::default()),
             samplers_ps: std::array::from_fn(|_| default_sampler.clone()),
@@ -595,6 +624,7 @@ impl Default for RasterizerState {
 
 const MAX_SAMPLERS: usize = 16;
 const CONSTANTS_BUFFER_SIZE_BYTES: usize = 512 * 16;
+const HALF_PIXEL_UNIFORM_SIZE_BYTES: usize = 16;
 const MAX_REASONABLE_RENDER_STATE_ID: u32 = 4096;
 const MAX_REASONABLE_SAMPLER_STATE_ID: u32 = 4096;
 
@@ -712,6 +742,22 @@ fn create_samplers_bind_group_layout(
     })
 }
 
+fn create_half_pixel_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("aerogpu-d3d9.half_pixel.bind_group_layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(HALF_PIXEL_UNIFORM_SIZE_BYTES as u64),
+            },
+            count: None,
+        }],
+    })
+}
+
 fn create_constants_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -724,6 +770,14 @@ fn create_constants_bind_group(
             binding: 0,
             resource: constants_buffer.as_entire_binding(),
         }],
+    })
+}
+
+fn create_half_pixel_uniform_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("aerogpu-d3d9.half_pixel.uniform"),
+        contents: &[0u8; HALF_PIXEL_UNIFORM_SIZE_BYTES],
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     })
 }
 
@@ -955,9 +1009,33 @@ struct ClearDummyColorTarget {
     view: wgpu::TextureView,
 }
 
+/// Configuration for [`AerogpuD3d9Executor`].
+#[derive(Debug, Clone, Copy)]
+pub struct AerogpuD3d9ExecutorConfig {
+    /// Enable the D3D9 half-pixel center convention in translated vertex shaders.
+    ///
+    /// See `aero-d3d9`'s `WgslOptions::half_pixel_center` for details.
+    pub half_pixel_center: bool,
+}
+
+impl Default for AerogpuD3d9ExecutorConfig {
+    fn default() -> Self {
+        Self {
+            half_pixel_center: false,
+        }
+    }
+}
+
 impl AerogpuD3d9Executor {
     /// Create a headless executor suitable for tests.
     pub async fn new_headless() -> Result<Self, AerogpuD3d9Error> {
+        Self::new_headless_with_config(AerogpuD3d9ExecutorConfig::default()).await
+    }
+
+    /// Like [`AerogpuD3d9Executor::new_headless`], but allows configuring translation flags.
+    pub async fn new_headless_with_config(
+        config: AerogpuD3d9ExecutorConfig,
+    ) -> Result<Self, AerogpuD3d9Error> {
         // Ensure `wgpu` has somewhere to put its runtime files on Unix CI.
         #[cfg(unix)]
         {
@@ -1026,11 +1104,12 @@ impl AerogpuD3d9Executor {
             .await
             .map_err(|e| AerogpuD3d9Error::RequestDevice(e.to_string()))?;
 
-        Ok(Self::new(
+        Ok(Self::new_with_config(
             device,
             queue,
             downlevel_flags,
             Arc::new(GpuStats::new()),
+            config,
         ))
     }
 
@@ -1040,9 +1119,25 @@ impl AerogpuD3d9Executor {
         downlevel_flags: wgpu::DownlevelFlags,
         stats: Arc<GpuStats>,
     ) -> Self {
+        Self::new_with_config(
+            device,
+            queue,
+            downlevel_flags,
+            stats,
+            AerogpuD3d9ExecutorConfig::default(),
+        )
+    }
+
+    pub fn new_with_config(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        downlevel_flags: wgpu::DownlevelFlags,
+        stats: Arc<GpuStats>,
+        config: AerogpuD3d9ExecutorConfig,
+    ) -> Self {
         #[cfg(target_arch = "wasm32")]
         let persistent_shader_cache_flags = aero_d3d9::runtime::ShaderTranslationFlags::new(
-            false,
+            config.half_pixel_center,
             Some(compute_wgpu_caps_hash(&device, downlevel_flags)),
         );
 
@@ -1095,17 +1190,50 @@ impl AerogpuD3d9Executor {
             create_samplers_bind_group_layout(&device, wgpu::ShaderStages::VERTEX);
         let samplers_bind_group_layout_ps =
             create_samplers_bind_group_layout(&device, wgpu::ShaderStages::FRAGMENT);
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("aerogpu-d3d9.pipeline_layout"),
-            bind_group_layouts: &[
-                &constants_bind_group_layout,
-                &samplers_bind_group_layout_vs,
-                &samplers_bind_group_layout_ps,
-            ],
-            push_constant_ranges: &[],
-        });
+        let half_pixel_bind_group_layout = config
+            .half_pixel_center
+            .then(|| create_half_pixel_bind_group_layout(&device));
+        let pipeline_layout = if let Some(half_pixel_layout) = half_pixel_bind_group_layout.as_ref()
+        {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("aerogpu-d3d9.pipeline_layout"),
+                bind_group_layouts: &[
+                    &constants_bind_group_layout,
+                    &samplers_bind_group_layout_vs,
+                    &samplers_bind_group_layout_ps,
+                    half_pixel_layout,
+                ],
+                push_constant_ranges: &[],
+            })
+        } else {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("aerogpu-d3d9.pipeline_layout"),
+                bind_group_layouts: &[
+                    &constants_bind_group_layout,
+                    &samplers_bind_group_layout_vs,
+                    &samplers_bind_group_layout_ps,
+                ],
+                push_constant_ranges: &[],
+            })
+        };
         let constants_bind_group =
             create_constants_bind_group(&device, &constants_bind_group_layout, &constants_buffer);
+
+        let (half_pixel_uniform_buffer, half_pixel_bind_group) =
+            if let Some(half_pixel_layout) = half_pixel_bind_group_layout.as_ref() {
+                let buffer = create_half_pixel_uniform_buffer(&device);
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu-d3d9.half_pixel.bind_group"),
+                    layout: half_pixel_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                });
+                (Some(buffer), Some(bind_group))
+            } else {
+                (None, None)
+            };
 
         let clear_color_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu-d3d9.clear_params"),
@@ -1158,7 +1286,9 @@ impl AerogpuD3d9Executor {
             device,
             queue,
             stats,
-            shader_cache: shader::ShaderCache::default(),
+            shader_cache: shader::ShaderCache::new(shader::WgslOptions {
+                half_pixel_center: config.half_pixel_center,
+            }),
             #[cfg(target_arch = "wasm32")]
             persistent_shader_cache: PersistentShaderCache::new(),
             #[cfg(target_arch = "wasm32")]
@@ -1168,6 +1298,10 @@ impl AerogpuD3d9Executor {
             shaders: HashMap::new(),
             input_layouts: HashMap::new(),
             constants_buffer,
+            half_pixel_center: config.half_pixel_center,
+            half_pixel_bind_group_layout,
+            half_pixel_uniform_buffer,
+            half_pixel_bind_group,
             dummy_texture_view,
             downlevel_flags,
             bc_copy_to_buffer_supported,
@@ -1229,7 +1363,9 @@ impl AerogpuD3d9Executor {
     }
 
     pub fn reset(&mut self) {
-        self.shader_cache = shader::ShaderCache::default();
+        self.shader_cache = shader::ShaderCache::new(shader::WgslOptions {
+            half_pixel_center: self.half_pixel_center,
+        });
         #[cfg(target_arch = "wasm32")]
         {
             self.persistent_shader_cache = PersistentShaderCache::new();
@@ -1273,6 +1409,9 @@ impl AerogpuD3d9Executor {
             0,
             &[0u8; CONSTANTS_BUFFER_SIZE_BYTES],
         );
+        if let Some(buf) = self.half_pixel_uniform_buffer.as_ref() {
+            self.queue.write_buffer(buf, 0, &[0u8; HALF_PIXEL_UNIFORM_SIZE_BYTES]);
+        }
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -1784,6 +1923,7 @@ impl AerogpuD3d9Executor {
                 &self.device,
                 &self.constants_bind_group_layout,
                 default_sampler,
+                self.half_pixel_bind_group_layout.as_ref(),
             )
         };
 
@@ -1804,6 +1944,11 @@ impl AerogpuD3d9Executor {
             &mut self.samplers_bind_groups_dirty,
             &mut next.samplers_bind_groups_dirty,
         );
+        std::mem::swap(
+            &mut self.half_pixel_uniform_buffer,
+            &mut next.half_pixel_uniform_buffer,
+        );
+        std::mem::swap(&mut self.half_pixel_bind_group, &mut next.half_pixel_bind_group);
         std::mem::swap(&mut self.samplers_vs, &mut next.samplers_vs);
         std::mem::swap(&mut self.sampler_state_vs, &mut next.sampler_state_vs);
         std::mem::swap(&mut self.samplers_ps, &mut next.samplers_ps);
@@ -2218,7 +2363,13 @@ impl AerogpuD3d9Executor {
                 .get_or_translate_with_source(dxbc_bytes, flags.clone(), || async {
                     let program = shader::parse(dxbc_bytes).map_err(|e| e.to_string())?;
                     let ir = shader::to_ir(&program);
-                    let wgsl = shader::generate_wgsl(&ir).map_err(|e| e.to_string())?;
+                    let wgsl = shader::generate_wgsl_with_options(
+                        &ir,
+                        shader::WgslOptions {
+                            half_pixel_center: flags.half_pixel_center,
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
 
                     let mut used_samplers_mask = 0u16;
                     for &s in &ir.used_samplers {
@@ -4738,14 +4889,52 @@ impl AerogpuD3d9Executor {
                 min_depth_f32,
                 max_depth_f32,
             } => {
+                let width = f32::from_bits(width_f32);
+                let height = f32::from_bits(height_f32);
                 self.state.viewport = Some(ViewportState {
                     x: f32::from_bits(x_f32),
                     y: f32::from_bits(y_f32),
-                    width: f32::from_bits(width_f32),
-                    height: f32::from_bits(height_f32),
+                    width,
+                    height,
                     min_depth: f32::from_bits(min_depth_f32),
                     max_depth: f32::from_bits(max_depth_f32),
                 });
+
+                // When half-pixel mode is enabled, keep the viewport inverse dimensions uniform in
+                // sync. Use an encoder-ordered copy so multiple viewport changes within a single
+                // command stream are ordered correctly relative to subsequent draws.
+                if self.half_pixel_center {
+                    let inv_w = if width > 0.0 { 1.0 / width } else { 0.0 };
+                    let inv_h = if height > 0.0 { 1.0 / height } else { 0.0 };
+                    let mut data = [0u8; HALF_PIXEL_UNIFORM_SIZE_BYTES];
+                    data[0..4].copy_from_slice(&inv_w.to_le_bytes());
+                    data[4..8].copy_from_slice(&inv_h.to_le_bytes());
+                    // Remaining bytes are padding.
+
+                    if self.half_pixel_uniform_buffer.is_some() {
+                        self.ensure_encoder();
+                        let staging = self
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("aerogpu-d3d9.half_pixel.staging"),
+                                contents: &data,
+                                usage: wgpu::BufferUsages::COPY_SRC,
+                            });
+                        let mut encoder = self.encoder.take().unwrap();
+                        let buf = self
+                            .half_pixel_uniform_buffer
+                            .as_ref()
+                            .expect("checked is_some above");
+                        encoder.copy_buffer_to_buffer(
+                            &staging,
+                            0,
+                            buf,
+                            0,
+                            HALF_PIXEL_UNIFORM_SIZE_BYTES as u64,
+                        );
+                        self.encoder = Some(encoder);
+                    }
+                }
                 Ok(())
             }
             AeroGpuCmd::SetScissor {
@@ -7270,6 +7459,9 @@ impl AerogpuD3d9Executor {
         pass.set_bind_group(0, constants_bind_group, &[]);
         pass.set_bind_group(1, samplers_bind_group_vs, &[]);
         pass.set_bind_group(2, samplers_bind_group_ps, &[]);
+        if let Some(half_pixel_bg) = self.half_pixel_bind_group.as_ref() {
+            pass.set_bind_group(3, half_pixel_bg, &[]);
+        }
 
         // Bind vertex buffers: wgpu slot is derived from the vertex declaration's used streams.
         for stream in &vertex_buffers.streams {
