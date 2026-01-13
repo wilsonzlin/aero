@@ -1675,6 +1675,20 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
         return;
     }
 
+    /*
+     * This is a best-effort internal submission used to tell the host to release
+     * a share_token mapping.
+     *
+     * Do not attempt to touch the ring/MMIO unless the adapter is powered (D0)
+     * and accepting submissions; during sleep/disable transitions the ring may
+     * be stopped and BAR state may be partially reset.
+     */
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
+            DxgkDevicePowerStateD0 ||
+        InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+        return;
+    }
+
     if (Adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
         return;
     }
