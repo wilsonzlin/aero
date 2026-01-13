@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn ring_header_validation_accepts_unknown_minor() {
-        let abi_version = (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 999);
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1);
         let hdr = make_valid_header_with_abi(abi_version);
         assert!(hdr.is_valid(hdr.size_bytes));
     }

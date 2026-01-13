@@ -1352,7 +1352,11 @@ test("decodeAllocTableHeader accepts unknown minor versions and extended strides
   const view = new DataView(buf);
 
   view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_MAGIC, AEROGPU_ALLOC_TABLE_MAGIC, true);
-  view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ABI_VERSION, (AEROGPU_ABI_MAJOR << 16) | 999, true);
+  view.setUint32(
+    AEROGPU_ALLOC_TABLE_HEADER_OFF_ABI_VERSION,
+    (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1),
+    true,
+  );
   view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_SIZE_BYTES, 24 + 2 * 64, true);
   view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_COUNT, 2, true);
   view.setUint32(AEROGPU_ALLOC_TABLE_HEADER_OFF_ENTRY_STRIDE_BYTES, 64, true);
@@ -1444,7 +1448,7 @@ test("decodeRingHeader accepts unknown minor versions and extended strides", () 
   const view = new DataView(buf);
 
   view.setUint32(AEROGPU_RING_HEADER_OFF_MAGIC, AEROGPU_RING_MAGIC, true);
-  view.setUint32(AEROGPU_RING_HEADER_OFF_ABI_VERSION, (AEROGPU_ABI_MAJOR << 16) | 999, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ABI_VERSION, (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1), true);
   view.setUint32(AEROGPU_RING_HEADER_OFF_ENTRY_COUNT, 8, true);
   view.setUint32(AEROGPU_RING_HEADER_OFF_ENTRY_STRIDE_BYTES, 128, true);
   view.setUint32(AEROGPU_RING_HEADER_OFF_SIZE_BYTES, 64 + 8 * 128, true);
@@ -1452,7 +1456,7 @@ test("decodeRingHeader accepts unknown minor versions and extended strides", () 
   const hdr = decodeRingHeader(view, 0);
   assert.equal(hdr.entryCount, 8);
   assert.equal(hdr.entryStrideBytes, 128);
-  assert.equal(hdr.abiVersion, (AEROGPU_ABI_MAJOR << 16) | 999);
+  assert.equal(hdr.abiVersion, (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1));
 });
 
 test("decodeRingHeader rejects non-power-of-two entry_count", () => {

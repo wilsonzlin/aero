@@ -3980,11 +3980,11 @@ fn abi_version_rejects_unknown_major() {
 
 #[test]
 fn abi_version_accepts_unknown_minor() {
-    let version_u32 = (AEROGPU_ABI_MAJOR << 16) | 999u32;
+    let version_u32 = (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1);
     let parsed = parse_and_validate_abi_version_u32(version_u32)
         .expect("minor versions are backwards compatible");
     assert_eq!(parsed.major, AEROGPU_ABI_MAJOR as u16);
-    assert_eq!(parsed.minor, 999);
+    assert_eq!(parsed.minor, (AEROGPU_ABI_MINOR + 1) as u16);
 }
 
 #[test]
@@ -4029,7 +4029,7 @@ fn ring_header_accepts_unknown_minor_and_extended_stride() {
     write_u32_le(
         &mut buf,
         core::mem::offset_of!(AerogpuRingHeader, abi_version),
-        (AEROGPU_ABI_MAJOR << 16) | 999u32,
+        (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1),
     );
     write_u32_le(
         &mut buf,
@@ -4177,7 +4177,7 @@ fn alloc_table_header_accepts_unknown_minor_and_extended_stride() {
     write_u32_le(
         &mut buf,
         core::mem::offset_of!(AerogpuAllocTableHeader, abi_version),
-        (AEROGPU_ABI_MAJOR << 16) | 999u32,
+        (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1),
     );
     write_u32_le(
         &mut buf,

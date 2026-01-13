@@ -397,7 +397,7 @@ fn doorbell_accepts_newer_minor_abi_version() {
     // Ring header: advertise an unknown minor version while keeping the same major.
     // The protocol versioning rules require consumers to accept forward-compatible minor
     // extensions and ignore what they don't understand.
-    let newer_minor = (AEROGPU_ABI_MAJOR << 16) | 999;
+    let newer_minor = (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1);
     mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, newer_minor);
     mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);

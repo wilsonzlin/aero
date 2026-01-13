@@ -11,6 +11,12 @@ Windows 7 applications (and some OS compositor paths) use **Direct3D 10/11**. Co
 
 This document specifies the translation layer that maps D3D10/11 concepts onto **WebGPU** primitives while remaining compatible with browser limits and WebGPU’s fixed-function constraints.
 
+> Protocol note: **AeroGPU ABI 1.3** (minor bump) introduces the guest↔host command-stream
+> extensions needed for D3D10/11 parity:
+> - GS/HS/DS support via `*_stage_ex` shader-stage extensions
+> - extended `BIND_SHADERS` encoding
+> - additional primitive topologies (beyond the original D3D9-oriented subset)
+
 Scope ordering:
 
 - **P0 (minimum viable for Win7 apps):** VS/PS SM4/5 + constant buffers + SRV/RTV/DSV + blend/depth/rasterizer + Draw/DrawIndexed (+ instancing)

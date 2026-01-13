@@ -1,6 +1,7 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
 };
+use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_MINOR;
 use aero_protocol::aerogpu::aerogpu_ring::{
     AerogpuAllocEntry as ProtocolAllocEntry, AerogpuAllocTableHeader as ProtocolAllocTableHeader,
     AerogpuRingHeader as ProtocolRingHeader, AerogpuSubmitDesc as ProtocolSubmitDesc,
@@ -452,7 +453,7 @@ fn accepts_unknown_minor_versions_for_submission_headers() {
     });
 
     // Use an unknown minor version while keeping the same major to validate forward-compat rules.
-    let newer_minor = (regs.abi_version & 0xffff_0000) | 999;
+    let newer_minor = (regs.abi_version & 0xffff_0000) | (AEROGPU_ABI_MINOR + 1);
 
     let ring_gpa = 0x1000u64;
     let ring_size = 0x1000u32;
