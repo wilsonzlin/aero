@@ -410,13 +410,13 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceGetGammaRamp:
       return "Device::GetGammaRamp";
     case D3d9TraceFunc::DeviceDrawRectPatch:
-      return "Device::DrawRectPatch (stub)";
+      return "Device::DrawRectPatch";
     case D3d9TraceFunc::DeviceDrawTriPatch:
-      return "Device::DrawTriPatch (stub)";
+      return "Device::DrawTriPatch";
     case D3d9TraceFunc::DeviceDeletePatch:
-      return "Device::DeletePatch (stub)";
+      return "Device::DeletePatch";
     case D3d9TraceFunc::DeviceProcessVertices:
-      return "Device::ProcessVertices (stub)";
+      return "Device::ProcessVertices";
     case D3d9TraceFunc::DeviceGetRasterStatus:
       return "Device::GetRasterStatus";
     case D3d9TraceFunc::DeviceSetDialogBoxMode:
@@ -491,6 +491,8 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::SetPriority";
     case D3d9TraceFunc::DeviceGetPriority:
       return "Device::GetPriority";
+    case D3d9TraceFunc::TraceTestStub:
+      return "Trace::TestStub (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }

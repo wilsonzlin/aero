@@ -38,7 +38,7 @@ int main() {
 
   // This call should be recorded (stub-tagged).
   {
-    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0x333, 0, 0, 0);
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::TraceTestStub, 0x333, 0, 0, 0);
     trace.ret(S_OK);
   }
 
@@ -49,7 +49,7 @@ int main() {
     std::fprintf(stdout, "FAIL: expected dump reason DLL_PROCESS_DETACH (log=%s)\n", out_path.c_str());
     return 1;
   }
-  if (output.find("Device::ProcessVertices (stub)") == std::string::npos) {
+  if (output.find("Trace::TestStub (stub)") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected stub-tagged entry to be recorded (log=%s)\n", out_path.c_str());
     return 1;
   }

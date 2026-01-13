@@ -178,6 +178,10 @@ enum class D3d9TraceFunc : uint16_t {
   DeviceSetPriority,
   DeviceGetPriority,
 
+  // Trace-only entrypoint used by host tests to exercise "(stub)" tagging and
+  // dump-on-stub behavior without mislabeling real DDIs.
+  TraceTestStub,
+
   kCount,
 };
 

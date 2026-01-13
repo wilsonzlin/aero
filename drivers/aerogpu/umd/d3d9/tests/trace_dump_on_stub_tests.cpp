@@ -24,16 +24,17 @@ int main() {
   set_env("AEROGPU_D3D9_TRACE_STDERR", "1");
  
   aerogpu::d3d9_trace_init_from_env();
- 
-  // Use an entrypoint that is intentionally stubbed in the bring-up UMD.
+  
+  // Use a trace-only entrypoint that is intentionally "(stub)"-tagged, so we
+  // can validate dump-on-stub without mislabeling real DDIs.
   {
-    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0xabc, 0, 0, 0);
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::TraceTestStub, 0xabc, 0, 0, 0);
     trace.ret(S_OK);
   }
 
   // Subsequent stubbed calls should not trigger additional dumps (dump is one-shot).
   {
-    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0xdef, 0, 0, 0);
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::TraceTestStub, 0xdef, 0, 0, 0);
     trace.ret(S_OK);
   }
 
@@ -49,11 +50,11 @@ int main() {
     std::fprintf(stdout, "FAIL: expected exactly one dump reason line (count=%d log=%s)\n", dump_count, out_path.c_str());
     return 1;
   }
-  if (output.find("dump reason=Device::ProcessVertices (stub)") == std::string::npos) {
-    std::fprintf(stdout, "FAIL: expected dump reason Device::ProcessVertices (stub) (log=%s)\n", out_path.c_str());
+  if (output.find("dump reason=Trace::TestStub (stub)") == std::string::npos) {
+    std::fprintf(stdout, "FAIL: expected dump reason Trace::TestStub (stub) (log=%s)\n", out_path.c_str());
     return 1;
   }
-  if (output.find("Device::ProcessVertices (stub)") == std::string::npos) {
+  if (output.find("Trace::TestStub (stub)") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected entrypoint name to appear in dump (log=%s)\n", out_path.c_str());
     return 1;
   }

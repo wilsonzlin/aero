@@ -52,6 +52,25 @@ int main() {
     trace.ret(S_OK);
   }
 
+  // Previously-stubbed DDIs that are now implemented should also NOT carry the
+  // "(stub)" marker in trace output.
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceDrawRectPatch, 0x111, 0, 0, 0);
+    trace.ret(S_OK);
+  }
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceDrawTriPatch, 0x222, 0, 0, 0);
+    trace.ret(S_OK);
+  }
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceDeletePatch, 0x333, 0, 0, 0);
+    trace.ret(S_OK);
+  }
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0x444, 0, 0, 0);
+    trace.ret(S_OK);
+  }
+
   const std::string output = slurp_file_after_closing_stderr(out_path);
   if (output.find("aerogpu-d3d9-trace: enabled") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected trace init line (log=%s)\n", out_path.c_str());
