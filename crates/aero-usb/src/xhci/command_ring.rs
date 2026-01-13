@@ -1,9 +1,11 @@
-use crate::MemoryBus;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
+use crate::{MemoryBus, SetupPacket, UsbDeviceModel};
 
 use super::context::EndpointContext;
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use alloc::vec;
-use alloc::vec::Vec;
 
 const CONTEXT_ALIGN: u64 = 64;
 const CONTEXT_SIZE: u64 = 32;
@@ -33,6 +35,8 @@ const ICC_CTX_FLAG_EP0: u32 = 1 << 1;
 const EP_STATE_RUNNING: u32 = 1;
 const EP_STATE_STOPPED: u32 = 3;
 
+const USB_REQUEST_SET_ADDRESS: u8 = 0x05;
+
 /// Command ring state (dequeue pointer + cycle state).
 #[derive(Clone, Copy, Debug)]
 pub struct CommandRing {
@@ -45,6 +49,17 @@ impl CommandRing {
         Self {
             dequeue_ptr,
             cycle_state: true,
+        }
+    }
+
+    /// Construct command ring consumer state from the Command Ring Control Register (CRCR).
+    ///
+    /// xHCI encodes the dequeue pointer in bits 63:6 (64-byte aligned) and the ring cycle state in
+    /// bit 0.
+    pub const fn from_crcr(crcr: u64) -> Self {
+        Self {
+            dequeue_ptr: crcr & !0x3f,
+            cycle_state: (crcr & 1) != 0,
         }
     }
 }
@@ -81,6 +96,32 @@ impl EventRing {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EndpointState {
+    dequeue_ptr: u64,
+    cycle: bool,
+}
+
+#[derive(Clone, Debug)]
+struct SlotState {
+    root_port: Option<u8>,
+    address: u8,
+    /// Endpoint states indexed by DCI (Device Context Index).
+    ///
+    /// DCI 0 is unused (slot context), DCI 1..=31 correspond to endpoint contexts.
+    endpoints: Vec<Option<EndpointState>>,
+}
+
+impl SlotState {
+    fn new() -> Self {
+        Self {
+            root_port: None,
+            address: 0,
+            endpoints: vec![None; 32],
+        }
+    }
+}
+
 /// Minimal xHCI command ring processor.
 ///
 /// This is *not* a full xHCI controller model; it is only the command-ring + event-ring plumbing
@@ -103,12 +144,22 @@ pub struct CommandRingProcessor {
     pub command_ring: CommandRing,
     pub event_ring: EventRing,
 
+    root_ports: Vec<Option<AttachedUsbDevice>>,
+    slots: Vec<Option<SlotState>>,
+    next_device_address: u8,
+
     /// Set when we detect a fatal error (e.g. malformed ring pointers).
     pub host_controller_error: bool,
 }
 
 impl CommandRingProcessor {
-    pub fn new(mem_size: u64, max_slots: u8, dcbaa_ptr: u64, command_ring: CommandRing, event_ring: EventRing) -> Self {
+    pub fn new(
+        mem_size: u64,
+        max_slots: u8,
+        dcbaa_ptr: u64,
+        command_ring: CommandRing,
+        event_ring: EventRing,
+    ) -> Self {
         Self {
             mem_size,
             max_slots,
@@ -116,8 +167,29 @@ impl CommandRingProcessor {
             slots_enabled: vec![false; usize::from(max_slots).saturating_add(1)],
             command_ring,
             event_ring,
+            root_ports: Vec::new(),
+            slots: vec![None; (max_slots as usize) + 1],
+            next_device_address: 1,
             host_controller_error: false,
         }
+    }
+
+    pub fn attach_root_port(&mut self, port: u8, model: Box<dyn UsbDeviceModel>) {
+        let idx = (port as usize).saturating_sub(1);
+        if idx >= self.root_ports.len() {
+            self.root_ports.resize_with(idx + 1, || None);
+        }
+        self.root_ports[idx] = Some(AttachedUsbDevice::new(model));
+    }
+
+    pub fn port_device(&self, port: u8) -> Option<&AttachedUsbDevice> {
+        let idx = (port as usize).checked_sub(1)?;
+        self.root_ports.get(idx)?.as_ref()
+    }
+
+    pub fn port_device_mut(&mut self, port: u8) -> Option<&mut AttachedUsbDevice> {
+        let idx = (port as usize).checked_sub(1)?;
+        self.root_ports.get_mut(idx)?.as_mut()
     }
 
     /// Process up to `max_trbs` TRBs from the command ring.
@@ -172,6 +244,24 @@ impl CommandRingProcessor {
                 TrbType::NoOpCommand => {
                     let slot_id = trb.slot_id();
                     self.emit_command_completion(mem, trb_addr, CompletionCode::Success, slot_id);
+                    if !self.advance_cmd_dequeue() {
+                        self.host_controller_error = true;
+                        return;
+                    }
+                }
+                TrbType::AddressDeviceCommand => {
+                    let slot_id = trb.slot_id();
+                    let code = self.handle_address_device(mem, trb);
+                    self.emit_command_completion(mem, trb_addr, code, slot_id);
+                    if !self.advance_cmd_dequeue() {
+                        self.host_controller_error = true;
+                        return;
+                    }
+                }
+                TrbType::ConfigureEndpointCommand => {
+                    let slot_id = trb.slot_id();
+                    let code = self.handle_configure_endpoint(mem, trb);
+                    self.emit_command_completion(mem, trb_addr, code, slot_id);
                     if !self.advance_cmd_dequeue() {
                         self.host_controller_error = true;
                         return;
@@ -262,6 +352,9 @@ impl CommandRingProcessor {
         if let Some(flag) = self.slots_enabled.get_mut(usize::from(slot_id)) {
             *flag = true;
         }
+        if let Some(slot) = self.slots.get_mut(usize::from(slot_id)) {
+            *slot = Some(SlotState::new());
+        }
 
         (CompletionCode::Success, slot_id)
     }
@@ -291,6 +384,13 @@ impl CommandRingProcessor {
         if let Some(flag) = self.slots_enabled.get_mut(idx) {
             *flag = false;
         }
+        if let Some(state) = self.slots.get_mut(idx).and_then(|s| s.take()) {
+            if let Some(root_port) = state.root_port {
+                if let Some(dev) = self.port_device_mut(root_port) {
+                    dev.reset();
+                }
+            }
+        }
         CompletionCode::Success
     }
 
@@ -302,6 +402,173 @@ impl CommandRingProcessor {
             }
             None => false,
         }
+    }
+
+    fn handle_address_device(&mut self, mem: &mut dyn MemoryBus, cmd: Trb) -> CompletionCode {
+        let slot_id = cmd.slot_id();
+        if slot_id == 0 || slot_id > self.max_slots {
+            return CompletionCode::SlotNotEnabledError;
+        }
+        if self
+            .slots
+            .get(slot_id as usize)
+            .and_then(|s| s.as_ref())
+            .is_none()
+        {
+            return CompletionCode::SlotNotEnabledError;
+        }
+
+        let input_ctx_ptr = cmd.pointer();
+        if (input_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+            return CompletionCode::ParameterError;
+        }
+        // Need at least ICC + Slot Context.
+        let min_input_ctx_len = INPUT_CONTROL_CTX_SIZE + CONTEXT_SIZE;
+        if !self.check_range(input_ctx_ptr, min_input_ctx_len) {
+            return CompletionCode::ParameterError;
+        }
+
+        let slot_dword1 = match self.read_u32(mem, input_ctx_ptr + INPUT_SLOT_CTX_OFFSET + 4) {
+            Ok(v) => v,
+            Err(_) => return CompletionCode::ParameterError,
+        };
+        let root_port = (slot_dword1 & 0xff) as u8;
+        if root_port == 0 {
+            return CompletionCode::ParameterError;
+        }
+
+        let Some(addr) = self.alloc_device_address() else {
+            return CompletionCode::TrbError;
+        };
+
+        {
+            let Some(dev) = self.port_device_mut(root_port) else {
+                return CompletionCode::ContextStateError;
+            };
+
+            let setup = SetupPacket {
+                bm_request_type: 0x00, // HostToDevice | Standard | Device
+                b_request: USB_REQUEST_SET_ADDRESS,
+                w_value: addr as u16,
+                w_index: 0,
+                w_length: 0,
+            };
+            if dev.handle_setup(setup) != UsbOutResult::Ack {
+                return CompletionCode::TrbError;
+            }
+            match dev.handle_in(0, 0) {
+                UsbInResult::Data(data) if data.is_empty() => {}
+                _ => return CompletionCode::TrbError,
+            }
+        }
+
+        if let Some(slot) = self
+            .slots
+            .get_mut(slot_id as usize)
+            .and_then(|s| s.as_mut())
+        {
+            slot.root_port = Some(root_port);
+            slot.address = addr;
+        }
+
+        CompletionCode::Success
+    }
+
+    fn handle_configure_endpoint(&mut self, mem: &mut dyn MemoryBus, cmd: Trb) -> CompletionCode {
+        let slot_id = cmd.slot_id();
+        if slot_id == 0 || slot_id > self.max_slots {
+            return CompletionCode::SlotNotEnabledError;
+        }
+        if self
+            .slots
+            .get(slot_id as usize)
+            .and_then(|s| s.as_ref())
+            .is_none()
+        {
+            return CompletionCode::SlotNotEnabledError;
+        }
+
+        let input_ctx_ptr = cmd.pointer();
+        if (input_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+            return CompletionCode::ParameterError;
+        }
+        if !self.check_range(input_ctx_ptr, 8) {
+            return CompletionCode::ParameterError;
+        }
+
+        let drop_flags = match self.read_u32(mem, input_ctx_ptr + ICC_DROP_FLAGS_OFFSET) {
+            Ok(v) => v,
+            Err(_) => return CompletionCode::ParameterError,
+        };
+        let add_flags = match self.read_u32(mem, input_ctx_ptr + ICC_ADD_FLAGS_OFFSET) {
+            Ok(v) => v,
+            Err(_) => return CompletionCode::ParameterError,
+        };
+
+        let mut updates: Vec<(u8, Option<EndpointState>)> = Vec::new();
+        for dci in 1u8..=31 {
+            let bit = 1u32 << dci;
+            if (drop_flags & bit) != 0 {
+                updates.push((dci, None));
+            }
+            if (add_flags & bit) != 0 {
+                let ep_ctx_addr = input_ctx_ptr
+                    + INPUT_CONTROL_CTX_SIZE
+                    + CONTEXT_SIZE * (dci as u64);
+                if !self.check_range(ep_ctx_addr, CONTEXT_SIZE) {
+                    return CompletionCode::ParameterError;
+                }
+                let dw2 = match self.read_u32(mem, ep_ctx_addr + 8) {
+                    Ok(v) => v,
+                    Err(_) => return CompletionCode::ParameterError,
+                };
+                let dw3 = match self.read_u32(mem, ep_ctx_addr + 12) {
+                    Ok(v) => v,
+                    Err(_) => return CompletionCode::ParameterError,
+                };
+                let ptr = ((dw3 as u64) << 32 | (dw2 as u64)) & !0x0f;
+                let cycle = (dw2 & 1) != 0;
+                updates.push((
+                    dci,
+                    Some(EndpointState {
+                        dequeue_ptr: ptr,
+                        cycle,
+                    }),
+                ));
+            }
+        }
+
+        if let Some(slot) = self
+            .slots
+            .get_mut(slot_id as usize)
+            .and_then(|s| s.as_mut())
+        {
+            for (dci, state) in updates {
+                if let Some(ep) = slot.endpoints.get_mut(dci as usize) {
+                    *ep = state;
+                }
+            }
+        }
+
+        CompletionCode::Success
+    }
+
+    fn alloc_device_address(&mut self) -> Option<u8> {
+        for _ in 0..127 {
+            let addr = self.next_device_address;
+            self.next_device_address = if addr >= 127 { 1 } else { addr + 1 };
+            if !self.address_in_use(addr) {
+                return Some(addr);
+            }
+        }
+        None
+    }
+
+    fn address_in_use(&self, addr: u8) -> bool {
+        self.slots
+            .iter()
+            .flatten()
+            .any(|slot| slot.address == addr)
     }
 
     fn handle_link_trb(&mut self, _mem: &mut dyn MemoryBus, _addr: u64, trb: Trb) -> bool {

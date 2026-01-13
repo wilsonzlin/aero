@@ -62,6 +62,15 @@ impl RingCursor {
         }
     }
 
+    /// Derive a command ring cursor from CRCR.
+    ///
+    /// xHCI encodes the ring cycle state in bit 0 and the base pointer in bits 63:6.
+    pub const fn from_crcr(crcr: u64) -> Self {
+        let cycle = (crcr & 1) != 0;
+        let ptr = crcr & !0x3f;
+        Self::new(ptr, cycle)
+    }
+
     /// Current dequeue pointer (16-byte aligned).
     pub const fn dequeue_ptr(&self) -> u64 {
         self.paddr
