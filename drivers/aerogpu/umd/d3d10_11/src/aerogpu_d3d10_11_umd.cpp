@@ -5886,6 +5886,14 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
     res->mapped_size_bytes = id.mapped_size_bytes;
   };
 
+  // Capture the pre-rotation AeroGPU handles so we can remap bound SRV slots
+  // (which store raw handles, not resource pointers).
+  std::vector<aerogpu_handle_t> old_handles;
+  old_handles.reserve(resources.size());
+  for (auto* res : resources) {
+    old_handles.push_back(res ? res->handle : 0);
+  }
+
   // Rotate the full resource identity bundle. This matches Win7 DXGI's
   // expectation that the *logical* backbuffer resource (buffer[0]) continues to
   // be used by the app across frames while the underlying allocation identity
@@ -5924,6 +5932,35 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
       put_identity(resources[0], std::move(undo_saved));
       ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
       return;
+    }
+  }
+
+  auto remap_handle = [&](aerogpu_handle_t handle) -> aerogpu_handle_t {
+    if (!handle) {
+      return handle;
+    }
+    for (size_t i = 0; i < old_handles.size(); ++i) {
+      if (old_handles[i] == handle) {
+        return resources[i] ? resources[i]->handle : 0;
+      }
+    }
+    return handle;
+  };
+
+  for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
+    const aerogpu_handle_t new_vs = remap_handle(dev->vs_srvs[slot]);
+    if (new_vs != dev->vs_srvs[slot]) {
+      if (!set_texture_locked(dev, hDevice, AEROGPU_SHADER_STAGE_VERTEX, slot, new_vs)) {
+        return;
+      }
+      dev->vs_srvs[slot] = new_vs;
+    }
+    const aerogpu_handle_t new_ps = remap_handle(dev->ps_srvs[slot]);
+    if (new_ps != dev->ps_srvs[slot]) {
+      if (!set_texture_locked(dev, hDevice, AEROGPU_SHADER_STAGE_PIXEL, slot, new_ps)) {
+        return;
+      }
+      dev->ps_srvs[slot] = new_ps;
     }
   }
 

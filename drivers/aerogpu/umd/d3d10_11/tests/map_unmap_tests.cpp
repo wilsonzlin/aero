@@ -8043,6 +8043,148 @@ bool TestRasterizerStateWireframeDepthBiasEncodesCmd() {
   return true;
 }
 
+bool TestRotateResourceIdentitiesRemapsMrtSlots() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(RotateResourceIdentities MRT)")) {
+    return false;
+  }
+
+  TestResource a{};
+  TestResource b{};
+  TestResource c{};
+  if (!Check(CreateTexture2D(&dev,
+                             /*width=*/4,
+                             /*height=*/4,
+                             AEROGPU_D3D11_USAGE_DEFAULT,
+                             kD3D11BindRenderTarget,
+                             /*cpu_access_flags=*/0,
+                             kDxgiFormatB8G8R8A8Unorm,
+                             &a),
+             "Create tex A")) {
+    return false;
+  }
+  if (!Check(CreateTexture2D(&dev,
+                             /*width=*/4,
+                             /*height=*/4,
+                             AEROGPU_D3D11_USAGE_DEFAULT,
+                             kD3D11BindRenderTarget,
+                             /*cpu_access_flags=*/0,
+                             kDxgiFormatB8G8R8A8Unorm,
+                             &b),
+             "Create tex B")) {
+    return false;
+  }
+  if (!Check(CreateTexture2D(&dev,
+                             /*width=*/4,
+                             /*height=*/4,
+                             AEROGPU_D3D11_USAGE_DEFAULT,
+                             kD3D11BindRenderTarget,
+                             /*cpu_access_flags=*/0,
+                             kDxgiFormatB8G8R8A8Unorm,
+                             &c),
+             "Create tex C")) {
+    return false;
+  }
+
+  TestRenderTargetView rtv_a{};
+  TestRenderTargetView rtv_b{};
+  TestRenderTargetView rtv_c{};
+  if (!Check(CreateRenderTargetView(&dev, &a, &rtv_a), "CreateRTV(A)")) {
+    return false;
+  }
+  if (!Check(CreateRenderTargetView(&dev, &b, &rtv_b), "CreateRTV(B)")) {
+    return false;
+  }
+  if (!Check(CreateRenderTargetView(&dev, &c, &rtv_c), "CreateRTV(C)")) {
+    return false;
+  }
+
+  // Bind MRT: RTV0=A, RTV1=B.
+  const D3D10DDI_HRENDERTARGETVIEW rtvs[2] = {rtv_a.hView, rtv_b.hView};
+  D3D10DDI_HDEPTHSTENCILVIEW dsv{};
+  dsv.pDrvPrivate = nullptr;
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/2, rtvs, dsv);
+
+  // Flush so we can capture the CREATE_TEXTURE2D handle identities before rotation.
+  HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetRenderTargets")) {
+    return false;
+  }
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream0 = dev.harness.last_stream.data();
+  const size_t stream0_len = StreamBytesUsed(stream0, dev.harness.last_stream.size());
+
+  // Collect the CREATE_TEXTURE2D handles in emission order so we don't assume any
+  // specific handle allocation strategy.
+  std::vector<aerogpu_handle_t> handles;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream0_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(stream0 + offset);
+    if (hdr->opcode == AEROGPU_CMD_CREATE_TEXTURE2D) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream0 + offset);
+      handles.push_back(cmd->texture_handle);
+    }
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_hdr) || hdr->size_bytes > stream0_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  if (!Check(handles.size() >= 3, "captured >=3 CREATE_TEXTURE2D handles")) {
+    return false;
+  }
+  const aerogpu_handle_t handle_a = handles[handles.size() - 3];
+  const aerogpu_handle_t handle_b = handles[handles.size() - 2];
+  const aerogpu_handle_t handle_c = handles[handles.size() - 1];
+  (void)handle_a;
+
+  D3D10DDI_HRESOURCE rotation[3] = {a.hResource, b.hResource, c.hResource};
+  dev.device_funcs.pfnRotateResourceIdentities(dev.hDevice, rotation, 3);
+
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after RotateResourceIdentities")) {
+    return false;
+  }
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_SET_RENDER_TARGETS) == 1,
+             "RotateResourceIdentities emitted SET_RENDER_TARGETS")) {
+    return false;
+  }
+
+  CmdLoc loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS emitted")) {
+    return false;
+  }
+  const auto* set_cmd = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(stream + loc.offset);
+  if (!Check(set_cmd->color_count == 2, "color_count preserved")) {
+    return false;
+  }
+  if (!Check(set_cmd->colors[0] == handle_b, "RTV0 remapped to B")) {
+    return false;
+  }
+  if (!Check(set_cmd->colors[1] == handle_c, "RTV1 remapped to C")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv_c.hView);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv_b.hView);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv_a.hView);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, c.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, b.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, a.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestCreateBlendStateRejectsUnsupportedFactor() {
   TestDevice dev{};
   if (!InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false)) {
@@ -8627,6 +8769,7 @@ int main() {
   ok &= TestBcTexture2DLayout();
   ok &= TestMapDoNotWaitRespectsFenceCompletion();
   ok &= TestRasterizerStateWireframeDepthBiasEncodesCmd();
+  ok &= TestRotateResourceIdentitiesRemapsMrtSlots();
   ok &= TestCreateBlendStateRejectsUnsupportedFactor();
   ok &= TestCreateBlendStateRejectsPerRtMismatch();
   ok &= TestCreateBlendStateRejectsPerRtWriteMaskMismatch();
