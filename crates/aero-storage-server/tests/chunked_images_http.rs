@@ -76,6 +76,61 @@ async fn setup_app(max_chunk_bytes: Option<u64>) -> (axum::Router, tempfile::Tem
     (http::router_with_state(state), dir, manifest)
 }
 
+async fn setup_versioned_app() -> (axum::Router, tempfile::TempDir, String) {
+    let dir = tempdir().expect("tempdir");
+
+    // Backing image file required by the image catalog.
+    tokio::fs::write(dir.path().join("disk.img"), b"raw image bytes")
+        .await
+        .expect("write disk.img");
+
+    let catalog = serde_json::json!({
+        "images": [
+            { "id": IMAGE_ID, "file": "disk.img", "name": "Disk", "public": true }
+        ]
+    })
+    .to_string();
+    tokio::fs::write(dir.path().join("manifest.json"), catalog)
+        .await
+        .expect("write manifest.json");
+
+    let chunk_root = dir.path().join("chunked").join(IMAGE_ID).join("v1");
+    tokio::fs::create_dir_all(chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+
+    let manifest = serde_json::json!({
+        "schema": "aero.chunked-disk-image.v1",
+        "imageId": IMAGE_ID,
+        "version": "v1",
+        "mimeType": "application/octet-stream",
+        "totalSize": 4,
+        "chunkSize": 2,
+        "chunkCount": 2,
+        "chunkIndexWidth": 8,
+        "chunks": [
+            { "size": 2 },
+            { "size": 2 }
+        ]
+    })
+    .to_string();
+    tokio::fs::write(chunk_root.join("manifest.json"), manifest.as_bytes())
+        .await
+        .expect("write chunked manifest.json");
+    tokio::fs::write(chunk_root.join("chunks/00000000.bin"), b"ab")
+        .await
+        .expect("write chunk0");
+    tokio::fs::write(chunk_root.join("chunks/00000001.bin"), b"cd")
+        .await
+        .expect("write chunk1");
+
+    let store = Arc::new(LocalFsImageStore::new(dir.path()).with_require_manifest(true));
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics);
+
+    (http::router_with_state(state), dir, manifest)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chunked_manifest_endpoint_has_expected_headers() {
     let (app, _dir, expected_manifest) = setup_app(None).await;
@@ -217,6 +272,117 @@ async fn chunked_manifest_with_matching_if_modified_since_returns_304() {
         .oneshot(
             Request::builder()
                 .uri("/v1/images/disk/chunked/manifest.json")
+                .header(header::IF_MODIFIED_SINCE, last_modified)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn versioned_chunked_manifest_head_has_expected_headers_and_empty_body() {
+    let (app, _dir, expected_manifest) = setup_versioned_app().await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/v1/images/disk/chunked/v1/manifest.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[header::CONTENT_TYPE].to_str().unwrap(),
+        "application/json"
+    );
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+    assert!(resp.headers().contains_key(header::ETAG));
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+    assert_eq!(
+        resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
+        expected_manifest.as_bytes().len().to_string()
+    );
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn versioned_chunked_manifest_with_matching_if_none_match_returns_304() {
+    let (app, _dir, _expected_manifest) = setup_versioned_app().await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/v1/manifest.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp.headers()[header::ETAG].to_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/v1/manifest.json")
+                .header(header::IF_NONE_MATCH, etag.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(resp.headers()[header::ETAG].to_str().unwrap(), etag);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn versioned_chunked_manifest_with_matching_if_modified_since_returns_304() {
+    let (app, _dir, _expected_manifest) = setup_versioned_app().await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/v1/manifest.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let last_modified = resp.headers()[header::LAST_MODIFIED]
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/v1/manifest.json")
                 .header(header::IF_MODIFIED_SINCE, last_modified)
                 .body(Body::empty())
                 .unwrap(),
@@ -451,6 +617,8 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable"
     );
+    assert!(resp.headers().contains_key(header::ETAG));
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
         resp.headers()["access-control-allow-origin"]
             .to_str()
@@ -490,6 +658,8 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable, no-transform"
     );
+    assert!(resp.headers().contains_key(header::ETAG));
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
         resp.headers()["access-control-allow-origin"]
             .to_str()
@@ -706,6 +876,77 @@ async fn chunked_chunk_with_matching_if_none_match_returns_304() {
         .oneshot(
             Request::builder()
                 .uri("/v1/images/disk/chunked/chunks/00000000.bin")
+                .header(header::IF_NONE_MATCH, etag.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "public, max-age=31536000, immutable, no-transform"
+    );
+    assert_eq!(resp.headers()[header::ETAG].to_str().unwrap(), etag);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn versioned_chunked_chunk_head_has_expected_headers_and_empty_body() {
+    let (app, _dir, _manifest) = setup_versioned_app().await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/v1/images/disk/chunked/v1/chunks/00000000.bin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[header::CONTENT_TYPE].to_str().unwrap(),
+        "application/octet-stream"
+    );
+    assert_eq!(
+        resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
+        "identity"
+    );
+    assert!(resp.headers().contains_key(header::ETAG));
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+    assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn versioned_chunked_chunk_with_matching_if_none_match_returns_304() {
+    let (app, _dir, _manifest) = setup_versioned_app().await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/v1/chunks/00000000.bin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp.headers()[header::ETAG].to_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/v1/chunks/00000000.bin")
                 .header(header::IF_NONE_MATCH, etag.clone())
                 .body(Body::empty())
                 .unwrap(),
