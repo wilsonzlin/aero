@@ -30,6 +30,38 @@ static void build_eth(uint8_t *dst, uint16_t ethertype)
     dst[13] = (uint8_t)(ethertype & 0xff);
 }
 
+static size_t build_eth_vlan(uint8_t *dst, uint16_t inner_ethertype)
+{
+    /* 802.1Q tag: ethertype 0x8100 + TCI + inner ethertype */
+    memset(dst, 0x11, 6);
+    memset(dst + 6, 0x22, 6);
+    dst[12] = 0x81;
+    dst[13] = 0x00;
+    dst[14] = 0x00; /* TCI */
+    dst[15] = 0x00;
+    dst[16] = (uint8_t)(inner_ethertype >> 8);
+    dst[17] = (uint8_t)(inner_ethertype & 0xff);
+    return 18;
+}
+
+static size_t build_eth_qinq(uint8_t *dst, uint16_t inner_ethertype)
+{
+    /* QinQ: outer 0x88A8 + TCI + inner 0x8100 + TCI + inner ethertype */
+    memset(dst, 0x11, 6);
+    memset(dst + 6, 0x22, 6);
+    dst[12] = 0x88;
+    dst[13] = 0xA8;
+    dst[14] = 0x00; /* outer TCI */
+    dst[15] = 0x00;
+    dst[16] = 0x81;
+    dst[17] = 0x00;
+    dst[18] = 0x00; /* inner TCI */
+    dst[19] = 0x00;
+    dst[20] = (uint8_t)(inner_ethertype >> 8);
+    dst[21] = (uint8_t)(inner_ethertype & 0xff);
+    return 22;
+}
+
 static void build_ipv4_tcp(uint8_t *dst, size_t payload_len)
 {
     /* IPv4 header */
@@ -62,6 +94,23 @@ static void build_ipv6_tcp(uint8_t *dst, size_t payload_len)
     dst[6] = 6;  /* TCP */
     dst[7] = 64; /* hop limit */
     /* src/dst addresses left as zero */
+}
+
+static void build_ipv6_hopbyhop_tcp(uint8_t *dst, size_t payload_len)
+{
+    /* IPv6 base header with Hop-by-Hop extension header before TCP. */
+    const uint16_t payload = (uint16_t)(8 + 20 + payload_len); /* ext + TCP header + payload */
+    memset(dst, 0, 40);
+    dst[0] = (6u << 4);
+    dst[4] = (uint8_t)(payload >> 8);
+    dst[5] = (uint8_t)(payload & 0xff);
+    dst[6] = 0;  /* Hop-by-Hop */
+    dst[7] = 64; /* hop limit */
+
+    /* Hop-by-Hop extension header: NextHeader=TCP, HdrExtLen=0 (8 bytes total). */
+    memset(dst + 40, 0, 8);
+    dst[40] = 6;  /* next = TCP */
+    dst[41] = 0;  /* 8 bytes */
 }
 
 static void build_tcp_header(uint8_t *dst)
@@ -127,6 +176,28 @@ static void test_ipv6_tcp_checksum_only(void)
     assert(info.L4Protocol == 6);
 }
 
+static void test_ipv4_vlan_tcp_checksum_only(void)
+{
+    uint8_t pkt[18 + 20 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth_vlan(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 18, 0);
+    build_tcp_header(pkt + 18 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.CsumStart == (uint16_t)(18 + 20));
+    assert(hdr.CsumOffset == 16);
+}
+
 static void test_ipv4_tcp_lso(void)
 {
     uint8_t pkt[14 + 20 + 20 + 4000];
@@ -153,6 +224,31 @@ static void test_ipv4_tcp_lso(void)
     assert(hdr.CsumStart == (uint16_t)(14 + 20));
     assert(hdr.CsumOffset == 16);
     assert(info.IpVersion == 4);
+}
+
+static void test_ipv4_qinq_tcp_lso(void)
+{
+    uint8_t pkt[22 + 20 + 20 + 4000];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth_qinq(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 22, 4000);
+    build_tcp_header(pkt + 22 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoMss = 1400;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_TCPV4);
+    assert(hdr.HdrLen == (uint16_t)(22 + 20 + 20));
+    assert(hdr.GsoSize == 1400);
+    assert(hdr.CsumStart == (uint16_t)(22 + 20));
+    assert(hdr.CsumOffset == 16);
 }
 
 static void test_ipv6_tcp_lso(void)
@@ -183,6 +279,28 @@ static void test_ipv6_tcp_lso(void)
     assert(info.IpVersion == 6);
 }
 
+static void test_ipv6_hopbyhop_tcp_checksum_only(void)
+{
+    uint8_t pkt[14 + 40 + 8 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_hopbyhop_tcp(pkt + 14, 0);
+    build_tcp_header(pkt + 14 + 40 + 8);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40 + 8));
+    assert(hdr.CsumOffset == 16);
+}
+
 static void test_unsupported_protocol(void)
 {
     uint8_t pkt[14 + 20 + 8];
@@ -207,9 +325,11 @@ int main(void)
 {
     test_ipv4_tcp_checksum_only();
     test_ipv6_tcp_checksum_only();
+    test_ipv4_vlan_tcp_checksum_only();
     test_ipv4_tcp_lso();
+    test_ipv4_qinq_tcp_lso();
     test_ipv6_tcp_lso();
+    test_ipv6_hopbyhop_tcp_checksum_only();
     test_unsupported_protocol();
     return 0;
 }
-
