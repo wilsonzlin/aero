@@ -3582,6 +3582,61 @@ impl Machine {
             .map_err(js_error)
     }
 
+    /// Open an existing OPFS-backed ISO image and attach it as the IDE secondary channel master
+    /// ATAPI CD-ROM (install media, `disk_id=1`).
+    ///
+    /// Notes:
+    /// - ISO images must have a capacity that is a multiple of 2048 bytes.
+    /// - OPFS sync access handles are worker-only; this requires running in a Dedicated Worker.
+    /// - This API is not supported in threaded WASM builds (atomics enabled) because OPFS sync
+    ///   access handles cannot be shared across wasm threads.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_ide_secondary_master_iso_opfs_existing(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        #[cfg(not(target_feature = "atomics"))]
+        {
+            let backend = aero_opfs::OpfsBackend::open_existing(&path)
+                .await
+                .map_err(|e| {
+                    opfs_disk_error_to_js("Machine.attach_ide_secondary_master_iso_opfs_existing", &path, e)
+                })?;
+            let disk: Box<dyn aero_storage::VirtualDisk + Send> = Box::new(backend);
+            self.inner.attach_ide_secondary_master_iso(disk).map_err(js_error)
+        }
+
+        #[cfg(target_feature = "atomics")]
+        {
+            Err(js_error(
+                "Machine.attach_ide_secondary_master_iso_opfs_existing is not supported in threaded WASM builds (atomics enabled); OPFS sync handles cannot be shared across wasm threads",
+            ))
+        }
+    }
+
+    /// Open an existing OPFS-backed ISO image, attach it as the IDE secondary channel master ATAPI
+    /// CD-ROM (install media), and set the snapshot overlay reference (`DISKS` entry) for
+    /// `disk_id=1`.
+    ///
+    /// This sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// This method is intentionally separate from
+    /// [`Machine::attach_ide_secondary_master_iso_opfs_existing`] so callers do not silently
+    /// overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.attach_ide_secondary_master_iso_opfs_existing(path)
+            .await?;
+        self.set_ide_secondary_master_atapi_overlay_ref(&overlay_path, "");
+        Ok(())
+    }
+
     /// Open (or create) an OPFS-backed disk image and attach it as the IDE primary channel master
     /// ATA disk.
     ///
@@ -4912,7 +4967,7 @@ mod machine_opfs_disk_tests {
 
     fn js_error_to_string(err: &JsValue) -> String {
         err.as_string()
-            .or_else(|| err.dyn_ref::<js_sys::Error>().map(|e| e.message()))
+            .or_else(|| err.dyn_ref::<js_sys::Error>().and_then(|e| e.message().as_string()))
             .unwrap_or_else(|| format!("{err:?}"))
     }
 
