@@ -436,3 +436,46 @@ test("AerogpuCmdWriter stage_ex binding packets encode (shaderStage=COMPUTE, res
 
   assert.equal(cursor, bytes.byteLength);
 });
+
+test("AerogpuCmdWriter emits stage_ex packets and extended BindShaders encoding", () => {
+  const w = new AerogpuCmdWriter();
+  w.bindShadersEx(1, 2, 3, 4, 5, 6);
+  w.createShaderDxbcEx(7, AerogpuShaderStageEx.Geometry, new Uint8Array([0xaa, 0xbb, 0xcc]));
+  w.setTextureEx(AerogpuShaderStageEx.Hull, 9, 10);
+
+  const bytes = w.finish();
+  assert.equal(bytes.byteLength % 4, 0, "stream must remain 4-byte aligned");
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  assert.equal(view.getUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, true), bytes.byteLength);
+
+  let cursor = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  // BIND_SHADERS_EX
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.BindShaders);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 24 + 12);
+  assert.equal(view.getUint32(cursor + 8, true), 1);
+  assert.equal(view.getUint32(cursor + 12, true), 2);
+  assert.equal(view.getUint32(cursor + 16, true), 3);
+  // Trailing GS/HS/DS u32s.
+  assert.equal(view.getUint32(cursor + 24, true), 4);
+  assert.equal(view.getUint32(cursor + 28, true), 5);
+  assert.equal(view.getUint32(cursor + 32, true), 6);
+  cursor += 24 + 12;
+
+  // CREATE_SHADER_DXBC_EX (stage_ex stored in reserved0; stage set to Compute for fwd-compat).
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.CreateShaderDxbc);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), alignUp(24 + 3, 4));
+  assert.equal(view.getUint32(cursor + 12, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Geometry);
+  cursor += alignUp(24 + 3, 4);
+
+  // SET_TEXTURE_EX (shader_stage_ex stored in reserved0; shader_stage set to Compute for fwd-compat).
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetTexture);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_SET_TEXTURE_SIZE);
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Hull);
+  cursor += AEROGPU_CMD_SET_TEXTURE_SIZE;
+
+  assert.equal(cursor, bytes.byteLength);
+});

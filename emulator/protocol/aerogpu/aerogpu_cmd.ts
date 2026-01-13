@@ -320,7 +320,6 @@ export function decodeStageEx(shaderStage: number, reserved0: number): AerogpuSh
 export function encodeStageEx(stageEx: AerogpuShaderStageEx): [shaderStage: number, reserved0: number] {
   return [AerogpuShaderStage.Compute, stageEx];
 }
-
 export const AerogpuIndexFormat = {
   Uint16: 0,
   Uint32: 1,
@@ -1490,6 +1489,17 @@ export class AerogpuCmdWriter {
 
   bindShaders(vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
     this.bindShadersWithGs(vs, 0, ps, cs);
+  }
+
+  bindShadersEx(vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle, gs: AerogpuHandle, hs: AerogpuHandle, ds: AerogpuHandle): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE + 3 * 4);
+    this.view.setUint32(base + 8, vs, true);
+    this.view.setUint32(base + 12, ps, true);
+    this.view.setUint32(base + 16, cs, true);
+    // Trailing extended-stage shader handles (forward-compatible extension).
+    this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 0, gs, true);
+    this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 4, hs, true);
+    this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 8, ds, true);
   }
 
   setShaderConstantsF(stage: AerogpuShaderStage, startRegister: number, data: Float32Array | readonly number[]): void {

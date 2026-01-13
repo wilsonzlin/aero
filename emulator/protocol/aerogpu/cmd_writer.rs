@@ -526,6 +526,29 @@ impl AerogpuCmdWriter {
         self.bind_shaders_with_gs(vs, 0, ps, cs);
     }
 
+    pub fn bind_shaders_ex(
+        &mut self,
+        vs: AerogpuHandle,
+        ps: AerogpuHandle,
+        cs: AerogpuHandle,
+        gs: AerogpuHandle,
+        hs: AerogpuHandle,
+        ds: AerogpuHandle,
+    ) {
+        use super::aerogpu_cmd::AerogpuCmdBindShaders;
+
+        let size = size_of::<AerogpuCmdBindShaders>() + 3 * size_of::<AerogpuHandle>();
+        let base = self.append_raw(AerogpuCmdOpcode::BindShaders, size);
+        self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, vs), vs);
+        self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, ps), ps);
+        self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, cs), cs);
+
+        let trailing_base = base + size_of::<AerogpuCmdBindShaders>();
+        self.write_u32_at(trailing_base, gs);
+        self.write_u32_at(trailing_base + 4, hs);
+        self.write_u32_at(trailing_base + 8, ds);
+    }
+
     pub fn create_input_layout(&mut self, input_layout_handle: AerogpuHandle, blob: &[u8]) {
         assert!(blob.len() <= u32::MAX as usize);
         let unpadded_size = size_of::<AerogpuCmdCreateInputLayout>()

@@ -6,8 +6,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdExportSharedSurface, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
     AerogpuCmdPresentEx, AerogpuCmdReleaseSharedSurface, AerogpuCmdSetShaderConstantsF,
     AerogpuCmdSetTexture, AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
-    AerogpuCullMode, AerogpuFillMode, AerogpuShaderStage, AerogpuVertexBufferBinding,
-    AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuCullMode, AerogpuFillMode, AerogpuShaderStage, AerogpuShaderStageEx,
+    AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -841,4 +841,134 @@ fn cmd_writer_emits_d3d11_binding_table_packets() {
         ),
         128
     );
+}
+
+#[test]
+fn cmd_writer_emits_stage_ex_and_bind_shaders_ex_packets() {
+    let mut w = AerogpuCmdWriter::new();
+
+    w.bind_shaders_ex(1, 2, 3, 4, 5, 6);
+    w.create_shader_dxbc_ex(
+        7,
+        AerogpuShaderStageEx::Geometry,
+        &[0xAA, 0xBB, 0xCC],
+    );
+    w.set_texture_ex(AerogpuShaderStageEx::Hull, 9, 10);
+
+    let buf = w.finish();
+    assert!(buf.len() >= AerogpuCmdStreamHeader::SIZE_BYTES);
+    assert_eq!(buf.len() % 4, 0, "stream must remain 4-byte aligned");
+
+    let stream = decode_cmd_stream_header_le(&buf).unwrap();
+    assert_eq!(stream.size_bytes as usize, buf.len());
+
+    let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    // BIND_SHADERS_EX
+    let hdr0 = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode0 = hdr0.opcode;
+    let size0 = hdr0.size_bytes as usize;
+    assert_eq!(opcode0, AerogpuCmdOpcode::BindShaders as u32);
+    assert_eq!(size0, 24 + 12);
+    assert_eq!(size0 % 4, 0);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdBindShaders, vs)
+                ..cursor + offset_of!(AerogpuCmdBindShaders, vs) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        1
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdBindShaders, ps)
+                ..cursor + offset_of!(AerogpuCmdBindShaders, ps) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdBindShaders, cs)
+                ..cursor + offset_of!(AerogpuCmdBindShaders, cs) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        3
+    );
+
+    // Trailing GS/HS/DS u32s.
+    let trailing_base = cursor + size_of::<AerogpuCmdBindShaders>();
+    assert_eq!(
+        u32::from_le_bytes(buf[trailing_base..trailing_base + 4].try_into().unwrap()),
+        4
+    );
+    assert_eq!(
+        u32::from_le_bytes(buf[trailing_base + 4..trailing_base + 8].try_into().unwrap()),
+        5
+    );
+    assert_eq!(
+        u32::from_le_bytes(buf[trailing_base + 8..trailing_base + 12].try_into().unwrap()),
+        6
+    );
+
+    cursor += size0;
+
+    // CREATE_SHADER_DXBC_EX (stage_ex stored in reserved0; stage set to Compute for fwd-compat).
+    let hdr1 = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode1 = hdr1.opcode;
+    let size1 = hdr1.size_bytes as usize;
+    assert_eq!(opcode1, AerogpuCmdOpcode::CreateShaderDxbc as u32);
+    assert_eq!(size1 % 4, 0);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdCreateShaderDxbc, stage)
+                ..cursor + offset_of!(AerogpuCmdCreateShaderDxbc, stage) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStage::Compute as u32
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdCreateShaderDxbc, reserved0)
+                ..cursor + offset_of!(AerogpuCmdCreateShaderDxbc, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStageEx::Geometry as u32
+    );
+
+    cursor += size1;
+
+    // SET_TEXTURE_EX (shader_stage_ex stored in reserved0; shader_stage set to Compute for fwd-compat).
+    let hdr2 = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode2 = hdr2.opcode;
+    let size2 = hdr2.size_bytes as usize;
+    assert_eq!(opcode2, AerogpuCmdOpcode::SetTexture as u32);
+    assert_eq!(size2, size_of::<AerogpuCmdSetTexture>());
+    assert_eq!(size2 % 4, 0);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdSetTexture, shader_stage)
+                ..cursor + offset_of!(AerogpuCmdSetTexture, shader_stage) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStage::Compute as u32
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdSetTexture, reserved0)
+                ..cursor + offset_of!(AerogpuCmdSetTexture, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStageEx::Hull as u32
+    );
+
+    cursor += size2;
+    assert_eq!(cursor, buf.len());
 }
