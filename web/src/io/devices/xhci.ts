@@ -57,15 +57,15 @@ function maskToSize(value: number, size: number): number {
  */
 export class XhciPciDevice implements PciDevice, TickableDevice {
   readonly name = "xhci";
-  // Use an Intel-ish identity by default; the specific IDs are not currently relied upon by the web runtime.
-  readonly vendorId = 0x8086;
-  readonly deviceId = 0x1e31;
+  // Canonical PCI identity (keep in sync with `crates/devices/src/pci/profile.rs` `USB_XHCI_QEMU`).
+  readonly vendorId = 0x1b36; // Red Hat / QEMU
+  readonly deviceId = 0x000d; // QEMU xHCI controller
   readonly classCode = XHCI_CLASS_CODE;
-  readonly revisionId = 0x01;
+  readonly revisionId = 0x00;
   readonly irqLine = XHCI_IRQ_LINE;
   readonly interruptPin = 0x01 as const; // INTA#
   // Keep a stable BDF so guest driver installation and snapshots are deterministic.
-  readonly bdf = { bus: 0, device: 2, function: 0 };
+  readonly bdf = { bus: 0, device: 0x0d, function: 0 };
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: XHCI_MMIO_BAR_SIZE }, null, null, null, null, null];
 

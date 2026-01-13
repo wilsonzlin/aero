@@ -15,6 +15,9 @@ describe("io/devices/xhci", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
 
     const dev = new XhciPciDevice({ bridge, irqSink });
+    expect(dev.vendorId).toBe(0x1b36);
+    expect(dev.deviceId).toBe(0x000d);
+    expect(dev.bdf).toEqual({ bus: 0, device: 0x0d, function: 0 });
     expect(dev.bars).toEqual([{ kind: "mmio32", size: 0x1_0000 }, null, null, null, null, null]);
     expect(dev.classCode).toBe(0x0c0330);
     expect(dev.irqLine).toBe(11);
@@ -141,4 +144,3 @@ describe("io/devices/xhci", () => {
     expect(bridge.step_frame).toHaveBeenCalledTimes(1);
   });
 });
-
