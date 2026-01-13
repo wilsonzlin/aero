@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use aero_d3d9::dxbc::{Container as DxbcContainer, DxbcError, FourCC};
+use aero_d3d9::dxbc::{self, DxbcError};
 use aero_d3d9::shader::{self, ShaderError, ShaderStage, ShaderVersion};
 use tracing::debug;
 
@@ -177,12 +177,13 @@ fn extract_token_stream(
     match format {
         ShaderPayloadFormat::D3d9TokenStream => Ok(bytes),
         ShaderPayloadFormat::Dxbc => {
-            let container = DxbcContainer::parse(bytes)?;
-            container
-                .get(FourCC::SHDR)
-                .or_else(|| container.get(FourCC::SHEX))
-                .map(|chunk| chunk.data)
-                .ok_or(D3d9ShaderCacheError::DxbcMissingShaderChunk)
+            match dxbc::extract_shader_bytecode(bytes) {
+                Ok(token_stream) => Ok(token_stream),
+                Err(DxbcError::MissingShaderChunk) => {
+                    Err(D3d9ShaderCacheError::DxbcMissingShaderChunk)
+                }
+                Err(err) => Err(D3d9ShaderCacheError::Dxbc(err)),
+            }
         }
     }
 }

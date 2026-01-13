@@ -14,6 +14,8 @@ anyhow = "1"
 bitflags = "2"
 blake3 = "1.5.0"
 bytemuck = { version = "1.14", features = ["derive"] }
+ # Shared DXBC container parsing.
+ aero-dxbc = { path = "../aero-dxbc" }
 futures-intrusive = "0.5"
 half = "2.7.1"
 hashbrown = "0.14"

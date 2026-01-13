@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use aero_dxbc::DxbcFile;
 use thiserror::Error;
 
 #[cfg(feature = "dxbc-robust")]
@@ -13,6 +14,8 @@ pub mod robust;
 
 #[derive(Debug, Error)]
 pub enum DxbcError {
+    #[error("{0}")]
+    Shared(#[from] aero_dxbc::DxbcError),
     #[error("buffer too small")]
     BufferTooSmall,
     #[error("missing DXBC magic")]
@@ -155,16 +158,17 @@ impl<'a> Container<'a> {
     }
 }
 
-/// If `bytes` is a DXBC container, return the contained `SHDR` bytecode slice.
+/// If `bytes` is a DXBC container, return the contained `SHEX`/`SHDR` bytecode
+/// slice.
 /// Otherwise return `bytes` as-is (D3D9 runtime commonly provides raw token
 /// streams).
 pub fn extract_shader_bytecode(bytes: &[u8]) -> Result<&[u8], DxbcError> {
-    if bytes.len() >= 4 && &bytes[0..4] == b"DXBC" {
-        let container = Container::parse(bytes)?;
-        let Some(shader_chunk) = container
-            .get(FourCC::SHDR)
-            .or_else(|| container.get(FourCC::SHEX))
-        else {
+    if bytes.starts_with(b"DXBC") {
+        // Use the shared `aero-dxbc` parser for runtime DXBC validation and
+        // chunk extraction. This is strict about bounds and respects the
+        // declared `total_size` when slicing.
+        let dxbc = DxbcFile::parse(bytes)?;
+        let Some(shader_chunk) = dxbc.find_first_shader_chunk() else {
             return Err(DxbcError::MissingShaderChunk);
         };
         Ok(shader_chunk.data)
