@@ -953,6 +953,12 @@ function shouldEmitPresenterErrorEvent(key: string): boolean {
   }
   if (presenterErrorEventKeys.has(key)) return false;
   presenterErrorEventKeys.add(key);
+  // Defensive bound: some error sources can include unique IDs in their messages, which would
+  // otherwise cause the dedupe cache to grow without limit over a long-running session.
+  if (presenterErrorEventKeys.size > 1024) {
+    presenterErrorEventKeys.clear();
+    presenterErrorEventKeys.add(key);
+  }
   return true;
 }
 
