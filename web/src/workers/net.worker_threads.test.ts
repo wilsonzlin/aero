@@ -6,7 +6,13 @@ import type { AeroConfig } from "../config/aero_config";
 import { openRingByKind } from "../ipc/ipc";
 import { encodeCommand } from "../ipc/protocol";
 import { RingBuffer } from "../ipc/ring_buffer";
-import { decodeL2Message, encodeL2Frame, L2_TUNNEL_TYPE_FRAME } from "../shared/l2TunnelProtocol";
+import {
+  decodeL2Message,
+  encodeL2Frame,
+  L2_TUNNEL_SUBPROTOCOL,
+  L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX,
+  L2_TUNNEL_TYPE_FRAME,
+} from "../shared/l2TunnelProtocol";
 import {
   IO_IPC_NET_RX_QUEUE_KIND,
   IO_IPC_NET_TX_QUEUE_KIND,
@@ -156,14 +162,15 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
   });
 }
 
-function makeConfig(proxyUrl: string | null): AeroConfig {
+function makeConfig(proxyUrl: string | null, extra: Partial<AeroConfig> = {}): AeroConfig {
   return {
     guestMemoryMiB: 1,
     enableWorkers: true,
     enableWebGPU: false,
-    proxyUrl,
     activeDiskImage: null,
     logLevel: "info",
+    ...extra,
+    proxyUrl,
   };
 }
 
@@ -181,6 +188,90 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
 }
 
 describe("workers/net.worker (worker_threads)", () => {
+  it("supports L2 token auth via Sec-WebSocket-Protocol (subprotocol)", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const token = "sekrit";
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const wsCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
+        url?: string;
+        protocols?: unknown;
+      }>;
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "net",
+        10000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig("https://gateway.example.com", {
+          l2TunnelToken: token,
+          l2TunnelTokenTransport: "subprotocol",
+        }),
+      });
+      worker.postMessage(makeInit(segments));
+
+      const createdMsg = await wsCreated;
+      expect(createdMsg.url).toBe("wss://gateway.example.com/l2");
+      expect(createdMsg.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}${token}`]);
+
+      await workerReady;
+    } finally {
+      await worker.terminate();
+    }
+  }, 20000);
+
+  it("supports L2 token auth via query param (tokenTransport=query)", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const token = "sekrit";
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const wsCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
+        url?: string;
+        protocols?: unknown;
+      }>;
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "net",
+        10000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig("https://gateway.example.com", {
+          l2TunnelToken: token,
+          l2TunnelTokenTransport: "query",
+        }),
+      });
+      worker.postMessage(makeInit(segments));
+
+      const createdMsg = await wsCreated;
+      expect(createdMsg.url).toBe(`wss://gateway.example.com/l2?token=${token}`);
+      expect(createdMsg.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL]);
+
+      await workerReady;
+    } finally {
+      await worker.terminate();
+    }
+  }, 20000);
+
   it("falls back to direct proxyUrl when POST /session is unavailable", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
 

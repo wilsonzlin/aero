@@ -2,6 +2,7 @@ import { PCI_MMIO_BASE_MIB } from "../arch/guest_phys.ts";
 import type { VirtioInputPciMode } from "../io/devices/virtio_input.ts";
 import type { VirtioNetPciMode } from "../io/devices/virtio_net.ts";
 import type { VirtioSndPciMode } from "../io/devices/virtio_snd.ts";
+import type { L2TunnelTokenTransport } from "../net/l2Tunnel";
 
 export const AERO_LOG_LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
 export type AeroLogLevel = (typeof AERO_LOG_LEVELS)[number];
@@ -11,6 +12,21 @@ export interface AeroConfig {
   enableWorkers: boolean;
   enableWebGPU: boolean;
   proxyUrl: string | null;
+  /**
+   * Optional token for deployments that require auth on the `/l2` WebSocket endpoint.
+   *
+   * This is forwarded to the net worker and passed to `WebSocketL2TunnelClient`.
+   *
+   * Note: This config surface is intentionally optional; absent values preserve the
+   * current unauthenticated behavior.
+   */
+  l2TunnelToken?: string;
+  /**
+   * How to transport `l2TunnelToken` to the `/l2` endpoint (WebSocket only).
+   *
+   * See `L2TunnelTokenTransport` / `WebSocketL2TunnelClient` for details.
+   */
+  l2TunnelTokenTransport?: L2TunnelTokenTransport;
   activeDiskImage: string | null;
   logLevel: AeroLogLevel;
   uiScale?: number;

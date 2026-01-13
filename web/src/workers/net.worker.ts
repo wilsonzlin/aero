@@ -4,7 +4,7 @@ import type { AeroConfig } from "../config/aero_config";
 import { openRingByKind } from "../ipc/ipc";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { RingBuffer } from "../ipc/ring_buffer";
-import { WebSocketL2TunnelClient } from "../net/l2Tunnel";
+import { WebSocketL2TunnelClient, type L2TunnelClientOptions, type L2TunnelTokenTransport } from "../net/l2Tunnel";
 import { L2TunnelForwarder } from "../net/l2TunnelForwarder";
 import { L2TunnelTelemetry } from "../net/l2TunnelTelemetry";
 import { NetTracer } from "../net/net_tracer";
@@ -333,7 +333,7 @@ async function connectL2TunnelWithBootstrap(proxyUrl: string, generation: number
 
   const maxFramePayloadBytes = session?.limits?.l2?.maxFramePayloadBytes;
   const maxControlPayloadBytes = session?.limits?.l2?.maxControlPayloadBytes;
-  const tunnelOpts: { maxFrameSize?: number; maxControlSize?: number } = {};
+  const tunnelOpts: L2TunnelClientOptions = {};
   if (typeof maxFramePayloadBytes === "number" && Number.isInteger(maxFramePayloadBytes) && maxFramePayloadBytes > 0) {
     tunnelOpts.maxFrameSize = maxFramePayloadBytes;
   }
@@ -343,6 +343,18 @@ async function connectL2TunnelWithBootstrap(proxyUrl: string, generation: number
     maxControlPayloadBytes > 0
   ) {
     tunnelOpts.maxControlSize = maxControlPayloadBytes;
+  }
+
+  const tokenRaw = currentConfig?.l2TunnelToken;
+  const token = typeof tokenRaw === "string" ? tokenRaw.trim() : "";
+  if (token) {
+    tunnelOpts.token = token;
+    const tokenTransportRaw = currentConfig?.l2TunnelTokenTransport;
+    const tokenTransport: L2TunnelTokenTransport | null =
+      tokenTransportRaw === "query" || tokenTransportRaw === "subprotocol" || tokenTransportRaw === "both" ? tokenTransportRaw : null;
+    if (tokenTransport) {
+      tunnelOpts.tokenTransport = tokenTransport;
+    }
   }
   const tunnelOptions = Object.keys(tunnelOpts).length > 0 ? tunnelOpts : undefined;
 
