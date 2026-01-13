@@ -159,7 +159,7 @@ pub struct MachineConfig {
     /// Whether to attach the legacy VGA/VBE device model.
     ///
     /// This is the transitional standalone VGA/VBE path used for BIOS/boot display and VGA-focused
-    /// integration tests. It is mutually exclusive with [`MachineConfig::enable_aerogpu`].
+    /// integration tests.
     ///
     /// When enabled, guest physical accesses to the legacy VGA window (`0xA0000..0xC0000`), the
     /// Bochs VBE linear framebuffer (LFB) at [`aero_gpu_vga::SVGA_LFB_BASE`], and VGA/VBE port I/O
@@ -170,17 +170,28 @@ pub struct MachineConfig {
     /// `00:0c.0`) so the fixed VBE LFB can be routed through the PCI MMIO window. This PCI stub is
     /// not present when [`MachineConfig::enable_aerogpu`] is enabled.
     ///
+    /// Note: when [`MachineConfig::enable_aerogpu`] is enabled, the legacy VGA/VBE device model is
+    /// not wired even if `enable_vga=true` to avoid conflicting ownership of the VGA legacy ranges.
+    ///
     /// Port mappings:
     ///
     /// - Legacy VGA ports: `0x3B0..0x3DF` (covers both mono and color decode ranges, e.g.
     ///   `0x3B4/0x3B5` and `0x3D4/0x3D5`)
     /// - Bochs VBE: `0x01CE/0x01CF`
     pub enable_vga: bool,
-    /// Whether to expose the canonical AeroGPU PCI identity at `00:07.0` (`A3A0:0001`).
+    /// Whether to expose the canonical AeroGPU PCI device (`aero_devices::pci::profile::AEROGPU`)
+    /// with a dedicated VRAM aperture.
     ///
-    /// This is intended to back the canonical browser GPU path. Today this flag wires only the PCI
-    /// config-space identity (IDs/class/BAR definitions); the full AeroGPU MMIO device model may be
-    /// integrated later.
+    /// When enabled, the machine wires a dedicated VRAM backing store exposed via:
+    ///
+    /// - AeroGPU BAR1 as a linear VRAM aperture, and
+    /// - the legacy VGA window (`0xA0000..0xC0000`) as an alias of the first 128KiB of that VRAM.
+    ///
+    /// This is the storage foundation required by `docs/16-aerogpu-vga-vesa-compat.md` for
+    /// firmware/bootloader compatibility.
+    ///
+    /// Note: The full AeroGPU MMIO/WDDM device model is not implemented yet; this flag currently
+    /// provides only the legacy VGA/VBE compatibility foundation.
     ///
     /// Requires [`MachineConfig::enable_pc_platform`] and is mutually exclusive with
     /// [`MachineConfig::enable_vga`].
@@ -1378,6 +1389,268 @@ impl MmioHandler for VgaLfbMmio {
 }
 
 // -----------------------------------------------------------------------------
+// AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
+// -----------------------------------------------------------------------------
+
+/// Size of the legacy VGA memory window (`0xA0000..0xC0000`) in bytes.
+///
+/// This is aliased to `VRAM[0..LEGACY_VGA_WINDOW_SIZE]` when AeroGPU is enabled.
+const LEGACY_VGA_WINDOW_SIZE: usize = 0x20000; // 128KiB
+
+/// Offset within VRAM where the VBE linear framebuffer (LFB) begins.
+///
+/// This keeps the LFB aligned to 64KiB and leaves the first 128KiB reserved for legacy VGA
+/// mappings.
+#[allow(dead_code)]
+const VBE_LFB_OFFSET: usize = 0x20000;
+
+/// Total VRAM size exposed via AeroGPU BAR1.
+const AEROGPU_VRAM_SIZE: usize = aero_devices::pci::profile::AEROGPU_VRAM_SIZE as usize;
+
+/// Minimal AeroGPU runtime state required for VRAM-backed legacy VGA/VBE compatibility.
+///
+/// This intentionally models only the storage foundation:
+/// - a dedicated VRAM backing store (BAR1), and
+/// - minimal legacy VGA port decode state.
+struct AeroGpuDevice {
+    /// Dedicated VRAM backing store exposed via AeroGPU BAR1.
+    vram: Vec<u8>,
+
+    // ---------------------------------------------------------------------
+    // Minimal VGA port state (permissive)
+    // ---------------------------------------------------------------------
+    misc_output: u8,
+
+    seq_index: u8,
+    seq_regs: [u8; 256],
+
+    gc_index: u8,
+    gc_regs: [u8; 256],
+
+    crtc_index: u8,
+    crtc_regs: [u8; 256],
+
+    attr_index: u8,
+    attr_regs: [u8; 256],
+    attr_flip_flop: bool,
+}
+
+impl AeroGpuDevice {
+    fn new() -> Self {
+        Self {
+            vram: vec![0u8; AEROGPU_VRAM_SIZE],
+            misc_output: 0,
+            seq_index: 0,
+            seq_regs: [0; 256],
+            gc_index: 0,
+            gc_regs: [0; 256],
+            crtc_index: 0,
+            crtc_regs: [0; 256],
+            attr_index: 0,
+            attr_regs: [0; 256],
+            attr_flip_flop: false,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.vram.fill(0);
+        self.misc_output = 0;
+        self.seq_index = 0;
+        self.seq_regs.fill(0);
+        self.gc_index = 0;
+        self.gc_regs.fill(0);
+        self.crtc_index = 0;
+        self.crtc_regs.fill(0);
+        self.attr_index = 0;
+        self.attr_regs.fill(0);
+        self.attr_flip_flop = false;
+    }
+
+    fn read_linear(buf: &[u8], offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
+        let size = match size {
+            1 | 2 | 4 | 8 => size,
+            _ => size.clamp(1, 8),
+        };
+
+        let off = usize::try_from(offset).unwrap_or(usize::MAX);
+        if off >= buf.len() {
+            return 0;
+        }
+
+        let end = off.saturating_add(size).min(buf.len());
+        let len = end - off;
+
+        let mut tmp = [0u8; 8];
+        tmp[..len].copy_from_slice(&buf[off..end]);
+        u64::from_le_bytes(tmp)
+    }
+
+    fn write_linear(buf: &mut [u8], offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
+        let size = match size {
+            1 | 2 | 4 | 8 => size,
+            _ => size.clamp(1, 8),
+        };
+
+        let off = usize::try_from(offset).unwrap_or(usize::MAX);
+        if off >= buf.len() {
+            return;
+        }
+
+        let end = off.saturating_add(size).min(buf.len());
+        let len = end - off;
+        let bytes = value.to_le_bytes();
+        buf[off..end].copy_from_slice(&bytes[..len]);
+    }
+
+    fn vram_read(&self, offset: u64, size: usize) -> u64 {
+        Self::read_linear(&self.vram, offset, size)
+    }
+
+    fn vram_write(&mut self, offset: u64, size: usize, value: u64) {
+        Self::write_linear(&mut self.vram, offset, size, value);
+    }
+
+    fn legacy_vga_read(&self, offset: u64, size: usize) -> u64 {
+        let end = LEGACY_VGA_WINDOW_SIZE.min(self.vram.len());
+        Self::read_linear(&self.vram[..end], offset, size)
+    }
+
+    fn legacy_vga_write(&mut self, offset: u64, size: usize, value: u64) {
+        let end = LEGACY_VGA_WINDOW_SIZE.min(self.vram.len());
+        Self::write_linear(&mut self.vram[..end], offset, size, value);
+    }
+
+    fn vga_port_read_u8(&mut self, port: u16) -> u8 {
+        match port {
+            // Attribute controller: reads happen via 0x3C1.
+            0x03C1 => self.attr_regs[usize::from(self.attr_index)],
+            // Misc Output readback (0x3CC).
+            0x03CC => self.misc_output,
+            // Sequencer.
+            0x03C4 => self.seq_index,
+            0x03C5 => self.seq_regs[usize::from(self.seq_index)],
+            // Graphics controller.
+            0x03CE => self.gc_index,
+            0x03CF => self.gc_regs[usize::from(self.gc_index)],
+            // CRTC (color and mono aliases).
+            0x03B4 | 0x03D4 => self.crtc_index,
+            0x03B5 | 0x03D5 => self.crtc_regs[usize::from(self.crtc_index)],
+            // Input Status 1: reading resets the attribute controller flip-flop.
+            0x03DA => {
+                self.attr_flip_flop = false;
+                0xFF
+            }
+            _ => 0xFF,
+        }
+    }
+
+    fn vga_port_write_u8(&mut self, port: u16, value: u8) {
+        match port {
+            // Attribute controller (index/data flip-flop).
+            0x03C0 => {
+                if !self.attr_flip_flop {
+                    self.attr_index = value;
+                    self.attr_flip_flop = true;
+                } else {
+                    self.attr_regs[usize::from(self.attr_index)] = value;
+                    self.attr_flip_flop = false;
+                }
+            }
+            // Attribute controller data writes via 0x3C1 are ignored for now.
+            0x03C1 => {}
+
+            // Misc Output.
+            0x03C2 => self.misc_output = value,
+
+            // Sequencer.
+            0x03C4 => self.seq_index = value,
+            0x03C5 => self.seq_regs[usize::from(self.seq_index)] = value,
+
+            // Graphics controller.
+            0x03CE => self.gc_index = value,
+            0x03CF => self.gc_regs[usize::from(self.gc_index)] = value,
+
+            // CRTC (color and mono aliases).
+            0x03B4 | 0x03D4 => self.crtc_index = value,
+            0x03B5 | 0x03D5 => self.crtc_regs[usize::from(self.crtc_index)] = value,
+
+            _ => {}
+        }
+    }
+}
+
+struct AeroGpuBar1Mmio {
+    dev: Rc<RefCell<AeroGpuDevice>>,
+}
+
+impl PciBarMmioHandler for AeroGpuBar1Mmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.dev.borrow().vram_read(offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.dev.borrow_mut().vram_write(offset, size, value);
+    }
+}
+
+struct AeroGpuLegacyVgaMmio {
+    dev: Rc<RefCell<AeroGpuDevice>>,
+}
+
+impl MmioHandler for AeroGpuLegacyVgaMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.dev.borrow().legacy_vga_read(offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.dev.borrow_mut().legacy_vga_write(offset, size, value);
+    }
+}
+
+struct AeroGpuVgaPortWindow {
+    dev: Rc<RefCell<AeroGpuDevice>>,
+}
+
+impl aero_platform::io::PortIoDevice for AeroGpuVgaPortWindow {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        let size = match size {
+            0 => return 0,
+            1 | 2 | 4 => size as usize,
+            _ => return u32::MAX,
+        };
+
+        let mut out = 0u32;
+        let mut dev = self.dev.borrow_mut();
+        for i in 0..size {
+            let p = port.wrapping_add(i as u16);
+            let b = dev.vga_port_read_u8(p) as u32;
+            out |= b << (i * 8);
+        }
+        out
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return,
+        };
+
+        let mut dev = self.dev.borrow_mut();
+        for i in 0..size {
+            let p = port.wrapping_add(i as u16);
+            let b = ((value >> (i * 8)) & 0xFF) as u8;
+            dev.vga_port_write_u8(p, b);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
 // PC platform MMIO adapters (LAPIC / IOAPIC / HPET)
 // -----------------------------------------------------------------------------
 
@@ -1804,6 +2077,7 @@ pub struct Machine {
     e1000: Option<Rc<RefCell<E1000Device>>>,
     virtio_net: Option<Rc<RefCell<VirtioPciDevice>>>,
     vga: Option<Rc<RefCell<VgaDevice>>>,
+    aerogpu: Option<Rc<RefCell<AeroGpuDevice>>>,
     ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     nvme: Option<Rc<RefCell<NvmePciDevice>>>,
     ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
@@ -1945,6 +2219,7 @@ impl Machine {
             e1000: None,
             virtio_net: None,
             vga: None,
+            aerogpu: None,
             ahci: None,
             nvme: None,
             ide: None,
@@ -3617,6 +3892,8 @@ impl Machine {
         // Rebuild port I/O devices for deterministic power-on state.
         self.io = IoPortBus::new();
 
+        let use_legacy_vga = self.cfg.enable_vga && !self.cfg.enable_aerogpu;
+
         // `enable_vga` controls whether the machine wires the legacy VGA/VBE device model.
         //
         // Note: The physical memory bus persists across `Machine::reset()` calls, so any MMIO
@@ -3624,7 +3901,7 @@ impl Machine {
         // When VGA is disabled we drop the device handle, but any previously-installed MMIO
         // mappings (if the machine was ever reset with VGA enabled) will still point at the old
         // instance.
-        if self.cfg.enable_vga && !self.cfg.enable_pc_platform {
+        if use_legacy_vga && !self.cfg.enable_pc_platform {
             // VGA is a special legacy device whose MMIO window lives in the low 1MiB region. The
             // physical bus supports MMIO overlays on top of RAM, so mapping this window is safe
             // even when guest RAM is a dense `[0, ram_size_bytes)` range.
@@ -3777,7 +4054,7 @@ impl Machine {
             };
             register_acpi_pm(&mut self.io, acpi_pm.clone());
 
-            if self.cfg.enable_vga {
+            if use_legacy_vga {
                 // VGA/SVGA (VBE). Keep the device instance stable across resets so the MMIO mapping
                 // remains valid.
                 let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
@@ -3818,6 +4095,43 @@ impl Machine {
             } else {
                 self.vga = None;
             }
+
+            if self.cfg.enable_aerogpu {
+                let aerogpu: Rc<RefCell<AeroGpuDevice>> = match &self.aerogpu {
+                    Some(dev) => {
+                        dev.borrow_mut().reset();
+                        dev.clone()
+                    }
+                    None => {
+                        let dev = Rc::new(RefCell::new(AeroGpuDevice::new()));
+                        self.aerogpu = Some(dev.clone());
+                        dev
+                    }
+                };
+
+                // Minimal legacy VGA port decode (`0x3B0..0x3DF`).
+                self.io.register_range(
+                    0x03B0,
+                    0x0030, // 0x3B0..0x3DF
+                    Box::new(AeroGpuVgaPortWindow {
+                        dev: aerogpu.clone(),
+                    }),
+                );
+
+                // Map the legacy VGA memory window (`0xA0000..0xC0000`) as an MMIO overlay that
+                // aliases `VRAM[0..128KiB]`.
+                self.mem
+                    .map_mmio_once(0xA0000, LEGACY_VGA_WINDOW_SIZE as u64, {
+                        let aerogpu = aerogpu.clone();
+                        move || {
+                            Box::new(AeroGpuLegacyVgaMmio {
+                                dev: aerogpu.clone(),
+                            })
+                        }
+                    });
+            } else {
+                self.aerogpu = None;
+            }
             // PCI config ports (config mechanism #1).
             let pci_cfg: SharedPciConfigPorts = match &self.pci_cfg {
                 Some(pci_cfg) => {
@@ -3840,7 +4154,7 @@ impl Machine {
                 );
             }
 
-            if self.cfg.enable_vga && !self.cfg.enable_aerogpu {
+            if use_legacy_vga {
                 // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
                 // MMIO router at `PciResourceAllocatorConfig::mmio_base` (0xE000_0000).
                 pci_cfg
@@ -4203,6 +4517,7 @@ impl Machine {
             }
 
             let vga = self.vga.clone();
+            let aerogpu = self.aerogpu.clone();
 
             // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
             // immediately without needing dynamic MMIO unmap/remap support in the physical memory
@@ -4239,6 +4554,13 @@ impl Machine {
                             VGA_PCI_BDF,
                             VGA_PCI_BAR_INDEX,
                             VgaLfbMmio { dev: vga },
+                        );
+                    }
+                    if let Some(aerogpu) = aerogpu.clone() {
+                        router.register_handler(
+                            aero_devices::pci::profile::AEROGPU.bdf,
+                            1,
+                            AeroGpuBar1Mmio { dev: aerogpu },
                         );
                     }
                     if let Some(e1000) = e1000.clone() {
@@ -4406,7 +4728,8 @@ impl Machine {
             self.acpi_pm = None;
             self.hpet = None;
             self.e1000 = None;
-            if !self.cfg.enable_vga {
+            self.aerogpu = None;
+            if !use_legacy_vga {
                 self.vga = None;
             }
             self.ahci = None;
@@ -4478,7 +4801,7 @@ impl Machine {
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
             cpu_count: self.cfg.cpu_count,
-            vbe_lfb_base: self.cfg.enable_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE),
+            vbe_lfb_base: use_legacy_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE),
             ..Default::default()
         });
         let bus: &mut dyn BiosBus = &mut self.mem;
@@ -5698,6 +6021,8 @@ impl snapshot::SnapshotTarget for Machine {
         }
         disk_controller_states.sort_by_key(|s| (s.version, s.flags));
 
+        let use_legacy_vga = self.cfg.enable_vga && !self.cfg.enable_aerogpu;
+
         // Firmware snapshot: required for deterministic BIOS interrupt behaviour.
         if let Some(state) = by_id.remove(&snapshot::DeviceId::BIOS) {
             if state.version == 1 {
@@ -5708,7 +6033,7 @@ impl snapshot::SnapshotTarget for Machine {
                 //   the fixed MMIO address `SVGA_LFB_BASE`.
                 // - When VGA is disabled, avoid reporting `SVGA_LFB_BASE` since it overlaps the
                 //   canonical PCI MMIO window (0xE0000000).
-                let lfb_base = if self.cfg.enable_vga {
+                let lfb_base = if use_legacy_vga {
                     aero_gpu_vga::SVGA_LFB_BASE
                 } else {
                     firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
@@ -5720,7 +6045,7 @@ impl snapshot::SnapshotTarget for Machine {
                     // `vbe_lfb_base` is a firmware configuration knob; treat the machine wiring as
                     // the source of truth when restoring.
                     snapshot.config.vbe_lfb_base =
-                        self.cfg.enable_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE);
+                        use_legacy_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE);
                     snapshot.vbe.lfb_base = lfb_base;
                     self.bios.restore_snapshot(snapshot, &mut self.mem);
                 }
@@ -5754,7 +6079,7 @@ impl snapshot::SnapshotTarget for Machine {
             // unmapping MMIO regions. When VGA is disabled we map the canonical PCI MMIO window at
             // 0xE0000000, which overlaps `SVGA_LFB_BASE`. Attempting to restore a VGA snapshot would
             // therefore panic due to MMIO overlap.
-            if !self.cfg.enable_vga {
+            if !use_legacy_vga {
                 // Treat this as a config mismatch (snapshot taken with VGA enabled, restored into a
                 // headless machine).
                 self.vga = None;
