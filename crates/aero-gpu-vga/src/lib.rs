@@ -2012,6 +2012,28 @@ mod tests {
     }
 
     #[test]
+    fn legacy_vga_snapshot_v1_migrates_vbe_framebuffer_to_offset() {
+        // Build a legacy `VgaSnapshotV1` that represents the old VRAM layout: VBE framebuffer at
+        // vram[0..].
+        let mut dev = VgaDevice::new();
+        dev.set_svga_mode(64, 64, 32, true);
+        let mut snap = dev.snapshot_v1();
+
+        snap.vram.fill(0);
+        // Red pixel at (0,0) in BGRX at the legacy base (offset 0).
+        snap.vram[0] = 0x00; // B
+        snap.vram[1] = 0x00; // G
+        snap.vram[2] = 0xFF; // R
+        snap.vram[3] = 0x00; // X
+
+        let mut restored = VgaDevice::new();
+        restored.restore_snapshot_v1(&snap);
+        restored.present();
+        assert_eq!(restored.get_resolution(), (64, 64));
+        assert_eq!(restored.get_framebuffer()[0], 0xFF00_00FF);
+    }
+
+    #[test]
     fn planar_write_mode0_set_reset_writes_selected_planes() {
         let mut dev = VgaDevice::new();
 
