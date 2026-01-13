@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AEROGPU_CMD_BIND_SHADERS_SIZE,
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE,
@@ -12,6 +13,7 @@ import {
   AerogpuBlendFactor,
   AerogpuBlendOp,
   AerogpuCmdOpcode,
+  decodeCmdBindShadersPayload,
   decodeCmdCreateShaderDxbcPayload,
   decodeCmdStreamView,
   decodeCmdSetBlendState,
@@ -182,4 +184,67 @@ test("SET_BLEND_STATE decoder accepts legacy 28-byte packets", () => {
   assert.equal(decoded.blendOpAlpha, decoded.blendOp);
   assert.deepEqual(decoded.blendConstantRgba, [1, 1, 1, 1]);
   assert.equal(decoded.sampleMask >>> 0, 0xffff_ffff);
+});
+
+function buildBindShadersStream(extended: boolean): Uint8Array {
+  const bytes: number[] = [];
+  pushU32(bytes, AEROGPU_CMD_STREAM_MAGIC);
+  pushU32(bytes, AEROGPU_ABI_VERSION_U32);
+  pushU32(bytes, 0); // size_bytes (patched later)
+  pushU32(bytes, 0); // flags
+  pushU32(bytes, 0); // reserved0
+  pushU32(bytes, 0); // reserved1
+
+  const cmdOffset = bytes.length;
+  pushU32(bytes, AerogpuCmdOpcode.BindShaders);
+  pushU32(bytes, 0); // size_bytes (patched later)
+  pushU32(bytes, 1); // vs
+  pushU32(bytes, 2); // ps
+  pushU32(bytes, 3); // cs
+  pushU32(bytes, 0); // reserved0
+  if (extended) {
+    pushU32(bytes, 4); // gs
+    pushU32(bytes, 5); // hs
+    pushU32(bytes, 6); // ds
+  }
+
+  const out = new Uint8Array(bytes);
+  const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  dv.setUint32(cmdOffset + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, out.byteLength - cmdOffset, true);
+  dv.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, out.byteLength, true);
+  assert.equal(out.byteLength % 4, 0);
+  assert.equal(cmdOffset, AEROGPU_CMD_STREAM_HEADER_SIZE);
+  return out;
+}
+
+test("BIND_SHADERS decoders accept append-only extensions for additional stages", () => {
+  const base = buildBindShadersStream(false);
+  const extended = buildBindShadersStream(true);
+
+  const packetsBase = decodeCmdStreamView(base).packets;
+  const packetsExt = decodeCmdStreamView(extended).packets;
+  assert.equal(packetsBase.length, 1);
+  assert.equal(packetsExt.length, 1);
+
+  assert.equal(packetsBase[0]!.hdr.opcode, AerogpuCmdOpcode.BindShaders);
+  assert.equal(packetsExt[0]!.hdr.opcode, AerogpuCmdOpcode.BindShaders);
+  assert.equal(packetsBase[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE);
+  assert.equal(packetsExt[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE + 12);
+
+  const decodedBase = decodeCmdBindShadersPayload(base, packetsBase[0]!.offsetBytes);
+  const decodedExt = decodeCmdBindShadersPayload(extended, packetsExt[0]!.offsetBytes);
+
+  // Legacy decode: original VS/PS/CS fields remain stable even when newer guests append fields.
+  assert.deepEqual(
+    { vs: decodedBase.vs, ps: decodedBase.ps, cs: decodedBase.cs, reserved0: decodedBase.reserved0 },
+    { vs: decodedExt.vs, ps: decodedExt.ps, cs: decodedExt.cs, reserved0: decodedExt.reserved0 },
+  );
+  assert.deepEqual(
+    { vs: decodedBase.vs, ps: decodedBase.ps, cs: decodedBase.cs, reserved0: decodedBase.reserved0 },
+    { vs: 1, ps: 2, cs: 3, reserved0: 0 },
+  );
+  assert.equal(decodedBase.ex, undefined);
+
+  // Extended decode: appended GS/HS/DS handles are available to decoders that understand them.
+  assert.deepEqual(decodedExt.ex, { gs: 4, hs: 5, ds: 6 });
 });
