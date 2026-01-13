@@ -636,13 +636,19 @@ export class WebGpuPresenterBackend implements Presenter {
         if (this.destroyed) return;
         if (this.device !== device) return;
 
+        // Best-effort: avoid double-reporting (console + diagnostics) when the event is cancelable.
+        (ev as any).preventDefault?.();
+
         const err = ev?.error;
         const errorName =
           (typeof err?.name === 'string' && err.name) ||
           (typeof err?.constructor?.name === 'string' && err.constructor.name) ||
           '';
         const errorMessage = typeof err?.message === 'string' ? err.message : '';
-        const msg = errorMessage || (err != null ? String(err) : 'WebGPU uncaptured error');
+        let msg = errorMessage || (err != null ? String(err) : 'WebGPU uncaptured error');
+        if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
+          msg = `${errorName}: ${msg}`;
+        }
 
         // Avoid flooding: emit each unique (name, message) pair at most once per init().
         const key = `${errorName}:${msg}`;
