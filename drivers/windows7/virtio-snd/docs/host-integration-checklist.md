@@ -19,6 +19,7 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 
 - [ ] **BAR0** is a **64-bit MMIO** BAR (memory BAR, not I/O port).
 - [ ] **BAR0 size** is at least `0x4000` bytes (contract/strict mode).
+- [ ] (Contract/strict mode) BAR0 base address in PCI config space matches the BAR0 MMIO resource Windows assigns/maps (no “BAR0 address mismatch”).
 - [ ] PCI config space exposes a valid **PCI capability list** (Status bit 4 set, aligned pointers, no loops).
 - [ ] The capability list includes virtio **vendor-specific** caps (PCI cap ID `0x09`) for:
   - `COMMON_CFG` (`cfg_type=1`, `cap_len>=16`)
