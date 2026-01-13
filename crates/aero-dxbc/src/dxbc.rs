@@ -288,6 +288,56 @@ impl<'a> DxbcFile<'a> {
         }
     }
 
+    /// Returns and parses the first `RDEF` chunk in file order, if any.
+    ///
+    /// Behavior:
+    /// - Iterates all `RDEF` chunks in file order and returns the first one that
+    ///   parses successfully.
+    /// - If all `RDEF` chunks are malformed, returns the first parse error.
+    /// - Returns `None` if no `RDEF` chunk is present.
+    pub fn get_rdef(&self) -> Option<Result<crate::rdef::ResourceDefs, DxbcError>> {
+        let rdef = FourCC(*b"RDEF");
+        let mut first_err = None;
+        for chunk in self.get_chunks(rdef) {
+            match crate::rdef::parse_rdef_chunk(chunk.data).map_err(|e| {
+                DxbcError::invalid_chunk(format!("{} chunk: {}", chunk.fourcc, e.context()))
+            }) {
+                Ok(parsed) => return Some(Ok(parsed)),
+                Err(err) => {
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                }
+            }
+        }
+        first_err.map(Err)
+    }
+
+    /// Returns and parses the first `CTAB` chunk in file order, if any.
+    ///
+    /// Behavior:
+    /// - Iterates all `CTAB` chunks in file order and returns the first one that
+    ///   parses successfully.
+    /// - If all `CTAB` chunks are malformed, returns the first parse error.
+    /// - Returns `None` if no `CTAB` chunk is present.
+    pub fn get_ctab(&self) -> Option<Result<crate::ctab::ConstantTable, DxbcError>> {
+        let ctab = FourCC(*b"CTAB");
+        let mut first_err = None;
+        for chunk in self.get_chunks(ctab) {
+            match crate::ctab::parse_ctab_chunk(chunk.data).map_err(|e| {
+                DxbcError::invalid_chunk(format!("{} chunk: {}", chunk.fourcc, e.context()))
+            }) {
+                Ok(parsed) => return Some(Ok(parsed)),
+                Err(err) => {
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                }
+            }
+        }
+        first_err.map(Err)
+    }
+
     /// Returns the first shader bytecode chunk (`SHEX` or `SHDR`) in file order.
     pub fn find_first_shader_chunk(&self) -> Option<DxbcChunk<'a>> {
         let shex = FourCC(*b"SHEX");
