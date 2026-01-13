@@ -587,6 +587,7 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             input_size: [size.width as f32, size.height as f32],
             mode: self.aspect_mode.as_u32(),
             srgb_encode: if self.srgb_encode { 1 } else { 0 },
+            _pad: [0; 2],
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
@@ -810,6 +811,7 @@ struct PresentUniforms {
     input_size: [f32; 2],
     mode: u32,
     srgb_encode: u32,
+    _pad: [u32; 2],
 }
 
 const PRESENT_WGSL: &str = r#"
@@ -818,6 +820,7 @@ struct Uniforms {
     input_size: vec2<f32>,
     mode: u32,
     srgb_encode: u32,
+    _pad: vec2<u32>,
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -825,6 +828,7 @@ struct Uniforms {
 @group(0) @binding(2) var src_samp: sampler;
 
 fn linear_to_srgb_channel(x: f32) -> f32 {
+    let x = max(x, 0.0);
     if (x <= 0.0031308) {
         return x * 12.92;
     }
@@ -840,10 +844,13 @@ fn linear_to_srgb(rgb: vec3<f32>) -> vec3<f32> {
 }
 
 fn encode_output(color: vec4<f32>) -> vec4<f32> {
+    // Presentation is effectively scanout; keep the output opaque even if the source framebuffer
+    // contains alpha.
+    let a = 1.0;
     if (u.srgb_encode == 0u) {
-        return color;
+        return vec4<f32>(color.rgb, a);
     }
-    return vec4<f32>(linear_to_srgb(color.rgb), color.a);
+    return vec4<f32>(linear_to_srgb(color.rgb), a);
 }
 
 @vertex
