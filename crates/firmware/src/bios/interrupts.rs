@@ -1,6 +1,7 @@
 use aero_cpu_core::state::{
     gpr, mask_bits, CpuState, FLAG_CF, FLAG_DF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF,
 };
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
@@ -13,6 +14,8 @@ pub const E820_RAM: u32 = 1;
 pub const E820_RESERVED: u32 = 2;
 pub const E820_ACPI: u32 = 3;
 pub const E820_NVS: u32 = 4;
+
+static UNHANDLED_INTERRUPT_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
@@ -57,7 +60,17 @@ pub fn dispatch_interrupt(
         0x1A => handle_int1a(bios, cpu, bus),
         _ => {
             // Safe default: do nothing and return.
-            eprintln!("BIOS: unhandled interrupt {:02x}", vector);
+            // Emit a BIOS-visible diagnostic, but rate-limit it so we don't spam the TTY buffer for
+            // guests that probe many vectors.
+            const LOG_LIMIT: u32 = 16;
+            let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+            if count < LOG_LIMIT {
+                let msg = format!("BIOS: unhandled interrupt {vector:02x}\n");
+                bios.tty_output.extend_from_slice(msg.as_bytes());
+            } else if count == LOG_LIMIT {
+                bios.tty_output
+                    .extend_from_slice(b"BIOS: further unhandled interrupts suppressed\n");
+            }
         }
     }
 
@@ -909,7 +922,15 @@ fn handle_int13(
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
         }
         _ => {
-            eprintln!("BIOS: unhandled INT 13h AH={ah:02x}");
+            const LOG_LIMIT: u32 = 16;
+            let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+            if count < LOG_LIMIT {
+                let msg = format!("BIOS: unhandled INT 13h AH={ah:02x}\n");
+                bios.tty_output.extend_from_slice(msg.as_bytes());
+            } else if count == LOG_LIMIT {
+                bios.tty_output
+                    .extend_from_slice(b"BIOS: further unhandled interrupts suppressed\n");
+            }
             set_error(bios, cpu, 0x01);
         }
     }
@@ -1055,7 +1076,15 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
                 cpu.rflags &= !FLAG_CF;
             }
             _ => {
-                eprintln!("BIOS: unhandled INT 15h AX={ax:04x}");
+                const LOG_LIMIT: u32 = 16;
+                let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+                if count < LOG_LIMIT {
+                    let msg = format!("BIOS: unhandled INT 15h AX={ax:04x}\n");
+                    bios.tty_output.extend_from_slice(msg.as_bytes());
+                } else if count == LOG_LIMIT {
+                    bios.tty_output
+                        .extend_from_slice(b"BIOS: further unhandled interrupts suppressed\n");
+                }
                 cpu.rflags |= FLAG_CF;
                 cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x86u64 << 8);
             }
@@ -1206,7 +1235,15 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
             cpu.rflags &= !FLAG_CF;
         }
         _ => {
-            eprintln!("BIOS: unhandled INT 16h AH={ah:02x}");
+            const LOG_LIMIT: u32 = 16;
+            let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+            if count < LOG_LIMIT {
+                let msg = format!("BIOS: unhandled INT 16h AH={ah:02x}\n");
+                bios.tty_output.extend_from_slice(msg.as_bytes());
+            } else if count == LOG_LIMIT {
+                bios.tty_output
+                    .extend_from_slice(b"BIOS: further unhandled interrupts suppressed\n");
+            }
             cpu.rflags |= FLAG_CF;
         }
     }

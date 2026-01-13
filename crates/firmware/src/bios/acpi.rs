@@ -11,6 +11,63 @@ pub struct AcpiInfo {
     pub nvs: (u64, u64),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BiosAcpiError {
+    TableAddressOverflow {
+        table: &'static str,
+        addr: u64,
+        len: u64,
+    },
+    TableOutOfBounds {
+        table: &'static str,
+        end: u64,
+        memory_size_bytes: u64,
+    },
+    NvsAddressOverflow {
+        base: u64,
+        size: u64,
+    },
+    NvsOutOfBounds {
+        end: u64,
+        memory_size_bytes: u64,
+    },
+}
+
+impl core::fmt::Display for BiosAcpiError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            BiosAcpiError::TableAddressOverflow {
+                table,
+                addr,
+                len,
+            } => write!(
+                f,
+                "ACPI {table} address overflow (addr=0x{addr:x} len=0x{len:x})"
+            ),
+            BiosAcpiError::TableOutOfBounds {
+                table,
+                end,
+                memory_size_bytes,
+            } => write!(
+                f,
+                "ACPI {table} out of bounds (end=0x{end:x} mem=0x{memory_size_bytes:x})"
+            ),
+            BiosAcpiError::NvsAddressOverflow { base, size } => {
+                write!(f, "ACPI NVS address overflow (base=0x{base:x} size=0x{size:x})")
+            }
+            BiosAcpiError::NvsOutOfBounds {
+                end,
+                memory_size_bytes,
+            } => write!(
+                f,
+                "ACPI NVS out of bounds (end=0x{end:x} mem=0x{memory_size_bytes:x})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BiosAcpiError {}
+
 pub trait AcpiBuilder: Send {
     fn build_and_write(
         &mut self,
@@ -19,7 +76,7 @@ pub trait AcpiBuilder: Send {
         cpu_count: u8,
         pirq_to_gsi: [u32; 4],
         placement: AcpiPlacement,
-    ) -> Option<AcpiInfo>;
+    ) -> Result<AcpiInfo, BiosAcpiError>;
 }
 
 #[derive(Debug, Default)]
@@ -33,7 +90,7 @@ impl AcpiBuilder for AeroAcpiBuilder {
         cpu_count: u8,
         pirq_to_gsi: [u32; 4],
         placement: AcpiPlacement,
-    ) -> Option<AcpiInfo> {
+    ) -> Result<AcpiInfo, BiosAcpiError> {
         build_and_write(bus, memory_size_bytes, cpu_count, pirq_to_gsi, placement)
     }
 }
@@ -44,7 +101,7 @@ pub fn build_and_write(
     cpu_count: u8,
     pirq_to_gsi: [u32; 4],
     placement: AcpiPlacement,
-) -> Option<AcpiInfo> {
+) -> Result<AcpiInfo, BiosAcpiError> {
     let cfg = AcpiConfig {
         cpu_count: cpu_count.max(1),
         pirq_to_gsi,
@@ -76,23 +133,31 @@ pub fn build_and_write(
     }
     for (name, addr, len) in to_check {
         let Some(end) = addr.checked_add(len as u64) else {
-            eprintln!("BIOS: ACPI {name} address overflow (addr=0x{addr:x} len=0x{len:x})");
-            return None;
+            return Err(BiosAcpiError::TableAddressOverflow {
+                table: name,
+                addr,
+                len: len as u64,
+            });
         };
         if end > memory_size_bytes {
-            eprintln!(
-                "BIOS: ACPI {name} out of bounds (end=0x{end:x} mem=0x{memory_size_bytes:x})"
-            );
-            return None;
+            return Err(BiosAcpiError::TableOutOfBounds {
+                table: name,
+                end,
+                memory_size_bytes,
+            });
         }
     }
     let Some(nvs_end) = placement.nvs_base.checked_add(placement.nvs_size) else {
-        eprintln!("BIOS: ACPI NVS address overflow");
-        return None;
+        return Err(BiosAcpiError::NvsAddressOverflow {
+            base: placement.nvs_base,
+            size: placement.nvs_size,
+        });
     };
     if nvs_end > memory_size_bytes {
-        eprintln!("BIOS: ACPI NVS out of bounds (end=0x{nvs_end:x} mem=0x{memory_size_bytes:x})");
-        return None;
+        return Err(BiosAcpiError::NvsOutOfBounds {
+            end: nvs_end,
+            memory_size_bytes,
+        });
     }
 
     struct Writer<'a> {
@@ -108,7 +173,7 @@ pub fn build_and_write(
     tables.write_to(&mut Writer { bus });
 
     let reclaimable = acpi_reclaimable_region_from_tables(&tables);
-    Some(AcpiInfo {
+    Ok(AcpiInfo {
         rsdp_addr: tables.addresses.rsdp,
         reclaimable,
         nvs: (placement.nvs_base, placement.nvs_size),

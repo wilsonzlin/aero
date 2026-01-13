@@ -91,17 +91,23 @@ impl Bios {
 
         // 7) ACPI tables (generated via `aero-acpi`).
         if self.config.enable_acpi {
-            if let Some(info) = self.acpi_builder.build_and_write(
+            match self.acpi_builder.build_and_write(
                 bus,
                 self.config.memory_size_bytes,
                 self.config.cpu_count,
                 self.config.pirq_to_gsi,
                 self.config.acpi_placement,
             ) {
-                self.rsdp_addr = Some(info.rsdp_addr);
-                self.acpi_reclaimable = Some(info.reclaimable);
-                self.acpi_nvs = Some(info.nvs);
-            }
+                Ok(info) => {
+                    self.rsdp_addr = Some(info.rsdp_addr);
+                    self.acpi_reclaimable = Some(info.reclaimable);
+                    self.acpi_nvs = Some(info.nvs);
+                }
+                Err(err) => {
+                    let msg = format!("BIOS: ACPI build failed: {err}");
+                    self.bios_diag(bus, &msg);
+                }
+            };
         }
 
         // 8) Re-enable interrupts after POST.
@@ -148,10 +154,13 @@ impl Bios {
         Ok(())
     }
 
-    fn bios_panic(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, msg: &'static str) {
+    fn bios_diag(&mut self, bus: &mut dyn BiosBus, msg: &str) {
         // Record the message in the TTY buffer for programmatic inspection.
         self.tty_output.extend_from_slice(msg.as_bytes());
-        self.tty_output.push(b'\n');
+        let needs_newline = !msg.as_bytes().last().is_some_and(|b| *b == b'\n');
+        if needs_newline {
+            self.tty_output.push(b'\n');
+        }
 
         // Best-effort: also render to the VGA text buffer so the reason is visible on the guest
         // display when POST fails before a bootloader takes over.
@@ -164,9 +173,14 @@ impl Bios {
             for &ch in msg.as_bytes() {
                 self.video.vga.teletype_output(&mut mem, 0, ch, 0x07);
             }
-            self.video.vga.teletype_output(&mut mem, 0, b'\n', 0x07);
+            if needs_newline {
+                self.video.vga.teletype_output(&mut mem, 0, b'\n', 0x07);
+            }
         }));
+    }
 
+    fn bios_panic(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, msg: &'static str) {
+        self.bios_diag(bus, msg);
         cpu.halted = true;
     }
 }

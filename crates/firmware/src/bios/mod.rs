@@ -38,7 +38,7 @@ use crate::memory::MemoryBus as FirmwareMemoryBus;
 use crate::rtc::{CmosRtc, DateTime};
 use crate::video::VideoDevice;
 
-pub use acpi::{AcpiBuilder, AcpiInfo};
+pub use acpi::{AcpiBuilder, AcpiInfo, BiosAcpiError};
 pub use bda_time::{BdaTime, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
 pub use interrupts::E820Entry;
 pub use pci::{PciConfigSpace, PciDevice};
@@ -750,5 +750,28 @@ mod tests {
             .expect("ACPI reclaimable window should be tracked");
         assert!(reclaim_len > 0);
         assert!(rsdt_addr >= reclaim_base && rsdt_addr < reclaim_base + reclaim_len);
+    }
+
+    #[test]
+    fn post_reports_acpi_build_failure_to_tty_output() {
+        // Force ACPI placement to be out-of-bounds by advertising too little guest RAM for the
+        // default `AcpiPlacement` (tables start at 1MiB).
+        let mut bios = Bios::new(BiosConfig {
+            memory_size_bytes: 0x0010_0000, // 1MiB
+            boot_drive: 0x80,
+            ..BiosConfig::default()
+        });
+        let mut cpu = CpuState::new(aero_cpu_core::state::CpuMode::Real);
+        let mut mem = TestMemory::new(0x0010_0000);
+        let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
+
+        bios.post(&mut cpu, &mut mem, &mut disk);
+
+        assert!(bios.rsdp_addr().is_none(), "ACPI should not be built");
+        let tty = String::from_utf8_lossy(bios.tty_output());
+        assert!(
+            tty.contains("ACPI build failed"),
+            "expected BIOS TTY output to contain an ACPI failure message, got: {tty:?}"
+        );
     }
 }
