@@ -906,7 +906,10 @@ function Try-EmitAeroVirtioNetLargeMarker {
 
 function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
   param(
-    [Parameter(Mandatory = $true)] [string]$Tail
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain any virtio-*-irq markers (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
   )
 
   # Guest selftest may emit interrupt mode diagnostics markers:
@@ -915,37 +918,51 @@ function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
   #
   # These are informational by default and do not affect PASS/FAIL; the harness
   # re-emits them as host-side markers for log scraping/diagnostics.
-  $byDev = @{}
-  foreach ($line in ($Tail -split "`r?`n")) {
-    if ($line -match "^virtio-(.+)-irq\|(INFO|WARN)(?:\|(.*))?$") {
-      $dev = $Matches[1]
-      $level = $Matches[2]
-      $rest = $Matches[3]
-      $fields = @{}
-      $extras = @()
-      if (-not [string]::IsNullOrEmpty($rest)) {
-        foreach ($tok in $rest.Split("|")) {
-          if ([string]::IsNullOrEmpty($tok)) { continue }
-          $idx = $tok.IndexOf("=")
-          if ($idx -gt 0) {
-            $k = $tok.Substring(0, $idx).Trim()
-            $v = $tok.Substring($idx + 1).Trim()
-            if (-not [string]::IsNullOrEmpty($k)) {
-              $fields[$k] = $v
+  $parseText = {
+    param([Parameter(Mandatory = $true)] [string]$Text)
+    $map = @{}
+    foreach ($line in ($Text -split "`r?`n")) {
+      if ($line -match "^virtio-(.+)-irq\|(INFO|WARN)(?:\|(.*))?$") {
+        $dev = $Matches[1]
+        $level = $Matches[2]
+        $rest = $Matches[3]
+        $fields = @{}
+        $extras = @()
+        if (-not [string]::IsNullOrEmpty($rest)) {
+          foreach ($tok in $rest.Split("|")) {
+            if ([string]::IsNullOrEmpty($tok)) { continue }
+            $idx = $tok.IndexOf("=")
+            if ($idx -gt 0) {
+              $k = $tok.Substring(0, $idx).Trim()
+              $v = $tok.Substring($idx + 1).Trim()
+              if (-not [string]::IsNullOrEmpty($k)) {
+                $fields[$k] = $v
+              }
+            } else {
+              $extras += $tok.Trim()
             }
-          } else {
-            $extras += $tok.Trim()
           }
         }
-      }
-      if ($extras.Count -gt 0) {
-        $fields["msg"] = ($extras -join "|")
-      }
-      $byDev[$dev] = @{
-        Level = $level
-        Fields = $fields
+        if ($extras.Count -gt 0) {
+          $fields["msg"] = ($extras -join "|")
+        }
+        $map[$dev] = @{
+          Level = $level
+          Fields = $fields
+        }
       }
     }
+    return $map
+  }
+
+  $byDev = & $parseText $Tail
+  if ($byDev.Count -eq 0 -and (-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath)) {
+    try {
+      $full = (Get-Content -LiteralPath $SerialLogPath -Raw -ErrorAction SilentlyContinue)
+      if ($null -ne $full) {
+        $byDev = & $parseText ([string]$full)
+      }
+    } catch { }
   }
 
   foreach ($dev in ($byDev.Keys | Sort-Object)) {
@@ -1699,7 +1716,7 @@ try {
 
   Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail
-  Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail
+  Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail -SerialLogPath $SerialLogPath
 
   switch ($result.Result) {
     "PASS" {
