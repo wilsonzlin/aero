@@ -120,13 +120,24 @@ mod wasm {
                 ));
             }
 
+            if !opfs_platform::is_worker_scope() {
+                return Err(DiskError::NotSupported(
+                    "OPFS sync access handles are worker-only; run this code in a DedicatedWorker (not the main thread)"
+                        .to_string(),
+                ));
+            }
+            if !crate::opfs_sync_access_supported() {
+                return Err(DiskError::NotSupported(
+                    "OPFS sync access handles are not supported in this browser (FileSystemFileHandle.createSyncAccessHandle missing)"
+                        .to_string(),
+                ));
+            }
+
             let file = opfs_platform::open_file(path, create).await?;
 
-            if !opfs_platform::is_worker_scope()
-                || !opfs_platform::file_handle_supports_sync_access_handle(&file)
-            {
+            if !opfs_platform::file_handle_supports_sync_access_handle(&file) {
                 return Err(DiskError::NotSupported(
-                    "OPFS sync access handles are unavailable; use OpfsAsyncBackend instead"
+                    "OPFS sync access handles are not supported in this browser (FileSystemFileHandle.createSyncAccessHandle missing)"
                         .to_string(),
                 ));
             }
@@ -388,13 +399,24 @@ mod wasm {
                 ));
             }
 
+            if !opfs_platform::is_worker_scope() {
+                return Err(DiskError::NotSupported(
+                    "OPFS sync access handles are worker-only; run this code in a DedicatedWorker (not the main thread)"
+                        .to_string(),
+                ));
+            }
+            if !crate::opfs_sync_access_supported() {
+                return Err(DiskError::NotSupported(
+                    "OPFS sync access handles are not supported in this browser (FileSystemFileHandle.createSyncAccessHandle missing)"
+                        .to_string(),
+                ));
+            }
+
             let file = opfs_platform::open_file(path, false).await?;
 
-            if !opfs_platform::is_worker_scope()
-                || !opfs_platform::file_handle_supports_sync_access_handle(&file)
-            {
+            if !opfs_platform::file_handle_supports_sync_access_handle(&file) {
                 return Err(DiskError::NotSupported(
-                    "OPFS sync access handles are unavailable; use OpfsAsyncBackend instead"
+                    "OPFS sync access handles are not supported in this browser (FileSystemFileHandle.createSyncAccessHandle missing)"
                         .to_string(),
                 ));
             }
@@ -497,13 +519,24 @@ mod wasm {
                 ));
             }
 
+            if !opfs_platform::is_worker_scope() {
+                return Err(DiskError::NotSupported(
+                    "OPFS sync access handles are worker-only; run this code in a DedicatedWorker (not the main thread)"
+                        .to_string(),
+                ));
+            }
+            if !crate::opfs_sync_access_supported() {
+                return Err(DiskError::NotSupported(
+                    "OPFS sync access handles are not supported in this browser (FileSystemFileHandle.createSyncAccessHandle missing)"
+                        .to_string(),
+                ));
+            }
+
             let file = opfs_platform::open_file(path, create).await?;
 
-            if !opfs_platform::is_worker_scope()
-                || !opfs_platform::file_handle_supports_sync_access_handle(&file)
-            {
+            if !opfs_platform::file_handle_supports_sync_access_handle(&file) {
                 return Err(DiskError::NotSupported(
-                    "OPFS sync access handles are unavailable; use OpfsAsyncBackend instead"
+                    "OPFS sync access handles are not supported in this browser (FileSystemFileHandle.createSyncAccessHandle missing)"
                         .to_string(),
                 ));
             }

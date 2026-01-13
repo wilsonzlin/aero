@@ -123,7 +123,7 @@ use aero_opfs::OpfsSyncFile;
 use aero_platform::audio::mic_bridge::MicBridge;
 
 #[cfg(target_arch = "wasm32")]
-use js_sys::{BigInt, Object, Reflect, SharedArrayBuffer, Uint8Array};
+use js_sys::{BigInt, Error, Object, Reflect, SharedArrayBuffer, Uint8Array};
 
 #[cfg(target_arch = "wasm32")]
 use aero_audio::hda::HdaController;
@@ -2565,6 +2565,19 @@ pub struct Machine {
     mouse_buttons_known: bool,
 }
 
+#[cfg(target_arch = "wasm32")]
+fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError) -> JsValue {
+    match err {
+        aero_opfs::DiskError::NotSupported(_) | aero_opfs::DiskError::BackendUnavailable => {
+            let msg = format!(
+                "{operation} failed for OPFS path \"{path}\": {err}\nHint: Run the wasm module in a DedicatedWorker (not the main thread)."
+            );
+            Error::new(&msg).into()
+        }
+        _ => JsValue::from_str(&err.to_string()),
+    }
+}
+
 #[wasm_bindgen]
 impl Machine {
     #[wasm_bindgen(constructor)]
@@ -2606,7 +2619,7 @@ impl Machine {
     ) -> Result<(), JsValue> {
         let backend = aero_opfs::OpfsBackend::open(&path, create, size_bytes)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_opfs", &path, e))?;
         self.inner
             .set_disk_backend(Box::new(backend))
             .map_err(|e| JsValue::from_str(&e.to_string()))
@@ -2623,7 +2636,7 @@ impl Machine {
     pub async fn set_disk_opfs_existing(&mut self, path: String) -> Result<(), JsValue> {
         let backend = aero_opfs::OpfsBackend::open_existing(&path)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_opfs_existing", &path, e))?;
         self.inner
             .set_disk_backend(Box::new(backend))
             .map_err(|e| JsValue::from_str(&e.to_string()))
