@@ -180,6 +180,8 @@ typedef struct VIOINPUT_COUNTERS {
 
     LONG VirtioQueueDepth;
     LONG VirtioQueueMaxDepth;
+
+    LONG VirtioStatusDrops;
 } VIOINPUT_COUNTERS;
 
 typedef struct VIOINPUT_STATE {
@@ -765,6 +767,7 @@ static int dump_vioinput_counters(const SELECTED_DEVICE *dev)
     DUMP_LONG_FIELD(VirtioEventOverruns);
     DUMP_LONG_FIELD(VirtioQueueDepth);
     DUMP_LONG_FIELD(VirtioQueueMaxDepth);
+    DUMP_LONG_FIELD(VirtioStatusDrops);
 
 #undef DUMP_LONG_FIELD
 #undef VIOINPUT_WIDEN
@@ -889,7 +892,8 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     JSON_LONG_FIELD(VirtioEventDrops, 0);
     JSON_LONG_FIELD(VirtioEventOverruns, 0);
     JSON_LONG_FIELD(VirtioQueueDepth, 0);
-    JSON_LONG_FIELD(VirtioQueueMaxDepth, 1);
+    JSON_LONG_FIELD(VirtioQueueMaxDepth, 0);
+    JSON_LONG_FIELD(VirtioStatusDrops, 1);
 
     wprintf(L"}\n");
 

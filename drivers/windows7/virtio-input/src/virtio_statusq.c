@@ -89,6 +89,22 @@ static __forceinline VOID VirtioStatusQUpdateDepthCounter(_In_ PVIRTIO_STATUSQ Q
     VioInputCounterMaxUpdate(&devCtx->Counters.VirtioQueueMaxDepth, depth);
 }
 
+static __forceinline VOID VirtioStatusQCountDrop(_In_ PVIRTIO_STATUSQ Q)
+{
+    PDEVICE_CONTEXT devCtx;
+
+    if (Q == NULL || Q->Device == NULL) {
+        return;
+    }
+
+    devCtx = VirtioInputGetDeviceContext(Q->Device);
+    if (devCtx == NULL) {
+        return;
+    }
+
+    VioInputCounterInc(&devCtx->Counters.VirtioStatusDrops);
+}
+
 static __forceinline UINT16 VirtioStatusQPopFreeTxBuffer(_Inout_ PVIRTIO_STATUSQ Q)
 {
     UINT16 idx;
@@ -136,6 +152,7 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
                 VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
                 "statusq dropping pending LED report (queue full): leds=0x%02X\n",
                 (ULONG)Q->PendingLedBitfield);
+            VirtioStatusQCountDrop(Q);
             Q->PendingValid = FALSE;
         }
         return STATUS_SUCCESS;
@@ -161,6 +178,7 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
                 VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
                 "statusq dropping pending LED report (VirtqSplitAddBuffer failed): leds=0x%02X\n",
                 (ULONG)Q->PendingLedBitfield);
+            VirtioStatusQCountDrop(Q);
             Q->PendingValid = FALSE;
         }
         return STATUS_SUCCESS;

@@ -121,6 +121,9 @@ typedef struct _VIOINPUT_COUNTERS {
     // Current virtqueue depth (buffers posted - buffers completed), if tracked.
     volatile LONG VirtioQueueDepth;
     volatile LONG VirtioQueueMaxDepth;
+
+    // Statusq writes dropped when StatusQDropOnFull is enabled (e.g. keyboard LEDs).
+    volatile LONG VirtioStatusDrops;
 } VIOINPUT_COUNTERS, *PVIOINPUT_COUNTERS;
 
 typedef struct _VIOINPUT_STATE {
