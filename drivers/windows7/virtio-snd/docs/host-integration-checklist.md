@@ -127,6 +127,9 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
   - `u32 reserved = 0`
 - [ ] The header and PCM payload may be split across multiple **device-readable** descriptors; the device must treat them as a single concatenated byte stream.
 - [ ] PCM payload is **interleaved stereo S16_LE** (payload length is a multiple of **4** bytes).
+- [ ] **Safety cap (contract v1):** PCM **payload** is **≤ 256 KiB** (`262,144` bytes), where payload bytes exclude:
+  - the 8-byte `virtio_snd_pcm_xfer` header, and
+  - the final 8-byte `virtio_snd_pcm_status` response descriptor.
 - [ ] Device writes an 8-byte `virtio_snd_pcm_status` response:
   - `u32 status`
   - `u32 latency_bytes`
@@ -141,6 +144,9 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
   - `u32 reserved = 0`
 - [ ] The PCM payload may be split across multiple **device-writable** descriptors; the device must write sequential PCM bytes across them.
 - [ ] PCM payload is **mono S16_LE** (payload length is a multiple of **2** bytes).
+- [ ] **Safety cap (contract v1):** PCM **payload** is **≤ 256 KiB** (`262,144` bytes), where payload bytes exclude:
+  - the 8-byte `virtio_snd_pcm_xfer` header, and
+  - the final 8-byte `virtio_snd_pcm_status` response descriptor.
 - [ ] Device writes an 8-byte `virtio_snd_pcm_status` response:
   - `u32 status`
   - `u32 latency_bytes`

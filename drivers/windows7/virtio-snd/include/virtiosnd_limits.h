@@ -5,11 +5,16 @@
 /*
  * Driver-local sizing limits derived from the Aero virtio-snd contract.
  *
- * Contract v1 (§3.4.6) allows the device to reject a single PCM transfer whose
- * payload exceeds 4 MiB with VIRTIO_SND_S_BAD_MSG. The current TX/RX engines
- * treat BAD_MSG as fatal, so the driver must never submit larger payloads.
+ * Contract v1 (§3.4.6) requires the device to reject any single PCM transfer
+ * whose PCM payload exceeds 256 KiB (262,144 bytes) with VIRTIO_SND_S_BAD_MSG.
+ * The current TX/RX engines treat BAD_MSG as fatal, so the driver must never
+ * submit larger payloads.
+ *
+ * Note: the contract defines "payload bytes" as excluding the 8-byte
+ * virtio_snd_pcm_xfer header and excluding the final 8-byte
+ * virtio_snd_pcm_status descriptor.
  */
-#define VIRTIOSND_MAX_PCM_PAYLOAD_BYTES (4u * 1024u * 1024u) /* 4 MiB */
+#define VIRTIOSND_MAX_PCM_PAYLOAD_BYTES 262144u /* 256 KiB */
 
 /*
  * Upper bound for the WaveRT cyclic buffer (DMA common buffer) allocation.
@@ -23,4 +28,3 @@
  * which is far above typical Windows audio engine buffering needs.
  */
 #define VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES (2u * 1024u * 1024u) /* 2 MiB */
-

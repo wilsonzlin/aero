@@ -2918,7 +2918,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
 
     /*
      * Compute a period size aligned to milliseconds (bytesPerMs). Ensure the
-     * period payload never exceeds the contract maximum (4 MiB) by increasing
+     * period payload never exceeds the contract maximum (256 KiB) by increasing
      * the notification count (up to the existing 256 cap).
      */
     for (;;) {

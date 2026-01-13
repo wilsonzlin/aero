@@ -135,10 +135,10 @@ NTSTATUS VirtioSndCtrlBuildPcmSetParamsReq(
     }
 
     /*
-     * Contract v1 allows the device to reject a single PCM transfer larger than
-     * 4 MiB with VIRTIO_SND_S_BAD_MSG. Reject these up-front so callers don't
-     * accidentally break streaming by triggering fatal BAD_MSG handling in the
-     * TX/RX engines.
+     * Contract v1 requires the device to reject any single PCM transfer whose
+     * PCM payload exceeds 256 KiB (262,144 bytes) with VIRTIO_SND_S_BAD_MSG.
+     * Reject these up-front so callers don't accidentally break streaming by
+     * triggering fatal BAD_MSG handling in the TX/RX engines.
      */
     if (PeriodBytes > VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
         return STATUS_INVALID_BUFFER_SIZE;

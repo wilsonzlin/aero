@@ -171,6 +171,35 @@ static void test_rx_submit_sg_rejects_payload_over_contract_limit(void)
     VirtIoSndRxUninit(&rx);
 }
 
+static void test_rx_submit_sg_allows_payload_at_contract_limit(void)
+{
+    VIRTIOSND_RX_ENGINE rx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    VIRTIOSND_RX_SEGMENT seg;
+    VIRTIOSND_RX_REQUEST* req;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    seg.addr = 0x1000;
+    seg.len = VIRTIOSND_MAX_PCM_PAYLOAD_BYTES; /* mono S16 frame size */
+    status = VirtIoSndRxSubmitSg(&rx, &seg, 1, (void*)0x1u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    /* Complete it to keep teardown deterministic. */
+    req = (VIRTIOSND_RX_REQUEST*)q.LastCookie;
+    TEST_ASSERT(req != NULL);
+    req->StatusVa->status = VIRTIO_SND_S_OK;
+    VirtioSndHostQueuePushUsed(&q, req, (UINT32)sizeof(VIRTIO_SND_PCM_STATUS));
+    (VOID)VirtIoSndRxDrainCompletions(&rx, NULL, NULL);
+
+    VirtIoSndRxUninit(&rx);
+}
+
 static void test_rx_submit_sg_builds_descriptor_chain(void)
 {
     VIRTIOSND_RX_ENGINE rx;
@@ -543,6 +572,7 @@ int main(void)
     test_rx_submit_sg_validates_segments();
     test_rx_submit_sg_rejects_payload_overflow();
     test_rx_submit_sg_rejects_payload_over_contract_limit();
+    test_rx_submit_sg_allows_payload_at_contract_limit();
     test_rx_submit_sg_builds_descriptor_chain();
     test_rx_on_used_uses_registered_callback();
     test_rx_ok_with_no_payload_is_success_and_payload_zero();

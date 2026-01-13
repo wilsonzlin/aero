@@ -87,6 +87,37 @@ static void test_tx_init_rejects_max_period_bytes_over_contract_limit(void)
     TEST_ASSERT(status == STATUS_INVALID_BUFFER_SIZE);
 }
 
+static void test_tx_submit_sg_allows_payload_at_contract_limit(void)
+{
+    VIRTIOSND_TX_ENGINE tx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    VIRTIOSND_TX_SEGMENT seg;
+    VIRTIOSND_TX_BUFFER* buf;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, VIRTIOSND_MAX_PCM_PAYLOAD_BYTES, 1u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    seg.Address.QuadPart = 0x1000;
+    seg.Length = VIRTIOSND_MAX_PCM_PAYLOAD_BYTES;
+    status = VirtioSndTxSubmitSg(&tx, &seg, 1u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    buf = (VIRTIOSND_TX_BUFFER*)q.LastCookie;
+    TEST_ASSERT(buf != NULL);
+
+    /* Complete it to recycle the buffer before uninit. */
+    buf->StatusVa->status = VIRTIO_SND_S_OK;
+    VirtioSndHostQueuePushUsed(&q, buf, (UINT32)sizeof(VIRTIO_SND_PCM_STATUS));
+    TEST_ASSERT(VirtioSndTxDrainCompletions(&tx) == 1u);
+
+    VirtioSndTxUninit(&tx);
+}
+
 static void test_tx_submit_period_wrap_copies_both_segments_and_builds_sg(void)
 {
     VIRTIOSND_TX_ENGINE tx;
@@ -430,6 +461,7 @@ int main(void)
     test_tx_init_default_and_clamped_buffer_count();
     test_tx_init_rejects_unaligned_max_period_bytes();
     test_tx_init_rejects_max_period_bytes_over_contract_limit();
+    test_tx_submit_sg_allows_payload_at_contract_limit();
     test_tx_submit_period_wrap_copies_both_segments_and_builds_sg();
     test_tx_no_free_buffers_drops_period();
     test_tx_queue_full_returns_buffer_to_pool();
