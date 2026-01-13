@@ -21,7 +21,8 @@ fn main() {}
 
 #[cfg(not(target_arch = "wasm32"))]
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, translate_sm4_to_wgsl_bootstrap, Sm4Program,
+    parse_signatures, sm4::decode_program, translate_sm4_module_to_wgsl,
+    translate_sm4_to_wgsl_bootstrap, Sm4Program,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -72,7 +73,7 @@ fn bench_sm4_decode(c: &mut Criterion) {
             b.iter(|| {
                 let program =
                     Sm4Program::parse_from_dxbc(black_box(&dxbc)).expect("SM4 parse failed");
-                let module = program.decode().expect("SM4 decode failed");
+                let module = decode_program(&program).expect("SM4 decode failed");
                 black_box(module);
             })
         });
@@ -91,7 +92,7 @@ fn bench_wgsl_translate(c: &mut Criterion) {
             let dxbc = aero_dxbc::DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
             let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
             let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse failed");
-            let module = program.decode().expect("SM4 decode failed");
+            let module = decode_program(&program).expect("SM4 decode failed");
 
             group.bench_function(BenchmarkId::from_parameter(name), |b| {
                 b.iter(|| {
@@ -133,4 +134,3 @@ fn bench_wgsl_translate(c: &mut Criterion) {
 criterion_group!(benches, bench_dxbc_parse, bench_sm4_decode, bench_wgsl_translate);
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
-
