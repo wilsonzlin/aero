@@ -28,7 +28,23 @@ and low-speed traffic for the same physical ports (see [Companion controllers](#
 **MVP goal:** enough EHCI behavior for Windows to enumerate high-speed devices and poll interrupt
 endpoints reliably, with deterministic snapshot/restore.
 
-### Implemented in Aero’s EHCI MVP
+### Implementation status (today) vs MVP target
+
+The EHCI bring-up work in-tree is intentionally staged.
+
+Current code locations:
+
+- Rust EHCI controller core: `crates/aero-usb/src/ehci/{mod.rs, regs.rs, hub.rs}`
+- Rust EHCI smoke tests: `crates/aero-usb/tests/ehci.rs`
+- Browser PCI device wrapper (worker runtime): `web/src/io/devices/ehci.ts` (+ `ehci.test.ts`)
+- Native PCI identity stub (not a full controller yet): `crates/devices/src/usb/ehci.rs`
+
+Important: as of this staged bring-up, the **schedule engine is not implemented yet** in
+`aero-usb` (see the `process_schedules` stub in `crates/aero-usb/src/ehci/mod.rs`). The sections
+below still document the *intended* async/periodic schedule contracts because they are part of the
+EHCI MVP design.
+
+### Implemented in Aero’s EHCI MVP (target scope)
 
 The EHCI model implements:
 
@@ -116,8 +132,10 @@ The EHCI operational register block includes:
 - Status bits that are defined as **W1C** are W1C in Aero. Writes that attempt to set read-only
   bits are masked out.
 - `USBSTS.HCHALTED` is derived from `USBCMD.RunStop` and reset state; it is not directly writable.
-- The “schedule status” bits (`USBSTS.ASS` / `USBSTS.PSS`) reflect whether the corresponding schedule
-  is enabled and the controller is running (useful for drivers that wait for schedules to stop).
+- The “schedule status” bits (`USBSTS.ASS` / `USBSTS.PSS`) are part of the EHCI spec, but are not
+  currently modeled in Aero’s bring-up implementation (the schedule engine is still a stub). When
+  schedule walking lands, these bits should reflect whether the periodic/asynchronous schedules are
+  active.
 - `USBCMD.HCRESET` resets controller-local state (registers and scheduler bookkeeping) but should
   not implicitly detach devices from the root hub; device topology is modeled separately.
 
@@ -136,7 +154,8 @@ Each port tracks:
 - **Enabled** + **Port Enable/Disable Change** (PEDC)
 - **Reset** (PR) and a **reset timer** (real-time delay before reset completes)
 - **Suspend/Resume** (SUSP/FPR) and a **resume timer** (if modeled)
-- **Port owner** (`PORT_OWNER`) when companion routing is enabled
+- **Port power** (`PP`) (Aero currently models ports as powered-on by default, but honors writes)
+- **Port owner** (`PORT_OWNER`) when companion routing is enabled (planned; not modeled yet)
 
 ### Timing model
 
@@ -160,8 +179,8 @@ The guest driver typically performs sequences like:
 
 EHCI has an interrupt cause for port changes. Aero models:
 
-- Any event that sets a port change bit (CSC/PEDC/…) also latches `USBSTS.PORT_CHANGE`.
-- If `USBINTR.PORT_CHANGE` is enabled, `USBSTS.PORT_CHANGE` contributes to `irq_level()`.
+- Any event that sets a port change bit (CSC/PEDC/…) also latches `USBSTS.PCD` (Port Change Detect).
+- If `USBINTR.PCD` is enabled, `USBSTS.PCD` contributes to `irq_level()`.
 
 ---
 
@@ -191,6 +210,10 @@ EHCI is defined in terms of **frames (1 ms)** subdivided into **microframes (125
 ---
 
 ## Asynchronous schedule (QH / qTD) — control + bulk
+
+> Status: the EHCI schedule engine is not implemented yet in `crates/aero-usb` (bring-up currently
+> covers regs + root hub). This section documents the planned contract for the future schedule
+> walker.
 
 ### Structures (guest memory)
 
@@ -235,6 +258,10 @@ For MVP, error modeling focuses on being deterministic and unblocking the guest:
 ---
 
 ## Periodic schedule — interrupt polling
+
+> Status: the EHCI schedule engine is not implemented yet in `crates/aero-usb` (bring-up currently
+> covers regs + root hub). This section documents the planned contract for the future periodic
+> walker.
 
 The periodic schedule is driven by:
 
@@ -324,6 +351,10 @@ The EHCI snapshot must include:
   - connect/enable/change bits
   - reset/suspend state
   - countdown timers (reset/resume)
+- The full **USB device topology** behind the root hub (i.e. `AttachedUsbDevice` snapshots for
+  any attached hubs/HID devices/passthrough wrappers). EHCI snapshots should follow the same
+  “controller snapshot includes nested device-model snapshots” approach used by UHCI so restores
+  do not depend on the host pre-attaching devices purely to satisfy snapshot loading.
 - Any internal bookkeeping that is *not* represented in guest RAM (e.g. cached “previous port
   change” values used to latch global status bits).
 
@@ -395,6 +426,13 @@ layered:
 
 ### 1) Rust unit tests (synthetic schedules, memory-bus)
 
+Current bring-up tests already cover basic register/port behavior:
+
+- `crates/aero-usb/tests/ehci.rs` (capability regs stability, port reset timer, `HCHALTED` tracking)
+
+As schedule walking is implemented, extend the Rust test suite to build synthetic QH/qTD schedules
+in a fake `MemoryBus` and assert on detailed qTD/QH behavior.
+
 In `crates/aero-usb`, write unit tests that:
 
 - build synthetic QH/qTD chains in a fake `MemoryBus`
@@ -424,6 +462,10 @@ Then validate:
 
 ### 3) Browser runtime harness (dev panel)
 
+The browser runtime already has unit tests for the TypeScript PCI wrapper:
+
+- `web/src/io/devices/ehci.test.ts` (MMIO forwarding/masking, INTx level→edge transitions, tick→frame conversion)
+
 In the web runtime, include a dev-facing panel (similar to existing WebUSB panels) that can:
 
 - display key EHCI registers live (`USBCMD/USBSTS/FRINDEX/PORTSC`)
@@ -432,4 +474,3 @@ In the web runtime, include a dev-facing panel (similar to existing WebUSB panel
 
 This is invaluable for debugging timing and schedule traversal issues that are hard to see from
 inside the guest OS alone.
-
