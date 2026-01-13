@@ -479,6 +479,15 @@ fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Mov { dst, src })
         }
+        OPCODE_MOVC => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let cond = decode_src(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Movc { dst, cond, a, b })
+        }
         OPCODE_ADD => {
             let mut dst = decode_dst(&mut r)?;
             dst.saturate = saturate;

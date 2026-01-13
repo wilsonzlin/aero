@@ -531,6 +531,54 @@ fn translates_cbuffer_and_arithmetic_ops() {
 }
 
 #[test]
+fn translates_movc_to_wgsl_select_with_bitcast_condition() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // SM4/SM5 encodes boolean conditions as raw 32-bit lanes (commonly 0xffffffff for true, 0 for
+    // false). Ensure the translator treats `movc`'s condition as a raw-bit non-zero test.
+    let cond = SrcOperand {
+        kind: SrcKind::ImmediateF32([0xffff_ffff, 0, 0xffff_ffff, 0]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Movc {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                cond,
+                a: src_imm([1.0, 1.0, 1.0, 1.0]),
+                b: src_imm([0.0, 0.0, 0.0, 0.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("select("),
+        "expected WGSL to use `select` for movc:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<u32>>"),
+        "expected movc condition to use a raw-bit test:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_cbuffer_at_max_slot() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[

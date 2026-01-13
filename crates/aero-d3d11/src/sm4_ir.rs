@@ -107,6 +107,13 @@ pub enum Sm4Inst {
         dst: DstOperand,
         src: SrcOperand,
     },
+    /// `movc dst, cond, a, b` (per-component conditional select).
+    Movc {
+        dst: DstOperand,
+        cond: SrcOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
     Add {
         dst: DstOperand,
         a: SrcOperand,

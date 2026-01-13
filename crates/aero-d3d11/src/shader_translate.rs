@@ -1509,6 +1509,16 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
         };
         match inst {
             Sm4Inst::Mov { dst: _, src } => scan_src(src)?,
+            Sm4Inst::Movc {
+                dst: _,
+                cond,
+                a,
+                b,
+            } => {
+                scan_src(cond)?;
+                scan_src(a)?;
+                scan_src(b)?;
+            }
             Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
             | Sm4Inst::Dp3 { dst: _, a, b }
@@ -1632,6 +1642,12 @@ fn emit_temp_and_output_decls(
             Sm4Inst::Mov { dst, src } => {
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
+            }
+            Sm4Inst::Movc { dst, cond, a, b } => {
+                scan_reg(dst.reg);
+                scan_src_regs(cond, &mut scan_reg);
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
             }
             Sm4Inst::Add { dst, a, b }
             | Sm4Inst::Mul { dst, a, b }
@@ -1765,6 +1781,23 @@ fn emit_instructions(
                 let rhs = emit_src_vec4(src, inst_index, "mov", ctx)?;
                 let rhs = maybe_saturate(dst, rhs);
                 emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "mov", ctx)?;
+            }
+            Sm4Inst::Movc { dst, cond, a, b } => {
+                let cond_vec = emit_src_vec4(cond, inst_index, "movc", ctx)?;
+                let a_vec = emit_src_vec4(a, inst_index, "movc", ctx)?;
+                let b_vec = emit_src_vec4(b, inst_index, "movc", ctx)?;
+
+                let cond_bits = format!("movc_cond_bits_{inst_index}");
+                let cond_bool = format!("movc_cond_bool_{inst_index}");
+                w.line(&format!(
+                    "let {cond_bits} = bitcast<vec4<u32>>({cond_vec});"
+                ));
+                w.line(&format!(
+                    "let {cond_bool} = {cond_bits} != vec4<u32>(0u);"
+                ));
+
+                let expr = maybe_saturate(dst, format!("select(({b_vec}), ({a_vec}), {cond_bool})"));
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "movc", ctx)?;
             }
             Sm4Inst::Add { dst, a, b } => {
                 let a = emit_src_vec4(a, inst_index, "add", ctx)?;
