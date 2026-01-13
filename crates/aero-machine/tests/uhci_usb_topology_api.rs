@@ -77,3 +77,33 @@ fn machine_usb_attach_detach_topology_helpers() {
     );
 }
 
+#[test]
+fn machine_usb_attach_detach_are_noops_when_uhci_is_disabled() {
+    // No UHCI controller is present when `enable_uhci` is false.
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: false,
+        // Keep the machine minimal/deterministic for this host-side API behaviour test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    // Attaching/detaching should be a no-op (and should not panic) even with invalid ports/paths.
+    m.usb_attach_root(0, Box::new(UsbHubDevice::new()))
+        .expect("usb_attach_root should be a no-op when UHCI is disabled");
+    m.usb_detach_root(0)
+        .expect("usb_detach_root should be a no-op when UHCI is disabled");
+
+    m.usb_attach_path(&[2, 0, 99], Box::new(UsbHidKeyboardHandle::new()))
+        .expect("usb_attach_path should be a no-op when UHCI is disabled");
+    m.usb_detach_path(&[])
+        .expect("usb_detach_path should be a no-op when UHCI is disabled");
+}
