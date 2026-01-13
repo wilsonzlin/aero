@@ -1570,6 +1570,10 @@ impl IoSnapshot for VgaDevice {
         const TAG_DAC_WRITE_LATCH: u16 = 22;
         const TAG_VBLANK_TIME_NS: u16 = 23;
         const TAG_VBE_BYTES_PER_SCAN_LINE_OVERRIDE: u16 = 24;
+        const TAG_SEQUENCER_EXT: u16 = 25;
+        const TAG_GRAPHICS_EXT: u16 = 26;
+        const TAG_CRTC_EXT: u16 = 27;
+        const TAG_ATTRIBUTE_EXT: u16 = 28;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -1577,16 +1581,20 @@ impl IoSnapshot for VgaDevice {
 
         w.field_u8(TAG_SEQUENCER_INDEX, self.sequencer_index);
         w.field_bytes(TAG_SEQUENCER, self.sequencer.to_vec());
+        w.field_bytes(TAG_SEQUENCER_EXT, self.sequencer_ext.to_vec());
 
         w.field_u8(TAG_GRAPHICS_INDEX, self.graphics_index);
         w.field_bytes(TAG_GRAPHICS, self.graphics.to_vec());
+        w.field_bytes(TAG_GRAPHICS_EXT, self.graphics_ext.to_vec());
 
         w.field_u8(TAG_CRTC_INDEX, self.crtc_index);
         w.field_bytes(TAG_CRTC, self.crtc.to_vec());
+        w.field_bytes(TAG_CRTC_EXT, self.crtc_ext.to_vec());
 
         w.field_u8(TAG_ATTRIBUTE_INDEX, self.attribute_index);
         w.field_bool(TAG_ATTRIBUTE_FLIP_FLOP, self.attribute_flip_flop_data);
         w.field_bytes(TAG_ATTRIBUTE, self.attribute.to_vec());
+        w.field_bytes(TAG_ATTRIBUTE_EXT, self.attribute_ext.to_vec());
         w.field_bool(TAG_INPUT_STATUS1_VRETRACE, self.input_status1_vretrace);
 
         w.field_u8(TAG_PEL_MASK, self.pel_mask);
@@ -1659,6 +1667,10 @@ impl IoSnapshot for VgaDevice {
         const TAG_DAC_WRITE_LATCH: u16 = 22;
         const TAG_VBLANK_TIME_NS: u16 = 23;
         const TAG_VBE_BYTES_PER_SCAN_LINE_OVERRIDE: u16 = 24;
+        const TAG_SEQUENCER_EXT: u16 = 25;
+        const TAG_GRAPHICS_EXT: u16 = 26;
+        const TAG_CRTC_EXT: u16 = 27;
+        const TAG_ATTRIBUTE_EXT: u16 = 28;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -1682,6 +1694,12 @@ impl IoSnapshot for VgaDevice {
             }
             self.sequencer.copy_from_slice(buf);
         }
+        if let Some(buf) = r.bytes(TAG_SEQUENCER_EXT) {
+            if buf.len() != self.sequencer_ext.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("sequencer_ext"));
+            }
+            self.sequencer_ext.copy_from_slice(buf);
+        }
 
         if let Some(v) = r.u8(TAG_GRAPHICS_INDEX)? {
             self.graphics_index = v;
@@ -1692,6 +1710,12 @@ impl IoSnapshot for VgaDevice {
             }
             self.graphics.copy_from_slice(buf);
         }
+        if let Some(buf) = r.bytes(TAG_GRAPHICS_EXT) {
+            if buf.len() != self.graphics_ext.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("graphics_ext"));
+            }
+            self.graphics_ext.copy_from_slice(buf);
+        }
 
         if let Some(v) = r.u8(TAG_CRTC_INDEX)? {
             self.crtc_index = v;
@@ -1701,6 +1725,12 @@ impl IoSnapshot for VgaDevice {
                 return Err(SnapshotError::InvalidFieldEncoding("crtc"));
             }
             self.crtc.copy_from_slice(buf);
+        }
+        if let Some(buf) = r.bytes(TAG_CRTC_EXT) {
+            if buf.len() != self.crtc_ext.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("crtc_ext"));
+            }
+            self.crtc_ext.copy_from_slice(buf);
         }
 
         if let Some(v) = r.u8(TAG_ATTRIBUTE_INDEX)? {
@@ -1714,6 +1744,12 @@ impl IoSnapshot for VgaDevice {
                 return Err(SnapshotError::InvalidFieldEncoding("attribute"));
             }
             self.attribute.copy_from_slice(buf);
+        }
+        if let Some(buf) = r.bytes(TAG_ATTRIBUTE_EXT) {
+            if buf.len() != self.attribute_ext.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("attribute_ext"));
+            }
+            self.attribute_ext.copy_from_slice(buf);
         }
         if let Some(v) = r.bool(TAG_INPUT_STATUS1_VRETRACE)? {
             self.input_status1_vretrace = v;
