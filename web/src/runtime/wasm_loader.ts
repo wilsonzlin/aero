@@ -45,6 +45,24 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     set_disk_opfs_existing?(path: string): Promise<void>;
+    /**
+     * Open (or create) an OPFS-backed disk image and attach it as the canonical Windows 7 IDE
+     * primary channel master ATA disk (`disk_id=2`).
+     *
+     * Optional for older WASM builds.
+     */
+    attach_ide_primary_master_disk_opfs?(
+        path: string,
+        create: boolean,
+        sizeBytes: bigint,
+    ): Promise<void>;
+    /**
+     * Open an existing OPFS-backed disk image (using the file's current size) and attach it as the
+     * canonical Windows 7 IDE primary channel master ATA disk (`disk_id=2`).
+     *
+     * Optional for older WASM builds.
+     */
+    attach_ide_primary_master_disk_opfs_existing?(path: string): Promise<void>;
     run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
     serial_output(): Uint8Array;
     /**
