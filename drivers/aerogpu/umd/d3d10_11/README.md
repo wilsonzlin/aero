@@ -24,6 +24,9 @@ This implementation started as “minimum viable triangle”, but it now include
 - Input layout + vertex/index buffers, primitive topology
 - Render target + depth-stencil binding (currently RT0 + optional DSV), Clear, Draw/DrawIndexed
 - Viewport + scissor
+- Resource updates + readback:
+  - `Map`/`Unmap` for buffers and Texture2D subresources (uploads via `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` / `AEROGPU_CMD_UPLOAD_RESOURCE`)
+  - Staging readback uses `AEROGPU_CMD_COPY_*` + `AEROGPU_COPY_FLAG_WRITEBACK_DST` when the host exposes `AEROGPU_FEATURE_TRANSFER` (ABI 1.1+)
 - Pipeline state **encoding** into the command stream:
   - `AEROGPU_CMD_SET_BLEND_STATE`, `AEROGPU_CMD_SET_RASTERIZER_STATE`, `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE`
 - Windowed swapchain present (sync interval 0 vs non-zero) via `AEROGPU_CMD_PRESENT`
