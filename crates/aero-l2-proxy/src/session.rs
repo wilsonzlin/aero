@@ -574,6 +574,10 @@ async fn run_session_inner(
             _ = tokio::time::sleep_until(last_inbound_activity + idle_timeout_duration), if idle_timeout_enabled => {
                 state.metrics.idle_timeout_closed();
                 tracing::warn!(reason = "idle_timeout", "closing idle session");
+                // We initiate a close handshake on idle timeout, so ensure we drain the peer's
+                // close response before dropping the socket. Otherwise, the peer can observe a TCP
+                // reset (depending on platform buffering) instead of receiving the close frame.
+                close_handshake = true;
                 request_close_policy_violation(&ws_close_tx, "idle timeout");
                 break;
             }
