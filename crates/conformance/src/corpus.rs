@@ -493,6 +493,15 @@ pub fn templates() -> Vec<InstructionTemplate> {
             init: InitPreset::MemAtRdi { data_off: 0 },
         },
         InstructionTemplate {
+            name: "mov qword ptr [rdi], rax (rdi=mem_base+8)",
+            coverage_key: "mov_mem",
+            bytes: &[0x48, 0x89, 0x07],
+            kind: TemplateKind::MovM64Rax,
+            flags_mask: all_flags,
+            mem_compare_len: 16,
+            init: InitPreset::MemAtRdi { data_off: 8 },
+        },
+        InstructionTemplate {
             name: "mov rax, qword ptr [rdi]",
             coverage_key: "mov_mem",
             bytes: &[0x48, 0x8B, 0x07],
@@ -500,6 +509,15 @@ pub fn templates() -> Vec<InstructionTemplate> {
             flags_mask: all_flags,
             mem_compare_len: 0,
             init: InitPreset::MemAtRdi { data_off: 0 },
+        },
+        InstructionTemplate {
+            name: "mov rax, qword ptr [rdi] (rdi=mem_base+8)",
+            coverage_key: "mov_mem",
+            bytes: &[0x48, 0x8B, 0x07],
+            kind: TemplateKind::MovRaxM64,
+            flags_mask: all_flags,
+            mem_compare_len: 0,
+            init: InitPreset::MemAtRdi { data_off: 8 },
         },
         InstructionTemplate {
             name: "add qword ptr [rdi], rax",
@@ -711,14 +729,8 @@ mod tests {
 
         for template in templates() {
             let case = TestCase::generate(0, &template, &mut rng, mem_base);
-            match template.kind {
-                TemplateKind::MovM64Rax
-                | TemplateKind::MovRaxM64
-                | TemplateKind::AddM64Rax
-                | TemplateKind::SubM64Rax => {
-                    assert_eq!(case.init.rdi, mem_base);
-                }
-                _ => {}
+            if let InitPreset::MemAtRdi { data_off: 0 } = template.init {
+                assert_eq!(case.init.rdi, mem_base);
             }
         }
     }
