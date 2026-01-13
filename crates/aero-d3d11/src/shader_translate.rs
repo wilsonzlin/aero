@@ -316,13 +316,9 @@ fn translate_cs(
     let used_sivs = scan_used_compute_sivs(module, &io);
 
     let mut w = WgslWriter::new();
-    // The `protocol_d3d11` executor builds compute pipelines with a single bind group layout at
-    // `@group(0)`. Emit compute resources in group 0 so translated compute shaders can be executed
-    // by the protocol runtime.
-    //
-    // Note: The signature-driven AeroGPU binding model reserves `@group(2)` for compute resources;
-    // this is currently only exercised by the higher-level `aerogpu_cmd_executor`.
-    resources.emit_decls(&mut w, ShaderStage::Vertex)?;
+    // The Aero D3D11 binding model uses stage-scoped bind groups, so compute-stage resources live
+    // in `@group(2)`.
+    resources.emit_decls(&mut w, ShaderStage::Compute)?;
 
     if !used_sivs.is_empty() {
         w.line("struct CsIn {");
@@ -904,6 +900,34 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
                 scan_src_regs(c, &mut scan_reg);
+            }
+            Sm4Inst::Bfi {
+                width,
+                offset,
+                insert,
+                base,
+                ..
+            } => {
+                scan_src_regs(width, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+                scan_src_regs(insert, &mut scan_reg);
+                scan_src_regs(base, &mut scan_reg);
+            }
+            Sm4Inst::Ubfe {
+                width,
+                offset,
+                src,
+                ..
+            }
+            | Sm4Inst::Ibfe {
+                width,
+                offset,
+                src,
+                ..
+            } => {
+                scan_src_regs(width, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+                scan_src_regs(src, &mut scan_reg);
             }
             Sm4Inst::Rcp { dst: _, src }
             | Sm4Inst::Rsq { dst: _, src }

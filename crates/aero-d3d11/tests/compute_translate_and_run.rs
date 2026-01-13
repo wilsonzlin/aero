@@ -3,12 +3,35 @@ mod common;
 use aero_d3d11::binding_model::BINDING_BASE_UAV;
 use aero_d3d11::runtime::execute::D3D11Runtime;
 use aero_d3d11::{
-    translate_sm4_module_to_wgsl, BufferKind, DxbcFile, OperandModifier, ShaderModel, ShaderStage,
-    ShaderSignatures, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
+    translate_sm4_module_to_wgsl, BufferKind, DxbcFile, OperandModifier, ShaderModel,
+    ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle,
+    UavRef, WriteMask,
 };
-use aero_gpu::protocol_d3d11::{
-    BindingDesc, BindingType, BufferUsage, CmdWriter, PipelineKind, ShaderStageFlags,
-};
+
+// The Aero D3D11 translator emits compute-stage bindings in `@group(2)` (stage-scoped binding
+// model). The `protocol_d3d11` command-stream runtime binds only group 0 for compute pipelines, so
+// translated compute WGSL cannot be executed through that path.
+//
+// Test strategy (Option 1): use a small wgpu harness with an explicit pipeline layout containing
+// empty bind groups 0/1 and the translated compute resources bound at group 2.
+
+async fn read_mapped_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer, size: u64) -> Vec<u8> {
+    let slice = buffer.slice(0..size);
+    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+    slice.map_async(wgpu::MapMode::Read, move |v| {
+        sender.send(v).ok();
+    });
+    device.poll(wgpu::Maintain::Wait);
+
+    receiver
+        .receive()
+        .await
+        .expect("map_async dropped")
+        .expect("map_async failed");
+    let data = slice.get_mapped_range().to_vec();
+    buffer.unmap();
+    data
+}
 
 fn dummy_dxbc_bytes() -> Vec<u8> {
     // Minimal DXBC container with no chunks. The signature-driven SM4→WGSL translator only uses the
@@ -80,7 +103,7 @@ fn compute_translate_and_run_store_raw_uav_buffer() {
             .expect("compute translation should succeed");
         assert_wgsl_validates(&translated.wgsl);
 
-        let mut rt = match D3D11Runtime::new_for_tests().await {
+        let rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(err) => {
                 common::skip_or_panic(TEST_NAME, &format!("wgpu unavailable ({err:#})"));
@@ -92,57 +115,98 @@ fn compute_translate_and_run_store_raw_uav_buffer() {
             return;
         }
 
-        const STORAGE_BUF: u32 = 1;
-        const READBACK_BUF: u32 = 2;
-        const SHADER: u32 = 3;
-        const PIPELINE: u32 = 4;
-
         let binding_u0 = BINDING_BASE_UAV + 0;
-        let size = 16u64;
-
-        let mut w = CmdWriter::new();
-        w.create_buffer(
-            STORAGE_BUF,
-            size,
-            BufferUsage::STORAGE | BufferUsage::COPY_SRC | BufferUsage::COPY_DST,
+        assert!(
+            translated.wgsl.contains("@group(2)"),
+            "translated compute WGSL must use @group(2):\n{}",
+            translated.wgsl
         );
-        w.create_buffer(
-            READBACK_BUF,
-            size,
-            BufferUsage::MAP_READ | BufferUsage::COPY_DST,
-        );
-        w.update_buffer(STORAGE_BUF, 0, &[0u8; 16]);
 
-        w.create_shader_module_wgsl(SHADER, &translated.wgsl);
-        w.create_compute_pipeline(
-            PIPELINE,
-            SHADER,
-            &[BindingDesc {
+        let device = rt.device();
+        let queue = rt.queue();
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("compute_translate_and_run cs shader"),
+            source: wgpu::ShaderSource::Wgsl(translated.wgsl.into()),
+        });
+
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("compute_translate_and_run empty bind group layout"),
+            entries: &[],
+        });
+        let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("compute_translate_and_run bind group 2 layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
                 binding: binding_u0,
-                ty: BindingType::StorageBufferReadWrite,
-                visibility: ShaderStageFlags::COMPUTE,
-                storage_texture_format: None,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
             }],
-        );
+        });
 
-        w.set_pipeline(PipelineKind::Compute, PIPELINE);
-        w.set_bind_buffer(binding_u0, STORAGE_BUF, 0, size);
-        w.begin_compute_pass();
-        w.dispatch(1, 1, 1);
-        w.end_compute_pass();
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("compute_translate_and_run pipeline layout"),
+            bind_group_layouts: &[&empty_layout, &empty_layout, &group2_layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("compute_translate_and_run compute pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "cs_main",
+            compilation_options: Default::default(),
+        });
 
-        // Map-read buffers are generally "staging" resources; copy the results into a dedicated
-        // readback buffer so this test works on backends that don't support mapping a storage
-        // buffer directly.
-        w.copy_buffer_to_buffer(STORAGE_BUF, 0, READBACK_BUF, 0, size);
+        let out = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("compute_translate_and_run out buffer"),
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&out, 0, &[0u8; 16]);
 
-        rt.execute(&w.finish()).expect("execute command stream");
-        rt.poll_wait();
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("compute_translate_and_run readback buffer"),
+            size: 4,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
-        let data = rt
-            .read_buffer(READBACK_BUF, 0, 4)
-            .await
-            .expect("read buffer");
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("compute_translate_and_run bind group 2"),
+            layout: &group2_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: binding_u0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &out,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("compute_translate_and_run encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("compute_translate_and_run compute pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(2, &bind_group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, 4);
+        queue.submit([encoder.finish()]);
+
+        let data = read_mapped_buffer(device, &readback, 4).await;
         let got = u32::from_le_bytes(data[..4].try_into().expect("read 4 bytes"));
         assert_eq!(got, expected);
     });
