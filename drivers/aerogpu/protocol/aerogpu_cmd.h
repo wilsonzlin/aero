@@ -153,6 +153,8 @@ enum aerogpu_shader_stage {
   AEROGPU_SHADER_STAGE_VERTEX = 0,
   AEROGPU_SHADER_STAGE_PIXEL = 1,
   AEROGPU_SHADER_STAGE_COMPUTE = 2,
+  /* D3D10+ geometry shader stage. */
+  AEROGPU_SHADER_STAGE_GEOMETRY = 3,
 };
 
 enum aerogpu_index_format {
@@ -447,6 +449,7 @@ struct aerogpu_cmd_bind_shaders {
   aerogpu_handle_t vs; /* 0 = unbound */
   aerogpu_handle_t ps; /* 0 = unbound */
   aerogpu_handle_t cs; /* 0 = unbound */
+  /* If non-zero, interpreted as the geometry shader (GS) handle. */
   uint32_t reserved0;
 };
 #pragma pack(pop)

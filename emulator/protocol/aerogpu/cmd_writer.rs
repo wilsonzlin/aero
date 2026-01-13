@@ -463,7 +463,17 @@ impl AerogpuCmdWriter {
         );
     }
 
-    pub fn bind_shaders(&mut self, vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle) {
+    /// Bind shaders, including an optional geometry shader.
+    ///
+    /// ABI note: The on-wire packet layout is unchanged; the `gs` handle is stored in
+    /// `AerogpuCmdBindShaders.reserved0` when non-zero.
+    pub fn bind_shaders_with_gs(
+        &mut self,
+        vs: AerogpuHandle,
+        gs: AerogpuHandle,
+        ps: AerogpuHandle,
+        cs: AerogpuHandle,
+    ) {
         use super::aerogpu_cmd::AerogpuCmdBindShaders;
 
         let base = self.append_raw(
@@ -473,6 +483,11 @@ impl AerogpuCmdWriter {
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, vs), vs);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, ps), ps);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, cs), cs);
+        self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, reserved0), gs);
+    }
+
+    pub fn bind_shaders(&mut self, vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle) {
+        self.bind_shaders_with_gs(vs, 0, ps, cs);
     }
 
     pub fn create_input_layout(&mut self, input_layout_handle: AerogpuHandle, blob: &[u8]) {

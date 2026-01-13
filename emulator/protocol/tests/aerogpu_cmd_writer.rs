@@ -2,11 +2,12 @@ use core::mem::{offset_of, size_of};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuBlendFactor, AerogpuBlendOp,
-    AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc, AerogpuCmdExportSharedSurface,
-    AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresentEx,
-    AerogpuCmdReleaseSharedSurface, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture,
-    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode,
-    AerogpuFillMode, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuCmdBindShaders, AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc,
+    AerogpuCmdExportSharedSurface, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
+    AerogpuCmdPresentEx, AerogpuCmdReleaseSharedSurface, AerogpuCmdSetShaderConstantsF,
+    AerogpuCmdSetTexture, AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
+    AerogpuCullMode, AerogpuFillMode, AerogpuShaderStage, AerogpuVertexBufferBinding,
+    AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -35,6 +36,30 @@ fn cmd_writer_default_emits_valid_stream_header() {
     assert_eq!(flags, 0);
     assert_eq!(reserved0, 0);
     assert_eq!(reserved1, 0);
+}
+
+#[test]
+fn cmd_writer_bind_shaders_with_gs_reuses_reserved0_field() {
+    let mut w = AerogpuCmdWriter::new();
+    w.bind_shaders_with_gs(11, 22, 33, 44);
+    w.flush();
+
+    let buf = w.finish();
+
+    let packet_offset = AerogpuCmdStreamHeader::SIZE_BYTES;
+    let hdr = decode_cmd_hdr_le(&buf[packet_offset..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::BindShaders as u32);
+    assert_eq!(size_bytes as usize, size_of::<AerogpuCmdBindShaders>());
+
+    let reserved0 = u32::from_le_bytes(
+        buf[packet_offset + offset_of!(AerogpuCmdBindShaders, reserved0)
+            ..packet_offset + offset_of!(AerogpuCmdBindShaders, reserved0) + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(reserved0, 22);
 }
 
 #[test]

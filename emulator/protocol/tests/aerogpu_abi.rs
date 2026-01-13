@@ -3521,6 +3521,11 @@ fn rust_layout_matches_c_headers() {
         "AEROGPU_SHADER_STAGE_COMPUTE",
         AerogpuShaderStage::Compute as u64,
     );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_SHADER_STAGE_GEOMETRY",
+        AerogpuShaderStage::Geometry as u64,
+    );
 
     check_const(
         &mut cmd_consts_seen,

@@ -248,6 +248,7 @@ export const AerogpuShaderStage = {
   Vertex: 0,
   Pixel: 1,
   Compute: 2,
+  Geometry: 3,
 } as const;
 
 export type AerogpuShaderStage = (typeof AerogpuShaderStage)[keyof typeof AerogpuShaderStage];
@@ -1222,11 +1223,22 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 8, shaderHandle, true);
   }
 
-  bindShaders(vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
+  /**
+   * BIND_SHADERS with an optional geometry shader.
+   *
+   * ABI note: the on-wire packet layout is unchanged; we reuse the legacy `reserved0` field as the
+   * GS handle when non-zero.
+   */
+  bindShadersWithGs(vs: AerogpuHandle, gs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
     const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE);
     this.view.setUint32(base + 8, vs, true);
     this.view.setUint32(base + 12, ps, true);
     this.view.setUint32(base + 16, cs, true);
+    this.view.setUint32(base + 20, gs, true);
+  }
+
+  bindShaders(vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
+    this.bindShadersWithGs(vs, 0, ps, cs);
   }
 
   setShaderConstantsF(stage: AerogpuShaderStage, startRegister: number, data: Float32Array | readonly number[]): void {

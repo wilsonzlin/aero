@@ -153,6 +153,7 @@ pub enum AerogpuShaderStage {
     Vertex = 0,
     Pixel = 1,
     Compute = 2,
+    Geometry = 3,
 }
 
 /// Extended shader stage used by the "stage_ex" ABI extension.
@@ -422,6 +423,9 @@ pub struct AerogpuCmdBindShaders {
     pub vs: AerogpuHandle,
     pub ps: AerogpuHandle,
     pub cs: AerogpuHandle,
+    /// Reserved for ABI-forward-compat.
+    ///
+    /// When non-zero, this field is interpreted as the geometry shader handle (`gs`).
     pub reserved0: u32,
 }
 
