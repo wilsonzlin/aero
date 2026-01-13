@@ -13,6 +13,7 @@ pub mod shader_translate;
 pub mod signature;
 pub mod sm4;
 pub mod sm4_ir;
+pub mod vertex_pulling;
 pub mod wgsl;
 mod wgsl_bootstrap;
 
