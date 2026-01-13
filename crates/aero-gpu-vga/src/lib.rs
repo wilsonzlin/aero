@@ -22,7 +22,7 @@ mod text_font;
 
 use palette::{rgb_to_rgba_u32, Rgb};
 pub use snapshot::{VgaSnapshotError, VgaSnapshotV1};
-use text_font::FONT8X8_BASIC;
+use text_font::FONT8X8_CP437;
 
 #[cfg(feature = "io-snapshot")]
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
@@ -767,7 +767,7 @@ impl VgaDevice {
 
     fn font_row_8x16(&self, ch: u8, row: u8) -> u8 {
         let row8 = (row / 2) as usize;
-        FONT8X8_BASIC.get(ch as usize).copied().unwrap_or([0; 8])[row8]
+        FONT8X8_CP437[ch as usize][row8]
     }
 
     fn attribute_palette_lookup(&self, color: u8) -> u8 {
@@ -1523,6 +1523,68 @@ mod tests {
         dev.present();
         assert_eq!(dev.get_resolution(), (720, 400));
         assert_eq!(framebuffer_hash(&dev), 0x5cfe440e33546065);
+    }
+
+    #[test]
+    fn text_mode_cp437_box_drawing_glyph_is_not_blank() {
+        let mut dev = VgaDevice::new();
+        dev.set_text_mode_80x25();
+
+        // Disable cursor for deterministic output.
+        dev.crtc[0x0A] = 0x20;
+
+        // Use a CP437 box drawing glyph in the "line graphics" range. The renderer has special
+        // 9th-column replication logic for 0xC0..=0xDF when line graphics are enabled.
+        let base = 0xB8000u32;
+        let ch = 0xC4u8; // '─'
+        let attr = 0x1F; // fg=15 (light grey), bg=1 (blue)
+
+        dev.mem_write_u8(base, ch);
+        dev.mem_write_u8(base + 1, attr);
+        dev.present();
+
+        let fg = attr & 0x0F;
+        let bg = (attr >> 4) & 0x0F; // blink is disabled in set_text_mode_80x25()
+
+        let fg_px = rgb_to_rgba_u32(dev.dac[dev.attribute_palette_lookup(fg) as usize]);
+        let bg_px = rgb_to_rgba_u32(dev.dac[dev.attribute_palette_lookup(bg) as usize]);
+        assert_ne!(fg_px, bg_px);
+
+        let fb = dev.get_framebuffer();
+        let width = dev.get_resolution().0 as usize;
+
+        // The first cell is 9x16 pixels at the top-left of the framebuffer.
+        let mut has_fg = false;
+        for y in 0..16usize {
+            for x in 0..9usize {
+                if fb[y * width + x] == fg_px {
+                    has_fg = true;
+                    break;
+                }
+            }
+            if has_fg {
+                break;
+            }
+        }
+        assert!(
+            has_fg,
+            "expected CP437 glyph 0x{ch:02X} to render at least one foreground pixel"
+        );
+
+        // Optional: validate that the 9th column is replicated for at least one row.
+        let mut ninth_col_fg = false;
+        for y in 0..16usize {
+            if fb[y * width + 8] == fg_px {
+                // Replication duplicates the right-most glyph pixel.
+                assert_eq!(fb[y * width + 7], fg_px);
+                ninth_col_fg = true;
+                break;
+            }
+        }
+        assert!(
+            ninth_col_fg,
+            "expected 9th-column replication for CP437 glyph 0x{ch:02X}"
+        );
     }
 
     #[test]

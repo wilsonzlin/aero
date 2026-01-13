@@ -135,3 +135,212 @@ pub const FONT8X8_BASIC: [[u8; 8]; 128] = [
     [0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00], // 0x7E '~'
     [0x00,0x10,0x38,0x6C,0xC6,0xC6,0xFE,0x00], // 0x7F (del)
 ];
+
+// ----------------------------------------------------------------------------------------------
+// CP437 extensions
+// ----------------------------------------------------------------------------------------------
+
+/// A CP437-compatible 8x8 font table.
+///
+/// The first 128 entries (0x00..=0x7F) are copied verbatim from [`FONT8X8_BASIC`] so that the
+/// existing ASCII output (and golden hashes) stay stable.
+///
+/// The extended range is currently populated with common CP437 text UI glyphs:
+/// - Shading (`0xB0..=0xB2`)
+/// - Box drawing (`0xB3..=0xDF`)
+///
+/// The `aero-gpu-vga` text renderer scales this 8x8 font to 8x16 by duplicating rows.
+pub const FONT8X8_CP437: [[u8; 8]; 256] = build_font8x8_cp437();
+
+const fn build_font8x8_cp437() -> [[u8; 8]; 256] {
+    let mut font = [[0u8; 8]; 256];
+
+    // Preserve the original 0x00..=0x7F glyphs byte-for-byte.
+    let mut i = 0usize;
+    while i < 128 {
+        font[i] = FONT8X8_BASIC[i];
+        i += 1;
+    }
+
+    // CP437 shading characters.
+    font[0xB0] = glyph_shade_light(); // ░
+    font[0xB1] = glyph_shade_medium(); // ▒
+    font[0xB2] = glyph_shade_dark(); // ▓
+
+    // CP437 single-line box drawing.
+    font[0xB3] = glyph_box_single(true, true, false, false); // │
+    font[0xB4] = glyph_box_single(true, true, true, false); // ┤
+    font[0xBF] = glyph_box_single(false, true, true, false); // ┐
+    font[0xC0] = glyph_box_single(true, false, false, true); // └
+    font[0xC1] = glyph_box_single(true, false, true, true); // ┴
+    font[0xC2] = glyph_box_single(false, true, true, true); // ┬
+    font[0xC3] = glyph_box_single(true, true, false, true); // ├
+    font[0xC4] = glyph_box_single(false, false, true, true); // ─
+    font[0xC5] = glyph_box_single(true, true, true, true); // ┼
+    font[0xD9] = glyph_box_single(true, false, true, false); // ┘
+    font[0xDA] = glyph_box_single(false, true, false, true); // ┌
+
+    // CP437 double-line/mixed box drawing.
+    //
+    // These are approximated using the same "single-line" strokes; the primary goal is to avoid
+    // rendering them as blanks in boot-time text UIs.
+    font[0xB5] = glyph_box_single(true, true, true, false); // ╡
+    font[0xB6] = glyph_box_single(true, true, true, false); // ╢
+    font[0xB7] = glyph_box_single(false, true, true, false); // ╖
+    font[0xB8] = glyph_box_single(false, true, true, false); // ╕
+    font[0xB9] = glyph_box_single(true, true, true, false); // ╣
+    font[0xBA] = glyph_box_double_vertical(); // ║
+    font[0xBB] = glyph_box_single(false, true, true, false); // ╗
+    font[0xBC] = glyph_box_single(true, false, true, false); // ╝
+    font[0xBD] = glyph_box_single(true, false, true, false); // ╜
+    font[0xBE] = glyph_box_single(true, false, true, false); // ╛
+
+    // These are in the EGA "line graphics" range (0xC0..=0xDF) and participate in VGA 9th-column
+    // replication when the Attribute Controller's "line graphics enable" bit is set.
+    font[0xC6] = glyph_box_single(true, true, false, true); // ╞
+    font[0xC7] = glyph_box_single(true, true, false, true); // ╟
+    font[0xC8] = glyph_box_single(true, false, false, true); // ╚
+    font[0xC9] = glyph_box_single(false, true, false, true); // ╔
+    font[0xCA] = glyph_box_single(true, false, true, true); // ╩
+    font[0xCB] = glyph_box_single(false, true, true, true); // ╦
+    font[0xCC] = glyph_box_single(true, true, false, true); // ╠
+    font[0xCD] = glyph_box_single(false, false, true, true); // ═
+    font[0xCE] = glyph_box_single(true, true, true, true); // ╬
+    font[0xCF] = glyph_box_single(true, false, true, true); // ╧
+    font[0xD0] = glyph_box_single(true, false, true, true); // ╨
+    font[0xD1] = glyph_box_single(false, true, true, true); // ╤
+    font[0xD2] = glyph_box_single(false, true, true, true); // ╥
+    font[0xD3] = glyph_box_single(true, false, false, true); // ╙
+    font[0xD4] = glyph_box_single(true, false, false, true); // ╘
+    font[0xD5] = glyph_box_single(false, true, false, true); // ╒
+    font[0xD6] = glyph_box_single(false, true, false, true); // ╓
+    font[0xD7] = glyph_box_single(true, true, true, true); // ╫
+    font[0xD8] = glyph_box_single(true, true, true, true); // ╪
+
+    // CP437 block elements.
+    font[0xDB] = [0xFF; 8]; // █ full block
+    font[0xDC] = glyph_block_lower_half(); // ▄
+    font[0xDD] = glyph_block_left_half(); // ▌
+    font[0xDE] = glyph_block_right_half(); // ▐
+    font[0xDF] = glyph_block_upper_half(); // ▀
+
+    font
+}
+
+const fn glyph_box_single(up: bool, down: bool, left: bool, right: bool) -> [u8; 8] {
+    // A simple 8x8 "box drawing" generator. Lines are drawn centered within the cell:
+    // - Horizontal line is at row 3.
+    // - Vertical line is at column 3 (bit 4).
+    //
+    // This deliberately matches the assumptions in the VGA text renderer, which replicates the
+    // 8th column into the 9th for 0xC0..=0xDF when line graphics are enabled.
+    let mut out = [0u8; 8];
+    let h_row = 3usize;
+    let v_col = 3usize;
+    let v_bit = 1u8 << (7 - v_col);
+    let left_mask = 0xFFu8 << (7 - v_col);
+    let right_mask = 0xFFu8 >> v_col;
+
+    let mut y = 0usize;
+    while y < 8 {
+        let mut row = 0u8;
+        if (up && y <= h_row) || (down && y >= h_row) {
+            row |= v_bit;
+        }
+        if y == h_row {
+            if left {
+                row |= left_mask;
+            }
+            if right {
+                row |= right_mask;
+            }
+        }
+        out[y] = row;
+        y += 1;
+    }
+    out
+}
+
+const fn glyph_box_double_vertical() -> [u8; 8] {
+    // Approximate a double-vertical line by using a 2px wide stroke.
+    let mut out = [0u8; 8];
+    let v_bits = 0x18u8; // bits 4 and 3
+    let mut y = 0usize;
+    while y < 8 {
+        out[y] = v_bits;
+        y += 1;
+    }
+    out
+}
+
+const fn glyph_block_upper_half() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    let mut y = 0usize;
+    while y < 4 {
+        out[y] = 0xFF;
+        y += 1;
+    }
+    out
+}
+
+const fn glyph_block_lower_half() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    let mut y = 4usize;
+    while y < 8 {
+        out[y] = 0xFF;
+        y += 1;
+    }
+    out
+}
+
+const fn glyph_block_left_half() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    let mut y = 0usize;
+    while y < 8 {
+        out[y] = 0xF0; // left 4 pixels
+        y += 1;
+    }
+    out
+}
+
+const fn glyph_block_right_half() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    let mut y = 0usize;
+    while y < 8 {
+        out[y] = 0x0F; // right 4 pixels
+        y += 1;
+    }
+    out
+}
+
+const fn glyph_shade_light() -> [u8; 8] {
+    // Approximate the CP437 shading characters. Exact density isn't critical as long as it's
+    // visible in typical VGA palettes.
+    let mut out = [0u8; 8];
+    let mut y = 0usize;
+    while y < 8 {
+        out[y] = if (y & 1) == 0 { 0x00 } else { 0x55 };
+        y += 1;
+    }
+    out
+}
+
+const fn glyph_shade_medium() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    let mut y = 0usize;
+    while y < 8 {
+        out[y] = if (y & 1) == 0 { 0x55 } else { 0xAA };
+        y += 1;
+    }
+    out
+}
+
+const fn glyph_shade_dark() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    let mut y = 0usize;
+    while y < 8 {
+        out[y] = if (y & 1) == 0 { 0xFF } else { 0xAA };
+        y += 1;
+    }
+    out
+}
