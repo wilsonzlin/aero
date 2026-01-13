@@ -5,6 +5,7 @@ param(
     [string] $OutDir = "out/artifacts",
     [string] $Version,
     [switch] $NoIso,
+    [switch] $LegacyIso,
     [switch] $MakeFatImage,
     [switch] $FatImageStrict,
     [int] $FatImageSizeMB = 64,
@@ -650,35 +651,67 @@ function New-IsoFromFolder {
         [Parameter(Mandatory = $true)][string] $VolumeLabel
     )
 
-    $isWindows = $false
-    try {
-        $isWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
-    } catch {
-        $isWindows = $false
-    }
-
-    if (-not $isWindows) {
-        throw "ISO creation requires Windows (IMAPI2). Re-run with -NoIso, or run this script on Windows."
-    }
-
     if (Test-Path $IsoPath) {
         Remove-Item -Force $IsoPath
     }
 
-    $helper = Join-Path $PSScriptRoot "lib/New-IsoFile.ps1"
-    if (-not (Test-Path $helper)) {
-        throw "Missing helper script: '$helper'."
-    }
+    # Prefer the deterministic Rust ISO builder when `cargo` is available (cross-platform).
+    $cargoExe = (Get-Command cargo -ErrorAction SilentlyContinue).Source
+    $useRustIso = (-not $LegacyIso) -and $cargoExe
+    if ($useRustIso) {
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+        $manifestPath = Join-Path $repoRoot "tools/packaging/aero_packager/Cargo.toml"
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "Missing aero_packager Cargo.toml: '$manifestPath'."
+        }
 
-    $powershellExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
-    if ($powershellExe) {
-        & $powershellExe -NoProfile -ExecutionPolicy Bypass -STA -File $helper -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel
+        $sourceDateEpoch = 0
+        if (-not [string]::IsNullOrWhiteSpace($env:SOURCE_DATE_EPOCH)) {
+            try {
+                $sourceDateEpoch = [int64] $env:SOURCE_DATE_EPOCH
+            } catch {
+                throw "Invalid SOURCE_DATE_EPOCH (expected integer seconds): '$($env:SOURCE_DATE_EPOCH)'."
+            }
+        }
+
+        & $cargoExe run --quiet --locked --manifest-path $manifestPath --bin aero_iso -- `
+            --in-dir $Folder `
+            --out-iso $IsoPath `
+            --volume-id $VolumeLabel `
+            --source-date-epoch $sourceDateEpoch
         if ($LASTEXITCODE -ne 0) {
-            throw "ISO creation failed (exit code $LASTEXITCODE)."
+            throw "Deterministic ISO creation failed (cargo exit code $LASTEXITCODE)."
         }
     } else {
-        . $helper
-        New-IsoFile -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel
+        $isWindows = $false
+        try {
+            $isWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+        } catch {
+            $isWindows = $false
+        }
+
+        if (-not $isWindows) {
+            if ($LegacyIso) {
+                throw "ISO creation with -LegacyIso requires Windows (IMAPI2). Re-run without -LegacyIso (requires cargo), or use -NoIso."
+            }
+            throw "ISO creation requires either cargo (deterministic, cross-platform) or Windows IMAPI2. Install Rust/cargo, re-run with -NoIso, or run this script on Windows."
+        }
+
+        $helper = Join-Path $PSScriptRoot "lib/New-IsoFile.ps1"
+        if (-not (Test-Path $helper)) {
+            throw "Missing helper script: '$helper'."
+        }
+
+        $powershellExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
+        if ($powershellExe) {
+            & $powershellExe -NoProfile -ExecutionPolicy Bypass -STA -File $helper -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel
+            if ($LASTEXITCODE -ne 0) {
+                throw "ISO creation failed (exit code $LASTEXITCODE)."
+            }
+        } else {
+            . $helper
+            New-IsoFile -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel
+        }
     }
 
     $isoFile = Get-Item -Path $IsoPath -ErrorAction SilentlyContinue

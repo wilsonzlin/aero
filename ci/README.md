@@ -128,12 +128,23 @@ Packages signed driver staging folders from `out/packages/` into release artifac
 This step refuses to package any driver that is not explicitly opted into CI packaging via
 `drivers/<driver>/ci-package.json` (defense-in-depth against stale/stray packages under `out/packages/`).
 
+### Deterministic ISO creation (cross-platform)
+
+When `cargo` is available, `ci/package-drivers.ps1` builds the bundle ISO using the deterministic Rust
+ISO writer (`tools/packaging/aero_packager`, binary: `aero_iso`). This makes the produced
+`AeroVirtIO-Win7-*.iso` **bit-identical** across runs/hosts as long as the staged bundle directory
+contents (and `SOURCE_DATE_EPOCH`, if set) are identical.
+
+- Works on Windows, Linux, and macOS (no IMAPI2 required).
+- Falls back to the legacy IMAPI2-based PowerShell implementation on Windows if `cargo` is missing.
+- Use `-LegacyIso` to force the IMAPI2 path (Windows only).
+
 Artifacts (typical):
 
 - `AeroVirtIO-Win7-<version>-x86.zip`
 - `AeroVirtIO-Win7-<version>-x64.zip`
 - `AeroVirtIO-Win7-<version>-bundle.zip`
-- `AeroVirtIO-Win7-<version>.iso` (unless `-NoIso`; Windows only)
+- `AeroVirtIO-Win7-<version>.iso` (unless `-NoIso`; deterministic when `cargo` is available; legacy Windows IMAPI2 fallback via `-LegacyIso`)
 - `AeroVirtIO-Win7-<version>-fat.vhd` (when `-MakeFatImage` or `AERO_MAKE_FAT_IMAGE=1`; requires Windows + admin; skipped unless `-FatImageStrict`)
 
 If `-Version` is not provided, the script derives a deterministic version string from git:

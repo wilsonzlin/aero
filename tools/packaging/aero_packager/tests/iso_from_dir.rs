@@ -1,0 +1,52 @@
+use std::fs;
+
+#[test]
+fn iso_from_dir_is_deterministic_and_filters_host_metadata() -> anyhow::Result<()> {
+    let input = tempfile::tempdir()?;
+    let root = input.path();
+
+    fs::write(root.join("b.txt"), b"b\n")?;
+    fs::write(root.join("a.txt"), b"a\n")?;
+    fs::create_dir_all(root.join("dir1"))?;
+    fs::write(root.join("dir1").join("c.txt"), b"c\n")?;
+
+    // Host metadata / hidden files that must not affect the output ISO.
+    fs::write(root.join(".DS_Store"), b"junk")?;
+    fs::create_dir_all(root.join(".git"))?;
+    fs::write(root.join(".git").join("config"), b"junk")?;
+    fs::create_dir_all(root.join("__MACOSX"))?;
+    fs::write(root.join("__MACOSX").join("junk"), b"junk")?;
+    fs::write(root.join("Thumbs.db"), b"junk")?;
+    fs::write(root.join("desktop.ini"), b"junk")?;
+
+    let out1 = tempfile::tempdir()?;
+    let out2 = tempfile::tempdir()?;
+    let iso1 = out1.path().join("out.iso");
+    let iso2 = out2.path().join("out.iso");
+
+    aero_packager::write_iso9660_joliet_from_dir(root, &iso1, "TEST_VOL", 0)?;
+    aero_packager::write_iso9660_joliet_from_dir(root, &iso2, "TEST_VOL", 0)?;
+
+    let bytes1 = fs::read(&iso1)?;
+    let bytes2 = fs::read(&iso2)?;
+    assert_eq!(bytes1, bytes2, "ISO bytes differed across identical runs");
+
+    let tree = aero_packager::read_joliet_tree(&bytes1)?;
+    for expected in ["a.txt", "b.txt", "dir1/c.txt"] {
+        assert!(tree.contains(expected), "ISO is missing {expected}");
+    }
+    for unexpected in [
+        ".DS_Store",
+        ".git/config",
+        "__MACOSX/junk",
+        "Thumbs.db",
+        "desktop.ini",
+    ] {
+        assert!(
+            !tree.contains(unexpected),
+            "ISO unexpectedly contains filtered file: {unexpected}"
+        );
+    }
+
+    Ok(())
+}

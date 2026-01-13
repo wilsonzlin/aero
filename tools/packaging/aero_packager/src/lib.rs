@@ -1,5 +1,6 @@
 mod guest_tools_config;
 mod iso9660;
+mod iso_from_dir;
 mod manifest;
 mod spec;
 mod windows_device_contract;
@@ -17,6 +18,7 @@ pub use guest_tools_config::GuestToolsDevicesCmdServiceOverrides;
 pub use iso9660::read_joliet_file_entries;
 pub use iso9660::read_joliet_tree;
 pub use iso9660::{IsoFileEntry, IsoFileTree};
+pub use iso_from_dir::write_iso9660_joliet_from_dir;
 pub use manifest::{Manifest, ManifestFileEntry, SigningPolicy};
 pub use spec::{DriverSpec, PackagingSpec};
 

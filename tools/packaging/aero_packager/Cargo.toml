@@ -9,6 +9,10 @@ default-run = "aero_packager"
 name = "aero_packager"
 path = "src/main.rs"
 
+[[bin]]
+name = "aero_iso"
+path = "src/aero_iso.rs"
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
