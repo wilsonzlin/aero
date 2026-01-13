@@ -1030,12 +1030,15 @@ function renderAudioPanel(): HTMLElement {
       const need = Math.max(0, target - level);
       if (need > 0) writeTone(need);
 
+      const metrics = output.getMetrics();
       status.textContent =
-        `AudioContext: ${output.context.state}\n` +
-        `sampleRate: ${sr}\n` +
-        `bufferLevelFrames: ${output.getBufferLevelFrames()}\n` +
-        `underrunFrames: ${output.getUnderrunCount()}\n` +
-        `overrunFrames: ${output.getOverrunCount()}`;
+        `AudioContext: ${metrics.state}\n` +
+        `sampleRate: ${metrics.sampleRate}\n` +
+        `baseLatencySeconds: ${metrics.baseLatencySeconds ?? "n/a"}\n` +
+        `outputLatencySeconds: ${metrics.outputLatencySeconds ?? "n/a"}\n` +
+        `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
+        `underrunFrames: ${metrics.underrunCount}\n` +
+        `overrunFrames: ${metrics.overrunCount}`;
     }, 20);
     (timer as unknown as { unref?: () => void }).unref?.();
     toneTimer = timer as unknown as number;
@@ -1283,6 +1286,8 @@ function renderAudioPanel(): HTMLElement {
         status.textContent =
           `AudioContext: ${metrics.state}\n` +
           `sampleRate: ${metrics.sampleRate}\n` +
+          `baseLatencySeconds: ${metrics.baseLatencySeconds ?? "n/a"}\n` +
+          `outputLatencySeconds: ${metrics.outputLatencySeconds ?? "n/a"}\n` +
           `capacityFrames: ${metrics.capacityFrames}\n` +
           `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
           `underrunFrames: ${metrics.underrunCount}\n` +
@@ -1432,6 +1437,8 @@ function renderAudioPanel(): HTMLElement {
         status.textContent =
           `AudioContext: ${metrics.state}\n` +
           `sampleRate: ${metrics.sampleRate}\n` +
+          `baseLatencySeconds: ${metrics.baseLatencySeconds ?? "n/a"}\n` +
+          `outputLatencySeconds: ${metrics.outputLatencySeconds ?? "n/a"}\n` +
           `capacityFrames: ${metrics.capacityFrames}\n` +
           `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
           `underrunFrames: ${metrics.underrunCount}\n` +
