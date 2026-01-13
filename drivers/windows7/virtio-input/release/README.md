@@ -42,6 +42,21 @@ powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/p
 
 `release/out/` and generated `*.zip` files are ignored by git (see `release/.gitignore`).
 
+## Verifying a packaged zip
+
+`../scripts/verify-release.ps1` validates a packaged release zip by extracting it to a temporary directory and checking every file listed in `manifest.json`:
+
+- file exists
+- file size matches
+- SHA-256 hash matches
+
+It also validates `schemaVersion == 1`, `driver.id == aero-virtio-input`, and `driver.targetOs == win7`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/verify-release.ps1 `
+  -ZipPath drivers/windows7/virtio-input/release/out/aero-virtio-input-win7-amd64-<version>.zip
+```
+
 ## One-shot local workflow (optional)
 
 If you want a single command that runs the typical local signing flow:
