@@ -94,6 +94,150 @@ function installMockRangeFetch(data: Uint8Array, opts: { etag: string }): { stat
   };
 }
 
+type ConcurrencyFetchStats = {
+  chunkRangeCalls: number;
+  maxChunkInflight: number;
+};
+
+function installMockRangeFetchWithConcurrency(
+  data: Uint8Array,
+  opts: { etag: string },
+): {
+  stats: ConcurrencyFetchStats;
+  control: { waitForChunkInflightAtLeast: (n: number) => Promise<void>; releaseAll: () => void };
+  restore: () => void;
+} {
+  const original = globalThis.fetch;
+  const stats: ConcurrencyFetchStats = { chunkRangeCalls: 0, maxChunkInflight: 0 };
+
+  function headerValue(init: RequestInit | undefined, name: string): string | null {
+    const h = init?.headers;
+    if (!h) return null;
+    if (h instanceof Headers) return h.get(name);
+    if (Array.isArray(h)) {
+      for (const [k, v] of h) {
+        if (k.toLowerCase() === name.toLowerCase()) return v;
+      }
+      return null;
+    }
+    const rec = h as Record<string, string>;
+    for (const [k, v] of Object.entries(rec)) {
+      if (k.toLowerCase() === name.toLowerCase()) return v;
+    }
+    return null;
+  }
+
+  let chunkInflight = 0;
+  let released = false;
+  const releaseWaiters: Array<() => void> = [];
+
+  type InflightWaiter = { target: number; resolve: () => void };
+  const inflightWaiters: InflightWaiter[] = [];
+  const notifyInflight = () => {
+    for (let i = inflightWaiters.length - 1; i >= 0; i -= 1) {
+      const waiter = inflightWaiters[i]!;
+      if (stats.maxChunkInflight >= waiter.target) {
+        inflightWaiters.splice(i, 1);
+        waiter.resolve();
+      }
+    }
+  };
+
+  const releaseAll = () => {
+    released = true;
+    while (releaseWaiters.length > 0) {
+      releaseWaiters.shift()!();
+    }
+  };
+
+  const waitForChunkInflightAtLeast = async (n: number): Promise<void> => {
+    if (stats.maxChunkInflight >= n) return;
+    await new Promise<void>((resolve) => {
+      inflightWaiters.push({ target: n, resolve });
+    });
+  };
+
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const method = (init?.method ?? "GET").toUpperCase();
+
+    if (method === "HEAD") {
+      return new Response(null, {
+        status: 200,
+        headers: {
+          "Content-Length": String(data.byteLength),
+          "Accept-Ranges": "bytes",
+          ETag: opts.etag,
+        },
+      });
+    }
+
+    const range = headerValue(init, "Range");
+    if (!range) {
+      return new Response(data.slice().buffer, {
+        status: 200,
+        headers: {
+          "Content-Length": String(data.byteLength),
+          "Accept-Ranges": "bytes",
+          ETag: opts.etag,
+        },
+      });
+    }
+
+    const match = /^bytes=(\d+)-(\d+)$/.exec(range);
+    if (!match) {
+      return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${data.byteLength}` } });
+    }
+
+    const start = Number(match[1]);
+    const endInclusive = Number(match[2]);
+    const body = data.slice(start, endInclusive + 1);
+    const len = endInclusive - start + 1;
+
+    const makeRangeResp = () =>
+      new Response(body.buffer, {
+        status: 206,
+        headers: {
+          "Accept-Ranges": "bytes",
+          "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+          "Content-Length": String(body.byteLength),
+          ETag: opts.etag,
+        },
+      });
+
+    // Don't delay the 0-0 probe.
+    if (len === 1) {
+      return makeRangeResp();
+    }
+
+    stats.chunkRangeCalls += 1;
+    chunkInflight += 1;
+    stats.maxChunkInflight = Math.max(stats.maxChunkInflight, chunkInflight);
+    notifyInflight();
+
+    const resolveResp = () => {
+      chunkInflight -= 1;
+      return makeRangeResp();
+    };
+
+    if (released) {
+      return resolveResp();
+    }
+
+    return await new Promise<Response>((resolve) => {
+      releaseWaiters.push(() => resolve(resolveResp()));
+    });
+  }) as typeof fetch;
+
+  return {
+    stats,
+    control: { waitForChunkInflightAtLeast, releaseAll },
+    restore: () => {
+      releaseAll();
+      globalThis.fetch = original;
+    },
+  };
+}
+
 let restoreOpfs: (() => void) | null = null;
 let restoreFetch: (() => void) | null = null;
 
@@ -246,5 +390,44 @@ describe("RemoteStreamingDisk (OPFS chunk cache)", () => {
     expect(mock.stats.chunkRangeCalls).toBe(2);
 
     await disk.close();
+  });
+
+  it("issues concurrent Range requests for multi-block reads", async () => {
+    const blockSize = 512;
+    const image = makeTestImage(blockSize * 4);
+    const mock = installMockRangeFetchWithConcurrency(image, { etag: '"e1"' });
+    restoreFetch = mock.restore;
+
+    const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
+      blockSize,
+      cacheLimitBytes: 0,
+      prefetchSequentialBlocks: 0,
+    });
+
+    const readPromise = disk.read(0, blockSize * 3);
+    let sawConcurrency = false;
+    let bytes: Uint8Array | null = null;
+    try {
+      await Promise.race([
+        mock.control.waitForChunkInflightAtLeast(2).then(() => {
+          sawConcurrency = true;
+        }),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error("expected concurrent Range requests (chunk inflight never exceeded 1)")), 1000),
+        ),
+      ]);
+      expect(sawConcurrency).toBe(true);
+      expect(mock.stats.maxChunkInflight).toBeGreaterThan(1);
+    } finally {
+      // Ensure the read can complete even if the concurrency assertion fails.
+      mock.control.releaseAll();
+      bytes = await readPromise.catch(() => null);
+      await disk.close().catch(() => {
+        // best-effort
+      });
+    }
+
+    if (!bytes) throw new Error("expected read to complete");
+    expect(Array.from(bytes)).toEqual(Array.from(image.subarray(0, blockSize * 3)));
   });
 });

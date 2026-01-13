@@ -24,6 +24,12 @@ export const REMOTE_DISK_SECTOR_SIZE = 512;
 const MAX_REMOTE_BLOCK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
 const MAX_REMOTE_PREFETCH_SEQUENTIAL_BLOCKS = 1024;
 const MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES = 512 * 1024 * 1024; // 512 MiB
+// Bounded concurrency for `RemoteStreamingDisk.readInto` when a read spans multiple blocks.
+//
+// Large reads (e.g. guest DMA) frequently span many blocks; fetching them strictly serially
+// introduces avoidable latency. Keep this window small to bound memory: `getBlock()` resolves to
+// whole-block `Uint8Array`s, so higher concurrency can retain multiple multi-megabyte buffers.
+const REMOTE_READ_INTO_MAX_CONCURRENT_BLOCKS = 4;
 
 function rangeLen(r: ByteRange): number {
   return r.end - r.start;
@@ -716,19 +722,74 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
           await this.idbCache.getMany(indices);
         }
 
-        let written = 0;
-        for (let block = startBlock; block <= endBlock; block++) {
-          const bytes = await this.getBlock(block, onLog);
+        const readStart = offset;
+        const readEnd = offset + length;
+
+        const copyFromBlock = (blockIndex: number, bytes: Uint8Array): void => {
+          const blockStart = blockIndex * this.blockSize;
+          const blockEnd = blockStart + bytes.length;
+          const copyStart = Math.max(readStart, blockStart);
+          const copyEnd = Math.min(readEnd, blockEnd);
+          if (copyEnd <= copyStart) return;
+
+          const srcStart = copyStart - blockStart;
+          const dstStart = copyStart - readStart;
+          const len = copyEnd - copyStart;
+          dest.set(bytes.subarray(srcStart, srcStart + len), dstStart);
+        };
+
+        if (endBlock === startBlock) {
+          const bytes = await this.getBlock(startBlock, onLog);
           if (generation !== this.cacheGeneration) {
             // The cache was invalidated while we were reading (clearCache or validator mismatch). Restart
             // the read against the new cache generation.
-            break;
+            continue;
           }
-          const blockStart = block * this.blockSize;
-          const inBlockStart = offset > blockStart ? offset - blockStart : 0;
-          const toCopy = Math.min(length - written, bytes.length - inBlockStart);
-          dest.set(bytes.subarray(inBlockStart, inBlockStart + toCopy), written);
-          written += toCopy;
+          copyFromBlock(startBlock, bytes);
+        } else {
+          // Avoid allocating/promising all spanned blocks at once: keeping an array of
+          // promises can retain many resolved multi-megabyte ArrayBuffers until the
+          // whole read completes. Instead, process a bounded window of blocks and
+          // copy them into the caller's buffer as they arrive.
+          type BlockResult = { block: number; bytes: Uint8Array } | { block: number; err: unknown };
+
+          const window = new Map<number, Promise<BlockResult>>();
+          let nextBlock = startBlock;
+          const maxInflight = Math.min(REMOTE_READ_INTO_MAX_CONCURRENT_BLOCKS, endBlock - startBlock + 1);
+
+          const launch = (blockIndex: number): void => {
+            const task = this.getBlock(blockIndex, onLog)
+              .then((bytes) => ({ block: blockIndex, bytes }) satisfies BlockResult)
+              .catch((err) => ({ block: blockIndex, err }) satisfies BlockResult);
+            window.set(blockIndex, task);
+          };
+
+          while (nextBlock <= endBlock && window.size < maxInflight) {
+            launch(nextBlock);
+            nextBlock += 1;
+          }
+
+          while (window.size > 0) {
+            const result = await Promise.race(window.values());
+            window.delete(result.block);
+
+            if ("err" in result) {
+              throw result.err;
+            }
+
+            if (generation !== this.cacheGeneration) {
+              // The cache was invalidated while we were reading (clearCache or validator mismatch). Restart
+              // the read against the new cache generation.
+              break;
+            }
+
+            copyFromBlock(result.block, result.bytes);
+
+            while (nextBlock <= endBlock && window.size < maxInflight) {
+              launch(nextBlock);
+              nextBlock += 1;
+            }
+          }
         }
 
         if (generation !== this.cacheGeneration) {
