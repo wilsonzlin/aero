@@ -45,6 +45,7 @@ pub struct RingBufferTelemetry {
 }
 
 impl AudioRingBuffer {
+    #[inline]
     pub fn new_stereo(capacity_frames: usize) -> Self {
         // Treat capacity as untrusted (e.g. from host config); clamp to avoid panics and
         // multi-gigabyte allocations.
@@ -60,6 +61,7 @@ impl AudioRingBuffer {
         }
     }
 
+    #[inline]
     pub fn capacity_frames(&self) -> usize {
         self.capacity_frames
     }
@@ -69,6 +71,7 @@ impl AudioRingBuffer {
         self.len_frames
     }
 
+    #[inline]
     pub fn telemetry(&self) -> RingBufferTelemetry {
         RingBufferTelemetry {
             capacity_frames: self.capacity_frames,
@@ -78,6 +81,7 @@ impl AudioRingBuffer {
         }
     }
 
+    #[inline]
     pub fn clear(&mut self) {
         self.read_frame = 0;
         self.write_frame = 0;
