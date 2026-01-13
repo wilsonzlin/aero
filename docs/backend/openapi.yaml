@@ -393,7 +393,13 @@ components:
           example: /udp
         webrtcIce:
           type: string
-          description: Path for ICE server discovery.
+          description: |
+            Path for ICE server discovery.
+
+            Responses from `GET /webrtc/ice` are explicitly **non-cacheable**
+            (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`) because
+            they may include sensitive TURN credentials (especially TURN REST
+            ephemeral creds).
           example: /webrtc/ice
 
     UdpRelayInfo:
