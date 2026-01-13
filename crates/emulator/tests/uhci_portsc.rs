@@ -1,3 +1,4 @@
+use core::ops::DerefMut;
 use emulator::io::usb::core::{AttachedUsbDevice, UsbInResult, UsbOutResult};
 use emulator::io::usb::hub::{RootHub, UsbHubDevice};
 use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
@@ -14,7 +15,7 @@ impl UsbDeviceModel for TestUsbDevice {
     }
 }
 
-fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
+fn control_no_data(dev: &mut impl DerefMut<Target = AttachedUsbDevice>, setup: SetupPacket) {
     assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
     assert!(
         matches!(dev.handle_in(0, 0), UsbInResult::Data(d) if d.is_empty()),
@@ -22,7 +23,7 @@ fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
     );
 }
 
-fn control_in(dev: &mut AttachedUsbDevice, setup: SetupPacket) -> Vec<u8> {
+fn control_in(dev: &mut impl DerefMut<Target = AttachedUsbDevice>, setup: SetupPacket) -> Vec<u8> {
     let max_len = setup.w_length as usize;
     assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
     let data = match dev.handle_in(0, max_len) {
@@ -34,7 +35,7 @@ fn control_in(dev: &mut AttachedUsbDevice, setup: SetupPacket) -> Vec<u8> {
     data
 }
 
-fn set_address(dev: &mut AttachedUsbDevice, address: u8) {
+fn set_address(dev: &mut impl DerefMut<Target = AttachedUsbDevice>, address: u8) {
     let setup = SetupPacket {
         bm_request_type: 0x00,
         b_request: 0x05, // SET_ADDRESS
@@ -62,7 +63,7 @@ fn uhci_portsc_port_reset_is_bit9_and_resets_device_state() {
     // Give the device a non-zero address so we can observe that a port reset
     // returns the device to the default-address state.
     {
-        let dev = hub
+        let mut dev = hub
             .device_mut_for_address(0)
             .expect("device should be visible at address 0");
 
@@ -191,17 +192,17 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
 
     // Enumerate the hub at address 1 and configure it.
     {
-        let hub_dev = root
+        let mut hub_dev = root
             .device_mut_for_address(0)
             .expect("hub should be reachable at address 0");
-        set_address(hub_dev, 1);
+        set_address(&mut hub_dev, 1);
     }
     {
-        let hub_dev = root
+        let mut hub_dev = root
             .device_mut_for_address(1)
             .expect("hub should be reachable at address 1");
         control_no_data(
-            hub_dev,
+            &mut hub_dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x09, // SET_CONFIGURATION
@@ -213,7 +214,7 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
 
         // Power + reset downstream port 1 to make the attached device reachable.
         control_no_data(
-            hub_dev,
+            &mut hub_dev,
             SetupPacket {
                 bm_request_type: 0x23, // HostToDevice | Class | Other
                 b_request: 0x03,       // SET_FEATURE
@@ -223,7 +224,7 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
             },
         );
         control_no_data(
-            hub_dev,
+            &mut hub_dev,
             SetupPacket {
                 bm_request_type: 0x23, // HostToDevice | Class | Other
                 b_request: 0x03,       // SET_FEATURE
@@ -240,10 +241,10 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
 
     // Assign address 5 to the downstream device (reachable at default address 0).
     {
-        let downstream = root
+        let mut downstream = root
             .device_mut_for_address(0)
             .expect("downstream device should be reachable at address 0");
-        set_address(downstream, 5);
+        set_address(&mut downstream, 5);
     }
     assert!(root.device_mut_for_address(5).is_some());
 
@@ -257,11 +258,11 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
     // Hub should have returned to the default-address state and be unconfigured.
     assert!(root.device_mut_for_address(1).is_none());
     {
-        let hub_dev = root
+        let mut hub_dev = root
             .device_mut_for_address(0)
             .expect("hub should be reachable at address 0 after reset");
         let cfg = control_in(
-            hub_dev,
+            &mut hub_dev,
             SetupPacket {
                 bm_request_type: 0x80, // DeviceToHost | Standard | Device
                 b_request: 0x08,       // GET_CONFIGURATION
@@ -275,7 +276,7 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
         // Hub port should be disabled after the upstream reset, while still showing the device as
         // connected.
         let status = control_in(
-            hub_dev,
+            &mut hub_dev,
             SetupPacket {
                 bm_request_type: 0xa3, // DeviceToHost | Class | Other
                 b_request: 0x00,       // GET_STATUS
@@ -302,13 +303,13 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
     // Re-enumerate hub and re-enable the downstream port *without* another downstream port reset;
     // the previously assigned downstream address must not become routable again.
     {
-        let hub_dev = root.device_mut_for_address(0).unwrap();
-        set_address(hub_dev, 1);
+        let mut hub_dev = root.device_mut_for_address(0).unwrap();
+        set_address(&mut hub_dev, 1);
     }
     {
-        let hub_dev = root.device_mut_for_address(1).unwrap();
+        let mut hub_dev = root.device_mut_for_address(1).unwrap();
         control_no_data(
-            hub_dev,
+            &mut hub_dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x09, // SET_CONFIGURATION
@@ -318,7 +319,7 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
             },
         );
         control_no_data(
-            hub_dev,
+            &mut hub_dev,
             SetupPacket {
                 bm_request_type: 0x23,
                 b_request: 0x03,
@@ -328,7 +329,7 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
             },
         );
         control_no_data(
-            hub_dev,
+            &mut hub_dev,
             SetupPacket {
                 bm_request_type: 0x23,
                 b_request: 0x03,
@@ -388,10 +389,10 @@ fn uhci_portsc_suspend_blocks_routing_until_resumed() {
     // Assign a non-default address so we can validate that suspend blocks routing
     // without resetting device state.
     {
-        let dev = hub
+        let mut dev = hub
             .device_mut_for_address(0)
             .expect("device should be visible at address 0");
-        set_address(dev, 5);
+        set_address(&mut dev, 5);
     }
     assert!(hub.device_mut_for_address(5).is_some());
 

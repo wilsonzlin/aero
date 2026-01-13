@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use core::ops::DerefMut;
 use emulator::io::usb::core::{AttachedUsbDevice, UsbInResult, UsbOutResult};
 use emulator::io::usb::hub::{RootHub, UsbHub};
 use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
@@ -128,7 +129,7 @@ impl UsbDeviceModel for TestLeaf {
     }
 }
 
-fn set_address(dev: &mut AttachedUsbDevice, address: u8) {
+fn set_address(dev: &mut impl DerefMut<Target = AttachedUsbDevice>, address: u8) {
     let setup = SetupPacket {
         bm_request_type: 0x00,
         b_request: 0x05, // SET_ADDRESS
@@ -151,10 +152,10 @@ fn root_hub_routes_to_device_behind_single_hub() {
     root.force_enable_for_tests(0);
 
     {
-        let hub_dev = root
+        let mut hub_dev = root
             .device_mut_for_address(0)
             .expect("hub should be reachable at address 0");
-        set_address(hub_dev, 1);
+        set_address(&mut hub_dev, 1);
     }
 
     root.attach_at_path(&[0, 1], Box::new(TestLeaf))
@@ -162,10 +163,10 @@ fn root_hub_routes_to_device_behind_single_hub() {
     hub_ctl.set_port_enabled(0, true);
 
     {
-        let leaf = root
+        let mut leaf = root
             .device_mut_for_address(0)
             .expect("leaf should be reachable at address 0");
-        set_address(leaf, 5);
+        set_address(&mut leaf, 5);
     }
 
     assert_eq!(
@@ -185,10 +186,10 @@ fn root_hub_routes_to_device_behind_nested_hubs() {
     root.force_enable_for_tests(0);
 
     {
-        let hub_dev = root
+        let mut hub_dev = root
             .device_mut_for_address(0)
             .expect("hub1 should be reachable at address 0");
-        set_address(hub_dev, 1);
+        set_address(&mut hub_dev, 1);
     }
 
     let (hub2, hub2_ctl) = TestHub::new(2);
@@ -197,10 +198,10 @@ fn root_hub_routes_to_device_behind_nested_hubs() {
     hub1_ctl.set_port_enabled(0, true);
 
     {
-        let hub2_dev = root
+        let mut hub2_dev = root
             .device_mut_for_address(0)
             .expect("hub2 should be reachable at address 0 once hub1 port is enabled");
-        set_address(hub2_dev, 2);
+        set_address(&mut hub2_dev, 2);
     }
 
     root.attach_at_path(&[0, 1, 2], Box::new(TestLeaf))
@@ -208,10 +209,10 @@ fn root_hub_routes_to_device_behind_nested_hubs() {
     hub2_ctl.set_port_enabled(1, true);
 
     {
-        let leaf = root
+        let mut leaf = root
             .device_mut_for_address(0)
             .expect("leaf should be reachable at address 0");
-        set_address(leaf, 7);
+        set_address(&mut leaf, 7);
     }
 
     assert_eq!(
@@ -231,16 +232,16 @@ fn disabled_downstream_port_is_not_routable() {
     root.force_enable_for_tests(0);
 
     {
-        let hub_dev = root.device_mut_for_address(0).unwrap();
-        set_address(hub_dev, 1);
+        let mut hub_dev = root.device_mut_for_address(0).unwrap();
+        set_address(&mut hub_dev, 1);
     }
 
     root.attach_at_path(&[0, 1], Box::new(TestLeaf)).unwrap();
     hub_ctl.set_port_enabled(0, true);
 
     {
-        let leaf = root.device_mut_for_address(0).unwrap();
-        set_address(leaf, 5);
+        let mut leaf = root.device_mut_for_address(0).unwrap();
+        set_address(&mut leaf, 5);
     }
 
     assert!(root.device_mut_for_address(5).is_some());

@@ -33,7 +33,7 @@ fn usb_hub_hotplug_attach_detach_at_path() {
 
     // Enumerate the hub itself: address 0 -> address 1.
     {
-        let dev = root
+        let mut dev = root
             .device_mut_for_address(0)
             .expect("hub should be visible at address 0");
         let setup = SetupPacket {
@@ -57,7 +57,7 @@ fn usb_hub_hotplug_attach_detach_at_path() {
     assert!(root.device_mut_for_address(0).is_none());
 
     {
-        let hub_dev = root
+        let mut hub_dev = root
             .device_mut_for_address(1)
             .expect("hub should be visible at address 1");
         // SET_FEATURE(PORT_POWER), port 1.
@@ -95,7 +95,7 @@ fn usb_hub_hotplug_attach_detach_at_path() {
     }
 
     {
-        let dev = root
+        let mut dev = root
             .device_mut_for_address(0)
             .expect("downstream device should now be reachable at address 0");
         let desc = match dev.model_mut().handle_control_request(
@@ -117,7 +117,7 @@ fn usb_hub_hotplug_attach_detach_at_path() {
 
     // Clear connection change so we can prove detach toggles it.
     {
-        let hub_dev = root
+        let mut hub_dev = root
             .device_mut_for_address(1)
             .expect("hub should still be visible at address 1");
         assert_eq!(
@@ -152,7 +152,7 @@ fn usb_hub_hotplug_attach_detach_at_path() {
     assert!(root.device_mut_for_address(0).is_none());
 
     {
-        let hub_dev = root
+        let mut hub_dev = root
             .device_mut_for_address(1)
             .expect("hub should still be visible at address 1");
         let change_bits = port_change_bits(hub_dev.model_mut().handle_control_request(

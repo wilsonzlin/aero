@@ -269,8 +269,8 @@ impl WebUsbUhciBridge {
         w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
         w.field_bool(TAG_IRQ_ASSERTED, self.controller.irq_level());
 
-        if let Some(hub) = self.external_hub() {
-            w.field_bytes(TAG_EXTERNAL_HUB, hub.save_state());
+        if let Some(hub_state) = self.with_external_hub(|hub| hub.save_state()) {
+            w.field_bytes(TAG_EXTERNAL_HUB, hub_state);
         }
         if self.webusb_connected {
             if let Some(dev) = self.webusb.as_ref() {
@@ -304,7 +304,7 @@ impl WebUsbUhciBridge {
         //
         // Note: the underlying `aero-usb` controller snapshot can now reconstruct common USB device
         // models on its own, but the bridge still needs explicit `UsbHubDevice` / WebUSB handles.
-        if r.bytes(TAG_EXTERNAL_HUB).is_some() && self.external_hub().is_none() {
+        if r.bytes(TAG_EXTERNAL_HUB).is_some() && self.with_external_hub(|_| ()).is_none() {
             self.controller.hub_mut().attach(
                 ROOT_PORT_EXTERNAL_HUB,
                 Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
@@ -324,11 +324,12 @@ impl WebUsbUhciBridge {
             .map_err(|e| JsValue::from_str(&format!("Invalid UHCI controller snapshot: {e}")))?;
 
         if let Some(buf) = r.bytes(TAG_EXTERNAL_HUB) {
-            let hub = self.external_hub_mut().ok_or_else(|| {
-                JsValue::from_str("WebUSB UHCI bridge missing external hub device")
-            })?;
-            hub.load_state(buf)
-                .map_err(|e| JsValue::from_str(&format!("Invalid external hub snapshot: {e}")))?;
+            let Some(res) = self.with_external_hub_mut(|hub| hub.load_state(buf)) else {
+                return Err(JsValue::from_str(
+                    "WebUSB UHCI bridge missing external hub device",
+                ));
+            };
+            res.map_err(|e| JsValue::from_str(&format!("Invalid external hub snapshot: {e}")))?;
         }
 
         if let Some(buf) = r.bytes(TAG_WEBUSB_DEVICE) {
@@ -357,19 +358,21 @@ impl WebUsbUhciBridge {
 }
 
 impl WebUsbUhciBridge {
-    fn external_hub(&self) -> Option<&UsbHubDevice> {
+    fn with_external_hub<R>(&self, f: impl FnOnce(&UsbHubDevice) -> R) -> Option<R> {
         let dev = self.controller.hub().port_device(ROOT_PORT_EXTERNAL_HUB)?;
         let any = dev.model() as &dyn core::any::Any;
-        any.downcast_ref::<UsbHubDevice>()
+        let hub = any.downcast_ref::<UsbHubDevice>()?;
+        Some(f(hub))
     }
 
-    fn external_hub_mut(&mut self) -> Option<&mut UsbHubDevice> {
-        let dev = self
+    fn with_external_hub_mut<R>(&mut self, f: impl FnOnce(&mut UsbHubDevice) -> R) -> Option<R> {
+        let mut dev = self
             .controller
             .hub_mut()
             .port_device_mut(ROOT_PORT_EXTERNAL_HUB)?;
         let any = dev.model_mut() as &mut dyn core::any::Any;
-        any.downcast_mut::<UsbHubDevice>()
+        let hub = any.downcast_mut::<UsbHubDevice>()?;
+        Some(f(hub))
     }
 }
 

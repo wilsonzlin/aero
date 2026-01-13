@@ -177,9 +177,9 @@ fn process_single_td<M: MemoryBus + ?Sized>(
         max_len_field as usize + 1
     };
 
-    let Some(dev) = ctx.hub.device_mut_for_address(dev_addr) else {
+    let Some(mut dev) = ctx.hub.device_mut_for_address(dev_addr) else {
         status |= TD_STATUS_CRC_TIMEOUT;
-        complete_td(ctx, td_addr, status, 0, true);
+        complete_td(&mut *ctx.mem, &mut *ctx.usbsts, td_addr, status, 0, true);
         if status & TD_CTRL_IOC != 0 {
             *ctx.usbsts |= USBSTS_USBINT;
             *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -194,7 +194,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
         PID_SETUP => {
             if max_len != 8 {
                 status |= TD_STATUS_DATA_BUFFER_ERROR;
-                complete_td(ctx, td_addr, status, 0, true);
+                complete_td(&mut *ctx.mem, &mut *ctx.usbsts, td_addr, status, 0, true);
                 if status & TD_CTRL_IOC != 0 {
                     *ctx.usbsts |= USBSTS_USBINT;
                     *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -209,7 +209,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
             let setup = SetupPacket::from_bytes(bytes);
             match dev.handle_setup(setup) {
                 UsbOutResult::Ack => {
-                    complete_td(ctx, td_addr, status, 8, false);
+                    complete_td(&mut *ctx.mem, &mut *ctx.usbsts, td_addr, status, 8, false);
                     if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
                         *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -227,7 +227,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 }
                 UsbOutResult::Stall => {
                     status |= TD_STATUS_STALLED;
-                    complete_td(ctx, td_addr, status, 0, true);
+                    complete_td(&mut *ctx.mem, &mut *ctx.usbsts, td_addr, status, 0, true);
                     if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
                         *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -239,7 +239,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 }
                 UsbOutResult::Timeout => {
                     status |= TD_STATUS_CRC_TIMEOUT;
-                    complete_td(ctx, td_addr, status, 0, true);
+                    complete_td(&mut *ctx.mem, &mut *ctx.usbsts, td_addr, status, 0, true);
                     if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
                         *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -258,7 +258,14 @@ fn process_single_td<M: MemoryBus + ?Sized>(
             }
             match dev.handle_out(endpoint, &out_data) {
                 UsbOutResult::Ack => {
-                    complete_td(ctx, td_addr, status, out_data.len(), false);
+                    complete_td(
+                        &mut *ctx.mem,
+                        &mut *ctx.usbsts,
+                        td_addr,
+                        status,
+                        out_data.len(),
+                        false,
+                    );
                     if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
                         *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -276,7 +283,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 }
                 UsbOutResult::Stall => {
                     status |= TD_STATUS_STALLED;
-                    complete_td(ctx, td_addr, status, 0, true);
+                    complete_td(&mut *ctx.mem, &mut *ctx.usbsts, td_addr, status, 0, true);
                     if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
                         *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -288,7 +295,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 }
                 UsbOutResult::Timeout => {
                     status |= TD_STATUS_CRC_TIMEOUT;
-                    complete_td(ctx, td_addr, status, 0, true);
+                    complete_td(&mut *ctx.mem, &mut *ctx.usbsts, td_addr, status, 0, true);
                     if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
                         *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -309,7 +316,14 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                     ctx.mem.write_physical(buffer as u64, &data);
                 }
                 let short = data.len() < max_len;
-                complete_td(ctx, td_addr, status, data.len(), false);
+                complete_td(
+                    &mut *ctx.mem,
+                    &mut *ctx.usbsts,
+                    td_addr,
+                    status,
+                    data.len(),
+                    false,
+                );
                 if status & TD_CTRL_IOC != 0 {
                     *ctx.usbsts |= USBSTS_USBINT;
                     *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -329,7 +343,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
             }
             UsbInResult::Stall => {
                 status |= TD_STATUS_STALLED;
-                complete_td(ctx, td_addr, status, 0, true);
+                complete_td(&mut *ctx.mem, &mut *ctx.usbsts, td_addr, status, 0, true);
                 if status & TD_CTRL_IOC != 0 {
                     *ctx.usbsts |= USBSTS_USBINT;
                     *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -341,7 +355,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
             }
             UsbInResult::Timeout => {
                 status |= TD_STATUS_CRC_TIMEOUT;
-                complete_td(ctx, td_addr, status, 0, true);
+                complete_td(&mut *ctx.mem, &mut *ctx.usbsts, td_addr, status, 0, true);
                 if status & TD_CTRL_IOC != 0 {
                     *ctx.usbsts |= USBSTS_USBINT;
                     *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -354,7 +368,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
         },
         _ => {
             status |= TD_STATUS_STALLED;
-            complete_td(ctx, td_addr, status, 0, true);
+            complete_td(&mut *ctx.mem, &mut *ctx.usbsts, td_addr, status, 0, true);
             if status & TD_CTRL_IOC != 0 {
                 *ctx.usbsts |= USBSTS_USBINT;
                 *ctx.usbint_causes |= USBINT_CAUSE_IOC;
@@ -368,7 +382,8 @@ fn process_single_td<M: MemoryBus + ?Sized>(
 }
 
 fn complete_td<M: MemoryBus + ?Sized>(
-    ctx: &mut ScheduleContext<'_, M>,
+    mem: &mut M,
+    usbsts: &mut u16,
     td_addr: u32,
     mut status: u32,
     actual_len: usize,
@@ -381,9 +396,9 @@ fn complete_td<M: MemoryBus + ?Sized>(
         (actual_len as u32).saturating_sub(1) & 0x7ff
     };
     status = (status & !0x7ff) | al;
-    ctx.mem.write_u32(td_addr.wrapping_add(4) as u64, status);
+    mem.write_u32(td_addr.wrapping_add(4) as u64, status);
 
     if error {
-        *ctx.usbsts |= USBSTS_USBERRINT;
+        *usbsts |= USBSTS_USBERRINT;
     }
 }

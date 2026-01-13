@@ -352,7 +352,7 @@ mod tests {
 
         // Configure the device and enable remote wakeup.
         {
-            let dev0 = dev
+            let mut dev0 = dev
                 .controller
                 .hub_mut()
                 .device_mut_for_address(0)

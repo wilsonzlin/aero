@@ -583,13 +583,13 @@ fn uhci_suspended_hid_device_can_remote_wake_and_trigger_resume_irq() {
 
     // Configure the device and enable remote wakeup.
     {
-        let dev = uhci
+        let mut dev = uhci
             .controller
             .hub_mut()
             .device_mut_for_address(0)
             .expect("device should be reachable at address 0");
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x09, // SET_CONFIGURATION
@@ -599,7 +599,7 @@ fn uhci_suspended_hid_device_can_remote_wake_and_trigger_resume_irq() {
             },
         );
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x03, // SET_FEATURE
@@ -642,13 +642,13 @@ fn uhci_remote_wakeup_only_triggers_for_activity_while_suspended() {
 
     // Configure the device and enable remote wakeup.
     {
-        let dev = uhci
+        let mut dev = uhci
             .controller
             .hub_mut()
             .device_mut_for_address(0)
             .expect("device should be reachable at address 0");
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x09, // SET_CONFIGURATION
@@ -658,7 +658,7 @@ fn uhci_remote_wakeup_only_triggers_for_activity_while_suspended() {
             },
         );
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x03, // SET_FEATURE
@@ -701,13 +701,13 @@ fn uhci_remote_wakeup_propagates_through_external_hub() {
 
     // Enumerate the hub itself at address 0 -> address 1, then configure it.
     {
-        let dev = uhci
+        let mut dev = uhci
             .controller
             .hub_mut()
             .device_mut_for_address(0)
             .expect("hub should be reachable at address 0");
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x05, // SET_ADDRESS
@@ -718,13 +718,13 @@ fn uhci_remote_wakeup_propagates_through_external_hub() {
         );
     }
     {
-        let dev = uhci
+        let mut dev = uhci
             .controller
             .hub_mut()
             .device_mut_for_address(1)
             .expect("hub should be reachable at address 1");
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x09, // SET_CONFIGURATION
@@ -737,13 +737,13 @@ fn uhci_remote_wakeup_propagates_through_external_hub() {
 
     // Power + reset hub downstream port 1 to make the keyboard reachable.
     {
-        let dev = uhci
+        let mut dev = uhci
             .controller
             .hub_mut()
             .device_mut_for_address(1)
             .expect("hub should be reachable at address 1");
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x23, // HostToDevice | Class | Other
                 b_request: 0x03,       // SET_FEATURE
@@ -753,7 +753,7 @@ fn uhci_remote_wakeup_propagates_through_external_hub() {
             },
         );
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x23, // HostToDevice | Class | Other
                 b_request: 0x03,       // SET_FEATURE
@@ -769,13 +769,13 @@ fn uhci_remote_wakeup_propagates_through_external_hub() {
 
     // Configure the downstream keyboard and enable remote wakeup.
     {
-        let dev = uhci
+        let mut dev = uhci
             .controller
             .hub_mut()
             .device_mut_for_address(0)
             .expect("downstream device should be reachable at address 0");
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x09, // SET_CONFIGURATION
@@ -785,7 +785,7 @@ fn uhci_remote_wakeup_propagates_through_external_hub() {
             },
         );
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x03, // SET_FEATURE

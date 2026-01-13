@@ -12,7 +12,7 @@ mod util;
 use util::{TestMemory, PORTSC_PR, REG_PORTSC1};
 
 fn control_no_data(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) {
-    let dev = ctrl
+    let mut dev = ctrl
         .hub_mut()
         .device_mut_for_address(addr)
         .unwrap_or_else(|| panic!("expected USB device at address {addr}"));
@@ -25,7 +25,7 @@ fn control_no_data(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) {
 
 fn control_in(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) -> Vec<u8> {
     let expected_len = setup.w_length as usize;
-    let dev = ctrl
+    let mut dev = ctrl
         .hub_mut()
         .device_mut_for_address(addr)
         .unwrap_or_else(|| panic!("expected USB device at address {addr}"));
@@ -52,24 +52,31 @@ fn control_in(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) -> Vec<u8
     out
 }
 
-fn external_hub_ref(ctrl: &UhciController) -> &UsbHubDevice {
+fn with_external_hub<R>(ctrl: &UhciController, f: impl FnOnce(&UsbHubDevice) -> R) -> R {
     let dev = ctrl
         .hub()
         .port_device(0)
         .expect("expected device on root port 0");
     let any = dev.model() as &dyn Any;
-    any.downcast_ref::<UsbHubDevice>()
-        .expect("expected UsbHubDevice on root port 0")
+    let hub = any
+        .downcast_ref::<UsbHubDevice>()
+        .expect("expected UsbHubDevice on root port 0");
+    f(hub)
 }
 
-fn external_hub_mut(ctrl: &mut UhciController) -> &mut UsbHubDevice {
-    let dev = ctrl
+fn with_external_hub_mut<R>(
+    ctrl: &mut UhciController,
+    f: impl FnOnce(&mut UsbHubDevice) -> R,
+) -> R {
+    let mut dev = ctrl
         .hub_mut()
         .port_device_mut(0)
         .expect("expected device on root port 0");
     let any = dev.model_mut() as &mut dyn Any;
-    any.downcast_mut::<UsbHubDevice>()
-        .expect("expected UsbHubDevice on root port 0")
+    let hub = any
+        .downcast_mut::<UsbHubDevice>()
+        .expect("expected UsbHubDevice on root port 0");
+    f(hub)
 }
 
 #[test]
@@ -222,7 +229,7 @@ fn snapshot_roundtrip_is_deterministic_and_preserves_external_hub_reports() {
     mouse.movement(1, 1);
 
     let ctrl_snap1 = ctrl.save_state();
-    let hub_snap1 = external_hub_ref(&ctrl).save_state();
+    let hub_snap1 = with_external_hub(&ctrl, |hub| hub.save_state());
     let kb_snap1 = kb.save_state();
     let mouse_snap1 = mouse.save_state();
 
@@ -246,9 +253,9 @@ fn snapshot_roundtrip_is_deterministic_and_preserves_external_hub_reports() {
         .attach_at_path(&[0, 2], Box::new(restored_mouse.clone()))
         .unwrap();
 
-    external_hub_mut(&mut restored_ctrl)
-        .load_state(&hub_snap1)
-        .unwrap();
+    with_external_hub_mut(&mut restored_ctrl, |hub| {
+        hub.load_state(&hub_snap1).unwrap()
+    });
     restored_ctrl.load_state(&ctrl_snap1).unwrap();
 
     assert_eq!(
@@ -257,7 +264,7 @@ fn snapshot_roundtrip_is_deterministic_and_preserves_external_hub_reports() {
         "UHCI controller snapshot should roundtrip byte-for-byte"
     );
     assert_eq!(
-        external_hub_ref(&restored_ctrl).save_state(),
+        with_external_hub(&restored_ctrl, |hub| hub.save_state()),
         hub_snap1,
         "external hub snapshot should roundtrip byte-for-byte"
     );
@@ -272,28 +279,32 @@ fn snapshot_roundtrip_is_deterministic_and_preserves_external_hub_reports() {
         "mouse model snapshot should roundtrip byte-for-byte"
     );
 
-    let kb_dev = restored_ctrl
-        .hub_mut()
-        .device_mut_for_address(2)
-        .expect("expected keyboard at address 2");
-    let kb_report = match kb_dev.handle_in(1, 8) {
-        UsbInResult::Data(data) => data,
-        other => panic!("expected keyboard interrupt IN report, got {other:?}"),
-    };
-    assert_eq!(kb_report.len(), 8);
-    assert_eq!(kb_report[2], 0x04);
+    {
+        let mut kb_dev = restored_ctrl
+            .hub_mut()
+            .device_mut_for_address(2)
+            .expect("expected keyboard at address 2");
+        let kb_report = match kb_dev.handle_in(1, 8) {
+            UsbInResult::Data(data) => data,
+            other => panic!("expected keyboard interrupt IN report, got {other:?}"),
+        };
+        assert_eq!(kb_report.len(), 8);
+        assert_eq!(kb_report[2], 0x04);
+    }
 
-    let mouse_dev = restored_ctrl
-        .hub_mut()
-        .device_mut_for_address(3)
-        .expect("expected mouse at address 3");
-    let mouse_report = match mouse_dev.handle_in(1, 4) {
-        UsbInResult::Data(data) => data,
-        other => panic!("expected mouse interrupt IN report, got {other:?}"),
-    };
-    assert!(mouse_report.len() >= 3);
-    assert_eq!(mouse_report[1], 1);
-    assert_eq!(mouse_report[2], 1);
+    {
+        let mut mouse_dev = restored_ctrl
+            .hub_mut()
+            .device_mut_for_address(3)
+            .expect("expected mouse at address 3");
+        let mouse_report = match mouse_dev.handle_in(1, 4) {
+            UsbInResult::Data(data) => data,
+            other => panic!("expected mouse interrupt IN report, got {other:?}"),
+        };
+        assert!(mouse_report.len() >= 3);
+        assert_eq!(mouse_report[1], 1);
+        assert_eq!(mouse_report[2], 1);
+    }
 }
 
 #[test]
@@ -457,28 +468,32 @@ fn uhci_snapshot_restore_reconstructs_usb_topology_without_pre_attaching_devices
         "UHCI controller snapshot should reconstruct and roundtrip byte-for-byte"
     );
 
-    let kb_dev = restored_ctrl
-        .hub_mut()
-        .device_mut_for_address(2)
-        .expect("expected keyboard at address 2");
-    let kb_report = match kb_dev.handle_in(1, 8) {
-        UsbInResult::Data(data) => data,
-        other => panic!("expected keyboard interrupt IN report, got {other:?}"),
-    };
-    assert_eq!(kb_report.len(), 8);
-    assert_eq!(kb_report[2], 0x04);
+    {
+        let mut kb_dev = restored_ctrl
+            .hub_mut()
+            .device_mut_for_address(2)
+            .expect("expected keyboard at address 2");
+        let kb_report = match kb_dev.handle_in(1, 8) {
+            UsbInResult::Data(data) => data,
+            other => panic!("expected keyboard interrupt IN report, got {other:?}"),
+        };
+        assert_eq!(kb_report.len(), 8);
+        assert_eq!(kb_report[2], 0x04);
+    }
 
-    let mouse_dev = restored_ctrl
-        .hub_mut()
-        .device_mut_for_address(3)
-        .expect("expected mouse at address 3");
-    let mouse_report = match mouse_dev.handle_in(1, 4) {
-        UsbInResult::Data(data) => data,
-        other => panic!("expected mouse interrupt IN report, got {other:?}"),
-    };
-    assert!(mouse_report.len() >= 3);
-    assert_eq!(mouse_report[1], 1);
-    assert_eq!(mouse_report[2], 1);
+    {
+        let mut mouse_dev = restored_ctrl
+            .hub_mut()
+            .device_mut_for_address(3)
+            .expect("expected mouse at address 3");
+        let mouse_report = match mouse_dev.handle_in(1, 4) {
+            UsbInResult::Data(data) => data,
+            other => panic!("expected mouse interrupt IN report, got {other:?}"),
+        };
+        assert!(mouse_report.len() >= 3);
+        assert_eq!(mouse_report[1], 1);
+        assert_eq!(mouse_report[2], 1);
+    }
 }
 
 #[test]
@@ -593,7 +608,7 @@ fn uhci_snapshot_restore_reconstructs_hid_passthrough_device_without_pre_attachi
         0x5678
     );
 
-    let dev = restored
+    let mut dev = restored
         .hub_mut()
         .device_mut_for_address(1)
         .expect("expected HID passthrough device at address 1");
@@ -768,7 +783,7 @@ fn uhci_snapshot_restore_reconstructs_hid_passthrough_device_behind_external_hub
         0x5678
     );
 
-    let dev = restored
+    let mut dev = restored
         .hub_mut()
         .device_mut_for_address(2)
         .expect("expected passthrough device at address 2");
@@ -802,7 +817,7 @@ fn uhci_snapshot_restore_reconstructs_webusb_passthrough_device_without_pre_atta
         w_length: 4,
     };
     {
-        let dev = ctrl
+        let mut dev = ctrl
             .hub_mut()
             .device_mut_for_address(0)
             .expect("expected WebUSB device at address 0");
@@ -857,7 +872,7 @@ fn uhci_snapshot_restore_reconstructs_webusb_passthrough_device_without_pre_atta
         },
     });
 
-    let dev = restored
+    let mut dev = restored
         .hub_mut()
         .device_mut_for_address(0)
         .expect("expected WebUSB device at address 0");

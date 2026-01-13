@@ -820,8 +820,7 @@ impl UhciRuntime {
         let mut external_hub_ports_with_devices: Option<Vec<u8>> = None;
         if let Some(state) = self.external_hub.as_ref() {
             w.field_u8(TAG_EXTERNAL_HUB_PORT_COUNT, state.port_count);
-            if let Some(hub) = self.external_hub_ref() {
-                let hub_state = hub.save_state();
+            if let Some(hub_state) = self.with_external_hub(|hub| hub.save_state()) {
                 // This should never fail because `hub_state` was produced by our own snapshot
                 // implementation, but keep it best-effort so snapshotting cannot panic.
                 if let Ok(ports) = Self::external_hub_ports_with_snapshot_devices(&hub_state) {
@@ -1364,13 +1363,13 @@ impl UhciRuntime {
 
         // Restore hub dynamic state after attaching downstream devices.
         if let Some(hub_state) = hub_state_bytes {
-            let Some(hub) = self.external_hub_mut() else {
+            let Some(res) = self.with_external_hub_mut(|hub| hub.load_state(hub_state)) else {
                 self.reset_for_snapshot_restore();
                 return Err(js_error(
                     "UHCI runtime snapshot includes external hub state but hub is missing",
                 ));
             };
-            if let Err(err) = hub.load_state(hub_state) {
+            if let Err(err) = res {
                 self.reset_for_snapshot_restore();
                 return Err(js_error(&format!(
                     "Invalid UHCI runtime snapshot external hub state: {err}"
@@ -1578,19 +1577,21 @@ impl UhciRuntime {
         Err(js_error("No free UHCI root hub ports available."))
     }
 
-    fn external_hub_mut(&mut self) -> Option<&mut UsbHubDevice> {
-        let dev = self
+    fn with_external_hub_mut<R>(&mut self, f: impl FnOnce(&mut UsbHubDevice) -> R) -> Option<R> {
+        let mut dev = self
             .ctrl
             .hub_mut()
             .port_device_mut(EXTERNAL_HUB_ROOT_PORT)?;
         let any = dev.model_mut() as &mut dyn core::any::Any;
-        any.downcast_mut::<UsbHubDevice>()
+        let hub = any.downcast_mut::<UsbHubDevice>()?;
+        Some(f(hub))
     }
 
-    fn external_hub_ref(&self) -> Option<&UsbHubDevice> {
+    fn with_external_hub<R>(&self, f: impl FnOnce(&UsbHubDevice) -> R) -> Option<R> {
         let dev = self.ctrl.hub().port_device(EXTERNAL_HUB_ROOT_PORT)?;
         let any = dev.model() as &dyn core::any::Any;
-        any.downcast_ref::<UsbHubDevice>()
+        let hub = any.downcast_ref::<UsbHubDevice>()?;
+        Some(f(hub))
     }
 
     fn reset_for_snapshot_restore(&mut self) {
@@ -1679,22 +1680,22 @@ impl UhciRuntime {
         // old hub so we can reattach only those after hub replacement. The handle map can include
         // devices that were attached previously but are not part of the current topology (e.g.
         // devices attached after a snapshot, then removed by restore).
-        let passthrough_to_reattach: Vec<(Vec<u8>, UsbHidPassthroughHandle)> = {
-            let Some(hub) = self.external_hub_mut() else {
-                return Err(js_error("Cannot grow external hub: hub device is missing"));
-            };
+        let passthrough_to_reattach: Vec<(Vec<u8>, UsbHidPassthroughHandle)> = match self
+            .with_external_hub_mut(|hub| {
+                passthrough_candidates
+                    .into_iter()
+                    .filter_map(|(path, hub_port, dev)| {
+                        let idx = (hub_port - 1) as usize;
+                        if hub.downstream_device_mut(idx).is_none() {
+                            return None;
+                        }
 
-            passthrough_candidates
-                .into_iter()
-                .filter_map(|(path, hub_port, dev)| {
-                    let idx = (hub_port - 1) as usize;
-                    if hub.downstream_device_mut(idx).is_none() {
-                        return None;
-                    }
-
-                    Some((path.clone(), dev.clone()))
-                })
-                .collect()
+                        Some((path.clone(), dev.clone()))
+                    })
+                    .collect()
+            }) {
+            Some(v) => v,
+            None => return Err(js_error("Cannot grow external hub: hub device is missing")),
         };
 
         // Replace the hub device at root port 0 so the guest sees a real hotplug event and can

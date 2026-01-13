@@ -46,6 +46,7 @@ pub mod memory;
 pub mod passthrough;
 pub mod passthrough_device;
 pub mod uhci;
+pub mod usb2_port;
 pub mod web;
 pub mod xhci;
 
