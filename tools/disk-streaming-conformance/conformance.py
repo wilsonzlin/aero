@@ -2075,23 +2075,29 @@ def _main_chunked(args: argparse.Namespace) -> int:
                     chunk_resp = resp
 
                     _require(resp.status == 200, f"expected 200, got {resp.status}")
-                    if resp.body_truncated:
-                        raise TestFailure(
-                            "chunk response body was truncated by safety cap; "
-                            f"expected {expected_len} bytes but only read {len(resp.body)} bytes "
-                            f"(cap {_fmt_bytes(cap)})."
-                        )
                     if len(resp.body) > expected_len:
                         raise TestFailure(
                             f"server returned more bytes than expected: expected={expected_len} got={len(resp.body)}"
                         )
-                    _require(len(resp.body) == expected_len, f"expected body length {expected_len}, got {len(resp.body)}")
+                    if len(resp.body) < expected_len:
+                        truncated = " (body truncated by safety cap)" if resp.body_truncated else ""
+                        raise TestFailure(
+                            f"expected body length {expected_len}, got {len(resp.body)}{truncated} "
+                            f"(cap {_fmt_bytes(cap)})"
+                        )
 
+                    details = f"bytes={expected_len} ({_fmt_bytes(expected_len)})"
+                    if resp.body_truncated:
+                        # If the server doesn't include Content-Length, the underlying request helper
+                        # conservatively marks the response as truncated when we hit the read cap
+                        # exactly. If we already got the exact expected chunk length, treat it as a
+                        # pass (but surface it in the details).
+                        details += " (hit read cap)"
                     results.append(
                         TestResult(
                             name=f"chunk {label}: GET returns 200 with expected body length",
                             status="PASS",
-                            details=f"bytes={expected_len} ({_fmt_bytes(expected_len)})",
+                            details=details,
                         )
                     )
                     chunk_body_ok = True
