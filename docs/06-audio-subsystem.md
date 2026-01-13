@@ -470,6 +470,24 @@ Audio tuning is inherently workload-dependent, but the following presets are goo
       if the IO worker frequently stalls.
   - enable `discardOnResume` to avoid resuming with a large backlog of buffered guest audio (stale latency).
 
+Concrete examples:
+
+```ts
+// Demo mode: low startup latency, still avoids stale latency after tab resumes.
+await createAudioOutput({
+  latencyHint: "interactive",
+  startupPrefillFrames: 0, // or 512 (default)
+  discardOnResume: true,
+});
+
+// VM mode: tolerate IO-worker stalls (higher robustness), at the cost of more buffering.
+await createAudioOutput({
+  latencyHint: "balanced",
+  startupPrefillFrames: 4096,
+  discardOnResume: true,
+});
+```
+
 ---
 
 ## AC'97 fallback (legacy)
