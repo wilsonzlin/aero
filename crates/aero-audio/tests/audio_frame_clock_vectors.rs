@@ -21,77 +21,53 @@ fn audio_frame_clock_conformance_vectors() {
     let json = std::fs::read_to_string(&fixture_path)
         .unwrap_or_else(|e| panic!("failed to read {fixture_path:?}: {e}"));
 
-    let vectors: VectorsFile =
+    let vectors: Vec<Vector> =
         serde_json::from_str(&json).unwrap_or_else(|e| panic!("failed to parse {fixture_path:?}: {e}"));
+    assert!(
+        !vectors.is_empty(),
+        "fixture must contain at least one vector"
+    );
 
-    for case in vectors.cases {
+    for case in vectors {
         assert_eq!(
-            case.now_ns.len(),
-            case.expected_frames.len(),
-            "vector case {:?} length mismatch: now_ns has {}, expected_frames has {}",
+            case.steps.len(),
+            case.expected_frames_per_step.len(),
+            "vector {:?} length mismatch: steps has {}, expected_frames_per_step has {}",
             case.name,
-            case.now_ns.len(),
-            case.expected_frames.len()
+            case.steps.len(),
+            case.expected_frames_per_step.len()
         );
 
-        let start_time_ns = parse_u64(&case.start_time_ns, "start_time_ns");
-        let mut clock = AudioFrameClock::new(case.sample_rate_hz, start_time_ns);
+        let mut clock = AudioFrameClock::new(case.sample_rate_hz, case.start_time_ns);
 
         for (step_index, (now_ns, expected_frames)) in case
-            .now_ns
+            .steps
             .iter()
-            .zip(case.expected_frames.iter().copied())
+            .zip(case.expected_frames_per_step.iter().copied())
             .enumerate()
         {
-            let now_ns = parse_u64(now_ns, "now_ns");
-            let actual = clock.advance_to(now_ns);
+            let actual = clock.advance_to(*now_ns) as u64;
             assert_eq!(
                 actual, expected_frames,
-                "vector case {:?} step {step_index} (now_ns={now_ns}) frames mismatch",
+                "vector {:?} step {step_index} (now_ns={now_ns}) frames mismatch",
                 case.name
             );
         }
 
-        let expected_last_time_ns = parse_u64(&case.expected_end.last_time_ns, "expected_end.last_time_ns");
-        let expected_frac_fp = parse_u64(&case.expected_end.frac_fp, "expected_end.frac_fp");
         assert_eq!(
-            clock.last_time_ns, expected_last_time_ns,
-            "vector case {:?} end state last_time_ns mismatch",
-            case.name
-        );
-        assert_eq!(
-            clock.frac_fp, expected_frac_fp,
-            "vector case {:?} end state frac_fp mismatch",
+            clock.frac_fp, case.expected_final_frac,
+            "vector {:?} end state frac_fp mismatch",
             case.name
         );
     }
 }
 
-fn parse_u64(s: &str, field_name: &str) -> u64 {
-    s.parse()
-        .unwrap_or_else(|e| panic!("invalid u64 for {field_name}: {s:?}: {e}"))
-}
-
 #[derive(Debug, Deserialize)]
-struct VectorsFile {
-    #[allow(dead_code)]
-    version: u32,
-    cases: Vec<VectorCase>,
-}
-
-#[derive(Debug, Deserialize)]
-struct VectorCase {
+struct Vector {
     name: String,
     sample_rate_hz: u32,
-    start_time_ns: String,
-    now_ns: Vec<String>,
-    expected_frames: Vec<usize>,
-    expected_end: ExpectedEnd,
+    start_time_ns: u64,
+    steps: Vec<u64>,
+    expected_frames_per_step: Vec<u64>,
+    expected_final_frac: u64,
 }
-
-#[derive(Debug, Deserialize)]
-struct ExpectedEnd {
-    last_time_ns: String,
-    frac_fp: String,
-}
-

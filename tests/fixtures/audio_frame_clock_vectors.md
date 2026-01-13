@@ -10,31 +10,23 @@ The same semantics are implemented in two places:
 
 ## Format
 
-The fixture is a single JSON object:
+The fixture is a JSON array of vectors.
 
-- `version` (number): format version.
-- `description` (string, optional): human-readable notes.
-- `cases` (array): conformance cases.
-
-Each case is:
+Each vector is:
 
 - `name` (string): test case label.
-- `sample_rate_hz` (number): audio sample rate (frames/second).
-- `start_time_ns` (string): initial `last_time_ns` / `lastTimeNs` timestamp (`u64` encoded as a
-  decimal string).
-- `now_ns` (string[]): absolute `now_ns` timestamps to pass to `advance_to` / `advanceTo` in order
-  (`u64` encoded as decimal strings).
-- `expected_frames` (number[]): frames returned by each step (same length as `now_ns`).
-- `expected_end`:
-  - `last_time_ns` (string): expected final `last_time_ns` / `lastTimeNs` (`u64` as decimal string).
-  - `frac_fp` (string): expected final remainder accumulator (`AudioFrameClock.frac_fp` in Rust,
-    `AudioFrameClock.fracNsTimesRate` in TS) as a decimal string.
+- `sample_rate_hz` (integer): audio sample rate (frames/second).
+- `start_time_ns` (integer): initial `last_time_ns` / `lastTimeNs` timestamp (nanoseconds).
+- `steps` (integer[]): absolute `now_ns` timestamps to pass to `advance_to` / `advanceTo` in order.
+- `expected_frames_per_step` (integer[]): frames returned by each step (same length as `steps`).
+- `expected_final_frac` (integer): remainder accumulator after the final step
+  (`AudioFrameClock.frac_fp` in Rust, `AudioFrameClock.fracNsTimesRate` in TS).
 
-### Why strings?
+### Integer precision
 
-JSON has no `bigint` type, and decoding large integers as JS `number` can lose precision. All
-nanosecond timestamps and the remainder accumulator are therefore stored as **decimal strings**, and
-the web unit tests parse them with `BigInt(...)`.
+The fixture stores all values as JSON numbers, so all timestamps must fit within
+`Number.MAX_SAFE_INTEGER` to remain lossless when parsed by JS. The generator script validates this
+invariant.
 
 ## Semantics
 

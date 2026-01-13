@@ -10,17 +10,29 @@
  * - TS:   `web/src/audio/audio_frame_clock.ts`
  */
 const NS_PER_SEC = 1_000_000_000n;
+const MAX_SAFE_INTEGER = BigInt(Number.MAX_SAFE_INTEGER);
 
-function simulateCase({ sample_rate_hz, start_time_ns, now_ns }) {
+function assertSafeInteger(value, label) {
+  if (!Number.isSafeInteger(value)) throw new Error(`${label} must be a JS safe integer, got: ${String(value)}`);
+  if (value < 0) throw new Error(`${label} must be >= 0, got: ${String(value)}`);
+  return value;
+}
+
+function toSafeNumber(value, label) {
+  if (value > MAX_SAFE_INTEGER) throw new Error(`${label} overflows JS safe integer range: ${value.toString()}`);
+  return Number(value);
+}
+
+function simulateVector({ sample_rate_hz, start_time_ns, steps }) {
   const sr = BigInt(sample_rate_hz);
   let last = BigInt(start_time_ns);
   let frac_fp = 0n;
-  const expected_frames = [];
+  const expected_frames_per_step = [];
 
-  for (const nowStr of now_ns) {
-    const now = BigInt(nowStr);
+  for (const nowNs of steps) {
+    const now = BigInt(nowNs);
     if (now <= last) {
-      expected_frames.push(0);
+      expected_frames_per_step.push(0);
       continue;
     }
     const delta = now - last;
@@ -28,90 +40,94 @@ function simulateCase({ sample_rate_hz, start_time_ns, now_ns }) {
     const total = frac_fp + delta * sr;
     const frames = total / NS_PER_SEC;
     frac_fp = total % NS_PER_SEC;
-    expected_frames.push(Number(frames));
+    expected_frames_per_step.push(toSafeNumber(frames, "frames"));
   }
 
   return {
-    expected_frames,
-    expected_end: { last_time_ns: last.toString(), frac_fp: frac_fp.toString() },
+    expected_frames_per_step,
+    expected_final_frac: toSafeNumber(frac_fp, "expected_final_frac"),
   };
 }
 
-const cases = [
+const vectors = [
   {
     name: "48kHz_small_deltas_and_duplicates",
     sample_rate_hz: 48000,
-    start_time_ns: "0",
-    now_ns: ["0", "1", "101", "20934", "20935", "41768", "61768", "61769", "62769", "62769", "30062769", "30062769", "30083602"],
+    start_time_ns: 0,
+    steps: [0, 1, 101, 20_934, 20_935, 41_768, 61_768, 61_769, 62_769, 62_769, 30_062_769, 30_062_769, 30_083_602],
   },
   {
     name: "48kHz_backwards_time_is_ignored",
     sample_rate_hz: 48000,
-    start_time_ns: "1000",
+    start_time_ns: 1_000,
     // Includes a backwards step (`21000` < `21834`). This must return 0 frames and must not
     // modify `last_time_ns` or `frac_fp`.
-    now_ns: ["21833", "21834", "21000", "21835"],
+    steps: [21_833, 21_834, 21_000, 21_835],
   },
   {
     name: "48kHz_jittery_ticks_60Hz_16666666_16666667",
     sample_rate_hz: 48000,
-    start_time_ns: "0",
+    start_time_ns: 0,
     // ~60Hz jitter pattern where 1/60s (16_666_666.666...) is represented via a mix of
     // 16_666_666 and 16_666_667 ns steps. Frame output is intentionally non-uniform to verify
     // remainder carry semantics (799/800/801 frames at 48kHz).
-    now_ns: ["16666666", "33333333", "50000000", "66666666", "83333333", "100000000", "116666666"],
+    steps: [16_666_666, 33_333_333, 50_000_000, 66_666_666, 83_333_333, 100_000_000, 116_666_666],
   },
   {
     name: "48kHz_jittery_ticks_variable_frames",
     sample_rate_hz: 48000,
-    start_time_ns: "0",
-    now_ns: [
-      "20833333",
-      "41666666",
-      "62500000",
-      "83333333",
-      "104166665",
-      "125000000",
-      "125000000",
-      "145833333",
-      "166666667",
-      "187500000",
-      "208333333",
+    start_time_ns: 0,
+    steps: [
+      20_833_333,
+      41_666_666,
+      62_500_000,
+      83_333_333,
+      104_166_665,
+      125_000_000,
+      125_000_000,
+      145_833_333,
+      166_666_667,
+      187_500_000,
+      208_333_333,
     ],
   },
   {
     name: "48kHz_large_delta_500ms",
     sample_rate_hz: 48000,
-    start_time_ns: "0",
-    now_ns: ["500000001", "500000001", "1000000002", "1500000002", "2000000003"],
+    start_time_ns: 0,
+    steps: [500_000_001, 500_000_001, 1_000_000_002, 1_500_000_002, 2_000_000_003],
   },
   {
     name: "44_1kHz_mixed_small_and_large",
     sample_rate_hz: 44100,
-    start_time_ns: "1000",
-    now_ns: ["1000", "1000", "1001", "1101", "500001101", "500001102", "500001102", "500023676", "500023676", "500046351"],
+    start_time_ns: 1_000,
+    steps: [1_000, 1_000, 1_001, 1_101, 500_001_101, 500_001_102, 500_001_102, 500_023_676, 500_023_676, 500_046_351],
   },
   {
     name: "44_1kHz_1ms_steps_accumulate_fraction",
     sample_rate_hz: 44100,
-    start_time_ns: "0",
-    now_ns: ["0", "1000000", "2000000", "3000000", "4000000", "5000000", "6000000", "7000000", "8000000", "9000000", "10000000"],
+    start_time_ns: 0,
+    steps: Array.from({ length: 11 }, (_, i) => i * 1_000_000),
   },
   {
     name: "96kHz_multi_second_deltas_with_remainder",
     sample_rate_hz: 96000,
-    start_time_ns: "0",
+    start_time_ns: 0,
     // Large multi-second deltas plus a 1ns step to ensure remainder carry is preserved across
     // very different step sizes.
-    now_ns: ["2000000000", "2000000001", "5000000000", "5000000123"],
+    steps: [2_000_000_000, 2_000_000_001, 5_000_000_000, 5_000_000_123],
   },
 ];
 
-const out = {
-  version: 1,
-  description:
-    "Cross-language conformance vectors for AudioFrameClock (Rust crates/aero-audio/src/clock.rs vs TypeScript web/src/audio/audio_frame_clock.ts). If the clock behavior changes intentionally, regenerate this file (see tests/fixtures/generate_audio_frame_clock_vectors.mjs) and update both implementations together.",
-  cases: cases.map((c) => ({ ...c, ...simulateCase(c) })),
-};
+for (const [i, v] of vectors.entries()) {
+  assertSafeInteger(v.sample_rate_hz, `vectors[${i}].sample_rate_hz`);
+  assertSafeInteger(v.start_time_ns, `vectors[${i}].start_time_ns`);
+  if (!Array.isArray(v.steps) || v.steps.length === 0) throw new Error(`vectors[${i}].steps must be a non-empty array`);
+  for (const [j, step] of v.steps.entries()) {
+    assertSafeInteger(step, `vectors[${i}].steps[${j}]`);
+  }
+}
+
+const out = vectors.map((v) => ({ ...v, ...simulateVector(v) }));
 
 process.stdout.write(JSON.stringify(out, null, 2) + "\n");
