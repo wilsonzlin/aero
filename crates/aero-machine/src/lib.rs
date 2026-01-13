@@ -3386,6 +3386,7 @@ impl Machine {
     }
 
     /// Attach a disk image as an ATAPI CD-ROM ISO on the IDE secondary master, if present.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn attach_ide_secondary_master_iso(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
@@ -3429,6 +3430,16 @@ impl Machine {
         self.install_media = Some(shared.clone());
         let backend: Box<dyn IsoBackend> = Box::new(shared);
         self.attach_ide_secondary_master_atapi_backend_for_restore(backend);
+        Ok(())
+    }
+
+    /// Attach a disk image as an ATAPI CD-ROM ISO on the IDE secondary master, if present.
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_ide_secondary_master_iso(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
+    ) -> std::io::Result<()> {
+        self.attach_ide_secondary_master_atapi(AtapiCdrom::new_from_virtual_disk(disk)?);
         Ok(())
     }
 

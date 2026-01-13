@@ -3,6 +3,11 @@ use std::io;
 use aero_io_snapshot::io::storage::state::{IdeAtapiDeviceState, MAX_IDE_DATA_BUFFER_BYTES};
 use aero_storage::{DiskError, VirtualDisk};
 
+#[cfg(target_arch = "wasm32")]
+pub type IsoDisk = Box<dyn VirtualDisk>;
+#[cfg(not(target_arch = "wasm32"))]
+pub type IsoDisk = Box<dyn VirtualDisk + Send>;
+
 /// Read-only ISO9660 (or raw CD) backing store.
 ///
 /// The IDE/ATAPI layer treats the image as a sequence of 2048-byte sectors.
@@ -17,7 +22,14 @@ use aero_storage::{DiskError, VirtualDisk};
 /// [`VirtualDiskIsoBackend`] to adapt into this ATAPI interface.
 ///
 /// See `docs/20-storage-trait-consolidation.md`.
+#[cfg(not(target_arch = "wasm32"))]
 pub trait IsoBackend: Send {
+    fn sector_count(&self) -> u32;
+    fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()>;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub trait IsoBackend {
     fn sector_count(&self) -> u32;
     fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()>;
 }
@@ -28,12 +40,12 @@ pub trait IsoBackend: Send {
 /// This is useful for attaching a disk image (e.g. a Windows install ISO stored in a generic
 /// storage backend) as an ATAPI CD-ROM.
 pub struct VirtualDiskIsoBackend {
-    disk: Box<dyn VirtualDisk + Send>,
+    disk: IsoDisk,
     sector_count: u32,
 }
 
 impl VirtualDiskIsoBackend {
-    pub fn new(disk: Box<dyn VirtualDisk + Send>) -> io::Result<Self> {
+    pub fn new(disk: IsoDisk) -> io::Result<Self> {
         let capacity = disk.capacity_bytes();
         if !capacity.is_multiple_of(AtapiCdrom::SECTOR_SIZE as u64) {
             return Err(io::Error::new(
@@ -150,11 +162,11 @@ impl AtapiCdrom {
         self.media_changed = true;
     }
 
-    pub fn new_from_virtual_disk(disk: Box<dyn VirtualDisk + Send>) -> io::Result<Self> {
+    pub fn new_from_virtual_disk(disk: IsoDisk) -> io::Result<Self> {
         Ok(Self::new(Some(Box::new(VirtualDiskIsoBackend::new(disk)?))))
     }
 
-    pub fn insert_virtual_disk(&mut self, disk: Box<dyn VirtualDisk + Send>) -> io::Result<()> {
+    pub fn insert_virtual_disk(&mut self, disk: IsoDisk) -> io::Result<()> {
         self.insert_media(Box::new(VirtualDiskIsoBackend::new(disk)?));
         Ok(())
     }

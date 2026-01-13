@@ -2175,9 +2175,19 @@ impl PcPlatform {
             .attach_secondary_master_atapi(dev);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn attach_ide_secondary_master_iso(
         &mut self,
         disk: Box<dyn VirtualDisk + Send>,
+    ) -> std::io::Result<()> {
+        self.attach_ide_secondary_master_atapi(AtapiCdrom::new_from_virtual_disk(disk)?);
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_ide_secondary_master_iso(
+        &mut self,
+        disk: Box<dyn VirtualDisk>,
     ) -> std::io::Result<()> {
         self.attach_ide_secondary_master_atapi(AtapiCdrom::new_from_virtual_disk(disk)?);
         Ok(())

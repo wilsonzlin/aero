@@ -228,6 +228,10 @@ bash ./scripts/safe-run.sh cargo test -p aero-storage --locked
 bash ./scripts/safe-run.sh cargo test -p aero-devices-storage --locked
 bash ./scripts/safe-run.sh cargo test -p aero-opfs --locked
 
+# Compile-check selected crates for wasm32-unknown-unknown (no test runner required).
+# This helps catch `Send`/threading bound regressions that break browser storage backends.
+bash ./scripts/safe-run.sh cargo check --target wasm32-unknown-unknown -p aero-devices-storage -p aero-machine --locked
+
 # Integration tests
 # Note: the first run in a clean/contended agent sandbox can take >10 minutes to compile.
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test freedos_boot --locked
