@@ -7,6 +7,16 @@ pub trait MemoryBus {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]);
     fn write_physical(&mut self, paddr: u64, buf: &[u8]);
 
+    /// Alias for [`MemoryBus::read_physical`], provided for discoverability.
+    fn read_bytes(&mut self, paddr: u64, buf: &mut [u8]) {
+        self.read_physical(paddr, buf);
+    }
+
+    /// Alias for [`MemoryBus::write_physical`], provided for discoverability.
+    fn write_bytes(&mut self, paddr: u64, buf: &[u8]) {
+        self.write_physical(paddr, buf);
+    }
+
     fn read_u8(&mut self, paddr: u64) -> u8 {
         let mut buf = [0u8; 1];
         self.read_physical(paddr, &mut buf);
@@ -25,6 +35,12 @@ pub trait MemoryBus {
         u32::from_le_bytes(buf)
     }
 
+    fn read_u64(&mut self, paddr: u64) -> u64 {
+        let mut buf = [0u8; 8];
+        self.read_physical(paddr, &mut buf);
+        u64::from_le_bytes(buf)
+    }
+
     fn write_u8(&mut self, paddr: u64, val: u8) {
         self.write_physical(paddr, &[val]);
     }
@@ -34,6 +50,10 @@ pub trait MemoryBus {
     }
 
     fn write_u32(&mut self, paddr: u64, val: u32) {
+        self.write_physical(paddr, &val.to_le_bytes());
+    }
+
+    fn write_u64(&mut self, paddr: u64, val: u64) {
         self.write_physical(paddr, &val.to_le_bytes());
     }
 }
