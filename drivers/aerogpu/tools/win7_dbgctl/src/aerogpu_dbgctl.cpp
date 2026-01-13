@@ -724,7 +724,7 @@ static void PrintUsage() {
            L"  aerogpu_dbgctl [--display \\\\.\\DISPLAY1] [--ring-id N] [--timeout-ms N] [--json[=PATH]] [--pretty]\n"
            L"               [--vblank-samples N] [--vblank-interval-ms N]\n"
            L"               [--samples N] [--interval-ms N]\n"
-           L"               [--size N] [--out FILE] [--force] <command>\n"
+           L"               [--size N] [--out FILE] [--count N] [--force] <command>\n"
            L"\n"
            L"Global output options:\n"
            L"  --json[=PATH]  Output machine-readable JSON (schema_version=1). If PATH is provided, write JSON there.\n"
