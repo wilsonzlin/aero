@@ -2651,24 +2651,58 @@ fn emit_instructions(
                 match ctx.stage {
                     ShaderStage::Vertex => ctx.io.emit_vs_return(w)?,
                     ShaderStage::Pixel => {
-                        let target_reg = ctx
-                            .io
-                            .ps_sv_target0_register
-                            .ok_or(ShaderTranslateError::PixelShaderMissingSvTarget0)?;
-                        let target_param = ctx.io.outputs.get(&target_reg).ok_or(
-                            ShaderTranslateError::SignatureMissingRegister {
-                                io: "output",
-                                register: target_reg,
-                            },
-                        )?;
-                        let return_expr = apply_sig_mask_to_vec4(
-                            &format!("o{target_reg}"),
-                            target_param.param.mask,
-                        );
-                        w.line(&format!("return {return_expr};"));
+                        if let Some(depth_reg) = ctx.io.ps_sv_depth_register {
+                            // Pixel shaders that write depth return a `PsOut` struct; mirror the
+                            // epilogue return sequence with a uniquely-named local.
+                            let out_var = format!("out_ret_{inst_index}");
+                            w.line(&format!("var {out_var}: PsOut;"));
+
+                            if let Some(target_reg) = ctx.io.ps_sv_target0_register {
+                                let target_param = ctx.io.outputs.get(&target_reg).ok_or(
+                                    ShaderTranslateError::SignatureMissingRegister {
+                                        io: "output",
+                                        register: target_reg,
+                                    },
+                                )?;
+                                let expr = apply_sig_mask_to_vec4(
+                                    &format!("o{target_reg}"),
+                                    target_param.param.mask,
+                                );
+                                w.line(&format!("{out_var}.target0 = {expr};"));
+                            }
+
+                            let depth_param = ctx.io.outputs.get(&depth_reg).ok_or(
+                                ShaderTranslateError::SignatureMissingRegister {
+                                    io: "output",
+                                    register: depth_reg,
+                                },
+                            )?;
+                            let depth_expr = apply_sig_mask_to_scalar(
+                                &format!("o{depth_reg}"),
+                                depth_param.param.mask,
+                            );
+                            w.line(&format!("{out_var}.depth = {depth_expr};"));
+                            w.line(&format!("return {out_var};"));
+                        } else {
+                            let target_reg = ctx
+                                .io
+                                .ps_sv_target0_register
+                                .ok_or(ShaderTranslateError::PixelShaderMissingSvTarget0)?;
+                            let target_param = ctx.io.outputs.get(&target_reg).ok_or(
+                                ShaderTranslateError::SignatureMissingRegister {
+                                    io: "output",
+                                    register: target_reg,
+                                },
+                            )?;
+                            let return_expr = apply_sig_mask_to_vec4(
+                                &format!("o{target_reg}"),
+                                target_param.param.mask,
+                            );
+                            w.line(&format!("return {return_expr};"));
+                        }
                     }
                     ShaderStage::Compute => {
-                        // Compute entrypoints return `()`.
+                        // Compute entry points return `()`.
                         w.line("return;");
                     }
                     other => {

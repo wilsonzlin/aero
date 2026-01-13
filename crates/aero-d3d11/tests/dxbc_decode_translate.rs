@@ -764,3 +764,125 @@ fn translates_compute_thread_group_size_decl_to_workgroup_size() {
     );
     assert_wgsl_validates(&translated.wgsl);
 }
+
+#[test]
+fn ret_inside_if_with_depth_output_validates() {
+    let mut body = Vec::<u32>::new();
+
+    // if_nz l(1.0)
+    let cond = imm32_scalar(1.0f32.to_bits());
+    body.push(
+        OPCODE_IF
+            | ((1 + cond.len() as u32) << OPCODE_LEN_SHIFT)
+            | (1 << OPCODE_TEST_BOOLEAN_SHIFT),
+    );
+    body.extend_from_slice(&cond);
+
+    // mov o0, l(1,0,0,1)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + red.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&red);
+
+    // mov o1.x, l(0.5)
+    let depth_a = imm32_scalar(0.5f32.to_bits());
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + depth_a.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::X));
+    body.extend_from_slice(&depth_a);
+
+    // ret (inside if)
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // endif
+    body.push(opcode_token(OPCODE_ENDIF, 1));
+
+    // mov o0, l(0,1,0,1)
+    let green = imm32_vec4([
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + green.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&green);
+
+    // mov o1.x, l(0.25)
+    let depth_b = imm32_scalar(0.25f32.to_bits());
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + depth_b.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::X));
+    body.extend_from_slice(&depth_b);
+
+    // ret (top-level)
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[
+                sig_param("SV_Target", 0, 0, 0b1111),
+                sig_param("SV_Depth", 0, 1, 0b0001),
+            ]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(module.instructions.iter().any(|i| matches!(i, Sm4Inst::If { .. })));
+    assert!(module.instructions.iter().any(|i| matches!(i, Sm4Inst::Ret)));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert!(translated.wgsl.contains("struct PsOut"));
+    assert!(translated.wgsl.contains("@builtin(frag_depth)"));
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.matches("return").count() >= 2,
+        "expected both early and epilogue returns:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn compute_ret_inside_if_validates() {
+    // Minimal compute shader: `dcl_thread_group` + `if_nz` + `ret` + `endif` + `ret`.
+    let mut body = Vec::<u32>::new();
+    body.push(opcode_token(OPCODE_DCL_THREAD_GROUP, 4));
+    body.extend_from_slice(&[8, 4, 1]);
+
+    // if_nz l(1.0)
+    let cond = imm32_scalar(1.0f32.to_bits());
+    body.push(
+        OPCODE_IF
+            | ((1 + cond.len() as u32) << OPCODE_LEN_SHIFT)
+            | (1 << OPCODE_TEST_BOOLEAN_SHIFT),
+    );
+    body.extend_from_slice(&cond);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+    body.push(opcode_token(OPCODE_ENDIF, 1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(5, &body);
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, tokens_to_bytes(&tokens))]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert!(translated.wgsl.contains("@compute"));
+    assert!(translated.wgsl.contains("if ("));
+    assert!(translated.wgsl.contains("return;"));
+    assert_wgsl_validates(&translated.wgsl);
+}
