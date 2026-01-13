@@ -233,9 +233,7 @@ enum { VIRTIO_INPUT_QUEUE_COUNT = 2 };
 
 typedef struct _DEVICE_CONTEXT {
     WDFQUEUE DefaultQueue;
-    WDFQUEUE PendingReadQueue;
     WDFSPINLOCK InputLock;
-    WDFWORKITEM ReadWorkItem;
     struct virtio_input_device InputDevice;
     // Manual read queues indexed by ReportID. Index 0 is a special "any report"
     // queue used for non-collection (parent interface) opens.
