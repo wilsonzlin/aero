@@ -696,11 +696,22 @@ struct AeroGpuBlendState {
 };
 
 struct AeroGpuRasterizerState {
-  uint32_t dummy = 0;
+  uint32_t fill_mode = static_cast<uint32_t>(D3D10_FILL_SOLID);
+  uint32_t cull_mode = static_cast<uint32_t>(D3D10_CULL_BACK);
+  uint32_t front_ccw = 0u;
+  uint32_t scissor_enable = 0u;
+  int32_t depth_bias = 0;
+  uint32_t depth_clip_enable = 1u;
 };
 
 struct AeroGpuDepthStencilState {
-  uint32_t dummy = 0;
+  uint32_t depth_enable = 1u;
+  uint32_t depth_write_mask = static_cast<uint32_t>(D3D10_DEPTH_WRITE_MASK_ALL);
+  uint32_t depth_func = static_cast<uint32_t>(D3D10_COMPARISON_LESS);
+  uint32_t stencil_enable = 0u;
+  uint8_t stencil_read_mask = 0xFF;
+  uint8_t stencil_write_mask = 0xFF;
+  uint8_t reserved0[2] = {0, 0};
 };
 
 struct AeroGpuSampler {
@@ -5700,18 +5711,169 @@ void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice,
   cmd->state.sample_mask = sample_mask;
 }
 
+static uint32_t D3D10FillModeToAerogpu(uint32_t fill_mode) {
+  switch (static_cast<D3D10_FILL_MODE>(fill_mode)) {
+    case D3D10_FILL_WIREFRAME:
+      return AEROGPU_FILL_WIREFRAME;
+    case D3D10_FILL_SOLID:
+    default:
+      return AEROGPU_FILL_SOLID;
+  }
+}
+
+static uint32_t D3D10CullModeToAerogpu(uint32_t cull_mode) {
+  switch (static_cast<D3D10_CULL_MODE>(cull_mode)) {
+    case D3D10_CULL_NONE:
+      return AEROGPU_CULL_NONE;
+    case D3D10_CULL_FRONT:
+      return AEROGPU_CULL_FRONT;
+    case D3D10_CULL_BACK:
+    default:
+      return AEROGPU_CULL_BACK;
+  }
+}
+
+static uint32_t D3D10CompareFuncToAerogpu(uint32_t func) {
+  switch (static_cast<D3D10_COMPARISON_FUNC>(func)) {
+    case D3D10_COMPARISON_NEVER:
+      return AEROGPU_COMPARE_NEVER;
+    case D3D10_COMPARISON_LESS:
+      return AEROGPU_COMPARE_LESS;
+    case D3D10_COMPARISON_EQUAL:
+      return AEROGPU_COMPARE_EQUAL;
+    case D3D10_COMPARISON_LESS_EQUAL:
+      return AEROGPU_COMPARE_LESS_EQUAL;
+    case D3D10_COMPARISON_GREATER:
+      return AEROGPU_COMPARE_GREATER;
+    case D3D10_COMPARISON_NOT_EQUAL:
+      return AEROGPU_COMPARE_NOT_EQUAL;
+    case D3D10_COMPARISON_GREATER_EQUAL:
+      return AEROGPU_COMPARE_GREATER_EQUAL;
+    case D3D10_COMPARISON_ALWAYS:
+    default:
+      return AEROGPU_COMPARE_ALWAYS;
+  }
+}
+
+void AEROGPU_APIENTRY SetRasterizerState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRASTERIZERSTATE hState) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  AEROGPU_D3D10_TRACEF_VERBOSE("SetRasterizerState hDevice=%p hState=%p", hDevice.pDrvPrivate, hState.pDrvPrivate);
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  uint32_t fill_mode = static_cast<uint32_t>(D3D10_FILL_SOLID);
+  uint32_t cull_mode = static_cast<uint32_t>(D3D10_CULL_BACK);
+  uint32_t front_ccw = 0u;
+  uint32_t scissor_enable = 0u;
+  int32_t depth_bias = 0;
+  uint32_t depth_clip_enable = 1u;
+  if (hState.pDrvPrivate) {
+    const auto* rs = FromHandle<D3D10DDI_HRASTERIZERSTATE, AeroGpuRasterizerState>(hState);
+    if (rs) {
+      fill_mode = rs->fill_mode;
+      cull_mode = rs->cull_mode;
+      front_ccw = rs->front_ccw;
+      scissor_enable = rs->scissor_enable;
+      depth_bias = rs->depth_bias;
+      depth_clip_enable = rs->depth_clip_enable;
+    }
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+
+  cmd->state.fill_mode = D3D10FillModeToAerogpu(fill_mode);
+  cmd->state.cull_mode = D3D10CullModeToAerogpu(cull_mode);
+  cmd->state.front_ccw = front_ccw ? 1u : 0u;
+  cmd->state.scissor_enable = scissor_enable ? 1u : 0u;
+  cmd->state.depth_bias = depth_bias;
+  cmd->state.flags = depth_clip_enable ? AEROGPU_RASTERIZER_FLAG_NONE : AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE;
+}
+
+void AEROGPU_APIENTRY SetDepthStencilState(D3D10DDI_HDEVICE hDevice,
+                                          D3D10DDI_HDEPTHSTENCILSTATE hState,
+                                          UINT stencil_ref) {
+  (void)stencil_ref;
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  AEROGPU_D3D10_TRACEF_VERBOSE("SetDepthStencilState hDevice=%p hState=%p",
+                               hDevice.pDrvPrivate,
+                               hState.pDrvPrivate);
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  uint32_t depth_enable = 1u;
+  uint32_t depth_write_mask = static_cast<uint32_t>(D3D10_DEPTH_WRITE_MASK_ALL);
+  uint32_t depth_func = static_cast<uint32_t>(D3D10_COMPARISON_LESS);
+  uint32_t stencil_enable = 0u;
+  uint8_t stencil_read_mask = 0xFF;
+  uint8_t stencil_write_mask = 0xFF;
+  if (hState.pDrvPrivate) {
+    const auto* dss = FromHandle<D3D10DDI_HDEPTHSTENCILSTATE, AeroGpuDepthStencilState>(hState);
+    if (dss) {
+      depth_enable = dss->depth_enable;
+      depth_write_mask = dss->depth_write_mask;
+      depth_func = dss->depth_func;
+      stencil_enable = dss->stencil_enable;
+      stencil_read_mask = dss->stencil_read_mask;
+      stencil_write_mask = dss->stencil_write_mask;
+    }
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+
+  cmd->state.depth_enable = depth_enable ? 1u : 0u;
+  cmd->state.depth_write_enable = depth_write_mask ? 1u : 0u;
+  cmd->state.depth_func = D3D10CompareFuncToAerogpu(depth_func);
+  cmd->state.stencil_enable = stencil_enable ? 1u : 0u;
+  cmd->state.stencil_read_mask = stencil_read_mask;
+  cmd->state.stencil_write_mask = stencil_write_mask;
+  cmd->state.reserved0[0] = 0;
+  cmd->state.reserved0[1] = 0;
+}
+
 SIZE_T AEROGPU_APIENTRY CalcPrivateRasterizerStateSize(D3D10DDI_HDEVICE, const D3D10_DDI_RASTERIZER_DESC*) {
   return sizeof(AeroGpuRasterizerState);
 }
 
 HRESULT AEROGPU_APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
-                                               const D3D10_DDI_RASTERIZER_DESC*,
+                                               const D3D10_DDI_RASTERIZER_DESC* pDesc,
                                                D3D10DDI_HRASTERIZERSTATE hState,
                                                D3D10DDI_HRTRASTERIZERSTATE) {
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  new (hState.pDrvPrivate) AeroGpuRasterizerState();
+  auto* state = new (hState.pDrvPrivate) AeroGpuRasterizerState();
+  if (!pDesc) {
+    return S_OK;
+  }
+
+  state->fill_mode = static_cast<uint32_t>(pDesc->FillMode);
+  state->cull_mode = static_cast<uint32_t>(pDesc->CullMode);
+  state->front_ccw = pDesc->FrontCounterClockwise ? 1u : 0u;
+  state->scissor_enable = pDesc->ScissorEnable ? 1u : 0u;
+  state->depth_bias = static_cast<int32_t>(pDesc->DepthBias);
+  state->depth_clip_enable = pDesc->DepthClipEnable ? 1u : 0u;
   return S_OK;
 }
 
@@ -5728,13 +5890,23 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateDepthStencilStateSize(D3D10DDI_HDEVICE, const
 }
 
 HRESULT AEROGPU_APIENTRY CreateDepthStencilState(D3D10DDI_HDEVICE hDevice,
-                                                 const D3D10_DDI_DEPTH_STENCIL_DESC*,
+                                                 const D3D10_DDI_DEPTH_STENCIL_DESC* pDesc,
                                                  D3D10DDI_HDEPTHSTENCILSTATE hState,
                                                  D3D10DDI_HRTDEPTHSTENCILSTATE) {
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  new (hState.pDrvPrivate) AeroGpuDepthStencilState();
+  auto* state = new (hState.pDrvPrivate) AeroGpuDepthStencilState();
+  if (!pDesc) {
+    return S_OK;
+  }
+
+  state->depth_enable = pDesc->DepthEnable ? 1u : 0u;
+  state->depth_write_mask = static_cast<uint32_t>(pDesc->DepthWriteMask);
+  state->depth_func = static_cast<uint32_t>(pDesc->DepthFunc);
+  state->stencil_enable = pDesc->StencilEnable ? 1u : 0u;
+  state->stencil_read_mask = static_cast<uint8_t>(pDesc->StencilReadMask);
+  state->stencil_write_mask = static_cast<uint8_t>(pDesc->StencilWriteMask);
   return S_OK;
 }
 
@@ -7942,12 +8114,12 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateRasterizerStateSize = &CalcPrivateRasterizerStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateRasterizerState = &CreateRasterizerState;
   pCreateDevice->pDeviceFuncs->pfnDestroyRasterizerState = &DestroyRasterizerState;
-  AEROGPU_D3D10_ASSIGN_STUB(pfnSetRasterizerState, SetRasterizerState);
+  pCreateDevice->pDeviceFuncs->pfnSetRasterizerState = &SetRasterizerState;
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateDepthStencilStateSize = &CalcPrivateDepthStencilStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilState = &CreateDepthStencilState;
   pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilState = &DestroyDepthStencilState;
-  AEROGPU_D3D10_ASSIGN_STUB(pfnSetDepthStencilState, SetDepthStencilState);
+  pCreateDevice->pDeviceFuncs->pfnSetDepthStencilState = &SetDepthStencilState;
 
   pCreateDevice->pDeviceFuncs->pfnIaSetInputLayout = &IaSetInputLayout;
   pCreateDevice->pDeviceFuncs->pfnIaSetVertexBuffers = &IaSetVertexBuffers;
@@ -8131,14 +8303,12 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateRasterizerStateSize = &CalcPrivateRasterizerStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateRasterizerState = &CreateRasterizerState;
   pCreateDevice->pDeviceFuncs->pfnDestroyRasterizerState = &DestroyRasterizerState;
-  pCreateDevice->pDeviceFuncs->pfnSetRasterizerState =
-      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetRasterizerState)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnSetRasterizerState = &SetRasterizerState;
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateDepthStencilStateSize = &CalcPrivateDepthStencilStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilState = &CreateDepthStencilState;
   pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilState = &DestroyDepthStencilState;
-  pCreateDevice->pDeviceFuncs->pfnSetDepthStencilState =
-      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetDepthStencilState)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnSetDepthStencilState = &SetDepthStencilState;
 
   pCreateDevice->pDeviceFuncs->pfnIaSetInputLayout = &IaSetInputLayout;
   pCreateDevice->pDeviceFuncs->pfnIaSetVertexBuffers = &IaSetVertexBuffers;
