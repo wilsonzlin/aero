@@ -368,6 +368,16 @@ AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=.
 
 This mirrors the guest's virtio-net marker fields when present and does not affect overall PASS/FAIL.
 
+The harnesses may also surface interrupt mode diagnostics when the guest selftest emits them:
+
+- Standalone guest lines:
+  - `virtio-<dev>-irq|INFO|...`
+  - `virtio-<dev>-irq|WARN|...`
+- Mirrored host markers (for log scraping):
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_<DEV>_IRQ_DIAG|INFO/WARN|...`
+
+These IRQ diagnostics are informational by default and do not affect overall PASS/FAIL.
+
 ### Why `x-pci-revision=0x01`?
 
 The Aero Windows 7 virtio device contract encodes the **contract major version** in the PCI
