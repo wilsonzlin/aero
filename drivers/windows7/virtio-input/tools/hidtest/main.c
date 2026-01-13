@@ -1233,6 +1233,7 @@ static void print_usage(void)
     wprintf(L"  --list          List all present HID interfaces and exit\n");
     wprintf(L"  --selftest      Validate virtio-input keyboard/mouse HID descriptor contract and exit (0=pass, 1=fail)\n");
     wprintf(L"  --json          With --list or --selftest, emit machine-readable JSON on stdout\n");
+    wprintf(L"  --quiet         Suppress enumeration / device summary output (keeps stdout clean for scraping)\n");
     wprintf(L"  --keyboard      Prefer/select the keyboard top-level collection (Usage=Keyboard)\n");
     wprintf(L"  --mouse         Prefer/select the mouse top-level collection (Usage=Mouse)\n");
     wprintf(L"  --index N       Open HID interface at enumeration index N\n");
@@ -3725,6 +3726,11 @@ int wmain(int argc, wchar_t **argv)
 
         if (wcscmp(argv[i], L"--json") == 0) {
             opt.json = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--quiet") == 0) {
+            opt.quiet = 1;
             continue;
         }
 
