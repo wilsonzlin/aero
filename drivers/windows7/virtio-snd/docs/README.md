@@ -91,13 +91,15 @@ The in-tree virtio-snd driver supports both interrupt delivery modes:
 - If Windows provides message interrupts (INF opt-in), the driver prefers MSI/MSI-X and programs virtio MSI-X vectors:
   - if Windows grants enough messages: **vector 0 = config**, **vectors 1..4 = queues 0..3** (`controlq`/`eventq`/`txq`/`rxq`)
   - otherwise: **all sources on vector 0**
-- If MSI/MSI-X is unavailable or vector programming fails, the driver falls back to INTx.
+- If MSI/MSI-X is unavailable or vector programming fails, the driver falls back to INTx and (best-effort) disables virtio MSI-X routing
+  (`VIRTIO_PCI_MSI_NO_VECTOR` / `0xFFFF`) so the device uses INTx + ISR semantics.
 
-If neither MSI/MSI-X nor INTx can be used, set `AllowPollingOnly=1` under `HKR\\Parameters` to allow `START_DEVICE` to succeed and rely on used-ring polling (driven by the WaveRT period timer DPC).
+If neither MSI/MSI-X nor INTx resources are available, the driver will fail `START_DEVICE` by default. If `AllowPollingOnly=1` is set under `HKR\\Parameters`,
+the driver may start in polling-only mode (reduced interrupt-driven behavior).
 
 #### INF registry keys (Windows 7 MSI opt-in)
 
-On Windows 7, MSI/MSI-X is typically enabled via INF `HKR` settings under:
+On Windows 7, MSI/MSI-X is enabled via INF `HKR` settings under:
 
 `Interrupt Management\\MessageSignaledInterruptProperties`
 
@@ -121,7 +123,7 @@ Notes:
 
 #### Expected vector mapping
 
-When Windows grants enough messages, the expected mapping is:
+When MSI/MSI-X is active and Windows grants enough messages, the expected mapping is:
 
 - **Vector/message 0:** virtio **config** interrupt (`common_cfg.msix_config`)
 - **Vector/message 1..4:** queues 0..3 (`controlq`, `eventq`, `txq`, `rxq`)
@@ -138,6 +140,12 @@ In **Device Manager** (`devmgmt.msc`) → the virtio-snd PCI device → **Proper
 
 - **INTx** typically shows a single small IRQ number (often shared).
 - **MSI/MSI-X** typically shows one or more interrupt entries with larger values (often shown in hex) and they are usually not shared.
+
+You can also use `aero-virtio-selftest.exe`:
+
+- The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|...` markers on stdout/COM1.
+- Once the MSI diagnostics update lands, the `virtio-snd` marker will include additional fields indicating whether MSI/MSI-X was used and how many messages were allocated.
+- See `drivers/windows7/tests/guest-selftest/README.md`.
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
 
