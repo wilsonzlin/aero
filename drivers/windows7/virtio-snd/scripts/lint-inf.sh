@@ -17,6 +17,7 @@ BASE_DIR=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)
 
 INF_CONTRACT="$BASE_DIR/inf/aero_virtio_snd.inf"
 INF_TRANSITIONAL="$BASE_DIR/inf/aero-virtio-snd-legacy.inf"
+INF_IOPORT="$BASE_DIR/inf/aero-virtio-snd-ioport.inf"
 INF_DISABLED="$BASE_DIR/inf/virtio-snd.inf.disabled"
 
 tmp1=''
@@ -222,6 +223,15 @@ if [ -f "$INF_TRANSITIONAL" ]; then
     'AeroVirtioSndLegacy.AddReg' \
     'hkr,parameters,allowpollingonly,0x00010001,0' \
     "inf/aero-virtio-snd-legacy.inf must set HKR\\Parameters\\AllowPollingOnly default to 0"
+fi
+
+if [ -f "$INF_IOPORT" ]; then
+  note "checking ioport legacy INF bring-up toggle defaults..."
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort.AddReg' \
+    'hkr,parameters,forcenullbackend,0x00010001,0' \
+    "inf/aero-virtio-snd-ioport.inf must set HKR\\Parameters\\ForceNullBackend default to 0"
 fi
 
 section_contains_norm \
