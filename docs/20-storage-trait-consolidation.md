@@ -133,6 +133,8 @@ Rule of thumb:
   header with explicit sector size (512/4096) plus a small journal for crash‑safe table updates.
 - Status/limits: `AEROSPRS` is **emulator-only** and not used by the new controller stack; new work
   should create/consume `AEROSPAR` via `crates/aero-storage`.
+- Migration: see the offline converter tool
+  [`crates/emulator/src/bin/aerosparse_convert.rs`](../crates/emulator/src/bin/aerosparse_convert.rs).
 - Tests: [`crates/emulator/tests/storage_formats.rs`](../crates/emulator/tests/storage_formats.rs)
   (`detect_aerosprs_*`) and [`crates/aero-storage/tests/storage_formats.rs`](../crates/aero-storage/tests/storage_formats.rs).
 
