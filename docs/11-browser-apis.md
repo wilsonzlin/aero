@@ -1229,6 +1229,14 @@ registerProcessor('aero-audio-processor', AeroAudioProcessor);
 
 ### Audio Context Setup
 
+> In Aero, prefer using the canonical helper `createAudioOutput` (`web/src/platform/audio.ts`) instead of wiring Web Audio
+> directly. It handles:
+>
+> - `AudioContext` vs `webkitAudioContext` (Safari/WebKit)
+> - fallback constructor option sets (some browsers throw on certain `AudioContext` option combinations)
+> - optional startup/latency-smoothing policies like `startupPrefillFrames` and `discardOnResume` (see `docs/06-audio-subsystem.md`)
+> - `AudioWorkletNode` option compatibility fallbacks (e.g. `outputChannelCount` support)
+
 ```javascript
 async function setupAudio() {
     // NOTE: browsers may ignore the requested sample rate. Always use

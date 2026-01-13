@@ -260,6 +260,8 @@ Key options (in addition to the existing `sampleRate`/`latencyHint`/`ringBufferF
   - **Why it exists:** prevents *stale latency* where the VM kept producing while the browser was suspended; without discarding,
     the AudioWorklet would play back old buffered audio first, making the user hear audio seconds late after resume.
   - **Trade-off:** drops buffered frames across the suspension boundary (you get an audio discontinuity, but latency stays bounded).
+  - **Implementation detail:** the discard happens on the **AudioWorklet consumer** (via a control message) so we do not violate
+    the playback ring’s SPSC ownership rules (normally only the worklet advances `readFrameIndex`).
 
 #### AudioContext construction fallbacks (Safari/WebKit)
 
@@ -445,12 +447,16 @@ Implementation references:
 Audio tuning is inherently workload-dependent, but the following presets are good starting points:
 
 - **Demo mode** (repo harness / interactive demos; producer is typically the CPU worker):
-  - keep `startupPrefillFrames` small (or disabled) to minimize “click → sound” delay.
+  - keep `startupPrefillFrames` small to minimize “click → sound” delay:
+    - `startupPrefillFrames: 0..512` (default is `512`, ~10.7ms @ 48kHz).
   - prefer `latencyHint: "interactive"` and a smaller steady-state buffer target.
   - `discardOnResume: true` is still recommended if you care about interactive latency after tab/background resumes.
 - **VM mode** (real guest VM; producer is typically the IO worker and may stall on host IO/GC):
-  - use a larger `startupPrefillFrames` so initial device init / IO-worker stalls don’t immediately underrun.
-  - consider a less aggressive `latencyHint` (e.g. `"balanced"`/`"playback"`) if you see frequent underruns.
+  - use a larger `startupPrefillFrames` so initial device init / IO-worker stalls don’t immediately underrun:
+    - `startupPrefillFrames: 2048..4096` (~43–85ms @ 48kHz) is a reasonable starting range if you see cold-start underruns.
+  - consider a less aggressive `latencyHint` (e.g. `"balanced"`/`"playback"`) and/or a larger ring capacity if you see frequent underruns:
+    - default `ringBufferFrames` is ~200ms capacity (`sampleRate / 5`), but VM mode can justify ~400–500ms capacity
+      if the IO worker frequently stalls.
   - enable `discardOnResume` to avoid resuming with a large backlog of buffered guest audio (stale latency).
 
 ---
