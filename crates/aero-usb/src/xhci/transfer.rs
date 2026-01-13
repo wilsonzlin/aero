@@ -489,7 +489,7 @@ impl XhciTransferExecutor {
                 continue;
             }
             let chunk_len = remaining.len().min(len);
-            mem.write_physical(seg.paddr, &remaining[..chunk_len]);
+            mem.write_bytes(seg.paddr, &remaining[..chunk_len]);
             remaining = &remaining[chunk_len..];
             written += chunk_len;
         }
@@ -513,7 +513,7 @@ impl XhciTransferExecutor {
                 break;
             }
             let chunk_len = len.min(out.len() - offset);
-            mem.read_physical(seg.paddr, &mut out[offset..offset + chunk_len]);
+            mem.read_bytes(seg.paddr, &mut out[offset..offset + chunk_len]);
             offset += chunk_len;
         }
         out.truncate(offset);

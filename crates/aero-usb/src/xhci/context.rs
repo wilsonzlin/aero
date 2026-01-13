@@ -49,7 +49,7 @@ impl core::error::Error for ContextError {}
 
 fn read_context32_dwords(mem: &mut impl MemoryBus, paddr: u64) -> [u32; CONTEXT_DWORDS] {
     let mut raw = [0u8; CONTEXT_DWORDS * 4];
-    mem.read_physical(paddr, &mut raw);
+    mem.read_bytes(paddr, &mut raw);
     let mut out = [0u32; CONTEXT_DWORDS];
     for (i, dword) in out.iter_mut().enumerate() {
         let off = i * 4;
@@ -59,9 +59,7 @@ fn read_context32_dwords(mem: &mut impl MemoryBus, paddr: u64) -> [u32; CONTEXT_
 }
 
 fn read_u64_le(mem: &mut impl MemoryBus, paddr: u64) -> u64 {
-    let mut raw = [0u8; 8];
-    mem.read_physical(paddr, &mut raw);
-    u64::from_le_bytes(raw)
+    mem.read_u64(paddr)
 }
 
 /// Iterator over set bits in a 32-bit context flags field.
