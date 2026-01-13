@@ -16,6 +16,21 @@ use aero_io_snapshot::io::audio::state::{
 /// Size of the HDA MMIO region.
 pub const HDA_MMIO_SIZE: usize = 0x4000;
 
+/// Host-side telemetry for HDA microphone/capture.
+///
+/// These counters are **not** guest-visible state:
+/// - They are not included in `aero-io-snapshot` schemas.
+/// - They do not map to any HDA MMIO registers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HdaCaptureTelemetry {
+    /// Number of host capture samples dropped by the capture backend.
+    pub dropped_samples: u64,
+    /// Number of samples requested from the host capture backend that could not be read.
+    pub underrun_samples: u64,
+    /// Number of processing ticks that observed an underrun.
+    pub underrun_ticks: u64,
+}
+
 // Global register offsets (subset).
 const REG_GCAP: u64 = 0x00;
 const REG_VMIN: u64 = 0x02;
@@ -961,6 +976,8 @@ pub struct HdaController {
     /// `AudioContext` (and therefore potentially a different `AudioContext.sampleRate`) than the
     /// output AudioWorklet graph.
     capture_sample_rate_hz: u32,
+
+    capture_telemetry: HdaCaptureTelemetry,
 }
 
 impl Default for HdaController {
@@ -1032,6 +1049,8 @@ impl HdaController {
             irq_pending: false,
             output_rate_hz,
             capture_sample_rate_hz: output_rate_hz,
+
+            capture_telemetry: HdaCaptureTelemetry::default(),
         }
     }
 
@@ -1051,6 +1070,11 @@ impl HdaController {
     /// By default, the capture sample rate tracks [`Self::output_rate_hz`].
     pub fn capture_sample_rate_hz(&self) -> u32 {
         self.capture_sample_rate_hz
+    }
+
+    /// Return host-side microphone capture telemetry.
+    pub fn capture_telemetry(&self) -> HdaCaptureTelemetry {
+        self.capture_telemetry
     }
 
     /// Set the host/output sample rate used by the controller when emitting audio.
@@ -2143,9 +2167,13 @@ impl HdaController {
                 let need_src = required_src.saturating_sub(queued_src);
 
                 if need_src > 0 {
+                    self.capture_telemetry.dropped_samples += capture.take_dropped_samples();
+
                     rt.capture_mono_scratch.resize(need_src, 0.0);
                     let got = capture.read_mono_f32(&mut rt.capture_mono_scratch);
                     if got < need_src {
+                        self.capture_telemetry.underrun_samples += (need_src - got) as u64;
+                        self.capture_telemetry.underrun_ticks += 1;
                         rt.capture_mono_scratch[got..].fill(0.0);
                     }
 
