@@ -198,6 +198,15 @@ Canonical implementation:
 - Ring snapshot restore helper (JS): `web/src/platform/audio_ring_restore.ts` (`restoreAudioWorkletRing`)
 - Ring layout/constants + WASM producer bridge: `crates/platform/src/audio/worklet_bridge.rs`
 
+Note: `createAudioOutput` includes a few robustness/latency controls that are important for real VM runs:
+
+- `startupPrefillFrames` — optional startup silence prefill (reduces initial underrun spam / tolerates slow-starting producers)
+- `discardOnResume` — discards buffered playback frames on `AudioContext` resume to avoid stale latency after suspends
+- Safari/WebKit fallbacks (`webkitAudioContext`, constructor option retries, and `AudioWorkletNode` option compatibility retries)
+
+See [`docs/06-audio-subsystem.md`](../docs/06-audio-subsystem.md#createaudiooutput-options-latency-vs-robustness) for the canonical
+write-up and suggested defaults (demo mode vs VM mode).
+
 ```typescript
 // Simplified: AudioWorklet consumer for the SAB playback ring.
 //
@@ -226,6 +235,10 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
     this.samples = new Float32Array(sab, HEADER_BYTES);
     this.channelCount = options.processorOptions.channelCount;
     this.capacityFrames = options.processorOptions.capacityFrames;
+
+    // Canonical Aero worklet implementation also supports a small control channel:
+    // the main thread may post `{ type: "ring.reset" }` to discard any buffered backlog
+    // (`readFrameIndex := writeFrameIndex`) on resume.
   }
 
   process(_inputs, outputs) {
