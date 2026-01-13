@@ -3,13 +3,20 @@ import { describe, expect, it } from "vitest";
 import { RuntimeDiskClient } from "./runtime_disk_client";
 
 class MockWorker {
+  calls: Array<{ msg: any; transfer?: any[] }> = [];
   lastMessage: any;
   lastTransfer: readonly any[] | undefined;
+  throwOnNextPostMessage: boolean | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onmessage: ((event: any) => void) | null = null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   postMessage(msg: any, transfer?: any[]): void {
+    this.calls.push({ msg, transfer });
+    if (this.throwOnNextPostMessage) {
+      this.throwOnNextPostMessage = false;
+      throw new DOMException("Cannot transfer object of unsupported type.", "DataCloneError");
+    }
     this.lastMessage = msg;
     this.lastTransfer = transfer;
   }
@@ -90,6 +97,42 @@ describe("RuntimeDiskClient.write", () => {
     expect(w.lastTransfer?.[0]).toBe(payloadData.buffer);
 
     w.emit({ type: "response", requestId: 1, ok: true, result: { ok: true } });
+    await p;
+    client.close();
+  });
+
+  it("falls back to copying when direct-transfer postMessage throws DataCloneError", async () => {
+    const w = new MockWorker();
+    w.throwOnNextPostMessage = true;
+    const client = new RuntimeDiskClient(w as unknown as Worker);
+
+    const buffer = new ArrayBuffer(4);
+    const data = new Uint8Array(buffer);
+    data.set([1, 2, 3, 4]);
+
+    const p = client.write(1, 2, data);
+    // Allow the `.catch()` fallback to run.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(w.calls).toHaveLength(2);
+    expect(w.calls[0]?.transfer).toHaveLength(1);
+    expect(w.calls[0]?.transfer?.[0]).toBe(buffer);
+
+    const secondMsg = w.calls[1]?.msg as any;
+    const secondTransfer = w.calls[1]?.transfer;
+    expect(secondMsg.requestId).toBe(2);
+    expect(secondMsg.op).toBe("write");
+
+    const payloadData = secondMsg.payload.data as Uint8Array;
+    expect(payloadData).not.toBe(data);
+    expect(secondTransfer).toHaveLength(1);
+    expect(secondTransfer?.[0]).toBe(payloadData.buffer);
+
+    // Ensure we don't leak the failed request's pending entry.
+    expect(((client as any).pending as Map<number, unknown>).size).toBe(1);
+
+    w.emit({ type: "response", requestId: 2, ok: true, result: { ok: true } });
     await p;
     client.close();
   });

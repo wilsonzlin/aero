@@ -75,7 +75,14 @@ export class RuntimeDiskClient {
     return new Promise((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });
       const msg: RuntimeDiskRequestMessage = { type: "request", requestId, op, payload } as any;
-      this.worker.postMessage(msg, transfer ?? []);
+      try {
+        this.worker.postMessage(msg, transfer ?? []);
+      } catch (err) {
+        // If `postMessage` fails (e.g. DataCloneError due to an invalid transfer list), reject
+        // the request and ensure we don't leak a pending entry.
+        this.pending.delete(requestId);
+        reject(err);
+      }
     });
   }
 
@@ -108,7 +115,18 @@ export class RuntimeDiskClient {
     // after calling `write()`.
     const buffer = data.buffer;
     if (buffer instanceof ArrayBuffer && data.byteOffset === 0 && data.byteLength === buffer.byteLength) {
-      return this.request("write", { handle, lba, data }, [buffer]).then(() => undefined);
+      return this.request("write", { handle, lba, data }, [buffer])
+        .then(() => undefined)
+        .catch((err) => {
+          // Some ArrayBuffers (e.g. WebAssembly.Memory.buffer) are non-transferable even though
+          // they are not SharedArrayBuffer. If the transfer fails, fall back to copying so the
+          // write still succeeds.
+          if (err instanceof DOMException && err.name === "DataCloneError") {
+            const buf = data.slice();
+            return this.request("write", { handle, lba, data: buf }, [buf.buffer]).then(() => undefined);
+          }
+          throw err;
+        });
     }
 
     const buf = data.slice();
