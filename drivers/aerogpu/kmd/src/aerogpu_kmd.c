@@ -7473,6 +7473,13 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
             return STATUS_INVALID_PARAMETER;
         }
 
+        const ULONG minMaskPitch = (width + 7u) / 8u;
+        if (srcPitch < minMaskPitch) {
+            AeroGpuCursorDisable(adapter);
+            adapter->CursorShapeValid = FALSE;
+            return STATUS_INVALID_PARAMETER;
+        }
+
         /*
          * The mask buffer is `heightIn` rows (AND + XOR). We only read `height`
          * rows per plane.
