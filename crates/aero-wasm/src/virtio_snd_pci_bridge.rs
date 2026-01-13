@@ -816,7 +816,33 @@ impl VirtioSndPciBridge {
 mod tests {
     use super::*;
 
+    use aero_platform::audio::worklet_bridge::WorkletBridge;
+    use aero_virtio::devices::snd::VIRTIO_SND_R_PCM_INFO;
+    use aero_virtio::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le};
+    use aero_io_snapshot::io::state::SnapshotReader;
+    use aero_io_snapshot::io::virtio::state::VirtioPciTransportState;
+    use aero_virtio::pci::{
+        VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1, VIRTIO_STATUS_ACKNOWLEDGE,
+        VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
+    };
+    use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn write_desc(
+        mem: &mut dyn GuestMemory,
+        table: u64,
+        index: u16,
+        addr: u64,
+        len: u32,
+        flags: u16,
+        next: u16,
+    ) {
+        let base = table + u64::from(index) * 16;
+        write_u64_le(mem, base, addr).unwrap();
+        write_u32_le(mem, base + 8, len).unwrap();
+        write_u16_le(mem, base + 12, flags).unwrap();
+        write_u16_le(mem, base + 14, next).unwrap();
+    }
 
     #[wasm_bindgen_test]
     fn host_provided_sample_rates_are_clamped_to_avoid_oom() {
@@ -842,5 +868,240 @@ mod tests {
         assert_eq!(bridge.buffer_level_frames(), 0);
         assert_eq!(bridge.underrun_count(), 0);
         assert_eq!(bridge.overrun_count(), 0);
+    }
+
+    #[wasm_bindgen_test]
+    fn bus_master_enable_gates_queue_dma_and_irqs() {
+        // Back guest RAM with an isolated heap allocation so we can safely assert on memory
+        // mutation.
+        let mut guest = vec![0u8; 0x8000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let mut bridge = VirtioSndPciBridge::new(guest_base, guest_size, None).unwrap();
+
+        // Enable BAR0 MMIO decoding (PCI COMMAND.MEM) but leave Bus Master Enable clear.
+        bridge.set_pci_command(1u32 << 1);
+
+        // Configure virtqueue 0 (control queue) with a tiny "PCM_INFO" request so processing the
+        // queue will write a response into guest memory and produce an interrupt.
+        let desc_table = 0x1000u64;
+        let avail = 0x2000u64;
+        let used = 0x3000u64;
+        let req = 0x4000u64;
+        let resp = 0x5000u64;
+
+        // Descriptor table: [request (out)] -> [response (in)].
+        write_desc(
+            &mut bridge.mem,
+            desc_table,
+            0,
+            req,
+            12,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut bridge.mem,
+            desc_table,
+            1,
+            resp,
+            64,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        // Request payload.
+        let mut request = Vec::new();
+        request.extend_from_slice(&VIRTIO_SND_R_PCM_INFO.to_le_bytes());
+        request.extend_from_slice(&0u32.to_le_bytes()); // start_id
+        request.extend_from_slice(&1u32.to_le_bytes()); // count
+        bridge.mem.write(req, &request).unwrap();
+
+        // Initialize avail/used rings.
+        write_u16_le(&mut bridge.mem, avail, 0).unwrap(); // avail.flags (interrupts enabled)
+        write_u16_le(&mut bridge.mem, avail + 2, 1).unwrap(); // avail.idx
+        write_u16_le(&mut bridge.mem, avail + 4, 0).unwrap(); // avail.ring[0] = head desc index
+
+        write_u16_le(&mut bridge.mem, used, 0).unwrap(); // used.flags
+        write_u16_le(&mut bridge.mem, used + 2, 0).unwrap(); // used.idx
+
+        // Seed the response buffer with a sentinel so we can detect DMA writes.
+        bridge.mem.get_slice_mut(resp, 64).unwrap().fill(0xAA);
+
+        // Program queue addresses + enable via the virtio-pci common config region.
+        bridge.mmio_write(0x16, 2, 0); // queue_select = 0
+        bridge.mmio_write(0x20, 4, desc_table as u32);
+        bridge.mmio_write(0x24, 4, (desc_table >> 32) as u32);
+        bridge.mmio_write(0x28, 4, avail as u32);
+        bridge.mmio_write(0x2c, 4, (avail >> 32) as u32);
+        bridge.mmio_write(0x30, 4, used as u32);
+        bridge.mmio_write(0x34, 4, (used >> 32) as u32);
+        bridge.mmio_write(0x1c, 2, 1); // queue_enable = 1
+
+        // Kick queue 0 via the notify region (BAR0 + 0x1000). With BME clear, this must *not*
+        // perform DMA or assert IRQ.
+        bridge.mmio_write(0x1000, 4, 0);
+        assert!(!bridge.irq_asserted(), "IRQ should be gated when BME is clear");
+        assert_eq!(
+            read_u16_le(&bridge.mem, used + 2).unwrap(),
+            0,
+            "used.idx must not advance when BME is clear"
+        );
+        assert_eq!(
+            bridge.mem.get_slice(resp, 4).unwrap(),
+            &[0xAA; 4],
+            "response buffer must not be written when BME is clear"
+        );
+
+        // Now enable Bus Master and kick again. The device should DMA the response and update the
+        // used ring, producing an interrupt.
+        bridge.set_pci_command((1u32 << 1) | (1u32 << 2));
+        bridge.mmio_write(0x1000, 4, 0);
+
+        assert!(bridge.irq_asserted(), "IRQ should assert once DMA is permitted");
+        assert_eq!(read_u16_le(&bridge.mem, used + 2).unwrap(), 1);
+        assert_eq!(
+            bridge.mem.get_slice(resp, 4).unwrap(),
+            &[0, 0, 0, 0],
+            "response header should contain VIRTIO_SND_S_OK"
+        );
+
+        drop(guest);
+    }
+
+    #[wasm_bindgen_test]
+    fn snapshot_roundtrip_is_deterministic() {
+        let mut guest1 = vec![0u8; 0x4000];
+        let guest_base1 = guest1.as_mut_ptr() as u32;
+        let guest_size1 = guest1.len() as u32;
+
+        let mut bridge1 = VirtioSndPciBridge::new(guest_base1, guest_size1, None).unwrap();
+        bridge1.set_pci_command(1u32 << 1); // enable MMIO decode so common_cfg writes stick
+
+        // Mutate virtio-snd state.
+        bridge1.set_host_sample_rate_hz(44_100).unwrap();
+        bridge1.set_capture_sample_rate_hz(48_000).unwrap();
+
+        // Mutate virtio-pci transport state: negotiate a minimal feature set and set DRIVER_OK.
+        // driver_feature_select = 1 (high 32 bits)
+        bridge1.mmio_write(0x08, 4, 1);
+        // driver_features[63:32] = 1 => VIRTIO_F_VERSION_1 (bit 32)
+        bridge1.mmio_write(0x0c, 4, 1);
+
+        // Also opt into indirect descriptors to exercise the low feature page.
+        bridge1.mmio_write(0x08, 4, 0);
+        bridge1.mmio_write(0x0c, 4, VIRTIO_F_RING_INDIRECT_DESC as u32);
+
+        let status = VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK;
+        bridge1.mmio_write(0x14, 1, status as u32);
+
+        let snap1 = bridge1.save_state();
+
+        let mut guest2 = vec![0u8; 0x4000];
+        let guest_base2 = guest2.as_mut_ptr() as u32;
+        let guest_size2 = guest2.len() as u32;
+
+        let mut bridge2 = VirtioSndPciBridge::new(guest_base2, guest_size2, None).unwrap();
+        bridge2.load_state(&snap1).unwrap();
+        let snap2 = bridge2.save_state();
+
+        assert_eq!(
+            snap1, snap2,
+            "save_state -> load_state -> save_state must be stable"
+        );
+
+        // Sanity-check the decoded snapshot contents.
+        let mut decoded = VirtioSndPciState::default();
+        decoded.load_state(&snap2).unwrap();
+
+        assert!(
+            decoded.snd.host_sample_rate_hz == 44_100 && decoded.snd.capture_sample_rate_hz == 48_000,
+            "expected host/capture sample rates to survive snapshot restore"
+        );
+
+        // Verify that the embedded virtio-pci snapshot advertises DRIVER_OK and negotiated
+        // `VIRTIO_F_VERSION_1`.
+        let vpci = SnapshotReader::parse(&decoded.virtio_pci, *b"VPCI").unwrap();
+        let transport_bytes = vpci.bytes(2).expect("virtio-pci transport field");
+        let transport = VirtioPciTransportState::decode(transport_bytes).unwrap();
+        assert_ne!(
+            transport.device_status & VIRTIO_STATUS_DRIVER_OK,
+            0,
+            "expected DRIVER_OK to survive snapshot restore"
+        );
+        assert_ne!(
+            transport.negotiated_features & VIRTIO_F_VERSION_1,
+            0,
+            "expected VIRTIO_F_VERSION_1 to be negotiated"
+        );
+
+        drop(guest1);
+        drop(guest2);
+    }
+
+    #[wasm_bindgen_test]
+    fn deferred_worklet_ring_restore_is_applied_on_attach() {
+        let capacity_frames = 8;
+        let channel_count = 2;
+
+        // Create a snapshot with a non-trivial ring state.
+        let mut guest1 = vec![0u8; 0x4000];
+        let guest_base1 = guest1.as_mut_ptr() as u32;
+        let guest_size1 = guest1.len() as u32;
+        let mut bridge1 = VirtioSndPciBridge::new(guest_base1, guest_size1, None).unwrap();
+
+        let ring = WorkletBridge::new(capacity_frames, channel_count).unwrap();
+        let sab = ring.shared_buffer();
+        bridge1
+            .attach_audio_ring(sab.clone(), capacity_frames, channel_count)
+            .unwrap();
+
+        let expected = AudioWorkletRingState {
+            capacity_frames,
+            read_pos: 2,
+            write_pos: 6,
+        };
+        ring.restore_state(&expected);
+
+        let snap = bridge1.save_state();
+
+        // Restore into a fresh bridge before attaching any AudioWorklet ring. This should stash the
+        // ring state in `pending_audio_ring_state`.
+        let mut guest2 = vec![0u8; 0x4000];
+        let guest_base2 = guest2.as_mut_ptr() as u32;
+        let guest_size2 = guest2.len() as u32;
+        let mut bridge2 = VirtioSndPciBridge::new(guest_base2, guest_size2, None).unwrap();
+        bridge2.load_state(&snap).unwrap();
+
+        assert_eq!(
+            bridge2.pending_audio_ring_state.as_ref(),
+            Some(&expected),
+            "load_state should retain worklet ring indices when no ring is attached"
+        );
+
+        // Corrupt the ring indices so we can observe the deferred restore when attaching.
+        ring.restore_state(&AudioWorkletRingState {
+            capacity_frames,
+            read_pos: 123,
+            write_pos: 125,
+        });
+        assert_ne!(ring.snapshot_state(), expected);
+
+        bridge2
+            .attach_audio_ring(sab, capacity_frames, channel_count)
+            .unwrap();
+
+        assert_eq!(ring.snapshot_state(), expected);
+        assert!(
+            bridge2.pending_audio_ring_state.is_none(),
+            "pending state should be consumed once applied"
+        );
+
+        drop(guest1);
+        drop(guest2);
     }
 }
