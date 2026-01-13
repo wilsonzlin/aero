@@ -5950,6 +5950,176 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   return true;
 }
 
+bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x142u);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  aerogpu_handle_t internal_decl = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fvf_vertex_decl_xyz_diffuse_tex1 != nullptr, "FVF internal vertex decl created")) {
+      return false;
+    }
+    internal_decl = dev->fvf_vertex_decl_xyz_diffuse_tex1->handle;
+
+    // Set a non-identity world matrix so the uploaded WVP constants are easy to spot.
+    auto set_identity = [](float m[16]) {
+      std::memset(m, 0, 16 * sizeof(float));
+      m[0] = 1.0f;
+      m[5] = 1.0f;
+      m[10] = 1.0f;
+      m[15] = 1.0f;
+    };
+
+    set_identity(dev->transform_matrices[256]); // D3DTS_WORLD
+    set_identity(dev->transform_matrices[2]);   // D3DTS_VIEW
+    set_identity(dev->transform_matrices[3]);   // D3DTS_PROJECTION
+
+    // Scale on the diagonal.
+    dev->transform_matrices[256][0] = 2.0f;
+    dev->transform_matrices[256][5] = 3.0f;
+    dev->transform_matrices[256][10] = 4.0f;
+
+    dev->fixedfunc_matrix_dirty = true;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {-1.0f, -1.0f, 0.0f, kWhite, 0.0f, 0.0f};
+  verts[1] = {1.0f, -1.0f, 0.0f, kWhite, 1.0f, 0.0f};
+  verts[2] = {0.0f, 1.0f, 0.0f, kWhite, 0.5f, 1.0f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  // Internal fixed-function shaders should have been created.
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2,
+             "fixed-function fallback creates shaders")) {
+    return false;
+  }
+
+  const CmdLoc set_layout = FindLastOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!Check(set_layout.hdr != nullptr, "set_input_layout emitted")) {
+    return false;
+  }
+  const auto* set_layout_cmd = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(set_layout.hdr);
+  if (!Check(set_layout_cmd->input_layout_handle == internal_decl, "set_input_layout binds internal FVF decl")) {
+    return false;
+  }
+
+  const CmdLoc set_consts = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
+  if (!Check(set_consts.hdr != nullptr, "set_shader_constants_f emitted")) {
+    return false;
+  }
+  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
+  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
+    return false;
+  }
+  if (!Check(const_cmd->start_register == 0, "WVP constants start register")) {
+    return false;
+  }
+  if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
+    return false;
+  }
+
+  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
+  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[5] - 3.0f) < 1e-6f, "WVP[1][1] = 3")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[10] - 4.0f) < 1e-6f, "WVP[2][2] = 4")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
+    return false;
+  }
+
+  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
+    return false;
+  }
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  return Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles");
+}
+
 bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -12170,6 +12340,7 @@ int main() {
   failures += !aerogpu::TestSetVertexDeclDerivesFixedFunctionFvf();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();

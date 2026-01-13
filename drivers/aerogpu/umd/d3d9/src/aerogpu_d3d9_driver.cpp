@@ -2789,6 +2789,17 @@ static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float 
   }
 }
 
+// Fixed-function fallback shader constant register ranges.
+// The WVP matrix is uploaded as 4 float4 registers (row-major).
+constexpr uint32_t kFixedfuncMatrixStartRegister = 0u;
+constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
+
+// D3DTRANSFORMSTATETYPE numeric values (d3d9types.h). Use local constants so we
+// can key off them even when building without the Windows SDK/WDK.
+constexpr uint32_t kD3dTransformView = 2u;
+constexpr uint32_t kD3dTransformProjection = 3u;
+constexpr uint32_t kD3dTransformWorld0 = 256u;
+
 // -----------------------------------------------------------------------------
 // Handle helpers
 // -----------------------------------------------------------------------------
@@ -4269,6 +4280,71 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot, Shad
 
 } // namespace
 
+static bool emit_set_shader_constants_f_locked(
+    Device* dev,
+    uint32_t stage,
+    uint32_t start_reg,
+    const float* data,
+    uint32_t vec4_count) {
+  if (!dev || !data || vec4_count == 0) {
+    return false;
+  }
+  if (start_reg >= 256 || vec4_count > 256u - start_reg) {
+    return false;
+  }
+
+  float* dst = (stage == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
+  std::memcpy(dst + start_reg * 4u, data, static_cast<size_t>(vec4_count) * 4u * sizeof(float));
+
+  const size_t payload_size = static_cast<size_t>(vec4_count) * 4u * sizeof(float);
+  auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_f>(
+      dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_F, data, payload_size);
+  if (!cmd) {
+    return false;
+  }
+  cmd->stage = d3d9_stage_to_aerogpu_stage(stage);
+  cmd->start_register = start_reg;
+  cmd->vec4_count = vec4_count;
+  cmd->reserved0 = 0;
+  return true;
+}
+
+static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float out[16]) {
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      out[r * 4 + c] =
+          a[r * 4 + 0] * b[0 * 4 + c] +
+          a[r * 4 + 1] * b[1 * 4 + c] +
+          a[r * 4 + 2] * b[2 * 4 + c] +
+          a[r * 4 + 3] * b[3 * 4 + c];
+    }
+  }
+}
+
+static HRESULT ensure_fixedfunc_wvp_constants_locked(Device* dev) {
+  if (!dev) {
+    return E_FAIL;
+  }
+  if (!dev->fixedfunc_matrix_dirty) {
+    return S_OK;
+  }
+
+  float world_view[16] = {};
+  float wvp[16] = {};
+  d3d9_mul_mat4_row_major(dev->transform_matrices[kD3dTransformWorld0], dev->transform_matrices[kD3dTransformView], world_view);
+  d3d9_mul_mat4_row_major(world_view, dev->transform_matrices[kD3dTransformProjection], wvp);
+
+  if (!emit_set_shader_constants_f_locked(dev,
+                                         kD3d9ShaderStageVs,
+                                         kFixedfuncMatrixStartRegister,
+                                         wvp,
+                                         kFixedfuncMatrixVec4Count)) {
+    return E_OUTOFMEMORY;
+  }
+
+  dev->fixedfunc_matrix_dirty = false;
+  return S_OK;
+}
 HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   if (!dev || !dev->adapter) {
     return E_FAIL;
@@ -4278,30 +4354,54 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     return D3DERR_INVALIDCALL;
   }
 
-  const bool tex1 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1 || dev->fvf == kSupportedFvfXyzDiffuseTex1);
-
   Shader** vs_slot = nullptr;
   Shader** ps_slot = nullptr;
   VertexDecl* fvf_decl = nullptr;
   const void* vs_bytes = nullptr;
   uint32_t vs_size = 0;
+  bool needs_matrix = false;
 
-  if (!tex1) {
-    vs_slot = &dev->fixedfunc_vs;
-    ps_slot = &dev->fixedfunc_ps;
-    if (dev->fvf == kSupportedFvfXyzrhwDiffuse) {
+  switch (dev->fvf) {
+    case kSupportedFvfXyzrhwDiffuse:
+      vs_slot = &dev->fixedfunc_vs;
+      ps_slot = &dev->fixedfunc_ps;
       fvf_decl = dev->fvf_vertex_decl;
-    }
-    vs_bytes = fixedfunc::kVsPassthroughPosColor;
-    vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
-  } else {
-    vs_slot = &dev->fixedfunc_vs_tex1;
-    ps_slot = &dev->fixedfunc_ps_tex1;
-    if (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) {
+      vs_bytes = fixedfunc::kVsPassthroughPosColor;
+      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
+      break;
+    case kSupportedFvfXyzDiffuse:
+      // Bring-up: treat XYZ vertices as already in clip space (no WVP transform).
+      // Some host-side tests intentionally pass clip-space-ish coordinates here.
+      vs_slot = &dev->fixedfunc_vs;
+      ps_slot = &dev->fixedfunc_ps;
+      vs_bytes = fixedfunc::kVsPassthroughPosColor;
+      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
+      break;
+    case kSupportedFvfXyzrhwDiffuseTex1:
+      vs_slot = &dev->fixedfunc_vs_tex1;
+      ps_slot = &dev->fixedfunc_ps_tex1;
       fvf_decl = dev->fvf_vertex_decl_tex1;
-    }
-    vs_bytes = fixedfunc::kVsPassthroughPosColorTex1;
-    vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1));
+      vs_bytes = fixedfunc::kVsPassthroughPosColorTex1;
+      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1));
+      break;
+    case kSupportedFvfXyzDiffuseTex1:
+      // XYZ vertices require a WVP transform in the VS. When SetFVF is used, the
+      // UMD synthesizes an internal declaration so it can bind a known input layout.
+      vs_slot = &dev->fixedfunc_vs_xyz_diffuse_tex1;
+      ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+      fvf_decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
+      vs_bytes = fixedfunc::kVsWvpPosColorTex0;
+      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorTex0));
+      needs_matrix = true;
+      break;
+    default:
+      // Note: `fixedfunc_supported_fvf` currently includes additional FVFs that
+      // may be accepted for bring-up. Keep the draw path conservative.
+      return D3DERR_INVALIDCALL;
+  }
+
+  if (!vs_slot || !ps_slot || !vs_bytes) {
+    return E_FAIL;
   }
 
   if (!*vs_slot) {
@@ -4310,6 +4410,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       return E_OUTOFMEMORY;
     }
   }
+
   const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot, *vs_slot);
   if (FAILED(ps_hr)) {
     return ps_hr;
@@ -4325,15 +4426,20 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     }
   }
 
+  if (needs_matrix) {
+    const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
   // Bind the fixed-function shaders iff the app did not set explicit shaders.
   if (!dev->user_vs && !dev->user_ps) {
-    Shader* desired_vs = *vs_slot;
-    Shader* desired_ps = *ps_slot;
-    if (dev->vs != desired_vs || dev->ps != desired_ps) {
+    if (dev->vs != *vs_slot || dev->ps != *ps_slot) {
       Shader* prev_vs = dev->vs;
       Shader* prev_ps = dev->ps;
-      dev->vs = desired_vs;
-      dev->ps = desired_ps;
+      dev->vs = *vs_slot;
+      dev->ps = *ps_slot;
       if (!emit_bind_shaders_locked(dev)) {
         dev->vs = prev_vs;
         dev->ps = prev_ps;
@@ -7369,10 +7475,20 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fvf_vertex_decl_tex1;
       dev->fvf_vertex_decl_tex1 = nullptr;
     }
+    if (dev->fvf_vertex_decl_xyz_diffuse_tex1) {
+      (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_diffuse_tex1->handle);
+      delete dev->fvf_vertex_decl_xyz_diffuse_tex1;
+      dev->fvf_vertex_decl_xyz_diffuse_tex1 = nullptr;
+    }
     if (dev->fixedfunc_vs) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs->handle);
       delete dev->fixedfunc_vs;
       dev->fixedfunc_vs = nullptr;
+    }
+    if (dev->fixedfunc_vs_xyz_diffuse_tex1) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_diffuse_tex1->handle);
+      delete dev->fixedfunc_vs_xyz_diffuse_tex1;
+      dev->fixedfunc_vs_xyz_diffuse_tex1 = nullptr;
     }
     if (dev->fixedfunc_ps) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps->handle);
@@ -7388,6 +7504,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_tex1->handle);
       delete dev->fixedfunc_ps_tex1;
       dev->fixedfunc_ps_tex1 = nullptr;
+    }
+    if (dev->fixedfunc_ps_xyz_diffuse_tex1) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_xyz_diffuse_tex1->handle);
+      delete dev->fixedfunc_ps_xyz_diffuse_tex1;
+      dev->fixedfunc_ps_xyz_diffuse_tex1 = nullptr;
     }
     if (dev->up_vertex_buffer) {
       (void)emit_destroy_resource_locked(dev, dev->up_vertex_buffer->handle);
@@ -11270,6 +11391,12 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
     }
   }
   dev->fvf = implied_fvf;
+  if (implied_fvf == kSupportedFvfXyzDiffuseTex1) {
+    // Switching to the WVP-fixed-function path must refresh the reserved VS
+    // constant range, even if transforms did not change (user shaders may have
+    // written overlapping registers).
+    dev->fixedfunc_matrix_dirty = true;
+  }
   stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
   return trace.ret(S_OK);
 }
@@ -11319,7 +11446,13 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   if (fvf == dev->fvf) {
-    stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
+    VertexDecl* decl = dev->vertex_decl;
+    if (fvf == kSupportedFvfXyzrhwDiffuse) {
+      decl = dev->fvf_vertex_decl;
+    } else if (fvf == kSupportedFvfXyzDiffuseTex1) {
+      decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
+    }
+    stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
     return trace.ret(S_OK);
   }
 
@@ -11368,6 +11501,35 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     }
     dev->fvf = fvf;
     stateblock_record_vertex_decl_locked(dev, *decl_slot, dev->fvf);
+    return trace.ret(S_OK);
+  }
+
+  if (fvf == kSupportedFvfXyzDiffuseTex1) {
+    if (!dev->fvf_vertex_decl_xyz_diffuse_tex1) {
+      const D3DVERTEXELEMENT9_COMPAT elems[] = {
+          // stream, offset, type, method, usage, usage_index
+          {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*POSITION=*/0, 0},
+          {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+          {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+      };
+
+      dev->fvf_vertex_decl_xyz_diffuse_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+      if (!dev->fvf_vertex_decl_xyz_diffuse_tex1) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+    }
+
+    if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_diffuse_tex1)) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    dev->fvf = fvf;
+    // Fixed-function shaders use a reserved VS constant range for the combined
+    // world/view/projection matrix; mark it dirty so we re-upload on the next draw
+    // even if transforms themselves did not change (user shaders may have written
+    // overlapping registers before switching back to FVF mode).
+    dev->fixedfunc_matrix_dirty = true;
+    stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl_xyz_diffuse_tex1, dev->fvf);
     return trace.ret(S_OK);
   }
 
@@ -12066,6 +12228,9 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       std::memcpy(dev->transform_matrices[t],
                   sb->transform_values.data() + static_cast<size_t>(t) * 16u,
                   sizeof(float) * 16u);
+      if (t == kD3dTransformWorld0 || t == kD3dTransformView || t == kD3dTransformProjection) {
+        dev->fixedfunc_matrix_dirty = true;
+      }
       stateblock_record_transform_locked(dev, t, dev->transform_matrices[t]);
     }
   }
@@ -12908,6 +13073,9 @@ HRESULT device_set_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, const Ma
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   std::memcpy(dev->transform_matrices[idx], pMatrix, 16 * sizeof(float));
+  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
+    dev->fixedfunc_matrix_dirty = true;
+  }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
   return trace.ret(S_OK);
 }
@@ -12942,6 +13110,9 @@ HRESULT device_multiply_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, con
   std::memcpy(rhs, pMatrix, sizeof(rhs));
   d3d9_mul_mat4_row_major(dev->transform_matrices[idx], rhs, tmp);
   std::memcpy(dev->transform_matrices[idx], tmp, sizeof(tmp));
+  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
+    dev->fixedfunc_matrix_dirty = true;
+  }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
 
   return trace.ret(S_OK);

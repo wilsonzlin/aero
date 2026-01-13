@@ -5,12 +5,15 @@
 namespace aerogpu {
 
 // Minimal built-in D3D9 SM2.0 shader token streams used by the AeroGPU D3D9 UMD
-// fixed-function fallback path (bring-up FVF subset: `XYZRHW|DIFFUSE` and
-// `XYZRHW|DIFFUSE|TEX1`).
+// fixed-function fallback path (bring-up FVF subset).
 //
 // These are intentionally tiny and avoid declarations so they can be consumed by
 // early bring-up shader translators (mov/add/mul subset).
 namespace fixedfunc {
+
+// -----------------------------------------------------------------------------
+// Vertex shaders
+// -----------------------------------------------------------------------------
 
 // vs_2_0:
 //   mov oPos, v0
@@ -49,6 +52,56 @@ static constexpr uint32_t kVsPassthroughPosColorTex1[] = {
     0x10E40002u, // v2.xyzw
     0x0000FFFFu, // end
 };
+
+// vs_2_0:
+//   dp4 oPos.x, v0, c0
+//   dp4 oPos.y, v0, c1
+//   dp4 oPos.z, v0, c2
+//   dp4 oPos.w, v0, c3
+//   mov oD0, v1
+//   mov oT0, v2
+//   end
+//
+// This shader is used by fixed-function emulation for:
+//   D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1
+// where the UMD uploads `world_view_proj` into c0..c3.
+static constexpr uint32_t kVsWvpPosColorTex0[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x03000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E40000u, // c0.xyzw
+
+    0x03000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E40001u, // c1.xyzw
+
+    0x03000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E40002u, // c2.xyzw
+
+    0x03000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E40003u, // c3.xyzw
+
+    0x02000001u, // mov (2 operands)
+    0x500F0000u, // oD0.xyzw
+    0x10E40001u, // v1.xyzw
+
+    0x02000001u, // mov (2 operands)
+    0x600F0000u, // oT0.xyzw
+    0x10E40002u, // v2.xyzw
+
+    0x0000FFFFu, // end
+};
+
+// -----------------------------------------------------------------------------
+// Pixel shaders
+// -----------------------------------------------------------------------------
 
 // ps_2_0:
 //   mov oC0, v0
@@ -243,5 +296,7 @@ static constexpr uint32_t kPsStage0ModulateTexture[] = {
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
 };
+
 } // namespace fixedfunc
 } // namespace aerogpu
+
