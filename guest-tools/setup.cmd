@@ -609,25 +609,49 @@ if not defined AERO_VIRTIO_BLK_HWIDS (
 exit /b 0
 
 :check_kb3033929
-rem KB3033929 adds SHA-256 signature validation support to Windows 7.
-rem If Aero's driver catalogs are SHA-256 signed and this update is missing,
-rem Device Manager may report Code 52 (signature verification failure).
+rem SHA-2 / SHA-256 signing prerequisites for Windows 7:
+rem - KB3033929 (adds SHA-256 signature validation support)
+rem - KB4474419 (SHA-2 code signing support update)
+rem - KB4490628 (servicing stack prerequisite often needed to install KB4474419)
+rem If driver catalogs are SHA-256 signed and these updates are missing, Device Manager may
+rem report Code 52 (signature verification failure).
 call :log ""
-call :log "Checking for KB3033929 (SHA-256 signature support)..."
+call :log "Checking for Windows 7 signing prerequisites (KB3033929/KB4474419/KB4490628)..."
 
-if /i "%OS_ARCH%"=="amd64" (
-  if not exist "%SYS32%\wmic.exe" (
-    call :log "WARNING: wmic.exe not found; cannot detect KB3033929."
-    exit /b 0
-  )
+if not exist "%SYS32%\wmic.exe" (
+  call :log "WARNING: wmic.exe not found; cannot detect installed hotfixes (KB3033929/KB4474419/KB4490628)."
+  call :log "         See: docs/windows7-driver-troubleshooting.md#issue-missing-kb3033929-sha-256-signature-support"
+  exit /b 0
+)
 
-  "%SYS32%\wmic.exe" qfe get HotFixID 2>nul | findstr /i "KB3033929" >nul 2>&1
-  if errorlevel 1 (
-    call :log "WARNING: KB3033929 not detected. If Aero driver packages are SHA-256 signed, Windows 7 x64 may refuse to load them (Code 52)."
-    call :log "         Install KB3033929 (offline) or use SHA-1 signed driver catalogs."
-  ) else (
-    call :log "KB3033929 detected."
-  )
+set "KB_MISSING=0"
+
+"%SYS32%\wmic.exe" qfe get HotFixID 2>nul | findstr /i "KB3033929" >nul 2>&1
+if errorlevel 1 (
+  set "KB_MISSING=1"
+  call :log "WARNING: KB3033929 not detected. Windows may be unable to verify SHA-256-signed driver catalogs (Code 52)."
+) else (
+  call :log "KB3033929 detected."
+)
+
+"%SYS32%\wmic.exe" qfe get HotFixID 2>nul | findstr /i "KB4474419" >nul 2>&1
+if errorlevel 1 (
+  set "KB_MISSING=1"
+  call :log "WARNING: KB4474419 not detected. This SHA-2 support update is often required for newer SHA-2 signatures (Code 52)."
+) else (
+  call :log "KB4474419 detected."
+)
+
+"%SYS32%\wmic.exe" qfe get HotFixID 2>nul | findstr /i "KB4490628" >nul 2>&1
+if errorlevel 1 (
+  set "KB_MISSING=1"
+  call :log "WARNING: KB4490628 not detected. This servicing stack update is often required before KB4474419 can install."
+) else (
+  call :log "KB4490628 detected."
+)
+
+if "%KB_MISSING%"=="1" (
+  call :log "         Guidance: docs/windows7-driver-troubleshooting.md#issue-missing-kb3033929-sha-256-signature-support"
 )
 
 exit /b 0

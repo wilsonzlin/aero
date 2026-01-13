@@ -1005,7 +1005,10 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         "optional_tools",
         "guest_tools_setup_state",
         "guest_tools_config",
+        "clock_sanity",
         "kb3033929",
+        "kb4474419",
+        "kb4490628",
         "certificate_store",
         "signature_mode",
         "driver_packages",
@@ -2094,7 +2097,35 @@ try {
     Add-Check "packaged_drivers_summary" "Packaged Drivers (media INFs)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
-# --- Hotfix: KB3033929 (SHA-256 signature support) ---
+# --- Clock sanity (certificate validity depends on correct time) ---
+try {
+    $now = Get-Date
+    $year = $now.Year
+    $minYear = 2015
+    $maxYear = 2100
+
+    $clockStatus = "PASS"
+    $clockSummary = "System clock: " + $now.ToString()
+    $clockDetails = @()
+    if (($year -lt $minYear) -or ($year -gt $maxYear)) {
+        $clockStatus = "WARN"
+        $clockSummary = "System clock looks wrong: " + $now.ToString()
+        $clockDetails += "Set correct date/time; incorrect clock can break signature verification (certificates may appear not-yet-valid or expired)."
+        $clockDetails += "See: docs/windows7-driver-troubleshooting.md#issue-device-manager-code-52-signature-and-trust-failures"
+    }
+
+    $clockData = @{
+        now_local = $now.ToString("o")
+        year = $year
+        min_year = $minYear
+        max_year = $maxYear
+    }
+    Add-Check "clock_sanity" "Clock Sanity (signature validity)" $clockStatus $clockSummary $clockData $clockDetails
+} catch {
+    Add-Check "clock_sanity" "Clock Sanity (signature validity)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Hotfix: KB3033929 (SHA-256 / SHA-2 signature support) ---
 try {
     $kb = Try-GetWmi "Win32_QuickFixEngineering" "HotFixID='KB3033929'"
     $installed = $false
@@ -2115,13 +2146,6 @@ try {
         }
     }
 
-    $is64 = $false
-    if ($report.checks.ContainsKey("os") -and $report.checks.os.data -and $report.checks.os.data.architecture) {
-        $is64 = ("" + $report.checks.os.data.architecture) -match '64'
-    } else {
-        $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
-    }
-
     $kbStatus = "PASS"
     $kbSummary = ""
     $kbDetails = @()
@@ -2130,17 +2154,95 @@ try {
         $kbSummary = "KB3033929 is installed."
     } else {
         $kbSummary = "KB3033929 is NOT installed."
-        if ($is64) {
-            $kbStatus = "WARN"
-            $kbDetails += "Windows 7 x64 may require KB3033929 to validate SHA-256-signed driver catalogs (otherwise Device Manager Code 52)."
-        } else {
-            $kbDetails += "If your driver packages are SHA-256 signed, KB3033929 may still be required."
-        }
+        $kbStatus = "WARN"
+        $kbDetails += "Windows 7 may require KB3033929 to validate SHA-256-signed driver catalogs (otherwise Device Manager Code 52)."
+        $kbDetails += "Install KB3033929 (x86/x64) and reboot."
+        $kbDetails += "See: docs/windows7-driver-troubleshooting.md#issue-missing-kb3033929-sha-256-signature-support"
     }
 
     Add-Check "kb3033929" "Hotfix: KB3033929 (SHA-256 signatures)" $kbStatus $kbSummary $kbInfo $kbDetails
 } catch {
     Add-Check "kb3033929" "Hotfix: KB3033929 (SHA-256 signatures)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Hotfix: KB4474419 (SHA-2 code signing support update) ---
+try {
+    $kb = Try-GetWmi "Win32_QuickFixEngineering" "HotFixID='KB4474419'"
+    $installed = $false
+    $kbInfo = $null
+    if ($kb) {
+        $installed = $true
+        $one = $kb | Select-Object -First 1
+        $kbInfo = @{
+            hotfix_id = "" + $one.HotFixID
+            description = "" + $one.Description
+            installed_on = "" + $one.InstalledOn
+            installed_by = "" + $one.InstalledBy
+        }
+    } else {
+        $kbInfo = @{
+            hotfix_id = "KB4474419"
+            installed = $false
+        }
+    }
+
+    $kbStatus = "PASS"
+    $kbSummary = ""
+    $kbDetails = @()
+
+    if ($installed) {
+        $kbSummary = "KB4474419 is installed."
+    } else {
+        $kbSummary = "KB4474419 is NOT installed."
+        $kbStatus = "WARN"
+        $kbDetails += "Windows 7 may require KB4474419 (SHA-2 support update) to validate newer SHA-2 signatures (otherwise Device Manager Code 52)."
+        $kbDetails += "Install KB4474419 and reboot (KB4490628 is a common prerequisite)."
+        $kbDetails += "See: docs/windows7-driver-troubleshooting.md#issue-missing-kb3033929-sha-256-signature-support"
+    }
+
+    Add-Check "kb4474419" "Hotfix: KB4474419 (SHA-2 signatures)" $kbStatus $kbSummary $kbInfo $kbDetails
+} catch {
+    Add-Check "kb4474419" "Hotfix: KB4474419 (SHA-2 signatures)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Hotfix: KB4490628 (servicing stack prerequisite) ---
+try {
+    $kb = Try-GetWmi "Win32_QuickFixEngineering" "HotFixID='KB4490628'"
+    $installed = $false
+    $kbInfo = $null
+    if ($kb) {
+        $installed = $true
+        $one = $kb | Select-Object -First 1
+        $kbInfo = @{
+            hotfix_id = "" + $one.HotFixID
+            description = "" + $one.Description
+            installed_on = "" + $one.InstalledOn
+            installed_by = "" + $one.InstalledBy
+        }
+    } else {
+        $kbInfo = @{
+            hotfix_id = "KB4490628"
+            installed = $false
+        }
+    }
+
+    $kbStatus = "PASS"
+    $kbSummary = ""
+    $kbDetails = @()
+
+    if ($installed) {
+        $kbSummary = "KB4490628 is installed."
+    } else {
+        $kbSummary = "KB4490628 is NOT installed."
+        $kbStatus = "WARN"
+        $kbDetails += "KB4490628 is a common servicing stack prerequisite for installing KB4474419 (SHA-2 support update)."
+        $kbDetails += "Install KB4490628, then install KB4474419, then reboot."
+        $kbDetails += "See: docs/windows7-driver-troubleshooting.md#issue-missing-kb3033929-sha-256-signature-support"
+    }
+
+    Add-Check "kb4490628" "Hotfix: KB4490628 (Servicing Stack)" $kbStatus $kbSummary $kbInfo $kbDetails
+} catch {
+    Add-Check "kb4490628" "Hotfix: KB4490628 (Servicing Stack)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Certificate store (driver signing trust) ---

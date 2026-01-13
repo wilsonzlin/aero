@@ -296,7 +296,8 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
   - Provider
   - `DriverVer`
   - best-effort HWID patterns (used for later correlation)
-- **KB3033929 (SHA-256 signatures)**: detects whether the hotfix is installed (relevant for SHA-256-signed driver packages on Win7).
+- **Clock sanity**: warns if the guest date/time is obviously wrong (incorrect clock can break signature verification).
+- **SHA-2 hotfix prerequisites (KB3033929 / KB4474419 / KB4490628)**: detects whether these updates are installed (relevant for SHA-2/SHA-256-signed driver packages on Win7).
 - **Certificate store**: verifies that Guest Tools certificate(s) (from `certs\`, e.g. `*.cer`, `*.crt`, `*.p7b`) are installed into **Local Machine**:
   - Trusted Root Certification Authorities (**Root**)
   - Trusted Publishers (**TrustedPublisher**)
