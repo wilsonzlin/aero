@@ -25,6 +25,13 @@ fn write_cfg_u32(bus: &mut PcCpuBus, bdf: PciBdf, offset: u8, value: u32) {
         .unwrap();
 }
 
+fn write_cfg_u16(bus: &mut PcCpuBus, bdf: PciBdf, offset: u8, value: u16) {
+    bus.io_write(PCI_CFG_ADDR_PORT, 4, u64::from(cfg_addr(bdf, offset)))
+        .unwrap();
+    bus.io_write(PCI_CFG_DATA_PORT, 2, u64::from(value))
+        .unwrap();
+}
+
 #[test]
 fn pc_cpu_bus_routes_pci_io_bar_and_tracks_bar_reprogramming() {
     let platform = PcPlatform::new_with_e1000(2 * 1024 * 1024);
@@ -44,6 +51,19 @@ fn pc_cpu_bus_routes_pci_io_bar_and_tracks_bar_reprogramming() {
     assert_ne!(status_mmio, 0xffff_ffff);
 
     // Program IOADDR at BAR1 base.
+    bus.io_write(bar1_base, 4, 0x0000_0008).unwrap();
+    let status_io = bus.io_read(bar1_base + 0x04, 4).unwrap() as u32;
+    assert_eq!(status_io, status_mmio);
+
+    // COMMAND.IO gating should be enforced for PCI I/O BAR dispatch.
+    let command = read_cfg_u32(&mut bus, bdf, 0x04) as u16;
+    assert_ne!(command & 0x1, 0, "BIOS POST should enable I/O decoding");
+    write_cfg_u16(&mut bus, bdf, 0x04, command & !0x1);
+    let gated_status = bus.io_read(bar1_base + 0x04, 4).unwrap() as u32;
+    assert_eq!(gated_status, 0xffff_ffff);
+    write_cfg_u16(&mut bus, bdf, 0x04, command);
+
+    // With I/O decoding re-enabled, reads should hit again.
     bus.io_write(bar1_base, 4, 0x0000_0008).unwrap();
     let status_io = bus.io_read(bar1_base + 0x04, 4).unwrap() as u32;
     assert_eq!(status_io, status_mmio);
