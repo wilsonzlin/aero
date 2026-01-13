@@ -620,6 +620,14 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   }
   PrintModeInfo("original", original);
   aerogpu_test::PrintfStdout("INFO: %s: GetSystemMetrics: %dx%d", kTestName, initial_w, initial_h);
+  if (initial_w != (int)original.dmPelsWidth || initial_h != (int)original.dmPelsHeight) {
+    aerogpu_test::PrintfStdout("INFO: %s: WARNING: GetSystemMetrics != EnumDisplaySettingsW (metrics=%dx%d mode=%lux%lu)",
+                               kTestName,
+                               initial_w,
+                               initial_h,
+                               (unsigned long)original.dmPelsWidth,
+                               (unsigned long)original.dmPelsHeight);
+  }
   if (original.dmBitsPerPel != 32) {
     return reporter.Fail("expected a 32bpp desktop mode (dmBitsPerPel=32), but got %lu",
                          (unsigned long)original.dmBitsPerPel);
@@ -672,8 +680,8 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   std::string scanout_err0;
   if (!WaitForScanoutMatch(&kmt,
                            adapter,
-                           (DWORD)initial_w,
-                           (DWORD)initial_h,
+                           (DWORD)original.dmPelsWidth,
+                           (DWORD)original.dmPelsHeight,
                            2000,
                            &q_init,
                            &st_init,
