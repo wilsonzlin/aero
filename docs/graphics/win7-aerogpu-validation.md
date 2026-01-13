@@ -507,6 +507,7 @@ For lightweight, snapshot-style counters, use `aerogpu_dbgctl --query-perf`.
 | Toast: “Display driver stopped responding and has recovered” | Event Viewer: **Display** Event ID **4101** | fence/interrupt not progressing, submission too long, deadlock in KMD | `--query-fence`, look for stuck completed fence; verify vblank still ticking |
 | Apps start failing after a stutter | `DXGI_ERROR_DEVICE_REMOVED` (`0x887A0005`) | TDR recovery occurred; device reset | check System log for 4101 near the time; ensure reset path restores state |
 | A 3D app crashes during heavy draw | `DXGI_ERROR_DEVICE_HUNG` (`0x887A0006`) / `D3DERR_DEVICELOST` | invalid command stream, out-of-bounds memory, shader/translation bug, long-running batch | enable validation in UMD, log last submission bytes/opcodes, bisect by disabling features |
+| Allocations fail “too early” (while the guest still has free RAM) | `E_OUTOFMEMORY` / `D3DERR_OUTOFVIDEOMEMORY` | WDDM segment budget too small (AeroGPU’s memory is system-RAM-backed, but dxgkrnl still enforces a segment budget) | increase the reported budget via `HKR\Parameters\NonLocalMemorySizeMB` (see appendix); reboot |
 | BSOD during/after TDR | **0x116 VIDEO_TDR_FAILURE** | `ResetFromTimeout` failed or returned inconsistent state | instrument reset path; ensure worker threads stop; avoid touching freed allocations |
 | Aero turns off (Basic theme) without a BSOD | “The color scheme has been changed…” notification | DWM device removed/reset, vblank pacing broken, present failures | verify `dwm.exe` still running; check 4101; check `--dump-vblank` cadence (seq/time monotonic) |
 | Desktop freezes with no recovery | no logs after a point; hard hang | TdrLevel disabled, deadlock at DISPATCH_LEVEL, interrupt storm, spinlock inversion | re-enable TDR; add watchdog logs; check vblank generator independence from render thread |
@@ -534,3 +535,51 @@ If you’re unsure what to implement first, aim for this minimal set:
 5. `aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank` works even after a failure.
 
 Once this recipe is stable, expand: more modes, more features, better pacing accuracy, and higher throughput.
+
+---
+
+## Appendix: WDDM segment budget override (`NonLocalMemorySizeMB`)
+
+AeroGPU is a **system-memory-only** WDDM adapter: allocations are backed by **guest RAM**, not dedicated VRAM. However, Win7’s
+dxgkrnl still relies on the KMD-reported “non-local” segment size as an **allocation budget**. If the reported budget is too small,
+D3D9/D3D11 can fail resource creation with `E_OUTOFMEMORY` / `D3DERR_OUTOFVIDEOMEMORY` even when the guest still has free RAM.
+
+The AeroGPU Win7 KMD allows overriding this budget via a device registry parameter:
+
+- **Key:** `HKR\Parameters\NonLocalMemorySizeMB`
+- **Type:** `REG_DWORD`
+- **Unit:** megabytes (MB)
+- **Default:** 512
+- **Clamped:** min 128; max 2048 on x64; max 1024 on x86
+
+Notes:
+
+- This is a **budget hint** only; it does **not** reserve memory up front.
+- Setting it too high can increase guest RAM consumption and paging pressure under heavy workloads.
+
+### When to tune it
+
+Consider increasing `NonLocalMemorySizeMB` when:
+
+- D3D workloads that allocate many large textures/buffers fail early with out-of-memory style errors, and
+- the guest still has significant free RAM (i.e., you are hitting the *budget*, not real exhaustion).
+
+Recommended starting points:
+
+- **Win7 x64:** 1024–2048 (depending on guest RAM and workload)
+- **Win7 x86:** 256–1024 (larger values are clamped to 1024)
+
+### How to set it (example)
+
+On Win7, `HKR` maps to the AeroGPU adapter’s driver key under the display class GUID:
+
+`HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\000X\`
+
+Create/open a `Parameters` subkey and set `NonLocalMemorySizeMB`. Example (replace `000X`):
+
+```bat
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\000X\Parameters" ^
+  /v NonLocalMemorySizeMB /t REG_DWORD /d 2048 /f
+```
+
+Reboot the guest (or disable/enable the AeroGPU device) for the new budget to take effect.

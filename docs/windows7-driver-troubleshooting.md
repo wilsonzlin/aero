@@ -39,6 +39,7 @@ If you have not installed Guest Tools yet, start here:
 - Display issues after switching to the Aero GPU:
   - [Black screen after switching to the Aero GPU](#issue-black-screen-after-switching-to-the-aero-gpu)
   - [Aero theme not available (stuck in basic graphics mode)](#issue-aero-theme-not-available-stuck-in-basic-graphics-mode)
+  - [Allocation failures (E_OUTOFMEMORY)](#issue-allocation-failures-e_outofmemory)
   - [32-bit D3D9 apps fail on Windows 7 x64 (missing WOW64 UMD)](#issue-32-bit-d3d9-apps-fail-on-windows-7-x64-missing-wow64-umd)
   - [32-bit D3D11 apps fail on Windows 7 x64 (missing WOW64 D3D10/11 UMD)](#issue-32-bit-d3d11-apps-fail-on-windows-7-x64-missing-wow64-d3d1011-umd)
 - Guest Tools installation problems:
@@ -580,6 +581,60 @@ If the WOW64 UMD is missing or not registered, **32-bit D3D10/D3D11 apps will no
    - Or just the D3D11 test:
      - `drivers\aerogpu\tests\win7\bin\d3d11_triangle.exe --require-umd`
 4. Reboot the guest after reinstalling the display driver.
+
+## Issue: Allocation failures (E_OUTOFMEMORY)
+
+**Symptoms**
+
+- D3D9/D3D10/D3D11 apps fail to create resources (textures, buffers, swapchain backbuffers), often returning:
+  - `E_OUTOFMEMORY`
+  - `D3DERR_OUTOFVIDEOMEMORY`
+- The failures may occur “too early” (for example, after allocating only a few large textures) even though the guest still has free RAM.
+
+**Why it happens**
+
+AeroGPU is a **system-memory-backed** WDDM adapter (no dedicated VRAM). Even so, the Windows 7 graphics kernel (`dxgkrnl`) enforces
+a per-adapter **segment budget** based on what the KMD reports as “non-local” memory.
+
+The AeroGPU Win7 KMD defaults this budget to **512 MB** for bring-up. Some workloads legitimately need a larger budget, otherwise
+allocations can fail due to the budget limit rather than actual guest memory exhaustion.
+
+**Fix: increase the segment budget hint (`NonLocalMemorySizeMB`)**
+
+Set the AeroGPU device registry parameter:
+
+- **Key:** `HKR\Parameters\NonLocalMemorySizeMB`
+- **Type:** `REG_DWORD`
+- **Unit:** MB
+- **Default:** 512
+- **Clamped:** min 128; max 2048 on x64; max 1024 on x86
+
+Important: this is a **budget hint** (system-RAM-backed), not dedicated VRAM. It does not “create VRAM”; it only changes what the
+driver reports to dxgkrnl.
+
+### How to set it (Win7)
+
+1. Find the AeroGPU adapter driver key:
+   - Device Manager → Display adapters → AeroGPU → Properties → Details → select **Driver key**.
+   - It typically looks like:
+     - `HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\000X\`
+2. Create/open a `Parameters` subkey and set `NonLocalMemorySizeMB`. Example (replace `000X`):
+
+```bat
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\000X\Parameters" ^
+  /v NonLocalMemorySizeMB /t REG_DWORD /d 2048 /f
+```
+
+3. Reboot the guest (or disable/enable the AeroGPU device) for the new budget to take effect.
+
+If you need to revert, delete the value:
+
+```bat
+reg delete "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\000X\Parameters" ^
+  /v NonLocalMemorySizeMB /f
+```
+
+For the canonical KMD-side behavior and rationale, see: `drivers/aerogpu/kmd/README.md`.
 
 ## Safe Mode recovery tips
 
