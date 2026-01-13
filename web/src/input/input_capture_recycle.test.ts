@@ -192,12 +192,14 @@ describe("InputCapture buffer recycling", () => {
 
       (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
       capture.flushNow();
+      expect(((capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>).size).toBe(0);
 
       (capture as any).handleKeyDown(keyDownEvent("KeyB", 1));
       capture.flushNow();
 
       expect(posted).toHaveLength(2);
       expect(posted[1]).not.toBe(posted[0]);
+      expect(((capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>).size).toBe(0);
     });
   });
   it("caps distinct recycled buffer sizes so buckets do not grow unbounded", () => {
