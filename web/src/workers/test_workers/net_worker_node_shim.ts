@@ -57,6 +57,7 @@ parentPort?.on("message", (data) => {
 
 type WebSocketSentMessage = { type: "ws.sent"; data: Uint8Array };
 type WebSocketCreatedMessage = { type: "ws.created"; url: string; protocol: string; protocols: string[] };
+type WebSocketClosedMessage = { type: "ws.closed"; code: number; reason: string };
 
 class FakeWebSocket {
   static CONNECTING = 0;
@@ -121,8 +122,16 @@ class FakeWebSocket {
   }
 
   close(code?: number, reason?: string): void {
+    if (this.readyState === FakeWebSocket.CLOSED) return;
     this.readyState = FakeWebSocket.CLOSED;
-    this.onclose?.({ code: code ?? 1000, reason: reason ?? "", wasClean: true } as CloseEvent);
+    const closeCode = code ?? 1000;
+    const closeReason = reason ?? "";
+    this.onclose?.({ code: closeCode, reason: closeReason, wasClean: true } as CloseEvent);
+    // Notify the parent after the WebSocket close callback chain runs so tests can
+    // deterministically wait until the worker has processed the close event.
+    queueMicrotask(() => {
+      postToParent({ type: "ws.closed", code: closeCode, reason: closeReason } satisfies WebSocketClosedMessage);
+    });
   }
 
   emitMessage(payload: Uint8Array): void {

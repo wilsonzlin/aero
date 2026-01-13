@@ -621,6 +621,128 @@ describe("workers/net.worker (worker_threads)", () => {
     }
   }, 20000);
 
+  it("does not forward NET_TX frames queued while the tunnel is closed after reconnect", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+
+    const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    type SentFrame = { seq: number; payload: Uint8Array };
+    const sentFrames: SentFrame[] = [];
+    const onWorkerMessage = (msg: unknown) => {
+      const data = msg as { type?: unknown; data?: unknown; seq?: unknown };
+      if (data.type !== "ws.sent") return;
+      if (typeof data.seq !== "number") return;
+      if (!(data.data instanceof Uint8Array)) return;
+      try {
+        const decoded = decodeL2Message(data.data);
+        if (decoded.type !== L2_TUNNEL_TYPE_FRAME) return;
+        // Copy to avoid aliasing the transport buffer.
+        sentFrames.push({ seq: data.seq, payload: decoded.payload.slice() });
+      } catch {
+        // Ignore malformed payloads.
+      }
+    };
+    worker.on("message", onWorkerMessage);
+
+    try {
+      const wsCreated1Promise = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
+        seq?: number;
+      }>;
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "net",
+        10000,
+      );
+
+      worker.postMessage({ kind: "config.update", version: 1, config: makeConfig("https://gateway.example.com") });
+      worker.postMessage(makeInit(segments));
+
+      const wsCreated1 = await wsCreated1Promise;
+      await workerReady;
+      const firstCreatedSeq = typeof wsCreated1.seq === "number" ? wsCreated1.seq : 0;
+
+      const wsClosed = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.closed", 10000);
+      const wsCreated2Promise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { type?: unknown }).type === "ws.created" &&
+          typeof (msg as { seq?: unknown }).seq === "number" &&
+          (msg as { seq: number }).seq > firstCreatedSeq,
+        10000,
+      ) as Promise<{ seq?: number }>;
+
+      // Force a disconnect.
+      worker.postMessage({ type: "ws.close", code: 1000, reason: "test" });
+      await wsClosed;
+
+      // Push a batch of frames while the tunnel is down. The filler frames ensure
+      // that, in the buggy implementation, at least some disconnect-window frames
+      // survive until reconnect and would be forwarded as stale traffic.
+      const filler = Uint8Array.of(0xfa, 0xce, 0x00, 0x01);
+      const frameA = Uint8Array.of(0x41, 0x00, 0x00, 0x01);
+      const frameB = Uint8Array.of(0x42, 0x00, 0x00, 0x02);
+      const fillerCount = 128;
+      for (let i = 0; i < fillerCount; i += 1) {
+        while (!netTxRing.tryPush(filler)) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
+      while (!netTxRing.tryPush(frameA)) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      while (!netTxRing.tryPush(frameB)) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+
+      const wsCreated2 = await wsCreated2Promise;
+      const reconnectSeq = typeof wsCreated2.seq === "number" ? wsCreated2.seq : firstCreatedSeq;
+
+      const frameC = Uint8Array.of(0x43, 0x00, 0x00, 0x03);
+      const wsSentC = waitForWorkerMessage(
+        worker,
+        (msg) => {
+          const sent = msg as { type?: unknown; data?: unknown; seq?: unknown };
+          if (sent.type !== "ws.sent") return false;
+          if (typeof sent.seq !== "number" || sent.seq <= reconnectSeq) return false;
+          if (!(sent.data instanceof Uint8Array)) return false;
+          try {
+            const decoded = decodeL2Message(sent.data);
+            return decoded.type === L2_TUNNEL_TYPE_FRAME && arraysEqual(decoded.payload, frameC);
+          } catch {
+            return false;
+          }
+        },
+        10000,
+      );
+
+      // Frame pushed after reconnect should be forwarded.
+      while (!netTxRing.tryPush(frameC)) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      await wsSentC;
+
+      // Give the worker a moment to flush any additional queued sends so that we
+      // can assert over all observed post-reconnect traffic without relying on
+      // exact message counts.
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+      const postReconnect = sentFrames.filter((f) => f.seq > reconnectSeq).map((f) => f.payload);
+      expect(postReconnect.some((payload) => arraysEqual(payload, frameC))).toBe(true);
+      expect(postReconnect.some((payload) => arraysEqual(payload, frameA))).toBe(false);
+      expect(postReconnect.some((payload) => arraysEqual(payload, frameB))).toBe(false);
+    } finally {
+      worker.off("message", onWorkerMessage);
+      await worker.terminate();
+    }
+  }, 20000);
+
   it("falls back to connecting directly when POST /session fails", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
 

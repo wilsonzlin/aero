@@ -714,6 +714,10 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
             // Drop the reference early so late events from the closed tunnel
             // don't race with a new client instance.
             l2TunnelClient = null;
+            // Treat a closed tunnel as "no tunnel" for the forwarder so `sendFrame()`
+            // failures don't behave like backpressure (which would otherwise stall
+            // NET_TX draining and allow stale frames to leak after reconnect).
+            l2Forwarder?.setTunnel(null);
             scheduleReconnect();
           }
         },
