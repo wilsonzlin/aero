@@ -121,4 +121,10 @@ fn file_backend_read_only_rejects_writes() {
         err,
         DiskError::NotSupported(msg) if msg == "read-only backend"
     ));
+
+    let err = backend.set_len(8).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::NotSupported(msg) if msg == "read-only backend"
+    ));
 }
