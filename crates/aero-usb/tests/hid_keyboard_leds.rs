@@ -68,7 +68,10 @@ fn hid_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_preserves_
     );
 
     // SET_REPORT(Output) to set boot keyboard LEDs: NumLock | CapsLock | ScrollLock.
-    let leds = 0x07;
+    // Send high bits as well; devices should ignore the padding bits and only track the 5 LED
+    // usages defined by the report descriptor.
+    let leds = 0xe7;
+    let expected_leds = 0x07;
     control_out_data(
         &mut dev,
         SetupPacket {
@@ -81,7 +84,7 @@ fn hid_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_preserves_
         &[leds],
     );
 
-    assert_eq!(kb.leds(), leds);
+    assert_eq!(kb.leds(), expected_leds);
 
     // Snapshot both the device wrapper and the host-visible handle (pre-attached model case).
     let dev_snapshot = dev.save_state();
@@ -89,12 +92,12 @@ fn hid_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_preserves_
 
     let mut restored_kb = UsbHidKeyboardHandle::new();
     restored_kb.load_state(&model_snapshot).unwrap();
-    assert_eq!(restored_kb.leds(), leds);
+    assert_eq!(restored_kb.leds(), expected_leds);
 
     let kb_from_dev = UsbHidKeyboardHandle::new();
     let mut restored_dev = AttachedUsbDevice::new(Box::new(kb_from_dev.clone()));
     restored_dev.load_state(&dev_snapshot).unwrap();
-    assert_eq!(kb_from_dev.leds(), leds);
+    assert_eq!(kb_from_dev.leds(), expected_leds);
 }
 
 #[test]
@@ -127,7 +130,10 @@ fn hid_composite_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_
     );
 
     // SET_REPORT(Output) to set boot keyboard LEDs: NumLock | CapsLock.
-    let leds = 0x03;
+    // Send high bits as well; devices should ignore the padding bits and only track the 5 LED
+    // usages defined by the report descriptor.
+    let leds = 0xe3;
+    let expected_leds = 0x03;
     control_out_data(
         &mut dev,
         SetupPacket {
@@ -140,17 +146,17 @@ fn hid_composite_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_
         &[leds],
     );
 
-    assert_eq!(hid.keyboard_leds(), leds);
+    assert_eq!(hid.keyboard_leds(), expected_leds);
 
     let dev_snapshot = dev.save_state();
     let model_snapshot = hid.save_state();
 
     let mut restored_hid = UsbCompositeHidInputHandle::new();
     restored_hid.load_state(&model_snapshot).unwrap();
-    assert_eq!(restored_hid.keyboard_leds(), leds);
+    assert_eq!(restored_hid.keyboard_leds(), expected_leds);
 
     let hid_from_dev = UsbCompositeHidInputHandle::new();
     let mut restored_dev = AttachedUsbDevice::new(Box::new(hid_from_dev.clone()));
     restored_dev.load_state(&dev_snapshot).unwrap();
-    assert_eq!(hid_from_dev.keyboard_leds(), leds);
+    assert_eq!(hid_from_dev.keyboard_leds(), expected_leds);
 }

@@ -37,6 +37,7 @@ const GAMEPAD_INTERRUPT_IN_EP: u8 = 0x83;
 const MAX_PENDING_KEYBOARD_REPORTS: usize = 64;
 const MAX_PENDING_MOUSE_REPORTS: usize = 128;
 const MAX_PENDING_GAMEPAD_REPORTS: usize = 128;
+const KEYBOARD_LED_MASK: u8 = 0x1f;
 
 #[derive(Debug, Clone)]
 struct KeyboardInterface {
@@ -1239,7 +1240,9 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                             let report_type = (setup.w_value >> 8) as u8;
                             match (report_type, data_stage) {
                                 (2, Some(data)) if !data.is_empty() => {
-                                    self.keyboard.leds = data[0];
+                                    // HID boot keyboard output report defines 5 LED bits and 3
+                                    // constant padding bits; ignore the padding.
+                                    self.keyboard.leds = data[0] & KEYBOARD_LED_MASK;
                                     ControlResponse::Ack
                                 }
                                 _ => ControlResponse::Stall,

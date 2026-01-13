@@ -28,6 +28,7 @@ use super::{
 
 const INTERRUPT_IN_EP: u8 = 0x81;
 const MAX_PENDING_REPORTS: usize = 64;
+const KEYBOARD_LED_MASK: u8 = 0x1f;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyboardReport {
@@ -642,7 +643,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     let report_type = (setup.w_value >> 8) as u8;
                     match (report_type, data_stage) {
                         (2, Some(data)) if !data.is_empty() => {
-                            self.leds = data[0];
+                            // HID boot keyboard output report defines 5 LED bits and 3 constant
+                            // padding bits; ignore the padding.
+                            self.leds = data[0] & KEYBOARD_LED_MASK;
                             ControlResponse::Ack
                         }
                         _ => ControlResponse::Stall,
