@@ -512,6 +512,8 @@ quota enforcement / future flows).
 - **Request:** `POST /session` (no request body)
 - **Response:** `201 Created` with the raw session ID as the response body
 
+When `AUTH_MODE=jwt` and another active relay session already exists for the same JWT `sid`, this endpoint returns **`409 Conflict`** with `{ "code":"session_already_active", "message":"..." }`.
+
 #### Expiry / TTL
 
 Session IDs allocated via `POST /session` are **short-lived**. If the session is
