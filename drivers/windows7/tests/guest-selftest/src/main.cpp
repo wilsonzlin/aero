@@ -721,6 +721,282 @@ static std::optional<std::wstring> GetDeviceInstanceIdString(HDEVINFO devinfo, S
   return std::wstring(buf.data());
 }
 
+// Some Windows 7 SDK environments are missing newer interrupt flag definitions (e.g. message-signaled interrupts).
+// Define the subset we need for resource list parsing so the guest selftest can be built with a plain Win7 SDK.
+#ifndef CM_RESOURCE_INTERRUPT_MESSAGE
+// In `wdm.h` this is defined as 0x0002 (alongside CM_RESOURCE_INTERRUPT_LATCHED=0x0001).
+#define CM_RESOURCE_INTERRUPT_MESSAGE 0x0002
+#endif
+
+struct IrqModeInfo {
+  // True when Windows assigned MSI/MSI-X (message signaled) interrupts.
+  bool is_msi = false;
+  // Number of messages allocated when `is_msi` is true.
+  uint32_t messages = 0;
+};
+
+struct IrqQueryResult {
+  bool ok = false;
+  IrqModeInfo info{};
+  std::string reason;
+  CONFIGRET cr = CR_SUCCESS;
+};
+
+struct DevNodeMatch {
+  DEVINST devinst = 0;
+  std::wstring instance_id;
+};
+
+static std::vector<DevNodeMatch> FindPresentDevNodesByHwidSubstrings(const wchar_t* enumerator,
+                                                                     const std::vector<std::wstring>& needles) {
+  std::vector<DevNodeMatch> out;
+  if (needles.empty()) return out;
+
+  const DWORD flags = DIGCF_PRESENT | DIGCF_ALLCLASSES;
+  HDEVINFO devinfo = SetupDiGetClassDevsW(nullptr, enumerator, nullptr, flags);
+  if (devinfo == INVALID_HANDLE_VALUE) return out;
+
+  for (DWORD idx = 0;; idx++) {
+    SP_DEVINFO_DATA dev{};
+    dev.cbSize = sizeof(dev);
+    if (!SetupDiEnumDeviceInfo(devinfo, idx, &dev)) {
+      if (GetLastError() == ERROR_NO_MORE_ITEMS) break;
+      continue;
+    }
+
+    const auto hwids = GetDevicePropertyMultiSz(devinfo, &dev, SPDRP_HARDWAREID);
+    bool match = false;
+    for (const auto& id : hwids) {
+      for (const auto& needle : needles) {
+        if (ContainsInsensitive(id, needle)) {
+          match = true;
+          break;
+        }
+      }
+      if (match) break;
+    }
+    if (!match) continue;
+
+    DevNodeMatch m{};
+    m.devinst = dev.DevInst;
+    if (auto inst = GetDeviceInstanceIdString(devinfo, &dev)) {
+      m.instance_id = *inst;
+    }
+    out.push_back(std::move(m));
+  }
+
+  SetupDiDestroyDeviceInfoList(devinfo);
+
+  std::sort(out.begin(), out.end(),
+            [](const DevNodeMatch& a, const DevNodeMatch& b) { return a.instance_id < b.instance_id; });
+  return out;
+}
+
+static uint32_t ChooseMsiMessageCount(uint32_t message_descriptor_count, const std::set<uint32_t>& message_count_values) {
+  if (message_descriptor_count == 0) return 0;
+  if (message_count_values.empty()) return message_descriptor_count;
+
+  // If the resource descriptor includes a single non-trivial MessageCount (common when the interrupt is represented
+  // as a single range), prefer it. Otherwise, fall back to counting descriptors.
+  if (message_count_values.size() == 1) {
+    const uint32_t v = *message_count_values.begin();
+    if (v > message_descriptor_count) return v;
+    if (message_descriptor_count == 1 && v > 0) return v;
+  }
+  return message_descriptor_count;
+}
+
+static IrqQueryResult QueryDevInstIrqModeOnce(DEVINST devinst) {
+  IrqQueryResult out{};
+
+  if (devinst == 0) {
+    out.reason = "invalid_devinst";
+    out.cr = CR_FAILURE;
+    return out;
+  }
+
+  LOG_CONF log_conf = 0;
+  CONFIGRET cr = CM_Get_First_Log_Conf(&log_conf, devinst, ALLOC_LOG_CONF);
+  if (cr != CR_SUCCESS) {
+    out.reason = "cm_get_first_log_conf_failed";
+    out.cr = cr;
+    return out;
+  }
+
+  // Enumerate the translated (allocated) resource descriptors and look for interrupt descriptors.
+  RES_DES res_des = 0;
+  RESOURCEID res_id = 0;
+  cr = CM_Get_Next_Res_Des(&res_des, log_conf, ResType_All, &res_id, 0);
+  if (cr != CR_SUCCESS) {
+    CM_Free_Log_Conf_Handle(log_conf);
+    out.reason = "cm_get_next_res_des_failed";
+    out.cr = cr;
+    return out;
+  }
+
+  bool saw_any_interrupt = false;
+  bool saw_message_interrupt = false;
+  uint32_t message_desc_count = 0;
+  std::set<uint32_t> message_count_values;
+
+  // `CM_PARTIAL_RESOURCE_DESCRIPTOR::Type` values. We only need Interrupt here.
+  static constexpr uint8_t kCmResourceTypeInterrupt = 2;
+
+  while (true) {
+    ULONG data_size = 0;
+    cr = CM_Get_Res_Des_Data_Size(&data_size, res_des, 0);
+    if (cr != CR_SUCCESS) {
+      out.reason = "cm_get_res_des_data_size_failed";
+      out.cr = cr;
+      break;
+    }
+
+    std::vector<uint8_t> data;
+    if (data_size > 0) {
+      data.resize(data_size);
+      cr = CM_Get_Res_Des_Data(res_des, data.data(), data_size, 0);
+      if (cr != CR_SUCCESS) {
+        out.reason = "cm_get_res_des_data_failed";
+        out.cr = cr;
+        break;
+      }
+    }
+
+    // Best-effort parse of CM_PARTIAL_RESOURCE_DESCRIPTOR header (Type/ShareDisposition/Flags).
+    if (data_size >= 4) {
+      const uint8_t type = data[0];
+      uint16_t flags = 0;
+      memcpy(&flags, data.data() + 2, sizeof(flags));
+
+      if (type == kCmResourceTypeInterrupt) {
+        saw_any_interrupt = true;
+        if ((flags & CM_RESOURCE_INTERRUPT_MESSAGE) != 0) {
+          saw_message_interrupt = true;
+          message_desc_count++;
+
+          // When present, MessageCount sits immediately after Level + Vector + Affinity. Depending on packing,
+          // the union may be 4 or 8-byte aligned on x64; probe both offsets (best-effort).
+          const size_t msg_count_off1 = 12u + sizeof(ULONG_PTR);
+          const size_t msg_count_off2 = msg_count_off1 + 4u;
+          const size_t msg_count_offs[] = {msg_count_off1, msg_count_off2};
+          for (const size_t msg_count_off : msg_count_offs) {
+            if (data_size < msg_count_off + sizeof(uint32_t)) continue;
+            uint32_t msg_count = 0;
+            memcpy(&msg_count, data.data() + msg_count_off, sizeof(msg_count));
+            // Ignore obviously corrupt values. Virtio devices should only allocate a small number of vectors.
+            if (msg_count == 0 || msg_count > 4096) continue;
+            message_count_values.insert(msg_count);
+            break;
+          }
+        }
+      }
+    }
+
+    RES_DES next = 0;
+    RESOURCEID next_id = 0;
+    const CONFIGRET next_cr = CM_Get_Next_Res_Des(&next, res_des, ResType_All, &next_id, 0);
+    CM_Free_Res_Des_Handle(res_des);
+    res_des = 0;
+
+    if (next_cr != CR_SUCCESS) {
+      // Expected end-of-list is CR_NO_MORE_RES_DES.
+      cr = next_cr;
+      if (cr == CR_NO_MORE_RES_DES) {
+        break;
+      }
+      out.reason = "cm_get_next_res_des_failed";
+      out.cr = cr;
+      break;
+    }
+
+    res_des = next;
+    res_id = next_id;
+  }
+
+  if (res_des) {
+    CM_Free_Res_Des_Handle(res_des);
+  }
+  CM_Free_Log_Conf_Handle(log_conf);
+
+  if (!out.reason.empty()) return out;
+
+  if (!saw_any_interrupt) {
+    out.reason = "no_interrupt_resources";
+    out.cr = CR_SUCCESS;
+    return out;
+  }
+
+  out.ok = true;
+  out.info.is_msi = saw_message_interrupt;
+  if (saw_message_interrupt) {
+    out.info.messages = ChooseMsiMessageCount(message_desc_count, message_count_values);
+    if (out.info.messages == 0) out.info.messages = 1;
+  }
+  return out;
+}
+
+static IrqQueryResult QueryDevInstIrqModeWithParentFallback(DEVINST devinst) {
+  // Some stacks expose virtio functionality as a child devnode (e.g. a HID interface) while the underlying PCI
+  // function holds the interrupt resources. Walk up the devnode tree until we find an interrupt resource descriptor.
+  DEVINST dn = devinst;
+  IrqQueryResult last{};
+  for (int depth = 0; depth < 16 && dn != 0; depth++) {
+    last = QueryDevInstIrqModeOnce(dn);
+    if (last.ok) return last;
+    if (last.reason != "no_interrupt_resources" && last.reason != "cm_get_first_log_conf_failed" &&
+        last.reason != "cm_get_next_res_des_failed") {
+      // For other failures (e.g. invalid handles), don't keep walking indefinitely.
+      break;
+    }
+    DEVINST parent = 0;
+    const CONFIGRET cr = CM_Get_Parent(&parent, dn, 0);
+    if (cr != CR_SUCCESS) {
+      last.reason = "cm_get_parent_failed";
+      last.cr = cr;
+      break;
+    }
+    dn = parent;
+  }
+  return last;
+}
+
+static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::vector<std::wstring>& hwid_needles,
+                                const std::vector<std::wstring>& fallback_needles = {}) {
+  if (!dev_name) return;
+
+  // Fast path: restrict to PCI enumerated devices.
+  auto matches = FindPresentDevNodesByHwidSubstrings(L"PCI", hwid_needles);
+  if (matches.empty() && !fallback_needles.empty()) {
+    matches = FindPresentDevNodesByHwidSubstrings(nullptr, fallback_needles);
+  }
+
+  if (matches.empty()) {
+    log.Logf("%s-irq|WARN|reason=device_missing", dev_name);
+    return;
+  }
+
+  const DEVINST dn = matches.front().devinst;
+  const auto irq = QueryDevInstIrqModeWithParentFallback(dn);
+  if (!irq.ok) {
+    if (irq.cr != CR_SUCCESS) {
+      log.Logf("%s-irq|WARN|reason=%s|cr=%lu", dev_name,
+               irq.reason.empty() ? "resource_query_failed" : irq.reason.c_str(),
+               static_cast<unsigned long>(irq.cr));
+    } else {
+      log.Logf("%s-irq|WARN|reason=%s", dev_name,
+               irq.reason.empty() ? "resource_query_failed" : irq.reason.c_str());
+    }
+    return;
+  }
+
+  if (!irq.info.is_msi) {
+    log.Logf("%s-irq|INFO|mode=intx", dev_name);
+    return;
+  }
+
+  log.Logf("%s-irq|INFO|mode=msi|messages=%lu", dev_name, static_cast<unsigned long>(irq.info.messages));
+}
+
 struct VirtioSndPciIdInfo {
   bool modern = false;
   bool modern_rev01 = false;
@@ -6450,6 +6726,7 @@ int wmain(int argc, wchar_t** argv) {
 
   const bool blk_ok = VirtioBlkTest(log, opt);
   log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
+  EmitVirtioIrqMarker(log, "virtio-blk", {L"PCI\\VEN_1AF4&DEV_1042"});
   all_ok = all_ok && blk_ok;
 
   const auto input = VirtioInputTest(log);
@@ -6460,6 +6737,8 @@ int wmain(int argc, wchar_t** argv) {
            input.ambiguous_devices, input.unknown_devices, input.keyboard_collections, input.mouse_collections,
            input.tablet_devices, input.tablet_collections,
            input.reason.empty() ? "-" : input.reason.c_str());
+  EmitVirtioIrqMarker(log, "virtio-input", {L"PCI\\VEN_1AF4&DEV_1052", L"PCI\\VEN_1AF4&DEV_1011"},
+                      {L"VID_1AF4&PID_0001", L"VID_1AF4&PID_0002", L"VID_1AF4&PID_1052", L"VID_1AF4&PID_1011"});
   all_ok = all_ok && input.ok;
 
   if (!opt.test_input_events) {
@@ -6825,6 +7104,12 @@ int wmain(int argc, wchar_t** argv) {
     }
   }
 
+  if (opt.allow_virtio_snd_transitional) {
+    EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059", L"PCI\\VEN_1AF4&DEV_1018"});
+  } else {
+    EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059"});
+  }
+
   // Network tests require Winsock initialized for getaddrinfo.
   WSADATA wsa{};
   const int wsa_rc = WSAStartup(MAKEWORD(2, 2), &wsa);
@@ -6843,6 +7128,8 @@ int wmain(int argc, wchar_t** argv) {
     all_ok = all_ok && net.ok;
     WSACleanup();
   }
+
+  EmitVirtioIrqMarker(log, "virtio-net", {L"PCI\\VEN_1AF4&DEV_1041"});
 
   log.Logf("AERO_VIRTIO_SELFTEST|RESULT|%s", all_ok ? "PASS" : "FAIL");
   return all_ok ? 0 : 1;
