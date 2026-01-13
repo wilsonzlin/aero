@@ -234,7 +234,7 @@ export class IdbRemoteChunkCache {
     try {
       await idbTxDone(tx);
     } catch (err) {
-      if (isQuotaExceededError(err)) {
+      if (isQuotaExceededError(err) || isQuotaExceededError(tx.error)) {
         throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
       }
       throw err;
@@ -323,9 +323,19 @@ export class IdbRemoteChunkCache {
 
     if (missing.length === 0) return out;
 
-    const tx = this.db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
-    const chunksStore = tx.objectStore("remote_chunks");
-    const metaStore = tx.objectStore("remote_chunk_meta");
+    let tx: IDBTransaction;
+    let chunksStore: IDBObjectStore;
+    let metaStore: IDBObjectStore;
+    try {
+      tx = this.db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
+      chunksStore = tx.objectStore("remote_chunks");
+      metaStore = tx.objectStore("remote_chunk_meta");
+    } catch (err) {
+      // `getMany()` is used on the remote disk read path. Quota errors must not fail reads;
+      // treat them as cache misses.
+      if (isQuotaExceededError(err)) return out;
+      throw err;
+    }
 
     try {
       const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
@@ -432,7 +442,16 @@ export class IdbRemoteChunkCache {
         });
       }
 
-      await idbTxDone(tx);
+      try {
+        await idbTxDone(tx);
+      } catch (err) {
+        // Ensure we surface quota errors consistently even when the transaction abort error is not
+        // the same object as the original failing request's error.
+        if (isQuotaExceededError(tx.error) && !isQuotaExceededError(err)) {
+          throw tx.error;
+        }
+        throw err;
+      }
 
       if (this.maxCachedChunks > 0) {
         const cached = new Uint8Array(data);
@@ -487,9 +506,22 @@ export class IdbRemoteChunkCache {
       throw new Error(`chunkIndex must be a non-negative integer (got ${chunkIndex})`);
     }
 
-    const tx = this.db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
-    const chunksStore = tx.objectStore("remote_chunks");
-    const metaStore = tx.objectStore("remote_chunk_meta");
+    let tx: IDBTransaction;
+    let chunksStore: IDBObjectStore;
+    let metaStore: IDBObjectStore;
+    try {
+      tx = this.db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
+      chunksStore = tx.objectStore("remote_chunks");
+      metaStore = tx.objectStore("remote_chunk_meta");
+    } catch (err) {
+      // Best-effort healing; do not fail read paths if the cache DB is at quota.
+      if (isQuotaExceededError(err)) {
+        this.cache.delete(chunkIndex);
+        this.pendingAccess.delete(chunkIndex);
+        return;
+      }
+      throw err;
+    }
 
     const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
     const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as RemoteChunkRecord | undefined;
@@ -503,7 +535,7 @@ export class IdbRemoteChunkCache {
       await idbTxDone(tx);
     } catch (err) {
       // Healing deletes are best-effort; do not fail read paths if the cache DB is at quota.
-      if (!isQuotaExceededError(err)) throw err;
+      if (!isQuotaExceededError(err) && !isQuotaExceededError(tx.error)) throw err;
     } finally {
       this.cache.delete(chunkIndex);
       this.pendingAccess.delete(chunkIndex);
@@ -545,7 +577,7 @@ export class IdbRemoteChunkCache {
         await idbTxDone(tx);
         return;
       } catch (err) {
-        if (isQuotaExceededError(err)) {
+        if (isQuotaExceededError(err) || isQuotaExceededError(tx.error)) {
           throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
         }
         throw err;
@@ -572,7 +604,7 @@ export class IdbRemoteChunkCache {
     try {
       await idbTxDone(tx);
     } catch (err) {
-      if (isQuotaExceededError(err)) {
+      if (isQuotaExceededError(err) || isQuotaExceededError(tx.error)) {
         throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
       }
       throw err;
