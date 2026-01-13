@@ -111,6 +111,15 @@ class VirtioIrqMarkerTests(unittest.TestCase):
         self.assertEqual(markers["virtio-net"]["mode"], "msix")
         self.assertEqual(markers["virtio-net"]["vectors"], "4")
 
+    def test_incremental_parser_handles_crlf(self) -> None:
+        markers: dict[str, dict[str, str]] = {}
+        carry = b""
+        carry = self.harness._update_virtio_irq_markers_from_chunk(
+            markers, b"virtio-net-irq|INFO|mode=msix|vectors=4\r\n", carry=carry
+        )
+        self.assertEqual(carry, b"")
+        self.assertEqual(markers["virtio-net"]["mode"], "msix")
+
     def test_incremental_parser_allows_leading_whitespace(self) -> None:
         markers: dict[str, dict[str, str]] = {}
         carry = b""

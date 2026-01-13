@@ -3765,11 +3765,15 @@ def _update_virtio_irq_markers_from_chunk(
     if not chunk and not carry:
         return b""
     data = carry + chunk
-    parts = data.split(b"\n")
-    new_carry = parts.pop() if parts else b""
+    # Use splitlines(keepends=True) so we correctly handle any of: LF, CRLF, or CR.
+    parts = data.splitlines(keepends=True)
+    new_carry = b""
+    if parts and not parts[-1].endswith((b"\n", b"\r")):
+        new_carry = parts.pop()
+
     for raw in parts:
-        if raw.endswith(b"\r"):
-            raw = raw[:-1]
+        # Drop the line ending so we can match against the raw marker text.
+        raw = raw.rstrip(b"\r\n")
         raw2 = raw.lstrip()
         if not raw2 or not raw2.startswith(b"virtio-") or b"-irq|" not in raw2:
             continue
