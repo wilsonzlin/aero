@@ -330,6 +330,10 @@ impl AerogpuResourceManager {
             x if x == AerogpuShaderStage::Vertex as u32 => AerogpuShaderStage::Vertex,
             x if x == AerogpuShaderStage::Pixel as u32 => AerogpuShaderStage::Pixel,
             x if x == AerogpuShaderStage::Compute as u32 => AerogpuShaderStage::Compute,
+            // Geometry shaders are representable in the protocol but ignored by the WebGPU backend.
+            x if x == AerogpuShaderStage::Geometry as u32 => {
+                return Ok(());
+            }
             _ => bail!("CreateShaderDxbc: unknown aerogpu_shader_stage {stage}"),
         };
 

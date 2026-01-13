@@ -42,14 +42,17 @@ fn aerogpu_cmd_ignores_geometry_shader_dxbc_payloads() {
             }
         };
 
-        // A minimal DXBC container that parses as a geometry shader (program type 2). The command
-        // stream only supports VS/PS/CS stages, but we want to accept-and-ignore these payloads
-        // rather than failing with a stage-mismatch error.
+        // A minimal DXBC container that parses as a geometry shader (program type 2). The WebGPU
+        // executor still has no GS stage, but the command stream can represent it; we want to
+        // accept-and-ignore these payloads rather than failing.
         let gs_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm4_program_chunk(2))]);
 
         let mut writer = AerogpuCmdWriter::new();
-        // Label it as a vertex shader to simulate a placeholder stage coming from a guest.
-        writer.create_shader_dxbc(1, AerogpuShaderStage::Vertex, &gs_dxbc);
+        writer.create_shader_dxbc(1, AerogpuShaderStage::Geometry, &gs_dxbc);
+        // Ensure geometry-stage bindings are accepted, even though they are ignored by the WebGPU backend.
+        writer.bind_shaders_with_gs(0, 1, 0, 0);
+        writer.set_texture(AerogpuShaderStage::Geometry, 0, 0);
+        writer.set_shader_constants_f(AerogpuShaderStage::Geometry, 0, &[1.0, 2.0, 3.0, 4.0]);
         writer.destroy_shader(1);
         let stream = writer.finish();
 

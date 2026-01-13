@@ -24,7 +24,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_bind_shaders_payload_le, decode_cmd_create_input_layout_blob_le,
     decode_cmd_create_shader_dxbc_payload_le,
     decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
-    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR,
+    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuShaderStage,
+    AEROGPU_CLEAR_COLOR,
     AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
     AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
@@ -3823,15 +3824,23 @@ impl AerogpuD3d11Executor {
                     break;
                 }
                 let stage_raw = read_u32_le(cmd_bytes, 8)?;
-                let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
-                    break;
-                };
+                if stage_raw == AerogpuShaderStage::Geometry as u32 {
+                    // Geometry shader stage is accepted by the protocol but ignored by the WebGPU
+                    // executor (no GS stage in WebGPU). Do not treat it as a pass boundary.
+                    //
+                    // Note: invalid shader stage values still terminate the pass so the outer
+                    // executor can handle them as errors.
+                } else {
+                    let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
+                        break;
+                    };
                 let legacy_id = legacy_constants_buffer_id(stage);
                 let stage_index = stage.as_bind_group_index() as usize;
                 if (stage_index < legacy_constants_used.len() && legacy_constants_used[stage_index])
                     || self.encoder_used_buffers.contains(&legacy_id)
                 {
                     break;
+                }
                 }
             }
 
@@ -4050,7 +4059,10 @@ impl AerogpuD3d11Executor {
                     let stage_raw = read_u32_le(cmd_bytes, 8)?;
                     let slot = read_u32_le(cmd_bytes, 12)?;
                     let texture = read_u32_le(cmd_bytes, 16)?;
-                    if texture != 0 {
+                    if stage_raw == AerogpuShaderStage::Geometry as u32 {
+                        // Geometry-stage bindings are accepted but ignored; they do not affect pass
+                        // safety (and must not require the referenced handle to exist).
+                    } else if texture != 0 {
                         let texture = self
                             .shared_surfaces
                             .resolve_cmd_handle(texture, "SET_TEXTURE")?;
@@ -4181,9 +4193,19 @@ impl AerogpuD3d11Executor {
                     if cmd_bytes.len() >= expected {
                         let uniform_align =
                             self.device.limits().min_uniform_buffer_offset_alignment as u64;
-                        let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
-                            break;
-                        };
+                        if stage_raw == AerogpuShaderStage::Geometry as u32 {
+                            // Geometry-stage bindings are accepted but ignored; they do not affect
+                            // render pass safety and must not require referenced handles to exist.
+                            //
+                            // Skip any validation/resolve work that would otherwise force the pass
+                            // to restart.
+                            //
+                            // Note: truly unknown shader stage values still break to let the outer
+                            // executor validate/reject the packet.
+                        } else {
+                            let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
+                                break;
+                            };
                         let used_slots = match stage {
                             ShaderStage::Vertex => &used_cb_vs,
                             ShaderStage::Pixel => &used_cb_ps,
@@ -4229,6 +4251,7 @@ impl AerogpuD3d11Executor {
                         }
                         if needs_break {
                             break;
+                        }
                         }
                     } else {
                         break;
@@ -4599,23 +4622,27 @@ impl AerogpuD3d11Executor {
                     }
                     let data = &cmd_bytes[24..24 + byte_len];
 
-                    let stage = ShaderStage::from_aerogpu_u32(stage_raw).ok_or_else(|| {
-                        anyhow!("SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw}")
-                    })?;
-                    let dst = self
-                        .legacy_constants
-                        .get(&stage)
-                        .expect("legacy constants buffer exists for every stage");
+                    if stage_raw == AerogpuShaderStage::Geometry as u32 {
+                        // Geometry-stage constants are accepted but ignored; WebGPU has no GS stage.
+                    } else {
+                        let stage = ShaderStage::from_aerogpu_u32(stage_raw).ok_or_else(|| {
+                            anyhow!("SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw}")
+                        })?;
+                        let dst = self
+                            .legacy_constants
+                            .get(&stage)
+                            .expect("legacy constants buffer exists for every stage");
 
-                    let offset_bytes = start_register as u64 * 16;
-                    let end = offset_bytes + byte_len as u64;
-                    if end > LEGACY_CONSTANTS_SIZE_BYTES {
-                        bail!(
-                            "SET_SHADER_CONSTANTS_F: write out of bounds (end={end}, buffer_size={LEGACY_CONSTANTS_SIZE_BYTES})"
-                        );
+                        let offset_bytes = start_register as u64 * 16;
+                        let end = offset_bytes + byte_len as u64;
+                        if end > LEGACY_CONSTANTS_SIZE_BYTES {
+                            bail!(
+                                "SET_SHADER_CONSTANTS_F: write out of bounds (end={end}, buffer_size={LEGACY_CONSTANTS_SIZE_BYTES})"
+                            );
+                        }
+
+                        self.queue.write_buffer(dst, offset_bytes, data);
                     }
-
-                    self.queue.write_buffer(dst, offset_bytes, data);
                 }
                 OPCODE_SET_DEPTH_STENCIL_STATE => self.exec_set_depth_stencil_state(cmd_bytes)?,
                 OPCODE_SET_RASTERIZER_STATE => {
@@ -4777,7 +4804,10 @@ impl AerogpuD3d11Executor {
                         let stage_raw = read_u32_le(cmd_bytes, 8)?;
                         let slot = read_u32_le(cmd_bytes, 12)?;
                         let texture = read_u32_le(cmd_bytes, 16)?;
-                        if texture != 0 {
+                        if stage_raw == AerogpuShaderStage::Geometry as u32 {
+                            // Geometry-stage bindings are accepted but ignored; do not attempt to
+                            // validate or upload the referenced handle.
+                        } else if texture != 0 {
                             let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
                                 bail!("SET_TEXTURE: unknown shader stage {stage_raw}");
                             };
@@ -6858,9 +6888,10 @@ impl AerogpuD3d11Executor {
         let stage_u32 = cmd.stage;
 
         let stage = match stage_u32 {
-            0 => ShaderStage::Vertex,
-            1 => ShaderStage::Pixel,
-            2 => ShaderStage::Compute,
+            x if x == AerogpuShaderStage::Vertex as u32 => Some(ShaderStage::Vertex),
+            x if x == AerogpuShaderStage::Pixel as u32 => Some(ShaderStage::Pixel),
+            x if x == AerogpuShaderStage::Compute as u32 => Some(ShaderStage::Compute),
+            x if x == AerogpuShaderStage::Geometry as u32 => None,
             _ => bail!("CREATE_SHADER_DXBC: unknown shader stage {stage_u32}"),
         };
 
@@ -6868,23 +6899,28 @@ impl AerogpuD3d11Executor {
         let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
         let parsed_stage = match program.stage {
-            crate::ShaderStage::Vertex => ShaderStage::Vertex,
-            crate::ShaderStage::Pixel => ShaderStage::Pixel,
-            crate::ShaderStage::Compute => ShaderStage::Compute,
-            // Geometry/hull/domain stages are not represented in the AeroGPU command stream (WebGPU
-            // does not expose them), but Win7 D3D11 applications may still create these shaders.
-            //
-            // Accept the create to keep the command stream robust, but ignore the shader since it
-            // can never be bound (no GS/HS/DS slot in `AEROGPU_CMD_BIND_SHADERS`).
-            crate::ShaderStage::Geometry
-            | crate::ShaderStage::Hull
-            | crate::ShaderStage::Domain => {
+            crate::ShaderStage::Vertex => Some(ShaderStage::Vertex),
+            crate::ShaderStage::Pixel => Some(ShaderStage::Pixel),
+            crate::ShaderStage::Compute => Some(ShaderStage::Compute),
+            // Geometry/hull/domain stages are not supported by the AeroGPU/WebGPU pipeline. Accept
+            // the create call to keep the command stream robust, but ignore the shader since it
+            // cannot be executed.
+            crate::ShaderStage::Geometry | crate::ShaderStage::Hull | crate::ShaderStage::Domain => {
                 return Ok(());
             }
             other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
         };
-        if parsed_stage != stage {
-            bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
+        let Some(stage) = stage else {
+            bail!(
+                "CREATE_SHADER_DXBC: stage mismatch (cmd=Geometry, dxbc={:?})",
+                parsed_stage.expect("non-geometry DXBC stage mapped above")
+            );
+        };
+        if parsed_stage != Some(stage) {
+            bail!(
+                "CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={:?})",
+                parsed_stage.expect("non-geometry DXBC stage mapped above")
+            );
         }
 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
@@ -7030,6 +7066,10 @@ impl AerogpuD3d11Executor {
         }
         let data = &cmd_bytes[24..24 + byte_len];
 
+        if stage_raw == AerogpuShaderStage::Geometry as u32 {
+            // Geometry-stage constants are accepted but ignored; WebGPU has no GS stage.
+            return Ok(());
+        }
         let stage = ShaderStage::from_aerogpu_u32(stage_raw)
             .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw}"))?;
         let dst = self
