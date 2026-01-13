@@ -53,27 +53,7 @@ fn validate_port_size(size: u8) -> usize {
 }
 
 pub(crate) fn parse_usb_path(path: JsValue) -> Result<Vec<u8>, JsValue> {
-    let parts: Vec<u32> = serde_wasm_bindgen::from_value(path)
-        .map_err(|e| js_error(format!("Invalid USB topology path: {e}")))?;
-    if parts.is_empty() {
-        return Err(js_error("USB topology path must not be empty"));
-    }
-
-    let mut out = Vec::with_capacity(parts.len());
-    for (i, part) in parts.into_iter().enumerate() {
-        if i == 0 {
-            if part > 1 {
-                return Err(js_error("USB root port must be 0 or 1"));
-            }
-            out.push(part as u8);
-            continue;
-        }
-        if !(1..=255).contains(&part) {
-            return Err(js_error("USB hub port numbers must be in 1..=255"));
-        }
-        out.push(part as u8);
-    }
-    Ok(out)
+    crate::usb_topology::parse_usb_path(path, 1)
 }
 
 fn parse_uhci_usb_path(path: JsValue) -> Result<Vec<u8>, JsValue> {

@@ -73,24 +73,20 @@ fn map_attach_error(err: UsbHubAttachError) -> JsValue {
 }
 
 fn parse_xhci_usb_path(path: JsValue, port_count: u8) -> Result<Vec<u8>, JsValue> {
-    let parts: Vec<u32> = serde_wasm_bindgen::from_value(path)
-        .map_err(|e| js_error(format!("Invalid USB topology path: {e}")))?;
-    if parts.is_empty() {
-        return Err(js_error("USB topology path must not be empty"));
+    if port_count == 0 {
+        return Err(js_error("xHCI controller has no root ports"));
     }
-    if parts.len() > XHCI_MAX_ROUTE_TIER_COUNT + 1 {
+
+    // Share the baseline USB topology path parsing semantics with UHCI:
+    // - `path[0]` is a 0-based root port index
+    // - `path[1..]` are 1-based hub port indices.
+    let max_root_port = port_count.saturating_sub(1);
+    let out = crate::usb_topology::parse_usb_path(path, max_root_port)?;
+
+    if out.len() > XHCI_MAX_ROUTE_TIER_COUNT + 1 {
         return Err(js_error(format!(
             "xHCI topology path too deep (max {} downstream hub tiers)",
             XHCI_MAX_ROUTE_TIER_COUNT
-        )));
-    }
-
-    let root = parts[0];
-    if root >= port_count as u32 {
-        // Root ports are 0-based in the guest-facing contract; xHCI itself uses 1-based port IDs.
-        let max = port_count.saturating_sub(1);
-        return Err(js_error(format!(
-            "xHCI root port out of range (expected 0..={max})"
         )));
     }
     let reserved_port = if port_count > WEBUSB_ROOT_PORT {
@@ -98,21 +94,19 @@ fn parse_xhci_usb_path(path: JsValue, port_count: u8) -> Result<Vec<u8>, JsValue
     } else {
         0
     };
-    if root == reserved_port as u32 {
+    if out[0] == reserved_port {
         return Err(js_error(format!(
             "xHCI root port {reserved_port} is reserved for WebUSB passthrough"
         )));
     }
-
-    let mut out = Vec::with_capacity(parts.len());
-    out.push(root as u8);
-    for &part in &parts[1..] {
-        if !(1..=XHCI_MAX_ROUTE_PORT).contains(&part) {
-            return Err(js_error(format!(
-                "xHCI hub port numbers must be in 1..={XHCI_MAX_ROUTE_PORT}"
-            )));
-        }
-        out.push(part as u8);
+    if out
+        .iter()
+        .skip(1)
+        .any(|&p| u32::from(p) > XHCI_MAX_ROUTE_PORT)
+    {
+        return Err(js_error(format!(
+            "xHCI hub port numbers must be in 1..={XHCI_MAX_ROUTE_PORT}"
+        )));
     }
 
     Ok(out)

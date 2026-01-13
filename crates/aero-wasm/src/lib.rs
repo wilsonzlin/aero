@@ -84,6 +84,9 @@ mod uhci_controller_bridge;
 pub use uhci_controller_bridge::UhciControllerBridge;
 
 #[cfg(target_arch = "wasm32")]
+mod usb_topology;
+
+#[cfg(target_arch = "wasm32")]
 mod ehci_controller_bridge;
 #[cfg(target_arch = "wasm32")]
 pub use ehci_controller_bridge::EhciControllerBridge;

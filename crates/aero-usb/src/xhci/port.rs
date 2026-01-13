@@ -11,11 +11,13 @@ use super::regs::{
 use crate::device::AttachedUsbDevice;
 use crate::{UsbDeviceModel, UsbSpeed};
 
-const MAX_USB_DEVICE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
-
 // Reset signalling for USB2 ports is ~50ms (similar to the UHCI root hub model).
 const RESET_DURATION_MS: u16 = 50;
 
+/// Maximum bytes allowed for a nested `AttachedUsbDevice` snapshot when restoring.
+///
+/// This mirrors the limits used by hubs (`crate::hub`).
+const MAX_USB_DEVICE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum XhciUsb2LinkState {
     /// U0 (active).
