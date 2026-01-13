@@ -368,6 +368,11 @@ The service supports configuration via environment variables and equivalent flag
   - `address_and_port` (recommended): only allow inbound UDP packets from remote address+port tuples that the guest has previously sent to (like a typical symmetric NAT).
   - `any`: allow inbound UDP packets from any remote endpoint (full-cone NAT behavior). **Less safe**: attackers can send arbitrary UDP traffic to the relay's UDP sockets and have it forwarded to clients.
 - `UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT` / `--udp-remote-allowlist-idle-timeout` (default: `UDP_BINDING_IDLE_TIMEOUT`) — expire inactive remote allowlist entries (used when `UDP_INBOUND_FILTER_MODE=address_and_port`)
+- `MAX_ALLOWED_REMOTES_PER_BINDING` / `--max-allowed-remotes-per-binding` (default `1024`) — cap the number of remote endpoints tracked in the per-binding allowlist (one allowlist per guest UDP port binding)
+  - When the cap is exceeded, the relay evicts the **least recently seen** remote (oldest by last-seen timestamp).
+  - DoS-hardening: bounds memory usage if a client "sprays" many destinations/remotes from a single UDP socket.
+  - Observability: allowlist evictions increment the `/metrics` event counter `udp_remote_allowlist_evictions_total`.
+  - Warning: setting this too low can break legitimate UDP patterns that talk to many peers from one local port; replies from evicted remotes will be dropped until the guest sends to them again.
 - `UDP_READ_BUFFER_BYTES` / `--udp-read-buffer-bytes` (default: `MAX_DATAGRAM_PAYLOAD_BYTES+1`, e.g. `1201`)
   - Must be `>= MAX_DATAGRAM_PAYLOAD_BYTES+1` so the relay can detect and drop oversized UDP datagrams instead of forwarding a silently truncated payload.
 - `DATACHANNEL_SEND_QUEUE_BYTES` / `--datachannel-send-queue-bytes` (default `1048576`)
@@ -436,7 +441,11 @@ Per-session quotas and rate limits are enforced on the **data plane** (WebRTC Da
 - `MAX_UDP_PPS_PER_SESSION` / `--max-udp-pps-per-session` (default `0` = unlimited) — outbound UDP packets/sec per session
 - `MAX_UDP_BPS_PER_SESSION` / `--max-udp-bps-per-session` (default `0` = unlimited) — outbound UDP bytes/sec per session
 - `MAX_UDP_PPS_PER_DEST` / `--max-udp-pps-per-dest` (default `0` = unlimited) — outbound UDP packets/sec per destination per session
-- `MAX_UDP_DEST_BUCKETS_PER_SESSION` / `--max-udp-dest-buckets-per-session` (default `1024`; defaults to `MAX_UNIQUE_DESTINATIONS_PER_SESSION` when that is set) — bounds per-destination rate limiter state per session (prevents unbounded memory growth on destination spray when per-dest PPS limiting is enabled)
+- `MAX_UDP_DEST_BUCKETS_PER_SESSION` / `--max-udp-dest-buckets-per-session` (default `1024`; defaults to `MAX_UNIQUE_DESTINATIONS_PER_SESSION` when that is set) — cap the number of per-destination token buckets kept per session (only used when `MAX_UDP_PPS_PER_DEST` is enabled)
+  - When the cap is exceeded, the relay evicts the **least recently used (LRU)** destination bucket.
+  - DoS-hardening: bounds per-session memory usage under destination spray while per-destination rate limiting is enabled.
+  - Observability: bucket evictions increment the `/metrics` event counter `udp_per_dest_bucket_evictions`.
+  - Warning: setting this too low can cause frequent bucket churn for legitimate clients that talk to many UDP destinations, making per-destination rate limiting less predictable/consistent.
 - `MAX_UNIQUE_DESTINATIONS_PER_SESSION` / `--max-unique-destinations-per-session` (default `0` = unlimited)
 - `MAX_DC_BPS_PER_SESSION` / `--max-dc-bps-per-session` (default `0` = unlimited) — relay→client DataChannel bytes/sec per session
 - `HARD_CLOSE_AFTER_VIOLATIONS` / `--hard-close-after-violations` (default `0` = disabled) — close the session after N rate/quota violations
