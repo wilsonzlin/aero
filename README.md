@@ -170,6 +170,8 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 | `disk`    | string \| `null` | `activeDiskImage` | `?disk=win7-sp1.img` |
 | `log`     | `trace|debug|info|warn|error` | `logLevel` | `?log=debug` |
 | `scale`   | number | `uiScale` | `?scale=1.25` |
+| `kbd`     | `auto|ps2|usb|virtio` | `forceKeyboardBackend` | `?kbd=ps2` |
+| `mouse`   | `auto|ps2|usb|virtio` | `forceMouseBackend` | `?mouse=virtio` |
 
 ### Examples
 

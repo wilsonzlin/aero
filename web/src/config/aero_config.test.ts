@@ -177,6 +177,21 @@ describe("AeroConfig", () => {
     expect(parsed.overrides.virtioSndMode).toBe("legacy");
   });
 
+  it("query parsing: accepts input backend overrides", () => {
+    const parsed = parseAeroConfigQueryOverrides("?kbd=ps2&mouse=virtio");
+    expect(parsed.lockedKeys.has("forceKeyboardBackend")).toBe(true);
+    expect(parsed.lockedKeys.has("forceMouseBackend")).toBe(true);
+    expect(parsed.overrides.forceKeyboardBackend).toBe("ps2");
+    expect(parsed.overrides.forceMouseBackend).toBe("virtio");
+  });
+
+  it("query parsing: rejects invalid input backend overrides", () => {
+    const parsed = parseAeroConfigQueryOverrides("?kbd=wat");
+    expect(parsed.lockedKeys.has("forceKeyboardBackend")).toBe(false);
+    expect(parsed.overrides.forceKeyboardBackend).toBeUndefined();
+    expect(parsed.issues.some((i) => i.key === "forceKeyboardBackend")).toBe(true);
+  });
+
   it("query parsing: accepts same-origin proxy paths", () => {
     const parsed = parseAeroConfigQueryOverrides("?proxy=%2Fl2");
     expect(parsed.lockedKeys.has("proxyUrl")).toBe(true);
