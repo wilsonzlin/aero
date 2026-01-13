@@ -146,8 +146,19 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
         // immediate constant buffers, etc.). Treat them as declarations/metadata regardless of
         // their class so they never poison the instruction stream.
         if opcode == OPCODE_CUSTOMDATA {
+            // Custom-data blocks can (in theory) also have extended opcode tokens. Skip over them
+            // to find the class token so the metadata we record is accurate.
+            let mut class_pos = 1usize;
+            let mut extended = (opcode_token & OPCODE_EXTENDED_BIT) != 0;
+            while extended {
+                let Some(ext) = inst_toks.get(class_pos).copied() else {
+                    break;
+                };
+                class_pos += 1;
+                extended = (ext & OPCODE_EXTENDED_BIT) != 0;
+            }
             let class = inst_toks
-                .get(1)
+                .get(class_pos)
                 .copied()
                 .unwrap_or(CUSTOMDATA_CLASS_COMMENT);
             decls.push(Sm4Decl::CustomData {
@@ -402,6 +413,53 @@ mod tests {
             "expected InstructionLengthZero, got {err:?}"
         );
         assert_eq!(err.at_dword, 2);
+    }
+
+    #[test]
+    fn customdata_records_class_after_extended_opcode_tokens() {
+        // Extended opcode tokens (rare for `customdata`, but allowed by the token format) should
+        // not be mistaken for the customdata class token.
+        let version_token = 0x50u32; // ps_5_0
+
+        // customdata block: opcode (extended) + ext token + class token
+        let customdata_len = 3u32;
+        let customdata_class = 1u32;
+
+        let customdata_opcode =
+            opcode_token(OPCODE_CUSTOMDATA, customdata_len) | OPCODE_EXTENDED_BIT;
+        let ext_token = 0u32; // terminates extended opcode token chain
+
+        let ret_len = 1u32;
+
+        let mut tokens = vec![
+            version_token,
+            0, // declared length patched below
+            customdata_opcode,
+            ext_token,
+            customdata_class,
+            opcode_token(OPCODE_RET, ret_len),
+        ];
+        tokens[1] = tokens.len() as u32;
+
+        let program = Sm4Program {
+            stage: ShaderStage::Pixel,
+            model: ShaderModel { major: 5, minor: 0 },
+            tokens,
+        };
+
+        let module = program.decode().expect("decode should succeed");
+        assert!(matches!(module.instructions.as_slice(), [Sm4Inst::Ret]));
+        assert!(
+            module.decls.iter().any(|d| matches!(
+                d,
+                Sm4Decl::CustomData {
+                    class: 1,
+                    len_dwords: 3
+                }
+            )),
+            "expected customdata class to be recorded after extended tokens, got decls={:?}",
+            module.decls
+        );
     }
 }
 fn decode_instruction(
