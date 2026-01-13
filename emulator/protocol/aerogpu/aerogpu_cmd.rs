@@ -162,6 +162,18 @@ pub enum AerogpuShaderStage {
     Geometry = 3,
 }
 
+impl AerogpuShaderStage {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Vertex),
+            1 => Some(Self::Pixel),
+            2 => Some(Self::Compute),
+            3 => Some(Self::Geometry),
+            _ => None,
+        }
+    }
+}
+
 /// Extended shader stage used by the "stage_ex" ABI extension.
 ///
 /// This matches the DXBC/D3D10+ `D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE` values:
@@ -476,6 +488,20 @@ pub struct AerogpuCmdBindShaders {
 
 impl AerogpuCmdBindShaders {
     pub const SIZE_BYTES: usize = 24;
+
+    /// Geometry shader handle (GS).
+    ///
+    /// ABI note: `aerogpu_cmd_bind_shaders` stores the GS handle in `reserved0` when non-zero.
+    pub const fn gs(&self) -> AerogpuHandle {
+        self.reserved0
+    }
+
+    /// Set the geometry shader handle (GS).
+    ///
+    /// ABI note: `aerogpu_cmd_bind_shaders` stores the GS handle in `reserved0` when non-zero.
+    pub fn set_gs(&mut self, gs: AerogpuHandle) {
+        self.reserved0 = gs;
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
