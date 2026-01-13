@@ -3735,8 +3735,11 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
   wprintf(L"Selftest: %s\n", q.passed ? L"PASS" : L"FAIL");
   if (!q.passed) {
     wprintf(L"Error code: %lu (%s)\n", (unsigned long)q.error_code, SelftestErrorToString(q.error_code));
+    // Return the KMD-provided stable error code for automation (0 == PASS).
+    // If a buggy/older KMD reports failure with error_code==0, fall back to 1.
+    return (q.error_code != 0) ? (int)q.error_code : 1;
   }
-  return q.passed ? 0 : 3;
+  return 0;
 }
 
 static int DoReadGpa(const D3DKMT_FUNCS *f,
