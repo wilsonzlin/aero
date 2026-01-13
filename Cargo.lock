@@ -732,6 +732,7 @@ dependencies = [
  "futures-intrusive",
  "pollster",
  "thiserror 1.0.69",
+ "tracing",
  "web-sys",
  "wgpu",
 ]

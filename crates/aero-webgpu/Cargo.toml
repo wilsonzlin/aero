@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 bytemuck = { version = "1.14", features = ["derive"] }
 futures-intrusive = "0.5"
 thiserror = "1.0"
+tracing = "0.1"
 wgpu = { version = "0.20", features = ["webgl"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

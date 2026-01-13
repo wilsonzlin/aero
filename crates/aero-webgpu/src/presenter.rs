@@ -335,6 +335,7 @@ pub struct WebGpuFramebufferPresenter<'a> {
     pub(crate) context: WebGpuContext,
     surface: wgpu::Surface<'a>,
     _surface_format: wgpu::TextureFormat,
+    srgb_encode: bool,
     config: wgpu::SurfaceConfiguration,
 
     surface_size: FramebufferSize,
@@ -367,8 +368,9 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
 
         let surface_caps = surface.get_capabilities(adapter);
         let surface_format = preferred_surface_format(&surface_caps.formats);
-        let alpha_mode = surface_caps.alpha_modes[0];
+        let alpha_mode = preferred_composite_alpha_mode(&surface_caps.alpha_modes);
         let present_mode = preferred_present_mode(&surface_caps.present_modes);
+        let srgb_encode = surface_format_requires_manual_srgb_encoding(surface_format);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -447,6 +449,7 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             context,
             surface,
             _surface_format: surface_format,
+            srgb_encode,
             config,
             surface_size,
             aspect_mode: AspectMode::default(),
@@ -579,7 +582,7 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             ],
             input_size: [size.width as f32, size.height as f32],
             mode: self.aspect_mode.as_u32(),
-            _pad: 0,
+            srgb_encode: if self.srgb_encode { 1 } else { 0 },
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
@@ -594,14 +597,22 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
 
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
-            Err(
-                wgpu::SurfaceError::Lost
-                | wgpu::SurfaceError::Outdated
-                | wgpu::SurfaceError::Timeout,
-            ) => {
+            Err(wgpu::SurfaceError::Timeout) => {
+                // Present timeout: treat as transient and drop the frame.
+                tracing::warn!("wgpu surface timeout during present; dropping frame");
+                return Ok(());
+            }
+            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 // Window resize / swap chain invalidation; reconfigure and retry once.
                 self.surface.configure(device, &self.config);
-                self.surface.get_current_texture()?
+                match self.surface.get_current_texture() {
+                    Ok(frame) => frame,
+                    Err(wgpu::SurfaceError::Timeout) => {
+                        tracing::warn!("wgpu surface timeout during present retry; dropping frame");
+                        return Ok(());
+                    }
+                    Err(e) => return Err(e.into()),
+                }
             }
             Err(e) => return Err(e.into()),
         };
@@ -761,7 +772,7 @@ struct PresentUniforms {
     output_size: [f32; 2],
     input_size: [f32; 2],
     mode: u32,
-    _pad: u32,
+    srgb_encode: u32,
 }
 
 const PRESENT_WGSL: &str = r#"
@@ -769,12 +780,34 @@ struct Uniforms {
     output_size: vec2<f32>,
     input_size: vec2<f32>,
     mode: u32,
-    _pad: u32,
+    srgb_encode: u32,
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var src_tex: texture_2d<f32>;
 @group(0) @binding(2) var src_samp: sampler;
+
+fn linear_to_srgb_channel(x: f32) -> f32 {
+    if (x <= 0.0031308) {
+        return x * 12.92;
+    }
+    return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+}
+
+fn linear_to_srgb(rgb: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        linear_to_srgb_channel(rgb.r),
+        linear_to_srgb_channel(rgb.g),
+        linear_to_srgb_channel(rgb.b),
+    );
+}
+
+fn encode_output(color: vec4<f32>) -> vec4<f32> {
+    if (u.srgb_encode == 0u) {
+        return color;
+    }
+    return vec4<f32>(linear_to_srgb(color.rgb), color.a);
+}
 
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
@@ -791,7 +824,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // Stretch: map directly.
     if (u.mode == 0u) {
         let uv = pos.xy / u.output_size;
-        return textureSample(src_tex, src_samp, uv);
+        return encode_output(textureSample(src_tex, src_samp, uv));
     }
 
     let dst = u.output_size;
@@ -811,10 +844,62 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let p = pos.xy - offset;
 
     if (p.x < 0.0 || p.y < 0.0 || p.x >= scaled.x || p.y >= scaled.y) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return encode_output(vec4<f32>(0.0, 0.0, 0.0, 1.0));
     }
 
     let uv = p / scaled;
-    return textureSample(src_tex, src_samp, uv);
+    return encode_output(textureSample(src_tex, src_samp, uv));
 }
 "#;
+
+fn preferred_composite_alpha_mode(
+    modes: &[wgpu::CompositeAlphaMode],
+) -> wgpu::CompositeAlphaMode {
+    if modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
+        return wgpu::CompositeAlphaMode::Opaque;
+    }
+    modes
+        .first()
+        .copied()
+        .unwrap_or(wgpu::CompositeAlphaMode::Opaque)
+}
+
+fn surface_format_requires_manual_srgb_encoding(format: wgpu::TextureFormat) -> bool {
+    !format.is_srgb()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn composite_alpha_mode_prefers_opaque() {
+        let modes = [
+            wgpu::CompositeAlphaMode::PreMultiplied,
+            wgpu::CompositeAlphaMode::Opaque,
+        ];
+        assert_eq!(preferred_composite_alpha_mode(&modes), wgpu::CompositeAlphaMode::Opaque);
+
+        let modes = [wgpu::CompositeAlphaMode::PostMultiplied];
+        assert_eq!(
+            preferred_composite_alpha_mode(&modes),
+            wgpu::CompositeAlphaMode::PostMultiplied
+        );
+    }
+
+    #[test]
+    fn surface_format_prefers_srgb_and_requires_encode_for_linear() {
+        let formats = [
+            wgpu::TextureFormat::Bgra8Unorm,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+        ];
+        let chosen = preferred_surface_format(&formats);
+        assert_eq!(chosen, wgpu::TextureFormat::Bgra8UnormSrgb);
+        assert!(!surface_format_requires_manual_srgb_encoding(chosen));
+
+        let formats = [wgpu::TextureFormat::Bgra8Unorm];
+        let chosen = preferred_surface_format(&formats);
+        assert_eq!(chosen, wgpu::TextureFormat::Bgra8Unorm);
+        assert!(surface_format_requires_manual_srgb_encoding(chosen));
+    }
+}
