@@ -1204,25 +1204,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     };
 
     let cache: ChunkCache;
-    if (resolved.cacheLimitBytes === 0) {
-      // cacheLimitBytes=0 is defined as "disable caching entirely". Ensure we do not open or
-      // read/write any persistent cache backend (OPFS or IndexedDB).
-      cache = new NoopChunkCache();
-    } else if (options.store) {
-      // Tests can inject an in-memory store to avoid depending on OPFS/IDB.
-      const manager = new RemoteCacheManager(new StoreDirHandle(resolved.store, REMOTE_CACHE_ROOT_PATH));
-      const opened = await manager.openCache(cacheKeyParts, { chunkSizeBytes: manifest.chunkSize, validators });
-      cache = new RemoteChunkCache(
-        resolved.store,
-        manager,
-        opened.cacheKey,
-        cacheKeyParts,
-        validators,
-        manifest,
-        resolved.cacheLimitBytes,
-        opened.meta,
-      );
-    } else if (resolved.cacheBackend === "idb" && typeof indexedDB !== "undefined") {
+    const openIdbCache = async (): Promise<ChunkCache> => {
       try {
         const cacheKey = await RemoteCacheManager.deriveCacheKey(cacheKeyParts);
         const idbCache = await IdbRemoteChunkCache.open({
@@ -1238,21 +1220,22 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
           cacheLimitBytes: resolved.cacheLimitBytes,
         });
         const status = await idbCache.getStatus();
-        cache = new IdbChunkCache(idbCache, manifest, status);
+        return new IdbChunkCache(idbCache, manifest, status);
       } catch (err) {
         if (err instanceof IdbRemoteChunkCacheQuotaError) {
           // If the cache cannot be initialized due to quota pressure, treat caching as disabled
           // and continue with network-only reads.
-          cache = new NoopChunkCache();
-        } else {
-          throw err;
+          return new NoopChunkCache();
         }
+        throw err;
       }
-    } else {
-      const manager = new RemoteCacheManager(new StoreDirHandle(resolved.store, REMOTE_CACHE_ROOT_PATH));
+    };
+
+    const openRemoteChunkCache = async (store: BinaryStore): Promise<RemoteChunkCache> => {
+      const manager = new RemoteCacheManager(new StoreDirHandle(store, REMOTE_CACHE_ROOT_PATH));
       const opened = await manager.openCache(cacheKeyParts, { chunkSizeBytes: manifest.chunkSize, validators });
-      cache = new RemoteChunkCache(
-        resolved.store,
+      const out = new RemoteChunkCache(
+        store,
         manager,
         opened.cacheKey,
         cacheKeyParts,
@@ -1261,10 +1244,40 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
         resolved.cacheLimitBytes,
         opened.meta,
       );
-    }
+      await out.initialize();
+      return out;
+    };
 
-    if (cache instanceof RemoteChunkCache) {
-      await cache.initialize();
+    if (resolved.cacheLimitBytes === 0) {
+      // cacheLimitBytes=0 is defined as "disable caching entirely". Ensure we do not open or
+      // read/write any persistent cache backend (OPFS or IndexedDB).
+      cache = new NoopChunkCache();
+    } else if (options.store) {
+      // Tests can inject an in-memory store to avoid depending on OPFS/IDB.
+      cache = await openRemoteChunkCache(resolved.store);
+    } else if (resolved.cacheBackend === "idb" && typeof indexedDB !== "undefined") {
+      cache = await openIdbCache();
+    } else {
+      const opfsBacked = resolved.store instanceof OpfsStore;
+      if (opfsBacked) {
+        // OPFS can be present but unusable at runtime (permissions, transient errors). Streaming
+        // reads should still work, so treat OPFS cache initialization as best-effort and fall back.
+        try {
+          cache = await openRemoteChunkCache(resolved.store);
+        } catch {
+          if (typeof indexedDB !== "undefined") {
+            try {
+              cache = await openIdbCache();
+            } catch {
+              cache = new NoopChunkCache();
+            }
+          } else {
+            cache = new NoopChunkCache();
+          }
+        }
+      } else {
+        cache = await openRemoteChunkCache(resolved.store);
+      }
     }
 
     const disk = new RemoteChunkedDisk(cacheImageId, params.lease, manifest, cache, {

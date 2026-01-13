@@ -1,10 +1,12 @@
+import "../../test/fake_indexeddb_auto.ts";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { MAX_REMOTE_CHUNK_COUNT, MAX_REMOTE_MANIFEST_JSON_BYTES, RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
-import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR } from "./metadata";
+import { clearIdb, OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR } from "./metadata";
 import { remoteChunkedDeliveryType, RemoteCacheManager } from "./remote_cache_manager";
 
 class TestMemoryStore implements BinaryStore {
@@ -572,6 +574,94 @@ describe("RemoteChunkedDisk", () => {
     expect(t3.bytesDownloaded).toBe(512);
 
     await disk2.close();
+  });
+
+  it("falls back to IndexedDB cache when OPFS cache init fails", async () => {
+    await clearIdb();
+
+    const chunkSize = 512 * 1024; // IDB cache requires >= 512KiB chunks
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunks = [img.slice(0, chunkSize)];
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+    };
+
+    const { baseUrl, hits, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunks[0]);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const nav = globalThis.navigator as unknown as Record<string, unknown>;
+    const originalStorageDescriptor = Object.getOwnPropertyDescriptor(nav, "storage");
+
+    // Force OPFS feature detection to pass, but throw when OPFS operations are actually invoked.
+    Object.defineProperty(nav, "storage", {
+      value: {
+        getDirectory: () => {
+          throw new Error("OPFS unavailable");
+        },
+      },
+      configurable: true,
+    });
+
+    try {
+      const common = {
+        cacheBackend: "opfs" as const,
+        cacheLimitBytes: null,
+        maxConcurrentFetches: 1,
+        prefetchSequentialChunks: 0,
+        retryBaseDelayMs: 0,
+      };
+
+      const disk1 = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, common);
+      const buf1 = new Uint8Array(512);
+      await disk1.readSectors(0, buf1);
+      expect(buf1).toEqual(img.slice(0, 512));
+      expect(hits.get("/chunks/00000000.bin")).toBe(1);
+      await disk1.close();
+
+      // Re-open: should still succeed and hit the persistent IDB cache (no extra chunk fetch).
+      const disk2 = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, common);
+      const buf2 = new Uint8Array(512);
+      await disk2.readSectors(0, buf2);
+      expect(buf2).toEqual(img.slice(0, 512));
+      expect(hits.get("/chunks/00000000.bin")).toBe(1);
+      await disk2.close();
+    } finally {
+      if (originalStorageDescriptor) {
+        Object.defineProperty(nav, "storage", originalStorageDescriptor);
+      } else {
+        delete (nav as { storage?: unknown }).storage;
+      }
+      await clearIdb();
+    }
   });
 
   it("does not persist chunks when cacheLimitBytes is 0 (cache disabled)", async () => {
