@@ -183,6 +183,7 @@ constexpr uint32_t kD3D10BindShaderResource = 0x8;
 constexpr uint32_t kD3D10BindRenderTarget = 0x20;
 constexpr uint32_t kD3D10BindDepthStencil = 0x40;
 
+constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kAeroGpuD3D10MaxSrvSlots = 128;
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
@@ -752,6 +753,10 @@ struct AeroGpuDevice {
   aerogpu_handle_t current_dsv = 0;
   std::array<AeroGpuResource*, kAeroGpuD3D10MaxSrvSlots> current_vs_srvs{};
   std::array<AeroGpuResource*, kAeroGpuD3D10MaxSrvSlots> current_ps_srvs{};
+  std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots> vs_constant_buffers{};
+  std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots> ps_constant_buffers{};
+  std::array<AeroGpuResource*, kMaxConstantBufferSlots> current_vs_cb_resources{};
+  std::array<AeroGpuResource*, kMaxConstantBufferSlots> current_ps_cb_resources{};
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_input_layout = 0;
@@ -1233,6 +1238,12 @@ static void TrackDrawStateLocked(AeroGpuDevice* dev) {
     TrackWddmAllocForSubmitLocked(dev, res);
   }
   for (AeroGpuResource* res : dev->current_ps_srvs) {
+    TrackWddmAllocForSubmitLocked(dev, res);
+  }
+  for (AeroGpuResource* res : dev->current_vs_cb_resources) {
+    TrackWddmAllocForSubmitLocked(dev, res);
+  }
+  for (AeroGpuResource* res : dev->current_ps_cb_resources) {
     TrackWddmAllocForSubmitLocked(dev, res);
   }
 }
@@ -3632,6 +3643,40 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     }
   }
 
+  auto unbind_constant_buffers = [&](uint32_t shader_stage,
+                                     std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots>& table,
+                                     std::array<AeroGpuResource*, kMaxConstantBufferSlots>& resources) {
+    bool any = false;
+    for (uint32_t slot = 0; slot < kMaxConstantBufferSlots; ++slot) {
+      if (resources[slot] == res) {
+        resources[slot] = nullptr;
+        table[slot] = {};
+        any = true;
+      }
+    }
+    if (!any) {
+      return;
+    }
+
+    for (AeroGpuResource* bound : resources) {
+      TrackWddmAllocForSubmitLocked(dev, bound);
+    }
+
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+        AEROGPU_CMD_SET_CONSTANT_BUFFERS, table.data(), table.size() * sizeof(table[0]));
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+      return;
+    }
+    cmd->shader_stage = shader_stage;
+    cmd->start_slot = 0;
+    cmd->buffer_count = static_cast<uint32_t>(table.size());
+    cmd->reserved0 = 0;
+  };
+
+  unbind_constant_buffers(AEROGPU_SHADER_STAGE_VERTEX, dev->vs_constant_buffers, dev->current_vs_cb_resources);
+  unbind_constant_buffers(AEROGPU_SHADER_STAGE_PIXEL, dev->ps_constant_buffers, dev->current_ps_cb_resources);
+
   if (res->handle != kInvalidHandle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
     cmd->resource_handle = res->handle;
@@ -5541,6 +5586,106 @@ void AEROGPU_APIENTRY PsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HPIXELSHADE
   cmd->reserved0 = 0;
 }
 
+static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
+                                     uint32_t shader_stage,
+                                     UINT start_slot,
+                                     UINT buffer_count,
+                                     const D3D10DDI_HRESOURCE* phBuffers) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  if (buffer_count == 0) {
+    return;
+  }
+  if (!phBuffers) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+  const uint64_t end_slot = static_cast<uint64_t>(start_slot) + static_cast<uint64_t>(buffer_count);
+  if (start_slot >= kMaxConstantBufferSlots || end_slot > kMaxConstantBufferSlots) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots>* table = nullptr;
+  std::array<AeroGpuResource*, kMaxConstantBufferSlots>* resources = nullptr;
+  if (shader_stage == AEROGPU_SHADER_STAGE_VERTEX) {
+    table = &dev->vs_constant_buffers;
+    resources = &dev->current_vs_cb_resources;
+  } else if (shader_stage == AEROGPU_SHADER_STAGE_PIXEL) {
+    table = &dev->ps_constant_buffers;
+    resources = &dev->current_ps_cb_resources;
+  } else {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+
+  std::vector<aerogpu_constant_buffer_binding> bindings;
+  bindings.resize(buffer_count);
+  for (UINT i = 0; i < buffer_count; i++) {
+    aerogpu_constant_buffer_binding b{};
+    b.buffer = 0;
+    b.offset_bytes = 0;
+    b.size_bytes = 0;
+    b.reserved0 = 0;
+
+    auto* res = phBuffers[i].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(phBuffers[i]) : nullptr;
+    auto* buf_res = (res && res->kind == ResourceKind::Buffer) ? res : nullptr;
+    if (buf_res) {
+      b.buffer = buf_res->handle;
+      b.offset_bytes = 0;
+      b.size_bytes = buf_res->size_bytes > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(buf_res->size_bytes);
+    }
+
+    TrackWddmAllocForSubmitLocked(dev, buf_res);
+
+    (*table)[start_slot + i] = b;
+    (*resources)[start_slot + i] = buf_res;
+    bindings[i] = b;
+  }
+
+  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->shader_stage = shader_stage;
+  cmd->start_slot = static_cast<uint32_t>(start_slot);
+  cmd->buffer_count = static_cast<uint32_t>(buffer_count);
+  cmd->reserved0 = 0;
+}
+
+void AEROGPU_APIENTRY VsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
+                                          UINT start_slot,
+                                          UINT num_buffers,
+                                          const D3D10DDI_HRESOURCE* phBuffers) {
+  AEROGPU_D3D10_TRACEF_VERBOSE("VsSetConstantBuffers hDevice=%p start=%u count=%u",
+                               hDevice.pDrvPrivate,
+                               static_cast<unsigned>(start_slot),
+                               static_cast<unsigned>(num_buffers));
+  SetConstantBuffersCommon(hDevice, AEROGPU_SHADER_STAGE_VERTEX, start_slot, num_buffers, phBuffers);
+}
+
+void AEROGPU_APIENTRY PsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
+                                          UINT start_slot,
+                                          UINT num_buffers,
+                                          const D3D10DDI_HRESOURCE* phBuffers) {
+  AEROGPU_D3D10_TRACEF_VERBOSE("PsSetConstantBuffers hDevice=%p start=%u count=%u",
+                               hDevice.pDrvPrivate,
+                               static_cast<unsigned>(start_slot),
+                               static_cast<unsigned>(num_buffers));
+  SetConstantBuffersCommon(hDevice, AEROGPU_SHADER_STAGE_PIXEL, start_slot, num_buffers, phBuffers);
+}
+
 void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
                               uint32_t shader_stage,
                               UINT start_slot,
@@ -5589,6 +5734,40 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto clear_constant_buffers = [&](uint32_t shader_stage,
+                                    std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots>& table,
+                                    std::array<AeroGpuResource*, kMaxConstantBufferSlots>& resources) {
+    bool any = false;
+    for (const aerogpu_constant_buffer_binding& b : table) {
+      if (b.buffer != 0) {
+        any = true;
+        break;
+      }
+    }
+
+    table.fill({});
+    resources.fill(nullptr);
+
+    if (!any) {
+      return;
+    }
+
+    std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots> zeros{};
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+        AEROGPU_CMD_SET_CONSTANT_BUFFERS, zeros.data(), zeros.size() * sizeof(zeros[0]));
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+      return;
+    }
+    cmd->shader_stage = shader_stage;
+    cmd->start_slot = 0;
+    cmd->buffer_count = static_cast<uint32_t>(zeros.size());
+    cmd->reserved0 = 0;
+  };
+
+  clear_constant_buffers(AEROGPU_SHADER_STAGE_VERTEX, dev->vs_constant_buffers, dev->current_vs_cb_resources);
+  clear_constant_buffers(AEROGPU_SHADER_STAGE_PIXEL, dev->ps_constant_buffers, dev->current_ps_cb_resources);
 
   for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
     if (dev->current_vs_srvs[slot]) {
@@ -7077,8 +7256,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnVsSetShader = &VsSetShader;
   pCreateDevice->pDeviceFuncs->pfnPsSetShader = &PsSetShader;
 
-  AEROGPU_D3D10_ASSIGN_STUB(pfnVsSetConstantBuffers, VsSetConstantBuffers);
-  AEROGPU_D3D10_ASSIGN_STUB(pfnPsSetConstantBuffers, PsSetConstantBuffers);
+  pCreateDevice->pDeviceFuncs->pfnVsSetConstantBuffers = &VsSetConstantBuffers;
+  pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers = &PsSetConstantBuffers;
   pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources = &VsSetShaderResources;
   pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources = &PsSetShaderResources;
   AEROGPU_D3D10_ASSIGN_STUB(pfnVsSetSamplers, VsSetSamplers);
@@ -7268,10 +7447,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnVsSetShader = &VsSetShader;
   pCreateDevice->pDeviceFuncs->pfnPsSetShader = &PsSetShader;
 
-  pCreateDevice->pDeviceFuncs->pfnVsSetConstantBuffers =
-      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetConstantBuffers)>::Call;
-  pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers =
-      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnVsSetConstantBuffers = &VsSetConstantBuffers;
+  pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers = &PsSetConstantBuffers;
   pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources = &VsSetShaderResources;
   pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources = &PsSetShaderResources;
   pCreateDevice->pDeviceFuncs->pfnVsSetSamplers =
