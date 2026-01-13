@@ -21,6 +21,46 @@ This is the **coordination hub**. You wire together the work from all other work
 
 ---
 
+## Current status (implementation reality)
+
+### Implemented (already in-tree)
+
+- **Legacy BIOS (HLE) with INT dispatch via ROM stubs + `HLT` hypercall**:
+  `crates/firmware/src/bios/mod.rs` (see module-level docs) + ROM generation in
+  `crates/firmware/src/bios/rom.rs`.
+- **POST + boot-sector handoff** (IVT/BDA/EBDA init, A20 enable, disk boot, etc.):
+  `crates/firmware/src/bios/post.rs`, `crates/firmware/src/bios/ivt.rs`.
+- **E820 map with PCI holes + >4 GiB high-memory remap**:
+  `crates/firmware/src/bios/interrupts.rs::build_e820_map` and PC constants in
+  `crates/aero-pc-constants/src/lib.rs`.
+- **ACPI table generation + publication during POST**:
+  `crates/aero-acpi/` (tables + AML DSDT) and BIOS integration in
+  `crates/firmware/src/bios/acpi.rs`.
+- **PCI core + ECAM mapping** (config ports + 256 MiB ECAM window at `0xB000_0000`):
+  `crates/devices/src/pci/*` (core types), platform wiring in
+  `crates/aero-pc-platform/src/lib.rs` and `crates/aero-machine/src/lib.rs::map_pc_platform_mmio_regions`.
+- **PC interrupt/timer models wired in canonical platforms**:
+  PIC (8259A), LAPIC + I/O APIC, PIT (8254), RTC/CMOS, HPET, ACPI PM/Sci, IMCR
+  (see `crates/devices/src/*`, `crates/aero-pc-platform/src/lib.rs`,
+  `crates/aero-machine/src/lib.rs`).
+- **Snapshots + restore plumbing**:
+  format + tooling in `crates/aero-snapshot/`, IO device state in `crates/aero-io-snapshot/`,
+  canonical machine integration/tests in `crates/aero-machine/tests/*`.
+
+### Known major gaps / limitations (please don’t rediscover these)
+
+- **No SMP yet (cpu_count is forced to 1)**:
+  `aero_machine::Machine` rejects `cpu_count != 1` (`crates/aero-machine/src/lib.rs::Machine::new`),
+  and `aero_machine::pc::PcMachine` does the same (`crates/aero-machine/src/pc.rs`).
+- **Virtio MSI-X is implemented but not wired in the canonical machine/platform**:
+  `aero-virtio` implements MSI-X in the virtio-pci transport (`crates/aero-virtio/src/pci.rs`), but
+  the canonical integration layers currently use a `NoopVirtioInterruptSink` and only support
+  **legacy INTx** (`crates/aero-machine/src/lib.rs`, `crates/aero-pc-platform/src/lib.rs`).
+- **NVMe MSI/MSI-X is intentionally omitted**:
+  `aero-devices-nvme` models **legacy INTx only** (see `crates/aero-devices-nvme/README.md`).
+
+---
+
 ## Key Crates & Directories
 
 The **canonical** integration stack is now fully in-tree: BIOS/ACPI are implemented in Rust, and the
@@ -61,41 +101,87 @@ Older docs may still read like “bring your own BIOS binary” or like the mach
 
 ---
 
-## Current Status
+## Tasks (status-aware)
 
-Most `BI-*` / `AC-*` / `DM-*` items from the original project plan are now **implemented and covered by tests** in the canonical stack:
-
-- `cargo test -p firmware` exercises BIOS services (INT 10/13/15/16/1A), ROM layout, ACPI/SMBIOS
-  publication, etc.
-- `cargo test -p aero-machine` exercises end-to-end wiring: BIOS POST, PCI layout/INTx routing,
-  storage controllers, snapshots, and platform interrupt delivery.
+Most `BI-*` / `AC-*` / `DM-*` items from the original project plan are now **implemented and covered
+by tests** in the canonical stack. The tables below reflect current reality and point at the
+relevant crates/tests.
 
 ### BIOS Tasks
 
 > Note: The canonical Windows 7 storage + boot-media topology (including the **CD-first El Torito
-> install flow**) is defined in [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md).
-> Treat it as the source of truth.
+> install flow**) is defined in [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md)
+> and [`docs/09b-eltorito-cd-boot.md`](../docs/09b-eltorito-cd-boot.md). Treat them as the source of
+> truth.
 
-| ID | Task | Priority | Dependencies | Complexity |
-|----|------|----------|--------------|------------|
-| BI-001 | POST sequence | P0 | None | Medium |
-| BI-002 | Memory detection (E820) | P0 | BI-001 | Medium |
-| BI-003 | Interrupt vector table setup | P0 | BI-001 | Low |
-| BI-004 | BIOS data area setup | P0 | BI-001 | Low |
-| BI-005 | INT 10h (video) | P0 | None | Medium |
-| BI-006 | INT 13h (disk + EDD): include CD-ROM drive numbers (`0xE0..=0xEF`) + EDD `AH=41/42/48` (2048-byte sectors) | P0 | None | Medium |
-| BI-007 | INT 15h (system) | P0 | None | Medium |
-| BI-008 | INT 16h (keyboard) | P0 | None | Low |
-| BI-009 | Boot device selection (Win7 install: **CD-ROM/El Torito first**, HDD fallback) | P0 | BI-006 | Low |
-| BI-010 | Boot sector loading: HDD MBR/VBR **or** El Torito (no-emulation) boot image from install ISO | P0 | BI-009 | Low |
-| BI-011 | BIOS test suite | P0 | BI-001..BI-010 | Medium |
+| ID | Task | Status | Priority | Dependencies | Complexity | Pointers |
+|----|------|--------|----------|--------------|------------|----------|
+| BI-001 | POST sequence | Implemented | P0 | None | Medium | `crates/firmware/src/bios/post.rs` |
+| BI-002 | Memory detection (E820) | Implemented | P0 | BI-001 | Medium | `crates/firmware/src/bios/interrupts.rs::build_e820_map` |
+| BI-003 | Interrupt vector table setup | Implemented | P0 | BI-001 | Low | `crates/firmware/src/bios/ivt.rs` |
+| BI-004 | BIOS data area setup | Implemented | P0 | BI-001 | Low | `crates/firmware/src/bios/ivt.rs::init_bda` |
+| BI-005 | INT 10h (video) | Implemented | P0 | None | Medium | `crates/firmware/src/bios/int10.rs`, `int10_vbe.rs` |
+| BI-006 | INT 13h (disk + EDD + CD-ROM + El Torito services) | Implemented | P0 | None | Medium | `crates/firmware/src/bios/interrupts.rs::handle_int13`, `crates/firmware/src/bios/eltorito.rs` |
+| BI-007 | INT 15h (system) | Implemented | P0 | None | Medium | `crates/firmware/src/bios/interrupts.rs::handle_int15` |
+| BI-008 | INT 16h (keyboard) | Implemented | P0 | None | Low | `crates/firmware/src/bios/interrupts.rs::handle_int16` |
+| BI-009 | Boot device selection (Win7 install: CD first, HDD fallback) | Implemented | P0 | BI-006 | Low | `firmware::bios::BiosConfig::boot_drive`, `crates/firmware/src/bios/post.rs` |
+| BI-010 | Boot code loading (HDD MBR/VBR or El Torito no-emulation image) | Implemented | P0 | BI-009 | Low | `crates/firmware/src/bios/post.rs::boot_eltorito` |
+| BI-011 | BIOS test suite | Implemented | P0 | BI-001..BI-010 | Medium | Run `cargo test -p firmware` (see tests in `crates/firmware/src/bios/*`) |
 
-### Remaining integration gaps (high-value work)
+### ACPI Tasks
+
+| ID | Task | Status | Priority | Dependencies | Complexity | Pointers |
+|----|------|--------|----------|--------------|------------|----------|
+| AC-001 | RSDP/RSDT/XSDT generation | Implemented | P0 | None | Medium | `crates/aero-acpi/src/tables.rs`, `crates/firmware/src/bios/acpi.rs` |
+| AC-002 | FADT (Fixed ACPI Description Table) | Implemented | P0 | AC-001 | Medium | `crates/aero-acpi/src/tables.rs` |
+| AC-003 | MADT (Multiple APIC Description Table) | Implemented | P0 | AC-001 | Medium | `crates/aero-acpi/src/tables.rs` |
+| AC-004 | HPET table | Implemented | P0 | AC-001 | Low | `crates/aero-acpi/src/tables.rs` |
+| AC-005 | DSDT (AML bytecode) | Implemented (minimal) | P1 | AC-001 | High | `crates/aero-acpi/src/tables.rs` (AML builder) |
+| AC-006 | Power management stubs | Implemented (ACPI PM device) | P1 | AC-002 | Medium | `crates/devices/src/acpi_pm.rs` + FADT/DSDT in `aero-acpi` |
+| AC-007 | ACPI test suite | Implemented | P0 | AC-001..AC-006 | Medium | Run `cargo test -p aero-acpi` (see `crates/aero-acpi/tests/*`) |
+
+### Device Models Tasks
+
+| ID | Task | Status | Priority | Dependencies | Complexity | Pointers |
+|----|------|--------|----------|--------------|------------|----------|
+| DM-001 | PIC (8259A) | Implemented | P0 | None | Medium | `crates/devices/src/pic8259.rs` |
+| DM-002 | PIT (8254) | Implemented | P0 | None | Medium | `crates/devices/src/pit8254.rs` |
+| DM-003 | CMOS/RTC | Implemented | P0 | None | Medium | `crates/devices/src/rtc_cmos.rs` |
+| DM-004 | Local APIC | Implemented (single-vCPU use) | P0 | None | High | `crates/platform/src/interrupts/*`, MMIO adapters in `crates/aero-machine/src/lib.rs` |
+| DM-005 | I/O APIC | Implemented | P0 | DM-004 | High | `crates/platform/src/interrupts/*`, MMIO adapters in `crates/aero-machine/src/lib.rs` |
+| DM-006 | HPET | Implemented | P0 | None | Medium | `crates/devices/src/hpet.rs` |
+| DM-007 | PCI configuration space | Implemented | P0 | None | High | `crates/devices/src/pci/*` |
+| DM-008 | PCI device enumeration | Implemented | P0 | DM-007 | Medium | `aero_devices::pci::bios_post` + `crates/aero-machine/tests/win7_storage_topology.rs` |
+| DM-009 | DMA controller (8237) | Implemented (stub) | P1 | None | Medium | `crates/devices/src/dma.rs` |
+| DM-010 | Serial port (16550) | Implemented | P2 | None | Medium | `crates/devices/src/serial.rs` |
+| DM-011 | Device models test suite | Implemented | P0 | DM-001..DM-010 | Medium | `cargo test -p aero-devices`, `cargo test -p aero-pc-platform`, `cargo test -p aero-machine` |
+
+### Virtio PCI Transport Tasks
+
+| ID | Task | Status | Priority | Dependencies | Complexity | Pointers |
+|----|------|--------|----------|--------------|------------|----------|
+| VTP-001 | Virtio core (virtqueue, feature negotiation) | Implemented | P0 | DM-007 | High | `crates/aero-virtio/src/queue.rs`, `crates/aero-virtio/src/devices/*` |
+| VTP-002 | Virtio PCI modern transport | Implemented | P0 | VTP-001, DM-007 | High | `crates/aero-virtio/src/pci.rs` |
+| VTP-003 | Virtio PCI legacy transport | Implemented | P0 | VTP-001, DM-007 | High | `crates/aero-virtio/src/pci.rs` |
+| VTP-004 | Virtio PCI transitional device | Implemented | P0 | VTP-002, VTP-003 | Medium | `VirtioPciDevice::new_transitional` |
+| VTP-005 | Legacy INTx wiring | Implemented | P0 | VTP-003 | Medium | `VirtioPciDevice::irq_level()` + platform INTx routers |
+| VTP-006 | MSI-X support | Transport implemented; **platform wiring missing** | P1 | VTP-002, DM-007 | High | MSI-X logic in `crates/aero-virtio/src/pci.rs`, but canonical machine uses `NoopVirtioInterruptSink` |
+| VTP-007 | Unit tests | Implemented | P0 | VTP-003 | Medium | `cargo test -p aero-virtio` (see `crates/aero-virtio/tests/*`) |
+| VTP-008 | Config option: disable modern | Implemented | P1 | VTP-004 | Low | `VirtioPciOptions::{modern_only,legacy_only,transitional}` |
+| VTP-009 | **Wire virtio MSI/MSI-X into canonical machine/platform** | Open | P1 | VTP-006 | High | Start at `NoopVirtioInterruptSink` in `crates/aero-machine/src/lib.rs` / `crates/aero-pc-platform/src/lib.rs`; deliver `MsiMessage` into `aero_platform::interrupts` |
+
+### Canonical machine/platform gaps (actionable)
+
+| ID | Task | Priority | Complexity | Notes / entry points |
+|----|------|----------|------------|----------------------|
+| MP-001 | SMP: allow `cpu_count > 1` in `aero_machine::Machine` / `PcMachine` | P0 | Very High | Remove `cpu_count != 1` guard (`crates/aero-machine/src/lib.rs`, `crates/aero-machine/src/pc.rs`), then implement multi-vCPU scheduling + LAPIC/IPI delivery + ACPI MADT updates. |
+| MP-002 | MSI/MSI-X plumbing in canonical PCI integration | P1 | High | `aero_platform::interrupts::msi::MsiMessage` exists; the missing piece is routing PCI MSI/MSI-X config + message delivery through the canonical `PlatformInterrupts` used by `Machine`/`PcPlatform`. |
+| MP-003 | NVMe MSI/MSI-X (if/when desired) | P2 | High | Intentionally omitted today (see `crates/aero-devices-nvme/README.md`). Do not start without agreement on scope. |
 
 If you are looking for impactful integration/boot work today, focus on:
 
-- **SMP / multi-vCPU bring-up**: `aero_machine::Machine` currently enforces `cpu_count = 1`. The next
-  step is AP startup (INIT/SIPI), APIC IPI delivery, and guest-visible CPU topology.
+- **SMP / multi-vCPU bring-up** (MP-001)
+- **MSI/MSI-X end-to-end** (MP-002, VTP-009)
 - **PCI routing hardening**: keep `aero_acpi` DSDT `_PRT`, PCI “Interrupt Line” programming, and the
   runtime INTx/MSI/MSI-X delivery model coherent and snapshot-safe.
 - **Snapshot determinism & stability**: ensure device ordering, guest time, and interrupt state are
@@ -355,18 +441,27 @@ under the `emulator` crate via `crates/emulator/Cargo.toml` `[[test]]` entries (
 `path = "../../tests/boot_sector.rs"`). Always run them via `-p emulator` (not `-p aero`).
 
 ```bash
-# Run BIOS tests
-bash ./scripts/safe-run.sh cargo test -p firmware --locked
-
 # Regenerate/verify deterministic in-repo fixtures (BIOS ROM, ACPI DSDT, tiny boot images).
 # CI runs `--check` and fails if it produces a diff.
 bash ./scripts/safe-run.sh cargo xtask fixtures
 bash ./scripts/safe-run.sh cargo xtask fixtures --check
 
+# Run BIOS tests
+bash ./scripts/safe-run.sh cargo test -p firmware --locked
+
+# Run ACPI table generator tests
+bash ./scripts/safe-run.sh cargo test -p aero-acpi --locked
+
 # Run device model tests
 bash ./scripts/safe-run.sh cargo test -p aero-devices --locked
 bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
 bash ./scripts/safe-run.sh cargo test -p aero-timers --locked
+
+# Run canonical integration tests (PCI wiring, snapshots, storage topologies, etc.)
+bash ./scripts/safe-run.sh cargo test -p aero-pc-platform --locked
+bash ./scripts/safe-run.sh cargo test -p aero-machine --locked
+bash ./scripts/safe-run.sh cargo test -p aero-snapshot --locked
+bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked
 
 # Boot tests
 # Note: the first `cargo test` in a clean/contended agent sandbox can take >10 minutes.
