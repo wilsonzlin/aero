@@ -80,6 +80,21 @@ fn verify_session_token_accepts_large_exp_just_below_i64_max_when_float() {
 }
 
 #[test]
+fn verify_session_token_rejects_exp_i64_max_rendered_as_float() {
+    let secret = b"unit-test-secret";
+    let now_ms = 0;
+
+    // `i64::MAX` is not exactly representable as an `f64`; serde_json will round this to `2^63`,
+    // which would otherwise silently saturate to `i64::MAX` when casting. Reject instead.
+    let payload = br#"{"v":1,"sid":"abc","exp":9223372036854775807.0}"#;
+    let token = mint_session_token(payload, secret);
+    assert!(
+        verify_gateway_session_token(&token, secret, now_ms).is_none(),
+        "expected exp=i64::MAX (float) to be rejected due to rounding"
+    );
+}
+
+#[test]
 fn verify_session_token_rejects_extremely_large_exp_float() {
     let secret = b"unit-test-secret";
     let now_ms = 0;
@@ -136,4 +151,3 @@ fn jwt_rejects_malformed_json_payload_even_with_valid_signature() {
         "expected malformed-json payload to be rejected"
     );
 }
-
