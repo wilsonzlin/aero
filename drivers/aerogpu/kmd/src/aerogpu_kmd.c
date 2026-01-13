@@ -3379,6 +3379,11 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryChildRelations(_In_ const HANDLE hAdapte
 
     RtlZeroMemory(&pRelations->pChildRelations[0], sizeof(pRelations->pChildRelations[0]));
     pRelations->pChildRelations[0].ChildDeviceType = DXGK_CHILD_DEVICE_TYPE_MONITOR;
+    /*
+     * Virtual monitor is always connected; advertising HPD awareness helps Win7's
+     * display stack avoid treating the output as hotpluggable/unknown.
+     */
+    pRelations->pChildRelations[0].ChildCapabilities.Type.VideoOutput.HpdAwareness = HpdAwarenessAlwaysConnected;
     pRelations->pChildRelations[0].ChildUid = AEROGPU_CHILD_UID;
     pRelations->pChildRelations[0].AcpiUid = 0;
 
