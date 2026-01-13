@@ -273,7 +273,7 @@ What exists today (in repo):
 - **Option C (L2 tunnel):**
   - Wire protocol: `docs/l2-tunnel-protocol.md` (`aero-l2-tunnel-v1`)
   - Browser client: `web/src/net/l2Tunnel.ts`
-  - Proxy: `crates/aero-l2-proxy` (`GET /l2` WebSocket, user-space stack + NAT)
+  - Proxy: `crates/aero-l2-proxy` (`GET /l2` WebSocket (legacy alias: `/eth`), user-space stack + NAT)
   - Optional WebRTC transport bridge: `proxy/webrtc-udp-relay` (`l2` DataChannel ↔ backend WS `/l2`, per `PROTOCOL.md`)
 - **Phase 0 / migration (socket-level relays):**
   - `backend/aero-gateway` (`POST /session`, `/tcp`, `/tcp-mux`, `/dns-query`, `/dns-json`, `/udp-relay/token`)

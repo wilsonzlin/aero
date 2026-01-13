@@ -295,7 +295,7 @@ For the browser networking stack (e.g. tunnel/NAT state managed outside the gues
 Restore note: `NET_STACK` snapshots capture *guest-visible* stack/backend bookkeeping (e.g. DHCP/DNS cache and connection bookkeeping) but **must not** attempt to bit-restore host resources. On restore, integrations should treat the following as reset and drop/recreate them:
 
 - Active TCP proxy connections (e.g. WebSocket `/tcp` / `/tcp-mux`)
-- L2 tunnel transports (WebSocket `/l2`, WebRTC `l2` DataChannels)
+- L2 tunnel transports (WebSocket `/l2` (legacy alias: `/eth`), WebRTC `l2` DataChannels)
 
 #### E1000 (`DeviceId::E1000`)
 
