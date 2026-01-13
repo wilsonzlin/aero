@@ -9086,6 +9086,60 @@ fn wgsl_depth_clamp_variant(wgsl: &str) -> String {
     out
 }
 
+fn gs_passthrough_position_location(locations: &BTreeSet<u32>) -> u32 {
+    // Choose the lowest location not used by varyings. We store the clip-space position as a
+    // vertex attribute in the generated vertex buffer and then forward it to
+    // `@builtin(position)`. This avoids colliding with user varyings (which use `@location(N)`
+    // based on D3D output registers).
+    //
+    // The generated buffer layout is host-controlled (compute writes it, passthrough VS reads it),
+    // so any deterministic scheme works as long as both sides agree.
+    let mut loc = 0u32;
+    while locations.contains(&loc) {
+        loc = loc.saturating_add(1);
+    }
+    loc
+}
+
+fn wgsl_gs_passthrough_vertex_shader(locations: &BTreeSet<u32>) -> Result<String> {
+    // The GS emulation passthrough shader expects its vertex buffer to contain:
+    // - clip-space position at a dedicated `@location(P)` chosen to not collide with varyings.
+    // - one `vec4<f32>` attribute for each varying required by the pixel shader, at the same
+    //   `@location(N)` as the pixel shader input.
+    let pos_location = gs_passthrough_position_location(locations);
+
+    // A conservative capacity estimate; the shader is tiny.
+    let mut wgsl = String::with_capacity(512 + locations.len() * 64);
+
+    wgsl.push_str("struct VsIn {\n");
+    wgsl.push_str(&format!(
+        "  @location({pos_location}) pos: vec4<f32>,\n"
+    ));
+    for &loc in locations {
+        wgsl.push_str(&format!("  @location({loc}) v{loc}: vec4<f32>,\n"));
+    }
+    wgsl.push_str("};\n\n");
+
+    wgsl.push_str("struct VsOut {\n");
+    wgsl.push_str("  @builtin(position) pos: vec4<f32>,\n");
+    for &loc in locations {
+        wgsl.push_str(&format!("  @location({loc}) v{loc}: vec4<f32>,\n"));
+    }
+    wgsl.push_str("};\n\n");
+
+    wgsl.push_str("@vertex\n");
+    wgsl.push_str("fn vs_main(input: VsIn) -> VsOut {\n");
+    wgsl.push_str("  var out: VsOut;\n");
+    wgsl.push_str("  out.pos = input.pos;\n");
+    for &loc in locations {
+        wgsl.push_str(&format!("  out.v{loc} = input.v{loc};\n"));
+    }
+    wgsl.push_str("  return out;\n");
+    wgsl.push_str("}\n");
+
+    Ok(wgsl)
+}
+
 fn exec_draw<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> Result<()> {
     // struct aerogpu_cmd_draw (24 bytes)
     if cmd_bytes.len() < 24 {
@@ -9229,6 +9283,16 @@ fn get_or_create_render_pipeline_for_state<'a>(
     state: &AerogpuD3d11State,
     layout_key: PipelineLayoutKey,
 ) -> Result<(RenderPipelineKey, &'a wgpu::RenderPipeline, Vec<u32>)> {
+    // Geometry shader emulation (GS) uses a generated vertex buffer and a host-provided
+    // passthrough vertex shader (no real WebGPU geometry stage exists).
+    //
+    // Today the `aerogpu_cmd` protocol does not expose an explicit GS slot. We treat a non-zero
+    // `cs` binding as "GS emulation active" for render passes.
+    //
+    // NOTE: This intentionally means `cs` cannot currently be used for actual compute dispatch.
+    // (Compute is still a roadmap item for the D3D11 executor.)
+    let gs_emulation_active = state.cs.is_some();
+
     let vs_handle = state
         .vs
         .ok_or_else(|| anyhow!("render draw without bound VS"))?;
@@ -9236,6 +9300,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
         .ps
         .ok_or_else(|| anyhow!("render draw without bound PS"))?;
     let (
+        ps_link_locations,
         vertex_shader,
         ps_wgsl_hash,
         vs_dxbc_hash_fnv1a64,
@@ -9327,38 +9392,64 @@ fn get_or_create_render_pipeline_for_state<'a>(
 
         let needs_trim = vs_outputs != ps_link_locations;
 
-        let selected_vs_hash = if state.depth_clip_enabled {
-            vs.wgsl_hash
-        } else {
-            vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash)
-        };
-
-        let vertex_shader = if !needs_trim {
-            selected_vs_hash
-        } else {
-            let base_vs_wgsl = if state.depth_clip_enabled {
-                std::borrow::Cow::Borrowed(vs.wgsl_source.as_str())
+        // Vertex shader selection:
+        // - Without GS emulation, use the translated DXBC vertex shader (with depth-clamp and/or
+        //   output-trimming variants as needed).
+        // - With GS emulation, render the generated vertex buffer with an internal passthrough VS.
+        let (vertex_shader, vs_entry_point) = if !gs_emulation_active {
+            let selected_vs_hash = if state.depth_clip_enabled {
+                vs.wgsl_hash
             } else {
-                std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&vs.wgsl_source))
+                vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash)
             };
-            let trimmed_vs_wgsl = super::wgsl_link::trim_vs_outputs_to_locations(
-                base_vs_wgsl.as_ref(),
-                &ps_link_locations,
-            );
+
+            let vertex_shader = if !needs_trim {
+                selected_vs_hash
+            } else {
+                let base_vs_wgsl = if state.depth_clip_enabled {
+                    std::borrow::Cow::Borrowed(vs.wgsl_source.as_str())
+                } else {
+                    std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&vs.wgsl_source))
+                };
+                let trimmed_vs_wgsl = super::wgsl_link::trim_vs_outputs_to_locations(
+                    base_vs_wgsl.as_ref(),
+                    &ps_link_locations,
+                );
+                let (hash, _module) = pipeline_cache.get_or_create_shader_module(
+                    device,
+                    map_pipeline_cache_stage(ShaderStage::Vertex),
+                    &trimmed_vs_wgsl,
+                    Some("aerogpu_cmd linked vertex shader"),
+                );
+                hash
+            };
+
+            (vertex_shader, vs.entry_point)
+        } else {
+            // GS emulation draws from a generated vertex buffer containing clip-space position
+            // and all user varyings required by the PS. Depth-clamp must happen here (after GS),
+            // not only in the original VS.
+            let passthrough_wgsl = wgsl_gs_passthrough_vertex_shader(&ps_link_locations)?;
+            let base_vs_wgsl = if state.depth_clip_enabled {
+                std::borrow::Cow::Borrowed(passthrough_wgsl.as_str())
+            } else {
+                std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&passthrough_wgsl))
+            };
             let (hash, _module) = pipeline_cache.get_or_create_shader_module(
                 device,
                 map_pipeline_cache_stage(ShaderStage::Vertex),
-                &trimmed_vs_wgsl,
-                Some("aerogpu_cmd linked vertex shader"),
+                base_vs_wgsl.as_ref(),
+                Some("aerogpu_cmd GS passthrough vertex shader"),
             );
-            hash
+            (hash, "vs_main")
         };
 
         (
+            ps_link_locations,
             vertex_shader,
             fragment_shader,
             vs.dxbc_hash_fnv1a64,
-            vs.entry_point,
+            vs_entry_point,
             vs.vs_input_signature.clone(),
             ps.entry_point,
         )
@@ -9368,12 +9459,16 @@ fn get_or_create_render_pipeline_for_state<'a>(
         vertex_buffers,
         vertex_buffer_keys,
         wgpu_slot_to_d3d_slot,
-    } = build_vertex_buffers_for_pipeline(
-        resources,
-        state,
-        vs_dxbc_hash_fnv1a64,
-        &vs_input_signature,
-    )?;
+    } = if !gs_emulation_active {
+        build_vertex_buffers_for_pipeline(
+            resources,
+            state,
+            vs_dxbc_hash_fnv1a64,
+            &vs_input_signature,
+        )?
+    } else {
+        build_gs_passthrough_vertex_state(device, state, &ps_link_locations)?
+    };
 
     let depth_only_pass = state.render_targets.iter().all(|rt| rt.is_none())
         && state.depth_stencil.is_some();
@@ -9877,6 +9972,83 @@ fn build_vertex_buffers_for_pipeline(
     };
     layout.mapping_cache.insert(cache_key, built.clone());
     Ok(built)
+}
+
+fn build_gs_passthrough_vertex_state(
+    device: &wgpu::Device,
+    state: &AerogpuD3d11State,
+    ps_link_locations: &BTreeSet<u32>,
+) -> Result<BuiltVertexState> {
+    // GS emulation draws from a generated vertex buffer bound at slot 0.
+    let Some(vb) = state.vertex_buffers.get(0).and_then(|v| *v) else {
+        bail!("GS passthrough draw requires vertex buffer bound at slot 0");
+    };
+
+    let pos_location = gs_passthrough_position_location(ps_link_locations);
+
+    // WebGPU limits vertex attributes by *count* and also requires locations < max.
+    let max_attrs = device.limits().max_vertex_attributes;
+    let required_attr_count: u32 = 1 + ps_link_locations.len() as u32;
+    if required_attr_count > max_attrs {
+        bail!(
+            "GS passthrough requires {required_attr_count} vertex attributes (position + {} varyings), but device max_vertex_attributes is {max_attrs}",
+            ps_link_locations.len()
+        );
+    }
+    if pos_location >= max_attrs {
+        bail!(
+            "GS passthrough position location {pos_location} exceeds device max_vertex_attributes {max_attrs}"
+        );
+    }
+    if let Some(&bad) = ps_link_locations.iter().find(|&&loc| loc >= max_attrs) {
+        bail!(
+            "GS passthrough varying location {bad} exceeds device max_vertex_attributes {max_attrs}"
+        );
+    }
+
+    let required_bytes: u32 = required_attr_count
+        .checked_mul(16)
+        .ok_or_else(|| anyhow!("GS passthrough required_bytes overflows u32"))?;
+    if vb.stride_bytes < required_bytes {
+        bail!(
+            "GS passthrough vertex stride {stride} is too small for required {required_bytes} bytes (position + {} varyings)",
+            ps_link_locations.len(),
+            stride = vb.stride_bytes
+        );
+    }
+
+    // Pack attributes tightly into the bound vertex buffer:
+    // - position vec4 at offset 0
+    // - varyings vec4 in ascending location order, starting at offset 16
+    let mut attrs = Vec::with_capacity(required_attr_count as usize);
+    attrs.push(wgpu::VertexAttribute {
+        shader_location: pos_location,
+        offset: 0,
+        format: wgpu::VertexFormat::Float32x4,
+    });
+    let mut offset = 16u64;
+    for &loc in ps_link_locations {
+        attrs.push(wgpu::VertexAttribute {
+            shader_location: loc,
+            offset,
+            format: wgpu::VertexFormat::Float32x4,
+        });
+        offset += 16;
+    }
+
+    let layout = VertexBufferLayoutOwned {
+        array_stride: vb.stride_bytes as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: attrs,
+    };
+    let key: aero_gpu::pipeline_key::VertexBufferLayoutKey = (&layout.as_wgpu()).into();
+
+    Ok(BuiltVertexState {
+        vertex_buffers: vec![layout],
+        vertex_buffer_keys: vec![key],
+        // Generated vertex buffer is always bound at D3D slot 0.
+        wgpu_slot_to_d3d_slot: vec![0],
+    })
 }
 
 struct AllocTable {
