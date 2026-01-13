@@ -103,6 +103,17 @@ static bool StartsWithInsensitive(const std::wstring& s, const std::wstring& pre
   return true;
 }
 
+static bool LessInsensitive(const std::wstring& a, const std::wstring& b) {
+  const size_t n = std::min(a.size(), b.size());
+  for (size_t i = 0; i < n; i++) {
+    const wchar_t ca = static_cast<wchar_t>(towlower(a[i]));
+    const wchar_t cb = static_cast<wchar_t>(towlower(b[i]));
+    if (ca < cb) return true;
+    if (ca > cb) return false;
+  }
+  return a.size() < b.size();
+}
+
 // Windows 7 SDKs do not consistently ship the HIDClass IOCTL definitions in user-mode headers.
 // Define the subset we need (report descriptor read) locally so the selftest stays buildable with
 // a plain Win7-compatible SDK toolchain.
@@ -2723,6 +2734,7 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
   std::wstring unknown_pointer_path;
   int absolute_pointer_candidates = 0;
   int unknown_pointer_candidates = 0;
+  std::vector<std::wstring> relative_mouse_candidates;
 
   for (DWORD idx = 0;; idx++) {
     SP_DEVICE_INTERFACE_DATA iface{};
@@ -2781,11 +2793,9 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
       log.Logf("virtio-input-events: selected keyboard HID interface: %s", WideToUtf8(device_path).c_str());
     } else if (!has_keyboard) {
       if (has_mouse) {
-        if (has_relative_xy && out.mouse_path.empty()) {
-          out.mouse_path = device_path;
-          log.Logf("virtio-input-events: selected relative mouse HID interface: %s",
-                   WideToUtf8(device_path).c_str());
-        } else if (!has_relative_xy && (has_absolute_xy || has_tablet)) {
+        if (has_relative_xy) {
+          relative_mouse_candidates.push_back(device_path);
+        } else if (has_absolute_xy || has_tablet) {
           absolute_pointer_candidates++;
           if (absolute_pointer_path.empty()) absolute_pointer_path = device_path;
           log.Logf("virtio-input-events: found absolute pointer/tablet HID interface (not a mouse): %s",
@@ -2803,11 +2813,15 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
                  WideToUtf8(device_path).c_str());
       }
     }
-
-    if (!out.keyboard_path.empty() && !out.mouse_path.empty()) break;
   }
 
   SetupDiDestroyDeviceInfoList(devinfo);
+
+  if (!relative_mouse_candidates.empty()) {
+    std::sort(relative_mouse_candidates.begin(), relative_mouse_candidates.end(), LessInsensitive);
+    out.mouse_path = relative_mouse_candidates.front();
+    log.Logf("virtio-input-events: selected relative mouse HID interface: %s", WideToUtf8(out.mouse_path).c_str());
+  }
 
   if (out.keyboard_path.empty()) {
     if (had_error) {
