@@ -17,10 +17,10 @@ type recordedLog struct {
 }
 
 type recordingHandler struct {
-	mu     *sync.Mutex
+	mu      *sync.Mutex
 	records *[]recordedLog
-	attrs  []slog.Attr
-	groups []string
+	attrs   []slog.Attr
+	groups  []string
 }
 
 func newRecordingLogger() (*slog.Logger, func() []recordedLog) {
@@ -162,4 +162,3 @@ func TestStartupSecurityWarnings_AllowedOriginsWildcard(t *testing.T) {
 		t.Fatalf("expected warning_code=allowed_origins_wildcard, got %#v", records())
 	}
 }
-

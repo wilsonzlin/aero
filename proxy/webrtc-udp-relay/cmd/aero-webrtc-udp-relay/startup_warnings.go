@@ -88,4 +88,3 @@ func safeURLHost(raw string) string {
 	}
 	return u.Host
 }
-
