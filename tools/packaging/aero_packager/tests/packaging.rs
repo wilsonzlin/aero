@@ -1691,6 +1691,68 @@ fn package_outputs_allow_missing_certs_dir_when_signing_policy_none() -> anyhow:
 }
 
 #[test]
+fn packaging_fails_when_certs_present_for_production_or_none() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_src = testdata.join("guest-tools-no-certs");
+
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&guest_tools_src, guest_tools_tmp.path())?;
+    fs::write(
+        guest_tools_tmp.path().join("certs").join("foo.cer"),
+        b"dummy cert\n",
+    )?;
+
+    for signing_policy in [
+        aero_packager::SigningPolicy::Production,
+        aero_packager::SigningPolicy::None,
+    ] {
+        let out = tempfile::tempdir()?;
+        let config = aero_packager::PackageConfig {
+            drivers_dir: drivers_dir.clone(),
+            guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+            windows_device_contract_path: device_contract_path(),
+            out_dir: out.path().to_path_buf(),
+            spec_path: spec_path.clone(),
+            version: "1.2.3".to_string(),
+            build_id: "test".to_string(),
+            volume_id: "AERO_GUEST_TOOLS".to_string(),
+            signing_policy,
+            source_date_epoch: 0,
+        };
+
+        let err = aero_packager::package_guest_tools(&config).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("refusing to package certificate")
+                && msg.contains("--signing-policy test")
+                && msg.contains("foo.cer"),
+            "unexpected error for signing_policy={signing_policy}: {msg}"
+        );
+    }
+
+    // Sanity: the exact same tree should be accepted for test signing policies.
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+    aero_packager::package_guest_tools(&config)?;
+
+    Ok(())
+}
+
+#[test]
 fn packaging_fails_when_signing_policy_requires_certs_but_none_present() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");

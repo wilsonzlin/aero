@@ -41,7 +41,7 @@ cd tools/packaging/aero_packager
 #     README.md
 #     THIRD_PARTY_NOTICES.md
 #     config/devices.cmd
-#     certs/*.{cer,crt,p7b}   (required for --signing-policy test; optional for production/none)
+#     certs/*.{cer,crt,p7b}   (required for --signing-policy test; must be absent for production/none)
 #     licenses/** (optional; third-party license texts / attribution files)
 #
 # spec.json declares which drivers to include (required + optional) and expected HWID regexes.
@@ -57,7 +57,9 @@ cargo run --release --locked -- \
 ```
 
 Use `--signing-policy production` (or `none`) to build Guest Tools media for
-WHQL/production-signed drivers without requiring any certificate files.
+WHQL/production-signed drivers without requiring (or shipping) any certificate files. The
+packager will fail if it finds `*.cer/*.crt/*.p7b` under `guest-tools/certs/` when using
+`production` or `none` (remove the certs or use `--signing-policy test`).
 
 ## Windows device contract variants (`config/devices.cmd`)
 

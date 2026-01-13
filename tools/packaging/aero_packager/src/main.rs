@@ -12,7 +12,8 @@ struct Cli {
     /// Directory containing Guest Tools scripts (setup.cmd, uninstall.cmd, README.md, etc).
     ///
     /// Note: `certs/` may be empty/absent when `--signing-policy production` or `--signing-policy none`
-    /// is used (no custom certificate required).
+    /// is used (no custom certificate required). If `certs/` exists, it must not contain any
+    /// `*.cer/*.crt/*.p7b` files; the packager will fail fast to avoid shipping trust anchors.
     #[arg(long)]
     guest_tools_dir: PathBuf,
 

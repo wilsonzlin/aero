@@ -387,6 +387,17 @@ fn collect_files(
             }
             if is_cert {
                 found_cert = true;
+                if !config.signing_policy.certs_required() {
+                    bail!(
+                        "refusing to package certificate file for signing_policy={}: certs/{}.\n\
+                         Guest Tools media built with signing_policy=production/none must not ship trust anchors.\n\
+                         Remediation: remove all *.cer/*.crt/*.p7b files from {} (keep certs/README.md if needed), \
+                         or re-run with --signing-policy test.",
+                        config.signing_policy,
+                        rel_str,
+                        certs_dir.display(),
+                    );
+                }
             }
             certs.push(FileToPackage {
                 rel_path: format!("certs/{}", rel_str),

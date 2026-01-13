@@ -20,10 +20,15 @@ For Windows 7 x64, **Test Signing** (or `nointegritychecks`) may still be requir
 
 ## WHQL / production-signed drivers (no custom certs)
 
-If you are building Guest Tools media that ships only WHQL/production-signed drivers (for example from `virtio-win`), you typically should **not** include any custom certificates here.
+If you are building Guest Tools media that ships only WHQL/production-signed drivers (for example from `virtio-win`), you must **not** ship any custom certificates (trust anchors) here.
 
 When building with `tools/packaging/aero_packager`, set:
 
 - `--signing-policy production` (or `none`)
 
 and ensure this directory contains **zero** certificate files (`*.cer/*.crt/*.p7b`) so the installer will not import anything into the machine trust stores.
+
+`aero_packager` will fail fast if any certificate files are present when using `--signing-policy production` or `--signing-policy none`:
+
+- Remove the cert files (you may keep `certs/README.md`), **or**
+- Re-run with `--signing-policy test` when building media for test-signed drivers.
