@@ -60,6 +60,7 @@ test("gpu worker smoke: disableWebGpu forces WebGL2 fallback", async ({ page, br
       backend: api.backend ?? "unknown",
       fallback: api.fallback ?? null,
       pass: api.pass,
+      events: Array.isArray(api.events) ? api.events : null,
     };
   });
 
@@ -68,6 +69,13 @@ test("gpu worker smoke: disableWebGpu forces WebGL2 fallback", async ({ page, br
   expect(result.fallback.from).toBe("webgpu");
   expect(result.fallback.to).toBe("webgl2_raw");
   expect(result.pass).toBe(true);
+
+  const initWarnEvent = result.events
+    ? result.events.find((ev: any) => ev && ev.category === "Init" && ev.severity === "warn") ?? null
+    : null;
+  expect(initWarnEvent).not.toBeNull();
+  expect(initWarnEvent.backend_kind).toBe("webgl2_raw");
+  expect(initWarnEvent.details).toMatchObject({ from: "webgpu", to: "webgl2_raw" });
 });
 
 test("gpu worker smoke: presenter errors emit structured events", async ({ page, browserName }) => {
