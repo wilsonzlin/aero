@@ -1,7 +1,10 @@
 use aero_devices::pci::profile::{
-    AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE_U32, IDE_PIIX3, NIC_E1000_82540EM, NVME_CONTROLLER,
-    SATA_AHCI_ICH9, USB_UHCI_PIIX3,
+    AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE_U32, IDE_PIIX3, NIC_E1000_82540EM, SATA_AHCI_ICH9,
+    USB_UHCI_PIIX3,
 };
+#[cfg(feature = "storage-device-crates")]
+use aero_devices::pci::profile::NVME_CONTROLLER;
+use aero_devices::pci::PciDevice as CanonPciDevice;
 use aero_devices::pci::{PciIntxRouter, PciIntxRouterConfig};
 
 #[cfg(feature = "legacy-audio")]
@@ -10,62 +13,56 @@ use aero_devices::pci::profile::HDA_ICH6;
 #[cfg(feature = "legacy-audio")]
 use emulator::io::audio::hda::HdaPciDevice;
 use emulator::io::net::e1000_aero::{E1000Device, E1000PciDevice};
-use emulator::io::pci::PciDevice;
-use emulator::io::storage::ahci::{AhciController, AhciPciDevice};
-use emulator::io::storage::disk::MemDisk;
+use emulator::io::pci::PciDevice as EmuPciDevice;
 use emulator::io::storage::ide::IdeController;
+#[cfg(feature = "storage-device-crates")]
+use emulator::io::storage::disk::MemDisk;
+#[cfg(feature = "storage-device-crates")]
 use emulator::io::storage::nvme::{NvmeController, NvmePciDevice};
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 
-fn read_u8(dev: &dyn PciDevice, offset: u16) -> u8 {
-    dev.config_read(offset, 1) as u8
-}
-
-fn read_u16(dev: &dyn PciDevice, offset: u16) -> u16 {
-    dev.config_read(offset, 2) as u16
-}
-
-fn read_u32(dev: &dyn PciDevice, offset: u16) -> u32 {
-    dev.config_read(offset, 4)
-}
-
 fn assert_basic_identity(
-    dev: &dyn PciDevice,
+    mut read: impl FnMut(u16, usize) -> u32,
     profile: aero_devices::pci::profile::PciDeviceProfile,
 ) {
-    assert_eq!(read_u16(dev, 0x00), profile.vendor_id, "{}", profile.name);
-    assert_eq!(read_u16(dev, 0x02), profile.device_id, "{}", profile.name);
-    assert_eq!(read_u8(dev, 0x08), profile.revision_id, "{}", profile.name);
+    assert_eq!(read(0x00, 2) as u16, profile.vendor_id, "{}", profile.name);
+    assert_eq!(read(0x02, 2) as u16, profile.device_id, "{}", profile.name);
+    assert_eq!(read(0x08, 1) as u8, profile.revision_id, "{}", profile.name);
 
     assert_eq!(
-        read_u8(dev, 0x09),
+        read(0x09, 1) as u8,
         profile.class.prog_if,
         "{}",
         profile.name
     );
     assert_eq!(
-        read_u8(dev, 0x0a),
+        read(0x0a, 1) as u8,
         profile.class.sub_class,
         "{}",
         profile.name
     );
     assert_eq!(
-        read_u8(dev, 0x0b),
+        read(0x0b, 1) as u8,
         profile.class.base_class,
         "{}",
         profile.name
     );
 
-    assert_eq!(read_u8(dev, 0x0e), profile.header_type, "{}", profile.name);
+    assert_eq!(
+        read(0x0e, 1) as u8,
+        profile.header_type,
+        "{}",
+        profile.name
+    );
 
     assert_eq!(
-        read_u16(dev, 0x2c),
+        read(0x2c, 2) as u16,
         profile.subsystem_vendor_id,
         "{}",
         profile.name
     );
     assert_eq!(
-        read_u16(dev, 0x2e),
+        read(0x2e, 2) as u16,
         profile.subsystem_id,
         "{}",
         profile.name
@@ -75,23 +72,23 @@ fn assert_basic_identity(
         .interrupt_pin
         .map(|pin| pin.to_config_u8())
         .unwrap_or(0);
-    assert_eq!(read_u8(dev, 0x3d), expected_pin, "{}", profile.name);
+    assert_eq!(read(0x3d, 1) as u8, expected_pin, "{}", profile.name);
 }
 
 #[test]
 fn uhci_pci_config_matches_canonical_profile() {
     let uhci = UhciPciDevice::new(UhciController::new(), 0);
-    assert_basic_identity(&uhci, USB_UHCI_PIIX3);
+    assert_basic_identity(|off, size| uhci.config_read(off, size), USB_UHCI_PIIX3);
 
     let router = PciIntxRouter::new(PciIntxRouterConfig::default());
     let expected_pin = USB_UHCI_PIIX3
         .interrupt_pin
         .expect("profile should provide interrupt pin");
     let expected_gsi = router.gsi_for_intx(USB_UHCI_PIIX3.bdf, expected_pin);
-    assert_eq!(read_u8(&uhci, 0x3c), u8::try_from(expected_gsi).unwrap());
+    assert_eq!(uhci.config_read(0x3c, 1) as u8, u8::try_from(expected_gsi).unwrap());
 
     // UHCI uses BAR4 (I/O) at 0x20.
-    assert_eq!(read_u32(&uhci, 0x20) & 0x1, 0x1);
+    assert_eq!(uhci.config_read(0x20, 4) & 0x1, 0x1);
 
     let mut uhci = uhci;
     uhci.config_write(0x20, 4, 0xffff_ffff);
@@ -105,27 +102,25 @@ fn uhci_pci_config_matches_canonical_profile() {
 
 #[test]
 fn ahci_pci_config_matches_canonical_profile() {
-    let disk = Box::new(MemDisk::new(16));
-    let dev = AhciPciDevice::new(AhciController::new(disk), 0xfebf_0000);
-    assert_basic_identity(&dev, SATA_AHCI_ICH9);
+    let mut dev = aero_devices_storage::pci_ahci::AhciPciDevice::new(1);
+    assert_basic_identity(|off, size| dev.config_mut().read(off, size), SATA_AHCI_ICH9);
 
     // BAR5 probe must report the implemented ABAR size.
     let abar_cfg_off: u16 = AHCI_ABAR_CFG_OFFSET as u16;
-    let mut dev = dev;
-    dev.config_write(abar_cfg_off, 4, 0xffff_ffff);
-    let mask = dev.config_read(abar_cfg_off, 4);
+    dev.config_mut().write(abar_cfg_off, 4, 0xffff_ffff);
+    let mask = dev.config_mut().read(abar_cfg_off, 4);
     assert_eq!(mask, !(AHCI_ABAR_SIZE_U32 - 1) & 0xffff_fff0);
 
     // BAR bases must be masked by the BAR size alignment (not just 16 bytes).
-    dev.config_write(abar_cfg_off, 4, 0xdead_beef);
-    assert_eq!(dev.config_read(abar_cfg_off, 4), 0xdead_beef & mask);
+    dev.config_mut().write(abar_cfg_off, 4, 0xdead_beef);
+    assert_eq!(dev.config_mut().read(abar_cfg_off, 4), 0xdead_beef & mask);
 }
 
 #[test]
 #[cfg(feature = "legacy-audio")]
 fn hda_pci_config_matches_canonical_profile() {
     let dev = HdaPciDevice::new(emulator::io::audio::hda::HdaController::new(), 0xfebf_0000);
-    assert_basic_identity(&dev, HDA_ICH6);
+    assert_basic_identity(|off, size| dev.config_read(off, size), HDA_ICH6);
 
     let mut dev = dev;
     dev.config_write(0x10, 4, 0xffff_ffff);
@@ -144,18 +139,19 @@ fn hda_pci_config_matches_canonical_profile() {
 #[test]
 fn e1000_pci_config_matches_canonical_profile() {
     let dev = E1000PciDevice::new(E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]));
-    assert_basic_identity(&dev, NIC_E1000_82540EM);
+    assert_basic_identity(|off, size| dev.config_read(off, size), NIC_E1000_82540EM);
 }
 
 #[test]
+#[cfg(feature = "storage-device-crates")]
 fn nvme_pci_config_matches_canonical_profile() {
     let disk = Box::new(MemDisk::new(16));
     let ctrl = NvmeController::new(disk);
     let dev = NvmePciDevice::new(ctrl, 0xfebf_0000);
-    assert_basic_identity(&dev, NVME_CONTROLLER);
+    assert_basic_identity(|off, size| dev.config_read(off, size), NVME_CONTROLLER);
 
     // BAR0 is a 64-bit MMIO BAR.
-    assert_eq!(read_u32(&dev, 0x10) & 0x7, 0x4);
+    assert_eq!(dev.config_read(0x10, 4) & 0x7, 0x4);
 
     let mut dev = dev;
     dev.config_write(0x10, 4, 0xffff_ffff);
@@ -181,6 +177,6 @@ fn nvme_pci_config_matches_canonical_profile() {
 
 #[test]
 fn ide_pci_config_matches_canonical_profile() {
-    let dev = IdeController::new(0);
-    assert_basic_identity(&dev, IDE_PIIX3);
+    let mut dev = IdeController::new();
+    assert_basic_identity(|off, size| dev.config_mut().read(off, size), IDE_PIIX3);
 }

@@ -1,4 +1,4 @@
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(all(not(target_arch = "wasm32"), feature = "storage-device-crates"))]
 
 use emulator::io::pci::MmioDevice;
 use emulator::io::storage::disk::MemDisk;
