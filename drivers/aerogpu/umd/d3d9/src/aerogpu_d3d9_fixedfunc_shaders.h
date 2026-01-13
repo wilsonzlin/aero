@@ -88,41 +88,33 @@ static constexpr uint32_t kVsPassthroughPosWhiteTex1[] = {
 //   mov oT0, v0
 //   end
 //
-// This shader is used by fixed-function emulation for:
-//   D3DFVF_XYZ | D3DFVF_DIFFUSE
-// where the UMD uploads the *columns* of the row-major `world_view_proj` matrix
-// into c0..c3 (i.e. transpose for `dp4(v, cN)` row-vector multiplication).
+// The WVP matrix is provided in constants c0-c3 as column vectors (the transpose
+// of a row-major matrix) so the shader computes `float4(pos, 1) * WVP` using the
+// D3D9 row-vector convention.
 static constexpr uint32_t kVsWvpPosColor[] = {
     0xFFFE0200u, // vs_2_0
-
     0x03000009u, // dp4 (3 operands)
     0x40010000u, // oPos.x
     0x10E40000u, // v0.xyzw
     0x20E40000u, // c0.xyzw
-
     0x03000009u, // dp4
     0x40020000u, // oPos.y
     0x10E40000u, // v0.xyzw
     0x20E40001u, // c1.xyzw
-
     0x03000009u, // dp4
     0x40040000u, // oPos.z
     0x10E40000u, // v0.xyzw
     0x20E40002u, // c2.xyzw
-
     0x03000009u, // dp4
     0x40080000u, // oPos.w
     0x10E40000u, // v0.xyzw
     0x20E40003u, // c3.xyzw
-
     0x02000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
     0x10E40001u, // v1.xyzw
-
     0x02000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40000u, // v0.xyzw
-
     0x0000FFFFu, // end
 };
 
@@ -141,35 +133,28 @@ static constexpr uint32_t kVsWvpPosColor[] = {
 // into c0..c3 (i.e. transpose for `dp4(v, cN)` row-vector multiplication).
 static constexpr uint32_t kVsWvpPosColorTex0[] = {
     0xFFFE0200u, // vs_2_0
-
     0x03000009u, // dp4 (3 operands)
     0x40010000u, // oPos.x
     0x10E40000u, // v0.xyzw
     0x20E40000u, // c0.xyzw
-
     0x03000009u, // dp4
     0x40020000u, // oPos.y
     0x10E40000u, // v0.xyzw
     0x20E40001u, // c1.xyzw
-
     0x03000009u, // dp4
     0x40040000u, // oPos.z
     0x10E40000u, // v0.xyzw
     0x20E40002u, // c2.xyzw
-
     0x03000009u, // dp4
     0x40080000u, // oPos.w
     0x10E40000u, // v0.xyzw
     0x20E40003u, // c3.xyzw
-
     0x02000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
     0x10E40001u, // v1.xyzw
-
     0x02000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40002u, // v2.xyzw
-
     0x0000FFFFu, // end
 };
 
@@ -223,7 +208,6 @@ static constexpr uint32_t kVsTransformPosWhiteTex1[] = {
 // -----------------------------------------------------------------------------
 // Pixel shaders (ps_2_0)
 // -----------------------------------------------------------------------------
-
 // ps_2_0:
 //   mov oC0, v0
 //   end

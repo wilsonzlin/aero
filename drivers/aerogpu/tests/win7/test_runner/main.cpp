@@ -1076,6 +1076,7 @@ int main(int argc, char** argv) {
       "d3d9_mipmapped_texture_smoke",
       "d3d9_fixedfunc_xyz_diffuse",
       "d3d9_fixedfunc_xyz_diffuse_tex1",
+      "d3d9_fixedfunc_wvp_triangle",
       "d3d9_patch_rendering_smoke",
       "d3d9ex_fixedfunc_textured_triangle",
       "d3d9ex_fixedfunc_texture_stage_state",

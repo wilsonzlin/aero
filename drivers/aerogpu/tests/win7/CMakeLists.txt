@@ -198,6 +198,11 @@ aerogpu_add_win7_test(d3d9ex_ps_only_triangle
 )
 target_link_libraries(d3d9ex_ps_only_triangle PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9_fixedfunc_wvp_triangle
+  d3d9_fixedfunc_wvp_triangle/main.cpp
+)
+target_link_libraries(d3d9_fixedfunc_wvp_triangle PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9_mipmapped_texture_smoke
   d3d9_mipmapped_texture_smoke/main.cpp
 )

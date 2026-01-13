@@ -2849,10 +2849,10 @@ constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 
+constexpr uint32_t kSupportedFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
-constexpr uint32_t kSupportedFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
 
@@ -2905,30 +2905,18 @@ constexpr uint8_t kD3dDeclTypeUnused = 17;
 constexpr uint8_t kD3dDeclMethodDefault = 0;
 
 constexpr uint8_t kD3dDeclUsagePosition = 0;
-constexpr uint8_t kD3dDeclUsageTexcoord = 5;
 constexpr uint8_t kD3dDeclUsagePositionT = 9;
 constexpr uint8_t kD3dDeclUsageColor = 10;
-constexpr uint8_t kD3dDeclUsageTexCoord = 5;
-
-static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float out[16]) {
-  for (int r = 0; r < 4; ++r) {
-    for (int c = 0; c < 4; ++c) {
-      out[r * 4 + c] =
-          a[r * 4 + 0] * b[0 * 4 + c] +
-          a[r * 4 + 1] * b[1 * 4 + c] +
-          a[r * 4 + 2] * b[2 * 4 + c] +
-          a[r * 4 + 3] * b[3 * 4 + c];
-    }
-  }
-}
+constexpr uint8_t kD3dDeclUsageTexcoord = 5;
 
 // Fixed-function fallback shader constant register ranges.
 //
 // Note: D3D9 transform matrices are stored in row-major order (D3DMATRIX) and
-// fixed-function math uses row-vectors (v * WVP). The fixed-function vertex shader
-// uses `dp4 oPos.{x,y,z,w}, v0, c{0,1,2,3}` which computes dot(v, cN), so the
+// fixed-function math uses row-vectors (v * WVP). The fixed-function vertex
+// shader uses `dp4 oPos.{x,y,z,w}, v0, c{0..3}` which computes dot(v, cN), so the
 // driver uploads the *columns* of the row-major WVP matrix into c0..c3 (i.e. the
-// transpose of the row-major matrix).
+// transpose of the row-major matrix), matching the dp4-based shaders in
+// `aerogpu_d3d9_fixedfunc_shaders.h`.
 constexpr uint32_t kFixedfuncMatrixStartRegister = 0u;
 constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
 
@@ -2965,6 +2953,27 @@ HRESULT validate_fixedfunc_vertex_stride(uint32_t fvf, uint32_t stride_bytes) {
     return kD3DErrInvalidCall;
   }
   return S_OK;
+}
+
+// Row-major 4x4 matrix multiply: out = a * b.
+//
+// D3D9 fixed-function transforms use row vectors (v * M), so the conventional
+// left-to-right matrix multiply matches how WORLD/VIEW/PROJECTION compose.
+static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float out[16]) {
+  if (!a || !b || !out) {
+    return;
+  }
+  for (uint32_t r = 0; r < 4; ++r) {
+    const float a0 = a[r * 4 + 0];
+    const float a1 = a[r * 4 + 1];
+    const float a2 = a[r * 4 + 2];
+    const float a3 = a[r * 4 + 3];
+
+    out[r * 4 + 0] = a0 * b[0 * 4 + 0] + a1 * b[1 * 4 + 0] + a2 * b[2 * 4 + 0] + a3 * b[3 * 4 + 0];
+    out[r * 4 + 1] = a0 * b[0 * 4 + 1] + a1 * b[1 * 4 + 1] + a2 * b[2 * 4 + 1] + a3 * b[3 * 4 + 1];
+    out[r * 4 + 2] = a0 * b[0 * 4 + 2] + a1 * b[1 * 4 + 2] + a2 * b[2 * 4 + 2] + a3 * b[3 * 4 + 2];
+    out[r * 4 + 3] = a0 * b[0 * 4 + 3] + a1 * b[1 * 4 + 3] + a2 * b[2 * 4 + 3] + a3 * b[3 * 4 + 3];
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -3560,6 +3569,7 @@ inline void stateblock_record_shader_const_b_locked(
 // Forward-declared so helpers can opportunistically split submissions when the
 // runtime-provided DMA buffer / allocation list is full.
 uint64_t submit(Device* dev, bool is_present = false);
+
 #if defined(_WIN32)
 // Ensures the device has a valid runtime-provided command buffer + allocation
 // list bound for recording (CreateContext persistent buffers, or Allocate/
@@ -4565,17 +4575,18 @@ static HRESULT ensure_fixedfunc_wvp_constants_locked(Device* dev) {
   d3d9_mul_mat4_row_major(world_view, dev->transform_matrices[kD3dTransformProjection], wvp);
 
   // Upload WVP as column vectors (transpose of row-major).
-  float wvp_cols[16] = {};
-  for (int r = 0; r < 4; ++r) {
-    for (int c = 0; c < 4; ++c) {
-      wvp_cols[c * 4 + r] = wvp[r * 4 + c];
-    }
+  float cols[16] = {};
+  for (uint32_t c = 0; c < 4; ++c) {
+    cols[c * 4 + 0] = wvp[0 * 4 + c];
+    cols[c * 4 + 1] = wvp[1 * 4 + c];
+    cols[c * 4 + 2] = wvp[2 * 4 + c];
+    cols[c * 4 + 3] = wvp[3 * 4 + c];
   }
 
   if (!emit_set_shader_constants_f_locked(dev,
                                           kD3d9ShaderStageVs,
                                           kFixedfuncMatrixStartRegister,
-                                          wvp_cols,
+                                          cols,
                                           kFixedfuncMatrixVec4Count)) {
     return E_OUTOFMEMORY;
   }
@@ -4632,8 +4643,6 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosWhiteTex1));
       break;
     case kSupportedFvfXyzDiffuseTex1:
-      // XYZ vertices require a WVP transform in the VS. When SetFVF is used, the
-      // UMD synthesizes an internal declaration so it can bind a known input layout.
       vs_slot = &dev->fixedfunc_vs_xyz_diffuse_tex1;
       ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
       fvf_decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
@@ -4650,12 +4659,10 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       needs_matrix = true;
       break;
     default:
-      // Note: `fixedfunc_supported_fvf` currently includes additional FVFs that
-      // may be accepted for bring-up. Keep the draw path conservative.
       return D3DERR_INVALIDCALL;
   }
 
-  if (!vs_slot || !ps_slot || !vs_bytes) {
+  if (!vs_slot || !ps_slot || !vs_bytes || vs_size == 0) {
     return E_FAIL;
   }
 
@@ -4670,20 +4677,12 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     return ps_hr;
   }
 
-  // Ensure the FVF-derived declaration is bound when the app is using the
-  // SetFVF path (internal declaration). When the app uses an explicit vertex
-  // declaration (SetVertexDecl), preserve it so GetVertexDecl/state blocks
-  // remain consistent.
+  // Ensure the FVF-derived declaration is bound when the app is using the SetFVF
+  // path (internal declaration). When the app uses an explicit vertex declaration
+  // (SetVertexDecl), preserve it so GetVertexDecl/state blocks remain consistent.
   if (fvf_decl && (!dev->vertex_decl || dev->vertex_decl == fvf_decl)) {
     if (!emit_set_input_layout_locked(dev, fvf_decl)) {
       return E_OUTOFMEMORY;
-    }
-  }
-
-  if (needs_matrix) {
-    const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
-    if (FAILED(hr)) {
-      return hr;
     }
   }
 
@@ -4694,11 +4693,23 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       Shader* prev_ps = dev->ps;
       dev->vs = *vs_slot;
       dev->ps = *ps_slot;
+      if (needs_matrix) {
+        // User shaders may have touched the constant registers while fixed-function
+        // was inactive. Force a re-upload when we bind our internal WVP shader.
+        dev->fixedfunc_matrix_dirty = true;
+      }
       if (!emit_bind_shaders_locked(dev)) {
         dev->vs = prev_vs;
         dev->ps = prev_ps;
         return E_OUTOFMEMORY;
       }
+    }
+  }
+
+  if (needs_matrix) {
+    const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
+    if (FAILED(hr)) {
+      return hr;
     }
   }
 
@@ -5563,7 +5574,7 @@ bool parse_process_vertices_dest_decl(const VertexDecl* decl, ProcessVerticesDec
       out->has_diffuse = true;
       out->diffuse_offset = e.Offset;
     }
-    if (e.Usage == kD3dDeclUsageTexCoord && e.Type == kD3dDeclTypeFloat2 && e.UsageIndex == 0) {
+    if (e.Usage == kD3dDeclUsageTexcoord && e.Type == kD3dDeclTypeFloat2 && e.UsageIndex == 0) {
       out->has_tex0 = true;
       out->tex0_offset = e.Offset;
     }
@@ -5883,12 +5894,9 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
     }
 
     // Compute WVP matrix (row-major, row-vector convention).
-    constexpr uint32_t kD3dTsView = 2u;
-    constexpr uint32_t kD3dTsProjection = 3u;
-    constexpr uint32_t kD3dTsWorld = 256u; // WORLD0
-    if (kD3dTsWorld >= Device::kTransformCacheCount ||
-        kD3dTsView >= Device::kTransformCacheCount ||
-        kD3dTsProjection >= Device::kTransformCacheCount) {
+    if (kD3dTransformWorld0 >= Device::kTransformCacheCount ||
+        kD3dTransformView >= Device::kTransformCacheCount ||
+        kD3dTransformProjection >= Device::kTransformCacheCount) {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
       if (dst_locked) {
         (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst_res->wddm_hAllocation, dev->wddm_context.hContext);
@@ -5902,8 +5910,10 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
 
     float wv[16];
     float wvp[16];
-    d3d9_mul_mat4_row_major(dev->transform_matrices[kD3dTsWorld], dev->transform_matrices[kD3dTsView], wv);
-    d3d9_mul_mat4_row_major(wv, dev->transform_matrices[kD3dTsProjection], wvp);
+    d3d9_mul_mat4_row_major(dev->transform_matrices[kD3dTransformWorld0],
+                            dev->transform_matrices[kD3dTransformView],
+                            wv);
+    d3d9_mul_mat4_row_major(wv, dev->transform_matrices[kD3dTransformProjection], wvp);
 
     const D3DDDIVIEWPORTINFO vp = viewport_effective_locked(dev);
     const float vp_x = vp.X;
@@ -12438,143 +12448,104 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
   //
   // Other FVFs may be accepted and cached so GetFVF + state blocks behave
   // deterministically, but rendering is not guaranteed for unsupported formats.
-  if (fixedfunc_fvf_supported(fvf)) {
-    VertexDecl** decl_slot =
-        (fvf == kSupportedFvfXyzrhwDiffuse) ? &dev->fvf_vertex_decl : &dev->fvf_vertex_decl_tex1;
-
-    if (!*decl_slot) {
-      // Build the declaration for this FVF. The fixed-function fallback path
-      // uses an internal declaration so it can bind a known input layout.
-      if (fvf == kSupportedFvfXyzrhwDiffuse) {
-        const D3DVERTEXELEMENT9_COMPAT elems[] = {
-            // stream, offset, type, method, usage, usage_index
-            {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
-            {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-            {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-        };
-        *decl_slot = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
-      } else {
-        const D3DVERTEXELEMENT9_COMPAT elems[] = {
-            // stream, offset, type, method, usage, usage_index
-            {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
-            {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-            {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
-            {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-        };
-        *decl_slot = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+  if (fixedfunc_supported_fvf(fvf)) {
+    VertexDecl* decl = nullptr;
+    switch (fvf) {
+      case kSupportedFvfXyzrhwDiffuse: {
+        if (!dev->fvf_vertex_decl) {
+          const D3DVERTEXELEMENT9_COMPAT elems[] = {
+              {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+              {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+          };
+          dev->fvf_vertex_decl = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        }
+        decl = dev->fvf_vertex_decl;
+        break;
       }
-      if (!*decl_slot) {
-        return trace.ret(E_OUTOFMEMORY);
+      case kSupportedFvfXyzrhwDiffuseTex1: {
+        if (!dev->fvf_vertex_decl_tex1) {
+          const D3DVERTEXELEMENT9_COMPAT elems[] = {
+              {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+              {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+              {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+          };
+          dev->fvf_vertex_decl_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        }
+        decl = dev->fvf_vertex_decl_tex1;
+        break;
       }
+      case kSupportedFvfXyzrhwTex1: {
+        if (!dev->fvf_vertex_decl_tex1_nodiffuse) {
+          const D3DVERTEXELEMENT9_COMPAT elems[] = {
+              {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+              {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+          };
+          dev->fvf_vertex_decl_tex1_nodiffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        }
+        decl = dev->fvf_vertex_decl_tex1_nodiffuse;
+        break;
+      }
+      case kSupportedFvfXyzDiffuse: {
+        if (!dev->fvf_vertex_decl_xyz_diffuse) {
+          const D3DVERTEXELEMENT9_COMPAT elems[] = {
+              {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+              {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+          };
+          dev->fvf_vertex_decl_xyz_diffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        }
+        decl = dev->fvf_vertex_decl_xyz_diffuse;
+        break;
+      }
+      case kSupportedFvfXyzDiffuseTex1: {
+        if (!dev->fvf_vertex_decl_xyz_diffuse_tex1) {
+          const D3DVERTEXELEMENT9_COMPAT elems[] = {
+              {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+              {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+              {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+          };
+          dev->fvf_vertex_decl_xyz_diffuse_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        }
+        decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
+        break;
+      }
+      case kSupportedFvfXyzTex1: {
+        if (!dev->fvf_vertex_decl_xyz_tex1) {
+          const D3DVERTEXELEMENT9_COMPAT elems[] = {
+              {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+              {0, 12, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+          };
+          dev->fvf_vertex_decl_xyz_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        }
+        decl = dev->fvf_vertex_decl_xyz_tex1;
+        break;
+      }
+      default:
+        break;
     }
 
-    if (!emit_set_input_layout_locked(dev, *decl_slot)) {
+    if (!decl) {
       return trace.ret(E_OUTOFMEMORY);
     }
-    dev->fvf = fvf;
-    stateblock_record_vertex_decl_locked(dev, *decl_slot, dev->fvf);
-    return trace.ret(S_OK);
-  }
 
-  if (fvf == kSupportedFvfXyzrhwTex1) {
-    if (!dev->fvf_vertex_decl_tex1_nodiffuse) {
-      const D3DVERTEXELEMENT9_COMPAT elems[] = {
-          // stream, offset, type, method, usage, usage_index
-          {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
-          {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
-          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-      };
-      dev->fvf_vertex_decl_tex1_nodiffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
-      if (!dev->fvf_vertex_decl_tex1_nodiffuse) {
-        return trace.ret(E_OUTOFMEMORY);
-      }
-    }
-
-    if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl_tex1_nodiffuse)) {
+    if (!emit_set_input_layout_locked(dev, decl)) {
       return trace.ret(E_OUTOFMEMORY);
     }
+
     dev->fvf = fvf;
-    stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl_tex1_nodiffuse, dev->fvf);
-    return trace.ret(S_OK);
-  }
-
-  if (fvf == kSupportedFvfXyzDiffuse) {
-    if (!dev->fvf_vertex_decl_xyz_diffuse) {
-      const D3DVERTEXELEMENT9_COMPAT elems[] = {
-          // stream, offset, type, method, usage, usage_index
-          {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*POSITION=*/0, 0},
-          {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-      };
-
-      dev->fvf_vertex_decl_xyz_diffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
-      if (!dev->fvf_vertex_decl_xyz_diffuse) {
-        return trace.ret(E_OUTOFMEMORY);
-      }
+    if (!fixedfunc_fvf_is_xyzrhw(fvf)) {
+      // Fixed-function WVP shaders use a reserved VS constant range. Mark it dirty
+      // so we re-upload on the next draw even if transforms themselves did not
+      // change (user shaders may have written overlapping registers before
+      // switching back to FVF mode).
+      dev->fixedfunc_matrix_dirty = true;
     }
-
-    if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_diffuse)) {
-      return trace.ret(E_OUTOFMEMORY);
-    }
-    dev->fvf = fvf;
-    // Fixed-function shaders use a reserved VS constant range for the combined
-    // world/view/projection matrix; mark it dirty so we re-upload on the next draw
-    // even if transforms themselves did not change (user shaders may have written
-    // overlapping registers before switching back to FVF mode).
-    dev->fixedfunc_matrix_dirty = true;
-    stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl_xyz_diffuse, dev->fvf);
-    return trace.ret(S_OK);
-  }
-
-  if (fvf == kSupportedFvfXyzTex1) {
-    if (!dev->fvf_vertex_decl_xyz_tex1) {
-      const D3DVERTEXELEMENT9_COMPAT elems[] = {
-          // stream, offset, type, method, usage, usage_index
-          {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*POSITION=*/0, 0},
-          {0, 12, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
-          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-      };
-      dev->fvf_vertex_decl_xyz_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
-      if (!dev->fvf_vertex_decl_xyz_tex1) {
-        return trace.ret(E_OUTOFMEMORY);
-      }
-    }
-
-    if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_tex1)) {
-      return trace.ret(E_OUTOFMEMORY);
-    }
-    dev->fvf = fvf;
-    dev->fixedfunc_matrix_dirty = true;
-    stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl_xyz_tex1, dev->fvf);
-    return trace.ret(S_OK);
-  }
-
-  if (fvf == kSupportedFvfXyzDiffuseTex1) {
-    if (!dev->fvf_vertex_decl_xyz_diffuse_tex1) {
-      const D3DVERTEXELEMENT9_COMPAT elems[] = {
-          // stream, offset, type, method, usage, usage_index
-          {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*POSITION=*/0, 0},
-          {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-          {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
-          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-      };
-
-      dev->fvf_vertex_decl_xyz_diffuse_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
-      if (!dev->fvf_vertex_decl_xyz_diffuse_tex1) {
-        return trace.ret(E_OUTOFMEMORY);
-      }
-    }
-
-    if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_diffuse_tex1)) {
-      return trace.ret(E_OUTOFMEMORY);
-    }
-    dev->fvf = fvf;
-    // Fixed-function shaders use a reserved VS constant range for the combined
-    // world/view/projection matrix; mark it dirty so we re-upload on the next draw
-    // even if transforms themselves did not change (user shaders may have written
-    // overlapping registers before switching back to FVF mode).
-    dev->fixedfunc_matrix_dirty = true;
-    stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl_xyz_diffuse_tex1, dev->fvf);
+    stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
     return trace.ret(S_OK);
   }
 
@@ -13318,11 +13289,10 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     stateblock_record_render_state_locked(dev, i, sb->render_state_values[i]);
   }
 
-  // Fixed-function state: transforms. Cached for GetTransform/state blocks, and
-  // consumed by bring-up fixed-function paths that apply a WVP transform (e.g.
-  // the `XYZ|DIFFUSE|TEX1` fixed-function VS and the fixed-function
-  // ProcessVertices CPU transform). Mark the reserved fixed-function WVP constant
-  // range dirty when relevant matrices change.
+  // Fixed-function state: transforms. Cached for GetTransform/state blocks.
+  // WORLD/VIEW/PROJECTION also drive the internal WVP constants used by the
+  // fixed-function fallback vertex shaders and other bring-up paths that consume
+  // transforms (e.g. ProcessVertices).
   if (sb->transform_mask.any()) {
     for (uint32_t t = 0; t < Device::kTransformCacheCount; ++t) {
       if (!sb->transform_mask.test(t)) {
@@ -13476,11 +13446,13 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   if (sb->fvf_set) {
     const uint32_t old_fvf = dev->fvf;
     dev->fvf = sb->fvf;
-    // Switching to the XYZ|DIFFUSE|TEX1 fixed-function fallback must refresh
-    // the reserved matrix constant range, even if transforms did not change.
-    // State-block apply bypasses SetFVF/SetVertexDecl, so handle the transition
-    // here as well.
-    if (old_fvf != dev->fvf && dev->fvf == kSupportedFvfXyzDiffuseTex1) {
+    // Switching to a WVP-fixed-function path must refresh the reserved matrix
+    // constant range, even if transforms did not change. State-block apply
+    // bypasses SetFVF/SetVertexDecl, so handle the transition here as well.
+    if (old_fvf != dev->fvf &&
+        (dev->fvf == kSupportedFvfXyzDiffuse ||
+         dev->fvf == kSupportedFvfXyzDiffuseTex1 ||
+         dev->fvf == kSupportedFvfXyzTex1)) {
       dev->fixedfunc_matrix_dirty = true;
     }
   }
@@ -13531,10 +13503,13 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   if (sb->user_vs_set && dev->user_vs != sb->user_vs) {
     dev->user_vs = sb->user_vs;
     shaders_dirty = true;
-    // If the app binds a user VS while the XYZ|DIFFUSE|TEX1 fixed-function path
-    // is active, treat the reserved WVP constant range as clobbered; the app
-    // may have written overlapping constants before returning to fixed-function.
-    if (dev->user_vs && dev->fvf == kSupportedFvfXyzDiffuseTex1) {
+    // If the app binds a user VS while a WVP fixed-function path is active,
+    // treat the reserved WVP constant range as clobbered; the app may have
+    // written overlapping constants before returning to fixed-function.
+    if (dev->user_vs &&
+        (dev->fvf == kSupportedFvfXyzDiffuse ||
+         dev->fvf == kSupportedFvfXyzDiffuseTex1 ||
+         dev->fvf == kSupportedFvfXyzTex1)) {
       dev->fixedfunc_matrix_dirty = true;
     }
   }
@@ -13580,7 +13555,10 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
 
       // If the state block writes to the reserved WVP constant range, mark it
       // dirty so the next fixed-function draw re-uploads the correct matrix.
-      if (stage == kD3d9ShaderStageVs && dev->fvf == kSupportedFvfXyzDiffuseTex1) {
+      if (stage == kD3d9ShaderStageVs &&
+          (dev->fvf == kSupportedFvfXyzDiffuse ||
+           dev->fvf == kSupportedFvfXyzDiffuseTex1 ||
+           dev->fvf == kSupportedFvfXyzTex1)) {
         const uint32_t write_end = start + count;
         const uint32_t ff_start = kFixedfuncMatrixStartRegister;
         const uint32_t ff_end = kFixedfuncMatrixStartRegister + kFixedfuncMatrixVec4Count;
@@ -13617,6 +13595,10 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     if (FAILED(hr)) {
       return hr;
     }
+    // State blocks can capture and re-apply VS constant registers even when the
+    // app uses fixed-function rendering. Since the fixed-function fallback shader
+    // consumes c0-c3 for WVP, re-emit those constants after the block is applied.
+    dev->fixedfunc_matrix_dirty = true;
   }
   if (sb->ps_const_mask.any()) {
     const HRESULT hr = apply_consts(kD3d9ShaderStagePs, sb->ps_const_mask, sb->ps_consts.data(), dev->ps_consts_f);
@@ -13700,6 +13682,18 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   }
   if (sb->ps_const_b_mask.any()) {
     const HRESULT hr = apply_consts_b(kD3d9ShaderStagePs, sb->ps_const_b_mask, sb->ps_consts_b.data(), dev->ps_consts_b);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
+  // If fixed-function WVP rendering is active, ensure any state-block-applied
+  // transform changes are reflected in the internal VS constant registers.
+  if (!dev->user_vs && !dev->user_ps &&
+      (dev->fvf == kSupportedFvfXyzDiffuse ||
+       dev->fvf == kSupportedFvfXyzDiffuseTex1 ||
+       dev->fvf == kSupportedFvfXyzTex1)) {
+    const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
     if (FAILED(hr)) {
       return hr;
     }
@@ -14122,14 +14116,15 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 // -----------------------------------------------------------------------------
 // Legacy fixed-function/DDI state (cached; minimal fixed-function consumption)
 // -----------------------------------------------------------------------------
-// These DDIs are mostly cached-only and are not emitted as explicit fixed-function
-// GPU state in the AeroGPU command stream, but some legacy D3D9 apps call the
-// corresponding Get* APIs and treat failures as fatal. Cache values so Set*/Get*
-// and state blocks round-trip.
+// Most fixed-function DDIs are cached-only and are not emitted as explicit
+// fixed-function GPU state in the AeroGPU command stream. However, the UMD does
+// emulate a minimal fixed-function pipeline:
+// - WORLD/VIEW/PROJECTION matrices drive internal WVP vertex shaders for `FVF
+//   XYZ*` when no user shaders are bound.
+// - Stage0 texture stage state selects a fixed-function PS variant.
 //
-// Note: stage0 texture stage state is consulted by the UMD's minimal fixed-function
-// fallback path to select a pixel shader variant (see the stage0 update hook in
-// device_set_texture_stage_state_impl()).
+// Cache state so Set*/Get* and state blocks round-trip for legacy apps that treat
+// Get* failures as fatal.
 
 template <typename StageT, typename StateT, typename ValueT>
 HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage, StateT state, ValueT value) {
@@ -14247,6 +14242,19 @@ HRESULT device_set_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, const Ma
     dev->fixedfunc_matrix_dirty = true;
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
+
+  // If fixed-function WVP rendering is active, reflect transform updates in the
+  // internal VS constant registers eagerly (not just at draw time).
+  if ((idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) &&
+      !dev->user_vs && !dev->user_ps &&
+      (dev->fvf == kSupportedFvfXyzDiffuse ||
+       dev->fvf == kSupportedFvfXyzDiffuseTex1 ||
+       dev->fvf == kSupportedFvfXyzTex1)) {
+    const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
+    }
+  }
   return trace.ret(S_OK);
 }
 
@@ -14284,6 +14292,19 @@ HRESULT device_multiply_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, con
     dev->fixedfunc_matrix_dirty = true;
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
+
+  // If fixed-function WVP rendering is active, reflect transform updates in the
+  // internal VS constant registers eagerly (not just at draw time).
+  if ((idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) &&
+      !dev->user_vs && !dev->user_ps &&
+      (dev->fvf == kSupportedFvfXyzDiffuse ||
+       dev->fvf == kSupportedFvfXyzDiffuseTex1 ||
+       dev->fvf == kSupportedFvfXyzTex1)) {
+    const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
+    }
+  }
 
   return trace.ret(S_OK);
 }

@@ -886,6 +886,7 @@ struct Device {
 
   // Fixed-function (FVF) fallback state.
   uint32_t fvf = 0;
+  // Internal vertex declarations synthesized for common FVFs (SetFVF).
   VertexDecl* fvf_vertex_decl = nullptr;
   VertexDecl* fvf_vertex_decl_tex1 = nullptr;
   VertexDecl* fvf_vertex_decl_tex1_nodiffuse = nullptr;

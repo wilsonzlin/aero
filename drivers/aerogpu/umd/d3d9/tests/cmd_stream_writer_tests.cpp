@@ -1970,16 +1970,6 @@ bool TestCreateResourceRejectsNon2dDepth() {
   std::vector<uint8_t> dma(4096, 0);
   dev->cmd.set_span(dma.data(), dma.size());
   dev->cmd.reset();
-  struct CmdStreamRestore {
-    Device* dev = nullptr;
-    ~CmdStreamRestore() {
-      if (dev) {
-        // Ensure Cleanup's DestroyDevice/CloseAdapter paths use a safe, owned
-        // command buffer (the span backing store is about to be freed).
-        dev->cmd.set_vector();
-      }
-    }
-  } cmd_restore{dev};
 
   D3D9DDIARG_CREATERESOURCE create_res{};
   create_res.type = kD3dRTypeVolumeTexture; // explicit non-2D resource type
@@ -2186,16 +2176,6 @@ bool TestCreateResourceComputesBcTexturePitchAndSize() {
   std::vector<uint8_t> dma(4096, 0);
   dev->cmd.set_span(dma.data(), dma.size());
   dev->cmd.reset();
-  struct CmdModeGuard {
-    Device* dev = nullptr;
-    ~CmdModeGuard() {
-      if (dev) {
-        // Cleanup destructors destroy resources/devices and may submit, so ensure
-        // we don't reference the span-backed command buffer after `dma` is freed.
-        dev->cmd.set_vector();
-      }
-    }
-  } cmd_guard{dev};
 
   D3D9DDIARG_CREATERESOURCE create_res{};
   create_res.type = kD3dRTypeTexture;
