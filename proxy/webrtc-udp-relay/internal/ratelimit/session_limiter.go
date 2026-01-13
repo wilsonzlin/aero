@@ -1,6 +1,9 @@
 package ratelimit
 
-import "sync"
+import (
+	"container/list"
+	"sync"
+)
 
 type DropReason string
 
@@ -18,6 +21,16 @@ type SessionConfig struct {
 
 	UDPPacketsPerSecondPerDest int
 	MaxUniqueDestinations      int
+
+	// MaxUDPDestBuckets bounds the number of per-destination token buckets kept
+	// for UDPPacketsPerSecondPerDest.
+	//
+	// When <= 0, a safe default is used (see NewSessionLimiter).
+	MaxUDPDestBuckets int
+
+	// OnUDPDestBucketEvicted is invoked once per evicted per-destination bucket.
+	// It must be safe to call while holding SessionLimiter's mutex.
+	OnUDPDestBucketEvicted func()
 }
 
 // SessionLimiter enforces per-session rate limits and destination quotas.
@@ -32,9 +45,19 @@ type SessionLimiter struct {
 
 	perDestRate int64
 
+	maxUDPDestBuckets int
+
+	onUDPDestBucketEvicted func()
+
 	mu       sync.Mutex
 	destSeen map[string]struct{}
-	perDest  map[string]*TokenBucket
+	perDest  map[string]*destBucketEntry
+	perDestQ *list.List
+}
+
+type destBucketEntry struct {
+	bucket *TokenBucket
+	elem   *list.Element
 }
 
 func NewSessionLimiter(clock Clock, cfg SessionConfig) *SessionLimiter {
@@ -53,15 +76,30 @@ func NewSessionLimiter(clock Clock, cfg SessionConfig) *SessionLimiter {
 		dcBytes = NewTokenBucket(clock, int64(cfg.DataChannelBytesPerSecond), int64(cfg.DataChannelBytesPerSecond))
 	}
 
+	maxUDPDestBuckets := cfg.MaxUDPDestBuckets
+	if maxUDPDestBuckets <= 0 {
+		// Default to the unique destination cap (when configured) to keep the
+		// per-dest limiter state consistent with quota enforcement.
+		if cfg.MaxUniqueDestinations > 0 {
+			maxUDPDestBuckets = cfg.MaxUniqueDestinations
+		} else {
+			// Safe bound to prevent unbounded memory growth on destination spray.
+			maxUDPDestBuckets = 1024
+		}
+	}
+
 	l := &SessionLimiter{
-		clock:                 clock,
-		udpPackets:            udpPackets,
-		udpBytes:              udpBytes,
-		dcBytes:               dcBytes,
-		maxUniqueDestinations: cfg.MaxUniqueDestinations,
-		perDestRate:           int64(cfg.UDPPacketsPerSecondPerDest),
-		destSeen:              make(map[string]struct{}),
-		perDest:               make(map[string]*TokenBucket),
+		clock:                  clock,
+		udpPackets:             udpPackets,
+		udpBytes:               udpBytes,
+		dcBytes:                dcBytes,
+		maxUniqueDestinations:  cfg.MaxUniqueDestinations,
+		perDestRate:            int64(cfg.UDPPacketsPerSecondPerDest),
+		maxUDPDestBuckets:      maxUDPDestBuckets,
+		onUDPDestBucketEvicted: cfg.OnUDPDestBucketEvicted,
+		destSeen:               make(map[string]struct{}),
+		perDest:                make(map[string]*destBucketEntry),
+		perDestQ:               list.New(),
 	}
 	return l
 }
@@ -124,11 +162,28 @@ func (l *SessionLimiter) getOrCreateDestBucket(destKey string) *TokenBucket {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if bucket, ok := l.perDest[destKey]; ok {
-		return bucket
+	if entry, ok := l.perDest[destKey]; ok {
+		l.perDestQ.MoveToFront(entry.elem)
+		return entry.bucket
+	}
+
+	if l.maxUDPDestBuckets > 0 && len(l.perDest) >= l.maxUDPDestBuckets {
+		// Evict least-recently used entry (oldest at the back).
+		if elem := l.perDestQ.Back(); elem != nil {
+			evictKey := elem.Value.(string)
+			l.perDestQ.Remove(elem)
+			delete(l.perDest, evictKey)
+			if l.onUDPDestBucketEvicted != nil {
+				l.onUDPDestBucketEvicted()
+			}
+		}
 	}
 
 	bucket := NewTokenBucket(l.clock, l.perDestRate, l.perDestRate)
-	l.perDest[destKey] = bucket
+	elem := l.perDestQ.PushFront(destKey)
+	l.perDest[destKey] = &destBucketEntry{
+		bucket: bucket,
+		elem:   elem,
+	}
 	return bucket
 }

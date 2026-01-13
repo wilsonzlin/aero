@@ -89,6 +89,9 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.MaxUDPBindingsPerSession != DefaultMaxUDPBindingsPerSession {
 		t.Fatalf("MaxUDPBindingsPerSession=%d, want %d", cfg.MaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
 	}
+	if cfg.MaxUDPDestBucketsPerSession != DefaultMaxUDPDestBucketsPerSession {
+		t.Fatalf("MaxUDPDestBucketsPerSession=%d, want %d", cfg.MaxUDPDestBucketsPerSession, DefaultMaxUDPDestBucketsPerSession)
+	}
 	if cfg.SignalingWSIdleTimeout != DefaultSignalingWSIdleTimeout {
 		t.Fatalf("SignalingWSIdleTimeout=%v, want %v", cfg.SignalingWSIdleTimeout, DefaultSignalingWSIdleTimeout)
 	}
@@ -100,6 +103,33 @@ func TestDefaultsDev(t *testing.T) {
 	}
 	if cfg.UDPWSPingInterval != DefaultUDPWSPingInterval {
 		t.Fatalf("UDPWSPingInterval=%v, want %v", cfg.UDPWSPingInterval, DefaultUDPWSPingInterval)
+	}
+}
+
+func TestMaxUDPDestBuckets_DefaultsToMaxUniqueDestinations(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                          "secret",
+		EnvMaxUniqueDestinationsPerSession: "123",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxUDPDestBucketsPerSession != 123 {
+		t.Fatalf("MaxUDPDestBucketsPerSession=%d, want %d", cfg.MaxUDPDestBucketsPerSession, 123)
+	}
+}
+
+func TestMaxUDPDestBuckets_EnvOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                          "secret",
+		EnvMaxUniqueDestinationsPerSession: "123",
+		EnvMaxUDPDestBucketsPerSession:     "7",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxUDPDestBucketsPerSession != 7 {
+		t.Fatalf("MaxUDPDestBucketsPerSession=%d, want %d", cfg.MaxUDPDestBucketsPerSession, 7)
 	}
 }
 

@@ -35,12 +35,20 @@ func newSession(id string, cfg config.Config, m *metrics.Metrics, clock ratelimi
 	if clock == nil {
 		clock = ratelimit.RealClock{}
 	}
+	var onEvict func()
+	if m != nil {
+		onEvict = func() {
+			m.Inc(metrics.UDPPerDestBucketEvictions)
+		}
+	}
 	rl := ratelimit.NewSessionLimiter(clock, ratelimit.SessionConfig{
 		UDPPacketsPerSecond:        cfg.MaxUDPPpsPerSession,
 		UDPBytesPerSecond:          cfg.MaxUDPBpsPerSession,
 		DataChannelBytesPerSecond:  cfg.MaxDataChannelBpsPerSession,
 		UDPPacketsPerSecondPerDest: cfg.MaxUDPPpsPerDest,
 		MaxUniqueDestinations:      cfg.MaxUniqueDestinationsPerSession,
+		MaxUDPDestBuckets:          cfg.MaxUDPDestBucketsPerSession,
+		OnUDPDestBucketEvicted:     onEvict,
 	})
 
 	return &Session{

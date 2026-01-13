@@ -56,6 +56,7 @@ const (
 	EnvMaxUDPPpsPerDest                = "MAX_UDP_PPS_PER_DEST"
 	EnvMaxUDPBindingsPerSession        = "MAX_UDP_BINDINGS_PER_SESSION"
 	EnvMaxUniqueDestinationsPerSession = "MAX_UNIQUE_DESTINATIONS_PER_SESSION"
+	EnvMaxUDPDestBucketsPerSession     = "MAX_UDP_DEST_BUCKETS_PER_SESSION"
 	EnvMaxDataChannelBpsPerSession     = "MAX_DC_BPS_PER_SESSION"
 	EnvHardCloseAfterViolations        = "HARD_CLOSE_AFTER_VIOLATIONS"
 	EnvViolationWindowSeconds          = "VIOLATION_WINDOW_SECONDS"
@@ -121,6 +122,8 @@ const (
 	DefaultTURNRESTTTLSeconds     int64  = 3600
 	DefaultTURNRESTUsernamePrefix string = "aero"
 )
+
+const DefaultMaxUDPDestBucketsPerSession = 1024
 
 const (
 	EnvWebRTCUDPPortMin = "WEBRTC_UDP_PORT_MIN"
@@ -291,6 +294,7 @@ type Config struct {
 	MaxUDPPpsPerDest                int
 	MaxUDPBindingsPerSession        int
 	MaxUniqueDestinationsPerSession int
+	MaxUDPDestBucketsPerSession     int
 	MaxDataChannelBpsPerSession     int
 	HardCloseAfterViolations        int
 	ViolationWindow                 time.Duration
@@ -503,6 +507,12 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	envMaxUDPDestBuckets, envMaxUDPDestBucketsOK := lookup(EnvMaxUDPDestBucketsPerSession)
+	envMaxUDPDestBucketsSet := envMaxUDPDestBucketsOK && strings.TrimSpace(envMaxUDPDestBuckets) != ""
+	maxUDPDestBucketsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPDestBucketsPerSession, DefaultMaxUDPDestBucketsPerSession)
+	if err != nil {
+		return Config{}, err
+	}
 	maxDataChannelBpsPerSession, err := envIntOrDefault(lookup, EnvMaxDataChannelBpsPerSession, 0)
 	if err != nil {
 		return Config{}, err
@@ -663,6 +673,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&maxUDPPpsPerDest, "max-udp-pps-per-dest", maxUDPPpsPerDest, "Outbound UDP packets/sec per destination per session (0 = unlimited)")
 	fs.IntVar(&maxUDPBindingsPerSession, "max-udp-bindings-per-session", maxUDPBindingsPerSession, "Maximum UDP bindings per session (env "+EnvMaxUDPBindingsPerSession+")")
 	fs.IntVar(&maxUniqueDestinationsPerSession, "max-unique-destinations-per-session", maxUniqueDestinationsPerSession, "Maximum unique UDP destinations per session (0 = unlimited)")
+	fs.IntVar(&maxUDPDestBucketsPerSession, "max-udp-dest-buckets-per-session", maxUDPDestBucketsPerSession, "Maximum per-destination UDP rate limiter buckets per session (env "+EnvMaxUDPDestBucketsPerSession+")")
 	fs.IntVar(&maxDataChannelBpsPerSession, "max-dc-bps-per-session", maxDataChannelBpsPerSession, "DataChannel bytes/sec per session (relay -> client) (0 = unlimited)")
 	fs.IntVar(&hardCloseAfterViolations, "hard-close-after-violations", hardCloseAfterViolations, "Close session after N rate/quota violations (0 = disabled)")
 	fs.DurationVar(&violationWindow, "violation-window", violationWindow, "Violation window for hard close")
@@ -711,6 +722,13 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	// the (possibly overridden) max payload after flag parsing.
 	if !envUDPReadBufferBytesSet && !setFlags["udp-read-buffer-bytes"] {
 		udpReadBufferBytes = maxDatagramPayloadBytes + 1
+	}
+
+	if !envMaxUDPDestBucketsSet && !setFlags["max-udp-dest-buckets-per-session"] && maxUniqueDestinationsPerSession > 0 {
+		// If the user configured a unique destination cap but didn't explicitly
+		// configure the per-destination bucket cap, default buckets to the same
+		// value to avoid surprise memory usage.
+		maxUDPDestBucketsPerSession = maxUniqueDestinationsPerSession
 	}
 
 	mode, err := parseMode(modeStr)
@@ -826,6 +844,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if maxUDPBindingsPerSession <= 0 {
 		return Config{}, fmt.Errorf("%s/--max-udp-bindings-per-session must be > 0", EnvMaxUDPBindingsPerSession)
+	}
+	if maxUDPDestBucketsPerSession <= 0 {
+		return Config{}, fmt.Errorf("%s/--max-udp-dest-buckets-per-session must be > 0", EnvMaxUDPDestBucketsPerSession)
 	}
 	if authMode == AuthModeAPIKey && strings.TrimSpace(apiKey) == "" {
 		return Config{}, fmt.Errorf("%s must be set when %s=%s", EnvAPIKey, EnvAuthMode, AuthModeAPIKey)
@@ -1031,6 +1052,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		MaxUDPPpsPerDest:                maxUDPPpsPerDest,
 		MaxUDPBindingsPerSession:        maxUDPBindingsPerSession,
 		MaxUniqueDestinationsPerSession: maxUniqueDestinationsPerSession,
+		MaxUDPDestBucketsPerSession:     maxUDPDestBucketsPerSession,
 		MaxDataChannelBpsPerSession:     maxDataChannelBpsPerSession,
 		HardCloseAfterViolations:        hardCloseAfterViolations,
 		ViolationWindow:                 violationWindow,

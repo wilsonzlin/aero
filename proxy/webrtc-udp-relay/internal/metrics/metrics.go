@@ -66,6 +66,11 @@ const (
 	UDPRemoteAllowlistOverflowDropsTotal = "udp_remote_allowlist_overflow_drops_total"
 )
 
+// UDP relay limiter internal counters.
+const (
+	UDPPerDestBucketEvictions = "udp_per_dest_bucket_evictions"
+)
+
 // Metrics is a minimal, concurrency-safe counter registry.
 //
 // The production relay is expected to plug into a real metrics backend; this
