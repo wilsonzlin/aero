@@ -245,7 +245,7 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
 
     let (out_w, out_h, rgba8) = dev
-        .read_presented_scanout_rgba8(0)
+        .read_presented_scanout_rgba8(&mut mem, 0)
         .expect("scanout should be readable");
 
     assert_eq!((out_w, out_h), (width, height));

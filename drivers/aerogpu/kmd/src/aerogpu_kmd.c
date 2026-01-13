@@ -1968,6 +1968,21 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
     AEROGPU_LOG0("StopDevice");
 
     if (adapter->Bar0) {
+        /*
+         * Disable the hardware cursor early so the device will not DMA from freed
+         * cursor memory during teardown.
+         */
+        if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0 &&
+            adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, 0);
+        }
+
         /* Stop device IRQ generation before unregistering the ISR. */
         if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
@@ -2024,6 +2039,13 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
     AeroGpuFreeAllInternalSubmissions(adapter);
     AeroGpuRingCleanup(adapter);
 
+    AeroGpuFreeContiguousNonCached(adapter->CursorFbVa, adapter->CursorFbSizeBytes);
+    adapter->CursorFbVa = NULL;
+    adapter->CursorFbPa.QuadPart = 0;
+    adapter->CursorFbSizeBytes = 0;
+    adapter->CursorShapeValid = FALSE;
+    adapter->CursorVisible = FALSE;
+
     if (adapter->Bar0) {
         MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
         adapter->Bar0 = NULL;
@@ -2041,6 +2063,10 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     }
 
     AEROGPU_LOG0("RemoveDevice");
+    AeroGpuFreeContiguousNonCached(adapter->CursorFbVa, adapter->CursorFbSizeBytes);
+    adapter->CursorFbVa = NULL;
+    adapter->CursorFbPa.QuadPart = 0;
+    adapter->CursorFbSizeBytes = 0;
     AeroGpuMetaHandleFreeAll(adapter);
     AeroGpuFreeAllAllocations(adapter);
     AeroGpuFreeAllShareTokenRefs(adapter);
@@ -4575,19 +4601,310 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
     return STATUS_SUCCESS;
 }
 
+static BOOLEAN AeroGpuCursorMmioUsable(_In_ const AEROGPU_ADAPTER* Adapter)
+{
+    if (!Adapter || !Adapter->Bar0) {
+        return FALSE;
+    }
+
+    if ((Adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) == 0) {
+        return FALSE;
+    }
+
+    /*
+     * Cursor registers live at fixed offsets in the versioned MMIO map. Some legacy
+     * bring-up models may expose FEATURE bits but not a full 64 KiB BAR. Guard
+     * against out-of-bounds MMIO.
+     */
+    if (Adapter->Bar0Length < (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static VOID AeroGpuCursorDisable(_Inout_ AEROGPU_ADAPTER* Adapter)
+{
+    if (!AeroGpuCursorMmioUsable(Adapter)) {
+        return;
+    }
+
+    AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
+}
+
 static NTSTATUS APIENTRY AeroGpuDdiSetPointerPosition(_In_ const HANDLE hAdapter,
                                                      _In_ const DXGKARG_SETPOINTERPOSITION* pPos)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
-    UNREFERENCED_PARAMETER(pPos);
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter || !pPos) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (pPos->VidPnSourceId != AEROGPU_VIDPN_SOURCE_ID) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) == 0) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    if (!adapter->Bar0) {
+        return STATUS_DEVICE_NOT_READY;
+    }
+
+    if (adapter->Bar0Length < (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    adapter->CursorVisible = pPos->Visible ? TRUE : FALSE;
+
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, (ULONG)pPos->X);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, (ULONG)pPos->Y);
+    AeroGpuWriteRegU32(adapter,
+                       AEROGPU_MMIO_REG_CURSOR_ENABLE,
+                       (adapter->CursorVisible && adapter->CursorShapeValid) ? 1u : 0u);
+
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
                                                   _In_ const DXGKARG_SETPOINTERSHAPE* pShape)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
-    UNREFERENCED_PARAMETER(pShape);
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) == 0) {
+        /*
+         * Prefer a hard NOT_SUPPORTED so dxgkrnl falls back to software cursor
+         * composition instead of assuming hardware cursor state is applied.
+         */
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    if (!adapter->Bar0) {
+        return STATUS_DEVICE_NOT_READY;
+    }
+
+    if (adapter->Bar0Length < (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    /* Defensive: treat null shape as "disable hardware cursor". */
+    if (!pShape) {
+        AeroGpuCursorDisable(adapter);
+        adapter->CursorShapeValid = FALSE;
+        return STATUS_SUCCESS;
+    }
+
+    if (pShape->VidPnSourceId != AEROGPU_VIDPN_SOURCE_ID) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!pShape->pPixels || pShape->Width == 0 || pShape->Height == 0) {
+        AeroGpuCursorDisable(adapter);
+        adapter->CursorShapeValid = FALSE;
+        return STATUS_SUCCESS;
+    }
+
+    const ULONG width = pShape->Width;
+    const ULONG height = pShape->Height;
+
+    /* Sanity cap to avoid runaway allocations on malformed inputs. */
+    if (width > 512u || height > 512u) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* We only implement 32bpp cursor formats in the MVP. */
+    if (width > (0xFFFFFFFFu / 4u)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const ULONG dstPitchBytes = width * 4u;
+
+    const ULONGLONG size64 = (ULONGLONG)dstPitchBytes * (ULONGLONG)height;
+    if (dstPitchBytes != 0 && (size64 / dstPitchBytes) != height) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Size must be representable as SIZE_T for MmAllocateContiguousMemory*. */
+    if (size64 == 0 || size64 > (ULONGLONG)(SIZE_T)~0ULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const SIZE_T requiredBytes = (SIZE_T)size64;
+
+    /* Cursor is small; keep an additional hard cap for safety (1 MiB). */
+    if (requiredBytes > (SIZE_T)(1024u * 1024u)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!adapter->CursorFbVa || adapter->CursorFbSizeBytes < requiredBytes) {
+        AeroGpuCursorDisable(adapter);
+        AeroGpuFreeContiguousNonCached(adapter->CursorFbVa, adapter->CursorFbSizeBytes);
+        adapter->CursorFbVa = NULL;
+        adapter->CursorFbPa.QuadPart = 0;
+        adapter->CursorFbSizeBytes = 0;
+
+        adapter->CursorFbVa = AeroGpuAllocContiguous(requiredBytes, &adapter->CursorFbPa);
+        if (!adapter->CursorFbVa) {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        adapter->CursorFbSizeBytes = requiredBytes;
+    } else {
+        /* Ensure deterministic contents even when reusing a larger buffer. */
+        RtlZeroMemory(adapter->CursorFbVa, adapter->CursorFbSizeBytes);
+    }
+
+    ULONG hotX = pShape->XHot;
+    ULONG hotY = pShape->YHot;
+    if (hotX >= width) {
+        hotX = width ? (width - 1) : 0;
+    }
+    if (hotY >= height) {
+        hotY = height ? (height - 1) : 0;
+    }
+
+    ULONG format = AEROGPU_FORMAT_B8G8R8A8_UNORM;
+
+    /*
+     * Cursor shape encoding:
+     * - Color / masked color: 32bpp pixels in A8R8G8B8 or X8R8G8B8 (little-endian BGRA/BGRX).
+     * - Monochrome: AND mask + XOR mask, each 1bpp, stacked vertically (classic Windows cursor encoding).
+     *
+     * We always write a 32bpp BGRA/BGRX cursor into the protocol cursor framebuffer and program
+     * CURSOR_FORMAT accordingly.
+     */
+    const DXGK_POINTERFLAGS flags = pShape->Flags;
+    if (flags.Monochrome) {
+        const ULONG srcPitch = pShape->Pitch;
+        if (srcPitch == 0) {
+            AeroGpuCursorDisable(adapter);
+            adapter->CursorShapeValid = FALSE;
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const ULONGLONG maskPlane64 = (ULONGLONG)srcPitch * (ULONGLONG)height;
+        if (maskPlane64 == 0 || (srcPitch != 0 && (maskPlane64 / srcPitch) != height) ||
+            maskPlane64 > (ULONGLONG)(SIZE_T)~0ULL) {
+            AeroGpuCursorDisable(adapter);
+            adapter->CursorShapeValid = FALSE;
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const SIZE_T maskPlaneBytes = (SIZE_T)maskPlane64;
+        const UCHAR* pixels = (const UCHAR*)pShape->pPixels;
+        const UCHAR* andMask = pixels;
+        const UCHAR* xorMask = pixels + maskPlaneBytes;
+
+        UCHAR* dst = (UCHAR*)adapter->CursorFbVa;
+
+        for (ULONG y = 0; y < height; ++y) {
+            const UCHAR* andRow = andMask + (SIZE_T)y * (SIZE_T)srcPitch;
+            const UCHAR* xorRow = xorMask + (SIZE_T)y * (SIZE_T)srcPitch;
+            UCHAR* dstRow = dst + (SIZE_T)y * (SIZE_T)dstPitchBytes;
+
+            for (ULONG x = 0; x < width; ++x) {
+                const ULONG byteIndex = x >> 3;
+                const UCHAR bit = (UCHAR)(0x80u >> (x & 7u));
+                const UCHAR a = andRow[byteIndex] & bit;
+                const UCHAR xo = xorRow[byteIndex] & bit;
+
+                /* Map AND/XOR to a best-effort RGBA value (cannot represent invert). */
+                UCHAR r = 0, g = 0, b = 0, alpha = 0;
+                if (a && !xo) {
+                    /* Transparent. */
+                    alpha = 0;
+                } else if (!a && !xo) {
+                    /* Black. */
+                    r = g = b = 0;
+                    alpha = 0xFF;
+                } else if (!a && xo) {
+                    /* White. */
+                    r = g = b = 0xFF;
+                    alpha = 0xFF;
+                } else { /* a && xo */
+                    /* Invert (approximate as white). */
+                    r = g = b = 0xFF;
+                    alpha = 0xFF;
+                }
+
+                const SIZE_T off = (SIZE_T)x * 4u;
+                dstRow[off + 0] = b;
+                dstRow[off + 1] = g;
+                dstRow[off + 2] = r;
+                dstRow[off + 3] = alpha;
+            }
+        }
+
+        format = AEROGPU_FORMAT_B8G8R8A8_UNORM;
+    } else if (flags.Color || flags.MaskedColor) {
+        const ULONG srcPitch = pShape->Pitch;
+        if (srcPitch == 0 || srcPitch < dstPitchBytes) {
+            AeroGpuCursorDisable(adapter);
+            adapter->CursorShapeValid = FALSE;
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const ULONGLONG srcSize64 = (ULONGLONG)srcPitch * (ULONGLONG)height;
+        if (srcPitch != 0 && (srcSize64 / srcPitch) != height) {
+            AeroGpuCursorDisable(adapter);
+            adapter->CursorShapeValid = FALSE;
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const UCHAR* src = (const UCHAR*)pShape->pPixels;
+        UCHAR* dst = (UCHAR*)adapter->CursorFbVa;
+
+        BOOLEAN anyAlphaNonZero = FALSE;
+        for (ULONG y = 0; y < height; ++y) {
+            const UCHAR* srcRow = src + (SIZE_T)y * (SIZE_T)srcPitch;
+            UCHAR* dstRow = dst + (SIZE_T)y * (SIZE_T)dstPitchBytes;
+            RtlCopyMemory(dstRow, srcRow, (SIZE_T)dstPitchBytes);
+
+            /* Detect XRGB inputs (alpha always 0) and switch to BGRX for display. */
+            for (ULONG x = 0; x < width; ++x) {
+                const UCHAR a = dstRow[(SIZE_T)x * 4u + 3u];
+                if (a != 0) {
+                    anyAlphaNonZero = TRUE;
+                    break;
+                }
+            }
+        }
+
+        format = anyAlphaNonZero ? AEROGPU_FORMAT_B8G8R8A8_UNORM : AEROGPU_FORMAT_B8G8R8X8_UNORM;
+    } else {
+        AeroGpuCursorDisable(adapter);
+        adapter->CursorShapeValid = FALSE;
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Program cursor registers. */
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X, hotX);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y, hotY);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, width);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, height);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, format);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, dstPitchBytes);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, adapter->CursorFbPa.LowPart);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, (ULONG)(adapter->CursorFbPa.QuadPart >> 32));
+
+    adapter->CursorWidth = width;
+    adapter->CursorHeight = height;
+    adapter->CursorPitchBytes = dstPitchBytes;
+    adapter->CursorFormat = format;
+    adapter->CursorHotX = hotX;
+    adapter->CursorHotY = hotY;
+    adapter->CursorShapeValid = TRUE;
+
+    KeMemoryBarrier();
+
+    AeroGpuWriteRegU32(adapter,
+                       AEROGPU_MMIO_REG_CURSOR_ENABLE,
+                       (adapter->CursorVisible && adapter->CursorShapeValid) ? 1u : 0u);
+
     return STATUS_SUCCESS;
 }
 

@@ -6,10 +6,10 @@ use crate::devices::aerogpu_regs::{
     irq_bits, mmio, ring_control, AeroGpuRegs, AEROGPU_MMIO_MAGIC, AEROGPU_PCI_BAR0_SIZE_BYTES,
     AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER, AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_PROG_IF,
     AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE, AEROGPU_PCI_SUBSYSTEM_ID, AEROGPU_PCI_SUBSYSTEM_VENDOR_ID,
-    AEROGPU_PCI_VENDOR_ID, FEATURE_VBLANK,
+    AEROGPU_PCI_VENDOR_ID, FEATURE_CURSOR, FEATURE_VBLANK,
 };
 use crate::devices::aerogpu_ring::{write_fence_page, AeroGpuRingHeader, RING_TAIL_OFFSET};
-use crate::devices::aerogpu_scanout::AeroGpuFormat;
+use crate::devices::aerogpu_scanout::{composite_cursor_rgba_over_scanout, AeroGpuFormat};
 use crate::gpu_worker::aerogpu_backend::AeroGpuCommandBackend;
 use crate::gpu_worker::aerogpu_executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
@@ -208,8 +208,33 @@ impl AeroGpuPciDevice {
         self.executor.set_backend(backend);
     }
 
-    pub fn read_presented_scanout_rgba8(&mut self, scanout_id: u32) -> Option<(u32, u32, Vec<u8>)> {
-        let scanout = self.executor.read_presented_scanout_rgba8(scanout_id)?;
+    pub fn read_presented_scanout_rgba8(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        scanout_id: u32,
+    ) -> Option<(u32, u32, Vec<u8>)> {
+        let mut scanout = self.executor.read_presented_scanout_rgba8(scanout_id)?;
+
+        /*
+         * Presentation path: composite the hardware cursor over the last-presented
+         * scanout so host screenshots/display match what a real GPU scanout would
+         * show.
+         *
+         * Note: `read_scanout0_rgba` reads scanout0 from guest memory and does
+         * *not* include the cursor overlay.
+         */
+        if (self.regs.features & FEATURE_CURSOR) != 0 {
+            if let Some(cursor_rgba) = self.regs.cursor.read_rgba(mem) {
+                let _ = composite_cursor_rgba_over_scanout(
+                    &mut scanout.rgba8,
+                    scanout.width as usize,
+                    scanout.height as usize,
+                    &self.regs.cursor,
+                    &cursor_rgba,
+                );
+            }
+        }
+
         Some((scanout.width, scanout.height, scanout.rgba8))
     }
 

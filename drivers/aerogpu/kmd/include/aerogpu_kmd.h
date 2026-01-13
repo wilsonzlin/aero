@@ -247,6 +247,26 @@ typedef struct _AEROGPU_ADAPTER {
     BOOLEAN SourceVisible;
     BOOLEAN UsingNewAbi;
 
+    /* ---- Hardware cursor (protocol cursor regs) ------------------------- */
+    /*
+     * Cursor backing store in guest physical memory.
+     *
+     * This is driver-managed system memory (non-paged, physically contiguous) and is
+     * programmed into AEROGPU_MMIO_REG_CURSOR_FB_GPA_{LO,HI} so the emulator can
+     * DMA it during scanout composition.
+     */
+    PVOID CursorFbVa;
+    PHYSICAL_ADDRESS CursorFbPa;
+    SIZE_T CursorFbSizeBytes;
+    ULONG CursorWidth;
+    ULONG CursorHeight;
+    ULONG CursorPitchBytes;
+    ULONG CursorFormat; /* enum aerogpu_format */
+    ULONG CursorHotX;
+    ULONG CursorHotY;
+    BOOLEAN CursorVisible;
+    BOOLEAN CursorShapeValid;
+
     /* VBlank / scanline estimation state (see DxgkDdiGetScanLine). */
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankSeq;
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankTimeNs;

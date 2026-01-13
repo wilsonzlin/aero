@@ -501,7 +501,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
 
     let (out_w, out_h, rgba) = dev
-        .read_presented_scanout_rgba8(0)
+        .read_presented_scanout_rgba8(&mut mem, 0)
         .expect("scanout should be readable");
     assert_eq!((out_w, out_h), (width, height));
     assert_eq!(rgba.len(), (width * height * 4) as usize);
@@ -899,7 +899,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
 
     let (out_w, out_h, rgba) = dev
-        .read_presented_scanout_rgba8(0)
+        .read_presented_scanout_rgba8(&mut mem, 0)
         .expect("scanout should be readable");
     assert_eq!((out_w, out_h), (width, height));
     assert_eq!(rgba.len(), (width * height * 4) as usize);
@@ -1199,7 +1199,7 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     assert_eq!(dev.regs.completed_fence, 1);
 
     let (out_w, out_h, rgba) = dev
-        .read_presented_scanout_rgba8(0)
+        .read_presented_scanout_rgba8(&mut mem, 0)
         .expect("scanout should be readable");
     assert_eq!((out_w, out_h), (width, height));
     assert_eq!(rgba.len(), (width * height * 4) as usize);
@@ -1603,10 +1603,10 @@ fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
     assert_eq!(dev.regs.completed_fence, 2);
 
     let (_, _, rgba0) = dev
-        .read_presented_scanout_rgba8(0)
+        .read_presented_scanout_rgba8(&mut mem, 0)
         .expect("scanout0 should be readable");
     let (_, _, rgba1) = dev
-        .read_presented_scanout_rgba8(1)
+        .read_presented_scanout_rgba8(&mut mem, 1)
         .expect("scanout1 should be readable");
 
     let px = |rgba: &[u8], x: u32, y: u32| -> [u8; 4] {
