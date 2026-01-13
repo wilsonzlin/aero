@@ -119,6 +119,15 @@ Notes:
   on-disk `chunked/<image_id>/...` contents as immutable, or publish new content under a new
   `image_id` (or include a version string in the `image_id`).
 
+If you want to follow the recommended versioned layout from the chunked format docs, you can set
+`chunked_version` in the image catalog `manifest.json` entry and store chunked artifacts under:
+
+```text
+chunked/<image_id>/<chunked_version>/
+  manifest.json
+  chunks/...
+```
+
 The manifest supports optional per-image cache validator overrides to enable stable browser (OPFS)
 and CDN caching even if filesystem mtimes change during copy/restore:
 

@@ -20,6 +20,15 @@ pub struct ManifestImage {
     pub content_type: Option<String>,
     #[serde(default)]
     pub recommended_chunk_size_bytes: Option<u64>,
+    /// Optional chunked-disk-image version identifier.
+    ///
+    /// When set, `aero-storage-server` will resolve chunked artifacts under
+    /// `chunked/<image_id>/<chunked_version>/...` instead of `chunked/<image_id>/...`.
+    ///
+    /// This is intended to support the versioned/immutable layout described in
+    /// `docs/18-chunked-disk-image-format.md`.
+    #[serde(default)]
+    pub chunked_version: Option<String>,
     #[serde(default = "default_public")]
     pub public: bool,
     /// Optional cache validator override.
@@ -50,6 +59,11 @@ pub enum ManifestError {
     InvalidId(String),
     #[error("invalid file path for image {id}: {file}")]
     InvalidFilePath { id: String, file: String },
+    #[error("invalid chunked_version for image {id}: {chunked_version}")]
+    InvalidChunkedVersion {
+        id: String,
+        chunked_version: String,
+    },
     #[error("manifest.json is required but missing at {path}")]
     Missing { path: String },
     #[error("invalid etag for image {id}: {etag:?}: {reason}")]
@@ -91,6 +105,10 @@ impl Manifest {
         for image in &mut images {
             validate_id(&image.id)?;
             validate_file_path(&image.id, &image.file)?;
+            if let Some(chunked_version) = image.chunked_version.as_mut() {
+                *chunked_version = chunked_version.trim().to_string();
+                validate_chunked_version(&image.id, chunked_version)?;
+            }
             if let Some(etag) = image.etag.as_mut() {
                 // Normalize so callers don't accidentally include leading/trailing whitespace that
                 // would later break strict validator comparisons (e.g. `If-Range`).
@@ -133,6 +151,36 @@ fn validate_id(id: &str) -> Result<(), ManifestError> {
             super::MAX_IMAGE_ID_LEN,
         )));
     }
+    Ok(())
+}
+
+fn validate_chunked_version(id: &str, version: &str) -> Result<(), ManifestError> {
+    if version.is_empty()
+        || version.len() > super::MAX_IMAGE_ID_LEN
+        || version == "."
+        || version == ".."
+    {
+        return Err(ManifestError::InvalidChunkedVersion {
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            chunked_version: super::truncate_for_error(version, 256),
+        });
+    }
+
+    // Treat as an opaque path segment and restrict to ASCII `[A-Za-z0-9._-]` to prevent path
+    // traversal when used in filesystem paths.
+    let is_allowed = version.bytes().all(|b| {
+        matches!(
+            b,
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'
+        )
+    });
+    if !is_allowed {
+        return Err(ManifestError::InvalidChunkedVersion {
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            chunked_version: super::truncate_for_error(version, 256),
+        });
+    }
+
     Ok(())
 }
 

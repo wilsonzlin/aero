@@ -113,6 +113,7 @@ impl LocalFsImageStore {
                 name: image.name,
                 description: image.description,
                 recommended_chunk_size_bytes: image.recommended_chunk_size_bytes,
+                chunked_version: image.chunked_version,
                 public: image.public,
                 etag: image.etag,
                 last_modified: image.last_modified_time,
@@ -128,6 +129,7 @@ impl LocalFsImageStore {
             name: image_id.to_string(),
             description: None,
             recommended_chunk_size_bytes: None,
+            chunked_version: None,
             public: true,
             etag: None,
             last_modified: None,
@@ -169,6 +171,7 @@ struct ResolvedImage {
     name: String,
     description: Option<String>,
     recommended_chunk_size_bytes: Option<u64>,
+    chunked_version: Option<String>,
     public: bool,
     etag: Option<String>,
     last_modified: Option<SystemTime>,
@@ -210,6 +213,7 @@ impl ImageStore for LocalFsImageStore {
                     name: image.name.clone(),
                     description: image.description.clone(),
                     recommended_chunk_size_bytes: image.recommended_chunk_size_bytes,
+                    chunked_version: image.chunked_version.clone(),
                     public: image.public,
                     etag: image.etag.clone(),
                     last_modified: image.last_modified_time,
@@ -316,13 +320,13 @@ impl ImageStore for LocalFsImageStore {
     }
 
     async fn open_chunked_manifest(&self, image_id: &str) -> Result<ChunkedObject, StoreError> {
-        validate_image_id(image_id)?;
+        let resolved = self.resolve_image(image_id).await?;
 
-        let path = self
-            .root
-            .join("chunked")
-            .join(Path::new(image_id))
-            .join("manifest.json");
+        let mut path = self.root.join("chunked").join(Path::new(&resolved.id));
+        if let Some(version) = resolved.chunked_version.as_deref() {
+            path = path.join(Path::new(version));
+        }
+        let path = path.join("manifest.json");
         let canonical = self.ensure_within_root(&path).await?;
 
         let meta = fs::metadata(&canonical).await.map_err(map_not_found)?;
@@ -354,12 +358,13 @@ impl ImageStore for LocalFsImageStore {
         image_id: &str,
         chunk_name: &str,
     ) -> Result<ChunkedObject, StoreError> {
-        validate_image_id(image_id)?;
+        let resolved = self.resolve_image(image_id).await?;
 
-        let path = self
-            .root
-            .join("chunked")
-            .join(Path::new(image_id))
+        let mut path = self.root.join("chunked").join(Path::new(&resolved.id));
+        if let Some(version) = resolved.chunked_version.as_deref() {
+            path = path.join(Path::new(version));
+        }
+        let path = path
             .join("chunks")
             .join(Path::new(chunk_name));
         let canonical = self.ensure_within_root(&path).await?;
