@@ -117,6 +117,39 @@ async fn chunked_manifest_endpoint_has_expected_headers() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_manifest_head_has_expected_headers_and_empty_body() {
+    let (app, _dir, expected_manifest) = setup_app(None).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/v1/images/disk/chunked/manifest.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[header::CONTENT_TYPE].to_str().unwrap(),
+        "application/json"
+    );
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(
+        resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
+        expected_manifest.as_bytes().len().to_string()
+    );
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chunked_versioned_layout_is_supported_via_catalog_field() {
     let dir = tempdir().expect("tempdir");
 
@@ -535,6 +568,36 @@ async fn chunked_chunk_endpoint_has_expected_headers_and_body() {
 
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body[..], b"ab");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_chunk_head_has_expected_headers_and_empty_body() {
+    let (app, _dir, _manifest) = setup_app(None).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/v1/images/disk/chunked/chunks/00000000.bin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[header::CONTENT_TYPE].to_str().unwrap(),
+        "application/octet-stream"
+    );
+    assert_eq!(
+        resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
+        "identity"
+    );
+    assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
