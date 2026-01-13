@@ -152,11 +152,14 @@ Aero uses stage-scoped bind groups for translated SM4/SM5 shaders (see `crates/a
 - `@group(1)`: PS resources
 - `@group(2)`: CS resources
 
-For GS emulation:
+For GS emulation (and future HS/DS emulation):
 
-- The GS runs as a **compute** shader and therefore uses **`@group(2)`** for GS resources.
-- An additional internal bind group is reserved for **vertex pulling**:
-  - `@group(3)` (see `crates/aero-d3d11/src/runtime/vertex_pulling.rs`)
+- GS/HS/DS run as **compute** entry points but bind *their D3D resources* through a reserved internal
+  bind group so they never trample CS bindings:
+  - `@group(3)` for GS/HS/DS resources (selected via the `stage_ex` ABI extension).
+- Expansion-internal buffers (vertex pulling inputs, scratch outputs, counters, indirect args) also
+  live in `@group(3)` but use a reserved binding-number range (see
+  [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
 
 ### Binding number ranges within a stage group
 
@@ -176,15 +179,15 @@ Constants (current defaults):
 - `BINDING_BASE_SAMPLER = 160`
 - `BINDING_BASE_UAV = 176` (`160 + 16`)
 
-### Vertex pulling bind group (`@group(3)`)
+### Vertex pulling + expansion internal bindings (`@group(3)`)
 
-When running the VS as compute, vertex attributes are loaded from IA vertex buffers using a dedicated
-bind group (`VERTEX_PULLING_GROUP = 3`):
+When running VS/GS/HS/DS as compute, vertex attributes must be loaded from IA vertex buffers manually
+("vertex pulling"), and intermediate outputs must be written to scratch buffers.
 
-- `@group(3) @binding(i)`: vertex buffer slot `i` as a storage buffer (read-only)
-- `@group(3) @binding(32)`: a small uniform containing per-slot `base_offset` + `stride`
-
-This group is **internal** to the emulation path; it is not visible to the D3D binding model.
+These bindings are **internal** to the emulation path; they are not visible to the D3D binding model
+and are specified in the compute-expansion section of
+[`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (including the reserved internal
+binding-number range).
 
 ### AeroGPU command stream note: `stage_ex`
 
@@ -192,7 +195,8 @@ The AeroGPU command stream historically only had `Vertex/Pixel/Compute` stage en
 To bind resources for additional D3D stages (GS/HS/DS) without breaking ABI, the protocol supports a
 “stage_ex” extension (see `emulator/protocol/aerogpu/aerogpu_cmd.rs`):
 
-- For certain binding commands (`SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`, `SET_SHADER_CONSTANTS_F`):
+- For certain binding commands (`SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`,
+  `SET_SHADER_RESOURCE_BUFFERS`, `SET_UNORDERED_ACCESS_BUFFERS`, `SET_SHADER_CONSTANTS_F`):
   - set `shader_stage = COMPUTE` (legacy value `2`)
   - use `reserved0` as a small `stage_ex` tag (values match DXBC program types):
     - `0 = Pixel`, `1 = Vertex`, `2 = Geometry`, `3 = Hull`, `4 = Domain`, `5 = Compute`
