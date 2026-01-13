@@ -679,8 +679,13 @@ Set the AeroGPU device registry parameter:
 - **Default:** 512
 - **Clamped:** min 128; max 2048 on x64; max 1024 on x86
 
+Recommended starting points:
+
+- **Win7 x64:** 1024–2048 (depending on guest RAM and workload)
+- **Win7 x86:** 256–1024 (larger values are clamped to 1024)
+
 Important: this is a **budget hint** (system-RAM-backed), not dedicated VRAM. It does not “create VRAM”; it only changes what the
-driver reports to dxgkrnl.
+driver reports to dxgkrnl. Setting it too high can increase guest RAM consumption and paging pressure under heavy workloads.
 
 ### How to set it (Win7)
 
