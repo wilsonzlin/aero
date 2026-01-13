@@ -4501,7 +4501,12 @@ void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETV
   if (!rt) {
     // D3D10/10.1 ClearRTV always provides an explicit RTV handle, but keep a
     // fallback for tests/tools that call into the portable UMD without a view.
-    rt = (dev->current_rtv_count != 0) ? dev->current_rtv_resources[0] : nullptr;
+    for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+      if (dev->current_rtv_resources[i]) {
+        rt = dev->current_rtv_resources[i];
+        break;
+      }
+    }
   }
 
   if (rt && rt->kind == ResourceKind::Texture2D && rt->width != 0 && rt->height != 0) {

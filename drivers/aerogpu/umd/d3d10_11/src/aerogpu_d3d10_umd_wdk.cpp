@@ -2881,6 +2881,13 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
   __if_exists(D3D10DDIARG_OPENRESOURCE::CpuAccessFlags) {
     res->cpu_access_flags |= static_cast<uint32_t>(pOpenResource->CpuAccessFlags);
   }
+  // If the WDK OpenResource struct does not expose a Usage field, fall back to
+  // the KMD-provided private flag to preserve staging Map behavior.
+#ifdef D3D10_USAGE_STAGING
+  if (priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING) {
+    res->usage = static_cast<uint32_t>(D3D10_USAGE_STAGING);
+  }
+#endif
 
   // Recover the runtime allocation handle (`hAllocation`) for LockCb/UnlockCb
   // and the KM handles needed for pfnDeallocateCb. Field availability varies

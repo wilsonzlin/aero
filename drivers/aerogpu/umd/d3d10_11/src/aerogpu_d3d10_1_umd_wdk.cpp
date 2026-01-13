@@ -3485,6 +3485,13 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
   __if_exists(D3D10DDIARG_OPENRESOURCE::CpuAccessFlags) {
     res->cpu_access_flags |= static_cast<uint32_t>(pOpenResource->CpuAccessFlags);
   }
+  // If the WDK OpenResource struct does not expose a Usage field, fall back to
+  // the KMD-provided private flag to preserve staging Map behavior.
+#ifdef D3D10_USAGE_STAGING
+  if (priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING) {
+    res->usage = static_cast<uint32_t>(D3D10_USAGE_STAGING);
+  }
+#endif
 
   __if_exists(D3D10DDIARG_OPENRESOURCE::hKMResource) {
     res->wddm.km_resource_handle = static_cast<uint64_t>(pOpenResource->hKMResource);
@@ -6664,6 +6671,8 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
     uint32_t backing_alloc_id = 0;
     uint32_t backing_offset_bytes = 0;
     uint32_t wddm_allocation_handle = 0;
+    uint32_t usage = 0;
+    uint32_t cpu_access_flags = 0;
     AeroGpuResource::WddmIdentity wddm;
     std::vector<Texture2DSubresourceLayout> tex2d_subresources;
     std::vector<uint8_t> storage;
@@ -6684,6 +6693,8 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
     id.backing_alloc_id = res->backing_alloc_id;
     id.backing_offset_bytes = res->backing_offset_bytes;
     id.wddm_allocation_handle = res->wddm_allocation_handle;
+    id.usage = res->usage;
+    id.cpu_access_flags = res->cpu_access_flags;
     id.wddm = std::move(res->wddm);
     id.tex2d_subresources = std::move(res->tex2d_subresources);
     id.storage = std::move(res->storage);
@@ -6704,6 +6715,8 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
     res->backing_alloc_id = id.backing_alloc_id;
     res->backing_offset_bytes = id.backing_offset_bytes;
     res->wddm_allocation_handle = id.wddm_allocation_handle;
+    res->usage = id.usage;
+    res->cpu_access_flags = id.cpu_access_flags;
     res->wddm = std::move(id.wddm);
     res->tex2d_subresources = std::move(id.tex2d_subresources);
     res->storage = std::move(id.storage);

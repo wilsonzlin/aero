@@ -2025,6 +2025,109 @@ bool TestInvalidUnmapReportsError() {
   return true;
 }
 
+bool TestInvalidSpecializedUnmapReportsError() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(invalid specialized unmap)")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2D(&dev, /*width=*/3, /*height=*/2, AEROGPU_D3D11_CPU_ACCESS_WRITE, &tex),
+             "CreateStagingTexture2D")) {
+    return false;
+  }
+
+  // Unmap without a prior Map should report E_INVALIDARG.
+  dev.harness.errors.clear();
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, tex.hResource, /*subresource=*/0);
+  if (!Check(dev.harness.errors.size() == 1, "StagingResourceUnmap without Map should report one error")) {
+    return false;
+  }
+  if (!Check(dev.harness.errors[0] == E_INVALIDARG, "StagingResourceUnmap without Map should report E_INVALIDARG")) {
+    return false;
+  }
+
+  // Map/unmap mismatch should also report E_INVALIDARG.
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                      tex.hResource,
+                                                      /*subresource=*/0,
+                                                      AEROGPU_DDI_MAP_WRITE,
+                                                      /*map_flags=*/0,
+                                                      &mapped);
+  if (!Check(hr == S_OK, "StagingResourceMap")) {
+    return false;
+  }
+  if (!Check(mapped.pData != nullptr, "StagingResourceMap returned non-null pointer")) {
+    return false;
+  }
+
+  dev.harness.errors.clear();
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, tex.hResource, /*subresource=*/1);
+  if (!Check(dev.harness.errors.size() == 1, "StagingResourceUnmap wrong subresource should report one error")) {
+    return false;
+  }
+  if (!Check(dev.harness.errors[0] == E_INVALIDARG, "StagingResourceUnmap wrong subresource should report E_INVALIDARG")) {
+    return false;
+  }
+
+  dev.harness.errors.clear();
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, tex.hResource, /*subresource=*/0);
+  if (!Check(dev.harness.errors.empty(), "Valid StagingResourceUnmap should not report errors")) {
+    return false;
+  }
+
+  // Dynamic Unmap wrappers should also report E_INVALIDARG when called without Map.
+  TestResource dyn_vb{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/32,
+                          AEROGPU_D3D11_USAGE_DYNAMIC,
+                          kD3D11BindVertexBuffer,
+                          AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                          &dyn_vb),
+             "CreateBuffer(dynamic VB)")) {
+    return false;
+  }
+
+  dev.harness.errors.clear();
+  dev.device_funcs.pfnDynamicIABufferUnmap(dev.hDevice, dyn_vb.hResource);
+  if (!Check(dev.harness.errors.size() == 1, "DynamicIABufferUnmap without Map should report one error")) {
+    return false;
+  }
+  if (!Check(dev.harness.errors[0] == E_INVALIDARG, "DynamicIABufferUnmap without Map should report E_INVALIDARG")) {
+    return false;
+  }
+
+  TestResource dyn_cb{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/32,
+                          AEROGPU_D3D11_USAGE_DYNAMIC,
+                          kD3D11BindConstantBuffer,
+                          AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                          &dyn_cb),
+             "CreateBuffer(dynamic CB)")) {
+    return false;
+  }
+
+  dev.harness.errors.clear();
+  dev.device_funcs.pfnDynamicConstantBufferUnmap(dev.hDevice, dyn_cb.hResource);
+  if (!Check(dev.harness.errors.size() == 1, "DynamicConstantBufferUnmap without Map should report one error")) {
+    return false;
+  }
+  if (!Check(dev.harness.errors[0] == E_INVALIDARG,
+             "DynamicConstantBufferUnmap without Map should report E_INVALIDARG")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, dyn_cb.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, dyn_vb.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestDynamicMapFlagsValidation() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(dynamic map flags)")) {
@@ -7839,6 +7942,7 @@ int main() {
   ok &= TestMapDoNotWaitReportsStillDrawing();
   ok &= TestMapBlockingWaitUsesInfiniteTimeout();
   ok &= TestInvalidUnmapReportsError();
+  ok &= TestInvalidSpecializedUnmapReportsError();
   ok &= TestDynamicMapFlagsValidation();
   ok &= TestDynamicMapTypeValidation();
   ok &= TestMapDefaultImmutableRejected();
