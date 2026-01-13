@@ -132,10 +132,7 @@ Minimum supported commands:
 
   Structured export:
   - `--csv <path>` writes a stable, machine-parseable CSV file (header row + one row per trace entry), including `write_index` and `entry_capacity` metadata for wrap-around detection.
-  - `--json <path>` writes a stable, machine-parseable JSON file with:
-    - top-level `{ "schema_version": 1, "write_index": <u32>, "entry_capacity": <u32>, "entries": [...] }`
-    - one JSON object per entry with all fields from `aerogpu_dbgctl_createallocation_desc`
-    - note: flag fields are encoded as hex strings (e.g. `"0x00000001"`), and 64-bit values are encoded as strings (e.g. `"0x0000000000000000"` / `"4096"`) to avoid JSON integer precision issues in some parsers.
+  - For JSON output, use the global `--json[=PATH]` flag (for example: `aerogpu_dbgctl --dump-createalloc --json=C:\\createalloc.json`).
 
 - `aerogpu_dbgctl --dump-vblank`  
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
@@ -170,7 +167,7 @@ Minimum supported commands:
 ## Usage
 
 ```
-aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] \
+aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] [--json[=PATH]] \
                [--vblank-samples N] [--vblank-interval-ms N] \
                [--samples N] [--interval-ms N] \
                [--size N] [--out FILE] [--force] <command>
@@ -181,7 +178,10 @@ Examples:
 ```
 aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --status
+aerogpu_dbgctl --status --json
+aerogpu_dbgctl --status --json=C:\\status.json
 aerogpu_dbgctl --query-version
+aerogpu_dbgctl --query-device
 aerogpu_dbgctl --query-umd-private
 aerogpu_dbgctl --query-segments
 aerogpu_dbgctl --query-fence
@@ -239,6 +239,46 @@ The most common use of `--read-gpa` is to inspect the scanout framebuffer withou
 
 If scanout is configured for `B8G8R8X8`, the first pixels should match the expected desktop contents (little-endian BGRA/XRGB).
 If the dump is all zeros, check that scanout is enabled/visible and that `mmio_fb_gpa` is non-zero.
+
+## JSON output (`--json[=PATH]`)
+
+`aerogpu_dbgctl` can emit **machine-readable JSON** to enable automation (CI/test runners) without fragile text parsing.
+
+- `--json` prints JSON to stdout.
+- `--json=PATH` writes JSON to `PATH` (UTF-8).
+
+### Schema stability
+
+All JSON outputs include:
+
+```json
+{ "schema_version": 1, "command": "<name>", "ok": true }
+```
+
+- `schema_version` is incremented only for **breaking schema changes**.
+- New fields may be added over time; existing fields keep their meaning.
+- 64-bit counters are emitted as strings or `{ "hex": "...", "dec": "..." }` objects to avoid precision loss in JS runtimes.
+- On failure, `ok` is `false` and an `error` object is present. When available, `error.status` includes `ntstatus` and a Win32 translation.
+
+### JSON-supported commands
+
+This tool currently supports JSON output for snapshot-style commands:
+
+- `--status` (aliases: `--query-version`, `--query-device`)
+- `--query-fence`
+- `--query-perf`
+- `--query-umd-private`
+- `--query-scanout`
+- `--query-cursor`
+- `--dump-ring`
+- `--dump-createalloc` (still supports `--csv`)
+- `--dump-vblank`
+- `--map-shared-handle`
+- `--selftest`
+- `--list-displays`
+
+Streaming/binary-output commands (`--watch-fence`, `--watch-ring`, `--wait-vblank`, `--query-scanline`, `--dump-scanout-bmp`,
+`--dump-last-cmd`, `--read-gpa`) currently return `ok:false` in JSON mode.
 
 ## Build (Windows 7)
 

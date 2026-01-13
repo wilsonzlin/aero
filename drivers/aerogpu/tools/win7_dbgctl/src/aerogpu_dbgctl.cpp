@@ -10,11 +10,14 @@
 #include <windows.h>
 
 #include <errno.h>
+#include <locale.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string>
 #include <string.h>
+#include <vector>
 #include <wchar.h>
 
 #include "aerogpu_pci.h"
@@ -64,6 +67,247 @@ typedef UINT D3DKMT_HANDLE;
 static const uint32_t kAerogpuIrqFence = (1u << 0);
 static const uint32_t kAerogpuIrqScanoutVblank = (1u << 1);
 static const uint32_t kAerogpuIrqError = (1u << 31);
+
+static bool g_json_output = false;
+static const wchar_t *g_json_path = NULL;
+
+static std::string WideToUtf8(const wchar_t *s) {
+  if (!s) {
+    return std::string();
+  }
+  const int bytes =
+      WideCharToMultiByte(CP_UTF8, 0, s, -1, NULL, 0, NULL, NULL);
+  if (bytes <= 0) {
+    return std::string();
+  }
+  std::string out;
+  out.resize((size_t)bytes);
+  WideCharToMultiByte(CP_UTF8, 0, s, -1, &out[0], bytes, NULL, NULL);
+  if (!out.empty() && out[out.size() - 1] == '\0') {
+    out.resize(out.size() - 1);
+  }
+  return out;
+}
+
+static std::string WideToUtf8(const std::wstring &s) {
+  return WideToUtf8(s.c_str());
+}
+
+static std::string HexU32(uint32_t v) {
+  char buf[32];
+  sprintf_s(buf, sizeof(buf), "0x%08lx", (unsigned long)v);
+  return std::string(buf);
+}
+
+static std::string HexU64(uint64_t v) {
+  char buf[32];
+  sprintf_s(buf, sizeof(buf), "0x%016I64x", (unsigned long long)v);
+  return std::string(buf);
+}
+
+static std::string DecU64(uint64_t v) {
+  char buf[64];
+  sprintf_s(buf, sizeof(buf), "%I64u", (unsigned long long)v);
+  return std::string(buf);
+}
+
+static std::string Win32ErrorToString(DWORD win32) {
+  wchar_t msg[512];
+  DWORD chars =
+      FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                     NULL, win32, 0, msg,
+                     (DWORD)(sizeof(msg) / sizeof(msg[0])), NULL);
+  if (chars == 0) {
+    return std::string();
+  }
+  while (chars > 0 && (msg[chars - 1] == L'\r' || msg[chars - 1] == L'\n')) {
+    msg[--chars] = 0;
+  }
+  return WideToUtf8(msg);
+}
+
+class JsonWriter {
+public:
+  explicit JsonWriter(std::string *out) : out_(out) {}
+
+  void BeginObject() {
+    PrepareValue();
+    out_->push_back('{');
+    Ctx c;
+    c.type = CTX_OBJECT;
+    c.first = true;
+    c.expecting_value = false;
+    stack_.push_back(c);
+  }
+
+  void EndObject() {
+    if (stack_.empty()) {
+      return;
+    }
+    out_->push_back('}');
+    stack_.pop_back();
+  }
+
+  void BeginArray() {
+    PrepareValue();
+    out_->push_back('[');
+    Ctx c;
+    c.type = CTX_ARRAY;
+    c.first = true;
+    c.expecting_value = false;
+    stack_.push_back(c);
+  }
+
+  void EndArray() {
+    if (stack_.empty()) {
+      return;
+    }
+    out_->push_back(']');
+    stack_.pop_back();
+  }
+
+  void Key(const char *k) {
+    if (stack_.empty()) {
+      return;
+    }
+    Ctx &c = stack_.back();
+    if (c.type != CTX_OBJECT) {
+      return;
+    }
+    if (c.expecting_value) {
+      // Missing value for previous key; keep output valid by inserting null.
+      Null();
+    }
+    if (!c.first) {
+      out_->push_back(',');
+    }
+    c.first = false;
+    WriteString(k);
+    out_->push_back(':');
+    c.expecting_value = true;
+  }
+
+  void String(const char *s) {
+    PrepareValue();
+    WriteString(s ? s : "");
+  }
+
+  void String(const std::string &s) { String(s.c_str()); }
+
+  void Bool(bool v) {
+    PrepareValue();
+    if (v) {
+      out_->append("true");
+    } else {
+      out_->append("false");
+    }
+  }
+
+  void Null() {
+    PrepareValue();
+    out_->append("null");
+  }
+
+  void Uint32(uint32_t v) {
+    PrepareValue();
+    char buf[32];
+    sprintf_s(buf, sizeof(buf), "%lu", (unsigned long)v);
+    out_->append(buf);
+  }
+
+  void Int32(int32_t v) {
+    PrepareValue();
+    char buf[32];
+    sprintf_s(buf, sizeof(buf), "%ld", (long)v);
+    out_->append(buf);
+  }
+
+  void Double(double v) {
+    PrepareValue();
+    // JSON numbers require '.' decimal separator regardless of process locale.
+    static _locale_t c_locale = _create_locale(LC_NUMERIC, "C");
+    char buf[64];
+    _sprintf_s_l(buf, sizeof(buf), "%.6f", c_locale, v);
+    out_->append(buf);
+  }
+
+private:
+  enum CtxType { CTX_OBJECT = 0, CTX_ARRAY = 1 };
+  struct Ctx {
+    CtxType type;
+    bool first;
+    bool expecting_value;
+  };
+
+  void PrepareValue() {
+    if (!out_) {
+      return;
+    }
+    if (stack_.empty()) {
+      return;
+    }
+    Ctx &c = stack_.back();
+    if (c.type == CTX_ARRAY) {
+      if (!c.first) {
+        out_->push_back(',');
+      }
+      c.first = false;
+      return;
+    }
+    // Object: value must come after Key().
+    if (c.type == CTX_OBJECT) {
+      if (!c.expecting_value) {
+        // Misuse; keep output valid by emitting an implicit keyless null.
+        // (Should not happen in normal usage.)
+      } else {
+        c.expecting_value = false;
+      }
+    }
+  }
+
+  void WriteString(const char *s) {
+    out_->push_back('"');
+    for (const unsigned char *p = (const unsigned char *)s; p && *p; ++p) {
+      const unsigned char c = *p;
+      switch (c) {
+      case '"':
+        out_->append("\\\"");
+        break;
+      case '\\':
+        out_->append("\\\\");
+        break;
+      case '\b':
+        out_->append("\\b");
+        break;
+      case '\f':
+        out_->append("\\f");
+        break;
+      case '\n':
+        out_->append("\\n");
+        break;
+      case '\r':
+        out_->append("\\r");
+        break;
+      case '\t':
+        out_->append("\\t");
+        break;
+      default:
+        if (c < 0x20) {
+          char buf[8];
+          sprintf_s(buf, sizeof(buf), "\\u%04x", (unsigned int)c);
+          out_->append(buf);
+        } else {
+          out_->push_back((char)c);
+        }
+        break;
+      }
+    }
+    out_->push_back('"');
+  }
+
+  std::string *out_;
+  std::vector<Ctx> stack_;
+};
 
 static const char *AerogpuFormatName(uint32_t fmt) {
   switch (fmt) {
@@ -320,10 +564,13 @@ static const uint64_t kDumpLastCmdHardMaxBytes = 64ull * 1024ull * 1024ull; // 6
 static void PrintUsage() {
   fwprintf(stderr,
            L"Usage:\n"
-           L"  aerogpu_dbgctl [--display \\\\.\\DISPLAY1] [--ring-id N] [--timeout-ms N]\n"
+           L"  aerogpu_dbgctl [--display \\\\.\\DISPLAY1] [--ring-id N] [--timeout-ms N] [--json[=PATH]]\n"
            L"               [--vblank-samples N] [--vblank-interval-ms N]\n"
            L"               [--samples N] [--interval-ms N]\n"
            L"               [--size N] [--out FILE] [--force] <command>\n"
+           L"\n"
+           L"Global output options:\n"
+           L"  --json[=PATH]  Output machine-readable JSON (schema_version=1). If PATH is provided, write JSON there.\n"
            L"\n"
            L"Commands:\n"
            L"  --list-displays\n"
@@ -343,7 +590,6 @@ static void PrintUsage() {
            L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
            L"      [--csv <path>]  (write CreateAllocation trace as CSV)\n"
-           L"      [--json <path>] (write CreateAllocation trace as JSON)\n"
            L"  --dump-vblank  (alias: --query-vblank)\n"
            L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
            L"  --query-scanline  (D3DKMTGetScanLine)\n"
@@ -373,6 +619,82 @@ static void PrintNtStatus(const wchar_t *prefix, const D3DKMT_FUNCS *f, NTSTATUS
   }
 
   fwprintf(stderr, L"%s: NTSTATUS=0x%08lx\n", prefix, (unsigned long)st);
+}
+
+static DWORD NtStatusToWin32(const D3DKMT_FUNCS *f, NTSTATUS st) {
+  if (!f || !f->RtlNtStatusToDosError) {
+    return 0;
+  }
+  return f->RtlNtStatusToDosError(st);
+}
+
+static void JsonWriteNtStatusError(JsonWriter &w, const D3DKMT_FUNCS *f, NTSTATUS st) {
+  w.BeginObject();
+  w.Key("ntstatus");
+  w.String(HexU32((uint32_t)st));
+  const DWORD win32 = NtStatusToWin32(f, st);
+  if (win32 != 0) {
+    w.Key("win32");
+    w.Uint32((uint32_t)win32);
+    w.Key("win32_hex");
+    w.String(HexU32((uint32_t)win32));
+    const std::string msg = Win32ErrorToString(win32);
+    if (!msg.empty()) {
+      w.Key("win32_message");
+      w.String(msg);
+    }
+  }
+  w.EndObject();
+}
+
+static void JsonWriteTopLevelError(std::string *out, const char *command, const D3DKMT_FUNCS *f, const char *message,
+                                  NTSTATUS st) {
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String(command ? command : "");
+  w.Key("ok");
+  w.Bool(false);
+  w.Key("error");
+  w.BeginObject();
+  w.Key("message");
+  w.String(message ? message : "");
+  w.Key("status");
+  JsonWriteNtStatusError(w, f, st);
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+}
+
+static bool WriteStringToFileUtf8(const wchar_t *path, const std::string &data) {
+  if (!path) {
+    return false;
+  }
+  FILE *fp = _wfopen(path, L"wb");
+  if (!fp) {
+    return false;
+  }
+  const size_t n = fwrite(data.data(), 1, data.size(), fp);
+  fclose(fp);
+  return n == data.size();
+}
+
+static int WriteJsonToDestination(const std::string &json) {
+  if (g_json_path) {
+    if (WriteStringToFileUtf8(g_json_path, json)) {
+      return 0;
+    }
+    const int err = errno;
+    fwprintf(stderr, L"Failed to write JSON to %s (errno=%d)\n", g_json_path, err);
+    // Best-effort fallback to stdout so the caller still gets a parseable payload.
+    fwrite(json.data(), 1, json.size(), stdout);
+    return 2;
+  }
+
+  fwrite(json.data(), 1, json.size(), stdout);
+  return 0;
 }
 
 static void HexDumpBytes(const void *data, uint32_t len, uint64_t base) {
@@ -509,6 +831,51 @@ static int ListDisplays() {
     dd.cb = sizeof(dd);
   }
 
+  return 0;
+}
+
+static int ListDisplaysJson(std::string *out) {
+  if (!out) {
+    return 1;
+  }
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("list-displays");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("displays");
+  w.BeginArray();
+
+  DISPLAY_DEVICEW dd;
+  ZeroMemory(&dd, sizeof(dd));
+  dd.cb = sizeof(dd);
+  for (DWORD i = 0; EnumDisplayDevicesW(NULL, i, &dd, 0); ++i) {
+    const bool primary = (dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0;
+    const bool active = (dd.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0;
+
+    w.BeginObject();
+    w.Key("index");
+    w.Uint32((uint32_t)i);
+    w.Key("device_name");
+    w.String(WideToUtf8(dd.DeviceName));
+    w.Key("device_string");
+    w.String(WideToUtf8(dd.DeviceString));
+    w.Key("primary");
+    w.Bool(primary);
+    w.Key("active");
+    w.Bool(active);
+    w.EndObject();
+
+    ZeroMemory(&dd, sizeof(dd));
+    dd.cb = sizeof(dd);
+  }
+
+  w.EndArray();
+  w.EndObject();
+  out->push_back('\n');
   return 0;
 }
 
@@ -1430,6 +1797,554 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   DumpVblankSnapshot();
   DumpCreateAllocationSummary();
 
+  return 0;
+}
+
+static void JsonWriteU64HexDec(JsonWriter &w, const char *key, uint64_t v) {
+  w.Key(key);
+  w.BeginObject();
+  w.Key("hex");
+  w.String(HexU64(v));
+  w.Key("dec");
+  w.String(DecU64(v));
+  w.EndObject();
+}
+
+static void JsonWriteU32Hex(JsonWriter &w, const char *key, uint32_t v) {
+  w.Key(key);
+  w.String(HexU32(v));
+}
+
+static void JsonWriteDecodedFeatureList(JsonWriter &w, const char *key, const std::wstring &decoded) {
+  const std::string utf8 = WideToUtf8(decoded);
+  w.Key(key);
+  w.BeginArray();
+  size_t start = 0;
+  while (start < utf8.size()) {
+    size_t end = utf8.find(',', start);
+    size_t part_end = (end == std::string::npos) ? utf8.size() : end;
+    size_t a = start;
+    while (a < part_end && (utf8[a] == ' ' || utf8[a] == '\t' || utf8[a] == '\r' || utf8[a] == '\n')) {
+      ++a;
+    }
+    size_t b = part_end;
+    while (b > a && (utf8[b - 1] == ' ' || utf8[b - 1] == '\t' || utf8[b - 1] == '\r' || utf8[b - 1] == '\n')) {
+      --b;
+    }
+    if (b > a) {
+      w.String(utf8.substr(a, b - a));
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  w.EndArray();
+}
+
+static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  static const uint32_t kLegacyMmioMagic = 0x41524750u; // "ARGP" little-endian
+
+  // Query device (prefer v2, fall back to legacy).
+  bool deviceV2 = false;
+  aerogpu_escape_query_device_v2_out q2;
+  ZeroMemory(&q2, sizeof(q2));
+  q2.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q2.hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2;
+  q2.hdr.size = sizeof(q2);
+  q2.hdr.reserved0 = 0;
+
+  NTSTATUS stDevice = SendAerogpuEscape(f, hAdapter, &q2, sizeof(q2));
+  aerogpu_escape_query_device_out q1;
+  ZeroMemory(&q1, sizeof(q1));
+  if (!NT_SUCCESS(stDevice)) {
+    // Legacy fallback.
+    q1.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q1.hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE;
+    q1.hdr.size = sizeof(q1);
+    q1.hdr.reserved0 = 0;
+    stDevice = SendAerogpuEscape(f, hAdapter, &q1, sizeof(q1));
+    if (!NT_SUCCESS(stDevice)) {
+      JsonWriteTopLevelError(out, "status", f, "D3DKMTEscape(query-device) failed", stDevice);
+      return 2;
+    }
+    deviceV2 = false;
+  } else {
+    deviceV2 = true;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("status");
+  w.Key("ok");
+  w.Bool(true);
+
+  // Device / ABI / features.
+  w.Key("device");
+  w.BeginObject();
+  w.Key("escape_abi");
+  w.Uint32((uint32_t)(deviceV2 ? q2.hdr.version : q1.hdr.version));
+  w.Key("query_device");
+  w.String(deviceV2 ? "query-device-v2" : "query-device-legacy");
+
+  uint32_t abi_version_u32 = 0;
+  if (deviceV2) {
+    abi_version_u32 = q2.abi_version_u32;
+    w.Key("mmio_magic_u32_hex");
+    w.String(HexU32(q2.detected_mmio_magic));
+
+    const char *abiKind = "unknown";
+    if (q2.detected_mmio_magic == kLegacyMmioMagic) {
+      abiKind = "legacy";
+    } else if (q2.detected_mmio_magic == AEROGPU_MMIO_MAGIC) {
+      abiKind = "new";
+    }
+    w.Key("device_abi");
+    w.String(abiKind);
+  } else {
+    abi_version_u32 = q1.mmio_version;
+    w.Key("mmio_magic_u32_hex");
+    w.Null();
+    w.Key("device_abi");
+    w.String("unknown");
+  }
+
+  w.Key("abi_version_u32_hex");
+  w.String(HexU32(abi_version_u32));
+  w.Key("abi_version");
+  w.BeginObject();
+  w.Key("major");
+  w.Uint32((uint32_t)(abi_version_u32 >> 16));
+  w.Key("minor");
+  w.Uint32((uint32_t)(abi_version_u32 & 0xFFFFu));
+  w.EndObject();
+
+  w.Key("features");
+  w.BeginObject();
+  if (deviceV2) {
+    w.Key("available");
+    w.Bool(true);
+    w.Key("lo_hex");
+    w.String(HexU64(q2.features_lo));
+    w.Key("hi_hex");
+    w.String(HexU64(q2.features_hi));
+    const std::wstring decoded = aerogpu::FormatDeviceFeatureBits(q2.features_lo, q2.features_hi);
+    w.Key("decoded");
+    w.String(WideToUtf8(decoded));
+    JsonWriteDecodedFeatureList(w, "decoded_list", decoded);
+    if (q2.detected_mmio_magic == kLegacyMmioMagic) {
+      w.Key("note");
+      w.String("legacy device; feature bits are best-effort");
+    }
+  } else {
+    w.Key("available");
+    w.Bool(false);
+  }
+  w.EndObject();
+  w.EndObject();
+
+  // Fences.
+  w.Key("fences");
+  w.BeginObject();
+  aerogpu_escape_query_fence_out qf;
+  ZeroMemory(&qf, sizeof(qf));
+  qf.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qf.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+  qf.hdr.size = sizeof(qf);
+  qf.hdr.reserved0 = 0;
+  NTSTATUS stFence = SendAerogpuEscape(f, hAdapter, &qf, sizeof(qf));
+  if (NT_SUCCESS(stFence)) {
+    w.Key("supported");
+    w.Bool(true);
+    JsonWriteU64HexDec(w, "last_submitted_fence", qf.last_submitted_fence);
+    JsonWriteU64HexDec(w, "last_completed_fence", qf.last_completed_fence);
+  } else {
+    w.Key("supported");
+    w.Bool(false);
+    w.Key("error");
+    JsonWriteNtStatusError(w, f, stFence);
+  }
+  w.EndObject();
+
+  // UMDRIVERPRIVATE summary.
+  w.Key("umd_private");
+  w.BeginObject();
+  if (!f->QueryAdapterInfo) {
+    w.Key("available");
+    w.Bool(false);
+    w.Key("reason");
+    w.String("missing_gdi32_export");
+  } else {
+    w.Key("available");
+    w.Bool(true);
+    aerogpu_umd_private_v1 blob;
+    ZeroMemory(&blob, sizeof(blob));
+    UINT foundType = 0xFFFFFFFFu;
+    NTSTATUS lastStatus = 0;
+    for (UINT type = 0; type < 256; ++type) {
+      ZeroMemory(&blob, sizeof(blob));
+      const NTSTATUS stUmd = QueryAdapterInfoWithTimeout(f, hAdapter, type, &blob, sizeof(blob));
+      lastStatus = stUmd;
+      if (!NT_SUCCESS(stUmd)) {
+        if (stUmd == STATUS_TIMEOUT) {
+          break;
+        }
+        continue;
+      }
+      if (blob.size_bytes < sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+        continue;
+      }
+      const uint32_t magic = blob.device_mmio_magic;
+      if (magic != 0 && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
+        continue;
+      }
+      foundType = type;
+      break;
+    }
+
+    if (foundType == 0xFFFFFFFFu) {
+      w.Key("found");
+      w.Bool(false);
+      w.Key("reason");
+      w.String((lastStatus == STATUS_TIMEOUT) ? "timeout" : "not_found");
+      if (lastStatus != 0) {
+        w.Key("last_error");
+        JsonWriteNtStatusError(w, f, lastStatus);
+      }
+    } else {
+      w.Key("found");
+      w.Bool(true);
+      w.Key("type");
+      w.Uint32((uint32_t)foundType);
+
+      char magicStr[5] = {0, 0, 0, 0, 0};
+      {
+        const uint32_t m = blob.device_mmio_magic;
+        magicStr[0] = (char)((m >> 0) & 0xFF);
+        magicStr[1] = (char)((m >> 8) & 0xFF);
+        magicStr[2] = (char)((m >> 16) & 0xFF);
+        magicStr[3] = (char)((m >> 24) & 0xFF);
+      }
+
+      w.Key("device_mmio_magic_u32_hex");
+      w.String(HexU32(blob.device_mmio_magic));
+      w.Key("device_mmio_magic_str");
+      w.String(magicStr);
+      w.Key("device_abi_version_u32_hex");
+      w.String(HexU32(blob.device_abi_version_u32));
+
+      w.Key("device_abi_version");
+      w.BeginObject();
+      w.Key("major");
+      w.Uint32((uint32_t)(blob.device_abi_version_u32 >> 16));
+      w.Key("minor");
+      w.Uint32((uint32_t)(blob.device_abi_version_u32 & 0xFFFFu));
+      w.EndObject();
+
+      w.Key("device_features_u64_hex");
+      w.String(HexU64(blob.device_features));
+      const std::wstring decoded_features = aerogpu::FormatDeviceFeatureBits(blob.device_features, 0);
+      w.Key("decoded_features");
+      w.String(WideToUtf8(decoded_features));
+      JsonWriteDecodedFeatureList(w, "decoded_features_list", decoded_features);
+
+      w.Key("flags_u32_hex");
+      w.String(HexU32(blob.flags));
+      w.Key("flags");
+      w.BeginObject();
+      w.Key("is_legacy");
+      w.Bool((blob.flags & AEROGPU_UMDPRIV_FLAG_IS_LEGACY) != 0);
+      w.Key("has_vblank");
+      w.Bool((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0);
+      w.Key("has_fence_page");
+      w.Bool((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE) != 0);
+      w.EndObject();
+    }
+  }
+  w.EndObject();
+
+  // Ring0 summary.
+  w.Key("ring0");
+  w.BeginObject();
+  aerogpu_escape_dump_ring_v2_inout qr2;
+  ZeroMemory(&qr2, sizeof(qr2));
+  qr2.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qr2.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING_V2;
+  qr2.hdr.size = sizeof(qr2);
+  qr2.hdr.reserved0 = 0;
+  qr2.ring_id = 0;
+  qr2.desc_capacity = 1;
+  NTSTATUS stRing = SendAerogpuEscape(f, hAdapter, &qr2, sizeof(qr2));
+  if (NT_SUCCESS(stRing)) {
+    w.Key("supported");
+    w.Bool(true);
+    w.Key("format");
+    const char *fmt = "unknown";
+    switch (qr2.ring_format) {
+    case AEROGPU_DBGCTL_RING_FORMAT_LEGACY:
+      fmt = "legacy";
+      break;
+    case AEROGPU_DBGCTL_RING_FORMAT_AGPU:
+      fmt = "agpu";
+      break;
+    default:
+      fmt = "unknown";
+      break;
+    }
+    w.String(fmt);
+    w.Key("ring_size_bytes");
+    w.Uint32(qr2.ring_size_bytes);
+    w.Key("head");
+    w.Uint32(qr2.head);
+    w.Key("tail");
+    w.Uint32(qr2.tail);
+    w.Key("desc_count");
+    w.Uint32(qr2.desc_count);
+    if (qr2.desc_count > 0) {
+      const aerogpu_dbgctl_ring_desc_v2 &d = qr2.desc[qr2.desc_count - 1];
+      w.Key("last");
+      w.BeginObject();
+      JsonWriteU64HexDec(w, "fence", d.fence);
+      w.Key("cmd_gpa_hex");
+      w.String(HexU64(d.cmd_gpa));
+      w.Key("cmd_size_bytes");
+      w.Uint32(d.cmd_size_bytes);
+      JsonWriteU32Hex(w, "flags_u32_hex", d.flags);
+      w.Key("alloc_table_gpa_hex");
+      w.String(HexU64(d.alloc_table_gpa));
+      w.Key("alloc_table_size_bytes");
+      w.Uint32(d.alloc_table_size_bytes);
+      w.EndObject();
+    }
+  } else if (stRing == STATUS_NOT_SUPPORTED) {
+    aerogpu_escape_dump_ring_inout qr1;
+    ZeroMemory(&qr1, sizeof(qr1));
+    qr1.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qr1.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING;
+    qr1.hdr.size = sizeof(qr1);
+    qr1.hdr.reserved0 = 0;
+    qr1.ring_id = 0;
+    qr1.desc_capacity = 1;
+    NTSTATUS stRing1 = SendAerogpuEscape(f, hAdapter, &qr1, sizeof(qr1));
+    if (NT_SUCCESS(stRing1)) {
+      w.Key("supported");
+      w.Bool(true);
+      w.Key("format");
+      w.String("legacy_v1");
+      w.Key("ring_size_bytes");
+      w.Uint32(qr1.ring_size_bytes);
+      w.Key("head");
+      w.Uint32(qr1.head);
+      w.Key("tail");
+      w.Uint32(qr1.tail);
+      w.Key("desc_count");
+      w.Uint32(qr1.desc_count);
+      if (qr1.desc_count > 0) {
+        const aerogpu_dbgctl_ring_desc &d = qr1.desc[qr1.desc_count - 1];
+        w.Key("last");
+        w.BeginObject();
+        JsonWriteU64HexDec(w, "fence", d.signal_fence);
+        w.Key("cmd_gpa_hex");
+        w.String(HexU64(d.cmd_gpa));
+        w.Key("cmd_size_bytes");
+        w.Uint32(d.cmd_size_bytes);
+        JsonWriteU32Hex(w, "flags_u32_hex", d.flags);
+        w.EndObject();
+      }
+    } else {
+      w.Key("supported");
+      w.Bool(false);
+      w.Key("error");
+      JsonWriteNtStatusError(w, f, stRing1);
+    }
+  } else {
+    w.Key("supported");
+    w.Bool(false);
+    w.Key("error");
+    JsonWriteNtStatusError(w, f, stRing);
+  }
+  w.EndObject();
+
+  // Scanout0 snapshot.
+  w.Key("scanout0");
+  w.BeginObject();
+  aerogpu_escape_query_scanout_out qs;
+  ZeroMemory(&qs, sizeof(qs));
+  qs.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qs.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  qs.hdr.size = sizeof(qs);
+  qs.hdr.reserved0 = 0;
+  qs.vidpn_source_id = 0;
+  NTSTATUS stScanout = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
+  if (NT_SUCCESS(stScanout)) {
+    w.Key("supported");
+    w.Bool(true);
+    w.Key("vidpn_source_id");
+    w.Uint32(qs.vidpn_source_id);
+    w.Key("cached");
+    w.BeginObject();
+    w.Key("enable");
+    w.Uint32(qs.cached_enable);
+    w.Key("width");
+    w.Uint32(qs.cached_width);
+    w.Key("height");
+    w.Uint32(qs.cached_height);
+    w.Key("format");
+    w.String(AerogpuFormatName(qs.cached_format));
+    w.Key("pitch_bytes");
+    w.Uint32(qs.cached_pitch_bytes);
+    w.EndObject();
+    w.Key("mmio");
+    w.BeginObject();
+    w.Key("enable");
+    w.Uint32(qs.mmio_enable);
+    w.Key("width");
+    w.Uint32(qs.mmio_width);
+    w.Key("height");
+    w.Uint32(qs.mmio_height);
+    w.Key("format");
+    w.String(AerogpuFormatName(qs.mmio_format));
+    w.Key("pitch_bytes");
+    w.Uint32(qs.mmio_pitch_bytes);
+    w.Key("fb_gpa_hex");
+    w.String(HexU64(qs.mmio_fb_gpa));
+    w.EndObject();
+  } else {
+    w.Key("supported");
+    w.Bool(false);
+    w.Key("error");
+    JsonWriteNtStatusError(w, f, stScanout);
+  }
+  w.EndObject();
+
+  // Cursor summary.
+  w.Key("cursor");
+  w.BeginObject();
+  aerogpu_escape_query_cursor_out qc;
+  ZeroMemory(&qc, sizeof(qc));
+  qc.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qc.hdr.op = AEROGPU_ESCAPE_OP_QUERY_CURSOR;
+  qc.hdr.size = sizeof(qc);
+  qc.hdr.reserved0 = 0;
+  NTSTATUS stCursor = SendAerogpuEscape(f, hAdapter, &qc, sizeof(qc));
+  if (!NT_SUCCESS(stCursor)) {
+    w.Key("supported");
+    w.Bool(false);
+    w.Key("error");
+    JsonWriteNtStatusError(w, f, stCursor);
+  } else {
+    bool cursorSupported = true;
+    if ((qc.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+      cursorSupported = (qc.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
+    }
+    w.Key("supported");
+    w.Bool(cursorSupported);
+    JsonWriteU32Hex(w, "flags_u32_hex", qc.flags);
+    if (cursorSupported) {
+      w.Key("enable");
+      w.Uint32(qc.enable);
+      w.Key("x");
+      w.Int32((int32_t)qc.x);
+      w.Key("y");
+      w.Int32((int32_t)qc.y);
+      w.Key("hot_x");
+      w.Uint32(qc.hot_x);
+      w.Key("hot_y");
+      w.Uint32(qc.hot_y);
+      w.Key("width");
+      w.Uint32(qc.width);
+      w.Key("height");
+      w.Uint32(qc.height);
+      w.Key("format");
+      w.String(AerogpuFormatName(qc.format));
+      w.Key("pitch_bytes");
+      w.Uint32(qc.pitch_bytes);
+      w.Key("fb_gpa_hex");
+      w.String(HexU64(qc.fb_gpa));
+    }
+  }
+  w.EndObject();
+
+  // Vblank snapshot.
+  w.Key("vblank");
+  w.BeginObject();
+  aerogpu_escape_query_vblank_out qv;
+  ZeroMemory(&qv, sizeof(qv));
+  qv.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qv.hdr.op = AEROGPU_ESCAPE_OP_QUERY_VBLANK;
+  qv.hdr.size = sizeof(qv);
+  qv.hdr.reserved0 = 0;
+  qv.vidpn_source_id = 0;
+  NTSTATUS stVblank = SendAerogpuEscape(f, hAdapter, &qv, sizeof(qv));
+  if (!NT_SUCCESS(stVblank)) {
+    w.Key("supported");
+    w.Bool(false);
+    w.Key("error");
+    JsonWriteNtStatusError(w, f, stVblank);
+  } else {
+    bool vblankSupported = true;
+    if ((qv.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0) {
+      vblankSupported = (qv.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED) != 0;
+    }
+    w.Key("supported");
+    w.Bool(vblankSupported);
+    w.Key("vidpn_source_id");
+    w.Uint32(qv.vidpn_source_id);
+    JsonWriteU32Hex(w, "flags_u32_hex", qv.flags);
+    JsonWriteU32Hex(w, "irq_enable_u32_hex", qv.irq_enable);
+    JsonWriteU32Hex(w, "irq_status_u32_hex", qv.irq_status);
+    JsonWriteU32Hex(w, "irq_active_u32_hex", (uint32_t)(qv.irq_enable & qv.irq_status));
+    if ((qv.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0 &&
+        (qv.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID) != 0) {
+      w.Key("vblank_interrupt_type");
+      w.Uint32(qv.vblank_interrupt_type);
+    }
+    if (vblankSupported) {
+      w.Key("vblank_period_ns");
+      w.Uint32(qv.vblank_period_ns);
+      JsonWriteU64HexDec(w, "vblank_seq", qv.vblank_seq);
+      JsonWriteU64HexDec(w, "last_vblank_time_ns", qv.last_vblank_time_ns);
+    }
+  }
+  w.EndObject();
+
+  // CreateAllocation trace summary.
+  w.Key("createallocation_trace");
+  w.BeginObject();
+  aerogpu_escape_dump_createallocation_inout qa;
+  ZeroMemory(&qa, sizeof(qa));
+  qa.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qa.hdr.op = AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION;
+  qa.hdr.size = sizeof(qa);
+  qa.hdr.reserved0 = 0;
+  qa.entry_capacity = AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS;
+  NTSTATUS stAlloc = SendAerogpuEscape(f, hAdapter, &qa, sizeof(qa));
+  if (!NT_SUCCESS(stAlloc)) {
+    w.Key("supported");
+    w.Bool(false);
+    w.Key("error");
+    JsonWriteNtStatusError(w, f, stAlloc);
+  } else {
+    w.Key("supported");
+    w.Bool(true);
+    w.Key("write_index");
+    w.Uint32(qa.write_index);
+    w.Key("entry_count");
+    w.Uint32(qa.entry_count);
+    w.Key("entry_capacity");
+    w.Uint32(qa.entry_capacity);
+  }
+  w.EndObject();
+
+  w.EndObject();
+  out->push_back('\n');
   return 0;
 }
 
@@ -3848,6 +4763,1049 @@ static int DoReadGpa(const D3DKMT_FUNCS *f,
     return 3;
   }
   return NT_SUCCESS(op) ? 0 : 2;
+
+static void JsonWriteTopLevelErrno(std::string *out, const char *command, const char *message, int err) {
+  if (!out) {
+    return;
+  }
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String(command ? command : "");
+  w.Key("ok");
+  w.Bool(false);
+  w.Key("error");
+  w.BeginObject();
+  w.Key("message");
+  w.String(message ? message : "");
+  w.Key("errno");
+  w.Int32(err);
+  const char *errStr = strerror(err);
+  if (errStr) {
+    w.Key("errno_message");
+    w.String(errStr);
+  }
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+}
+
+static int DoQueryFenceJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  aerogpu_escape_query_fence_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "query-fence", f, "D3DKMTEscape(query-fence) failed", st);
+    return 2;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("query-fence");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("fences");
+  w.BeginObject();
+  JsonWriteU64HexDec(w, "last_submitted_fence", q.last_submitted_fence);
+  JsonWriteU64HexDec(w, "last_completed_fence", q.last_completed_fence);
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  aerogpu_escape_query_perf_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_PERF;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "query-perf", f, "D3DKMTEscape(query-perf) failed", st);
+    return 2;
+  }
+
+  const uint64_t submitted = (uint64_t)q.last_submitted_fence;
+  const uint64_t completed = (uint64_t)q.last_completed_fence;
+  const uint64_t pendingFences = (submitted >= completed) ? (submitted - completed) : 0;
+
+  uint32_t ringPending = 0;
+  if (q.ring0_entry_count != 0) {
+    const uint32_t head = q.ring0_head;
+    const uint32_t tail = q.ring0_tail;
+    if (tail >= head) {
+      ringPending = tail - head;
+    } else {
+      ringPending = tail + q.ring0_entry_count - head;
+    }
+    if (ringPending > q.ring0_entry_count) {
+      ringPending = q.ring0_entry_count;
+    }
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("query-perf");
+  w.Key("ok");
+  w.Bool(true);
+
+  w.Key("fences");
+  w.BeginObject();
+  JsonWriteU64HexDec(w, "last_submitted_fence", submitted);
+  JsonWriteU64HexDec(w, "last_completed_fence", completed);
+  w.Key("pending");
+  w.String(DecU64(pendingFences));
+  w.EndObject();
+
+  w.Key("ring0");
+  w.BeginObject();
+  w.Key("head");
+  w.Uint32(q.ring0_head);
+  w.Key("tail");
+  w.Uint32(q.ring0_tail);
+  w.Key("pending");
+  w.Uint32(ringPending);
+  w.Key("entry_count");
+  w.Uint32(q.ring0_entry_count);
+  w.Key("size_bytes");
+  w.Uint32(q.ring0_size_bytes);
+  w.EndObject();
+
+  w.Key("submits");
+  w.BeginObject();
+  JsonWriteU64HexDec(w, "total", q.total_submissions);
+  JsonWriteU64HexDec(w, "render", q.total_render_submits);
+  JsonWriteU64HexDec(w, "present", q.total_presents);
+  JsonWriteU64HexDec(w, "internal", q.total_internal_submits);
+  w.EndObject();
+
+  w.Key("irqs");
+  w.BeginObject();
+  JsonWriteU64HexDec(w, "fence_delivered", q.irq_fence_delivered);
+  JsonWriteU64HexDec(w, "vblank_delivered", q.irq_vblank_delivered);
+  JsonWriteU64HexDec(w, "spurious", q.irq_spurious);
+  w.EndObject();
+
+  w.Key("resets");
+  w.BeginObject();
+  JsonWriteU64HexDec(w, "reset_from_timeout_count", q.reset_from_timeout_count);
+  JsonWriteU64HexDec(w, "last_reset_time_100ns", q.last_reset_time_100ns);
+  w.EndObject();
+
+  w.Key("vblank");
+  w.BeginObject();
+  JsonWriteU64HexDec(w, "seq", q.vblank_seq);
+  JsonWriteU64HexDec(w, "last_time_ns", q.last_vblank_time_ns);
+  w.Key("period_ns");
+  w.Uint32(q.vblank_period_ns);
+  w.EndObject();
+
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoQueryScanoutJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId,
+                             std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  const uint32_t requested = vidpnSourceId;
+  bool fallbackToSource0 = false;
+
+  aerogpu_escape_query_scanout_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.vidpn_source_id = requested;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && requested != 0) {
+    fallbackToSource0 = true;
+    ZeroMemory(&q, sizeof(q));
+    q.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    q.hdr.size = sizeof(q);
+    q.hdr.reserved0 = 0;
+    q.vidpn_source_id = 0;
+    st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  }
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "query-scanout", f, "D3DKMTEscape(query-scanout) failed", st);
+    return 2;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("query-scanout");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("vidpn_source_id_requested");
+  w.Uint32(requested);
+  w.Key("vidpn_source_id");
+  w.Uint32(q.vidpn_source_id);
+  w.Key("fallback_to_source0");
+  w.Bool(fallbackToSource0);
+  w.Key("scanout");
+  w.BeginObject();
+  w.Key("cached");
+  w.BeginObject();
+  w.Key("enable");
+  w.Uint32(q.cached_enable);
+  w.Key("width");
+  w.Uint32(q.cached_width);
+  w.Key("height");
+  w.Uint32(q.cached_height);
+  w.Key("format");
+  w.String(AerogpuFormatName(q.cached_format));
+  w.Key("pitch_bytes");
+  w.Uint32(q.cached_pitch_bytes);
+  w.EndObject();
+  w.Key("mmio");
+  w.BeginObject();
+  w.Key("enable");
+  w.Uint32(q.mmio_enable);
+  w.Key("width");
+  w.Uint32(q.mmio_width);
+  w.Key("height");
+  w.Uint32(q.mmio_height);
+  w.Key("format");
+  w.String(AerogpuFormatName(q.mmio_format));
+  w.Key("pitch_bytes");
+  w.Uint32(q.mmio_pitch_bytes);
+  w.Key("fb_gpa_hex");
+  w.String(HexU64(q.mmio_fb_gpa));
+  w.EndObject();
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoQueryCursorJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  aerogpu_escape_query_cursor_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_CURSOR;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "query-cursor", f, "D3DKMTEscape(query-cursor) failed", st);
+    return 2;
+  }
+
+  bool supported = true;
+  if ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+    supported = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
+  }
+  if (!supported) {
+    // Surface a consistent machine-detectable failure.
+    JsonWriteTopLevelError(out, "query-cursor", f, "Cursor not supported", STATUS_NOT_SUPPORTED);
+    return 2;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("query-cursor");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("cursor");
+  w.BeginObject();
+  JsonWriteU32Hex(w, "flags_u32_hex", q.flags);
+  w.Key("enable");
+  w.Uint32(q.enable);
+  w.Key("x");
+  w.Int32((int32_t)q.x);
+  w.Key("y");
+  w.Int32((int32_t)q.y);
+  w.Key("hot_x");
+  w.Uint32(q.hot_x);
+  w.Key("hot_y");
+  w.Uint32(q.hot_y);
+  w.Key("width");
+  w.Uint32(q.width);
+  w.Key("height");
+  w.Uint32(q.height);
+  w.Key("format");
+  w.String(AerogpuFormatName(q.format));
+  w.Key("pitch_bytes");
+  w.Uint32(q.pitch_bytes);
+  w.Key("fb_gpa_hex");
+  w.String(HexU64(q.fb_gpa));
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static bool WriteCreateAllocationCsvJson(const wchar_t *path, const aerogpu_escape_dump_createallocation_inout &q,
+                                        int *errnoOut) {
+  if (errnoOut) {
+    *errnoOut = 0;
+  }
+  if (!path) {
+    if (errnoOut) {
+      *errnoOut = EINVAL;
+    }
+    return false;
+  }
+
+  FILE *fp = _wfopen(path, L"w");
+  if (!fp) {
+    if (errnoOut) {
+      *errnoOut = errno;
+    }
+    return false;
+  }
+
+  fprintf(fp,
+          "write_index,entry_count,entry_capacity,seq,call_seq,alloc_index,num_allocations,create_flags,alloc_id,"
+          "priv_flags,pitch_bytes,share_token,size_bytes,flags_in,flags_out\n");
+
+  for (uint32_t i = 0; i < q.entry_count && i < q.entry_capacity && i < AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS; ++i) {
+    const aerogpu_dbgctl_createallocation_desc &e = q.entries[i];
+    fprintf(fp,
+            "%lu,%lu,%lu,%lu,%lu,%lu,%lu,0x%08lx,%lu,0x%08lx,%lu,0x%016I64x,%I64u,0x%08lx,0x%08lx\n",
+            (unsigned long)q.write_index, (unsigned long)q.entry_count, (unsigned long)q.entry_capacity,
+            (unsigned long)e.seq, (unsigned long)e.call_seq, (unsigned long)e.alloc_index, (unsigned long)e.num_allocations,
+            (unsigned long)e.create_flags, (unsigned long)e.alloc_id, (unsigned long)e.priv_flags,
+            (unsigned long)e.pitch_bytes, (unsigned long long)e.share_token, (unsigned long long)e.size_bytes,
+            (unsigned long)e.flags_in, (unsigned long)e.flags_out);
+  }
+
+  fclose(fp);
+  return true;
+}
+
+static int DoDumpCreateAllocationJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const wchar_t *csvPath,
+                                     std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  aerogpu_escape_dump_createallocation_inout q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.write_index = 0;
+  q.entry_count = 0;
+  q.entry_capacity = AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS;
+  q.reserved0 = 0;
+
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "dump-createalloc", f, "D3DKMTEscape(dump-createalloc) failed", st);
+    return 2;
+  }
+
+  bool csvWritten = false;
+  int csvErrno = 0;
+  if (csvPath) {
+    csvWritten = WriteCreateAllocationCsvJson(csvPath, q, &csvErrno);
+    if (!csvWritten) {
+      JsonWriteTopLevelErrno(out, "dump-createalloc", "Failed to write --csv output", csvErrno);
+      return 2;
+    }
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("dump-createalloc");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("write_index");
+  w.Uint32(q.write_index);
+  w.Key("entry_count");
+  w.Uint32(q.entry_count);
+  w.Key("entry_capacity");
+  w.Uint32(q.entry_capacity);
+  if (csvPath) {
+    w.Key("csv_path");
+    w.String(WideToUtf8(csvPath));
+    w.Key("csv_written");
+    w.Bool(csvWritten);
+  }
+  w.Key("entries");
+  w.BeginArray();
+  for (uint32_t i = 0; i < q.entry_count && i < q.entry_capacity && i < AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS; ++i) {
+    const aerogpu_dbgctl_createallocation_desc &e = q.entries[i];
+    w.BeginObject();
+    w.Key("index");
+    w.Uint32(i);
+    w.Key("seq");
+    w.Uint32(e.seq);
+    w.Key("call_seq");
+    w.Uint32(e.call_seq);
+    JsonWriteU32Hex(w, "create_flags_u32_hex", e.create_flags);
+    w.Key("alloc_index");
+    w.Uint32(e.alloc_index);
+    w.Key("num_allocations");
+    w.Uint32(e.num_allocations);
+    w.Key("alloc_id");
+    w.Uint32(e.alloc_id);
+    w.Key("share_token_hex");
+    w.String(HexU64(e.share_token));
+    JsonWriteU64HexDec(w, "size_bytes", e.size_bytes);
+    JsonWriteU32Hex(w, "priv_flags_u32_hex", e.priv_flags);
+    w.Key("pitch_bytes");
+    w.Uint32(e.pitch_bytes);
+    JsonWriteU32Hex(w, "flags_in_u32_hex", e.flags_in);
+    JsonWriteU32Hex(w, "flags_out_u32_hex", e.flags_out);
+    w.EndObject();
+  }
+  w.EndArray();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoQueryUmdPrivateJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+  if (!f->QueryAdapterInfo) {
+    JsonWriter w(out);
+    w.BeginObject();
+    w.Key("schema_version");
+    w.Uint32(1);
+    w.Key("command");
+    w.String("query-umd-private");
+    w.Key("ok");
+    w.Bool(false);
+    w.Key("error");
+    w.BeginObject();
+    w.Key("message");
+    w.String("D3DKMTQueryAdapterInfo not available (missing gdi32 export)");
+    w.EndObject();
+    w.EndObject();
+    out->push_back('\n');
+    return 1;
+  }
+
+  aerogpu_umd_private_v1 blob;
+  ZeroMemory(&blob, sizeof(blob));
+
+  UINT foundType = 0xFFFFFFFFu;
+  NTSTATUS lastStatus = 0;
+  for (UINT type = 0; type < 256; ++type) {
+    ZeroMemory(&blob, sizeof(blob));
+    const NTSTATUS st = QueryAdapterInfoWithTimeout(f, hAdapter, type, &blob, sizeof(blob));
+    lastStatus = st;
+    if (!NT_SUCCESS(st)) {
+      if (st == STATUS_TIMEOUT) {
+        break;
+      }
+      continue;
+    }
+    if (blob.size_bytes < sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+      continue;
+    }
+    const uint32_t magic = blob.device_mmio_magic;
+    if (magic != 0 && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
+      continue;
+    }
+    foundType = type;
+    break;
+  }
+
+  if (foundType == 0xFFFFFFFFu) {
+    JsonWriteTopLevelError(out, "query-umd-private", f, "D3DKMTQueryAdapterInfo(UMDRIVERPRIVATE) failed", lastStatus);
+    return 2;
+  }
+
+  char magicStr[5] = {0, 0, 0, 0, 0};
+  {
+    const uint32_t m = blob.device_mmio_magic;
+    magicStr[0] = (char)((m >> 0) & 0xFF);
+    magicStr[1] = (char)((m >> 8) & 0xFF);
+    magicStr[2] = (char)((m >> 16) & 0xFF);
+    magicStr[3] = (char)((m >> 24) & 0xFF);
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("query-umd-private");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("type");
+  w.Uint32(foundType);
+  w.Key("size_bytes");
+  w.Uint32(blob.size_bytes);
+  w.Key("struct_version");
+  w.Uint32(blob.struct_version);
+  w.Key("device_mmio_magic_u32_hex");
+  w.String(HexU32(blob.device_mmio_magic));
+  w.Key("device_mmio_magic_str");
+  w.String(magicStr);
+  w.Key("device_abi_version_u32_hex");
+  w.String(HexU32(blob.device_abi_version_u32));
+  w.Key("device_abi_version");
+  w.BeginObject();
+  w.Key("major");
+  w.Uint32((uint32_t)(blob.device_abi_version_u32 >> 16));
+  w.Key("minor");
+  w.Uint32((uint32_t)(blob.device_abi_version_u32 & 0xFFFFu));
+  w.EndObject();
+  w.Key("device_features_u64_hex");
+  w.String(HexU64(blob.device_features));
+  const std::wstring decoded_features = aerogpu::FormatDeviceFeatureBits(blob.device_features, 0);
+  w.Key("decoded_features");
+  w.String(WideToUtf8(decoded_features));
+  JsonWriteDecodedFeatureList(w, "decoded_features_list", decoded_features);
+  w.Key("flags_u32_hex");
+  w.String(HexU32(blob.flags));
+  w.Key("flags");
+  w.BeginObject();
+  w.Key("is_legacy");
+  w.Bool((blob.flags & AEROGPU_UMDPRIV_FLAG_IS_LEGACY) != 0);
+  w.Key("has_vblank");
+  w.Bool((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0);
+  w.Key("has_fence_page");
+  w.Bool((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE) != 0);
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoDumpRingJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ringId, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  aerogpu_escape_dump_ring_v2_inout q2;
+  ZeroMemory(&q2, sizeof(q2));
+  q2.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q2.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING_V2;
+  q2.hdr.size = sizeof(q2);
+  q2.hdr.reserved0 = 0;
+  q2.ring_id = ringId;
+  q2.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+
+  const NTSTATUS st2 = SendAerogpuEscape(f, hAdapter, &q2, sizeof(q2));
+  if (NT_SUCCESS(st2)) {
+    uint32_t count = q2.desc_count;
+    if (count > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+      count = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+    }
+    uint32_t window_start = 0;
+    if (q2.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU && count != 0) {
+      window_start = q2.tail - count;
+    }
+
+    const char *fmt = "unknown";
+    switch (q2.ring_format) {
+    case AEROGPU_DBGCTL_RING_FORMAT_LEGACY:
+      fmt = "legacy";
+      break;
+    case AEROGPU_DBGCTL_RING_FORMAT_AGPU:
+      fmt = "agpu";
+      break;
+    default:
+      fmt = "unknown";
+      break;
+    }
+
+    JsonWriter w(out);
+    w.BeginObject();
+    w.Key("schema_version");
+    w.Uint32(1);
+    w.Key("command");
+    w.String("dump-ring");
+    w.Key("ok");
+    w.Bool(true);
+    w.Key("ring_id");
+    w.Uint32(q2.ring_id);
+    w.Key("format");
+    w.String(fmt);
+    w.Key("ring_size_bytes");
+    w.Uint32(q2.ring_size_bytes);
+    w.Key("head_u32_hex");
+    w.String(HexU32(q2.head));
+    w.Key("tail_u32_hex");
+    w.String(HexU32(q2.tail));
+    w.Key("desc_count");
+    w.Uint32(q2.desc_count);
+    w.Key("descriptors");
+    w.BeginArray();
+    for (uint32_t i = 0; i < count; ++i) {
+      const aerogpu_dbgctl_ring_desc_v2 *d = &q2.desc[i];
+      w.BeginObject();
+      w.Key("index");
+      w.Uint32(i);
+      if (q2.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+        w.Key("ring_index");
+        w.Uint32(window_start + i);
+      }
+      JsonWriteU64HexDec(w, "fence", d->fence);
+      w.Key("cmd_gpa_hex");
+      w.String(HexU64(d->cmd_gpa));
+      w.Key("cmd_size_bytes");
+      w.Uint32(d->cmd_size_bytes);
+      JsonWriteU32Hex(w, "flags_u32_hex", d->flags);
+      w.Key("alloc_table_gpa_hex");
+      w.String(HexU64(d->alloc_table_gpa));
+      w.Key("alloc_table_size_bytes");
+      w.Uint32(d->alloc_table_size_bytes);
+      w.EndObject();
+    }
+    w.EndArray();
+    w.EndObject();
+    out->push_back('\n');
+    return 0;
+  }
+
+  // Fallback to legacy packet.
+  aerogpu_escape_dump_ring_inout q1;
+  ZeroMemory(&q1, sizeof(q1));
+  q1.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q1.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING;
+  q1.hdr.size = sizeof(q1);
+  q1.hdr.reserved0 = 0;
+  q1.ring_id = ringId;
+  q1.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+
+  const NTSTATUS st1 = SendAerogpuEscape(f, hAdapter, &q1, sizeof(q1));
+  if (!NT_SUCCESS(st1)) {
+    // Prefer surfacing the v2 error if it wasn't NOT_SUPPORTED.
+    const NTSTATUS stOut = (st2 != STATUS_NOT_SUPPORTED) ? st2 : st1;
+    JsonWriteTopLevelError(out, "dump-ring", f, "D3DKMTEscape(dump-ring) failed", stOut);
+    return 2;
+  }
+
+  uint32_t count = q1.desc_count;
+  if (count > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+    count = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("dump-ring");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("ring_id");
+  w.Uint32(q1.ring_id);
+  w.Key("format");
+  w.String("legacy_v1");
+  w.Key("ring_size_bytes");
+  w.Uint32(q1.ring_size_bytes);
+  w.Key("head_u32_hex");
+  w.String(HexU32(q1.head));
+  w.Key("tail_u32_hex");
+  w.String(HexU32(q1.tail));
+  w.Key("desc_count");
+  w.Uint32(q1.desc_count);
+  w.Key("descriptors");
+  w.BeginArray();
+  for (uint32_t i = 0; i < count; ++i) {
+    const aerogpu_dbgctl_ring_desc *d = &q1.desc[i];
+    w.BeginObject();
+    w.Key("index");
+    w.Uint32(i);
+    JsonWriteU64HexDec(w, "fence", d->signal_fence);
+    w.Key("cmd_gpa_hex");
+    w.String(HexU64(d->cmd_gpa));
+    w.Key("cmd_size_bytes");
+    w.Uint32(d->cmd_size_bytes);
+    JsonWriteU32Hex(w, "flags_u32_hex", d->flags);
+    w.EndObject();
+  }
+  w.EndArray();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static bool QueryVblankJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId,
+                           aerogpu_escape_query_vblank_out *out, bool *supportedOut, bool *fallbackToSource0) {
+  if (fallbackToSource0) {
+    *fallbackToSource0 = false;
+  }
+  ZeroMemory(out, sizeof(*out));
+  out->hdr.version = AEROGPU_ESCAPE_VERSION;
+  out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_VBLANK;
+  out->hdr.size = sizeof(*out);
+  out->hdr.reserved0 = 0;
+  out->vidpn_source_id = vidpnSourceId;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, out, sizeof(*out));
+  if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && vidpnSourceId != 0) {
+    if (fallbackToSource0) {
+      *fallbackToSource0 = true;
+    }
+    ZeroMemory(out, sizeof(*out));
+    out->hdr.version = AEROGPU_ESCAPE_VERSION;
+    out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_VBLANK;
+    out->hdr.size = sizeof(*out);
+    out->hdr.reserved0 = 0;
+    out->vidpn_source_id = 0;
+    st = SendAerogpuEscape(f, hAdapter, out, sizeof(*out));
+  }
+  if (!NT_SUCCESS(st)) {
+    return false;
+  }
+
+  if (supportedOut) {
+    bool supported = true;
+    if ((out->flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0) {
+      supported = (out->flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED) != 0;
+    }
+    *supportedOut = supported;
+  }
+  return true;
+}
+
+static int DoDumpVblankJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId, uint32_t samples,
+                           uint32_t intervalMs, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+  if (samples == 0) {
+    samples = 1;
+  }
+  if (samples > 10000) {
+    samples = 10000;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("dump-vblank");
+
+  w.Key("vidpn_source_id_requested");
+  w.Uint32(vidpnSourceId);
+  w.Key("samples_requested");
+  w.Uint32(samples);
+  w.Key("interval_ms");
+  w.Uint32(intervalMs);
+
+  w.Key("samples");
+  w.BeginArray();
+
+  aerogpu_escape_query_vblank_out prev;
+  bool prevSupported = false;
+  bool havePrev = false;
+  uint32_t stallCount = 0;
+  uint64_t perVblankUsMin = 0;
+  uint64_t perVblankUsMax = 0;
+  uint64_t perVblankUsSum = 0;
+  uint64_t perVblankUsSamples = 0;
+
+  uint32_t effectiveVidpnSourceId = vidpnSourceId;
+  bool scanlineFallbackToSource0 = false;
+
+  for (uint32_t i = 0; i < samples; ++i) {
+    aerogpu_escape_query_vblank_out q;
+    bool supported = false;
+    bool fallbackToSource0 = false;
+    if (!QueryVblankJson(f, hAdapter, effectiveVidpnSourceId, &q, &supported, &fallbackToSource0)) {
+      // We do not have the NTSTATUS at this point (SendAerogpuEscape already printed it in the text path).
+      // Re-run once to capture the error code for JSON.
+      aerogpu_escape_query_vblank_out tmp;
+      ZeroMemory(&tmp, sizeof(tmp));
+      tmp.hdr.version = AEROGPU_ESCAPE_VERSION;
+      tmp.hdr.op = AEROGPU_ESCAPE_OP_QUERY_VBLANK;
+      tmp.hdr.size = sizeof(tmp);
+      tmp.hdr.reserved0 = 0;
+      tmp.vidpn_source_id = effectiveVidpnSourceId;
+      const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &tmp, sizeof(tmp));
+      w.EndArray();
+      w.Key("ok");
+      w.Bool(false);
+      w.Key("error");
+      w.BeginObject();
+      w.Key("message");
+      w.String("D3DKMTEscape(query-vblank) failed");
+      w.Key("status");
+      JsonWriteNtStatusError(w, f, st);
+      w.EndObject();
+      w.EndObject();
+      out->push_back('\n');
+      return 2;
+    }
+
+    effectiveVidpnSourceId = q.vidpn_source_id;
+
+    w.BeginObject();
+    w.Key("index");
+    w.Uint32(i + 1);
+    w.Key("vidpn_source_id");
+    w.Uint32(q.vidpn_source_id);
+    w.Key("fallback_to_source0");
+    w.Bool(fallbackToSource0);
+    w.Key("supported");
+    w.Bool(supported);
+    JsonWriteU32Hex(w, "flags_u32_hex", q.flags);
+    JsonWriteU32Hex(w, "irq_enable_u32_hex", q.irq_enable);
+    JsonWriteU32Hex(w, "irq_status_u32_hex", q.irq_status);
+    JsonWriteU32Hex(w, "irq_active_u32_hex", (uint32_t)(q.irq_enable & q.irq_status));
+    if ((q.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0 &&
+        (q.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID) != 0) {
+      w.Key("vblank_interrupt_type");
+      w.Uint32(q.vblank_interrupt_type);
+    }
+    if (supported) {
+      w.Key("vblank_period_ns");
+      w.Uint32(q.vblank_period_ns);
+      JsonWriteU64HexDec(w, "vblank_seq", q.vblank_seq);
+      JsonWriteU64HexDec(w, "last_vblank_time_ns", q.last_vblank_time_ns);
+    }
+
+    // Optional scanline snapshot.
+    if (f->GetScanLine) {
+      D3DKMT_GETSCANLINE s;
+      ZeroMemory(&s, sizeof(s));
+      s.hAdapter = hAdapter;
+      s.VidPnSourceId = scanlineFallbackToSource0 ? 0 : effectiveVidpnSourceId;
+      NTSTATUS stScan = f->GetScanLine(&s);
+      if (!NT_SUCCESS(stScan) && stScan == STATUS_INVALID_PARAMETER && s.VidPnSourceId != 0) {
+        scanlineFallbackToSource0 = true;
+        s.VidPnSourceId = 0;
+        stScan = f->GetScanLine(&s);
+      }
+      w.Key("scanline");
+      w.BeginObject();
+      w.Key("vidpn_source_id");
+      w.Uint32(s.VidPnSourceId);
+      if (NT_SUCCESS(stScan)) {
+        w.Key("ok");
+        w.Bool(true);
+        w.Key("scanline");
+        w.Uint32((uint32_t)s.ScanLine);
+        w.Key("in_vblank");
+        w.Bool(!!s.InVerticalBlank);
+      } else {
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        JsonWriteNtStatusError(w, f, stScan);
+      }
+      w.EndObject();
+    }
+
+    // Delta stats (best-effort; raw counters are already reported).
+    if (havePrev && supported && prevSupported) {
+      if (q.vblank_seq >= prev.vblank_seq && q.last_vblank_time_ns >= prev.last_vblank_time_ns) {
+        const uint64_t dseq = q.vblank_seq - prev.vblank_seq;
+        const uint64_t dt = q.last_vblank_time_ns - prev.last_vblank_time_ns;
+        w.Key("delta");
+        w.BeginObject();
+        w.Key("dseq");
+        w.String(DecU64(dseq));
+        w.Key("dt_ns");
+        w.String(DecU64(dt));
+        w.EndObject();
+        if (dseq != 0 && dt != 0) {
+          const uint64_t perVblankUs = (dt / dseq) / 1000ull;
+          if (perVblankUsSamples == 0) {
+            perVblankUsMin = perVblankUs;
+            perVblankUsMax = perVblankUs;
+          } else {
+            if (perVblankUs < perVblankUsMin) {
+              perVblankUsMin = perVblankUs;
+            }
+            if (perVblankUs > perVblankUsMax) {
+              perVblankUsMax = perVblankUs;
+            }
+          }
+          perVblankUsSum += perVblankUs;
+          perVblankUsSamples += 1;
+        } else if (dseq == 0) {
+          stallCount += 1;
+        }
+      }
+    }
+
+    w.EndObject();
+
+    if (!supported) {
+      // Match text-mode behavior: fail immediately when vblank isn't supported.
+      w.EndArray();
+      w.Key("ok");
+      w.Bool(false);
+      w.Key("error");
+      w.BeginObject();
+      w.Key("message");
+      w.String("Vblank not supported by device/KMD");
+      w.Key("status");
+      JsonWriteNtStatusError(w, f, STATUS_NOT_SUPPORTED);
+      w.EndObject();
+      w.EndObject();
+      out->push_back('\n');
+      return 2;
+    }
+
+    prev = q;
+    prevSupported = supported;
+    havePrev = true;
+
+    if (i + 1 < samples) {
+      Sleep(intervalMs);
+    }
+  }
+
+  w.EndArray();
+  w.Key("ok");
+  w.Bool(true);
+
+  if (samples > 1 && perVblankUsSamples != 0) {
+    w.Key("summary");
+    w.BeginObject();
+    w.Key("delta_samples");
+    w.Uint32((uint32_t)perVblankUsSamples);
+    w.Key("per_vblank_us_min");
+    w.String(DecU64(perVblankUsMin));
+    w.Key("per_vblank_us_max");
+    w.String(DecU64(perVblankUsMax));
+    w.Key("per_vblank_us_avg");
+    w.String(DecU64(perVblankUsSum / perVblankUsSamples));
+    w.Key("stalls");
+    w.Uint32(stallCount);
+    w.EndObject();
+  }
+
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoMapSharedHandleJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_t sharedHandle,
+                                std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  aerogpu_escape_map_shared_handle_inout q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.shared_handle = sharedHandle;
+  q.debug_token = 0;
+  q.reserved0 = 0;
+
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "map-shared-handle", f, "D3DKMTEscape(map-shared-handle) failed", st);
+    return 2;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("map-shared-handle");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("shared_handle_hex");
+  w.String(HexU64(sharedHandle));
+  w.Key("debug_token");
+  w.BeginObject();
+  w.Key("hex");
+  w.String(HexU32(q.debug_token));
+  w.Key("dec");
+  w.Uint32(q.debug_token);
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoSelftestJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t timeoutMs, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  aerogpu_escape_selftest_inout q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_SELFTEST;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.timeout_ms = timeoutMs;
+
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "selftest", f, "D3DKMTEscape(selftest) failed", st);
+    return 2;
+  }
+
+  const int rc = q.passed ? 0 : 3;
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("selftest");
+  w.Key("ok");
+  w.Bool(q.passed ? true : false);
+  w.Key("passed");
+  w.Bool(q.passed ? true : false);
+  w.Key("timeout_ms");
+  w.Uint32(timeoutMs);
+  if (!q.passed) {
+    w.Key("error_code");
+    w.Uint32(q.error_code);
+    w.Key("error_code_str");
+    w.String(WideToUtf8(SelftestErrorToString(q.error_code)));
+  }
+  w.EndObject();
+  out->push_back('\n');
+  return rc;
 }
 
 int wmain(int argc, wchar_t **argv) {
@@ -3863,7 +5821,6 @@ int wmain(int argc, wchar_t **argv) {
   bool watchIntervalSet = false;
   uint64_t mapSharedHandle = 0;
   const wchar_t *createAllocCsvPath = NULL;
-  const wchar_t *createAllocJsonPath = NULL;
   const wchar_t *dumpScanoutBmpPath = NULL;
   const wchar_t *dumpCursorBmpPath = NULL;
   uint64_t readGpa = 0;
@@ -3913,6 +5870,30 @@ int wmain(int argc, wchar_t **argv) {
     if (wcscmp(a, L"--help") == 0 || wcscmp(a, L"-h") == 0 || wcscmp(a, L"/?") == 0) {
       PrintUsage();
       return 0;
+    }
+
+    if (wcscmp(a, L"--json") == 0) {
+      g_json_output = true;
+      // Allow "--json <path>" as a convenience/compat form in addition to "--json=<path>".
+      if (i + 1 < argc) {
+        const wchar_t *next = argv[i + 1];
+        if (next && wcsncmp(next, L"--", 2) != 0) {
+          g_json_path = next;
+          i += 1;
+        }
+      }
+      continue;
+    }
+    if (wcsncmp(a, L"--json=", 7) == 0) {
+      const wchar_t *path = a + 7;
+      if (!path || *path == 0) {
+        fwprintf(stderr, L"--json=PATH requires a non-empty PATH\n");
+        PrintUsage();
+        return 1;
+      }
+      g_json_output = true;
+      g_json_path = path;
+      continue;
     }
 
     if (wcscmp(a, L"--display") == 0) {
@@ -4073,22 +6054,6 @@ int wmain(int argc, wchar_t **argv) {
         return 1;
       }
       createAllocCsvPath = argv[++i];
-      continue;
-    }
-
-    if (wcscmp(a, L"--json") == 0) {
-      if (i + 1 >= argc) {
-        fwprintf(stderr, L"--json requires an argument\n");
-        PrintUsage();
-        return 1;
-      }
-      if (createAllocJsonPath) {
-        fwprintf(stderr, L"--json specified multiple times\n");
-        PrintUsage();
-        return 1;
-      }
-      createAllocJsonPath = argv[++i];
-
       continue;
     }
 
@@ -4258,14 +6223,20 @@ int wmain(int argc, wchar_t **argv) {
     return 1;
   }
 
-  if ((createAllocCsvPath || createAllocJsonPath) && cmd != CMD_DUMP_CREATEALLOCATION) {
-    fwprintf(stderr, L"--csv/--json is only supported with --dump-createalloc\n");
+  if (createAllocCsvPath && cmd != CMD_DUMP_CREATEALLOCATION) {
+    fwprintf(stderr, L"--csv is only supported with --dump-createalloc\n");
     PrintUsage();
     return 1;
   }
 
   if (cmd == CMD_LIST_DISPLAYS) {
-    return ListDisplays();
+    if (!g_json_output) {
+      return ListDisplays();
+    }
+    std::string json;
+    const int rc = ListDisplaysJson(&json);
+    const int writeRc = WriteJsonToDestination(json);
+    return (rc != 0) ? rc : writeRc;
   }
 
   if (cmd == CMD_WATCH_FENCE) {
@@ -4358,70 +6329,172 @@ int wmain(int argc, wchar_t **argv) {
 
   int rc = 0;
   bool skipCloseAdapter = false;
-  switch (cmd) {
-  case CMD_QUERY_VERSION:
-    rc = DoQueryVersion(&f, open.hAdapter);
-    break;
-  case CMD_QUERY_UMD_PRIVATE:
-    rc = DoQueryUmdPrivate(&f, open.hAdapter);
-    break;
-  case CMD_QUERY_SEGMENTS:
-    rc = DoQuerySegments(&f, open.hAdapter);
-    break;
-  case CMD_QUERY_FENCE:
-    rc = DoQueryFence(&f, open.hAdapter);
-    break;
-  case CMD_WATCH_FENCE:
-    rc = DoWatchFence(&f, open.hAdapter, watchSamples, watchIntervalMs, timeoutMsSet ? timeoutMs : 0);
-    break;
-  case CMD_QUERY_PERF:
-    rc = DoQueryPerf(&f, open.hAdapter);
-    break;
-  case CMD_QUERY_SCANOUT:
-    rc = DoQueryScanout(&f, open.hAdapter, (uint32_t)open.VidPnSourceId);
-    break;
-  case CMD_DUMP_SCANOUT_BMP:
-    rc = DoDumpScanoutBmp(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, dumpScanoutBmpPath);
-    break;
-  case CMD_QUERY_CURSOR:
-    rc = DoQueryCursor(&f, open.hAdapter);
-    break;
-  case CMD_DUMP_CURSOR_BMP:
-    rc = DoDumpCursorBmp(&f, open.hAdapter, dumpCursorBmpPath);
-    break;
-  case CMD_DUMP_RING:
-    rc = DoDumpRing(&f, open.hAdapter, ringId);
-    break;
-  case CMD_WATCH_RING:
-    rc = DoWatchRing(&f, open.hAdapter, ringId, watchSamples, watchIntervalMs);
-    break;
-  case CMD_DUMP_LAST_CMD:
-    rc = DoDumpLastCmd(&f, open.hAdapter, ringId, dumpLastCmdIndexFromTail, dumpLastCmdOutPath, dumpLastCmdForce);
-    break;
-  case CMD_DUMP_CREATEALLOCATION:
-    rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath, createAllocJsonPath);
-    break;
-  case CMD_DUMP_VBLANK:
-    rc = DoDumpVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs);
-    break;
-  case CMD_WAIT_VBLANK:
-    rc = DoWaitVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, timeoutMs, &skipCloseAdapter);
-    break;
-  case CMD_QUERY_SCANLINE:
-    rc = DoQueryScanline(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs);
-    break;
-  case CMD_MAP_SHARED_HANDLE:
-    rc = DoMapSharedHandle(&f, open.hAdapter, mapSharedHandle);
-    break;
-  case CMD_READ_GPA:
-    rc = DoReadGpa(&f, open.hAdapter, readGpa, readGpaSizeBytes, readGpaOutFile);
-    break;
-  case CMD_SELFTEST:
-    rc = DoSelftest(&f, open.hAdapter, timeoutMs);
-    break;
-  default:
-    rc = 1;
-    break;
+  std::string json;
+  if (g_json_output) {
+    switch (cmd) {
+    case CMD_QUERY_VERSION:
+      rc = DoStatusJson(&f, open.hAdapter, &json);
+      break;
+    case CMD_QUERY_UMD_PRIVATE:
+      rc = DoQueryUmdPrivateJson(&f, open.hAdapter, &json);
+      break;
+    case CMD_QUERY_FENCE:
+      rc = DoQueryFenceJson(&f, open.hAdapter, &json);
+      break;
+    case CMD_QUERY_SEGMENTS:
+      JsonWriteTopLevelError(&json, "query-segments", &f,
+                             "JSON output is not supported for this command; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
+    case CMD_QUERY_PERF:
+      rc = DoQueryPerfJson(&f, open.hAdapter, &json);
+      break;
+    case CMD_QUERY_SCANOUT:
+      rc = DoQueryScanoutJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, &json);
+      break;
+    case CMD_QUERY_CURSOR:
+      rc = DoQueryCursorJson(&f, open.hAdapter, &json);
+      break;
+    case CMD_DUMP_CURSOR_BMP:
+      JsonWriteTopLevelError(&json, "dump-cursor-bmp", &f,
+                             "JSON output is not supported for binary-output commands; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
+    case CMD_DUMP_RING:
+      rc = DoDumpRingJson(&f, open.hAdapter, ringId, &json);
+      break;
+    case CMD_DUMP_CREATEALLOCATION:
+      rc = DoDumpCreateAllocationJson(&f, open.hAdapter, createAllocCsvPath, &json);
+      break;
+    case CMD_DUMP_VBLANK:
+      rc = DoDumpVblankJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs, &json);
+      break;
+    case CMD_MAP_SHARED_HANDLE:
+      rc = DoMapSharedHandleJson(&f, open.hAdapter, mapSharedHandle, &json);
+      break;
+    case CMD_SELFTEST:
+      rc = DoSelftestJson(&f, open.hAdapter, timeoutMs, &json);
+      break;
+    case CMD_DUMP_SCANOUT_BMP:
+      JsonWriteTopLevelError(&json, "dump-scanout-bmp", &f,
+                             "JSON output is not supported for binary-output commands; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
+    case CMD_DUMP_LAST_CMD:
+      JsonWriteTopLevelError(&json, "dump-last-cmd", &f,
+                             "JSON output is not supported for binary-output commands; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
+    case CMD_READ_GPA:
+      JsonWriteTopLevelError(&json, "read-gpa", &f,
+                             "JSON output is not supported for binary-output commands; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
+    case CMD_WATCH_FENCE:
+      JsonWriteTopLevelError(&json, "watch-fence", &f,
+                             "JSON output is not supported for watch/streaming commands; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
+    case CMD_WATCH_RING:
+      JsonWriteTopLevelError(&json, "watch-ring", &f,
+                             "JSON output is not supported for watch/streaming commands; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
+    case CMD_WAIT_VBLANK:
+      JsonWriteTopLevelError(&json, "wait-vblank", &f,
+                             "JSON output is not supported for watch/streaming commands; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
+    case CMD_QUERY_SCANLINE:
+      JsonWriteTopLevelError(&json, "query-scanline", &f,
+                             "JSON output is not supported for watch/streaming commands; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
+    default:
+      JsonWriteTopLevelError(&json, "unknown", &f, "Unknown command", STATUS_INVALID_PARAMETER);
+      rc = 1;
+      break;
+    }
+
+    const int writeRc = WriteJsonToDestination(json);
+    if (rc == 0 && writeRc != 0) {
+      rc = writeRc;
+    }
+  } else {
+    switch (cmd) {
+    case CMD_QUERY_VERSION:
+      rc = DoQueryVersion(&f, open.hAdapter);
+      break;
+    case CMD_QUERY_UMD_PRIVATE:
+      rc = DoQueryUmdPrivate(&f, open.hAdapter);
+      break;
+    case CMD_QUERY_SEGMENTS:
+      rc = DoQuerySegments(&f, open.hAdapter);
+      break;
+    case CMD_QUERY_FENCE:
+      rc = DoQueryFence(&f, open.hAdapter);
+      break;
+    case CMD_WATCH_FENCE:
+      rc = DoWatchFence(&f, open.hAdapter, watchSamples, watchIntervalMs, timeoutMsSet ? timeoutMs : 0);
+      break;
+    case CMD_QUERY_PERF:
+      rc = DoQueryPerf(&f, open.hAdapter);
+      break;
+    case CMD_QUERY_SCANOUT:
+      rc = DoQueryScanout(&f, open.hAdapter, (uint32_t)open.VidPnSourceId);
+      break;
+    case CMD_DUMP_SCANOUT_BMP:
+      rc = DoDumpScanoutBmp(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, dumpScanoutBmpPath);
+      break;
+    case CMD_QUERY_CURSOR:
+      rc = DoQueryCursor(&f, open.hAdapter);
+      break;
+    case CMD_DUMP_CURSOR_BMP:
+      rc = DoDumpCursorBmp(&f, open.hAdapter, dumpCursorBmpPath);
+      break;
+    case CMD_DUMP_RING:
+      rc = DoDumpRing(&f, open.hAdapter, ringId);
+      break;
+    case CMD_WATCH_RING:
+      rc = DoWatchRing(&f, open.hAdapter, ringId, watchSamples, watchIntervalMs);
+      break;
+    case CMD_DUMP_LAST_CMD:
+      rc = DoDumpLastCmd(&f, open.hAdapter, ringId, dumpLastCmdIndexFromTail, dumpLastCmdOutPath, dumpLastCmdForce);
+      break;
+    case CMD_DUMP_CREATEALLOCATION:
+      rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath, NULL);
+      break;
+    case CMD_DUMP_VBLANK:
+      rc = DoDumpVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs);
+      break;
+    case CMD_WAIT_VBLANK:
+      rc = DoWaitVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, timeoutMs, &skipCloseAdapter);
+      break;
+    case CMD_QUERY_SCANLINE:
+      rc = DoQueryScanline(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs);
+      break;
+    case CMD_MAP_SHARED_HANDLE:
+      rc = DoMapSharedHandle(&f, open.hAdapter, mapSharedHandle);
+      break;
+    case CMD_READ_GPA:
+      rc = DoReadGpa(&f, open.hAdapter, readGpa, readGpaSizeBytes, readGpaOutFile);
+      break;
+    case CMD_SELFTEST:
+      rc = DoSelftest(&f, open.hAdapter, timeoutMs);
+      break;
+    default:
+      rc = 1;
+      break;
+    }
   }
 
   if (skipCloseAdapter || InterlockedCompareExchange(&g_skip_close_adapter, 0, 0) != 0) {
