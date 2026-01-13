@@ -788,6 +788,16 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
         };
         match inst {
             Sm4Inst::Mov { dst: _, src } => scan_src_regs(src, &mut scan_reg),
+            Sm4Inst::Movc {
+                dst: _,
+                cond,
+                a,
+                b,
+            } => {
+                scan_src_regs(cond, &mut scan_reg);
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+            }
             Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
             | Sm4Inst::Dp3 { dst: _, a, b }

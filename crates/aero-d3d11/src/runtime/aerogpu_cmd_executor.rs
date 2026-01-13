@@ -2371,6 +2371,7 @@ impl AerogpuD3d11Executor {
                         legacy_constants: &self.legacy_constants,
                         cbuffer_scratch: &self.cbuffer_scratch,
                         dummy_uniform: &self.dummy_uniform,
+                        dummy_storage: &self.dummy_storage,
                         dummy_texture_view: &self.dummy_texture_view,
                         default_sampler: &self.default_sampler,
                         stage,
@@ -2393,6 +2394,7 @@ impl AerogpuD3d11Executor {
                         legacy_constants: &self.legacy_constants,
                         cbuffer_scratch: &self.cbuffer_scratch,
                         dummy_uniform: &self.dummy_uniform,
+                        dummy_storage: &self.dummy_storage,
                         dummy_texture_view: &self.dummy_texture_view,
                         default_sampler: &self.default_sampler,
                         stage,
@@ -2545,9 +2547,19 @@ impl AerogpuD3d11Executor {
                             self.encoder_used_textures.insert(tex.texture);
                         }
                     }
+                    crate::BindingKind::SrvBuffer { slot } => {
+                        if let Some(buf) = stage_bindings.srv_buffer(*slot) {
+                            self.encoder_used_buffers.insert(buf.buffer);
+                        }
+                    }
                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
                             self.encoder_used_buffers.insert(cb.buffer);
+                        }
+                    }
+                    crate::BindingKind::UavBuffer { slot } => {
+                        if let Some(buf) = stage_bindings.uav_buffer(*slot) {
+                            self.encoder_used_buffers.insert(buf.buffer);
                         }
                     }
                     crate::BindingKind::Sampler { .. } => {}
