@@ -27,6 +27,8 @@ volatile const UCHAR* WdfTestLastReadRegisterUcharAddress;
 /* Optional instrumentation hooks for our stub ntddk.h READ/WRITE_REGISTER_USHORT. */
 PFN_WDF_TEST_READ_REGISTER_USHORT WdfTestReadRegisterUshortHook;
 PFN_WDF_TEST_WRITE_REGISTER_USHORT WdfTestWriteRegisterUshortHook;
+/* Instrumentation hook consumed by our stub wdf.h spinlock acquire/release. */
+ULONGLONG WdfTestSpinLockSequence;
 
 typedef struct _TEST_CALLBACKS {
     WDFDEVICE ExpectedDevice;
@@ -135,6 +137,11 @@ static USHORT ReadCommonCfgQueueVector(_Inout_ volatile VIRTIO_PCI_COMMON_CFG* C
     return READ_REGISTER_USHORT(&CommonCfg->queue_msix_vector);
 }
 
+static void ResetSpinLockInstrumentation(void)
+{
+    WdfTestSpinLockSequence = 0;
+}
+
 static void PrepareIntx(
     _Out_ PVIRTIO_PCI_INTERRUPTS Interrupts,
     _Out_ WDFDEVICE* DeviceOut,
@@ -191,7 +198,8 @@ static void PrepareMsix(
     _Out_ WDFDEVICE* DeviceOut,
     _Inout_ TEST_CALLBACKS* Callbacks,
     _In_ ULONG QueueCount,
-    _In_ ULONG MessageCount)
+    _In_ ULONG MessageCount,
+    _Out_opt_ WDFSPINLOCK* CommonCfgLockOut)
 {
     WDFDEVICE dev;
     CM_PARTIAL_RESOURCE_DESCRIPTOR rawDesc;
@@ -199,6 +207,7 @@ static void PrepareMsix(
     WDFCMRESLIST__ rawList;
     WDFCMRESLIST__ transList;
     NTSTATUS st;
+    WDFSPINLOCK commonCfgLock;
 
     dev = WdfTestCreateDevice();
     assert(dev != NULL);
@@ -221,6 +230,16 @@ static void PrepareMsix(
     ResetCallbacks(Callbacks);
     Callbacks->ExpectedDevice = dev;
 
+    commonCfgLock = NULL;
+    if (CommonCfgLockOut != NULL) {
+        WDF_OBJECT_ATTRIBUTES lockAttributes;
+        WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
+        lockAttributes.ParentObject = dev;
+        st = WdfSpinLockCreate(&lockAttributes, &commonCfgLock);
+        assert(st == STATUS_SUCCESS);
+        *CommonCfgLockOut = commonCfgLock;
+    }
+
     st = VirtioPciInterruptsPrepareHardware(
         dev,
         Interrupts,
@@ -228,7 +247,7 @@ static void PrepareMsix(
         &transList,
         QueueCount,
         NULL, /* ISR status register is INTx-only. */
-        NULL,
+        commonCfgLock,
         TestEvtConfigChange,
         TestEvtDrainQueue,
         Callbacks);
@@ -330,7 +349,7 @@ static void TestMsixDispatchAndRouting(void)
     BOOLEAN handled;
 
     ResetRegisterReadInstrumentation();
-    PrepareMsix(&interrupts, &dev, &cb, 2, 3 /* config + 2 queues */);
+    PrepareMsix(&interrupts, &dev, &cb, 2, 3 /* config + 2 queues */, NULL);
 
     assert(interrupts.u.Msix.UsedVectorCount == 3);
     assert(interrupts.u.Msix.ConfigVector == 0);
@@ -386,7 +405,7 @@ static void TestMsixLimitedVectorRouting(void)
     BOOLEAN handled;
 
     ResetRegisterReadInstrumentation();
-    PrepareMsix(&interrupts, &dev, &cb, 2, 2 /* only config + 1 queue vector */);
+    PrepareMsix(&interrupts, &dev, &cb, 2, 2 /* only config + 1 queue vector */, NULL);
 
     assert(interrupts.u.Msix.UsedVectorCount == 2);
     assert(interrupts.u.Msix.ConfigVector == 0);
@@ -475,7 +494,7 @@ static void TestResetInProgressGating(void)
      * MSI-X: while reset is in progress, ISR should return TRUE but not queue
      * a DPC.
      */
-    PrepareMsix(&interrupts, &dev, &cb, 2, 3);
+    PrepareMsix(&interrupts, &dev, &cb, 2, 3, NULL);
 
     InterlockedExchange(&interrupts.ResetInProgress, 1);
     handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
@@ -510,14 +529,20 @@ static void TestMsixQuiesceResumeVectors(void)
     WDFDEVICE dev;
     TEST_CALLBACKS cb;
     volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    WDFSPINLOCK commonCfgLock;
     NTSTATUS st;
     ULONG i;
     ULONG q;
+    ULONG commonCfgLockAcquireBefore;
+    ULONG commonCfgLockReleaseBefore;
+    BOOLEAN handled;
 
     memset((void*)&commonCfg, 0, sizeof(commonCfg));
     InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 2);
 
-    PrepareMsix(&interrupts, &dev, &cb, 2, 3 /* config + 2 queues */);
+    commonCfgLock = NULL;
+    PrepareMsix(&interrupts, &dev, &cb, 2, 3 /* config + 2 queues */, &commonCfgLock);
+    assert(commonCfgLock != NULL);
 
     /* Establish a known vector mapping and program the device. */
     interrupts.u.Msix.ConfigVector = 0;
@@ -536,19 +561,45 @@ static void TestMsixQuiesceResumeVectors(void)
         assert(interrupts.u.Msix.Interrupts[i]->Enabled == TRUE);
     }
 
-    /* Quiesce: should gate DPCs, disable OS delivery, and clear device routing. */
+    commonCfgLockAcquireBefore = commonCfgLock->AcquireCalls;
+    commonCfgLockReleaseBefore = commonCfgLock->ReleaseCalls;
+    ResetSpinLockInstrumentation();
+
+    /* Quiesce: gate DPCs, disable OS delivery, clear device routing, sync locks. */
     st = VirtioPciInterruptsQuiesce(&interrupts, &commonCfg);
     assert(st == STATUS_SUCCESS);
 
     assert(InterlockedCompareExchange(&interrupts.ResetInProgress, 0, 0) != 0);
     for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
         assert(interrupts.u.Msix.Interrupts[i]->Enabled == FALSE);
+        assert(interrupts.u.Msix.Interrupts[i]->DisableCalls == 1);
     }
+
+    /* CommonCfg lock should serialize MSI-X vector clearing. */
+    assert(commonCfgLock->AcquireCalls == commonCfgLockAcquireBefore + 1);
+    assert(commonCfgLock->ReleaseCalls == commonCfgLockReleaseBefore + 1);
+
+    /* Quiesce must synchronize with config + per-queue locks. */
+    assert(interrupts.ConfigLock->AcquireCalls == 1);
+    assert(interrupts.ConfigLock->ReleaseCalls == 1);
+    assert(interrupts.QueueLocks[0]->AcquireCalls == 1);
+    assert(interrupts.QueueLocks[0]->ReleaseCalls == 1);
+    assert(interrupts.QueueLocks[1]->AcquireCalls == 1);
+    assert(interrupts.QueueLocks[1]->ReleaseCalls == 1);
+    assert(commonCfgLock->LastAcquireSequence < interrupts.ConfigLock->LastAcquireSequence);
+    assert(interrupts.ConfigLock->LastAcquireSequence < interrupts.QueueLocks[0]->LastAcquireSequence);
+    assert(interrupts.QueueLocks[0]->LastAcquireSequence < interrupts.QueueLocks[1]->LastAcquireSequence);
 
     assert(commonCfg.msix_config == VIRTIO_PCI_MSI_NO_VECTOR);
     for (q = 0; q < interrupts.QueueCount; q++) {
         assert(ReadCommonCfgQueueVector(&commonCfg, (USHORT)q) == VIRTIO_PCI_MSI_NO_VECTOR);
     }
+
+    /* ResetInProgress gating: ISR returns TRUE but does not queue a DPC. */
+    handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
+    assert(handled == TRUE);
+    assert(interrupts.u.Msix.Interrupts[1]->DpcQueueCalls == 0);
+    assert(interrupts.u.Msix.Interrupts[1]->DpcQueued == FALSE);
 
     /* Resume: should restore routing and re-enable OS delivery. */
     st = VirtioPciInterruptsResume(&interrupts, &commonCfg);
@@ -557,6 +608,7 @@ static void TestMsixQuiesceResumeVectors(void)
     assert(InterlockedCompareExchange(&interrupts.ResetInProgress, 0, 0) == 0);
     for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
         assert(interrupts.u.Msix.Interrupts[i]->Enabled == TRUE);
+        assert(interrupts.u.Msix.Interrupts[i]->EnableCalls == 1);
     }
 
     assert(commonCfg.msix_config == interrupts.u.Msix.ConfigVector);
@@ -568,6 +620,126 @@ static void TestMsixQuiesceResumeVectors(void)
     UninstallCommonCfgQueueVectorWindowHooks();
 }
 
+static void TestIntxQuiesceResume(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    volatile UCHAR isrStatus;
+    NTSTATUS st;
+    BOOLEAN handled;
+
+    isrStatus = (UCHAR)(VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT);
+    PrepareIntx(&interrupts, &dev, &cb, 2, &isrStatus);
+
+    assert(interrupts.ResetInProgress == 0);
+    assert(interrupts.u.Intx.Interrupt->Enabled == TRUE);
+
+    ResetSpinLockInstrumentation();
+    st = VirtioPciInterruptsQuiesce(&interrupts, NULL);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.ResetInProgress == 1);
+    assert(interrupts.u.Intx.Interrupt->Enabled == FALSE);
+    assert(interrupts.u.Intx.Interrupt->DisableCalls == 1);
+
+    /* Quiesce must synchronize with the ConfigLock and per-queue locks. */
+    assert(interrupts.ConfigLock->AcquireCalls == 1);
+    assert(interrupts.ConfigLock->ReleaseCalls == 1);
+    assert(interrupts.QueueLocks[0]->AcquireCalls == 1);
+    assert(interrupts.QueueLocks[0]->ReleaseCalls == 1);
+    assert(interrupts.QueueLocks[1]->AcquireCalls == 1);
+    assert(interrupts.QueueLocks[1]->ReleaseCalls == 1);
+    assert(interrupts.ConfigLock->LastAcquireSequence < interrupts.QueueLocks[0]->LastAcquireSequence);
+    assert(interrupts.QueueLocks[0]->LastAcquireSequence < interrupts.QueueLocks[1]->LastAcquireSequence);
+
+    /*
+     * While quiesced/resetting, ISR must still read-to-ack but must not queue a
+     * DPC (ResetInProgress gating).
+     */
+    ResetCallbacks(&cb);
+    cb.ExpectedDevice = dev;
+    isrStatus = (UCHAR)(VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT);
+    ResetRegisterReadInstrumentation();
+    handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
+    assert(handled == TRUE);
+    assert(interrupts.u.Intx.Interrupt->DpcQueued == FALSE);
+    assert(interrupts.u.Intx.Interrupt->DpcQueueCalls == 0);
+    assert(cb.ConfigCalls == 0);
+    assert(cb.QueueCallsTotal == 0);
+    assert(WdfTestReadRegisterUcharCount == 1);
+
+    st = VirtioPciInterruptsResume(&interrupts, NULL);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.ResetInProgress == 0);
+    assert(interrupts.u.Intx.Interrupt->Enabled == TRUE);
+    assert(interrupts.u.Intx.Interrupt->EnableCalls == 1);
+
+    /* After resume, interrupts should dispatch again. */
+    ResetCallbacks(&cb);
+    cb.ExpectedDevice = dev;
+    isrStatus = (UCHAR)(VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT);
+    handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
+    assert(handled == TRUE);
+    assert(interrupts.u.Intx.Interrupt->DpcQueued == TRUE);
+    WdfTestInterruptRunDpc(interrupts.u.Intx.Interrupt);
+    assert(cb.ConfigCalls == 1);
+    assert(cb.QueueCallsTotal == 2);
+
+    Cleanup(&interrupts, dev);
+}
+
+static volatile const USHORT* gTestReadUshortFailAddress;
+
+static USHORT TestReadRegisterUshortFailOnce(_In_ volatile const USHORT* Register)
+{
+    if (gTestReadUshortFailAddress != NULL && Register == gTestReadUshortFailAddress) {
+        return VIRTIO_PCI_MSI_NO_VECTOR;
+    }
+
+    return *Register;
+}
+
+static void TestMsixResumeVectorReadbackFailure(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    WDFSPINLOCK commonCfgLock;
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    NTSTATUS st;
+
+    commonCfgLock = NULL;
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+
+    PrepareMsix(&interrupts, &dev, &cb, 2, 3, &commonCfgLock);
+    assert(commonCfgLock != NULL);
+
+    /* Quiesce puts us in the normal "reset in progress" state. */
+    st = VirtioPciInterruptsQuiesce(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.ResetInProgress == 1);
+
+    /* Simulate a device that rejects MSI-X vector programming via readback. */
+    gTestReadUshortFailAddress = (volatile const USHORT*)&commonCfg.msix_config;
+    WdfTestReadRegisterUshortHook = TestReadRegisterUshortFailOnce;
+    WdfTestWriteRegisterUshortHook = NULL;
+
+    st = VirtioPciInterruptsResume(&interrupts, &commonCfg);
+    assert(st == STATUS_DEVICE_HARDWARE_ERROR);
+
+    /* Resume failure must not re-enable interrupts or clear ResetInProgress. */
+    assert(interrupts.ResetInProgress == 1);
+    for (ULONG i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
+        assert(interrupts.u.Msix.Interrupts[i]->Enabled == FALSE);
+        assert(interrupts.u.Msix.Interrupts[i]->EnableCalls == 0);
+    }
+
+    gTestReadUshortFailAddress = NULL;
+    WdfTestReadRegisterUshortHook = NULL;
+
+    Cleanup(&interrupts, dev);
+}
+
 int main(void)
 {
     TestIntxSpuriousInterrupt();
@@ -576,6 +748,8 @@ int main(void)
     TestMsixLimitedVectorRouting();
     TestResetInProgressGating();
     TestMsixQuiesceResumeVectors();
+    TestIntxQuiesceResume();
+    TestMsixResumeVectorReadbackFailure();
     printf("virtio_pci_interrupts_host_tests: PASS\n");
     return 0;
 }

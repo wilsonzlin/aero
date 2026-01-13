@@ -16,6 +16,14 @@
 /* Generic WDF object handle type */
 typedef void* WDFOBJECT;
 
+/*
+ * Host-test instrumentation
+ *
+ * Use a single monotonically increasing sequence so tests can reason about
+ * relative ordering of Acquire/Release calls across different spinlocks.
+ */
+extern ULONGLONG WdfTestSpinLockSequence;
+
 /* Forward declarations for typed handles (opaque in real KMDF). */
 typedef struct WDFDEVICE__* WDFDEVICE;
 typedef struct WDFINTERRUPT__* WDFINTERRUPT;
@@ -101,6 +109,11 @@ struct WDFDEVICE__ {
 
 struct WDFSPINLOCK__ {
     WDF_OBJECT_HEADER Header;
+    ULONG AcquireCalls;
+    ULONG ReleaseCalls;
+    ULONGLONG LastAcquireSequence;
+    ULONGLONG LastReleaseSequence;
+    BOOLEAN Held;
 };
 
 struct WDFMEMORY__ {
@@ -120,6 +133,8 @@ struct WDFINTERRUPT__ {
     ULONG MessageNumber;
 
     BOOLEAN Enabled;
+    ULONG DisableCalls;
+    ULONG EnableCalls;
 
     /* Host test scheduling state. */
     BOOLEAN DpcQueued;
@@ -294,12 +309,24 @@ static __forceinline NTSTATUS WdfSpinLockCreate(_In_opt_ const WDF_OBJECT_ATTRIB
 
 static __forceinline VOID WdfSpinLockAcquire(_In_opt_ WDFSPINLOCK SpinLock)
 {
-    (VOID)SpinLock;
+    if (SpinLock == NULL) {
+        return;
+    }
+
+    SpinLock->AcquireCalls++;
+    SpinLock->Held = TRUE;
+    SpinLock->LastAcquireSequence = ++WdfTestSpinLockSequence;
 }
 
 static __forceinline VOID WdfSpinLockRelease(_In_opt_ WDFSPINLOCK SpinLock)
 {
-    (VOID)SpinLock;
+    if (SpinLock == NULL) {
+        return;
+    }
+
+    SpinLock->ReleaseCalls++;
+    SpinLock->Held = FALSE;
+    SpinLock->LastReleaseSequence = ++WdfTestSpinLockSequence;
 }
 
 /* Memory stubs */
@@ -378,6 +405,7 @@ static __forceinline NTSTATUS WdfInterruptDisable(_In_ WDFINTERRUPT Interrupt)
     if (Interrupt == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    Interrupt->DisableCalls++;
     Interrupt->Enabled = FALSE;
     return STATUS_SUCCESS;
 }
@@ -387,6 +415,7 @@ static __forceinline NTSTATUS WdfInterruptEnable(_In_ WDFINTERRUPT Interrupt)
     if (Interrupt == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    Interrupt->EnableCalls++;
     Interrupt->Enabled = TRUE;
     return STATUS_SUCCESS;
 }
