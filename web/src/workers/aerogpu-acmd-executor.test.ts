@@ -231,4 +231,75 @@ describe("workers/aerogpu-acmd-executor", () => {
       expect(guestU8[expected.length]).toBe(0xee);
     }
   });
+
+  it("supports UPLOAD_RESOURCE uploads to mip+array subresources", () => {
+    const width = 4;
+    const height = 4;
+    const mipLevels = 3;
+    const arrayLayers = 2;
+
+    // Target subresource: mip1/layer1 (subresource index = 1 + 1*mipLevels = 4).
+    const mipLevel = 1;
+    const arrayLayer = 1;
+    const subresourceIndex = mipLevel + arrayLayer * mipLevels;
+
+    // Canonical packed layout: each array layer stores mip0..mipN sequentially.
+    const layerStrideBytes = width * height * 4 + 2 * 2 * 4 + 1 * 1 * 4;
+    const mip1OffsetBytes = width * height * 4;
+    const offsetBytes = layerStrideBytes * arrayLayer + mip1OffsetBytes;
+
+    const uploadPixels = new Uint8Array(2 * 2 * 4);
+    uploadPixels.fill(0xab);
+
+    const createSize = AEROGPU_CMD_CREATE_TEXTURE2D_SIZE;
+    const uploadSize = AEROGPU_CMD_UPLOAD_RESOURCE_SIZE + uploadPixels.byteLength;
+    const streamSize = AEROGPU_CMD_STREAM_HEADER_SIZE + createSize + uploadSize;
+
+    const buf = new ArrayBuffer(streamSize);
+    const dv = new DataView(buf);
+
+    dv.setUint32(0, AEROGPU_CMD_STREAM_MAGIC, true);
+    dv.setUint32(4, AEROGPU_ABI_VERSION_U32, true);
+    dv.setUint32(8, streamSize, true);
+    dv.setUint32(12, 0, true); // flags
+    dv.setUint32(16, 0, true); // reserved0
+    dv.setUint32(20, 0, true); // reserved1
+
+    let off = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+    // CREATE_TEXTURE2D (host-owned)
+    dv.setUint32(off + 0, AerogpuCmdOpcode.CreateTexture2d, true);
+    dv.setUint32(off + 4, createSize, true);
+    dv.setUint32(off + 8, 1, true); // texture_handle
+    dv.setUint32(off + 12, 0, true); // usage_flags
+    dv.setUint32(off + 16, AerogpuFormat.R8G8B8A8Unorm, true);
+    dv.setUint32(off + 20, width, true);
+    dv.setUint32(off + 24, height, true);
+    dv.setUint32(off + 28, mipLevels, true);
+    dv.setUint32(off + 32, arrayLayers, true);
+    dv.setUint32(off + 36, 0, true); // row_pitch_bytes
+    dv.setUint32(off + 40, 0, true); // backing_alloc_id
+    dv.setUint32(off + 44, 0, true); // backing_offset_bytes
+    dv.setBigUint64(off + 48, 0n, true); // reserved0
+    off += createSize;
+
+    // UPLOAD_RESOURCE mip1/layer1
+    dv.setUint32(off + 0, AerogpuCmdOpcode.UploadResource, true);
+    dv.setUint32(off + 4, uploadSize, true);
+    dv.setUint32(off + 8, 1, true); // resource_handle
+    dv.setUint32(off + 12, 0, true); // reserved0
+    dv.setBigUint64(off + 16, BigInt(offsetBytes), true);
+    dv.setBigUint64(off + 24, BigInt(uploadPixels.byteLength), true);
+    new Uint8Array(buf, off + AEROGPU_CMD_UPLOAD_RESOURCE_SIZE, uploadPixels.byteLength).set(uploadPixels);
+
+    const state = createAerogpuCpuExecutorState();
+    executeAerogpuCmdStream(state, buf, { allocTable: null, guestU8: null });
+
+    const tex = state.textures.get(1);
+    expect(tex).toBeTruthy();
+    if (!tex) throw new Error("missing texture handle 1");
+
+    expect(tex.subresources.length).toBe(mipLevels * arrayLayers);
+    expect(Array.from(tex.subresources[subresourceIndex] ?? [])).toEqual(Array.from(uploadPixels));
+  });
 });

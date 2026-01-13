@@ -62,6 +62,12 @@ export type AeroGpuCpuTexture = {
   /// Per-subresource guest backing layout for the packed chain, expressed relative to the start of
   /// the resource (i.e. `backing.offsetBytes` is added separately).
   subresourceLayouts: AeroGpuTextureSubresourceLayout[];
+  /// Raw packed texture bytes as last established via `UPLOAD_RESOURCE`.
+  ///
+  /// This stores the guest UMD's canonical packed `(array_layer, mip_level)` layout for the full
+  /// mip+array chain. `UPLOAD_RESOURCE` patches are applied into this buffer, and then any affected
+  /// subresources are decoded into the RGBA8 `subresources[]` views.
+  uploadShadow?: Uint8Array;
   backing?: { allocId: number; offsetBytes: number };
 };
 
@@ -1050,59 +1056,46 @@ export const executeAerogpuCmdStream = (
           throw new Error(`aerogpu: UPLOAD_RESOURCE references unknown resource handle ${handleRaw} (resolved=${handle})`);
         }
 
-        const bytesPerRow = tex.width * 4;
-        const linearSizeBig = BigInt(tex.rowPitchBytes) * BigInt(tex.height);
-        if (linearSizeBig > BigInt(Number.MAX_SAFE_INTEGER)) {
-          throw new Error(`aerogpu: UPLOAD_RESOURCE texture too large for JS (${linearSizeBig} bytes)`);
-        }
-        const linearSize = Number(linearSizeBig);
-        if (offsetBytes + uploadBytes > linearSize) {
+        const totalBackingBytes = tex.totalBackingSizeBytes;
+        if (offsetBytes + uploadBytes > totalBackingBytes) {
           throw new Error(
-            `aerogpu: UPLOAD_RESOURCE out of bounds (offset=${offsetBytes}, size=${uploadBytes}, texBytes=${linearSize})`,
+            `aerogpu: UPLOAD_RESOURCE out of bounds (offset=${offsetBytes}, size=${uploadBytes}, texBytes=${totalBackingBytes})`,
           );
         }
-
-        const dstBytes = tex.data;
-        if (tex.rowPitchBytes === bytesPerRow) {
-          // Common case: tightly packed rows.
-          if (offsetBytes + uploadBytes > dstBytes.byteLength) {
-            throw new Error(
-              `aerogpu: UPLOAD_RESOURCE out of bounds (offset=${offsetBytes}, size=${uploadBytes}, texBytes=${dstBytes.byteLength})`,
-            );
-          }
-
-          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM || tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
-            dstBytes.set(srcBytes, offsetBytes);
-            break;
-          }
-
-          if (offsetBytes % 4 !== 0 || uploadBytes % 4 !== 0) {
-            throw new Error("aerogpu: UPLOAD_RESOURCE texture uploads must be 4-byte aligned");
-          }
-          for (let i = 0; i < uploadBytes; i += 4) {
-            readTexelIntoRgba(tex.format, srcBytes, i, dstBytes, offsetBytes + i);
-          }
-          break;
+        if (
+          tex.format !== AEROGPU_FORMAT_R8G8B8A8_UNORM &&
+          tex.format !== AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB &&
+          (offsetBytes % 4 !== 0 || uploadBytes % 4 !== 0)
+        ) {
+          throw new Error("aerogpu: UPLOAD_RESOURCE texture uploads must be 4-byte aligned");
         }
 
-        // Row-pitched uploads: only support full texture uploads for now and ignore per-row padding.
-        if (offsetBytes !== 0 || uploadBytes !== linearSize) {
-          throw new Error(
-            `aerogpu: UPLOAD_RESOURCE requires full texture upload when row_pitch_bytes != width*4 (offset=${offsetBytes}, size=${uploadBytes}, expected=${linearSize})`,
-          );
+        if (!tex.uploadShadow || tex.uploadShadow.byteLength !== totalBackingBytes) {
+          tex.uploadShadow = new Uint8Array(totalBackingBytes);
         }
+        tex.uploadShadow.set(srcBytes, offsetBytes);
 
-        for (let row = 0; row < tex.height; row += 1) {
-          const srcRowOff = row * tex.rowPitchBytes;
-          const dstRowOff = row * bytesPerRow;
+        const uploadStart = offsetBytes;
+        const uploadEnd = offsetBytes + uploadBytes;
+        for (let i = 0; i < tex.subresourceLayouts.length; i += 1) {
+          const layout = tex.subresourceLayouts[i]!;
+          const subStart = layout.offsetBytes;
+          const subEnd = subStart + layout.sizeBytes;
+          if (subEnd <= uploadStart || subStart >= uploadEnd) continue;
 
-          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM || tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
-            dstBytes.set(srcBytes.subarray(srcRowOff, srcRowOff + bytesPerRow), dstRowOff);
-            continue;
-          }
-
-          for (let i = 0; i < bytesPerRow; i += 4) {
-            readTexelIntoRgba(tex.format, srcBytes, srcRowOff + i, dstBytes, dstRowOff + i);
+          const shadow = tex.uploadShadow.subarray(subStart, subEnd);
+          const dstRgba8 = tex.subresources[i]!;
+          const rowBytes = layout.width * 4;
+          for (let y = 0; y < layout.height; y += 1) {
+            const srcRowOff = y * layout.rowPitchBytes;
+            const dstRowOff = y * rowBytes;
+            if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM || tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
+              dstRgba8.set(shadow.subarray(srcRowOff, srcRowOff + rowBytes), dstRowOff);
+              continue;
+            }
+            for (let x = 0; x < rowBytes; x += 4) {
+              readTexelIntoRgba(tex.format, shadow, srcRowOff + x, dstRgba8, dstRowOff + x);
+            }
           }
         }
         break;

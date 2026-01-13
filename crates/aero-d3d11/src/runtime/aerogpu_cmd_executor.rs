@@ -562,11 +562,21 @@ struct Texture2dResource {
     guest_backing_is_current: bool,
     /// CPU shadow for textures updated via `UPLOAD_RESOURCE`.
     ///
-    /// The command stream expresses uploads as a linear byte range, but WebGPU uploads are 2D. For
-    /// partial updates we patch into this shadow buffer and then re-upload the full texture.
+    /// The command stream expresses uploads as a linear byte range into the guest UMD's canonical
+    /// packed `(array_layer, mip_level)` layout for the full mip+array chain (see
+    /// `compute_guest_texture_layout`), but WebGPU uploads are 2D per-subresource. For partial
+    /// updates we patch into this shadow buffer and then re-upload the affected subresource(s).
     ///
     /// The shadow is invalidated when the texture is written by GPU operations (draw/clear/copy).
     host_shadow: Option<Vec<u8>>,
+    /// Per-subresource validity for `host_shadow`.
+    ///
+    /// Indexing matches `compute_guest_texture_layout`: `array_layer * mip_level_count + mip_level`.
+    ///
+    /// A subresource is considered valid if all bytes for that mip/layer are present in
+    /// `host_shadow` and match the GPU contents. This is used to prevent partial `UPLOAD_RESOURCE`
+    /// patches from overwriting bytes we don't have.
+    host_shadow_valid: Vec<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -1418,6 +1428,15 @@ impl AerogpuD3d11Executor {
     }
 
     pub async fn read_texture_rgba8(&self, texture_id: u32) -> Result<Vec<u8>> {
+        self.read_texture_rgba8_subresource(texture_id, 0, 0).await
+    }
+
+    pub async fn read_texture_rgba8_subresource(
+        &self,
+        texture_id: u32,
+        mip_level: u32,
+        array_layer: u32,
+    ) -> Result<Vec<u8>> {
         // Test/emulator helper: see `texture_size`.
         let texture_id = self.shared_surfaces.resolve_handle(texture_id);
         let texture = self
@@ -1426,8 +1445,22 @@ impl AerogpuD3d11Executor {
             .get(&texture_id)
             .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?;
 
-        let width = texture.desc.width;
-        let height = texture.desc.height;
+        if mip_level >= texture.desc.mip_level_count {
+            bail!(
+                "read_texture_rgba8_subresource: mip_level out of bounds (mip_level={mip_level}, mip_levels={})",
+                texture.desc.mip_level_count
+            );
+        }
+        if array_layer >= texture.desc.array_layers {
+            bail!(
+                "read_texture_rgba8_subresource: array_layer out of bounds (array_layer={array_layer}, array_layers={})",
+                texture.desc.array_layers
+            );
+        }
+
+        let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
+        let width = mip_extent(texture.desc.width, mip_level);
+        let height = mip_extent(texture.desc.height, mip_level);
 
         // Some backends (notably GL) can behave strangely when attempting to copy compressed
         // texture formats directly to a buffer. For tests, we instead render BC textures into an
@@ -1461,9 +1494,9 @@ impl AerogpuD3d11Executor {
                 format: None,
                 dimension: Some(wgpu::TextureViewDimension::D2),
                 aspect: wgpu::TextureAspect::All,
-                base_mip_level: 0,
+                base_mip_level: mip_level,
                 mip_level_count: Some(1),
-                base_array_layer: 0,
+                base_array_layer: array_layer,
                 array_layer_count: Some(1),
             });
 
@@ -1759,8 +1792,12 @@ impl AerogpuD3d11Executor {
         encoder.copy_texture_to_buffer(
             wgpu::ImageCopyTexture {
                 texture: &texture.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
+                mip_level,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: array_layer,
+                },
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::ImageCopyBuffer {
@@ -2603,12 +2640,14 @@ impl AerogpuD3d11Executor {
         for &handle in render_targets.iter().flatten() {
             if let Some(tex) = self.resources.textures.get_mut(&handle) {
                 tex.host_shadow = None;
+                tex.host_shadow_valid.clear();
                 tex.guest_backing_is_current = false;
             }
         }
         if let Some(handle) = depth_stencil {
             if let Some(tex) = self.resources.textures.get_mut(&handle) {
                 tex.host_shadow = None;
+                tex.host_shadow_valid.clear();
                 tex.guest_backing_is_current = false;
             }
         }
@@ -3512,12 +3551,14 @@ impl AerogpuD3d11Executor {
         for &handle in render_targets.iter().flatten() {
             if let Some(tex) = self.resources.textures.get_mut(&handle) {
                 tex.host_shadow = None;
+                tex.host_shadow_valid.clear();
                 tex.guest_backing_is_current = false;
             }
         }
         if let Some(handle) = depth_stencil {
             if let Some(tex) = self.resources.textures.get_mut(&handle) {
                 tex.host_shadow = None;
+                tex.host_shadow_valid.clear();
                 tex.guest_backing_is_current = false;
             }
         }
@@ -5964,6 +6005,7 @@ impl AerogpuD3d11Executor {
                 dirty: backing.is_some(),
                 guest_backing_is_current: false,
                 host_shadow: None,
+                host_shadow_valid: Vec::new(),
             },
         );
         self.shared_surfaces.register_handle(texture_handle);
@@ -6151,6 +6193,7 @@ impl AerogpuD3d11Executor {
             }
             tex.dirty = true;
             tex.host_shadow = None;
+            tex.host_shadow_valid.clear();
             tex.guest_backing_is_current = false;
         }
         Ok(())
@@ -6264,318 +6307,344 @@ impl AerogpuD3d11Executor {
             return Ok(());
         }
 
-        let Some((desc, format_u32, row_pitch_bytes, shadow_len)) =
-            self.resources.textures.get(&handle).map(|tex| {
-                (
-                    tex.desc,
-                    tex.format_u32,
-                    tex.row_pitch_bytes,
-                    tex.host_shadow.as_ref().map(|v| v.len()),
-                )
-            })
+        let Some((desc, format_u32, row_pitch_bytes)) = self
+            .resources
+            .textures
+            .get(&handle)
+            .map(|tex| (tex.desc, tex.format_u32, tex.row_pitch_bytes))
         else {
             return Ok(());
         };
 
-        // Texture uploads are expressed as a linear byte range into mip0/layer0.
-        //
-        // WebGPU uploads are 2D; for partial updates we patch into a CPU shadow buffer and then
-        // re-upload the full texture.
+        // Texture uploads are expressed as a linear byte range into the guest UMD's canonical
+        // packed mip+array layout (see `CREATE_TEXTURE2D`/`compute_guest_texture_layout`).
         let format_layout = aerogpu_texture_format_layout(format_u32)
             .context("UPLOAD_RESOURCE: unknown texture format")?;
-        let bytes_per_row = if row_pitch_bytes != 0 {
-            row_pitch_bytes
-        } else {
-            format_layout
-                .bytes_per_row_tight(desc.width)
-                .context("UPLOAD_RESOURCE: compute bytes_per_row")?
-        };
-        let rows = format_layout.rows(desc.height) as u64;
-        let expected = (bytes_per_row as u64).saturating_mul(rows);
+        let guest_layout = compute_guest_texture_layout(
+            format_u32,
+            desc.width,
+            desc.height,
+            desc.mip_level_count,
+            desc.array_layers,
+            row_pitch_bytes,
+        )
+        .context("UPLOAD_RESOURCE: compute guest layout")?;
 
         let end = offset
             .checked_add(size)
             .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: upload range overflows u64"))?;
-        if end > expected {
+        if end > guest_layout.total_size {
             bail!("UPLOAD_RESOURCE: texture upload out of bounds");
         }
 
-        let expected_usize: usize = expected
+        let total_size_usize: usize = guest_layout
+            .total_size
             .try_into()
-            .map_err(|_| anyhow!("UPLOAD_RESOURCE: texture upload size out of range"))?;
+            .map_err(|_| anyhow!("UPLOAD_RESOURCE: texture size out of range"))?;
         let offset_usize: usize = offset
             .try_into()
             .map_err(|_| anyhow!("UPLOAD_RESOURCE: offset out of range"))?;
         let end_usize: usize = end
             .try_into()
             .map_err(|_| anyhow!("UPLOAD_RESOURCE: end out of range"))?;
-
-        if offset == 0 && size == expected {
-            let tex = self
-                .resources
-                .textures
-                .get_mut(&handle)
-                .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: unknown texture {handle}"))?;
-            if format_layout.is_block_compressed() {
-                let tight_bpr = format_layout
-                    .bytes_per_row_tight(desc.width)
-                    .context("UPLOAD_RESOURCE: compute BC tight bytes_per_row")?;
-                if bytes_per_row < tight_bpr {
-                    bail!("UPLOAD_RESOURCE: BC bytes_per_row too small");
-                }
-                let rows_u32: u32 = format_layout.rows(desc.height);
-                let rows_usize: usize = rows_u32
-                    .try_into()
-                    .map_err(|_| anyhow!("UPLOAD_RESOURCE: BC rows out of range"))?;
-                let src_bpr_usize: usize = bytes_per_row
-                    .try_into()
-                    .map_err(|_| anyhow!("UPLOAD_RESOURCE: BC bytes_per_row out of range"))?;
-                let tight_bpr_usize: usize = tight_bpr
-                    .try_into()
-                    .map_err(|_| anyhow!("UPLOAD_RESOURCE: BC bytes_per_row out of range"))?;
-
-                let mut tight = vec![
-                    0u8;
-                    tight_bpr_usize.checked_mul(rows_usize).ok_or_else(
-                        || anyhow!("UPLOAD_RESOURCE: BC data size overflow")
-                    )?
-                ];
-                for row in 0..rows_usize {
-                    let src_start = row
-                        .checked_mul(src_bpr_usize)
-                        .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: BC src row offset overflow"))?;
-                    let dst_start = row
-                        .checked_mul(tight_bpr_usize)
-                        .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: BC dst row offset overflow"))?;
-                    tight[dst_start..dst_start + tight_bpr_usize].copy_from_slice(
-                        data.get(src_start..src_start + tight_bpr_usize)
-                            .ok_or_else(|| {
-                                anyhow!("UPLOAD_RESOURCE: BC source too small for row")
-                            })?,
-                    );
-                }
-
-                let (bc, block_bytes) = match format_layout {
-                    AerogpuTextureFormatLayout::BlockCompressed { bc, block_bytes } => {
-                        (bc, block_bytes)
-                    }
-                    _ => unreachable!(),
-                };
-                let expected_len = desc.width.div_ceil(4) as usize
-                    * desc.height.div_ceil(4) as usize
-                    * (block_bytes as usize);
-                if tight.len() != expected_len {
-                    bail!(
-                        "UPLOAD_RESOURCE: BC data length mismatch: expected {expected_len} bytes, got {}",
-                        tight.len()
-                    );
-                }
-                if bc_block_bytes(tex.desc.format).is_some() {
-                    // Upload BC blocks directly.
-                    write_texture_linear(
-                        &self.queue,
-                        &tex.texture,
-                        tex.desc,
-                        tight_bpr,
-                        &tight,
-                        false,
-                    )?;
-                } else {
-                    // Fall back to RGBA8 + CPU decompression.
-                    let rgba = match bc {
-                        AerogpuBcFormat::Bc1 => {
-                            aero_gpu::decompress_bc1_rgba8(desc.width, desc.height, &tight)
-                        }
-                        AerogpuBcFormat::Bc2 => {
-                            aero_gpu::decompress_bc2_rgba8(desc.width, desc.height, &tight)
-                        }
-                        AerogpuBcFormat::Bc3 => {
-                            aero_gpu::decompress_bc3_rgba8(desc.width, desc.height, &tight)
-                        }
-                        AerogpuBcFormat::Bc7 => {
-                            aero_gpu::decompress_bc7_rgba8(desc.width, desc.height, &tight)
-                        }
-                    };
-
-                    let rgba_bpr = desc.width.checked_mul(4).ok_or_else(|| {
-                        anyhow!("UPLOAD_RESOURCE: decompressed bytes_per_row overflow")
-                    })?;
-                    write_texture_linear(
-                        &self.queue,
-                        &tex.texture,
-                        tex.desc,
-                        rgba_bpr,
-                        &rgba,
-                        false,
-                    )?;
-                }
-            } else {
-                if let Some(b5_format) = aerogpu_b5_format(tex.format_u32) {
-                    let rgba = expand_b5_texture_to_rgba8(
-                        b5_format,
-                        desc.width,
-                        desc.height,
-                        bytes_per_row,
-                        data,
-                    )?;
-                    let rgba_bpr = desc.width.checked_mul(4).ok_or_else(|| {
-                        anyhow!("UPLOAD_RESOURCE: B5 expanded bytes_per_row overflow")
-                    })?;
-                    write_texture_linear(
-                        &self.queue,
-                        &tex.texture,
-                        tex.desc,
-                        rgba_bpr,
-                        &rgba,
-                        false,
-                    )?;
-                } else {
-                    write_texture_linear(
-                        &self.queue,
-                        &tex.texture,
-                        tex.desc,
-                        bytes_per_row,
-                        data,
-                        aerogpu_format_is_x8(tex.format_u32),
-                    )?;
-                }
-            }
-            tex.host_shadow = Some(data.to_vec());
-            tex.dirty = false;
-            // `UPLOAD_RESOURCE` writes are not reflected back into guest memory even for
-            // guest-backed textures.
-            tex.guest_backing_is_current = false;
-            return Ok(());
+        let size_usize: usize = size
+            .try_into()
+            .map_err(|_| anyhow!("UPLOAD_RESOURCE: size_bytes out of range"))?;
+        if data.len() != size_usize {
+            bail!(
+                "UPLOAD_RESOURCE: payload size mismatch (expected {size_usize} bytes, got {})",
+                data.len()
+            );
         }
 
-        let shadow_len = shadow_len.ok_or_else(|| {
-            anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload")
-        })?;
-        if shadow_len != expected_usize {
-            bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
-        }
+        let force_opaque_alpha = aerogpu_format_is_x8(format_u32);
+        let b5_format = aerogpu_b5_format(format_u32);
+        let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
 
         let tex = self
             .resources
             .textures
             .get_mut(&handle)
             .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: unknown texture {handle}"))?;
-        let shadow = tex.host_shadow.as_mut().ok_or_else(|| {
-            anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload")
-        })?;
-        if shadow.len() != expected_usize {
+
+        let subresource_count = desc
+            .mip_level_count
+            .checked_mul(desc.array_layers)
+            .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: subresource count overflows u32"))?;
+        let subresource_count_usize: usize = subresource_count
+            .try_into()
+            .map_err(|_| anyhow!("UPLOAD_RESOURCE: subresource count out of range"))?;
+
+        if tex.host_shadow_valid.len() != subresource_count_usize {
+            tex.host_shadow_valid = vec![false; subresource_count_usize];
+        }
+
+        // If any intersected subresource is only partially covered, require a valid CPU shadow for
+        // that subresource so we don't overwrite bytes we don't have.
+        for array_layer in 0..desc.array_layers {
+            let layer_offset = guest_layout
+                .layer_stride
+                .checked_mul(array_layer as u64)
+                .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: layer offset overflows u64"))?;
+            for mip_level in 0..desc.mip_level_count {
+                let mip_offset = *guest_layout
+                    .mip_offsets
+                    .get(mip_level as usize)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: missing mip offset"))?;
+                let row_pitch = *guest_layout
+                    .mip_row_pitches
+                    .get(mip_level as usize)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: missing mip row pitch"))?;
+                let rows_u32 = *guest_layout
+                    .mip_rows
+                    .get(mip_level as usize)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: missing mip row count"))?;
+
+                let sub_offset = layer_offset
+                    .checked_add(mip_offset)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: subresource offset overflows u64"))?;
+                let sub_size = u64::from(row_pitch)
+                    .checked_mul(u64::from(rows_u32))
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: subresource size overflows u64"))?;
+                let sub_end = sub_offset
+                    .checked_add(sub_size)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: subresource end overflows u64"))?;
+
+                if sub_offset >= end || sub_end <= offset {
+                    continue;
+                }
+
+                let fully_covered = offset <= sub_offset && end >= sub_end;
+                if fully_covered {
+                    continue;
+                }
+
+                let idx: usize = (array_layer as usize)
+                    .checked_mul(desc.mip_level_count as usize)
+                    .and_then(|v| v.checked_add(mip_level as usize))
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: subresource index overflow"))?;
+
+                let has_valid_shadow =
+                    tex.host_shadow.is_some() && tex.host_shadow_valid.get(idx).copied() == Some(true);
+                if !has_valid_shadow {
+                    bail!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload");
+                }
+            }
+        }
+
+        if tex
+            .host_shadow
+            .as_ref()
+            .is_some_and(|shadow| shadow.len() != total_size_usize)
+        {
             bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
         }
-        shadow[offset_usize..end_usize].copy_from_slice(data);
 
-        if format_layout.is_block_compressed() {
-            let tight_bpr = format_layout
-                .bytes_per_row_tight(desc.width)
-                .context("UPLOAD_RESOURCE: compute BC tight bytes_per_row")?;
-            if bytes_per_row < tight_bpr {
-                bail!("UPLOAD_RESOURCE: BC bytes_per_row too small");
-            }
-            let rows_u32: u32 = format_layout.rows(desc.height);
-            let rows_usize: usize = rows_u32
-                .try_into()
-                .map_err(|_| anyhow!("UPLOAD_RESOURCE: BC rows out of range"))?;
-            let src_bpr_usize: usize = bytes_per_row
-                .try_into()
-                .map_err(|_| anyhow!("UPLOAD_RESOURCE: BC bytes_per_row out of range"))?;
-            let tight_bpr_usize: usize = tight_bpr
-                .try_into()
-                .map_err(|_| anyhow!("UPLOAD_RESOURCE: BC bytes_per_row out of range"))?;
+        // Patch payload bytes into the CPU shadow buffer and then upload the affected subresource(s)
+        // via WebGPU's 2D copy APIs.
+        if tex.host_shadow.is_none() {
+            tex.host_shadow = Some(vec![0u8; total_size_usize]);
+        }
+        let shadow = tex
+            .host_shadow
+            .as_mut()
+            .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: internal error: missing shadow"))?;
+        shadow
+            .get_mut(offset_usize..end_usize)
+            .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: internal shadow slice out of range"))?
+            .copy_from_slice(data);
 
-            let mut tight =
-                vec![
-                    0u8;
-                    tight_bpr_usize
-                        .checked_mul(rows_usize)
-                        .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: BC data size overflow"))?
-                ];
-            for row in 0..rows_usize {
-                let src_start = row
-                    .checked_mul(src_bpr_usize)
-                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: BC src row offset overflow"))?;
-                let dst_start = row
-                    .checked_mul(tight_bpr_usize)
-                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: BC dst row offset overflow"))?;
-                tight[dst_start..dst_start + tight_bpr_usize].copy_from_slice(
-                    shadow
-                        .get(src_start..src_start + tight_bpr_usize)
-                        .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: BC shadow too small for row"))?,
-                );
-            }
+        for array_layer in 0..desc.array_layers {
+            let layer_offset = guest_layout
+                .layer_stride
+                .checked_mul(array_layer as u64)
+                .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: layer offset overflows u64"))?;
+            for mip_level in 0..desc.mip_level_count {
+                let mip_offset = *guest_layout
+                    .mip_offsets
+                    .get(mip_level as usize)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: missing mip offset"))?;
+                let row_pitch = *guest_layout
+                    .mip_row_pitches
+                    .get(mip_level as usize)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: missing mip row pitch"))?;
+                let rows_u32 = *guest_layout
+                    .mip_rows
+                    .get(mip_level as usize)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: missing mip row count"))?;
 
-            let (bc, block_bytes) = match format_layout {
-                AerogpuTextureFormatLayout::BlockCompressed { bc, block_bytes } => {
-                    (bc, block_bytes)
+                let sub_offset = layer_offset
+                    .checked_add(mip_offset)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: subresource offset overflows u64"))?;
+                let sub_size = u64::from(row_pitch)
+                    .checked_mul(u64::from(rows_u32))
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: subresource size overflows u64"))?;
+                let sub_end = sub_offset
+                    .checked_add(sub_size)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: subresource end overflows u64"))?;
+
+                // Skip subresources that do not intersect the uploaded byte range.
+                if sub_offset >= end || sub_end <= offset {
+                    continue;
                 }
-                _ => unreachable!(),
-            };
-            let expected_len = desc.width.div_ceil(4) as usize
-                * desc.height.div_ceil(4) as usize
-                * (block_bytes as usize);
-            if tight.len() != expected_len {
-                bail!(
-                    "UPLOAD_RESOURCE: BC data length mismatch: expected {expected_len} bytes, got {}",
-                    tight.len()
-                );
-            }
-            if bc_block_bytes(tex.desc.format).is_some() {
-                write_texture_linear(
-                    &self.queue,
-                    &tex.texture,
-                    tex.desc,
-                    tight_bpr,
-                    &tight,
-                    false,
-                )?;
-            } else {
-                let rgba = match bc {
-                    AerogpuBcFormat::Bc1 => {
-                        aero_gpu::decompress_bc1_rgba8(desc.width, desc.height, &tight)
-                    }
-                    AerogpuBcFormat::Bc2 => {
-                        aero_gpu::decompress_bc2_rgba8(desc.width, desc.height, &tight)
-                    }
-                    AerogpuBcFormat::Bc3 => {
-                        aero_gpu::decompress_bc3_rgba8(desc.width, desc.height, &tight)
-                    }
-                    AerogpuBcFormat::Bc7 => {
-                        aero_gpu::decompress_bc7_rgba8(desc.width, desc.height, &tight)
-                    }
+
+                let idx: usize = (array_layer as usize)
+                    .checked_mul(desc.mip_level_count as usize)
+                    .and_then(|v| v.checked_add(mip_level as usize))
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: subresource index overflow"))?;
+
+                let sub_start_usize: usize = sub_offset
+                    .try_into()
+                    .map_err(|_| anyhow!("UPLOAD_RESOURCE: subresource offset out of range"))?;
+                let sub_end_usize: usize = sub_end
+                    .try_into()
+                    .map_err(|_| anyhow!("UPLOAD_RESOURCE: subresource end out of range"))?;
+                let sub_bytes = shadow.get(sub_start_usize..sub_end_usize).ok_or_else(|| {
+                    anyhow!("UPLOAD_RESOURCE: internal shadow slice out of range")
+                })?;
+
+                let subresource = Texture2dSubresourceDesc {
+                    desc: tex.desc,
+                    mip_level,
+                    array_layer,
                 };
 
-                let rgba_bpr = desc.width.checked_mul(4).ok_or_else(|| {
-                    anyhow!("UPLOAD_RESOURCE: decompressed bytes_per_row overflow")
-                })?;
-                write_texture_linear(&self.queue, &tex.texture, tex.desc, rgba_bpr, &rgba, false)?;
-            }
-        } else {
-            if let Some(b5_format) = aerogpu_b5_format(tex.format_u32) {
-                let rgba = expand_b5_texture_to_rgba8(
-                    b5_format,
-                    desc.width,
-                    desc.height,
-                    bytes_per_row,
-                    shadow,
-                )?;
-                let rgba_bpr = desc.width.checked_mul(4).ok_or_else(|| {
-                    anyhow!("UPLOAD_RESOURCE: B5 expanded bytes_per_row overflow")
-                })?;
-                write_texture_linear(&self.queue, &tex.texture, tex.desc, rgba_bpr, &rgba, false)?;
-            } else {
-                write_texture_linear(
-                    &self.queue,
-                    &tex.texture,
-                    tex.desc,
-                    bytes_per_row,
-                    shadow,
-                    aerogpu_format_is_x8(tex.format_u32),
-                )?;
+                if format_layout.is_block_compressed() {
+                    // When BC support is disabled, textures are backed by RGBA8 and BC blocks are
+                    // CPU-decompressed for upload.
+                    let mip_w = mip_extent(desc.width, mip_level);
+                    let mip_h = mip_extent(desc.height, mip_level);
+
+                    if bc_block_bytes(tex.desc.format).is_some() {
+                        // Upload BC blocks directly.
+                        write_texture_subresource_linear(
+                            &self.queue,
+                            &tex.texture,
+                            subresource,
+                            row_pitch,
+                            sub_bytes,
+                            false,
+                        )?;
+                    } else {
+                        // Fall back to RGBA8 + CPU decompression.
+                        let tight_bpr = format_layout
+                            .bytes_per_row_tight(mip_w)
+                            .context("UPLOAD_RESOURCE: compute BC tight bytes_per_row")?;
+                        if row_pitch < tight_bpr {
+                            bail!("UPLOAD_RESOURCE: BC bytes_per_row too small");
+                        }
+
+                        let rows_usize: usize = rows_u32
+                            .try_into()
+                            .map_err(|_| anyhow!("UPLOAD_RESOURCE: BC rows out of range"))?;
+                        let src_bpr_usize: usize = row_pitch.try_into().map_err(|_| {
+                            anyhow!("UPLOAD_RESOURCE: BC bytes_per_row out of range")
+                        })?;
+                        let tight_bpr_usize: usize = tight_bpr.try_into().map_err(|_| {
+                            anyhow!("UPLOAD_RESOURCE: BC bytes_per_row out of range")
+                        })?;
+
+                        let mut tight = vec![
+                            0u8;
+                            tight_bpr_usize.checked_mul(rows_usize).ok_or_else(
+                                || anyhow!("UPLOAD_RESOURCE: BC data size overflow")
+                            )?
+                        ];
+                        for row in 0..rows_usize {
+                            let src_start = row.checked_mul(src_bpr_usize).ok_or_else(|| {
+                                anyhow!("UPLOAD_RESOURCE: BC src row offset overflow")
+                            })?;
+                            let dst_start = row.checked_mul(tight_bpr_usize).ok_or_else(|| {
+                                anyhow!("UPLOAD_RESOURCE: BC dst row offset overflow")
+                            })?;
+                            tight[dst_start..dst_start + tight_bpr_usize].copy_from_slice(
+                                sub_bytes
+                                    .get(src_start..src_start + tight_bpr_usize)
+                                    .ok_or_else(|| {
+                                        anyhow!("UPLOAD_RESOURCE: BC source too small for row")
+                                    })?,
+                            );
+                        }
+
+                        let (bc, block_bytes) = match format_layout {
+                            AerogpuTextureFormatLayout::BlockCompressed { bc, block_bytes } => {
+                                (bc, block_bytes)
+                            }
+                            _ => unreachable!(),
+                        };
+                        let expected_len = mip_w.div_ceil(4) as usize
+                            * mip_h.div_ceil(4) as usize
+                            * (block_bytes as usize);
+                        if tight.len() != expected_len {
+                            bail!(
+                                "UPLOAD_RESOURCE: BC data length mismatch: expected {expected_len} bytes, got {}",
+                                tight.len()
+                            );
+                        }
+
+                        let rgba = match bc {
+                            AerogpuBcFormat::Bc1 => {
+                                aero_gpu::decompress_bc1_rgba8(mip_w, mip_h, &tight)
+                            }
+                            AerogpuBcFormat::Bc2 => {
+                                aero_gpu::decompress_bc2_rgba8(mip_w, mip_h, &tight)
+                            }
+                            AerogpuBcFormat::Bc3 => {
+                                aero_gpu::decompress_bc3_rgba8(mip_w, mip_h, &tight)
+                            }
+                            AerogpuBcFormat::Bc7 => {
+                                aero_gpu::decompress_bc7_rgba8(mip_w, mip_h, &tight)
+                            }
+                        };
+
+                        let rgba_bpr = mip_w.checked_mul(4).ok_or_else(|| {
+                            anyhow!("UPLOAD_RESOURCE: decompressed bytes_per_row overflow")
+                        })?;
+                        write_texture_subresource_linear(
+                            &self.queue,
+                            &tex.texture,
+                            subresource,
+                            rgba_bpr,
+                            &rgba,
+                            false,
+                        )?;
+                    }
+                } else if let Some(b5_format) = b5_format {
+                    let mip_w = mip_extent(desc.width, mip_level);
+                    let mip_h = mip_extent(desc.height, mip_level);
+                    let rgba = expand_b5_texture_to_rgba8(
+                        b5_format,
+                        mip_w,
+                        mip_h,
+                        row_pitch,
+                        sub_bytes,
+                    )?;
+                    let rgba_bpr = mip_w.checked_mul(4).ok_or_else(|| {
+                        anyhow!("UPLOAD_RESOURCE: B5 expanded bytes_per_row overflow")
+                    })?;
+                    write_texture_subresource_linear(
+                        &self.queue,
+                        &tex.texture,
+                        subresource,
+                        rgba_bpr,
+                        &rgba,
+                        false,
+                    )?;
+                } else {
+                    write_texture_subresource_linear(
+                        &self.queue,
+                        &tex.texture,
+                        subresource,
+                        row_pitch,
+                        sub_bytes,
+                        force_opaque_alpha,
+                    )?;
+                }
+
+                tex.host_shadow_valid[idx] = true;
             }
         }
+
         tex.dirty = false;
         // `UPLOAD_RESOURCE` updates do not update guest memory backing.
         tex.guest_backing_is_current = false;
@@ -7334,7 +7403,16 @@ impl AerogpuD3d11Executor {
                         .resources
                         .textures
                         .get(&src_texture)
-                        .and_then(|t| t.host_shadow.as_deref())
+                        .and_then(|t| {
+                            let idx = (src_array_layer as usize)
+                                .checked_mul(t.desc.mip_level_count as usize)?
+                                .checked_add(src_mip_level as usize)?;
+                            if t.host_shadow_valid.get(idx).copied().unwrap_or(false) {
+                                t.host_shadow.as_deref()
+                            } else {
+                                None
+                            }
+                        })
                         .ok_or_else(|| {
                             anyhow!(
                                 "COPY_TEXTURE2D: BC copy on GL cannot source blocks from guest memory because src_texture={src_texture} has been modified by GPU operations and its guest backing is stale, and no CPU shadow is available. Consider setting AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1 (CPU decompression fallback) or using a non-GL backend."
@@ -7357,7 +7435,16 @@ impl AerogpuD3d11Executor {
                     .resources
                     .textures
                     .get(&src_texture)
-                    .and_then(|t| t.host_shadow.as_deref())
+                    .and_then(|t| {
+                        let idx = (src_array_layer as usize)
+                            .checked_mul(t.desc.mip_level_count as usize)?
+                            .checked_add(src_mip_level as usize)?;
+                        if t.host_shadow_valid.get(idx).copied().unwrap_or(false) {
+                            t.host_shadow.as_deref()
+                        } else {
+                            None
+                        }
+                    })
                     .ok_or_else(|| {
                         anyhow!(
                             "COPY_TEXTURE2D: BC copy on GL requires a guest-backed source or a prior full UPLOAD_RESOURCE to establish a CPU shadow (src_texture={src_texture}). If this is a GPU-only BC texture, consider setting AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1 (CPU decompression fallback) or using a non-GL backend."
@@ -7436,11 +7523,24 @@ impl AerogpuD3d11Executor {
                 // GPU copies do not update guest memory backing.
                 dst_res.guest_backing_is_current = false;
 
-                // Maintain/update the CPU shadow so that later BC copies on GL can source blocks
+                let dst_sub_idx: usize = (dst_array_layer as usize)
+                    .checked_mul(dst_desc.mip_level_count as usize)
+                    .and_then(|v| v.checked_add(dst_mip_level as usize))
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst subresource index overflow"))?;
+                let dst_shadow_was_valid = dst_res
+                    .host_shadow_valid
+                    .get(dst_sub_idx)
+                    .copied()
+                    .unwrap_or(false);
+                if let Some(v) = dst_res.host_shadow_valid.get_mut(dst_sub_idx) {
+                    *v = false;
+                }
+
+                // Maintain/update a CPU shadow so that later BC copies on GL can source blocks
                 // without relying on the GPU compressed copy path.
                 //
-                // We only track mip0/layer0 because `host_shadow` is stored in the guest's linear
-                // layout for that subresource.
+                // This is currently only maintained for mip0/layer0 because the BC shadow read path
+                // assumes that layout.
                 if dst_mip_level == 0 && dst_array_layer == 0 {
                     let format_layout = aerogpu_texture_format_layout(dst_format_u32).context(
                         "COPY_TEXTURE2D: compute dst format layout for BC shadow update",
@@ -7469,9 +7569,61 @@ impl AerogpuD3d11Executor {
                         && width == dst_desc.width
                         && height == dst_desc.height;
 
+                    let dst_guest_layout = compute_guest_texture_layout(
+                        dst_format_u32,
+                        dst_desc.width,
+                        dst_desc.height,
+                        dst_desc.mip_level_count,
+                        dst_desc.array_layers,
+                        dst_row_pitch_bytes,
+                    )
+                    .context("COPY_TEXTURE2D: compute guest layout for BC shadow update")?;
+                    let total_shadow_len_usize: usize = dst_guest_layout
+                        .total_size
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: dst shadow size out of range"))?;
+                    let subresource_count_usize: usize = (dst_desc.mip_level_count as usize)
+                        .checked_mul(dst_desc.array_layers as usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst subresource count overflow"))?;
+                    if dst_res.host_shadow_valid.len() != subresource_count_usize {
+                        dst_res.host_shadow_valid = vec![false; subresource_count_usize];
+                    }
+
+                    let layer_offset = dst_guest_layout
+                        .layer_stride
+                        .checked_mul(dst_array_layer as u64)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst layer offset overflow"))?;
+                    let mip_offset = *dst_guest_layout
+                        .mip_offsets
+                        .get(dst_mip_level as usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: missing dst mip offset"))?;
+                    let dst_shadow_base = layer_offset
+                        .checked_add(mip_offset)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst shadow base overflow"))?;
+                    let dst_shadow_base_usize: usize = dst_shadow_base
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: dst shadow base out of range"))?;
+                    let dst_shadow_end = dst_shadow_base_usize
+                        .checked_add(dst_shadow_len)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst shadow range overflow"))?;
+                    if dst_shadow_end > total_shadow_len_usize {
+                        bail!("COPY_TEXTURE2D: dst shadow range out of bounds");
+                    }
+
+                    if dst_res
+                        .host_shadow
+                        .as_ref()
+                        .is_some_and(|shadow| shadow.len() != total_shadow_len_usize)
+                    {
+                        dst_res.host_shadow = None;
+                        dst_res.host_shadow_valid.clear();
+                    }
+
+                    let mut seeded_shadow = false;
                     if dst_res.host_shadow.is_none() {
                         if full_copy {
-                            dst_res.host_shadow = Some(vec![0u8; dst_shadow_len]);
+                            dst_res.host_shadow = Some(vec![0u8; total_shadow_len_usize]);
+                            dst_res.host_shadow_valid = vec![false; subresource_count_usize];
                         } else if dst_res.backing.is_some() && dst_guest_backing_was_current {
                             // Seed a shadow copy from guest memory (which we believe still matches
                             // GPU contents) so we can patch in the copied blocks.
@@ -7479,19 +7631,17 @@ impl AerogpuD3d11Executor {
                             let shadow_len_u64: u64 = dst_shadow_len.try_into().map_err(|_| {
                                 anyhow!("COPY_TEXTURE2D: dst shadow size out of range")
                             })?;
-                            allocs.validate_range(
-                                backing.alloc_id,
-                                backing.offset_bytes,
-                                shadow_len_u64,
-                            )?;
+                            let backing_offset = backing
+                                .offset_bytes
+                                .checked_add(dst_shadow_base)
+                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing offset overflow"))?;
+                            allocs.validate_range(backing.alloc_id, backing_offset, shadow_len_u64)?;
                             let base_gpa = allocs
                                 .gpa(backing.alloc_id)?
-                                .checked_add(backing.offset_bytes)
-                                .ok_or_else(|| {
-                                    anyhow!("COPY_TEXTURE2D: dst backing GPA overflow")
-                                })?;
+                                .checked_add(backing_offset)
+                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing GPA overflow"))?;
 
-                            let mut shadow = vec![0u8; dst_shadow_len];
+                            let mut shadow = vec![0u8; total_shadow_len_usize];
                             for row in 0..dst_rows_u32 {
                                 let row_offset = (row as u64)
                                     .checked_mul(dst_bytes_per_row as u64)
@@ -7502,10 +7652,13 @@ impl AerogpuD3d11Executor {
                                     base_gpa.checked_add(row_offset).ok_or_else(|| {
                                         anyhow!("COPY_TEXTURE2D: dst shadow src address overflow")
                                     })?;
-                                let start =
-                                    (row as usize).checked_mul(dst_bpr_usize).ok_or_else(|| {
-                                        anyhow!("COPY_TEXTURE2D: dst shadow dst offset overflow")
-                                    })?;
+                                let start = dst_shadow_base_usize
+                                    .checked_add(
+                                        (row as usize).checked_mul(dst_bpr_usize).ok_or_else(|| {
+                                            anyhow!("COPY_TEXTURE2D: dst shadow dst offset overflow")
+                                        })?,
+                                    )
+                                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst shadow dst offset overflow"))?;
                                 let end = start.checked_add(dst_bpr_usize).ok_or_else(|| {
                                     anyhow!("COPY_TEXTURE2D: dst shadow dst end overflow")
                                 })?;
@@ -7520,40 +7673,38 @@ impl AerogpuD3d11Executor {
                             }
 
                             dst_res.host_shadow = Some(shadow);
+                            dst_res.host_shadow_valid = vec![false; subresource_count_usize];
+                            seeded_shadow = true;
                         }
                     }
 
                     if let Some(shadow) = dst_res.host_shadow.as_mut() {
-                        if shadow.len() != dst_shadow_len {
+                        if shadow.len() != total_shadow_len_usize {
                             dst_res.host_shadow = None;
+                            dst_res.host_shadow_valid.clear();
                         } else {
                             let dst_block_x = dst_x / 4;
                             let dst_block_y = dst_y / 4;
                             let dst_x_bytes: usize = (dst_block_x as usize)
                                 .checked_mul(block_bytes as usize)
-                                .ok_or_else(|| {
-                                    anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow")
-                                })?;
+                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow"))?;
                             if dst_x_bytes.checked_add(row_bytes_usize).ok_or_else(|| {
                                 anyhow!("COPY_TEXTURE2D: dst shadow row range overflow")
                             })? > dst_bpr_usize
                             {
                                 dst_res.host_shadow = None;
+                                dst_res.host_shadow_valid.clear();
                             } else {
                                 for block_row in 0..blocks_h {
                                     let src_start = (block_row as usize)
                                         .checked_mul(row_bytes_usize)
                                         .ok_or_else(|| {
-                                            anyhow!(
-                                                "COPY_TEXTURE2D: BC shadow src row offset overflow"
-                                            )
+                                            anyhow!("COPY_TEXTURE2D: BC shadow src row offset overflow")
                                         })?;
                                     let src_end = src_start
                                         .checked_add(row_bytes_usize)
                                         .ok_or_else(|| {
-                                            anyhow!(
-                                                "COPY_TEXTURE2D: BC shadow src row end overflow"
-                                            )
+                                            anyhow!("COPY_TEXTURE2D: BC shadow src row end overflow")
                                         })?;
 
                                     let dst_row_index: usize = dst_block_y
@@ -7565,34 +7716,37 @@ impl AerogpuD3d11Executor {
                                         .map_err(|_| {
                                             anyhow!("COPY_TEXTURE2D: BC shadow dst row index out of range")
                                         })?;
-                                    let dst_start = dst_row_index
-                                        .checked_mul(dst_bpr_usize)
-                                        .and_then(|v| v.checked_add(dst_x_bytes))
-                                        .ok_or_else(|| {
-                                            anyhow!(
-                                                "COPY_TEXTURE2D: BC shadow dst row offset overflow"
-                                            )
-                                        })?;
+                                    let dst_start = dst_shadow_base_usize
+                                        .checked_add(
+                                            dst_row_index
+                                                .checked_mul(dst_bpr_usize)
+                                                .and_then(|v| v.checked_add(dst_x_bytes))
+                                                .ok_or_else(|| {
+                                                    anyhow!(
+                                                        "COPY_TEXTURE2D: BC shadow dst row offset overflow"
+                                                    )
+                                                })?,
+                                        )
+                                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC shadow dst row offset overflow"))?;
                                     let dst_end = dst_start
                                         .checked_add(row_bytes_usize)
-                                        .ok_or_else(|| {
-                                            anyhow!(
-                                                "COPY_TEXTURE2D: BC shadow dst row end overflow"
-                                            )
-                                        })?;
+                                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC shadow dst row end overflow"))?;
 
                                     shadow
                                         .get_mut(dst_start..dst_end)
-                                        .ok_or_else(|| {
-                                            anyhow!(
-                                                "COPY_TEXTURE2D: BC shadow dst buffer too small"
-                                            )
-                                        })?
+                                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC shadow dst buffer too small"))?
                                         .copy_from_slice(
                                             region_blocks.get(src_start..src_end).ok_or_else(
                                                 || anyhow!("COPY_TEXTURE2D: BC region buffer too small"),
                                             )?,
                                         );
+                                }
+
+                                let can_mark_valid = full_copy || dst_shadow_was_valid || seeded_shadow;
+                                if can_mark_valid {
+                                    if let Some(v) = dst_res.host_shadow_valid.get_mut(dst_sub_idx) {
+                                        *v = true;
+                                    }
                                 }
                             }
                         }
@@ -7699,10 +7853,17 @@ impl AerogpuD3d11Executor {
         // would otherwise cause us to overwrite the copy with stale guest-memory contents.
         if let Some(dst) = self.resources.textures.get_mut(&dst_texture) {
             dst.dirty = false;
-            // `host_shadow` only tracks mip0/layer0. Invalidate it only when the copy touches that
-            // subresource.
-            if dst_mip_level == 0 && dst_array_layer == 0 {
-                dst.host_shadow = None;
+            // The GPU copy modifies the destination subresource; invalidate any CPU shadow validity
+            // so later partial `UPLOAD_RESOURCE` patches don't accidentally overwrite bytes we
+            // don't have.
+            if !dst.host_shadow_valid.is_empty() {
+                let idx = (dst_array_layer as usize)
+                    .checked_mul(dst.desc.mip_level_count as usize)
+                    .and_then(|v| v.checked_add(dst_mip_level as usize));
+                match idx.and_then(|idx| dst.host_shadow_valid.get_mut(idx)) {
+                    Some(v) => *v = false,
+                    None => dst.host_shadow_valid.clear(),
+                }
             }
             // GPU copies do not update guest memory backing.
             dst.guest_backing_is_current = false;
@@ -8831,6 +8992,7 @@ impl AerogpuD3d11Executor {
             for &handle in render_targets.iter().flatten() {
                 if let Some(tex) = self.resources.textures.get_mut(&handle) {
                     tex.host_shadow = None;
+                    tex.host_shadow_valid.clear();
                     tex.guest_backing_is_current = false;
                 }
             }
@@ -8839,6 +9001,7 @@ impl AerogpuD3d11Executor {
             if let Some(handle) = depth_stencil {
                 if let Some(tex) = self.resources.textures.get_mut(&handle) {
                     tex.host_shadow = None;
+                    tex.host_shadow_valid.clear();
                     tex.guest_backing_is_current = false;
                 }
             }
@@ -10175,13 +10338,7 @@ impl AerogpuD3d11Executor {
                             queue,
                             &tex.texture,
                             Texture2dSubresourceDesc {
-                                desc: Texture2dDesc {
-                                    width: level_width,
-                                    height: level_height,
-                                    mip_level_count: 1,
-                                    array_layers: 1,
-                                    format: desc.format,
-                                },
+                                desc,
                                 mip_level: level,
                                 array_layer: layer,
                             },
@@ -10228,6 +10385,7 @@ impl AerogpuD3d11Executor {
         // Guest-backed uploads overwrite the GPU texture content; discard any stale UPLOAD_RESOURCE
         // shadow copy so later partial uploads don't accidentally clobber the updated contents.
         tex.host_shadow = None;
+        tex.host_shadow_valid.clear();
         tex.dirty = false;
         tex.guest_backing_is_current = true;
         Ok(())
@@ -12168,13 +12326,17 @@ fn write_texture_subresource_linear(
     force_opaque_alpha: bool,
 ) -> Result<()> {
     let desc = &subresource.desc;
-    let (unpadded_bpr, layout_rows) = write_texture_layout(desc.format, desc.width, desc.height)?;
+    let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
+    let mip_w = mip_extent(desc.width, subresource.mip_level);
+    let mip_h = mip_extent(desc.height, subresource.mip_level);
+
+    let (unpadded_bpr, layout_rows) = write_texture_layout(desc.format, mip_w, mip_h)?;
     let (extent_width, extent_height) = if bc_block_bytes(desc.format).is_some() {
         // WebGPU requires BC uploads to use the physical (block-rounded) size, even when the mip
         // itself is smaller than one block (e.g. 2x2 still copies as 4x4).
-        (align_to(desc.width, 4)?, align_to(desc.height, 4)?)
+        (align_to(mip_w, 4)?, align_to(mip_h, 4)?)
     } else {
-        (desc.width, desc.height)
+        (mip_w, mip_h)
     };
     if src_bytes_per_row < unpadded_bpr {
         bail!("write_texture: src_bytes_per_row too small");
