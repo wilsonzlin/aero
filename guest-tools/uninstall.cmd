@@ -23,6 +23,7 @@ set "INSTALL_ROOT=C:\AeroGuestTools"
 set "LOG=%INSTALL_ROOT%\uninstall.log"
 set "PKG_LIST=%INSTALL_ROOT%\installed-driver-packages.txt"
 set "CERT_LIST=%INSTALL_ROOT%\installed-certs.txt"
+set "STATE_INSTALLED_MEDIA=%INSTALL_ROOT%\installed-media.txt"
 set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
 set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
 set "STATE_STORAGE_SKIPPED=%INSTALL_ROOT%\storage-preseed.skipped.txt"
@@ -65,6 +66,7 @@ call :log "Script dir: %SCRIPT_DIR%"
 call :log "System tools: %SYS32%"
 call :log "Logs: %LOG%"
 call :log_manifest
+call :log_installed_media_state
 
 call :require_admin || goto :fail
 call :load_config || goto :fail
@@ -97,6 +99,7 @@ call :remove_driver_packages || goto :fail
 call :remove_certs || goto :fail
 call :maybe_disable_testsigning || goto :fail
 call :maybe_disable_nointegritychecks || goto :fail
+call :remove_installed_media_state
 
 call :log ""
 call :log "Uninstall complete."
@@ -127,6 +130,7 @@ exit /b 0
 set "RC=%ERRORLEVEL%"
 call :log ""
 call :log "ERROR: uninstall failed (exit code %RC%). See %LOG% for details."
+call :remove_installed_media_state
 popd >nul 2>&1
 exit /b %RC%
 
@@ -146,6 +150,28 @@ setlocal DisableDelayedExpansion
 echo(%*
 >>"%LOG%" echo(%*
 endlocal & exit /b 0
+
+:log_installed_media_state
+setlocal DisableDelayedExpansion
+call :log ""
+call :log "Installed media provenance (from setup.cmd): %STATE_INSTALLED_MEDIA%"
+if exist "%STATE_INSTALLED_MEDIA%" (
+  for /f "usebackq delims=" %%L in ("%STATE_INSTALLED_MEDIA%") do call :log "  %%L"
+) else (
+  call :log "  (not present)"
+)
+endlocal & exit /b 0
+
+:remove_installed_media_state
+if exist "%STATE_INSTALLED_MEDIA%" (
+  del /q "%STATE_INSTALLED_MEDIA%" >nul 2>&1
+  if exist "%STATE_INSTALLED_MEDIA%" (
+    call :log "WARNING: Failed to remove state file: %STATE_INSTALLED_MEDIA%"
+  ) else (
+    call :log "Removed state file: %STATE_INSTALLED_MEDIA%"
+  )
+)
+exit /b 0
 
 :require_admin_stdout
 "%SYS32%\fsutil.exe" dirty query %SYSTEMDRIVE% >nul 2>&1

@@ -100,6 +100,7 @@ Designed for the standard flow:
 - `C:\AeroGuestTools\install.log`
 - `C:\AeroGuestTools\installed-driver-packages.txt` (for best-effort uninstall)
 - `C:\AeroGuestTools\installed-certs.txt` (for best-effort uninstall)
+- `C:\AeroGuestTools\installed-media.txt` (records which Guest Tools ISO/zip build ran `setup.cmd`; used by `verify.ps1` to detect “mixed media” issues)
 - `C:\AeroGuestTools\storage-preseed.skipped.txt` (only when `/skipstorage` is used)
 
 ### Usage
@@ -290,7 +291,7 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
 - **Guest Tools media integrity (manifest.json)**:
   - records Guest Tools version/build metadata (if present),
   - verifies that the files listed in the manifest exist and match their SHA-256 hashes (detects corrupted/incomplete ISO/zip copies).
-- **Guest Tools setup state**: reads `C:\AeroGuestTools\install.log` and related state files from `setup.cmd` (if present) to show what Guest Tools staged/changed.
+- **Guest Tools setup state**: reads `C:\AeroGuestTools\install.log` and related state files from `setup.cmd` (if present) to show what Guest Tools staged/changed, including `installed-media.txt` to detect installed-vs-current media mismatches.
 - **Guest Tools config**: reads `config\devices.cmd` to understand expected virtio/Aero PCI IDs and storage service name (used by `setup.cmd` and some verify checks).
 - **Packaged drivers (media INFs)**: parses `.inf` files under `drivers\<arch>\...` on the Guest Tools media to extract:
   - Provider

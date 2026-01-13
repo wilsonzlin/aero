@@ -31,6 +31,7 @@ set "INSTALL_ROOT=C:\AeroGuestTools"
 set "LOG=%INSTALL_ROOT%\install.log"
 set "PKG_LIST=%INSTALL_ROOT%\installed-driver-packages.txt"
 set "CERT_LIST=%INSTALL_ROOT%\installed-certs.txt"
+set "STATE_INSTALLED_MEDIA=%INSTALL_ROOT%\installed-media.txt"
 set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
 set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
 set "STATE_STORAGE_SKIPPED=%INSTALL_ROOT%\storage-preseed.skipped.txt"
@@ -120,6 +121,7 @@ if "%ARG_SKIP_STORAGE%"=="0" (
 call :require_admin || goto :fail
 call :detect_arch || goto :fail
 call :load_signing_policy
+call :write_installed_media_state
 call :warn_if_unexpected_certs
 call :apply_force_defaults || goto :fail
 call :load_config || goto :fail
@@ -514,6 +516,36 @@ endlocal & (
   set "GT_PARSED_SIGNING_POLICY=%GT_PARSED_SIGNING_POLICY%"
   set "GT_PARSED_CERTS_REQUIRED=%GT_PARSED_CERTS_REQUIRED%"
 ) & exit /b 0
+
+:write_installed_media_state
+setlocal EnableDelayedExpansion
+set "OUT=%STATE_INSTALLED_MEDIA%"
+
+rem Record which Guest Tools media build ran setup.cmd (helps diagnose mixed ISO/zip problems).
+rem This is intentionally plain text so it can be attached to bug reports and parsed by verify.ps1.
+> "!OUT!" (
+  echo timestamp_local=!DATE! !TIME!
+  if defined GT_MANIFEST (
+    echo manifest_path=!GT_MANIFEST!
+  ) else (
+    echo manifest_path=manifest not found
+  )
+  echo GT_VERSION=!GT_VERSION!
+  echo GT_BUILD_ID=!GT_BUILD_ID!
+  echo GT_SIGNING_POLICY=!GT_SIGNING_POLICY!
+  echo GT_CERTS_REQUIRED=!GT_CERTS_REQUIRED!
+  echo effective_SIGNING_POLICY=%SIGNING_POLICY%
+)
+
+if exist "!OUT!" (
+  call :log "Wrote installed media state: !OUT!"
+  call :log "  - manifest_path=!GT_MANIFEST!"
+  call :log "  - GT_VERSION=!GT_VERSION!, GT_BUILD_ID=!GT_BUILD_ID!"
+) else (
+  call :log "WARNING: Failed to write installed media state: !OUT!"
+)
+
+endlocal & exit /b 0
 
 :log_summary
 call :log ""

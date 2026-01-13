@@ -1739,6 +1739,7 @@ try {
     $installLog = Join-Path $outDir "install.log"
     $pkgList = Join-Path $outDir "installed-driver-packages.txt"
     $certList = Join-Path $outDir "installed-certs.txt"
+    $installedMediaPath = Join-Path $outDir "installed-media.txt"
     $stateTestSign = Join-Path $outDir "testsigning.enabled-by-aero.txt"
     $stateNoIntegrity = Join-Path $outDir "nointegritychecks.enabled-by-aero.txt"
 
@@ -1759,19 +1760,77 @@ try {
         }
     }
 
+    $installedMediaVars = @{}
+    $installedMediaRaw = $null
+    if (Test-Path $installedMediaPath) {
+        $lines = @(Get-Content -Path $installedMediaPath -ErrorAction SilentlyContinue)
+        $installedMediaRaw = ($lines -join "`r`n")
+        foreach ($line in $lines) {
+            $t = ("" + $line).Trim()
+            if ($t.Length -eq 0) { continue }
+            if ($t -match '^([^=]+)=(.*)$') {
+                $installedMediaVars[$matches[1]] = $matches[2]
+            }
+        }
+    }
+    $installedMediaGtVersion = $null
+    $installedMediaGtBuildId = $null
+    if ($installedMediaVars.ContainsKey("GT_VERSION")) {
+        $installedMediaGtVersion = ("" + $installedMediaVars["GT_VERSION"]).Trim()
+        if ($installedMediaGtVersion.Length -eq 0) { $installedMediaGtVersion = $null }
+    }
+    if ($installedMediaVars.ContainsKey("GT_BUILD_ID")) {
+        $installedMediaGtBuildId = ("" + $installedMediaVars["GT_BUILD_ID"]).Trim()
+        if ($installedMediaGtBuildId.Length -eq 0) { $installedMediaGtBuildId = $null }
+    }
+
     $st = "PASS"
     $sum = ""
     $det = @()
 
-    $hasAny = (Test-Path $installLog) -or (Test-Path $pkgList) -or (Test-Path $certList) -or (Test-Path $storagePreseedSkipMarker)
+    $hasAny = (Test-Path $installLog) -or (Test-Path $pkgList) -or (Test-Path $certList) -or (Test-Path $installedMediaPath) -or (Test-Path $storagePreseedSkipMarker)
     if (-not $hasAny) {
         $st = "WARN"
         $sum = "No Guest Tools setup state files found under " + $outDir + " (setup.cmd may not have been run yet)."
     } else {
-        $sum = "install.log=" + (Test-Path $installLog) + ", installed-driver-packages=" + $gtInstalledDriverPackages.Count + ", installed-certs=" + $installedCertThumbprints.Count
+        $sum = "install.log=" + (Test-Path $installLog) + ", installed-driver-packages=" + $gtInstalledDriverPackages.Count + ", installed-certs=" + $installedCertThumbprints.Count + ", installed-media=" + (Test-Path $installedMediaPath)
         if (Test-Path $stateTestSign) { $det += "TestSigning was enabled by setup.cmd (marker file present)." }
         if (Test-Path $stateNoIntegrity) { $det += "nointegritychecks was enabled by setup.cmd (marker file present)." }
         if (Test-Path $storagePreseedSkipMarker) { $det += "Storage pre-seeding was skipped by setup.cmd (/skipstorage) (marker file present)." }
+
+        if (Test-Path $installedMediaPath) {
+            $det += ("installed-media.txt: GT_VERSION=" + $installedMediaGtVersion + ", GT_BUILD_ID=" + $installedMediaGtBuildId)
+            if ($installedMediaVars.ContainsKey("manifest_path")) {
+                $det += ("installed-media.txt: manifest_path=" + ("" + $installedMediaVars["manifest_path"]))
+            }
+
+            $currentVersion = $null
+            $currentBuildId = $null
+            if ($report.media_integrity -and ($report.media_integrity -is [hashtable])) {
+                $pkg = $report.media_integrity.package
+                if ($pkg -and ($pkg -is [hashtable])) {
+                    if ($pkg.ContainsKey("version")) { $currentVersion = $pkg["version"] }
+                    if ($pkg.ContainsKey("build_id")) { $currentBuildId = $pkg["build_id"] }
+                }
+            }
+            if ($currentVersion) { $currentVersion = ("" + $currentVersion).Trim() }
+            if ($currentBuildId) { $currentBuildId = ("" + $currentBuildId).Trim() }
+
+            $mismatch = $false
+            if ($installedMediaGtVersion -and $currentVersion) {
+                if ($installedMediaGtVersion.ToLower() -ne $currentVersion.ToLower()) { $mismatch = $true }
+            }
+            if ($installedMediaGtBuildId -and $currentBuildId) {
+                if ($installedMediaGtBuildId.ToLower() -ne $currentBuildId.ToLower()) { $mismatch = $true }
+            }
+
+            if ($mismatch) {
+                $st = Merge-Status $st "WARN"
+                $sum += "; WARN: installed media differs from current media"
+                $det += ("WARN: setup.cmd was run from Guest Tools media version=" + $installedMediaGtVersion + ", build_id=" + $installedMediaGtBuildId + ", but the current media manifest.json is version=" + $currentVersion + ", build_id=" + $currentBuildId + ".")
+                $det += "Remediation: re-run setup.cmd from the current ISO."
+            }
+        }
     }
 
     $data = @{
@@ -1786,6 +1845,10 @@ try {
         testsigning_marker_exists = (Test-Path $stateTestSign)
         nointegritychecks_marker_path = $stateNoIntegrity
         nointegritychecks_marker_exists = (Test-Path $stateNoIntegrity)
+        installed_media_path = $installedMediaPath
+        installed_media_exists = (Test-Path $installedMediaPath)
+        installed_media_raw = $installedMediaRaw
+        installed_media_vars = $installedMediaVars
         storage_preseed_skipped_marker_path = $storagePreseedSkipMarker
         storage_preseed_skipped_marker_exists = (Test-Path $storagePreseedSkipMarker)
     }
