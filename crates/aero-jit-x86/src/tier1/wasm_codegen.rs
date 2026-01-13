@@ -132,6 +132,115 @@ struct ImportedFuncs {
 
 pub struct Tier1WasmCodegen;
 
+#[derive(Debug, Clone, Copy, Default)]
+struct BlockStateUsage {
+    /// Whether a GPR's *initial* value must be loaded from `CpuState` at block entry.
+    ///
+    /// This is required when the block reads the GPR, or when the block performs a partial write
+    /// (8/16/high8) that needs the previous 64-bit value.
+    gpr_used: [bool; 16],
+    /// Whether a GPR may be written by the block and therefore must be spilled back to `CpuState`
+    /// at block exit.
+    gpr_written: [bool; 16],
+    /// Whether the block reads and/or writes RFLAGS.
+    uses_rflags: bool,
+}
+
+fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockStateUsage {
+    let mut usage = BlockStateUsage::default();
+    let mut initialized = [false; 16];
+    let mut first_write_idx: [Option<usize>; 16] = [None; 16];
+
+    let mut earliest_may_exit: Option<usize> = None;
+
+    for (i, inst) in block.insts.iter().enumerate() {
+        // Conservative: helper calls always bail out.
+        if matches!(inst, IrInst::CallHelper { .. }) {
+            earliest_may_exit = earliest_may_exit.or(Some(i));
+        } else if options.inline_tlb {
+            // Inline-TLB fast paths can exit early on MMIO.
+            let is_mmio_exit_point = match inst {
+                IrInst::Load { .. } => true,
+                IrInst::Store { .. } => options.inline_tlb_stores,
+                _ => false,
+            };
+            if is_mmio_exit_point {
+                earliest_may_exit = earliest_may_exit.or(Some(i));
+            }
+        }
+
+        match inst {
+            IrInst::ReadReg { reg, .. } => match *reg {
+                GuestReg::Gpr { reg, .. } => {
+                    let idx = reg.as_u8() as usize;
+                    if !initialized[idx] {
+                        usage.gpr_used[idx] = true;
+                        initialized[idx] = true;
+                    }
+                }
+                GuestReg::Flag(_) => usage.uses_rflags = true,
+                GuestReg::Rip => {}
+            },
+            IrInst::WriteReg { reg, .. } => match *reg {
+                GuestReg::Gpr { reg, width, high8 } => {
+                    let idx = reg.as_u8() as usize;
+                    usage.gpr_written[idx] = true;
+                    first_write_idx[idx].get_or_insert(i);
+
+                    let is_partial = matches!(width, Width::W8 | Width::W16) || high8;
+                    if is_partial && !initialized[idx] {
+                        // Partial writes need the previous 64-bit value.
+                        usage.gpr_used[idx] = true;
+                        initialized[idx] = true;
+                    }
+
+                    // Any write (full or partial) initializes the local for subsequent accesses.
+                    initialized[idx] = true;
+                }
+                GuestReg::Flag(_) => usage.uses_rflags = true,
+                GuestReg::Rip => {}
+            },
+            IrInst::BinOp { flags, .. }
+            | IrInst::CmpFlags { flags, .. }
+            | IrInst::TestFlags { flags, .. } => {
+                if !flags.is_empty() {
+                    usage.uses_rflags = true;
+                }
+            }
+            IrInst::EvalCond { cond, .. } => {
+                if !cond.uses_flags().is_empty() {
+                    usage.uses_rflags = true;
+                }
+            }
+            IrInst::CallHelper { .. } => {
+                // Tier-1 treats helper calls as a runtime exit; the remainder of the IR block is
+                // unreachable (both in the IR interpreter and in Tier-1 WASM codegen).
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    // If the block can exit early (MMIO fast path or CallHelper bailout) before a GPR's first
+    // write, we still need to load that GPR if we're going to spill it at function exit; otherwise
+    // the epilogue store would clobber the register with the local's default value (0).
+    if let Some(exit_idx) = earliest_may_exit {
+        for gpr in all_gprs() {
+            let idx = gpr.as_u8() as usize;
+            if !usage.gpr_written[idx] || usage.gpr_used[idx] {
+                continue;
+            }
+            if let Some(first_write) = first_write_idx[idx] {
+                if exit_idx < first_write {
+                    usage.gpr_used[idx] = true;
+                }
+            }
+        }
+    }
+
+    usage
+}
+
 impl Tier1WasmCodegen {
     #[must_use]
     pub fn new() -> Self {
@@ -358,25 +467,30 @@ impl Tier1WasmCodegen {
         module.section(&exports);
 
         let layout = LocalsLayout::new(block.value_types.len() as u32);
+        let state_usage = analyze_state_usage(block, options);
 
         let mut func = Function::new(vec![(layout.total_i64_locals(), ValType::I64)]);
 
         // Load architectural state into locals.
         for gpr in all_gprs() {
-            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-            func.instruction(&Instruction::I64Load(memarg(
-                abi::CPU_GPR_OFF[gpr.as_u8() as usize],
-                3,
-            )));
-            func.instruction(&Instruction::LocalSet(layout.gpr_local(gpr)));
+            if state_usage.gpr_used[gpr.as_u8() as usize] {
+                func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+                func.instruction(&Instruction::I64Load(memarg(
+                    abi::CPU_GPR_OFF[gpr.as_u8() as usize],
+                    3,
+                )));
+                func.instruction(&Instruction::LocalSet(layout.gpr_local(gpr)));
+            }
         }
         func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
         func.instruction(&Instruction::I64Load(memarg(abi::CPU_RIP_OFF, 3)));
         func.instruction(&Instruction::LocalSet(layout.rip_local()));
 
-        func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        func.instruction(&Instruction::I64Load(memarg(abi::CPU_RFLAGS_OFF, 3)));
-        func.instruction(&Instruction::LocalSet(layout.rflags_local()));
+        if state_usage.uses_rflags {
+            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            func.instruction(&Instruction::I64Load(memarg(abi::CPU_RFLAGS_OFF, 3)));
+            func.instruction(&Instruction::LocalSet(layout.rflags_local()));
+        }
 
         // Default next_rip = current RIP (overwritten by terminator emission).
         func.instruction(&Instruction::LocalGet(layout.rip_local()));
@@ -448,31 +562,35 @@ impl Tier1WasmCodegen {
 
         // Spill guest state back to linear memory.
         for gpr in all_gprs() {
+            if state_usage.gpr_written[gpr.as_u8() as usize] {
+                emitter
+                    .func
+                    .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+                emitter
+                    .func
+                    .instruction(&Instruction::LocalGet(layout.gpr_local(gpr)));
+                emitter.func.instruction(&Instruction::I64Store(memarg(
+                    abi::CPU_GPR_OFF[gpr.as_u8() as usize],
+                    3,
+                )));
+            }
+        }
+
+        if state_usage.uses_rflags {
             emitter
                 .func
                 .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
             emitter
                 .func
-                .instruction(&Instruction::LocalGet(layout.gpr_local(gpr)));
-            emitter.func.instruction(&Instruction::I64Store(memarg(
-                abi::CPU_GPR_OFF[gpr.as_u8() as usize],
-                3,
-            )));
+                .instruction(&Instruction::LocalGet(layout.rflags_local()));
+            emitter
+                .func
+                .instruction(&Instruction::I64Const(abi::RFLAGS_RESERVED1 as i64));
+            emitter.func.instruction(&Instruction::I64Or);
+            emitter
+                .func
+                .instruction(&Instruction::I64Store(memarg(abi::CPU_RFLAGS_OFF, 3)));
         }
-
-        emitter
-            .func
-            .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        emitter
-            .func
-            .instruction(&Instruction::LocalGet(layout.rflags_local()));
-        emitter
-            .func
-            .instruction(&Instruction::I64Const(abi::RFLAGS_RESERVED1 as i64));
-        emitter.func.instruction(&Instruction::I64Or);
-        emitter
-            .func
-            .instruction(&Instruction::I64Store(memarg(abi::CPU_RFLAGS_OFF, 3)));
 
         emitter
             .func
