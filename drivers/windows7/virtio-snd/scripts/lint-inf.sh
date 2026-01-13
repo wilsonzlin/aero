@@ -74,6 +74,11 @@ section_contains_norm() {
       if ($0 ~ /^[[:space:]]*;/) next
 
       line = $0
+      # Strip inline comments to avoid false positives from commented-out tokens
+      # on otherwise active lines (e.g. "Foo = bar ; AddService = ...").
+      sub(/[[:space:]]*;.*$/, "", line)
+      if (line ~ /^[[:space:]]*$/) next
+
       if (line ~ /^[[:space:]]*\[[^]]+\][[:space:]]*$/) {
         sub(/^[[:space:]]*\[/, "", line)
         sub(/\][[:space:]]*$/, "", line)
