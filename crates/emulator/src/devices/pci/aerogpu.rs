@@ -1,6 +1,12 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use memory::MemoryBus;
+
+use aero_shared::scanout_state::{
+    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
+    SCANOUT_SOURCE_WDDM,
+};
 
 use crate::devices::aerogpu_regs::{
     irq_bits, mmio, ring_control, AeroGpuRegs, AEROGPU_MMIO_MAGIC, AEROGPU_PCI_BAR0_SIZE_BYTES,
@@ -37,6 +43,8 @@ pub struct AeroGpuPciDevice {
     pub regs: AeroGpuRegs,
     executor: AeroGpuExecutor,
     irq_level: bool,
+
+    scanout_state: Option<Arc<ScanoutState>>,
 
     boot_time: Instant,
     vblank_interval: Option<Duration>,
@@ -89,6 +97,7 @@ impl AeroGpuPciDevice {
             regs,
             executor: AeroGpuExecutor::new(cfg.executor),
             irq_level: false,
+            scanout_state: None,
             boot_time: Instant::now(),
             vblank_interval,
             next_vblank: None,
@@ -208,6 +217,10 @@ impl AeroGpuPciDevice {
         self.executor.set_backend(backend);
     }
 
+    pub fn set_scanout_state(&mut self, scanout_state: Option<Arc<ScanoutState>>) {
+        self.scanout_state = scanout_state;
+    }
+
     pub fn read_presented_scanout_rgba8(
         &mut self,
         mem: &mut dyn MemoryBus,
@@ -237,8 +250,41 @@ impl AeroGpuPciDevice {
                 );
             }
         }
-
         Some((scanout.width, scanout.height, scanout.rgba8))
+    }
+
+    fn publish_wddm_scanout_state(&self) {
+        let Some(state) = &self.scanout_state else {
+            return;
+        };
+
+        let fb_gpa = self.regs.scanout0.fb_gpa;
+        state.publish(ScanoutStateUpdate {
+            source: SCANOUT_SOURCE_WDDM,
+            base_paddr_lo: fb_gpa as u32,
+            base_paddr_hi: (fb_gpa >> 32) as u32,
+            width: self.regs.scanout0.width,
+            height: self.regs.scanout0.height,
+            pitch_bytes: self.regs.scanout0.pitch_bytes,
+            // `ScanoutState` currently only has a single format value; treat the WDDM scanout
+            // surface as the canonical Windows/VBE-style BGRA/X8 format.
+            format: SCANOUT_FORMAT_B8G8R8X8,
+        });
+    }
+
+    fn publish_legacy_scanout_state(&self) {
+        let Some(state) = &self.scanout_state else {
+            return;
+        };
+        state.publish(ScanoutStateUpdate {
+            source: SCANOUT_SOURCE_LEGACY_TEXT,
+            base_paddr_lo: 0,
+            base_paddr_hi: 0,
+            width: 0,
+            height: 0,
+            pitch_bytes: 0,
+            format: SCANOUT_FORMAT_B8G8R8X8,
+        });
     }
 
     fn update_irq_level(&mut self) {
@@ -385,7 +431,8 @@ impl AeroGpuPciDevice {
 
             mmio::SCANOUT0_ENABLE => {
                 let new_enable = value != 0;
-                if self.regs.scanout0.enable && !new_enable {
+                let old_enable = self.regs.scanout0.enable;
+                if old_enable && !new_enable {
                     // When scanout is disabled, stop vblank scheduling and drop any pending vblank IRQ.
                     self.next_vblank = None;
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
@@ -393,6 +440,12 @@ impl AeroGpuPciDevice {
                         self.executor.flush_pending_fences(&mut self.regs, mem);
                         self.update_irq_level();
                     }
+                    self.publish_legacy_scanout_state();
+                } else if !old_enable && new_enable {
+                    // WDDM claims scanout by programming the scanout registers and then
+                    // transitioning ENABLE from 0->1. Publish the descriptor for the
+                    // presentation layer (browser worker, native UI, etc).
+                    self.publish_wddm_scanout_state();
                 }
                 self.regs.scanout0.enable = new_enable;
             }
