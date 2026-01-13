@@ -17,6 +17,13 @@ function nowMs() {
   return Date.now();
 }
 
+function wallNowMs() {
+  // AudioWorkletGlobalScope exposes `currentTime`, but that clock is *paused* when the
+  // AudioContext is suspended. For suspend/resume detection we need a wall clock.
+  if (typeof globalThis.performance?.now === "function") return globalThis.performance.now();
+  return Date.now();
+}
+
 // Atomically add missing frames to the underrun counter. The counter is a u32
 // that wraps naturally at 2^32.
 export function addUnderrunFrames(header, missingFrames) {
@@ -43,6 +50,7 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
     const capacityFrames = options?.processorOptions?.capacityFrames;
     const sendUnderrunMessages = options?.processorOptions?.sendUnderrunMessages;
     const underrunMessageIntervalMs = options?.processorOptions?.underrunMessageIntervalMs;
+    const discardOnResume = options?.processorOptions?.discardOnResume;
 
     // Underrun messages are optional diagnostics. Persistent underruns can happen at render-quantum
     // rate (~375 msg/sec at 48kHz), which can add overhead and worsen glitches. Default to *not*
@@ -58,6 +66,16 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
         : 250;
     this._lastUnderrunMessageTimeMs = null;
     this._pendingUnderrunFrames = 0;
+
+    // If enabled, discard any buffered backlog after a suspend/resume or other long pause in
+    // processing. The processor has no direct access to AudioContext state; instead, detect resume
+    // by observing a large wall-clock gap between `process()` callbacks.
+    //
+    // This is intentionally opt-in because it can also trigger after extreme scheduling stalls
+    // (e.g. tab backgrounding, long GC pauses). In those cases, lowering latency by dropping stale
+    // buffered audio is still desirable.
+    this._discardOnResume = discardOnResume === true;
+    this._lastWallTimeMs = null;
 
     if (typeof SharedArrayBuffer !== "undefined" && ringBuffer instanceof SharedArrayBuffer) {
       // Layout is described in:
@@ -125,6 +143,28 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
 
     if (!this._header || !this._samples) {
       return true;
+    }
+
+    if (this._discardOnResume) {
+      const now = wallNowMs();
+      const last = this._lastWallTimeMs;
+      this._lastWallTimeMs = now;
+
+      // If there is a large wall-time gap between callbacks, treat this as a suspend/resume (or a
+      // similarly disruptive stall) and discard any buffered frames so playback stays "live".
+      //
+      // Keep the threshold well above the nominal render quantum interval (~3ms @ 48kHz) so normal
+      // scheduling jitter does not trigger it. 100ms is still comfortably below Playwright's
+      // suspend/resume discard budget (the corresponding e2e spec expects recovery within ~350ms).
+      const GAP_THRESHOLD_MS = 100;
+      if (last !== null && Number.isFinite(last) && Number.isFinite(now) && now - last >= GAP_THRESHOLD_MS) {
+        try {
+          const writeFrameIndex = Atomics.load(this._header, WRITE_FRAME_INDEX) >>> 0;
+          Atomics.store(this._header, READ_FRAME_INDEX, writeFrameIndex);
+        } catch {
+          // Ignore.
+        }
+      }
     }
 
     const framesNeeded = output[0]?.length ?? 0;
