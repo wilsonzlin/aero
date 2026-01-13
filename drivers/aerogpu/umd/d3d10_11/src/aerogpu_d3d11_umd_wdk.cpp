@@ -1231,6 +1231,11 @@ static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resour
     changed = true;
   }
   if (changed) {
+    // AeroGPU host executors currently require render targets to be a contiguous
+    // prefix starting at slot 0. Unbinding an RTV due to SRV aliasing can create
+    // holes (e.g. unbinding slot 0 while slot 1 remains bound), so normalize the
+    // cached RTV state before emitting the rebinding packet.
+    NormalizeRenderTargetsNoGapsLocked(dev);
     EmitSetRenderTargetsLocked(dev);
   }
 }
