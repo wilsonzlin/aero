@@ -358,6 +358,11 @@ under the `emulator` crate via `crates/emulator/Cargo.toml` `[[test]]` entries (
 # Run BIOS tests
 bash ./scripts/safe-run.sh cargo test -p firmware --locked
 
+# Regenerate/verify deterministic in-repo fixtures (BIOS ROM, ACPI DSDT, tiny boot images).
+# CI runs `--check` and fails if it produces a diff.
+bash ./scripts/safe-run.sh cargo xtask fixtures
+bash ./scripts/safe-run.sh cargo xtask fixtures --check
+
 # Run device model tests
 bash ./scripts/safe-run.sh cargo test -p aero-devices --locked
 bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
