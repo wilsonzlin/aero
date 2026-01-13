@@ -459,7 +459,7 @@ func (b *l2Bridge) shutdown(closeDataChannel bool, info l2BridgeShutdownInfo) {
 			if info.err != nil {
 				var closeErr *websocket.CloseError
 				if errors.As(info.err, &closeErr) {
-					attrs = append(attrs, "ws_close_code", closeErr.Code, "ws_close_text", closeErr.Text)
+					attrs = append(attrs, "ws_close_code", closeErr.Code, "ws_close_text", b.sanitizeStringForLog(closeErr.Text))
 				}
 				attrs = append(attrs, "err", b.sanitizeErrorForLog(info.err))
 			}
@@ -504,8 +504,13 @@ func (b *l2Bridge) sanitizeErrorForLog(err error) string {
 	if err == nil {
 		return ""
 	}
+	return b.sanitizeStringForLog(err.Error())
+}
 
-	msg := err.Error()
+func (b *l2Bridge) sanitizeStringForLog(msg string) string {
+	if msg == "" {
+		return ""
+	}
 
 	// Best-effort redaction. Most dial failures include the request URL; when
 	// auth forwarding uses query parameters, that URL may contain the client's
