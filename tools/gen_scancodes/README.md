@@ -11,7 +11,6 @@ so the browser capture side and the PS/2 device model stay in sync.
 
 Running the generator updates:
 
-- `src/input/scancodes.ts`
 - `web/src/input/scancodes.ts`
 - `crates/aero-devices-input/src/scancodes_generated.rs`
 
@@ -41,8 +40,7 @@ silently diverge:
   - Convenience alias: `npm run check:scancodes`
   - Convenience alias: `just check-scancodes`
 - `web/test/scancodes_generated_sync.test.ts` compares `scancodes.json` against
-  the generated TypeScript mappings in both `web/src/input/scancodes.ts` and
-  `src/input/scancodes.ts`.
+  the generated TypeScript mapping in `web/src/input/scancodes.ts`.
 - `crates/aero-devices-input/tests/scancodes_json_sync.rs` compares
   `scancodes.json` against the generated Rust lookup (`browser_code_to_set2_bytes`).
 - `crates/emulator/tests/scancodes_json_sync.rs` performs the same check for the

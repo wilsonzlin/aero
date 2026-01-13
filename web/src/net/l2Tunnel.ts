@@ -228,6 +228,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
   private nextPingNonce = (Math.random() * 0xffff_ffff) >>> 0;
   private pendingPings = new Map<number, number>();
   private lastInboundAtMs = 0;
+  private sentKeepalivePing = false;
 
   private opened = false;
   private closed = false;
@@ -311,6 +312,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     if (this.closed || this.closing || this.opened) return;
     this.opened = true;
     this.lastInboundAtMs = nowMs();
+    this.sentKeepalivePing = false;
     this.sink({ type: "open" });
     this.startKeepalive();
     this.scheduleFlush();
@@ -481,6 +483,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       this.keepaliveTimer = null;
     }
     this.pendingPings.clear();
+    this.sentKeepalivePing = false;
   }
 
   private scheduleNextPing(): void {
@@ -505,7 +508,11 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     }
 
     const sentAt = nowMs();
-    if (this.opts.keepaliveMaxMs > 0 && this.lastInboundAtMs > 0) {
+    // Never close the tunnel before we've emitted at least one keepalive ping. In slower
+    // environments (sandboxed CI / heavily loaded test runners) the first timer callback can be
+    // delayed beyond the nominal interval, and we still want to attempt a ping before declaring a
+    // hard timeout.
+    if (this.sentKeepalivePing && this.opts.keepaliveMaxMs > 0 && this.lastInboundAtMs > 0) {
       const idleTimeoutMs = this.opts.keepaliveMaxMs * 2;
       if (idleTimeoutMs > 0 && sentAt - this.lastInboundAtMs > idleTimeoutMs) {
         this.emitSessionErrorThrottled(new Error(`closing L2 tunnel: keepalive timeout (${idleTimeoutMs}ms)`));
@@ -528,6 +535,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     }
 
     this.enqueue(encodePing(pingPayload, { maxPayload: this.opts.maxControlSize }));
+    this.sentKeepalivePing = true;
     this.scheduleNextPing();
   }
 

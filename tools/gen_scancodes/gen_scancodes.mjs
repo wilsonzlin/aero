@@ -7,7 +7,6 @@ const REPO_ROOT = path.resolve(SCRIPT_DIR, '../..');
 
 const INPUT_PATH = path.join(SCRIPT_DIR, 'scancodes.json');
 const OUT_TS_PATHS = [
-  path.join(REPO_ROOT, 'src/input/scancodes.ts'),
   path.join(REPO_ROOT, 'web/src/input/scancodes.ts'),
 ];
 const OUT_RS_PATHS = [

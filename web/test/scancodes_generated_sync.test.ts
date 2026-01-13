@@ -6,10 +6,6 @@ import {
   PS2_SET2_CODE_TO_SCANCODE as WEB_PS2_SET2_CODE_TO_SCANCODE,
   ps2Set2BytesForKeyEvent as webPs2Set2BytesForKeyEvent,
 } from '../src/input/scancodes.ts';
-import {
-  PS2_SET2_CODE_TO_SCANCODE as HARNESS_PS2_SET2_CODE_TO_SCANCODE,
-  ps2Set2BytesForKeyEvent as harnessPs2Set2BytesForKeyEvent,
-} from '../../src/input/scancodes.ts';
 
 type JsonScancodeEntry = {
   make: string[];
@@ -154,12 +150,6 @@ test('generated PS/2 Set-2 scancode tables are in sync with tools/gen_scancodes/
     (code, pressed) => webPs2Set2BytesForKeyEvent(code, pressed),
     jsonScancodes,
   );
-  assertTsMappingInSync(
-    'src/input/scancodes.ts',
-    HARNESS_PS2_SET2_CODE_TO_SCANCODE,
-    (code, pressed) => harnessPs2Set2BytesForKeyEvent(code, pressed),
-    jsonScancodes,
-  );
 });
 
 test("scancode tables cover standard, extended (E0), and multi-byte sequences", () => {
@@ -169,31 +159,21 @@ test("scancode tables cover standard, extended (E0), and multi-byte sequences", 
     ["Digit1", [0x16]],
   ] as const) {
     assert.deepStrictEqual(webPs2Set2BytesForKeyEvent(code, true), make);
-    assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent(code, true), make);
 
     // For non-extended, non-sequence keys, break is the canonical Set-2 `F0 <make>` form.
     assert.deepStrictEqual(webPs2Set2BytesForKeyEvent(code, false), [0xf0, make[0]]);
-    assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent(code, false), [0xf0, make[0]]);
   }
 
   // Extended keys (E0 prefix).
   assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("ArrowUp", true), [0xe0, 0x75]);
-  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("ArrowUp", true), [0xe0, 0x75]);
   assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("ArrowUp", false), [0xe0, 0xf0, 0x75]);
-  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("ArrowUp", false), [0xe0, 0xf0, 0x75]);
 
   // Multi-byte sequences (PrintScreen / Pause).
   assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("PrintScreen", true), [0xe0, 0x12, 0xe0, 0x7c]);
-  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("PrintScreen", true), [0xe0, 0x12, 0xe0, 0x7c]);
   assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("PrintScreen", false), [0xe0, 0xf0, 0x7c, 0xe0, 0xf0, 0x12]);
-  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("PrintScreen", false), [0xe0, 0xf0, 0x7c, 0xe0, 0xf0, 0x12]);
 
   assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("Pause", true), [
     0xe1, 0x14, 0x77, 0xe1, 0xf0, 0x14, 0xf0, 0x77,
   ]);
-  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("Pause", true), [
-    0xe1, 0x14, 0x77, 0xe1, 0xf0, 0x14, 0xf0, 0x77,
-  ]);
   assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("Pause", false), []);
-  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("Pause", false), []);
 });
