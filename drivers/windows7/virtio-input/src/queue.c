@@ -194,6 +194,7 @@ VOID VirtioInputEvtIoDeviceControl(
         PUCHAR outBuf;
         size_t outBytes;
         size_t availBytes;
+        size_t copyBytes;
         VIOINPUT_COUNTERS snapshot;
 
         outBuf = NULL;
@@ -210,37 +211,26 @@ VOID VirtioInputEvtIoDeviceControl(
             availBytes = OutputBufferLength;
         }
 
-        if (availBytes >= sizeof(snapshot)) {
-            RtlCopyMemory(outBuf, &snapshot, sizeof(snapshot));
-            status = STATUS_SUCCESS;
-            info = sizeof(snapshot);
-            break;
+        copyBytes = availBytes;
+        if (copyBytes > sizeof(snapshot)) {
+            copyBytes = sizeof(snapshot);
         }
 
         /*
-         * Buffer is too small to return a full snapshot. Still try to return at
-         * least Size + Version so callers can discover the expected struct size
-         * and version even across version bumps.
+         * Allow version negotiation: if the caller's buffer is too small for the
+         * current counters struct, return STATUS_BUFFER_TOO_SMALL but still copy
+         * as much of the snapshot as fits (starting with Size+Version).
          *
-         * Keep METHOD_BUFFERED semantics: we only touch the request's system
-         * buffer and report the number of bytes we actually wrote.
+         * This keeps METHOD_BUFFERED semantics and preserves compatibility with
+         * older tools that pass an older struct size: they still get the fields
+         * they know, and can read Size/Version to allocate a larger buffer.
          */
-        if (availBytes >= sizeof(VIOINPUT_COUNTERS_V1_MIN)) {
-            VIOINPUT_COUNTERS_V1_MIN minOut;
-
-            minOut.Size = snapshot.Size;
-            minOut.Version = snapshot.Version;
-            RtlCopyMemory(outBuf, &minOut, sizeof(minOut));
-            info = sizeof(minOut);
-        } else if (availBytes >= sizeof(ULONG)) {
-            // Best-effort: return Size only.
-            RtlCopyMemory(outBuf, &snapshot.Size, sizeof(snapshot.Size));
-            info = sizeof(snapshot.Size);
-        } else {
-            info = 0;
+        if (copyBytes != 0) {
+            RtlCopyMemory(outBuf, &snapshot, copyBytes);
+            info = copyBytes;
         }
 
-        status = STATUS_BUFFER_TOO_SMALL;
+        status = (copyBytes < sizeof(snapshot)) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
         break;
     }
     case IOCTL_VIOINPUT_QUERY_STATE: {
