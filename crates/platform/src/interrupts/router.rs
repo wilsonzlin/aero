@@ -192,6 +192,7 @@ impl PlatformInterrupts {
     /// machine configurations can construct a stable topology.
     pub fn new_with_cpu_count(cpu_count: u8) -> Self {
         let cpu_count = cpu_count.max(1);
+
         let mut isa_irq_to_gsi = [0u32; 16];
         for (idx, slot) in isa_irq_to_gsi.iter_mut().enumerate() {
             *slot = idx as u32;
@@ -223,7 +224,6 @@ impl PlatformInterrupts {
             }));
             lapics.push(lapic);
         }
-
         let ioapic = Arc::new(Mutex::new(IoApic::with_lapics(IoApicId(0), sinks)));
 
         // Wire LAPIC EOI -> IOAPIC Remote-IRR handling.
@@ -553,15 +553,15 @@ impl PlatformInterrupts {
     }
 
     pub fn lapic_mmio_read(&self, offset: u64, data: &mut [u8]) {
-        self.lapics[0].mmio_read(offset, data);
+        self.lapic_mmio_read_for_apic(0, offset, data);
     }
 
     pub fn lapic_mmio_write(&self, offset: u64, data: &[u8]) {
-        self.lapics[0].mmio_write(offset, data);
+        self.lapic_mmio_write_for_apic(0, offset, data);
     }
 
     pub fn lapic_mmio_read_for_apic(&self, apic_id: u8, offset: u64, data: &mut [u8]) {
-        let Some(lapic) = self.lapics.iter().find(|lapic| lapic.apic_id() == apic_id) else {
+        let Some(lapic) = self.lapic_for_apic_id(apic_id) else {
             data.fill(0);
             return;
         };
@@ -569,7 +569,7 @@ impl PlatformInterrupts {
     }
 
     pub fn lapic_mmio_write_for_apic(&self, apic_id: u8, offset: u64, data: &[u8]) {
-        let Some(lapic) = self.lapics.iter().find(|lapic| lapic.apic_id() == apic_id) else {
+        let Some(lapic) = self.lapic_for_apic_id(apic_id) else {
             return;
         };
         lapic.mmio_write(offset, data);
@@ -708,7 +708,7 @@ impl PlatformInterrupts {
     /// This is used by machine-level INIT IPI delivery to reset the target vCPU's local APIC.
     /// If `apic_id` does not correspond to any known LAPIC, this is a no-op.
     pub fn reset_lapic(&self, apic_id: u8) {
-        let Some(lapic) = self.lapics.iter().find(|lapic| lapic.apic_id() == apic_id) else {
+        let Some(lapic) = self.lapic_for_apic_id(apic_id) else {
             return;
         };
         lapic.reset_state(apic_id);
@@ -722,7 +722,6 @@ impl PlatformInterrupts {
         svr |= 1 << 8;
         lapic.mmio_write(0xF0, &svr.to_le_bytes());
     }
-
     pub fn get_pending_for_apic(&self, apic_id: u8) -> Option<u8> {
         match self.mode {
             PlatformInterruptMode::LegacyPic => {
@@ -1519,5 +1518,20 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].destination, 0);
         assert_eq!(events[0].vector, 0x41);
+    }
+
+    #[test]
+    fn ioapic_delivers_to_nonzero_destination_apic_id() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // GSI1 -> vector 0x45, edge-triggered, unmasked, destination APIC ID 1.
+        let vector = 0x45u32;
+        program_ioapic_entry(&mut ints, 1, vector, 1u32 << 24);
+
+        ints.raise_irq(InterruptInput::Gsi(1));
+
+        assert_eq!(ints.lapics[0].get_pending_vector(), None);
+        assert_eq!(ints.lapics[1].get_pending_vector(), Some(vector as u8));
     }
 }
