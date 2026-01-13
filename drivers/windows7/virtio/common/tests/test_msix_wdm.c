@@ -113,6 +113,12 @@ static void test_multivector_mapping(void)
 
     assert(msix.MessageCount == 3);
     assert(msix.UsedVectorCount == 3);
+    assert(msix.MessageInfo != NULL);
+    assert(msix.MessageInfo->MessageCount == 3);
+    /* MessageData is an APIC vector in real systems; ensure it differs from message number indices. */
+    assert(msix.MessageInfo->MessageInfo[0].MessageData == 0x50u);
+    assert(msix.MessageInfo->MessageInfo[1].MessageData == 0x51u);
+    assert(msix.MessageInfo->MessageInfo[2].MessageData == 0x52u);
     assert(msix.ConfigVector == 0);
     assert(msix.QueueVectors != NULL);
     assert(msix.QueueVectors[0] == 1);
@@ -151,6 +157,9 @@ static void test_all_on_0_fallback_drains_all_queues(void)
     ctx.expected_msix = &msix;
 
     assert(msix.UsedVectorCount == 1);
+    assert(msix.MessageInfo != NULL);
+    assert(msix.MessageInfo->MessageCount == 1);
+    assert(msix.MessageInfo->MessageInfo[0].MessageData == 0x50u);
     assert(msix.ConfigVector == 0);
     assert(msix.QueueVectors != NULL);
     assert(msix.QueueVectors[0] == 0);
@@ -177,4 +186,3 @@ int main(void)
     printf("virtio_msix_wdm_tests: PASS\n");
     return 0;
 }
-

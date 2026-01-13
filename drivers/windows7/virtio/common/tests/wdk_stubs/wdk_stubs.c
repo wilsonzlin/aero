@@ -206,7 +206,14 @@ NTSTATUS IoConnectInterruptEx(_Inout_ PIO_CONNECT_INTERRUPT_PARAMETERS Parameter
         intr->ProcessorEnableMask = 1;
 
         info->MessageInfo[i].InterruptObject = intr;
-        info->MessageInfo[i].MessageData = i;
+        /*
+         * Simulate realistic MSI/MSI-X message data values (APIC vectors), which
+         * are not the same as the MSI-X table entry indices ("message numbers").
+         *
+         * Unit tests for virtio MSI-X routing must ensure production code does
+         * not accidentally treat MessageData as a virtio MSI-X vector index.
+         */
+        info->MessageInfo[i].MessageData = 0x50u + i;
     }
 
     connection = (WDK_MESSAGE_INTERRUPT_CONNECTION*)calloc(1, sizeof(*connection));

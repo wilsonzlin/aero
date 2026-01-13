@@ -192,35 +192,28 @@ NTSTATUS VirtioMsixConnect(_In_ PDEVICE_OBJECT DeviceObject,
     Msix->ConnectionContext = params.MessageBased.ConnectionContext;
 
     /*
-     * Derive the message numbers that callers should program into common_cfg.
+     * Derive the MSI-X table entry indices ("message numbers") that callers should
+     * program into the virtio common_cfg routing fields (msix_config /
+     * queue_msix_vector).
      *
-     * The MSI-X table entry indices are surfaced as MessageData in the per-vector
-     * message info.
+     * IMPORTANT: Do NOT use MessageInfo[].MessageData here. MessageData is the
+     * APIC vector encoded in the MSI/MSI-X message data value, which is not the
+     * same thing as the MSI-X table entry index expected by virtio.
+     *
+     * IoConnectInterruptEx connects messages numbered 0..(MessageCount-1), and
+     * passes that message number as MessageId to the ISR. Those message numbers
+     * are the values that must be written into common_cfg.
      */
-    Msix->ConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
-    if (Msix->MessageInfo != NULL && Msix->MessageInfo->MessageCount != 0) {
-        Msix->ConfigVector = (USHORT)Msix->MessageInfo->MessageInfo[0].MessageData;
-    }
+    Msix->ConfigVector = 0;
 
     if (Msix->QueueVectors != NULL) {
         if (usedVectorCount == 1) {
             for (ULONG q = 0; q < QueueCount; q++) {
                 Msix->QueueVectors[q] = Msix->ConfigVector;
             }
-        } else if (Msix->MessageInfo != NULL && Msix->MessageInfo->MessageCount >= (ULONG)usedVectorCount) {
-            for (ULONG q = 0; q < QueueCount; q++) {
-                Msix->QueueVectors[q] = (USHORT)Msix->MessageInfo->MessageInfo[1 + q].MessageData;
-            }
         } else {
-            /*
-             * Defensive: if message info is absent/incomplete, fall back to the
-             * canonical message indices.
-             */
             for (ULONG q = 0; q < QueueCount; q++) {
-                Msix->QueueVectors[q] = (usedVectorCount == 1) ? 0 : (USHORT)(1 + q);
-            }
-            if (Msix->ConfigVector == VIRTIO_PCI_MSI_NO_VECTOR) {
-                Msix->ConfigVector = 0;
+                Msix->QueueVectors[q] = (USHORT)(1 + q);
             }
         }
     }
@@ -412,4 +405,3 @@ static VOID VirtioMsixDpc(_In_ PKDPC Dpc, _In_ PVOID DeferredContext, _In_opt_ P
         (VOID)InterlockedExchange(&msix->DpcInFlight, 0);
     }
 }
-
