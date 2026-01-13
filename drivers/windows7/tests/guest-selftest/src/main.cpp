@@ -1903,14 +1903,17 @@ struct VirtioInputTestResult {
   int matched_devices = 0;
   int keyboard_devices = 0;
   int mouse_devices = 0;
+  int tablet_devices = 0;
   int ambiguous_devices = 0;
   int unknown_devices = 0;
   int keyboard_collections = 0;
   int mouse_collections = 0;
-  // Best-effort: capture at least one interface path for the keyboard-only and mouse-only virtio-input
-  // HID devices so optional end-to-end input report tests can open them.
+  int tablet_collections = 0;
+  // Best-effort: capture at least one interface path for each virtio-input HID class device so optional
+  // end-to-end input report tests can open them.
   std::wstring keyboard_device_path;
   std::wstring mouse_device_path;
+  std::wstring tablet_device_path;
   std::string reason;
 };
 
@@ -1973,6 +1976,7 @@ static std::optional<std::vector<uint8_t>> ReadHidReportDescriptor(Logger& log, 
 struct HidReportDescriptorSummary {
   int keyboard_app_collections = 0;
   int mouse_app_collections = 0;
+  int tablet_app_collections = 0;
 };
 
 static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector<uint8_t>& desc) {
@@ -1982,10 +1986,33 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
   std::vector<uint32_t> usage_page_stack;
   std::vector<uint32_t> local_usages;
   std::optional<uint32_t> local_usage_min;
+  std::optional<uint32_t> local_usage_max;
+
+  // Track Application collections so we can classify "Mouse" vs "absolute pointer" (tablet-like) devices.
+  struct CollectionCtx {
+    bool is_application = false;
+    uint32_t usage_page = 0;
+    uint32_t usage = 0;
+
+    enum class Kind {
+      Unknown,
+      Keyboard,
+      MouseOrPointer,
+      Tablet,
+    } kind = Kind::Unknown;
+
+    // Only used for Kind::MouseOrPointer to detect absolute X/Y (tablet-like).
+    bool saw_x_abs = false;
+    bool saw_y_abs = false;
+    bool saw_x_rel = false;
+    bool saw_y_rel = false;
+  };
+  std::vector<CollectionCtx> collection_stack;
 
   auto clear_locals = [&]() {
     local_usages.clear();
     local_usage_min.reset();
+    local_usage_max.reset();
   };
 
   size_t i = 0;
@@ -2016,21 +2043,114 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
 
     switch (type) {
       case 0: { // Main
-        // Collection (tag 0xA) + Application (0x01)
+        // Collection (tag 0xA). Track Application collections (0x01) so we can later reclassify
+        // mouse-like collections as tablets when they advertise absolute X/Y.
         if (tag == 0xA) {
           const uint8_t collection_type = static_cast<uint8_t>(value & 0xFF);
-          if (collection_type == 0x01) {
-            std::optional<uint32_t> usage;
-            if (!local_usages.empty()) {
-              usage = local_usages.front();
-            } else if (local_usage_min.has_value()) {
-              usage = *local_usage_min;
-            }
 
-            if (usage.has_value()) {
-              // Generic Desktop Page (0x01): Keyboard (0x06), Mouse (0x02)
-              if (usage_page == 0x01 && *usage == 0x06) out.keyboard_app_collections++;
-              if (usage_page == 0x01 && *usage == 0x02) out.mouse_app_collections++;
+          std::optional<uint32_t> usage;
+          if (!local_usages.empty()) {
+            usage = local_usages.front();
+          } else if (local_usage_min.has_value()) {
+            usage = *local_usage_min;
+          }
+
+          CollectionCtx ctx{};
+          ctx.is_application = (collection_type == 0x01);
+          ctx.usage_page = usage_page;
+          ctx.usage = usage.value_or(0);
+
+          if (ctx.is_application) {
+            // Generic Desktop Page (0x01): Keyboard (0x06), Mouse (0x02), Pointer (0x01)
+            if (ctx.usage_page == 0x01 && ctx.usage == 0x06) {
+              ctx.kind = CollectionCtx::Kind::Keyboard;
+            } else if (ctx.usage_page == 0x01 && (ctx.usage == 0x02 || ctx.usage == 0x01)) {
+              ctx.kind = CollectionCtx::Kind::MouseOrPointer;
+            } else if (ctx.usage_page == 0x0D) {
+              // Digitizers (0x0D): treat as "tablet-like" so optional tablet support doesn't break PASS criteria.
+              // Common usages include Touch Screen (0x04), Pen (0x02), Stylus (0x20), etc.
+              ctx.kind = CollectionCtx::Kind::Tablet;
+            }
+          }
+
+          collection_stack.push_back(ctx);
+        } else if (tag == 0xC) {
+          // End Collection.
+          if (!collection_stack.empty()) {
+            const CollectionCtx ctx = collection_stack.back();
+            collection_stack.pop_back();
+
+            if (ctx.is_application) {
+              switch (ctx.kind) {
+                case CollectionCtx::Kind::Keyboard:
+                  out.keyboard_app_collections++;
+                  break;
+                case CollectionCtx::Kind::Tablet:
+                  out.tablet_app_collections++;
+                  break;
+                case CollectionCtx::Kind::MouseOrPointer: {
+                  const bool is_absolute_pointer =
+                      (ctx.saw_x_abs && ctx.saw_y_abs) && !(ctx.saw_x_rel || ctx.saw_y_rel);
+                  if (is_absolute_pointer) {
+                    out.tablet_app_collections++;
+                  } else {
+                    out.mouse_app_collections++;
+                  }
+                  break;
+                }
+                case CollectionCtx::Kind::Unknown:
+                default:
+                  break;
+              }
+            }
+          }
+        } else if (tag == 0x8) {
+          // Input. Use local usages to detect X/Y and value bits to detect Absolute vs Relative.
+          //
+          // HID "Input" item flags bit 2: Absolute(0) / Relative(1).
+          const bool is_relative = (value & 0x04u) != 0;
+
+          // Detect X/Y (Generic Desktop page).
+          bool has_x = false;
+          bool has_y = false;
+          if (usage_page == 0x01) {
+            for (const uint32_t u : local_usages) {
+              if (u == 0x30) has_x = true; // X
+              if (u == 0x31) has_y = true; // Y
+            }
+            if (local_usage_min.has_value() && local_usage_max.has_value()) {
+              const uint32_t lo = *local_usage_min;
+              const uint32_t hi = *local_usage_max;
+              if (lo <= 0x30 && 0x30 <= hi) has_x = true;
+              if (lo <= 0x31 && 0x31 <= hi) has_y = true;
+            } else if (local_usage_min.has_value() && !local_usage_max.has_value()) {
+              // Best-effort: some descriptors use a single Usage Minimum without a matching maximum.
+              if (*local_usage_min == 0x30) has_x = true;
+              if (*local_usage_min == 0x31) has_y = true;
+            }
+          }
+
+          if (has_x || has_y) {
+            // Attribute the axis flags to the nearest enclosing Application collection.
+            for (auto it = collection_stack.rbegin(); it != collection_stack.rend(); ++it) {
+              if (!it->is_application) continue;
+              if (it->kind != CollectionCtx::Kind::MouseOrPointer) break;
+
+              if (has_x) {
+                if (is_relative) {
+                  it->saw_x_rel = true;
+                } else {
+                  it->saw_x_abs = true;
+                }
+              }
+              if (has_y) {
+                if (is_relative) {
+                  it->saw_y_rel = true;
+                } else {
+                  it->saw_y_abs = true;
+                }
+              }
+              break;
             }
           }
         }
@@ -2056,6 +2176,8 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
           local_usages.push_back(value);
         } else if (tag == 0x1) { // Usage Minimum
           local_usage_min = value;
+        } else if (tag == 0x2) { // Usage Maximum
+          local_usage_max = value;
         }
         break;
       }
@@ -2144,6 +2266,7 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
     const auto summary = SummarizeHidReportDescriptor(*report_desc);
     const bool has_keyboard = summary.keyboard_app_collections > 0;
     const bool has_mouse = summary.mouse_app_collections > 0;
+    const bool has_tablet = summary.tablet_app_collections > 0;
     if (has_keyboard && has_mouse) {
       out.ambiguous_devices++;
     } else if (has_keyboard) {
@@ -2152,15 +2275,20 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
     } else if (has_mouse) {
       out.mouse_devices++;
       if (out.mouse_device_path.empty()) out.mouse_device_path = device_path;
+    } else if (has_tablet) {
+      out.tablet_devices++;
+      if (out.tablet_device_path.empty()) out.tablet_device_path = device_path;
     } else {
       out.unknown_devices++;
     }
     out.keyboard_collections += summary.keyboard_app_collections;
     out.mouse_collections += summary.mouse_app_collections;
+    out.tablet_collections += summary.tablet_app_collections;
 
     log.Logf("virtio-input: report_descriptor bytes=%zu keyboard_app_collections=%d "
-             "mouse_app_collections=%d",
-             report_desc->size(), summary.keyboard_app_collections, summary.mouse_app_collections);
+             "mouse_app_collections=%d tablet_app_collections=%d",
+             report_desc->size(), summary.keyboard_app_collections, summary.mouse_app_collections,
+             summary.tablet_app_collections);
   }
 
   SetupDiDestroyDeviceInfoList(devinfo);
@@ -6176,9 +6304,10 @@ int wmain(int argc, wchar_t** argv) {
   const auto input = VirtioInputTest(log);
   log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input|%s|devices=%d|keyboard_devices=%d|"
            "mouse_devices=%d|ambiguous_devices=%d|unknown_devices=%d|keyboard_collections=%d|"
-           "mouse_collections=%d|reason=%s",
+           "mouse_collections=%d|tablet_devices=%d|tablet_collections=%d|reason=%s",
            input.ok ? "PASS" : "FAIL", input.matched_devices, input.keyboard_devices, input.mouse_devices,
            input.ambiguous_devices, input.unknown_devices, input.keyboard_collections, input.mouse_collections,
+           input.tablet_devices, input.tablet_collections,
            input.reason.empty() ? "-" : input.reason.c_str());
   all_ok = all_ok && input.ok;
 
