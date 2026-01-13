@@ -87,7 +87,11 @@ export class WebHidBroker {
   // be serialized per device, so maintain an explicit FIFO per `deviceId` so reports are executed
   // in guest order without stalling other devices.
   readonly #pendingDeviceSends = new Map<number, HidDeviceSendTask[]>();
-  readonly #runningDeviceSends = new Set<number>();
+  // Track the currently-running queue runner per device using a monotonically increasing token so
+  // a runner from a previous device session (e.g. after detach/reattach) cannot clear the running
+  // flag for a newer runner.
+  readonly #deviceSendTokenById = new Map<number, number>();
+  #nextDeviceSendToken = 1;
 
   readonly #attachedToWorker = new Set<number>();
   readonly #inputReportListeners = new Map<number, (event: HIDInputReportEvent) => void>();
@@ -312,9 +316,10 @@ export class WebHidBroker {
       this.#pendingDeviceSends.set(deviceId, queue);
     }
     queue.push(task);
-    if (this.#runningDeviceSends.has(deviceId)) return;
-    this.#runningDeviceSends.add(deviceId);
-    void this.#runDeviceSendQueue(deviceId);
+    if (this.#deviceSendTokenById.has(deviceId)) return;
+    const token = this.#nextDeviceSendToken++;
+    this.#deviceSendTokenById.set(deviceId, token);
+    void this.#runDeviceSendQueue(deviceId, token);
   }
 
   #dequeueDeviceSend(deviceId: number): HidDeviceSendTask | null {
@@ -328,10 +333,11 @@ export class WebHidBroker {
     return task;
   }
 
-  async #runDeviceSendQueue(deviceId: number): Promise<void> {
+  async #runDeviceSendQueue(deviceId: number, token: number): Promise<void> {
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        if (this.#deviceSendTokenById.get(deviceId) !== token) break;
         // Intentionally fetch the next task via a helper so the queue array is not retained across
         // `await` points. This allows `detach` to drop pending tasks and release memory even if an
         // in-flight `sendReport` Promise never resolves.
@@ -346,7 +352,9 @@ export class WebHidBroker {
         }
       }
     } finally {
-      this.#runningDeviceSends.delete(deviceId);
+      if (this.#deviceSendTokenById.get(deviceId) === token) {
+        this.#deviceSendTokenById.delete(deviceId);
+      }
     }
   }
 
@@ -570,6 +578,7 @@ export class WebHidBroker {
     this.#inputReportListeners.delete(deviceId);
     this.#lastInputReportInfo.delete(deviceId);
     this.#pendingDeviceSends.delete(deviceId);
+    this.#deviceSendTokenById.delete(deviceId);
 
     if (options.sendDetach && this.#workerPort) {
       const detachMsg: HidDetachMessage = { type: "hid.detach", deviceId };
