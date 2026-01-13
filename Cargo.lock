@@ -205,6 +205,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-disk-convert"
+version = "0.1.0"
+dependencies = [
+ "aero-storage",
+ "anyhow",
+ "assert_cmd",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "aero-dxbc"
 version = "0.1.0"
 dependencies = [
