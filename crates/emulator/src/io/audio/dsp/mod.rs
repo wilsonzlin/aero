@@ -511,4 +511,49 @@ mod tests {
         sp.flush(&mut out).unwrap();
         assert_eq!(out, vec![0.25]);
     }
+
+    #[test]
+    fn stream_processor_reset_discards_resampler_history() {
+        // Use tiny sample rates so the linear resampler step is exactly 0.5.
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 1,
+            sample_rate: 1,
+        };
+
+        // Two input blocks; the second block's first output depends on the previous block's
+        // last sample unless we reset.
+        let block_a = f32s_to_le_bytes(&[0.0f32, 1.0]);
+        let block_b = f32s_to_le_bytes(&[1.0f32, 0.0]);
+
+        // With continuous state, the second block begins with interpolation between the last
+        // sample of A (1.0) and the first sample of B (1.0), yielding an initial 1.0 sample
+        // before the block's own frames.
+        let mut sp = StreamProcessor::new(input, 2, 1, ResamplerKind::Linear).unwrap();
+        let mut out_a = Vec::new();
+        sp.process(&block_a, &mut out_a).unwrap();
+        assert_eq!(out_a, vec![0.0, 0.5, 1.0]);
+
+        let mut out_b = Vec::new();
+        sp.process(&block_b, &mut out_b).unwrap();
+        assert_eq!(out_b, vec![1.0, 1.0, 0.5, 0.0]);
+
+        let mut tail = Vec::new();
+        sp.flush(&mut tail).unwrap();
+        assert_eq!(tail, vec![0.0]);
+
+        // After reset, the resampler should behave as if starting fresh on the next block.
+        let mut sp = StreamProcessor::new(input, 2, 1, ResamplerKind::Linear).unwrap();
+        let mut tmp = Vec::new();
+        sp.process(&block_a, &mut tmp).unwrap();
+        sp.reset();
+
+        let mut out_b = Vec::new();
+        sp.process(&block_b, &mut out_b).unwrap();
+        assert_eq!(out_b, vec![1.0, 0.5, 0.0]);
+
+        let mut tail = Vec::new();
+        sp.flush(&mut tail).unwrap();
+        assert_eq!(tail, vec![0.0]);
+    }
 }
