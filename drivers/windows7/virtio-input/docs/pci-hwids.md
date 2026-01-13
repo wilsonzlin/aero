@@ -94,6 +94,11 @@ the PCI Subsystem Device ID to distinguish keyboard vs mouse:
   * keyboard: `0x0010` → `SUBSYS_00101AF4`
   * mouse: `0x0011` → `SUBSYS_00111AF4`
 
+The in-tree Win7 virtio-input INF uses these subsystem-qualified HWIDs to assign **distinct Device Manager names**:
+
+- `SUBSYS_00101AF4` → **Aero VirtIO Keyboard**
+- `SUBSYS_00111AF4` → **Aero VirtIO Mouse**
+
 Topology notes:
 
 * The keyboard must be **function 0** and must set the PCI multi-function bit

@@ -32,6 +32,8 @@ hardware IDs:
 
 - `PCI\VEN_1AF4&DEV_1052&REV_01` (and the more-specific `...&SUBSYS_...&REV_01` variants)
 
+The `...&SUBSYS_...&REV_01` variants use distinct `DeviceDesc` strings so the keyboard and mouse PCI functions show up as separate named devices in Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**).
+
 This avoids “driver installs but won’t start” confusion: the driver enforces the
 contract major version at runtime, so binding to a non-contract `REV_00` device
 would otherwise install successfully but fail to start (Code 10).
