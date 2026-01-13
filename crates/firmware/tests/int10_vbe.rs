@@ -20,6 +20,18 @@ fn int10_vbe_controller_and_mode_info() {
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
     let mut cpu = CpuState::default();
 
+    // ModeInfoBlock::ModeAttributes flags we rely on for bootloader/Windows compatibility.
+    const MODE_ATTR_SUPPORTED: u16 = 1 << 0;
+    const MODE_ATTR_COLOR: u16 = 1 << 2;
+    const MODE_ATTR_GRAPHICS: u16 = 1 << 3;
+    const MODE_ATTR_WINDOWED: u16 = 1 << 5;
+    const MODE_ATTR_LFB: u16 = 1 << 7;
+    const REQUIRED_MODE_ATTRS: u16 = MODE_ATTR_SUPPORTED
+        | MODE_ATTR_COLOR
+        | MODE_ATTR_GRAPHICS
+        | MODE_ATTR_WINDOWED
+        | MODE_ATTR_LFB;
+
     // 4F00: controller info.
     cpu.set_ax(0x4F00);
     cpu.set_es(0x2000);
@@ -60,6 +72,8 @@ fn int10_vbe_controller_and_mode_info() {
         let mode_addr = real_addr(cpu.es(), cpu.di());
         let mut info = vec![0u8; 256];
         mem.read_bytes(mode_addr, &mut info);
+        let attrs = read_u16(&info, 0);
+        assert_eq!(attrs & REQUIRED_MODE_ATTRS, REQUIRED_MODE_ATTRS);
         assert_eq!(read_u16(&info, 18), width); // XResolution
         assert_eq!(read_u16(&info, 20), height); // YResolution
         assert_eq!(info[25], 32); // BitsPerPixel
@@ -70,6 +84,24 @@ fn int10_vbe_controller_and_mode_info() {
     assert_mode_info(0x115, 800, 600);
     assert_mode_info(0x118, 1024, 768);
     assert_mode_info(0x160, 1280, 720);
+
+    // Also verify an 8bpp packed-pixel mode advertises the same expected attributes.
+    cpu.set_ax(0x4F01);
+    cpu.set_cx(0x101);
+    cpu.set_es(0x2000);
+    cpu.set_di(0x0400);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+
+    let mode_addr = real_addr(cpu.es(), cpu.di());
+    let mut info = vec![0u8; 256];
+    mem.read_bytes(mode_addr, &mut info);
+    let attrs = read_u16(&info, 0);
+    assert_eq!(attrs & REQUIRED_MODE_ATTRS, REQUIRED_MODE_ATTRS);
+    assert_eq!(read_u16(&info, 18), 640); // XResolution
+    assert_eq!(read_u16(&info, 20), 480); // YResolution
+    assert_eq!(info[25], 8); // BitsPerPixel
 }
 
 #[test]

@@ -241,8 +241,31 @@ impl VbeDevice {
 
         let mut buf = [0u8; 256];
 
-        // ModeAttributes: supported | info | color | graphics | LFB
-        let mode_attributes: u16 = 0x009B;
+        // VBE ModeInfoBlock::ModeAttributes (VBE 2.0+).
+        //
+        // The Windows boot stack (bootmgr/winload/bootvid) is sensitive to these flags; in
+        // particular it expects the LFB-available bit when `PhysBasePtr` is non-zero.
+        //
+        // Bit meanings used here follow the project-wide convention in the emulator VBE
+        // implementation (`crates/emulator/src/devices/vga/vbe.rs`):
+        // - bit 0: mode supported
+        // - bit 2: color mode
+        // - bit 3: graphics mode
+        // - bit 5: windowed/banked framebuffer available (WinA/WinB fields valid)
+        // - bit 7: linear framebuffer available (PhysBasePtr valid)
+        const MODE_ATTR_SUPPORTED: u16 = 1 << 0;
+        const MODE_ATTR_COLOR: u16 = 1 << 2;
+        const MODE_ATTR_GRAPHICS: u16 = 1 << 3;
+        const MODE_ATTR_WINDOWED: u16 = 1 << 5;
+        const MODE_ATTR_LFB: u16 = 1 << 7;
+
+        let mut mode_attributes: u16 = MODE_ATTR_SUPPORTED | MODE_ATTR_COLOR | MODE_ATTR_GRAPHICS;
+
+        // Banked window A is advertised below (A000:0000), so set the "windowed available" bit.
+        mode_attributes |= MODE_ATTR_WINDOWED;
+
+        // All advertised modes expose a linear framebuffer at `PhysBasePtr`.
+        mode_attributes |= MODE_ATTR_LFB;
         buf[0..2].copy_from_slice(&mode_attributes.to_le_bytes());
 
         // Windowing (banked framebuffer). Provide a 64KB window at A000:0000.
