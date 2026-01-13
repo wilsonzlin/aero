@@ -29,6 +29,23 @@ typedef struct _VIRTIOSND_EVENTQ_DRAIN_CONTEXT {
 static BOOLEAN VirtIoSndMessageIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext, _In_ ULONG MessageID);
 static VOID VirtIoSndMessageDpc(_In_ PKDPC Dpc, _In_ PVOID DeferredContext, _In_opt_ PVOID SystemArgument1, _In_opt_ PVOID SystemArgument2);
 
+static __forceinline BOOLEAN VirtIoSndShouldRateLimitLog(_Inout_ volatile LONG* Counter)
+{
+    /*
+     * eventq contents are device-controlled. Even in free builds, avoid spamming
+     * DbgPrintEx under malformed/stress scenarios (which can cause hangs/timeouts
+     * in checked environments).
+     *
+     * Log the 1st occurrence and then every 256th.
+     */
+    LONG n;
+    if (Counter == NULL) {
+        return TRUE;
+    }
+    n = InterlockedIncrement(Counter);
+    return ((n & 0xFF) == 1) ? TRUE : FALSE;
+}
+
 static __forceinline BOOLEAN VirtIoSndIntxIsSharedInterrupt(_In_ const CM_PARTIAL_RESOURCE_DESCRIPTOR *Desc)
 {
     /*
@@ -41,6 +58,7 @@ static __forceinline BOOLEAN VirtIoSndIntxIsSharedInterrupt(_In_ const CM_PARTIA
 
 static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cookie, _In_ UINT32 UsedLen, _In_opt_ void *Context)
 {
+    static volatile LONG s_eventqErrorLog;
     PVIRTIOSND_EVENTQ_DRAIN_CONTEXT ctx;
     PVIRTIOSND_DEVICE_EXTENSION dx;
     ULONG_PTR poolBase;
@@ -80,7 +98,9 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
      * emits malformed/unknown events.
      */
     if (Cookie == NULL) {
-        VIRTIOSND_TRACE_ERROR("eventq completion with NULL cookie (len=%lu)\n", (ULONG)UsedLen);
+        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+            VIRTIOSND_TRACE_ERROR("eventq completion with NULL cookie (len=%lu)\n", (ULONG)UsedLen);
+        }
         return;
     }
 
@@ -93,7 +113,12 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
     }
 
     if (dx->EventqBufferPool.Va == NULL || dx->EventqBufferPool.DmaAddr == 0 || dx->EventqBufferPool.Size == 0) {
-        VIRTIOSND_TRACE_ERROR("eventq completion but buffer pool is not initialized (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+            VIRTIOSND_TRACE_ERROR(
+                "eventq completion but buffer pool is not initialized (cookie=%p len=%lu)\n",
+                Cookie,
+                (ULONG)UsedLen);
+        }
         return;
     }
 
@@ -102,29 +127,37 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
     cookiePtr = (ULONG_PTR)Cookie;
 
     if (cookiePtr < poolBase || cookiePtr >= poolEnd) {
-        VIRTIOSND_TRACE_ERROR("eventq completion cookie out of range (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+            VIRTIOSND_TRACE_ERROR("eventq completion cookie out of range (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        }
         return;
     }
 
     /* Ensure cookie points at the start of one of our fixed-size buffers. */
     off = cookiePtr - poolBase;
     if ((off % (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE) != 0) {
-        VIRTIOSND_TRACE_ERROR("eventq completion cookie misaligned (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+            VIRTIOSND_TRACE_ERROR("eventq completion cookie misaligned (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        }
         return;
     }
 
     if (off + (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE > poolEnd - poolBase) {
-        VIRTIOSND_TRACE_ERROR("eventq completion cookie range overflow (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+            VIRTIOSND_TRACE_ERROR("eventq completion cookie range overflow (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
+        }
         return;
     }
 
     if (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) {
         /* Device bug: used length should never exceed posted writable capacity. */
-        VIRTIOSND_TRACE_ERROR(
-            "eventq completion length too large: %lu > %u (cookie=%p)\n",
-            (ULONG)UsedLen,
-            (UINT)VIRTIOSND_EVENTQ_BUFFER_SIZE,
-            Cookie);
+        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+            VIRTIOSND_TRACE_ERROR(
+                "eventq completion length too large: %lu > %u (cookie=%p)\n",
+                (ULONG)UsedLen,
+                (UINT)VIRTIOSND_EVENTQ_BUFFER_SIZE,
+                Cookie);
+        }
     }
 
     InterlockedIncrement(&dx->EventqStats.Completions);
@@ -202,14 +235,18 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
                     sizeof(VIRTIO_SND_EVENT));
             }
         } else {
-            VIRTIOSND_TRACE_ERROR("eventq: failed to parse event (len=%lu): 0x%08X\n", (ULONG)cappedLen, (UINT)status);
+            if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+                VIRTIOSND_TRACE_ERROR("eventq: failed to parse event (len=%lu): 0x%08X\n", (ULONG)cappedLen, (UINT)status);
+            }
         }
     } else if (UsedLen != 0) {
         InterlockedIncrement(&dx->EventqStats.ShortBuffers);
-        VIRTIOSND_TRACE_ERROR(
-            "eventq: short completion ignored (%lu < %Iu)\n",
-            (ULONG)UsedLen,
-            sizeof(VIRTIO_SND_EVENT));
+        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+            VIRTIOSND_TRACE_ERROR(
+                "eventq: short completion ignored (%lu < %Iu)\n",
+                (ULONG)UsedLen,
+                sizeof(VIRTIO_SND_EVENT));
+        }
     }
 
     /*
@@ -239,7 +276,9 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
 
     status = VirtioSndQueueSubmit(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &sg, 1, Cookie);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("eventq repost failed: 0x%08X (cookie=%p)\n", (UINT)status, Cookie);
+        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+            VIRTIOSND_TRACE_ERROR("eventq repost failed: 0x%08X (cookie=%p)\n", (UINT)status, Cookie);
+        }
         return;
     }
 
