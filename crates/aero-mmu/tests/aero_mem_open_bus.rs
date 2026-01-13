@@ -60,6 +60,10 @@ fn aero_mem_bus_typed_reads_past_end_of_ram_preserve_partial_bytes() {
     // Typed reads that cross beyond RAM must keep the in-RAM bytes and fill the rest with 0xFF.
     assert_eq!(aero_mmu::MemoryBus::read_u16(&mut bus, 0x1000), 0xFF12);
 
+    let mut buf = [0u8; 2];
+    aero_mmu::MemoryBus::read_bytes(&mut bus, 0x1000, &mut buf);
+    assert_eq!(buf, [0x12, 0xFF]);
+
     // Also exercise a wider read spanning the boundary.
     bus.write_u8(0x0FFE, 0x34);
     bus.write_u8(0x0FFF, 0x56);

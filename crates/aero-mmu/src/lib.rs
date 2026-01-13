@@ -278,25 +278,24 @@ impl MemoryBus for aero_mem::MemoryBus {
     fn read_u16(&mut self, paddr: u64) -> u16 {
         // Preserve partial open-bus semantics when reads cross beyond the end of RAM.
         // `aero_mem::MemoryBus::try_read_u16` fails the whole read with `Err(Unmapped)`
-        // even if it successfully read prefix bytes; for the MMU page-table walker we
-        // want unmapped bytes to behave like open bus (0xFF) while keeping any bytes
-        // that were read from RAM/MMIO/ROM.
-        let mut buf = [0xFFu8; 2];
-        let _ = self.try_read_bytes(paddr, &mut buf);
+        // even if it successfully read prefix bytes, so we decode from our `read_bytes`
+        // bulk method which fills missing bytes with 0xFF.
+        let mut buf = [0u8; 2];
+        <Self as MemoryBus>::read_bytes(self, paddr, &mut buf);
         u16::from_le_bytes(buf)
     }
 
     #[inline]
     fn read_u32(&mut self, paddr: u64) -> u32 {
-        let mut buf = [0xFFu8; 4];
-        let _ = self.try_read_bytes(paddr, &mut buf);
+        let mut buf = [0u8; 4];
+        <Self as MemoryBus>::read_bytes(self, paddr, &mut buf);
         u32::from_le_bytes(buf)
     }
 
     #[inline]
     fn read_u64(&mut self, paddr: u64) -> u64 {
-        let mut buf = [0xFFu8; 8];
-        let _ = self.try_read_bytes(paddr, &mut buf);
+        let mut buf = [0u8; 8];
+        <Self as MemoryBus>::read_bytes(self, paddr, &mut buf);
         u64::from_le_bytes(buf)
     }
 
