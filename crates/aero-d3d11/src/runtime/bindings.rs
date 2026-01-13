@@ -121,10 +121,9 @@ impl StageBindings {
 
         // A `t#` register can be either a texture SRV or a buffer SRV. Binding one kind unbinds the
         // other.
-        if self.srv_buffers.get(slot_usize).is_some_and(|v| v.is_some()) {
-            self.srv_buffers.resize(slot_usize + 1, None);
-            if self.srv_buffers[slot_usize].is_some() {
-                self.srv_buffers[slot_usize] = None;
+        if let Some(buf) = self.srv_buffers.get_mut(slot_usize) {
+            if buf.is_some() {
+                *buf = None;
                 changed = true;
             }
         }
@@ -145,10 +144,9 @@ impl StageBindings {
 
         // A `t#` register can be either a texture SRV or a buffer SRV. Binding one kind unbinds the
         // other.
-        if self.textures.get(slot_usize).is_some_and(|v| v.is_some()) {
-            self.textures.resize(slot_usize + 1, None);
-            if self.textures[slot_usize].is_some() {
-                self.textures[slot_usize] = None;
+        if let Some(tex) = self.textures.get_mut(slot_usize) {
+            if tex.is_some() {
+                *tex = None;
                 changed = true;
             }
         }
@@ -169,10 +167,9 @@ impl StageBindings {
 
         // A `u#` register can be either a texture UAV or a buffer UAV. Binding one kind unbinds the
         // other.
-        if self.uav_textures.get(slot_usize).is_some_and(|v| v.is_some()) {
-            self.uav_textures.resize(slot_usize + 1, None);
-            if self.uav_textures[slot_usize].is_some() {
-                self.uav_textures[slot_usize] = None;
+        if let Some(tex) = self.uav_textures.get_mut(slot_usize) {
+            if tex.is_some() {
+                *tex = None;
                 changed = true;
             }
         }
@@ -193,10 +190,9 @@ impl StageBindings {
 
         // A `u#` register can be either a texture UAV or a buffer UAV. Binding one kind unbinds the
         // other.
-        if self.uav_buffers.get(slot_usize).is_some_and(|v| v.is_some()) {
-            self.uav_buffers.resize(slot_usize + 1, None);
-            if self.uav_buffers[slot_usize].is_some() {
-                self.uav_buffers[slot_usize] = None;
+        if let Some(buf) = self.uav_buffers.get_mut(slot_usize) {
+            if buf.is_some() {
+                *buf = None;
                 changed = true;
             }
         }
