@@ -474,6 +474,31 @@ mod tests {
     }
 
     #[test]
+    fn parse_accepts_u64_max_and_resolution_clamps_correctly() {
+        let max = u64::MAX.to_string();
+
+        // end == u64::MAX parses, but is clamped to len-1 during resolution.
+        let header = format!("bytes=0-{max}");
+        let specs = parse_range_header(&header).unwrap();
+        assert_eq!(
+            specs,
+            vec![ByteRangeSpec::FromTo {
+                start: 0,
+                end: u64::MAX
+            }]
+        );
+        let resolved = resolve_ranges(&specs, u64::MAX, false).unwrap();
+        assert_resolved_eq(&resolved, &[(0, u64::MAX - 1)], u64::MAX);
+
+        // suffix == u64::MAX parses and resolves to the full representation for len == u64::MAX.
+        let header = format!("bytes=-{max}");
+        let specs = parse_range_header(&header).unwrap();
+        assert_eq!(specs, vec![ByteRangeSpec::Suffix { len: u64::MAX }]);
+        let resolved = resolve_ranges(&specs, u64::MAX, false).unwrap();
+        assert_resolved_eq(&resolved, &[(0, u64::MAX - 1)], u64::MAX);
+    }
+
+    #[test]
     fn parse_rejects_missing_suffix_length() {
         assert!(matches!(
             parse_range_header("bytes=-").unwrap_err(),
