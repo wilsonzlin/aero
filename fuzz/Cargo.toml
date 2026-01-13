@@ -66,6 +66,9 @@ path = "../crates/aero-net-stack"
 [dependencies.aero-net-e1000]
 path = "../crates/aero-net-e1000"
 
+[dependencies.aero-d3d11]
+path = "../crates/aero-d3d11"
+
 [[bin]]
 name = "fuzz_mmu_translate"
 path = "fuzz_targets/fuzz_mmu_translate.rs"
@@ -231,5 +234,11 @@ doc = false
 [[bin]]
 name = "fuzz_linear_mem_wrapped"
 path = "fuzz_targets/fuzz_linear_mem_wrapped.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_d3d11_sm4_translate"
+path = "fuzz_targets/fuzz_d3d11_sm4_translate.rs"
 test = false
 doc = false

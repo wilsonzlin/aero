@@ -1319,6 +1319,7 @@ dependencies = [
  "aero-cpu-core",
  "aero-d3d11",
  "aero-d3d9",
+ "aero-d3d11",
  "aero-devices",
  "aero-devices-storage",
  "aero-dxbc",
