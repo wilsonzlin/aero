@@ -4447,6 +4447,104 @@ HRESULT emit_upload_buffer_locked(Device* dev, Resource* res, const void* data, 
   return S_OK;
 }
 
+static HRESULT emit_upload_resource_range_locked(Device* dev, Resource* res, uint32_t offset, uint32_t size) {
+  if (!dev || !res || !res->handle) {
+    return E_INVALIDARG;
+  }
+  if (size == 0) {
+    return S_OK;
+  }
+  if (res->backing_alloc_id != 0) {
+    // Host-side validation rejects UPLOAD_RESOURCE for guest-backed resources.
+    return E_INVALIDARG;
+  }
+  if (offset > res->size_bytes || size > res->size_bytes - offset) {
+    return E_INVALIDARG;
+  }
+
+  const bool is_buffer = (res->kind == ResourceKind::Buffer);
+  uint32_t upload_offset = offset;
+  uint32_t upload_size = size;
+  if (is_buffer) {
+    // WebGPU buffer copies require 4-byte alignment.
+    const uint32_t start = upload_offset & ~3u;
+    const uint64_t end_u64 = static_cast<uint64_t>(upload_offset) + static_cast<uint64_t>(upload_size);
+    const uint32_t end = static_cast<uint32_t>((end_u64 + 3ull) & ~3ull);
+    if (end > res->size_bytes || end < start) {
+      return E_INVALIDARG;
+    }
+    upload_offset = start;
+    upload_size = end - start;
+  }
+
+  const size_t end = static_cast<size_t>(upload_offset) + static_cast<size_t>(upload_size);
+  if (res->storage.size() < end) {
+    return E_FAIL;
+  }
+
+  const uint8_t* src = res->storage.data() + upload_offset;
+  uint32_t remaining = upload_size;
+  uint32_t cur_offset = upload_offset;
+
+  while (remaining) {
+    const size_t min_payload = is_buffer ? 4 : 1;
+    const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + min_payload, 4);
+    if (!ensure_cmd_space(dev, min_needed)) {
+      return E_OUTOFMEMORY;
+    }
+
+    // Uploads write into the resource. Track its backing allocation so the
+    // KMD/emulator can resolve the destination memory via the per-submit alloc
+    // table even though we keep the patch-location list empty.
+    const HRESULT track_hr = track_resource_allocation_locked(dev, res, /*write=*/true);
+    if (FAILED(track_hr)) {
+      return track_hr;
+    }
+
+    // Allocation tracking may have split/flushed the submission; ensure we
+    // still have room for at least a minimal upload packet before sizing the
+    // next chunk.
+    if (!ensure_cmd_space(dev, min_needed)) {
+      return E_OUTOFMEMORY;
+    }
+
+    const size_t avail = dev->cmd.bytes_remaining();
+    size_t chunk = 0;
+    if (avail > sizeof(aerogpu_cmd_upload_resource)) {
+      chunk = std::min<size_t>(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
+    }
+
+    if (is_buffer) {
+      chunk &= ~static_cast<size_t>(3);
+    } else {
+      while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
+        chunk--;
+      }
+    }
+    if (!chunk) {
+      submit(dev);
+      continue;
+    }
+
+    auto* cmd = append_with_payload_locked<aerogpu_cmd_upload_resource>(
+        dev, AEROGPU_CMD_UPLOAD_RESOURCE, src, chunk);
+    if (!cmd) {
+      return E_OUTOFMEMORY;
+    }
+
+    cmd->resource_handle = res->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = cur_offset;
+    cmd->size_bytes = chunk;
+
+    src += chunk;
+    cur_offset += static_cast<uint32_t>(chunk);
+    remaining -= static_cast<uint32_t>(chunk);
+  }
+
+  return S_OK;
+}
+
 float read_f32_unaligned(const uint8_t* p) {
   float v = 0.0f;
   std::memcpy(&v, p, sizeof(v));
@@ -9124,79 +9222,9 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
   // Fallback: host-allocated resources are updated by embedding raw bytes in the
   // command stream.
   if (res->handle != 0 && (locked_flags & kD3DLOCK_READONLY) == 0 && size) {
-    const bool is_buffer = (res->kind == ResourceKind::Buffer);
-
-    uint32_t upload_offset = offset;
-    uint32_t upload_size = size;
-    if (is_buffer) {
-      const uint32_t start = upload_offset & ~3u;
-      const uint64_t end_u64 = static_cast<uint64_t>(upload_offset) + static_cast<uint64_t>(upload_size);
-      const uint32_t end = static_cast<uint32_t>((end_u64 + 3ull) & ~3ull);
-      if (end > res->size_bytes || end < start) {
-        return trace.ret(E_INVALIDARG);
-      }
-      upload_offset = start;
-      upload_size = end - start;
-    }
-
-    const uint8_t* src = res->storage.data() + upload_offset;
-    uint32_t remaining = upload_size;
-    uint32_t cur_offset = upload_offset;
-
-    while (remaining) {
-      const size_t min_payload = is_buffer ? 4 : 1;
-      const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + min_payload, 4);
-      if (!ensure_cmd_space(dev, min_needed)) {
-        return trace.ret(E_OUTOFMEMORY);
-      }
-
-      // Uploads write into the resource. Track its backing allocation so the
-      // KMD/emulator can resolve the destination memory via the per-submit alloc
-      // table even though we keep the patch-location list empty.
-      HRESULT track_hr = track_resource_allocation_locked(dev, res, /*write=*/true);
-      if (FAILED(track_hr)) {
-        return trace.ret(track_hr);
-      }
-
-      // Allocation tracking may have split/flushed the submission; ensure we
-      // still have room for at least a minimal upload packet before sizing the
-      // next chunk.
-      if (!ensure_cmd_space(dev, min_needed)) {
-        return trace.ret(E_OUTOFMEMORY);
-      }
-
-      const size_t avail = dev->cmd.bytes_remaining();
-      size_t chunk = 0;
-      if (avail > sizeof(aerogpu_cmd_upload_resource)) {
-        chunk = std::min<size_t>(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
-      }
-
-      if (is_buffer) {
-        chunk &= ~static_cast<size_t>(3);
-      } else {
-        while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
-          chunk--;
-        }
-      }
-      if (!chunk) {
-        submit(dev);
-        continue;
-      }
-
-      auto* cmd = append_with_payload_locked<aerogpu_cmd_upload_resource>(
-          dev, AEROGPU_CMD_UPLOAD_RESOURCE, src, chunk);
-      if (!cmd) {
-        return trace.ret(E_OUTOFMEMORY);
-      }
-
-      cmd->resource_handle = res->handle;
-      cmd->reserved0 = 0;
-      cmd->offset_bytes = cur_offset;
-      cmd->size_bytes = chunk;
-
-      src += chunk;
-      cur_offset += static_cast<uint32_t>(chunk);
-      remaining -= static_cast<uint32_t>(chunk);
+    const HRESULT upload_hr = emit_upload_resource_range_locked(dev, res, offset, size);
+    if (FAILED(upload_hr)) {
+      return trace.ret(upload_hr);
     }
   }
   return trace.ret(S_OK);
@@ -9772,26 +9800,73 @@ HRESULT AEROGPU_D3D9_CALL device_copy_rects(
     return trace.ret(hr);
   }
 
-  // If the destination is allocation-backed, the host only observes CPU writes
-  // when we mark the allocation dirty.
-  if (dst->handle != 0 && dst->backing_alloc_id != 0 && dst->size_bytes) {
-    std::lock_guard<std::mutex> lock(dev->mutex);
+  // CPU writes are observable by the host differently depending on backing mode:
+  // - allocation-backed: notify using RESOURCE_DIRTY_RANGE.
+  // - host-backed: upload bytes explicitly using UPLOAD_RESOURCE.
+  if (dst->handle != 0 && dst->size_bytes) {
+    if (dst->backing_alloc_id != 0) {
+      std::lock_guard<std::mutex> lock(dev->mutex);
 
-    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
-      return trace.ret(E_OUTOFMEMORY);
+      if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+      const HRESULT track_hr = track_resource_allocation_locked(dev, dst, /*write=*/false);
+      if (FAILED(track_hr)) {
+        return trace.ret(track_hr);
+      }
+      auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      if (!cmd) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+      cmd->resource_handle = dst->handle;
+      cmd->reserved0 = 0;
+      cmd->offset_bytes = 0;
+      cmd->size_bytes = dst->size_bytes;
+    } else {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+
+      if (!rect_list || rect_count == 0) {
+        // Full-surface copy: upload the base mip bytes (not the full mip chain).
+        const HRESULT upload_hr = emit_upload_resource_range_locked(dev, dst, /*offset=*/0, dst->slice_pitch);
+        if (FAILED(upload_hr)) {
+          return trace.ret(upload_hr);
+        }
+      } else {
+        const uint32_t bpp = bytes_per_pixel(dst->format);
+        for (uint32_t i = 0; i < rect_count; ++i) {
+          const RECT& r = rect_list[i];
+          if (r.right <= r.left || r.bottom <= r.top) {
+            continue;
+          }
+
+          const uint32_t left = static_cast<uint32_t>(std::max<long>(0, r.left));
+          const uint32_t top = static_cast<uint32_t>(std::max<long>(0, r.top));
+          const uint32_t right = static_cast<uint32_t>(std::max<long>(0, r.right));
+          const uint32_t bottom = static_cast<uint32_t>(std::max<long>(0, r.bottom));
+
+          const uint32_t clamped_right = std::min<uint32_t>({right, src->width, dst->width});
+          const uint32_t clamped_bottom = std::min<uint32_t>({bottom, src->height, dst->height});
+
+          if (left >= clamped_right || top >= clamped_bottom) {
+            continue;
+          }
+
+          const uint32_t row_bytes = (clamped_right - left) * bpp;
+          for (uint32_t y = top; y < clamped_bottom; ++y) {
+            const uint64_t off_u64 =
+                static_cast<uint64_t>(y) * static_cast<uint64_t>(dst->row_pitch) + static_cast<uint64_t>(left) * bpp;
+            if (off_u64 > 0xFFFFFFFFull || off_u64 + row_bytes > dst->slice_pitch) {
+              return trace.ret(E_INVALIDARG);
+            }
+            const uint32_t off = static_cast<uint32_t>(off_u64);
+            const HRESULT upload_hr = emit_upload_resource_range_locked(dev, dst, off, row_bytes);
+            if (FAILED(upload_hr)) {
+              return trace.ret(upload_hr);
+            }
+          }
+        }
+      }
     }
-    const HRESULT track_hr = track_resource_allocation_locked(dev, dst, /*write=*/false);
-    if (FAILED(track_hr)) {
-      return trace.ret(track_hr);
-    }
-    auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    if (!cmd) {
-      return trace.ret(E_OUTOFMEMORY);
-    }
-    cmd->resource_handle = dst->handle;
-    cmd->reserved0 = 0;
-    cmd->offset_bytes = 0;
-    cmd->size_bytes = dst->size_bytes;
   }
 
   return trace.ret(S_OK);
