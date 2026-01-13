@@ -87,14 +87,13 @@ The contract also permits **MSI-X** as an optional enhancement; Windows reports 
 
 Current state of the in-tree virtio-snd driver package:
 
-- The shipped virtio-snd build uses **INTx** (it does not connect message interrupt resources).
-- It also programs virtio MSI-X routing registers (`msix_config`, `queue_msix_vector`) to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) during bring-up.
-- The shipped `inf/aero_virtio_snd.inf` does **not** opt into MSI/MSI-X, so Windows will normally assign an INTx resource (matching the shipped driver behavior).
+- The driver supports both **message-signaled interrupts** (MSI/MSI-X) and legacy **INTx**.
+- If Windows provides message interrupts (INF opt-in), the driver prefers MSI/MSI-X and programs virtio MSI-X vectors:
+  - if Windows grants enough messages: **vector 0 = config**, **vectors 1..4 = queues 0..3** (`controlq`/`eventq`/`txq`/`rxq`)
+  - otherwise: **all sources on vector 0**
+- If MSI/MSI-X is unavailable or vector programming fails, the driver falls back to INTx.
 
-Implication: **do not enable MSI/MSI-X in the INF for virtio-snd yet** unless you also update the driver to program virtio MSI-X vectors. If Windows assigns only message interrupts, the driver will either:
-
-- fail `START_DEVICE` (default strict behavior), or
-- if `AllowPollingOnly=1` is set under `HKR\\Parameters`, continue in polling-only mode (reduced interrupt-driven behavior).
+If neither MSI/MSI-X nor INTx can be used, set `AllowPollingOnly=1` under `HKR\\Parameters` to allow `START_DEVICE` to succeed and rely on used-ring polling (driven by the WaveRT period timer DPC).
 
 #### INF registry keys (Windows 7 MSI opt-in)
 
@@ -102,7 +101,7 @@ On Windows 7, MSI/MSI-X is typically enabled via INF `HKR` settings under:
 
 `Interrupt Management\\MessageSignaledInterruptProperties`
 
-If/when MSI/MSI-X is enabled for virtio-snd, add an `AddReg` section like the following to the chosen INF:
+The shipped `inf/aero_virtio_snd.inf` opts into MSI/MSI-X on Windows 7 via an `AddReg` section like the following:
 
 ```inf
 [AeroVirtioSnd_Install.NT.HW]
@@ -122,7 +121,7 @@ Notes:
 
 #### Expected vector mapping
 
-When MSI-X support is implemented and Windows grants enough messages, the expected mapping is:
+When Windows grants enough messages, the expected mapping is:
 
 - **Vector/message 0:** virtio **config** interrupt (`common_cfg.msix_config`)
 - **Vector/message 1..4:** queues 0..3 (`controlq`, `eventq`, `txq`, `rxq`)
@@ -130,6 +129,8 @@ When MSI-X support is implemented and Windows grants enough messages, the expect
 If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
 
 - **All sources on vector/message 0** (config + all queues)
+
+If MSI/MSI-X connection or vector programming fails, the driver falls back to INTx (if available).
 
 #### Troubleshooting / verifying MSI is active
 
@@ -226,9 +227,9 @@ Backend layer (WaveRT ↔ virtio-snd):
 - Optional bring-up flag: `AllowPollingOnly` (`REG_DWORD`) under the same per-instance **Parameters** key:
   - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly`
   - Default: `0` (created by the INF)
-  - When `AllowPollingOnly=1`, the driver may start even if INTx resource discovery/connection fails, and it will rely on polling used rings (driven by the WaveRT period timer DPC) instead of virtio ISR/DPC delivery.
-  - When running without INTx, the driver also disables per-queue virtqueue interrupts as a best-effort guard against interrupt storms.
-  - This is intended for early emulator/device-model bring-up and debugging; the default behavior remains INTx-strict per the Aero contract v1.
+  - When `AllowPollingOnly=1`, the driver may start even if no usable interrupt resource can be discovered/connected (neither MSI/MSI-X nor INTx).
+  - In that case it relies on polling used rings (driven by the WaveRT period timer DPC) instead of ISR/DPC delivery, and disables per-queue virtqueue interrupts best-effort to reduce interrupt storm risk.
+  - This is intended for early emulator/device-model bring-up and debugging; the default behavior remains interrupt-driven by default.
   - After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
 
 Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
@@ -237,7 +238,7 @@ Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 * `src/backend_virtio.c` — virtio-snd backend implementation (PortCls ↔ virtio glue)
 * `src/backend_null.c` — silent backend implementation (fallback / debugging)
 * `src/virtiosnd_hw.c` — virtio-snd WDM bring-up + queue ownership
-  - `VirtIoSndStartHardware` / `VirtIoSndStopHardware` handle BAR0 MMIO discovery/mapping, PCI vendor capability parsing, feature negotiation, queue setup, INTx interrupt wiring, and reset/teardown
+  - `VirtIoSndStartHardware` / `VirtIoSndStopHardware` handle BAR0 MMIO discovery/mapping, PCI vendor capability parsing, feature negotiation, queue setup, interrupt wiring (MSI/MSI-X or INTx), and reset/teardown
 * Canonical virtio-pci modern transport (BAR0 MMIO + PCI vendor capability parsing):
   - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
@@ -263,7 +264,7 @@ Notes:
     resulting plug/unplug state via topology jack properties (`KSPROPERTY_JACK_DESCRIPTION*`) and generates a
     `KSEVENTSETID_Jack` / `KSEVENT_JACK_INFO_CHANGE` notification so user-mode can refresh jack state without polling.
     Audio streaming remains correct even if eventq is silent or absent.
-* **Interrupts:** **INTx** is required by contract v1. MSI/MSI-X is an optional enhancement that requires Windows 7 INF opt-in and driver-side virtio MSI-X vector programming.
+* **Interrupts:** the driver supports both MSI/MSI-X (message interrupts) and INTx. The canonical INF opts into MSI/MSI-X; if Windows does not grant message interrupts (or the device rejects MSI-X vector programming), the driver falls back to INTx.
 * **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32) and `VIRTIO_F_RING_INDIRECT_DESC` (bit 28).
 
 ## Legacy / transitional virtio-pci paths (opt-in bring-up)
@@ -758,6 +759,6 @@ For additional safety in environments that expose multiple virtio-snd devices, y
 Notes:
 
 - The **transitional/legacy** virtio-snd PCI device ID (`DEV_1018`) is intentionally **not** matched by this INF (Aero contract v1 is modern-only).
-- This driver package uses **INTx** by default. MSI/MSI-X is an optional enhancement that requires Windows 7 INF opt-in (the `Interrupt Management\\MessageSignaledInterruptProperties` keys described above) and a driver build that programs virtio MSI-X vectors.
+- This driver package supports both MSI/MSI-X and INTx. The canonical INF opts into MSI/MSI-X; if Windows does not grant message interrupts (or MSI/MSI-X setup fails), the driver falls back to INTx.
 
 If this README or the INF disagrees with `AERO-W7-VIRTIO`, treat the contract as authoritative.
