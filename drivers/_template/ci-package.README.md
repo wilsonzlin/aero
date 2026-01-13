@@ -55,6 +55,23 @@ Example:
 { "wow64Files": ["mydriver_umd.dll"] }
 ```
 
+### `requiredBuildOutputFiles` (optional)
+
+List of file paths (relative to the per-arch build output directory under `out/drivers/<driver>/<arch>/`)
+that must exist after building.
+
+This is a guardrail to ensure auxiliary build products that should ship alongside the driver (for
+example, helper tools built by CI and staged into `out/drivers/...`) were actually produced before
+`ci/make-catalogs.ps1` stages packages.
+
+- Entries must be relative paths (no absolute paths; cannot escape the build output directory).
+
+Example:
+
+```json
+{ "requiredBuildOutputFiles": ["tools/myhelper.exe"] }
+```
+
 ### `additionalFiles` (optional)
 
 Extra files (paths relative to the driver directory) to include in staged packages. Intended

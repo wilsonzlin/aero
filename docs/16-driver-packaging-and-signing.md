@@ -36,6 +36,9 @@ Supported fields:
   - Entries must be file names only (no path separators).
   - Requires x86 build outputs to be present (even if you are only generating/staging x64 packages).
   - WOW64 payloads are copied into the x64 package root; ensure the 32-bit DLL names do not collide with 64-bit build outputs (use distinct names such as a `_x64` suffix for 64-bit DLLs).
+- `requiredBuildOutputFiles` (optional): list of file paths (relative to the per-arch build output directory under `out/drivers/<driver>/<arch>/`) that must exist after building.
+  - CI will fail staging if any listed path is missing.
+  - Paths must be relative (no absolute paths; cannot escape the build output directory).
 - `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<driver>/`) and must resolve under it (no absolute paths; cannot escape the driver directory).
   - CI refuses to include common binary extensions via `additionalFiles` (currently: `.sys`, `.dll`, `.exe`, `.cat`, `.msi`, `.cab`).
 - `toolFiles` (optional): list of user-mode helper tool binaries to include in staged packages (paths relative to the driver directory).
