@@ -3,6 +3,7 @@
 #include "..\\common\\aerogpu_test_report.h"
 
 #include "..\\..\\..\\protocol\\aerogpu_win7_abi.h"
+#include "..\\..\\..\\protocol\\aerogpu_umd_private.h"
 
 #include <initguid.h>
 #include <devguid.h>
@@ -394,6 +395,92 @@ static bool ReadAeroGpuNonLocalMemorySizeMbFromRegistry(uint32_t* out_mb, std::s
   return true;
 }
 
+static bool VerifyAeroGpuAdapterViaEscape(const D3DKMT_FUNCS* kmt,
+                                         D3DKMT_HANDLE adapter,
+                                         std::string* out_err) {
+  if (out_err) {
+    out_err->clear();
+  }
+  if (!kmt || !adapter) {
+    if (out_err) {
+      *out_err = "VerifyAeroGpuAdapterViaEscape: invalid args";
+    }
+    return false;
+  }
+
+  // Prefer QUERY_DEVICE_V2 (newer KMD); fall back to legacy QUERY_DEVICE if needed.
+  aerogpu_escape_query_device_v2_out q2;
+  ZeroMemory(&q2, sizeof(q2));
+  q2.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q2.hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2;
+  q2.hdr.size = sizeof(q2);
+  q2.hdr.reserved0 = 0;
+
+  NTSTATUS st = 0;
+  if (aerogpu_test::kmt::AerogpuEscapeWithTimeout(kmt, adapter, &q2, sizeof(q2), 2000, &st)) {
+    if (q2.hdr.version != AEROGPU_ESCAPE_VERSION || q2.hdr.op != AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2 ||
+        q2.hdr.size != sizeof(q2)) {
+      if (out_err) {
+        *out_err = aerogpu_test::FormatString("invalid QUERY_DEVICE_V2 header (version=%lu op=%lu size=%lu)",
+                                              (unsigned long)q2.hdr.version,
+                                              (unsigned long)q2.hdr.op,
+                                              (unsigned long)q2.hdr.size);
+      }
+      return false;
+    }
+
+    const uint32_t magic = (uint32_t)q2.detected_mmio_magic;
+    if (magic != AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
+      if (out_err) {
+        *out_err = aerogpu_test::FormatString("unexpected AeroGPU MMIO magic (0x%08lX)", (unsigned long)magic);
+      }
+      return false;
+    }
+    return true;
+  }
+
+  if (st != aerogpu_test::kmt::kStatusNotSupported && st != aerogpu_test::kmt::kStatusInvalidParameter) {
+    if (out_err) {
+      *out_err =
+          aerogpu_test::FormatString("D3DKMTEscape(query-device-v2) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
+    }
+    return false;
+  }
+
+  aerogpu_escape_query_device_out q1;
+  ZeroMemory(&q1, sizeof(q1));
+  q1.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q1.hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE;
+  q1.hdr.size = sizeof(q1);
+  q1.hdr.reserved0 = 0;
+
+  st = 0;
+  if (!aerogpu_test::kmt::AerogpuEscapeWithTimeout(kmt, adapter, &q1, sizeof(q1), 2000, &st)) {
+    if (out_err) {
+      *out_err =
+          aerogpu_test::FormatString("D3DKMTEscape(query-device) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
+    }
+    return false;
+  }
+
+  if (q1.mmio_version == 0) {
+    if (out_err) {
+      *out_err = "QUERY_DEVICE returned mmio_version==0";
+    }
+    return false;
+  }
+  if (q1.hdr.version != AEROGPU_ESCAPE_VERSION || q1.hdr.op != AEROGPU_ESCAPE_OP_QUERY_DEVICE || q1.hdr.size != sizeof(q1)) {
+    if (out_err) {
+      *out_err = aerogpu_test::FormatString("invalid QUERY_DEVICE header (version=%lu op=%lu size=%lu)",
+                                            (unsigned long)q1.hdr.version,
+                                            (unsigned long)q1.hdr.op,
+                                            (unsigned long)q1.hdr.size);
+    }
+    return false;
+  }
+  return true;
+}
+
 static bool ProbeGetSegmentGroupSizeType(const D3DKMT_FUNCS* kmt,
                                          D3DKMT_HANDLE adapter,
                                          UINT* out_type,
@@ -613,6 +700,14 @@ static int RunSegmentBudgetSanity(int argc, char** argv) {
   if (!aerogpu_test::kmt::OpenPrimaryAdapter(&kmt, &adapter, &open_err)) {
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
     return reporter.Fail("%s", open_err.c_str());
+  }
+
+  // Avoid false PASS when AeroGPU isn't the active adapter: confirm we can talk to the AeroGPU KMD via escape.
+  std::string verify_err;
+  if (!VerifyAeroGpuAdapterViaEscape(&kmt, adapter, &verify_err)) {
+    aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+    return reporter.Fail("%s", verify_err.c_str());
   }
 
   UINT seg_group_type = 0xFFFFFFFFu;
