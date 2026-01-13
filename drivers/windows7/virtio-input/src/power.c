@@ -62,10 +62,10 @@ NTSTATUS VirtioInputHidDeactivateDevice(_In_ WDFDEVICE Device)
      * If the read queues are already stopping, the reset report will be safely
      * dropped by VirtioInputReportArrived() once ReadReportsEnabled is cleared.
      */
-    emitResetReports = ctx->HidActivated ? TRUE : FALSE;
+    emitResetReports = VirtioInputIsHidActive(ctx) ? TRUE : FALSE;
     ctx->HidActivated = FALSE;
     VirtioInputUpdateStatusQActiveState(ctx);
-    if (emitResetReports && ctx->InD0) {
+    if (emitResetReports) {
         /*
          * Synchronize with any in-flight queue DPC that may have already started
          * draining the event virtqueue before we cleared HidActivated.

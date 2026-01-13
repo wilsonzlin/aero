@@ -897,7 +897,7 @@ static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
      * so they will safely be dropped if the read queues have already been
      * stopped (e.g. a concurrent HID deactivate).
      */
-    emitResetReports = ctx->HidActivated ? TRUE : FALSE;
+    emitResetReports = VirtioInputIsHidActive(ctx) ? TRUE : FALSE;
 
     ctx->InD0 = FALSE;
     (VOID)InterlockedExchange(&ctx->VirtioStarted, 0);
@@ -2134,6 +2134,7 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
 
     deviceContext = VirtioInputGetDeviceContext(Device);
 
+    emitResetReports = VirtioInputIsHidActive(deviceContext) ? TRUE : FALSE;
     (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
     deviceContext->InD0 = FALSE;
 
@@ -2158,7 +2159,6 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
      * This report is sent through the normal read-report path, so it will be
      * dropped automatically if reads have already been disabled.
      */
-    emitResetReports = deviceContext->HidActivated ? TRUE : FALSE;
     if (emitResetReports) {
         /*
          * Drop any queued input reports so the release report is the next thing
