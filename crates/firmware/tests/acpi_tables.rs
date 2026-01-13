@@ -466,6 +466,10 @@ fn dsdt_contains_pci_routing_and_resources() {
     //
     // When MCFG/MMCONFIG is enabled for the platform, PCI0 must present itself as a PCIe root
     // bridge (PNP0A08) and expose `_CBA` so Windows (and others) can use the ECAM window.
+    assert!(
+        tables.mcfg.is_some(),
+        "test configuration should enable ECAM/MMCONFIG (MCFG present)"
+    );
     let pci0_body = find_device_body(aml, b"PCI0").expect("DSDT AML missing Device(PCI0)");
     let pnp0a03 = 0x030A_D041u32.to_le_bytes();
     let pnp0a08 = 0x080A_D041u32.to_le_bytes();
@@ -474,45 +478,27 @@ fn dsdt_contains_pci_routing_and_resources() {
     let cid_pnp0a03 = [&[0x08][..], &b"_CID"[..], &[0x0C][..], &pnp0a03[..]].concat();
     let cba_nameop = [&[0x08][..], &b"_CBA"[..]].concat();
 
-    // Backwards-compatible behavior: if `_CBA` is present, we should be in the "ECAM enabled"
-    // mode and must advertise PNP0A08. Otherwise, we should be in the legacy PNP0A03-only mode.
-    let ecam_enabled = find_subslice(pci0_body, &cba_nameop).is_some();
-    if ecam_enabled {
-        assert!(
-            find_subslice(pci0_body, &hid_pnp0a08).is_some(),
-            "PCI0._HID should be PNP0A08 when ECAM/MMCONFIG is enabled"
-        );
-        assert!(
-            find_subslice(pci0_body, &cid_pnp0a03).is_some(),
-            "PCI0._CID should include PNP0A03 for compatibility when ECAM/MMCONFIG is enabled"
-        );
-        assert!(
-            find_subslice(pci0_body, &hid_pnp0a03).is_none(),
-            "PCI0._HID should not be PNP0A03 when ECAM/MMCONFIG is enabled"
-        );
+    assert!(
+        find_subslice(pci0_body, &hid_pnp0a08).is_some(),
+        "PCI0._HID should be PNP0A08 when ECAM/MMCONFIG is enabled"
+    );
+    assert!(
+        find_subslice(pci0_body, &cid_pnp0a03).is_some(),
+        "PCI0._CID should include PNP0A03 for compatibility when ECAM/MMCONFIG is enabled"
+    );
+    assert!(
+        find_subslice(pci0_body, &hid_pnp0a03).is_none(),
+        "PCI0._HID should not be PNP0A03 when ECAM/MMCONFIG is enabled"
+    );
 
-        let off =
-            find_subslice(pci0_body, &cba_nameop).expect("PCI0 should contain _CBA when ECAM is enabled");
-        let (val, _) = parse_integer(pci0_body, off + cba_nameop.len())
-            .expect("PCI0._CBA should be followed by an Integer");
-        assert_eq!(
-            val, PCIE_ECAM_BASE,
-            "PCI0._CBA must match aero_pc_constants::PCIE_ECAM_BASE"
-        );
-    } else {
-        assert!(
-            find_subslice(pci0_body, &hid_pnp0a03).is_some(),
-            "PCI0._HID should be PNP0A03 when ECAM/MMCONFIG is disabled"
-        );
-        assert!(
-            find_subslice(pci0_body, &hid_pnp0a08).is_none(),
-            "PCI0._HID should not be PNP0A08 when ECAM/MMCONFIG is disabled"
-        );
-        assert!(
-            find_subslice(pci0_body, &cid_pnp0a03).is_none(),
-            "did not expect PCI0._CID when ECAM/MMCONFIG is disabled"
-        );
-    }
+    let off = find_subslice(pci0_body, &cba_nameop)
+        .expect("PCI0 should contain _CBA when ECAM/MMCONFIG is enabled");
+    let (val, _) = parse_integer(pci0_body, off + cba_nameop.len())
+        .expect("PCI0._CBA should be followed by an Integer");
+    assert_eq!(
+        val, PCIE_ECAM_BASE,
+        "PCI0._CBA must match aero_pc_constants::PCIE_ECAM_BASE"
+    );
 
     // `_PIC` should program the IMCR (ports 0x22/0x23) so the platform switches
     // between legacy PIC routing and APIC/IOAPIC routing.
