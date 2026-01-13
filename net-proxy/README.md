@@ -30,6 +30,16 @@ curl http://127.0.0.1:8081/healthz
 
 This lets you run local networking (TCP + UDP + DNS) without standing up the full `backend/aero-gateway` service.
 
+#### DoH behavior / limitations
+
+These endpoints are intended for local development and are intentionally lightweight:
+
+- `/dns-query` supports `A` (type `1`) and `AAAA` (type `28`) questions.
+  - Other QTYPEs return `NOERROR` with no answers.
+- `/dns-json` supports `A`, `AAAA`, and `CNAME`.
+  - Other types return `400`.
+- TTLs are synthetic (configured by `AERO_PROXY_DOH_ANSWER_TTL_SECONDS`), not authoritative upstream TTLs.
+
 #### Browser client configuration (what URL to set)
 
 Use the **HTTP base URL** for `net-proxy`:
