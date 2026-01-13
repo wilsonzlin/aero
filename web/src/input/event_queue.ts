@@ -46,10 +46,10 @@ export const InputEventType = {
     * USB HID gamepad input report (8 bytes).
     *
     * Payload:
-    *   a = packed bytes 0..3 of an 8-byte gamepad report (little-endian)
-    *   b = packed bytes 4..7 of the report (little-endian)
-    *
-    * The canonical report layout is defined by `crates/aero-usb/src/hid.rs::GamepadReport`
+   *   a = packed bytes 0..3 of an 8-byte gamepad report (little-endian)
+   *   b = packed bytes 4..7 of the report (little-endian)
+   *
+    * The canonical report layout is defined by `crates/aero-usb/src/hid/gamepad.rs::GamepadReport`
     * (and mirrored by the native emulator stack under `crates/emulator`).
     */
   GamepadReport: 5,
