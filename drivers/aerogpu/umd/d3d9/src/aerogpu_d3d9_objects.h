@@ -116,8 +116,8 @@ inline uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format) {
     //
     // Note: X1R5G5B5 has no alpha channel; map it to B5G5R5A1 and treat the
     // alpha bit as "opaque" (D3D9 semantics are equivalent to alpha=1). The UMD
-    // fixes up CPU writes to set the top bit so texture sampling observes opaque
-    // alpha.
+    // may also fix up CPU writes to set the top bit so texture sampling observes
+    // opaque alpha.
     case 24u:
     case 25u:
       return AEROGPU_FORMAT_B5G5R5A1_UNORM;

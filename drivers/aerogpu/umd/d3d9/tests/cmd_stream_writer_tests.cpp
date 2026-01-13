@@ -5206,6 +5206,15 @@ bool TestSetVertexDeclDerivesFixedFunctionFvf() {
       {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
   };
 
+  // Same as above but with TEXCOORD0 encoded as Usage=0 (some runtimes appear to
+  // leave Usage as 0 when synthesizing fixed-function decls).
+  const D3DVERTEXELEMENT9_COMPAT decl_xyzrhw_diffuse_tex1_usage0[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, /*Usage=*/0, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
   // XYZ|DIFFUSE: POSITION float3 + COLOR0 D3DCOLOR.
   const D3DVERTEXELEMENT9_COMPAT decl_xyz_diffuse[] = {
       {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*Usage=*/0, 0},
@@ -5221,6 +5230,13 @@ bool TestSetVertexDeclDerivesFixedFunctionFvf() {
       {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
   };
 
+  const D3DVERTEXELEMENT9_COMPAT decl_xyz_diffuse_tex1_usage0[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*Usage=*/0, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, /*Usage=*/0, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
   if (!run_case(decl_xyzrhw_diffuse,
                 sizeof(decl_xyzrhw_diffuse) / sizeof(decl_xyzrhw_diffuse[0]),
                 kD3dFvfXyzRhw | kD3dFvfDiffuse,
@@ -5233,16 +5249,28 @@ bool TestSetVertexDeclDerivesFixedFunctionFvf() {
                 "CreateVertexDecl(XYZRHW|DIFFUSE|TEX1)")) {
     return false;
   }
+  if (!run_case(decl_xyzrhw_diffuse_tex1_usage0,
+                sizeof(decl_xyzrhw_diffuse_tex1_usage0) / sizeof(decl_xyzrhw_diffuse_tex1_usage0[0]),
+                kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1,
+                "CreateVertexDecl(XYZRHW|DIFFUSE|TEX1, tex Usage=0)")) {
+    return false;
+  }
   if (!run_case(decl_xyz_diffuse,
                 sizeof(decl_xyz_diffuse) / sizeof(decl_xyz_diffuse[0]),
                 kD3dFvfXyz | kD3dFvfDiffuse,
                 "CreateVertexDecl(XYZ|DIFFUSE)")) {
     return false;
   }
-  return run_case(decl_xyz_diffuse_tex1,
-                  sizeof(decl_xyz_diffuse_tex1) / sizeof(decl_xyz_diffuse_tex1[0]),
+  if (!run_case(decl_xyz_diffuse_tex1,
+                sizeof(decl_xyz_diffuse_tex1) / sizeof(decl_xyz_diffuse_tex1[0]),
+                kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1,
+                "CreateVertexDecl(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  return run_case(decl_xyz_diffuse_tex1_usage0,
+                  sizeof(decl_xyz_diffuse_tex1_usage0) / sizeof(decl_xyz_diffuse_tex1_usage0[0]),
                   kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1,
-                  "CreateVertexDecl(XYZ|DIFFUSE|TEX1)");
+                  "CreateVertexDecl(XYZ|DIFFUSE|TEX1, tex Usage=0)");
 }
 
 bool TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {

@@ -11075,7 +11075,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
       const bool e1_xyzw_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
                               (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
       const bool e2_xyzw_ok = (e2.Stream == 0) && (e2.Offset == 20) && (e2.Type == kD3dDeclTypeFloat2) &&
-                              (e2.Method == kD3dDeclMethodDefault) && (e2.Usage == kD3dDeclUsageTexcoord) && (e2.UsageIndex == 0);
+                              (e2.Method == kD3dDeclMethodDefault) &&
+                              (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
       if (e0_xyzw_ok && e1_xyzw_ok && e2_xyzw_ok && is_end(e3)) {
         implied_fvf = kSupportedFvfXyzrhwDiffuseTex1;
       }
@@ -11090,7 +11091,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
       const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
                              (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
       const bool e2_xyz_ok = (e2.Stream == 0) && (e2.Offset == 16) && (e2.Type == kD3dDeclTypeFloat2) &&
-                             (e2.Method == kD3dDeclMethodDefault) && (e2.Usage == kD3dDeclUsageTexcoord) && (e2.UsageIndex == 0);
+                             (e2.Method == kD3dDeclMethodDefault) &&
+                             (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
       if (e0_xyz_ok && e1_xyz_ok && e2_xyz_ok && is_end(e3)) {
         implied_fvf = kSupportedFvfXyzDiffuseTex1;
       }
