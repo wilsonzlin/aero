@@ -34,6 +34,14 @@ fn aerogpu_vga_ports_minimal_semantics() {
         m.io_write(0x3C4, 1, 0x02);
         assert_eq!(m.io_read(0x3C5, 1) as u8, 0xBE);
 
+        // Writes to out-of-range indices should not alias/wrap into the base VGA register file.
+        m.io_write(0x3C4, 1, 0x06);
+        m.io_write(0x3C5, 1, 0x11);
+        m.io_write(0x3C4, 1, 0x06);
+        assert_eq!(m.io_read(0x3C5, 1) as u8, 0x11);
+        m.io_write(0x3C4, 1, 0x02);
+        assert_eq!(m.io_read(0x3C5, 1) as u8, 0xBE);
+
         // Support 16-bit "index+data" word writes to the index port.
         m.io_write(0x3C4, 2, 0xAD03); // idx=0x03, data=0xAD
         m.io_write(0x3C4, 1, 0x03);
@@ -67,6 +75,23 @@ fn aerogpu_vga_ports_minimal_semantics() {
         // ---------------------------------------------------------------------
         // Attribute controller flip-flop reset via Input Status 1 (0x3DA)
         // ---------------------------------------------------------------------
+        // Ensure a write to an out-of-range attribute index does not alias back into the base
+        // register file (VGA uses indices up to 0x14, but software probes beyond that).
+        m.io_read(0x3DA, 1);
+        m.io_write(0x3C0, 1, 0x00);
+        m.io_write(0x3C0, 1, 0x5A);
+        m.io_read(0x3DA, 1);
+        m.io_write(0x3C0, 1, 0x15);
+        m.io_write(0x3C0, 1, 0x99);
+        m.io_read(0x3DA, 1);
+        m.io_write(0x3C0, 1, 0x15);
+        assert_eq!(m.io_read(0x3C1, 1) as u8, 0x99);
+        m.io_read(0x3DA, 1);
+        m.io_write(0x3C0, 1, 0x00);
+        assert_eq!(m.io_read(0x3C1, 1) as u8, 0x5A);
+        // Reset flip-flop back to index state before continuing with the main AC test.
+        m.io_read(0x3DA, 1);
+
         // Program attribute controller register 0x11 to a known value.
         m.io_write(0x3C0, 1, 0x11);
         m.io_write(0x3C0, 1, 0xAA);
@@ -95,4 +120,3 @@ fn aerogpu_vga_ports_minimal_semantics() {
         assert_eq!(m.io_read(0x3C3, 1) as u8, 0xFF);
     }
 }
-

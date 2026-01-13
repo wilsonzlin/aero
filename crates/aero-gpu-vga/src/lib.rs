@@ -132,16 +132,30 @@ pub struct VgaDevice {
 
     sequencer_index: u8,
     sequencer: [u8; 5],
+    /// Storage for sequencer registers outside the standard VGA range (0x00..=0x04).
+    ///
+    /// Some guests probe "extended" VGA registers by reading/writing indices that aren't
+    /// implemented on plain VGA hardware. Keep those values independent from the core register
+    /// file so probing doesn't clobber real mode state.
+    sequencer_ext: [u8; 256],
 
     graphics_index: u8,
     graphics: [u8; 9],
+    /// Storage for graphics controller registers outside the standard VGA range (0x00..=0x08).
+    graphics_ext: [u8; 256],
 
     crtc_index: u8,
     crtc: [u8; 25],
+    /// Storage for CRTC registers outside the standard VGA range (0x00..=0x18).
+    crtc_ext: [u8; 256],
 
     attribute_index: u8,
     attribute_flip_flop_data: bool,
     attribute: [u8; 21],
+    /// Storage for attribute controller registers outside the standard VGA range (0x00..=0x14).
+    ///
+    /// The attribute controller index is masked to 0x1F, so 0x20 entries is sufficient.
+    attribute_ext: [u8; 0x20],
     input_status1_vretrace: bool,
 
     // DAC / palette.
@@ -182,13 +196,17 @@ impl VgaDevice {
             misc_output: 0,
             sequencer_index: 0,
             sequencer: [0; 5],
+            sequencer_ext: [0; 256],
             graphics_index: 0,
             graphics: [0; 9],
+            graphics_ext: [0; 256],
             crtc_index: 0,
             crtc: [0; 25],
+            crtc_ext: [0; 256],
             attribute_index: 0,
             attribute_flip_flop_data: false,
             attribute: [0; 21],
+            attribute_ext: [0; 0x20],
             input_status1_vretrace: false,
             pel_mask: 0xFF,
             dac_write_index: 0,
@@ -1053,6 +1071,78 @@ impl DisplayOutput for VgaDevice {
 }
 
 impl VgaDevice {
+    fn read_sequencer_reg(&self, idx: u8) -> u8 {
+        let idx = idx as usize;
+        if idx < self.sequencer.len() {
+            self.sequencer[idx]
+        } else {
+            self.sequencer_ext[idx]
+        }
+    }
+
+    fn write_sequencer_reg(&mut self, idx: u8, value: u8) {
+        let idx = idx as usize;
+        if idx < self.sequencer.len() {
+            self.sequencer[idx] = value;
+        } else {
+            self.sequencer_ext[idx] = value;
+        }
+    }
+
+    fn read_graphics_reg(&self, idx: u8) -> u8 {
+        let idx = idx as usize;
+        if idx < self.graphics.len() {
+            self.graphics[idx]
+        } else {
+            self.graphics_ext[idx]
+        }
+    }
+
+    fn write_graphics_reg(&mut self, idx: u8, value: u8) {
+        let idx = idx as usize;
+        if idx < self.graphics.len() {
+            self.graphics[idx] = value;
+        } else {
+            self.graphics_ext[idx] = value;
+        }
+    }
+
+    fn read_crtc_reg(&self, idx: u8) -> u8 {
+        let idx = idx as usize;
+        if idx < self.crtc.len() {
+            self.crtc[idx]
+        } else {
+            self.crtc_ext[idx]
+        }
+    }
+
+    fn write_crtc_reg(&mut self, idx: u8, value: u8) {
+        let idx_usize = idx as usize;
+        if idx_usize < self.crtc.len() {
+            self.crtc[idx_usize] = value;
+        } else {
+            self.crtc_ext[idx_usize] = value;
+        }
+    }
+
+    fn read_attribute_reg(&self, idx: u8) -> u8 {
+        let idx = (idx & 0x1F) as usize;
+        if idx < self.attribute.len() {
+            self.attribute[idx]
+        } else {
+            self.attribute_ext[idx]
+        }
+    }
+
+    fn write_attribute_reg(&mut self, idx: u8, value: u8) {
+        let idx = (idx & 0x1F) as usize;
+        if idx < self.attribute.len() {
+            self.attribute[idx] = value;
+        } else {
+            self.attribute_ext[idx] = value;
+        }
+    }
+
     fn port_read_u8(&mut self, port: u16) -> u8 {
         match port {
             // VGA misc output.
@@ -1067,17 +1157,11 @@ impl VgaDevice {
 
             // Sequencer.
             0x3C4 => self.sequencer_index,
-            0x3C5 => {
-                let idx = (self.sequencer_index as usize) % self.sequencer.len();
-                self.sequencer[idx]
-            }
+            0x3C5 => self.read_sequencer_reg(self.sequencer_index),
 
             // Graphics controller.
             0x3CE => self.graphics_index,
-            0x3CF => {
-                let idx = (self.graphics_index as usize) % self.graphics.len();
-                self.graphics[idx]
-            }
+            0x3CF => self.read_graphics_reg(self.graphics_index),
 
             // CRTC.
             //
@@ -1087,16 +1171,10 @@ impl VgaDevice {
             //
             // Aero's VGA model keeps a single CRTC register array, so we accept both port bases.
             0x3D4 | 0x3B4 => self.crtc_index,
-            0x3D5 | 0x3B5 => {
-                let idx = (self.crtc_index as usize) % self.crtc.len();
-                self.crtc[idx]
-            }
+            0x3D5 | 0x3B5 => self.read_crtc_reg(self.crtc_index),
 
             // Attribute controller data read (index written via 0x3C0).
-            0x3C1 => {
-                let idx = (self.attribute_index as usize) % self.attribute.len();
-                self.attribute[idx]
-            }
+            0x3C1 => self.read_attribute_reg(self.attribute_index),
 
             // Input status 1. Reading resets the attribute flip-flop.
             0x3DA | 0x3BA => {
@@ -1133,27 +1211,25 @@ impl VgaDevice {
             // Sequencer.
             0x3C4 => self.sequencer_index = val,
             0x3C5 => {
-                let idx = (self.sequencer_index as usize) % self.sequencer.len();
-                self.sequencer[idx] = val;
+                self.write_sequencer_reg(self.sequencer_index, val);
                 self.dirty = true;
             }
 
             // Graphics controller.
             0x3CE => self.graphics_index = val,
             0x3CF => {
-                let idx = (self.graphics_index as usize) % self.graphics.len();
-                self.graphics[idx] = val;
+                self.write_graphics_reg(self.graphics_index, val);
                 self.dirty = true;
             }
 
             // CRTC.
             0x3D4 | 0x3B4 => self.crtc_index = val,
             0x3D5 | 0x3B5 => {
-                let idx = (self.crtc_index as usize) % self.crtc.len();
+                let idx = self.crtc_index;
                 if idx <= 0x07 && (self.crtc.get(0x11).copied().unwrap_or(0) & 0x80) != 0 {
                     return;
                 }
-                self.crtc[idx] = val;
+                self.write_crtc_reg(idx, val);
                 self.dirty = true;
             }
 
@@ -1163,8 +1239,7 @@ impl VgaDevice {
                     self.attribute_index = val & 0x1F;
                     self.attribute_flip_flop_data = true;
                 } else {
-                    let idx = (self.attribute_index as usize) % self.attribute.len();
-                    self.attribute[idx] = val;
+                    self.write_attribute_reg(self.attribute_index, val);
                     self.attribute_flip_flop_data = false;
                     self.dirty = true;
                 }
