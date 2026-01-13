@@ -19,6 +19,15 @@ export type CreateAudioOutputOptions = {
   latencyHint?: AudioContextLatencyCategory | number;
   channelCount?: number;
   /**
+   * When an AudioContext is resumed after being suspended/interrupted, the shared ring buffer may
+   * contain a backlog of buffered audio. Discarding the backlog keeps playback "live" instead of
+   * playing stale buffered audio with high latency.
+   *
+   * This is enabled by default, but it is intentionally *not* applied to the first-ever transition
+   * to `"running"` so that the initial silence prefill can still prevent startup underrun spam.
+   */
+  discardOnResume?: boolean;
+  /**
    * Size of the ring buffer in frames (per channel).
    *
    * The actual sample capacity is `ringBufferFrames * channelCount`.
@@ -96,6 +105,12 @@ export type EnabledAudioOutput = {
   ringBuffer: AudioRingBufferLayout;
   resume(): Promise<void>;
   close(): Promise<void>;
+  /**
+   * Instruct the AudioWorklet to discard any buffered audio frames (consumer-side reset).
+   *
+   * Useful after `AudioContext` suspend/resume cycles to avoid stale latency.
+   */
+  discardBufferedFrames(): void;
   /**
    * Write interleaved `f32` samples into the ring buffer.
    *
@@ -526,6 +541,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     Number.isFinite(requestedChannelCount) && requestedChannelCount > 0
       ? Math.max(1, Math.min(2, Math.floor(requestedChannelCount)))
       : 2;
+  const discardOnResume = typeof options.discardOnResume === "boolean" ? options.discardOnResume : true;
 
   let context: AudioContext;
   try {
@@ -617,6 +633,42 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
 
   node.connect(context.destination);
 
+  const discardBufferedFrames = () => {
+    // MessagePort semantics are a little subtle: when using `addEventListener` the receiver must
+    // call `start()`; when using `onmessage` it starts automatically. Calling `start()` here is a
+    // harmless no-op in browsers, but makes our control channel robust.
+    try {
+      node.port.start();
+    } catch {
+      // Ignore.
+    }
+    try {
+      node.port.postMessage({ type: "ring.reset" });
+    } catch {
+      // Ignore.
+    }
+  };
+
+  // If the AudioContext has already reached running at least once, any later transition back to
+  // running implies a suspend/resume cycle (tab backgrounding, interruption, etc.). Discard any
+  // buffered backlog so playback is "live".
+  let onContextStateChange: (() => void) | null = null;
+  if (discardOnResume) {
+    let hasEverBeenRunning = context.state === "running";
+    let lastState: AudioContextState = context.state;
+    onContextStateChange = () => {
+      const state = context.state;
+      if (state === "running") {
+        if (hasEverBeenRunning && lastState !== "running") {
+          discardBufferedFrames();
+        }
+        hasEverBeenRunning = true;
+      }
+      lastState = state;
+    };
+    context.addEventListener("statechange", onContextStateChange);
+  }
+
   return {
     enabled: true,
     context,
@@ -626,12 +678,17 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       await resumePromise;
     },
     async close() {
+      if (onContextStateChange) {
+        context.removeEventListener("statechange", onContextStateChange);
+        onContextStateChange = null;
+      }
       try {
         node.disconnect();
       } finally {
         await context.close();
       }
     },
+    discardBufferedFrames,
     writeInterleaved(samples: Float32Array, srcSampleRate: number) {
       return writeRingBufferInterleaved(ringBuffer, samples, srcSampleRate, context.sampleRate);
     },

@@ -60,6 +60,32 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
       this._channelCount = null;
       this._capacityFrames = null;
     }
+
+    // Control messages from the main thread.
+    //
+    // The AudioWorklet may be resumed after long suspends (tab background, iOS interruption, etc.)
+    // while the shared ring still contains buffered audio. A reset message allows the worklet to
+    // atomically discard any backlog and resume "live".
+    //
+    // Be defensive: messages and shared state may be untrusted (corrupted snapshots / misbehaving
+    // hosts). Never throw from the worklet thread.
+    const port = this.port;
+    if (port && typeof port === "object") {
+      port.onmessage = (event) => {
+        try {
+          const data = event?.data;
+          if (!data || typeof data !== "object") return;
+          const msg = data;
+          if (msg.type !== "ring.reset") return;
+          if (!this._header) return;
+
+          const writeFrameIndex = Atomics.load(this._header, WRITE_FRAME_INDEX) >>> 0;
+          Atomics.store(this._header, READ_FRAME_INDEX, writeFrameIndex);
+        } catch (_e) {
+          // Ignore.
+        }
+      };
+    }
   }
 
   process(_inputs, outputs) {

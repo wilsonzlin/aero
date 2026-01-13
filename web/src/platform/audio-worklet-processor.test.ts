@@ -157,4 +157,29 @@ describe("audio-worklet-processor underrun counter", () => {
     proc.process([], outputs);
     expect(outputs[0][0]).toEqual(Float32Array.from([0.5]));
   });
+
+  it("supports consumer-side ring.reset to discard buffered frames", () => {
+    const capacityFrames = 64;
+    const channelCount = 1;
+    const { sab, views } = makeRingBuffer(capacityFrames, channelCount);
+
+    // Seed a backlog (read < write).
+    Atomics.store(views.readIndex, 0, 0);
+    Atomics.store(views.writeIndex, 0, 10);
+
+    const proc = new AeroAudioProcessor({
+      processorOptions: { ringBuffer: sab, channelCount, capacityFrames },
+    });
+
+    expect(() => proc.port.onmessage?.({ data: { type: "ring.reset" } })).not.toThrow();
+
+    const readAfter = Atomics.load(views.readIndex, 0) >>> 0;
+    const writeAfter = Atomics.load(views.writeIndex, 0) >>> 0;
+    expect(readAfter).toBe(writeAfter);
+
+    // Malformed messages should be ignored (and never throw in the AudioWorklet).
+    expect(() => proc.port.onmessage?.({ data: null })).not.toThrow();
+    expect(() => proc.port.onmessage?.({ data: { type: 123 } })).not.toThrow();
+    expect(() => proc.port.onmessage?.({} as any)).not.toThrow();
+  });
 });

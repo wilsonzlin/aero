@@ -11,6 +11,7 @@ export class AeroAudioProcessor {
 
   readonly port: {
     postMessage(message: unknown): void;
+    onmessage?: ((event: { data: unknown }) => void) | null;
   };
 
   process(_inputs: unknown[], outputs: Float32Array[][]): boolean;
