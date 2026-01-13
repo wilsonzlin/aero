@@ -295,6 +295,29 @@ impl MachineConfig {
     pub fn win7_storage_defaults(ram_size_bytes: u64) -> Self {
         Self::win7_storage(ram_size_bytes)
     }
+
+    /// Configuration preset for the canonical browser runtime machine.
+    ///
+    /// This is the "batteries included" configuration that the wasm-bindgen wrapper
+    /// (`crates/aero-wasm`) uses for `new Machine(ramSize)`:
+    ///
+    /// - Canonical PC platform topology enabled (PIC/APIC/PIT/RTC/PCI/ACPI/HPET).
+    /// - Canonical Windows 7 boot/install storage controller set:
+    ///   - AHCI (ICH9) at `00:02.0`
+    ///   - IDE (PIIX3) at `00:01.1`
+    /// - E1000 NIC enabled (for the current browser networking runtime).
+    /// - UHCI (USB 1.1) enabled.
+    /// - VGA enabled.
+    ///
+    /// See `docs/05-storage-topology-win7.md` for the normative storage BDFs and media attachment
+    /// mapping.
+    #[must_use]
+    pub fn browser_defaults(ram_size_bytes: u64) -> Self {
+        let mut cfg = Self::win7_storage_defaults(ram_size_bytes);
+        cfg.enable_e1000 = true;
+        cfg.enable_uhci = true;
+        cfg
+    }
 }
 
 /// A single-step/run invocation result.

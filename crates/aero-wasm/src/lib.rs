@@ -2540,6 +2540,18 @@ pub enum MouseButtons {
 /// This wrapper is backed by `aero_machine::Machine` and is the intended target for new browser
 /// integration work (device wiring, networking via `NET_TX`/`NET_RX` rings, snapshots, …).
 ///
+/// `new Machine(ramSize)` constructs a "full PC" configuration suitable for booting/installing
+/// Windows 7 in the browser:
+///
+/// - Canonical PC platform topology (PIC/APIC/PIT/RTC/PCI/ACPI/HPET)
+/// - Canonical Win7 storage topology (ICH9 AHCI + PIIX3 IDE) as defined in
+///   `docs/05-storage-topology-win7.md`
+/// - E1000 NIC + UHCI (USB 1.1) + VGA (current browser runtime expectations)
+///
+/// Storage attachment points are identified by stable `disk_id` values exposed via
+/// [`Machine::disk_id_primary_hdd`], [`Machine::disk_id_install_media`], and
+/// [`Machine::disk_id_ide_primary_master`].
+///
 /// The worker CPU runtime currently uses the legacy `WasmVm` / `WasmTieredVm` exports instead: they
 /// execute only the CPU core in WASM and forward port I/O / MMIO back to JS via shims.
 #[wasm_bindgen]
@@ -2557,18 +2569,7 @@ pub struct Machine {
 impl Machine {
     #[wasm_bindgen(constructor)]
     pub fn new(ram_size_bytes: u32) -> Result<Self, JsValue> {
-        let cfg = aero_machine::MachineConfig {
-            ram_size_bytes: ram_size_bytes as u64,
-            // The browser runtime expects the canonical full-system VM to include the PC platform
-            // topology (PIC/PIT/RTC/PCI/ACPI) and a guest-visible NIC.
-            enable_pc_platform: true,
-            enable_e1000: true,
-            // USB is part of the canonical PC platform topology; enable UHCI so the guest can
-            // enumerate a basic USB 1.1 controller by default.
-            enable_uhci: true,
-            enable_vga: true,
-            ..Default::default()
-        };
+        let cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
         let inner =
             aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self {
