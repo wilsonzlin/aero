@@ -473,31 +473,30 @@ export class WebGpuPresenterBackend implements Presenter {
       usage: ((globalThis as any).GPUBufferUsage?.COPY_DST ?? 0x08) | ((globalThis as any).GPUBufferUsage?.MAP_READ ?? 0x01),
     });
 
-    const flags =
-      WebGpuPresenterBackend.FLAG_FORCE_OPAQUE_ALPHA |
-      (this.srgbEncodeInShader ? WebGpuPresenterBackend.FLAG_APPLY_SRGB_ENCODE : 0);
-
     const cursorEnable =
       this.cursorRenderEnabled && this.cursorEnabled && this.cursorWidth > 0 && this.cursorHeight > 0 ? 1 : 0;
-    const cursorParams = new Int32Array([
-      this.srcWidth | 0,
-      this.srcHeight | 0,
-      cursorEnable,
-      flags | 0,
-      this.cursorX | 0,
-      this.cursorY | 0,
-      this.cursorHotX | 0,
-      this.cursorHotY | 0,
-      this.cursorWidth | 0,
-      this.cursorHeight | 0,
-      0,
-      0,
-    ]);
-    this.queue.writeBuffer(this.cursorUniformBuffer, 0, cursorParams);
+    const cursorParams = new Int32Array(12);
+    cursorParams[0] = this.srcWidth | 0;
+    cursorParams[1] = this.srcHeight | 0;
+    cursorParams[2] = cursorEnable;
+    // cursorParams[3] (flags) is filled after we resolve which view format is in use.
+    cursorParams[4] = this.cursorX | 0;
+    cursorParams[5] = this.cursorY | 0;
+    cursorParams[6] = this.cursorHotX | 0;
+    cursorParams[7] = this.cursorHotY | 0;
+    cursorParams[8] = this.cursorWidth | 0;
+    cursorParams[9] = this.cursorHeight | 0;
+    cursorParams[10] = 0;
+    cursorParams[11] = 0;
 
     const scaleMode = this.opts.scaleMode ?? 'fit';
     const vp = computeViewport(width, height, this.srcWidth, this.srcHeight, scaleMode);
     const [r, g, b] = this.opts.clearColor ?? [0, 0, 0, 1];
+    const srgbEncodeChannel = (x: number): number => {
+      const v = Math.min(1, Math.max(0, x));
+      if (v <= 0.0031308) return v * 12.92;
+      return 1.055 * Math.pow(v, 1.0 / 2.4) - 0.055;
+    };
 
     let currentTexture: any = null;
     let currentTextureError: unknown = null;
@@ -530,10 +529,49 @@ export class WebGpuPresenterBackend implements Presenter {
       throw new PresenterError('webgpu_surface_error', `WebGPU getCurrentTexture() failed: ${message}`, currentTextureError);
     }
 
-    const view =
-      this.viewFormat && this.canvasFormat && this.viewFormat !== this.canvasFormat
-        ? currentTexture.createView({ format: this.viewFormat as any })
-        : currentTexture.createView();
+    let view: any = null;
+    let viewError: unknown = null;
+    try {
+      view =
+        this.viewFormat && this.canvasFormat && this.viewFormat !== this.canvasFormat
+          ? currentTexture.createView({ format: this.viewFormat as any })
+          : currentTexture.createView();
+    } catch (err) {
+      viewError = err;
+    }
+
+    if (!view) {
+      if (this.viewFormat && this.canvasFormat && this.viewFormat !== this.canvasFormat) {
+        this.viewFormat = this.canvasFormat;
+        this.srgbEncodeInShader = true;
+        if (this.pipelineFormat !== this.viewFormat || !this.pipeline) {
+          this.pipelineFormat = this.viewFormat;
+          this.createPipelineAndSampler();
+          this.rebuildBindGroup();
+        }
+        try {
+          view = currentTexture.createView();
+          viewError = null;
+        } catch (err) {
+          viewError = err;
+        }
+      }
+    }
+
+    if (!view) {
+      const message = viewError instanceof Error ? viewError.message : viewError ? String(viewError) : 'Unknown error';
+      throw new PresenterError('webgpu_surface_error', `WebGPU currentTexture.createView() failed: ${message}`, viewError);
+    }
+
+    const flags =
+      WebGpuPresenterBackend.FLAG_FORCE_OPAQUE_ALPHA |
+      (this.srgbEncodeInShader ? WebGpuPresenterBackend.FLAG_APPLY_SRGB_ENCODE : 0);
+    cursorParams[3] = flags | 0;
+    this.queue.writeBuffer(this.cursorUniformBuffer, 0, cursorParams);
+
+    const clearR = this.srgbEncodeInShader ? srgbEncodeChannel(r) : r;
+    const clearG = this.srgbEncodeInShader ? srgbEncodeChannel(g) : g;
+    const clearB = this.srgbEncodeInShader ? srgbEncodeChannel(b) : b;
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
@@ -542,7 +580,7 @@ export class WebGpuPresenterBackend implements Presenter {
           view,
           // Alpha is forced opaque in shader; keep clear alpha opaque too so letterboxing doesn't
           // accidentally blend with the page background.
-          clearValue: { r, g, b, a: 1 },
+          clearValue: { r: clearR, g: clearG, b: clearB, a: 1 },
           loadOp: 'clear',
           storeOp: 'store',
         },
@@ -874,27 +912,21 @@ export class WebGpuPresenterBackend implements Presenter {
       return;
     }
 
-    const flags =
-      WebGpuPresenterBackend.FLAG_FORCE_OPAQUE_ALPHA |
-      (this.srgbEncodeInShader ? WebGpuPresenterBackend.FLAG_APPLY_SRGB_ENCODE : 0);
-
     const cursorEnable =
       this.cursorRenderEnabled && this.cursorEnabled && this.cursorWidth > 0 && this.cursorHeight > 0 ? 1 : 0;
-    const cursorParams = new Int32Array([
-      this.srcWidth | 0,
-      this.srcHeight | 0,
-      cursorEnable,
-      flags | 0,
-      this.cursorX | 0,
-      this.cursorY | 0,
-      this.cursorHotX | 0,
-      this.cursorHotY | 0,
-      this.cursorWidth | 0,
-      this.cursorHeight | 0,
-      0,
-      0,
-    ]);
-    this.queue.writeBuffer(this.cursorUniformBuffer, 0, cursorParams);
+    const cursorParams = new Int32Array(12);
+    cursorParams[0] = this.srcWidth | 0;
+    cursorParams[1] = this.srcHeight | 0;
+    cursorParams[2] = cursorEnable;
+    // cursorParams[3] (flags) is filled after we resolve which view format is in use.
+    cursorParams[4] = this.cursorX | 0;
+    cursorParams[5] = this.cursorY | 0;
+    cursorParams[6] = this.cursorHotX | 0;
+    cursorParams[7] = this.cursorHotY | 0;
+    cursorParams[8] = this.cursorWidth | 0;
+    cursorParams[9] = this.cursorHeight | 0;
+    cursorParams[10] = 0;
+    cursorParams[11] = 0;
 
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
@@ -912,9 +944,6 @@ export class WebGpuPresenterBackend implements Presenter {
       if (v <= 0.0031308) return v * 12.92;
       return 1.055 * Math.pow(v, 1.0 / 2.4) - 0.055;
     };
-    const clearR = this.srgbEncodeInShader ? srgbEncodeChannel(r) : r;
-    const clearG = this.srgbEncodeInShader ? srgbEncodeChannel(g) : g;
-    const clearB = this.srgbEncodeInShader ? srgbEncodeChannel(b) : b;
 
     let currentTexture: any = null;
     let currentTextureError: unknown = null;
@@ -950,10 +979,54 @@ export class WebGpuPresenterBackend implements Presenter {
       return;
     }
 
-    const view =
-      this.viewFormat && this.canvasFormat && this.viewFormat !== this.canvasFormat
-        ? currentTexture.createView({ format: this.viewFormat as any })
-        : currentTexture.createView();
+    let view: any = null;
+    let viewError: unknown = null;
+    try {
+      view =
+        this.viewFormat && this.canvasFormat && this.viewFormat !== this.canvasFormat
+          ? currentTexture.createView({ format: this.viewFormat as any })
+          : currentTexture.createView();
+    } catch (err) {
+      viewError = err;
+    }
+
+    if (!view) {
+      // If we attempted an sRGB view format and the browser rejected it, fall back to the
+      // default (linear) view and enable shader sRGB encoding so presentation remains correct.
+      if (this.viewFormat && this.canvasFormat && this.viewFormat !== this.canvasFormat) {
+        this.viewFormat = this.canvasFormat;
+        this.srgbEncodeInShader = true;
+        if (this.pipelineFormat !== this.viewFormat || !this.pipeline) {
+          this.pipelineFormat = this.viewFormat;
+          this.createPipelineAndSampler();
+          this.rebuildBindGroup();
+        }
+        try {
+          view = currentTexture.createView();
+          viewError = null;
+        } catch (err) {
+          viewError = err;
+        }
+      }
+    }
+
+    if (!view) {
+      const message = viewError instanceof Error ? viewError.message : viewError ? String(viewError) : 'Unknown error';
+      this.opts.onError?.(
+        new PresenterError('webgpu_surface_error', `WebGPU currentTexture.createView() failed: ${message}`, viewError),
+      );
+      return;
+    }
+
+    const flags =
+      WebGpuPresenterBackend.FLAG_FORCE_OPAQUE_ALPHA |
+      (this.srgbEncodeInShader ? WebGpuPresenterBackend.FLAG_APPLY_SRGB_ENCODE : 0);
+    cursorParams[3] = flags | 0;
+    this.queue.writeBuffer(this.cursorUniformBuffer, 0, cursorParams);
+
+    const clearR = this.srgbEncodeInShader ? srgbEncodeChannel(r) : r;
+    const clearG = this.srgbEncodeInShader ? srgbEncodeChannel(g) : g;
+    const clearB = this.srgbEncodeInShader ? srgbEncodeChannel(b) : b;
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
