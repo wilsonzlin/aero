@@ -137,6 +137,24 @@ use aero_audio::pcm::{LinearResampler, StreamFormat, decode_pcm_to_stereo_f32_in
 #[cfg(target_arch = "wasm32")]
 use aero_audio::sink::AudioSink;
 
+#[cfg(target_arch = "wasm32")]
+use aero_virtio::devices::VirtioDevice;
+#[cfg(target_arch = "wasm32")]
+use aero_virtio::devices::snd::{
+    PCM_SAMPLE_RATE_HZ as VIRTIO_SND_GUEST_SAMPLE_RATE_HZ, PLAYBACK_STREAM_ID,
+    VIRTIO_SND_PCM_FMT_S16, VIRTIO_SND_PCM_RATE_48000, VIRTIO_SND_QUEUE_CONTROL,
+    VIRTIO_SND_QUEUE_TX, VIRTIO_SND_R_PCM_PREPARE, VIRTIO_SND_R_PCM_SET_PARAMS,
+    VIRTIO_SND_R_PCM_START, VIRTIO_SND_S_OK, VirtioSnd,
+};
+#[cfg(target_arch = "wasm32")]
+use aero_virtio::memory::{
+    GuestMemory, GuestRam, read_u32_le, write_u16_le, write_u32_le, write_u64_le,
+};
+#[cfg(target_arch = "wasm32")]
+use aero_virtio::queue::{
+    PoppedDescriptorChain, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE, VirtQueue, VirtQueueConfig,
+};
+
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -1998,6 +2016,757 @@ impl<'a> AudioSink for WorkletBridgeStatsSink<'a> {
         self.dropped_frames = self
             .dropped_frames
             .wrapping_add(requested_frames.saturating_sub(written));
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Virtio-snd end-to-end audio demo (virtqueues -> VirtioSnd -> AudioWorklet ring)
+// -------------------------------------------------------------------------------------------------
+
+#[cfg(target_arch = "wasm32")]
+struct VirtioWorkletTickSink {
+    bridge: WorkletBridge,
+    channel_count: u32,
+    /// Remaining frames this tick is allowed to write into the worklet ring.
+    tick_budget_frames: u32,
+    /// Pending interleaved samples (may include frames beyond the current tick budget).
+    pending: Vec<f32>,
+    pending_start_samples: usize,
+
+    total_frames_produced: u32,
+    total_frames_written: u32,
+    total_frames_dropped: u32,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl VirtioWorkletTickSink {
+    fn new(bridge: WorkletBridge) -> Self {
+        let channel_count = bridge.channel_count();
+        Self {
+            bridge,
+            channel_count,
+            tick_budget_frames: 0,
+            pending: Vec::new(),
+            pending_start_samples: 0,
+            total_frames_produced: 0,
+            total_frames_written: 0,
+            total_frames_dropped: 0,
+        }
+    }
+
+    fn begin_tick(&mut self, frames: u32) {
+        self.tick_budget_frames = frames;
+        // If the pending buffer is fully consumed, reset indices so future pushes don't grow the
+        // vector unnecessarily.
+        if self.pending_start_samples >= self.pending.len() {
+            self.pending.clear();
+            self.pending_start_samples = 0;
+        }
+    }
+
+    fn buffer_level_frames(&self) -> u32 {
+        self.bridge.buffer_level_frames()
+    }
+
+    fn flush_pending(&mut self) -> u32 {
+        if self.tick_budget_frames == 0 {
+            return 0;
+        }
+        let pending_samples = self
+            .pending
+            .len()
+            .saturating_sub(self.pending_start_samples);
+        let pending_frames = (pending_samples as u32) / self.channel_count;
+        if pending_frames == 0 {
+            return 0;
+        }
+
+        let level = self.bridge.buffer_level_frames();
+        let free = self.bridge.capacity_frames().saturating_sub(level);
+        let frames_to_write = pending_frames.min(free).min(self.tick_budget_frames);
+        if frames_to_write == 0 {
+            return 0;
+        }
+
+        let samples_to_write = frames_to_write as usize * self.channel_count as usize;
+        let start = self.pending_start_samples;
+        let end = start + samples_to_write;
+        let written = self.bridge.write_f32_interleaved(&self.pending[start..end]);
+        let written_samples = written as usize * self.channel_count as usize;
+        self.pending_start_samples = self.pending_start_samples.saturating_add(written_samples);
+
+        self.total_frames_written = self.total_frames_written.wrapping_add(written);
+        self.tick_budget_frames = self.tick_budget_frames.saturating_sub(written);
+
+        // Compact the pending buffer occasionally to keep it bounded without per-push drains.
+        if self.pending_start_samples > 0 && self.pending_start_samples >= self.pending.len() / 2 {
+            let remaining = self
+                .pending
+                .len()
+                .saturating_sub(self.pending_start_samples);
+            self.pending.copy_within(self.pending_start_samples.., 0);
+            self.pending.truncate(remaining);
+            self.pending_start_samples = 0;
+        }
+
+        written
+    }
+
+    fn total_frames_produced(&self) -> u32 {
+        self.total_frames_produced
+    }
+
+    fn total_frames_written(&self) -> u32 {
+        self.total_frames_written
+    }
+
+    fn total_frames_dropped(&self) -> u32 {
+        self.total_frames_dropped
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl AudioSink for VirtioWorkletTickSink {
+    fn push_interleaved_f32(&mut self, samples: &[f32]) {
+        let produced_frames = (samples.len() as u32) / self.channel_count;
+        if produced_frames == 0 {
+            return;
+        }
+
+        self.total_frames_produced = self.total_frames_produced.wrapping_add(produced_frames);
+
+        // Avoid unbounded buffering if a caller supplies a huge buffer or if the demo gets far
+        // behind. Keep pending audio bounded to the worklet ring capacity.
+        let max_pending_frames = self.bridge.capacity_frames();
+        let max_pending_samples = max_pending_frames as usize * self.channel_count as usize;
+
+        // If the pending window is already large, drop the oldest samples (and count them as
+        // dropped frames) to prevent unbounded growth.
+        let pending_samples = self
+            .pending
+            .len()
+            .saturating_sub(self.pending_start_samples);
+        if pending_samples > max_pending_samples {
+            let extra = pending_samples - max_pending_samples;
+            let extra_frames = (extra as u32) / self.channel_count;
+            if extra_frames > 0 {
+                self.total_frames_dropped = self.total_frames_dropped.wrapping_add(extra_frames);
+                self.pending_start_samples = self
+                    .pending_start_samples
+                    .saturating_add(extra_frames as usize * self.channel_count as usize);
+            }
+        }
+
+        // If we're appending and the pending head is far in, compact first so we don't grow the
+        // backing vector unnecessarily.
+        if self.pending_start_samples > 0 && self.pending_start_samples >= self.pending.len() / 2 {
+            let remaining = self
+                .pending
+                .len()
+                .saturating_sub(self.pending_start_samples);
+            self.pending.copy_within(self.pending_start_samples.., 0);
+            self.pending.truncate(remaining);
+            self.pending_start_samples = 0;
+        }
+
+        self.pending.extend_from_slice(samples);
+        let _ = self.flush_pending();
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_desc(
+    mem: &mut GuestRam,
+    table: u64,
+    index: u16,
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+) {
+    let base = table + u64::from(index) * 16;
+    write_u64_le(mem, base, addr).unwrap();
+    write_u32_le(mem, base + 8, len).unwrap();
+    write_u16_le(mem, base + 12, flags).unwrap();
+    write_u16_le(mem, base + 14, next).unwrap();
+}
+
+#[cfg(target_arch = "wasm32")]
+fn f32_to_i16(sample: f32) -> i16 {
+    let s = sample.clamp(-1.0, 1.0);
+    let scaled = (s * 32768.0).round();
+    let clamped = scaled.clamp(i16::MIN as f32, i16::MAX as f32);
+    clamped as i16
+}
+
+/// End-to-end browser demo: drive the virtio-snd TX path and stream its output
+/// directly into a Web Audio `AudioWorkletProcessor` ring buffer.
+///
+/// This wrapper exists purely for the web demo harness; it is not intended to be
+/// a stable public API.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct VirtioSndPlaybackDemo {
+    snd: VirtioSnd<VirtioWorkletTickSink>,
+    guest: GuestRam,
+    control_queue: VirtQueue,
+    tx_queue: VirtQueue,
+    control_avail_idx: u16,
+    tx_avail_idx: u16,
+
+    host_sample_rate_hz: u32,
+
+    total_frames_produced: u32,
+    total_frames_written: u32,
+    total_frames_dropped: u32,
+
+    last_tick_requested_frames: u32,
+    last_tick_produced_frames: u32,
+    last_tick_written_frames: u32,
+    last_tick_dropped_frames: u32,
+
+    // Tone generator state (guest 48kHz).
+    phase: f32,
+    freq_hz: f32,
+    gain: f32,
+
+    // Guest memory layout (physical offsets within `guest`).
+    control_desc: u64,
+    control_avail: u64,
+    control_req: u64,
+    control_resp: u64,
+
+    tx_desc: u64,
+    tx_avail: u64,
+    tx_hdr: u64,
+    tx_pcm: u64,
+    tx_resp: u64,
+    tx_pcm_capacity_bytes: u32,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl VirtioSndPlaybackDemo {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        ring_sab: SharedArrayBuffer,
+        capacity_frames: u32,
+        channel_count: u32,
+        host_sample_rate: u32,
+    ) -> Result<Self, JsValue> {
+        if capacity_frames == 0 {
+            return Err(JsValue::from_str("capacityFrames must be non-zero"));
+        }
+        if channel_count != 2 {
+            return Err(JsValue::from_str(
+                "channelCount must be 2 for virtio-snd demo output (stereo)",
+            ));
+        }
+        if host_sample_rate == 0 {
+            return Err(JsValue::from_str("hostSampleRate must be non-zero"));
+        }
+
+        // Clamp sample rates defensively to avoid large internal allocations from absurd inputs.
+        let host_sample_rate = host_sample_rate.clamp(1, aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+
+        let bridge = WorkletBridge::from_shared_buffer(ring_sab, capacity_frames, channel_count)?;
+        let sink = VirtioWorkletTickSink::new(bridge);
+
+        let mut snd = VirtioSnd::new_with_host_sample_rate(sink, host_sample_rate);
+        // Best-effort feature negotiation: enable whatever the device advertises.
+        let features = snd.device_features();
+        snd.set_features(features);
+
+        // Allocate a small guest memory window for virtqueue rings + request/payload buffers.
+        // Keep this bounded: the demo produces audio directly, so it does not require a full VM RAM
+        // allocation.
+        let mut guest = GuestRam::new(0x20_000); // 128KiB
+
+        // Queue sizes match the virtio-snd contract v1 queue maxima (small but realistic).
+        let control_qsize: u16 = 64;
+        let tx_qsize: u16 = 256;
+
+        // Virtqueue ring layout: each queue gets a 12KiB window (desc/avail/used each at 4KiB).
+        let control_base: u64 = 0x0000;
+        let tx_base: u64 = 0x4000;
+
+        let control_desc = control_base;
+        let control_avail = control_base + 0x1000;
+        let control_used = control_base + 0x2000;
+
+        let tx_desc = tx_base;
+        let tx_avail = tx_base + 0x1000;
+        let tx_used = tx_base + 0x2000;
+
+        // Scratch buffers in guest RAM.
+        let control_req = 0x8000;
+        let control_resp = 0x9000;
+
+        let tx_hdr = 0xA000;
+        let tx_pcm = 0xA100;
+        // Allow up to 4096 guest frames per TX submission (~85ms @ 48kHz), bounded for predictable
+        // per-tick work.
+        let tx_pcm_capacity_bytes: u32 = 4096 * 4;
+        let tx_resp = u64::from(tx_pcm) + u64::from(tx_pcm_capacity_bytes) + 0x100;
+
+        // Basic guest bounds checks (avoid panics if constants drift).
+        let guest_len = guest.len();
+        let required_end = tx_resp + 8;
+        if required_end > guest_len {
+            return Err(JsValue::from_str(
+                "VirtioSndPlaybackDemo guest memory layout exceeds allocated guest RAM",
+            ));
+        }
+
+        // Initialize queue rings (flags=0, idx=0).
+        write_u16_le(&mut guest, control_avail + 0, 0).unwrap();
+        write_u16_le(&mut guest, control_avail + 2, 0).unwrap();
+        write_u16_le(&mut guest, control_used + 0, 0).unwrap();
+        write_u16_le(&mut guest, control_used + 2, 0).unwrap();
+        write_u16_le(&mut guest, tx_avail + 0, 0).unwrap();
+        write_u16_le(&mut guest, tx_avail + 2, 0).unwrap();
+        write_u16_le(&mut guest, tx_used + 0, 0).unwrap();
+        write_u16_le(&mut guest, tx_used + 2, 0).unwrap();
+
+        // TX header buffer: stream_id + padding (8 bytes total).
+        {
+            let hdr = guest.get_slice_mut(tx_hdr, 8).unwrap();
+            hdr[..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+            hdr[4..8].fill(0);
+        }
+
+        let control_queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: control_qsize,
+                desc_addr: control_desc,
+                avail_addr: control_avail,
+                used_addr: control_used,
+            },
+            false,
+        )
+        .map_err(|e| {
+            JsValue::from_str(&format!("Failed to init virtio-snd control queue: {e:?}"))
+        })?;
+
+        let tx_queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: tx_qsize,
+                desc_addr: tx_desc,
+                avail_addr: tx_avail,
+                used_addr: tx_used,
+            },
+            false,
+        )
+        .map_err(|e| JsValue::from_str(&format!("Failed to init virtio-snd TX queue: {e:?}")))?;
+
+        let mut demo = Self {
+            snd,
+            guest,
+            control_queue,
+            tx_queue,
+            control_avail_idx: 0,
+            tx_avail_idx: 0,
+            host_sample_rate_hz: host_sample_rate,
+            total_frames_produced: 0,
+            total_frames_written: 0,
+            total_frames_dropped: 0,
+            last_tick_requested_frames: 0,
+            last_tick_produced_frames: 0,
+            last_tick_written_frames: 0,
+            last_tick_dropped_frames: 0,
+            phase: 0.0,
+            freq_hz: 440.0,
+            gain: 0.1,
+            control_desc,
+            control_avail,
+            control_req,
+            control_resp,
+            tx_desc,
+            tx_avail,
+            tx_hdr,
+            tx_pcm,
+            tx_resp,
+            tx_pcm_capacity_bytes,
+        };
+
+        // Initialize virtio-snd stream state (SET_PARAMS -> PREPARE -> START).
+        demo.init_stream()?;
+
+        Ok(demo)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn host_sample_rate_hz(&self) -> u32 {
+        self.host_sample_rate_hz
+    }
+
+    fn init_stream(&mut self) -> Result<(), JsValue> {
+        // PCM_SET_PARAMS: 24 bytes.
+        let mut req = [0u8; 24];
+        req[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_SET_PARAMS.to_le_bytes());
+        req[4..8].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        req[8..12].copy_from_slice(&4096u32.to_le_bytes());
+        req[12..16].copy_from_slice(&1024u32.to_le_bytes());
+        // features [16..20] = 0
+        req[20] = 2; // channels (stereo)
+        req[21] = VIRTIO_SND_PCM_FMT_S16;
+        req[22] = VIRTIO_SND_PCM_RATE_48000;
+        // req[23] = padding
+        self.send_control_request(&req)?;
+
+        // PCM_PREPARE.
+        let mut prepare = [0u8; 8];
+        prepare[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_PREPARE.to_le_bytes());
+        prepare[4..8].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        self.send_control_request(&prepare)?;
+
+        // PCM_START.
+        let mut start = [0u8; 8];
+        start[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_START.to_le_bytes());
+        start[4..8].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        self.send_control_request(&start)?;
+
+        Ok(())
+    }
+
+    fn send_control_request(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        // Write request into guest memory.
+        {
+            let dst = self
+                .guest
+                .get_slice_mut(self.control_req, bytes.len())
+                .map_err(|_| JsValue::from_str("virtio-snd demo control request OOB"))?;
+            dst.copy_from_slice(bytes);
+        }
+        // Fill response buffer with a sentinel.
+        {
+            let dst = self
+                .guest
+                .get_slice_mut(self.control_resp, 64)
+                .map_err(|_| JsValue::from_str("virtio-snd demo control response OOB"))?;
+            dst.fill(0xAA);
+        }
+
+        // Descriptor chain: [0]=request (read), [1]=response (write).
+        write_desc(
+            &mut self.guest,
+            self.control_desc,
+            0,
+            self.control_req,
+            bytes.len() as u32,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut self.guest,
+            self.control_desc,
+            1,
+            self.control_resp,
+            64,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        // Publish into avail ring.
+        let qsize = self.control_queue.size();
+        let slot = self.control_avail_idx % qsize;
+        write_u16_le(
+            &mut self.guest,
+            self.control_avail + 4 + u64::from(slot) * 2,
+            0,
+        )
+        .unwrap();
+        self.control_avail_idx = self.control_avail_idx.wrapping_add(1);
+        write_u16_le(
+            &mut self.guest,
+            self.control_avail + 2,
+            self.control_avail_idx,
+        )
+        .unwrap();
+
+        self.process_queue(VIRTIO_SND_QUEUE_CONTROL)?;
+
+        let status = read_u32_le(&self.guest, self.control_resp).unwrap_or(0xFFFF_FFFF);
+        if status != VIRTIO_SND_S_OK {
+            return Err(JsValue::from_str(&format!(
+                "virtio-snd demo control request failed: status=0x{status:08x}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn process_queue(&mut self, queue_index: u16) -> Result<(), JsValue> {
+        // Pop + process all available descriptor chains.
+        loop {
+            let popped = {
+                let mem_ref = &self.guest;
+                match queue_index {
+                    VIRTIO_SND_QUEUE_CONTROL => self
+                        .control_queue
+                        .pop_descriptor_chain(mem_ref)
+                        .map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "virtio-snd demo control queue pop failed: {e:?}"
+                            ))
+                        })?,
+                    VIRTIO_SND_QUEUE_TX => {
+                        self.tx_queue.pop_descriptor_chain(mem_ref).map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "virtio-snd demo TX queue pop failed: {e:?}"
+                            ))
+                        })?
+                    }
+                    _ => return Ok(()),
+                }
+            };
+
+            let Some(popped) = popped else {
+                break;
+            };
+
+            match popped {
+                PoppedDescriptorChain::Chain(chain) => {
+                    let queue = if queue_index == VIRTIO_SND_QUEUE_CONTROL {
+                        &mut self.control_queue
+                    } else {
+                        &mut self.tx_queue
+                    };
+                    self.snd
+                        .process_queue(queue_index, chain, queue, &mut self.guest)
+                        .map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "virtio-snd demo process_queue failed: {e:?}"
+                            ))
+                        })?;
+                }
+                PoppedDescriptorChain::Invalid { head_index, .. } => {
+                    let queue = if queue_index == VIRTIO_SND_QUEUE_CONTROL {
+                        &mut self.control_queue
+                    } else {
+                        &mut self.tx_queue
+                    };
+                    queue
+                        .add_used(&mut self.guest, head_index, 0)
+                        .map_err(|e| {
+                            JsValue::from_str(&format!("virtio-snd demo add_used failed: {e:?}"))
+                        })?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn submit_tx_pcm_s16le(&mut self, guest_frames: u32) -> Result<(), JsValue> {
+        let bytes = guest_frames
+            .saturating_mul(4)
+            .min(self.tx_pcm_capacity_bytes);
+        let frames = bytes / 4;
+
+        if frames == 0 {
+            return Ok(());
+        }
+
+        // Fill guest PCM payload with a deterministic sine wave (48kHz, S16_LE stereo).
+        {
+            let dst = self
+                .guest
+                .get_slice_mut(self.tx_pcm, bytes as usize)
+                .map_err(|_| JsValue::from_str("virtio-snd demo TX PCM buffer OOB"))?;
+            let step = self.freq_hz / (VIRTIO_SND_GUEST_SAMPLE_RATE_HZ as f32);
+            for i in 0..frames as usize {
+                let s = (2.0 * core::f32::consts::PI * self.phase).sin() * self.gain;
+                self.phase += step;
+                if self.phase >= 1.0 {
+                    self.phase -= 1.0;
+                }
+                let v = f32_to_i16(s).to_le_bytes();
+                let off = i * 4;
+                // L
+                dst[off] = v[0];
+                dst[off + 1] = v[1];
+                // R (same tone)
+                dst[off + 2] = v[0];
+                dst[off + 3] = v[1];
+            }
+        }
+
+        // Response buffer (status + latency).
+        {
+            let dst = self
+                .guest
+                .get_slice_mut(self.tx_resp, 8)
+                .map_err(|_| JsValue::from_str("virtio-snd demo TX response buffer OOB"))?;
+            dst.fill(0xAA);
+        }
+
+        // Descriptor chain: [0]=hdr, [1]=pcm, [2]=resp.
+        write_desc(
+            &mut self.guest,
+            self.tx_desc,
+            0,
+            self.tx_hdr,
+            8,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut self.guest,
+            self.tx_desc,
+            1,
+            self.tx_pcm,
+            bytes,
+            VIRTQ_DESC_F_NEXT,
+            2,
+        );
+        write_desc(
+            &mut self.guest,
+            self.tx_desc,
+            2,
+            self.tx_resp,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        // Publish into avail ring.
+        let qsize = self.tx_queue.size();
+        let slot = self.tx_avail_idx % qsize;
+        write_u16_le(&mut self.guest, self.tx_avail + 4 + u64::from(slot) * 2, 0).unwrap();
+        self.tx_avail_idx = self.tx_avail_idx.wrapping_add(1);
+        write_u16_le(&mut self.guest, self.tx_avail + 2, self.tx_avail_idx).unwrap();
+
+        self.process_queue(VIRTIO_SND_QUEUE_TX)?;
+
+        // Validate response status.
+        let status = read_u32_le(&self.guest, self.tx_resp).unwrap_or(0xFFFF_FFFF);
+        if status != VIRTIO_SND_S_OK {
+            return Err(JsValue::from_str(&format!(
+                "virtio-snd demo TX failed: status=0x{status:08x}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Advance the virtio-snd device by producing up to `frames` worth of host audio and pushing it
+    /// into the shared AudioWorklet ring buffer.
+    ///
+    /// Returns the current ring buffer fill level (frames).
+    pub fn tick(&mut self, frames: u32) -> u32 {
+        self.last_tick_requested_frames = frames;
+        self.last_tick_produced_frames = 0;
+        self.last_tick_written_frames = 0;
+        self.last_tick_dropped_frames = 0;
+
+        if frames == 0 {
+            return self.snd.output_mut().buffer_level_frames();
+        }
+
+        let produced0 = self.snd.output_mut().total_frames_produced();
+        let written0 = self.snd.output_mut().total_frames_written();
+        let dropped0 = self.snd.output_mut().total_frames_dropped();
+
+        {
+            let sink = self.snd.output_mut();
+            sink.begin_tick(frames);
+            let _ = sink.flush_pending();
+        }
+
+        // Produce audio in bounded chunks so `tick()` doesn't perform multi-second work if the
+        // caller passes a huge `frames` count.
+        let mut remaining_budget = frames;
+        let host_rate = self.host_sample_rate_hz;
+        let mut iterations = 0u32;
+        while remaining_budget > 0 && iterations < 64 {
+            iterations += 1;
+
+            // Check how many frames are still allowed to be written this tick.
+            let budget_left = self.snd.output_mut().tick_budget_frames;
+            if budget_left == 0 {
+                break;
+            }
+            remaining_budget = budget_left;
+
+            // Estimate guest frames required to generate the remaining host frames after resample.
+            let guest_frames_est = if host_rate == VIRTIO_SND_GUEST_SAMPLE_RATE_HZ {
+                remaining_budget
+            } else {
+                let num = (u64::from(remaining_budget))
+                    .saturating_mul(u64::from(VIRTIO_SND_GUEST_SAMPLE_RATE_HZ));
+                let denom = u64::from(host_rate).max(1);
+                let est = (num + denom - 1) / denom;
+                (est as u32).saturating_add(2)
+            };
+
+            // Cap per-submit payload to keep decode/resample work bounded.
+            let max_frames = self.tx_pcm_capacity_bytes / 4;
+            let guest_frames = guest_frames_est.min(max_frames).max(1);
+
+            // Ignore errors in the hot path; if something goes wrong, abort the tick early so the
+            // JS caller can observe it via counters/stats.
+            if self.submit_tx_pcm_s16le(guest_frames).is_err() {
+                break;
+            }
+
+            // Flush any newly produced samples into the ring within the tick budget.
+            let _ = self.snd.output_mut().flush_pending();
+            remaining_budget = self.snd.output_mut().tick_budget_frames;
+        }
+
+        let produced1 = self.snd.output_mut().total_frames_produced();
+        let written1 = self.snd.output_mut().total_frames_written();
+        let dropped1 = self.snd.output_mut().total_frames_dropped();
+
+        let produced_delta = produced1.wrapping_sub(produced0);
+        let written_delta = written1.wrapping_sub(written0);
+        let dropped_delta = dropped1.wrapping_sub(dropped0);
+
+        self.last_tick_produced_frames = produced_delta;
+        self.last_tick_written_frames = written_delta;
+        self.last_tick_dropped_frames = dropped_delta;
+
+        self.total_frames_produced = self.total_frames_produced.wrapping_add(produced_delta);
+        self.total_frames_written = self.total_frames_written.wrapping_add(written_delta);
+        self.total_frames_dropped = self.total_frames_dropped.wrapping_add(dropped_delta);
+
+        self.snd.output_mut().buffer_level_frames()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn total_frames_produced(&self) -> u32 {
+        self.total_frames_produced
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn total_frames_written(&self) -> u32 {
+        self.total_frames_written
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn total_frames_dropped(&self) -> u32 {
+        self.total_frames_dropped
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_tick_requested_frames(&self) -> u32 {
+        self.last_tick_requested_frames
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_tick_produced_frames(&self) -> u32 {
+        self.last_tick_produced_frames
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_tick_written_frames(&self) -> u32 {
+        self.last_tick_written_frames
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_tick_dropped_frames(&self) -> u32 {
+        self.last_tick_dropped_frames
     }
 }
 

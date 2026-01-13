@@ -1266,6 +1266,24 @@ export interface WasmApi {
         free(): void;
     };
 
+    VirtioSndPlaybackDemo?: new (
+        ringSab: SharedArrayBuffer,
+        capacityFrames: number,
+        channelCount: number,
+        hostSampleRate: number,
+    ) => {
+        readonly host_sample_rate_hz: number;
+        readonly total_frames_produced: number;
+        readonly total_frames_written: number;
+        readonly total_frames_dropped: number;
+        readonly last_tick_requested_frames: number;
+        readonly last_tick_produced_frames: number;
+        readonly last_tick_written_frames: number;
+        readonly last_tick_dropped_frames: number;
+        tick(frames: number): number;
+        free(): void;
+    };
+
     /**
      * Guest-visible Intel HD Audio (HDA) controller bridge (MMIO + DMA).
      *
@@ -1517,6 +1535,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         HdaControllerBridge: mod.HdaControllerBridge,
         HdaPcmWriter: mod.HdaPcmWriter,
         HdaPlaybackDemo: mod.HdaPlaybackDemo,
+        VirtioSndPlaybackDemo: mod.VirtioSndPlaybackDemo,
     };
 }
 

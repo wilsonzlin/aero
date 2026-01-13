@@ -119,6 +119,27 @@ type AudioOutputHdaDemoStopMessage = {
   type: "audioOutputHdaDemo.stop";
 };
 
+type AudioOutputVirtioSndDemoStartMessage = {
+  type: "audioOutputVirtioSndDemo.start";
+  ringBuffer: SharedArrayBuffer;
+  capacityFrames: number;
+  channelCount: number;
+  sampleRate: number;
+};
+
+type AudioOutputVirtioSndDemoReadyMessage = {
+  type: "audioOutputVirtioSndDemo.ready";
+};
+
+type AudioOutputVirtioSndDemoErrorMessage = {
+  type: "audioOutputVirtioSndDemo.error";
+  message: string;
+};
+
+type AudioOutputVirtioSndDemoStopMessage = {
+  type: "audioOutputVirtioSndDemo.stop";
+};
+
 type AudioHdaCaptureSyntheticStartMessage = {
   type: "audioHdaCaptureSynthetic.start";
   requestId: number;
@@ -145,6 +166,19 @@ type AudioHdaCaptureSyntheticErrorMessage = {
 
 type AudioOutputHdaDemoStatsMessage = {
   type: "audioOutputHdaDemo.stats";
+  bufferLevelFrames: number;
+  targetFrames: number;
+  totalFramesProduced?: number;
+  totalFramesWritten?: number;
+  totalFramesDropped?: number;
+  lastTickRequestedFrames?: number;
+  lastTickProducedFrames?: number;
+  lastTickWrittenFrames?: number;
+  lastTickDroppedFrames?: number;
+};
+
+type AudioOutputVirtioSndDemoStatsMessage = {
+  type: "audioOutputVirtioSndDemo.stats";
   bufferLevelFrames: number;
   targetFrames: number;
   totalFramesProduced?: number;
@@ -257,6 +291,16 @@ let hdaDemoNextStatsMs = 0;
 let hdaDemoWasmMemory: WebAssembly.Memory | null = null;
 let hdaDemoClock: AudioFrameClock | null = null;
 let hdaDemoClockStarted = false;
+
+let virtioSndDemoTimer: number | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let virtioSndDemoInstance: any | null = null;
+let virtioSndDemoHeader: Uint32Array | null = null;
+let virtioSndDemoCapacityFrames = 0;
+let virtioSndDemoSampleRate = 0;
+let virtioSndDemoNextStatsMs = 0;
+let virtioSndDemoClock: AudioFrameClock | null = null;
+let virtioSndDemoClockStarted = false;
 
 type PendingHdaPciDeviceStart = { msg: AudioOutputHdaPciDeviceStartMessage; token: number };
 let pendingHdaPciDeviceStart: PendingHdaPciDeviceStart | null = null;
@@ -380,6 +424,40 @@ function maybePostHdaDemoStats(): void {
   ctx.postMessage(msg);
 }
 
+function maybePostVirtioSndDemoStats(): void {
+  if (!virtioSndDemoInstance || !virtioSndDemoHeader) return;
+  const now = typeof performance?.now === "function" ? performance.now() : Date.now();
+  if (now < virtioSndDemoNextStatsMs) return;
+  virtioSndDemoNextStatsMs = now + 250;
+
+  const capacity = virtioSndDemoCapacityFrames;
+  const sampleRate = virtioSndDemoSampleRate;
+  const targetFrames = hdaDemoTargetFrames(capacity, sampleRate);
+  const msg: AudioOutputVirtioSndDemoStatsMessage = {
+    type: "audioOutputVirtioSndDemo.stats",
+    bufferLevelFrames: getAudioRingBufferLevelFrames(virtioSndDemoHeader, capacity),
+    targetFrames,
+  };
+
+  const totalFramesProduced = readDemoNumber(virtioSndDemoInstance, "total_frames_produced");
+  const totalFramesWritten = readDemoNumber(virtioSndDemoInstance, "total_frames_written");
+  const totalFramesDropped = readDemoNumber(virtioSndDemoInstance, "total_frames_dropped");
+  const lastTickRequestedFrames = readDemoNumber(virtioSndDemoInstance, "last_tick_requested_frames");
+  const lastTickProducedFrames = readDemoNumber(virtioSndDemoInstance, "last_tick_produced_frames");
+  const lastTickWrittenFrames = readDemoNumber(virtioSndDemoInstance, "last_tick_written_frames");
+  const lastTickDroppedFrames = readDemoNumber(virtioSndDemoInstance, "last_tick_dropped_frames");
+
+  if (typeof totalFramesProduced === "number") msg.totalFramesProduced = totalFramesProduced;
+  if (typeof totalFramesWritten === "number") msg.totalFramesWritten = totalFramesWritten;
+  if (typeof totalFramesDropped === "number") msg.totalFramesDropped = totalFramesDropped;
+  if (typeof lastTickRequestedFrames === "number") msg.lastTickRequestedFrames = lastTickRequestedFrames;
+  if (typeof lastTickProducedFrames === "number") msg.lastTickProducedFrames = lastTickProducedFrames;
+  if (typeof lastTickWrittenFrames === "number") msg.lastTickWrittenFrames = lastTickWrittenFrames;
+  if (typeof lastTickDroppedFrames === "number") msg.lastTickDroppedFrames = lastTickDroppedFrames;
+
+  ctx.postMessage(msg);
+}
+
 function stopHdaDemo(): void {
   if (hdaDemoTimer !== null) {
     ctx.clearInterval(hdaDemoTimer);
@@ -395,6 +473,23 @@ function stopHdaDemo(): void {
   hdaDemoNextStatsMs = 0;
   hdaDemoClock = null;
   hdaDemoClockStarted = false;
+}
+
+function stopVirtioSndDemo(): void {
+  if (virtioSndDemoTimer !== null) {
+    ctx.clearInterval(virtioSndDemoTimer);
+    virtioSndDemoTimer = null;
+  }
+  if (virtioSndDemoInstance && typeof virtioSndDemoInstance.free === "function") {
+    virtioSndDemoInstance.free();
+  }
+  virtioSndDemoInstance = null;
+  virtioSndDemoHeader = null;
+  virtioSndDemoCapacityFrames = 0;
+  virtioSndDemoSampleRate = 0;
+  virtioSndDemoNextStatsMs = 0;
+  virtioSndDemoClock = null;
+  virtioSndDemoClockStarted = false;
 }
 
 async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> {
@@ -533,6 +628,114 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   hdaDemoTimer = timer as unknown as number;
 
   ctx.postMessage({ type: "audioOutputHdaDemo.ready" } satisfies AudioOutputHdaDemoReadyMessage);
+}
+
+async function startVirtioSndDemo(msg: AudioOutputVirtioSndDemoStartMessage): Promise<void> {
+  stopVirtioSndDemo();
+
+  const Sab = globalThis.SharedArrayBuffer;
+  if (typeof Sab === "undefined" || !(msg.ringBuffer instanceof Sab)) {
+    throw new Error("audioOutputVirtioSndDemo.start requires a SharedArrayBuffer ring buffer.");
+  }
+
+  const capacityFrames = msg.capacityFrames | 0;
+  const channelCount = msg.channelCount | 0;
+  const sampleRate = msg.sampleRate | 0;
+  if (capacityFrames <= 0) throw new Error("capacityFrames must be > 0");
+  if (channelCount !== 2) throw new Error("channelCount must be 2 for virtio-snd demo output");
+  if (sampleRate <= 0) throw new Error("sampleRate must be > 0");
+
+  // Prefer the single-threaded WASM build for this standalone demo mode.
+  let api: WasmApi;
+  try {
+    if (!hdaDemoWasmMemory) {
+      const pages = 128 * 1024 * 1024 / (64 * 1024); // 128MiB / 64KiB
+      hdaDemoWasmMemory = new WebAssembly.Memory({ initial: pages, maximum: pages });
+    }
+    ({ api } = await initWasmForContext({ variant: "single", memory: hdaDemoWasmMemory }));
+    assertWasmMemoryWiring({ api, memory: hdaDemoWasmMemory, context: "cpu.worker:virtioSndDemo" });
+  } catch (err) {
+    console.warn("Failed to init single-threaded WASM for virtio-snd demo; falling back to auto:", err);
+    ({ api } = await initWasmForContext());
+  }
+
+  if (typeof api.VirtioSndPlaybackDemo !== "function") {
+    const message = "VirtioSndPlaybackDemo wasm export is unavailable; skipping virtio-snd audio demo.";
+    console.warn(message);
+    ctx.postMessage({ type: "audioOutputVirtioSndDemo.error", message } satisfies AudioOutputVirtioSndDemoErrorMessage);
+    return;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const DemoCtor = api.VirtioSndPlaybackDemo as any;
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+  const demo = new DemoCtor(msg.ringBuffer, capacityFrames, channelCount, sampleRate);
+
+  virtioSndDemoInstance = demo;
+  const header = new Uint32Array(msg.ringBuffer, 0, AUDIO_HEADER_U32_LEN);
+  virtioSndDemoHeader = header;
+  virtioSndDemoCapacityFrames = capacityFrames;
+  virtioSndDemoSampleRate = sampleRate;
+  virtioSndDemoClock = new AudioFrameClock(sampleRate, performanceNowNs());
+  virtioSndDemoClockStarted = false;
+
+  const targetFrames = hdaDemoTargetFrames(capacityFrames, sampleRate);
+  // Prime up to the target fill level (without overrunning if the buffer is already full).
+  const level = getAudioRingBufferLevelFrames(header, capacityFrames);
+  const prime = Math.max(0, targetFrames - level);
+  if (prime > 0 && typeof demo.tick === "function") {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    demo.tick(prime);
+  }
+  maybePostVirtioSndDemoStats();
+
+  const timer = ctx.setInterval(() => {
+    if (!virtioSndDemoInstance || !virtioSndDemoHeader) return;
+    const clock = virtioSndDemoClock;
+    const header = virtioSndDemoHeader;
+    const capacity = virtioSndDemoCapacityFrames;
+    const sampleRateHz = virtioSndDemoSampleRate;
+    if (!clock || !header || capacity <= 0 || sampleRateHz <= 0) return;
+
+    const nowNs = performanceNowNs();
+    const level = getAudioRingBufferLevelFrames(header, capacity);
+    const target = hdaDemoTargetFrames(capacity, sampleRateHz);
+
+    if (!virtioSndDemoClockStarted) {
+      virtioSndDemoClock = new AudioFrameClock(sampleRateHz, nowNs);
+
+      if (level > target) {
+        maybePostVirtioSndDemoStats();
+        return;
+      }
+
+      const prime = Math.max(0, target - level);
+      if (prime > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        virtioSndDemoInstance.tick(prime);
+      }
+
+      virtioSndDemoClockStarted = true;
+      virtioSndDemoClock = new AudioFrameClock(sampleRateHz, nowNs);
+      maybePostVirtioSndDemoStats();
+      return;
+    }
+
+    const elapsedFrames = clock.advanceTo(nowNs);
+    if (elapsedFrames > 0) {
+      const free = Math.max(0, capacity - level);
+      const frames = Math.min(elapsedFrames, free);
+      if (frames > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        virtioSndDemoInstance.tick(frames);
+      }
+    }
+    maybePostVirtioSndDemoStats();
+  }, 20);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  virtioSndDemoTimer = timer as unknown as number;
+
+  ctx.postMessage({ type: "audioOutputVirtioSndDemo.ready" } satisfies AudioOutputVirtioSndDemoReadyMessage);
 }
 
 function guestBoundsCheck(offset: number, len: number): void {
@@ -1848,6 +2051,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     | Partial<CoordinatorToWorkerSnapshotMessage>
     | Partial<AudioOutputHdaDemoStartMessage>
     | Partial<AudioOutputHdaDemoStopMessage>
+    | Partial<AudioOutputVirtioSndDemoStartMessage>
+    | Partial<AudioOutputVirtioSndDemoStopMessage>
     | Partial<AudioHdaCaptureSyntheticStartMessage>
     | Partial<CursorDemoStartMessage>
     | Partial<CursorDemoStopMessage>
@@ -2012,12 +2217,27 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     return;
   }
 
+  if ((msg as Partial<AudioOutputVirtioSndDemoStopMessage>).type === "audioOutputVirtioSndDemo.stop") {
+    stopVirtioSndDemo();
+    return;
+  }
+
   if ((msg as Partial<AudioOutputHdaDemoStartMessage>).type === "audioOutputHdaDemo.start") {
     void startHdaDemo(msg as AudioOutputHdaDemoStartMessage).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       console.error(err);
       ctx.postMessage({ type: "audioOutputHdaDemo.error", message } satisfies AudioOutputHdaDemoErrorMessage);
       stopHdaDemo();
+    });
+    return;
+  }
+
+  if ((msg as Partial<AudioOutputVirtioSndDemoStartMessage>).type === "audioOutputVirtioSndDemo.start") {
+    void startVirtioSndDemo(msg as AudioOutputVirtioSndDemoStartMessage).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(err);
+      ctx.postMessage({ type: "audioOutputVirtioSndDemo.error", message } satisfies AudioOutputVirtioSndDemoErrorMessage);
+      stopVirtioSndDemo();
     });
     return;
   }
