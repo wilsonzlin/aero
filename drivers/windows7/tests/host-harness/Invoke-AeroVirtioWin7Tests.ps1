@@ -86,6 +86,17 @@ param(
   [Alias("WithVirtioInputTabletEvents", "EnableVirtioInputTabletEvents", "WithTabletEvents", "EnableTabletEvents")]
   [switch]$WithInputTabletEvents,
 
+  # If set, require that the corresponding virtio PCI function has MSI-X enabled.
+  # Verification is performed via QMP/QEMU introspection (query-pci or HMP `info pci` fallback).
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireVirtioNetMsix,
+
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireVirtioBlkMsix,
+
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireVirtioSndMsix,
+
   # If set, stream newly captured COM1 serial output to stdout while waiting.
   [Parameter(Mandatory = $false)]
   [switch]$FollowSerial,
@@ -161,6 +172,10 @@ if ($VerifyVirtioSndWav) {
   if ($VirtioSndAudioBackend -ne "wav") {
     throw "-VerifyVirtioSndWav requires -VirtioSndAudioBackend wav."
   }
+}
+
+if ($RequireVirtioSndMsix -and (-not $WithVirtioSnd)) {
+  throw "-RequireVirtioSndMsix requires -WithVirtioSnd."
 }
 
 if ($VirtioTransitional -and $WithVirtioSnd) {
@@ -1750,6 +1765,269 @@ function Try-AeroQmpInjectVirtioInputTabletEvents {
   return $false
 }
 
+function Convert-AeroPciInt {
+  param(
+    [Parameter(Mandatory = $false)] $Value
+  )
+  if ($null -eq $Value) { return $null }
+  if ($Value -is [int] -or $Value -is [long]) { return [int]$Value }
+
+  $s = ([string]$Value).Trim()
+  if ([string]::IsNullOrEmpty($s)) { return $null }
+  if ($s.StartsWith("0x") -or $s.StartsWith("0X")) {
+    try { return [int]([Convert]::ToInt32($s.Substring(2), 16)) } catch { return $null }
+  }
+
+  $n = 0
+  if ([int]::TryParse($s, [ref]$n)) { return $n }
+
+  # Fallback: bare hex without a prefix (e.g. "1af4").
+  try { return [int]([Convert]::ToInt32($s, 16)) } catch { return $null }
+}
+
+function Format-AeroPciBdf {
+  param(
+    [Parameter(Mandatory = $false)] [Nullable[int]]$Bus,
+    [Parameter(Mandatory = $false)] [Nullable[int]]$Slot,
+    [Parameter(Mandatory = $false)] [Nullable[int]]$Function
+  )
+  if (($null -eq $Bus) -or ($null -eq $Slot) -or ($null -eq $Function)) { return "?:?.?" }
+  return ("{0:x2}:{1:x2}.{2}" -f $Bus, $Slot, $Function)
+}
+
+function Get-AeroPciMsixInfoFromQueryPci {
+  param(
+    [Parameter(Mandatory = $true)] $QueryPciReturn
+  )
+
+  $infos = @()
+  if ($null -eq $QueryPciReturn) { return $infos }
+
+  foreach ($bus in $QueryPciReturn) {
+    $busNum = Convert-AeroPciInt $bus.bus
+    $devs = $bus.devices
+    if ($null -eq $devs) { continue }
+    foreach ($dev in $devs) {
+      $vendor = Convert-AeroPciInt $dev.vendor_id
+      $device = Convert-AeroPciInt $dev.device_id
+      if (($null -eq $vendor) -or ($null -eq $device)) { continue }
+
+      $msixEnabled = $null
+      try {
+        foreach ($cap in $dev.capabilities) {
+          $capId = ""
+          try { $capId = [string]$cap.id } catch { }
+          if (-not [string]::IsNullOrEmpty($capId) -and $capId.ToLowerInvariant() -eq "msix") {
+            try { $msixEnabled = [bool]$cap.msix.enabled } catch { }
+            break
+          }
+          # Some QEMU builds may not provide `id` but still include a `msix` object.
+          try {
+            if ($cap.PSObject.Properties.Name -contains "msix") {
+              try { $msixEnabled = [bool]$cap.msix.enabled } catch { }
+              break
+            }
+          } catch { }
+        }
+      } catch { }
+
+      $devBus = Convert-AeroPciInt $dev.bus
+      if ($null -eq $devBus) { $devBus = $busNum }
+      $slot = Convert-AeroPciInt $dev.slot
+      $function = Convert-AeroPciInt $dev.function
+
+      $infos += [pscustomobject]@{
+        VendorId    = $vendor
+        DeviceId    = $device
+        Bus         = $devBus
+        Slot        = $slot
+        Function    = $function
+        MsixEnabled = $msixEnabled
+        Source      = "query-pci"
+      }
+    }
+  }
+  return $infos
+}
+
+function Get-AeroPciMsixInfoFromInfoPci {
+  param(
+    [Parameter(Mandatory = $true)] [string]$InfoPciText
+  )
+
+  $infos = @()
+  $bus = $null
+  $slot = $null
+  $function = $null
+  $vendor = $null
+  $device = $null
+  $msix = $null
+
+  foreach ($raw in ($InfoPciText -split "`n")) {
+    $line = $raw.TrimEnd("`r")
+    if ($line -match "^Bus\\s+(\\d+),\\s*device\\s+(\\d+),\\s*function\\s+(\\d+):") {
+      if (($null -ne $vendor) -and ($null -ne $device)) {
+        $infos += [pscustomobject]@{
+          VendorId    = $vendor
+          DeviceId    = $device
+          Bus         = $bus
+          Slot        = $slot
+          Function    = $function
+          MsixEnabled = $msix
+          Source      = "info pci"
+        }
+      }
+      $bus = Convert-AeroPciInt $Matches[1]
+      $slot = Convert-AeroPciInt $Matches[2]
+      $function = Convert-AeroPciInt $Matches[3]
+      $vendor = $null
+      $device = $null
+      $msix = $null
+      continue
+    }
+
+    if ($line -match "\\bVendor\\s+ID:\\s*([0-9a-fA-Fx]+)\\s+Device\\s+ID:\\s*([0-9a-fA-Fx]+)\\b") {
+      $vendor = Convert-AeroPciInt $Matches[1]
+      $device = Convert-AeroPciInt $Matches[2]
+      continue
+    }
+
+    if (($null -eq $vendor) -or ($null -eq $device)) {
+      if ($line -match "\\b([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\\b") {
+        $vendor = Convert-AeroPciInt ("0x" + $Matches[1])
+        $device = Convert-AeroPciInt ("0x" + $Matches[2])
+      }
+    }
+
+    if ($line -match "(?i)msi-x|msix") {
+      $low = $line.ToLowerInvariant()
+      if ($low.Contains("disabled") -or $low.Contains("enable-") -or $low.Contains("off")) {
+        $msix = $false
+      } elseif ($low.Contains("enabled") -or $low.Contains("enable+")) {
+        $msix = $true
+      }
+    }
+  }
+  if (($null -ne $vendor) -and ($null -ne $device)) {
+    $infos += [pscustomobject]@{
+      VendorId    = $vendor
+      DeviceId    = $device
+      Bus         = $bus
+      Slot        = $slot
+      Function    = $function
+      MsixEnabled = $msix
+      Source      = "info pci"
+    }
+  }
+  return $infos
+}
+
+function Test-AeroQmpRequiredVirtioMsix {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Host,
+    [Parameter(Mandatory = $true)] [int]$Port,
+    [Parameter(Mandatory = $false)] [bool]$RequireVirtioNetMsix = $false,
+    [Parameter(Mandatory = $false)] [bool]$RequireVirtioBlkMsix = $false,
+    [Parameter(Mandatory = $false)] [bool]$RequireVirtioSndMsix = $false
+  )
+
+  if (-not ($RequireVirtioNetMsix -or $RequireVirtioBlkMsix -or $RequireVirtioSndMsix)) {
+    return @{ Ok = $true }
+  }
+
+  $vendorId = 0x1AF4
+  $reqs = @()
+  if ($RequireVirtioNetMsix) { $reqs += @{ Name = "virtio-net"; Token = "VIRTIO_NET_MSIX_NOT_ENABLED"; DeviceIds = @(0x1041, 0x1000) } }
+  if ($RequireVirtioBlkMsix) { $reqs += @{ Name = "virtio-blk"; Token = "VIRTIO_BLK_MSIX_NOT_ENABLED"; DeviceIds = @(0x1042, 0x1001) } }
+  if ($RequireVirtioSndMsix) { $reqs += @{ Name = "virtio-snd"; Token = "VIRTIO_SND_MSIX_NOT_ENABLED"; DeviceIds = @(0x1059) } }
+
+  $client = $null
+  try {
+    $client = [System.Net.Sockets.TcpClient]::new()
+    $client.ReceiveTimeout = 2000
+    $client.SendTimeout = 2000
+    $client.Connect($Host, $Port)
+
+    $stream = $client.GetStream()
+    $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+    $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
+    $writer.NewLine = "`n"
+    $writer.AutoFlush = $true
+
+    # Greeting.
+    $null = $reader.ReadLine()
+    $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "qmp_capabilities" }
+
+    $queryInfos = @()
+    $infoInfos = @()
+    $querySupported = $false
+    $infoSupported = $false
+
+    try {
+      $query = (Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "query-pci" }).return
+      $queryInfos = Get-AeroPciMsixInfoFromQueryPci -QueryPciReturn $query
+      $querySupported = $true
+    } catch { }
+
+    try {
+      $txt = (Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "human-monitor-command"; arguments = @{ "command-line" = "info pci" } }).return
+      if ($null -ne $txt) {
+        $infoInfos = Get-AeroPciMsixInfoFromInfoPci -InfoPciText ([string]$txt)
+      }
+      $infoSupported = $true
+    } catch { }
+
+    if ((-not $querySupported) -and (-not $infoSupported)) {
+      return @{ Ok = $false; Result = "QMP_MSIX_CHECK_UNSUPPORTED"; Reason = "QEMU QMP does not support query-pci or human-monitor-command (required for MSI-X verification)" }
+    }
+
+    foreach ($r in $reqs) {
+      $deviceName = [string]$r.Name
+      $token = [string]$r.Token
+      $deviceIds = [int[]]$r.DeviceIds
+
+      $q = @($queryInfos | Where-Object { $_.VendorId -eq $vendorId -and ($deviceIds -contains $_.DeviceId) })
+      $h = @($infoInfos | Where-Object { $_.VendorId -eq $vendorId -and ($deviceIds -contains $_.DeviceId) })
+      $any = @($q + $h)
+
+      if ($any.Count -eq 0) {
+        $idsStr = ($deviceIds | ForEach-Object { "{0:x4}:{1:x4}" -f $vendorId, $_ }) -join ","
+        return @{ Ok = $false; Result = $token; Reason = "did not find $deviceName PCI function(s) ($idsStr) in QEMU PCI introspection output" }
+      }
+
+      $matches = $null
+      if (($q.Count -gt 0) -and (@($q | Where-Object { $null -eq $_.MsixEnabled }).Count -eq 0)) {
+        $matches = $q
+      } elseif (($h.Count -gt 0) -and (@($h | Where-Object { $null -eq $_.MsixEnabled }).Count -eq 0)) {
+        $matches = $h
+      }
+
+      if ($null -eq $matches) {
+        $idsStr = ($deviceIds | ForEach-Object { "{0:x4}:{1:x4}" -f $vendorId, $_ }) -join ","
+        $bdf = Format-AeroPciBdf -Bus ($any[0].Bus) -Slot ($any[0].Slot) -Function ($any[0].Function)
+        return @{ Ok = $false; Result = "QMP_MSIX_CHECK_UNSUPPORTED"; Reason = "could not determine MSI-X enabled state for $deviceName PCI function(s) ($idsStr) (example_bdf=$bdf)" }
+      }
+
+      $disabled = @($matches | Where-Object { -not $_.MsixEnabled })
+      if ($disabled.Count -gt 0) {
+        $d = $disabled[0]
+        $bdf = Format-AeroPciBdf -Bus ($d.Bus) -Slot ($d.Slot) -Function ($d.Function)
+        $idStr = ("{0:x4}:{1:x4}" -f $d.VendorId, $d.DeviceId)
+        return @{ Ok = $false; Result = $token; Reason = "$deviceName PCI function $idStr at $bdf reported MSI-X disabled (source=$($d.Source))" }
+      }
+    }
+
+    return @{ Ok = $true }
+  } catch {
+    $msg = ""
+    try { $msg = [string]$_.Exception.Message } catch { }
+    if ([string]::IsNullOrEmpty($msg)) { $msg = "unknown" }
+    return @{ Ok = $false; Result = "QMP_MSIX_CHECK_FAILED"; Reason = "failed to query PCI MSI-X state via QMP: $msg" }
+  } finally {
+    if ($client) { $client.Close() }
+  }
+}
+
 $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
 
 $serialParent = Split-Path -Parent $SerialLogPath
@@ -1775,11 +2053,13 @@ try {
   $needInputWheel = [bool]$WithInputWheel
   $needInputEvents = [bool]$WithInputEvents -or $needInputWheel
   $needInputTabletEvents = [bool]$WithInputTabletEvents
-  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputTabletEvents
+  $needMsixCheck = [bool]$RequireVirtioNetMsix -or [bool]$RequireVirtioBlkMsix -or [bool]$RequireVirtioSndMsix
+  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputTabletEvents -or $needMsixCheck
   if ($needQmp) {
     # QMP channel:
     # - Used for graceful shutdown when using the `wav` audiodev backend (so the RIFF header is finalized).
     # - Also used for virtio-input event injection (`input-send-event`) when -WithInputEvents is set.
+    # - Also used for virtio PCI MSI-X enable verification (query-pci / info pci) when -RequireVirtio*Msix is set.
     try {
       $qmpPort = Get-AeroFreeTcpPort
       $qmpArgs = @(
@@ -1994,6 +2274,24 @@ try {
 
   try {
     $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequirePerTestMarkers (-not $VirtioTransitional) -RequireVirtioSndPass ([bool]$WithVirtioSnd) -RequireVirtioInputEventsPass ([bool]$needInputEvents) -RequireVirtioInputWheelPass ([bool]$needInputWheel) -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) -QmpHost "127.0.0.1" -QmpPort $qmpPort
+    if ($needMsixCheck -and $result.Result -eq "PASS") {
+      if (($null -eq $qmpPort) -or ($qmpPort -le 0)) {
+        $result = @{
+          Result     = "QMP_MSIX_CHECK_UNSUPPORTED"
+          Tail       = $result.Tail
+          MsixReason = "QMP endpoint not configured"
+        }
+      } else {
+        $msix = Test-AeroQmpRequiredVirtioMsix -Host "127.0.0.1" -Port ([int]$qmpPort) -RequireVirtioNetMsix ([bool]$RequireVirtioNetMsix) -RequireVirtioBlkMsix ([bool]$RequireVirtioBlkMsix) -RequireVirtioSndMsix ([bool]$RequireVirtioSndMsix)
+        if (-not $msix.Ok) {
+          $result = @{
+            Result     = $msix.Result
+            Tail       = $result.Tail
+            MsixReason = $msix.Reason
+          }
+        }
+      }
+    }
   } finally {
     if (-not $proc.HasExited) {
       $quitOk = $false
@@ -2230,6 +2528,61 @@ try {
     }
     "VIRTIO_NET_FAILED" {
       Write-Host "FAIL: VIRTIO_NET_FAILED: selftest RESULT=PASS but virtio-net test reported FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_MSIX_NOT_ENABLED" {
+      $reason = ""
+      try { $reason = [string]$result.MsixReason } catch { }
+      if ([string]::IsNullOrEmpty($reason)) { $reason = "virtio-net MSI-X was not enabled" }
+      Write-Host "FAIL: VIRTIO_NET_MSIX_NOT_ENABLED: $reason"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_BLK_MSIX_NOT_ENABLED" {
+      $reason = ""
+      try { $reason = [string]$result.MsixReason } catch { }
+      if ([string]::IsNullOrEmpty($reason)) { $reason = "virtio-blk MSI-X was not enabled" }
+      Write-Host "FAIL: VIRTIO_BLK_MSIX_NOT_ENABLED: $reason"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_SND_MSIX_NOT_ENABLED" {
+      $reason = ""
+      try { $reason = [string]$result.MsixReason } catch { }
+      if ([string]::IsNullOrEmpty($reason)) { $reason = "virtio-snd MSI-X was not enabled" }
+      Write-Host "FAIL: VIRTIO_SND_MSIX_NOT_ENABLED: $reason"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "QMP_MSIX_CHECK_UNSUPPORTED" {
+      $reason = ""
+      try { $reason = [string]$result.MsixReason } catch { }
+      if ([string]::IsNullOrEmpty($reason)) { $reason = "QEMU QMP did not expose query-pci or human-monitor-command info pci" }
+      Write-Host "FAIL: QMP_MSIX_CHECK_UNSUPPORTED: $reason"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "QMP_MSIX_CHECK_FAILED" {
+      $reason = ""
+      try { $reason = [string]$result.MsixReason } catch { }
+      if ([string]::IsNullOrEmpty($reason)) { $reason = "failed to query QEMU PCI MSI-X state via QMP" }
+      Write-Host "FAIL: QMP_MSIX_CHECK_FAILED: $reason"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

@@ -312,6 +312,26 @@ class _QmpEndpoint:
         raise AssertionError("invalid QMP endpoint")
 
 
+@dataclass(frozen=True)
+class _PciMsixInfo:
+    vendor_id: int
+    device_id: int
+    bus: Optional[int]
+    slot: Optional[int]
+    function: Optional[int]
+    msix_enabled: Optional[bool]
+    # Where this info was sourced from (e.g. "query-pci" or "info pci").
+    source: str
+
+    def bdf(self) -> str:
+        if self.bus is None or self.slot is None or self.function is None:
+            return "?:?.?"
+        return f"{self.bus:02x}:{self.slot:02x}.{self.function}"
+
+    def pci_id(self) -> str:
+        return f"{self.vendor_id:04x}:{self.device_id:04x}"
+
+
 def _read_new_bytes(path: Path, pos: int) -> tuple[bytes, int]:
     try:
         with path.open("rb") as f:
@@ -424,9 +444,18 @@ def _qmp_read_response(sock: socket.socket, *, timeout_seconds: float = 2.0) -> 
             return msg
 
 
-def _qmp_send_command(sock: socket.socket, cmd: dict[str, object]) -> dict[str, object]:
+def _qmp_send_command_raw(sock: socket.socket, cmd: dict[str, object]) -> dict[str, object]:
+    """
+    Send a QMP command and return the raw response.
+
+    Unlike `_qmp_send_command`, this helper does not raise when QEMU returns an error.
+    """
     sock.sendall(json.dumps(cmd, separators=(",", ":")).encode("utf-8") + b"\n")
-    resp = _qmp_read_response(sock, timeout_seconds=2.0)
+    return _qmp_read_response(sock, timeout_seconds=2.0)
+
+
+def _qmp_send_command(sock: socket.socket, cmd: dict[str, object]) -> dict[str, object]:
+    resp = _qmp_send_command_raw(sock, cmd)
     if "error" in resp:
         raise RuntimeError(f"QMP command failed: {resp}")
     return resp
@@ -468,6 +497,331 @@ def _qmp_connect(endpoint: _QmpEndpoint, *, timeout_seconds: float = 5.0) -> soc
             if time.monotonic() >= deadline:
                 raise
             time.sleep(0.05)
+
+
+_VIRTIO_PCI_VENDOR_ID = 0x1AF4
+# Transitional and non-transitional device IDs (virtio spec: 0x1000 range for transitional, 0x1040 range for modern).
+_VIRTIO_NET_PCI_DEVICE_IDS = {0x1041, 0x1000}
+_VIRTIO_BLK_PCI_DEVICE_IDS = {0x1042, 0x1001}
+_VIRTIO_SND_PCI_DEVICE_IDS = {0x1059}
+
+
+def _qmp_maybe_int(v: object) -> Optional[int]:
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        try:
+            return int(s, 0)
+        except ValueError:
+            # `int(..., 0)` rejects bare hex without a 0x prefix (e.g. "1af4").
+            try:
+                return int(s, 16)
+            except ValueError:
+                return None
+    return None
+
+
+def _qmp_maybe_bool(v: object) -> Optional[bool]:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return bool(v)
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("1", "true", "yes", "on", "enabled"):
+            return True
+        if s in ("0", "false", "no", "off", "disabled"):
+            return False
+    return None
+
+
+def _qmp_device_vendor_device_id(dev: dict[str, object]) -> tuple[Optional[int], Optional[int]]:
+    vendor = _qmp_maybe_int(dev.get("vendor_id"))
+    device = _qmp_maybe_int(dev.get("device_id"))
+    if vendor is not None and device is not None:
+        return vendor, device
+
+    # Some QEMU builds may nest the IDs under an `id` object.
+    id_obj = dev.get("id")
+    if isinstance(id_obj, dict):
+        if vendor is None:
+            vendor = _qmp_maybe_int(id_obj.get("vendor_id") or id_obj.get("vendor"))
+        if device is None:
+            device = _qmp_maybe_int(id_obj.get("device_id") or id_obj.get("device"))
+    return vendor, device
+
+
+def _qmp_parse_msix_enabled_from_query_pci_device(dev: dict[str, object]) -> Optional[bool]:
+    caps = dev.get("capabilities")
+    if not isinstance(caps, list):
+        return None
+
+    for cap in caps:
+        if not isinstance(cap, dict):
+            continue
+
+        cap_id_obj = cap.get("id") or cap.get("capability") or cap.get("name")
+        cap_id = cap_id_obj.lower() if isinstance(cap_id_obj, str) else ""
+        cap_id_norm = cap_id.replace("-", "").replace("_", "")
+
+        msix_obj: Optional[object] = None
+        if "msix" in cap:
+            msix_obj = cap.get("msix")
+        elif "msi-x" in cap:
+            msix_obj = cap.get("msi-x")
+        elif cap_id_norm == "msix" or "msix" in cap_id_norm or "msix" in cap_id:
+            msix_obj = cap
+
+        if msix_obj is None:
+            continue
+
+        if isinstance(msix_obj, dict):
+            enabled = _qmp_maybe_bool(msix_obj.get("enabled"))
+            if enabled is not None:
+                return enabled
+
+        # Some QEMU versions may put `enabled` directly on the capability object.
+        enabled = _qmp_maybe_bool(cap.get("enabled"))
+        if enabled is not None:
+            return enabled
+
+        # Found MSI-X, but no readable enabled bit.
+        return None
+
+    return None
+
+
+def _parse_qmp_query_pci_msix_info(query_pci_return: object) -> list[_PciMsixInfo]:
+    """
+    Parse QMP `query-pci` output and extract MSI-X enabled state when available.
+    """
+    infos: list[_PciMsixInfo] = []
+    if not isinstance(query_pci_return, list):
+        return infos
+
+    for bus_obj in query_pci_return:
+        if not isinstance(bus_obj, dict):
+            continue
+        bus_num = _qmp_maybe_int(bus_obj.get("bus"))
+        devs = bus_obj.get("devices")
+        if not isinstance(devs, list):
+            continue
+        for dev_obj in devs:
+            if not isinstance(dev_obj, dict):
+                continue
+            vendor_id, device_id = _qmp_device_vendor_device_id(dev_obj)
+            if vendor_id is None or device_id is None:
+                continue
+
+            dev_bus = _qmp_maybe_int(dev_obj.get("bus"))
+            slot = _qmp_maybe_int(dev_obj.get("slot"))
+            func = _qmp_maybe_int(dev_obj.get("function"))
+            if dev_bus is None:
+                dev_bus = bus_num
+            msix_enabled = _qmp_parse_msix_enabled_from_query_pci_device(dev_obj)
+            infos.append(
+                _PciMsixInfo(
+                    vendor_id=vendor_id,
+                    device_id=device_id,
+                    bus=dev_bus,
+                    slot=slot,
+                    function=func,
+                    msix_enabled=msix_enabled,
+                    source="query-pci",
+                )
+            )
+
+    return infos
+
+
+_HMP_PCI_HEADER_RE = re.compile(r"^Bus\s+(\d+),\s*device\s+(\d+),\s*function\s+(\d+):", re.IGNORECASE)
+_HMP_PCI_VENDOR_DEVICE_RE = re.compile(
+    r"\bVendor\s+ID:\s*([0-9a-fA-Fx]+)\s+Device\s+ID:\s*([0-9a-fA-Fx]+)\b", re.IGNORECASE
+)
+_HMP_PCI_DEVICE_PAIR_RE = re.compile(r"\b([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\b")
+
+
+def _hmp_parse_msix_enabled_from_line(line: str) -> Optional[bool]:
+    low = line.lower()
+    if "msi-x" not in low and "msix" not in low:
+        return None
+    if "disabled" in low or "enable-" in low or "off" in low:
+        return False
+    if "enabled" in low or "enable+" in low or re.search(r"\benable(d)?\b", low):
+        return True
+    return None
+
+
+def _parse_hmp_info_pci_msix_info(info_pci_text: str) -> list[_PciMsixInfo]:
+    """
+    Parse HMP `info pci` output and extract MSI-X enabled state best-effort.
+    """
+    infos: list[_PciMsixInfo] = []
+
+    bus: Optional[int] = None
+    slot: Optional[int] = None
+    function: Optional[int] = None
+    vendor_id: Optional[int] = None
+    device_id: Optional[int] = None
+    msix_enabled: Optional[bool] = None
+
+    def flush() -> None:
+        nonlocal vendor_id, device_id, bus, slot, function, msix_enabled
+        if vendor_id is None or device_id is None:
+            return
+        infos.append(
+            _PciMsixInfo(
+                vendor_id=vendor_id,
+                device_id=device_id,
+                bus=bus,
+                slot=slot,
+                function=function,
+                msix_enabled=msix_enabled,
+                source="info pci",
+            )
+        )
+
+    for raw_line in info_pci_text.splitlines():
+        line = raw_line.rstrip("\r\n")
+        m = _HMP_PCI_HEADER_RE.match(line)
+        if m:
+            flush()
+            bus = _qmp_maybe_int(m.group(1))
+            slot = _qmp_maybe_int(m.group(2))
+            function = _qmp_maybe_int(m.group(3))
+            vendor_id = None
+            device_id = None
+            msix_enabled = None
+            continue
+
+        m = _HMP_PCI_VENDOR_DEVICE_RE.search(line)
+        if m:
+            vendor_id = _qmp_maybe_int(m.group(1))
+            device_id = _qmp_maybe_int(m.group(2))
+            continue
+
+        # Fallback: some QEMU builds only show the numeric IDs as a pair somewhere in the section
+        # (e.g. "Device 1af4:1041").
+        if vendor_id is None or device_id is None:
+            m2 = _HMP_PCI_DEVICE_PAIR_RE.search(line)
+            if m2:
+                vendor_id = _qmp_maybe_int("0x" + m2.group(1))
+                device_id = _qmp_maybe_int("0x" + m2.group(2))
+
+        msix = _hmp_parse_msix_enabled_from_line(line)
+        if msix is not None:
+            msix_enabled = msix
+
+    flush()
+    return infos
+
+
+def _qmp_collect_pci_msix_info(
+    endpoint: _QmpEndpoint,
+) -> tuple[list[_PciMsixInfo], list[_PciMsixInfo], bool, bool]:
+    """
+    Collect PCI MSI-X state from QEMU via QMP.
+
+    Returns a tuple of:
+      - parsed `query-pci` info (may be empty if unsupported)
+      - parsed `human-monitor-command: info pci` info (may be empty if unsupported)
+      - whether `query-pci` was supported by QMP
+      - whether `human-monitor-command` was supported by QMP
+    """
+    with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
+        query_infos: list[_PciMsixInfo] = []
+        resp = _qmp_send_command_raw(s, {"execute": "query-pci"})
+        query_supported = "return" in resp
+        if query_supported:
+            query_infos = _parse_qmp_query_pci_msix_info(resp.get("return"))
+
+        info_infos: list[_PciMsixInfo] = []
+        resp = _qmp_send_command_raw(
+            s,
+            {"execute": "human-monitor-command", "arguments": {"command-line": "info pci"}},
+        )
+        info_supported = "return" in resp
+        if info_supported:
+            txt_obj = resp.get("return")
+            txt = txt_obj if isinstance(txt_obj, str) else str(txt_obj)
+            info_infos = _parse_hmp_info_pci_msix_info(txt)
+
+        return query_infos, info_infos, query_supported, info_supported
+
+
+def _require_virtio_msix_check_failure_message(
+    endpoint: _QmpEndpoint,
+    *,
+    require_virtio_net_msix: bool,
+    require_virtio_blk_msix: bool,
+    require_virtio_snd_msix: bool,
+) -> Optional[str]:
+    """
+    Verify required virtio PCI functions have MSI-X enabled.
+
+    Returns a deterministic `FAIL: ...` message when the check fails, else None.
+    """
+    if not (require_virtio_net_msix or require_virtio_blk_msix or require_virtio_snd_msix):
+        return None
+
+    try:
+        query_infos, info_infos, query_supported, info_supported = _qmp_collect_pci_msix_info(endpoint)
+    except Exception as e:
+        return f"FAIL: QMP_MSIX_CHECK_FAILED: failed to query PCI state via QMP: {e}"
+
+    if not query_supported and not info_supported:
+        return (
+            "FAIL: QMP_MSIX_CHECK_UNSUPPORTED: QEMU QMP does not support query-pci or human-monitor-command "
+            "(required for MSI-X verification)"
+        )
+
+    requirements: list[tuple[str, str, set[int]]] = []
+    if require_virtio_net_msix:
+        requirements.append(("virtio-net", "VIRTIO_NET_MSIX_NOT_ENABLED", _VIRTIO_NET_PCI_DEVICE_IDS))
+    if require_virtio_blk_msix:
+        requirements.append(("virtio-blk", "VIRTIO_BLK_MSIX_NOT_ENABLED", _VIRTIO_BLK_PCI_DEVICE_IDS))
+    if require_virtio_snd_msix:
+        requirements.append(("virtio-snd", "VIRTIO_SND_MSIX_NOT_ENABLED", _VIRTIO_SND_PCI_DEVICE_IDS))
+
+    for device_name, token, device_ids in requirements:
+        q = [i for i in query_infos if i.vendor_id == _VIRTIO_PCI_VENDOR_ID and i.device_id in device_ids]
+        h = [i for i in info_infos if i.vendor_id == _VIRTIO_PCI_VENDOR_ID and i.device_id in device_ids]
+        any_matches = q + h
+        if not any_matches:
+            ids_str = ",".join(f"{_VIRTIO_PCI_VENDOR_ID:04x}:{d:04x}" for d in sorted(device_ids))
+            return f"FAIL: {token}: did not find {device_name} PCI function(s) ({ids_str}) in QEMU PCI introspection output"
+
+        # Prefer structured query-pci output when it provides an explicit enabled bit.
+        matches: Optional[list[_PciMsixInfo]] = None
+        if q and all(i.msix_enabled is not None for i in q):
+            matches = q
+        elif h and all(i.msix_enabled is not None for i in h):
+            matches = h
+
+        if matches is None:
+            # We found matching devices, but could not determine MSI-X state from either output.
+            ids_str = ",".join(f"{_VIRTIO_PCI_VENDOR_ID:04x}:{d:04x}" for d in sorted(device_ids))
+            bdfs = ",".join(i.bdf() for i in any_matches[:4])
+            extra = ""
+            if len(any_matches) > 4:
+                extra = f",...(+{len(any_matches)-4})"
+            return (
+                "FAIL: QMP_MSIX_CHECK_UNSUPPORTED: could not determine MSI-X enabled state for "
+                f"{device_name} PCI function(s) ({ids_str}) (bdf={bdfs}{extra})"
+            )
+
+        not_enabled = [i for i in matches if not i.msix_enabled]
+        if not_enabled:
+            i = not_enabled[0]
+            return (
+                f"FAIL: {token}: {device_name} PCI function {i.pci_id()} at {i.bdf()} "
+                f"reported MSI-X disabled (source={i.source})"
+            )
+
+    return None
 
 
 def _qmp_key_event(qcode: str, *, down: bool) -> dict[str, object]:
@@ -1029,6 +1383,21 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--require-virtio-net-msix",
+        action="store_true",
+        help="After drivers load, require that the virtio-net PCI function has MSI-X enabled (checked via QMP/QEMU introspection).",
+    )
+    parser.add_argument(
+        "--require-virtio-blk-msix",
+        action="store_true",
+        help="After drivers load, require that the virtio-blk PCI function has MSI-X enabled (checked via QMP/QEMU introspection).",
+    )
+    parser.add_argument(
+        "--require-virtio-snd-msix",
+        action="store_true",
+        help="After drivers load, require that the virtio-snd PCI function has MSI-X enabled (checked via QMP/QEMU introspection).",
+    )
+    parser.add_argument(
         "--with-virtio-snd",
         "--enable-virtio-snd",
         dest="enable_virtio_snd",
@@ -1095,9 +1464,15 @@ def main() -> int:
     need_input_wheel = bool(getattr(args, "with_input_wheel", False))
     need_input_events = bool(args.with_input_events) or need_input_wheel
     need_input_tablet_events = bool(getattr(args, "with_input_tablet_events", False))
+    need_msix_check = bool(
+        args.require_virtio_net_msix or args.require_virtio_blk_msix or args.require_virtio_snd_msix
+    )
 
     if args.virtio_msix_vectors is not None and args.virtio_msix_vectors <= 0:
         parser.error("--virtio-msix-vectors must be a positive integer")
+
+    if args.require_virtio_snd_msix and not args.enable_virtio_snd:
+        parser.error("--require-virtio-snd-msix requires --with-virtio-snd/--enable-virtio-snd")
 
     if not args.enable_virtio_snd:
         if args.virtio_snd_audio_backend != "none" or args.virtio_snd_wav_path is not None:
@@ -1165,11 +1540,17 @@ def main() -> int:
     # QMP endpoint used to:
     # - request a graceful shutdown (so the wav audiodev can flush/finalize)
     # - optionally inject virtio-input events (keyboard + mouse) via `input-send-event`
+    # - optionally introspect PCI state to verify MSI-X enablement (`--require-virtio-*-msix`)
     #
     # Historically we enabled QMP only when we needed a graceful exit for `-audiodev wav` output, so we
     # wouldn't introduce extra host port/socket dependencies in non-audio harness runs. Input injection
     # also requires QMP, but remains opt-in via --with-input-events/--with-virtio-input-events.
-    use_qmp = (args.enable_virtio_snd and args.virtio_snd_audio_backend == "wav") or need_input_events or need_input_tablet_events
+    use_qmp = (
+        (args.enable_virtio_snd and args.virtio_snd_audio_backend == "wav")
+        or need_input_events
+        or need_input_tablet_events
+        or need_msix_check
+    )
     qmp_endpoint: Optional[_QmpEndpoint] = None
     qmp_socket: Optional[Path] = None
     if use_qmp:
@@ -1192,9 +1573,18 @@ def main() -> int:
         if qmp_endpoint is None:
             port = _find_free_tcp_port()
             if port is None:
-                if need_input_events or need_input_tablet_events:
+                if need_input_events or need_input_tablet_events or need_msix_check:
+                    req_flags: list[str] = []
+                    if bool(args.with_input_events):
+                        req_flags.append("--with-input-events")
+                    if need_input_wheel:
+                        req_flags.append("--with-input-wheel")
+                    if need_input_tablet_events:
+                        req_flags.append("--with-input-tablet-events")
+                    if need_msix_check:
+                        req_flags.append("--require-virtio-*-msix")
                     print(
-                        "ERROR: --with-input-events/--with-virtio-input-events/--with-input-wheel/--with-input-tablet-events/--with-tablet-events requires QMP, but a free TCP port could not be allocated",
+                        f"ERROR: {'/'.join(req_flags)} requires QMP, but a free TCP port could not be allocated",
                         file=sys.stderr,
                     )
                     return 2
@@ -1204,9 +1594,18 @@ def main() -> int:
                 )
             else:
                 qmp_endpoint = _QmpEndpoint(tcp_host="127.0.0.1", tcp_port=port)
-    if (need_input_events or need_input_tablet_events) and qmp_endpoint is None:
+    if (need_input_events or need_input_tablet_events or need_msix_check) and qmp_endpoint is None:
+        req_flags: list[str] = []
+        if bool(args.with_input_events):
+            req_flags.append("--with-input-events")
+        if need_input_wheel:
+            req_flags.append("--with-input-wheel")
+        if need_input_tablet_events:
+            req_flags.append("--with-input-tablet-events")
+        if need_msix_check:
+            req_flags.append("--require-virtio-*-msix")
         print(
-            "ERROR: --with-input-events/--with-virtio-input-events/--with-input-wheel/--with-input-tablet-events/--with-tablet-events requires QMP, but a QMP endpoint could not be allocated",
+            f"ERROR: {'/'.join(req_flags)} requires QMP, but a QMP endpoint could not be allocated",
             file=sys.stderr,
         )
         return 2
@@ -1487,6 +1886,7 @@ def main() -> int:
             saw_virtio_snd_duplex_fail = False
             saw_virtio_net_pass = False
             saw_virtio_net_fail = False
+            msix_checked = False
             require_per_test_markers = not args.virtio_transitional
             deadline = time.monotonic() + args.timeout_seconds
 
@@ -1679,6 +2079,37 @@ def main() -> int:
                         saw_virtio_net_pass = True
                     if not saw_virtio_net_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL" in tail:
                         saw_virtio_net_fail = True
+
+                    # If requested, verify MSI-X enablement once we're confident the relevant drivers
+                    # have loaded (i.e. after the corresponding guest test marker has appeared).
+                    #
+                    # This is intentionally earlier than waiting for RESULT|PASS so we can still run the
+                    # QMP check even if the guest shuts down immediately after reporting results.
+                    if need_msix_check and not msix_checked:
+                        msix_ready = True
+                        if args.require_virtio_blk_msix and not (saw_virtio_blk_pass or saw_virtio_blk_fail):
+                            msix_ready = False
+                        if args.require_virtio_net_msix and not (saw_virtio_net_pass or saw_virtio_net_fail):
+                            msix_ready = False
+                        if args.require_virtio_snd_msix and not (
+                            saw_virtio_snd_pass or saw_virtio_snd_fail or saw_virtio_snd_skip
+                        ):
+                            msix_ready = False
+
+                        if msix_ready:
+                            assert qmp_endpoint is not None
+                            msg = _require_virtio_msix_check_failure_message(
+                                qmp_endpoint,
+                                require_virtio_net_msix=bool(args.require_virtio_net_msix),
+                                require_virtio_blk_msix=bool(args.require_virtio_blk_msix),
+                                require_virtio_snd_msix=bool(args.require_virtio_snd_msix),
+                            )
+                            msix_checked = True
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
 
                     if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
                         if require_per_test_markers:
@@ -1986,6 +2417,20 @@ def main() -> int:
                                         "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events PASS marker while --with-input-tablet-events/--with-tablet-events was enabled",
                                         file=sys.stderr,
                                     )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                        if need_msix_check and not msix_checked:
+                            assert qmp_endpoint is not None
+                            msg = _require_virtio_msix_check_failure_message(
+                                qmp_endpoint,
+                                require_virtio_net_msix=bool(args.require_virtio_net_msix),
+                                require_virtio_blk_msix=bool(args.require_virtio_blk_msix),
+                                require_virtio_snd_msix=bool(args.require_virtio_snd_msix),
+                            )
+                            msix_checked = True
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -2491,6 +2936,20 @@ def main() -> int:
                                             "FAIL: MISSING_VIRTIO_INPUT_WHEEL: did not observe virtio-input-wheel PASS marker while --with-input-wheel was enabled",
                                             file=sys.stderr,
                                         )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if need_msix_check and not msix_checked:
+                                assert qmp_endpoint is not None
+                                msg = _require_virtio_msix_check_failure_message(
+                                    qmp_endpoint,
+                                    require_virtio_net_msix=bool(args.require_virtio_net_msix),
+                                    require_virtio_blk_msix=bool(args.require_virtio_blk_msix),
+                                    require_virtio_snd_msix=bool(args.require_virtio_snd_msix),
+                                )
+                                msix_checked = True
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
