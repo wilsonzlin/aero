@@ -1443,8 +1443,9 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
         const queryText = "hello from websocket jwt query";
         const wsQuery = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(token)}`);
         wsQuery.binaryType = "arraybuffer";
+        const queryReadyPromise = waitForReady(wsQuery);
         await waitForOpen(wsQuery);
-        await waitForReady(wsQuery);
+        await queryReadyPromise;
         const echoedQueryFrame = await sendAndRecv(wsQuery, buildV1Frame(queryText));
         wsQuery.close();
         const echoedQueryText = new TextDecoder().decode(echoedQueryFrame.slice(8));
@@ -1452,9 +1453,10 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
         const firstMsgText = "hello from websocket jwt first message";
         const wsAuthMsg = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         wsAuthMsg.binaryType = "arraybuffer";
+        const authReadyPromise = waitForReady(wsAuthMsg);
         await waitForOpen(wsAuthMsg);
         wsAuthMsg.send(JSON.stringify({ type: "auth", token }));
-        await waitForReady(wsAuthMsg);
+        await authReadyPromise;
         const echoedFirstMsgFrame = await sendAndRecv(wsAuthMsg, buildV1Frame(firstMsgText));
         wsAuthMsg.close();
         const echoedFirstMsgText = new TextDecoder().decode(echoedFirstMsgFrame.slice(8));
@@ -1462,15 +1464,17 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
         // Sending datagrams before completing auth (and before receiving ready) should be rejected.
         const wsMissing = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         wsMissing.binaryType = "arraybuffer";
+        const missingPromise = waitForErrorAndClose(wsMissing);
         await waitForOpen(wsMissing);
         wsMissing.send(buildV1Frame("should be rejected"));
-        const missingRes = await waitForErrorAndClose(wsMissing);
+        const missingRes = await missingPromise;
 
         const wsInvalid = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         wsInvalid.binaryType = "arraybuffer";
+        const invalidPromise = waitForErrorAndClose(wsInvalid);
         await waitForOpen(wsInvalid);
         wsInvalid.send(JSON.stringify({ type: "auth", token: `${token}-invalid` }));
-        const invalidRes = await waitForErrorAndClose(wsInvalid);
+        const invalidRes = await invalidPromise;
 
         return {
           echoedQueryText,
