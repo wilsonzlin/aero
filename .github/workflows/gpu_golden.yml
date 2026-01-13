@@ -41,6 +41,14 @@ jobs:
             git status --porcelain -- tests/golden
             exit 1
           fi
+          # `git diff` does not report untracked files; ensure the generator did not
+          # produce any new goldens that were forgotten in the commit.
+          if [[ -n "$(git status --porcelain -- tests/golden)" ]]; then
+            echo "::error::Generated golden images are out of date. Run 'npm run generate:goldens' and commit the updated PNGs under tests/golden/."
+            echo "Changed files:"
+            git status --porcelain -- tests/golden
+            exit 1
+          fi
 
       - name: Run GPU golden tests
         working-directory: ${{ steps.node-workspace.outputs.dir }}

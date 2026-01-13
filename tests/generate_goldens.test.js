@@ -25,5 +25,17 @@ test("npm run generate:goldens exits 0 and does not modify tracked goldens", () 
     0,
     `generate:goldens produced a diff in tests/golden\n\nstdout:\n${diff.stdout}\n\nstderr:\n${diff.stderr}`,
   );
-});
 
+  // `git diff` does not report untracked files. Ensure the generator did not
+  // produce any new goldens that were forgotten in the commit.
+  const status = spawnSync("git", ["status", "--porcelain", "--", "tests/golden"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  assert.equal(status.status, 0, `git status failed\n\nstdout:\n${status.stdout}\n\nstderr:\n${status.stderr}`);
+  assert.equal(
+    status.stdout.trim(),
+    "",
+    `generate:goldens produced uncommitted changes in tests/golden\n\n${status.stdout}\n\nRun \`npm run generate:goldens\` and commit the updated PNGs under tests/golden/.`,
+  );
+});
