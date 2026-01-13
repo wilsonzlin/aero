@@ -187,18 +187,30 @@ pub fn translate_sm4_module_to_wgsl(
     module: &Sm4Module,
     signatures: &ShaderSignatures,
 ) -> Result<ShaderTranslation, ShaderTranslateError> {
-    let isgn = signatures
-        .isgn
-        .as_ref()
-        .ok_or(ShaderTranslateError::MissingSignature("ISGN"))?;
-    let osgn = signatures
-        .osgn
-        .as_ref()
-        .ok_or(ShaderTranslateError::MissingSignature("OSGN"))?;
-
     match module.stage {
-        ShaderStage::Vertex => translate_vs(module, isgn, osgn),
-        ShaderStage::Pixel => translate_ps(module, isgn, osgn),
+        ShaderStage::Vertex => {
+            let isgn = signatures
+                .isgn
+                .as_ref()
+                .ok_or(ShaderTranslateError::MissingSignature("ISGN"))?;
+            let osgn = signatures
+                .osgn
+                .as_ref()
+                .ok_or(ShaderTranslateError::MissingSignature("OSGN"))?;
+            translate_vs(module, isgn, osgn)
+        }
+        ShaderStage::Pixel => {
+            let isgn = signatures
+                .isgn
+                .as_ref()
+                .ok_or(ShaderTranslateError::MissingSignature("ISGN"))?;
+            let osgn = signatures
+                .osgn
+                .as_ref()
+                .ok_or(ShaderTranslateError::MissingSignature("OSGN"))?;
+            translate_ps(module, isgn, osgn)
+        }
+        ShaderStage::Compute => translate_cs(module),
         other => Err(ShaderTranslateError::UnsupportedStage(other)),
     }
 }
@@ -206,9 +218,8 @@ pub fn translate_sm4_module_to_wgsl(
 /// Scans a decoded SM4/SM5 module and produces bind group layout entries for the
 /// module's declared shader stage.
 ///
-/// Note: Full compute-stage WGSL translation is not implemented yet, but the
-/// binding model reserves `@group(2)` for compute resources. This helper is used
-/// by tests and is intended to support future compute-stage translation work.
+/// Note: Compute-stage WGSL translation is still minimal (it does not model thread
+/// builtins / UAVs yet), but we still reflect resource bindings for compute.
 pub fn reflect_resource_bindings(module: &Sm4Module) -> Result<Vec<Binding>, ShaderTranslateError> {
     Ok(scan_resources(module)?.bindings(module.stage))
 }
@@ -321,6 +332,45 @@ fn translate_ps(
     Ok(ShaderTranslation {
         wgsl: w.finish(),
         stage: ShaderStage::Pixel,
+        reflection,
+    })
+}
+
+fn translate_cs(module: &Sm4Module) -> Result<ShaderTranslation, ShaderTranslateError> {
+    let io = IoMaps::empty();
+    let resources = scan_resources(module)?;
+
+    let reflection = ShaderReflection {
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        bindings: resources.bindings(ShaderStage::Compute),
+    };
+
+    let mut w = WgslWriter::new();
+
+    resources.emit_decls(&mut w, ShaderStage::Compute)?;
+
+    w.line("@compute @workgroup_size(1)");
+    w.line("fn cs_main() {");
+    w.indent();
+    if !module.instructions.is_empty() {
+        w.line("");
+    }
+    emit_temp_and_output_decls(&mut w, module, &io)?;
+
+    let ctx = EmitCtx {
+        stage: ShaderStage::Compute,
+        io: &io,
+        resources: &resources,
+    };
+    emit_instructions(&mut w, module, &ctx)?;
+
+    w.dedent();
+    w.line("}");
+
+    Ok(ShaderTranslation {
+        wgsl: w.finish(),
+        stage: ShaderStage::Compute,
         reflection,
     })
 }
@@ -629,6 +679,21 @@ struct IoMaps {
 }
 
 impl IoMaps {
+    fn empty() -> Self {
+        Self {
+            inputs: BTreeMap::new(),
+            outputs: BTreeMap::new(),
+            vs_input_fields: Vec::new(),
+            vs_input_fields_by_register: BTreeMap::new(),
+            vs_position_register: None,
+            ps_position_register: None,
+            ps_sv_target0_register: None,
+            vs_vertex_id_register: None,
+            vs_instance_id_register: None,
+            ps_front_facing_register: None,
+        }
+    }
+
     fn inputs_reflection(&self) -> Vec<IoParam> {
         self.inputs
             .values()
@@ -1537,14 +1602,14 @@ fn emit_instructions(
                 sampler,
             } => {
                 let coord = emit_src_vec4(coord, inst_index, "sample", ctx)?;
-                // WGSL forbids implicit-derivative sampling in the vertex stage, so map D3D-style
-                // `sample` to `textureSampleLevel(..., 0.0)` when translating a vertex shader.
+                // WGSL forbids implicit-derivative sampling in non-fragment stages, so map D3D-style
+                // `sample` to `textureSampleLevel(..., 0.0)` when translating vertex/compute stages.
                 //
                 // Note: On real D3D hardware, vertex-stage texture sampling uses an implementation-
                 // defined LOD selection (typically base LOD). Using LOD 0 is a reasonable
                 // approximation and keeps the generated WGSL valid.
                 let expr = match ctx.stage {
-                    ShaderStage::Vertex => format!(
+                    ShaderStage::Vertex | ShaderStage::Compute => format!(
                         "textureSampleLevel(t{}, s{}, ({coord}).xy, 0.0)",
                         texture.slot, sampler.slot
                     ),

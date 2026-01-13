@@ -174,6 +174,17 @@ fn assert_wgsl_parses(wgsl: &str) {
     naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
 }
 
+fn assert_wgsl_validates(wgsl: &str) {
+    let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    validator
+        .validate(&module)
+        .expect("generated WGSL failed to validate");
+}
+
 #[test]
 fn translates_signature_driven_vs_with_empty_input_signature_without_empty_struct() {
     // WGSL forbids empty structs. DXBC vertex shaders can have an empty input signature (e.g. when
@@ -517,4 +528,31 @@ fn decodes_and_translates_ld_shader_from_dxbc() {
         .bindings
         .iter()
         .any(|b| matches!(b.kind, aero_d3d11::BindingKind::Sampler { .. })));
+}
+
+#[test]
+fn decodes_and_translates_minimal_compute_shader_without_signatures() {
+    // Minimal compute shader token stream: just `ret`.
+    let body = vec![opcode_token(OPCODE_RET, 1)];
+
+    // Stage type 5 = compute shader.
+    let tokens = make_sm5_program_tokens(5, &body);
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, tokens_to_bytes(&tokens))]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
+
+    // Compute shaders frequently omit ISGN/OSGN signature chunks; decoding should still succeed.
+    let module = program.decode().expect("SM4 decode");
+    assert_eq!(module.stage, ShaderStage::Compute);
+    assert_eq!(module.instructions, vec![Sm4Inst::Ret]);
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    assert!(signatures.isgn.is_none());
+    assert!(signatures.osgn.is_none());
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert!(translated.wgsl.contains("@compute"));
+    assert_wgsl_validates(&translated.wgsl);
 }
