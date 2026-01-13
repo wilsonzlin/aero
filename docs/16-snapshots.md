@@ -144,7 +144,7 @@ Section IDs are numeric (`u32`) and are defined by `aero_snapshot::SectionId`:
 
 #### PcPlatform (full-system) device coverage
 
-A minimal VM can sometimes get away with snapshotting just CPU/MMU + BIOS + RAM, but a full PcPlatform-based machine must also snapshot the platform devices that define interrupt/timer routing and input state.
+A minimal VM can sometimes get away with snapshotting just CPU/CPUS + MMU/MMUS + BIOS + RAM, but a full PcPlatform-based machine must also snapshot the platform devices that define interrupt/timer routing and input state.
 
 Beyond BIOS/RAM, a PcPlatform snapshot is expected to include `DEVICES` entries for:
 
@@ -674,7 +674,7 @@ The worker-based web runtime splits responsibilities across workers (CPU, I/O, n
 2. **Clear/reset `NET_TX` / `NET_RX`** once all ring participants are paused.
     - These shared-memory rings are **not part of the snapshot file**, and any in-flight frames must be dropped to avoid replay into a restored guest.
     - Host tunnel transports (WebSocket/WebRTC) are **not bit-restorable**, so restore must treat them as reset and reconnect best-effort.
-3. Save/restore the snapshot payload (CPU/MMU + device blobs + guest RAM).
+3. Save/restore the snapshot payload (CPU/CPUS + MMU/MMUS + device blobs + guest RAM).
 4. Resume workers (CPU+I/O first, then net); the net worker reconnects best-effort.
 
 Networking-specific restore semantics (what is and is not bit-restorable) are documented in `docs/07-networking.md`.
