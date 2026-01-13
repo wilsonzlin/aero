@@ -300,6 +300,22 @@ static uint64_t aerogpu_texture_required_size_bytes(uint32_t aerogpu_format, uin
   return aerogpu::d3d10_11::aerogpu_texture_required_size_bytes(aerogpu_format, row_pitch_bytes, height);
 }
 
+static uint32_t aerogpu_lock_pitch_bytes(const D3DDDICB_LOCK& lock) {
+  uint32_t pitch = 0;
+  __if_exists(D3DDDICB_LOCK::Pitch) {
+    pitch = lock.Pitch;
+  }
+  return pitch;
+}
+
+static uint32_t aerogpu_lock_slice_pitch_bytes(const D3DDDICB_LOCK& lock) {
+  uint32_t pitch = 0;
+  __if_exists(D3DDDICB_LOCK::SlicePitch) {
+    pitch = lock.SlicePitch;
+  }
+  return pitch;
+}
+
 uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
   return aerogpu::d3d10_11::bytes_per_pixel_aerogpu(aerogpu_format);
 }
@@ -339,6 +355,81 @@ struct Texture2DSubresourceLayout {
   uint32_t rows_in_layout = 0;
   uint64_t size_bytes = 0;
 };
+
+static void LogLockPitchMismatchMaybe(uint32_t dxgi_format,
+                                      uint32_t subresource_index,
+                                      const Texture2DSubresourceLayout& sub,
+                                      uint32_t expected_pitch,
+                                      uint32_t lock_pitch) {
+  if (lock_pitch == 0 || lock_pitch == expected_pitch) {
+    return;
+  }
+  static std::atomic<uint32_t> g_mismatch_logs{0};
+  const uint32_t n = g_mismatch_logs.fetch_add(1, std::memory_order_relaxed);
+  if (n < 32) {
+    AEROGPU_D3D10_11_LOG(
+        "D3D10 LockCb pitch mismatch: fmt=%u sub=%u (mip=%u layer=%u) expected_pitch=%u lock_pitch=%u",
+        static_cast<unsigned>(dxgi_format),
+        static_cast<unsigned>(subresource_index),
+        static_cast<unsigned>(sub.mip_level),
+        static_cast<unsigned>(sub.array_layer),
+        static_cast<unsigned>(expected_pitch),
+        static_cast<unsigned>(lock_pitch));
+  } else if (n == 32) {
+    AEROGPU_D3D10_11_LOG("D3D10 LockCb pitch mismatch: log limit reached; suppressing further messages");
+  }
+}
+
+static bool ValidateTexture2DRowSpan(uint32_t aerogpu_format,
+                                    const Texture2DSubresourceLayout& sub,
+                                    uint32_t pitch_bytes,
+                                    uint64_t allocation_size_bytes,
+                                    uint32_t* out_row_bytes) {
+  if (out_row_bytes) {
+    *out_row_bytes = 0;
+  }
+  if (pitch_bytes == 0 || allocation_size_bytes == 0) {
+    return false;
+  }
+
+  const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aerogpu_format, sub.width);
+  if (row_bytes == 0 || sub.rows_in_layout == 0) {
+    return false;
+  }
+  if (pitch_bytes < row_bytes) {
+    return false;
+  }
+
+  const uint64_t rows_minus_one = static_cast<uint64_t>(sub.rows_in_layout - 1u);
+  const uint64_t pitch_u64 = static_cast<uint64_t>(pitch_bytes);
+  const uint64_t row_bytes_u64 = static_cast<uint64_t>(row_bytes);
+
+  // offset + (rows-1)*pitch + row_bytes must be in-bounds.
+  uint64_t span = 0;
+  if (rows_minus_one != 0) {
+    const uint64_t step = rows_minus_one * pitch_u64;
+    if (step / pitch_u64 != rows_minus_one) {
+      return false;
+    }
+    span = step;
+  }
+  const uint64_t span_plus_row = span + row_bytes_u64;
+  if (span_plus_row < span) {
+    return false;
+  }
+  const uint64_t end = sub.offset_bytes + span_plus_row;
+  if (end < sub.offset_bytes) {
+    return false;
+  }
+  if (end > allocation_size_bytes) {
+    return false;
+  }
+
+  if (out_row_bytes) {
+    *out_row_bytes = row_bytes;
+  }
+  return true;
+}
 
 static uint32_t aerogpu_mip_dim(uint32_t base, uint32_t mip_level) {
   return aerogpu::d3d10_11::aerogpu_mip_dim(base, mip_level);
@@ -761,6 +852,10 @@ struct AeroGpuResource {
   // `aerogpu_wddm_alloc.h`); it is only valid for the originating process'
    // runtime callbacks.
   uint32_t wddm_allocation_handle = 0;
+  // Actual WDDM allocation size (bytes), as reported by AllocateCb/OpenResource
+  // private driver data. Used for conservative bounds checks when the runtime
+  // lock pitch differs from our expected layout pitch.
+  uint64_t wddm_allocation_size_bytes = 0;
 
   // Stable cross-process token used by EXPORT/IMPORT_SHARED_SURFACE.
   // 0 if the resource is not shareable.
@@ -1380,21 +1475,6 @@ static void InitLockForWrite(D3DDDICB_LOCK* lock) {
 
 static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write);
 
-static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_pitch) {
-  if (!res || res->kind != ResourceKind::Texture2D) {
-    return true;
-  }
-  // Some WDK/runtime combinations omit Pitch or return 0 for non-surface allocations.
-  // Only validate when the runtime provides a non-zero pitch.
-  if (wddm_pitch == 0) {
-    return true;
-  }
-  if (res->row_pitch_bytes == 0) {
-    return false;
-  }
-  return wddm_pitch == res->row_pitch_bytes;
-}
-
 static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
                              AeroGpuDevice* dev,
                              AeroGpuResource* res,
@@ -1460,67 +1540,193 @@ static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
-  uint32_t wddm_pitch = 0;
-  __if_exists(D3DDDICB_LOCK::Pitch) {
-    wddm_pitch = lock_args.Pitch;
-  }
-  if (res->kind == ResourceKind::Texture2D && !ValidateWddmTexturePitch(res, wddm_pitch)) {
-    // Our subresource packing (and the host's interpretation of guest memory) assumes the
-    // allocation pitch matches `res->row_pitch_bytes`. If the runtime reports a different
-    // pitch, we cannot safely treat the locked pointer as a packed linear buffer.
-    //
-    // Fail cleanly rather than silently corrupting the allocation.
-    HRESULT unlock_hr = E_FAIL;
-    D3DDDICB_UNLOCK unlock_args = {};
-    unlock_args.hAllocation = lock_args.hAllocation;
-    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
-    unlock_hr = CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
-    if (FAILED(unlock_hr)) {
-      SetError(hDevice, unlock_hr);
-    } else {
-      SetError(hDevice, E_FAIL);
-    }
-    return;
-  }
-
   HRESULT copy_hr = S_OK;
-  if (res->kind == ResourceKind::Texture2D &&
-      upload_offset == 0 &&
-      upload_size == res->storage.size() &&
-      res->mip_levels == 1 &&
-      res->array_size == 1) {
-    // Legacy single-subresource Texture2D upload. Keep the row-by-row path so that
-    // padding bytes are explicitly cleared and the runtime-provided Pitch is honored.
+  uint64_t dirty_offset = upload_offset;
+  uint64_t dirty_end = upload_offset + upload_size;
+  if (dirty_end < upload_offset) {
+    copy_hr = E_INVALIDARG;
+    goto Unlock;
+  }
+
+  if (res->kind == ResourceKind::Texture2D) {
     const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-    const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
-    const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
-    if (row_bytes == 0 || rows == 0) {
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       copy_hr = E_INVALIDARG;
       goto Unlock;
     }
-
-    uint32_t dst_pitch = res->row_pitch_bytes;
-    if (wddm_pitch) {
-      dst_pitch = wddm_pitch;
-    }
-    if (dst_pitch < row_bytes) {
+    if (aerogpu_format_is_block_compressed(aer_fmt) && !aerogpu::d3d10_11::SupportsBcFormats(dev)) {
       copy_hr = E_INVALIDARG;
       goto Unlock;
     }
+    if (res->tex2d_subresources.empty()) {
+      copy_hr = E_FAIL;
+      goto Unlock;
+    }
 
+    uint64_t allocation_size = res->wddm_allocation_size_bytes;
+    if (allocation_size == 0) {
+      allocation_size = static_cast<uint64_t>(res->storage.size());
+    }
+    if (allocation_size == 0) {
+      copy_hr = E_FAIL;
+      goto Unlock;
+    }
+
+    // For safety, ensure we can address the highest byte we might touch using size_t pointer arithmetic.
+    if (allocation_size > static_cast<uint64_t>(SIZE_MAX)) {
+      copy_hr = E_OUTOFMEMORY;
+      goto Unlock;
+    }
+
+    const uint32_t lock_pitch = aerogpu_lock_pitch_bytes(lock_args);
+
+    uint64_t span_start = UINT64_MAX;
+    uint64_t span_end = 0;
     uint8_t* dst_base = static_cast<uint8_t*>(lock_args.pData);
     const uint8_t* src_base = res->storage.data();
-    for (uint32_t y = 0; y < rows; ++y) {
-      const size_t src_off_row = static_cast<size_t>(y) * res->row_pitch_bytes;
-      const size_t dst_off_row = static_cast<size_t>(y) * dst_pitch;
-      if (src_off_row + row_bytes > res->storage.size()) {
+    const size_t storage_size = res->storage.size();
+    const uint64_t storage_size_u64 = static_cast<uint64_t>(storage_size);
+
+    const uint64_t upload_end = dirty_end;
+    const bool full_resource_upload = (upload_offset == 0 && upload_size == res->storage.size());
+    size_t exact_index = SIZE_MAX;
+    if (!full_resource_upload) {
+      for (size_t i = 0; i < res->tex2d_subresources.size(); ++i) {
+        const Texture2DSubresourceLayout& sub = res->tex2d_subresources[i];
+        if (sub.offset_bytes == upload_offset && sub.size_bytes == upload_size) {
+          exact_index = i;
+          break;
+        }
+      }
+    }
+
+    bool copied_any = false;
+
+    for (size_t i = 0; i < res->tex2d_subresources.size(); ++i) {
+      if (full_resource_upload) {
+        // Copy all subresources.
+      } else if (exact_index != SIZE_MAX) {
+        if (i != exact_index) {
+          continue;
+        }
+      } else {
+        const Texture2DSubresourceLayout& sub = res->tex2d_subresources[i];
+        const uint64_t sub_start = sub.offset_bytes;
+        const uint64_t sub_end = sub.offset_bytes + sub.size_bytes;
+        if (sub_end < sub_start) {
+          copy_hr = E_FAIL;
+          break;
+        }
+        if (upload_end <= sub_start || upload_offset >= sub_end) {
+          continue;
+        }
+      }
+
+      const Texture2DSubresourceLayout& sub = res->tex2d_subresources[i];
+      const uint32_t expected_pitch = sub.row_pitch_bytes;
+      // We lock SubresourceIndex=0 for packed Texture2D allocations. Treat the
+      // runtime-provided Pitch as applying to mip0 subresources (same width per
+      // array layer); other mips use our packed layout pitch.
+      const bool pitch_applies = (sub.mip_level == 0);
+      const uint32_t effective_lock_pitch = pitch_applies ? lock_pitch : 0;
+      const uint32_t dst_pitch = effective_lock_pitch ? effective_lock_pitch : expected_pitch;
+
+      if (pitch_applies) {
+        LogLockPitchMismatchMaybe(res->dxgi_format, static_cast<uint32_t>(i), sub, expected_pitch, lock_pitch);
+      }
+
+      uint32_t row_bytes = 0;
+      if (!ValidateTexture2DRowSpan(aer_fmt, sub, dst_pitch, allocation_size, &row_bytes)) {
+        copy_hr = E_INVALIDARG;
+        break;
+      }
+      if (expected_pitch < row_bytes) {
+        copy_hr = E_INVALIDARG;
+        break;
+      }
+
+      bool can_clear_padding = false;
+      uint64_t full_row_end = 0;
+      if (dst_pitch > row_bytes) {
+        full_row_end =
+            sub.offset_bytes +
+            static_cast<uint64_t>(sub.rows_in_layout - 1u) * static_cast<uint64_t>(dst_pitch) +
+            static_cast<uint64_t>(dst_pitch);
+        can_clear_padding = (full_row_end >= sub.offset_bytes) &&
+                            (full_row_end <= allocation_size) &&
+                            (full_row_end <= static_cast<uint64_t>(SIZE_MAX));
+      }
+
+      for (uint32_t y = 0; y < sub.rows_in_layout; ++y) {
+        const uint64_t src_off_u64 =
+            sub.offset_bytes + static_cast<uint64_t>(y) * static_cast<uint64_t>(expected_pitch);
+        const uint64_t dst_off_u64 =
+            sub.offset_bytes + static_cast<uint64_t>(y) * static_cast<uint64_t>(dst_pitch);
+        if (src_off_u64 > storage_size_u64 || src_off_u64 + row_bytes > storage_size_u64) {
+          copy_hr = E_FAIL;
+          break;
+        }
+        if (dst_off_u64 > allocation_size || dst_off_u64 + row_bytes > allocation_size) {
+          copy_hr = E_FAIL;
+          break;
+        }
+        if (src_off_u64 > static_cast<uint64_t>(SIZE_MAX) || dst_off_u64 > static_cast<uint64_t>(SIZE_MAX)) {
+          copy_hr = E_OUTOFMEMORY;
+          break;
+        }
+        const size_t src_off = static_cast<size_t>(src_off_u64);
+        const size_t dst_off = static_cast<size_t>(dst_off_u64);
+        std::memcpy(dst_base + dst_off, src_base + src_off, row_bytes);
+        if (can_clear_padding) {
+          std::memset(dst_base + dst_off + row_bytes, 0, dst_pitch - row_bytes);
+        }
+      }
+      if (FAILED(copy_hr)) {
+        break;
+      }
+
+      uint64_t sub_end_u64 = 0;
+      if (can_clear_padding && full_row_end) {
+        sub_end_u64 = full_row_end;
+      } else {
+        const uint64_t rows_minus_one = static_cast<uint64_t>(sub.rows_in_layout - 1u);
+        const uint64_t pitch_u64 = static_cast<uint64_t>(dst_pitch);
+        const uint64_t row_bytes_u64 = static_cast<uint64_t>(row_bytes);
+        const uint64_t step = rows_minus_one * pitch_u64;
+        if (rows_minus_one != 0 && step / pitch_u64 != rows_minus_one) {
+          copy_hr = E_FAIL;
+          break;
+        }
+        const uint64_t sub_size = step + row_bytes_u64;
+        if (sub_size < step) {
+          copy_hr = E_FAIL;
+          break;
+        }
+        sub_end_u64 = sub.offset_bytes + sub_size;
+      }
+      if (sub_end_u64 < sub.offset_bytes || sub_end_u64 > allocation_size) {
         copy_hr = E_FAIL;
         break;
       }
-      std::memcpy(dst_base + dst_off_row, src_base + src_off_row, row_bytes);
-      if (dst_pitch > row_bytes) {
-        std::memset(dst_base + dst_off_row + row_bytes, 0, dst_pitch - row_bytes);
+
+      span_start = std::min(span_start, sub.offset_bytes);
+      span_end = std::max(span_end, sub_end_u64);
+      copied_any = true;
+    }
+
+    if (FAILED(copy_hr)) {
+      goto Unlock;
+    }
+    if (!copied_any) {
+      copy_hr = E_INVALIDARG;
+      goto Unlock;
+    }
+    if (span_start != UINT64_MAX) {
+      dirty_offset = span_start;
+      dirty_end = span_end;
+      if (dirty_end < dirty_offset) {
+        copy_hr = E_FAIL;
+        goto Unlock;
       }
     }
   } else {
@@ -1556,8 +1762,8 @@ Unlock:
   }
   dirty->resource_handle = res->handle;
   dirty->reserved0 = 0;
-  dirty->offset_bytes = upload_offset;
-  dirty->size_bytes = upload_size;
+  dirty->offset_bytes = dirty_offset;
+  dirty->size_bytes = dirty_end - dirty_offset;
 }
 
 // -----------------------------------------------------------------------------
@@ -2453,6 +2659,9 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     // but fall back to the only handle we have if the WDK revision does not
     // expose it.
     res->wddm_allocation_handle = runtime_alloc ? runtime_alloc : static_cast<uint32_t>(km_alloc);
+    const uint64_t size_from_alloc = static_cast<uint64_t>(alloc_info[0].Size);
+    const uint64_t size_from_priv = have_priv_out ? static_cast<uint64_t>(priv_out.size_bytes) : 0ull;
+    res->wddm_allocation_size_bytes = std::max(size_from_alloc, size_from_priv);
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_allocation_handles.push_back(km_alloc);
     return S_OK;
@@ -2917,6 +3126,7 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
   res->backing_alloc_id = static_cast<uint32_t>(priv.alloc_id);
   res->backing_offset_bytes = 0;
   res->wddm_allocation_handle = 0;
+  res->wddm_allocation_size_bytes = static_cast<uint64_t>(priv.size_bytes);
   res->share_token = static_cast<uint64_t>(priv.share_token);
   res->is_shared = true;
   res->is_shared_alias = true;
@@ -3092,11 +3302,12 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
       if (cb && cb->pfnUnlockCb) {
         D3DDDICB_UNLOCK unlock_cb = {};
         unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(res->mapped_wddm_allocation);
+        const uint32_t unlock_subresource = (res->kind == ResourceKind::Texture2D) ? 0u : res->mapped_subresource;
         __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-          unlock_cb.SubresourceIndex = res->mapped_subresource;
+          unlock_cb.SubresourceIndex = unlock_subresource;
         }
         __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-          unlock_cb.SubResourceIndex = res->mapped_subresource;
+          unlock_cb.SubResourceIndex = unlock_subresource;
         }
         (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
       }
@@ -3443,6 +3654,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   uint64_t map_offset = 0;
   uint64_t map_size = total;
   uint32_t map_row_pitch = 0;
+  const Texture2DSubresourceLayout* tex_layout = nullptr;
   if (res->kind == ResourceKind::Buffer) {
     if (subresource != 0) {
       return E_INVALIDARG;
@@ -3457,6 +3669,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
       return E_FAIL;
     }
     const Texture2DSubresourceLayout& sub_layout = res->tex2d_subresources[subresource];
+    tex_layout = &sub_layout;
     map_offset = sub_layout.offset_bytes;
     map_size = sub_layout.size_bytes;
     map_row_pitch = sub_layout.row_pitch_bytes;
@@ -3577,60 +3790,183 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     return E_FAIL;
   }
 
-  uint32_t wddm_pitch = 0;
-  __if_exists(D3DDDICB_LOCK::Pitch) {
-    wddm_pitch = lock_cb.Pitch;
-  }
-  if (res->kind == ResourceKind::Texture2D && !ValidateWddmTexturePitch(res, wddm_pitch)) {
-    // The runtime reports a pitch that doesn't match our subresource layout. Returning a pointer
-    // into the allocation would expose an inconsistent RowPitch to the app (and later copies
-    // between storage and the allocation would corrupt).
-    D3DDDICB_UNLOCK unlock_cb = {};
-    unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
-    InitUnlockArgsForMap(&unlock_cb, lock_subresource);
-    (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
-    if (allow_storage_map && !want_read) {
-      return map_storage();
-    }
-    return E_FAIL;
-  }
-
   res->mapped_wddm_ptr = lock_cb.pData;
   res->mapped_wddm_allocation = alloc_handle;
-  __if_exists(D3DDDICB_LOCK::Pitch) {
-    res->mapped_wddm_pitch = lock_cb.Pitch;
-  }
-  __if_exists(D3DDDICB_LOCK::SlicePitch) {
-    res->mapped_wddm_slice_pitch = lock_cb.SlicePitch;
+
+  uint32_t tex_row_bytes = 0;
+  uint32_t tex_rows = 0;
+  uint32_t tex_pitch = 0;
+  uint32_t tex_slice_pitch = 0;
+  if (res->kind == ResourceKind::Texture2D) {
+    if (!tex_layout) {
+      D3DDDICB_UNLOCK unlock_cb = {};
+      unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
+      InitUnlockArgsForMap(&unlock_cb, lock_subresource);
+      (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+      if (allow_storage_map) {
+        return map_storage();
+      }
+      return E_FAIL;
+    }
+
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      D3DDDICB_UNLOCK unlock_cb = {};
+      unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
+      InitUnlockArgsForMap(&unlock_cb, lock_subresource);
+      (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+      if (allow_storage_map) {
+        return map_storage();
+      }
+      return E_INVALIDARG;
+    }
+    if (aerogpu_format_is_block_compressed(aer_fmt) && !aerogpu::d3d10_11::SupportsBcFormats(dev)) {
+      D3DDDICB_UNLOCK unlock_cb = {};
+      unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
+      InitUnlockArgsForMap(&unlock_cb, lock_subresource);
+      (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+      if (allow_storage_map) {
+        return map_storage();
+      }
+      return E_INVALIDARG;
+    }
+
+    // We lock SubresourceIndex=0 for packed Texture2D allocations. Treat the
+    // runtime-provided Pitch/SlicePitch as applying to the first subresource
+    // only (offset==0); other subresources use our packed layout pitch.
+    const bool pitch_applies = (tex_layout->offset_bytes == 0);
+    const uint32_t lock_pitch = pitch_applies ? aerogpu_lock_pitch_bytes(lock_cb) : 0;
+    if (pitch_applies) {
+      LogLockPitchMismatchMaybe(res->dxgi_format, subresource, *tex_layout, map_row_pitch, lock_pitch);
+    }
+    tex_pitch = lock_pitch ? lock_pitch : map_row_pitch;
+    const uint32_t lock_slice = pitch_applies ? aerogpu_lock_slice_pitch_bytes(lock_cb) : 0;
+    const uint64_t allocation_size =
+        res->wddm_allocation_size_bytes ? res->wddm_allocation_size_bytes : total;
+    if (!ValidateTexture2DRowSpan(aer_fmt, *tex_layout, tex_pitch, allocation_size, &tex_row_bytes)) {
+      D3DDDICB_UNLOCK unlock_cb = {};
+      unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
+      InitUnlockArgsForMap(&unlock_cb, lock_subresource);
+      (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+      if (allow_storage_map) {
+        return map_storage();
+      }
+      return E_INVALIDARG;
+    }
+    tex_rows = tex_layout->rows_in_layout;
+
+    if (lock_slice) {
+      tex_slice_pitch = lock_slice;
+    } else {
+      const uint64_t slice_pitch_u64 =
+          static_cast<uint64_t>(tex_pitch) * static_cast<uint64_t>(tex_rows);
+      if (slice_pitch_u64 == 0 || slice_pitch_u64 > static_cast<uint64_t>(UINT32_MAX)) {
+        D3DDDICB_UNLOCK unlock_cb = {};
+        unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
+        InitUnlockArgsForMap(&unlock_cb, lock_subresource);
+        (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+        if (allow_storage_map) {
+          return map_storage();
+        }
+        return E_OUTOFMEMORY;
+      }
+      tex_slice_pitch = static_cast<uint32_t>(slice_pitch_u64);
+    }
+
+    res->mapped_wddm_pitch = tex_pitch;
+    res->mapped_wddm_slice_pitch = tex_slice_pitch;
+  } else {
+    res->mapped_wddm_pitch = aerogpu_lock_pitch_bytes(lock_cb);
+    res->mapped_wddm_slice_pitch = aerogpu_lock_slice_pitch_bytes(lock_cb);
   }
 
   const bool is_guest_backed = (res->backing_alloc_id != 0);
   if (!res->storage.empty()) {
-    if (map_type_u == kD3DMapWriteDiscard) {
-      // Discard contents are undefined; clear for deterministic tests.
-      if (map_offset < static_cast<uint64_t>(SIZE_MAX) && map_size <= static_cast<uint64_t>(SIZE_MAX)) {
-        std::memset(static_cast<uint8_t*>(lock_cb.pData) + static_cast<size_t>(map_offset),
-                    0,
-                    static_cast<size_t>(map_size));
+    if (res->kind == ResourceKind::Texture2D && tex_pitch && tex_row_bytes && tex_rows && tex_layout) {
+      const uint64_t allocation_size =
+          res->wddm_allocation_size_bytes ? res->wddm_allocation_size_bytes : total;
+      const uint64_t end_row_u64 = tex_layout->offset_bytes +
+                                  static_cast<uint64_t>(tex_rows - 1u) * static_cast<uint64_t>(tex_pitch) +
+                                  static_cast<uint64_t>(tex_row_bytes);
+      if (end_row_u64 > static_cast<uint64_t>(SIZE_MAX) || end_row_u64 > allocation_size) {
+        // Should already be handled by ValidateTexture2DRowSpan, but keep the pointer arithmetic guarded.
+        D3DDDICB_UNLOCK unlock_cb = {};
+        unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
+        InitUnlockArgsForMap(&unlock_cb, lock_subresource);
+        (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+        if (allow_storage_map) {
+          return map_storage();
+        }
+        return E_INVALIDARG;
       }
-    } else if (!is_guest_backed) {
-      if (map_offset <= res->storage.size()) {
-        const size_t remaining = res->storage.size() - static_cast<size_t>(map_offset);
-        const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(map_size, remaining));
-        if (copy_bytes) {
-          std::memcpy(static_cast<uint8_t*>(lock_cb.pData) + static_cast<size_t>(map_offset),
-                      res->storage.data() + static_cast<size_t>(map_offset),
-                      copy_bytes);
+
+      uint8_t* dst_wddm = static_cast<uint8_t*>(lock_cb.pData);
+      uint8_t* dst_storage = res->storage.data();
+
+      bool can_clear_padding = false;
+      if (tex_pitch > tex_row_bytes) {
+        const uint64_t end_full_row_u64 = tex_layout->offset_bytes +
+                                          static_cast<uint64_t>(tex_rows - 1u) * static_cast<uint64_t>(tex_pitch) +
+                                          static_cast<uint64_t>(tex_pitch);
+        can_clear_padding = (end_full_row_u64 >= tex_layout->offset_bytes) &&
+                            (end_full_row_u64 <= allocation_size) &&
+                            (end_full_row_u64 <= static_cast<uint64_t>(SIZE_MAX));
+      }
+
+      for (uint32_t y = 0; y < tex_rows; ++y) {
+        const size_t off_storage =
+            static_cast<size_t>(tex_layout->offset_bytes) + static_cast<size_t>(y) * static_cast<size_t>(map_row_pitch);
+        const size_t off_wddm =
+            static_cast<size_t>(tex_layout->offset_bytes) + static_cast<size_t>(y) * static_cast<size_t>(tex_pitch);
+
+        if (map_type_u == kD3DMapWriteDiscard) {
+          std::memset(dst_wddm + off_wddm, 0, tex_row_bytes);
+          if (can_clear_padding) {
+            std::memset(dst_wddm + off_wddm + tex_row_bytes, 0, tex_pitch - tex_row_bytes);
+          }
+          continue;
+        }
+
+        if (!is_guest_backed) {
+          std::memcpy(dst_wddm + off_wddm, dst_storage + off_storage, tex_row_bytes);
+          if (can_clear_padding) {
+            std::memset(dst_wddm + off_wddm + tex_row_bytes, 0, tex_pitch - tex_row_bytes);
+          }
+          continue;
+        }
+
+        if (want_read) {
+          std::memcpy(dst_storage + off_storage, dst_wddm + off_wddm, tex_row_bytes);
         }
       }
-    } else if (want_read) {
-      if (map_offset <= res->storage.size()) {
-        const size_t remaining = res->storage.size() - static_cast<size_t>(map_offset);
-        const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(map_size, remaining));
-        if (copy_bytes) {
-          std::memcpy(res->storage.data() + static_cast<size_t>(map_offset),
-                      static_cast<const uint8_t*>(lock_cb.pData) + static_cast<size_t>(map_offset),
-                      copy_bytes);
+    } else {
+      // Buffer/unvalidated paths: treat as a linear byte range.
+      if (map_type_u == kD3DMapWriteDiscard) {
+        // Discard contents are undefined; clear for deterministic tests.
+        if (map_offset < static_cast<uint64_t>(SIZE_MAX) && map_size <= static_cast<uint64_t>(SIZE_MAX)) {
+          std::memset(static_cast<uint8_t*>(lock_cb.pData) + static_cast<size_t>(map_offset),
+                      0,
+                      static_cast<size_t>(map_size));
+        }
+      } else if (!is_guest_backed) {
+        if (map_offset <= res->storage.size()) {
+          const size_t remaining = res->storage.size() - static_cast<size_t>(map_offset);
+          const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(map_size, remaining));
+          if (copy_bytes) {
+            std::memcpy(static_cast<uint8_t*>(lock_cb.pData) + static_cast<size_t>(map_offset),
+                        res->storage.data() + static_cast<size_t>(map_offset),
+                        copy_bytes);
+          }
+        }
+      } else if (want_read) {
+        if (map_offset <= res->storage.size()) {
+          const size_t remaining = res->storage.size() - static_cast<size_t>(map_offset);
+          const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(map_size, remaining));
+          if (copy_bytes) {
+            std::memcpy(res->storage.data() + static_cast<size_t>(map_offset),
+                        static_cast<const uint8_t*>(lock_cb.pData) + static_cast<size_t>(map_offset),
+                        copy_bytes);
+          }
         }
       }
     }
@@ -3638,8 +3974,8 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
 
   if (res->kind == ResourceKind::Texture2D) {
     pMap->pData = static_cast<uint8_t*>(lock_cb.pData) + static_cast<size_t>(map_offset);
-    pMap->RowPitch = map_row_pitch;
-    pMap->DepthPitch = static_cast<UINT>(map_size);
+    pMap->RowPitch = tex_pitch ? tex_pitch : map_row_pitch;
+    pMap->DepthPitch = tex_slice_pitch ? static_cast<UINT>(tex_slice_pitch) : static_cast<UINT>(map_size);
   } else {
     pMap->pData = lock_cb.pData;
     pMap->RowPitch = 0;
@@ -3660,23 +3996,78 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
     return;
   }
 
-  const bool pitch_mismatch =
-      (res->kind == ResourceKind::Texture2D &&
-       res->mapped_wddm_pitch != 0 &&
-       !ValidateWddmTexturePitch(res, res->mapped_wddm_pitch));
-
+  HRESULT copy_back_hr = S_OK;
   if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
-    if (!pitch_mismatch && res->mapped_write && !res->storage.empty() && res->mapped_size) {
-      const uint8_t* src = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
-      const uint64_t off_u64 = res->mapped_offset;
-      const uint64_t size_u64 = res->mapped_size;
-      if (off_u64 <= res->storage.size()) {
-        const size_t remaining = res->storage.size() - static_cast<size_t>(off_u64);
-        const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(size_u64, remaining));
-        if (copy_bytes) {
-          std::memcpy(res->storage.data() + static_cast<size_t>(off_u64),
-                      src + static_cast<size_t>(off_u64),
-                      copy_bytes);
+    if (res->mapped_write && !res->storage.empty() && res->mapped_size) {
+      if (res->kind == ResourceKind::Texture2D) {
+        do {
+           if (subresource >= res->tex2d_subresources.size()) {
+             copy_back_hr = E_INVALIDARG;
+             break;
+           }
+           const Texture2DSubresourceLayout& sub_layout = res->tex2d_subresources[subresource];
+           const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+           if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+             copy_back_hr = E_INVALIDARG;
+             break;
+           }
+
+          const uint32_t src_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : sub_layout.row_pitch_bytes;
+          const uint64_t alloc_size =
+              res->wddm_allocation_size_bytes ? res->wddm_allocation_size_bytes : resource_total_bytes(dev, res);
+          uint32_t row_bytes = 0;
+          if (!ValidateTexture2DRowSpan(aer_fmt, sub_layout, src_pitch, alloc_size, &row_bytes)) {
+            copy_back_hr = E_INVALIDARG;
+            break;
+          }
+          if (sub_layout.row_pitch_bytes < row_bytes) {
+            copy_back_hr = E_INVALIDARG;
+            break;
+          }
+
+          const uint32_t rows = sub_layout.rows_in_layout;
+          const uint64_t storage_total = static_cast<uint64_t>(res->storage.size());
+          const uint64_t dst_end_u64 =
+              sub_layout.offset_bytes +
+              static_cast<uint64_t>(rows - 1u) * static_cast<uint64_t>(sub_layout.row_pitch_bytes) +
+              static_cast<uint64_t>(row_bytes);
+          if (dst_end_u64 > storage_total) {
+            copy_back_hr = E_INVALIDARG;
+            break;
+          }
+
+          const uint8_t* src_base = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
+          uint8_t* dst_base = res->storage.data();
+          for (uint32_t y = 0; y < rows; ++y) {
+            const uint64_t src_off_u64 =
+                sub_layout.offset_bytes + static_cast<uint64_t>(y) * static_cast<uint64_t>(src_pitch);
+            const uint64_t dst_off_u64 =
+                sub_layout.offset_bytes + static_cast<uint64_t>(y) * static_cast<uint64_t>(sub_layout.row_pitch_bytes);
+            if (src_off_u64 + row_bytes > alloc_size || dst_off_u64 + row_bytes > storage_total) {
+              copy_back_hr = E_INVALIDARG;
+              break;
+            }
+            if (src_off_u64 > static_cast<uint64_t>(SIZE_MAX) || dst_off_u64 > static_cast<uint64_t>(SIZE_MAX)) {
+              copy_back_hr = E_OUTOFMEMORY;
+              break;
+            }
+            const size_t src_off = static_cast<size_t>(src_off_u64);
+            const size_t dst_off = static_cast<size_t>(dst_off_u64);
+            std::memcpy(dst_base + dst_off, src_base + src_off, row_bytes);
+          }
+        } while (false);
+      } else {
+        const uint8_t* src = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
+        const uint64_t off_u64 = res->mapped_offset;
+        const uint64_t size_u64 = res->mapped_size;
+        if (off_u64 <= res->storage.size()) {
+          const size_t remaining = res->storage.size() - static_cast<size_t>(off_u64);
+          const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(size_u64, remaining));
+          if (copy_bytes) {
+            std::memcpy(res->storage.data() + static_cast<size_t>(off_u64),
+                        src + static_cast<size_t>(off_u64),
+                        copy_bytes);
+          }
         }
       }
     }
@@ -3695,66 +4086,91 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
     }
   }
 
-  if (pitch_mismatch) {
-    // Fail cleanly: do not attempt to interpret offsets within the allocation when the
-    // runtime-reported pitch differs from our expected layout.
-    SetError(hDevice, E_FAIL);
-    res->mapped = false;
-    res->mapped_write = false;
-    res->mapped_subresource = 0;
-    res->mapped_offset = 0;
-    res->mapped_size = 0;
-    res->mapped_wddm_ptr = nullptr;
-    res->mapped_wddm_allocation = 0;
-    res->mapped_wddm_pitch = 0;
-    res->mapped_wddm_slice_pitch = 0;
-    return;
+  if (FAILED(copy_back_hr)) {
+    SetError(hDevice, copy_back_hr);
   }
 
   if (res->mapped_write && res->mapped_size != 0) {
     uint64_t upload_offset = res->mapped_offset;
-    uint64_t upload_size = res->mapped_size;
+    uint64_t upload_size_storage = res->mapped_size;
+    uint64_t upload_size_dirty = res->mapped_size;
+    bool emit_ok = true;
     if (res->kind == ResourceKind::Buffer) {
       const uint64_t end = res->mapped_offset + res->mapped_size;
       if (end < res->mapped_offset) {
         SetError(hDevice, E_INVALIDARG);
-        return;
+        emit_ok = false;
       }
-      upload_offset = res->mapped_offset & ~3ull;
-      const uint64_t upload_end = AlignUpU64(end, 4);
-      upload_size = upload_end - upload_offset;
+      if (emit_ok) {
+        upload_offset = res->mapped_offset & ~3ull;
+        const uint64_t upload_end = AlignUpU64(end, 4);
+        upload_size_storage = upload_end - upload_offset;
+        upload_size_dirty = upload_size_storage;
+      }
+    } else if (res->kind == ResourceKind::Texture2D && res->backing_alloc_id != 0) {
+      if (subresource >= res->tex2d_subresources.size()) {
+        SetError(hDevice, E_INVALIDARG);
+        emit_ok = false;
+      }
+      if (emit_ok) {
+        const Texture2DSubresourceLayout& sub_layout = res->tex2d_subresources[subresource];
+        const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+        if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+          SetError(hDevice, E_INVALIDARG);
+          emit_ok = false;
+        } else {
+          const uint32_t pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : sub_layout.row_pitch_bytes;
+          const uint64_t alloc_size =
+              res->wddm_allocation_size_bytes ? res->wddm_allocation_size_bytes : resource_total_bytes(dev, res);
+          uint32_t row_bytes = 0;
+          if (!ValidateTexture2DRowSpan(aer_fmt, sub_layout, pitch, alloc_size, &row_bytes)) {
+            SetError(hDevice, E_INVALIDARG);
+            emit_ok = false;
+          } else {
+            upload_offset = sub_layout.offset_bytes;
+            upload_size_storage = sub_layout.size_bytes;
+            // Mark the full address span that covers the last row's texel bytes when stepping by Pitch.
+            upload_size_dirty =
+                static_cast<uint64_t>(row_bytes) +
+                static_cast<uint64_t>(sub_layout.rows_in_layout - 1u) * static_cast<uint64_t>(pitch);
+          }
+        }
+      }
     }
 
-    if (!res->storage.empty()) {
+    if (emit_ok && !res->storage.empty()) {
       if (upload_offset > static_cast<uint64_t>(res->storage.size())) {
         SetError(hDevice, E_INVALIDARG);
-        return;
+        emit_ok = false;
       }
-      const size_t remaining = res->storage.size() - static_cast<size_t>(upload_offset);
-      if (upload_size > static_cast<uint64_t>(remaining)) {
-        SetError(hDevice, E_INVALIDARG);
-        return;
-      }
-      if (upload_size > static_cast<uint64_t>(SIZE_MAX)) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        return;
+      if (emit_ok) {
+        const size_t remaining = res->storage.size() - static_cast<size_t>(upload_offset);
+        if (upload_size_storage > static_cast<uint64_t>(remaining)) {
+          SetError(hDevice, E_INVALIDARG);
+          emit_ok = false;
+        } else if (upload_size_storage > static_cast<uint64_t>(SIZE_MAX)) {
+          SetError(hDevice, E_OUTOFMEMORY);
+          emit_ok = false;
+        }
       }
     }
 
-    if (res->backing_alloc_id != 0) {
-      // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
-      TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
-      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      if (!cmd) {
-        SetError(hDevice, E_FAIL);
-        return;
+    if (emit_ok) {
+      if (res->backing_alloc_id != 0) {
+        // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
+        TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+        if (!cmd) {
+          SetError(hDevice, E_FAIL);
+        } else {
+          cmd->resource_handle = res->handle;
+          cmd->reserved0 = 0;
+          cmd->offset_bytes = upload_offset;
+          cmd->size_bytes = upload_size_dirty;
+        }
+      } else {
+        EmitUploadLocked(hDevice, dev, res, upload_offset, upload_size_storage);
       }
-      cmd->resource_handle = res->handle;
-      cmd->reserved0 = 0;
-      cmd->offset_bytes = upload_offset;
-      cmd->size_bytes = upload_size;
-    } else {
-      EmitUploadLocked(hDevice, dev, res, upload_offset, upload_size);
     }
   }
 
