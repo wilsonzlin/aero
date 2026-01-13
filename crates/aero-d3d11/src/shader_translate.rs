@@ -57,7 +57,9 @@ pub struct Binding {
 pub enum BindingKind {
     ConstantBuffer { slot: u32, reg_count: u32 },
     Texture2D { slot: u32 },
+    SrvBuffer { slot: u32 },
     Sampler { slot: u32 },
+    UavBuffer { slot: u32 },
 }
 
 #[derive(Debug)]

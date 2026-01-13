@@ -10,8 +10,8 @@ use aero_gpu::pipeline_key::PipelineLayoutKey;
 use anyhow::{bail, Result};
 
 use crate::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_CBUFFER_SLOTS,
-    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
+    MAX_CBUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 
 /// The AeroGPU D3D11 binding model uses stage-scoped bind groups:
@@ -164,6 +164,26 @@ pub(super) fn binding_to_layout_entry(
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
             }
         }
+        crate::BindingKind::SrvBuffer { slot } => {
+            if *slot >= MAX_TEXTURE_SLOTS {
+                bail!(
+                    "srv buffer slot {slot} is out of range for binding model (max {})",
+                    MAX_TEXTURE_SLOTS - 1
+                );
+            }
+            let expected = BINDING_BASE_TEXTURE + slot;
+            if binding.binding != expected {
+                bail!(
+                    "srv buffer slot {slot} expected @binding({expected}), got {}",
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            }
+        }
         crate::BindingKind::Sampler { slot } => {
             if *slot >= MAX_SAMPLER_SLOTS {
                 bail!(
@@ -179,6 +199,26 @@ pub(super) fn binding_to_layout_entry(
                 );
             }
             wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+        }
+        crate::BindingKind::UavBuffer { slot } => {
+            if *slot >= MAX_UAV_SLOTS {
+                bail!(
+                    "uav buffer slot {slot} is out of range for binding model (max {})",
+                    MAX_UAV_SLOTS - 1
+                );
+            }
+            let expected = BINDING_BASE_UAV + slot;
+            if binding.binding != expected {
+                bail!(
+                    "uav buffer slot {slot} expected @binding({expected}), got {}",
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            }
         }
     };
 
@@ -320,6 +360,9 @@ pub(super) fn build_bind_group(
                     resource: BindGroupCacheResource::TextureView { id, view },
                 });
             }
+            crate::BindingKind::SrvBuffer { slot } => {
+                bail!("srv buffer slot {slot} is not supported by bind group construction yet");
+            }
             crate::BindingKind::Sampler { slot } => {
                 let sampler = provider
                     .sampler(*slot)
@@ -332,6 +375,9 @@ pub(super) fn build_bind_group(
                         sampler: sampler.sampler.as_ref(),
                     },
                 });
+            }
+            crate::BindingKind::UavBuffer { slot } => {
+                bail!("uav buffer slot {slot} is not supported by bind group construction yet");
             }
         }
     }
@@ -989,6 +1035,18 @@ mod tests {
             "unexpected error for texture binding mismatch: {err}"
         );
 
+        let srv_buf = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_TEXTURE + 1,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::SrvBuffer { slot: 0 },
+        };
+        let err = binding_to_layout_entry(&srv_buf).unwrap_err().to_string();
+        assert!(
+            err.contains("expected @binding("),
+            "unexpected error for srv buffer binding mismatch: {err}"
+        );
+
         let sampler = crate::Binding {
             group: 0,
             binding: BINDING_BASE_SAMPLER + 1,
@@ -999,6 +1057,18 @@ mod tests {
         assert!(
             err.contains("expected @binding("),
             "unexpected error for sampler binding mismatch: {err}"
+        );
+
+        let uav_buf = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_UAV + 1,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::UavBuffer { slot: 0 },
+        };
+        let err = binding_to_layout_entry(&uav_buf).unwrap_err().to_string();
+        assert!(
+            err.contains("expected @binding("),
+            "unexpected error for uav buffer binding mismatch: {err}"
         );
     }
 
@@ -1033,6 +1103,20 @@ mod tests {
             "unexpected error for out-of-range texture: {err}"
         );
 
+        let srv_buf = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_TEXTURE + MAX_TEXTURE_SLOTS,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::SrvBuffer {
+                slot: MAX_TEXTURE_SLOTS,
+            },
+        };
+        let err = binding_to_layout_entry(&srv_buf).unwrap_err().to_string();
+        assert!(
+            err.contains("out of range"),
+            "unexpected error for out-of-range srv buffer: {err}"
+        );
+
         let sampler = crate::Binding {
             group: 0,
             binding: BINDING_BASE_SAMPLER + MAX_SAMPLER_SLOTS,
@@ -1045,6 +1129,20 @@ mod tests {
         assert!(
             err.contains("out of range"),
             "unexpected error for out-of-range sampler: {err}"
+        );
+
+        let uav_buf = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_UAV + MAX_UAV_SLOTS,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::UavBuffer {
+                slot: MAX_UAV_SLOTS,
+            },
+        };
+        let err = binding_to_layout_entry(&uav_buf).unwrap_err().to_string();
+        assert!(
+            err.contains("out of range"),
+            "unexpected error for out-of-range uav buffer: {err}"
         );
     }
 
@@ -1075,6 +1173,17 @@ mod tests {
             .to_string()
             .contains("texture slot 0 expected @binding(32)"));
 
+        let srv_buf = crate::Binding {
+            group: 0,
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::SrvBuffer { slot: 0 },
+        };
+        assert!(binding_to_layout_entry(&srv_buf)
+            .unwrap_err()
+            .to_string()
+            .contains("srv buffer slot 0 expected @binding(32)"));
+
         let sampler = crate::Binding {
             group: 0,
             binding: 0,
@@ -1085,6 +1194,55 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("sampler slot 0 expected @binding(160)"));
+
+        let uav_buf = crate::Binding {
+            group: 0,
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::UavBuffer { slot: 0 },
+        };
+        assert!(binding_to_layout_entry(&uav_buf)
+            .unwrap_err()
+            .to_string()
+            .contains(&format!(
+                "uav buffer slot 0 expected @binding({})",
+                BINDING_BASE_UAV
+            )));
+    }
+
+    #[test]
+    fn binding_to_layout_entry_uav_buffer_is_storage_and_validated() {
+        let ok = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_UAV,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            kind: crate::BindingKind::UavBuffer { slot: 0 },
+        };
+        let entry = binding_to_layout_entry(&ok).expect("uav buffer layout entry");
+        match entry.ty {
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset,
+                min_binding_size,
+            } => {
+                assert!(!read_only, "uav buffer should be read-write storage");
+                assert!(!has_dynamic_offset);
+                assert!(min_binding_size.is_none());
+            }
+            other => panic!("expected storage buffer binding type, got {other:?}"),
+        }
+
+        let bad_binding_number = crate::Binding {
+            binding: BINDING_BASE_UAV + 1,
+            ..ok
+        };
+        let err = binding_to_layout_entry(&bad_binding_number)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("expected @binding("),
+            "expected binding number validation error, got: {err}"
+        );
     }
 
     #[test]

@@ -2202,7 +2202,8 @@ impl AerogpuD3d11Executor {
                             *entry = true;
                         }
                     }
-                    crate::BindingKind::Texture2D { slot } => {
+                    crate::BindingKind::Texture2D { slot }
+                    | crate::BindingKind::SrvBuffer { slot } => {
                         let slot_usize = *slot as usize;
                         let used = match stage {
                             ShaderStage::Vertex => used_textures_vs.get_mut(slot_usize),
@@ -2213,7 +2214,7 @@ impl AerogpuD3d11Executor {
                             *entry = true;
                         }
                     }
-                    crate::BindingKind::Sampler { .. } => {}
+                    crate::BindingKind::Sampler { .. } | crate::BindingKind::UavBuffer { .. } => {}
                 }
             }
         }
@@ -3162,6 +3163,8 @@ impl AerogpuD3d11Executor {
                                             self.encoder_used_textures.insert(tex.texture);
                                         }
                                     }
+                                    crate::BindingKind::SrvBuffer { .. }
+                                    | crate::BindingKind::UavBuffer { .. } => {}
                                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
                                             self.encoder_used_buffers.insert(cb.buffer);
@@ -3282,6 +3285,8 @@ impl AerogpuD3d11Executor {
                                             self.encoder_used_textures.insert(tex.texture);
                                         }
                                     }
+                                    crate::BindingKind::SrvBuffer { .. }
+                                    | crate::BindingKind::UavBuffer { .. } => {}
                                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
                                             self.encoder_used_buffers.insert(cb.buffer);
@@ -6584,20 +6589,22 @@ impl AerogpuD3d11Executor {
         for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
             let stage = group_index_to_stage(group_index as u32)?;
             for binding in group_bindings {
-                match binding.kind {
+                match &binding.kind {
                     crate::BindingKind::ConstantBuffer { slot, .. } => {
-                        if let Some(cb) = self.bindings.stage(stage).constant_buffer(slot) {
+                        if let Some(cb) = self.bindings.stage(stage).constant_buffer(*slot) {
                             if cb.buffer != legacy_constants_buffer_id(stage) {
                                 self.ensure_buffer_uploaded(encoder, cb.buffer, allocs, guest_mem)?;
                             }
                         }
                     }
                     crate::BindingKind::Texture2D { slot } => {
-                        if let Some(tex) = self.bindings.stage(stage).texture(slot) {
+                        if let Some(tex) = self.bindings.stage(stage).texture(*slot) {
                             self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
                         }
                     }
-                    crate::BindingKind::Sampler { .. } => {}
+                    crate::BindingKind::Sampler { .. }
+                    | crate::BindingKind::SrvBuffer { .. }
+                    | crate::BindingKind::UavBuffer { .. } => {}
                 }
             }
         }
@@ -6609,10 +6616,10 @@ impl AerogpuD3d11Executor {
         for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
             let stage = group_index_to_stage(group_index as u32)?;
             for binding in group_bindings {
-                let crate::BindingKind::ConstantBuffer { slot, reg_count } = binding.kind else {
+                let crate::BindingKind::ConstantBuffer { slot, reg_count } = &binding.kind else {
                     continue;
                 };
-                let Some(cb) = self.bindings.stage(stage).constant_buffer(slot) else {
+                let Some(cb) = self.bindings.stage(stage).constant_buffer(*slot) else {
                     continue;
                 };
 
@@ -6639,7 +6646,7 @@ impl AerogpuD3d11Executor {
                 }
                 let mut size = cb.size.unwrap_or(src_size - offset);
                 size = size.min(src_size - offset);
-                let required_min = (reg_count as u64)
+                let required_min = (*reg_count as u64)
                     .saturating_mul(reflection_bindings::UNIFORM_BINDING_SIZE_ALIGN);
                 if size < required_min {
                     continue;
@@ -6664,7 +6671,7 @@ impl AerogpuD3d11Executor {
                     );
                 }
 
-                let scratch = self.get_or_create_constant_buffer_scratch(stage, slot, size);
+                let scratch = self.get_or_create_constant_buffer_scratch(stage, *slot, size);
                 let src = unsafe { &*src_ptr };
                 encoder.copy_buffer_to_buffer(src, offset, &scratch.buffer, 0, size);
                 self.encoder_has_commands = true;
