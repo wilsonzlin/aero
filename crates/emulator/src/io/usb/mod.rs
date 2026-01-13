@@ -7,10 +7,12 @@
 pub mod descriptor_fixups;
 pub mod passthrough;
 pub mod uhci;
+pub mod xhci;
 
 pub use aero_usb::device as core;
 pub use aero_usb::hid;
 pub use aero_usb::hub;
+pub use aero_usb::xhci::XhciController;
 
 pub use aero_usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
