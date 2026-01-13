@@ -76,6 +76,7 @@ fn int10_vbe_controller_and_mode_info() {
         assert_eq!(attrs & REQUIRED_MODE_ATTRS, REQUIRED_MODE_ATTRS);
         assert_eq!(read_u16(&info, 18), width); // XResolution
         assert_eq!(read_u16(&info, 20), height); // YResolution
+        assert_eq!(read_u16(&info, 16), width * 4); // BytesPerScanLine
         assert_eq!(info[25], 32); // BitsPerPixel
         assert_eq!(read_u32(&info, 40), VbeDevice::LFB_BASE_DEFAULT); // PhysBasePtr
     };
