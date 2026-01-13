@@ -785,7 +785,21 @@ fn translates_texture_load_ld() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("textureLoad(t0"));
-    assert!(translated.wgsl.contains("vec2<i32>(select("));
+    let load_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("textureLoad("))
+        .expect("expected a textureLoad call");
+    assert!(
+        load_line.contains("vec2<i32>("),
+        "expected textureLoad to use integer coordinates:\n{}",
+        load_line
+    );
+    assert!(
+        !load_line.contains("select(") && !load_line.contains("floor("),
+        "textureLoad lowering should not use float-vs-bitcast heuristics:\n{}",
+        load_line
+    );
     assert!(translated.wgsl.contains("bitcast<i32>(0x00000001u)"));
 
     // Reflection should surface the referenced texture slot (no sampler needed for ld).
@@ -799,6 +813,70 @@ fn translates_texture_load_ld() {
         .bindings
         .iter()
         .any(|b| matches!(b.kind, BindingKind::Sampler { .. })));
+}
+
+#[test]
+fn translates_texture_load_ld_uses_raw_integer_bits_not_float_heuristics() {
+    let isgn_params = vec![
+        sig_param("SV_Position", 0, 0, 0b1111),
+        sig_param("TEXCOORD", 0, 1, 0b0011),
+    ];
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Use float bit patterns that look like exact integers as floats (e.g. 1.0 = 0x3f800000).
+    // The `ld` instruction must interpret these operands as *integer bits* in the untyped register
+    // file, not as numeric floats that "happen to be integers".
+    let coord = SrcOperand {
+        kind: SrcKind::ImmediateF32([1.0f32.to_bits(), 2.0f32.to_bits(), 0, 0]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let lod = SrcOperand {
+        kind: SrcKind::ImmediateF32([0.0f32.to_bits(); 4]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    };
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Ld {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                coord,
+                texture: TextureRef { slot: 0 },
+                lod,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    let load_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("textureLoad("))
+        .expect("expected a textureLoad call");
+    assert!(
+        load_line.contains("bitcast<i32>(0x3f800000u)"),
+        "expected raw bit pattern 0x3f800000 (f32 1.0) to flow into textureLoad as i32 bits:\n{}",
+        load_line
+    );
+    assert!(
+        !load_line.contains("select(")
+            && !load_line.contains("floor(")
+            && !load_line.contains("i32("),
+        "textureLoad lowering should not use float-vs-bitcast heuristics or numeric f32->i32 conversions:\n{}",
+        load_line
+    );
 }
 
 #[test]

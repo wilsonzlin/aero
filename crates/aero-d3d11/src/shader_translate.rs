@@ -2230,34 +2230,19 @@ fn emit_instructions(
                 texture,
                 lod,
             } => {
-                // SM4 `ld` / WGSL `textureLoad` operates on integer texel coordinates and an
+                // SM4/SM5 `ld` (e.g. `Texture2D.Load`) consumes integer texel coordinates and an
                 // integer mip level.
                 //
-                // Our internal register model uses `vec4<f32>` for everything, so integer values
-                // can show up in two forms:
-                // - As exact float values (e.g. when system-value inputs like `SV_VertexID` are
-                //   expanded into a float lane).
-                // - As raw integer bits (common for real DXBC, where integer ops write integer
-                //   bit patterns into the untyped register file).
-                //
-                // To cover both, we derive an `i32` value from each lane by picking between:
-                // - `i32(f32)` (numeric conversion)
-                // - `bitcast<i32>(f32)` (bit reinterpretation)
-                // based on whether the float value looks like an exact integer.
-                let coord_f = emit_src_vec4(coord, inst_index, "ld", ctx)?;
+                // DXBC register files are untyped; integer-typed values are stored as raw 32-bit
+                // patterns in the same lanes that the rest of the translator models as
+                // `vec4<f32>`. For `textureLoad`, interpret the source lanes strictly as integer
+                // bits (i.e. bitcast `f32` -> `i32`) with no float-to-int heuristics.
                 let coord_i = emit_src_vec4_i32(coord, inst_index, "ld", ctx)?;
-                let x = format!(
-                    "select(({coord_i}).x, i32(({coord_f}).x), ({coord_f}).x == floor(({coord_f}).x))"
-                );
-                let y = format!(
-                    "select(({coord_i}).y, i32(({coord_f}).y), ({coord_f}).y == floor(({coord_f}).y))"
-                );
+                let x = format!("({coord_i}).x");
+                let y = format!("({coord_i}).y");
 
-                let lod_f = emit_src_vec4(lod, inst_index, "ld", ctx)?;
                 let lod_i = emit_src_vec4_i32(lod, inst_index, "ld", ctx)?;
-                let lod_scalar = format!(
-                    "select(({lod_i}).x, i32(({lod_f}).x), ({lod_f}).x == floor(({lod_f}).x))"
-                );
+                let lod_scalar = format!("({lod_i}).x");
 
                 let expr = format!(
                     "textureLoad(t{}, vec2<i32>({x}, {y}), {lod_scalar})",
