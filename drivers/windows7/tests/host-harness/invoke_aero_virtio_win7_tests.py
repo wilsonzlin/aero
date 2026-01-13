@@ -1082,9 +1082,11 @@ def main() -> int:
         type=int,
         default=None,
         help=(
-            "If set, append ',vectors=N' to virtio-pci devices created by the harness "
-            "(virtio-net/blk/input/snd) to exercise MSI-X multi-vector paths. "
-            "Support varies by QEMU build; disabled by default."
+            "If set, request a specific MSI-X vector table size from QEMU by appending ',vectors=N' to "
+            "virtio-pci devices created by the harness (virtio-net/blk/input/snd). "
+            "Best-effort: requires a QEMU build that supports the 'vectors' property. "
+            "Typical values: 2, 4, 8. Windows may still allocate fewer messages; drivers fall back. "
+            "Disabled by default."
         ),
     )
 

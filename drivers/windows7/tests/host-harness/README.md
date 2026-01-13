@@ -61,6 +61,34 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
+### Forcing virtio MSI-X vector count (multi-vector MSI-X)
+
+To intentionally exercise the Aero virtio drivers' **multi-vector MSI-X** paths, the harness can request a specific
+MSI-X table size from QEMU by appending `,vectors=N` to each virtio-pci device it creates:
+
+- PowerShell: `-VirtioMsixVectors N`
+- Python: `--virtio-msix-vectors N`
+
+Notes:
+
+- This is **best-effort** and only works on QEMU builds where the virtio device exposes the `vectors` property.
+  On older QEMU builds, QEMU may exit early with an "unknown property" error when `vectors=N` is passed.
+- Typical values to try are `2`, `4`, or `8`.
+- Windows may still allocate **fewer** MSI-X messages than requested (for example due to platform/OS limits). The Aero
+  drivers are expected to fall back to the number of vectors actually granted (including single-vector MSI-X or INTx), so
+  requesting more vectors should not break functional testing.
+
+Example (PowerShell):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -Snapshot `
+  -VirtioMsixVectors 4 `
+  -TimeoutSeconds 600
+```
+
 ### virtio-input event delivery (QMP input injection)
 
 The default virtio-input selftest (`virtio-input`) validates **enumeration + report descriptors** only.
