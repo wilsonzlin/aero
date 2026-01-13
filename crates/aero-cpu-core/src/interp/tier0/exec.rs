@@ -42,6 +42,26 @@ pub fn step_with_config<B: CpuBus>(
     state: &mut CpuState,
     bus: &mut B,
 ) -> Result<StepExit, Exception> {
+    step_with_config_and_decoder(cfg, state, bus, |bytes, ip, bitness| {
+        aero_x86::decode(bytes, ip, bitness)
+    })
+}
+
+pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Exception> {
+    let cfg = Tier0Config::default();
+    step_with_config(&cfg, state, bus)
+}
+
+pub(crate) fn step_with_config_and_decoder<B, F>(
+    cfg: &Tier0Config,
+    state: &mut CpuState,
+    bus: &mut B,
+    mut decode: F,
+) -> Result<StepExit, Exception>
+where
+    B: CpuBus,
+    F: FnMut(&[u8; 15], u64, u32) -> Result<aero_x86::DecodedInst, aero_x86::DecodeError>,
+{
     bus.sync(state);
 
     let ip = state.rip();
@@ -53,9 +73,9 @@ pub fn step_with_config<B: CpuBus>(
             return Err(e);
         }
     };
-    let addr_size_override = has_addr_size_override(&bytes, state.bitness());
-    let decoded =
-        aero_x86::decode(&bytes, ip, state.bitness()).map_err(|_| Exception::InvalidOpcode)?;
+    let bitness = state.bitness();
+    let addr_size_override = has_addr_size_override(&bytes, bitness);
+    let decoded = decode(&bytes, ip, bitness).map_err(|_| Exception::InvalidOpcode)?;
     let next_ip = ip.wrapping_add(decoded.len as u64) & state.mode.ip_mask();
 
     let outcome = match exec_decoded(cfg, state, bus, &decoded, next_ip, addr_size_override) {
@@ -63,7 +83,7 @@ pub fn step_with_config<B: CpuBus>(
         Err(e) => {
             // x87 opcodes (D8-DF, optionally preceded by FWAIT=9B) should still obey CR0.EM/TS
             // gating even if Tier-0 doesn't implement the specific mnemonic yet.
-            if matches!(e, Exception::InvalidOpcode) && is_x87_opcode(&bytes, state.bitness()) {
+            if matches!(e, Exception::InvalidOpcode) && is_x87_opcode(&bytes, bitness) {
                 if let Err(fp_e) = super::check_fp_available(state, crate::fpu::FpKind::X87) {
                     state.apply_exception_side_effects(&fp_e);
                     return Err(fp_e);
@@ -96,11 +116,6 @@ pub fn step_with_config<B: CpuBus>(
         ExecOutcome::Branch => Ok(StepExit::Branch),
         ExecOutcome::Assist(r) => Ok(StepExit::Assist(r)),
     }
-}
-
-pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Exception> {
-    let cfg = Tier0Config::default();
-    step_with_config(&cfg, state, bus)
 }
 
 fn is_x87_opcode(bytes: &[u8; 15], bitness: u32) -> bool {

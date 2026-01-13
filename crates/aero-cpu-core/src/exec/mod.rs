@@ -403,6 +403,7 @@ pub struct Tier0Interpreter {
     /// Maximum Tier-0 instructions executed in one `exec_block` call.
     pub max_insts: u64,
     pub assist: AssistContext,
+    decode_cache: Tier0DecodeCache,
 }
 
 impl Tier0Interpreter {
@@ -410,7 +411,13 @@ impl Tier0Interpreter {
         Self {
             max_insts,
             assist: AssistContext::default(),
+            decode_cache: Tier0DecodeCache::default(),
         }
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub fn decode_cache_stats(&self) -> Tier0DecodeCacheStats {
+        self.decode_cache.stats()
     }
 }
 
@@ -462,10 +469,11 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
             }
 
             let faulting_rip = cpu.cpu.state.rip();
-            let step = match crate::interp::tier0::exec::step_with_config(
+            let step = match crate::interp::tier0::exec::step_with_config_and_decoder(
                 &cfg,
                 &mut cpu.cpu.state,
                 &mut cpu.bus,
+                |bytes, ip, bitness| self.decode_cache.decode(bytes, ip, bitness),
             ) {
                 Ok(step) => step,
                 Err(e) => {
@@ -535,7 +543,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     };
                     let bitness = cpu.cpu.state.bitness();
                     let addr_size_override = has_addr_size_override(&bytes, bitness);
-                    let decoded = match aero_x86::decode(&bytes, ip, bitness) {
+                    let decoded = match self.decode_cache.decode(&bytes, ip, bitness) {
                         Ok(decoded) => decoded,
                         Err(_) => {
                             deliver_tier0_exception(cpu, ip, Exception::InvalidOpcode);
@@ -595,7 +603,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     let bitness = cpu.cpu.state.bitness();
                     // Keep address-size override prefix state in sync with `assist::handle_assist`.
                     let addr_size_override = has_addr_size_override(&bytes, bitness);
-                    let decoded = match aero_x86::decode(&bytes, ip, bitness) {
+                    let decoded = match self.decode_cache.decode(&bytes, ip, bitness) {
                         Ok(decoded) => decoded,
                         Err(_) => {
                             deliver_tier0_exception(cpu, ip, Exception::InvalidOpcode);
@@ -645,4 +653,89 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
             instructions_retired: executed,
         }
     }
+}
+
+// ---- Tier-0 decode cache ----------------------------------------------------
+
+const TIER0_DECODE_CACHE_SIZE: usize = 64;
+
+#[derive(Debug, Clone)]
+struct Tier0DecodeCacheEntry {
+    bitness: u32,
+    rip: u64,
+    bytes: [u8; 15],
+    decoded: aero_x86::DecodedInst,
+}
+
+#[derive(Debug)]
+struct Tier0DecodeCache {
+    entries: [Option<Tier0DecodeCacheEntry>; TIER0_DECODE_CACHE_SIZE],
+    next_insert: usize,
+    #[cfg(any(test, debug_assertions))]
+    hits: u64,
+    #[cfg(any(test, debug_assertions))]
+    misses: u64,
+}
+
+impl Default for Tier0DecodeCache {
+    fn default() -> Self {
+        Self {
+            entries: core::array::from_fn(|_| None),
+            next_insert: 0,
+            #[cfg(any(test, debug_assertions))]
+            hits: 0,
+            #[cfg(any(test, debug_assertions))]
+            misses: 0,
+        }
+    }
+}
+
+impl Tier0DecodeCache {
+    #[inline]
+    fn decode(
+        &mut self,
+        bytes: &[u8; 15],
+        rip: u64,
+        bitness: u32,
+    ) -> Result<aero_x86::DecodedInst, aero_x86::DecodeError> {
+        if let Some(hit) = self.entries.iter().flatten().find(|entry| {
+            entry.bitness == bitness && entry.rip == rip && entry.bytes == *bytes
+        }) {
+            #[cfg(any(test, debug_assertions))]
+            {
+                self.hits += 1;
+            }
+            return Ok(hit.decoded.clone());
+        }
+
+        #[cfg(any(test, debug_assertions))]
+        {
+            self.misses += 1;
+        }
+
+        let decoded = aero_x86::decode(bytes, rip, bitness)?;
+        self.entries[self.next_insert] = Some(Tier0DecodeCacheEntry {
+            bitness,
+            rip,
+            bytes: *bytes,
+            decoded: decoded.clone(),
+        });
+        self.next_insert = (self.next_insert + 1) % TIER0_DECODE_CACHE_SIZE;
+        Ok(decoded)
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    fn stats(&self) -> Tier0DecodeCacheStats {
+        Tier0DecodeCacheStats {
+            hits: self.hits,
+            misses: self.misses,
+        }
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Tier0DecodeCacheStats {
+    pub hits: u64,
+    pub misses: u64,
 }
