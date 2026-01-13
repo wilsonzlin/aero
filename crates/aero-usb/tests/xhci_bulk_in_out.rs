@@ -13,10 +13,13 @@ use util::{Alloc, TestMemory};
 
 const TRB_LEN: u64 = 0x10;
 
-fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, ioc: bool) -> Trb {
+fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, chain: bool, ioc: bool) -> Trb {
     let mut dword3 = 0u32;
     if cycle {
         dword3 |= 1;
+    }
+    if chain {
+        dword3 |= 1 << 4;
     }
     if ioc {
         dword3 |= 1 << 5;
@@ -126,7 +129,7 @@ fn xhci_bulk_out_normal_trb_delivers_payload() {
     write_trb(
         &mut mem,
         normal_trb_addr,
-        make_normal_trb(buf, payload.len() as u32, true, true),
+        make_normal_trb(buf, payload.len() as u32, true, false, true),
     );
     write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
 
@@ -157,7 +160,7 @@ fn xhci_bulk_in_normal_trb_writes_guest_memory() {
     let sentinel = [0xa5u8; 8];
     mem.write(buf as u32, &sentinel);
 
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, true));
+    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, false, true));
     write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
@@ -192,7 +195,7 @@ fn xhci_bulk_in_short_packet_sets_residual_bytes() {
 
     // Request 8 bytes but only provide 3. xHCI should report the residual byte count (5) and
     // complete with ShortPacket.
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 8, true, true));
+    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 8, true, false, true));
     write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
@@ -234,7 +237,7 @@ fn xhci_bulk_in_nak_leaves_trb_pending_until_data_available() {
     let sentinel = [0xa5u8; 3];
     mem.write(buf as u32, &sentinel);
 
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 3, true, true));
+    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 3, true, false, true));
     write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
@@ -267,4 +270,104 @@ fn xhci_bulk_in_nak_leaves_trb_pending_until_data_available() {
 
     let events = xhci.take_events();
     assert_single_success_event(&events, 0x81, normal_trb_addr, 0);
+}
+
+#[test]
+fn xhci_transfer_executor_follows_link_trb_and_toggles_cycle_state() {
+    let mut mem = TestMemory::new(0x10000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let ring_base = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
+    let normal_trb_addr = ring_base;
+    let link_trb_addr = ring_base + TRB_LEN;
+
+    let buf = alloc.alloc(4, 0x10) as u64;
+    let sentinel = [0xa5u8; 4];
+    mem.write(buf as u32, &sentinel);
+
+    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, false, true));
+    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    in_queue.borrow_mut().push_back(vec![1, 2, 3, 4]);
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    let dev = BulkEndpointDevice::new(in_queue.clone(), out_received);
+    let mut xhci = XhciTransferExecutor::new(Box::new(dev));
+
+    xhci.add_endpoint(0x81, ring_base);
+    xhci.tick_1ms(&mut mem);
+
+    let mut got = [0u8; 4];
+    mem.read(buf as u32, &mut got);
+    assert_eq!(got, [1, 2, 3, 4]);
+
+    let events = xhci.take_events();
+    assert_single_success_event(&events, 0x81, normal_trb_addr, 0);
+
+    // After consuming the first TRB, the dequeue pointer should land on the Link TRB.
+    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, link_trb_addr);
+    assert!(xhci.endpoint_state(0x81).unwrap().ring.cycle);
+
+    // Tick again without producing new TRBs: the executor should follow the Link TRB, toggle cycle,
+    // then stop because the next TRB's cycle bit doesn't match.
+    xhci.tick_1ms(&mut mem);
+    assert!(xhci.take_events().is_empty());
+    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, ring_base);
+    assert!(!xhci.endpoint_state(0x81).unwrap().ring.cycle);
+
+    // Produce another TRB in the new cycle state (C=0) and confirm it completes.
+    in_queue.borrow_mut().push_back(vec![5, 6, 7, 8]);
+    mem.write(buf as u32, &sentinel);
+    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, false, false, true));
+
+    xhci.tick_1ms(&mut mem);
+    let mut got = [0u8; 4];
+    mem.read(buf as u32, &mut got);
+    assert_eq!(got, [5, 6, 7, 8]);
+
+    let events = xhci.take_events();
+    assert_single_success_event(&events, 0x81, normal_trb_addr, 0);
+}
+
+#[test]
+fn xhci_transfer_executor_td_can_span_linked_segments() {
+    let mut mem = TestMemory::new(0x20000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let seg1 = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
+    let seg2 = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
+
+    let normal1_addr = seg1;
+    let link_addr = seg1 + TRB_LEN;
+    let normal2_addr = seg2;
+
+    let buf1 = alloc.alloc(4, 0x10) as u64;
+    let buf2 = alloc.alloc(4, 0x10) as u64;
+    let sentinel = [0xa5u8; 4];
+    mem.write(buf1 as u32, &sentinel);
+    mem.write(buf2 as u32, &sentinel);
+
+    // TD: Normal (CH=1) then Link to seg2, then Normal (CH=0, IOC=1).
+    write_trb(&mut mem, normal1_addr, make_normal_trb(buf1, 4, true, true, false));
+    write_trb(&mut mem, link_addr, make_link_trb(seg2, true, false));
+    write_trb(&mut mem, normal2_addr, make_normal_trb(buf2, 4, true, false, true));
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    in_queue.borrow_mut().push_back(vec![10, 11, 12, 13, 20, 21, 22, 23]);
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    let dev = BulkEndpointDevice::new(in_queue, out_received);
+    let mut xhci = XhciTransferExecutor::new(Box::new(dev));
+
+    xhci.add_endpoint(0x81, seg1);
+    xhci.tick_1ms(&mut mem);
+
+    let mut got1 = [0u8; 4];
+    let mut got2 = [0u8; 4];
+    mem.read(buf1 as u32, &mut got1);
+    mem.read(buf2 as u32, &mut got2);
+    assert_eq!(got1, [10, 11, 12, 13]);
+    assert_eq!(got2, [20, 21, 22, 23]);
+
+    let events = xhci.take_events();
+    assert_single_success_event(&events, 0x81, normal2_addr, 0);
 }
