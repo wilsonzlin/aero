@@ -1495,10 +1495,11 @@ impl NvmeController {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
 
-        // CDW10 contains the 0-based number of ranges (NR).
-        let Some(ranges) = cmd.cdw10.checked_add(1) else {
+        // CDW10[7:0] contains the 0-based number of ranges (NR). Higher bits are reserved.
+        if cmd.cdw10 & !0xff != 0 {
             return (NvmeStatus::INVALID_FIELD, 0);
-        };
+        }
+        let ranges = (cmd.cdw10 & 0xff) + 1;
 
         // DSM range definition entries are 16 bytes each.
         let Some(list_bytes_u64) = u64::from(ranges).checked_mul(16) else {
