@@ -541,7 +541,7 @@ The container + client integration uses the following environment variables and 
 - `WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE`: `host` or `srflx` (default: `host`).
 - WebRTC DataChannel hardening (pion/SCTP caps; mitigate oversized message DoS):
   - `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (default: derived from `MAX_DATAGRAM_PAYLOAD_BYTES` and `L2_MAX_MESSAGE_BYTES`)
-  - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (default: `1048576`; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES`)
+  - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (default: `1048576`; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`)
 - `AERO_ICE_SERVERS_JSON`: JSON string describing ICE servers that the relay advertises to clients.
   - Flag: `--ice-servers-json`
   - For the `with-turn` profile, `docker-compose.yml` sets this automatically to point at the
@@ -575,12 +575,15 @@ fully buffered by pion before `DataChannel.OnMessage` is invoked.
 To mitigate this, the relay configures hard caps in pion's `SettingEngine`:
 
 - `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` / `--webrtc-datachannel-max-message-bytes` (0 = auto):
-  maximum inbound DataChannel message size. The default is computed as:
+  advertised DataChannel max message size (`a=max-message-size`) used by well-behaved peers to avoid
+  sending oversized messages. The default is computed as:
   `max(MAX_DATAGRAM_PAYLOAD_BYTES + 24, L2_MAX_MESSAGE_BYTES) + 256`.
 - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` / `--webrtc-sctp-max-receive-buffer-bytes` (0 = auto):
-  SCTP receive buffer cap (must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES`).
+  SCTP receive buffer cap (hard receive-side buffering bound; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`).
 
-If a peer violates these limits, pion reports an SCTP/DataChannel error and the relay closes the session.
+Oversized messages that exceed the SCTP receive buffer cap cannot be fully reassembled and are not delivered to
+application-level `DataChannel.OnMessage` handlers. If the SCTP/DataChannel stack reports an error, the relay closes
+the session.
 
 #### Example: behind NAT (private IP + known public IP)
 

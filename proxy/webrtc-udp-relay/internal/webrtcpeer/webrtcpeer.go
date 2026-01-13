@@ -65,7 +65,12 @@ func ApplyNetworkSettings(se *webrtc.SettingEngine, cfg config.Config) error {
 	// large SCTP messages that pion would otherwise allocate before OnMessage is
 	// invoked.
 	//
-	// These caps are enforced inside pion/SCTP before message delivery.
+	// Note: In pion/webrtc, `SetSCTPMaxMessageSize` controls the `a=max-message-size`
+	// value advertised in SDP. This helps well-behaved peers avoid sending
+	// oversized user messages, but malicious peers can ignore SDP negotiation.
+	//
+	// The receive-side hard cap that bounds buffering/allocation before
+	// DataChannel.OnMessage runs is `SetSCTPMaxReceiveBufferSize`.
 	if cfg.WebRTCDataChannelMaxMessageBytes > 0 {
 		v, err := asUint32(cfg.WebRTCDataChannelMaxMessageBytes)
 		if err != nil {

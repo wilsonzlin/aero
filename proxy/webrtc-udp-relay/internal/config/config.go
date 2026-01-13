@@ -293,15 +293,20 @@ type Config struct {
 	WebRTCUDPListenIP net.IP
 
 	// WebRTCDataChannelMaxMessageBytes caps the maximum size of any inbound SCTP
-	// user message (i.e. an incoming DataChannel message) that pion will accept.
+	// user message that the relay advertises as acceptable in SDP
+	// (`a=max-message-size`).
 	//
-	// This limit is enforced inside pion/SCTP before DataChannel.OnMessage runs,
-	// mitigating peers attempting to force the relay to allocate multi-megabyte
-	// messages.
+	// This is a best-effort guardrail for well-behaved peers (they should not
+	// send messages larger than this), but it is not a hard receive-side cap
+	// against malicious peers. The receive-side memory bound is controlled by
+	// WebRTCSCTPMaxReceiveBufferBytes.
 	WebRTCDataChannelMaxMessageBytes int
 
 	// WebRTCSCTPMaxReceiveBufferBytes caps the SCTP receive buffer size used by
 	// pion for a single association.
+	//
+	// This bounds how much data a peer can cause pion/SCTP to buffer/reassemble
+	// before application-level DataChannel.OnMessage handlers run.
 	WebRTCSCTPMaxReceiveBufferBytes int
 
 	// Quotas/rate limiting.
@@ -862,10 +867,12 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, fmt.Errorf("%s/--%s must be >= 0 (0 = auto)", EnvWebRTCSCTPMaxReceiveBufferBytes, FlagWebRTCSCTPMaxReceiveBufferBytes)
 	}
 
-	// Derive WebRTC DataChannel size limits if not explicitly configured.
+	// Derive WebRTC DataChannel/SCTP size limits if not explicitly configured.
 	//
-	// These values are fed into pion's SettingEngine to enforce an allocation
-	// cap before DataChannel.OnMessage handlers run.
+	// - WebRTCDataChannelMaxMessageBytes is advertised via SDP `a=max-message-size`
+	//   (best-effort guardrail for compliant peers).
+	// - WebRTCSCTPMaxReceiveBufferBytes is the receive-side hard cap that bounds
+	//   how much data pion/SCTP will buffer before DataChannel.OnMessage runs.
 	minDCMax := minWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBytes)
 	effectiveDCMax := webrtcDataChannelMaxMessageBytes
 	if effectiveDCMax == 0 {
@@ -896,6 +903,13 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 			FlagWebRTCSCTPMaxReceiveBufferBytes,
 			effectiveDCMax,
 			EnvWebRTCDataChannelMaxMessageBytes,
+		)
+	}
+	if effectiveSCTPRecvBuf < minWebRTCSCTPReceiveBufferBytes {
+		return Config{}, fmt.Errorf("%s/--%s must be >= %d (SCTP receive buffer too small)",
+			EnvWebRTCSCTPMaxReceiveBufferBytes,
+			FlagWebRTCSCTPMaxReceiveBufferBytes,
+			minWebRTCSCTPReceiveBufferBytes,
 		)
 	}
 	if maxUDPBindingsPerSession <= 0 {

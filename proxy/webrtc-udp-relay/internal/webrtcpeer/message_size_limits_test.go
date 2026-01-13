@@ -1,28 +1,29 @@
 package webrtcpeer
 
 import (
-	"strconv"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/pion/webrtc/v4"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 )
 
-func TestWebRTCDataChannel_OversizeMessageClosesSession(t *testing.T) {
-	// Use intentionally small limits so we can reliably trigger the error without
-	// allocating large buffers in tests.
+func TestWebRTCDataChannel_OversizeMessageNotDelivered(t *testing.T) {
+	// The primary DoS risk is that extremely large user messages could be fully
+	// reassembled/buffered by pion/SCTP before DataChannel.OnMessage is invoked.
+	//
+	// Pion's SCTP max message size setting only influences SDP negotiation (send
+	// limits for compliant peers). The receive-side hard cap is enforced via the
+	// SCTP receive buffer size.
 	cfg := config.Config{
-		MaxDatagramPayloadBytes:          64,
-		L2MaxMessageBytes:                128,
-		WebRTCDataChannelMaxMessageBytes: 256,
-		// Leave plenty of headroom relative to the message cap.
-		WebRTCSCTPMaxReceiveBufferBytes: 1 << 20,
+		// Advertise a large max message size so the (pion-based) client will send
+		// the oversized message. The server-side receive buffer should prevent the
+		// oversized message from being delivered to OnMessage.
+		WebRTCDataChannelMaxMessageBytes: 1 << 30,
+		// Keep the receive buffer small enough that a large message cannot be
+		// fully reassembled.
+		WebRTCSCTPMaxReceiveBufferBytes: 16 * 1024,
 	}
 
 	api, err := NewAPI(cfg)
@@ -30,30 +31,11 @@ func TestWebRTCDataChannel_OversizeMessageClosesSession(t *testing.T) {
 		t.Fatalf("NewAPI: %v", err)
 	}
 
-	relayCfg := relay.DefaultConfig()
-	relayCfg.MaxDatagramPayloadBytes = cfg.MaxDatagramPayloadBytes
-	relayCfg.L2MaxMessageBytes = cfg.L2MaxMessageBytes
-
-	var sessCloseOnce sync.Once
-	sessClosed := make(chan struct{})
-	sess, err := NewSession(
-		api,
-		nil,
-		relayCfg,
-		policy.NewDevDestinationPolicy(),
-		nil,
-		"example.com",
-		"",
-		nil,
-		cfg.WebRTCDataChannelMaxMessageBytes,
-		func() { sessCloseOnce.Do(func() { close(sessClosed) }) },
-	)
+	serverPC, err := api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
-		t.Fatalf("NewSession: %v", err)
+		t.Fatalf("NewPeerConnection(server): %v", err)
 	}
-	t.Cleanup(func() { _ = sess.Close() })
-
-	serverPC := sess.PeerConnection()
+	t.Cleanup(func() { _ = serverPC.Close() })
 
 	clientPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
@@ -61,108 +43,68 @@ func TestWebRTCDataChannel_OversizeMessageClosesSession(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = clientPC.Close() })
 
+	received := make(chan int, 8)
+	serverOpen := make(chan struct{})
+
+	serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
+		if dc.Label() != DataChannelLabelUDP {
+			return
+		}
+		dc.OnOpen(func() {
+			select {
+			case <-serverOpen:
+			default:
+				close(serverOpen)
+			}
+		})
+		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+			if msg.IsString {
+				return
+			}
+			select {
+			case received <- len(msg.Data):
+			default:
+			}
+		})
+	})
+
 	ordered := false
 	maxRetransmits := uint16(0)
-	dc, err := clientPC.CreateDataChannel(DataChannelLabelUDP, &webrtc.DataChannelInit{
+	clientDC, err := clientPC.CreateDataChannel(DataChannelLabelUDP, &webrtc.DataChannelInit{
 		Ordered:        &ordered,
 		MaxRetransmits: &maxRetransmits,
 	})
 	if err != nil {
 		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelUDP, err)
 	}
+	clientOpen := make(chan struct{})
+	clientDC.OnOpen(func() { close(clientOpen) })
 
-	dcOpen := make(chan struct{})
-	dc.OnOpen(func() { close(dcOpen) })
-
-	var dcCloseOnce sync.Once
-	dcClosed := make(chan struct{})
-	dc.OnClose(func() { dcCloseOnce.Do(func() { close(dcClosed) }) })
-
-	connectPeerConnectionsWithAnswerSDPTransform(t, clientPC, serverPC, nil)
+	connectPeerConnections(t, clientPC, serverPC)
 
 	select {
-	case <-dcOpen:
+	case <-clientOpen:
 	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for datachannel open")
+		t.Fatalf("timed out waiting for client datachannel open")
+	}
+	select {
+	case <-serverOpen:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for server datachannel open")
 	}
 
-	// Send a payload that exceeds the negotiated max message size. The sender
-	// should refuse to send it (this relies on the max-message-size value in SDP).
-	payload := make([]byte, cfg.WebRTCDataChannelMaxMessageBytes+1)
-	if err := dc.Send(payload); err == nil {
-		// If the sender allows it, the receiver should tear down either the
-		// DataChannel or the whole session.
-		select {
-		case <-dcClosed:
-		case <-sessClosed:
-		case <-time.After(5 * time.Second):
-			t.Fatalf("timed out waiting for oversize message to close the datachannel/session")
-		}
+	oversize := make([]byte, cfg.WebRTCSCTPMaxReceiveBufferBytes*4) // 64KiB
+	if err := clientDC.Send(oversize); err != nil {
+		t.Fatalf("Send(oversize): %v", err)
+	}
+
+	// The oversized message should not be delivered to the receiver's OnMessage
+	// because the SCTP receive buffer cap prevents full reassembly.
+	select {
+	case n := <-received:
+		t.Fatalf("unexpected server-side delivery of oversized message: %d bytes", n)
+	case <-time.After(750 * time.Millisecond):
+		// ok
 	}
 }
 
-func connectPeerConnectionsWithAnswerSDPTransform(t *testing.T, offerer, answerer *webrtc.PeerConnection, transform func(string) string) {
-	t.Helper()
-
-	offer, err := offerer.CreateOffer(nil)
-	if err != nil {
-		t.Fatalf("CreateOffer: %v", err)
-	}
-	offerGatherComplete := webrtc.GatheringCompletePromise(offerer)
-	if err := offerer.SetLocalDescription(offer); err != nil {
-		t.Fatalf("SetLocalDescription(offer): %v", err)
-	}
-	<-offerGatherComplete
-
-	offerSDP := offerer.LocalDescription()
-	if offerSDP == nil {
-		t.Fatalf("missing local offer")
-	}
-	if err := answerer.SetRemoteDescription(*offerSDP); err != nil {
-		t.Fatalf("SetRemoteDescription(offer): %v", err)
-	}
-
-	answer, err := answerer.CreateAnswer(nil)
-	if err != nil {
-		t.Fatalf("CreateAnswer: %v", err)
-	}
-	answerGatherComplete := webrtc.GatheringCompletePromise(answerer)
-	if err := answerer.SetLocalDescription(answer); err != nil {
-		t.Fatalf("SetLocalDescription(answer): %v", err)
-	}
-	<-answerGatherComplete
-
-	answerSDP := answerer.LocalDescription()
-	if answerSDP == nil {
-		t.Fatalf("missing local answer")
-	}
-	mod := *answerSDP
-	if transform != nil {
-		mod.SDP = transform(mod.SDP)
-	}
-	if err := offerer.SetRemoteDescription(mod); err != nil {
-		t.Fatalf("SetRemoteDescription(answer): %v", err)
-	}
-}
-
-func forceSDPMaxMessageSize(sdp string, max uint64) string {
-	want := "a=max-message-size:" + strconv.FormatUint(max, 10)
-	lines := strings.Split(sdp, "\n")
-	replaced := false
-	for i, line := range lines {
-		raw := strings.TrimSuffix(line, "\r")
-		if strings.HasPrefix(raw, "a=max-message-size:") {
-			suffix := ""
-			if strings.HasSuffix(line, "\r") {
-				suffix = "\r"
-			}
-			lines[i] = want + suffix
-			replaced = true
-		}
-	}
-	if !replaced {
-		// Some stacks omit this attribute. In that case, keep the SDP unchanged.
-		return sdp
-	}
-	return strings.Join(lines, "\n")
-}

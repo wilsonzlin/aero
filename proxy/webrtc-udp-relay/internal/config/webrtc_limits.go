@@ -8,6 +8,11 @@ package config
 //	magic+version+af+type (4) + guest_port (2) + ipv6 (16) + remote_port (2) = 24
 const webrtcDataChannelUDPFrameOverheadBytes = 24
 
+// minWebRTCSCTPReceiveBufferBytes is the minimum SCTP receive buffer size that
+// pion/sctp will accept during association setup. Values below this break SCTP
+// negotiation (INIT/INIT-ACK validation).
+const minWebRTCSCTPReceiveBufferBytes = 1500
+
 func minWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBytes int) int {
 	if maxDatagramPayloadBytes < 0 {
 		maxDatagramPayloadBytes = 0
@@ -50,6 +55,9 @@ func defaultWebRTCSCTPMaxReceiveBufferBytes(maxMessageBytes int) int {
 	}
 	if buf < maxMessageBytes {
 		buf = maxMessageBytes
+	}
+	if buf < minWebRTCSCTPReceiveBufferBytes {
+		buf = minWebRTCSCTPReceiveBufferBytes
 	}
 	return buf
 }

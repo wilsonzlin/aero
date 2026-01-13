@@ -88,6 +88,35 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 		s.hasAeroSessionCookie = true
 	}
 
+	// If the SCTP association errors (e.g. due to an oversized inbound message),
+	// ensure we tear down the whole session so relay goroutines exit and resources
+	// are released.
+	var sctpOnce sync.Once
+	installSCTPHandlers := func() {
+		st := pc.SCTP()
+		if st == nil {
+			return
+		}
+		sctpOnce.Do(func() {
+			st.OnError(func(err error) {
+				var sessionID any
+				if s.quota != nil {
+					sessionID = s.quota.ID()
+				}
+				slog.Warn("sctp transport error", "session_id", sessionID, "err", err)
+				go func() { _ = s.Close() }()
+			})
+			st.OnClose(func(err error) {
+				var sessionID any
+				if s.quota != nil {
+					sessionID = s.quota.ID()
+				}
+				slog.Warn("sctp transport closed", "session_id", sessionID, "err", err)
+				go func() { _ = s.Close() }()
+			})
+		})
+	}
+
 	if quota != nil {
 		quota.OnHardClose(func() {
 			// Close asynchronously so we never block a UDP read loop on pion teardown.
@@ -98,6 +127,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 	}
 
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+		installSCTPHandlers()
 		switch dc.Label() {
 		case DataChannelLabelUDP:
 			if err := validateUDPDataChannel(dc); err != nil {
