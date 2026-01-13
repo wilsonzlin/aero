@@ -81,6 +81,10 @@ The driver reads the virtio-snd device config and requires:
 On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `virtio_snd_pcm_info` entries
 **in order**: stream 0 then stream 1:
 
+- [ ] Controlq response framing:
+  - [ ] Response begins with `u32 status` and completes with `used.len >= 4`.
+  - [ ] For `PCM_INFO`, response completes with `used.len >= 4 + 2*32 = 68` (status + 2 entries).
+
 - [ ] **Stream 0 (render / playback)**:
   - [ ] `direction = VIRTIO_SND_D_OUTPUT`
   - [ ] channels allow **2ch** (`channels_min <= 2 <= channels_max`)
@@ -99,6 +103,7 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
 - [ ] Each TX chain begins with an 8-byte header:
   - `u32 stream_id = 0`
   - `u32 reserved = 0`
+- [ ] The header and PCM payload may be split across multiple **device-readable** descriptors; the device must treat them as a single concatenated byte stream.
 - [ ] PCM payload is **interleaved stereo S16_LE** (payload length is a multiple of **4** bytes).
 - [ ] Device writes an 8-byte `virtio_snd_pcm_status` response:
   - `u32 status`
@@ -112,6 +117,7 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
 - [ ] Each RX chain begins with an 8-byte header:
   - `u32 stream_id = 1`
   - `u32 reserved = 0`
+- [ ] The PCM payload may be split across multiple **device-writable** descriptors; the device must write sequential PCM bytes across them.
 - [ ] PCM payload is **mono S16_LE** (payload length is a multiple of **2** bytes).
 - [ ] Device writes an 8-byte `virtio_snd_pcm_status` response:
   - `u32 status`
