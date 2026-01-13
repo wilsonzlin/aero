@@ -2201,11 +2201,9 @@ pub struct Machine {
     // Temporary legacy text-mode scanout renderer used when VGA is disabled but the canonical
     // AeroGPU PCI identity is enabled.
     //
-    // Today `MachineConfig::enable_aerogpu` wires BAR1-backed VRAM plus minimal legacy VGA decode,
-    // but it does not yet implement VBE mode setting or the BAR0 WDDM/MMIO/ring protocol. We still
-    // want BIOS/boot text output to be visible when the standalone VGA device model is disabled, so
-    // we present text mode by scanning guest physical memory at 0xB8000 and rendering it with the
-    // existing VGA text renderer.
+    // AeroGPU exposes a dedicated VRAM backing store, but for host-side scanout we currently reuse
+    // the existing VGA text renderer by scanning the legacy text buffer at `0xB8000` and converting
+    // it into pixels.
     aerogpu_text_renderer: Option<VgaDevice>,
 
     // ---------------------------------------------------------------------
@@ -2833,7 +2831,10 @@ impl Machine {
     /// Re-render the emulated display into the machine's host-visible framebuffer cache.
     ///
     /// When the standalone VGA/VBE device model is disabled and `enable_aerogpu=true`, this
-    /// presents BIOS/boot text mode output by scanning the legacy text buffer at `0xB8000`.
+    /// presents either:
+    ///
+    /// - the active VBE linear framebuffer (if a VBE mode is set), or
+    /// - BIOS/boot text mode output by scanning the legacy text buffer at `0xB8000`.
     ///
     /// Otherwise (no VGA, no AeroGPU fallback), this clears the cached framebuffer and returns
     /// `(0, 0)` resolution.
@@ -2852,6 +2853,9 @@ impl Machine {
         }
 
         if self.cfg.enable_aerogpu {
+            if self.display_present_aerogpu_vbe_lfb() {
+                return;
+            }
             self.display_present_aerogpu_text_mode();
             return;
         }
@@ -2859,6 +2863,99 @@ impl Machine {
         self.display_fb.clear();
         self.display_width = 0;
         self.display_height = 0;
+    }
+
+    fn display_present_aerogpu_vbe_lfb(&mut self) -> bool {
+        // If the BIOS has not set a VBE mode, fall back to the text-mode path.
+        let Some(mode_id) = self.bios.video.vbe.current_mode else {
+            return false;
+        };
+
+        let Some(mode) = self.bios.video.vbe.find_mode(mode_id) else {
+            return false;
+        };
+
+        let width = u32::from(mode.width);
+        let height = u32::from(mode.height);
+        if width == 0 || height == 0 {
+            return false;
+        }
+
+        let bytes_per_pixel = usize::from(mode.bytes_per_pixel()).max(1);
+        if bytes_per_pixel > 8 {
+            return false;
+        }
+
+        let pitch = u64::from(
+            self.bios
+                .video
+                .vbe
+                .bytes_per_scan_line
+                .max(mode.bytes_per_scan_line()),
+        );
+        if pitch == 0 {
+            return false;
+        }
+
+        let start_x = u64::from(self.bios.video.vbe.display_start_x);
+        let start_y = u64::from(self.bios.video.vbe.display_start_y);
+        let base = u64::from(self.bios.video.vbe.lfb_base)
+            .saturating_add(start_y.saturating_mul(pitch))
+            .saturating_add(start_x.saturating_mul(bytes_per_pixel as u64));
+
+        self.display_width = width;
+        self.display_height = height;
+        self.display_fb
+            .resize(width.saturating_mul(height) as usize, 0);
+
+        // Render row-by-row to avoid allocating large intermediate buffers (and to keep the MMIO
+        // read path incremental for BAR-backed apertures).
+        let mut row = vec![0u8; width as usize * bytes_per_pixel];
+
+        match mode.bpp {
+            32 => {
+                for y in 0..height {
+                    let row_addr = base.saturating_add(u64::from(y).saturating_mul(pitch));
+                    self.mem.read_physical(row_addr, &mut row);
+                    for x in 0..width as usize {
+                        let i = x * 4;
+                        let b = row.get(i).copied().unwrap_or(0);
+                        let g = row.get(i + 1).copied().unwrap_or(0);
+                        let r = row.get(i + 2).copied().unwrap_or(0);
+                        self.display_fb[y as usize * width as usize + x] =
+                            0xFF00_0000 | (u32::from(b) << 16) | (u32::from(g) << 8) | u32::from(r);
+                    }
+                }
+                true
+            }
+            8 => {
+                let pal = &self.bios.video.vbe.palette;
+                let dac_bits = self.bios.video.vbe.dac_width_bits;
+                let scale = |c: u8| -> u8 {
+                    if dac_bits == 6 {
+                        (c << 2) | (c >> 4)
+                    } else {
+                        c
+                    }
+                };
+
+                for y in 0..height {
+                    let row_addr = base.saturating_add(u64::from(y).saturating_mul(pitch));
+                    self.mem.read_physical(row_addr, &mut row);
+                    for x in 0..width as usize {
+                        let idx = row.get(x).copied().unwrap_or(0) as usize;
+                        let base = idx * 4;
+                        let b = scale(pal.get(base).copied().unwrap_or(0));
+                        let g = scale(pal.get(base + 1).copied().unwrap_or(0));
+                        let r = scale(pal.get(base + 2).copied().unwrap_or(0));
+                        self.display_fb[y as usize * width as usize + x] =
+                            0xFF00_0000 | (u32::from(b) << 16) | (u32::from(g) << 8) | u32::from(r);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     fn display_present_aerogpu_text_mode(&mut self) {
@@ -2874,9 +2971,9 @@ impl Machine {
 
         // Read the full 32KiB legacy text window from guest physical memory.
         //
-        // This address range is routed to whichever VGA implementation is active (standalone VGA or
-        // the AeroGPU legacy VGA alias), so `read_physical` provides the correct bytes without the
-        // renderer needing to know which path is wired.
+        // This address range is routed to whichever legacy VGA implementation is active
+        // (standalone VGA device model or the AeroGPU legacy VRAM alias), so `read_physical`
+        // provides the correct bytes without the renderer needing to know which path is wired.
         let mut text = [0u8; 0x8000];
         self.mem.read_physical(0xB8000, &mut text);
 
@@ -5122,6 +5219,9 @@ impl Machine {
         } else {
             self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
         }
+        // Once PCI BARs are assigned, update the BIOS VBE LFB base for any display configurations
+        // that derive it from PCI resources (AeroGPU BAR1).
+        self.sync_bios_vbe_lfb_base_to_display_wiring();
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         if self.bios.video.vbe.current_mode.is_none() {
             self.sync_text_mode_cursor_bda_to_vga_crtc();
@@ -5591,6 +5691,43 @@ impl Machine {
         vga.port_write(0x3D5, 1, u32::from((cursor_addr & 0x00FF) as u8));
     }
 
+    fn aerogpu_bar1_base(&self) -> Option<u64> {
+        let pci_cfg = self.pci_cfg.as_ref()?;
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(aero_devices::pci::profile::AEROGPU.bdf)?;
+        cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
+            .map(|range| range.base)
+            .filter(|&base| base != 0)
+    }
+
+    fn sync_bios_vbe_lfb_base_to_display_wiring(&mut self) {
+        // Keep the BIOS-reported VBE linear framebuffer base coherent with the active display
+        // device model.
+        //
+        // - Legacy VGA/VBE device model: fixed `SVGA_LFB_BASE`.
+        // - AeroGPU: BAR1_BASE + VBE_LFB_OFFSET (within the VRAM aperture).
+        // - Headless: default RAM-backed base (safe, avoids overlap with PCI MMIO window).
+        let use_legacy_vga = self.cfg.enable_vga && !self.cfg.enable_aerogpu;
+        if use_legacy_vga {
+            self.bios.video.vbe.lfb_base = aero_gpu_vga::SVGA_LFB_BASE;
+            return;
+        }
+
+        if self.cfg.enable_aerogpu {
+            if let Some(base) = self.aerogpu_bar1_base() {
+                let lfb = base.saturating_add(VBE_LFB_OFFSET as u64);
+                if let Ok(lfb) = u32::try_from(lfb) {
+                    self.bios.video.vbe.lfb_base = lfb;
+                    return;
+                }
+            }
+        }
+
+        self.bios.video.vbe.lfb_base = firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT;
+    }
+
     fn handle_bios_interrupt(&mut self, vector: u8) {
         let ax_before = self.cpu.state.gpr[gpr::RAX] as u16;
         let bx_before = self.cpu.state.gpr[gpr::RBX] as u16;
@@ -5626,7 +5763,7 @@ impl Machine {
         let force_vbe_no_clear = vector == 0x10
             && ax_before == 0x4F02
             && (bx_before & 0x8000) == 0
-            && self.vga.is_some();
+            && (self.vga.is_some() || self.aerogpu.is_some());
         if force_vbe_no_clear {
             self.cpu.state.gpr[gpr::RBX] |= 0x8000;
         }
@@ -5643,6 +5780,47 @@ impl Machine {
             self.cpu.state.gpr[gpr::RBX] &= !0x8000;
         }
         let ax_after = self.cpu.state.gpr[gpr::RAX] as u16;
+
+        // If we forced "no clear" for AeroGPU (MMIO-backed VRAM) mode sets, perform the clear
+        // directly on the VRAM backing store instead of letting the BIOS run a slow byte loop.
+        //
+        // The VGA path does the same thing but clears the VGA device model's internal VRAM (see
+        // below).
+        if force_vbe_no_clear
+            && self.vga.is_none()
+            && self.aerogpu.is_some()
+            && ax_before == 0x4F02
+            && ax_after == 0x004F
+            && (bx_before & 0x8000) == 0
+        {
+            if let (Some(mode_id), Some(bar1_base)) =
+                (self.bios.video.vbe.current_mode, self.aerogpu_bar1_base())
+            {
+                if let Some(mode) = self.bios.video.vbe.find_mode(mode_id) {
+                    let pitch = u64::from(
+                        self.bios
+                            .video
+                            .vbe
+                            .bytes_per_scan_line
+                            .max(mode.bytes_per_scan_line()),
+                    );
+                    let clear_len = pitch.saturating_mul(u64::from(mode.height));
+
+                    let lfb_base = u64::from(self.bios.video.vbe.lfb_base);
+                    if lfb_base >= bar1_base {
+                        let off = (lfb_base - bar1_base) as usize;
+                        let end = off.saturating_add(clear_len as usize);
+                        if let Some(aerogpu) = &self.aerogpu {
+                            let mut dev = aerogpu.borrow_mut();
+                            let end = end.min(dev.vram.len());
+                            if off < end {
+                                dev.vram[off..end].fill(0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // The BIOS INT 10h implementation is HLE and only updates its internal `firmware::video`
         // state + writes to guest memory; it does not program VGA/VBE ports. Mirror relevant VBE
@@ -6345,19 +6523,6 @@ impl snapshot::SnapshotTarget for Machine {
         // Firmware snapshot: required for deterministic BIOS interrupt behaviour.
         if let Some(state) = by_id.remove(&snapshot::DeviceId::BIOS) {
             if state.version == 1 {
-                // Keep the BIOS VBE LFB base coherent with the machine's VGA wiring even when
-                // restoring a snapshot taken under a different `enable_vga` configuration.
-                //
-                // - When VGA is enabled, the machine exposes the SVGA linear framebuffer (LFB) at
-                //   the fixed MMIO address `SVGA_LFB_BASE`.
-                // - When VGA is disabled, avoid reporting `SVGA_LFB_BASE` since it overlaps the
-                //   canonical PCI MMIO window (0xE0000000).
-                let lfb_base = if use_legacy_vga {
-                    aero_gpu_vga::SVGA_LFB_BASE
-                } else {
-                    firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
-                };
-
                 if let Ok(mut snapshot) =
                     firmware::bios::BiosSnapshot::decode(&mut Cursor::new(&state.data))
                 {
@@ -6365,7 +6530,6 @@ impl snapshot::SnapshotTarget for Machine {
                     // the source of truth when restoring.
                     snapshot.config.vbe_lfb_base =
                         use_legacy_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE);
-                    snapshot.vbe.lfb_base = lfb_base;
                     self.bios.restore_snapshot(snapshot, &mut self.mem);
                 }
             }
@@ -6900,6 +7064,10 @@ impl snapshot::SnapshotTarget for Machine {
                 snapshot::apply_cpu_internal_state_to_cpu_core(&decoded, &mut self.cpu);
             }
         }
+
+        // Ensure the BIOS VBE LFB base matches the machine's active display wiring (VGA fixed base,
+        // AeroGPU BAR1-derived base, or the default RAM-backed base for headless configs).
+        self.sync_bios_vbe_lfb_base_to_display_wiring();
     }
 
     fn restore_disk_overlays(&mut self, mut overlays: snapshot::DiskOverlayRefs) {
@@ -9727,6 +9895,40 @@ mod tests {
         })
         .unwrap();
         assert_eq!(vga.bios.video.vbe.lfb_base, aero_gpu_vga::SVGA_LFB_BASE);
+    }
+
+    #[test]
+    fn bios_vbe_lfb_base_uses_aerogpu_bar1_base_when_aerogpu_is_enabled() {
+        let m = Machine::new(MachineConfig {
+            ram_size_bytes: 64 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: false,
+            enable_aerogpu: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let bar1_base = {
+            let pci_cfg = m
+                .pci_config_ports()
+                .expect("pc platform should expose pci_cfg");
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(aero_devices::pci::profile::AEROGPU.bdf)
+                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX))
+                .map(|range| range.base)
+                .unwrap_or(0)
+        };
+        assert_ne!(bar1_base, 0, "AeroGPU BAR1 should be assigned by BIOS POST");
+
+        let expected =
+            u32::try_from(bar1_base + VBE_LFB_OFFSET as u64).expect("LFB base should fit in u32");
+        assert_eq!(m.bios.video.vbe.lfb_base, expected);
     }
 
     #[test]
