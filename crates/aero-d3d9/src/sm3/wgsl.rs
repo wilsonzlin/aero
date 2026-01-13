@@ -1,7 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write;
 
-use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent};
+use crate::sm3::decode::{
+    ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType, WriteMask,
+};
 use crate::sm3::ir::{
     Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
     Stmt,
@@ -31,6 +33,13 @@ fn err(message: impl Into<String>) -> WgslError {
 pub struct WgslOutput {
     pub wgsl: String,
     pub entry_point: &'static str,
+    pub bind_group_layout: BindGroupLayout,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindGroupLayout {
+    /// Binding 0 is always the constants buffer.
+    pub sampler_bindings: HashMap<u32, (u32, u32)>, // sampler_index -> (texture_binding, sampler_binding)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,6 +232,7 @@ struct RegUsage {
     float_consts: BTreeSet<u32>,
     int_consts: BTreeSet<u32>,
     bool_consts: BTreeSet<u32>,
+    samplers: BTreeSet<u32>,
 }
 
 impl RegUsage {
@@ -237,6 +247,7 @@ impl RegUsage {
             float_consts: BTreeSet::new(),
             int_consts: BTreeSet::new(),
             bool_consts: BTreeSet::new(),
+            samplers: BTreeSet::new(),
         }
     }
 }
@@ -350,6 +361,7 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             ddx,
             ddy,
             modifiers,
+            sampler,
             ..
         } => {
             collect_dst_usage(dst, usage);
@@ -361,6 +373,9 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
                 collect_src_usage(ddy, usage);
             }
             collect_mods_usage(modifiers, usage);
+            usage.samplers.insert(*sampler);
+            collect_mods_usage(modifiers, usage);
+            usage.samplers.insert(*sampler);
         }
     }
 }
@@ -620,7 +635,11 @@ fn apply_float_result_modifiers(expr: String, mods: &InstModifiers) -> Result<St
     Ok(out)
 }
 
-fn emit_op_line(op: &IrOp, f32_defs: &BTreeMap<u32, [f32; 4]>) -> Result<String, WgslError> {
+fn emit_op_line(
+    op: &IrOp,
+    stage: ShaderStage,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
+) -> Result<String, WgslError> {
     match op {
         IrOp::Mov {
             dst,
@@ -945,7 +964,68 @@ fn emit_op_line(op: &IrOp, f32_defs: &BTreeMap<u32, [f32; 4]>) -> Result<String,
             src1,
             modifiers,
         } => emit_float_func2(dst, src0, src1, modifiers, f32_defs, "pow"),
-        IrOp::TexSample { .. } => Err(err("texture sampling not supported in WGSL lowering")),
+        IrOp::TexSample {
+            kind,
+            dst,
+            coord,
+            ddx,
+            ddy,
+            sampler,
+            modifiers,
+        } => {
+            let (coord_e, coord_ty) = src_expr(coord, f32_defs)?;
+            if coord_ty != ScalarTy::F32 {
+                return Err(err("texsample coordinate must be float"));
+            }
+
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("texsample destination must be float"));
+            }
+
+            let tex = format!("tex{sampler}");
+            let samp = format!("samp{sampler}");
+
+            let sample = match kind {
+                crate::sm3::ir::TexSampleKind::ImplicitLod { project } => {
+                    let uv = if *project {
+                        format!("(({coord_e}).xy / ({coord_e}).w)")
+                    } else {
+                        format!("({coord_e}).xy")
+                    };
+                    match stage {
+                        // Vertex stage has no implicit derivatives, so use an explicit LOD.
+                        ShaderStage::Vertex => {
+                            format!("textureSampleLevel({tex}, {samp}, {uv}, 0.0)")
+                        }
+                        ShaderStage::Pixel => format!("textureSample({tex}, {samp}, {uv})"),
+                    }
+                }
+                crate::sm3::ir::TexSampleKind::ExplicitLod => {
+                    let uv = format!("({coord_e}).xy");
+                    let lod = format!("({coord_e}).w");
+                    format!("textureSampleLevel({tex}, {samp}, {uv}, {lod})")
+                }
+                crate::sm3::ir::TexSampleKind::Grad => {
+                    if stage != ShaderStage::Pixel {
+                        return Err(err("texldd/Grad texture sampling is only supported in pixel shaders"));
+                    }
+                    let ddx = ddx.as_ref().ok_or_else(|| err("texldd missing ddx operand"))?;
+                    let ddy = ddy.as_ref().ok_or_else(|| err("texldd missing ddy operand"))?;
+                    let (ddx_e, ddx_ty) = src_expr(ddx, f32_defs)?;
+                    let (ddy_e, ddy_ty) = src_expr(ddy, f32_defs)?;
+                    if ddx_ty != ScalarTy::F32 || ddy_ty != ScalarTy::F32 {
+                        return Err(err("texldd gradients must be float"));
+                    }
+                    format!(
+                        "textureSampleGrad({tex}, {samp}, ({coord_e}).xy, ({ddx_e}).xy, ({ddy_e}).xy)"
+                    )
+                }
+            };
+
+            let sample = apply_float_result_modifiers(sample, modifiers)?;
+            emit_assign(dst, sample)
+        }
     }
 }
 
@@ -1060,10 +1140,11 @@ fn emit_block(
     wgsl: &mut String,
     block: &Block,
     indent: usize,
+    stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
 ) -> Result<(), WgslError> {
     for stmt in &block.stmts {
-        emit_stmt(wgsl, stmt, indent, f32_defs)?;
+        emit_stmt(wgsl, stmt, indent, stage, f32_defs)?;
     }
     Ok(())
 }
@@ -1072,6 +1153,7 @@ fn emit_stmt(
     wgsl: &mut String,
     stmt: &Stmt,
     indent: usize,
+    stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
 ) -> Result<(), WgslError> {
     let pad = "  ".repeat(indent);
@@ -1080,12 +1162,12 @@ fn emit_stmt(
             if let Some(pred) = &op_modifiers(op).predicate {
                 let pred_cond = predicate_expr(pred)?;
                 let _ = writeln!(wgsl, "{pad}if ({pred_cond}) {{");
-                let line = emit_op_line(op, f32_defs)?;
+                let line = emit_op_line(op, stage, f32_defs)?;
                 let inner_pad = "  ".repeat(indent + 1);
                 let _ = writeln!(wgsl, "{inner_pad}{line}");
                 let _ = writeln!(wgsl, "{pad}}}");
             } else {
-                let line = emit_op_line(op, f32_defs)?;
+                let line = emit_op_line(op, stage, f32_defs)?;
                 let _ = writeln!(wgsl, "{pad}{line}");
             }
         }
@@ -1096,10 +1178,10 @@ fn emit_stmt(
         } => {
             let cond = cond_expr(cond, f32_defs)?;
             let _ = writeln!(wgsl, "{pad}if ({cond}) {{");
-            emit_block(wgsl, then_block, indent + 1, f32_defs)?;
+            emit_block(wgsl, then_block, indent + 1, stage, f32_defs)?;
             if let Some(else_block) = else_block {
                 let _ = writeln!(wgsl, "{pad}}} else {{");
-                emit_block(wgsl, else_block, indent + 1, f32_defs)?;
+                emit_block(wgsl, else_block, indent + 1, stage, f32_defs)?;
             }
             let _ = writeln!(wgsl, "{pad}}}");
         }
@@ -1144,7 +1226,7 @@ fn emit_stmt(
                 "{pad2}if ((_aero_loop_step > 0 && {loop_reg}.x > _aero_loop_end) || (_aero_loop_step < 0 && {loop_reg}.x < _aero_loop_end)) {{ break; }}"
             );
 
-            emit_block(wgsl, body, indent + 2, f32_defs)?;
+            emit_block(wgsl, body, indent + 2, stage, f32_defs)?;
 
             let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + _aero_loop_step;");
             let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
@@ -1252,6 +1334,37 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
     // bindings stable across shader stages (VS=0..255, PS=256..511).
     wgsl.push_str("struct Constants { c: array<vec4<f32>, 512>, };\n");
     wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n");
+
+    let sampler_type_map: HashMap<u32, TextureType> = ir
+        .samplers
+        .iter()
+        .map(|decl| (decl.index, decl.texture_type))
+        .collect();
+
+    let mut sampler_bindings = HashMap::new();
+    for s in &usage.samplers {
+        let ty = sampler_type_map.get(s).copied().unwrap_or(TextureType::Texture2D);
+        if ty != TextureType::Texture2D {
+            return Err(err(format!(
+                "unsupported texture type for sampler s{s}: {ty:?} (only Texture2D is supported)"
+            )));
+        }
+        let tex_binding = 1u32 + s * 2;
+        let samp_binding = tex_binding + 1;
+        sampler_bindings.insert(*s, (tex_binding, samp_binding));
+        let _ = writeln!(
+            wgsl,
+            "@group(0) @binding({tex_binding}) var tex{s}: texture_2d<f32>;"
+        );
+        let _ = writeln!(
+            wgsl,
+            "@group(0) @binding({samp_binding}) var samp{s}: sampler;"
+        );
+    }
+    if !usage.samplers.is_empty() {
+        wgsl.push('\n');
+    }
+
     let const_base = match ir.version.stage {
         ShaderStage::Vertex => 0u32,
         ShaderStage::Pixel => 256u32,
@@ -1447,7 +1560,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             emit_const_decls(&mut wgsl);
 
             wgsl.push('\n');
-            emit_block(&mut wgsl, &ir.body, 1, &f32_defs)?;
+            emit_block(&mut wgsl, &ir.body, 1, ShaderStage::Vertex, &f32_defs)?;
 
             wgsl.push_str("  var out: VsOut;\n");
             wgsl.push_str("  out.pos = oPos;\n");
@@ -1583,7 +1696,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             emit_const_decls(&mut wgsl);
 
             wgsl.push('\n');
-            emit_block(&mut wgsl, &ir.body, 1, &f32_defs)?;
+            emit_block(&mut wgsl, &ir.body, 1, ShaderStage::Pixel, &f32_defs)?;
 
             wgsl.push_str("  var out: FsOut;\n");
             for idx in &color_outputs {
@@ -1593,5 +1706,9 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         }
     }
 
-    Ok(WgslOutput { wgsl, entry_point })
+    Ok(WgslOutput {
+        wgsl,
+        entry_point,
+        bind_group_layout: BindGroupLayout { sampler_bindings },
+    })
 }

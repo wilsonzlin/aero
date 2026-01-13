@@ -13,4 +13,4 @@ pub use ir::ShaderIr;
 pub use ir_builder::build_ir;
 pub use types::{ShaderStage, ShaderVersion};
 pub use verify::verify_ir;
-pub use wgsl::{generate_wgsl, WgslError, WgslOutput};
+pub use wgsl::{generate_wgsl, BindGroupLayout, WgslError, WgslOutput};
