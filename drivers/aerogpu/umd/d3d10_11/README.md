@@ -24,6 +24,7 @@ This implementation started as “minimum viable triangle”, but it now include
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are supported when the host ABI is new enough (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`)
 - Vertex/pixel shaders (DXBC payload passthrough)
 - Input layout + vertex/index buffers, primitive topology
+- VS/PS binding tables: constant buffers, shader-resource views, samplers
 - Render target + depth-stencil binding (currently RT0 + optional DSV), Clear, Draw/DrawIndexed
 - Viewport + scissor
 - Resource updates + readback:
