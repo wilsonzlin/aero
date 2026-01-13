@@ -298,6 +298,15 @@ Kernel drivers cannot run in CI, but parts of the virtio-snd protocol engines ca
 be compiled and unit tested on the host (descriptor/SG building, framing, and
 status/state handling).
 
+### Full host-buildable suite (recommended)
+
+Build the top-level CMake project at `drivers/windows7/virtio-snd/tests/`. This is the
+**superset** and includes:
+
+- `virtiosnd_sg_tests`
+- `virtiosnd_proto_tests` (integrated tests that compile a subset of `src/*.c`)
+- everything under `drivers/windows7/virtio-snd/tests/host/` (added as a subdirectory)
+
 From the repo root:
 
 ```sh
@@ -310,10 +319,42 @@ To force a clean rebuild:
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --clean
 ```
 
-The default build directory is `out/virtiosnd-host-tests`. Override with:
+The default build directory is `out/virtiosnd-tests`. Override with:
 
 ```sh
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --build-dir out/my-virtiosnd-tests
+```
+
+Or run directly:
+
+```sh
+cmake -S drivers/windows7/virtio-snd/tests -B out/virtiosnd-tests
+cmake --build out/virtiosnd-tests
+ctest --test-dir out/virtiosnd-tests --output-on-failure
+```
+
+### Subset: `tests/host` only (fast iteration)
+
+The `drivers/windows7/virtio-snd/tests/host/` project can still be built standalone when
+you only want that smaller subset of tests (it is also included when building the full
+suite above):
+
+```sh
+./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only
+```
+
+The default build directory for `--host-only` is `out/virtiosnd-host-tests`. Override with:
+
+```sh
+./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only --build-dir out/my-virtiosnd-host-tests
+```
+
+Or run directly:
+
+```sh
+cmake -S drivers/windows7/virtio-snd/tests/host -B out/virtiosnd-host-tests
+cmake --build out/virtiosnd-host-tests
+ctest --test-dir out/virtiosnd-host-tests --output-on-failure
 ```
 
 ## Release packaging (optional)

@@ -5,12 +5,13 @@ set -eu
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--clean] [--build-dir <dir>]
+Usage: $(basename "$0") [--host-only] [--clean] [--build-dir <dir>]
 
-Configure, build, and run the virtio-snd host protocol unit tests.
+Configure, build, and run the virtio-snd host-buildable unit tests.
 
 Defaults:
-  --build-dir out/virtiosnd-host-tests   (relative to the repo root)
+  (full suite)   --build-dir out/virtiosnd-tests        (relative to the repo root)
+  (--host-only)  --build-dir out/virtiosnd-host-tests   (relative to the repo root)
 
 Examples:
   # From the repo root:
@@ -19,16 +20,24 @@ Examples:
   # Clean rebuild:
   ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --clean
 
+  # Subset only (tests/host):
+  ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only
+
   # Custom build output directory:
   ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --build-dir out/my-tests
 EOF
 }
 
+host_only=0
 clean=0
 build_dir=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --host-only)
+            host_only=1
+            shift
+            ;;
         --clean)
             clean=1
             shift
@@ -66,10 +75,17 @@ fi
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
 virtiosnd_dir=$(CDPATH= cd "$script_dir/.." && pwd)
 repo_root=$(CDPATH= cd "$virtiosnd_dir/../../.." && pwd)
-src_dir=$virtiosnd_dir/tests/host
+
+if [ "$host_only" -eq 1 ]; then
+    src_dir=$virtiosnd_dir/tests/host
+    default_build_dir=$repo_root/out/virtiosnd-host-tests
+else
+    src_dir=$virtiosnd_dir/tests
+    default_build_dir=$repo_root/out/virtiosnd-tests
+fi
 
 if [ -z "$build_dir" ]; then
-    build_dir=$repo_root/out/virtiosnd-host-tests
+    build_dir=$default_build_dir
 else
     case "$build_dir" in
         /*) ;;
