@@ -96,14 +96,21 @@ Minimum supported commands:
   
   Useful for diagnosing mode/pitch mismatches (e.g. scanline bounds issues or a blank display even though fences advance).
 
-- `aerogpu_dbgctl --dump-scanout-bmp C:\scanout.bmp`  
-  Dumps the current scanout 0 framebuffer contents to an **uncompressed 32bpp BMP** using:
-  - `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` to discover width/height/format/pitch/fb_gpa
-  - `AEROGPU_ESCAPE_OP_READ_GPA` to read framebuffer bytes from guest physical memory
+- `aerogpu_dbgctl --dump-scanout-bmp <path>`  
+  Dumps the current scanout framebuffer to an **uncompressed 32bpp BMP** by:
+  1) querying scanout state via `AEROGPU_ESCAPE_OP_QUERY_SCANOUT`, then
+  2) reading framebuffer bytes from the reported `fb_gpa` via `AEROGPU_ESCAPE_OP_READ_GPA`, row-by-row (respecting pitch).
   
   Useful for diagnosing pitch/format/fb_gpa bugs **without screen capture / RDP**.
   Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
   `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+  
+  Supported formats include:
+  - `B8G8R8X8_UNORM` / `B8G8R8A8_UNORM`
+  - `R8G8B8X8_UNORM` / `R8G8B8A8_UNORM`
+  - `*_SRGB` variants of the above
+  - `B5G6R5_UNORM`
+  - `B5G5R5A1_UNORM`
 
 - `aerogpu_dbgctl --dump-scanout-png C:\scanout.png`  
   Same as `--dump-scanout-bmp`, but writes a PNG (RGBA8). The encoder uses stored (uncompressed) deflate blocks for simplicity,
@@ -129,13 +136,14 @@ Minimum supported commands:
   Same as `--dump-cursor-bmp`, but writes a PNG (RGBA8; preserves alpha).
 
 - `aerogpu_dbgctl --read-gpa GPA --size N [--out FILE] [--force]`  
+  `aerogpu_dbgctl --read-gpa GPA N [--out FILE] [--force]`  
   Reads a **bounded** slice of guest physical memory (GPA) from buffers that the KMD/device tracks (for example: scanout framebuffer,
   cursor framebuffer, ring buffers, and driver-owned DMA buffers for pending submissions).
   
   Notes:
-  - The KMD enforces a hard ABI maximum of `AEROGPU_DBGCTL_READ_GPA_MAX_BYTES` (currently 4096 bytes).
-  - dbgctl refuses reads larger than 256 bytes unless `--force` is specified.
-  - By default dbgctl prints a hex dump to stdout; use `--out` to also write raw bytes to a file.
+  - The KMD enforces a per-escape maximum of `AEROGPU_DBGCTL_READ_GPA_MAX_BYTES` (currently 4096 bytes); dbgctl chunks reads when `--out` is used.
+  - Without `--out`, dbgctl prints up to 256 bytes by default; use `--force` to print up to 4096 bytes.
+  - With `--out`, dbgctl writes the full requested range to a file.
 
 - `aerogpu_dbgctl --dump-ring`  
   Dumps ring head/tail + recent submissions. Fields include:
@@ -159,6 +167,8 @@ Minimum supported commands:
   On AGPU rings, if the submission has an allocation table (`alloc_table_gpa/alloc_table_size_bytes`), it is also dumped
   to `<cmd_path>.alloc_table.bin` (one file per dumped submission). Alternatively, for a single-submission dump
   (`--count 1`), you can override the alloc table output path via `--alloc-out <path>`.
+  If the selected submission has no alloc table (or the ring format does not expose it), and `--alloc-out` is provided,
+  dbgctl writes an empty file to `--alloc-out` for scripting convenience.
 
   dbgctl also writes a small metadata summary to `<cmd_path>.txt` (ring/fence/GPAs/sizes) when possible (one file per dumped submission).
   Note: this is appended to the full cmd path, so dumping `last_cmd_0.bin` produces `last_cmd_0.bin.txt`.
@@ -176,7 +186,6 @@ Minimum supported commands:
   - (when available) the newest descriptor's `fence` and `flags` for quick correlation with fence progression.
   
   Useful for diagnosing whether the emulator/backend is draining submissions (head catches up to tail) and whether the guest is over-submitting.
-
 - `aerogpu_dbgctl --dump-createalloc` *(aliases: `--dump-createallocation`, `--dump-allocations`)*  
   Dumps a small KMD-maintained ring buffer of recent `DxgkDdiCreateAllocation` events, including:
   - the incoming `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime
@@ -224,13 +233,23 @@ Minimum supported commands:
   If the escape transport fails (e.g. `D3DKMTEscape` / `D3DKMTCloseAdapter` failure), it returns **254**.
   If `--timeout-ms` is too small for all subtests to run, the KMD may fail with `TIME_BUDGET_EXHAUSTED`.
 
+### Security gating for `--read-gpa` (and dependent commands)
+
+`--read-gpa` and dependent commands (`--dump-scanout-bmp`, `--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`,
+`--dump-last-cmd`, `--dump-last-submit`) are intentionally **locked down**:
+
+- **Release builds:** require an explicit registry opt-in:
+  - `HKR\\Parameters\\EnableDbgctlReadGpa = 1` (REG_DWORD)
+- **DBG builds:** registry opt-in is not required.
+- In both cases, the caller must be privileged (**Administrator** and/or have **SeDebugPrivilege** enabled), otherwise the KMD returns `STATUS_ACCESS_DENIED`.
+
 ## Usage
 
 ```
 aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] [--json[=PATH]] [--pretty] \
                [--vblank-samples N] [--vblank-interval-ms N] \
                [--samples N] [--interval-ms N] \
-               [--size N] [--out FILE] [--count N] [--force] <command>
+               [--size N] [--out FILE] [--count N] [--force] [--cmd-out FILE] [--alloc-out FILE] <command>
 ```
 
 Examples:
@@ -252,7 +271,7 @@ aerogpu_dbgctl --query-scanout
 aerogpu_dbgctl --dump-scanout-bmp C:\scanout.bmp
 aerogpu_dbgctl --dump-scanout-png C:\scanout.png
 aerogpu_dbgctl --read-gpa 0x12340000 --size 256
-aerogpu_dbgctl --read-gpa 0x12340000 --size 4096 --force --out dump.bin
+aerogpu_dbgctl --read-gpa 0x12340000 65536 --out C:\dump.bin
 aerogpu_dbgctl --query-cursor
 aerogpu_dbgctl --dump-cursor-bmp C:\cursor.bmp
 aerogpu_dbgctl --dump-cursor-png C:\cursor.png
@@ -363,7 +382,7 @@ This tool currently supports JSON output for snapshot-style commands and other b
 - `--dump-cursor-bmp`, `--dump-cursor-png`
 - `--dump-ring`
 - `--watch-ring`
-- `--dump-last-cmd`
+- `--dump-last-submit` (alias: `--dump-last-cmd`)
 - `--dump-createalloc` (still supports `--csv`)
 - `--dump-vblank`
 - `--wait-vblank`
@@ -422,8 +441,8 @@ Escape ops used:
 - `AEROGPU_ESCAPE_OP_QUERY_ERROR` → reported inline by `--status` and `--query-perf` (last latched device error, if supported)
 - `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` → `--query-scanout`, `--dump-scanout-bmp`, `--dump-scanout-png`
 - `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`, `--dump-cursor-bmp`, `--dump-cursor-png`
-- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`, `--watch-ring`, `--dump-last-cmd`
-- `AEROGPU_ESCAPE_OP_READ_GPA` → `--read-gpa`, `--dump-scanout-bmp`, `--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`, `--dump-last-cmd`
+- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`, `--watch-ring`, `--dump-last-cmd`, `--dump-last-submit`
+- `AEROGPU_ESCAPE_OP_READ_GPA` → `--read-gpa`, `--dump-scanout-bmp`, `--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`, `--dump-last-cmd`, `--dump-last-submit`
 - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` → `--dump-createalloc`
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
 - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` → `--map-shared-handle`

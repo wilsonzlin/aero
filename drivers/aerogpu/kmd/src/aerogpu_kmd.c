@@ -10,6 +10,17 @@
 
 #define AEROGPU_VBLANK_PERIOD_NS_DEFAULT 16666667u
 
+/* ---- Dbgctl READ_GPA security gating ------------------------------------ */
+
+/*
+ * These functions are exported by ntoskrnl but are not declared in all header
+ * sets we build against (the AeroGPU Win7 KMD is built with a newer WDK).
+ *
+ * Declare minimal prototypes to avoid pulling in additional headers.
+ */
+extern BOOLEAN NTAPI SeSinglePrivilegeCheck(_In_ LUID PrivilegeValue, _In_ KPROCESSOR_MODE PreviousMode);
+extern BOOLEAN NTAPI SeTokenIsAdmin(_In_ PACCESS_TOKEN Token);
+
 /*
  * AeroGPU exposes a single system-memory-backed segment (Aperture + CpuVisible).
  *
@@ -3695,10 +3706,10 @@ static BOOLEAN AeroGpuTryQueryRegistryDword(_In_ HANDLE Key, _In_ PCWSTR ValueNa
 }
 
 static BOOLEAN AeroGpuTryReadRegistryDword(_In_ PDEVICE_OBJECT PhysicalDeviceObject,
-                                          _In_ ULONG RootKeyType,
-                                          _In_opt_ PCWSTR SubKeyNameW,
-                                          _In_ PCWSTR ValueNameW,
-                                          _Out_ ULONG* ValueOut)
+                                           _In_ ULONG RootKeyType,
+                                           _In_opt_ PCWSTR SubKeyNameW,
+                                           _In_ PCWSTR ValueNameW,
+                                           _Out_ ULONG* ValueOut)
 {
     if (!PhysicalDeviceObject || !ValueNameW || !ValueOut) {
         return FALSE;
@@ -3728,6 +3739,134 @@ static BOOLEAN AeroGpuTryReadRegistryDword(_In_ PDEVICE_OBJECT PhysicalDeviceObj
 
     ZwClose(rootKey);
     return ok;
+}
+
+/* ---- dbgctl READ_GPA support --------------------------------------------- */
+
+/*
+ * READ_GPA is intentionally constrained:
+ * - PASSIVE_LEVEL only (registry + mapping APIs)
+ * - strict size caps
+ * - physical range validation (RAM only)
+ * - security gated (DBG build or explicit registry opt-in + privileged caller)
+ *
+ * This is a debugging escape; treat it as a sharp tool.
+ */
+#define AEROGPU_DBGCTL_READ_GPA_HARD_MAX_BYTES (64u * 1024u)
+
+static BOOLEAN AeroGpuDbgctlReadGpaRegistryEnabled(_In_opt_ const AEROGPU_ADAPTER* Adapter)
+{
+#if DBG
+    UNREFERENCED_PARAMETER(Adapter);
+    return TRUE;
+#else
+    if (!Adapter || !Adapter->PhysicalDeviceObject) {
+        return FALSE;
+    }
+
+    ULONG enabled = 0;
+    if (AeroGpuTryReadRegistryDword(Adapter->PhysicalDeviceObject, PLUGPLAY_REGKEY_DRIVER, L"Parameters", L"EnableDbgctlReadGpa", &enabled) ||
+        AeroGpuTryReadRegistryDword(Adapter->PhysicalDeviceObject, PLUGPLAY_REGKEY_DEVICE, L"Parameters", L"EnableDbgctlReadGpa", &enabled)) {
+        return enabled ? TRUE : FALSE;
+    }
+
+    return FALSE;
+#endif
+}
+
+static BOOLEAN AeroGpuDbgctlCallerIsAdminOrSeDebug(_In_ KPROCESSOR_MODE PreviousMode)
+{
+    /* Prefer an explicit group check for usability (SeDebugPrivilege is often disabled by default). */
+    BOOLEAN isAdmin = FALSE;
+    PACCESS_TOKEN token = PsReferencePrimaryToken(PsGetCurrentProcess());
+    if (token) {
+        isAdmin = SeTokenIsAdmin(token) ? TRUE : FALSE;
+        ObDereferenceObject(token);
+    }
+
+    LUID debugLuid;
+    debugLuid.LowPart = SE_DEBUG_PRIVILEGE;
+    debugLuid.HighPart = 0;
+    const BOOLEAN hasDebugPriv = SeSinglePrivilegeCheck(debugLuid, PreviousMode) ? TRUE : FALSE;
+
+    return (isAdmin || hasDebugPriv) ? TRUE : FALSE;
+}
+
+static BOOLEAN AeroGpuDbgctlValidateGpaRangeIsRam(_In_ ULONGLONG Gpa, _In_ ULONG SizeBytes)
+{
+    if (SizeBytes == 0) {
+        return TRUE;
+    }
+
+    const ULONGLONG end = Gpa + (ULONGLONG)SizeBytes;
+    if (end < Gpa) {
+        return FALSE;
+    }
+
+    PPHYSICAL_MEMORY_RANGE ranges = MmGetPhysicalMemoryRanges();
+    if (!ranges) {
+        return FALSE;
+    }
+
+    BOOLEAN ok = FALSE;
+    for (PPHYSICAL_MEMORY_RANGE r = ranges; r->NumberOfBytes.QuadPart != 0; ++r) {
+        const ULONGLONG base = (ULONGLONG)r->BaseAddress.QuadPart;
+        const ULONGLONG len = (ULONGLONG)r->NumberOfBytes.QuadPart;
+        const ULONGLONG limit = base + len;
+        if (limit < base) {
+            continue;
+        }
+        if (Gpa >= base && end <= limit) {
+            ok = TRUE;
+            break;
+        }
+    }
+
+    ExFreePool(ranges);
+    return ok;
+}
+
+static NTSTATUS AeroGpuDbgctlReadGpaBytes(_In_ ULONGLONG Gpa, _In_ ULONG SizeBytes, _Out_writes_bytes_(SizeBytes) UCHAR* Dst)
+{
+    if (!Dst) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (SizeBytes == 0) {
+        return STATUS_SUCCESS;
+    }
+
+    const ULONGLONG pageMask = (ULONGLONG)PAGE_SIZE - 1ull;
+    const ULONGLONG base = Gpa & ~pageMask;
+    const ULONG offset = (ULONG)(Gpa - base);
+
+    const ULONGLONG mapSize64 = (ULONGLONG)offset + (ULONGLONG)SizeBytes;
+    if (mapSize64 < (ULONGLONG)offset) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const ULONGLONG aligned64 = (mapSize64 + pageMask) & ~pageMask;
+    if (aligned64 > 0xFFFFFFFFull) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const SIZE_T mapSize = (SIZE_T)aligned64;
+    PHYSICAL_ADDRESS pa;
+    pa.QuadPart = (LONGLONG)base;
+
+    PVOID map = MmMapIoSpace(pa, mapSize, MmCached);
+    if (!map) {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    NTSTATUS st = STATUS_SUCCESS;
+    __try {
+        RtlCopyMemory(Dst, (PUCHAR)map + offset, SizeBytes);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        st = STATUS_UNSUCCESSFUL;
+    }
+
+    MmUnmapIoSpace(map, mapSize);
+    return st;
 }
 
 static ULONGLONG AeroGpuGetNonLocalMemorySizeBytes(_In_ const AEROGPU_ADAPTER* Adapter)
@@ -10180,10 +10319,19 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
     }
 
     if (hdr->op == AEROGPU_ESCAPE_OP_READ_GPA) {
-        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_read_gpa_inout)) {
-            return STATUS_BUFFER_TOO_SMALL;
+        if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+            return STATUS_INVALID_DEVICE_STATE;
         }
+
+        if (!AeroGpuDbgctlReadGpaRegistryEnabled(adapter) ||
+            !AeroGpuDbgctlCallerIsAdminOrSeDebug(ExGetPreviousMode())) {
+            return STATUS_ACCESS_DENIED;
+        }
+
         aerogpu_escape_read_gpa_inout* io = (aerogpu_escape_read_gpa_inout*)pEscape->pPrivateDriverData;
+        if (pEscape->PrivateDriverDataSize != sizeof(*io)) {
+            return STATUS_INVALID_PARAMETER;
+        }
 
         io->hdr.version = AEROGPU_ESCAPE_VERSION;
         io->hdr.op = AEROGPU_ESCAPE_OP_READ_GPA;
@@ -10343,6 +10491,88 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
         }
 
+        /*
+         * Recent ring descriptor references (AGPU): allow reads within cmd/alloc buffers referenced by the
+         * most recent ring descriptors. This makes it easier to dump the most recent submission even on
+         * fast devices where the pending submission list may already have been retired.
+         */
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader && adapter->RingVa && adapter->RingEntryCount) {
+            ULONGLONG allowBase = 0;
+            ULONGLONG allowSize = 0;
+            BOOLEAN found = FALSE;
+
+            KIRQL ringIrql;
+            KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+
+            ULONG tail = adapter->RingHeader->tail;
+            ULONG window = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+            if (window > adapter->RingEntryCount) {
+                window = adapter->RingEntryCount;
+            }
+            if (tail < window) {
+                window = tail;
+            }
+
+            struct aerogpu_submit_desc* ring =
+                (struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
+
+            for (ULONG i = 0; i < window && !found; ++i) {
+                const ULONG ringIndex = (tail - 1u - i) & (adapter->RingEntryCount - 1u);
+                const struct aerogpu_submit_desc entry = ring[ringIndex];
+
+                struct range {
+                    ULONGLONG Base;
+                    ULONGLONG Size;
+                } ranges[] = {
+                    {(ULONGLONG)entry.cmd_gpa, (ULONGLONG)entry.cmd_size_bytes},
+                    {(ULONGLONG)entry.alloc_table_gpa, (ULONGLONG)entry.alloc_table_size_bytes},
+                };
+
+                for (UINT j = 0; j < (UINT)(sizeof(ranges) / sizeof(ranges[0])); ++j) {
+                    const ULONGLONG base = ranges[j].Base;
+                    const ULONGLONG size = ranges[j].Size;
+                    if (base == 0 || size == 0) {
+                        continue;
+                    }
+                    if (gpa < base) {
+                        continue;
+                    }
+                    const ULONGLONG off = gpa - base;
+                    if (off >= size) {
+                        continue;
+                    }
+                    allowBase = base;
+                    allowSize = size;
+                    found = TRUE;
+                    break;
+                }
+            }
+
+            KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+
+            if (found) {
+                const ULONGLONG off = gpa - allowBase;
+                const ULONGLONG maxBytesU64 = allowSize - off;
+                ULONG bytesToCopy = (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
+                NTSTATUS opSt = (bytesToCopy == reqBytes) ? STATUS_SUCCESS : STATUS_PARTIAL_COPY;
+
+                if (!AeroGpuDbgctlValidateGpaRangeIsRam(gpa, bytesToCopy)) {
+                    opSt = STATUS_INVALID_PARAMETER;
+                    bytesToCopy = 0;
+                } else {
+                    const NTSTATUS readSt = AeroGpuDbgctlReadGpaBytes(gpa, bytesToCopy, (UCHAR*)io->data);
+                    if (!NT_SUCCESS(readSt)) {
+                        opSt = readSt;
+                        bytesToCopy = 0;
+                    }
+                }
+
+                io->status = (uint32_t)opSt;
+                io->bytes_copied = (uint32_t)bytesToCopy;
+                return STATUS_SUCCESS;
+            }
+        }
+
         /* Scanout framebuffer (best-effort): allow reads within the current SCANOUT0 framebuffer region. */
         if (adapter->Bar0) {
             ULONGLONG fbGpa = 0;
@@ -10394,6 +10624,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 const ULONG bytesToCopy =
                     (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
                 NTSTATUS opSt = (bytesToCopy == reqBytes) ? STATUS_SUCCESS : STATUS_PARTIAL_COPY;
+
+                if (!AeroGpuDbgctlValidateGpaRangeIsRam(gpa, bytesToCopy)) {
+                    io->status = (uint32_t)STATUS_INVALID_PARAMETER;
+                    io->bytes_copied = 0;
+                    return STATUS_SUCCESS;
+                }
 
                 ULONG copied = 0;
                 ULONGLONG cur = gpa;

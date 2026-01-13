@@ -36,7 +36,11 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_QUERY_CURSOR 11u
 /* Query performance/health counters snapshot. */
 #define AEROGPU_ESCAPE_OP_QUERY_PERF 12u
-/* Debug-only: read guest physical memory. */
+/*
+ * Debug-only, security-gated guest physical memory read.
+ *
+ * See `aerogpu_escape_read_gpa_inout`.
+ */
 #define AEROGPU_ESCAPE_OP_READ_GPA 13u
 /* Query most recent device error state (MMIO error registers when available). */
 #define AEROGPU_ESCAPE_OP_QUERY_ERROR 14u
