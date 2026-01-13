@@ -307,8 +307,9 @@ Not yet implemented (examples; expected by some fixed-function apps):
 
 Implementation notes (bring-up):
 
-- The fallback path binds a tiny built-in `vs_2_0`/`ps_2_0` pair and converts `POSITIONT` (screen-space `XYZRHW`)
-  vertices to clip-space on the CPU.
+- For `POSITIONT`/`XYZRHW` vertices, the fallback path converts screen-space `XYZRHW` to clip-space on the CPU
+  (`convert_xyzrhw_to_clipspace_locked()` in `src/aerogpu_d3d9_driver.cpp`) and then draws using a tiny built-in
+  `vs_2_0`/`ps_2_0` pair.
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
   for bring-up).
 - Patch rendering (`DrawRectPatch` / `DrawTriPatch`) is supported for the bring-up subset of **cubic Bezier patches**:
@@ -377,6 +378,11 @@ Patch rendering DDIs (`pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch`)
 
 - `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch`
 
+Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
+
+- `device_draw_rect_patch()` / `device_draw_tri_patch()` / `device_delete_patch()`
+- CPU tessellation helpers (Bezier cubic): `tessellate_rect_patch_cubic()` / `tessellate_tri_patch_cubic()`
+
 Limitations:
 
 - Only the fixed-function fallback path is supported (no user shaders).
@@ -387,6 +393,8 @@ Limitations:
 `pfnProcessVertices` is implemented and is **not** treated as a stub. The current implementation is a conservative CPU-side
 buffer-to-buffer copy from the active stream 0 vertex buffer into the destination buffer, with stride handling and the
 same “upload/dirty-range” notifications used by `Unlock`.
+
+Code anchor: `device_process_vertices()` in `src/aerogpu_d3d9_driver.cpp`.
 
 Limitations:
 
