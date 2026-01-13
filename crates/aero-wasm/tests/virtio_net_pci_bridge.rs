@@ -10,7 +10,9 @@ use aero_virtio::pci::{
 };
 use aero_virtio::queue::VIRTQ_DESC_F_NEXT;
 use aero_wasm::VirtioNetPciBridge;
-use js_sys::{SharedArrayBuffer, Uint8Array};
+use js_sys::{BigInt, Reflect, SharedArrayBuffer, Uint8Array};
+use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::JsValue;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
@@ -41,6 +43,13 @@ fn write_u16(mem: &mut [u8], addr: u32, value: u16) {
 fn read_u16(mem: &[u8], addr: u32) -> u16 {
     let addr = addr as usize;
     u16::from_le_bytes([mem[addr], mem[addr + 1]])
+}
+
+fn get_bigint(obj: &JsValue, key: &str) -> BigInt {
+    Reflect::get(obj, &JsValue::from_str(key))
+        .expect("Reflect::get")
+        .dyn_into::<BigInt>()
+        .expect("expected BigInt")
 }
 
 fn write_u32(mem: &mut [u8], addr: u32, value: u32) {
@@ -309,4 +318,20 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
         !bridge.irq_asserted(),
         "irq should deassert after ISR read-to-clear"
     );
+
+    // Ring backend stats should be visible for debugging.
+    let stats = bridge.virtio_net_stats();
+    assert!(!stats.is_null(), "expected stats object, got null");
+    let tx_pushed = get_bigint(&stats, "tx_pushed_frames")
+        .to_string(10)
+        .unwrap()
+        .as_string()
+        .unwrap();
+    assert_eq!(tx_pushed, "1");
+    let rx_popped = get_bigint(&stats, "rx_popped_frames")
+        .to_string(10)
+        .unwrap()
+        .as_string()
+        .unwrap();
+    assert_eq!(rx_popped, "1");
 }

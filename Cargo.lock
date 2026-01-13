@@ -762,6 +762,7 @@ dependencies = [
  "aero-io-snapshot",
  "aero-ipc",
  "aero-jit-x86",
+ "aero-l2-protocol",
  "aero-machine",
  "aero-mmu",
  "aero-net-backend",

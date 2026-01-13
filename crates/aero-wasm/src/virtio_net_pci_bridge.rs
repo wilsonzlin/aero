@@ -21,17 +21,21 @@
 
 use wasm_bindgen::prelude::*;
 
-use js_sys::SharedArrayBuffer;
+use js_sys::{BigInt, Object, Reflect, SharedArrayBuffer};
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use aero_ipc::layout::io_ipc_queue_kind::{NET_RX, NET_TX};
 use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
+use aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD;
+use aero_net_backend::L2TunnelRingBackend;
 use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::net::{NetBackend, VirtioNet};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
 use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
+
+type NetRingBackend = L2TunnelRingBackend<SharedRingBuffer, SharedRingBuffer>;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
@@ -154,25 +158,6 @@ impl GuestMemory for WasmGuestMemory {
                 Err(GuestMemoryError::OutOfBounds { addr, len })
             }
         }
-    }
-}
-
-struct AipcNetBackend {
-    net_tx: SharedRingBuffer,
-    net_rx: SharedRingBuffer,
-}
-
-impl NetBackend for AipcNetBackend {
-    fn transmit(&mut self, packet: Vec<u8>) {
-        // Best-effort: drop when full / oversized.
-        let _ = self.net_tx.try_push(&packet);
-    }
-
-    fn poll_receive(&mut self) -> Option<Vec<u8>> {
-        let record = self.net_rx.try_pop()?;
-        let mut out = vec![0u8; record.length() as usize];
-        record.copy_to(&mut out);
-        Some(out)
     }
 }
 
@@ -307,7 +292,11 @@ impl VirtioNetPciBridge {
         let net_tx = open_ring_by_kind(io_ipc_sab.clone(), NET_TX, 0)?;
         let net_rx = open_ring_by_kind(io_ipc_sab, NET_RX, 0)?;
 
-        let backend = AipcNetBackend { net_tx, net_rx };
+        let backend = NetRingBackend::with_max_frame_bytes(
+            net_tx,
+            net_rx,
+            L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
+        );
 
         // Deterministic locally-administered MAC.
         let net = VirtioNet::new(backend, [0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
@@ -446,5 +435,51 @@ impl VirtioNetPciBridge {
     /// Whether the PCI INTx line should be raised.
     pub fn irq_asserted(&self) -> bool {
         self.irq_asserted.get()
+    }
+
+    /// Best-effort stats for the underlying `NET_TX`/`NET_RX` ring backend (or `null`).
+    ///
+    /// Values are exposed as JS `BigInt` so callers do not lose precision for long-running VMs.
+    pub fn virtio_net_stats(&mut self) -> JsValue {
+        let Some(dev) = self.dev.device_mut::<VirtioNet<NetRingBackend>>() else {
+            return JsValue::NULL;
+        };
+        let Some(stats) = dev.backend_mut().l2_ring_stats() else {
+            return JsValue::NULL;
+        };
+
+        let obj = Object::new();
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("tx_pushed_frames"),
+            &BigInt::from(stats.tx_pushed_frames).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("tx_dropped_oversize"),
+            &BigInt::from(stats.tx_dropped_oversize).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("tx_dropped_full"),
+            &BigInt::from(stats.tx_dropped_full).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_popped_frames"),
+            &BigInt::from(stats.rx_popped_frames).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_dropped_oversize"),
+            &BigInt::from(stats.rx_dropped_oversize).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_corrupt"),
+            &BigInt::from(stats.rx_corrupt).into(),
+        );
+
+        obj.into()
     }
 }
