@@ -329,8 +329,8 @@ describe("InputCapture preventDefault policy", () => {
       const downPreventDefault = vi.fn();
       const downStopPropagation = vi.fn();
       (capture as any).handleMouseDown({
-        // Not in our supported 0..4 range.
-        button: 5,
+        // Not in our supported 0..7 range.
+        button: 8,
         preventDefault: downPreventDefault,
         stopPropagation: downStopPropagation,
         timeStamp: 0,
@@ -345,7 +345,7 @@ describe("InputCapture preventDefault policy", () => {
       const upPreventDefault = vi.fn();
       const upStopPropagation = vi.fn();
       (capture as any).handleMouseUp({
-        button: 5,
+        button: 8,
         preventDefault: upPreventDefault,
         stopPropagation: upStopPropagation,
         timeStamp: 1,
@@ -356,6 +356,43 @@ describe("InputCapture preventDefault policy", () => {
       expect(upStopPropagation).toHaveBeenCalledTimes(1);
       expect((capture as any).mouseButtons).toBe(0);
       expect((capture as any).queue.size).toBe(0);
+    });
+  });
+
+  it("maps additional mouse buttons (5/6/7) into the MouseButtons bitmask", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+
+      (capture as any).hasFocus = true;
+
+      (capture as any).handleMouseDown({
+        button: 5,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        timeStamp: 0,
+        target: canvas,
+      } as unknown as MouseEvent);
+
+      expect((capture as any).mouseButtons).toBe(0x20);
+      expect((capture as any).queue.size).toBe(1);
+
+      (capture as any).handleMouseUp({
+        button: 5,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        timeStamp: 1,
+        target: canvas,
+      } as unknown as MouseEvent);
+
+      expect((capture as any).mouseButtons).toBe(0);
+      expect((capture as any).queue.size).toBe(2);
     });
   });
 });

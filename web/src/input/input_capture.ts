@@ -987,9 +987,17 @@ function pushPackedBytes(queue: InputEventQueue, timestampUs: number, bytes: rea
 }
 
 function buttonToMask(button: number): number {
-  // Track the DOM `MouseEvent.buttons` bitfield for the common 5 buttons:
-  // - left/right/middle (classic)
-  // - back/forward (aka side/extra buttons)
+  // Track the DOM `MouseEvent.buttons` bitfield for up to 8 mouse buttons.
+  //
+  // DOM `MouseEvent.button` uses this numbering:
+  // - 0 primary/left
+  // - 1 auxiliary/middle
+  // - 2 secondary/right
+  // - 3 back
+  // - 4 forward
+  //
+  // Some browsers/devices may surface additional buttons as 5/6/7; map those to bits 5..7 so
+  // virtio-input can forward them as BTN_FORWARD/BTN_BACK/BTN_TASK (Linux input ABI).
   //
   // Note: the PS/2 mouse backend only transmits back/forward when the guest has
   // enabled a 5-button PS/2 mouse variant (IntelliMouse Explorer, device ID 0x04).
@@ -1006,6 +1014,12 @@ function buttonToMask(button: number): number {
       return 8;
     case 4:
       return 16;
+    case 5:
+      return 32;
+    case 6:
+      return 64;
+    case 7:
+      return 128;
     default:
       return 0;
   }
