@@ -1,65 +1,13 @@
-use crate::{PcPlatform, PciIoBarHandler, PciIoBarRouter, SharedPciIoBarMap};
+use crate::{PcPlatform, SharedPciIoBarRouter};
 use aero_cpu_core::interrupts::InterruptController as CpuInterruptController;
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::Exception;
-use aero_devices::pci::PciBdf;
 use aero_mmu::{AccessType, Mmu, TranslateFault};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, SharedPlatformInterrupts,
 };
 
 const PAGE_SIZE: u64 = 4096;
-
-struct PciIoBarFromPortIoDevice {
-    key: (PciBdf, u8),
-    handlers: SharedPciIoBarMap,
-}
-
-impl PciIoBarFromPortIoDevice {
-    fn read_all_ones(size: usize) -> u32 {
-        match size {
-            0 => 0,
-            1 => 0xFF,
-            2 => 0xFFFF,
-            4 => 0xFFFF_FFFF,
-            _ => 0xFFFF_FFFF,
-        }
-    }
-}
-
-impl PciIoBarHandler for PciIoBarFromPortIoDevice {
-    fn io_read(&mut self, offset: u64, size: usize) -> u32 {
-        let size_u8 = match size {
-            1 | 2 | 4 => size as u8,
-            _ => return Self::read_all_ones(size),
-        };
-        let Ok(offset_u16) = u16::try_from(offset) else {
-            return Self::read_all_ones(size);
-        };
-
-        let mut handlers = self.handlers.borrow_mut();
-        let Some(handler) = handlers.get_mut(&self.key) else {
-            return Self::read_all_ones(size);
-        };
-        handler.read(offset_u16, size_u8)
-    }
-
-    fn io_write(&mut self, offset: u64, size: usize, value: u32) {
-        let size_u8 = match size {
-            1 | 2 | 4 => size as u8,
-            _ => return,
-        };
-        let Ok(offset_u16) = u16::try_from(offset) else {
-            return;
-        };
-
-        let mut handlers = self.handlers.borrow_mut();
-        let Some(handler) = handlers.get_mut(&self.key) else {
-            return;
-        };
-        handler.write(offset_u16, size_u8, value);
-    }
-}
 
 pub struct PcInterruptController {
     interrupts: SharedPlatformInterrupts,
@@ -85,28 +33,12 @@ pub struct PcCpuBus {
     mmu: Mmu,
     cpl: u8,
     write_chunks: Vec<(u64, usize, usize)>,
-    pci_io_router: PciIoBarRouter,
+    pci_io_router: SharedPciIoBarRouter,
 }
 
 impl PcCpuBus {
     pub fn new(platform: PcPlatform) -> Self {
-        let mut pci_io_router = PciIoBarRouter::new(platform.pci_cfg.clone());
-
-        // Register all PCI I/O BAR handlers defined by the platform. Sort for deterministic
-        // dispatch order when devices overlap (misconfigured guests).
-        let pci_io_bars = platform.pci_io_bars.clone();
-        let mut keys: Vec<(PciBdf, u8)> = pci_io_bars.borrow().keys().copied().collect();
-        keys.sort();
-        for (bdf, bar) in keys {
-            pci_io_router.register_handler(
-                bdf,
-                bar,
-                PciIoBarFromPortIoDevice {
-                    key: (bdf, bar),
-                    handlers: pci_io_bars.clone(),
-                },
-            );
-        }
+        let pci_io_router = platform.pci_io_router.clone();
 
         Self {
             platform,
@@ -578,7 +510,11 @@ impl CpuBus for PcCpuBus {
             _ => return Err(Exception::InvalidOpcode),
         };
 
-        if let Some(v) = self.pci_io_router.dispatch_read(port, size_usize) {
+        if let Some(v) = self
+            .pci_io_router
+            .borrow_mut()
+            .dispatch_read(port, size_usize)
+        {
             return Ok(u64::from(v));
         }
 
@@ -593,6 +529,7 @@ impl CpuBus for PcCpuBus {
 
         if self
             .pci_io_router
+            .borrow_mut()
             .dispatch_write(port, size_usize, val as u32)
         {
             return Ok(());

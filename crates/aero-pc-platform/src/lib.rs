@@ -42,7 +42,6 @@ use aero_virtio::memory::{
 use aero_virtio::pci::{InterruptSink as VirtioInterruptSink, VirtioPciDevice};
 use memory::{DenseMemory, GuestMemory, MmioHandler};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 mod cpu_core;
@@ -403,9 +402,7 @@ impl PortIoDevice for PcIdePort {
     }
 }
 
-/// Bus Master IDE (BAR4) handler registered via the platform's `PciIoWindow`.
-///
-/// The `port` argument is interpreted as the device-relative offset within BAR4.
+/// Bus Master IDE (BAR4) handler registered with the platform's [`PciIoBarRouter`].
 #[derive(Clone)]
 struct PcIdeBusMasterBar {
     pci_cfg: SharedPciConfigPorts,
@@ -414,6 +411,16 @@ struct PcIdeBusMasterBar {
 }
 
 impl PcIdeBusMasterBar {
+    fn read_all_ones(size: usize) -> u32 {
+        match size {
+            0 => 0,
+            1 => 0xFF,
+            2 => 0xFFFF,
+            4 => 0xFFFF_FFFF,
+            _ => 0xFFFF_FFFF,
+        }
+    }
+
     fn sync_config(&self) {
         let (command, bar4_base) = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
@@ -435,35 +442,46 @@ impl PcIdeBusMasterBar {
     }
 }
 
-impl PortIoDevice for PcIdeBusMasterBar {
-    fn read(&mut self, port: u16, size: u8) -> u32 {
-        // `port` is the BAR-relative offset.
-        self.sync_config();
+impl PciIoBarHandler for PcIdeBusMasterBar {
+    fn io_read(&mut self, offset: u64, size: usize) -> u32 {
+        let size_u8 = match size {
+            1 | 2 | 4 => size as u8,
+            _ => return Self::read_all_ones(size),
+        };
+        let Ok(offset_u16) = u16::try_from(offset) else {
+            return Self::read_all_ones(size);
+        };
 
+        self.sync_config();
         let base = { self.ide.borrow().bus_master_base() };
-        let abs_port = base.wrapping_add(port);
-        self.ide.borrow_mut().io_read(abs_port, size)
+        let abs_port = base.wrapping_add(offset_u16);
+        self.ide.borrow_mut().io_read(abs_port, size_u8)
     }
 
-    fn write(&mut self, port: u16, size: u8, value: u32) {
-        self.sync_config();
+    fn io_write(&mut self, offset: u64, size: usize, value: u32) {
+        let size_u8 = match size {
+            1 | 2 | 4 => size as u8,
+            _ => return,
+        };
+        let Ok(offset_u16) = u16::try_from(offset) else {
+            return;
+        };
 
+        self.sync_config();
         let base = { self.ide.borrow().bus_master_base() };
-        let abs_port = base.wrapping_add(port);
-        self.ide.borrow_mut().io_write(abs_port, size, value);
+        let abs_port = base.wrapping_add(offset_u16);
+        self.ide.borrow_mut().io_write(abs_port, size_u8, value);
     }
 }
 
-/// UHCI (BAR4) handler registered via the platform's `PciIoWindow`.
-///
-/// The `port` argument is interpreted as the device-relative offset within BAR4.
+/// UHCI (BAR4) I/O handler registered with the platform's [`PciIoBarRouter`].
 #[derive(Clone)]
 struct PcUhciIoBar {
     uhci: Rc<RefCell<UhciPciDevice>>,
 }
 
 impl PcUhciIoBar {
-    fn read_all_ones(size: u8) -> u32 {
+    fn read_all_ones(size: usize) -> u32 {
         match size {
             0 => 0,
             1 => 0xFF,
@@ -474,24 +492,33 @@ impl PcUhciIoBar {
     }
 }
 
-impl PortIoDevice for PcUhciIoBar {
-    fn read(&mut self, port: u16, size: u8) -> u32 {
+impl PciIoBarHandler for PcUhciIoBar {
+    fn io_read(&mut self, offset: u64, size: usize) -> u32 {
         let size = match size {
-            1 | 2 | 4 => size as usize,
+            1 | 2 | 4 => size,
             _ => return Self::read_all_ones(size),
         };
-        self.uhci.borrow_mut().controller_mut().io_read(port, size)
-    }
-
-    fn write(&mut self, port: u16, size: u8, value: u32) {
-        let size = match size {
-            1 | 2 | 4 => size as usize,
-            _ => return,
+        let Ok(offset_u16) = u16::try_from(offset) else {
+            return Self::read_all_ones(size);
         };
         self.uhci
             .borrow_mut()
             .controller_mut()
-            .io_write(port, size, value);
+            .io_read(offset_u16, size)
+    }
+
+    fn io_write(&mut self, offset: u64, size: usize, value: u32) {
+        let size = match size {
+            1 | 2 | 4 => size,
+            _ => return,
+        };
+        let Ok(offset_u16) = u16::try_from(offset) else {
+            return;
+        };
+        self.uhci
+            .borrow_mut()
+            .controller_mut()
+            .io_write(offset_u16, size, value);
     }
 }
 
@@ -501,7 +528,7 @@ struct E1000PciIoBar {
 }
 
 impl E1000PciIoBar {
-    fn read_all_ones(size: u8) -> u32 {
+    fn read_all_ones(size: usize) -> u32 {
         match size {
             0 => 0,
             1 => 0xFF,
@@ -512,30 +539,34 @@ impl E1000PciIoBar {
     }
 }
 
-impl PortIoDevice for E1000PciIoBar {
-    fn read(&mut self, port: u16, size: u8) -> u32 {
+impl PciIoBarHandler for E1000PciIoBar {
+    fn io_read(&mut self, offset: u64, size: usize) -> u32 {
         let size = match size {
-            1 | 2 | 4 => size as usize,
+            1 | 2 | 4 => size,
             _ => return Self::read_all_ones(size),
         };
-        self.e1000.borrow_mut().io_read(u32::from(port), size)
+        let Ok(offset_u32) = u32::try_from(offset) else {
+            return Self::read_all_ones(size);
+        };
+
+        self.e1000.borrow_mut().io_read(offset_u32, size)
     }
 
-    fn write(&mut self, port: u16, size: u8, value: u32) {
+    fn io_write(&mut self, offset: u64, size: usize, value: u32) {
         let size = match size {
-            1 | 2 | 4 => size as usize,
+            1 | 2 | 4 => size,
             _ => return,
         };
-        self.e1000
-            .borrow_mut()
-            .io_write_reg(u32::from(port), size, value);
+        let Ok(offset_u32) = u32::try_from(offset) else {
+            return;
+        };
+
+        self.e1000.borrow_mut().io_write_reg(offset_u32, size, value);
     }
 }
 
-type PciIoBarKey = (PciBdf, u8);
-type SharedPciIoBarMap = Rc<RefCell<HashMap<PciIoBarKey, Box<dyn PortIoDevice>>>>;
-
 type SharedPciBarMmioRouter = Rc<RefCell<PciBarMmioRouter>>;
+type SharedPciIoBarRouter = Rc<RefCell<PciIoBarRouter>>;
 
 #[derive(Clone)]
 struct SharedPciBarMmioRouterMmio {
@@ -555,54 +586,11 @@ impl MmioHandler for SharedPciBarMmioRouterMmio {
 }
 
 #[derive(Clone)]
-struct PciIoWindowPort {
-    pci_cfg: SharedPciConfigPorts,
-    handlers: SharedPciIoBarMap,
+struct PciIoBarRouterPort {
+    router: SharedPciIoBarRouter,
 }
 
-impl PciIoWindowPort {
-    fn map_port(&mut self, port: u16, size: u8) -> Option<(PciIoBarKey, u16)> {
-        let port_u64 = u64::from(port);
-        let size_u64 = match size {
-            1 | 2 | 4 => u64::from(size),
-            _ => return None,
-        };
-        let access_end = port_u64.checked_add(size_u64)?;
-        if access_end > 0x1_0000 {
-            // Would wrap the 16-bit I/O port space.
-            return None;
-        }
-
-        // Iterate the bus' mapped BARs (deterministic order) without per-access allocations.
-        let handlers = self.handlers.borrow();
-        let mut pci_cfg = self.pci_cfg.borrow_mut();
-        let bus = pci_cfg.bus_mut();
-
-        for mapped in bus.iter_mapped_io_bars() {
-            let key = (mapped.bdf, mapped.bar);
-            if !handlers.contains_key(&key) {
-                continue;
-            }
-            let range = mapped.range;
-            // Treat port I/O accesses as byte-addressed ranges (like MMIO): require the entire
-            // access to fit within the decoded BAR region.
-            let Some(bar_end) = range.base.checked_add(range.size) else {
-                continue;
-            };
-            if port_u64 >= range.base && access_end <= bar_end {
-                let Some(dev_offset) = port_u64
-                    .checked_sub(range.base)
-                    .and_then(|v| u16::try_from(v).ok())
-                else {
-                    continue;
-                };
-                return Some((key, dev_offset));
-            }
-        }
-
-        None
-    }
-
+impl PciIoBarRouterPort {
     fn read_all_ones(size: u8) -> u32 {
         match size {
             0 => 0,
@@ -614,45 +602,29 @@ impl PciIoWindowPort {
     }
 }
 
-impl PortIoDevice for PciIoWindowPort {
+impl PortIoDevice for PciIoBarRouterPort {
     fn read(&mut self, port: u16, size: u8) -> u32 {
-        if !matches!(size, 1 | 2 | 4) {
-            return Self::read_all_ones(size);
-        }
-        let Some((key, dev_offset)) = self.map_port(port, size) else {
-            return Self::read_all_ones(size);
+        let size_usize = match size {
+            1 | 2 | 4 => usize::from(size),
+            _ => return Self::read_all_ones(size),
         };
 
-        let mut handlers = self.handlers.borrow_mut();
-        let Some(handler) = handlers.get_mut(&key) else {
-            return Self::read_all_ones(size);
-        };
-
-        // Dispatch using the device-relative offset.
-        handler.read(dev_offset, size)
+        self.router
+            .borrow_mut()
+            .dispatch_read(port, size_usize)
+            .unwrap_or_else(|| Self::read_all_ones(size))
     }
 
     fn write(&mut self, port: u16, size: u8, value: u32) {
-        if !matches!(size, 1 | 2 | 4) {
-            return;
-        }
-        let Some((key, dev_offset)) = self.map_port(port, size) else {
-            return;
+        let size_usize = match size {
+            1 | 2 | 4 => usize::from(size),
+            _ => return,
         };
 
-        let mut handlers = self.handlers.borrow_mut();
-        let Some(handler) = handlers.get_mut(&key) else {
-            return;
-        };
-
-        handler.write(dev_offset, size, value);
-    }
-
-    fn reset(&mut self) {
-        let mut handlers = self.handlers.borrow_mut();
-        for dev in handlers.values_mut() {
-            dev.reset();
-        }
+        let _ = self
+            .router
+            .borrow_mut()
+            .dispatch_write(port, size_usize, value);
     }
 }
 
@@ -932,7 +904,7 @@ pub struct PcPlatform {
 
     pci_intx_sources: Vec<PciIntxSource>,
     pci_allocator: PciResourceAllocator,
-    pci_io_bars: SharedPciIoBarMap,
+    pci_io_router: SharedPciIoBarRouter,
     pci_mmio_router: SharedPciBarMmioRouter,
 
     clock: ManualClock,
@@ -1321,7 +1293,8 @@ impl PcPlatform {
         let mut pci_allocator = PciResourceAllocator::new(pci_allocator_config.clone());
 
         let mut pci_intx_sources: Vec<PciIntxSource> = Vec::new();
-        let pci_io_bars: SharedPciIoBarMap = Rc::new(RefCell::new(HashMap::new()));
+        let pci_io_router: SharedPciIoBarRouter =
+            Rc::new(RefCell::new(PciIoBarRouter::new(pci_cfg.clone())));
 
         #[cfg(feature = "hda")]
         let hda = if config.enable_hda {
@@ -1731,50 +1704,40 @@ impl PcPlatform {
                 );
             }
 
-            // Bus Master IDE (BAR4) is a relocatable PCI I/O BAR. Register a single handler keyed
-            // by (BDF, BAR4) so the `PciIoWindow` can route accesses after guest reprogramming.
-            let prev = pci_io_bars.borrow_mut().insert(
-                (bdf, 4),
-                Box::new(PcIdeBusMasterBar {
+            // Bus Master IDE (BAR4) is a relocatable PCI I/O BAR. Register a handler so port I/O
+            // accesses follow BAR relocation and COMMAND.IO gating.
+            pci_io_router.borrow_mut().register_handler(
+                bdf,
+                4,
+                PcIdeBusMasterBar {
                     pci_cfg: pci_cfg.clone(),
                     ide: ide_dev.clone(),
                     bdf,
-                }),
-            );
-            assert!(
-                prev.is_none(),
-                "duplicate IDE Bus Master BAR4 handler registration for {bdf:?}"
+                },
             );
         }
 
-        // Register UHCI's relocatable BAR4 I/O region through the PCI I/O window dispatcher.
+        // Register UHCI's relocatable BAR4 I/O region through the PCI I/O BAR router.
         if let Some(uhci_dev) = uhci.as_ref() {
             let bdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
             let bar = UhciPciDevice::IO_BAR_INDEX;
-            let prev = pci_io_bars.borrow_mut().insert(
-                (bdf, bar),
-                Box::new(PcUhciIoBar {
+            pci_io_router.borrow_mut().register_handler(
+                bdf,
+                bar,
+                PcUhciIoBar {
                     uhci: uhci_dev.clone(),
-                }),
-            );
-            assert!(
-                prev.is_none(),
-                "duplicate UHCI BAR{bar} handler registration for {bdf:?}"
+                },
             );
         }
-        // E1000 BAR1 is a relocatable PCI I/O BAR. Register a handler keyed by (BDF, BAR1) so the
-        // `PciIoWindow` can route accesses after guest reprogramming.
+        // E1000 BAR1 is a relocatable PCI I/O BAR.
         if let Some(e1000_dev) = e1000.as_ref() {
             let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
-            let prev = pci_io_bars.borrow_mut().insert(
-                (bdf, 1),
-                Box::new(E1000PciIoBar {
+            pci_io_router.borrow_mut().register_handler(
+                bdf,
+                1,
+                E1000PciIoBar {
                     e1000: e1000_dev.clone(),
-                }),
-            );
-            assert!(
-                prev.is_none(),
-                "duplicate E1000 BAR1 handler registration for {bdf:?}"
+                },
             );
         }
 
@@ -1848,9 +1811,8 @@ impl PcPlatform {
         io.register_range(
             io_base,
             io_size,
-            Box::new(PciIoWindowPort {
-                pci_cfg: pci_cfg.clone(),
-                handlers: pci_io_bars.clone(),
+            Box::new(PciIoBarRouterPort {
+                router: pci_io_router.clone(),
             }),
         );
 
@@ -1906,7 +1868,7 @@ impl PcPlatform {
             virtio_blk,
             pci_intx_sources,
             pci_allocator,
-            pci_io_bars,
+            pci_io_router,
             pci_mmio_router,
             clock,
             pit,
@@ -1934,14 +1896,14 @@ impl PcPlatform {
     /// The handler is keyed by `(bdf, bar_index)` and is dispatched to whenever that BAR currently
     /// decodes the accessed I/O port (respecting PCI command I/O decoding and BAR relocation).
     ///
-    /// The `port` argument passed to the handler is the device-relative offset within the BAR
-    /// (i.e. `port - bar.base`).
-    pub fn register_pci_io_bar(&mut self, bdf: PciBdf, bar: u8, dev: Box<dyn PortIoDevice>) {
-        let prev = self.pci_io_bars.borrow_mut().insert((bdf, bar), dev);
-        assert!(
-            prev.is_none(),
-            "duplicate PCI I/O BAR handler registration for {bdf:?} BAR{bar}"
-        );
+    /// The handler receives an `offset` relative to the BAR base (i.e. `port - bar.base`).
+    pub fn register_pci_io_bar<H>(&mut self, bdf: PciBdf, bar: u8, handler: H)
+    where
+        H: PciIoBarHandler + 'static,
+    {
+        self.pci_io_router
+            .borrow_mut()
+            .register_handler(bdf, bar, handler);
     }
 
     /// Registers a handler for a PCI MMIO BAR in the platform's PCI MMIO window.

@@ -1,8 +1,7 @@
 use aero_devices::pci::{
     PciBarDefinition, PciBdf, PciConfigSpace, PciDevice, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
-use aero_pc_platform::PcPlatform;
-use aero_platform::io::PortIoDevice;
+use aero_pc_platform::{PcPlatform, PciIoBarHandler};
 
 fn cfg_addr(bdf: PciBdf, offset: u8) -> u32 {
     0x8000_0000
@@ -61,12 +60,12 @@ impl PciDevice for TestPciConfigDevice {
 #[derive(Default)]
 struct TestIoBar;
 
-impl PortIoDevice for TestIoBar {
-    fn read(&mut self, _port: u16, _size: u8) -> u32 {
+impl PciIoBarHandler for TestIoBar {
+    fn io_read(&mut self, _offset: u64, _size: usize) -> u32 {
         0
     }
 
-    fn write(&mut self, _port: u16, _size: u8, _value: u32) {}
+    fn io_write(&mut self, _offset: u64, _size: usize, _value: u32) {}
 }
 
 #[test]
@@ -83,7 +82,7 @@ fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
         .add_device(bdf, Box::new(TestPciConfigDevice { cfg }));
 
     // Register an I/O handler for BAR4 so we can observe I/O decode behavior.
-    pc.register_pci_io_bar(bdf, 4, Box::new(TestIoBar));
+    pc.register_pci_io_bar(bdf, 4, TestIoBar);
 
     // Re-run BIOS POST so the new device gets BARs assigned and I/O decoding enabled.
     pc.reset_pci();
