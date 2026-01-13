@@ -2,6 +2,7 @@ use std::io::{Cursor, Read};
 
 use crate::palette::Rgb;
 use crate::VgaDevice;
+use crate::VBE_FRAMEBUFFER_OFFSET;
 
 /// Errors returned when decoding VGA snapshot payloads.
 #[derive(Debug)]
@@ -405,6 +406,22 @@ impl VgaDevice {
             self.vram.copy_from_slice(&snap.vram);
         } else {
             self.vram = snap.vram.clone();
+        }
+
+        // `VgaSnapshotV1` is a legacy snapshot format that predates the VRAM partition between
+        // legacy VGA planes and the Bochs VBE packed-pixel framebuffer. Those snapshots implicitly
+        // stored VBE pixels at `vram[0..]`, but the current renderer reads from
+        // `vram[VBE_FRAMEBUFFER_OFFSET..]`.
+        //
+        // We cannot reliably distinguish old vs new layouts within this v1 format, but the
+        // canonical machine snapshot path uses the io-snapshot (`VGAD`) encoding instead. Treat v1
+        // snapshots as pre-partition and migrate when VBE is enabled.
+        if self.vbe.enabled() {
+            if let Some(vbe_len) = self.vram.len().checked_sub(VBE_FRAMEBUFFER_OFFSET) {
+                if vbe_len != 0 {
+                    self.vram.copy_within(0..vbe_len, VBE_FRAMEBUFFER_OFFSET);
+                }
+            }
         }
 
         // Force the next `present()` call to re-render from restored VRAM/register state.

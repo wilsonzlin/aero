@@ -1903,6 +1903,10 @@ mod tests {
         dev.present();
         assert_eq!(dev.get_resolution(), (64, 64));
         assert_eq!(dev.get_framebuffer()[0], 0xFF00_00FF);
+        assert_eq!(
+            &dev.vram()[VBE_FRAMEBUFFER_OFFSET..VBE_FRAMEBUFFER_OFFSET + 4],
+            &[0x00, 0x00, 0xFF, 0x00]
+        );
     }
 
     #[test]
