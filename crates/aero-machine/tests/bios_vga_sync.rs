@@ -217,7 +217,35 @@ fn bios_vbe_sync_mode_and_lfb_base() {
         run_until_halt(&mut m);
 
         // VBE mode info block was written to 0x0000:0x0500 by INT 10h AX=4F01.
-        let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
+        let mode_info_addr = 0x0500u64;
+        let attrs = m.read_physical_u16(mode_info_addr);
+        const MODE_ATTR_SUPPORTED: u16 = 1 << 0;
+        const MODE_ATTR_COLOR: u16 = 1 << 2;
+        const MODE_ATTR_GRAPHICS: u16 = 1 << 3;
+        const MODE_ATTR_WINDOWED: u16 = 1 << 5;
+        const MODE_ATTR_LFB: u16 = 1 << 7;
+        const REQUIRED_MODE_ATTRS: u16 = MODE_ATTR_SUPPORTED
+            | MODE_ATTR_COLOR
+            | MODE_ATTR_GRAPHICS
+            | MODE_ATTR_WINDOWED
+            | MODE_ATTR_LFB;
+        assert_eq!(attrs & REQUIRED_MODE_ATTRS, REQUIRED_MODE_ATTRS);
+
+        assert_eq!(m.read_physical_u16(mode_info_addr + 18), w as u16); // XResolution
+        assert_eq!(m.read_physical_u16(mode_info_addr + 20), h as u16); // YResolution
+        assert_eq!(m.read_physical_u16(mode_info_addr + 16), (w as u16) * 4); // BytesPerScanLine
+        assert_eq!(m.read_physical_u8(mode_info_addr + 25), 32); // BitsPerPixel
+        assert_eq!(m.read_physical_u8(mode_info_addr + 27), 0x06); // MemoryModel (direct color)
+        assert_eq!(m.read_physical_u8(mode_info_addr + 31), 8); // RedMaskSize
+        assert_eq!(m.read_physical_u8(mode_info_addr + 32), 16); // RedFieldPosition
+        assert_eq!(m.read_physical_u8(mode_info_addr + 33), 8); // GreenMaskSize
+        assert_eq!(m.read_physical_u8(mode_info_addr + 34), 8); // GreenFieldPosition
+        assert_eq!(m.read_physical_u8(mode_info_addr + 35), 8); // BlueMaskSize
+        assert_eq!(m.read_physical_u8(mode_info_addr + 36), 0); // BlueFieldPosition
+        assert_eq!(m.read_physical_u8(mode_info_addr + 37), 8); // ReservedMaskSize
+        assert_eq!(m.read_physical_u8(mode_info_addr + 38), 24); // ReservedFieldPosition
+
+        let phys_base_ptr = m.read_physical_u32(mode_info_addr + 40);
         assert_eq!(phys_base_ptr, SVGA_LFB_BASE);
 
         let vga = m.vga().expect("pc platform should include VGA");
