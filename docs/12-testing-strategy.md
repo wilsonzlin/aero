@@ -1026,6 +1026,11 @@ npm run generate:goldens
 npm run test:gpu
 ```
 
+CI enforcement:
+
+- CI runs `npm run generate:goldens` and fails if anything under `tests/golden/` changes afterwards.
+- If your change intentionally affects golden output, rerun `npm run generate:goldens` locally and commit the updated PNGs.
+
 ---
 
 ## Visual regression (Playwright screenshots)
