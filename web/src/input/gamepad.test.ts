@@ -6,6 +6,7 @@ import {
   GAMEPAD_HAT_NEUTRAL,
   GamepadCapture,
   computeGamepadHat,
+  decodeGamepadReport,
   packGamepadReport,
   gamepadButtonsToBitfield,
   quantizeGamepadAxis,
@@ -123,6 +124,19 @@ describe("hid_gamepad_report_vectors fixture", () => {
 
       const bytes = Array.from(unpackGamepadReport(packedLo, packedHi));
       expect(bytes, v.name ?? `vector ${idx}`).toEqual(v.bytes);
+
+      const clampI8 = (n: number): number => Math.max(-127, Math.min(127, n | 0)) | 0;
+      const clampHat = (n: number): number =>
+        Number.isFinite(n) && n >= 0 && n <= GAMEPAD_HAT_NEUTRAL ? (n | 0) : GAMEPAD_HAT_NEUTRAL;
+      const decoded = decodeGamepadReport(packedLo, packedHi);
+      expect(decoded, v.name ?? `vector ${idx}`).toEqual({
+        buttons: v.buttons & 0xffff,
+        hat: clampHat(v.hat),
+        x: clampI8(v.x),
+        y: clampI8(v.y),
+        rx: clampI8(v.rx),
+        ry: clampI8(v.ry),
+      });
     }
   });
 });
