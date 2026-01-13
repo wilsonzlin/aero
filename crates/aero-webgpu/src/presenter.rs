@@ -369,13 +369,12 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
 
         let surface_caps = surface.get_capabilities(adapter);
         let prefer_srgb_view = matches!(context.kind(), BackendKind::WebGpu);
-        let (surface_format, surface_view_format, view_formats) =
+        let (surface_format, mut surface_view_format, view_formats) =
             preferred_surface_config(&surface_caps.formats, prefer_srgb_view);
         let alpha_mode = preferred_composite_alpha_mode(&surface_caps.alpha_modes);
         let present_mode = preferred_present_mode(&surface_caps.present_modes);
-        let srgb_encode = surface_format_requires_manual_srgb_encoding(surface_view_format);
 
-        let config = wgpu::SurfaceConfiguration {
+        let mut config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: config_size.width,
@@ -386,7 +385,28 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             view_formats,
         };
 
-        surface.configure(device, &config);
+        // Some WebGPU implementations may reject `view_formats` (or specific view formats) for
+        // canvas/surface configuration. Prefer an sRGB view when requested, but fall back to manual
+        // shader encoding if configuration fails.
+        if !config.view_formats.is_empty() {
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
+            surface.configure(device, &config);
+            #[cfg(not(target_arch = "wasm32"))]
+            device.poll(wgpu::Maintain::Poll);
+            let err = device.pop_error_scope().await;
+            if let Some(err) = err {
+                tracing::warn!(
+                    "wgpu surface rejected sRGB view format configuration; falling back to manual encoding: {err}"
+                );
+                config.view_formats.clear();
+                surface_view_format = surface_format;
+                surface.configure(device, &config);
+            }
+        } else {
+            surface.configure(device, &config);
+        }
+
+        let srgb_encode = surface_format_requires_manual_srgb_encoding(surface_view_format);
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("aero framebuffer presenter bind group layout"),
