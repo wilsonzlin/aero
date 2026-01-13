@@ -4,8 +4,8 @@ use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuShaderStageEx, AerogpuVertexBufferBinding,
+    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -280,10 +280,10 @@ fn aerogpu_cmd_geometry_shader_point_list_expands_to_triangle() {
         writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
 
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, &build_vs_pos_only_dxbc());
-        // BindShaders encodes the geometry shader handle in `reserved0`.
-        writer.create_shader_dxbc(
+        // Create a GS via the `stage_ex` ABI extension (CREATE_SHADER_DXBC.reserved0).
+        writer.create_shader_dxbc_ex(
             GS,
-            AerogpuShaderStage::Geometry,
+            AerogpuShaderStageEx::Geometry,
             &build_gs_point_to_triangle_dxbc(),
         );
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, &build_ps_solid_green_dxbc());
