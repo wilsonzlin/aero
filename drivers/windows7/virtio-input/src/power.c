@@ -56,6 +56,9 @@ NTSTATUS VirtioInputHidDeactivateDevice(_In_ WDFDEVICE Device)
      * If HID is currently active, emit an all-zero report before disabling the
      * read queues so Windows releases any latched key state ("stuck keys").
      *
+     * We clear HidActivated first so any in-flight event processing will stop
+     * translating further events before the release report is emitted.
+     *
      * If the read queues are already stopping, the reset report will be safely
      * dropped by VirtioInputReportArrived() once ReadReportsEnabled is cleared.
      */

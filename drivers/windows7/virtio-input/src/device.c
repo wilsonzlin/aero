@@ -2200,6 +2200,10 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
      * the read queues so Windows releases any latched key state during the
      * transition away from D0.
      *
+     * Note: we clear InD0 (and VirtioStarted) first so any in-flight queue/DPC
+     * processing will stop translating further events that could re-latch key
+     * state after the release report.
+     *
      * This report is sent through the normal read-report path, so it will be
      * dropped automatically if reads have already been disabled.
      */
