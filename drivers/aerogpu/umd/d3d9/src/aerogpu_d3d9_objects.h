@@ -91,6 +91,42 @@ inline uint32_t block_bytes_per_4x4(D3DDDIFORMAT d3d9_format) {
   }
 }
 
+// Maps a D3D9 format (D3DFORMAT / D3DDDIFORMAT numeric value) to an AeroGPU
+// protocol format (`enum aerogpu_format`).
+//
+// NOTE: Portable builds do not include the Windows SDK/WDK, so callers should
+// pass the numeric D3DFORMAT value (e.g. 21u for D3DFMT_A8R8G8B8).
+inline uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format) {
+  switch (d3d9_format) {
+    // D3DFMT_A8R8G8B8 / D3DFMT_X8R8G8B8
+    case 21u:
+      return AEROGPU_FORMAT_B8G8R8A8_UNORM;
+    case 22u:
+      return AEROGPU_FORMAT_B8G8R8X8_UNORM;
+    // D3DFMT_A8B8G8R8
+    case 32u:
+      return AEROGPU_FORMAT_R8G8B8A8_UNORM;
+    // D3DFMT_D24S8
+    case 75u:
+      return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
+    // D3DFMT_DXT1/DXT2/DXT3/DXT4/DXT5 (FOURCC codes; see d3d9_make_fourcc above).
+    case static_cast<uint32_t>(kD3dFmtDxt1):
+      return AEROGPU_FORMAT_BC1_RGBA_UNORM;
+    // DXT2 is the premultiplied-alpha variant of DXT3. AeroGPU does not encode
+    // alpha-premultiplication at the format level, so treat it as BC2.
+    case static_cast<uint32_t>(kD3dFmtDxt2):
+    case static_cast<uint32_t>(kD3dFmtDxt3):
+      return AEROGPU_FORMAT_BC2_RGBA_UNORM;
+    // DXT4 is the premultiplied-alpha variant of DXT5. AeroGPU does not encode
+    // alpha-premultiplication at the format level, so treat it as BC3.
+    case static_cast<uint32_t>(kD3dFmtDxt4):
+    case static_cast<uint32_t>(kD3dFmtDxt5):
+      return AEROGPU_FORMAT_BC3_RGBA_UNORM;
+    default:
+      return AEROGPU_FORMAT_INVALID;
+  }
+}
+
 struct Texture2dLayout {
   uint32_t row_pitch_bytes = 0;
   uint32_t slice_pitch_bytes = 0;
