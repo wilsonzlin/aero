@@ -164,7 +164,7 @@ Example output excerpt (`--status`):
 ```
 AeroGPU features:
   raw: lo=0x1f hi=0x0
-  decoded: fence_page, cursor, scanout, vblank, transfer
+  decoded: cursor, scanout, vblank, fence_page, transfer
 ```
 
 Notes:

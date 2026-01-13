@@ -41,7 +41,8 @@ int main() {
   if (!Check(decoded_known.size() == 3, "known bits decode count")) {
     return 1;
   }
-  if (!Check(decoded_known[0] == L"fence_page" && decoded_known[1] == L"scanout" && decoded_known[2] == L"transfer",
+  // Known features are returned in stable, user-oriented order (not bit order).
+  if (!Check(decoded_known[0] == L"scanout" && decoded_known[1] == L"fence_page" && decoded_known[2] == L"transfer",
              "known bits decode names/order")) {
     return 1;
   }
@@ -58,10 +59,15 @@ int main() {
 
   const uint64_t mix_lo = (1ull << 1) | (1ull << 6);  // cursor + unknown_bit_6
   if (!CheckEq(FormatDeviceFeatureBits(mix_lo, unknown_hi), L"cursor, unknown_bit_6, unknown_bit_64",
-               "mixed known/unknown formats in ascending bit order")) {
+               "mixed known/unknown formats in stable order")) {
+    return 1;
+  }
+
+  if (!CheckEq(FormatDeviceFeatureBits(/*features_lo=*/0x1full, /*features_hi=*/0),
+               L"cursor, scanout, vblank, fence_page, transfer",
+               "all known bits format in stable order")) {
     return 1;
   }
 
   return 0;
 }
-

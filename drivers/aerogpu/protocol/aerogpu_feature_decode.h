@@ -24,23 +24,6 @@
 
 namespace aerogpu {
 
-inline const wchar_t* FeatureBitIndexToName(uint32_t bit_index) {
-  switch (bit_index) {
-    case 0:
-      return L"fence_page";
-    case 1:
-      return L"cursor";
-    case 2:
-      return L"scanout";
-    case 3:
-      return L"vblank";
-    case 4:
-      return L"transfer";
-    default:
-      return nullptr;
-  }
-}
-
 inline std::wstring Uint32ToWstring(uint32_t v) {
   // VS2010 does not provide std::to_wstring; implement a tiny conversion.
   wchar_t buf[32];
@@ -56,20 +39,54 @@ inline std::wstring Uint32ToWstring(uint32_t v) {
 inline std::vector<std::wstring> DecodeDeviceFeatureBits(uint64_t features_lo, uint64_t features_hi) {
   std::vector<std::wstring> out;
 
-  for (uint32_t bit = 0; bit < 128; ++bit) {
+  // Print known features first in a stable, user-oriented order.
+  // (This order is intentionally not the same as numeric bit order.)
+  struct KnownFeature {
+    uint32_t bit_index;
+    const wchar_t* name;
+  };
+
+  static const KnownFeature kKnown[] = {
+      {1, L"cursor"},
+      {2, L"scanout"},
+      {3, L"vblank"},
+      {0, L"fence_page"},
+      {4, L"transfer"},
+  };
+
+  uint64_t known_mask_lo = 0;
+  uint64_t known_mask_hi = 0;
+  for (size_t i = 0; i < (sizeof(kKnown) / sizeof(kKnown[0])); ++i) {
+    const uint32_t bit = kKnown[i].bit_index;
+    if (bit < 64) {
+      known_mask_lo |= (1ull << bit);
+    } else {
+      known_mask_hi |= (1ull << (bit - 64));
+    }
+  }
+
+  for (size_t i = 0; i < (sizeof(kKnown) / sizeof(kKnown[0])); ++i) {
+    const uint32_t bit = kKnown[i].bit_index;
     const bool is_set = (bit < 64) ? ((features_lo & (1ull << bit)) != 0ull)
                                    : ((features_hi & (1ull << (bit - 64))) != 0ull);
-    if (!is_set) {
-      continue;
+    if (is_set) {
+      out.push_back(kKnown[i].name);
     }
+  }
 
-    const wchar_t* known = FeatureBitIndexToName(bit);
-    if (known) {
-      out.push_back(known);
-      continue;
+  // Append any set-but-unknown bits as `unknown_bit_<n>` (numeric bit index),
+  // ordered by increasing bit index.
+  const uint64_t unknown_lo = features_lo & ~known_mask_lo;
+  const uint64_t unknown_hi = features_hi & ~known_mask_hi;
+  for (uint32_t bit = 0; bit < 64; ++bit) {
+    if ((unknown_lo & (1ull << bit)) != 0ull) {
+      out.push_back(std::wstring(L"unknown_bit_") + Uint32ToWstring(bit));
     }
-
-    out.push_back(std::wstring(L"unknown_bit_") + Uint32ToWstring(bit));
+  }
+  for (uint32_t bit = 0; bit < 64; ++bit) {
+    if ((unknown_hi & (1ull << bit)) != 0ull) {
+      out.push_back(std::wstring(L"unknown_bit_") + Uint32ToWstring(64u + bit));
+    }
   }
 
   return out;
