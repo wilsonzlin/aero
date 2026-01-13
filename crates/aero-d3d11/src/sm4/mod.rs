@@ -1,5 +1,6 @@
 pub mod decode;
 pub mod opcode;
+pub mod token_dump;
 
 pub use decode::{decode_program, Sm4DecodeError};
 

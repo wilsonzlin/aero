@@ -227,6 +227,9 @@ web/src/wasm/aero_microbench/*
 !web/src/wasm/aero_microbench/aero_microbench.ts
 # Visual Studio / MSBuild
 **/bin/
+# Rust binary targets live in `src/bin/`; keep these tracked.
+!**/src/bin/
+!**/src/bin/**
 **/obj/
 **/.vs/
 **/*.user
