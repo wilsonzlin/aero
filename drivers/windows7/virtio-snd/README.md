@@ -339,7 +339,7 @@ For a repeatable manual bring-up/validation plan under QEMU, see:
 
 ## INF linter (Linux/macOS)
 
-To catch accidental drift in the contract-v1 INF (HWIDs, KS/WDMAudio registrations, render/capture interface registration, and `virtio-snd.inf.disabled` sync), run:
+To catch accidental drift in the contract-v1 INF (HWIDs, KS/WDMAudio + KS interface registration, install/service wiring, and legacy alias INF sync), run:
 
 ```sh
 cd drivers/windows7/virtio-snd
