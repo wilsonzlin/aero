@@ -3,7 +3,7 @@ use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
-use aero_interrupts::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{
     InterruptController, InterruptInput, PlatformInterruptMode, IMCR_INDEX, IMCR_SELECT_PORT,
@@ -520,9 +520,9 @@ fn lapic_mmio_timer_can_fire_in_apic_mode() {
     // - divide config: 0xB => divisor 1 (fast ticks)
     // - LVT timer: vector 0x40 (one-shot, unmasked)
     // - initial count: 10
-    m.write_physical_u32(LAPIC_MMIO_BASE + 0x3E0, 0xBu32);
-    m.write_physical_u32(LAPIC_MMIO_BASE + 0x320, u32::from(vector));
-    m.write_physical_u32(LAPIC_MMIO_BASE + 0x380, 10u32);
+    m.write_lapic_u32(0, 0x3E0, 0xBu32);
+    m.write_lapic_u32(0, 0x320, u32::from(vector));
+    m.write_lapic_u32(0, 0x380, 10u32);
 
     let interrupts = m.platform_interrupts().unwrap();
     interrupts.borrow().tick(9);

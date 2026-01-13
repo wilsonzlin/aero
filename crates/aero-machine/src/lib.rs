@@ -684,6 +684,162 @@ impl aero_mmu::MemoryBus for SystemMemory {
     }
 }
 
+/// Per-vCPU physical memory bus adapter used for CPU execution.
+///
+/// The LAPIC MMIO window lives at a fixed physical address (`0xFEE0_0000`), but is architecturally
+/// per-CPU: each vCPU sees a different LAPIC register page at that shared address. Our core RAM/MMIO
+/// bus (`SystemMemory`) is shared across CPUs, so we intercept LAPIC MMIO accesses here and route
+/// them explicitly based on the currently executing vCPU's APIC ID.
+struct PerCpuSystemMemoryBus<'a> {
+    apic_id: u8,
+    interrupts: Option<Rc<RefCell<PlatformInterrupts>>>,
+    mem: &'a mut SystemMemory,
+}
+
+impl<'a> PerCpuSystemMemoryBus<'a> {
+    fn new(
+        apic_id: u8,
+        interrupts: Option<Rc<RefCell<PlatformInterrupts>>>,
+        mem: &'a mut SystemMemory,
+    ) -> Self {
+        Self {
+            apic_id,
+            interrupts,
+            mem,
+        }
+    }
+}
+
+impl memory::MemoryBus for PerCpuSystemMemoryBus<'_> {
+    fn read_physical(&mut self, mut paddr: u64, buf: &mut [u8]) {
+        if buf.is_empty() {
+            return;
+        }
+
+        let Some(interrupts) = &self.interrupts else {
+            // No PC platform attached: fall back to the shared bus.
+            self.mem.read_physical(paddr, buf);
+            return;
+        };
+
+        let lapic_start = LAPIC_MMIO_BASE;
+        let lapic_end = LAPIC_MMIO_BASE + LAPIC_MMIO_SIZE;
+
+        let mut offset = 0usize;
+        while offset < buf.len() {
+            let remaining = buf.len() - offset;
+            if paddr >= lapic_start && paddr < lapic_end {
+                let chunk_len = ((lapic_end - paddr) as usize).min(remaining);
+                interrupts.borrow().lapic_mmio_read_for_apic(
+                    self.apic_id,
+                    paddr - lapic_start,
+                    &mut buf[offset..offset + chunk_len],
+                );
+                paddr = paddr.wrapping_add(chunk_len as u64);
+                offset += chunk_len;
+                continue;
+            }
+
+            // Not in the LAPIC window: forward to the shared SystemMemory bus, but avoid crossing
+            // into the LAPIC range so the next iteration can intercept.
+            let chunk_len = if paddr < lapic_start {
+                let until_lapic = (lapic_start - paddr) as usize;
+                remaining.min(until_lapic)
+            } else {
+                remaining
+            };
+            self.mem
+                .read_physical(paddr, &mut buf[offset..offset + chunk_len]);
+            paddr = paddr.wrapping_add(chunk_len as u64);
+            offset += chunk_len;
+        }
+    }
+
+    fn write_physical(&mut self, mut paddr: u64, buf: &[u8]) {
+        if buf.is_empty() {
+            return;
+        }
+
+        let Some(interrupts) = &self.interrupts else {
+            // No PC platform attached: fall back to the shared bus.
+            self.mem.write_physical(paddr, buf);
+            return;
+        };
+
+        let lapic_start = LAPIC_MMIO_BASE;
+        let lapic_end = LAPIC_MMIO_BASE + LAPIC_MMIO_SIZE;
+
+        let mut offset = 0usize;
+        while offset < buf.len() {
+            let remaining = buf.len() - offset;
+            if paddr >= lapic_start && paddr < lapic_end {
+                let chunk_len = ((lapic_end - paddr) as usize).min(remaining);
+                interrupts.borrow().lapic_mmio_write_for_apic(
+                    self.apic_id,
+                    paddr - lapic_start,
+                    &buf[offset..offset + chunk_len],
+                );
+                paddr = paddr.wrapping_add(chunk_len as u64);
+                offset += chunk_len;
+                continue;
+            }
+
+            let chunk_len = if paddr < lapic_start {
+                let until_lapic = (lapic_start - paddr) as usize;
+                remaining.min(until_lapic)
+            } else {
+                remaining
+            };
+            self.mem
+                .write_physical(paddr, &buf[offset..offset + chunk_len]);
+            paddr = paddr.wrapping_add(chunk_len as u64);
+            offset += chunk_len;
+        }
+    }
+}
+
+impl aero_mmu::MemoryBus for PerCpuSystemMemoryBus<'_> {
+    #[inline]
+    fn read_u8(&mut self, paddr: u64) -> u8 {
+        memory::MemoryBus::read_u8(self, paddr)
+    }
+
+    #[inline]
+    fn read_u16(&mut self, paddr: u64) -> u16 {
+        memory::MemoryBus::read_u16(self, paddr)
+    }
+
+    #[inline]
+    fn read_u32(&mut self, paddr: u64) -> u32 {
+        memory::MemoryBus::read_u32(self, paddr)
+    }
+
+    #[inline]
+    fn read_u64(&mut self, paddr: u64) -> u64 {
+        memory::MemoryBus::read_u64(self, paddr)
+    }
+
+    #[inline]
+    fn write_u8(&mut self, paddr: u64, value: u8) {
+        memory::MemoryBus::write_u8(self, paddr, value)
+    }
+
+    #[inline]
+    fn write_u16(&mut self, paddr: u64, value: u16) {
+        memory::MemoryBus::write_u16(self, paddr, value)
+    }
+
+    #[inline]
+    fn write_u32(&mut self, paddr: u64, value: u32) {
+        memory::MemoryBus::write_u32(self, paddr, value)
+    }
+
+    #[inline]
+    fn write_u64(&mut self, paddr: u64, value: u64) {
+        memory::MemoryBus::write_u64(self, paddr, value)
+    }
+}
+
 struct StrictIoPortBus<'a> {
     io: &'a mut IoPortBus,
 }
@@ -712,7 +868,7 @@ impl aero_cpu_core::paging_bus::IoBus for StrictIoPortBus<'_> {
 struct MachineCpuBus<'a> {
     a20: A20GateHandle,
     reset: ResetLatch,
-    inner: aero_cpu_core::PagingBus<&'a mut SystemMemory, StrictIoPortBus<'a>>,
+    inner: aero_cpu_core::PagingBus<PerCpuSystemMemoryBus<'a>, StrictIoPortBus<'a>>,
 }
 
 impl aero_cpu_core::mem::CpuBus for MachineCpuBus<'_> {
@@ -1735,33 +1891,6 @@ impl MmioHandler for IoApicMmio {
     }
 }
 
-struct LapicMmio {
-    interrupts: Rc<RefCell<PlatformInterrupts>>,
-}
-
-impl MmioHandler for LapicMmio {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if size == 0 {
-            return 0;
-        }
-        let size = size.clamp(1, 8);
-        let interrupts = self.interrupts.borrow();
-        let mut buf = [0u8; 8];
-        interrupts.lapic_mmio_read(offset, &mut buf[..size]);
-        u64::from_le_bytes(buf)
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 {
-            return;
-        }
-        let size = size.clamp(1, 8);
-        let interrupts = self.interrupts.borrow();
-        let bytes = value.to_le_bytes();
-        interrupts.lapic_mmio_write(offset, &bytes[..size]);
-    }
-}
-
 struct HpetMmio {
     hpet: Rc<RefCell<hpet::Hpet<ManualClock>>>,
     interrupts: Rc<RefCell<PlatformInterrupts>>,
@@ -2298,12 +2427,10 @@ impl Machine {
         let hpet = hpet.clone();
         let pci_cfg = pci_cfg.clone();
 
-        self.mem
-            .map_mmio_once(LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE, || {
-                Box::new(LapicMmio {
-                    interrupts: interrupts.clone(),
-                })
-            });
+        // NOTE: The LAPIC MMIO window is per-vCPU even though it lives at a shared physical
+        // address (0xFEE0_0000). Do not map it into the shared `SystemMemory` bus; CPU execution
+        // wraps `SystemMemory` in a per-vCPU adapter that routes LAPIC accesses to the currently
+        // running vCPU's LAPIC instance.
         self.mem
             .map_mmio_once(IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, || {
                 Box::new(IoApicMmio {
@@ -2626,6 +2753,37 @@ impl Machine {
         let mut out = vec![0u8; len];
         self.mem.read_physical(paddr, &mut out);
         out
+    }
+
+    /// Debug/testing helper: read a u32 from the LAPIC MMIO window as seen by `cpu_index`.
+    ///
+    /// This uses the same per-vCPU LAPIC routing path as CPU execution (a per-vCPU physical bus
+    /// wrapper around the shared `SystemMemory`).
+    pub fn read_lapic_u32(&mut self, cpu_index: usize, offset: u64) -> u32 {
+        assert!(
+            cpu_index < self.cfg.cpu_count as usize,
+            "cpu_index {cpu_index} out of range (cpu_count={})",
+            self.cfg.cpu_count
+        );
+        let apic_id = cpu_index as u8;
+        let interrupts = self.interrupts.clone();
+        let mut bus = PerCpuSystemMemoryBus::new(apic_id, interrupts, &mut self.mem);
+        aero_mmu::MemoryBus::read_u32(&mut bus, LAPIC_MMIO_BASE + offset)
+    }
+
+    /// Debug/testing helper: write a u32 to the LAPIC MMIO window as seen by `cpu_index`.
+    ///
+    /// This uses the same per-vCPU LAPIC routing path as CPU execution.
+    pub fn write_lapic_u32(&mut self, cpu_index: usize, offset: u64, value: u32) {
+        assert!(
+            cpu_index < self.cfg.cpu_count as usize,
+            "cpu_index {cpu_index} out of range (cpu_count={})",
+            self.cfg.cpu_count
+        );
+        let apic_id = cpu_index as u8;
+        let interrupts = self.interrupts.clone();
+        let mut bus = PerCpuSystemMemoryBus::new(apic_id, interrupts, &mut self.mem);
+        aero_mmu::MemoryBus::write_u32(&mut bus, LAPIC_MMIO_BASE + offset, value);
     }
 
     /// Debug/testing helper: write a single guest physical byte.
@@ -4035,7 +4193,10 @@ impl Machine {
                     ints.clone()
                 }
                 None => {
-                    let ints = Rc::new(RefCell::new(PlatformInterrupts::new()));
+                    let ints =
+                        Rc::new(RefCell::new(PlatformInterrupts::new_with_cpu_count(
+                            self.cfg.cpu_count,
+                        )));
                     self.interrupts = Some(ints.clone());
                     ints
                 }
@@ -5189,8 +5350,15 @@ impl Machine {
             {
                 remaining = remaining.min(1);
             }
+            // The LAPIC MMIO page is per-vCPU, so wrap the shared `SystemMemory` in a per-vCPU
+            // adapter that can route `0xFEE0_0000..+0x1000` accesses to the correct LAPIC instance.
+            //
+            // Today `Machine` only executes vCPU0, so the APIC ID is always 0 here; multi-vCPU
+            // scheduling can pass the correct APIC ID when additional `CpuCore` instances are
+            // introduced.
+            let phys = PerCpuSystemMemoryBus::new(0, self.interrupts.clone(), &mut self.mem);
             let mut inner = aero_cpu_core::PagingBus::new_with_io(
-                &mut self.mem,
+                phys,
                 StrictIoPortBus { io: &mut self.io },
             );
             std::mem::swap(&mut self.mmu, inner.mmu_mut());
@@ -9483,8 +9651,9 @@ mod tests {
         // BIOS POST enables A20; force it off so we exercise the A20-aliasing path.
         m.chipset.a20().set_enabled(false);
 
-        let inner =
-            aero_cpu_core::PagingBus::new_with_io(&mut m.mem, StrictIoPortBus { io: &mut m.io });
+        let interrupts = m.interrupts.clone();
+        let phys = PerCpuSystemMemoryBus::new(0, interrupts, &mut m.mem);
+        let inner = aero_cpu_core::PagingBus::new_with_io(phys, StrictIoPortBus { io: &mut m.io });
         let mut bus = MachineCpuBus {
             a20: m.chipset.a20(),
             reset: m.reset_latch.clone(),

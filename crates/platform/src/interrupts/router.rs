@@ -396,6 +396,21 @@ impl PlatformInterrupts {
         self.lapics[0].mmio_write(offset, data);
     }
 
+    pub fn lapic_mmio_read_for_apic(&self, apic_id: u8, offset: u64, data: &mut [u8]) {
+        let Some(lapic) = self.lapics.iter().find(|lapic| lapic.apic_id() == apic_id) else {
+            data.fill(0);
+            return;
+        };
+        lapic.mmio_read(offset, data);
+    }
+
+    pub fn lapic_mmio_write_for_apic(&self, apic_id: u8, offset: u64, data: &[u8]) {
+        let Some(lapic) = self.lapics.iter().find(|lapic| lapic.apic_id() == apic_id) else {
+            return;
+        };
+        lapic.mmio_write(offset, data);
+    }
+
     pub fn tick(&self, delta_ns: u64) {
         self.lapic_clock.advance_ns(delta_ns);
         for lapic in &self.lapics {
