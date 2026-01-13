@@ -73,6 +73,41 @@ fn arbitrary_spec() -> impl Strategy<Value = ByteRangeSpec> {
     ]
 }
 
+fn spec_to_model_range(spec: ByteRangeSpec, len: u64) -> Option<(u64, u64)> {
+    if len == 0 {
+        return None;
+    }
+
+    match spec {
+        ByteRangeSpec::FromTo { start, end } => {
+            if start >= len {
+                return None;
+            }
+            let end = end.min(len - 1);
+            if end < start {
+                return None;
+            }
+            Some((start, end))
+        }
+        ByteRangeSpec::From { start } => {
+            if start >= len {
+                return None;
+            }
+            Some((start, len - 1))
+        }
+        ByteRangeSpec::Suffix { len: suffix_len } => {
+            if suffix_len == 0 {
+                return None;
+            }
+            if suffix_len >= len {
+                Some((0, len - 1))
+            } else {
+                Some((len - suffix_len, len - 1))
+            }
+        }
+    }
+}
+
 proptest! {
     // Parser should never panic on arbitrary inputs.
     #[test]
@@ -151,6 +186,63 @@ proptest! {
                     prop_assert_eq!(r.len(), expected_len);
                     prop_assert!(r.len() > 0);
                 }
+
+                if coalesce {
+                    for pair in ranges.windows(2) {
+                        let a = pair[0];
+                        let b = pair[1];
+                        prop_assert!(a.start <= b.start);
+                        prop_assert!(a.end.saturating_add(1) < b.start);
+                    }
+                }
+            }
+        }
+    }
+
+    // Compare `resolve_ranges` against a simple byte-level model implementation, for
+    // small lengths (so we can enumerate all covered bytes).
+    #[test]
+    fn resolve_matches_byte_level_model(
+        specs in prop::collection::vec(arbitrary_spec(), 0..50),
+        len in 0u64..2_000u64,
+        coalesce in any::<bool>(),
+    ) {
+        let expected = if len == 0 {
+            Vec::new()
+        } else {
+            let mut covered = vec![false; len as usize];
+            for &spec in &specs {
+                if let Some((start, end)) = spec_to_model_range(spec, len) {
+                    for i in (start as usize)..=(end as usize) {
+                        covered[i] = true;
+                    }
+                }
+            }
+            covered
+        };
+
+        let expected_any = expected.iter().any(|&b| b);
+
+        let resolved = resolve_ranges(&specs, len, coalesce);
+        match resolved {
+            Err(RangeResolveError::Unsatisfiable) => {
+                prop_assert!(!expected_any);
+            }
+            Ok(ranges) => {
+                prop_assert!(expected_any);
+                prop_assert!(len > 0);
+                prop_assert!(!ranges.is_empty());
+
+                let mut actual = vec![false; len as usize];
+                for r in &ranges {
+                    prop_assert!(r.start <= r.end);
+                    prop_assert!(r.end < len);
+                    for i in (r.start as usize)..=(r.end as usize) {
+                        actual[i] = true;
+                    }
+                }
+
+                prop_assert_eq!(actual, expected);
 
                 if coalesce {
                     for pair in ranges.windows(2) {
