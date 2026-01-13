@@ -3,6 +3,7 @@ package webrtcpeer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -371,5 +372,33 @@ func TestDialL2Backend_FailsOnMissingCredentialSubprotocol(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestDialL2Backend_PropagatesHTTPStatusCodeOnFailure(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	t.Cleanup(ts.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/l2"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := dialL2Backend(ctx, l2BackendDialConfig{
+		BackendWSURL:    wsURL,
+		AuthForwardMode: config.L2BackendAuthForwardModeNone,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+
+	var httpErr *l2BackendDialHTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("expected *l2BackendDialHTTPError, got %T (%v)", err, err)
+	}
+	if httpErr.statusCode != http.StatusForbidden {
+		t.Fatalf("statusCode=%d, want %d", httpErr.statusCode, http.StatusForbidden)
 	}
 }

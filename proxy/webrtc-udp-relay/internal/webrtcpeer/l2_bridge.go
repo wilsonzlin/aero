@@ -60,6 +60,25 @@ type l2BackendDialConfig struct {
 	MaxMessageBytes int
 }
 
+type l2BackendDialHTTPError struct {
+	statusCode int
+	err        error
+}
+
+func (e *l2BackendDialHTTPError) Error() string {
+	if e == nil || e.err == nil {
+		return "l2 backend dial failed"
+	}
+	return e.err.Error()
+}
+
+func (e *l2BackendDialHTTPError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
 // l2Bridge forwards binary messages between a WebRTC DataChannel ("l2") and a
 // backend WebSocket that speaks subprotocol "aero-l2-tunnel-v1".
 //
@@ -143,15 +162,24 @@ func (b *l2Bridge) dialBackend() (*websocket.Conn, error) {
 	start := time.Now()
 	ws, err := dialL2Backend(dialCtx, b.dialCfg)
 	if err != nil {
+		var httpErr *l2BackendDialHTTPError
+		var statusCode any
+		if errors.As(err, &httpErr) && httpErr.statusCode != 0 {
+			statusCode = httpErr.statusCode
+		}
 		if m := b.metrics(); m != nil {
 			m.Inc(metrics.L2BridgeDialErrorsTotal)
 		}
-		slog.Warn("l2_bridge_backend_dial_failed",
+		attrs := []any{
 			"session_id", b.sessionID(),
 			"backend_ws_url", sanitizeWSURLForLog(b.dialCfg.BackendWSURL),
 			"dial_duration_ms", time.Since(start).Milliseconds(),
-			"err", b.sanitizeErrorForLog(err),
-		)
+		}
+		if statusCode != nil {
+			attrs = append(attrs, "status_code", statusCode)
+		}
+		attrs = append(attrs, "err", b.sanitizeErrorForLog(err))
+		slog.Warn("l2_bridge_backend_dial_failed", attrs...)
 		return nil, err
 	}
 
@@ -219,6 +247,9 @@ func dialL2Backend(ctx context.Context, cfg l2BackendDialConfig) (*websocket.Con
 
 	conn, resp, err := dialer.DialContext(ctx, dialURL, header)
 	if err != nil {
+		if resp != nil {
+			err = &l2BackendDialHTTPError{statusCode: resp.StatusCode, err: err}
+		}
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
