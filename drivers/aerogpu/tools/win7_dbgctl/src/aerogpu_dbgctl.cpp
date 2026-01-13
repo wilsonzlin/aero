@@ -5564,7 +5564,7 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   return 0;
 }
 
-static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t timeoutMs) {
+static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t timeoutMs, uint32_t vidpnSourceId) {
   // Best-effort: query device feature bits so we can print which selftest sub-checks are applicable.
   uint64_t features = 0;
   bool haveFeatures = false;
@@ -5585,6 +5585,39 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
 
   const bool featureVblank = haveFeatures && ((features & AEROGPU_FEATURE_VBLANK) != 0);
   const bool featureCursor = haveFeatures && ((features & AEROGPU_FEATURE_CURSOR) != 0);
+
+  // Best-effort: query scanout enable so we can distinguish "vblank skipped because scanout is disabled"
+  // from "vblank passed". The KMD selftest only validates vblank/IRQ delivery while scanout is enabled
+  // because some device models gate vblank tick generation on scanout enable.
+  bool scanoutKnown = false;
+  bool scanoutEnabled = false;
+  {
+    aerogpu_escape_query_scanout_out qs;
+    ZeroMemory(&qs, sizeof(qs));
+    qs.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qs.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    qs.hdr.size = sizeof(qs);
+    qs.hdr.reserved0 = 0;
+    qs.vidpn_source_id = vidpnSourceId;
+
+    NTSTATUS stScanout = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
+    if (!NT_SUCCESS(stScanout) &&
+        (stScanout == STATUS_INVALID_PARAMETER || stScanout == STATUS_NOT_SUPPORTED) &&
+        vidpnSourceId != 0) {
+      // Older KMDs may only support source 0; retry.
+      ZeroMemory(&qs, sizeof(qs));
+      qs.hdr.version = AEROGPU_ESCAPE_VERSION;
+      qs.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+      qs.hdr.size = sizeof(qs);
+      qs.hdr.reserved0 = 0;
+      qs.vidpn_source_id = 0;
+      stScanout = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
+    }
+    if (NT_SUCCESS(stScanout)) {
+      scanoutKnown = true;
+      scanoutEnabled = (qs.mmio_enable != 0);
+    }
+  }
 
   aerogpu_escape_selftest_inout q;
   ZeroMemory(&q, sizeof(q));
@@ -5653,6 +5686,8 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
     PrintStep(L"vblank", L"?", L"(features unknown)");
   } else if (!featureVblank) {
     PrintStep(L"vblank", L"SKIP", L"(AEROGPU_FEATURE_VBLANK not set)");
+  } else if (scanoutKnown && !scanoutEnabled) {
+    PrintStep(L"vblank", L"SKIP", L"(scanout disabled)");
   } else if (q.passed || failedStage > STAGE_VBLANK) {
     PrintStep(L"vblank", L"PASS", L"SCANOUT0_VBLANK_SEQ changes");
   } else if (failedStage == STAGE_VBLANK) {
@@ -5666,6 +5701,8 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
     PrintStep(L"irq", L"?", L"(features unknown)");
   } else if (!featureVblank) {
     PrintStep(L"irq", L"SKIP", L"(requires vblank feature)");
+  } else if (scanoutKnown && !scanoutEnabled) {
+    PrintStep(L"irq", L"SKIP", L"(scanout disabled)");
   } else if (q.passed || failedStage > STAGE_IRQ) {
     PrintStep(L"irq", L"PASS", L"IRQ_STATUS latch/ACK + ISR + DPC");
   } else if (failedStage == STAGE_IRQ) {
@@ -7631,7 +7668,7 @@ int wmain(int argc, wchar_t **argv) {
       rc = DoReadGpa(&f, open.hAdapter, readGpa, readGpaSizeBytes, readGpaOutFile);
       break;
     case CMD_SELFTEST:
-      rc = DoSelftest(&f, open.hAdapter, timeoutMs);
+      rc = DoSelftest(&f, open.hAdapter, timeoutMs, (uint32_t)open.VidPnSourceId);
       break;
     default:
       rc = 1;
