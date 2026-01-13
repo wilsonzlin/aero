@@ -1372,50 +1372,14 @@ mod tests {
         read_u32_le(mem, addr).unwrap()
     }
 
-    fn control_set_params_playback(snd: &mut VirtioSnd<aero_audio::ring::AudioRingBuffer>) {
-        let mut req = [0u8; 24];
-        req[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_SET_PARAMS.to_le_bytes());
-        req[4..8].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
-        req[8..12].copy_from_slice(&4096u32.to_le_bytes());
-        req[12..16].copy_from_slice(&1024u32.to_le_bytes());
-        // features [16..20] = 0
-        req[20] = PLAYBACK_CHANNELS;
-        req[21] = VIRTIO_SND_PCM_FMT_S16;
-        req[22] = VIRTIO_SND_PCM_RATE_48000;
-
-        let resp = snd.handle_control_request(&req);
-        assert_eq!(
-            status(&resp),
-            VIRTIO_SND_S_OK,
-            "PCM_SET_PARAMS should succeed for the supported contract"
-        );
-    }
-
-    fn control_pcm_simple(
-        snd: &mut VirtioSnd<aero_audio::ring::AudioRingBuffer>,
-        code: u32,
-    ) -> u32 {
-        let mut req = [0u8; 8];
-        req[0..4].copy_from_slice(&code.to_le_bytes());
-        req[4..8].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
-        let resp = snd.handle_control_request(&req);
-        status(&resp)
-    }
-
     fn drive_playback_to_prepared(snd: &mut VirtioSnd<aero_audio::ring::AudioRingBuffer>) {
-        control_set_params_playback(snd);
-        assert_eq!(
-            control_pcm_simple(snd, VIRTIO_SND_R_PCM_PREPARE),
-            VIRTIO_SND_S_OK
-        );
+        control_set_params(snd, PLAYBACK_STREAM_ID);
+        control_simple(snd, VIRTIO_SND_R_PCM_PREPARE, PLAYBACK_STREAM_ID);
     }
 
     fn drive_playback_to_running(snd: &mut VirtioSnd<aero_audio::ring::AudioRingBuffer>) {
         drive_playback_to_prepared(snd);
-        assert_eq!(
-            control_pcm_simple(snd, VIRTIO_SND_R_PCM_START),
-            VIRTIO_SND_S_OK
-        );
+        control_simple(snd, VIRTIO_SND_R_PCM_START, PLAYBACK_STREAM_ID);
     }
 
     fn write_bytes(mem: &mut GuestRam, addr: u64, data: &[u8]) {
