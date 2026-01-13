@@ -510,13 +510,18 @@ export interface WasmApi {
          */
         net_stats?():
             | {
-                  tx_pushed_frames: bigint;
-                  tx_dropped_oversize: bigint;
-                  tx_dropped_full: bigint;
-                  rx_popped_frames: bigint;
-                  rx_dropped_oversize: bigint;
-                  rx_corrupt: bigint;
-              }
+                   tx_pushed_frames: bigint;
+                   tx_pushed_bytes?: bigint;
+                   tx_dropped_oversize: bigint;
+                   tx_dropped_oversize_bytes?: bigint;
+                   tx_dropped_full: bigint;
+                   tx_dropped_full_bytes?: bigint;
+                   rx_popped_frames: bigint;
+                   rx_popped_bytes?: bigint;
+                   rx_dropped_oversize: bigint;
+                   rx_dropped_oversize_bytes?: bigint;
+                   rx_corrupt: bigint;
+               }
             | null;
         run_slice(max_insts: number): { kind: number; executed: number; detail: string; free(): void };
         free(): void;
@@ -977,13 +982,18 @@ export interface WasmApi {
          */
         net_stats?():
             | {
-                  tx_pushed_frames: bigint;
-                  tx_dropped_oversize: bigint;
-                  tx_dropped_full: bigint;
-                  rx_popped_frames: bigint;
-                  rx_dropped_oversize: bigint;
-                  rx_corrupt: bigint;
-              }
+                   tx_pushed_frames: bigint;
+                   tx_pushed_bytes?: bigint;
+                   tx_dropped_oversize: bigint;
+                   tx_dropped_oversize_bytes?: bigint;
+                   tx_dropped_full: bigint;
+                   tx_dropped_full_bytes?: bigint;
+                   rx_popped_frames: bigint;
+                   rx_popped_bytes?: bigint;
+                   rx_dropped_oversize: bigint;
+                   rx_dropped_oversize_bytes?: bigint;
+                   rx_corrupt: bigint;
+               }
             | null;
         /**
          * Optional for older WASM builds; canonical machine snapshot support.
