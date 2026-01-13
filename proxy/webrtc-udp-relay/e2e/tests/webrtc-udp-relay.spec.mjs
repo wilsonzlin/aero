@@ -966,6 +966,13 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
         invalidWS.send(JSON.stringify({ type: "auth", token: invalidToken }));
         const invalid = await invalidPromise;
 
+        const invalidQueryWS = new WebSocket(
+          `ws://127.0.0.1:${relayPort}/webrtc/signal?token=${encodeURIComponent(invalidToken)}`,
+        );
+        const invalidQueryPromise = waitForClose(invalidQueryWS);
+        await waitForOpen(invalidQueryWS);
+        const invalidQuery = await invalidQueryPromise;
+
         const queryWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal?token=${encodeURIComponent(token)}`);
         const queryPromise = waitForClose(queryWS);
         await waitForOpen(queryWS);
@@ -975,7 +982,7 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
         queryWS.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "not-an-sdp" } }));
         const query = await queryPromise;
 
-        return { unauth, invalid, query };
+        return { unauth, invalid, invalidQuery, query };
       },
       { relayPort: relay.port, token, invalidToken },
     );
@@ -994,6 +1001,13 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
       expect(["unauthorized", ""]).toContain(res.invalid.closeReason ?? "");
     }
     expect(res.invalid.closeCode).toBe(1008);
+
+    if (res.invalidQuery.errMsg) {
+      expect(res.invalidQuery.errMsg.code).toBe("unauthorized");
+    } else {
+      expect(["unauthorized", ""]).toContain(res.invalidQuery.closeReason ?? "");
+    }
+    expect(res.invalidQuery.closeCode).toBe(1008);
 
     if (res.query.errMsg) {
       expect(res.query.errMsg.code).toBe("bad_message");
