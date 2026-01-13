@@ -465,6 +465,13 @@ function valueToBigInt(v: unknown, name: string): bigint {
 
 function topologyCNameToTsKey(cName: string): string {
   const suffix = cName.replace(/^AEROGPU_TOPOLOGY_/, "");
+  if (suffix.startsWith("PATCHLIST_")) {
+    const n = suffix.replace(/^PATCHLIST_/, "");
+    if (!/^\d+$/.test(n)) {
+      throw new Error(`unknown topology enum name: ${cName}`);
+    }
+    return `PatchList${n}`;
+  }
   switch (suffix) {
     case "POINTLIST":
       return "PointList";
@@ -478,6 +485,14 @@ function topologyCNameToTsKey(cName: string): string {
       return "TriangleStrip";
     case "TRIANGLEFAN":
       return "TriangleFan";
+    case "LINELIST_ADJ":
+      return "LineListAdj";
+    case "LINESTRIP_ADJ":
+      return "LineStripAdj";
+    case "TRIANGLELIST_ADJ":
+      return "TriangleListAdj";
+    case "TRIANGLESTRIP_ADJ":
+      return "TriangleStripAdj";
     default:
       throw new Error(`unknown topology enum name: ${cName}`);
   }
@@ -1080,6 +1095,21 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_TOPOLOGY_TRIANGLELIST"), BigInt(AerogpuPrimitiveTopology.TriangleList));
   assert.equal(konst("AEROGPU_TOPOLOGY_TRIANGLESTRIP"), BigInt(AerogpuPrimitiveTopology.TriangleStrip));
   assert.equal(konst("AEROGPU_TOPOLOGY_TRIANGLEFAN"), BigInt(AerogpuPrimitiveTopology.TriangleFan));
+  assert.equal(konst("AEROGPU_TOPOLOGY_LINELIST_ADJ"), BigInt(AerogpuPrimitiveTopology.LineListAdj));
+  assert.equal(konst("AEROGPU_TOPOLOGY_LINESTRIP_ADJ"), BigInt(AerogpuPrimitiveTopology.LineStripAdj));
+  assert.equal(
+    konst("AEROGPU_TOPOLOGY_TRIANGLELIST_ADJ"),
+    BigInt(AerogpuPrimitiveTopology.TriangleListAdj),
+  );
+  assert.equal(
+    konst("AEROGPU_TOPOLOGY_TRIANGLESTRIP_ADJ"),
+    BigInt(AerogpuPrimitiveTopology.TriangleStripAdj),
+  );
+  for (let cp = 1; cp <= 32; cp++) {
+    const name = `AEROGPU_TOPOLOGY_PATCHLIST_${cp}`;
+    const key = `PatchList${cp}` as keyof typeof AerogpuPrimitiveTopology;
+    assert.equal(konst(name), BigInt(AerogpuPrimitiveTopology[key]));
+  }
 
   assert.equal(konst("AEROGPU_SUBMIT_FLAG_PRESENT"), BigInt(AEROGPU_SUBMIT_FLAG_PRESENT));
   assert.equal(konst("AEROGPU_SUBMIT_FLAG_NO_IRQ"), BigInt(AEROGPU_SUBMIT_FLAG_NO_IRQ));

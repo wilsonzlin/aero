@@ -2901,7 +2901,7 @@ fn rust_layout_matches_c_headers() {
     let mut ring_consts_seen: Vec<String> = Vec::new();
     let mut cmd_consts_seen: Vec<String> = Vec::new();
 
-    let check_const = |seen: &mut Vec<String>, name: &'static str, value: u64| {
+    let check_const = |seen: &mut Vec<String>, name: &str, value: u64| {
         seen.push(name.to_string());
         assert_eq!(abi.konst(name), value, "constant value for {name}");
     };
@@ -3728,6 +3728,34 @@ fn rust_layout_matches_c_headers() {
         "AEROGPU_TOPOLOGY_TRIANGLEFAN",
         AerogpuPrimitiveTopology::TriangleFan as u64,
     );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_TOPOLOGY_LINELIST_ADJ",
+        AerogpuPrimitiveTopology::LineListAdj as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_TOPOLOGY_LINESTRIP_ADJ",
+        AerogpuPrimitiveTopology::LineStripAdj as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_TOPOLOGY_TRIANGLELIST_ADJ",
+        AerogpuPrimitiveTopology::TriangleListAdj as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_TOPOLOGY_TRIANGLESTRIP_ADJ",
+        AerogpuPrimitiveTopology::TriangleStripAdj as u64,
+    );
+
+    // Patchlists (1..=32 control points).
+    for cp in 1u32..=32 {
+        let name = format!("AEROGPU_TOPOLOGY_PATCHLIST_{cp}");
+        // Values follow D3D11: 33..=64 encodes 1..=32 control points.
+        let expected_value = (32 + cp) as u64;
+        check_const(&mut cmd_consts_seen, &name, expected_value);
+    }
 
     assert_name_set_eq(
         cmd_consts_seen,

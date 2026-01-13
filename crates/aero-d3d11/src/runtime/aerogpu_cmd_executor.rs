@@ -554,6 +554,82 @@ struct IndexBufferBinding {
     offset_bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CmdPrimitiveTopology {
+    PointList,
+    LineList,
+    LineStrip,
+    TriangleList,
+    TriangleStrip,
+    /// D3D9 triangle fan. Not directly supported by WebGPU; the current executor treats it as a
+    /// triangle list.
+    TriangleFan,
+
+    // D3D11 adjacency topologies (GS input).
+    LineListAdj,
+    LineStripAdj,
+    TriangleListAdj,
+    TriangleStripAdj,
+
+    // D3D11 patchlists (HS/DS input).
+    PatchList { control_points: u8 },
+}
+
+impl CmdPrimitiveTopology {
+    fn from_u32(v: u32) -> Option<Self> {
+        Some(match v {
+            1 => Self::PointList,
+            2 => Self::LineList,
+            3 => Self::LineStrip,
+            4 => Self::TriangleList,
+            5 => Self::TriangleStrip,
+            6 => Self::TriangleFan,
+            10 => Self::LineListAdj,
+            11 => Self::LineStripAdj,
+            12 => Self::TriangleListAdj,
+            13 => Self::TriangleStripAdj,
+            33..=64 => Self::PatchList {
+                control_points: (v - 32) as u8,
+            },
+            _ => return None,
+        })
+    }
+
+    fn wgpu_topology_for_direct_draw(self) -> Option<wgpu::PrimitiveTopology> {
+        Some(match self {
+            Self::PointList => wgpu::PrimitiveTopology::PointList,
+            Self::LineList => wgpu::PrimitiveTopology::LineList,
+            Self::LineStrip => wgpu::PrimitiveTopology::LineStrip,
+            Self::TriangleList => wgpu::PrimitiveTopology::TriangleList,
+            Self::TriangleStrip => wgpu::PrimitiveTopology::TriangleStrip,
+            // TriangleFan is not directly supported; fall back to TriangleList.
+            Self::TriangleFan => wgpu::PrimitiveTopology::TriangleList,
+            Self::LineListAdj
+            | Self::LineStripAdj
+            | Self::TriangleListAdj
+            | Self::TriangleStripAdj
+            | Self::PatchList { .. } => return None,
+        })
+    }
+
+    fn validate_direct_draw(self) -> Result<wgpu::PrimitiveTopology> {
+        if let Some(t) = self.wgpu_topology_for_direct_draw() {
+            return Ok(t);
+        }
+
+        match self {
+            Self::LineListAdj
+            | Self::LineStripAdj
+            | Self::TriangleListAdj
+            | Self::TriangleStripAdj => {
+                bail!("adjacency primitive topology requires geometry shader emulation")
+            }
+            Self::PatchList { .. } => bail!("patchlist topology requires tessellation emulation"),
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct InputLayoutResource {
     layout: InputLayoutDesc,
@@ -706,7 +782,7 @@ struct AerogpuD3d11State {
 
     vertex_buffers: Vec<Option<VertexBufferBinding>>,
     index_buffer: Option<IndexBufferBinding>,
-    primitive_topology: wgpu::PrimitiveTopology,
+    primitive_topology: CmdPrimitiveTopology,
 
     vs: Option<u32>,
     ps: Option<u32>,
@@ -743,7 +819,7 @@ impl Default for AerogpuD3d11State {
             scissor: None,
             vertex_buffers: vec![None; DEFAULT_MAX_VERTEX_SLOTS],
             index_buffer: None,
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            primitive_topology: CmdPrimitiveTopology::TriangleList,
             vs: None,
             ps: None,
             cs: None,
@@ -2712,7 +2788,15 @@ impl AerogpuD3d11Executor {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
 
-        let depth_only_pass = self.state.render_targets.is_empty() && self.state.depth_stencil.is_some();
+        let depth_only_pass =
+            self.state.render_targets.is_empty() && self.state.depth_stencil.is_some();
+
+        // Some D3D11 primitive topologies (patchlists + adjacency) cannot be expressed in WebGPU
+        // render pipelines. Accept them in `SET_PRIMITIVE_TOPOLOGY` so the command stream can carry
+        // the original D3D11 value, but reject attempts to draw through the non-emulated path.
+        //
+        // This is prerequisite plumbing for future HS/DS + GS emulation.
+        let _topology = self.state.primitive_topology.validate_direct_draw()?;
 
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
@@ -3569,16 +3653,22 @@ impl AerogpuD3d11Executor {
                 // `struct aerogpu_cmd_set_primitive_topology` (16 bytes)
                 if cmd_bytes.len() >= 12 {
                     let topology_u32 = read_u32_le(cmd_bytes, 8)?;
-                    let next = match topology_u32 {
-                        1 => wgpu::PrimitiveTopology::PointList,
-                        2 => wgpu::PrimitiveTopology::LineList,
-                        3 => wgpu::PrimitiveTopology::LineStrip,
-                        4 => wgpu::PrimitiveTopology::TriangleList,
-                        5 => wgpu::PrimitiveTopology::TriangleStrip,
-                        6 => wgpu::PrimitiveTopology::TriangleList, // TriangleFan fallback
-                        _ => break,
+                    let Some(next) = CmdPrimitiveTopology::from_u32(topology_u32) else {
+                        break;
                     };
-                    if next != self.state.primitive_topology {
+                    // `SET_PRIMITIVE_TOPOLOGY` is pipeline-affecting; it can only be applied inside
+                    // an in-flight render pass if it is a no-op for the current pipeline.
+                    //
+                    // Compare against the WebGPU topology used by the "direct draw" path (e.g.
+                    // TriangleFan falls back to TriangleList).
+                    let Some(next_key) = next.wgpu_topology_for_direct_draw() else {
+                        break;
+                    };
+                    let Some(cur_key) = self.state.primitive_topology.wgpu_topology_for_direct_draw()
+                    else {
+                        break;
+                    };
+                    if next_key != cur_key {
                         break;
                     }
                 } else {
@@ -7188,16 +7278,10 @@ impl AerogpuD3d11Executor {
             );
         }
         let topology_u32 = read_u32_le(cmd_bytes, 8)?;
-        self.state.primitive_topology = match topology_u32 {
-            1 => wgpu::PrimitiveTopology::PointList,
-            2 => wgpu::PrimitiveTopology::LineList,
-            3 => wgpu::PrimitiveTopology::LineStrip,
-            4 => wgpu::PrimitiveTopology::TriangleList,
-            5 => wgpu::PrimitiveTopology::TriangleStrip,
-            // TriangleFan is not directly supported; fall back to TriangleList.
-            6 => wgpu::PrimitiveTopology::TriangleList,
-            other => bail!("SET_PRIMITIVE_TOPOLOGY: unknown topology {other}"),
+        let Some(topology) = CmdPrimitiveTopology::from_u32(topology_u32) else {
+            bail!("SET_PRIMITIVE_TOPOLOGY: unknown topology {topology_u32}");
         };
+        self.state.primitive_topology = topology;
         Ok(())
     }
     fn exec_set_blend_state(&mut self, cmd_bytes: &[u8]) -> Result<()> {
@@ -8916,12 +9000,13 @@ fn get_or_create_render_pipeline_for_state<'a>(
     };
     let depth_stencil_key = depth_stencil_state.as_ref().map(|ds| ds.clone().into());
 
+    let topology = state.primitive_topology.validate_direct_draw()?;
     let key = RenderPipelineKey {
         vertex_shader,
         fragment_shader: ps_wgsl_hash,
         color_targets,
         depth_stencil: depth_stencil_key,
-        primitive_topology: state.primitive_topology,
+        primitive_topology: topology,
         cull_mode: state.cull_mode,
         front_face: state.front_face,
         vertex_buffers: vertex_buffer_keys,
@@ -8929,7 +9014,6 @@ fn get_or_create_render_pipeline_for_state<'a>(
         layout: layout_key,
     };
 
-    let topology = state.primitive_topology;
     let cull_mode = state.cull_mode;
     let front_face = state.front_face;
     let depth_stencil_state_for_pipeline = depth_stencil_state.clone();
@@ -9167,12 +9251,13 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
     };
     let depth_stencil_key = depth_stencil_state.as_ref().map(|ds| ds.clone().into());
 
+    let topology = state.primitive_topology.validate_direct_draw()?;
     let key = RenderPipelineKey {
         vertex_shader,
         fragment_shader,
         color_targets,
         depth_stencil: depth_stencil_key,
-        primitive_topology: state.primitive_topology,
+        primitive_topology: topology,
         cull_mode: state.cull_mode,
         front_face: state.front_face,
         vertex_buffers: vec![vb_key],
@@ -9180,7 +9265,6 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
         layout: layout_key,
     };
 
-    let topology = state.primitive_topology;
     let cull_mode = state.cull_mode;
     let front_face = state.front_face;
     let depth_stencil_state_for_pipeline = depth_stencil_state.clone();
@@ -10257,6 +10341,8 @@ fn anyhow_guest_mem(err: GuestMemoryError) -> anyhow::Error {
 mod tests {
     use super::*;
     use aero_gpu::guest_memory::VecGuestMemory;
+    use aero_protocol::aerogpu::aerogpu_cmd::AerogpuPrimitiveTopology;
+    use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
     use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdOpcode;
     use std::sync::Arc;
 
@@ -10276,6 +10362,57 @@ mod tests {
             panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
         }
         eprintln!("skipping {test_name}: {reason}");
+    }
+
+    #[test]
+    fn patchlist_topology_is_accepted_but_draw_requires_emulation() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // Build a minimal stream that attempts to draw with a D3D11 patchlist topology.
+            //
+            // The current executor has no tessellation emulation path, but it must still accept the
+            // `SET_PRIMITIVE_TOPOLOGY` value and defer the error to draw time.
+            const RT: u32 = 1;
+            let mut writer = AerogpuCmdWriter::new();
+            writer.create_texture2d(
+                RT,
+                AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                AerogpuFormat::R8G8B8A8Unorm as u32,
+                1,
+                1,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            writer.set_render_targets(&[RT], 0);
+            writer.set_primitive_topology(AerogpuPrimitiveTopology::PatchList3);
+            writer.draw(3, 1, 0, 0);
+            let stream = writer.finish();
+
+            let mut guest_mem = VecGuestMemory::new(0);
+            let err = exec
+                .execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect_err("patchlist draw should error until tessellation emulation is implemented");
+            assert!(
+                err.to_string()
+                    .contains("patchlist topology requires tessellation emulation"),
+                "unexpected error: {err:#}"
+            );
+
+            assert_eq!(
+                exec.state.primitive_topology,
+                CmdPrimitiveTopology::PatchList { control_points: 3 }
+            );
+        });
     }
 
     #[test]
