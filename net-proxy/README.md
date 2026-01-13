@@ -1,6 +1,7 @@
 # Aero Network Proxy (`net-proxy`)
 
-`net-proxy` is a standalone WebSocket → TCP/UDP relay service that enables browser-based “guest” networking.
+`net-proxy` is a standalone WebSocket → TCP/UDP relay service (plus lightweight DNS-over-HTTPS endpoints) that enables
+browser-based “guest” networking.
 
 The browser connects to this service via WebSocket, and the proxy opens real TCP/UDP sockets from the server to the requested target.
 
@@ -19,6 +20,65 @@ Health check:
 ```bash
 curl http://127.0.0.1:8081/healthz
 ```
+
+### DNS-over-HTTPS (DoH) endpoints
+
+`net-proxy` also implements two DNS-over-HTTPS endpoints that are compatible with the production gateway API:
+
+- `GET|POST /dns-query` — RFC 8484 DoH (`application/dns-message`)
+- `GET /dns-json` — JSON DoH (`application/dns-json`, Cloudflare-DNS-JSON compatible)
+
+This lets you run local networking (TCP + UDP + DNS) without standing up the full `backend/aero-gateway` service.
+
+#### Browser runtime configuration (what URL to set)
+
+Point the browser runtime at the **HTTP base URL** for `net-proxy`:
+
+- `http://127.0.0.1:8081`
+
+In the repo’s web host, this is the `proxyUrl` config (URL query param `proxy`), e.g.:
+
+```text
+http://localhost:5173/?proxy=http%3A%2F%2F127.0.0.1%3A8081
+```
+
+The runtime will then use:
+
+- `http://127.0.0.1:8081/dns-query` (and/or `/dns-json`) for DNS resolution
+- `ws://127.0.0.1:8081/tcp`, `/tcp-mux`, `/udp` for socket proxying (WebSocket URLs are derived from the same base)
+
+> Tip: prefer an `http://` base URL (not `ws://`) so the same value works for both WebSocket and `fetch()`-based DNS.
+
+#### Security caveats (open mode vs allowlist)
+
+Just like `/tcp` and `/udp`, DNS answers are subject to the proxy’s security policy:
+
+- **Default (safe-by-default):** only public/unicast IPs are permitted.
+- **Allowlist mode:** `AERO_PROXY_ALLOW` can opt specific targets in.
+  - Domain allowlist rules still only permit targets that resolve to public/unicast IPs (DNS rebinding mitigation).
+  - To allow private/localhost resolution, use explicit IP/CIDR rules (e.g. `127.0.0.1:*`, `10.0.0.0/8:*`).
+- **Open mode:** `AERO_PROXY_OPEN=1` disables restrictions (trusted local dev only).
+
+Do not expose a dev `net-proxy` instance to the public internet; it is an outbound network proxy.
+
+#### Example `curl` roundtrips
+
+`/dns-json` (human readable):
+
+```bash
+curl -sS 'http://127.0.0.1:8081/dns-json?name=example.com&type=A' \
+  -H 'accept: application/dns-json'
+```
+
+`/dns-query` (binary DNS message; `dns` query parameter is base64url-encoded wire bytes for `A example.com`):
+
+```bash
+curl -sS 'http://127.0.0.1:8081/dns-query?dns=AAABAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE' \
+  -H 'accept: application/dns-message' \
+  | hexdump -C | head
+```
+
+See also: [`docs/07-networking.md`](../docs/07-networking.md) (where DoH fits into the overall networking stack).
 
 ### Open mode (trusted local development)
 
