@@ -127,6 +127,8 @@ paths:
 
 Important: WebRTC uses a **UDP port range** for ICE candidates and relay traffic; this cannot be reverse-proxied by an HTTP Ingress. You must publish/open the relay's UDP port range separately (e.g. a `LoadBalancer`/`NodePort` `Service` with UDP ports, or host networking) and configure the relay to match (see the relay README).
 
+Security note: `GET /webrtc/ice` responses may include sensitive TURN credentials (especially TURN REST ephemeral creds) and are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`). Ensure your Ingress/proxy preserves these headers and does not inject caching headers for `/webrtc/ice`.
+
 ## Prerequisites
 
 - Kubernetes v1.22+ (Ingress v1)

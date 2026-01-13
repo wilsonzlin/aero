@@ -179,6 +179,8 @@ To have the gateway return `udpRelay` connection metadata in `POST /session`, co
 
 These can be provided via `config.data`, `gateway.extraEnv`, or an existing Secret referenced by the chart.
 
+Security note: `GET /webrtc/ice` responses may include sensitive TURN credentials (especially TURN REST ephemeral creds) and are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`). Ensure your Ingress/proxy preserves these headers and does not inject caching headers for `/webrtc/ice`.
+
 See also:
 
 - [`docs/backend/01-aero-gateway-api.md`](../../../../docs/backend/01-aero-gateway-api.md)
