@@ -609,11 +609,38 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   const actualSampleRate = context.sampleRate;
 
   // Call resume() immediately (before any await) to satisfy autoplay policies.
-  const resumePromise = context.resume();
-  // Always attach a rejection handler so we don't surface unhandled rejections if
-  // callers forget to await `output.resume()` or if we early-return due to a
-  // subsequent initialization failure.
-  void resumePromise.catch(() => {});
+  //
+  // IMPORTANT: Do not permanently bind `output.resume()` to this *first* attempt.
+  // Browsers may reject `AudioContext.resume()` when invoked outside a user
+  // gesture. We want later calls (e.g. after a click) to retry.
+  let resumeInFlight: Promise<void> | null = null;
+  const startResumeAttempt = (): Promise<void> => {
+    if (context.state === "running") return Promise.resolve();
+    if (resumeInFlight) return resumeInFlight;
+
+    const p = context.resume();
+    resumeInFlight = p;
+
+    // Always attach a rejection handler so we don't surface unhandled rejections
+    // if callers forget to await `output.resume()` or if we early-return due to a
+    // subsequent initialization failure.
+    void p.catch(() => {});
+
+    // Clear the in-flight promise once it settles so future calls can retry.
+    void p.then(
+      () => {
+        if (resumeInFlight === p) resumeInFlight = null;
+      },
+      () => {
+        if (resumeInFlight === p) resumeInFlight = null;
+      },
+    );
+
+    return p;
+  };
+
+  // Kick off an early resume attempt (best-effort).
+  void startResumeAttempt().catch(() => {});
 
   let ringBuffer: AudioRingBufferLayout;
   let ringBufferFrames: number;
@@ -748,9 +775,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     context,
     node,
     ringBuffer,
-    async resume() {
-      await resumePromise;
-    },
+    resume: startResumeAttempt,
     async close() {
       if (onContextStateChange) {
         // The watcher is only installed when `removeEventListener` exists, but keep this robust
