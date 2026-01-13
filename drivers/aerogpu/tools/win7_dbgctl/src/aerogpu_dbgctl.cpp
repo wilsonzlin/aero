@@ -558,6 +558,131 @@ static bool AddU64(uint64_t a, uint64_t b, uint64_t *out) {
   return true;
 }
 
+static const uint32_t kPngCrc32Table[256] = {
+    0x00000000u, 0x77073096u, 0xee0e612cu, 0x990951bau, 0x076dc419u, 0x706af48fu, 0xe963a535u, 0x9e6495a3u,
+    0x0edb8832u, 0x79dcb8a4u, 0xe0d5e91eu, 0x97d2d988u, 0x09b64c2bu, 0x7eb17cbdu, 0xe7b82d07u, 0x90bf1d91u,
+    0x1db71064u, 0x6ab020f2u, 0xf3b97148u, 0x84be41deu, 0x1adad47du, 0x6ddde4ebu, 0xf4d4b551u, 0x83d385c7u,
+    0x136c9856u, 0x646ba8c0u, 0xfd62f97au, 0x8a65c9ecu, 0x14015c4fu, 0x63066cd9u, 0xfa0f3d63u, 0x8d080df5u,
+    0x3b6e20c8u, 0x4c69105eu, 0xd56041e4u, 0xa2677172u, 0x3c03e4d1u, 0x4b04d447u, 0xd20d85fdu, 0xa50ab56bu,
+    0x35b5a8fau, 0x42b2986cu, 0xdbbbc9d6u, 0xacbcf940u, 0x32d86ce3u, 0x45df5c75u, 0xdcd60dcfu, 0xabd13d59u,
+    0x26d930acu, 0x51de003au, 0xc8d75180u, 0xbfd06116u, 0x21b4f4b5u, 0x56b3c423u, 0xcfba9599u, 0xb8bda50fu,
+    0x2802b89eu, 0x5f058808u, 0xc60cd9b2u, 0xb10be924u, 0x2f6f7c87u, 0x58684c11u, 0xc1611dabu, 0xb6662d3du,
+    0x76dc4190u, 0x01db7106u, 0x98d220bcu, 0xefd5102au, 0x71b18589u, 0x06b6b51fu, 0x9fbfe4a5u, 0xe8b8d433u,
+    0x7807c9a2u, 0x0f00f934u, 0x9609a88eu, 0xe10e9818u, 0x7f6a0dbbu, 0x086d3d2du, 0x91646c97u, 0xe6635c01u,
+    0x6b6b51f4u, 0x1c6c6162u, 0x856530d8u, 0xf262004eu, 0x6c0695edu, 0x1b01a57bu, 0x8208f4c1u, 0xf50fc457u,
+    0x65b0d9c6u, 0x12b7e950u, 0x8bbeb8eau, 0xfcb9887cu, 0x62dd1ddfu, 0x15da2d49u, 0x8cd37cf3u, 0xfbd44c65u,
+    0x4db26158u, 0x3ab551ceu, 0xa3bc0074u, 0xd4bb30e2u, 0x4adfa541u, 0x3dd895d7u, 0xa4d1c46du, 0xd3d6f4fbu,
+    0x4369e96au, 0x346ed9fcu, 0xad678846u, 0xda60b8d0u, 0x44042d73u, 0x33031de5u, 0xaa0a4c5fu, 0xdd0d7cc9u,
+    0x5005713cu, 0x270241aau, 0xbe0b1010u, 0xc90c2086u, 0x5768b525u, 0x206f85b3u, 0xb966d409u, 0xce61e49fu,
+    0x5edef90eu, 0x29d9c998u, 0xb0d09822u, 0xc7d7a8b4u, 0x59b33d17u, 0x2eb40d81u, 0xb7bd5c3bu, 0xc0ba6cadu,
+    0xedb88320u, 0x9abfb3b6u, 0x03b6e20cu, 0x74b1d29au, 0xead54739u, 0x9dd277afu, 0x04db2615u, 0x73dc1683u,
+    0xe3630b12u, 0x94643b84u, 0x0d6d6a3eu, 0x7a6a5aa8u, 0xe40ecf0bu, 0x9309ff9du, 0x0a00ae27u, 0x7d079eb1u,
+    0xf00f9344u, 0x8708a3d2u, 0x1e01f268u, 0x6906c2feu, 0xf762575du, 0x806567cbu, 0x196c3671u, 0x6e6b06e7u,
+    0xfed41b76u, 0x89d32be0u, 0x10da7a5au, 0x67dd4accu, 0xf9b9df6fu, 0x8ebeeff9u, 0x17b7be43u, 0x60b08ed5u,
+    0xd6d6a3e8u, 0xa1d1937eu, 0x38d8c2c4u, 0x4fdff252u, 0xd1bb67f1u, 0xa6bc5767u, 0x3fb506ddu, 0x48b2364bu,
+    0xd80d2bdau, 0xaf0a1b4cu, 0x36034af6u, 0x41047a60u, 0xdf60efc3u, 0xa867df55u, 0x316e8eefu, 0x4669be79u,
+    0xcb61b38cu, 0xbc66831au, 0x256fd2a0u, 0x5268e236u, 0xcc0c7795u, 0xbb0b4703u, 0x220216b9u, 0x5505262fu,
+    0xc5ba3bbeu, 0xb2bd0b28u, 0x2bb45a92u, 0x5cb36a04u, 0xc2d7ffa7u, 0xb5d0cf31u, 0x2cd99e8bu, 0x5bdeae1du,
+    0x9b64c2b0u, 0xec63f226u, 0x756aa39cu, 0x026d930au, 0x9c0906a9u, 0xeb0e363fu, 0x72076785u, 0x05005713u,
+    0x95bf4a82u, 0xe2b87a14u, 0x7bb12baeu, 0x0cb61b38u, 0x92d28e9bu, 0xe5d5be0du, 0x7cdcefb7u, 0x0bdbdf21u,
+    0x86d3d2d4u, 0xf1d4e242u, 0x68ddb3f8u, 0x1fda836eu, 0x81be16cdu, 0xf6b9265bu, 0x6fb077e1u, 0x18b74777u,
+    0x88085ae6u, 0xff0f6a70u, 0x66063bcau, 0x11010b5cu, 0x8f659effu, 0xf862ae69u, 0x616bffd3u, 0x166ccf45u,
+    0xa00ae278u, 0xd70dd2eeu, 0x4e048354u, 0x3903b3c2u, 0xa7672661u, 0xd06016f7u, 0x4969474du, 0x3e6e77dbu,
+    0xaed16a4au, 0xd9d65adcu, 0x40df0b66u, 0x37d83bf0u, 0xa9bcae53u, 0xdebb9ec5u, 0x47b2cf7fu, 0x30b5ffe9u,
+    0xbdbdf21cu, 0xcabac28au, 0x53b39330u, 0x24b4a3a6u, 0xbad03605u, 0xcdd70693u, 0x54de5729u, 0x23d967bfu,
+    0xb3667a2eu, 0xc4614ab8u, 0x5d681b02u, 0x2a6f2b94u, 0xb40bbe37u, 0xc30c8ea1u, 0x5a05df1bu, 0x2d02ef8du,
+};
+
+static uint32_t PngCrc32Update(uint32_t crc, const void *data, size_t len) {
+  const uint8_t *p = (const uint8_t *)data;
+  for (size_t i = 0; i < len; ++i) {
+    crc = kPngCrc32Table[(crc ^ (uint32_t)p[i]) & 0xFFu] ^ (crc >> 8);
+  }
+  return crc;
+}
+
+static uint32_t PngAdler32Update(uint32_t adler, const void *data, size_t len) {
+  // zlib Adler32 (RFC 1950).
+  static const uint32_t kBase = 65521u;
+  static const size_t kNmax = 5552u;
+
+  uint32_t s1 = adler & 0xFFFFu;
+  uint32_t s2 = (adler >> 16) & 0xFFFFu;
+
+  const uint8_t *buf = (const uint8_t *)data;
+  while (len != 0) {
+    size_t k = (len < kNmax) ? len : kNmax;
+    len -= k;
+    while (k--) {
+      s1 += *buf++;
+      s2 += s1;
+    }
+    s1 %= kBase;
+    s2 %= kBase;
+  }
+
+  return (s2 << 16) | s1;
+}
+
+static bool WriteU32Be(FILE *fp, uint32_t v) {
+  uint8_t b[4];
+  b[0] = (uint8_t)((v >> 24) & 0xFFu);
+  b[1] = (uint8_t)((v >> 16) & 0xFFu);
+  b[2] = (uint8_t)((v >> 8) & 0xFFu);
+  b[3] = (uint8_t)(v & 0xFFu);
+  return fwrite(b, 1, sizeof(b), fp) == sizeof(b);
+}
+
+static bool WritePngChunk(FILE *fp, const char type[4], const void *data, uint32_t len) {
+  if (!fp || !type) {
+    return false;
+  }
+  if (!WriteU32Be(fp, len)) {
+    return false;
+  }
+  if (fwrite(type, 1, 4, fp) != 4) {
+    return false;
+  }
+  if (len != 0) {
+    if (!data) {
+      return false;
+    }
+    if (fwrite(data, 1, len, fp) != len) {
+      return false;
+    }
+  }
+
+  uint32_t crc = 0xFFFFFFFFu;
+  crc = PngCrc32Update(crc, type, 4);
+  if (len != 0) {
+    crc = PngCrc32Update(crc, data, (size_t)len);
+  }
+  crc ^= 0xFFFFFFFFu;
+  return WriteU32Be(fp, crc);
+}
+
+static bool WritePngChunkHeader(FILE *fp, const char type[4], uint32_t len, uint32_t *crcOut) {
+  if (!fp || !type || !crcOut) {
+    return false;
+  }
+  if (!WriteU32Be(fp, len)) {
+    return false;
+  }
+  if (fwrite(type, 1, 4, fp) != 4) {
+    return false;
+  }
+  *crcOut = PngCrc32Update(0xFFFFFFFFu, type, 4);
+  return true;
+}
+
+static bool WritePngChunkCrc(FILE *fp, uint32_t crc) {
+  if (!fp) {
+    return false;
+  }
+  crc ^= 0xFFFFFFFFu;
+  return WriteU32Be(fp, crc);
+}
+
 static const uint64_t kDumpLastCmdDefaultMaxBytes = 1024ull * 1024ull;      // 1 MiB
 static const uint64_t kDumpLastCmdHardMaxBytes = 64ull * 1024ull * 1024ull; // 64 MiB
 
@@ -580,14 +705,16 @@ static void PrintUsage() {
            L"  --query-segments\n"
            L"  --query-fence\n"
            L"  --watch-fence  (requires: --samples N --interval-ms M)\n"
-           L"  --query-perf  (alias: --perf)\n"
-           L"  --query-scanout\n"
-           L"  --dump-scanout-bmp PATH\n"
-           L"  --query-cursor  (alias: --dump-cursor)\n"
-           L"  --dump-cursor-bmp PATH\n"
-           L"  --dump-ring\n"
-           L"  --dump-last-cmd [--index-from-tail K] --out <path> [--force]\n"
-           L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
+            L"  --query-perf  (alias: --perf)\n"
+            L"  --query-scanout\n"
+            L"  --dump-scanout-bmp PATH\n"
+            L"  --dump-scanout-png PATH\n"
+            L"  --query-cursor  (alias: --dump-cursor)\n"
+            L"  --dump-cursor-bmp PATH\n"
+            L"  --dump-cursor-png PATH\n"
+            L"  --dump-ring\n"
+            L"  --dump-last-cmd [--index-from-tail K] --out <path> [--force]\n"
+            L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
            L"      [--csv <path>]  (write CreateAllocation trace as CSV)\n"
            L"  --dump-vblank  (alias: --query-vblank)\n"
@@ -3200,6 +3327,495 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
   return 0;
 }
 
+static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
+                                      D3DKMT_HANDLE hAdapter,
+                                      const wchar_t *label,
+                                      uint32_t width,
+                                      uint32_t height,
+                                      uint32_t format,
+                                      uint32_t pitchBytes,
+                                      uint64_t fbGpa,
+                                      const wchar_t *path) {
+  if (!f || !f->Escape || !hAdapter || !label || !path) {
+    return 2;
+  }
+
+  uint32_t srcBpp = 0;
+  switch ((enum aerogpu_format)format) {
+  case AEROGPU_FORMAT_B8G8R8A8_UNORM:
+  case AEROGPU_FORMAT_B8G8R8X8_UNORM:
+  case AEROGPU_FORMAT_R8G8B8A8_UNORM:
+  case AEROGPU_FORMAT_R8G8B8X8_UNORM:
+  case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
+  case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
+  case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
+  case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
+    srcBpp = 4;
+    break;
+  case AEROGPU_FORMAT_B5G6R5_UNORM:
+  case AEROGPU_FORMAT_B5G5R5A1_UNORM:
+    srcBpp = 2;
+    break;
+  default:
+    fwprintf(stderr, L"%s: unsupported format: %S (%lu)\n",
+             label,
+             AerogpuFormatName(format),
+             (unsigned long)format);
+    return 2;
+  }
+
+  // Validate row byte sizes and PNG size computations (avoid overflows / huge dumps).
+  uint64_t rowSrcBytes64 = 0;
+  if (!MulU64((uint64_t)width, (uint64_t)srcBpp, &rowSrcBytes64) || rowSrcBytes64 == 0) {
+    fwprintf(stderr, L"%s: invalid width/bpp combination: width=%lu bpp=%lu\n",
+             label,
+             (unsigned long)width,
+             (unsigned long)srcBpp);
+    return 2;
+  }
+  if ((uint64_t)pitchBytes < rowSrcBytes64) {
+    fwprintf(stderr,
+             L"%s: invalid pitch (pitch=%lu < row_bytes=%I64u)\n",
+             label,
+             (unsigned long)pitchBytes,
+             (unsigned long long)rowSrcBytes64);
+    return 2;
+  }
+
+  uint64_t rowOutBytes64 = 0;
+  if (!MulU64((uint64_t)width, 4ull, &rowOutBytes64) || rowOutBytes64 == 0) {
+    fwprintf(stderr, L"%s: invalid width for PNG output: width=%lu\n", label, (unsigned long)width);
+    return 2;
+  }
+  uint64_t imageBytes64 = 0;
+  if (!MulU64(rowOutBytes64, (uint64_t)height, &imageBytes64)) {
+    fwprintf(stderr, L"%s: image size overflow: %lux%lu\n", label, (unsigned long)width, (unsigned long)height);
+    return 2;
+  }
+
+  // Refuse absurdly large dumps (debug tool safety).
+  const uint64_t kMaxImageBytes = 512ull * 1024ull * 1024ull; // 512 MiB
+  if (imageBytes64 > kMaxImageBytes) {
+    fwprintf(stderr,
+             L"%s: refusing to dump %I64u bytes (%lux%lu) to PNG (limit %I64u MiB)\n",
+             label,
+             (unsigned long long)imageBytes64,
+             (unsigned long)width,
+             (unsigned long)height,
+             (unsigned long long)(kMaxImageBytes / (1024ull * 1024ull)));
+    return 2;
+  }
+
+  if (width == 0 || height == 0) {
+    fwprintf(stderr, L"%s: invalid size %lux%lu\n", label, (unsigned long)width, (unsigned long)height);
+    return 2;
+  }
+
+  // PNG stores scanlines as: [filter_byte][RGBA...].
+  uint64_t rowRawBytes64 = 0;
+  if (!AddU64(rowOutBytes64, 1ull, &rowRawBytes64)) {
+    fwprintf(stderr, L"%s: row size overflow\n", label);
+    return 2;
+  }
+  uint64_t rawBytes64 = 0;
+  if (!MulU64(rowRawBytes64, (uint64_t)height, &rawBytes64)) {
+    fwprintf(stderr, L"%s: raw image size overflow\n", label);
+    return 2;
+  }
+
+  // zlib stream for IDAT: 2-byte header + N stored blocks + Adler32.
+  const uint64_t kDeflateBlockMax = 65535ull;
+  const uint64_t numBlocks = (rawBytes64 + (kDeflateBlockMax - 1ull)) / kDeflateBlockMax;
+  uint64_t blockOverhead64 = 0;
+  if (!MulU64(numBlocks, 5ull, &blockOverhead64)) {
+    fwprintf(stderr, L"%s: deflate overhead overflow\n", label);
+    return 2;
+  }
+  uint64_t zlibPayload64 = 0;
+  if (!AddU64(rawBytes64, blockOverhead64, &zlibPayload64)) {
+    fwprintf(stderr, L"%s: deflate payload overflow\n", label);
+    return 2;
+  }
+  uint64_t idatLen64 = 0;
+  // 2 bytes zlib header + payload + 4 bytes Adler32 footer.
+  if (!AddU64(zlibPayload64, 6ull, &idatLen64) || idatLen64 > 0xFFFFFFFFull) {
+    fwprintf(stderr, L"%s: refusing to dump: IDAT chunk too large (%I64u bytes)\n",
+             label,
+             (unsigned long long)idatLen64);
+    return 2;
+  }
+  const uint32_t idatLen = (uint32_t)idatLen64;
+
+  const uint64_t sizeMax = (uint64_t)(~(size_t)0);
+  if (rowSrcBytes64 > sizeMax || rowOutBytes64 > sizeMax) {
+    fwprintf(stderr, L"%s: refusing to dump: row buffers exceed addressable size\n", label);
+    return 2;
+  }
+  const size_t rowSrcBytes = (size_t)rowSrcBytes64;
+  const size_t rowOutBytes = (size_t)rowOutBytes64;
+
+  FILE *fp = NULL;
+  errno_t ferr = _wfopen_s(&fp, path, L"wb");
+  if (ferr != 0 || !fp) {
+    fwprintf(stderr, L"%s: failed to open output file: %s (errno=%d)\n", label, path, (int)ferr);
+    return 2;
+  }
+
+  static const uint8_t kPngSig[8] = {0x89u, 'P', 'N', 'G', '\r', '\n', 0x1Au, '\n'};
+  if (fwrite(kPngSig, 1, sizeof(kPngSig), fp) != sizeof(kPngSig)) {
+    fwprintf(stderr, L"%s: failed to write PNG signature to %s\n", label, path);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  uint8_t ihdr[13];
+  ihdr[0] = (uint8_t)((width >> 24) & 0xFFu);
+  ihdr[1] = (uint8_t)((width >> 16) & 0xFFu);
+  ihdr[2] = (uint8_t)((width >> 8) & 0xFFu);
+  ihdr[3] = (uint8_t)(width & 0xFFu);
+  ihdr[4] = (uint8_t)((height >> 24) & 0xFFu);
+  ihdr[5] = (uint8_t)((height >> 16) & 0xFFu);
+  ihdr[6] = (uint8_t)((height >> 8) & 0xFFu);
+  ihdr[7] = (uint8_t)(height & 0xFFu);
+  ihdr[8] = 8u;  // bit depth
+  ihdr[9] = 6u;  // color type: RGBA
+  ihdr[10] = 0u; // compression: deflate
+  ihdr[11] = 0u; // filter: none
+  ihdr[12] = 0u; // interlace: none
+
+  if (!WritePngChunk(fp, "IHDR", ihdr, (uint32_t)sizeof(ihdr))) {
+    fwprintf(stderr, L"%s: failed to write PNG IHDR chunk to %s\n", label, path);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  uint8_t *rowSrc = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, rowSrcBytes);
+  uint8_t *rowOut = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, rowOutBytes);
+  if (!rowSrc || !rowOut) {
+    fwprintf(stderr, L"%s: out of memory allocating row buffers (%Iu, %Iu bytes)\n", label, rowSrcBytes, rowOutBytes);
+    if (rowSrc) HeapFree(GetProcessHeap(), 0, rowSrc);
+    if (rowOut) HeapFree(GetProcessHeap(), 0, rowOut);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  // Escape buffer for READ_GPA: reuse a single buffer to avoid per-chunk allocations.
+  const uint32_t maxReadChunk = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+  const uint32_t escapeBufCap = (uint32_t)sizeof(aerogpu_escape_read_gpa_inout);
+  uint8_t *escapeBuf = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, (size_t)escapeBufCap);
+  if (!escapeBuf) {
+    fwprintf(stderr, L"%s: out of memory allocating escape buffer (%lu bytes)\n", label, (unsigned long)escapeBufCap);
+    HeapFree(GetProcessHeap(), 0, rowSrc);
+    HeapFree(GetProcessHeap(), 0, rowOut);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  // IDAT chunk: zlib stream using stored (uncompressed) deflate blocks.
+  uint32_t idatCrc = 0;
+  if (!WritePngChunkHeader(fp, "IDAT", idatLen, &idatCrc)) {
+    fwprintf(stderr, L"%s: failed to start PNG IDAT chunk\n", label);
+    HeapFree(GetProcessHeap(), 0, escapeBuf);
+    HeapFree(GetProcessHeap(), 0, rowSrc);
+    HeapFree(GetProcessHeap(), 0, rowOut);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  const uint8_t zhdr[2] = {0x78u, 0x01u}; // CMF/FLG for deflate/no compression
+  if (fwrite(zhdr, 1, sizeof(zhdr), fp) != sizeof(zhdr)) {
+    fwprintf(stderr, L"%s: failed to write zlib header\n", label);
+    HeapFree(GetProcessHeap(), 0, escapeBuf);
+    HeapFree(GetProcessHeap(), 0, rowSrc);
+    HeapFree(GetProcessHeap(), 0, rowOut);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+  idatCrc = PngCrc32Update(idatCrc, zhdr, sizeof(zhdr));
+
+  uint64_t rawRemaining = rawBytes64;
+  uint32_t blockRemaining = 0;
+  uint32_t adler = 1u;
+
+  const auto WriteRaw = [&](const void *data, uint32_t len) -> bool {
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t off = 0;
+    while (off < len) {
+      if (rawRemaining == 0) {
+        return false;
+      }
+      if (blockRemaining == 0) {
+        const uint32_t blkLen =
+            (rawRemaining > kDeflateBlockMax) ? (uint32_t)kDeflateBlockMax : (uint32_t)rawRemaining;
+        const uint8_t bfinal = (rawRemaining <= kDeflateBlockMax) ? 1u : 0u;
+        const uint8_t hdr = bfinal; // BTYPE=00 (stored)
+
+        if (fwrite(&hdr, 1, 1, fp) != 1) {
+          return false;
+        }
+        idatCrc = PngCrc32Update(idatCrc, &hdr, 1);
+
+        const uint16_t len16 = (uint16_t)blkLen;
+        const uint16_t nlen16 = (uint16_t)(~len16);
+        uint8_t le[4];
+        le[0] = (uint8_t)(len16 & 0xFFu);
+        le[1] = (uint8_t)((len16 >> 8) & 0xFFu);
+        le[2] = (uint8_t)(nlen16 & 0xFFu);
+        le[3] = (uint8_t)((nlen16 >> 8) & 0xFFu);
+        if (fwrite(le, 1, sizeof(le), fp) != sizeof(le)) {
+          return false;
+        }
+        idatCrc = PngCrc32Update(idatCrc, le, sizeof(le));
+        blockRemaining = blkLen;
+      }
+
+      uint32_t chunk = len - off;
+      if (chunk > blockRemaining) {
+        chunk = blockRemaining;
+      }
+
+      if (fwrite(p + off, 1, chunk, fp) != chunk) {
+        return false;
+      }
+      idatCrc = PngCrc32Update(idatCrc, p + off, chunk);
+      adler = PngAdler32Update(adler, p + off, chunk);
+
+      off += chunk;
+      blockRemaining -= chunk;
+      rawRemaining -= (uint64_t)chunk;
+    }
+    return true;
+  };
+
+  // Write scanlines top-down.
+  for (uint32_t y = 0; y < height; ++y) {
+    uint64_t rowGpa = 0;
+    uint64_t rowOffset = 0;
+    if (!MulU64((uint64_t)y, (uint64_t)pitchBytes, &rowOffset) || !AddU64(fbGpa, rowOffset, &rowGpa)) {
+      fwprintf(stderr, L"%s: GPA overflow computing row %lu address\n", label, (unsigned long)y);
+      HeapFree(GetProcessHeap(), 0, escapeBuf);
+      HeapFree(GetProcessHeap(), 0, rowSrc);
+      HeapFree(GetProcessHeap(), 0, rowOut);
+      fclose(fp);
+      _wremove(path);
+      return 2;
+    }
+
+    // Read row bytes in bounded chunks.
+    size_t done = 0;
+    while (done < rowSrcBytes) {
+      const uint32_t remaining = (uint32_t)(rowSrcBytes - done);
+      uint32_t chunk = (remaining < maxReadChunk) ? remaining : maxReadChunk;
+
+      uint64_t chunkGpa = 0;
+      if (!AddU64(rowGpa, (uint64_t)done, &chunkGpa)) {
+        fwprintf(stderr, L"%s: GPA overflow computing read offset for row %lu\n", label, (unsigned long)y);
+        HeapFree(GetProcessHeap(), 0, escapeBuf);
+        HeapFree(GetProcessHeap(), 0, rowSrc);
+        HeapFree(GetProcessHeap(), 0, rowOut);
+        fclose(fp);
+        _wremove(path);
+        return 2;
+      }
+
+      const NTSTATUS rst = ReadGpa(f, hAdapter, chunkGpa, rowSrc + done, chunk, escapeBuf, escapeBufCap);
+      if (!NT_SUCCESS(rst)) {
+        PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, rst);
+        fwprintf(stderr,
+                 L"%s: failed to read row %lu (offset %Iu, size %lu)\n",
+                 label,
+                 (unsigned long)y,
+                 done,
+                 (unsigned long)chunk);
+        HeapFree(GetProcessHeap(), 0, escapeBuf);
+        HeapFree(GetProcessHeap(), 0, rowSrc);
+        HeapFree(GetProcessHeap(), 0, rowOut);
+        fclose(fp);
+        _wremove(path);
+        return 2;
+      }
+      done += (size_t)chunk;
+    }
+
+    // Convert to 32bpp RGBA8.
+    switch ((enum aerogpu_format)format) {
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint8_t *s = rowSrc + (size_t)x * 4u;
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = s[2];
+        d[1] = s[1];
+        d[2] = s[0];
+        d[3] = s[3];
+      }
+      break;
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint8_t *s = rowSrc + (size_t)x * 4u;
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = s[2];
+        d[1] = s[1];
+        d[2] = s[0];
+        d[3] = 0xFFu;
+      }
+      break;
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM:
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint8_t *s = rowSrc + (size_t)x * 4u;
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = s[0];
+        d[1] = s[1];
+        d[2] = s[2];
+        d[3] = s[3];
+      }
+      break;
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM:
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint8_t *s = rowSrc + (size_t)x * 4u;
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = s[0];
+        d[1] = s[1];
+        d[2] = s[2];
+        d[3] = 0xFFu;
+      }
+      break;
+    case AEROGPU_FORMAT_B5G6R5_UNORM: {
+      const uint16_t *src16 = (const uint16_t *)rowSrc;
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint16_t p = src16[x];
+        const uint8_t b5 = (uint8_t)(p & 0x1Fu);
+        const uint8_t g6 = (uint8_t)((p >> 5) & 0x3Fu);
+        const uint8_t r5 = (uint8_t)((p >> 11) & 0x1Fu);
+        const uint8_t b = (uint8_t)((b5 << 3) | (b5 >> 2));
+        const uint8_t g = (uint8_t)((g6 << 2) | (g6 >> 4));
+        const uint8_t r = (uint8_t)((r5 << 3) | (r5 >> 2));
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = r;
+        d[1] = g;
+        d[2] = b;
+        d[3] = 0xFFu;
+      }
+      break;
+    }
+    case AEROGPU_FORMAT_B5G5R5A1_UNORM: {
+      const uint16_t *src16 = (const uint16_t *)rowSrc;
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint16_t p = src16[x];
+        const uint8_t a1 = (uint8_t)((p >> 15) & 0x1u);
+        const uint8_t b5 = (uint8_t)(p & 0x1Fu);
+        const uint8_t g5 = (uint8_t)((p >> 5) & 0x1Fu);
+        const uint8_t r5 = (uint8_t)((p >> 10) & 0x1Fu);
+        const uint8_t b = (uint8_t)((b5 << 3) | (b5 >> 2));
+        const uint8_t g = (uint8_t)((g5 << 3) | (g5 >> 2));
+        const uint8_t r = (uint8_t)((r5 << 3) | (r5 >> 2));
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = r;
+        d[1] = g;
+        d[2] = b;
+        d[3] = a1 ? 0xFFu : 0x00u;
+      }
+      break;
+    }
+    default:
+      fwprintf(stderr, L"%s: unsupported format during conversion: %S (%lu)\n",
+               label,
+               AerogpuFormatName(format),
+               (unsigned long)format);
+      HeapFree(GetProcessHeap(), 0, escapeBuf);
+      HeapFree(GetProcessHeap(), 0, rowSrc);
+      HeapFree(GetProcessHeap(), 0, rowOut);
+      fclose(fp);
+      _wremove(path);
+      return 2;
+    }
+
+    const uint8_t filter = 0u;
+    if (!WriteRaw(&filter, 1) || !WriteRaw(rowOut, (uint32_t)rowOutBytes)) {
+      fwprintf(stderr, L"%s: failed to write PNG IDAT data\n", label);
+      HeapFree(GetProcessHeap(), 0, escapeBuf);
+      HeapFree(GetProcessHeap(), 0, rowSrc);
+      HeapFree(GetProcessHeap(), 0, rowOut);
+      fclose(fp);
+      _wremove(path);
+      return 2;
+    }
+  }
+
+  if (rawRemaining != 0 || blockRemaining != 0) {
+    fwprintf(stderr, L"%s: internal error: PNG writer rawRemaining=%I64u blockRemaining=%lu\n",
+             label,
+             (unsigned long long)rawRemaining,
+             (unsigned long)blockRemaining);
+    HeapFree(GetProcessHeap(), 0, escapeBuf);
+    HeapFree(GetProcessHeap(), 0, rowSrc);
+    HeapFree(GetProcessHeap(), 0, rowOut);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  uint8_t adlerBe[4];
+  adlerBe[0] = (uint8_t)((adler >> 24) & 0xFFu);
+  adlerBe[1] = (uint8_t)((adler >> 16) & 0xFFu);
+  adlerBe[2] = (uint8_t)((adler >> 8) & 0xFFu);
+  adlerBe[3] = (uint8_t)(adler & 0xFFu);
+  if (fwrite(adlerBe, 1, sizeof(adlerBe), fp) != sizeof(adlerBe)) {
+    fwprintf(stderr, L"%s: failed to write PNG Adler32\n", label);
+    HeapFree(GetProcessHeap(), 0, escapeBuf);
+    HeapFree(GetProcessHeap(), 0, rowSrc);
+    HeapFree(GetProcessHeap(), 0, rowOut);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+  idatCrc = PngCrc32Update(idatCrc, adlerBe, sizeof(adlerBe));
+
+  if (!WritePngChunkCrc(fp, idatCrc)) {
+    fwprintf(stderr, L"%s: failed to write PNG IDAT CRC\n", label);
+    HeapFree(GetProcessHeap(), 0, escapeBuf);
+    HeapFree(GetProcessHeap(), 0, rowSrc);
+    HeapFree(GetProcessHeap(), 0, rowOut);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  if (!WritePngChunk(fp, "IEND", "", 0)) {
+    fwprintf(stderr, L"%s: failed to write PNG IEND chunk\n", label);
+    HeapFree(GetProcessHeap(), 0, escapeBuf);
+    HeapFree(GetProcessHeap(), 0, rowSrc);
+    HeapFree(GetProcessHeap(), 0, rowOut);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  HeapFree(GetProcessHeap(), 0, escapeBuf);
+  HeapFree(GetProcessHeap(), 0, rowSrc);
+  HeapFree(GetProcessHeap(), 0, rowOut);
+  fclose(fp);
+
+  wprintf(L"Wrote %s: %lux%lu format=%S pitch=%lu fb_gpa=0x%I64x -> %s\n",
+          label,
+          (unsigned long)width,
+          (unsigned long)height,
+          AerogpuFormatName(format),
+          (unsigned long)pitchBytes,
+          (unsigned long long)fbGpa,
+          path);
+  return 0;
+}
+
 static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId, const wchar_t *path) {
   if (!path || path[0] == 0) {
     fwprintf(stderr, L"--dump-scanout-bmp requires a non-empty path\n");
@@ -3263,6 +3879,69 @@ static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   return DumpLinearFramebufferToBmp(f, hAdapter, label, width, height, format, pitchBytes, fbGpa, path);
 }
 
+static int DoDumpScanoutPng(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId, const wchar_t *path) {
+  if (!path || path[0] == 0) {
+    fwprintf(stderr, L"--dump-scanout-png requires a non-empty path\n");
+    return 1;
+  }
+
+  // Query scanout state (MMIO snapshot preferred).
+  aerogpu_escape_query_scanout_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.vidpn_source_id = vidpnSourceId;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && vidpnSourceId != 0) {
+    // Older KMDs may only support source 0; retry.
+    ZeroMemory(&q, sizeof(q));
+    q.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    q.hdr.size = sizeof(q);
+    q.hdr.reserved0 = 0;
+    q.vidpn_source_id = 0;
+    st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  }
+  if (!NT_SUCCESS(st)) {
+    PrintNtStatus(L"D3DKMTEscape(query-scanout) failed", f, st);
+    return 2;
+  }
+
+  // Prefer MMIO snapshot values (these reflect what the device is actually using).
+  const uint32_t enable = (q.mmio_enable != 0) ? q.mmio_enable : q.cached_enable;
+  const uint32_t width = (q.mmio_width != 0) ? q.mmio_width : q.cached_width;
+  const uint32_t height = (q.mmio_height != 0) ? q.mmio_height : q.cached_height;
+  const uint32_t format = (q.mmio_format != 0) ? q.mmio_format : q.cached_format;
+  const uint32_t pitchBytes = (q.mmio_pitch_bytes != 0) ? q.mmio_pitch_bytes : q.cached_pitch_bytes;
+  const uint64_t fbGpa = (uint64_t)q.mmio_fb_gpa;
+
+  if (width == 0 || height == 0 || pitchBytes == 0) {
+    fwprintf(stderr,
+             L"Scanout%lu: invalid mode (enable=%lu width=%lu height=%lu pitch=%lu)\n",
+             (unsigned long)q.vidpn_source_id,
+             (unsigned long)enable,
+             (unsigned long)width,
+             (unsigned long)height,
+             (unsigned long)pitchBytes);
+    fwprintf(stderr, L"Hint: run --query-scanout to inspect cached vs MMIO values.\n");
+    return 2;
+  }
+
+  if (fbGpa == 0) {
+    fwprintf(stderr, L"Scanout%lu: MMIO framebuffer GPA is 0; cannot dump framebuffer.\n",
+             (unsigned long)q.vidpn_source_id);
+    fwprintf(stderr, L"Hint: ensure the installed KMD supports scanout registers (and AEROGPU_ESCAPE_OP_QUERY_SCANOUT).\n");
+    return 2;
+  }
+
+  wchar_t label[32];
+  swprintf_s(label, sizeof(label) / sizeof(label[0]), L"scanout%lu", (unsigned long)q.vidpn_source_id);
+  return DumpLinearFramebufferToPng(f, hAdapter, label, width, height, format, pitchBytes, fbGpa, path);
+}
+
 static int DoDumpCursorBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const wchar_t *path) {
   if (!path || path[0] == 0) {
     fwprintf(stderr, L"--dump-cursor-bmp requires a non-empty path\n");
@@ -3317,6 +3996,62 @@ static int DoDumpCursorBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const 
   }
 
   return DumpLinearFramebufferToBmp(f, hAdapter, L"cursor", width, height, format, pitchBytes, fbGpa, path);
+}
+
+static int DoDumpCursorPng(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const wchar_t *path) {
+  if (!path || path[0] == 0) {
+    fwprintf(stderr, L"--dump-cursor-png requires a non-empty path\n");
+    return 1;
+  }
+
+  aerogpu_escape_query_cursor_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_CURSOR;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    if (st == STATUS_NOT_SUPPORTED) {
+      wprintf(L"Cursor: (not supported)\n");
+      return 2;
+    }
+    PrintNtStatus(L"D3DKMTEscape(query-cursor) failed", f, st);
+    return 2;
+  }
+
+  bool supported = true;
+  if ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+    supported = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
+  }
+  if (!supported) {
+    wprintf(L"Cursor: (not supported)\n");
+    return 2;
+  }
+
+  const uint32_t width = (uint32_t)q.width;
+  const uint32_t height = (uint32_t)q.height;
+  const uint32_t format = (uint32_t)q.format;
+  const uint32_t pitchBytes = (uint32_t)q.pitch_bytes;
+  const uint64_t fbGpa = (uint64_t)q.fb_gpa;
+
+  if (width == 0 || height == 0 || pitchBytes == 0) {
+    fwprintf(stderr, L"Cursor: invalid mode (width=%lu height=%lu pitch=%lu)\n",
+             (unsigned long)width,
+             (unsigned long)height,
+             (unsigned long)pitchBytes);
+    fwprintf(stderr, L"Hint: run --query-cursor to inspect cursor MMIO state.\n");
+    return 2;
+  }
+
+  if (fbGpa == 0) {
+    fwprintf(stderr, L"Cursor: framebuffer GPA is 0; cannot dump cursor.\n");
+    fwprintf(stderr, L"Hint: run --query-cursor to inspect cursor MMIO state.\n");
+    return 2;
+  }
+
+  return DumpLinearFramebufferToPng(f, hAdapter, L"cursor", width, height, format, pitchBytes, fbGpa, path);
 }
 
 static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f,
@@ -6103,7 +6838,9 @@ int wmain(int argc, wchar_t **argv) {
   uint64_t mapSharedHandle = 0;
   const wchar_t *createAllocCsvPath = NULL;
   const wchar_t *dumpScanoutBmpPath = NULL;
+  const wchar_t *dumpScanoutPngPath = NULL;
   const wchar_t *dumpCursorBmpPath = NULL;
+  const wchar_t *dumpCursorPngPath = NULL;
   uint64_t readGpa = 0;
   uint32_t readGpaSizeBytes = 0;
   const wchar_t *readGpaOutFile = NULL;
@@ -6122,8 +6859,10 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_PERF,
     CMD_QUERY_SCANOUT,
     CMD_DUMP_SCANOUT_BMP,
+    CMD_DUMP_SCANOUT_PNG,
     CMD_QUERY_CURSOR,
     CMD_DUMP_CURSOR_BMP,
+    CMD_DUMP_CURSOR_PNG,
     CMD_DUMP_RING,
     CMD_WATCH_RING,
     CMD_DUMP_LAST_CMD,
@@ -6414,6 +7153,18 @@ int wmain(int argc, wchar_t **argv) {
       dumpScanoutBmpPath = argv[++i];
       continue;
     }
+    if (wcscmp(a, L"--dump-scanout-png") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--dump-scanout-png requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      if (!SetCommand(CMD_DUMP_SCANOUT_PNG)) {
+        return 1;
+      }
+      dumpScanoutPngPath = argv[++i];
+      continue;
+    }
     if (wcscmp(a, L"--query-cursor") == 0 || wcscmp(a, L"--dump-cursor") == 0) {
       if (!SetCommand(CMD_QUERY_CURSOR)) {
         return 1;
@@ -6430,6 +7181,18 @@ int wmain(int argc, wchar_t **argv) {
         return 1;
       }
       dumpCursorBmpPath = argv[++i];
+      continue;
+    }
+    if (wcscmp(a, L"--dump-cursor-png") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--dump-cursor-png requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      if (!SetCommand(CMD_DUMP_CURSOR_PNG)) {
+        return 1;
+      }
+      dumpCursorPngPath = argv[++i];
       continue;
     }
     if (wcscmp(a, L"--dump-ring") == 0) {
@@ -6640,6 +7403,12 @@ int wmain(int argc, wchar_t **argv) {
                              STATUS_NOT_SUPPORTED);
       rc = 1;
       break;
+    case CMD_DUMP_CURSOR_PNG:
+      JsonWriteTopLevelError(&json, "dump-cursor-png", &f,
+                             "JSON output is not supported for binary-output commands; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
     case CMD_DUMP_RING:
       rc = DoDumpRingJson(&f, open.hAdapter, ringId, &json);
       break;
@@ -6657,6 +7426,12 @@ int wmain(int argc, wchar_t **argv) {
       break;
     case CMD_DUMP_SCANOUT_BMP:
       JsonWriteTopLevelError(&json, "dump-scanout-bmp", &f,
+                             "JSON output is not supported for binary-output commands; use text output",
+                             STATUS_NOT_SUPPORTED);
+      rc = 1;
+      break;
+    case CMD_DUMP_SCANOUT_PNG:
+      JsonWriteTopLevelError(&json, "dump-scanout-png", &f,
                              "JSON output is not supported for binary-output commands; use text output",
                              STATUS_NOT_SUPPORTED);
       rc = 1;
@@ -6733,11 +7508,17 @@ int wmain(int argc, wchar_t **argv) {
     case CMD_DUMP_SCANOUT_BMP:
       rc = DoDumpScanoutBmp(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, dumpScanoutBmpPath);
       break;
+    case CMD_DUMP_SCANOUT_PNG:
+      rc = DoDumpScanoutPng(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, dumpScanoutPngPath);
+      break;
     case CMD_QUERY_CURSOR:
       rc = DoQueryCursor(&f, open.hAdapter);
       break;
     case CMD_DUMP_CURSOR_BMP:
       rc = DoDumpCursorBmp(&f, open.hAdapter, dumpCursorBmpPath);
+      break;
+    case CMD_DUMP_CURSOR_PNG:
+      rc = DoDumpCursorPng(&f, open.hAdapter, dumpCursorPngPath);
       break;
     case CMD_DUMP_RING:
       rc = DoDumpRing(&f, open.hAdapter, ringId);

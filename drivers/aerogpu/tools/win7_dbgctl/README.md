@@ -76,6 +76,9 @@ Minimum supported commands:
   Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
   `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
 
+- `aerogpu_dbgctl --dump-scanout-png C:\scanout.png`  
+  Same as `--dump-scanout-bmp`, but writes a PNG (RGBA8). The encoder uses stored (uncompressed) deflate blocks for simplicity.
+
 - `aerogpu_dbgctl --query-cursor` *(alias: `--dump-cursor`)*  
   Dumps cursor MMIO state (`CURSOR_*` registers), including:
   - enable, position, hot spot
@@ -91,6 +94,9 @@ Minimum supported commands:
   Useful for diagnosing cursor image/pitch/fb_gpa bugs without relying on host-side captures.
   Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
   `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+
+- `aerogpu_dbgctl --dump-cursor-png C:\cursor.png`  
+  Same as `--dump-cursor-bmp`, but writes a PNG (RGBA8).
 
 - `aerogpu_dbgctl --read-gpa GPA --size N [--out FILE] [--force]`  
   Reads a **bounded** slice of guest physical memory (GPA) from buffers that the KMD/device tracks (for example: scanout framebuffer,
@@ -202,10 +208,12 @@ aerogpu_dbgctl --watch-fence --samples 120 --interval-ms 250 --timeout-ms 30000
 aerogpu_dbgctl --query-perf
 aerogpu_dbgctl --query-scanout
 aerogpu_dbgctl --dump-scanout-bmp C:\scanout.bmp
+aerogpu_dbgctl --dump-scanout-png C:\scanout.png
 aerogpu_dbgctl --read-gpa 0x12340000 --size 256
 aerogpu_dbgctl --read-gpa 0x12340000 --size 4096 --force --out dump.bin
 aerogpu_dbgctl --query-cursor
 aerogpu_dbgctl --dump-cursor-bmp C:\cursor.bmp
+aerogpu_dbgctl --dump-cursor-png C:\cursor.png
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --watch-ring --ring-id 0 --samples 200 --interval-ms 50
 aerogpu_dbgctl --dump-last-cmd --out last_cmd.bin
@@ -354,10 +362,10 @@ Escape ops used:
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (fallback: `AEROGPU_ESCAPE_OP_QUERY_DEVICE`) → `--query-version` / `--query-device`
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`, `--watch-fence`
 - `AEROGPU_ESCAPE_OP_QUERY_PERF` → `--query-perf`
-- `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` → `--query-scanout`, `--dump-scanout-bmp`
-- `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`, `--dump-cursor-bmp`
+- `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` → `--query-scanout`, `--dump-scanout-bmp`, `--dump-scanout-png`
+- `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`, `--dump-cursor-bmp`, `--dump-cursor-png`
 - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`, `--watch-ring`, `--dump-last-cmd`
-- `AEROGPU_ESCAPE_OP_READ_GPA` → `--read-gpa`, `--dump-scanout-bmp`, `--dump-cursor-bmp`, `--dump-last-cmd`
+- `AEROGPU_ESCAPE_OP_READ_GPA` → `--read-gpa`, `--dump-scanout-bmp`, `--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`, `--dump-last-cmd`
 - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` → `--dump-createalloc`
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
 - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` → `--map-shared-handle`
