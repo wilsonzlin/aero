@@ -2524,87 +2524,120 @@ try {
         inventory_errors = @()
     }
 
-    if (-not (Test-Path $toolsDir)) {
+    $toolsDirItem = $null
+    $toolsDirErr = $null
+    try {
+        $toolsDirItem = Get-Item -LiteralPath $toolsDir -ErrorAction Stop
+    } catch {
+        $fid = "" + $_.FullyQualifiedErrorId
+        if ($fid -match '(?i)PathNotFound') {
+            $toolsDirItem = $null
+        } else {
+            # Treat any other error as: directory may exist but is unreadable.
+            $toolsDirItem = $true
+            $toolsDirErr = $_.Exception.Message
+        }
+    }
+
+    if (-not $toolsDirItem) {
         $toolsSummary = "No tools\\ directory present (optional)."
         Add-Check "optional_tools" "Optional Tools (tools\\*)" $toolsStatus $toolsSummary $toolsData $toolsDetails
     } else {
         $toolsData.tools_dir_present = $true
 
-        $gciErrors = @()
-        $exeItems = @()
-        try {
-            $exeItems = Get-ChildItem -Path $toolsDir -Recurse -Filter *.exe -ErrorAction SilentlyContinue -ErrorVariable gciErrors
-        } catch {
-            # Get-ChildItem can still throw in some cases; treat as unreadable.
-            $gciErrors += $_
-        }
-
-        $invErrors = @()
-        if ($gciErrors -and $gciErrors.Count -gt 0) {
+        if ($toolsDirErr) {
             $toolsStatus = "WARN"
-            foreach ($e in $gciErrors) {
+            $toolsData.tools_dir_readable = $false
+            $toolsSummary = "tools\\ directory is present but unreadable."
+            $toolsDetails += ("Failed to access tools\\: " + $toolsDirErr)
+            $toolsData.inventory_errors = @($toolsDirErr)
+            Add-Check "optional_tools" "Optional Tools (tools\\*)" $toolsStatus $toolsSummary $toolsData $toolsDetails
+        } elseif ($toolsDirItem -and ($toolsDirItem -isnot [bool]) -and (-not $toolsDirItem.PSIsContainer)) {
+            $toolsStatus = "WARN"
+            $toolsData.tools_dir_readable = $false
+            $toolsSummary = "tools\\ exists but is not a directory."
+            $toolsDetails += ("tools\\ path is not a directory: " + ("" + $toolsDirItem.FullName))
+            $toolsData.inventory_errors = @("tools\\ exists but is not a directory")
+            Add-Check "optional_tools" "Optional Tools (tools\\*)" $toolsStatus $toolsSummary $toolsData $toolsDetails
+        } else {
+            $gciErrors = @()
+            $exeItems = @()
+            try {
+                $exeItems = Get-ChildItem -Path $toolsDir -Recurse -Filter *.exe -ErrorAction SilentlyContinue -ErrorVariable gciErrors
+            } catch {
+                # Get-ChildItem can still throw in some cases; treat as unreadable.
+                $gciErrors += $_
+            }
+
+            $invErrors = @()
+            if ($gciErrors -and $gciErrors.Count -gt 0) {
+                $toolsStatus = "WARN"
+                foreach ($e in $gciErrors) {
+                    try {
+                        if ($e -and $e.Exception -and $e.Exception.Message) {
+                            $invErrors += ("" + $e.Exception.Message)
+                        } elseif ($e) {
+                            $invErrors += ("" + $e.ToString())
+                        }
+                    } catch { }
+                }
+            }
+
+            $rootFull = $null
+            try { $rootFull = [System.IO.Path]::GetFullPath($scriptDir) } catch { $rootFull = $scriptDir }
+            $rootLower = $null
+            try { $rootLower = $rootFull.ToLower() } catch { $rootLower = "" }
+
+            $exeFiles = @()
+            $exeItemsSorted = @($exeItems | Sort-Object FullName)
+            foreach ($f in @($exeItemsSorted)) {
+                if (-not $f -or -not $f.FullName) { continue }
+                $full = "" + $f.FullName
+                $rel = $full
                 try {
-                    if ($e -and $e.Exception -and $e.Exception.Message) {
-                        $invErrors += ("" + $e.Exception.Message)
-                    } elseif ($e) {
-                        $invErrors += ("" + $e.ToString())
+                    $fullCanon = [System.IO.Path]::GetFullPath($full)
+                    if ($rootLower -and $fullCanon.ToLower().StartsWith($rootLower)) {
+                        $rel = $fullCanon.Substring($rootFull.Length)
+                        $rel = $rel.TrimStart('\','/')
+                    } else {
+                        $rel = $fullCanon
                     }
                 } catch { }
-            }
-        }
 
-        $rootFull = $null
-        try { $rootFull = [System.IO.Path]::GetFullPath($scriptDir) } catch { $rootFull = $scriptDir }
-        $rootLower = $null
-        try { $rootLower = $rootFull.ToLower() } catch { $rootLower = "" }
-
-        $exeFiles = @()
-        foreach ($f in @($exeItems)) {
-            if (-not $f -or -not $f.FullName) { continue }
-            $full = "" + $f.FullName
-            $rel = $full
-            try {
-                $fullCanon = [System.IO.Path]::GetFullPath($full)
-                if ($rootLower -and $fullCanon.ToLower().StartsWith($rootLower)) {
-                    $rel = $fullCanon.Substring($rootFull.Length)
-                    $rel = $rel.TrimStart('\','/')
-                } else {
-                    $rel = $fullCanon
+                $sha = Get-FileSha256Hex $full
+                if (-not $sha) {
+                    $toolsStatus = "WARN"
+                    $invErrors += ("Failed to compute SHA-256 for: " + $rel)
                 }
-            } catch { }
 
-            $sha = Get-FileSha256Hex $full
-            if (-not $sha) {
-                $toolsStatus = "WARN"
-                $invErrors += ("Failed to compute SHA-256 for: " + $rel)
+                $exeFiles += @{
+                    relative_path = $rel
+                    sha256 = $sha
+                    size_bytes = $f.Length
+                }
+            }
+            $exeFiles = @($exeFiles | Sort-Object { $_.relative_path })
+
+            $toolsData.exe_files = $exeFiles
+            $toolsData.inventory_errors = $invErrors
+            $toolsData.tools_dir_readable = ($toolsStatus -eq "PASS")
+
+            $toolsSummary = "tools\\ directory present. EXE file(s): " + $exeFiles.Count
+            if ($toolsStatus -eq "WARN") {
+                $toolsSummary += " (inventory incomplete)."
             }
 
-            $exeFiles += @{
-                relative_path = $rel
-                sha256 = $sha
-                size_bytes = $f.Length
+            foreach ($e in $exeFiles) {
+                $line = "" + $e.relative_path
+                if ($e.sha256) { $line += " sha256=" + $e.sha256 } else { $line += " sha256=<error>" }
+                $toolsDetails += $line
             }
-        }
+            foreach ($m in $invErrors) {
+                if ($m) { $toolsDetails += ("Inventory error: " + $m) }
+            }
 
-        $toolsData.exe_files = $exeFiles
-        $toolsData.inventory_errors = $invErrors
-        $toolsData.tools_dir_readable = ($toolsStatus -ne "WARN")
-
-        $toolsSummary = "tools\\ directory present. EXE file(s): " + $exeFiles.Count
-        if ($toolsStatus -eq "WARN") {
-            $toolsSummary += " (inventory incomplete)."
+            Add-Check "optional_tools" "Optional Tools (tools\\*)" $toolsStatus $toolsSummary $toolsData $toolsDetails
         }
-
-        foreach ($e in $exeFiles) {
-            $line = "" + $e.relative_path
-            if ($e.sha256) { $line += " sha256=" + $e.sha256 } else { $line += " sha256=<error>" }
-            $toolsDetails += $line
-        }
-        foreach ($m in $invErrors) {
-            if ($m) { $toolsDetails += ("Inventory error: " + $m) }
-        }
-
-        Add-Check "optional_tools" "Optional Tools (tools\\*)" $toolsStatus $toolsSummary $toolsData $toolsDetails
     }
 } catch {
     Add-Check "optional_tools" "Optional Tools (tools\\*)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
