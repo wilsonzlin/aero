@@ -9,12 +9,12 @@
     - Protocol tests (e.g. test_proto.c)
     - Host shim tests (tests/host/)
 
-  This script can be run from anywhere (repo root, driver directory, etc). It
-  locates the repo root based on the script location.
+  This script is the PowerShell equivalent of `scripts/run-host-tests.sh` and can:
+    - Build the full suite (`tests/`) (default)
+    - Build only `tests/host/` with `-HostOnly`
 
-.PARAMETER BuildDir
-  Build directory to use. If relative, it is interpreted relative to the repo
-  root.
+  It can be run from anywhere (repo root, driver directory, etc). It locates the repo root
+  based on the script location.
 
   Defaults:
     - (full suite)  out/virtiosnd-tests
@@ -27,18 +27,27 @@
 .PARAMETER Clean
   Delete the build directory before configuring.
 
+.PARAMETER BuildDir
+  Build directory to use. If relative, it is interpreted relative to the repo root.
+
 .PARAMETER Configuration
   Build/test configuration to use for multi-config generators (Visual Studio,
   Ninja Multi-Config). Defaults to Release.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -BuildDir out/my-virtiosnd-tests
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -BuildDir out/my-virtiosnd-tests
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Clean
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Clean
+
+.EXAMPLE
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly
+
+.EXAMPLE
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Configuration Debug
 #>
 
 [CmdletBinding()]

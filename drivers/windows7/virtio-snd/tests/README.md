@@ -12,7 +12,58 @@ It builds the full superset of host tests, including:
 
 ## Run
 
-From the repo root:
+Prerequisites:
+
+- CMake in `PATH` (`cmake` + `ctest`).
+- A C compiler toolchain.
+  - On Windows, Visual Studio / “Build Tools for Visual Studio” (MSVC) is recommended.
+    - Run from a “Developer PowerShell/Command Prompt for VS” so `cl.exe` is available.
+    - Ninja is optional.
+- On Windows, PowerShell (`pwsh` or Windows PowerShell). If script execution is blocked, use
+  `-ExecutionPolicy Bypass` (or `Set-ExecutionPolicy -Scope Process Bypass`).
+
+### Linux/macOS (Bash)
+
+Helper script:
+
+```sh
+./drivers/windows7/virtio-snd/scripts/run-host-tests.sh
+```
+
+### Windows (PowerShell)
+
+PowerShell runner: `drivers/windows7/virtio-snd/scripts/run-host-tests.ps1`.
+
+Default run:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1
+```
+
+Replace `pwsh` with `powershell` if you are using Windows PowerShell.
+
+Clean rebuild:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Clean
+```
+
+Custom build output directory (relative to the repo root, or absolute):
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -BuildDir out\my-virtiosnd-tests
+```
+
+Multi-config generators (Visual Studio, Ninja Multi-Config) require a build/test configuration.
+`run-host-tests.ps1` auto-detects this and uses `-Configuration` (default: `Release`):
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Configuration Debug
+```
+
+### Direct CMake invocation
+
+From the repo root (any platform):
 
 ```sh
 cmake -S drivers/windows7/virtio-snd/tests -B out/virtiosnd-tests
@@ -20,18 +71,25 @@ cmake --build out/virtiosnd-tests
 ctest --test-dir out/virtiosnd-tests --output-on-failure
 ```
 
-Or via the helper script:
+Note: for multi-config generators (Visual Studio, Ninja Multi-Config), add:
 
-```sh
-./drivers/windows7/virtio-snd/scripts/run-host-tests.sh
-```
+- `--config <cfg>` to `cmake --build`
+- `-C <cfg>` to `ctest`
 
 ## Subset: `host/` only
 
-For faster iteration on just the shim-based protocol-engine tests under `host/`, either:
+For faster iteration on just the shim-based protocol-engine tests under `host/`:
+
+### Linux/macOS (Bash)
 
 ```sh
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only
+```
+
+### Windows (PowerShell)
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -HostOnly
 ```
 
 or build `host/` directly:
@@ -42,3 +100,6 @@ cmake --build out/virtiosnd-host-tests
 ctest --test-dir out/virtiosnd-host-tests --output-on-failure
 ```
 
+Note: for multi-config generators (Visual Studio, Ninja Multi-Config), pass `-Configuration <cfg>`
+to the PowerShell runner, or add `--config <cfg>` / `ctest -C <cfg>` when invoking CMake/CTest
+directly.

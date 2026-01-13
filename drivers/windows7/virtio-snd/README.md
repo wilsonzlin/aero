@@ -381,11 +381,14 @@ status/state handling).
 
 Prerequisites:
 
-- CMake (which provides `ctest`)
-- A C compiler toolchain
+- CMake in `PATH` (`cmake` + `ctest`).
+- A C compiler toolchain:
   - On Linux/macOS, Clang/GCC should work.
-  - On Windows, a POSIX-like toolchain (for example MSYS2/MinGW-w64 or clang + ninja) may be required.
-    MSVC/Visual Studio support depends on the Task 83 "MSVC portability" work.
+  - On Windows, Visual Studio / “Build Tools for Visual Studio” (MSVC) is recommended.
+    - Run from a “Developer PowerShell/Command Prompt for VS” so `cl.exe` is available.
+    - Ninja is optional.
+- On Windows, PowerShell (`pwsh` or Windows PowerShell). If script execution is blocked, use
+  `-ExecutionPolicy Bypass` (or `Set-ExecutionPolicy -Scope Process Bypass`).
 
 ### Full host-buildable suite (recommended)
 
@@ -408,6 +411,8 @@ On Windows:
 pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1
 ```
 
+Replace `pwsh` with `powershell` if you are using Windows PowerShell.
+
 To force a clean rebuild:
 
 ```sh
@@ -426,6 +431,14 @@ The default build directory is `out/virtiosnd-tests`. Override with:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -BuildDir out/my-virtiosnd-tests
+```
+
+Multi-config generators (Visual Studio, Ninja Multi-Config) require a build/test configuration.
+`run-host-tests.ps1` auto-detects multi-config build dirs and uses `-Configuration` (default:
+`Release`):
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Configuration Debug
 ```
 
 Or run directly:
@@ -471,10 +484,12 @@ cmake --build out/virtiosnd-host-tests
 ctest --test-dir out/virtiosnd-host-tests --output-on-failure
 ```
 
-Note: for multi-config generators (Visual Studio, Ninja Multi-Config), add:
+Note: for multi-config generators (Visual Studio, Ninja Multi-Config):
 
-- `--config Release` to `cmake --build`
-- `-C Release` to `ctest`
+- For the PowerShell runner, use `-Configuration <cfg>` (default: `Release`).
+- When invoking CMake/CTest directly, add:
+  - `--config <cfg>` to `cmake --build`
+  - `-C <cfg>` to `ctest`
 
 ## Release packaging (optional)
 
