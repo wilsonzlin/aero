@@ -1,8 +1,9 @@
 //! Minimal EHCI (USB 2.0) host controller model.
 //!
 //! This is intentionally a *bring-up* implementation: it models the capability/operational MMIO
-//! registers and an EHCI root hub with per-port state machines. The schedule engine is stubbed out
-//! and will be implemented by follow-up tasks (EHCI-003/004).
+//! registers and an EHCI root hub with per-port state machines. A minimal asynchronous schedule
+//! engine (QH/qTD) is implemented for high-speed control + bulk/interrupt transfers (sufficient for
+//! Windows enumeration and WebUSB passthrough).
 //!
 //! ## Companion controller handoff
 //!
@@ -19,11 +20,14 @@
 mod hub;
 pub use hub::RootHub;
 
+mod schedule_async;
+
 pub mod regs;
 
 use crate::memory::MemoryBus;
 
 use regs::*;
+use schedule_async::{process_async_schedule, AsyncScheduleContext};
 
 /// Default number of EHCI root hub ports.
 ///
@@ -125,7 +129,6 @@ impl EhciController {
 
     fn reset_regs(&mut self) {
         self.regs = EhciRegs::new();
-        self.irq_level = false;
     }
 
     fn update_irq(&mut self) {
@@ -409,9 +412,15 @@ impl EhciController {
     }
 
     fn process_schedules(&mut self, mem: &mut dyn MemoryBus) {
-        // EHCI-003/004 will add real schedule walking. For now, this is a stub that is safe even
-        // when the schedule base pointers are 0.
-        let _ = mem;
+        if self.regs.usbcmd & USBCMD_ASE != 0 && self.regs.asynclistaddr != 0 {
+            let mut ctx = AsyncScheduleContext {
+                mem,
+                hub: &mut self.hub,
+                usbsts: &mut self.regs.usbsts,
+            };
+            process_async_schedule(&mut ctx, self.regs.asynclistaddr);
+        }
+        // Periodic schedule (iTD/siTD) is not yet implemented.
     }
 
     fn service_async_advance_doorbell(&mut self) {
@@ -449,4 +458,3 @@ impl Default for EhciController {
         Self::new()
     }
 }
-

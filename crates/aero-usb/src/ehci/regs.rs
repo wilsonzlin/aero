@@ -1,8 +1,7 @@
 //! EHCI (USB 2.0) register definitions.
 //!
-//! This module intentionally only models the registers needed for basic OS driver bring-up
-//! (capability + operational registers + root hub ports). The schedule engine is implemented in
-//! follow-up tasks (EHCI-003/004).
+//! This module models the EHCI capability + operational MMIO registers and the PORTSC bitfields
+//! required for basic OS driver bring-up.
 
 /// Size of the EHCI MMIO register window exposed through PCI BAR0.
 pub const MMIO_SIZE: u32 = 0x1000;
@@ -64,6 +63,7 @@ pub const USBSTS_W1C_MASK: u32 =
     USBSTS_USBINT | USBSTS_USBERRINT | USBSTS_PCD | USBSTS_FLR | USBSTS_HSE | USBSTS_IAA;
 pub const USBSTS_READ_MASK: u32 = USBSTS_W1C_MASK | USBSTS_HCHALTED;
 
+/// Subset of USBSTS bits that can raise interrupts when enabled in USBINTR.
 pub const USBSTS_IRQ_MASK: u32 = USBSTS_W1C_MASK;
 
 // USBINTR bits.
