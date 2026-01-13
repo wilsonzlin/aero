@@ -48,6 +48,9 @@ use memory::{MemoryBus, MmioHandler};
 mod aero_storage_adapter;
 pub use aero_storage_adapter::NvmeDiskFromAeroStorage;
 
+mod nvme_as_aero_storage;
+pub use nvme_as_aero_storage::NvmeBackendAsAeroVirtualDisk;
+
 const PAGE_SIZE: usize = 4096;
 const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
 // DoS guard: cap per-request DMA buffers. This should match the MDTS value we advertise in
