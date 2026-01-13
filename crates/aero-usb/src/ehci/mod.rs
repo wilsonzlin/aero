@@ -20,10 +20,18 @@
 //! - `CONFIGFLAG` is read/write, and on 0→1 claims all ports for EHCI (clears `PORT_OWNER`).
 //! - Clearing `CONFIGFLAG` (1→0) releases all ports back to companion ownership (sets `PORT_OWNER`).
 //! - Writes that change `PORT_OWNER` assert `USBSTS.PCD` (Port Change Detect).
+//!
+//! ## Schedule robustness
+//!
+//! EHCI schedule structures live in guest memory and are therefore entirely guest-controlled. This
+//! model defends against malformed or adversarial schedules by enforcing strict per-tick traversal
+//! bounds and cycle detection. On detecting a runaway schedule, the controller reports a Host
+//! System Error (`USBSTS.HSE`) and halts.
 
 mod hub;
 pub use hub::RootHub;
 
+mod schedule;
 mod schedule_async;
 mod schedule_periodic;
 
@@ -78,6 +86,16 @@ impl EhciRegs {
         } else {
             self.usbsts |= USBSTS_HCHALTED;
         }
+    }
+
+    fn frame_index(&self) -> u16 {
+        ((self.frindex >> 3) & 0x03ff) as u16
+    }
+
+    fn advance_1ms(&mut self) {
+        // FRINDEX is a microframe counter. We tick in 1ms increments, so add 8 microframes so the
+        // microframe bits (0..=2) remain 0 at tick boundaries.
+        self.frindex = self.frindex.wrapping_add(8) & FRINDEX_MASK;
     }
 }
 
@@ -157,6 +175,18 @@ impl EhciController {
 
         let pending = (self.regs.usbsts & USBSTS_IRQ_MASK) & (self.regs.usbintr & USBINTR_MASK);
         self.irq_level = pending != 0;
+    }
+
+    fn schedule_fault(&mut self, _err: schedule::ScheduleError) {
+        // Treat schedule traversal runaway/cycles as a Host System Error. This is an observable
+        // error condition for the guest (USBSTS.HSE) and is severe enough that real controllers
+        // typically halt.
+        self.regs.usbsts |= USBSTS_HSE | USBSTS_USBERRINT;
+
+        // Halt the controller to avoid re-walking the same malformed schedule every tick.
+        self.regs.usbcmd &= !USBCMD_RS;
+        self.regs.update_halted();
+        self.update_irq();
     }
 
     fn write_usbcmd(&mut self, value: u32) {
@@ -477,26 +507,30 @@ impl EhciController {
         self.update_irq();
     }
 
-    fn process_schedules(&mut self, mem: &mut dyn MemoryBus) {
+    fn process_schedules(&mut self, mem: &mut dyn MemoryBus) -> Result<(), schedule::ScheduleError> {
         if self.regs.usbcmd & USBCMD_ASE != 0 && self.regs.asynclistaddr != 0 {
             let mut ctx = AsyncScheduleContext {
                 mem,
                 hub: &mut self.hub,
                 usbsts: &mut self.regs.usbsts,
             };
-            process_async_schedule(&mut ctx, self.regs.asynclistaddr);
+            process_async_schedule(&mut ctx, self.regs.asynclistaddr)?;
         }
 
-        // Periodic schedule (interrupt endpoints) using PERIODICLISTBASE + FRINDEX. We currently
-        // support QH/qTD traversal; iTD/siTD/FSTN are ignored.
+        // Periodic schedule (interrupt endpoints) using PERIODICLISTBASE + FRINDEX.
+        //
+        // This is still guest-controlled memory; `process_periodic_frame` is responsible for
+        // enforcing traversal bounds and reporting schedule faults.
         if (self.regs.usbcmd & USBCMD_PSE) != 0 && self.regs.periodiclistbase != 0 {
             let mut ctx = PeriodicScheduleContext {
                 mem,
                 hub: &mut self.hub,
                 usbsts: &mut self.regs.usbsts,
             };
-            process_periodic_frame(&mut ctx, self.regs.periodiclistbase, self.regs.frindex);
+            process_periodic_frame(&mut ctx, self.regs.periodiclistbase, self.regs.frindex)?;
         }
+
+        Ok(())
     }
 
     fn service_async_advance_doorbell(&mut self) {
@@ -515,13 +549,14 @@ impl EhciController {
 
         if self.regs.usbcmd & USBCMD_RS != 0 {
             if self.regs.usbcmd & (USBCMD_PSE | USBCMD_ASE) != 0 {
-                self.process_schedules(mem);
+                if let Err(err) = self.process_schedules(mem) {
+                    self.schedule_fault(err);
+                    return;
+                }
             }
 
             self.service_async_advance_doorbell();
-            // FRINDEX is a microframe counter. We tick in 1ms increments, so add 8 microframes so
-            // the microframe bits (0..=2) remain stable at 1ms tick boundaries.
-            self.regs.frindex = self.regs.frindex.wrapping_add(8) & FRINDEX_MASK;
+            self.regs.advance_1ms();
         }
 
         self.update_irq();

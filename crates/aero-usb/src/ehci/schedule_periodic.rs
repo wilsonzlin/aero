@@ -1,4 +1,5 @@
 use alloc::vec;
+use alloc::vec::Vec;
 
 use crate::device::{UsbInResult, UsbOutResult};
 use crate::memory::MemoryBus;
@@ -6,6 +7,7 @@ use crate::SetupPacket;
 
 use super::RootHub;
 use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
+use super::schedule::{ScheduleError, MAX_PERIODIC_LINKS_PER_FRAME, MAX_QTD_STEPS_PER_QH};
 
 // -----------------------------------
 // Link pointer helpers (EHCI 3.6)
@@ -88,30 +90,39 @@ pub(crate) fn process_periodic_frame<M: MemoryBus + ?Sized>(
     ctx: &mut PeriodicScheduleContext<'_, M>,
     periodiclistbase: u32,
     frindex: u32,
-) {
+) -> Result<(), ScheduleError> {
     let frame = (frindex >> 3) & 0x3ff;
     let microframe = (frindex & 0x7) as u8;
 
     let entry_addr = periodiclistbase.wrapping_add(frame * 4) as u64;
     let link = LinkPointer(ctx.mem.read_u32(entry_addr));
-    walk_link(ctx, link, microframe);
+    walk_link(ctx, link, microframe)
 }
 
 fn walk_link<M: MemoryBus + ?Sized>(
     ctx: &mut PeriodicScheduleContext<'_, M>,
     mut link: LinkPointer,
     microframe: u8,
-) {
-    let mut iterations = 0;
-    while !link.terminated() {
-        if iterations > 4096 {
-            return;
+) -> Result<(), ScheduleError> {
+    let mut visited: Vec<u32> = Vec::with_capacity(16);
+    for _ in 0..MAX_PERIODIC_LINKS_PER_FRAME {
+        if link.terminated() {
+            return Ok(());
         }
-        iterations += 1;
+
+        let addr = link.addr();
+        if addr == 0 {
+            return Ok(());
+        }
+
+        if visited.iter().any(|&a| a == addr) {
+            return Err(ScheduleError::PeriodicCycle);
+        }
+        visited.push(addr);
 
         match link.link_type() {
             LP_TYPE_QH => {
-                link = process_qh(ctx, link.addr(), microframe);
+                link = process_qh(ctx, addr, microframe)?;
             }
             // Unsupported periodic descriptor types. We do not emulate their transfers yet, but we
             // still follow their forward link pointers so that interrupt QHs later in the list can
@@ -120,18 +131,20 @@ fn walk_link<M: MemoryBus + ?Sized>(
             // EHCI 3.6: iTD and siTD dword0 is the Next Link Pointer; FSTN dword0 is the Normal Path
             // Link Pointer.
             LP_TYPE_ITD | LP_TYPE_SITD | LP_TYPE_FSTN => {
-                link = LinkPointer(ctx.mem.read_u32(link.addr() as u64));
+                link = LinkPointer(ctx.mem.read_u32(addr as u64));
             }
-            _ => return,
+            _ => return Ok(()),
         }
     }
+
+    Err(ScheduleError::PeriodicBudgetExceeded)
 }
 
 fn process_qh<M: MemoryBus + ?Sized>(
     ctx: &mut PeriodicScheduleContext<'_, M>,
     qh_addr: u32,
     microframe: u8,
-) -> LinkPointer {
+) -> Result<LinkPointer, ScheduleError> {
     // Queue Head layout (32-bit addressing):
     // dword0: Horizontal Link Pointer
     // dword1: Endpoint Characteristics
@@ -151,36 +164,43 @@ fn process_qh<M: MemoryBus + ?Sized>(
     // Optional: honor uFrame S-mask. If SMASK is 0, treat it as always runnable.
     let s_mask = (ep_caps & 0xff) as u8;
     if s_mask != 0 && (s_mask & (1u8 << microframe)) == 0 {
-        return horiz;
+        return Ok(horiz);
     }
 
     let mut next = QtdPointer(ctx.mem.read_u32(qh_addr.wrapping_add(0x10) as u64));
-    let mut qtd_iterations = 0;
-    while !next.terminated() {
-        if qtd_iterations > 1024 {
-            break;
+    let mut visited_qtd: Vec<u32> = Vec::with_capacity(16);
+    for _ in 0..MAX_QTD_STEPS_PER_QH {
+        if next.terminated() {
+            return Ok(horiz);
         }
-        qtd_iterations += 1;
 
         let qtd_addr = next.addr();
+        if qtd_addr == 0 {
+            return Ok(horiz);
+        }
+        if visited_qtd.iter().any(|&a| a == qtd_addr) {
+            return Err(ScheduleError::QtdCycle);
+        }
+        visited_qtd.push(qtd_addr);
+
         let next_ptr = ctx.mem.read_u32(qtd_addr as u64);
 
         match process_single_qtd(ctx, qtd_addr, dev_addr, endpoint) {
-            QtdProgress::NoProgress => break,
-            QtdProgress::Nak => break,
+            QtdProgress::NoProgress => return Ok(horiz),
+            QtdProgress::Nak => return Ok(horiz),
             QtdProgress::Advanced { stop } => {
                 // Advance the QH overlay "Next qTD Pointer" so software sees forward progress.
                 ctx.mem
                     .write_u32(qh_addr.wrapping_add(0x10) as u64, next_ptr);
                 next = QtdPointer(next_ptr);
                 if stop {
-                    break;
+                    return Ok(horiz);
                 }
             }
         }
     }
 
-    horiz
+    Err(ScheduleError::QtdBudgetExceeded)
 }
 
 #[derive(Debug)]

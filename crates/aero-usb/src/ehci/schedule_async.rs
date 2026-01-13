@@ -7,6 +7,7 @@ use crate::SetupPacket;
 
 use super::RootHub;
 use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
+use super::schedule::{ScheduleError, MAX_ASYNC_QH_VISITS, MAX_QTD_STEPS_PER_QH};
 
 // -----------------------------------------------------------------------------
 // Link pointers
@@ -112,29 +113,44 @@ pub(crate) struct AsyncScheduleContext<'a, M: MemoryBus + ?Sized> {
 pub(crate) fn process_async_schedule<M: MemoryBus + ?Sized>(
     ctx: &mut AsyncScheduleContext<'_, M>,
     asynclistaddr: u32,
-) {
+) -> Result<(), ScheduleError> {
     let head = asynclistaddr & LINK_ADDR_MASK;
     if head == 0 {
-        return;
+        return Ok(());
     }
 
     // The async schedule list is a circular list of QHs. Stop when we return to the head, but also
     // cap iterations to avoid infinite loops if the guest corrupts pointers.
-    const MAX_QH_VISITS: usize = 1024;
+    let mut visited_qh: Vec<u32> = Vec::with_capacity(16);
     let mut qh_addr = head;
-    for _ in 0..MAX_QH_VISITS {
-        process_qh(ctx, qh_addr);
+    for _ in 0..MAX_ASYNC_QH_VISITS {
+        if visited_qh.iter().any(|&a| a == qh_addr) {
+            return Err(ScheduleError::AsyncQhCycle);
+        }
+        visited_qh.push(qh_addr);
+
+        process_qh(ctx, qh_addr)?;
 
         let horiz = HorizLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_HORIZ) as u64));
         if horiz.terminated() || !horiz.is_qh() {
-            break;
+            return Ok(());
         }
         let next = horiz.addr();
+        if next == 0 {
+            return Ok(());
+        }
         if next == head {
-            break;
+            return Ok(());
+        }
+        if next == qh_addr || visited_qh.iter().any(|&a| a == next) {
+            return Err(ScheduleError::AsyncQhCycle);
         }
         qh_addr = next;
     }
+
+    // If we consumed the entire budget without naturally terminating, treat that as a schedule
+    // traversal fault so `tick_1ms()` remains bounded and the guest can observe an error.
+    Err(ScheduleError::AsyncQhBudgetExceeded)
 }
 
 // -----------------------------------------------------------------------------
@@ -244,7 +260,10 @@ impl QtdCursor {
 // QH processing
 // -----------------------------------------------------------------------------
 
-fn process_qh<M: MemoryBus + ?Sized>(ctx: &mut AsyncScheduleContext<'_, M>, qh_addr: u32) {
+fn process_qh<M: MemoryBus + ?Sized>(
+    ctx: &mut AsyncScheduleContext<'_, M>,
+    qh_addr: u32,
+) -> Result<(), ScheduleError> {
     let ep_char = ctx.mem.read_u32(qh_addr.wrapping_add(QH_EPCHAR) as u64);
 
     let dev_addr = (ep_char & 0x7f) as u8;
@@ -263,7 +282,7 @@ fn process_qh<M: MemoryBus + ?Sized>(ctx: &mut AsyncScheduleContext<'_, M>, qh_a
             QTD_STS_HALT | QTD_STS_XACTERR,
             true,
         );
-        return;
+        return Ok(());
     }
 
     // Resolve the device once per QH iteration.
@@ -274,25 +293,33 @@ fn process_qh<M: MemoryBus + ?Sized>(ctx: &mut AsyncScheduleContext<'_, M>, qh_a
             QTD_STS_HALT | QTD_STS_XACTERR,
             true,
         );
-        return;
+        return Ok(());
     };
 
-    const MAX_QTD_STEPS: usize = 1024;
-    for _ in 0..MAX_QTD_STEPS {
+    let mut visited_qtd: Vec<u32> = Vec::with_capacity(16);
+    for _ in 0..MAX_QTD_STEPS_PER_QH {
         // If no current qTD is loaded, attempt to fetch the one pointed to by QH.Next qTD.
         let cur_qtd = ctx.mem.read_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64) & LINK_ADDR_MASK;
         if cur_qtd == 0 {
             let next = QtdLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_NEXT_QTD) as u64));
             if next.terminated() {
-                break;
+                return Ok(());
             }
             let addr = next.addr();
             if addr == 0 {
-                break;
+                return Ok(());
             }
+            if visited_qtd.iter().any(|&a| a == addr) {
+                return Err(ScheduleError::QtdCycle);
+            }
+            visited_qtd.push(addr);
             load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
             // Loop and process the now-loaded qTD in the same tick.
             continue;
+        }
+
+        if !visited_qtd.iter().any(|&a| a == cur_qtd) {
+            visited_qtd.push(cur_qtd);
         }
 
         let mut token = ctx.mem.read_u32(qh_addr.wrapping_add(QH_TOKEN) as u64);
@@ -301,19 +328,23 @@ fn process_qh<M: MemoryBus + ?Sized>(ctx: &mut AsyncScheduleContext<'_, M>, qh_a
         // halted/error status and we must stop.
         if token & QTD_STS_ACTIVE == 0 {
             if token & QTD_ERROR_MASK != 0 {
-                break;
+                return Ok(());
             }
             // Advance to the next qTD if present; otherwise clear QH.CUR_QTD to indicate idle.
             let next = QtdLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_NEXT_QTD) as u64));
             if next.terminated() {
                 ctx.mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
-                break;
+                return Ok(());
             }
             let addr = next.addr();
             if addr == 0 {
                 ctx.mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
-                break;
+                return Ok(());
             }
+            if visited_qtd.iter().any(|&a| a == addr) {
+                return Err(ScheduleError::QtdCycle);
+            }
+            visited_qtd.push(addr);
             load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
             continue;
         }
@@ -511,14 +542,14 @@ fn process_qh<M: MemoryBus + ?Sized>(ctx: &mut AsyncScheduleContext<'_, M>, qh_a
             }
             write_back_current_qtd_token(ctx.mem, qh_addr, cur_qtd, token);
             // Halted/error qTDs stop queue processing.
-            break;
+            return Ok(());
         }
 
         if nak {
             // Keep the qTD active (so the guest retries). The cursor and TotalBytes have already
             // been updated for any progress that occurred before the NAK.
             write_back_qh_overlay_token(ctx.mem, qh_addr, token);
-            break;
+            return Ok(());
         }
 
         // Completed (either because remaining==0 or because of a short packet).
@@ -541,16 +572,22 @@ fn process_qh<M: MemoryBus + ?Sized>(ctx: &mut AsyncScheduleContext<'_, M>, qh_a
         if next_ptr.terminated() {
             // Queue is now empty.
             ctx.mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
-            break;
+            return Ok(());
         }
         let addr = next_ptr.addr();
         if addr == 0 {
             ctx.mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
-            break;
+            return Ok(());
         }
+        if visited_qtd.iter().any(|&a| a == addr) {
+            return Err(ScheduleError::QtdCycle);
+        }
+        visited_qtd.push(addr);
         load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
         // Continue to process the next qTD in the same tick.
     }
+
+    Err(ScheduleError::QtdBudgetExceeded)
 }
 
 fn load_qtd_into_qh_overlay<M: MemoryBus + ?Sized>(mem: &mut M, qh_addr: u32, qtd_addr: u32) {

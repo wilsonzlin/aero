@@ -800,3 +800,91 @@ fn ehci_async_in_allows_full_5_page_qtd() {
 
     assert_eq!(&mem.data[base as usize..base as usize + len], payload);
 }
+
+// ---------------------------------------------------------------------------
+// EHCI-026: schedule robustness (loop/cycle bounds)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ehci_async_qh_non_head_self_loop_sets_hse_and_halts() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+
+    let head_qh: u32 = ASYNC_QH;
+    let qh1: u32 = 0x1200;
+
+    // The async schedule is a circular list, so a single head QH pointing to itself is valid.
+    // Instead, construct: head -> qh1, qh1 -> qh1 (a non-head self-loop).
+    mem.write_u32(head_qh + 0x00, qh_link_ptr_qh(qh1));
+    mem.write_u32(qh1 + 0x00, qh_link_ptr_qh(qh1));
+
+    // Terminate qTD chains so QH processing is effectively a no-op.
+    mem.write_u32(head_qh + 0x10, LINK_TERMINATE);
+    mem.write_u32(qh1 + 0x10, LINK_TERMINATE);
+
+    let mut c = EhciController::new();
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, head_qh);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
+
+#[test]
+fn ehci_async_qtd_self_loop_sets_hse_and_halts() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+    c.hub_mut().attach(0, Box::new(TestDevice));
+
+    reset_port(&mut c, &mut mem, 0);
+
+    // qTD next points to itself (cycle). Token is inactive and error-free so the controller tries
+    // to advance the qTD pointer.
+    write_qtd(
+        &mut mem,
+        QTD_SETUP,
+        QTD_SETUP,
+        qtd_token(QTD_TOKEN_PID_OUT, 0, false, false),
+        0,
+    );
+
+    let ep_char = qh_epchar(0, 0, 64);
+    write_qh(&mut mem, ASYNC_QH, qh_link_ptr_qh(ASYNC_QH), ep_char, QTD_SETUP);
+
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
+
+#[test]
+fn ehci_periodic_qh_self_loop_sets_hse_and_halts() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+
+    let fl_base: u32 = 0x7000;
+    let qh: u32 = 0x1800;
+
+    // Frame list entry 0 points at a QH with a self-referential horizontal link.
+    mem.write_u32(fl_base, qh_link_ptr_qh(qh));
+    mem.write_u32(qh + 0x00, qh_link_ptr_qh(qh));
+    mem.write_u32(qh + 0x10, LINK_TERMINATE);
+
+    let mut c = EhciController::new();
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
