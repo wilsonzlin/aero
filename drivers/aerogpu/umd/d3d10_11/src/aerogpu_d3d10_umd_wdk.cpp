@@ -1597,85 +1597,73 @@ Unlock:
 // calls in the D3D10 runtime are fatal). These templates let us generate stubs
 // that exactly match the calling convention/signature of each function pointer
 // without having to manually write hundreds of prototypes.
-template <typename Fn>
-struct NotImpl;
+template <typename TFnPtr>
+struct DdiStub;
 
-template <typename... Args>
-struct NotImpl<void(APIENTRY*)(Args...)> {
-  static void APIENTRY Fn(Args... args) {
-    // Most device DDIs are (HDEVICE, ...). Only call SetError when we can prove
-    // the first argument is the expected handle type.
-    if constexpr (sizeof...(Args) > 0) {
-      using First = typename std::tuple_element<0, std::tuple<Args...>>::type;
-      if constexpr (std::is_same<typename std::remove_cv<typename std::remove_reference<First>::type>::type,
-                                 D3D10DDI_HDEVICE>::value) {
-        SetError(std::get<0>(std::tie(args...)), E_NOTIMPL);
-      }
+static void ReportNotImpl(D3D10DDI_HDEVICE hDevice) {
+  SetError(hDevice, E_NOTIMPL);
+}
+
+inline void ReportNotImpl() {}
+
+template <typename Handle0, typename... Rest>
+inline void ReportNotImpl(Handle0 handle0, Rest...) {
+  using H0 = std::decay_t<Handle0>;
+  if constexpr (std::is_same_v<H0, D3D10DDI_HDEVICE>) {
+    ReportNotImpl(handle0);
+  }
+}
+
+template <typename Ret, typename... Args>
+struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args... args) {
+    ((void)args, ...);
+    if constexpr (std::is_same_v<Ret, void>) {
+      ReportNotImpl(args...);
+      return;
+    } else if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+      // Returning 0 from a CalcPrivate*Size hook often causes the runtime to pass
+      // a NULL pDrvPrivate (which then tends to crash on later Create/Destroy
+      // probes). Return a small non-zero placeholder so stubs are always safe.
+      return sizeof(uint64_t);
+    } else {
+      return Ret{};
     }
   }
 };
 
-template <typename... Args>
-struct NotImpl<HRESULT(APIENTRY*)(Args...)> {
-  static HRESULT APIENTRY Fn(Args...) {
-    return E_NOTIMPL;
-  }
-};
-
-template <typename... Args>
-struct NotImpl<SIZE_T(APIENTRY*)(Args...)> {
-  static SIZE_T APIENTRY Fn(Args...) {
-    // Returning 0 from a CalcPrivate*Size hook often causes the runtime to pass a
-    // NULL pDrvPrivate, which can crash if the runtime still tries to call the
-    // matching Create/Destroy DDI. Use a small non-zero placeholder so stubs are
-    // always safe to call.
-    return sizeof(uint64_t);
-  }
-};
+template <typename TFnPtr>
+struct DdiNoopStub;
 
 template <typename Ret, typename... Args>
-struct NotImpl<Ret(APIENTRY*)(Args...)> {
-  static Ret APIENTRY Fn(Args...) {
-    return Ret{};
-  }
-};
-
-template <typename Fn>
-struct Noop;
-
-template <typename... Args>
-struct Noop<void(APIENTRY*)(Args...)> {
-  static void APIENTRY Fn(Args...) {
-    // Intentionally do nothing (treated as supported but ignored).
-  }
-};
-
-template <typename... Args>
-struct Noop<HRESULT(APIENTRY*)(Args...)> {
-  static HRESULT APIENTRY Fn(Args...) {
-    return S_OK;
-  }
-};
-
-template <typename Ret, typename... Args>
-struct Noop<Ret(APIENTRY*)(Args...)> {
-  static Ret APIENTRY Fn(Args...) {
-    return Ret{};
+struct DdiNoopStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args... args) {
+    ((void)args, ...);
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return S_OK;
+    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+      return sizeof(uint64_t);
+    } else if constexpr (std::is_same_v<Ret, void>) {
+      return;
+    } else {
+      return Ret{};
+    }
   }
 };
 
 // Validates that the runtime will never see a NULL DDI function pointer.
 //
-// This is intentionally enabled in release builds. If our `__if_exists` field
-// lists ever fall out of sync with the WDK's `d3d10umddi.h` layout, this check
-// fails fast (OpenAdapter/CreateDevice return `E_NOINTERFACE`) instead of
-// allowing a later NULL-call crash inside the D3D10 runtime.
+// This is intentionally enabled in release builds. If our stub-fill lists ever
+// fall out of sync with the WDK's `d3d10umddi.h` layout, this check should fail
+// fast (OpenAdapter/CreateDevice return `E_NOINTERFACE`) instead of allowing a
+// later NULL-call crash inside the D3D10 runtime.
 static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t bytes) {
   if (!table || bytes == 0) {
     return false;
   }
 
-  // These tables are expected to contain only function pointers, densely packed.
   if ((bytes % sizeof(void*)) != 0) {
     return false;
   }
@@ -1706,162 +1694,176 @@ static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t b
 #endif
     return false;
   }
+
   return true;
 }
 
-// Enumerate the full D3D10DDI_DEVICEFUNCS table for the WDK header revision used
-// by CI (see `aerogpu_d3d10_11_wdk_abi_expected.h` for the probed struct size).
-//
-// If the WDK adds/removes entries, `ValidateNoNullDdiTable` will fail fast,
-// forcing us to update this list rather than crashing in the runtime.
-#define AEROGPU_D3D10_DEVICEFUNCS_FIELDS(X)                                                                           \
-  X(pfnDestroyDevice)                                                                                                  \
-  X(pfnCalcPrivateResourceSize)                                                                                        \
-  X(pfnCreateResource)                                                                                                  \
-  X(pfnOpenResource)                                                                                                    \
-  X(pfnDestroyResource)                                                                                                 \
-  X(pfnCalcPrivateShaderResourceViewSize)                                                                               \
-  X(pfnCreateShaderResourceView)                                                                                        \
-  X(pfnDestroyShaderResourceView)                                                                                       \
-  X(pfnCalcPrivateRenderTargetViewSize)                                                                                 \
-  X(pfnCreateRenderTargetView)                                                                                          \
-  X(pfnDestroyRenderTargetView)                                                                                         \
-  X(pfnCalcPrivateDepthStencilViewSize)                                                                                 \
-  X(pfnCreateDepthStencilView)                                                                                          \
-  X(pfnDestroyDepthStencilView)                                                                                         \
-  X(pfnCalcPrivateVertexShaderSize)                                                                                     \
-  X(pfnCreateVertexShader)                                                                                              \
-  X(pfnDestroyVertexShader)                                                                                             \
-  X(pfnCalcPrivateGeometryShaderSize)                                                                                   \
-  X(pfnCreateGeometryShader)                                                                                            \
-  X(pfnDestroyGeometryShader)                                                                                           \
-  X(pfnCalcPrivateGeometryShaderWithStreamOutputSize)                                                                   \
-  X(pfnCreateGeometryShaderWithStreamOutput)                                                                            \
-  X(pfnCalcPrivatePixelShaderSize)                                                                                      \
-  X(pfnCreatePixelShader)                                                                                               \
-  X(pfnDestroyPixelShader)                                                                                              \
-  X(pfnCalcPrivateElementLayoutSize)                                                                                    \
-  X(pfnCreateElementLayout)                                                                                             \
-  X(pfnDestroyElementLayout)                                                                                            \
-  X(pfnCalcPrivateSamplerSize)                                                                                          \
-  X(pfnCreateSampler)                                                                                                   \
-  X(pfnDestroySampler)                                                                                                  \
-  X(pfnCalcPrivateBlendStateSize)                                                                                       \
-  X(pfnCreateBlendState)                                                                                                \
-  X(pfnDestroyBlendState)                                                                                               \
-  X(pfnCalcPrivateRasterizerStateSize)                                                                                  \
-  X(pfnCreateRasterizerState)                                                                                           \
-  X(pfnDestroyRasterizerState)                                                                                          \
-  X(pfnCalcPrivateDepthStencilStateSize)                                                                                \
-  X(pfnCreateDepthStencilState)                                                                                         \
-  X(pfnDestroyDepthStencilState)                                                                                        \
-  X(pfnCalcPrivateQuerySize)                                                                                            \
-  X(pfnCreateQuery)                                                                                                     \
-  X(pfnDestroyQuery)                                                                                                    \
-  X(pfnCalcPrivatePredicateSize)                                                                                        \
-  X(pfnCreatePredicate)                                                                                                 \
-  X(pfnDestroyPredicate)                                                                                                \
-  X(pfnCalcPrivateCounterSize)                                                                                          \
-  X(pfnCreateCounter)                                                                                                   \
-  X(pfnDestroyCounter)                                                                                                  \
-  X(pfnIaSetInputLayout)                                                                                                \
-  X(pfnIaSetVertexBuffers)                                                                                              \
-  X(pfnIaSetIndexBuffer)                                                                                                \
-  X(pfnIaSetTopology)                                                                                                   \
-  X(pfnVsSetShader)                                                                                                     \
-  X(pfnVsSetConstantBuffers)                                                                                            \
-  X(pfnVsSetShaderResources)                                                                                            \
-  X(pfnVsSetSamplers)                                                                                                   \
-  X(pfnGsSetShader)                                                                                                     \
-  X(pfnGsSetConstantBuffers)                                                                                            \
-  X(pfnGsSetShaderResources)                                                                                            \
-  X(pfnGsSetSamplers)                                                                                                   \
-  X(pfnSoSetTargets)                                                                                                    \
-  X(pfnPsSetShader)                                                                                                     \
-  X(pfnPsSetConstantBuffers)                                                                                            \
-  X(pfnPsSetShaderResources)                                                                                            \
-  X(pfnPsSetSamplers)                                                                                                   \
-  X(pfnSetViewports)                                                                                                    \
-  X(pfnSetScissorRects)                                                                                                 \
-  X(pfnSetRasterizerState)                                                                                              \
-  X(pfnSetBlendState)                                                                                                   \
-  X(pfnSetDepthStencilState)                                                                                            \
-  X(pfnSetRenderTargets)                                                                                                \
-  X(pfnClearRenderTargetView)                                                                                           \
-  X(pfnClearDepthStencilView)                                                                                           \
-  X(pfnDraw)                                                                                                            \
-  X(pfnDrawIndexed)                                                                                                     \
-  X(pfnDrawInstanced)                                                                                                   \
-  X(pfnDrawIndexedInstanced)                                                                                            \
-  X(pfnDrawAuto)                                                                                                        \
-  X(pfnPresent)                                                                                                         \
-  X(pfnFlush)                                                                                                           \
-  X(pfnRotateResourceIdentities)                                                                                        \
-  X(pfnMap)                                                                                                             \
-  X(pfnUnmap)                                                                                                           \
-  X(pfnUpdateSubresourceUP)                                                                                             \
-  X(pfnCopyResource)                                                                                                    \
-  X(pfnCopySubresourceRegion)                                                                                           \
-  X(pfnGenMips)                                                                                                         \
-  X(pfnGenerateMips)                                                                                                    \
-  X(pfnResolveSubresource)                                                                                              \
-  X(pfnBegin)                                                                                                           \
-  X(pfnEnd)                                                                                                             \
-  X(pfnSetPredication)                                                                                                  \
-  X(pfnClearState)                                                                                                      \
-  X(pfnSetTextFilterSize)                                                                                               \
-  X(pfnReadFromSubresource)                                                                                             \
-  X(pfnWriteToSubresource)                                                                                              \
-  X(pfnStagingResourceMap)                                                                                              \
-  X(pfnStagingResourceUnmap)                                                                                            \
-  X(pfnDynamicIABufferMapDiscard)                                                                                       \
-  X(pfnDynamicIABufferMapNoOverwrite)                                                                                   \
-  X(pfnDynamicIABufferUnmap)                                                                                            \
-  X(pfnDynamicConstantBufferMapDiscard)                                                                                 \
-  X(pfnDynamicConstantBufferUnmap)
+// Full `D3D10DDI_DEVICEFUNCS` surface (104 function pointers in Win7-era WDKs).
+#define AEROGPU_D3D10_DEVICEFUNCS_FIELDS(X)      \
+  X(pfnBegin)                                    \
+  X(pfnCalcPrivateBlendStateSize)                \
+  X(pfnCalcPrivateCounterSize)                   \
+  X(pfnCalcPrivateDepthStencilStateSize)         \
+  X(pfnCalcPrivateDepthStencilViewSize)          \
+  X(pfnCalcPrivateElementLayoutSize)             \
+  X(pfnCalcPrivateGeometryShaderSize)            \
+  X(pfnCalcPrivateGeometryShaderWithStreamOutputSize) \
+  X(pfnCalcPrivatePixelShaderSize)               \
+  X(pfnCalcPrivatePredicateSize)                 \
+  X(pfnCalcPrivateQuerySize)                     \
+  X(pfnCalcPrivateRasterizerStateSize)           \
+  X(pfnCalcPrivateRenderTargetViewSize)          \
+  X(pfnCalcPrivateResourceSize)                  \
+  X(pfnCalcPrivateSamplerSize)                   \
+  X(pfnCalcPrivateShaderResourceViewSize)        \
+  X(pfnCalcPrivateVertexShaderSize)              \
+  X(pfnClearDepthStencilView)                    \
+  X(pfnClearRenderTargetView)                    \
+  X(pfnClearState)                               \
+  X(pfnCopyResource)                             \
+  X(pfnCopySubresourceRegion)                    \
+  X(pfnCreateBlendState)                         \
+  X(pfnCreateCounter)                            \
+  X(pfnCreateDepthStencilState)                  \
+  X(pfnCreateDepthStencilView)                   \
+  X(pfnCreateElementLayout)                      \
+  X(pfnCreateGeometryShader)                     \
+  X(pfnCreateGeometryShaderWithStreamOutput)     \
+  X(pfnCreatePixelShader)                        \
+  X(pfnCreatePredicate)                          \
+  X(pfnCreateQuery)                              \
+  X(pfnCreateRasterizerState)                    \
+  X(pfnCreateRenderTargetView)                   \
+  X(pfnCreateResource)                           \
+  X(pfnCreateSampler)                            \
+  X(pfnCreateShaderResourceView)                 \
+  X(pfnCreateVertexShader)                       \
+  X(pfnDestroyBlendState)                        \
+  X(pfnDestroyCounter)                           \
+  X(pfnDestroyDepthStencilState)                 \
+  X(pfnDestroyDepthStencilView)                  \
+  X(pfnDestroyDevice)                            \
+  X(pfnDestroyElementLayout)                     \
+  X(pfnDestroyGeometryShader)                    \
+  X(pfnDestroyPixelShader)                       \
+  X(pfnDestroyPredicate)                         \
+  X(pfnDestroyQuery)                             \
+  X(pfnDestroyRasterizerState)                   \
+  X(pfnDestroyRenderTargetView)                  \
+  X(pfnDestroyResource)                          \
+  X(pfnDestroySampler)                           \
+  X(pfnDestroyShaderResourceView)                \
+  X(pfnDestroyVertexShader)                      \
+  X(pfnDraw)                                     \
+  X(pfnDrawAuto)                                 \
+  X(pfnDrawIndexed)                              \
+  X(pfnDrawIndexedInstanced)                     \
+  X(pfnDrawInstanced)                            \
+  X(pfnDynamicConstantBufferMapDiscard)          \
+  X(pfnDynamicConstantBufferUnmap)               \
+  X(pfnDynamicIABufferMapDiscard)                \
+  X(pfnDynamicIABufferMapNoOverwrite)            \
+  X(pfnDynamicIABufferUnmap)                     \
+  X(pfnEnd)                                      \
+  X(pfnFlush)                                    \
+  X(pfnGenMips)                                  \
+  X(pfnGenerateMips)                             \
+  X(pfnGsSetConstantBuffers)                     \
+  X(pfnGsSetSamplers)                            \
+  X(pfnGsSetShader)                              \
+  X(pfnGsSetShaderResources)                     \
+  X(pfnIaSetIndexBuffer)                         \
+  X(pfnIaSetInputLayout)                         \
+  X(pfnIaSetTopology)                            \
+  X(pfnIaSetVertexBuffers)                       \
+  X(pfnMap)                                      \
+  X(pfnOpenResource)                             \
+  X(pfnPresent)                                  \
+  X(pfnPsSetConstantBuffers)                     \
+  X(pfnPsSetSamplers)                            \
+  X(pfnPsSetShader)                              \
+  X(pfnPsSetShaderResources)                     \
+  X(pfnReadFromSubresource)                      \
+  X(pfnResolveSubresource)                       \
+  X(pfnRotateResourceIdentities)                 \
+  X(pfnSetBlendState)                            \
+  X(pfnSetDepthStencilState)                     \
+  X(pfnSetPredication)                           \
+  X(pfnSetRasterizerState)                       \
+  X(pfnSetRenderTargets)                         \
+  X(pfnSetScissorRects)                          \
+  X(pfnSetTextFilterSize)                        \
+  X(pfnSetViewports)                             \
+  X(pfnSoSetTargets)                             \
+  X(pfnStagingResourceMap)                       \
+  X(pfnStagingResourceUnmap)                     \
+  X(pfnUnmap)                                    \
+  X(pfnUpdateSubresourceUP)                      \
+  X(pfnVsSetConstantBuffers)                     \
+  X(pfnVsSetSamplers)                            \
+  X(pfnVsSetShader)                              \
+  X(pfnVsSetShaderResources)                     \
+  X(pfnWriteToSubresource)
 
-#define AEROGPU_D3D10_DEVICEFUNCS_DESTROY_FIELDS(X)                                                                    \
-  X(pfnDestroyDevice)                                                                                                  \
-  X(pfnDestroyResource)                                                                                                 \
-  X(pfnDestroyShaderResourceView)                                                                                       \
-  X(pfnDestroyRenderTargetView)                                                                                         \
-  X(pfnDestroyDepthStencilView)                                                                                         \
-  X(pfnDestroyVertexShader)                                                                                             \
-  X(pfnDestroyGeometryShader)                                                                                           \
-  X(pfnDestroyPixelShader)                                                                                              \
-  X(pfnDestroyElementLayout)                                                                                            \
-  X(pfnDestroySampler)                                                                                                  \
-  X(pfnDestroyBlendState)                                                                                               \
-  X(pfnDestroyRasterizerState)                                                                                          \
-  X(pfnDestroyDepthStencilState)                                                                                        \
-  X(pfnDestroyQuery)                                                                                                    \
-  X(pfnDestroyPredicate)                                                                                                \
-  X(pfnDestroyCounter)
+#define AEROGPU_D3D10_DEVICEFUNCS_NOOP_FIELDS(X) \
+  X(pfnDestroyDevice)                            \
+  X(pfnDestroyResource)                          \
+  X(pfnDestroyShaderResourceView)                \
+  X(pfnDestroyRenderTargetView)                  \
+  X(pfnDestroyDepthStencilView)                  \
+  X(pfnDestroyVertexShader)                      \
+  X(pfnDestroyPixelShader)                       \
+  X(pfnDestroyGeometryShader)                    \
+  X(pfnDestroyElementLayout)                     \
+  X(pfnDestroySampler)                           \
+  X(pfnDestroyBlendState)                        \
+  X(pfnDestroyRasterizerState)                   \
+  X(pfnDestroyDepthStencilState)                 \
+  X(pfnDestroyQuery)                             \
+  X(pfnDestroyPredicate)                         \
+  X(pfnDestroyCounter)                           \
+  X(pfnSoSetTargets)                             \
+  X(pfnSetPredication)                           \
+  X(pfnSetTextFilterSize)                        \
+  X(pfnGenMips)                                  \
+  X(pfnGenerateMips)                             \
+  X(pfnClearState)                               \
+  X(pfnFlush)
 
-static void InitDeviceFuncsWithStubs_D3D10(D3D10DDI_DEVICEFUNCS* out) {
+#define AEROGPU_D3D10_ADAPTERFUNCS_FIELDS(X) \
+  X(pfnGetCaps)                              \
+  X(pfnCalcPrivateDeviceSize)                \
+  X(pfnCreateDevice)                         \
+  X(pfnCloseAdapter)
+
+static void InitDeviceFuncsWithStubs(D3D10DDI_DEVICEFUNCS* out) {
   if (!out) {
     return;
   }
 
   std::memset(out, 0, sizeof(*out));
 
-  // Stub-fill everything first so we never expose NULL function pointers to the
-  // runtime (a NULL call in the D3D10 runtime is a process crash).
-#define AEROGPU_ASSIGN_DEVICE_STUB(field)                                                                               \
-  __if_exists(D3D10DDI_DEVICEFUNCS::field) { out->field = &NotImpl<decltype(out->field)>::Fn; }
-  AEROGPU_D3D10_DEVICEFUNCS_FIELDS(AEROGPU_ASSIGN_DEVICE_STUB)
-#undef AEROGPU_ASSIGN_DEVICE_STUB
+#define AEROGPU_D3D10_ASSIGN_DEVICE_STUB(field) \
+  __if_exists(D3D10DDI_DEVICEFUNCS::field) { out->field = &DdiStub<decltype(out->field)>::Call; }
+  AEROGPU_D3D10_DEVICEFUNCS_FIELDS(AEROGPU_D3D10_ASSIGN_DEVICE_STUB)
+#undef AEROGPU_D3D10_ASSIGN_DEVICE_STUB
 
-  // Ensure benign cleanup paths never spam SetErrorCb.
-#define AEROGPU_ASSIGN_DEVICE_NOOP(field)                                                                               \
-  __if_exists(D3D10DDI_DEVICEFUNCS::field) { out->field = &Noop<decltype(out->field)>::Fn; }
-  AEROGPU_D3D10_DEVICEFUNCS_DESTROY_FIELDS(AEROGPU_ASSIGN_DEVICE_NOOP)
-#undef AEROGPU_ASSIGN_DEVICE_NOOP
+#define AEROGPU_D3D10_ASSIGN_DEVICE_NOOP(field) \
+  __if_exists(D3D10DDI_DEVICEFUNCS::field) { out->field = &DdiNoopStub<decltype(out->field)>::Call; }
+  AEROGPU_D3D10_DEVICEFUNCS_NOOP_FIELDS(AEROGPU_D3D10_ASSIGN_DEVICE_NOOP)
+#undef AEROGPU_D3D10_ASSIGN_DEVICE_NOOP
 }
 
-#undef AEROGPU_D3D10_DEVICEFUNCS_DESTROY_FIELDS
-#undef AEROGPU_D3D10_DEVICEFUNCS_FIELDS
-
+static void InitAdapterFuncsWithStubs(D3D10DDI_ADAPTERFUNCS* out) {
+  if (!out) {
+    return;
+  }
+  std::memset(out, 0, sizeof(*out));
+#define AEROGPU_D3D10_ASSIGN_ADAPTER_STUB(field) \
+  __if_exists(D3D10DDI_ADAPTERFUNCS::field) { out->field = &DdiStub<decltype(out->field)>::Call; }
+  AEROGPU_D3D10_ADAPTERFUNCS_FIELDS(AEROGPU_D3D10_ASSIGN_ADAPTER_STUB)
+#undef AEROGPU_D3D10_ASSIGN_ADAPTER_STUB
+}
 #define AEROGPU_DEFINE_HAS_MEMBER(member)                                                            \
   template <typename T, typename = void>                                                             \
   struct has_##member : std::false_type {};                                                          \
@@ -7823,10 +7825,10 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
   // to the runtime. Then override the subset of entrypoints we actually
   // implement below.
   D3D10DDI_DEVICEFUNCS funcs;
-  InitDeviceFuncsWithStubs_D3D10(&funcs);
+  InitDeviceFuncsWithStubs(&funcs);
 
-  // Optional/rare entrypoints: override defaults with more permissive no-op
-  // stubs so common runtime state-reset paths don't trip SetErrorCb.
+  // Optional entrypoints that may be present depending on the WDK headers.
+  // Bind them opportunistically when the function signature matches.
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnDrawInstanced) {
     using Fn = decltype(funcs.pfnDrawInstanced);
     if constexpr (std::is_convertible_v<decltype(&DrawInstanced), Fn>) {
@@ -7850,21 +7852,6 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
     if constexpr (std::is_convertible_v<decltype(&OpenResource), Fn>) {
       funcs.pfnOpenResource = &OpenResource;
     }
-  }
-  __if_exists(D3D10DDI_DEVICEFUNCS::pfnSoSetTargets) {
-    funcs.pfnSoSetTargets = &Noop<decltype(funcs.pfnSoSetTargets)>::Fn;
-  }
-  __if_exists(D3D10DDI_DEVICEFUNCS::pfnSetPredication) {
-    funcs.pfnSetPredication = &Noop<decltype(funcs.pfnSetPredication)>::Fn;
-  }
-  __if_exists(D3D10DDI_DEVICEFUNCS::pfnSetTextFilterSize) {
-    funcs.pfnSetTextFilterSize = &Noop<decltype(funcs.pfnSetTextFilterSize)>::Fn;
-  }
-  __if_exists(D3D10DDI_DEVICEFUNCS::pfnGenMips) {
-    funcs.pfnGenMips = &Noop<decltype(funcs.pfnGenMips)>::Fn;
-  }
-  __if_exists(D3D10DDI_DEVICEFUNCS::pfnGenerateMips) {
-    funcs.pfnGenerateMips = &Noop<decltype(funcs.pfnGenerateMips)>::Fn;
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnClearState) {
     funcs.pfnClearState = &ClearState;
@@ -8044,7 +8031,7 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
   pOpenData->hAdapter.pDrvPrivate = adapter;
 
   D3D10DDI_ADAPTERFUNCS funcs;
-  std::memset(&funcs, 0, sizeof(funcs));
+  InitAdapterFuncsWithStubs(&funcs);
   funcs.pfnGetCaps = &GetCaps;
   funcs.pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize;
   funcs.pfnCreateDevice = &CreateDevice;
@@ -8061,6 +8048,12 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
     return E_INVALIDARG;
   }
   *out_funcs = funcs;
+  if (!ValidateNoNullDdiTable("D3D10DDI_ADAPTERFUNCS", out_funcs, sizeof(*out_funcs))) {
+    pOpenData->hAdapter.pDrvPrivate = nullptr;
+    DestroyKmtAdapterHandle(adapter);
+    delete adapter;
+    return E_NOINTERFACE;
+  }
   return S_OK;
 }
 
