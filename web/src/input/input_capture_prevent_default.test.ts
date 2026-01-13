@@ -61,6 +61,126 @@ describe("InputCapture preventDefault policy", () => {
     });
   });
 
+  it("does not swallow Ctrl-only shortcuts by default (still forwards to guest)", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+
+      // Simulate the canvas being focused.
+      (capture as any).hasFocus = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+      const event = {
+        code: "KeyC",
+        repeat: false,
+        timeStamp: 0,
+        altKey: false,
+        ctrlKey: true,
+        shiftKey: false,
+        metaKey: false,
+        preventDefault,
+        stopPropagation,
+      } as unknown as KeyboardEvent;
+
+      (capture as any).handleKeyDown(event);
+      expect(preventDefault).toHaveBeenCalledTimes(0);
+      expect(stopPropagation).toHaveBeenCalledTimes(0);
+      expect((capture as any).queue.size).toBe(2);
+
+      (capture as any).handleKeyUp({ ...event, timeStamp: 1 } as KeyboardEvent);
+      expect(preventDefault).toHaveBeenCalledTimes(0);
+      expect(stopPropagation).toHaveBeenCalledTimes(0);
+      expect((capture as any).queue.size).toBe(4);
+    });
+  });
+
+  it("swallows AltGr-style Ctrl+Alt shortcuts by default (still forwards to guest)", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+
+      // Simulate the canvas being focused.
+      (capture as any).hasFocus = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+      const event = {
+        code: "KeyQ",
+        repeat: false,
+        timeStamp: 0,
+        altKey: true,
+        ctrlKey: true,
+        shiftKey: false,
+        metaKey: false,
+        preventDefault,
+        stopPropagation,
+      } as unknown as KeyboardEvent;
+
+      (capture as any).handleKeyDown(event);
+      expect(preventDefault).toHaveBeenCalledTimes(1);
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+      expect((capture as any).queue.size).toBe(2);
+
+      (capture as any).handleKeyUp({ ...event, timeStamp: 1 } as KeyboardEvent);
+      expect(preventDefault).toHaveBeenCalledTimes(2);
+      expect(stopPropagation).toHaveBeenCalledTimes(2);
+      expect((capture as any).queue.size).toBe(4);
+    });
+  });
+
+  it("does not swallow Meta shortcuts by default (still forwards to guest)", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+
+      // Simulate the canvas being focused.
+      (capture as any).hasFocus = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+      const event = {
+        code: "KeyR",
+        repeat: false,
+        timeStamp: 0,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        metaKey: true,
+        preventDefault,
+        stopPropagation,
+      } as unknown as KeyboardEvent;
+
+      (capture as any).handleKeyDown(event);
+      expect(preventDefault).toHaveBeenCalledTimes(0);
+      expect(stopPropagation).toHaveBeenCalledTimes(0);
+      expect((capture as any).queue.size).toBe(2);
+
+      (capture as any).handleKeyUp({ ...event, timeStamp: 1 } as KeyboardEvent);
+      expect(preventDefault).toHaveBeenCalledTimes(0);
+      expect(stopPropagation).toHaveBeenCalledTimes(0);
+      expect((capture as any).queue.size).toBe(4);
+    });
+  });
+
   it("prevents default for extra mouse buttons while capture is active (e.g. browser back/forward buttons)", () => {
     withStubbedDocument(() => {
       const canvas = {
