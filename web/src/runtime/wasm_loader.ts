@@ -890,6 +890,24 @@ export interface WasmApi {
     ) => {
         push_input_report(reportId: number, data: Uint8Array): void;
         drain_next_output_report(): { reportType: "output" | "feature"; reportId: number; data: Uint8Array<ArrayBuffer> } | null;
+        /**
+         * Drain the next pending guest feature report read request (or return `null` if none).
+         *
+         * Optional while older WASM builds are still in circulation.
+         */
+        drain_next_feature_report_request?: () => { requestId: number; reportId: number } | null;
+        /**
+         * Complete a feature report read request with host-provided data.
+         *
+         * Optional while older WASM builds are still in circulation.
+         */
+        complete_feature_report_request?: (requestId: number, reportId: number, data: Uint8Array) => boolean;
+        /**
+         * Fail a feature report read request.
+         *
+         * Optional while older WASM builds are still in circulation.
+         */
+        fail_feature_report_request?: (requestId: number, reportId: number, error?: string) => boolean;
         configured(): boolean;
         free(): void;
     };
@@ -912,6 +930,24 @@ export interface WasmApi {
     ) => {
         push_input_report(reportId: number, data: Uint8Array): void;
         drain_next_output_report(): { reportType: "output" | "feature"; reportId: number; data: Uint8Array } | null;
+        /**
+         * Drain the next pending guest feature report read request (or return `null` if none).
+         *
+         * Optional while older WASM builds are still in circulation.
+         */
+        drain_next_feature_report_request?: () => { requestId: number; reportId: number } | null;
+        /**
+         * Complete a feature report read request with host-provided data.
+         *
+         * Optional while older WASM builds are still in circulation.
+         */
+        complete_feature_report_request?: (requestId: number, reportId: number, data: Uint8Array) => boolean;
+        /**
+         * Fail a feature report read request.
+         *
+         * Optional while older WASM builds are still in circulation.
+         */
+        fail_feature_report_request?: (requestId: number, reportId: number, error?: string) => boolean;
         configured(): boolean;
         free(): void;
     };

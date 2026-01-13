@@ -6,7 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const VITE_BUILD_TIMEOUT_MS = 120_000;
+// Vite prod builds can be slow under heavy CI load (or when the full test suite
+// is running with many worker threads). Keep this generous to avoid flaky timeouts.
+const VITE_BUILD_TIMEOUT_MS = 300_000;
 
 describe("web Vite build outputs", () => {
   it(

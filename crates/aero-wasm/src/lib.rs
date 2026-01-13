@@ -1022,6 +1022,56 @@ impl UsbHidPassthroughBridge {
         obj.into()
     }
 
+    /// Drain the next pending guest -> host feature report read request.
+    ///
+    /// Returns `null` when no request is pending.
+    pub fn drain_next_feature_report_request(&mut self) -> JsValue {
+        let Some(req) = self.device.pop_feature_report_request() else {
+            return JsValue::NULL;
+        };
+
+        let obj = Object::new();
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("requestId"),
+            &JsValue::from_f64(f64::from(req.request_id)),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("reportId"),
+            &JsValue::from_f64(f64::from(req.report_id)),
+        );
+        obj.into()
+    }
+
+    /// Complete a previously-drained feature report read request.
+    pub fn complete_feature_report_request(
+        &mut self,
+        request_id: u32,
+        report_id: u32,
+        data: &[u8],
+    ) -> Result<bool, JsValue> {
+        let report_id = u8::try_from(report_id)
+            .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
+        Ok(self
+            .device
+            .complete_feature_report_request(request_id, report_id, data))
+    }
+
+    /// Fail a previously-drained feature report read request.
+    pub fn fail_feature_report_request(
+        &mut self,
+        request_id: u32,
+        report_id: u32,
+        error: Option<String>,
+    ) -> Result<bool, JsValue> {
+        let report_id = u8::try_from(report_id)
+            .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
+        Ok(self
+            .device
+            .fail_feature_report_request(request_id, report_id, error))
+    }
+
     /// Whether the guest has configured the USB device (SET_CONFIGURATION != 0).
     pub fn configured(&self) -> bool {
         self.device.configured()
@@ -1107,6 +1157,56 @@ impl WebHidPassthroughBridge {
         let data = Uint8Array::from(report.data.as_slice());
         let _ = Reflect::set(&obj, &JsValue::from_str("data"), data.as_ref());
         obj.into()
+    }
+
+    /// Drain the next pending guest -> host feature report read request.
+    ///
+    /// Returns `null` when no request is pending.
+    pub fn drain_next_feature_report_request(&mut self) -> JsValue {
+        let Some(req) = self.device.pop_feature_report_request() else {
+            return JsValue::NULL;
+        };
+
+        let obj = Object::new();
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("requestId"),
+            &JsValue::from_f64(f64::from(req.request_id)),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("reportId"),
+            &JsValue::from_f64(f64::from(req.report_id)),
+        );
+        obj.into()
+    }
+
+    /// Complete a previously-drained feature report read request.
+    pub fn complete_feature_report_request(
+        &mut self,
+        request_id: u32,
+        report_id: u32,
+        data: &[u8],
+    ) -> Result<bool, JsValue> {
+        let report_id = u8::try_from(report_id)
+            .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
+        Ok(self
+            .device
+            .complete_feature_report_request(request_id, report_id, data))
+    }
+
+    /// Fail a previously-drained feature report read request.
+    pub fn fail_feature_report_request(
+        &mut self,
+        request_id: u32,
+        report_id: u32,
+        error: Option<String>,
+    ) -> Result<bool, JsValue> {
+        let report_id = u8::try_from(report_id)
+            .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
+        Ok(self
+            .device
+            .fail_feature_report_request(request_id, report_id, error))
     }
 
     /// Whether the guest has configured the USB device (SET_CONFIGURATION != 0).

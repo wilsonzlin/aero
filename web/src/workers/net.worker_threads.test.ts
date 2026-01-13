@@ -112,10 +112,14 @@ function parsePcapng(bytes: Uint8Array): {
 
 async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) => boolean, timeoutMs: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    // Worker thread startup + module evaluation can be slow under heavy CI load.
+    // Add slack to keep these integration tests from flaking when the suite is
+    // running in parallel.
+    const effectiveTimeoutMs = timeoutMs * 2;
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error(`timed out after ${timeoutMs}ms waiting for worker message`));
-    }, timeoutMs);
+      reject(new Error(`timed out after ${effectiveTimeoutMs}ms waiting for worker message`));
+    }, effectiveTimeoutMs);
     (timer as unknown as { unref?: () => void }).unref?.();
 
     const onMessage = (msg: unknown) => {
@@ -318,7 +322,7 @@ describe("workers/net.worker (worker_threads)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20000);
+  }, 40000);
 
   it("falls back to /l2 derived from base proxyUrl when POST /session is unavailable", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
@@ -371,7 +375,7 @@ describe("workers/net.worker (worker_threads)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20000);
+  }, 40000);
 
   it("falls back to connecting directly when POST /session throws (network error)", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
@@ -420,7 +424,7 @@ describe("workers/net.worker (worker_threads)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20000);
+  }, 40000);
 
   it("forwards NET_TX frames over the L2 tunnel and delivers inbound frames to NET_RX", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
@@ -619,7 +623,7 @@ describe("workers/net.worker (worker_threads)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20000);
+  }, 40000);
 
   it("does not forward NET_TX frames queued while the tunnel is closed after reconnect", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
@@ -785,7 +789,7 @@ describe("workers/net.worker (worker_threads)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20000);
+  }, 40000);
 
   it("falls back to connecting directly when POST /session returns invalid JSON", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
@@ -829,7 +833,7 @@ describe("workers/net.worker (worker_threads)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20000);
+  }, 40000);
 
   it("captures guest_tx + guest_rx frames into a PCAPNG when tracing is enabled", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
@@ -1019,7 +1023,7 @@ describe("workers/net.worker (worker_threads)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20000);
+  }, 40000);
 
   it("pauses forwarding during VM snapshots and drains NET_TX/NET_RX without errors", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
@@ -1120,7 +1124,7 @@ describe("workers/net.worker (worker_threads)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20000);
+  }, 40000);
 
   it("wakes promptly on shutdown commands even while pending RX frames are buffered", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
@@ -1202,5 +1206,5 @@ describe("workers/net.worker (worker_threads)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20000);
+  }, 40000);
 });

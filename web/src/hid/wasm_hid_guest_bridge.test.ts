@@ -27,6 +27,9 @@ describe("hid/WasmHidGuestBridge", () => {
     class FakeBridge {
       readonly push_input_report = vi.fn();
       readonly drain_next_output_report = vi.fn();
+      readonly drain_next_feature_report_request = vi.fn();
+      readonly complete_feature_report_request = vi.fn(() => true);
+      readonly fail_feature_report_request = vi.fn(() => true);
       readonly configured = vi.fn(() => true);
       readonly free = vi.fn();
 
@@ -38,6 +41,7 @@ describe("hid/WasmHidGuestBridge", () => {
 
     const host = {
       sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
       log: vi.fn(),
       error: vi.fn(),
     };
@@ -100,6 +104,9 @@ describe("hid/WasmHidGuestBridge", () => {
     bridgeInstance!.drain_next_output_report.mockReturnValueOnce({ reportType: "output", reportId: 1, data: outData });
     bridgeInstance!.drain_next_output_report.mockReturnValueOnce(null);
 
+    bridgeInstance!.drain_next_feature_report_request.mockReturnValueOnce({ requestId: 99, reportId: 3 });
+    bridgeInstance!.drain_next_feature_report_request.mockReturnValueOnce(null);
+
     guest.poll?.();
     expect(host.sendReport).toHaveBeenCalledWith({
       deviceId: attach.deviceId,
@@ -107,6 +114,12 @@ describe("hid/WasmHidGuestBridge", () => {
       reportId: 1,
       data: outData,
     });
+
+    expect(host.requestFeatureReport).toHaveBeenCalledWith({ deviceId: attach.deviceId, requestId: 99, reportId: 3 });
+
+    const featureData = new Uint8Array([1, 2, 3]);
+    expect(guest.completeFeatureReportRequest?.({ deviceId: attach.deviceId, requestId: 99, reportId: 3, data: featureData })).toBe(true);
+    expect(bridgeInstance!.complete_feature_report_request).toHaveBeenCalledWith(99, 3, featureData);
   });
 
   it("infers HID boot keyboard subclass/protocol for keyboard collections", () => {
@@ -237,6 +250,7 @@ describe("hid/WasmHidGuestBridge", () => {
 
     const host = {
       sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
       log: vi.fn(),
       error: vi.fn(),
     };

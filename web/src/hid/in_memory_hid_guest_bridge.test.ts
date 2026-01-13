@@ -6,6 +6,7 @@ import type { HidHostSink } from "./wasm_hid_guest_bridge";
 
 const noopHost: HidHostSink = {
   sendReport: () => {},
+  requestFeatureReport: () => {},
   log: () => {},
   error: () => {},
 };

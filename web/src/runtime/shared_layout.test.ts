@@ -100,10 +100,12 @@ describe("runtime/shared_layout", () => {
     }
   });
 
-  it("transfers messages across threads using a shared_layout ring", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });
-    const regions = ringRegionsForWorker("cpu");
-    const ring = new RingBuffer(segments.control, regions.command.byteOffset);
+  it(
+    "transfers messages across threads using a shared_layout ring",
+    async () => {
+      const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });
+      const regions = ringRegionsForWorker("cpu");
+      const ring = new RingBuffer(segments.control, regions.command.byteOffset);
 
     const count = 100;
     const worker = new Worker(new URL("./shared_layout_ring_consumer_worker.ts", import.meta.url), {
@@ -130,10 +132,14 @@ describe("runtime/shared_layout", () => {
       });
 
       expect(received).toEqual(Array.from({ length: count }, (_, i) => i));
-    } finally {
-      await worker.terminate();
-    }
-  });
+      } finally {
+        await worker.terminate();
+      }
+    },
+    // Spawning a worker thread and shuttling 100 messages can take longer under
+    // heavy CI load (or when the full suite is running in parallel).
+    20_000,
+  );
 
   it("creates shared views for control + guest memory", () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });

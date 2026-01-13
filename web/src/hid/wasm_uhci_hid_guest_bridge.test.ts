@@ -26,6 +26,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
 
     const host = {
       sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
       log: vi.fn(),
       error: vi.fn(),
     };
@@ -73,6 +74,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
 
     const host = {
       sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
       log: vi.fn(),
       error: vi.fn(),
     };
@@ -120,6 +122,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
 
     const host = {
       sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
       log: vi.fn(),
       error: vi.fn(),
     };

@@ -10,6 +10,7 @@ export type HidTopologyManager = {
 
 export type HidHostSink = {
   sendReport: (msg: { deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }) => void;
+  requestFeatureReport: (msg: { deviceId: number; requestId: number; reportId: number }) => void;
   log: (message: string, deviceId?: number) => void;
   error: (message: string, deviceId?: number) => void;
 };
@@ -19,11 +20,14 @@ export interface HidGuestBridge {
   detach(msg: HidDetachMessage): void;
   inputReport(msg: HidInputReportMessage): void;
   poll?(): void;
+  completeFeatureReportRequest?(msg: { deviceId: number; requestId: number; reportId: number; data: Uint8Array }): boolean;
+  failFeatureReportRequest?(msg: { deviceId: number; requestId: number; reportId: number; error?: string }): boolean;
   destroy?(): void;
 }
 
 const MAX_HID_OUTPUT_REPORTS_PER_TICK = 64;
 const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
+const MAX_HID_FEATURE_REPORT_REQUESTS_PER_TICK = 16;
 
 type WebHidPassthroughBridge = InstanceType<WasmApi["WebHidPassthroughBridge"]>;
 type UsbHidPassthroughBridge = InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>;
@@ -61,6 +65,14 @@ function inferHidBootInterfaceFromCollections(
     return { interface_subclass: HID_INTERFACE_SUBCLASS_BOOT, interface_protocol: HID_INTERFACE_PROTOCOL_MOUSE };
   }
   return {};
+}
+
+type FeatureReportRequest = { requestId: number; reportId: number };
+
+function isFeatureReportRequest(value: unknown): value is FeatureReportRequest {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.requestId === "number" && typeof v.reportId === "number";
 }
 
 export class WasmHidGuestBridge implements HidGuestBridge {
@@ -155,8 +167,9 @@ export class WasmHidGuestBridge implements HidGuestBridge {
 
   poll(): void {
     let remainingReports = MAX_HID_OUTPUT_REPORTS_PER_TICK;
+    let remainingFeatureRequests = MAX_HID_FEATURE_REPORT_REQUESTS_PER_TICK;
     for (const [deviceId, bridge] of this.#bridges) {
-      if (remainingReports <= 0) return;
+      if (remainingReports <= 0 && remainingFeatureRequests <= 0) return;
       let configured = false;
       try {
         configured = bridge.configured();
@@ -184,6 +197,71 @@ export class WasmHidGuestBridge implements HidGuestBridge {
           data: report.data,
         });
       }
+
+      const drainFeatureReportRequest = (bridge as unknown as { drain_next_feature_report_request?: () => unknown })
+        .drain_next_feature_report_request;
+      if (typeof drainFeatureReportRequest === "function") {
+        while (remainingFeatureRequests > 0) {
+          let req: FeatureReportRequest | null = null;
+          try {
+            const next = drainFeatureReportRequest.call(bridge) as unknown;
+            if (next === null) break;
+            if (!isFeatureReportRequest(next)) break;
+            req = next;
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.host.error(`drain_next_feature_report_request failed: ${message}`, deviceId);
+            break;
+          }
+          if (!req) break;
+          remainingFeatureRequests -= 1;
+          this.host.requestFeatureReport({ deviceId, requestId: req.requestId, reportId: req.reportId });
+        }
+      }
+    }
+  }
+
+  completeFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; data: Uint8Array }): boolean {
+    const bridge = this.#bridges.get(msg.deviceId);
+    if (!bridge) return false;
+    const fn = (bridge as unknown as { complete_feature_report_request?: (requestId: number, reportId: number, data: Uint8Array) => boolean })
+      .complete_feature_report_request;
+    if (typeof fn !== "function") return false;
+    try {
+      return fn.call(bridge, msg.requestId >>> 0, msg.reportId >>> 0, msg.data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.host.error(`complete_feature_report_request failed: ${message}`, msg.deviceId);
+      return false;
+    }
+  }
+
+  failFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; error?: string }): boolean {
+    const bridge = this.#bridges.get(msg.deviceId);
+    if (!bridge) return false;
+    const fn = (bridge as unknown as { fail_feature_report_request?: (requestId: number, reportId: number, error?: string) => boolean })
+      .fail_feature_report_request;
+    if (typeof fn === "function") {
+      try {
+        return fn.call(bridge, msg.requestId >>> 0, msg.reportId >>> 0, msg.error);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.host.error(`fail_feature_report_request failed: ${message}`, msg.deviceId);
+        return false;
+      }
+    }
+    // Best-effort: if the WASM build doesn't expose an explicit failure method, complete with an
+    // empty payload so the guest control transfer doesn't hang indefinitely.
+    const complete = (
+      bridge as unknown as { complete_feature_report_request?: (requestId: number, reportId: number, data: Uint8Array) => boolean }
+    ).complete_feature_report_request;
+    if (typeof complete !== "function") return false;
+    try {
+      return complete.call(bridge, msg.requestId >>> 0, msg.reportId >>> 0, new Uint8Array());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.host.error(`complete_feature_report_request (fail fallback) failed: ${message}`, msg.deviceId);
+      return false;
     }
   }
 

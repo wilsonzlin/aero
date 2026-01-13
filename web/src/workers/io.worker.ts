@@ -123,6 +123,7 @@ import {
   isHidAttachMessage,
   type HidAttachResultMessage,
   isHidDetachMessage,
+  isHidFeatureReportResultMessage,
   isHidInputReportMessage,
   isHidProxyMessage,
   isHidRingAttachMessage,
@@ -131,6 +132,8 @@ import {
   type HidAttachMessage,
   type HidDetachMessage,
   type HidErrorMessage,
+  type HidGetFeatureReportMessage,
+  type HidFeatureReportResultMessage,
   type HidInputReportMessage,
   type HidLogMessage,
   type HidProxyMessage,
@@ -2450,6 +2453,15 @@ const hidHostSink: HidHostSink = {
       }
     }
   },
+  requestFeatureReport: (payload) => {
+    const msg: HidGetFeatureReportMessage = {
+      type: "hid.getFeatureReport",
+      deviceId: payload.deviceId >>> 0,
+      requestId: payload.requestId >>> 0,
+      reportId: payload.reportId >>> 0,
+    };
+    ctx.postMessage(msg);
+  },
   log: (message, deviceId) => {
     const msg: HidLogMessage = { type: "hid.log", message, ...(deviceId !== undefined ? { deviceId } : {}) };
     ctx.postMessage(msg);
@@ -2466,6 +2478,34 @@ const hidHostSink: HidHostSink = {
 const hidGuestInMemory = new InMemoryHidGuestBridge(hidHostSink);
 let hidGuest: HidGuestBridge = hidGuestInMemory;
 let wasmHidGuest: HidGuestBridge | null = null;
+
+function handleHidFeatureReportResult(msg: HidFeatureReportResultMessage): void {
+  const wasm = wasmHidGuest;
+  if (!wasm?.completeFeatureReportRequest) {
+    if (import.meta.env.DEV) {
+      console.warn("[hid] Received hid.featureReportResult but no WASM bridge is available", msg);
+    }
+    return;
+  }
+
+  if (msg.ok) {
+    const data = msg.data ?? new Uint8Array();
+    wasm.completeFeatureReportRequest({ deviceId: msg.deviceId, requestId: msg.requestId, reportId: msg.reportId, data });
+  } else {
+    if (wasm.failFeatureReportRequest) {
+      wasm.failFeatureReportRequest({
+        deviceId: msg.deviceId,
+        requestId: msg.requestId,
+        reportId: msg.reportId,
+        error: msg.error ?? "failed to receive feature report",
+      });
+    } else {
+      // Best-effort: older WASM builds may not expose a failure callback. Complete with an empty payload
+      // to avoid leaving a guest control transfer hanging indefinitely.
+      wasm.completeFeatureReportRequest({ deviceId: msg.deviceId, requestId: msg.requestId, reportId: msg.reportId, data: new Uint8Array() });
+    }
+  }
+}
 
 // -----------------------------------------------------------------------------
 // WebHID passthrough (main thread ↔ I/O worker) debug plumbing
@@ -3462,7 +3502,6 @@ async function handleVmSnapshotSaveToOpfs(
         usbUhciRuntime: uhciRuntime,
         usbUhciControllerBridge: uhciControllerBridge,
         usbEhciControllerBridge: ehciControllerBridge,
-        usbXhciControllerBridge: xhciControllerBridge,
         i8042: i8042Wasm ?? i8042Ts,
         // Wrap audio devices so snapshot restore semantics (pending bytes + ring reattachment) stay
         // centralized in the IO worker.
@@ -3513,7 +3552,6 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         usbUhciRuntime: uhciRuntime,
         usbUhciControllerBridge: uhciControllerBridge,
         usbEhciControllerBridge: ehciControllerBridge,
-        usbXhciControllerBridge: xhciControllerBridge,
         i8042: i8042Wasm ?? i8042Ts,
         audioHda: {
           load_state: (bytes: Uint8Array) => restoreAudioHdaDeviceState(bytes),
@@ -4363,6 +4401,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     if (isHidInputReportMessage(data)) {
       if (started) Atomics.add(status, StatusIndex.IoHidInputReportCounter, 1);
       hidGuest.inputReport(data);
+      return;
+    }
+
+    if (isHidFeatureReportResultMessage(data)) {
+      handleHidFeatureReportResult(data);
       return;
     }
 
