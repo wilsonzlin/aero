@@ -1,0 +1,101 @@
+import { describe, expect, it } from "vitest";
+
+import { SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
+import { readScanoutRgba8FromGuestRam } from "./scanout_readback";
+
+describe("runtime/scanout_readback", () => {
+  it("converts tight pitch (pitch == width*4) BGRX->RGBA and forces alpha=255", () => {
+    const width = 2;
+    const height = 2;
+    const pitchBytes = width * 4;
+
+    const guest = new Uint8Array([
+      // row0
+      // pixel0: B=1,G=2,R=3,X=0
+      1, 2, 3, 0,
+      // pixel1: B=4,G=5,R=6,X=0
+      4, 5, 6, 0,
+      // row1
+      // pixel2: B=7,G=8,R=9,X=0
+      7, 8, 9, 0,
+      // pixel3: B=10,G=11,R=12,X=0
+      10, 11, 12, 0,
+    ]);
+
+    const out = readScanoutRgba8FromGuestRam(guest, {
+      basePaddr: 0,
+      width,
+      height,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    expect(out.width).toBe(width);
+    expect(out.height).toBe(height);
+    expect(Array.from(out.rgba8)).toEqual([
+      // row0
+      3, 2, 1, 255, 6, 5, 4, 255,
+      // row1
+      9, 8, 7, 255, 12, 11, 10, 255,
+    ]);
+  });
+
+  it("converts padded pitch (pitch > width*4), skipping padding bytes", () => {
+    const width = 2;
+    const height = 2;
+    const rowBytes = width * 4;
+    const pitchBytes = rowBytes + 4; // 4 bytes padding at end of each row
+
+    const guest = new Uint8Array(pitchBytes * height);
+    guest.fill(0xee);
+
+    // Row0 pixels.
+    guest.set([1, 2, 3, 0, 4, 5, 6, 0], 0);
+    // Row1 pixels (after pitchBytes).
+    guest.set([7, 8, 9, 0, 10, 11, 12, 0], pitchBytes);
+
+    const out = readScanoutRgba8FromGuestRam(guest, {
+      basePaddr: 0,
+      width,
+      height,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    expect(out.rgba8.byteLength).toBe(rowBytes * height);
+    expect(Array.from(out.rgba8)).toEqual([
+      // row0
+      3, 2, 1, 255, 6, 5, 4, 255,
+      // row1
+      9, 8, 7, 255, 12, 11, 10, 255,
+    ]);
+  });
+
+  it("throws for invalid pitchBytes (< width*4)", () => {
+    const guest = new Uint8Array(64);
+    expect(() =>
+      readScanoutRgba8FromGuestRam(guest, {
+        basePaddr: 0,
+        width: 3,
+        height: 1,
+        pitchBytes: 8, // < 3*4
+        format: SCANOUT_FORMAT_B8G8R8X8,
+      }),
+    ).toThrow(/pitchBytes/i);
+  });
+
+  it("throws when basePaddr is out of bounds", () => {
+    // 16 bytes of guest RAM, but rowBytes=8, basePaddr=12 would require bytes [12..20).
+    const guest = new Uint8Array(16);
+    expect(() =>
+      readScanoutRgba8FromGuestRam(guest, {
+        basePaddr: 12,
+        width: 2,
+        height: 1,
+        pitchBytes: 8,
+        format: SCANOUT_FORMAT_B8G8R8X8,
+      }),
+    ).toThrow(/out of bounds/i);
+  });
+});
+
