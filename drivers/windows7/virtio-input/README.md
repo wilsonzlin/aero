@@ -429,8 +429,9 @@ Note: QEMU’s virtio-input devices typically report `ID_NAME` strings like `"QE
 **contract-first** and expects the Aero contract strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`). If the
 device reports a different `ID_NAME`, the driver will fail to start with Code 10 (`STATUS_NOT_SUPPORTED`).
 
-Note: `virtio-tablet-pci` is an **absolute** pointing device (`EV_ABS`). Tablet/absolute input is not yet supported
-end-to-end by the in-tree Win7 driver package (see “Known limitations”).
+Note: `virtio-tablet-pci` is an **absolute** pointing device (`EV_ABS`). Tablet/absolute input is supported by the
+driver (HID ReportID `4`) when the device is classified as `DeviceKind==Tablet` (stock QEMU typically requires enabling
+the per-device `CompatDeviceKind` mode; see `docs/virtio-input-notes.md`).
 
 ## Testing
 
@@ -450,23 +451,49 @@ The packaged ZIP includes guest-side helper scripts (`INSTALL_CERT.cmd`, `INSTAL
 
 ## Known limitations
 This driver intentionally implements a **minimal, contract-first** subset of virtio-input sufficient
-for Windows 7 keyboard + mouse input via the HID stack.
+for Windows 7 keyboard + mouse input via the HID stack, plus a small set of
+optional extensions that are implemented in-tree (consumer/media keys and a
+tablet/absolute-pointer report).
 
 ### Virtio-input functionality (guest-visible)
 
 | Capability | Status | Notes (what Windows sees) |
 | --- | --- | --- |
-| Keyboard input (`EV_KEY` → HID keyboard) | **Supported** | Boot-protocol-style report (8 modifiers + **6-key** array). Keys outside the translator’s Linux `KEY_*` → HID mapping are ignored. |
-| Consumer/media keys (subset) | **Supported** | Exposed as a HID **Consumer Control** collection (ReportID `3`) on the keyboard function. Supported keys: mute, volume up/down, play/pause, next/previous, stop. |
-| Mouse relative motion (`EV_REL`: `REL_X`/`REL_Y`) | **Supported** | HID mouse report with signed 8-bit X/Y deltas. |
-| Mouse wheel (`EV_REL`: `REL_WHEEL`) | **Supported** | Vertical wheel. |
-| Mouse horizontal wheel (`EV_REL`: `REL_HWHEEL`) | **Supported** | Exposed as HID **AC Pan** (horizontal wheel). |
-| Mouse buttons | **Supported** | Up to **8 buttons** (`BTN_LEFT/RIGHT/MIDDLE/SIDE/EXTRA/FORWARD/BACK/TASK`) mapped to HID buttons 1–8. |
-| Keyboard LED output (Windows → driver → device) | **Supported** | HID output report is translated to virtio-input `EV_LED` events on `statusq` (Num/Caps/Scroll + Compose/Kana bits). Device may ignore LED state per contract. |
-| Absolute/tablet pointer (`EV_ABS`) | **Not supported (end-to-end)** | The translator has an opt-in tablet report format, but the in-tree driver currently exposes a relative mouse HID interface only (no advertised tablet report/collection). |
+| Keyboard input (`EV_KEY` → HID keyboard, ReportID `1`) | **Supported** | Boot-protocol-style input report (8 modifiers + reserved + **6-key** array). Keys outside the translator’s Linux `KEY_*` → HID mapping are ignored. |
+| Consumer/media keys (`EV_KEY` → HID Consumer Control, ReportID `3`) | **Supported** | Bitmask report exposed as a HID **Consumer Control** collection on the keyboard function. Supported keys: **Mute, Volume Down, Volume Up, Play/Pause, Next Track, Previous Track, Stop**. |
+| Mouse relative motion (`EV_REL`: `REL_X`/`REL_Y`) | **Supported** | HID mouse report (ReportID `2`) with signed 8-bit X/Y deltas. Large deltas are split across multiple reports. |
+| Mouse wheel (`EV_REL`: `REL_WHEEL`) | **Supported** | Vertical wheel (signed 8-bit). |
+| Mouse horizontal wheel (`EV_REL`: `REL_HWHEEL`) | **Supported** | Mapped to HID **Consumer / AC Pan** (signed 8-bit). |
+| Mouse buttons (`EV_KEY`: `BTN_*`) | **Supported** | 8-button HID bitmask (ReportID `2`, buttons 1–8). See mapping table below. |
+| Keyboard LED output (Windows → driver → device) | **Supported** | HID output report (ReportID `1`) is translated to virtio-input `EV_LED` events on `statusq` (Num/Caps/Scroll + Compose/Kana bits). Device may ignore LED state per contract. |
+| Tablet / absolute pointer (`EV_ABS`: `ABS_X`/`ABS_Y`) | **Supported** | Exposed when `DeviceKind==Tablet` (HID ReportID `4`). Requires device-provided `ABS_INFO` ranges for `ABS_X`/`ABS_Y` so coordinates can be scaled into the HID logical range `[0, 32767]`. Buttons are only reported if the device also advertises `EV_KEY` (see below). **INF note:** there is no tablet-specific `SUBSYS_...` HWID entry today; tablet devices typically bind via the generic `PCI\VEN_1AF4&DEV_1052&REV_01` match and may appear under the generic “Aero VirtIO Input Device” name. |
 | Multi-touch | **Not supported** | No multi-touch HID collections or contact tracking. |
 | System control keys (power/sleep/wake) | **Not supported** | No HID System Control reports. |
 | Force feedback (`EV_FF`) | **Not supported** | No force feedback / haptics support. |
+
+Device kind / report descriptor selection:
+
+- `DeviceKind==Keyboard` exposes ReportID `1` (keyboard + LED output) and ReportID `3` (Consumer Control).
+- `DeviceKind==Mouse` exposes ReportID `2` (mouse).
+- `DeviceKind==Tablet` exposes ReportID `4` (absolute pointer/tablet).
+
+See `docs/virtio-input-notes.md` for how `DeviceKind` is derived from virtio `ID_NAME` / `ID_DEVIDS` (strict vs compat mode).
+
+#### Mouse / tablet button mapping (`EV_KEY` → HID buttons 1–8)
+
+The mouse (ReportID `2`) and tablet (ReportID `4`) reports expose an 8-button bitmask (buttons 1–8 → bits 0–7):
+
+| virtio-input `EV_KEY` code | HID button | Notes |
+| --- | --- | --- |
+| `BTN_LEFT` | Button 1 | |
+| `BTN_RIGHT` | Button 2 | |
+| `BTN_MIDDLE` | Button 3 | |
+| `BTN_SIDE` | Button 4 | |
+| `BTN_EXTRA` | Button 5 | |
+| `BTN_FORWARD` | Button 6 | |
+| `BTN_BACK` | Button 7 | |
+| `BTN_TASK` | Button 8 | |
+| `BTN_TOUCH` | Button 1 | Touch contact is mapped to “left click” for compatibility with absolute-pointer stacks. |
 
 > Driver model note: the INF installs the driver as a **KMDF HID minidriver** under `HIDClass`
 > (Windows sees standard “HID Keyboard Device” / “HID-compliant mouse” collections; the keyboard function also exposes a “Consumer Control” collection).
@@ -483,8 +510,8 @@ The driver and INF are intentionally strict and are **not** intended to be “ge
 | Fixed BAR0 virtio-pci modern layout (contract v1) | **Required** | `VirtioPciModernValidateAeroContractV1FixedLayout` in `src/device.c` (expects BAR0 `len >= 0x4000`, caps at offsets `0x0000/0x1000/0x2000/0x3000`, `notify_off_multiplier = 4`) |
 | Required virtqueues | **2 queues** (`eventq` + `statusq`) | `src/device.c` (expects 64/64 and `queue_notify_off` of `0/1`) |
 | Virtqueue/ring feature negotiation | **Split ring only** | `src/device.c` requires `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` and refuses to negotiate `VIRTIO_F_RING_EVENT_IDX` (no EVENT_IDX / packed rings in contract v1). |
-| Required advertised event types/codes (`EV_BITS`) | **Required** | `src/device.c` enforces minimum `EV_BITS` sets per device kind (keyboard vs mouse; see `docs/windows7-virtio-driver-contract.md` §3.3.5 for the contract minimum lists). |
-| Device identification strings | **Required** | `src/device.c` enforces Aero `ID_NAME` strings + contract `ID_DEVIDS` and cross-checks them against the PCI subsystem device ID when present. |
+| Required advertised event types/codes (`EV_BITS`) | **Required** | `src/device.c` enforces minimum `EV_BITS` sets per device kind (keyboard vs mouse; see `docs/windows7-virtio-driver-contract.md` §3.3.5 for the contract minimum lists). Tablet (`EV_ABS`) devices require `ABS_X/ABS_Y` and `ABS_INFO` ranges. |
+| Device identification strings | **Strict by default** | Strict mode enforces Aero `ID_NAME` strings + contract `ID_DEVIDS` and cross-checks them against the PCI subsystem device ID when present. QEMU/non-Aero devices require enabling `CompatDeviceKind` (see `docs/virtio-input-notes.md`). |
 
 ### QEMU compatibility expectations
 
