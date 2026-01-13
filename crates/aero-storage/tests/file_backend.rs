@@ -86,3 +86,22 @@ fn file_backend_can_open_disk_image_auto() {
     disk.read_sectors(0, &mut buf).unwrap();
     assert_eq!(buf, sector);
 }
+
+#[test]
+fn file_backend_write_extends_file_and_zero_fills_gap() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("disk.img");
+
+    let mut backend = StdFileBackend::create(&path, 4).unwrap();
+    backend.write_at(6, &[0xAA, 0xBB]).unwrap();
+    assert_eq!(backend.len().unwrap(), 8);
+
+    // The gap created by extending the file should read as zeros.
+    let mut gap = [0xFFu8; 2];
+    backend.read_at(4, &mut gap).unwrap();
+    assert_eq!(gap, [0, 0]);
+
+    let mut tail = [0u8; 2];
+    backend.read_at(6, &mut tail).unwrap();
+    assert_eq!(tail, [0xAA, 0xBB]);
+}
