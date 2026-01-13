@@ -1310,6 +1310,48 @@ static void NormalizeRenderTargetsNoGapsLocked(AeroGpuDevice* dev) {
   dev->current_rtv_count = new_count;
 }
 
+static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
+  if (!dev) {
+    return;
+  }
+  NormalizeRenderTargetsNoGapsLocked(dev);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->color_count = dev->current_rtv_count;
+  cmd->depth_stencil = dev->current_dsv;
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+    cmd->colors[i] = 0;
+  }
+  for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    cmd->colors[i] = dev->current_rtvs[i];
+  }
+}
+
+static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t handle, AeroGpuResource* res) {
+  if (!dev || handle == 0) {
+    return;
+  }
+  bool changed = false;
+  for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (dev->current_rtvs[i] == handle || (res && dev->current_rtv_resources[i] == res)) {
+      dev->current_rtvs[i] = 0;
+      dev->current_rtv_resources[i] = nullptr;
+      changed = true;
+    }
+  }
+  if (dev->current_dsv == handle || (res && dev->current_dsv_res == res)) {
+    dev->current_dsv = 0;
+    dev->current_dsv_res = nullptr;
+    changed = true;
+  }
+  if (changed) {
+    EmitSetRenderTargetsLocked(dev);
+  }
+}
+
 static void TrackDrawStateLocked(AeroGpuDevice* dev) {
   if (!dev) {
     return;
@@ -3679,16 +3721,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     rt_state_changed = true;
   }
   if (rt_state_changed) {
-    NormalizeRenderTargetsNoGapsLocked(dev);
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-    cmd->color_count = dev->current_rtv_count;
-    cmd->depth_stencil = dev->current_dsv;
-    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-      cmd->colors[i] = 0;
-    }
-    for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-      cmd->colors[i] = dev->current_rtvs[i];
-    }
+    EmitSetRenderTargetsLocked(dev);
   }
   if (dev->current_vb_res == res) {
     dev->current_vb_res = nullptr;
@@ -5843,6 +5876,12 @@ void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
       res = view ? view->resource : nullptr;
       tex = res ? res->handle : (view ? view->texture : 0);
     }
+    if (tex) {
+      // Hazard rule: a resource cannot be bound simultaneously as an SRV and as
+      // an RTV/DSV. Match D3D10/11 behavior by unbinding it from outputs before
+      // binding as an SRV.
+      UnbindResourceFromOutputsLocked(dev, tex, res);
+    }
     if (slot < dev->current_vs_srvs.size() && shader_stage == AEROGPU_SHADER_STAGE_VERTEX) {
       dev->current_vs_srvs[slot] = res;
     } else if (slot < dev->current_ps_srvs.size() && shader_stage == AEROGPU_SHADER_STAGE_PIXEL) {
@@ -6387,16 +6426,7 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
     unbind_srvs_for_resource(dev->current_rtv_resources[i]);
   }
   unbind_srvs_for_resource(dev->current_dsv_res);
-
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  cmd->color_count = dev->current_rtv_count;
-  cmd->depth_stencil = dsv_handle;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-    cmd->colors[i] = 0;
-  }
-  for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    cmd->colors[i] = dev->current_rtvs[i];
-  }
+  EmitSetRenderTargetsLocked(dev);
 }
 
 void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT start_vertex) {
@@ -7332,6 +7362,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
     for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
       dev->current_rtvs[i] = dev->current_rtv_resources[i] ? dev->current_rtv_resources[i]->handle : 0;
     }
+    NormalizeRenderTargetsNoGapsLocked(dev);
 
     cmd->color_count = dev->current_rtv_count;
     cmd->depth_stencil = dev->current_dsv;
