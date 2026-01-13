@@ -76,6 +76,11 @@ import {
 } from "../display/framebuffer_protocol";
 
 import { GpuTelemetry } from '../gpu/telemetry.ts';
+import {
+  chooseDirtyRectsForUpload,
+  estimateFullFrameUploadBytes,
+  estimateTextureUploadBytes,
+} from "../gpu/dirty-rect-policy";
 import type { AeroConfig } from '../config/aero_config';
 import { createSharedMemoryViews, ringRegionsForWorker, setReadyFlag, StatusIndex, type WorkerRole } from '../runtime/shared_layout';
 import { RingBuffer } from '../ipc/ring_buffer';
@@ -738,24 +743,6 @@ const maybePublishWddmScanout = (width: number, height: number): void => {
   }
 };
 
-const alignUp = (value: number, align: number): number => {
-  if (align <= 0) return value;
-  return Math.ceil(value / align) * align;
-};
-
-const bytesPerRowForUpload = (rowBytes: number, copyHeight: number, bytesPerRowAlignment: number): number => {
-  if (copyHeight <= 1) return rowBytes;
-  return alignUp(rowBytes, bytesPerRowAlignment);
-};
-
-const requiredDataLen = (bytesPerRow: number, rowBytes: number, copyHeight: number): number => {
-  if (copyHeight <= 0) return 0;
-  return bytesPerRow * (copyHeight - 1) + rowBytes;
-};
-
-const clampInt = (value: number, min: number, max: number): number =>
-  Math.max(min, Math.min(max, Math.trunc(value)));
-
 const bytesPerRowAlignmentForPresenterBackend = (backend: PresenterBackendKind | null): number => {
   // Telemetry-only estimate of texture upload bandwidth.
   //
@@ -773,33 +760,6 @@ const bytesPerRowAlignmentForPresenterBackend = (backend: PresenterBackendKind |
       // alignment so existing telemetry remains comparable.
       return COPY_BYTES_PER_ROW_ALIGNMENT;
   }
-};
-
-const estimateTextureUploadBytes = (
-  layout: SharedFramebufferLayout | null,
-  dirtyRects: DirtyRect[] | null,
-  bytesPerRowAlignment: number,
-): number => {
-  if (!layout) return 0;
-
-  const fullRect: DirtyRect = { x: 0, y: 0, w: layout.width, h: layout.height };
-  const rects =
-    dirtyRects == null ? [fullRect] : dirtyRects.length === 0 ? ([] as DirtyRect[]) : dirtyRects;
-
-  let total = 0;
-  for (const rect of rects) {
-    const x = clampInt(rect.x, 0, layout.width);
-    const y = clampInt(rect.y, 0, layout.height);
-    const w = clampInt(rect.w, 0, layout.width - x);
-    const h = clampInt(rect.h, 0, layout.height - y);
-    if (w === 0 || h === 0) continue;
-
-    const rowBytes = w * BYTES_PER_PIXEL_RGBA8;
-    const bytesPerRow = bytesPerRowForUpload(rowBytes, h, bytesPerRowAlignment);
-    total += requiredDataLen(bytesPerRow, rowBytes, h);
-  }
-
-  return total;
 };
 
 const syncSharedMetrics = () => {
@@ -1600,12 +1560,6 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
   return null;
 };
 
-const estimateFullFrameUploadBytes = (width: number, height: number, bytesPerRowAlignment: number): number => {
-  const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
-  const bytesPerRow = bytesPerRowForUpload(rowBytes, height, bytesPerRowAlignment);
-  return requiredDataLen(bytesPerRow, rowBytes, height);
-};
-
 const presentOnce = async (): Promise<boolean> => {
   const t0 = performance.now();
   lastUploadDirtyRects = null;
@@ -1690,9 +1644,18 @@ const presentOnce = async (): Promise<boolean> => {
       if (needsFullUpload) {
         presenter.present(frame.pixels, frame.strideBytes);
         presenterNeedsFullUpload = false;
-      } else if (dirtyRects && dirtyRects.length > 0 && typeof dirtyPresenter.presentDirtyRects === "function") {
-        dirtyPresenter.presentDirtyRects(frame.pixels, frame.strideBytes, dirtyRects);
-        lastUploadDirtyRects = dirtyRects;
+      } else if (typeof dirtyPresenter.presentDirtyRects === "function") {
+        const bytesPerRowAlignment = bytesPerRowAlignmentForPresenterBackend(presenter.backend);
+        const chosenDirtyRects =
+          frame.sharedLayout === undefined
+            ? dirtyRects
+            : chooseDirtyRectsForUpload(frame.sharedLayout, dirtyRects, bytesPerRowAlignment);
+        if (chosenDirtyRects && chosenDirtyRects.length > 0) {
+          dirtyPresenter.presentDirtyRects(frame.pixels, frame.strideBytes, chosenDirtyRects);
+          lastUploadDirtyRects = chosenDirtyRects;
+        } else {
+          presenter.present(frame.pixels, frame.strideBytes);
+        }
       } else {
         presenter.present(frame.pixels, frame.strideBytes);
       }
