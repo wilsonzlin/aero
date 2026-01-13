@@ -571,6 +571,25 @@ async fn verify(args: VerifyArgs) -> Result<()> {
         }
     }
 
+    if args.prefix.is_some() {
+        if let Some((inferred_image_id, inferred_version)) =
+            infer_image_id_and_version(&version_prefix)
+        {
+            if manifest.image_id != inferred_image_id {
+                bail!(
+                    "manifest imageId '{}' does not match prefix imageId '{inferred_image_id}'",
+                    manifest.image_id
+                );
+            }
+            if manifest.version != inferred_version {
+                bail!(
+                    "manifest version '{}' does not match prefix version '{inferred_version}'",
+                    manifest.version
+                );
+            }
+        }
+    }
+
     eprintln!(
         "Verifying imageId={} version={} chunkSize={} chunkCount={} totalSize={}",
         manifest.image_id,
@@ -706,11 +725,19 @@ fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
             manifest.chunk_count
         );
     }
-    if manifest.chunk_index_width != CHUNK_INDEX_WIDTH as u32 {
+    if manifest.chunk_index_width == 0 {
+        bail!("manifest chunkIndexWidth must be > 0");
+    }
+    let width_usize: usize = manifest.chunk_index_width.try_into().map_err(|_| {
+        anyhow!(
+            "manifest chunkIndexWidth {} does not fit into usize",
+            manifest.chunk_index_width
+        )
+    })?;
+    if width_usize > 32 {
         bail!(
-            "manifest chunkIndexWidth {} is not supported (expected {})",
-            manifest.chunk_index_width,
-            CHUNK_INDEX_WIDTH
+            "manifest chunkIndexWidth {} is unreasonably large (max 32)",
+            manifest.chunk_index_width
         );
     }
     if let Some(chunks) = &manifest.chunks {
@@ -855,6 +882,12 @@ async fn verify_chunks(
 
     let chunks_verified = Arc::new(AtomicU64::new(0));
     let cancelled = Arc::new(AtomicBool::new(false));
+    let chunk_index_width: usize = manifest.chunk_index_width.try_into().map_err(|_| {
+        anyhow!(
+            "manifest chunkIndexWidth {} does not fit into usize",
+            manifest.chunk_index_width
+        )
+    })?;
 
     #[derive(Debug, Clone)]
     struct VerifyChunkJob {
@@ -872,6 +905,7 @@ async fn verify_chunks(
         let bucket = bucket.to_string();
         let version_prefix = version_prefix.to_string();
         let manifest = Arc::clone(&manifest);
+        let chunk_index_width = chunk_index_width;
         let pb = pb.clone();
         let chunks_verified = Arc::clone(&chunks_verified);
         let cancelled = Arc::clone(&cancelled);
@@ -880,7 +914,10 @@ async fn verify_chunks(
                 if cancelled.load(Ordering::SeqCst) {
                     break;
                 }
-                let key = format!("{version_prefix}{}", chunk_object_key(job.index)?);
+                let key = format!(
+                    "{version_prefix}{}",
+                    chunk_object_key_with_width(job.index, chunk_index_width)?
+                );
                 let expected_size = expected_chunk_size(manifest.as_ref(), job.index)?;
                 let expected_sha256 = expected_chunk_sha256(manifest.as_ref(), job.index)?;
                 match verify_chunk_with_retry(
@@ -1524,17 +1561,21 @@ fn infer_image_id_and_version(prefix: &str) -> Option<(String, String)> {
     Some((image_id, version))
 }
 
-fn chunk_object_key(index: u64) -> Result<String> {
+fn chunk_object_key_with_width(index: u64, width: usize) -> Result<String> {
     if index >= MAX_CHUNKS {
         bail!(
             "chunk index {index} exceeds max supported index {}",
             MAX_CHUNKS - 1
         );
     }
-    Ok(format!(
-        "chunks/{index:0width$}.bin",
-        width = CHUNK_INDEX_WIDTH
-    ))
+    if width == 0 {
+        bail!("chunk index width must be > 0");
+    }
+    Ok(format!("chunks/{index:0width$}.bin", width = width))
+}
+
+fn chunk_object_key(index: u64) -> Result<String> {
+    chunk_object_key_with_width(index, CHUNK_INDEX_WIDTH)
 }
 
 fn chunk_size_at_index(total_size: u64, chunk_size: u64, index: u64) -> Result<u64> {
