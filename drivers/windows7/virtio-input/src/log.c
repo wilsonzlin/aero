@@ -137,6 +137,68 @@ VOID VioInputCountersSnapshot(_In_ const VIOINPUT_COUNTERS* Counters, _Out_ PVIO
     RtlCopyMemory(Snapshot, Counters, sizeof(*Snapshot));
 }
 
+VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
+{
+    LONG readDepth;
+    LONG ringDepth;
+    LONG virtioDepth;
+
+    if (Counters == NULL) {
+        return;
+    }
+
+    /*
+     * Reset the monotonic counters, but preserve the "current depth" fields.
+     *
+     * ReadReportQueueDepth / ReportRingDepth / VirtioQueueDepth are intended to
+     * reflect instantaneous state. Zeroing them while there are pending IRPs or
+     * buffered reports can cause confusing negative values after subsequent
+     * decrements. Instead, keep the current depths and reset the corresponding
+     * maxima to the current value.
+     *
+     * This is a best-effort diagnostic reset; counters may change concurrently.
+     */
+    readDepth = Counters->ReadReportQueueDepth;
+    ringDepth = Counters->ReportRingDepth;
+    virtioDepth = Counters->VirtioQueueDepth;
+
+    InterlockedExchange(&Counters->IoctlTotal, 0);
+    InterlockedExchange(&Counters->IoctlUnknown, 0);
+
+    InterlockedExchange(&Counters->IoctlHidGetDeviceDescriptor, 0);
+    InterlockedExchange(&Counters->IoctlHidGetReportDescriptor, 0);
+    InterlockedExchange(&Counters->IoctlHidGetDeviceAttributes, 0);
+    InterlockedExchange(&Counters->IoctlHidGetCollectionInformation, 0);
+    InterlockedExchange(&Counters->IoctlHidGetCollectionDescriptor, 0);
+    InterlockedExchange(&Counters->IoctlHidFlushQueue, 0);
+    InterlockedExchange(&Counters->IoctlHidGetString, 0);
+    InterlockedExchange(&Counters->IoctlHidGetIndexedString, 0);
+    InterlockedExchange(&Counters->IoctlHidGetFeature, 0);
+    InterlockedExchange(&Counters->IoctlHidSetFeature, 0);
+    InterlockedExchange(&Counters->IoctlHidGetInputReport, 0);
+    InterlockedExchange(&Counters->IoctlHidSetOutputReport, 0);
+    InterlockedExchange(&Counters->IoctlHidReadReport, 0);
+    InterlockedExchange(&Counters->IoctlHidWriteReport, 0);
+
+    InterlockedExchange(&Counters->ReadReportPended, 0);
+    InterlockedExchange(&Counters->ReadReportCompleted, 0);
+    InterlockedExchange(&Counters->ReadReportCancelled, 0);
+
+    InterlockedExchange(&Counters->ReadReportQueueMaxDepth, readDepth);
+
+    InterlockedExchange(&Counters->ReportRingMaxDepth, ringDepth);
+    InterlockedExchange(&Counters->ReportRingDrops, 0);
+    InterlockedExchange(&Counters->ReportRingOverruns, 0);
+
+    InterlockedExchange(&Counters->VirtioInterrupts, 0);
+    InterlockedExchange(&Counters->VirtioDpcs, 0);
+    InterlockedExchange(&Counters->VirtioEvents, 0);
+    InterlockedExchange(&Counters->VirtioEventDrops, 0);
+    InterlockedExchange(&Counters->VirtioEventOverruns, 0);
+
+    InterlockedExchange(&Counters->VirtioQueueMaxDepth, virtioDepth);
+}
+
 PCSTR VioInputHidIoctlToString(_In_ ULONG IoControlCode)
 {
     switch (IoControlCode) {

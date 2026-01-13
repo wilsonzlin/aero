@@ -57,6 +57,9 @@
 #define IOCTL_VIOINPUT_QUERY_STATE \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
 
+#define IOCTL_VIOINPUT_RESET_COUNTERS \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 #define VIOINPUT_COUNTERS_VERSION 1
 #define VIOINPUT_STATE_VERSION 1
 
@@ -198,6 +201,7 @@ PCSTR VioInputHidIoctlToString(_In_ ULONG IoControlCode);
 
 VOID VioInputCountersInit(_Out_ PVIOINPUT_COUNTERS Counters);
 VOID VioInputCountersSnapshot(_In_ const VIOINPUT_COUNTERS* Counters, _Out_ PVIOINPUT_COUNTERS Snapshot);
+VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters);
 
 #if VIOINPUT_DIAGNOSTICS
 static __forceinline VOID VioInputCounterInc(_Inout_ volatile LONG* Counter)

@@ -77,6 +77,10 @@
 #define IOCTL_HID_WRITE_REPORT HID_CTL_CODE(3)
 #endif
 
+#ifndef IOCTL_HID_READ_REPORT
+#define IOCTL_HID_READ_REPORT HID_CTL_CODE(2)
+#endif
+
 #ifndef IOCTL_HID_SET_OUTPUT_REPORT
 // WDK `hidclass.h` defines IOCTL_HID_SET_OUTPUT_REPORT as a HID_CTL_CODE (function code 9).
 #define IOCTL_HID_SET_OUTPUT_REPORT HID_CTL_CODE(9)
@@ -132,6 +136,11 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
 #endif
 
+#ifndef IOCTL_VIOINPUT_RESET_COUNTERS
+#define IOCTL_VIOINPUT_RESET_COUNTERS \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#endif
+
 #define VIOINPUT_COUNTERS_VERSION 1
 #define VIOINPUT_STATE_VERSION 1
 
@@ -140,7 +149,7 @@ typedef struct VIOINPUT_COUNTERS_V1_MIN {
     ULONG Version;
 } VIOINPUT_COUNTERS_V1_MIN;
 
-typedef struct VIOINPUT_COUNTERS {
+typedef struct _VIOINPUT_COUNTERS {
     ULONG Size;
     ULONG Version;
 
@@ -223,6 +232,8 @@ typedef struct OPTIONS {
     int list_only;
     int selftest;
     int query_state;
+    int query_counters;
+    int reset_counters;
     int have_vid;
     int have_pid;
     int have_index;
@@ -234,6 +245,8 @@ typedef struct OPTIONS {
     int led_cycle;
     int ioctl_bad_xfer_packet;
     int ioctl_bad_write_report;
+    int ioctl_bad_read_xfer_packet;
+    int ioctl_bad_read_report;
     int ioctl_bad_set_output_xfer_packet;
     int ioctl_bad_set_output_report;
     int ioctl_bad_get_report_descriptor;
@@ -247,7 +260,6 @@ typedef struct OPTIONS {
     int hidd_bad_set_output_report;
     int dump_desc;
     int dump_collection_desc;
-    int query_counters;
     int query_counters_json;
     int quiet;
     int want_keyboard;
@@ -425,6 +437,26 @@ static void dump_hex(const BYTE *buf, DWORD len)
             wprintf(L" ");
         }
     }
+}
+
+static int reset_vioinput_counters(const SELECTED_DEVICE *dev)
+{
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return 1;
+    }
+
+    ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_RESET_COUNTERS, NULL, 0, NULL, 0, &bytes, NULL);
+    if (!ok) {
+        print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)");
+        return 1;
+    }
+
+    wprintf(L"\nvirtio-input counters reset.\n");
+    return 0;
 }
 
 static void dump_report_descriptor(HANDLE handle)
@@ -920,8 +952,10 @@ static void print_usage(void)
     wprintf(L"             [--state]\n");
     wprintf(L"             [--counters]\n");
     wprintf(L"             [--counters-json]\n");
+    wprintf(L"             [--reset-counters]\n");
     wprintf(L"             [--led-ioctl-set-output 0x07]\n");
-    wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report]\n");
+    wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report |\n");
+    wprintf(L"              --ioctl-bad-read-xfer-packet | --ioctl-bad-read-report]\n");
     wprintf(L"             [--ioctl-bad-set-output-xfer-packet | --ioctl-bad-set-output-report | --hidd-bad-set-output-report]\n");
     wprintf(L"             [--ioctl-bad-get-report-descriptor | --ioctl-bad-get-device-descriptor |\n");
     wprintf(L"              --ioctl-bad-get-string | --ioctl-bad-get-indexed-string |\n");
@@ -949,13 +983,21 @@ static void print_usage(void)
     wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");
     wprintf(L"  --dump-collection-desc\n");
     wprintf(L"                 Print the raw bytes returned by IOCTL_HID_GET_COLLECTION_DESCRIPTOR\n");
-    wprintf(L"  --counters      Query and print virtio-input driver diagnostic counters\n");
+    wprintf(L"  --counters      Query and print virtio-input driver diagnostic counters (IOCTL_VIOINPUT_QUERY_COUNTERS)\n");
     wprintf(L"  --counters-json Query and print virtio-input driver diagnostic counters as JSON\n");
+    wprintf(L"  --reset-counters\n");
+    wprintf(L"                 Reset virtio-input driver diagnostic counters (IOCTL_VIOINPUT_RESET_COUNTERS)\n");
     wprintf(L"  --ioctl-bad-xfer-packet\n");
     wprintf(L"                 Send IOCTL_HID_WRITE_REPORT with an invalid HID_XFER_PACKET pointer\n");
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
     wprintf(L"  --ioctl-bad-write-report\n");
     wprintf(L"                 Send IOCTL_HID_WRITE_REPORT with an invalid reportBuffer pointer\n");
+    wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
+    wprintf(L"  --ioctl-bad-read-xfer-packet\n");
+    wprintf(L"                 Send IOCTL_HID_READ_REPORT with an invalid HID_XFER_PACKET pointer\n");
+    wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
+    wprintf(L"  --ioctl-bad-read-report\n");
+    wprintf(L"                 Send IOCTL_HID_READ_REPORT with an invalid reportBuffer pointer\n");
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
     wprintf(L"  --ioctl-bad-set-output-xfer-packet\n");
     wprintf(L"                 Send IOCTL_HID_SET_OUTPUT_REPORT with an invalid HID_XFER_PACKET pointer\n");
@@ -2390,6 +2432,72 @@ static int ioctl_bad_xfer_packet(const SELECTED_DEVICE *dev)
     return 0;
 }
 
+static int ioctl_bad_read_xfer_packet(const SELECTED_DEVICE *dev)
+{
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return 1;
+    }
+
+    if ((dev->desired_access & GENERIC_READ) == 0) {
+        wprintf(L"Device was not opened with GENERIC_READ; cannot issue IOCTL_HID_READ_REPORT\n");
+        return 1;
+    }
+
+    wprintf(L"\nIssuing IOCTL_HID_READ_REPORT with invalid HID_XFER_PACKET pointer...\n");
+    ok = DeviceIoControl(dev->handle, IOCTL_HID_READ_REPORT, (PVOID)(ULONG_PTR)0x1, 64, NULL, 0, &bytes, NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return 1;
+    }
+
+    print_last_error_w(L"DeviceIoControl(IOCTL_HID_READ_REPORT bad HID_XFER_PACKET)");
+    return 0;
+}
+
+static int ioctl_bad_read_report(const SELECTED_DEVICE *dev)
+{
+    typedef struct HID_XFER_PACKET_MIN {
+        PUCHAR reportBuffer;
+        ULONG reportBufferLen;
+        UCHAR reportId;
+    } HID_XFER_PACKET_MIN;
+
+    BYTE inbuf[64];
+    HID_XFER_PACKET_MIN *pkt;
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return 1;
+    }
+
+    if ((dev->desired_access & GENERIC_READ) == 0) {
+        wprintf(L"Device was not opened with GENERIC_READ; cannot issue IOCTL_HID_READ_REPORT\n");
+        return 1;
+    }
+
+    ZeroMemory(inbuf, sizeof(inbuf));
+    pkt = (HID_XFER_PACKET_MIN *)inbuf;
+    pkt->reportId = 1; // keyboard
+    pkt->reportBufferLen = 64;
+    pkt->reportBuffer = (PUCHAR)(ULONG_PTR)0x1; // invalid user pointer
+
+    wprintf(L"\nIssuing IOCTL_HID_READ_REPORT with invalid reportBuffer=%p...\n", pkt->reportBuffer);
+    ok = DeviceIoControl(dev->handle, IOCTL_HID_READ_REPORT, inbuf, (DWORD)sizeof(inbuf), NULL, 0, &bytes, NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return 1;
+    }
+
+    print_last_error_w(L"DeviceIoControl(IOCTL_HID_READ_REPORT bad reportBuffer)");
+    return 0;
+}
+
 static int ioctl_bad_set_output_xfer_packet(const SELECTED_DEVICE *dev)
 {
     DWORD bytes = 0;
@@ -2689,6 +2797,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--reset-counters") == 0) {
+            opt.reset_counters = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--ioctl-bad-xfer-packet") == 0) {
             opt.ioctl_bad_xfer_packet = 1;
             continue;
@@ -2696,6 +2809,16 @@ int wmain(int argc, wchar_t **argv)
 
         if (wcscmp(argv[i], L"--ioctl-bad-write-report") == 0) {
             opt.ioctl_bad_write_report = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--ioctl-bad-read-xfer-packet") == 0) {
+            opt.ioctl_bad_read_xfer_packet = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--ioctl-bad-read-report") == 0) {
+            opt.ioctl_bad_read_report = 1;
             continue;
         }
 
@@ -2869,20 +2992,30 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"--keyboard and --mouse are mutually exclusive.\n");
         return 2;
     }
+    if (opt.query_counters && opt.reset_counters) {
+        wprintf(L"--counters and --reset-counters are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.list_only && (opt.query_counters || opt.reset_counters)) {
+        wprintf(L"--list is mutually exclusive with --counters/--reset-counters.\n");
+        return 2;
+    }
     if (opt.selftest &&
         (opt.query_state || opt.list_only || opt.dump_desc || opt.dump_collection_desc || opt.have_vid || opt.have_pid ||
          opt.have_index || opt.have_led_mask || opt.led_cycle || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
-         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
-         opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
-         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.ioctl_query_counters_short ||
-         opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output || opt.query_counters)) {
+         opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report || opt.ioctl_bad_set_output_xfer_packet ||
+         opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor ||
+         opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
+         opt.ioctl_bad_get_indexed_string_out || opt.ioctl_query_counters_short || opt.hidd_bad_set_output_report ||
+         opt.have_led_ioctl_set_output || opt.query_counters || opt.query_counters_json || opt.reset_counters)) {
         wprintf(
-            L"--selftest cannot be combined with --state, --list, --dump-desc, --dump-collection-desc, --vid/--pid/--index, --counters, LED, or negative-test options.\n");
+            L"--selftest cannot be combined with --state, --list, descriptor dump options, --vid/--pid/--index, counters, LED, or negative-test options.\n");
         return 2;
     }
     if (opt.query_state &&
-        (opt.selftest || opt.query_counters || opt.ioctl_query_counters_short || opt.have_led_mask || opt.led_cycle ||
-         opt.dump_desc || opt.dump_collection_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
+        (opt.selftest || opt.query_counters || opt.query_counters_json || opt.reset_counters || opt.ioctl_query_counters_short ||
+         opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.dump_collection_desc || opt.ioctl_bad_xfer_packet ||
+         opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
          opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
          opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
          opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report ||
@@ -2896,6 +3029,14 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.have_led_mask && opt.ioctl_bad_write_report) {
         wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-write-report are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.have_led_mask && opt.ioctl_bad_read_xfer_packet) {
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-read-xfer-packet are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.have_led_mask && opt.ioctl_bad_read_report) {
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-read-report are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_get_report_descriptor) {
@@ -2932,6 +3073,18 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.ioctl_bad_xfer_packet && opt.ioctl_bad_write_report) {
         wprintf(L"--ioctl-bad-xfer-packet and --ioctl-bad-write-report are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.ioctl_bad_read_xfer_packet && opt.ioctl_bad_read_report) {
+        wprintf(L"--ioctl-bad-read-xfer-packet and --ioctl-bad-read-report are mutually exclusive.\n");
+        return 2;
+    }
+    if ((opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report) &&
+        (opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
+         opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor ||
+         opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
+         opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report)) {
+        wprintf(L"IOCTL_HID_READ_REPORT negative tests are mutually exclusive with other negative tests.\n");
         return 2;
     }
     if (opt.ioctl_bad_xfer_packet && opt.hidd_bad_set_output_report) {
@@ -2972,9 +3125,9 @@ int wmain(int argc, wchar_t **argv)
     }
     if ((opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
          opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out) &&
-        (opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report ||
-         opt.hidd_bad_set_output_report)) {
-        wprintf(L"Descriptor/string negative tests are mutually exclusive with output-report negative tests.\n");
+        (opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
+         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.hidd_bad_set_output_report)) {
+        wprintf(L"Descriptor/string negative tests are mutually exclusive with IOCTL read/write negative tests.\n");
         return 2;
     }
     if (opt.ioctl_bad_get_report_descriptor &&
@@ -3014,14 +3167,14 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
 
-    if (opt.query_counters &&
-        (opt.query_state || opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.dump_collection_desc ||
-         opt.ioctl_get_input_report ||
-         opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
+    if ((opt.query_counters || opt.reset_counters) &&
+        (opt.query_state || opt.ioctl_get_input_report || opt.ioctl_query_counters_short || opt.have_led_mask || opt.led_cycle ||
+         opt.dump_desc || opt.dump_collection_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
+         opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report || opt.ioctl_bad_set_output_xfer_packet ||
          opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor ||
          opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
-         opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report)) {
-        wprintf(L"--counters is mutually exclusive with --state, --ioctl-get-input-report, LED actions, descriptor dumps, and negative tests.\n");
+         opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output)) {
+        wprintf(L"--counters/--reset-counters are mutually exclusive with --state, --ioctl-get-input-report, IOCTL counters selftests, LED actions, descriptor dumps, and negative tests.\n");
         return 2;
     }
 
@@ -3112,6 +3265,11 @@ int wmain(int argc, wchar_t **argv)
         dump_collection_descriptor(dev.handle);
     }
 
+    if (opt.reset_counters) {
+        int rc = reset_vioinput_counters(&dev);
+        free_selected_device(&dev);
+        return rc;
+    }
     if (opt.query_counters) {
         int rc = opt.query_counters_json ? dump_vioinput_counters_json(&dev) : dump_vioinput_counters(&dev);
         free_selected_device(&dev);
@@ -3126,6 +3284,18 @@ int wmain(int argc, wchar_t **argv)
 
     if (opt.ioctl_bad_write_report) {
         int rc = ioctl_bad_write_report(&dev);
+        free_selected_device(&dev);
+        return rc;
+    }
+
+    if (opt.ioctl_bad_read_xfer_packet) {
+        int rc = ioctl_bad_read_xfer_packet(&dev);
+        free_selected_device(&dev);
+        return rc;
+    }
+
+    if (opt.ioctl_bad_read_report) {
+        int rc = ioctl_bad_read_report(&dev);
         free_selected_device(&dev);
         return rc;
     }

@@ -282,6 +282,12 @@ VOID VirtioInputEvtIoDeviceControl(
         info = sizeof(snapshot);
         break;
     }
+    case IOCTL_VIOINPUT_RESET_COUNTERS: {
+        VioInputCountersReset(&devCtx->Counters);
+        status = STATUS_SUCCESS;
+        info = 0;
+        break;
+    }
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
         info = 0;

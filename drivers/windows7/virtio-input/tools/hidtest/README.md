@@ -26,6 +26,9 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   - `WriteFile` (exercises `IOCTL_HID_WRITE_REPORT`)
   - `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`)
   - `DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)` (explicit IOCTL test path)
+- Optionally queries/resets virtio-input driver diagnostics counters via:
+  - `DeviceIoControl(IOCTL_VIOINPUT_QUERY_COUNTERS)`
+  - `DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)`
 - Includes optional negative tests that pass invalid METHOD_NEITHER pointers (should fail cleanly without crashing the guest).
 
 ## Aero virtio-input IDs / expectations
@@ -134,6 +137,39 @@ hidtest.exe --mouse
 
 If multiple mice are present, `--mouse` prefers a virtio-input interface (VID `0x1AF4`, PID `0x0002`) when available.
 
+Query virtio-input driver diagnostic counters (custom IOCTLs exposed by the in-tree virtio-input minidriver):
+
+```bat
+hidtest.exe --counters
+```
+
+Reset virtio-input driver diagnostic counters:
+
+```bat
+hidtest.exe --reset-counters
+```
+
+### Counters interpretation
+
+The virtio-input Win7 minidriver maintains a set of best-effort counters that track:
+
+- **HIDCLASS IOCTL traffic** (what Windows is asking the driver to do)
+- **READ_REPORT lifecycle** (pended/completed/cancelled)
+- **Report ring buffering** (translated HID reports queued when there are no pending reads)
+- **Virtio event flow** (events arriving from the device model / virtqueue)
+
+During normal use (typing/mouse movement), you should typically see:
+
+- `VirtioEvents` increase as input events arrive from the virtio eventq.
+- `IoctlHidReadReport` increase as HIDCLASS issues read requests (driven by Windows input stacks).
+- `ReadReportPended` and `ReadReportCompleted` increase and remain close in value.
+- `ReadReportQueueDepth` and `ReportRingDepth` stay low (often 0–1), indicating the consumer is keeping up.
+
+Indicators of drops/overruns:
+
+- `ReportRingDrops` or `VirtioEventDrops` increasing indicates the driver had to drop input because its report ring was full (consumer not keeping up).
+- `ReportRingOverruns` or `VirtioEventOverruns` should remain **0**; any non-zero value indicates reports/events exceeded the expected maximum size.
+
 Write keyboard LEDs (NumLock|CapsLock|ScrollLock):
 
 ```bat
@@ -157,6 +193,8 @@ Negative test (invalid METHOD_NEITHER pointer; should fail cleanly without crash
 ```bat
 hidtest.exe --keyboard --ioctl-bad-xfer-packet
 hidtest.exe --keyboard --ioctl-bad-write-report
+hidtest.exe --keyboard --ioctl-bad-read-xfer-packet
+hidtest.exe --keyboard --ioctl-bad-read-report
 hidtest.exe --keyboard --ioctl-bad-set-output-xfer-packet
 hidtest.exe --keyboard --ioctl-bad-set-output-report
 hidtest.exe --keyboard --ioctl-bad-get-report-descriptor
