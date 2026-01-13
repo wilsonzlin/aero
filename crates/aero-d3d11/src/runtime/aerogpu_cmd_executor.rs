@@ -143,6 +143,7 @@ const GEOMETRY_PREPASS_INDEX_COUNT: u64 = 3;
 // Use the indexed-indirect layout size since it is a strict superset of `DrawIndirectArgs`.
 const GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES: u64 =
     core::mem::size_of::<DrawIndexedIndirectArgs>() as u64;
+const GEOMETRY_PREPASS_COUNTER_SIZE_BYTES: u64 = 4; // 1x u32
 const GEOMETRY_PREPASS_PARAMS_SIZE_BYTES: u64 = 16; // vec4<f32>
 
 const GEOMETRY_PREPASS_CS_WGSL: &str = r#"
@@ -158,7 +159,8 @@ struct Params {
 @group(0) @binding(0) var<storage, read_write> out_vertices: array<ExpandedVertex>;
 @group(0) @binding(1) var<storage, read_write> out_indices: array<u32>;
 @group(0) @binding(2) var<storage, read_write> out_indirect: array<u32>;
-@group(0) @binding(3) var<uniform> params: Params;
+@group(0) @binding(3) var<storage, read_write> out_counter: array<u32>;
+@group(0) @binding(4) var<uniform> params: Params;
 
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -181,6 +183,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     out_indices[0] = 0u;
     out_indices[1] = 1u;
     out_indices[2] = 2u;
+
+    // Placeholder counter (for eventual GS-style append/emit emulation).
+    out_counter[0] = 3u;
 
     // Write 5 u32s so the same buffer works for both:
     // - draw_indirect:           vertex_count, instance_count, first_vertex, first_instance
@@ -683,7 +688,7 @@ struct ConstantBufferScratch {
 #[allow(dead_code)]
 struct GsScratchBuffer {
     id: BufferId,
-    buffer: wgpu::Buffer,
+    buffer: Arc<wgpu::Buffer>,
     size: u64,
 }
 
@@ -691,9 +696,11 @@ struct GsScratchBuffer {
 #[allow(dead_code)]
 struct GsScratchPool {
     output: Option<GsScratchBuffer>,
+    index: Option<GsScratchBuffer>,
     counter: Option<GsScratchBuffer>,
     indirect_args: Option<GsScratchBuffer>,
     output_allocations: u32,
+    index_allocations: u32,
     counter_allocations: u32,
     indirect_allocations: u32,
 }
@@ -735,6 +742,23 @@ impl GsScratchPool {
             required_size,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             "aerogpu_cmd gs scratch counter buffer",
+        )
+    }
+
+    fn ensure_index(
+        &mut self,
+        device: &wgpu::Device,
+        next_id: &mut u64,
+        required_size: u64,
+    ) -> &GsScratchBuffer {
+        Self::ensure_buffer(
+            device,
+            next_id,
+            &mut self.index,
+            &mut self.index_allocations,
+            required_size,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDEX,
+            "aerogpu_cmd gs scratch index buffer",
         )
     }
 
@@ -781,12 +805,12 @@ impl GsScratchPool {
                 .unwrap_or(required_size);
             let id = BufferId(*next_id);
             *next_id = next_id.wrapping_add(1);
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            let buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
                 size,
                 usage,
                 mapped_at_creation: false,
-            });
+            }));
             *allocation_counter = allocation_counter.saturating_add(1);
             *slot = Some(GsScratchBuffer { id, buffer, size });
         }
@@ -2611,6 +2635,10 @@ impl AerogpuD3d11Executor {
             .expansion_scratch
             .alloc_indirect_draw_indexed(&self.device)
             .map_err(|e| anyhow!("geometry prepass: alloc indirect args buffer: {e}"))?;
+        let counter_alloc = self
+            .expansion_scratch
+            .alloc_counter_u32(&self.device)
+            .map_err(|e| anyhow!("geometry prepass: alloc counter buffer: {e}"))?;
 
         let params_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu_cmd geometry prepass params"),
@@ -2775,6 +2803,16 @@ impl AerogpuD3d11Executor {
                 binding: 3,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_COUNTER_SIZE_BYTES),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_PARAMS_SIZE_BYTES),
@@ -2851,6 +2889,14 @@ impl AerogpuD3d11Executor {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: counter_alloc.buffer.as_ref(),
+                        offset: counter_alloc.offset,
+                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_COUNTER_SIZE_BYTES),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &params_buffer,
                         offset: 0,
@@ -5432,9 +5478,9 @@ impl AerogpuD3d11Executor {
                                     ShaderStage::Vertex => &used_cb_vs,
                                     ShaderStage::Pixel => &used_cb_ps,
                                     ShaderStage::Compute => &used_cb_cs,
-                                    ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
-                                        &used_cb_cs
-                                    }
+                                    ShaderStage::Geometry
+                                    | ShaderStage::Hull
+                                    | ShaderStage::Domain => &used_cb_cs,
                                 };
                                 for i in 0..buffer_count {
                                     let slot =
@@ -7723,9 +7769,10 @@ impl AerogpuD3d11Executor {
             );
         }
 
-        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
-            || anyhow!("SET_TEXTURE: unknown shader stage {stage_raw} (stage_ex={stage_ex})"),
-        )?;
+        let stage =
+            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
+                anyhow!("SET_TEXTURE: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
+            })?;
         let texture = if texture == 0 {
             None
         } else {
@@ -7860,9 +7907,10 @@ impl AerogpuD3d11Executor {
         let sampler_count_u32 = read_u32_le(cmd_bytes, 16)?;
         let stage_ex = read_u32_le(cmd_bytes, 20)?;
 
-        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
-            || anyhow!("SET_SAMPLERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"),
-        )?;
+        let stage =
+            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
+                anyhow!("SET_SAMPLERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
+            })?;
         let start_slot: u32 = start_slot_u32;
         let sampler_count: usize = sampler_count_u32
             .try_into()
@@ -7916,13 +7964,12 @@ impl AerogpuD3d11Executor {
         let buffer_count_u32 = read_u32_le(cmd_bytes, 16)?;
         let stage_ex = read_u32_le(cmd_bytes, 20)?;
 
-        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
-            || {
+        let stage =
+            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
                 anyhow!(
                     "SET_CONSTANT_BUFFERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
                 )
-            },
-        )?;
+            })?;
         let start_slot: u32 = start_slot_u32;
         let buffer_count: usize = buffer_count_u32
             .try_into()
@@ -10333,10 +10380,11 @@ fn get_or_create_render_pipeline_for_state<'a>(
 
         let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl_source.as_str());
         if ps_link_locations != ps_declared_inputs {
-            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
-                linked_ps_wgsl.as_ref(),
-                &ps_link_locations,
-            ));
+            linked_ps_wgsl =
+                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+                    linked_ps_wgsl.as_ref(),
+                    &ps_link_locations,
+                ));
         }
 
         // Trim fragment shader outputs to the currently-bound render target slots.
@@ -10348,10 +10396,11 @@ fn get_or_create_render_pipeline_for_state<'a>(
             .copied()
             .collect();
         if !missing_outputs.is_empty() {
-            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
-                linked_ps_wgsl.as_ref(),
-                &keep_output_locations,
-            ));
+            linked_ps_wgsl =
+                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
+                    linked_ps_wgsl.as_ref(),
+                    &keep_output_locations,
+                ));
         }
 
         let fragment_shader = if linked_ps_wgsl.as_ref() == ps.wgsl_source.as_str() {
@@ -12112,7 +12161,9 @@ mod tests {
     use aero_gpu::pipeline_key::{ComputePipelineKey, PipelineLayoutKey};
     use aero_gpu::GpuError;
     use aero_gpu::guest_memory::VecGuestMemory;
-    use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdOpcode, AerogpuPrimitiveTopology};
+    use aero_protocol::aerogpu::aerogpu_cmd::{
+        AerogpuCmdOpcode, AerogpuPrimitiveTopology, AerogpuShaderStage,
+    };
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
     use std::sync::Arc;
 
@@ -12611,10 +12662,12 @@ fn main() {
 }
 "#;
 
-            let shader = exec.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("aerogpu_cmd ia buffer storage bind test shader"),
-                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(wgsl)),
-            });
+            let shader = exec
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("aerogpu_cmd ia buffer storage bind test shader"),
+                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(wgsl)),
+                });
 
             let bgl = exec
                 .device
@@ -12632,13 +12685,13 @@ fn main() {
                     }],
                 });
 
-            let pipeline_layout = exec
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("aerogpu_cmd ia buffer storage bind test pipeline layout"),
-                    bind_group_layouts: &[&bgl],
-                    push_constant_ranges: &[],
-                });
+            let pipeline_layout =
+                exec.device
+                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aerogpu_cmd ia buffer storage bind test pipeline layout"),
+                        bind_group_layouts: &[&bgl],
+                        push_constant_ranges: &[],
+                    });
 
             exec.device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -13019,7 +13072,7 @@ fn cs_main() {
     }
 
     #[test]
-    fn gs_scratch_pool_reuses_buffers_and_grows() {
+    fn gs_expansion_scratch_reuses_backing_buffer_and_grows() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
                 Ok(exec) => exec,
@@ -13029,66 +13082,144 @@ fn cs_main() {
                 }
             };
 
-            assert_eq!(exec.gs_scratch.output_allocations, 0);
-            assert_eq!(exec.gs_scratch.counter_allocations, 0);
-            assert_eq!(exec.gs_scratch.indirect_allocations, 0);
+            // Keep the scratch buffer small so the test is fast and can force growth without
+            // allocating a multi-megabyte backing buffer.
+            let mut desc = ExpansionScratchDescriptor::default();
+            desc.frames_in_flight = 1;
+            desc.per_frame_size = 256;
+            exec.expansion_scratch = ExpansionScratchAllocator::new(desc);
 
-            // First request should allocate all three buffers.
-            let out_id_1 = exec
-                .gs_scratch
-                .ensure_output(&exec.device, &mut exec.next_scratch_buffer_id, 128)
-                .id;
-            let counter_id_1 = exec
-                .gs_scratch
-                .ensure_counter(&exec.device, &mut exec.next_scratch_buffer_id, 4)
-                .id;
-            let indirect_id_1 = exec
-                .gs_scratch
-                .ensure_indirect_args(&exec.device, &mut exec.next_scratch_buffer_id, 16)
-                .id;
-            assert_eq!(exec.gs_scratch.output_allocations, 1);
-            assert_eq!(exec.gs_scratch.counter_allocations, 1);
-            assert_eq!(exec.gs_scratch.indirect_allocations, 1);
+            let a = exec
+                .expansion_scratch
+                .alloc_vertex_output(&exec.device, 16)
+                .expect("alloc_vertex_output");
+            let ptr_a = Arc::as_ptr(&a.buffer) as usize;
+            let cap_a = exec
+                .expansion_scratch
+                .per_frame_capacity()
+                .expect("scratch init");
 
-            // Smaller requests must reuse the same allocations.
-            let out_id_2 = exec
-                .gs_scratch
-                .ensure_output(&exec.device, &mut exec.next_scratch_buffer_id, 64)
-                .id;
-            let counter_id_2 = exec
-                .gs_scratch
-                .ensure_counter(&exec.device, &mut exec.next_scratch_buffer_id, 4)
-                .id;
-            let indirect_id_2 = exec
-                .gs_scratch
-                .ensure_indirect_args(&exec.device, &mut exec.next_scratch_buffer_id, 16)
-                .id;
-            assert_eq!(out_id_1, out_id_2);
-            assert_eq!(counter_id_1, counter_id_2);
-            assert_eq!(indirect_id_1, indirect_id_2);
-            assert_eq!(exec.gs_scratch.output_allocations, 1);
-            assert_eq!(exec.gs_scratch.counter_allocations, 1);
-            assert_eq!(exec.gs_scratch.indirect_allocations, 1);
+            // Subsequent allocations should reuse the same backing buffer.
+            let b = exec
+                .expansion_scratch
+                .alloc_index_output(&exec.device, 4)
+                .expect("alloc_index_output");
+            let ptr_b = Arc::as_ptr(&b.buffer) as usize;
+            assert_eq!(
+                ptr_a, ptr_b,
+                "expansion scratch allocations should share a backing buffer"
+            );
 
-            // Request a larger output buffer; only the output allocation should be replaced.
-            let out_id_3 = exec
-                .gs_scratch
-                .ensure_output(&exec.device, &mut exec.next_scratch_buffer_id, 1024)
-                .id;
-            assert_ne!(out_id_1, out_id_3);
-            assert_eq!(exec.gs_scratch.output_allocations, 2);
-            assert_eq!(exec.gs_scratch.counter_allocations, 1);
-            assert_eq!(exec.gs_scratch.indirect_allocations, 1);
-
-            let out_size = exec
-                .gs_scratch
-                .output
-                .as_ref()
-                .expect("output buffer exists")
-                .size;
+            // Force growth by requesting more than the current per-frame capacity.
+            let c = exec
+                .expansion_scratch
+                .alloc_metadata(&exec.device, cap_a.saturating_add(1), 16)
+                .expect("alloc_metadata grow");
+            let ptr_c = Arc::as_ptr(&c.buffer) as usize;
+            let cap_c = exec
+                .expansion_scratch
+                .per_frame_capacity()
+                .expect("scratch init");
             assert!(
-                out_size >= 1024,
-                "output buffer capacity must grow to satisfy request"
+                cap_c > cap_a,
+                "scratch capacity must grow to satisfy large request (cap_a={cap_a} cap_c={cap_c})"
+            );
+            assert_ne!(
+                ptr_a, ptr_c,
+                "growth should reallocate the backing buffer"
+            );
+        });
+    }
+
+    #[test]
+    fn gs_prepass_reuses_scratch_buffers_across_draws() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // Keep the per-frame scratch capacity small (but deterministic) so that the test can
+            // assert that repeated GS prepass draws do not force the allocator to grow/reallocate.
+            let mut desc = ExpansionScratchDescriptor::default();
+            desc.frames_in_flight = 1;
+            let storage_alignment =
+                (exec.device.limits().min_storage_buffer_offset_alignment as u64).max(1);
+            desc.per_frame_size = storage_alignment.saturating_mul(32).max(64 * 1024);
+            exec.expansion_scratch = ExpansionScratchAllocator::new(desc);
+            let _ = exec
+                .expansion_scratch
+                .alloc_metadata(&exec.device, 4, 4)
+                .expect("scratch init");
+            let cap_before = exec
+                .expansion_scratch
+                .per_frame_capacity()
+                .expect("scratch init");
+            exec.expansion_scratch.begin_frame();
+
+            // Minimal stream that triggers `exec_draw_with_compute_prepass` by binding a non-zero
+            // geometry shader handle. The executor only needs VS/PS to exist; GS is currently just
+            // the prepass trigger.
+            const RT: u32 = 1;
+            const VS: u32 = 2;
+            const PS: u32 = 3;
+            const GS: u32 = 4;
+
+            const DXBC_VS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
+            const DXBC_PS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
+
+            let mut writer = AerogpuCmdWriter::new();
+            writer.create_texture2d(
+                RT,
+                AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                AEROGPU_FORMAT_R8G8B8A8_UNORM,
+                4,
+                4,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
+            writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
+            writer.bind_shaders_with_gs(VS, GS, PS, 0);
+
+            // Two draws in the same command stream: scratch buffers should be allocated once and
+            // then reused.
+            writer.draw(3, 1, 0, 0);
+            writer.draw(3, 1, 0, 0);
+
+            let stream = writer.finish();
+            let mut guest_mem = VecGuestMemory::new(0);
+            match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    // Some wgpu backends (notably GL/WebGL2) do not support compute pipelines. GS
+                    // emulation is compute-based, so skip rather than failing the whole suite.
+                    if msg.contains("Unsupported") && msg.contains("compute") {
+                        skip_or_panic(module_path!(), &format!("compute unsupported ({msg})"));
+                        return;
+                    }
+                    panic!("unexpected execute_cmd_stream error: {e:#}");
+                }
+            }
+
+            let cap_after = exec
+                .expansion_scratch
+                .per_frame_capacity()
+                .expect("scratch init");
+            assert_eq!(
+                cap_after, cap_before,
+                "expansion scratch backing buffer should be reused across GS prepass draws"
             );
         });
     }
