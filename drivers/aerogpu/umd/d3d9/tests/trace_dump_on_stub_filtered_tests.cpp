@@ -21,7 +21,7 @@ int main() {
   set_env("AEROGPU_D3D9_TRACE_DUMP_PRESENT", "0");
  
   aerogpu::d3d9_trace_init_from_env();
-  
+ 
   // The test stub entrypoint is "(stub)"-tagged, but it should be filtered out
   // here (no dump).
   {

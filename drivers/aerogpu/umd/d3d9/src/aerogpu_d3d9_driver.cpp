@@ -1211,8 +1211,6 @@ AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorPosition, D3d9TraceFunc::DeviceSetCurso
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnShowCursor, D3d9TraceFunc::DeviceShowCursor, S_OK);
 
 // Patch rendering is implemented (DrawRectPatch/DrawTriPatch/DeletePatch).
-// ProcessVertices is still not supported yet.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnProcessVertices, D3d9TraceFunc::DeviceProcessVertices, D3DERR_NOTAVAILABLE);
 
 // Dialog-box mode impacts present/occlusion semantics; treat as a no-op for bring-up.
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialogBoxMode, S_OK);
@@ -1458,6 +1456,9 @@ AEROGPU_D3D9_DEFINE_HAS_MEMBER(OffsetToUnlock);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(SizeToUnlock);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(offset_bytes);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(size_bytes);
+
+// ProcessVertices arg fields (not present in all header vintages).
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(DestStride);
 
 // Present arg fields (member names vary between `hWnd` and `hWindow`, `hSrc` and
 // `hSrcResource`, etc).
@@ -9165,6 +9166,307 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
       remaining -= static_cast<uint32_t>(chunk);
     }
   }
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_process_vertices(
+    D3DDDI_HDEVICE hDevice,
+    const D3DDDIARG_PROCESSVERTICES* pProcessVertices) {
+  uint64_t arg0 = d3d9_trace_arg_ptr(hDevice.pDrvPrivate);
+  uint64_t arg1 = pProcessVertices ? d3d9_trace_arg_ptr(pProcessVertices->hDestBuffer.pDrvPrivate) : 0;
+  uint64_t arg2 = 0;
+  uint64_t arg3 = 0;
+  if (pProcessVertices) {
+    arg2 = d3d9_trace_pack_u32_u32(pProcessVertices->SrcStartIndex, pProcessVertices->DestIndex);
+    uint32_t dest_stride = 0;
+    if constexpr (aerogpu_d3d9_has_member_DestStride<D3DDDIARG_PROCESSVERTICES>::value) {
+      dest_stride = pProcessVertices->DestStride;
+    }
+    arg3 = d3d9_trace_pack_u32_u32(pProcessVertices->VertexCount, dest_stride);
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceProcessVertices, arg0, arg1, arg2, arg3);
+  if (!hDevice.pDrvPrivate || !pProcessVertices) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  auto* dev = as_device(hDevice);
+  auto* dst_res = as_resource(pProcessVertices->hDestBuffer);
+  if (!dev || !dst_res) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  const uint32_t vertex_count = pProcessVertices->VertexCount;
+  if (vertex_count == 0) {
+    return trace.ret(S_OK);
+  }
+
+  const DeviceStateStream& stream0 = dev->streams[0];
+  Resource* src_res = stream0.vb;
+  if (!src_res) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (src_res->kind != ResourceKind::Buffer || dst_res->kind != ResourceKind::Buffer) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  const uint32_t src_stride = stream0.stride_bytes;
+  if (src_stride == 0) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  uint32_t dst_stride = 0;
+  if constexpr (aerogpu_d3d9_has_member_DestStride<D3DDDIARG_PROCESSVERTICES>::value) {
+    dst_stride = pProcessVertices->DestStride;
+  }
+  if (dst_stride == 0) {
+    dst_stride = src_stride;
+  }
+  if (dst_stride == 0) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  const uint32_t copy_stride = std::min(src_stride, dst_stride);
+  if (copy_stride == 0) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  const uint64_t src_start_offset = static_cast<uint64_t>(stream0.offset_bytes) +
+                                    static_cast<uint64_t>(pProcessVertices->SrcStartIndex) * static_cast<uint64_t>(src_stride);
+  const uint64_t dst_start_offset =
+      static_cast<uint64_t>(pProcessVertices->DestIndex) * static_cast<uint64_t>(dst_stride);
+
+  // Total touched ranges are strided, but use the bounding range for validation
+  // and for DIRTY_RANGE/UPLOAD notifications.
+  const uint64_t src_end_offset = src_start_offset +
+                                  static_cast<uint64_t>(vertex_count - 1) * static_cast<uint64_t>(src_stride) +
+                                  static_cast<uint64_t>(copy_stride);
+  const uint64_t dst_end_offset = dst_start_offset +
+                                  static_cast<uint64_t>(vertex_count - 1) * static_cast<uint64_t>(dst_stride) +
+                                  static_cast<uint64_t>(copy_stride);
+  if (src_end_offset < src_start_offset || dst_end_offset < dst_start_offset) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (src_end_offset > static_cast<uint64_t>(src_res->size_bytes) ||
+      dst_end_offset > static_cast<uint64_t>(dst_res->size_bytes)) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  const uint8_t* src_base = nullptr;
+  uint8_t* dst_base = nullptr;
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  struct WddmScopedLock {
+    Device* dev = nullptr;
+    Resource* res = nullptr;
+    void* ptr = nullptr;
+    bool locked = false;
+
+    HRESULT lock_allocation(Device* d, Resource* r, uint64_t offset_bytes, uint64_t size_bytes, uint32_t lock_flags) {
+      if (!d || !r || size_bytes == 0) {
+        return E_INVALIDARG;
+      }
+      if (r->wddm_hAllocation == 0 || d->wddm_device == 0) {
+        return E_FAIL;
+      }
+      void* out = nullptr;
+      const HRESULT hr = wddm_lock_allocation(d->wddm_callbacks,
+                                             d->wddm_device,
+                                             r->wddm_hAllocation,
+                                             offset_bytes,
+                                             size_bytes,
+                                             lock_flags,
+                                             &out,
+                                             d->wddm_context.hContext);
+      if (FAILED(hr) || !out) {
+        return FAILED(hr) ? hr : E_FAIL;
+      }
+      dev = d;
+      res = r;
+      ptr = out;
+      locked = true;
+      return S_OK;
+    }
+
+    HRESULT unlock_allocation() {
+      if (!locked) {
+        return S_OK;
+      }
+      locked = false;
+      return wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, res->wddm_hAllocation, dev->wddm_context.hContext);
+    }
+
+    ~WddmScopedLock() {
+      if (locked && dev && res) {
+        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, res->wddm_hAllocation, dev->wddm_context.hContext);
+      }
+    }
+  };
+
+  WddmScopedLock src_lock{};
+  WddmScopedLock dst_lock{};
+#endif
+
+  if (src_res->storage.size() >= src_res->size_bytes) {
+    src_base = src_res->storage.data() + static_cast<size_t>(src_start_offset);
+  }
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  else if (src_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+    const uint64_t lock_size = src_end_offset - src_start_offset;
+    const HRESULT hr = src_lock.lock_allocation(dev, src_res, src_start_offset, lock_size, kD3DLOCK_READONLY);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
+    }
+    src_base = reinterpret_cast<const uint8_t*>(src_lock.ptr);
+  }
+#endif
+  else {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  if (dst_res->storage.size() >= dst_res->size_bytes) {
+    dst_base = dst_res->storage.data() + static_cast<size_t>(dst_start_offset);
+  }
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  else if (dst_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+    const uint64_t lock_size = dst_end_offset - dst_start_offset;
+    const HRESULT hr = dst_lock.lock_allocation(dev, dst_res, dst_start_offset, lock_size, /*lock_flags=*/0);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
+    }
+    dst_base = reinterpret_cast<uint8_t*>(dst_lock.ptr);
+  }
+#endif
+  else {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  const auto copy_vertex = [&](uint32_t i) {
+    const uint8_t* src = src_base + static_cast<size_t>(i) * src_stride;
+    uint8_t* dst = dst_base + static_cast<size_t>(i) * dst_stride;
+    std::memmove(dst, src, copy_stride);
+  };
+
+  // If source and destination alias the same buffer, copy in a direction that
+  // matches `memmove`-style semantics for overlapping ranges.
+  if (src_res == dst_res && dst_start_offset > src_start_offset) {
+    for (uint32_t i = vertex_count; i-- > 0;) {
+      copy_vertex(i);
+    }
+  } else {
+    for (uint32_t i = 0; i < vertex_count; ++i) {
+      copy_vertex(i);
+    }
+  }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  const HRESULT unlock_dst_hr = dst_lock.unlock_allocation();
+  const HRESULT unlock_src_hr = src_lock.unlock_allocation();
+  if (FAILED(unlock_dst_hr)) {
+    return trace.ret(unlock_dst_hr);
+  }
+  if (FAILED(unlock_src_hr)) {
+    return trace.ret(unlock_src_hr);
+  }
+#endif
+
+  const uint32_t write_offset = static_cast<uint32_t>(dst_start_offset);
+  const uint32_t write_size = static_cast<uint32_t>(dst_end_offset - dst_start_offset);
+
+  // If the destination is host-visible (systemmem / CPU-only), there is no host
+  // resource to update.
+  if (dst_res->handle == 0 || write_size == 0) {
+    return trace.ret(S_OK);
+  }
+
+  if (dst_res->backing_alloc_id != 0) {
+    // Guest-backed resources are updated via CPU-visible guest memory; notify
+    // the host that a range changed (like Unlock).
+    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    const HRESULT track_hr = track_resource_allocation_locked(dev, dst_res, /*write=*/false);
+    if (FAILED(track_hr)) {
+      return trace.ret(track_hr);
+    }
+
+    auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    if (!cmd) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    cmd->resource_handle = dst_res->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = static_cast<uint64_t>(write_offset);
+    cmd->size_bytes = static_cast<uint64_t>(write_size);
+    return trace.ret(S_OK);
+  }
+
+  // Host-allocated resources are updated by embedding raw bytes in the command
+  // stream (like Unlock).
+  if (dst_res->storage.size() < dst_res->size_bytes) {
+    return trace.ret(E_FAIL);
+  }
+
+  uint32_t upload_offset = write_offset;
+  uint32_t upload_size = write_size;
+  const uint32_t start = upload_offset & ~3u;
+  const uint64_t end_u64 = static_cast<uint64_t>(upload_offset) + static_cast<uint64_t>(upload_size);
+  const uint32_t end = static_cast<uint32_t>((end_u64 + 3ull) & ~3ull);
+  if (end > dst_res->size_bytes || end < start) {
+    return trace.ret(E_INVALIDARG);
+  }
+  upload_offset = start;
+  upload_size = end - start;
+
+  const uint8_t* upload_src = dst_res->storage.data() + upload_offset;
+  uint32_t remaining = upload_size;
+  uint32_t cur_offset = upload_offset;
+
+  while (remaining) {
+    const size_t min_payload = 4; // buffer upload requires 4-byte alignment
+    const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + min_payload, 4);
+    if (!ensure_cmd_space(dev, min_needed)) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+
+    HRESULT track_hr = track_resource_allocation_locked(dev, dst_res, /*write=*/true);
+    if (FAILED(track_hr)) {
+      return trace.ret(track_hr);
+    }
+
+    if (!ensure_cmd_space(dev, min_needed)) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+
+    const size_t avail = dev->cmd.bytes_remaining();
+    size_t chunk = 0;
+    if (avail > sizeof(aerogpu_cmd_upload_resource)) {
+      chunk = std::min<size_t>(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
+    }
+
+    chunk &= ~static_cast<size_t>(3);
+    if (!chunk) {
+      submit(dev);
+      continue;
+    }
+
+    auto* cmd = append_with_payload_locked<aerogpu_cmd_upload_resource>(
+        dev, AEROGPU_CMD_UPLOAD_RESOURCE, upload_src, chunk);
+    if (!cmd) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+
+    cmd->resource_handle = dst_res->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = cur_offset;
+    cmd->size_bytes = chunk;
+
+    upload_src += chunk;
+    cur_offset += static_cast<uint32_t>(chunk);
+    remaining -= static_cast<uint32_t>(chunk);
+  }
+
   return trace.ret(S_OK);
 }
 
@@ -18069,9 +18371,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     AEROGPU_SET_D3D9DDI_FN(pfnDeletePatch, device_delete_patch);
   }
   if constexpr (aerogpu_has_member_pfnProcessVertices<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(
-        pfnProcessVertices,
-        aerogpu_d3d9_stub_pfnProcessVertices<decltype(pDeviceFuncs->pfnProcessVertices)>::pfnProcessVertices);
+    AEROGPU_SET_D3D9DDI_FN(pfnProcessVertices, device_process_vertices);
   }
   if constexpr (aerogpu_has_member_pfnGetRasterStatus<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -18585,6 +18885,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
   pDeviceFuncs->pfnSetStreamSource = device_set_stream_source;
   pDeviceFuncs->pfnSetIndices = device_set_indices;
+  pDeviceFuncs->pfnProcessVertices = device_process_vertices;
   pDeviceFuncs->pfnBeginScene = device_begin_scene;
   pDeviceFuncs->pfnEndScene = device_end_scene;
 

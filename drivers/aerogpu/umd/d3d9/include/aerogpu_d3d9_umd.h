@@ -1041,6 +1041,25 @@ typedef struct _D3DDDIARG_DRAWINDEXEDPRIMITIVE2 {
   uint32_t VertexStreamZeroStride;
 } D3DDDIARG_DRAWINDEXEDPRIMITIVE2;
 
+// Device::ProcessVertices emulation.
+//
+// The D3D9 runtime consumes the currently-bound stream sources as the vertex
+// input and writes into `hDestBuffer`.
+//
+// Portable ABI note:
+// - The Win7 WDK defines this struct in `d3dumddi.h`.
+// - Some header vintages may not include `DestStride`; when absent the UMD
+//   implementation falls back to the currently-bound stream 0 stride.
+typedef struct _D3DDDIARG_PROCESSVERTICES {
+  uint32_t SrcStartIndex;
+  uint32_t DestIndex;
+  uint32_t VertexCount;
+  D3DDDI_HRESOURCE hDestBuffer;
+  D3D9DDI_HVERTEXDECL hVertexDecl;
+  uint32_t Flags;
+  uint32_t DestStride; // optional; 0 means "use stream 0 stride"
+} D3DDDIARG_PROCESSVERTICES;
+
 typedef struct _D3D9DDIARG_GETDISPLAYMODEEX {
   uint32_t swapchain;
   D3DDDI_DISPLAYMODEEX* pMode; // optional
@@ -1127,6 +1146,7 @@ typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DRAWPRIMITIVEUP)(D3DDDI_HDEVICE hD
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DRAWINDEXEDPRIMITIVE)(D3DDDI_HDEVICE hDevice, D3DDDIPRIMITIVETYPE type, int32_t base_vertex, uint32_t min_index, uint32_t num_vertices, uint32_t start_index, uint32_t primitive_count);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DRAWPRIMITIVE2)(D3DDDI_HDEVICE hDevice, const D3DDDIARG_DRAWPRIMITIVE2* pDraw);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DRAWINDEXEDPRIMITIVE2)(D3DDDI_HDEVICE hDevice, const D3DDDIARG_DRAWINDEXEDPRIMITIVE2* pDraw);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_PROCESSVERTICES)(D3DDDI_HDEVICE hDevice, const D3DDDIARG_PROCESSVERTICES* pProcessVertices);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_CREATESWAPCHAIN)(D3DDDI_HDEVICE hDevice, D3D9DDIARG_CREATESWAPCHAIN* pCreateSwapChain);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DESTROYSWAPCHAIN)(D3DDDI_HDEVICE hDevice, D3D9DDI_HSWAPCHAIN hSwapChain);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_GETSWAPCHAIN)(D3DDDI_HDEVICE hDevice, uint32_t index, D3D9DDI_HSWAPCHAIN* phSwapChain);
@@ -1252,6 +1272,7 @@ struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_DRAWRECTPATCH pfnDrawRectPatch;
   PFND3D9DDI_DRAWTRIPATCH pfnDrawTriPatch;
   PFND3D9DDI_DELETEPATCH pfnDeletePatch;
+  PFND3D9DDI_PROCESSVERTICES pfnProcessVertices;
 };
 
 // -----------------------------------------------------------------------------

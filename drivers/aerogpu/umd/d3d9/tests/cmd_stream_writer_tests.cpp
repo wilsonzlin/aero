@@ -8138,6 +8138,363 @@ bool TestGuestBackedUnlockEmitsDirtyRangeNotUpload() {
   return ValidateStream(buf, len);
 }
 
+bool TestProcessVerticesCopiesBytesAndUploadsHostBuffer() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    std::vector<D3DDDI_HRESOURCE> resources;
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto& hRes : resources) {
+          if (hRes.pDrvPrivate) {
+            device_funcs.pfnDestroyResource(hDevice, hRes);
+          }
+        }
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  constexpr uint32_t kStride = 16;
+  constexpr uint32_t kBufSize = 64;
+
+  D3D9DDIARG_CREATERESOURCE create_src{};
+  create_src.type = 0;
+  create_src.format = 0;
+  create_src.width = 0;
+  create_src.height = 0;
+  create_src.depth = 1;
+  create_src.mip_levels = 1;
+  create_src.usage = 0;
+  create_src.pool = 0;
+  create_src.size = kBufSize;
+  create_src.hResource.pDrvPrivate = nullptr;
+  create_src.pSharedHandle = nullptr;
+  create_src.pPrivateDriverData = nullptr;
+  create_src.PrivateDriverDataSize = 0;
+  create_src.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_src);
+  if (!Check(hr == S_OK, "CreateResource(src buffer)")) {
+    return false;
+  }
+  if (!Check(create_src.hResource.pDrvPrivate != nullptr, "CreateResource returned src buffer handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_src.hResource);
+
+  D3D9DDIARG_CREATERESOURCE create_dst = create_src;
+  create_dst.hResource.pDrvPrivate = nullptr;
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_dst);
+  if (!Check(hr == S_OK, "CreateResource(dst buffer)")) {
+    return false;
+  }
+  if (!Check(create_dst.hResource.pDrvPrivate != nullptr, "CreateResource returned dst buffer handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_dst.hResource);
+
+  auto* src_res = reinterpret_cast<Resource*>(create_src.hResource.pDrvPrivate);
+  auto* dst_res = reinterpret_cast<Resource*>(create_dst.hResource.pDrvPrivate);
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(src_res && dst_res && dev, "device/resource pointers")) {
+    return false;
+  }
+  if (!Check(src_res->storage.size() >= kBufSize, "src buffer has CPU storage")) {
+    return false;
+  }
+  if (!Check(dst_res->storage.size() >= kBufSize, "dst buffer has CPU storage")) {
+    return false;
+  }
+
+  for (uint32_t i = 0; i < kBufSize; ++i) {
+    src_res->storage[i] = static_cast<uint8_t>(i ^ 0x5Au);
+    dst_res->storage[i] = 0;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice,
+                                               /*stream=*/0,
+                                               create_src.hResource,
+                                               /*offset_bytes=*/0,
+                                               /*stride_bytes=*/kStride);
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=src)")) {
+    return false;
+  }
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 1;
+  pv.DestIndex = 2;
+  pv.VertexCount = 2;
+  pv.hDestBuffer = create_dst.hResource;
+  pv.hVertexDecl.pDrvPrivate = nullptr;
+  pv.Flags = 0;
+  pv.DestStride = 0; // exercise default-to-stream0 stride behavior
+  hr = cleanup.device_funcs.pfnProcessVertices(create_dev.hDevice, &pv);
+  if (!Check(hr == S_OK, "ProcessVertices")) {
+    return false;
+  }
+
+  const uint32_t expected_src_offset = pv.SrcStartIndex * kStride;
+  const uint32_t expected_dst_offset = pv.DestIndex * kStride;
+  const uint32_t expected_bytes = pv.VertexCount * kStride;
+
+  if (!Check(std::memcmp(dst_res->storage.data() + expected_dst_offset,
+                         src_res->storage.data() + expected_src_offset,
+                         expected_bytes) == 0,
+             "ProcessVertices copied bytes into dst storage")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "ProcessVertices emits UPLOAD_RESOURCE")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->resource_handle == dst_res->handle, "UPLOAD_RESOURCE targets dst buffer")) {
+    return false;
+  }
+  if (!Check(upload_cmd->offset_bytes == expected_dst_offset, "UPLOAD_RESOURCE offset matches dst byte offset")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == expected_bytes, "UPLOAD_RESOURCE size matches copied byte count")) {
+    return false;
+  }
+
+  return ValidateStream(buf, len);
+}
+
+bool TestProcessVerticesEmitsDirtyRangeForGuestBackedDest() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    std::vector<D3DDDI_HRESOURCE> resources;
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto& hRes : resources) {
+          if (hRes.pDrvPrivate) {
+            device_funcs.pfnDestroyResource(hDevice, hRes);
+          }
+        }
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  constexpr uint32_t kStride = 16;
+  constexpr uint32_t kBufSize = 64;
+
+  // Source buffer is host-backed.
+  D3D9DDIARG_CREATERESOURCE create_src{};
+  create_src.type = 0;
+  create_src.format = 0;
+  create_src.width = 0;
+  create_src.height = 0;
+  create_src.depth = 1;
+  create_src.mip_levels = 1;
+  create_src.usage = 0;
+  create_src.pool = 0;
+  create_src.size = kBufSize;
+  create_src.hResource.pDrvPrivate = nullptr;
+  create_src.pSharedHandle = nullptr;
+  create_src.pPrivateDriverData = nullptr;
+  create_src.PrivateDriverDataSize = 0;
+  create_src.wddm_hAllocation = 0;
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_src);
+  if (!Check(hr == S_OK, "CreateResource(src buffer)")) {
+    return false;
+  }
+  if (!Check(create_src.hResource.pDrvPrivate != nullptr, "CreateResource returned src buffer handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_src.hResource);
+
+  // Destination buffer is guest-backed via OpenResource.
+  aerogpu_wddm_alloc_priv priv{};
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 0x1234u;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x1122334455667788ull;
+  priv.size_bytes = kBufSize;
+  priv.reserved0 = 0;
+
+  D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  open_res.type = 0;
+  open_res.format = 0;
+  open_res.width = 0;
+  open_res.height = 0;
+  open_res.depth = 1;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = kBufSize;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == S_OK, "OpenResource(dst guest-backed buffer)")) {
+    return false;
+  }
+  if (!Check(open_res.hResource.pDrvPrivate != nullptr, "OpenResource returned dst buffer handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(open_res.hResource);
+
+  auto* src_res = reinterpret_cast<Resource*>(create_src.hResource.pDrvPrivate);
+  auto* dst_res = reinterpret_cast<Resource*>(open_res.hResource.pDrvPrivate);
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(src_res && dst_res && dev, "device/resource pointers")) {
+    return false;
+  }
+  if (!Check(dst_res->backing_alloc_id == priv.alloc_id, "dst backing_alloc_id propagated from priv")) {
+    return false;
+  }
+
+  for (uint32_t i = 0; i < kBufSize; ++i) {
+    src_res->storage[i] = static_cast<uint8_t>(i);
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice,
+                                               /*stream=*/0,
+                                               create_src.hResource,
+                                               /*offset_bytes=*/0,
+                                               /*stride_bytes=*/kStride);
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=src)")) {
+    return false;
+  }
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 1;
+  pv.VertexCount = 2;
+  pv.hDestBuffer = open_res.hResource;
+  pv.hVertexDecl.pDrvPrivate = nullptr;
+  pv.Flags = 0;
+  pv.DestStride = 0;
+  hr = cleanup.device_funcs.pfnProcessVertices(create_dev.hDevice, &pv);
+  if (!Check(hr == S_OK, "ProcessVertices(guest-backed dest)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr == nullptr, "guest-backed ProcessVertices must not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  const CmdLoc dirty = FindLastOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty.hdr != nullptr, "guest-backed ProcessVertices emits RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+
+  const uint32_t expected_offset = pv.DestIndex * kStride;
+  const uint32_t expected_size = (pv.VertexCount - 1) * kStride + kStride;
+  const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(dirty.hdr);
+  if (!Check(dirty_cmd->resource_handle == dst_res->handle, "dirty_range targets dst buffer")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->offset_bytes == expected_offset, "dirty_range offset matches")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->size_bytes == expected_size, "dirty_range size matches")) {
+    return false;
+  }
+
+  return ValidateStream(buf, len);
+}
+
 bool TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull() {
 #if defined(_WIN32)
   // Portable CI builds do not exercise the WDDM DMA-buffer split behavior.
@@ -8833,6 +9190,8 @@ int main() {
   failures += !aerogpu::TestResetRebindsBackbufferTexture();
   failures += !aerogpu::TestOpenResourceTracksWddmAllocationHandle();
   failures += !aerogpu::TestGuestBackedUnlockEmitsDirtyRangeNotUpload();
+  failures += !aerogpu::TestProcessVerticesCopiesBytesAndUploadsHostBuffer();
+  failures += !aerogpu::TestProcessVerticesEmitsDirtyRangeForGuestBackedDest();
   failures += !aerogpu::TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull();
   failures += !aerogpu::TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload();
   failures += !aerogpu::TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload();
