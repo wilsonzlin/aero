@@ -101,10 +101,35 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
             }
             match pkt.opcode {
                 Some(cmd::AerogpuCmdOpcode::CreateShaderDxbc) => {
-                    let _ = pkt.decode_create_shader_dxbc_payload_le();
+                    if let Ok((cmd_hdr, _dxbc_bytes)) = pkt.decode_create_shader_dxbc_payload_le() {
+                        // Exercise stage_ex resolution helpers (forward-compat path).
+                        let _ = match cmd_hdr.stage {
+                            0 => Some(cmd::AerogpuShaderStage::Vertex),
+                            1 => Some(cmd::AerogpuShaderStage::Pixel),
+                            2 => Some(cmd::AerogpuShaderStage::Compute),
+                            3 => Some(cmd::AerogpuShaderStage::Geometry),
+                            _ => None,
+                        };
+                        let stage_ex = cmd::decode_stage_ex(cmd_hdr.stage, cmd_hdr.reserved0);
+                        if let Some(stage_ex) = stage_ex {
+                            let _ = cmd::encode_stage_ex(stage_ex);
+                        }
+                        // Also exercise the stage resolution helpers (they accept/validate a wider
+                        // range of legacy and stage_ex encodings).
+                        let _ = cmd::resolve_stage(cmd_hdr.stage, cmd_hdr.reserved0);
+                        let _ = cmd::resolve_shader_stage_with_ex(cmd_hdr.stage, cmd_hdr.reserved0);
+                        // Still fuzz the raw stage_ex decoder.
+                        let _ = cmd::AerogpuShaderStageEx::from_u32(cmd_hdr.reserved0);
+                    }
                 }
                 Some(cmd::AerogpuCmdOpcode::BindShaders) => {
-                    let _ = pkt.decode_bind_shaders_payload_le();
+                    if let Ok((_cmd, ex)) = pkt.decode_bind_shaders_payload_le() {
+                        // Touch the optional extended shader bindings to exercise the new
+                        // variable-length decode path.
+                        if let Some(ex) = ex {
+                            let _ = (ex.gs, ex.hs, ex.ds);
+                        }
+                    }
                 }
                 Some(cmd::AerogpuCmdOpcode::UploadResource) => {
                     let _ = pkt.decode_upload_resource_payload_le();
@@ -180,8 +205,23 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetConstantBuffers) => {
-                    if let Ok((cmd_cb, _bindings)) = pkt.decode_set_constant_buffers_payload_le() {
-                        let _ = cmd::decode_stage_ex(cmd_cb.shader_stage, cmd_cb.reserved0);
+                    if let Ok((cmd_hdr, bindings)) = pkt.decode_set_constant_buffers_payload_le() {
+                        // Exercise stage_ex resolution helpers (forward-compat path).
+                        let _ = match cmd_hdr.shader_stage {
+                            0 => Some(cmd::AerogpuShaderStage::Vertex),
+                            1 => Some(cmd::AerogpuShaderStage::Pixel),
+                            2 => Some(cmd::AerogpuShaderStage::Compute),
+                            3 => Some(cmd::AerogpuShaderStage::Geometry),
+                            _ => None,
+                        };
+                        let stage_ex = cmd::decode_stage_ex(cmd_hdr.shader_stage, cmd_hdr.reserved0);
+                        if let Some(stage_ex) = stage_ex {
+                            let _ = cmd::encode_stage_ex(stage_ex);
+                        }
+                        // Touch a couple binding fields to exercise packed/unaligned field reads.
+                        for binding in bindings.iter().take(4) {
+                            let _ = (binding.buffer, binding.offset_bytes, binding.size_bytes);
+                        }
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetShaderResourceBuffers) => {
@@ -963,6 +1003,14 @@ fuzz_target!(|data: &[u8]| {
         if let Some(dxbc_size_bytes) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
             dxbc_size_bytes.copy_from_slice(&(SYNTH_DXBC_BYTES as u32).to_le_bytes());
         }
+        // Exercise stage_ex decoding: set `stage=COMPUTE` (sentinel) and stash the extended stage
+        // value in `reserved0`.
+        if let Some(stage) = cmd_synth.get_mut(pkt + 12..pkt + 16) {
+            stage.copy_from_slice(&(cmd::AerogpuShaderStage::Compute as u32).to_le_bytes());
+        }
+        if let Some(stage_ex) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
+            stage_ex.copy_from_slice(&(cmd::AerogpuShaderStageEx::Geometry as u32).to_le_bytes());
+        }
     }
 
     // DESTROY_SHADER (fixed-size)
@@ -981,12 +1029,27 @@ fuzz_target!(|data: &[u8]| {
         BIND_SHADERS_BASE_SIZE_BYTES,
     );
     // BIND_SHADERS (extended: base + gs/hs/ds)
-    let _ = write_pkt_hdr(
+    if let Some(pkt) = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::BindShaders as u32,
         BIND_SHADERS_EXTENDED_SIZE_BYTES,
-    );
+    ) {
+        // Mirror gs into the legacy reserved0 field and also populate the append-only
+        // `{gs,hs,ds}` tail.
+        if let Some(reserved0) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
+            reserved0.copy_from_slice(&0x1000u32.to_le_bytes()); // legacy gs
+        }
+        let tail = pkt + cmd::AerogpuCmdBindShaders::SIZE_BYTES;
+        let ex_size = core::mem::size_of::<cmd::BindShadersEx>();
+        if let Some(end) = tail.checked_add(ex_size) {
+            if let Some(ex_bytes) = cmd_synth.get_mut(tail..end) {
+                ex_bytes[0..4].copy_from_slice(&0x1000u32.to_le_bytes()); // gs
+                ex_bytes[4..8].copy_from_slice(&0x1001u32.to_le_bytes()); // hs
+                ex_bytes[8..12].copy_from_slice(&0x1002u32.to_le_bytes()); // ds
+            }
+        }
+    }
 
     // UPLOAD_RESOURCE (size_bytes=4)
     if let Some(pkt) = write_pkt_hdr(
@@ -1225,8 +1288,11 @@ fuzz_target!(|data: &[u8]| {
         if let Some(buffer_count) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
             buffer_count.copy_from_slice(&(SYNTH_CONSTANT_BUFFER_COUNT as u32).to_le_bytes());
         }
+        // Exercise stage_ex decoding: keep shader_stage=COMPUTE (sentinel) and stash a non-zero
+        // DXBC program-type discriminator (1..=5) in `reserved0`.
         if let Some(reserved0) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
-            reserved0.copy_from_slice(&(stage_ex_seed2 as u32).to_le_bytes());
+            let stage_ex_u32 = ((stage_ex_seed2 % 5) + 1) as u32;
+            reserved0.copy_from_slice(&stage_ex_u32.to_le_bytes());
         }
     }
 
