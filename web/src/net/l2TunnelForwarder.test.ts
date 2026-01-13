@@ -246,6 +246,63 @@ describe("net/l2TunnelForwarder", () => {
     }
   });
 
+  it("flushes pending RX frames across many ticks in order and keeps pending stats consistent", () => {
+    const frameLen = 60;
+    const totalFrames = 1500;
+
+    // NET_RX is only large enough for a single frame, forcing the forwarder to
+    // buffer and then flush exactly one frame per tick.
+    const { netTx, netRx } = createNetRings(256, 64);
+    const forwarder = new L2TunnelForwarder(netTx, netRx, { maxPendingRxBytes: totalFrames * frameLen });
+    forwarder.start();
+
+    for (let i = 0; i < totalFrames; i++) {
+      const frame = new Uint8Array(frameLen);
+      new DataView(frame.buffer).setUint32(0, i, true);
+      forwarder.sink({ type: "frame", frame });
+    }
+
+    // First frame should have gone directly to the ring; the rest must be pending.
+    let stats = forwarder.stats();
+    expect(stats.rxPendingFrames).toBe(totalFrames - 1);
+    expect(stats.rxPendingBytes).toBe((totalFrames - 1) * frameLen);
+    expect(stats.rxDroppedNetRxFull).toBe(0);
+    expect(stats.rxDroppedPendingOverflow).toBe(0);
+
+    const delivered: number[] = [];
+
+    // Drain the initial in-ring frame.
+    let got = netRx.tryPop();
+    expect(got).not.toBeNull();
+    delivered.push(new DataView(got!.buffer, got!.byteOffset, got!.byteLength).getUint32(0, true));
+
+    for (let i = 1; i < totalFrames; i++) {
+      forwarder.tick();
+      stats = forwarder.stats();
+      expect(stats.rxPendingFrames).toBe(totalFrames - 1 - i);
+      expect(stats.rxPendingBytes).toBe((totalFrames - 1 - i) * frameLen);
+
+      got = netRx.tryPop();
+      expect(got).not.toBeNull();
+      delivered.push(new DataView(got!.buffer, got!.byteOffset, got!.byteLength).getUint32(0, true));
+    }
+
+    expect(netRx.tryPop()).toBeNull();
+    expect(delivered).toEqual(Array.from({ length: totalFrames }, (_, i) => i));
+
+    stats = forwarder.stats();
+    expect(stats.rxPendingFrames).toBe(0);
+    expect(stats.rxPendingBytes).toBe(0);
+    expect(stats.rxDroppedNetRxFull).toBe(0);
+    expect(stats.rxDroppedPendingOverflow).toBe(0);
+    expect(stats.rxDroppedRingTooSmall).toBe(0);
+    expect(stats.rxDroppedWhileStopped).toBe(0);
+    expect(stats.rxFrames).toBe(totalFrames);
+    expect(stats.rxBytes).toBe(totalFrames * frameLen);
+
+    forwarder.stop();
+  });
+
   it("drops inbound frames when NET_RX is full and maxPendingRxBytes=0", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;

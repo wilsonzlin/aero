@@ -95,6 +95,7 @@ export type L2TunnelForwarderStats = Readonly<{
 }>;
 
 const DEFAULT_MAX_PENDING_RX_BYTES = 8 * 1024 * 1024;
+const PENDING_RX_COMPACT_THRESHOLD = 1024;
 
 function validateNonNegativeInt(name: string, value: number): void {
   if (!Number.isInteger(value) || value < 0) {
@@ -312,10 +313,22 @@ export class L2TunnelForwarder {
       this.rxBytes += frame.byteLength;
     }
 
-    // Reclaim memory once we've drained part (or all) of the queue.
+    // Reclaim memory once we've drained the queue (or largely drained it).
+    //
+    // Avoid compacting on every tick: under sustained NET_RX backpressure we may
+    // only flush a small number of frames per call, and `slice()` would allocate
+    // a new array each time. Instead, keep a head pointer and only compact when
+    // either:
+    // - the queue is fully drained, or
+    // - the head has advanced far enough to amortize the copy cost.
     if (this.pendingRxHead > 0) {
-      this.pendingRx = this.pendingRx.slice(this.pendingRxHead);
-      this.pendingRxHead = 0;
+      if (this.pendingRxHead >= this.pendingRx.length) {
+        this.pendingRx = [];
+        this.pendingRxHead = 0;
+      } else if (this.pendingRxHead > PENDING_RX_COMPACT_THRESHOLD) {
+        this.pendingRx = this.pendingRx.slice(this.pendingRxHead);
+        this.pendingRxHead = 0;
+      }
     }
   }
 
