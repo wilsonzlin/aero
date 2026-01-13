@@ -100,6 +100,10 @@ export class WebGpuPresenterBackend implements Presenter {
   private static readonly FLAG_APPLY_SRGB_ENCODE = 1;
   private static readonly FLAG_FORCE_OPAQUE_ALPHA = 4;
 
+  private uncapturedErrorDevice: any = null;
+  private onUncapturedError: ((ev: any) => void) | null = null;
+  private seenUncapturedErrorKeys: Set<string> = new Set();
+
   public async init(
     canvas: OffscreenCanvas,
     width: number,
@@ -155,6 +159,8 @@ export class WebGpuPresenterBackend implements Presenter {
       throw new PresenterError('webgpu_context_unavailable', 'Failed to create a WebGPU canvas context');
     }
     this.ctx = ctx;
+
+    this.installUncapturedErrorHandler(device);
 
     // Report device loss asynchronously.
     (device.lost as Promise<any> | undefined)?.then((info) => {
@@ -411,6 +417,7 @@ export class WebGpuPresenterBackend implements Presenter {
 
   public destroy(): void {
     this.destroyed = true;
+    this.uninstallUncapturedErrorHandler();
     this.frameTexture?.destroy?.();
     this.cursorTexture?.destroy?.();
     try {
@@ -447,6 +454,85 @@ export class WebGpuPresenterBackend implements Presenter {
     this.dirtyRectStaging = null;
     this.cursorStaging = null;
     this.cursorStagingBytesPerRow = 0;
+  }
+
+  private installUncapturedErrorHandler(device: any): void {
+    this.uninstallUncapturedErrorHandler();
+    this.seenUncapturedErrorKeys.clear();
+
+    // WebGPU validation errors can surface as `GPUUncapturedErrorEvent`s rather than thrown
+    // exceptions. Forward them via the presenter's `onError` callback so the worker can surface
+    // structured diagnostics.
+    const handler = (ev: any) => {
+      try {
+        if (this.destroyed) return;
+        if (this.device !== device) return;
+
+        const err = ev?.error;
+        const errorName =
+          (typeof err?.name === 'string' && err.name) ||
+          (typeof err?.constructor?.name === 'string' && err.constructor.name) ||
+          '';
+        const errorMessage = typeof err?.message === 'string' ? err.message : '';
+        const msg = errorMessage || (err != null ? String(err) : 'WebGPU uncaptured error');
+
+        // Avoid flooding: emit each unique (name, message) pair at most once per init().
+        const key = `${errorName}:${msg}`;
+        if (this.seenUncapturedErrorKeys.has(key)) return;
+        this.seenUncapturedErrorKeys.add(key);
+
+        const details: Record<string, unknown> = {
+          name: errorName || undefined,
+          message: errorMessage || msg,
+        };
+        if (typeof err?.stack === 'string') details.stack = err.stack;
+
+        this.opts.onError?.(new PresenterError('webgpu_uncaptured_error', msg, details));
+      } catch {
+        // Never throw from an uncaptured error callback; best-effort diagnostics only.
+      }
+    };
+
+    this.uncapturedErrorDevice = device;
+    this.onUncapturedError = handler;
+
+    try {
+      if (typeof device.addEventListener === 'function') {
+        device.addEventListener('uncapturederror', handler);
+        return;
+      }
+    } catch {
+      // Fall through to the onuncapturederror IDL.
+    }
+
+    // Fall back to the older onuncapturederror IDL if needed.
+    try {
+      (device as any).onuncapturederror = handler;
+    } catch {
+      // Ignore.
+    }
+  }
+
+  private uninstallUncapturedErrorHandler(): void {
+    const device = this.uncapturedErrorDevice;
+    const handler = this.onUncapturedError;
+    if (device && handler) {
+      try {
+        device.removeEventListener?.('uncapturederror', handler);
+      } catch {
+        // Ignore.
+      }
+      try {
+        if ((device as any).onuncapturederror === handler) {
+          (device as any).onuncapturederror = null;
+        }
+      } catch {
+        // Ignore.
+      }
+    }
+    this.uncapturedErrorDevice = null;
+    this.onUncapturedError = null;
+    this.seenUncapturedErrorKeys.clear();
   }
 
   private resizeCanvas(outputWidth: number, outputHeight: number, dpr: number): void {
