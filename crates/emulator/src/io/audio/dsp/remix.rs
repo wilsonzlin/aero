@@ -184,4 +184,57 @@ mod tests {
         assert!((out[0] - expected_l).abs() < 1e-6);
         assert!((out[1] - expected_r).abs() < 1e-6);
     }
+
+    #[test]
+    fn remix_3_to_2_folds_extra_channels_half_gain() {
+        // Two 3-channel frames: [L, R, C]
+        let input = [1.0f32, 2.0, 4.0, -1.0, 0.5, 2.0];
+        let mut out = Vec::new();
+        remix_interleaved(&input, 3, 2, &mut out).unwrap();
+        assert_eq!(out, vec![3.0, 4.0, 0.0, 1.5]);
+    }
+
+    #[test]
+    fn remix_4_to_1_downmixes_by_average() {
+        // Two 4-channel frames.
+        let input = [1.0f32, 2.0, 3.0, 4.0, -1.0, -1.0, -1.0, -1.0];
+        let mut out = Vec::new();
+        remix_interleaved(&input, 4, 1, &mut out).unwrap();
+        assert_eq!(out, vec![2.5, -1.0]);
+    }
+
+    #[test]
+    fn remix_2_to_4_zero_extends() {
+        // Two stereo frames.
+        let input = [1.0f32, -1.0, 0.5, 0.25];
+        let mut out = Vec::new();
+        remix_interleaved(&input, 2, 4, &mut out).unwrap();
+        assert_eq!(out, vec![1.0, -1.0, 0.0, 0.0, 0.5, 0.25, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn invalid_channels_are_error() {
+        let input = [];
+        let mut out = Vec::new();
+        assert_eq!(
+            remix_interleaved(&input, 0, 2, &mut out),
+            Err(RemixError::InvalidChannels)
+        );
+        assert_eq!(
+            remix_interleaved(&input, 2, 0, &mut out),
+            Err(RemixError::InvalidChannels)
+        );
+    }
+
+    #[test]
+    fn input_length_not_aligned_is_error() {
+        let input = [0.0f32, 1.0, 2.0, 3.0];
+        let mut out = Vec::new();
+        assert_eq!(
+            remix_interleaved(&input, 3, 2, &mut out),
+            Err(RemixError::InputLengthNotAligned {
+                expected_multiple: 3
+            })
+        );
+    }
 }
