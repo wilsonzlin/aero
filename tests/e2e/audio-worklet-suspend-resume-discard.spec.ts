@@ -269,6 +269,9 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
 
   expect(afterResume.state).toBe("running");
   expect(afterResume.level).toBeLessThan(BACKLOG_DISCARDED_THRESHOLD_FRAMES);
+  // Stronger assertion than bufferLevelFrames alone: a discard should advance the consumer read
+  // index all the way to the producer write index (i.e. an empty ring).
+  expect(((afterResume.write - afterResume.read) >>> 0)).toBe(0);
 
   // Best-effort cleanup: restore the original write method so the harness doesn't keep the ring empty
   // if the page is reused.
