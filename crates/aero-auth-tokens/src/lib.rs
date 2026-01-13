@@ -131,7 +131,10 @@ pub fn verify_gateway_session_token(
             None => {
                 // Non-integer JSON number (e.g. `1.5`). Fall back to the JS semantics (`number`)
                 // while still ensuring we can represent the value as an `i64`.
-                if exp < i64::MIN as f64 || exp > i64::MAX as f64 {
+                // Note: `i64::MAX as f64` rounds up to `2^63` (since `2^63 - 1` is not exactly
+                // representable in an `f64`). Use `>=` so we reject values that would otherwise
+                // silently saturate to `i64::MAX` when casting from `f64`.
+                if exp < i64::MIN as f64 || exp >= i64::MAX as f64 {
                     return None;
                 }
                 exp as i64
