@@ -580,8 +580,47 @@ func (b *l2Bridge) sanitizeStringForLog(msg string) string {
 	msg = redactQueryParamValue(msg, "apiKey")
 	msg = redactQueryParamValue(msg, "aero_session")
 	msg = redactPrefixedValue(msg, l2tunnel.TokenSubprotocolPrefix)
+	msg = redactURLUserInfo(msg)
 
 	return msg
+}
+
+func redactURLUserInfo(msg string) string {
+	i := 0
+	for {
+		schemeIdx := strings.Index(msg[i:], "://")
+		if schemeIdx == -1 {
+			return msg
+		}
+		schemeIdx += i
+
+		restStart := schemeIdx + len("://")
+		if restStart >= len(msg) {
+			return msg
+		}
+
+		atRel := strings.IndexByte(msg[restStart:], '@')
+		if atRel == -1 {
+			i = restStart
+			continue
+		}
+		at := restStart + atRel
+
+		// Only treat this as userinfo if the '@' appears before the first path
+		// separator (or whitespace).
+		sepRel := strings.IndexAny(msg[restStart:], "/?# ")
+		if sepRel != -1 {
+			sep := restStart + sepRel
+			if at > sep {
+				i = at + 1
+				continue
+			}
+		}
+
+		// Drop "<userinfo>@" from the URL.
+		msg = msg[:restStart] + msg[at+1:]
+		i = restStart
+	}
 }
 
 func redactQueryParamValue(msg, key string) string {

@@ -82,3 +82,18 @@ func TestL2Bridge_SanitizeStringForLog_RedactsL2TokenSubprotocolEvenWhenValueUnk
 		t.Fatalf("expected l2 token subprotocol to be redacted: %q", s)
 	}
 }
+
+func TestL2Bridge_SanitizeStringForLog_StripsURLUserInfo(t *testing.T) {
+	b := &l2Bridge{}
+	msg := "dial ws://user:pass@example.com/l2?token=sekrit: 403"
+	s := b.sanitizeStringForLog(msg)
+	if strings.Contains(s, "user:pass") {
+		t.Fatalf("sanitized message still contains userinfo: %q", s)
+	}
+	if strings.Contains(s, "sekrit") {
+		t.Fatalf("sanitized message still contains query token value: %q", s)
+	}
+	if !strings.Contains(s, "ws://example.com/l2?token=<redacted>") {
+		t.Fatalf("expected sanitized message to preserve URL without userinfo: %q", s)
+	}
+}
