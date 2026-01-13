@@ -822,7 +822,7 @@ struct AeroGpuDevice {
   // allocation list. This is rebuilt for each command buffer submission so the
   // KMD can attach an allocation table that resolves `backing_alloc_id` values in
   // the AeroGPU command stream.
-  std::vector<uint32_t> wddm_submit_allocation_handles;
+  std::vector<aerogpu::d3d10_11::WddmSubmitAllocation> wddm_submit_allocation_handles;
 
   // Fence tracking for WDDM-backed synchronization (used by Map READ / DO_NOT_WAIT semantics).
   std::atomic<uint64_t> last_submitted_fence{0};
@@ -1213,11 +1213,11 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   const size_t submit_bytes = dev->cmd.size();
 
   uint64_t fence = 0;
-  const uint32_t* alloc_handles =
+  const auto* allocs =
       dev->wddm_submit_allocation_handles.empty() ? nullptr : dev->wddm_submit_allocation_handles.data();
   const uint32_t alloc_count = static_cast<uint32_t>(dev->wddm_submit_allocation_handles.size());
   const HRESULT hr =
-      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, alloc_handles, alloc_count, &fence);
+      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, allocs, alloc_count, &fence);
   dev->cmd.reset();
   dev->wddm_submit_allocation_handles.clear();
   if (FAILED(hr)) {
@@ -1264,7 +1264,7 @@ void flush_locked(AeroGpuDevice* dev) {
   }
 }
 
-static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res) {
+static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write) {
   if (!dev || !res) {
     return;
   }
@@ -1273,22 +1273,29 @@ static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResou
   }
 
   const uint32_t handle = res->wddm_allocation_handle;
-  if (std::find(dev->wddm_submit_allocation_handles.begin(),
-                dev->wddm_submit_allocation_handles.end(),
-                handle) != dev->wddm_submit_allocation_handles.end()) {
-    return;
+  for (auto& entry : dev->wddm_submit_allocation_handles) {
+    if (entry.allocation_handle == handle) {
+      if (write) {
+        entry.write = 1;
+      }
+      return;
+    }
   }
-  dev->wddm_submit_allocation_handles.push_back(handle);
+  aerogpu::d3d10_11::WddmSubmitAllocation entry{};
+  entry.allocation_handle = handle;
+  entry.write = write ? 1 : 0;
+  dev->wddm_submit_allocation_handles.push_back(entry);
 }
 
 static void TrackBoundTargetsForSubmitLocked(AeroGpuDevice* dev) {
   if (!dev) {
     return;
   }
+  // Render targets / depth-stencil are written by Draw/Clear.
   for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    TrackWddmAllocForSubmitLocked(dev, dev->current_rtv_resources[i]);
+    TrackWddmAllocForSubmitLocked(dev, dev->current_rtv_resources[i], /*write=*/true);
   }
-  TrackWddmAllocForSubmitLocked(dev, dev->current_dsv_res);
+  TrackWddmAllocForSubmitLocked(dev, dev->current_dsv_res, /*write=*/true);
 }
 
 static void NormalizeRenderTargetsNoGapsLocked(AeroGpuDevice* dev) {
@@ -1372,21 +1379,21 @@ static void TrackDrawStateLocked(AeroGpuDevice* dev) {
 
   TrackBoundTargetsForSubmitLocked(dev);
   for (AeroGpuResource* res : dev->current_vb_resources) {
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
-  TrackWddmAllocForSubmitLocked(dev, dev->current_ib_res);
+  TrackWddmAllocForSubmitLocked(dev, dev->current_ib_res, /*write=*/false);
 
   for (AeroGpuResource* res : dev->current_vs_srvs) {
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
   for (AeroGpuResource* res : dev->current_ps_srvs) {
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
   for (AeroGpuResource* res : dev->current_vs_cb_resources) {
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
   for (AeroGpuResource* res : dev->current_ps_cb_resources) {
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
 }
 
@@ -1602,7 +1609,8 @@ void emit_dirty_range_locked(AeroGpuDevice* dev,
     return;
   }
 
-  TrackWddmAllocForSubmitLocked(dev, res);
+  // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
+  TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!cmd) {
@@ -2094,8 +2102,8 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
         const bool transfer_aligned = ((copy_bytes & 3ull) == 0);
         const bool same_buffer = (dst->handle == src->handle);
         if (aerogpu::d3d10_11::SupportsTransfer(dev) && transfer_aligned && !same_buffer) {
-          TrackWddmAllocForSubmitLocked(dev, dst);
-          TrackWddmAllocForSubmitLocked(dev, src);
+          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
+          TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
 
           auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
           if (!cmd) {
@@ -2114,7 +2122,7 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
           cmd->reserved0 = 0;
           TrackStagingWriteLocked(dev, dst);
         } else if (copy_bytes) {
-          TrackWddmAllocForSubmitLocked(dev, dst);
+          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
           emit_upload_resource_locked(dev, dst, 0, copy_bytes);
         }
       } else if (dst->kind == ResourceKind::Texture2D) {
@@ -2221,8 +2229,8 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
 
         const bool same_texture = (dst->handle == src->handle);
         if (aerogpu::d3d10_11::SupportsTransfer(dev) && !same_texture) {
-          TrackWddmAllocForSubmitLocked(dev, dst);
-          TrackWddmAllocForSubmitLocked(dev, src);
+          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
+          TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
 
           uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
           if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
@@ -2259,7 +2267,7 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
           }
           TrackStagingWriteLocked(dev, dst);
         } else if (dst_total != 0) {
-          TrackWddmAllocForSubmitLocked(dev, dst);
+          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
           emit_upload_resource_locked(dev, dst, 0, dst_total);
         }
       }
@@ -2407,8 +2415,8 @@ struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
         const bool transfer_aligned = ((dst_off & 3ull) == 0) && ((src_left & 3ull) == 0) && ((bytes & 3ull) == 0);
         const bool same_buffer = (dst->handle == src->handle);
         if (aerogpu::d3d10_11::SupportsTransfer(dev) && transfer_aligned && bytes && !same_buffer) {
-          TrackWddmAllocForSubmitLocked(dev, dst);
-          TrackWddmAllocForSubmitLocked(dev, src);
+          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
+          TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
 
           auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
           if (!cmd) {
@@ -2427,7 +2435,7 @@ struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
           cmd->reserved0 = 0;
           TrackStagingWriteLocked(dev, dst);
         } else if (bytes) {
-          TrackWddmAllocForSubmitLocked(dev, dst);
+          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
           emit_upload_resource_locked(dev, dst, dst_off, bytes);
         }
         return finish(S_OK);
@@ -2596,8 +2604,8 @@ struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
 
         const bool same_texture = (dst->handle == src->handle);
         if (aerogpu::d3d10_11::SupportsTransfer(dev) && !same_texture) {
-          TrackWddmAllocForSubmitLocked(dev, dst);
-          TrackWddmAllocForSubmitLocked(dev, src);
+          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
+          TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
 
           auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
           if (!cmd) {
@@ -2623,7 +2631,7 @@ struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
           cmd->reserved0 = 0;
           TrackStagingWriteLocked(dev, dst);
         } else {
-          TrackWddmAllocForSubmitLocked(dev, dst);
+          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
           emit_upload_resource_locked(dev, dst, dst_sub.offset_bytes, dst_sub.size_bytes);
         }
         return finish(S_OK);
@@ -3189,7 +3197,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(init_hr);
     }
 
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
@@ -3453,7 +3461,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(init_hr);
     }
 
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     cmd->texture_handle = res->handle;
@@ -3836,7 +3844,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     }
 
     for (AeroGpuResource* bound : resources) {
-      TrackWddmAllocForSubmitLocked(dev, bound);
+      TrackWddmAllocForSubmitLocked(dev, bound, /*write=*/false);
     }
 
     auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
@@ -6587,7 +6595,7 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
       dev->current_vb_offset = b.offset_bytes;
     }
 
-    TrackWddmAllocForSubmitLocked(dev, vb_res);
+    TrackWddmAllocForSubmitLocked(dev, vb_res, /*write=*/false);
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
@@ -6751,7 +6759,7 @@ static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
       b.size_bytes = buf_res->size_bytes > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(buf_res->size_bytes);
     }
 
-    TrackWddmAllocForSubmitLocked(dev, buf_res);
+    TrackWddmAllocForSubmitLocked(dev, buf_res, /*write=*/false);
 
     (*table)[start_slot + i] = b;
     (*resources)[start_slot + i] = buf_res;
@@ -7780,7 +7788,7 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRE
   }
 
   auto* src_res = hsrc.pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hsrc) : nullptr;
-  TrackWddmAllocForSubmitLocked(dev, src_res);
+  TrackWddmAllocForSubmitLocked(dev, src_res, /*write=*/false);
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
   aerogpu_handle_t src_handle = src_res ? src_res->handle : 0;

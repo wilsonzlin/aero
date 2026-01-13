@@ -25,6 +25,7 @@
 #include "aerogpu_cmd_writer.h"
 #include "../../common/aerogpu_win32_security.h"
 #include "aerogpu_d3d10_11_log.h"
+#include "aerogpu_d3d10_11_wddm_submit_alloc.h"
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
   #include "aerogpu_d3d10_11_wddm_submit.h"
 #endif
@@ -860,10 +861,13 @@ struct Device {
 #endif
 
   // WDDM allocation handles (D3DKMT_HANDLE values) to include in each submission's
-  // allocation list. This is rebuilt for each command buffer submission so the
-  // KMD can attach an allocation table that resolves `backing_alloc_id` values in
-  // the AeroGPU command stream.
-  std::vector<uint32_t> wddm_submit_allocation_handles;
+  // allocation list, along with per-allocation read/write tracking used to set
+  // DXGK_ALLOCATIONLIST::WriteOperation precisely.
+  //
+  // This is rebuilt for each command buffer submission so the KMD can attach an
+  // allocation table that resolves `backing_alloc_id` values in the AeroGPU
+  // command stream.
+  std::vector<WddmSubmitAllocation> wddm_submit_allocation_handles;
 
   std::atomic<uint64_t> last_submitted_fence{0};
   std::atomic<uint64_t> last_completed_fence{0};
@@ -1351,11 +1355,16 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
   const size_t submit_bytes = dev->cmd.size();
   uint64_t fence = 0;
-  const uint32_t* alloc_handles =
+  const WddmSubmitAllocation* allocs =
       dev->wddm_submit_allocation_handles.empty() ? nullptr : dev->wddm_submit_allocation_handles.data();
   const uint32_t alloc_count = static_cast<uint32_t>(dev->wddm_submit_allocation_handles.size());
   const HRESULT hr =
-      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, alloc_handles, alloc_count, &fence);
+      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(),
+                                           dev->cmd.size(),
+                                           want_present,
+                                           allocs,
+                                           alloc_count,
+                                           &fence);
   if (out_hr) {
     *out_hr = hr;
   }

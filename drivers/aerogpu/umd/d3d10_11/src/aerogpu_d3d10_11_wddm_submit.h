@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "../include/aerogpu_d3d10_11_umd.h"
+#include "aerogpu_d3d10_11_wddm_submit_alloc.h"
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
   #include <d3dkmthk.h>
@@ -68,8 +69,8 @@ class WddmSubmit {
   HRESULT SubmitAeroCmdStream(const uint8_t* stream_bytes,
                               size_t stream_size,
                               bool want_present,
-                              const uint32_t* allocation_handles,
-                              uint32_t allocation_handle_count,
+                              const WddmSubmitAllocation* allocations,
+                              uint32_t allocation_count,
                               uint64_t* out_fence);
 
   // Waits for a fence value on the monitored-fence sync object returned by
@@ -129,7 +130,7 @@ class WddmSubmit {
   uint32_t hSyncObject() const {
     return 0;
   }
-  HRESULT SubmitAeroCmdStream(const uint8_t*, size_t, bool, const uint32_t*, uint32_t, uint64_t*) {
+  HRESULT SubmitAeroCmdStream(const uint8_t*, size_t, bool, const WddmSubmitAllocation*, uint32_t, uint64_t*) {
     return E_NOTIMPL;
   }
   HRESULT WaitForFenceWithTimeout(uint64_t, uint32_t) {

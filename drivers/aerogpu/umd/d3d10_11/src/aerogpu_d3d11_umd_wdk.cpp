@@ -780,7 +780,7 @@ static bool FixupLegacyPrivForOpenResource(aerogpu_wddm_alloc_priv_v2* priv) {
   return aerogpu::shared_surface::FixupLegacyPrivForOpenResource(priv);
 }
 
-static void TrackWddmAllocForSubmitLocked(Device* dev, const Resource* res) {
+static void TrackWddmAllocForSubmitLocked(Device* dev, const Resource* res, bool write) {
   if (!dev || !res) {
     return;
   }
@@ -789,23 +789,31 @@ static void TrackWddmAllocForSubmitLocked(Device* dev, const Resource* res) {
   }
 
   const uint32_t handle = res->wddm_allocation_handle;
-  if (std::find(dev->wddm_submit_allocation_handles.begin(),
-                dev->wddm_submit_allocation_handles.end(),
-                handle) != dev->wddm_submit_allocation_handles.end()) {
-    return;
+  for (auto& entry : dev->wddm_submit_allocation_handles) {
+    if (entry.allocation_handle == handle) {
+      if (write) {
+        entry.write = 1;
+      }
+      return;
+    }
   }
-  dev->wddm_submit_allocation_handles.push_back(handle);
+  WddmSubmitAllocation entry{};
+  entry.allocation_handle = handle;
+  entry.write = write ? 1 : 0;
+  dev->wddm_submit_allocation_handles.push_back(entry);
 }
 
 static void TrackBoundTargetsForSubmitLocked(Device* dev) {
   if (!dev) {
     return;
   }
-  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, static_cast<uint32_t>(dev->current_rtv_resources.size()));
+  // Render targets / depth-stencil are written by Draw/Clear.
+  const uint32_t count =
+      std::min<uint32_t>(dev->current_rtv_count, static_cast<uint32_t>(dev->current_rtv_resources.size()));
   for (uint32_t i = 0; i < count; ++i) {
-    TrackWddmAllocForSubmitLocked(dev, dev->current_rtv_resources[i]);
+    TrackWddmAllocForSubmitLocked(dev, dev->current_rtv_resources[i], /*write=*/true);
   }
-  TrackWddmAllocForSubmitLocked(dev, dev->current_dsv_resource);
+  TrackWddmAllocForSubmitLocked(dev, dev->current_dsv_resource, /*write=*/true);
 }
 
 static void TrackDrawStateLocked(Device* dev) {
@@ -814,21 +822,21 @@ static void TrackDrawStateLocked(Device* dev) {
   }
 
   TrackBoundTargetsForSubmitLocked(dev);
-  TrackWddmAllocForSubmitLocked(dev, dev->current_vb);
-  TrackWddmAllocForSubmitLocked(dev, dev->current_ib);
+  TrackWddmAllocForSubmitLocked(dev, dev->current_vb, /*write=*/false);
+  TrackWddmAllocForSubmitLocked(dev, dev->current_ib, /*write=*/false);
 
   for (Resource* res : dev->current_vs_cbs) {
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
   for (Resource* res : dev->current_ps_cbs) {
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
 
   for (Resource* res : dev->current_vs_srvs) {
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
   for (Resource* res : dev->current_ps_srvs) {
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
 }
 
@@ -1020,7 +1028,8 @@ Unlock:
     return;
   }
 
-  TrackWddmAllocForSubmitLocked(dev, res);
+  // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
+  TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
 
   auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!dirty) {
@@ -1038,7 +1047,8 @@ static void EmitDirtyRangeLocked(Device* dev, Resource* res, uint64_t offset_byt
     return;
   }
 
-  TrackWddmAllocForSubmitLocked(dev, res);
+  // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
+  TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!cmd) {
@@ -2763,7 +2773,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       EmitUploadLocked(dev, res, 0, res->size_bytes);
     }
 
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
 
     if (is_shared) {
       if (res->share_token == 0) {
@@ -2924,7 +2934,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       EmitUploadLocked(dev, res, 0, res->storage.size());
     }
 
-    TrackWddmAllocForSubmitLocked(dev, res);
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
 
     if (is_shared) {
       if (res->share_token == 0) {
@@ -7072,8 +7082,8 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
-    TrackWddmAllocForSubmitLocked(dev, src);
-    TrackWddmAllocForSubmitLocked(dev, dst);
+    TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
+    TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
@@ -7387,8 +7397,8 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
-    TrackWddmAllocForSubmitLocked(dev, src);
-    TrackWddmAllocForSubmitLocked(dev, dst);
+    TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
+    TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
     cmd->dst_texture = dst->handle;
     cmd->src_texture = src->handle;
@@ -8760,7 +8770,7 @@ HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIA
   }
 
   Resource* src_res = hsrc.pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, Resource>(hsrc) : nullptr;
-  TrackWddmAllocForSubmitLocked(dev, src_res);
+  TrackWddmAllocForSubmitLocked(dev, src_res, /*write=*/false);
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
   aerogpu_handle_t src_handle = 0;

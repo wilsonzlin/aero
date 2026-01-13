@@ -130,7 +130,7 @@ struct Harness {
   static HRESULT AEROGPU_APIENTRY SubmitCmdStream(void* user,
                                                   const void* cmd_stream,
                                                   uint32_t cmd_stream_size_bytes,
-                                                  const AEROGPU_WDDM_ALLOCATION_HANDLE*,
+                                                  const AEROGPU_WDDM_SUBMIT_ALLOCATION*,
                                                   uint32_t,
                                                   uint64_t* out_fence) {
     if (!user || !cmd_stream || cmd_stream_size_bytes < sizeof(aerogpu_cmd_stream_header)) {

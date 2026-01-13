@@ -301,7 +301,7 @@ struct Allocation {
 
 struct Harness {
   std::vector<uint8_t> last_stream;
-  std::vector<AEROGPU_WDDM_ALLOCATION_HANDLE> last_allocs;
+  std::vector<AEROGPU_WDDM_SUBMIT_ALLOCATION> last_allocs;
   std::vector<HRESULT> errors;
 
   std::vector<Allocation> allocations;
@@ -409,7 +409,7 @@ struct Harness {
   static HRESULT AEROGPU_APIENTRY SubmitCmdStream(void* user,
                                                    const void* cmd_stream,
                                                    uint32_t cmd_stream_size_bytes,
-                                                   const AEROGPU_WDDM_ALLOCATION_HANDLE* alloc_handles,
+                                                   const AEROGPU_WDDM_SUBMIT_ALLOCATION* allocs,
                                                    uint32_t alloc_count,
                                                    uint64_t* out_fence) {
     if (!user || !cmd_stream || cmd_stream_size_bytes < sizeof(aerogpu_cmd_stream_header)) {
@@ -418,10 +418,10 @@ struct Harness {
     auto* h = reinterpret_cast<Harness*>(user);
     const auto* bytes = reinterpret_cast<const uint8_t*>(cmd_stream);
     h->last_stream.assign(bytes, bytes + cmd_stream_size_bytes);
-    if (!alloc_handles || alloc_count == 0) {
+    if (!allocs || alloc_count == 0) {
       h->last_allocs.clear();
     } else {
-      h->last_allocs.assign(alloc_handles, alloc_handles + alloc_count);
+      h->last_allocs.assign(allocs, allocs + alloc_count);
     }
     if (out_fence) {
       if (h->async_fences) {
@@ -719,6 +719,47 @@ bool CreateBufferWithInitialData(TestDevice* dev,
 
   const HRESULT hr = dev->device_funcs.pfnCreateResource(dev->hDevice, &desc, out->hResource);
   if (!Check(hr == S_OK, "CreateResource(buffer initial data)")) {
+    return false;
+  }
+  return true;
+}
+
+bool CreateTexture2D(TestDevice* dev,
+                     uint32_t width,
+                     uint32_t height,
+                     uint32_t usage,
+                     uint32_t bind_flags,
+                     uint32_t cpu_access_flags,
+                     TestResource* out,
+                     uint32_t dxgi_format = kDxgiFormatB8G8R8A8Unorm) {
+  if (!dev || !out) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATERESOURCE desc = {};
+  desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D;
+  desc.BindFlags = bind_flags;
+  desc.MiscFlags = 0;
+  desc.Usage = usage;
+  desc.CPUAccessFlags = cpu_access_flags;
+  desc.Width = width;
+  desc.Height = height;
+  desc.MipLevels = 1;
+  desc.ArraySize = 1;
+  desc.Format = dxgi_format;
+  desc.pInitialData = nullptr;
+  desc.InitialDataCount = 0;
+
+  const SIZE_T size = dev->device_funcs.pfnCalcPrivateResourceSize(dev->hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateResourceSize returned a non-trivial size")) {
+    return false;
+  }
+
+  out->storage.assign(static_cast<size_t>(size), 0);
+  out->hResource.pDrvPrivate = out->storage.data();
+
+  const HRESULT hr = dev->device_funcs.pfnCreateResource(dev->hDevice, &desc, out->hResource);
+  if (!Check(hr == S_OK, "CreateResource(tex2d)")) {
     return false;
   }
   return true;
@@ -1490,12 +1531,17 @@ bool TestGuestBackedBufferUnmapDirtyRange() {
   }
 
   bool found_alloc = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == create_cmd->backing_alloc_id) {
+  uint8_t found_write = 1;
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == create_cmd->backing_alloc_id) {
       found_alloc = true;
+      found_write = a.write;
     }
   }
   if (!Check(found_alloc, "guest-backed submit alloc list contains backing alloc")) {
+    return false;
+  }
+  if (!Check(found_write == 0, "RESOURCE_DIRTY_RANGE should mark guest allocation as read-only")) {
     return false;
   }
 
@@ -1613,8 +1659,8 @@ bool TestGuestBackedTextureUnmapDirtyRange() {
   }
 
   bool found_alloc = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == create_cmd->backing_alloc_id) {
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == create_cmd->backing_alloc_id) {
       found_alloc = true;
     }
   }
@@ -1779,8 +1825,8 @@ bool TestGuestBackedBcTextureUnmapDirtyRange() {
     }
 
     bool found_alloc = false;
-    for (auto h : dev.harness.last_allocs) {
-      if (h == create_cmd->backing_alloc_id) {
+    for (const auto& a : dev.harness.last_allocs) {
+      if (a.handle == create_cmd->backing_alloc_id) {
         found_alloc = true;
       }
     }
@@ -2493,8 +2539,8 @@ bool TestGuestBackedDynamicIABufferDirtyRange() {
   }
 
   bool found_alloc = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == create_cmd->backing_alloc_id) {
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == create_cmd->backing_alloc_id) {
       found_alloc = true;
     }
   }
@@ -2718,8 +2764,8 @@ bool TestGuestBackedDynamicConstantBufferDirtyRange() {
   }
 
   bool found_alloc = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == create_cmd->backing_alloc_id) {
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == create_cmd->backing_alloc_id) {
       found_alloc = true;
     }
   }
@@ -2868,13 +2914,18 @@ bool TestSubmitAllocListTracksBoundConstantBuffer() {
   }
 
   bool found = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == backing) {
+  uint8_t found_write = 1;
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == backing) {
       found = true;
+      found_write = a.write;
       break;
     }
   }
   if (!Check(found, "submit alloc list contains bound constant buffer allocation")) {
+    return false;
+  }
+  if (!Check(found_write == 0, "bound constant buffer allocation should be read-only")) {
     return false;
   }
 
@@ -3329,18 +3380,189 @@ bool TestSubmitAllocListTracksBoundShaderResource() {
   }
 
   bool found = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == backing) {
+  uint8_t found_write = 1;
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == backing) {
       found = true;
+      found_write = a.write;
       break;
     }
   }
   if (!Check(found, "submit alloc list contains bound shader resource allocation")) {
     return false;
   }
+  if (!Check(found_write == 0, "bound shader resource allocation should be read-only")) {
+    return false;
+  }
 
   dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv.hView);
   dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+static bool FindSubmitAlloc(const std::vector<AEROGPU_WDDM_SUBMIT_ALLOCATION>& allocs,
+                            AEROGPU_WDDM_ALLOCATION_HANDLE handle,
+                            uint8_t* out_write) {
+  if (out_write) {
+    *out_write = 0;
+  }
+  if (handle == 0) {
+    return false;
+  }
+  for (const auto& a : allocs) {
+    if (a.handle == handle) {
+      if (out_write) {
+        *out_write = a.write;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+bool TestSubmitAllocWriteFlagsForDraw() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(draw write flags)")) {
+    return false;
+  }
+
+  // Create a guest-backed vertex buffer (read-only from the GPU's perspective).
+  TestResource vb{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/64,
+                          AEROGPU_D3D11_USAGE_DYNAMIC,
+                          kD3D11BindVertexBuffer,
+                          AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                          &vb),
+             "CreateBuffer(VB)")) {
+    return false;
+  }
+  HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateBuffer(VB)")) {
+    return false;
+  }
+  CmdLoc vb_create_loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_CREATE_BUFFER);
+  if (!Check(vb_create_loc.hdr != nullptr, "CREATE_BUFFER emitted (VB)")) {
+    return false;
+  }
+  const auto* vb_create_cmd =
+      reinterpret_cast<const aerogpu_cmd_create_buffer*>(dev.harness.last_stream.data() + vb_create_loc.offset);
+  const AEROGPU_WDDM_ALLOCATION_HANDLE vb_alloc = vb_create_cmd->backing_alloc_id;
+  if (!Check(vb_alloc != 0, "VB backing_alloc_id != 0")) {
+    return false;
+  }
+
+  // Create a guest-backed SRV texture (read-only in the draw).
+  TestResource srv_tex{};
+  if (!Check(CreateTexture2D(&dev,
+                             /*width=*/4,
+                             /*height=*/4,
+                             AEROGPU_D3D11_USAGE_DEFAULT,
+                             kD3D11BindShaderResource,
+                             /*cpu_access_flags=*/0,
+                             &srv_tex),
+             "CreateTexture2D(SRV tex)")) {
+    return false;
+  }
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateTexture2D(SRV tex)")) {
+    return false;
+  }
+  CmdLoc srv_create_loc =
+      FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(srv_create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted (SRV tex)")) {
+    return false;
+  }
+  const auto* srv_create_cmd =
+      reinterpret_cast<const aerogpu_cmd_create_texture2d*>(dev.harness.last_stream.data() + srv_create_loc.offset);
+  const AEROGPU_WDDM_ALLOCATION_HANDLE srv_alloc = srv_create_cmd->backing_alloc_id;
+  if (!Check(srv_alloc != 0, "SRV tex backing_alloc_id != 0")) {
+    return false;
+  }
+  TestShaderResourceView srv{};
+  if (!Check(CreateShaderResourceView(&dev, &srv_tex, &srv), "CreateShaderResourceView(SRV)")) {
+    return false;
+  }
+
+  // Create a guest-backed render target texture (written by the draw).
+  TestResource rtv_tex{};
+  if (!Check(CreateTexture2D(&dev,
+                             /*width=*/4,
+                             /*height=*/4,
+                             AEROGPU_D3D11_USAGE_DEFAULT,
+                             kD3D11BindRenderTarget,
+                             /*cpu_access_flags=*/0,
+                             &rtv_tex),
+             "CreateTexture2D(RTV tex)")) {
+    return false;
+  }
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateTexture2D(RTV tex)")) {
+    return false;
+  }
+  CmdLoc rtv_create_loc =
+      FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(rtv_create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted (RTV tex)")) {
+    return false;
+  }
+  const auto* rtv_create_cmd =
+      reinterpret_cast<const aerogpu_cmd_create_texture2d*>(dev.harness.last_stream.data() + rtv_create_loc.offset);
+  const AEROGPU_WDDM_ALLOCATION_HANDLE rtv_alloc = rtv_create_cmd->backing_alloc_id;
+  if (!Check(rtv_alloc != 0, "RTV tex backing_alloc_id != 0")) {
+    return false;
+  }
+  TestRenderTargetView rtv{};
+  if (!Check(CreateRenderTargetView(&dev, &rtv_tex, &rtv), "CreateRenderTargetView(RTV)")) {
+    return false;
+  }
+
+  // Bind state: VB + SRV, and draw into RTV.
+  D3D10DDI_HRENDERTARGETVIEW rtvs[1] = {rtv.hView};
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice,
+                                       /*num_views=*/1,
+                                       rtvs,
+                                       D3D10DDI_HDEPTHSTENCILVIEW{});
+  dev.device_funcs.pfnSetVertexBuffer(dev.hDevice, vb.hResource, /*stride=*/16, /*offset=*/0);
+  D3D10DDI_HSHADERRESOURCEVIEW views[1] = {srv.hView};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*view_count=*/1, views);
+  dev.device_funcs.pfnDraw(dev.hDevice, /*vertex_count=*/3, /*start_vertex=*/0);
+
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after draw")) {
+    return false;
+  }
+
+  uint8_t vb_write = 1;
+  uint8_t srv_write = 1;
+  uint8_t rtv_write = 0;
+  if (!Check(FindSubmitAlloc(dev.harness.last_allocs, vb_alloc, &vb_write), "submit alloc list contains VB allocation")) {
+    return false;
+  }
+  if (!Check(FindSubmitAlloc(dev.harness.last_allocs, srv_alloc, &srv_write), "submit alloc list contains SRV allocation")) {
+    return false;
+  }
+  if (!Check(FindSubmitAlloc(dev.harness.last_allocs, rtv_alloc, &rtv_write), "submit alloc list contains RTV allocation")) {
+    return false;
+  }
+
+  if (!Check(vb_write == 0, "VB allocation should be read-only")) {
+    return false;
+  }
+  if (!Check(srv_write == 0, "SRV allocation should be read-only")) {
+    return false;
+  }
+  if (!Check(rtv_write == 1, "RTV allocation should be marked write")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv.hView);
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv.hView);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, rtv_tex.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, srv_tex.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, vb.hResource);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
@@ -3436,8 +3658,8 @@ bool TestGuestBackedCopyResourceBufferReadback() {
   }
   for (uint32_t id : backing_ids) {
     bool found = false;
-    for (auto h : dev.harness.last_allocs) {
-      if (h == id) {
+    for (const auto& a : dev.harness.last_allocs) {
+      if (a.handle == id) {
         found = true;
       }
     }
@@ -4132,8 +4354,8 @@ bool TestGuestBackedUpdateSubresourceUPBufferDirtyRange() {
   }
 
   bool found_alloc = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == create_cmd->backing_alloc_id) {
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == create_cmd->backing_alloc_id) {
       found_alloc = true;
     }
   }
@@ -4454,8 +4676,8 @@ bool TestGuestBackedUpdateSubresourceUPTextureDirtyRange() {
   }
 
   bool found_alloc = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == create_cmd->backing_alloc_id) {
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == create_cmd->backing_alloc_id) {
       found_alloc = true;
     }
   }
@@ -4744,8 +4966,8 @@ bool TestGuestBackedUpdateSubresourceUPBcTextureDirtyRange() {
     }
 
     bool found_alloc = false;
-    for (auto h : dev.harness.last_allocs) {
-      if (h == create_cmd->backing_alloc_id) {
+    for (const auto& a : dev.harness.last_allocs) {
+      if (a.handle == create_cmd->backing_alloc_id) {
         found_alloc = true;
       }
     }
@@ -5800,8 +6022,8 @@ bool TestGuestBackedCreateBufferInitialDataDirtyRange() {
   }
 
   bool found_alloc = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == create_cmd->backing_alloc_id) {
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == create_cmd->backing_alloc_id) {
       found_alloc = true;
     }
   }
@@ -5993,8 +6215,8 @@ bool TestGuestBackedCreateTextureInitialDataDirtyRange() {
   }
 
   bool found_alloc = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == create_cmd->backing_alloc_id) {
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == create_cmd->backing_alloc_id) {
       found_alloc = true;
     }
   }
@@ -6277,8 +6499,8 @@ bool TestGuestBackedCreateBcTextureInitialDataDirtyRange() {
     }
 
     bool found_alloc = false;
-    for (auto h : dev.harness.last_allocs) {
-      if (h == create_cmd->backing_alloc_id) {
+    for (const auto& a : dev.harness.last_allocs) {
+      if (a.handle == create_cmd->backing_alloc_id) {
         found_alloc = true;
       }
     }
@@ -6455,8 +6677,8 @@ bool TestSrgbTexture2DFormatPropagationGuestBacked() {
     }
 
     bool found = false;
-    for (auto h : dev.harness.last_allocs) {
-      if (h == create_cmd->backing_alloc_id) {
+    for (const auto& a : dev.harness.last_allocs) {
+      if (a.handle == create_cmd->backing_alloc_id) {
         found = true;
         break;
       }
@@ -6530,8 +6752,8 @@ bool TestGuestBackedTexture2DMipArrayCreateEncodesMipAndArray() {
   }
 
   bool found_alloc = false;
-  for (auto h : dev.harness.last_allocs) {
-    if (h == create_cmd->backing_alloc_id) {
+  for (const auto& a : dev.harness.last_allocs) {
+    if (a.handle == create_cmd->backing_alloc_id) {
       found_alloc = true;
       break;
     }
@@ -8361,6 +8583,7 @@ int main() {
   ok &= TestGuestBackedDynamicConstantBufferDirtyRange();
   ok &= TestSubmitAllocListTracksBoundConstantBuffer();
   ok &= TestSubmitAllocListTracksBoundShaderResource();
+  ok &= TestSubmitAllocWriteFlagsForDraw();
   ok &= TestHostOwnedCopyResourceBufferReadback();
   ok &= TestHostOwnedCopyResourceTextureReadback();
   ok &= TestHostOwnedCopyResourceBcTextureReadback();

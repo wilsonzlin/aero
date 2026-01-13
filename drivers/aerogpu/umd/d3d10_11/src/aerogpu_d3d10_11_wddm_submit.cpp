@@ -1469,8 +1469,8 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
 HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
                                          size_t stream_size,
                                          bool want_present,
-                                         const uint32_t* allocation_handles,
-                                         uint32_t allocation_handle_count,
+                                         const WddmSubmitAllocation* allocations,
+                                         uint32_t allocation_count,
                                          uint64_t* out_fence) {
   if (out_fence) {
     *out_fence = 0;
@@ -1487,7 +1487,7 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
   if (stream_size == sizeof(aerogpu_cmd_stream_header)) {
     return S_OK;
   }
-  if (allocation_handle_count != 0 && !allocation_handles) {
+  if (allocation_count != 0 && !allocations) {
     return E_INVALIDARG;
   }
 
@@ -1565,7 +1565,7 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
       return E_OUTOFMEMORY;
     }
     const UINT request_bytes = static_cast<UINT>(request_sz);
-    const UINT allocation_list_entries = static_cast<UINT>(allocation_handle_count);
+    const UINT allocation_list_entries = static_cast<UINT>(allocation_count);
 
     SubmissionBuffers buf{};
     HRESULT hr = E_NOTIMPL;
@@ -1640,7 +1640,7 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
     }
 
     UINT used_allocation_list_entries = 0;
-    if (allocation_handle_count != 0) {
+    if (allocation_count != 0) {
       if (!buf.allocation_list || buf.allocation_list_entries < allocation_list_entries) {
         AEROGPU_D3D10_11_LOG("wddm_submit: %s missing allocation list ptr=%p entries=%u (need >=%u)",
                              buf.needs_deallocate ? "AllocateCb" : "GetCommandBufferCb",
@@ -1653,19 +1653,17 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
 
       used_allocation_list_entries = allocation_list_entries;
       for (UINT i = 0; i < used_allocation_list_entries; ++i) {
-        if (allocation_handles[i] == 0) {
+        const uint32_t handle_u32 = allocations[i].allocation_handle;
+        const bool write = allocations[i].write != 0;
+        if (handle_u32 == 0) {
           release();
           return E_INVALIDARG;
         }
-        // Conservative: mark all referenced allocations as potentially written by
-        // the submission. The Win7 AeroGPU UMD can emit clears/draws/copies/uploads
-        // that write into any resource, and under-specifying write access can
-        // lead to stale CPU mappings.
         aerogpu::wddm::InitAllocationListEntry(
             buf.allocation_list[i],
-            static_cast<decltype(buf.allocation_list[i].hAllocation)>(allocation_handles[i]),
+            static_cast<decltype(buf.allocation_list[i].hAllocation)>(handle_u32),
             i,
-            /*write=*/true);
+            /*write=*/write);
       }
     }
 

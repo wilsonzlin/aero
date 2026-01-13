@@ -477,6 +477,22 @@ typedef struct AEROGPU_DDIARG_PRESENT {
 // the KMD-visible `DXGK_ALLOCATIONLIST::hAllocation` identity.
 typedef uint32_t AEROGPU_WDDM_ALLOCATION_HANDLE;
 
+// Per-submission allocation reference (portable build).
+//
+// In the real Win7/WDDM 1.1 UMD, the runtime consumes an allocation list where each
+// entry carries a `WriteOperation` flag indicating whether the GPU is expected to
+// write to that allocation.
+//
+// The repository (non-WDK) build models that allocation-list contract by passing a
+// list of referenced allocations to the submission callback. The `write` flag is
+// used by unit tests to validate that the UMD tracks read vs write usage
+// correctly.
+typedef struct AEROGPU_WDDM_SUBMIT_ALLOCATION {
+  AEROGPU_WDDM_ALLOCATION_HANDLE handle;
+  // 0 = read-only, 1 = written by GPU in this submission.
+  uint8_t write;
+} AEROGPU_WDDM_SUBMIT_ALLOCATION;
+
 // Allocate backing storage for a resource and return the stable allocation ID.
 // For Texture2D allocations, the callback may also provide the linear row pitch.
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_ALLOCATE_BACKING)(
@@ -501,7 +517,7 @@ typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SUBMIT_CMD_STREAM)(
     void *pUserContext,
     const void *cmd_stream,
     uint32_t cmd_stream_size_bytes,
-    const AEROGPU_WDDM_ALLOCATION_HANDLE *alloc_handles,
+    const AEROGPU_WDDM_SUBMIT_ALLOCATION *allocs,
     uint32_t alloc_count,
     uint64_t *out_fence);
 
