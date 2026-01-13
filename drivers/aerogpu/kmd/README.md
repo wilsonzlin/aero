@@ -69,14 +69,17 @@ Recommended values:
 
 Where to set it:
 
+- The Win7 AeroGPU INFs seed this value during install:
+  - `HKR\Parameters\NonLocalMemorySizeMB = 512` (`REG_DWORD`)
+  - written with `FLG_ADDREG_NOCLOBBER`, so a user override is preserved across reinstall/upgrade.
 - `HKR` is the AeroGPU adapter's device/driver registry key (the same place that stores `InstalledDisplayDrivers`).
 - On Win7 this is typically under the display class key
   `HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\000X\`.
-  Create/open a `Parameters` subkey and add `NonLocalMemorySizeMB` there (the exact `000X` varies by machine).
+  To override it, create/open a `Parameters` subkey and set `NonLocalMemorySizeMB` there (the exact `000X` varies by machine).
 
 ### Manual validation guidance
 
-1. Set `NonLocalMemorySizeMB` to a larger value (e.g., 1024 or 2048 on x64).
+1. Override `NonLocalMemorySizeMB` to a larger value (e.g., 1024 or 2048 on x64).
 2. Reboot the guest (or disable/enable the AeroGPU device).
 3. Run a D3D11 workload that allocates multiple large textures (for example, repeatedly call
    `ID3D11Device::CreateTexture2D` for 4096×4096 RGBA textures in a loop).

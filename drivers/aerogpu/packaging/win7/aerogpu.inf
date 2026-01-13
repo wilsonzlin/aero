@@ -89,6 +89,8 @@ AeroGPU_UMD_Wow64.CopyFiles = 10,SysWOW64
 ; below aerogpu_dx11.inf (0xF7) so Windows prefers the DX11-capable package when
 ; both match the same HWID.
 HKR,,FeatureScore,%REG_DWORD%,0x000000F8
+; Seed a default WDDM non-local segment budget; preserve user overrides on reinstall/upgrade.
+HKR,Parameters,NonLocalMemorySizeMB,%REG_DWORD_NOCLOBBER%,512
 
 ; D3D9 UMD registration (32-bit).
 ; InstalledDisplayDrivers entries are base names (no extension).
@@ -96,6 +98,8 @@ HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9"
 
 [AeroGPU_Device_AddReg_amd64]
 HKR,,FeatureScore,%REG_DWORD%,0x000000F8
+; Seed a default WDDM non-local segment budget; preserve user overrides on reinstall/upgrade.
+HKR,Parameters,NonLocalMemorySizeMB,%REG_DWORD_NOCLOBBER%,512
 
 ; D3D9 UMD registration (64-bit + WoW32).
 HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9_x64"
@@ -143,4 +147,5 @@ AeroGPU.DiskName     = "AeroGPU Driver Disk"
 
 ; AddReg type helpers (kept explicit so UMD registration keys stay correct).
 REG_DWORD     = 0x00010001
+REG_DWORD_NOCLOBBER = 0x00010003
 REG_MULTI_SZ  = 0x00010000

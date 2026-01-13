@@ -115,6 +115,14 @@ On Windows 7 / WDDM 1.1 the Direct3D runtimes locate the display driver’s user
   - x64: `UserModeDriverName = "aerogpu_d3d10_x64.dll"`, `UserModeDriverNameWow = "aerogpu_d3d10.dll"`
   - `FeatureScore = 0xF7` (**preferred** by Windows PnP auto-selection if both INFs match the same HWID)
 
+### KMD parameter defaults (`NonLocalMemorySizeMB`)
+
+The AeroGPU Win7 INFs also seed the KMD's WDDM memory budget parameter:
+
+- `HKR\Parameters\NonLocalMemorySizeMB` (`REG_DWORD`) = `512`
+
+This value is written with `FLG_ADDREG_NOCLOBBER`, so a user override is preserved across reinstall/upgrade.
+
 To inspect what was actually written after install, you can query the adapter’s device key from an elevated Command Prompt:
 
 ```bat
