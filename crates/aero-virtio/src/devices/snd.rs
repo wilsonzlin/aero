@@ -1642,6 +1642,116 @@ mod tests {
     }
 
     #[test]
+    fn virtio_snd_eventq_flush_writes_pending_event_and_completes_used() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+        let buf = 0x4000;
+
+        let qsize = 1u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        // One write-only event buffer (virtio-snd events are 8 bytes).
+        write_desc(&mut mem, desc_table, 0, buf, 8, VIRTQ_DESC_F_WRITE, 0);
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.event_buffers.push_back(chain);
+
+        let evt_type = 0x1100u32; // VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED
+        let evt_data = 0x1234u32;
+        let mut evt = [0u8; 8];
+        evt[0..4].copy_from_slice(&evt_type.to_le_bytes());
+        evt[4..8].copy_from_slice(&evt_data.to_le_bytes());
+        snd.pending_events.push_back(evt.to_vec());
+
+        let need_irq = snd.flush_eventq(&mut queue, &mut mem).unwrap();
+        assert!(need_irq, "used entry should trigger an interrupt by default");
+
+        assert!(snd.event_buffers.is_empty());
+        assert!(snd.pending_events.is_empty());
+
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+        assert_eq!(read_u32_le(&mem, used + 4).unwrap(), 0);
+        assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
+
+        assert_eq!(mem.get_slice(buf, 8).unwrap(), &evt);
+    }
+
+    #[test]
+    fn virtio_snd_eventq_flush_can_split_event_across_descriptors() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+        let buf0 = 0x4000;
+        let buf1 = 0x5000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        // Two 4-byte write-only descriptors chained together.
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            buf0,
+            4,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            1,
+        );
+        write_desc(&mut mem, desc_table, 1, buf1, 4, VIRTQ_DESC_F_WRITE, 0);
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.event_buffers.push_back(chain);
+
+        let mut evt = [0u8; 8];
+        evt.copy_from_slice(&[
+            0x00, 0x11, 0x00, 0x00, // type = 0x1100
+            0x78, 0x56, 0x34, 0x12, // data = 0x12345678
+        ]);
+        snd.pending_events.push_back(evt.to_vec());
+
+        snd.flush_eventq(&mut queue, &mut mem).unwrap();
+
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+        assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
+
+        assert_eq!(mem.get_slice(buf0, 4).unwrap(), &evt[0..4]);
+        assert_eq!(mem.get_slice(buf1, 4).unwrap(), &evt[4..8]);
+    }
+
+    #[test]
     fn virtio_snd_config_reports_two_streams() {
         let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
         let mut cfg = [0u8; 12];
