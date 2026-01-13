@@ -11,13 +11,18 @@ import (
 func TestSessionManager_AssignsHexSessionIDsAndRemovesOnClose(t *testing.T) {
 	m := metrics.New()
 	sm := NewSessionManager(config.Config{}, m, nil)
+	activeSessions := func() int {
+		sm.mu.Lock()
+		defer sm.mu.Unlock()
+		return len(sm.sessions)
+	}
 
 	sess, err := sm.CreateSession()
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	if got := sm.ActiveSessions(); got != 1 {
+	if got := activeSessions(); got != 1 {
 		t.Fatalf("ActiveSessions=%d, want 1", got)
 	}
 
@@ -34,7 +39,7 @@ func TestSessionManager_AssignsHexSessionIDsAndRemovesOnClose(t *testing.T) {
 	}
 
 	sess.Close()
-	if got := sm.ActiveSessions(); got != 0 {
+	if got := activeSessions(); got != 0 {
 		t.Fatalf("ActiveSessions=%d, want 0 after Close", got)
 	}
 }
@@ -43,6 +48,11 @@ func TestSessionManager_EnforcesMaxSessions(t *testing.T) {
 	cfg := config.Config{MaxSessions: 1}
 	m := metrics.New()
 	sm := NewSessionManager(cfg, m, nil)
+	activeSessions := func() int {
+		sm.mu.Lock()
+		defer sm.mu.Unlock()
+		return len(sm.sessions)
+	}
 
 	s1, err := sm.CreateSession()
 	if err != nil {
@@ -58,12 +68,12 @@ func TestSessionManager_EnforcesMaxSessions(t *testing.T) {
 		t.Fatalf("expected %s metric increment", metrics.DropReasonTooManySessions)
 	}
 
-	if got := sm.ActiveSessions(); got != 1 {
+	if got := activeSessions(); got != 1 {
 		t.Fatalf("ActiveSessions=%d, want 1", got)
 	}
 
 	s1.Close()
-	if got := sm.ActiveSessions(); got != 0 {
+	if got := activeSessions(); got != 0 {
 		t.Fatalf("ActiveSessions=%d, want 0 after Close", got)
 	}
 

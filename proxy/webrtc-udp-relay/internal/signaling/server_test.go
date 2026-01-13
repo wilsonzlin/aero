@@ -789,13 +789,16 @@ func TestServer_SessionEndpoint_RequiresAuth(t *testing.T) {
 	if got := m.Get(metrics.AuthFailure); got == 0 {
 		t.Fatalf("expected auth_failure metric increment")
 	}
-	if got := sm.ActiveSessions(); got != 0 {
-		t.Fatalf("ActiveSessions=%d, want 0", got)
+	srv.mu.Lock()
+	reservationCount := len(srv.preSessions)
+	srv.mu.Unlock()
+	if reservationCount != 0 {
+		t.Fatalf("expected 0 preSessions reservations, got %d", reservationCount)
 	}
 }
 
 func TestServer_SessionEndpoint_ExpiresAndReleasesSession(t *testing.T) {
-	cfg := config.Config{MaxSessions: 10}
+	cfg := config.Config{MaxSessions: 1}
 	m := metrics.New()
 	sm := relay.NewSessionManager(cfg, m, nil)
 
@@ -834,19 +837,15 @@ func TestServer_SessionEndpoint_ExpiresAndReleasesSession(t *testing.T) {
 		t.Fatalf("expected non-empty session id")
 	}
 
-	if got := sm.ActiveSessions(); got != 1 {
-		t.Fatalf("ActiveSessions=%d, want 1", got)
-	}
-
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if sm.ActiveSessions() == 0 {
+		srv.mu.Lock()
+		reservationCount := len(srv.preSessions)
+		srv.mu.Unlock()
+		if reservationCount == 0 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-	if got := sm.ActiveSessions(); got != 0 {
-		t.Fatalf("ActiveSessions=%d, want 0 after expiry", got)
 	}
 
 	// Ensure the server does not retain stale reservations after expiry.
@@ -856,10 +855,21 @@ func TestServer_SessionEndpoint_ExpiresAndReleasesSession(t *testing.T) {
 	if reservationCount != 0 {
 		t.Fatalf("expected 0 preSessions reservations after expiry, got %d", reservationCount)
 	}
+
+	// With max sessions set to 1, a new /session request proves the session quota
+	// was released after expiry.
+	resp2, err := http.Post(ts.URL+"/session", "application/json", nil)
+	if err != nil {
+		t.Fatalf("post second /session: %v", err)
+	}
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusCreated {
+		t.Fatalf("second /session status=%d, want %d", resp2.StatusCode, http.StatusCreated)
+	}
 }
 
 func TestServer_Close_ClosesPreallocatedSessions(t *testing.T) {
-	cfg := config.Config{}
+	cfg := config.Config{MaxSessions: 1}
 	m := metrics.New()
 	sm := relay.NewSessionManager(cfg, m, nil)
 
@@ -882,18 +892,16 @@ func TestServer_Close_ClosesPreallocatedSessions(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	if got := sm.ActiveSessions(); got != 1 {
-		t.Fatalf("ActiveSessions=%d, want 1", got)
-	}
-
 	srv.Close()
-	if got := sm.ActiveSessions(); got != 0 {
-		t.Fatalf("ActiveSessions=%d, want 0 after server.Close", got)
+	if sess, err := sm.CreateSession(); err != nil {
+		t.Fatalf("CreateSession after server.Close: %v", err)
+	} else {
+		sess.Close()
 	}
 }
 
 func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
-	cfg := config.Config{}
+	cfg := config.Config{MaxSessions: 1}
 	m := metrics.New()
 	sm := relay.NewSessionManager(cfg, m, nil)
 
@@ -971,14 +979,23 @@ func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
 		webrtcSessions := len(srv.webrtcSessions)
 		srv.mu.Unlock()
 
-		if sm.ActiveSessions() == 0 && webrtcSessions == 0 && m.Get(metrics.WebRTCSessionConnectTimeout) > 0 {
-			break
+		if webrtcSessions == 0 && m.Get(metrics.WebRTCSessionConnectTimeout) > 0 {
+			sess, err := sm.CreateSession()
+			if err == nil {
+				sess.Close()
+				break
+			}
+			if !errors.Is(err, relay.ErrTooManySessions) {
+				t.Fatalf("CreateSession while waiting for cleanup: %v", err)
+			}
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	if got := sm.ActiveSessions(); got != 0 {
-		t.Fatalf("ActiveSessions=%d, want 0", got)
+	if sess, err := sm.CreateSession(); err != nil {
+		t.Fatalf("CreateSession after connect timeout: %v", err)
+	} else {
+		sess.Close()
 	}
 	srv.mu.Lock()
 	gotWebRTCSessions := len(srv.webrtcSessions)

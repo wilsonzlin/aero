@@ -43,12 +43,6 @@ func NewSessionManager(cfg config.Config, m *metrics.Metrics, clock ratelimit.Cl
 
 func (sm *SessionManager) Metrics() *metrics.Metrics { return sm.metrics }
 
-func (sm *SessionManager) ActiveSessions() int {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	return len(sm.sessions)
-}
-
 func (sm *SessionManager) CreateSession() (*Session, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		id, err := newSessionID()
