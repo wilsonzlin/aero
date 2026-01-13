@@ -309,13 +309,15 @@ foreach ($installSect in $installHwSections) {
     continue
   }
 
-  $msiLines = @()
+  $msiLines = New-Object System.Collections.Generic.List[string]
   foreach ($regSect in $addRegSections) {
     if (-not $sections.ContainsKey($regSect)) {
       Add-Failure -Failures $failures -Message ("AddReg section referenced by [{0}] does not exist: [{1}]." -f $installSect, $regSect)
       continue
     }
-    $msiLines += $sections[$regSect]
+    foreach ($l in $sections[$regSect]) {
+      $msiLines.Add($l)
+    }
   }
 
   # Key creation: HKR, "Interrupt Management",,0x00000010
