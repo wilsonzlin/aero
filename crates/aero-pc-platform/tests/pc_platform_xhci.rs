@@ -15,7 +15,10 @@ use std::rc::Rc;
 // COMMAND gating (MEM bit), and INTx delivery via the PIC. The MMIO register model is minimal and
 // only implements what these tests need.
 
-const XHCI_BDF: PciBdf = PciBdf::new(0, 6, 0);
+// Pick a device number that is not used by the built-in PC platform devices or the canonical PCI
+// profiles (e.g. RTL8139 is 00:06.0). This prevents future platform expansions from accidentally
+// colliding with this test-injected function.
+const XHCI_BDF: PciBdf = PciBdf::new(0, 0x1e, 0);
 const XHCI_BAR_INDEX: u8 = 0;
 const XHCI_BAR_SIZE: u32 = 0x4000;
 
@@ -472,6 +475,109 @@ fn pc_platform_xhci_intx_asserts_and_clears() {
 
     pc.poll_pci_intx_lines();
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
+fn pc_platform_respects_pci_interrupt_disable_bit_for_xhci_intx() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let xhci = Rc::new(RefCell::new(TestXhciMmio::default()));
+    install_test_xhci(&mut pc, xhci.clone());
+
+    // Assign BAR0, enable memory decoding.
+    write_cfg_u32(
+        &mut pc,
+        XHCI_BDF.bus,
+        XHCI_BDF.device,
+        XHCI_BDF.function,
+        0x10,
+        XHCI_BAR_BASE as u32,
+    );
+    write_cfg_u16(
+        &mut pc,
+        XHCI_BDF.bus,
+        XHCI_BDF.device,
+        XHCI_BDF.function,
+        0x04,
+        0x0002,
+    );
+
+    // Register the INTx source so `poll_pci_intx_lines` drives the PIC.
+    pc.register_pci_intx_source(XHCI_BDF, PciInterruptPin::IntA, {
+        let xhci = xhci.clone();
+        move |_pc| xhci.borrow().irq_level()
+    });
+
+    let expected_irq =
+        u8::try_from(pc.pci_intx.gsi_for_intx(XHCI_BDF, PciInterruptPin::IntA)).unwrap();
+
+    // Unmask the routed IRQ (and cascade) so we can observe INTx via the legacy PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
+    }
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    // Program a minimal ERST and enable interrupter 0 so a port status change can assert IRQ.
+    const ERST_BASE: u64 = 0x10_000;
+    const EVENT_RING_BASE: u64 = 0x11_000;
+
+    pc.memory.write_u64(ERST_BASE, EVENT_RING_BASE);
+    pc.memory.write_u32(ERST_BASE + 8, 1);
+    pc.memory.write_u32(ERST_BASE + 12, 0);
+
+    pc.memory.write_u32(XHCI_BAR_BASE + RT_ERSTSZ, 1);
+    pc.memory.write_u64(XHCI_BAR_BASE + RT_ERSTBA, ERST_BASE);
+    pc.memory.write_u64(XHCI_BAR_BASE + RT_ERDP, EVENT_RING_BASE);
+
+    pc.memory.write_u32(XHCI_BAR_BASE + RT_IMAN, u32::from(IMAN_IE));
+
+    // Cause the device to assert IMAN.IP.
+    xhci.borrow_mut().attach_device(&mut pc.memory);
+    assert!(
+        xhci.borrow().irq_level(),
+        "test expects the xHCI stub to have a pending interrupt before COMMAND.INTX_DISABLE gating"
+    );
+
+    let command = read_cfg_u32(&mut pc, XHCI_BDF.bus, XHCI_BDF.device, XHCI_BDF.function, 0x04) as u16;
+
+    // Disable INTx in PCI command register (bit 10) while leaving memory decode enabled.
+    write_cfg_u16(
+        &mut pc,
+        XHCI_BDF.bus,
+        XHCI_BDF.device,
+        XHCI_BDF.function,
+        0x04,
+        command | (1 << 10),
+    );
+    pc.poll_pci_intx_lines();
+    assert_eq!(
+        pc.interrupts.borrow().pic().get_pending_vector(),
+        None,
+        "INTx should be suppressed when COMMAND.INTX_DISABLE is set"
+    );
+
+    // Re-enable INTx and ensure the asserted line is delivered.
+    write_cfg_u16(
+        &mut pc,
+        XHCI_BDF.bus,
+        XHCI_BDF.device,
+        XHCI_BDF.function,
+        0x04,
+        command & !(1 << 10),
+    );
+    pc.poll_pci_intx_lines();
+    assert_eq!(
+        pc.interrupts
+            .borrow()
+            .pic()
+            .get_pending_vector()
+            .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
+        Some(expected_irq)
+    );
 }
 
 #[test]
