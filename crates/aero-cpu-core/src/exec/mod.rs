@@ -693,7 +693,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
 
 // ---- Tier-0 decode cache ----------------------------------------------------
 
-const TIER0_DECODE_CACHE_SIZE: usize = 64;
+const TIER0_DECODE_CACHE_SIZE: usize = 256;
 
 #[derive(Debug, Clone)]
 struct Tier0DecodeCacheEntry {
@@ -706,7 +706,6 @@ struct Tier0DecodeCacheEntry {
 #[derive(Debug)]
 struct Tier0DecodeCache {
     entries: [Option<Tier0DecodeCacheEntry>; TIER0_DECODE_CACHE_SIZE],
-    next_insert: usize,
     #[cfg(any(test, debug_assertions))]
     hits: u64,
     #[cfg(any(test, debug_assertions))]
@@ -717,7 +716,6 @@ impl Default for Tier0DecodeCache {
     fn default() -> Self {
         Self {
             entries: core::array::from_fn(|_| None),
-            next_insert: 0,
             #[cfg(any(test, debug_assertions))]
             hits: 0,
             #[cfg(any(test, debug_assertions))]
@@ -728,20 +726,42 @@ impl Default for Tier0DecodeCache {
 
 impl Tier0DecodeCache {
     #[inline]
+    fn index(rip: u64, bitness: u32) -> usize {
+        debug_assert!(TIER0_DECODE_CACHE_SIZE.is_power_of_two());
+
+        // Direct-mapped cache: hash `rip` + `bitness` into a small fixed-size
+        // table. This avoids the O(N) linear probe of a fully associative cache
+        // while still covering typical hot loops.
+        let mut x = rip
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (bitness as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+        x ^= x >> 33;
+        x as usize & (TIER0_DECODE_CACHE_SIZE - 1)
+    }
+
+    #[inline]
     fn decode(
         &mut self,
         bytes: &[u8; 15],
         rip: u64,
         bitness: u32,
     ) -> Result<aero_x86::DecodedInst, aero_x86::DecodeError> {
-        if let Some(hit) = self.entries.iter().flatten().find(|entry| {
-            entry.bitness == bitness && entry.rip == rip && entry.bytes == *bytes
-        }) {
+        let idx = Self::index(rip, bitness);
+        if let Some(hit) = &self.entries[idx] {
+            let len = hit.decoded.len as usize;
+            if hit.bitness == bitness
+                && hit.rip == rip
+                && len > 0
+                && len <= 15
+                // Self-modifying code safety: verify the instruction bytes still match.
+                && hit.bytes[..len] == bytes[..len]
+            {
             #[cfg(any(test, debug_assertions))]
             {
                 self.hits += 1;
             }
             return Ok(hit.decoded.clone());
+            }
         }
 
         #[cfg(any(test, debug_assertions))]
@@ -750,13 +770,12 @@ impl Tier0DecodeCache {
         }
 
         let decoded = aero_x86::decode(bytes, rip, bitness)?;
-        self.entries[self.next_insert] = Some(Tier0DecodeCacheEntry {
+        self.entries[idx] = Some(Tier0DecodeCacheEntry {
             bitness,
             rip,
             bytes: *bytes,
             decoded: decoded.clone(),
         });
-        self.next_insert = (self.next_insert + 1) % TIER0_DECODE_CACHE_SIZE;
         Ok(decoded)
     }
 
