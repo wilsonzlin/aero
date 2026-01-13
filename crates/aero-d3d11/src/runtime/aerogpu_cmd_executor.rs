@@ -1143,7 +1143,9 @@ impl AerogpuD3d11Executor {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("aerogpu_cmd legacy constants buffer"),
                 size: LEGACY_CONSTANTS_SIZE_BYTES,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
             {
@@ -10507,6 +10509,10 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
         self.cbuffer_scratch
             .get(&(self.stage, slot))
             .map(|scratch| (scratch.id, &scratch.buffer))
+    }
+
+    fn storage_buffer(&self, _slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        None
     }
 
     fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {

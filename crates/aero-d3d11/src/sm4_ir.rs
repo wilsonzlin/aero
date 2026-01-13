@@ -418,6 +418,7 @@ pub enum Sm4Inst {
         index: SrcOperand,
         offset: SrcOperand,
         value: SrcOperand,
+        /// Write mask from the `u#` operand (x/y/z/w).
         mask: WriteMask,
     },
     /// A decoded instruction that the IR producer does not model yet.

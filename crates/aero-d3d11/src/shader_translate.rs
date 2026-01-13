@@ -1926,7 +1926,7 @@ impl ResourceUsage {
                 BINDING_BASE_TEXTURE + slot
             ));
         }
-        if !self.textures.is_empty() {
+        if !self.textures.is_empty() || !self.srv_buffers.is_empty() {
             w.line("");
         }
         if !self.srv_buffers.is_empty() || !self.uav_buffers.is_empty() {
@@ -2166,7 +2166,7 @@ fn scan_resources(
                 index,
                 offset,
                 value,
-                ..
+                mask: _,
             } => {
                 scan_src(index)?;
                 scan_src(offset)?;

@@ -1,0 +1,240 @@
+mod common;
+
+use aero_d3d11::binding_model::BINDING_BASE_UAV;
+use aero_d3d11::{
+    parse_signatures, translate_sm4_module_to_wgsl, BufferKind, DxbcFile, FourCC, OperandModifier,
+    ShaderModel, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, UavRef,
+    WriteMask,
+};
+
+const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
+
+fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
+    let header_len = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);
+
+    let mut offsets = Vec::with_capacity(chunks.len());
+    let mut cursor = header_len;
+    for (_fourcc, data) in chunks {
+        offsets.push(cursor as u32);
+        cursor += 8 + data.len();
+    }
+    let total_size = cursor as u32;
+
+    let mut bytes = Vec::with_capacity(cursor);
+    bytes.extend_from_slice(b"DXBC");
+    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored by parser)
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved/unknown
+    bytes.extend_from_slice(&total_size.to_le_bytes());
+    bytes.extend_from_slice(&chunk_count.to_le_bytes());
+    for off in offsets {
+        bytes.extend_from_slice(&off.to_le_bytes());
+    }
+    for (fourcc, data) in chunks {
+        bytes.extend_from_slice(&fourcc.0);
+        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(data);
+    }
+    assert_eq!(bytes.len(), total_size as usize);
+    bytes
+}
+
+fn src_imm_bits(bits: [u32; 4]) -> SrcOperand {
+    SrcOperand {
+        kind: SrcKind::ImmediateF32(bits),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    }
+}
+
+#[test]
+fn compute_store_raw_writes_u32_word() {
+    pollster::block_on(async {
+        let test_name = concat!(module_path!(), "::compute_store_raw_writes_u32_word");
+
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                wgpu::Backends::PRIMARY
+            },
+            ..Default::default()
+        });
+
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            })
+            .await
+        {
+            Some(adapter) => Some(adapter),
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
+        };
+
+        let Some(adapter) = adapter else {
+            common::skip_or_panic(test_name, "wgpu: no suitable adapter found");
+            return;
+        };
+
+        let (device, queue) = match adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("compute_store_raw test device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+        {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:?})"));
+                return;
+            }
+        };
+
+        let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+        let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+        let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+                Sm4Decl::UavBuffer {
+                    slot: 0,
+                    stride: 0,
+                    kind: BufferKind::Raw,
+                },
+            ],
+            instructions: vec![
+                Sm4Inst::StoreRaw {
+                    uav: UavRef { slot: 0 },
+                    addr: src_imm_bits([0; 4]),
+                    value: src_imm_bits([0xdead_beefu32, 0, 0, 0]),
+                    mask: WriteMask::X,
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let translated =
+            translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("compute_store_raw shader"),
+            source: wgpu::ShaderSource::Wgsl(translated.wgsl.into()),
+        });
+
+        const BUF_SIZE: u64 = 16;
+        let uav = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("compute_store_raw uav buffer"),
+            size: BUF_SIZE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // Ensure deterministic initial contents.
+        queue.write_buffer(&uav, 0, &[0u8; BUF_SIZE as usize]);
+
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("compute_store_raw staging buffer"),
+            size: BUF_SIZE,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("compute_store_raw empty bgl"),
+            entries: &[],
+        });
+        let uav_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("compute_store_raw uav bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: BINDING_BASE_UAV,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("compute_store_raw pipeline layout"),
+            // The shader uses @group(2) to match the AeroGPU binding model.
+            bind_group_layouts: &[&empty_layout, &empty_layout, &uav_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("compute_store_raw pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "cs_main",
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        });
+
+        let uav_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("compute_store_raw bind group"),
+            layout: &uav_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: BINDING_BASE_UAV,
+                resource: uav.as_entire_binding(),
+            }],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("compute_store_raw encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("compute_store_raw pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(2, &uav_bg, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&uav, 0, &staging, 0, BUF_SIZE);
+        queue.submit([encoder.finish()]);
+
+        let slice = staging.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            sender.send(v).ok();
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(target_arch = "wasm32")]
+        device.poll(wgpu::Maintain::Poll);
+        receiver
+            .receive()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("wgpu: map_async dropped"))
+            .and_then(|r| r.map_err(|e| anyhow::anyhow!("wgpu: map_async failed: {e:?}")))
+            .unwrap();
+
+        let mapped = slice.get_mapped_range();
+        let got = u32::from_le_bytes(mapped[0..4].try_into().unwrap());
+        drop(mapped);
+        staging.unmap();
+
+        assert_eq!(got, 0xdead_beefu32);
+    });
+}

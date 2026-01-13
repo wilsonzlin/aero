@@ -1,12 +1,12 @@
 use aero_d3d11::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, D3D11_MAX_CONSTANT_BUFFER_SLOTS,
-    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
+    D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
 };
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, BindingKind, Builtin, DxbcFile,
+    parse_signatures, translate_sm4_module_to_wgsl, BindingKind, BufferKind, Builtin, DxbcFile,
     DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderModel,
     ShaderStage, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle,
-    TextureRef, WriteMask,
+    TextureRef, UavRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -234,6 +234,14 @@ fn src_cb(slot: u32, reg: u32) -> SrcOperand {
 
 fn src_imm(vals: [f32; 4]) -> SrcOperand {
     let bits = vals.map(f32::to_bits);
+    SrcOperand {
+        kind: SrcKind::ImmediateF32(bits),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    }
+}
+
+fn src_imm_bits(bits: [u32; 4]) -> SrcOperand {
     SrcOperand {
         kind: SrcKind::ImmediateF32(bits),
         swizzle: Swizzle::XYZW,
@@ -1845,6 +1853,48 @@ fn rejects_sampler_slot_out_of_range() {
             max
         } if max == MAX_SAMPLER_SLOTS - 1
     ));
+}
+
+#[test]
+fn translates_compute_store_raw_to_storage_buffer() {
+    // Compute shaders do not have ISGN/OSGN signatures.
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::StoreRaw {
+                uav: UavRef { slot: 0 },
+                addr: src_imm([0.0, 0.0, 0.0, 0.0]),
+                value: src_imm_bits([0xdead_beefu32, 0, 0, 0]),
+                mask: WriteMask::X,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("@compute"));
+    assert!(translated.wgsl.contains("fn cs_main"));
+    assert!(translated
+        .wgsl
+        .contains(&format!("@binding({})", BINDING_BASE_UAV)));
+    assert!(translated
+        .wgsl
+        .contains("var<storage, read_write> u0: AeroStorageBufferU32"));
+    assert!(translated.wgsl.contains("u0.data["));
 }
 
 #[test]
