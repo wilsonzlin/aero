@@ -318,13 +318,7 @@ async fn run_session_inner(
 
     tracing::info!("session opened");
 
-    let mut capture = match state.capture.open_session(tunnel_id).await {
-        Ok(capture) => capture,
-        Err(err) => {
-            tracing::warn!("failed to initialise capture: {err}");
-            None
-        }
-    };
+    let mut capture = state.capture.open_session(tunnel_id).await;
 
     let (ws_sender, mut ws_receiver) = socket.split();
 
@@ -438,23 +432,8 @@ async fn run_session_inner(
                                         state.metrics.frame_rx(frame.len());
 
                                         let ts_in = now_unix_timestamp_ns();
-                                        if let Some(capture_writer) = capture.as_mut() {
-                                            match capture_writer
-                                                .record_guest_to_proxy(ts_in, frame)
-                                                .await
-                                            {
-                                                Ok(true) => state.metrics.capture_frame(frame.len()),
-                                                Ok(false) => state
-                                                    .metrics
-                                                    .capture_frame_dropped(frame.len()),
-                                                Err(err) => {
-                                                    state.metrics.capture_frame_dropped(frame.len());
-                                                    tracing::warn!(
-                                                        err = %err,
-                                                        "failed to write capture packet (guest->proxy)"
-                                                    );
-                                                }
-                                            }
+                                        if let Some(capture) = capture.as_mut() {
+                                            capture.record_guest_to_proxy(ts_in, frame).await;
                                         }
 
                                         let actions = stack.process_outbound_ethernet(frame, now_ms);
@@ -773,18 +752,8 @@ async fn process_actions(
                 };
 
                 let ts_out = now_unix_timestamp_ns();
-                if let Some(capture_writer) = capture.as_mut() {
-                    match capture_writer.record_proxy_to_guest(ts_out, &frame).await {
-                        Ok(true) => state.metrics.capture_frame(frame.len()),
-                        Ok(false) => state.metrics.capture_frame_dropped(frame.len()),
-                        Err(err) => {
-                            state.metrics.capture_frame_dropped(frame.len());
-                            tracing::warn!(
-                                err = %err,
-                                "failed to write capture packet (proxy->guest)"
-                            );
-                        }
-                    }
+                if let Some(capture) = capture.as_mut() {
+                    capture.record_proxy_to_guest(ts_out, &frame).await;
                 }
                 if let Err(exceeded) =
                     send_ws_message(ws_out_tx, Message::Binary(wire), quotas).await

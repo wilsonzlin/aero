@@ -85,11 +85,11 @@ struct MetricsInner {
     bytes_tx_total: AtomicU64,
     frames_dropped_total: AtomicU64,
 
-    // Capture (per-session PCAPNG)
-    capture_frames_total: AtomicU64,
+    // Capture (pcapng)
     capture_bytes_total: AtomicU64,
+    capture_frames_total: AtomicU64,
     capture_frames_dropped_total: AtomicU64,
-    capture_bytes_dropped_total: AtomicU64,
+    capture_errors_total: AtomicU64,
 
     // Policy
     policy_denied_total: AtomicU64,
@@ -143,10 +143,10 @@ impl Metrics {
                 bytes_rx_total: AtomicU64::new(0),
                 bytes_tx_total: AtomicU64::new(0),
                 frames_dropped_total: AtomicU64::new(0),
-                capture_frames_total: AtomicU64::new(0),
                 capture_bytes_total: AtomicU64::new(0),
+                capture_frames_total: AtomicU64::new(0),
                 capture_frames_dropped_total: AtomicU64::new(0),
-                capture_bytes_dropped_total: AtomicU64::new(0),
+                capture_errors_total: AtomicU64::new(0),
                 policy_denied_total: AtomicU64::new(0),
                 tcp_conns_active: AtomicU64::new(0),
                 tcp_connect_fail_total: AtomicU64::new(0),
@@ -363,22 +363,28 @@ impl Metrics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn capture_frame(&self, bytes: usize) {
+    pub(crate) fn capture_bytes_written(&self, bytes: u64) {
+        self.inner
+            .capture_bytes_total
+            .fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub(crate) fn capture_frame_written(&self) {
         self.inner
             .capture_frames_total
             .fetch_add(1, Ordering::Relaxed);
-        self.inner
-            .capture_bytes_total
-            .fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
-    pub fn capture_frame_dropped(&self, bytes: usize) {
+    pub(crate) fn capture_frame_dropped(&self) {
         self.inner
             .capture_frames_dropped_total
             .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn capture_error(&self) {
         self.inner
-            .capture_bytes_dropped_total
-            .fetch_add(bytes as u64, Ordering::Relaxed);
+            .capture_errors_total
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn policy_denied(&self) {
@@ -454,16 +460,13 @@ impl Metrics {
         let bytes_rx_total = self.inner.bytes_rx_total.load(Ordering::Relaxed);
         let bytes_tx_total = self.inner.bytes_tx_total.load(Ordering::Relaxed);
         let frames_dropped_total = self.inner.frames_dropped_total.load(Ordering::Relaxed);
-        let capture_frames_total = self.inner.capture_frames_total.load(Ordering::Relaxed);
         let capture_bytes_total = self.inner.capture_bytes_total.load(Ordering::Relaxed);
+        let capture_frames_total = self.inner.capture_frames_total.load(Ordering::Relaxed);
         let capture_frames_dropped_total = self
             .inner
             .capture_frames_dropped_total
             .load(Ordering::Relaxed);
-        let capture_bytes_dropped_total = self
-            .inner
-            .capture_bytes_dropped_total
-            .load(Ordering::Relaxed);
+        let capture_errors_total = self.inner.capture_errors_total.load(Ordering::Relaxed);
         let policy_denied_total = self.inner.policy_denied_total.load(Ordering::Relaxed);
         let tcp_conns_active = self.inner.tcp_conns_active.load(Ordering::Relaxed);
         let tcp_connect_fail_total = self.inner.tcp_connect_fail_total.load(Ordering::Relaxed);
@@ -558,18 +561,14 @@ impl Metrics {
         push_counter(&mut out, "l2_bytes_tx_total", bytes_tx_total);
         push_counter(&mut out, "l2_frames_dropped_total", frames_dropped_total);
 
-        push_counter(&mut out, "l2_capture_frames_total", capture_frames_total);
         push_counter(&mut out, "l2_capture_bytes_total", capture_bytes_total);
+        push_counter(&mut out, "l2_capture_frames_total", capture_frames_total);
         push_counter(
             &mut out,
             "l2_capture_frames_dropped_total",
             capture_frames_dropped_total,
         );
-        push_counter(
-            &mut out,
-            "l2_capture_bytes_dropped_total",
-            capture_bytes_dropped_total,
-        );
+        push_counter(&mut out, "l2_capture_errors_total", capture_errors_total);
 
         push_counter(&mut out, "l2_policy_denied_total", policy_denied_total);
 

@@ -32,8 +32,8 @@ fn test_config(bind_addr: SocketAddr, shutdown_grace: Duration) -> ProxyConfig {
         dns_default_ttl_secs: 60,
         dns_max_ttl_secs: 300,
         capture_dir: None,
-        capture_max_bytes: 64 * 1024 * 1024,
-        capture_flush_interval: Duration::from_millis(1000),
+        capture_max_bytes: 0,
+        capture_flush_interval: Some(Duration::from_millis(1000)),
         security: SecurityConfig {
             open: true,
             ..Default::default()

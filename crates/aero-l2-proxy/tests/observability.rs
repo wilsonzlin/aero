@@ -21,6 +21,21 @@ struct TestServer {
 
 impl TestServer {
     async fn start(capture_dir: Option<PathBuf>, ping_interval: Option<Duration>) -> Self {
+        Self::start_with_capture(
+            capture_dir,
+            0,
+            Some(Duration::from_millis(1000)),
+            ping_interval,
+        )
+        .await
+    }
+
+    async fn start_with_capture(
+        capture_dir: Option<PathBuf>,
+        capture_max_bytes: u64,
+        capture_flush_interval: Option<Duration>,
+        ping_interval: Option<Duration>,
+    ) -> Self {
         let stack_defaults = StackConfig::default();
         let cfg = ProxyConfig {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
@@ -41,8 +56,8 @@ impl TestServer {
             dns_default_ttl_secs: 60,
             dns_max_ttl_secs: 300,
             capture_dir,
-            capture_max_bytes: 64 * 1024 * 1024,
-            capture_flush_interval: Duration::from_millis(1000),
+            capture_max_bytes,
+            capture_flush_interval,
             security: SecurityConfig {
                 open: true,
                 ..Default::default()
@@ -317,8 +332,8 @@ async fn upgrade_rejection_metrics_increment_on_missing_origin() {
         dns_default_ttl_secs: 60,
         dns_max_ttl_secs: 300,
         capture_dir: None,
-        capture_max_bytes: 64 * 1024 * 1024,
-        capture_flush_interval: Duration::from_millis(1000),
+        capture_max_bytes: 0,
+        capture_flush_interval: Some(Duration::from_millis(1000)),
         security: SecurityConfig {
             open: false,
             allowed_origins: AllowedOrigins::Any,
@@ -384,8 +399,8 @@ async fn upgrade_rejection_metrics_increment_on_origin_not_allowed() {
         dns_default_ttl_secs: 60,
         dns_max_ttl_secs: 300,
         capture_dir: None,
-        capture_max_bytes: 64 * 1024 * 1024,
-        capture_flush_interval: Duration::from_millis(1000),
+        capture_max_bytes: 0,
+        capture_flush_interval: Some(Duration::from_millis(1000)),
         security: SecurityConfig {
             open: false,
             allowed_origins: AllowedOrigins::List(vec!["https://allowed.test".to_string()]),
@@ -458,8 +473,8 @@ async fn upgrade_rejection_metrics_increment_on_missing_host() {
         dns_default_ttl_secs: 60,
         dns_max_ttl_secs: 300,
         capture_dir: None,
-        capture_max_bytes: 64 * 1024 * 1024,
-        capture_flush_interval: Duration::from_millis(1000),
+        capture_max_bytes: 0,
+        capture_flush_interval: Some(Duration::from_millis(1000)),
         security: SecurityConfig {
             open: true,
             allowed_hosts: vec!["allowed.test".to_string()],
@@ -586,6 +601,75 @@ async fn capture_creates_non_empty_file() {
                     "unexpected capture filename: {name}"
                 );
                 break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn capture_max_bytes_caps_file_and_reports_drops() {
+    let dir = tempfile::tempdir().unwrap();
+    let max_bytes = 250u64;
+    let server =
+        TestServer::start_with_capture(Some(dir.path().to_path_buf()), max_bytes, None, None).await;
+
+    let mut req = server.ws_url().into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        tokio_tungstenite::tungstenite::http::HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let (mut ws_sender, _ws_receiver) = ws.split();
+
+    // Send multiple frames so the capture session is forced to drop once it reaches the cap.
+    let frame = vec![0u8; 60];
+    let wire = aero_l2_protocol::encode_frame(&frame).unwrap();
+    for _ in 0..10 {
+        ws_sender
+            .send(tokio_tungstenite::tungstenite::Message::Binary(
+                wire.clone().into(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    let _ = ws_sender
+        .send(tokio_tungstenite::tungstenite::Message::Close(None))
+        .await;
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let body = reqwest::get(server.http_url("/metrics"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            let dropped = parse_metric(&body, "l2_capture_frames_dropped_total").unwrap_or(0);
+            if dropped >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some((_path, len)) = find_capture_file(dir.path()) {
+                if len > 0 {
+                    assert!(
+                        len <= max_bytes,
+                        "expected capture file to be capped at {max_bytes} bytes, got {len}"
+                    );
+                    break;
+                }
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

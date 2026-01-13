@@ -55,6 +55,9 @@ fn reset_common_env() -> Vec<EnvVarGuard> {
         EnvVarGuard::unset("AERO_L2_OPEN"),
         EnvVarGuard::unset("AERO_L2_TCP_SEND_BUFFER"),
         EnvVarGuard::unset("AERO_L2_WS_SEND_BUFFER"),
+        EnvVarGuard::unset("AERO_L2_CAPTURE_DIR"),
+        EnvVarGuard::unset("AERO_L2_CAPTURE_MAX_BYTES"),
+        EnvVarGuard::unset("AERO_L2_CAPTURE_FLUSH_INTERVAL_MS"),
     ]
 }
 
