@@ -217,6 +217,9 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 					if s.quota != nil {
 						sessionID = s.quota.ID()
 					}
+					s.incMetric(metrics.WebRTCUDPDatagramsIn)
+					s.incMetric(metrics.WebRTCUDPDropped)
+					s.incMetric(metrics.WebRTCUDPDroppedOversized)
 					slog.Warn("rejecting oversized udp datachannel message",
 						"session_id", sessionID,
 						"msg_bytes", len(msg.Data),
