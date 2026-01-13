@@ -3,11 +3,13 @@ use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 
 #[test]
 fn pc_platform_tick_advances_acpi_pm_timer() {
-    // Disable UHCI in this test so `PcPlatform::tick` stays O(1) (no per-millisecond loop).
+    // Disable USB controllers in this test so `PcPlatform::tick` stays O(1) (no per-millisecond
+    // loop).
     let mut pc = PcPlatform::new_with_config(
         2 * 1024 * 1024,
         PcPlatformConfig {
             enable_uhci: false,
+            enable_ehci: false,
             enable_ahci: false,
             ..Default::default()
         },
