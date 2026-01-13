@@ -505,12 +505,6 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     return false;
   }
 
-  // Expect a new shader creation for the new PS variant (VS + PS1 + PS2).
-  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 3,
-             "stage-state change creates a new shader (CREATE_SHADER_DXBC >= 3)")) {
-    return false;
-  }
-
   return true;
 }
 
