@@ -575,6 +575,7 @@ func (b *l2Bridge) sanitizeStringForLog(msg string) string {
 	// value in advance (e.g. when L2_BACKEND_WS_URL embeds a static token).
 	msg = redactQueryParamValue(msg, "token")
 	msg = redactQueryParamValue(msg, "apiKey")
+	msg = redactQueryParamValue(msg, "aero_session")
 
 	return msg
 }

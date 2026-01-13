@@ -48,3 +48,15 @@ func TestL2Bridge_SanitizeStringForLog_RedactsQueryTokenEvenWhenValueUnknown(t *
 		t.Fatalf("expected token query param to be redacted: %q", s)
 	}
 }
+
+func TestL2Bridge_SanitizeStringForLog_RedactsAeroSessionCookieEvenWhenValueUnknown(t *testing.T) {
+	b := &l2Bridge{}
+	msg := "Cookie: aero_session=sess123; other=ok"
+	s := b.sanitizeStringForLog(msg)
+	if strings.Contains(s, "sess123") {
+		t.Fatalf("sanitized message still contains aero_session cookie value: %q", s)
+	}
+	if !strings.Contains(s, "aero_session=<redacted>") {
+		t.Fatalf("expected aero_session cookie value to be redacted: %q", s)
+	}
+}
