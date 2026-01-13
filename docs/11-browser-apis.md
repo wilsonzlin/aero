@@ -1119,6 +1119,11 @@ function runEmulationLoop() {
 > `{ type: "ring.reset" }` to the `AudioWorkletNode.port` to discard any buffered playback backlog
 > (`readFrameIndex := writeFrameIndex`). This is used by `createAudioOutput({ discardOnResume: true })`
 > to avoid stale latency after `AudioContext` suspend/resume cycles.
+>
+> The canonical Aero worklet can also post `type: "underrun"` messages for debugging/telemetry, but
+> these are disabled by default (and rate-limited when enabled) to avoid overhead under persistent
+> underrun. See `CreateAudioOutputOptions.sendUnderrunMessages` /
+> `CreateAudioOutputOptions.underrunMessageIntervalMs` in `web/src/platform/audio.ts`.
 
 ### Processor Registration
 
