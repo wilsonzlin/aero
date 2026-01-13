@@ -1126,14 +1126,16 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     assert_eq!(header_type, VIRTIO_BLK.header_type);
 
     // Validate the vendor-specific capability list layout matches the virtio-pci contract.
+    //
+    // Note: the virtio-pci device also exposes standard PCI capabilities (e.g. MSI-X). Filter the
+    // capability list to just the vendor-specific descriptors, which carry the virtio register
+    // window layout contract.
     let mut caps: Vec<Vec<u8>> = Vec::new();
     let mut cap_ptr = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x34);
     let mut guard = 0usize;
     while cap_ptr != 0 {
         guard += 1;
         assert!(guard <= 16, "capability list too long or cyclic");
-        let cap_id = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr);
-        assert_eq!(cap_id, 0x09, "unexpected capability ID at {cap_ptr:#x}");
         let next = read_cfg_u8(
             &mut pc,
             bdf.bus,
@@ -1141,21 +1143,24 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
             bdf.function,
             cap_ptr.wrapping_add(1),
         );
-        let cap_len = read_cfg_u8(
-            &mut pc,
-            bdf.bus,
-            bdf.device,
-            bdf.function,
-            cap_ptr.wrapping_add(2),
-        );
-        assert!(cap_len >= 2, "invalid capability length");
-        let payload_len = usize::from(cap_len - 2);
-        let mut payload = vec![0u8; payload_len];
-        for (i, b) in payload.iter_mut().enumerate() {
-            let off = cap_ptr.wrapping_add(2).wrapping_add(i as u8);
-            *b = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, off);
+        let cap_id = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr);
+        if cap_id == 0x09 {
+            let cap_len = read_cfg_u8(
+                &mut pc,
+                bdf.bus,
+                bdf.device,
+                bdf.function,
+                cap_ptr.wrapping_add(2),
+            );
+            assert!(cap_len >= 2, "invalid vendor-specific capability length");
+            let payload_len = usize::from(cap_len - 2);
+            let mut payload = vec![0u8; payload_len];
+            for (i, b) in payload.iter_mut().enumerate() {
+                let off = cap_ptr.wrapping_add(2).wrapping_add(i as u8);
+                *b = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, off);
+            }
+            caps.push(payload);
         }
-        caps.push(payload);
         cap_ptr = next;
     }
     assert_eq!(caps.len(), 4);
