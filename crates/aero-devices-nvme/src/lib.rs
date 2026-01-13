@@ -1438,9 +1438,17 @@ impl NvmeController {
             return (NvmeStatus::INVALID_NS, 0);
         }
 
+        const DSM_ATTR_INTEGRAL_DATASET_FOR_READ: u32 = 1 << 0;
+        const DSM_ATTR_INTEGRAL_DATASET_FOR_WRITE: u32 = 1 << 1;
         const DSM_ATTR_DEALLOCATE: u32 = 1 << 2;
-        if cmd.cdw11 != DSM_ATTR_DEALLOCATE {
-            // Only "Deallocate" is supported for now. Reject any other attribute combinations.
+        const DSM_ATTR_KNOWN_MASK: u32 = DSM_ATTR_INTEGRAL_DATASET_FOR_READ
+            | DSM_ATTR_INTEGRAL_DATASET_FOR_WRITE
+            | DSM_ATTR_DEALLOCATE;
+
+        // We currently only act on Deallocate, but accept the "integral dataset" hints as they do
+        // not require any backend support (treated as no-op hints).
+        if cmd.cdw11 & !DSM_ATTR_KNOWN_MASK != 0 || cmd.cdw11 & DSM_ATTR_DEALLOCATE == 0 {
+            // Reject unknown attributes, or DSM commands that do not request deallocation.
             return (NvmeStatus::INVALID_FIELD, 0);
         }
 
@@ -3203,6 +3211,21 @@ mod tests {
         assert_eq!(cqe.cid, 0x11);
         assert_eq!(cqe.status & !0x1, 0);
 
+        // Also accept additional DSM "integral dataset" hint bits alongside Deallocate.
+        let mut cmd = build_command(0x09); // DSM
+        set_cid(&mut cmd, 0x14);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, dsm_ranges);
+        set_cdw10(&mut cmd, 0); // NR=0 => 1 range
+        set_cdw11(&mut cmd, (1 << 2) | (1 << 1) | (1 << 0)); // Deallocate + hint bits
+        mem.write_physical(io_sq + 2 * 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 3);
+        ctrl.process(&mut mem);
+
+        let cqe = read_cqe(&mut mem, io_cq + 2 * 16);
+        assert_eq!(cqe.cid, 0x14);
+        assert_eq!(cqe.status & !0x1, 0);
+
         // Read back sectors 0 and 2 to ensure they are unchanged.
         let mut cmd = build_command(0x02); // READ sector 0
         set_cid(&mut cmd, 0x12);
@@ -3211,8 +3234,8 @@ mod tests {
         set_cdw10(&mut cmd, 0);
         set_cdw11(&mut cmd, 0);
         set_cdw12(&mut cmd, 0);
-        mem.write_physical(io_sq + 2 * 64, &cmd);
-        ctrl.mmio_write(0x1008, 4, 3);
+        mem.write_physical(io_sq + 3 * 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 4);
         ctrl.process(&mut mem);
 
         let mut out0 = vec![0u8; sector_size];
@@ -3226,8 +3249,8 @@ mod tests {
         set_cdw10(&mut cmd, 2);
         set_cdw11(&mut cmd, 0);
         set_cdw12(&mut cmd, 0);
-        mem.write_physical(io_sq + 3 * 64, &cmd);
-        ctrl.mmio_write(0x1008, 4, 4);
+        mem.write_physical(io_sq + 4 * 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 5);
         ctrl.process(&mut mem);
 
         let mut out2 = vec![0u8; sector_size];
