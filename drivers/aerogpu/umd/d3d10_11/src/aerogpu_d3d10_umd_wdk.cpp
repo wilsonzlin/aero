@@ -5553,14 +5553,15 @@ HRESULT APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
       }
     }
 
-    if (!filled) {
-      return E_INVALIDARG;
-    }
-
-    const HRESULT hr =
-        aerogpu::d3d10_11::ValidateAndConvertBlendDesc(rts, AEROGPU_MAX_RENDER_TARGETS, alpha_to_coverage, &base);
-    if (FAILED(hr)) {
-      return hr;
+    // Some WDK header vintages wrap the blend descriptor differently. If we
+    // cannot extract a recognized descriptor variant, fall back to D3D10
+    // defaults instead of failing CreateBlendState.
+    if (filled) {
+      const HRESULT hr =
+          aerogpu::d3d10_11::ValidateAndConvertBlendDesc(rts, AEROGPU_MAX_RENDER_TARGETS, alpha_to_coverage, &base);
+      if (FAILED(hr)) {
+        return hr;
+      }
     }
   }
 
