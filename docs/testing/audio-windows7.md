@@ -212,6 +212,16 @@ Suggested pass criteria (rule-of-thumb):
 - `underrunCount` should be `0`, or at least stop increasing after startup.
   - If you see a small non-zero value at startup, treat up to **128 underrun frames** (one render quantum) as “tolerable” but still worth tracking.
 
+Tuning notes (latency vs robustness):
+
+- The host-side Web Audio output is created via `createAudioOutput` (`web/src/platform/audio.ts`), which exposes a few knobs that
+  are useful when iterating on this smoke test:
+  - `startupPrefillFrames`: pre-fills silence at startup (helps avoid startup underrun spam, but adds a small amount of initial latency).
+  - `discardOnResume`: discards buffered playback frames on `AudioContext` resume to avoid resuming with “stale” audio latency after
+    tab backgrounding/suspensions.
+  - `ringBufferFrames` / `latencyHint`: increase robustness at the cost of higher buffering/latency.
+- See [`docs/06-audio-subsystem.md`](../06-audio-subsystem.md#createaudiooutput-options-latency-vs-robustness) for details and suggested defaults (demo vs VM mode).
+
 Where to look:
 
 - If the web UI has an audio status box/HUD, record the values shown:
