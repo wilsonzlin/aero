@@ -33,3 +33,5 @@ memory = { path = "../memory" }
 pretty_assertions = "1"
 aero-usb = { path = "../aero-usb" }
 aero-edid = { path = "../aero-edid" }
+emulator = { path = "../emulator" }
+aero-protocol = { path = "../../emulator/protocol" }

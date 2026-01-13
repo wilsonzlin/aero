@@ -455,9 +455,6 @@ impl AeroGpuExecutor {
             match self.cfg.fence_completion {
                 AeroGpuFenceCompletionMode::Immediate => {
                     let mut vsync_present = false;
-                    // Most submissions are regular render work; avoid scanning the command stream
-                    // unless the KMD marked this submission as containing a PRESENT.
-                    let wants_present = (desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT) != 0;
                     let cmd_stream_ok = desc.cmd_gpa != 0
                         && desc.cmd_size_bytes != 0
                         && cmd_stream_header.is_some()
@@ -467,7 +464,13 @@ impl AeroGpuExecutor {
                     if decode_errors.is_empty() && cmd_stream_ok {
                         self.software.execute_submission(regs, mem, &desc);
                     }
-                    if wants_present && cmd_stream_ok {
+                    // Determine whether this submission contains a vsynced PRESENT command.
+                    //
+                    // Do not rely solely on `AEROGPU_SUBMIT_FLAG_PRESENT`: the contract we need for
+                    // Win7 DWM pacing is driven by the *command stream contents* (PRESENT with the
+                    // VSYNC flag), and we must be robust even if the submit-level hint bit is
+                    // missing.
+                    if cmd_stream_ok {
                         let scan_result = if cmd_stream.is_empty() {
                             cmd_stream_has_vsync_present(mem, desc.cmd_gpa, desc.cmd_size_bytes)
                         } else {
@@ -543,6 +546,7 @@ impl AeroGpuExecutor {
                             regs.irq_status |= irq_bits::ERROR;
                         }
 
+                        let wants_present = (desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT) != 0;
                         if wants_present {
                             if let Some(scanout) = self.backend.read_scanout_rgba8(0) {
                                 if let Err(err) = write_scanout0_rgba8(regs, mem, &scanout) {
