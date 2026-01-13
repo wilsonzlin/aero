@@ -16,19 +16,20 @@ fn read_u64_le(r: &mut impl Read) -> u64 {
 #[derive(Default)]
 struct CaptureTarget {
     ram: Vec<u8>,
-    cpus: Option<Vec<snapshot::VcpuSnapshot>>,
     mmus: Option<Vec<snapshot::VcpuMmuSnapshot>>,
 }
 
 impl snapshot::SnapshotTarget for CaptureTarget {
     fn restore_cpu_state(&mut self, _state: snapshot::CpuState) {}
 
-    fn restore_cpu_states(&mut self, states: Vec<snapshot::VcpuSnapshot>) -> snapshot::Result<()> {
-        self.cpus = Some(states);
+    fn restore_cpu_states(&mut self, _states: Vec<snapshot::VcpuSnapshot>) -> snapshot::Result<()> {
         Ok(())
     }
 
-    fn restore_mmu_state(&mut self, _state: snapshot::MmuState) {}
+    fn restore_mmu_state(&mut self, _state: snapshot::MmuState) {
+        panic!("restore_mmu_state should not be called for this test");
+    }
+
     fn restore_mmu_states(
         &mut self,
         states: Vec<snapshot::VcpuMmuSnapshot>,
@@ -45,27 +46,16 @@ impl snapshot::SnapshotTarget for CaptureTarget {
         self.ram.len()
     }
 
-    fn write_ram(&mut self, offset: u64, data: &[u8]) -> snapshot::Result<()> {
-        let offset = usize::try_from(offset)
-            .map_err(|_| snapshot::SnapshotError::Corrupt("ram write offset overflow"))?;
-        let end = offset
-            .checked_add(data.len())
-            .ok_or(snapshot::SnapshotError::Corrupt(
-                "ram write offset overflow",
-            ))?;
-        if end > self.ram.len() {
-            return Err(snapshot::SnapshotError::Corrupt("ram write out of range"));
-        }
-        self.ram[offset..end].copy_from_slice(data);
+    fn write_ram(&mut self, _offset: u64, _data: &[u8]) -> snapshot::Result<()> {
         Ok(())
     }
 }
 
-struct MinimalSource {
+struct TwoCpuSource {
     ram: Vec<u8>,
 }
 
-impl snapshot::SnapshotSource for MinimalSource {
+impl snapshot::SnapshotSource for TwoCpuSource {
     fn snapshot_meta(&mut self) -> snapshot::SnapshotMeta {
         snapshot::SnapshotMeta::default()
     }
@@ -97,11 +87,17 @@ impl snapshot::SnapshotSource for MinimalSource {
         vec![
             snapshot::VcpuMmuSnapshot {
                 apic_id: 0,
-                mmu: snapshot::MmuState::default(),
+                mmu: snapshot::MmuState {
+                    cr3: 0xAAAA,
+                    ..snapshot::MmuState::default()
+                },
             },
             snapshot::VcpuMmuSnapshot {
                 apic_id: 1,
-                mmu: snapshot::MmuState::default(),
+                mmu: snapshot::MmuState {
+                    cr3: 0xBBBB,
+                    ..snapshot::MmuState::default()
+                },
             },
         ]
     }
@@ -118,16 +114,7 @@ impl snapshot::SnapshotSource for MinimalSource {
         self.ram.len()
     }
 
-    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> snapshot::Result<()> {
-        let offset = usize::try_from(offset)
-            .map_err(|_| snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
-        let end = offset
-            .checked_add(buf.len())
-            .ok_or(snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
-        if end > self.ram.len() {
-            return Err(snapshot::SnapshotError::Corrupt("ram read out of range"));
-        }
-        buf.copy_from_slice(&self.ram[offset..end]);
+    fn read_ram(&self, _offset: u64, _buf: &mut [u8]) -> snapshot::Result<()> {
         Ok(())
     }
 
@@ -137,74 +124,8 @@ impl snapshot::SnapshotSource for MinimalSource {
 }
 
 #[test]
-fn restore_snapshot_sorts_cpus_by_apic_id_before_passing_to_target() {
-    let mut source = MinimalSource { ram: vec![0u8; 16] };
-    let mut cursor = Cursor::new(Vec::new());
-    snapshot::save_snapshot(&mut cursor, &mut source, snapshot::SaveOptions::default()).unwrap();
-    let mut bytes = cursor.into_inner();
-
-    // Rewrite the CPUS section payload with the same entries but in reverse order.
-    let (cpus_off, cpus_len) = {
-        let mut r = Cursor::new(bytes.as_slice());
-        let index = snapshot::inspect_snapshot(&mut r).expect("snapshot should be inspectable");
-        let cpus = index
-            .sections
-            .iter()
-            .find(|s| s.id == snapshot::SectionId::CPUS)
-            .expect("snapshot should contain a CPUS section");
-        (cpus.offset, cpus.len)
-    };
-
-    let entries = {
-        let mut r = Cursor::new(bytes.as_slice());
-        r.seek(SeekFrom::Start(cpus_off))
-            .expect("seek to CPUS payload");
-
-        let mut limited = r.take(cpus_len);
-        let count = read_u32_le(&mut limited) as usize;
-        let mut entries = Vec::with_capacity(count.min(64));
-        for _ in 0..count {
-            let entry_len = read_u64_le(&mut limited) as usize;
-            let mut entry = vec![0u8; entry_len];
-            limited.read_exact(&mut entry).expect("read entry bytes");
-            entries.push(entry);
-        }
-        entries
-    };
-
-    let mut rewritten = Vec::new();
-    rewritten.extend_from_slice(&(entries.len() as u32).to_le_bytes());
-    for entry in entries.into_iter().rev() {
-        rewritten.extend_from_slice(&(entry.len() as u64).to_le_bytes());
-        rewritten.extend_from_slice(&entry);
-    }
-    assert_eq!(
-        u64::try_from(rewritten.len()).unwrap(),
-        cpus_len,
-        "rewriting CPUS section should not change the payload length"
-    );
-
-    let off = usize::try_from(cpus_off).expect("CPUS offset should fit in usize");
-    let len = usize::try_from(cpus_len).expect("CPUS len should fit in usize");
-    bytes[off..off + len].copy_from_slice(&rewritten);
-
-    let mut target = CaptureTarget {
-        ram: vec![0u8; 16],
-        cpus: None,
-        mmus: None,
-    };
-    snapshot::restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap();
-
-    let cpus = target
-        .cpus
-        .expect("snapshot restore target did not receive CPUS section");
-    let apic_ids: Vec<u32> = cpus.iter().map(|c| c.apic_id).collect();
-    assert_eq!(apic_ids, vec![0, 1]);
-}
-
-#[test]
 fn restore_snapshot_sorts_mmus_by_apic_id_before_passing_to_target() {
-    let mut source = MinimalSource { ram: vec![0u8; 16] };
+    let mut source = TwoCpuSource { ram: vec![0u8; 0] };
     let mut cursor = Cursor::new(Vec::new());
     snapshot::save_snapshot(&mut cursor, &mut source, snapshot::SaveOptions::default()).unwrap();
     let mut bytes = cursor.into_inner();
@@ -255,8 +176,7 @@ fn restore_snapshot_sorts_mmus_by_apic_id_before_passing_to_target() {
     bytes[off..off + len].copy_from_slice(&rewritten);
 
     let mut target = CaptureTarget {
-        ram: vec![0u8; 16],
-        cpus: None,
+        ram: vec![],
         mmus: None,
     };
     snapshot::restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap();
@@ -266,4 +186,76 @@ fn restore_snapshot_sorts_mmus_by_apic_id_before_passing_to_target() {
         .expect("snapshot restore target did not receive MMUS section");
     let apic_ids: Vec<u32> = mmus.iter().map(|m| m.apic_id).collect();
     assert_eq!(apic_ids, vec![0, 1]);
+    assert_eq!(mmus[0].mmu.cr3, 0xAAAA);
+    assert_eq!(mmus[1].mmu.cr3, 0xBBBB);
+}
+
+fn push_section(
+    dst: &mut Vec<u8>,
+    id: snapshot::SectionId,
+    version: u16,
+    flags: u16,
+    payload: &[u8],
+) {
+    dst.extend_from_slice(&id.0.to_le_bytes());
+    dst.extend_from_slice(&version.to_le_bytes());
+    dst.extend_from_slice(&flags.to_le_bytes());
+    dst.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+    dst.extend_from_slice(payload);
+}
+
+#[test]
+fn restore_legacy_cpus_plus_single_mmu_replica_calls_restore_mmu_states() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(snapshot::SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&snapshot::SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(snapshot::SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut cpus_payload = Vec::new();
+    cpus_payload.extend_from_slice(&2u32.to_le_bytes());
+    for apic_id in [0u32, 1u32] {
+        let vcpu = snapshot::VcpuSnapshot {
+            apic_id,
+            cpu: snapshot::CpuState::default(),
+            internal_state: Vec::new(),
+        };
+        let mut entry = Vec::new();
+        vcpu.encode_v2(&mut entry).unwrap();
+        cpus_payload.extend_from_slice(&(entry.len() as u64).to_le_bytes());
+        cpus_payload.extend_from_slice(&entry);
+    }
+    push_section(&mut bytes, snapshot::SectionId::CPUS, 2, 0, &cpus_payload);
+
+    let mmu = snapshot::MmuState {
+        cr3: 0xDEAD_BEEF,
+        ..snapshot::MmuState::default()
+    };
+    let mut mmu_payload = Vec::new();
+    mmu.encode_v2(&mut mmu_payload).unwrap();
+    push_section(&mut bytes, snapshot::SectionId::MMU, 2, 0, &mmu_payload);
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(snapshot::RamMode::Full as u8);
+    ram_payload.push(snapshot::Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+    push_section(&mut bytes, snapshot::SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = CaptureTarget {
+        ram: vec![],
+        mmus: None,
+    };
+    snapshot::restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap();
+
+    let mmus = target
+        .mmus
+        .expect("snapshot restore target did not receive MMU state list");
+    let apic_ids: Vec<u32> = mmus.iter().map(|m| m.apic_id).collect();
+    assert_eq!(apic_ids, vec![0, 1]);
+    assert_eq!(mmus[0].mmu.cr3, 0xDEAD_BEEF);
+    assert_eq!(mmus[1].mmu.cr3, 0xDEAD_BEEF);
 }

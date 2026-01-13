@@ -5,7 +5,7 @@ use std::io::Cursor;
 use aero_snapshot::{
     save_snapshot, Compression, CpuMode, CpuState, DeviceId, DeviceState, DiskOverlayRef,
     DiskOverlayRefs, MmuState, RamMode, RamWriteOptions, SaveOptions, SegmentState, SnapshotMeta,
-    SnapshotSource, VcpuSnapshot,
+    SnapshotSource, VcpuMmuSnapshot, VcpuSnapshot,
 };
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 
@@ -39,6 +39,16 @@ impl SnapshotSource for RandomOrderSource {
 
     fn mmu_state(&self) -> MmuState {
         self.mmu.clone()
+    }
+
+    fn mmu_states(&self) -> Vec<VcpuMmuSnapshot> {
+        self.cpus
+            .iter()
+            .map(|cpu| VcpuMmuSnapshot {
+                apic_id: cpu.apic_id,
+                mmu: self.mmu.clone(),
+            })
+            .collect()
     }
 
     fn device_states(&self) -> Vec<DeviceState> {

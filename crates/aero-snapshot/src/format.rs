@@ -14,7 +14,8 @@ impl SectionId {
     pub const RAM: SectionId = SectionId(6);
     /// Multi-vCPU CPU state. Newer snapshots may use this instead of `CPU`.
     pub const CPUS: SectionId = SectionId(7);
-    /// Multi-vCPU MMU state. Newer snapshots may use this instead of `MMU`.
+    /// Multi-vCPU MMU state. Newer snapshots may use this instead of `MMU` when multiple CPUs are
+    /// present.
     pub const MMUS: SectionId = SectionId(8);
 
     pub fn name(self) -> Option<&'static str> {

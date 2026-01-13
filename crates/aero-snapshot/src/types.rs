@@ -653,6 +653,18 @@ pub struct VcpuMmuSnapshot {
 }
 
 impl VcpuMmuSnapshot {
+    pub fn encode_v1<W: Write>(&self, w: &mut W) -> Result<()> {
+        w.write_u32_le(self.apic_id)?;
+        self.mmu.encode_v1(w)?;
+        Ok(())
+    }
+
+    pub fn decode_v1<R: Read>(r: &mut R) -> Result<Self> {
+        let apic_id = r.read_u32_le()?;
+        let mmu = MmuState::decode_v1(r)?;
+        Ok(Self { apic_id, mmu })
+    }
+
     pub fn encode_v2<W: Write>(&self, w: &mut W) -> Result<()> {
         w.write_u32_le(self.apic_id)?;
         self.mmu.encode_v2(w)?;
