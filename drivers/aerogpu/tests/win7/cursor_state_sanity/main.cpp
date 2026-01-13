@@ -295,6 +295,9 @@ static int RunCursorStateSanity(int argc, char** argv) {
     aerogpu_test::PrintfStdout(
         "Moves the mouse cursor, sets a custom cursor shape, and queries the KMD cursor state via a driver-private "
         "escape.");
+    aerogpu_test::PrintfStdout(
+        "When run with --json, also writes cursor_state_sanity_diag.txt (cursor query snapshots) next to the exe and "
+        "records it in the JSON artifacts array.");
     return 0;
   }
 
