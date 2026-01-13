@@ -436,16 +436,16 @@ foreach ($installSect in $installHwSections) {
         try {
           $flags = Parse-InfInteger -Text $Matches['flags']
           if (($flags -band 0x10) -eq 0) {
-            Add-Failure -Failures $failures -Message ("Interrupt Management key line does not include 0x10 (key-only) flag. Line: {0}" -f $line)
+            Add-Failure -Failures $failures -Message ("Interrupt Management key line does not include 0x10 (key-only) flag (referenced by [{0}]). Line: {1}" -f $installSect, $line)
           }
         }
         catch {
-          Add-Failure -Failures $failures -Message ("Unable to parse Interrupt Management key flags in line: {0}" -f $line)
+          Add-Failure -Failures $failures -Message ("Unable to parse Interrupt Management key flags (referenced by [{0}]). Line: {1}" -f $installSect, $line)
         }
       }
     }
     if (-not $parsed) {
-      Add-Failure -Failures $failures -Message ("Unable to parse Interrupt Management key line(s): {0}" -f ($imKeyLines -join '; '))
+      Add-Failure -Failures $failures -Message ("Unable to parse Interrupt Management key line(s) (referenced by [{0}]): {1}" -f $installSect, ($imKeyLines -join '; '))
     }
   }
 
@@ -462,16 +462,16 @@ foreach ($installSect in $installHwSections) {
         try {
           $val = Parse-InfInteger -Text $Matches['val']
           if ($val -ne 1) {
-            Add-Failure -Failures $failures -Message ("MSISupported is {0}, expected 1 (enabled). Line: {1}" -f $val, $line)
+            Add-Failure -Failures $failures -Message ("MSISupported is {0}, expected 1 (enabled) (referenced by [{1}]). Line: {2}" -f $val, $installSect, $line)
           }
         }
         catch {
-          Add-Failure -Failures $failures -Message ("Unable to parse MSISupported value in line: {0}" -f $line)
+          Add-Failure -Failures $failures -Message ("Unable to parse MSISupported value (referenced by [{0}]). Line: {1}" -f $installSect, $line)
         }
       }
     }
     if (-not $parsed) {
-      Add-Failure -Failures $failures -Message ("Unable to parse MSISupported line(s): {0}" -f ($msiSupportedLines -join '; '))
+      Add-Failure -Failures $failures -Message ("Unable to parse MSISupported line(s) (referenced by [{0}]): {1}" -f $installSect, ($msiSupportedLines -join '; '))
     }
   }
 
@@ -496,20 +496,20 @@ foreach ($installSect in $installHwSections) {
           }
         }
         catch {
-          Add-Failure -Failures $failures -Message ("Unable to parse MessageNumberLimit value in line: {0}" -f $line)
+          Add-Failure -Failures $failures -Message ("Unable to parse MessageNumberLimit value (referenced by [{0}]). Line: {1}" -f $installSect, $line)
         }
       }
       else {
-        Add-Failure -Failures $failures -Message ("Unable to parse MessageNumberLimit line: {0}" -f $line)
+        Add-Failure -Failures $failures -Message ("Unable to parse MessageNumberLimit line (referenced by [{0}]). Line: {1}" -f $installSect, $line)
       }
     }
 
     if (-not $ok) {
       if ($bestVal -ne $null) {
-        Add-Failure -Failures $failures -Message ("MessageNumberLimit is {0}, but Aero requires >= {1} (config + at least two queues)." -f $bestVal, $min)
+        Add-Failure -Failures $failures -Message ("MessageNumberLimit is {0} in AddReg sections referenced by [{1}], but Aero requires >= {2} (config + at least two queues)." -f $bestVal, $installSect, $min)
       }
       else {
-        Add-Failure -Failures $failures -Message ("MessageNumberLimit is missing/invalid; Aero requires >= {0} (config + at least two queues)." -f $min)
+        Add-Failure -Failures $failures -Message ("MessageNumberLimit is missing/invalid in AddReg sections referenced by [{0}]; Aero requires >= {1} (config + at least two queues)." -f $installSect, $min)
       }
     }
   }
