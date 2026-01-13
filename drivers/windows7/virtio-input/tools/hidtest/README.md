@@ -301,7 +301,10 @@ hidtest.exe --keyboard --led-spam 10000
 hidtest.exe --keyboard --counters
 ```
 
-Watch the `VirtioStatusDrops` counter to confirm drop-on-full behavior.
+Watch:
+
+- `StatusQFull` to see how often the statusq hit backpressure.
+- With `StatusQDropOnFull=1`, `VirtioStatusDrops` (and `LedWritesDropped`) should increase when the queue is full.
 
 Dump the raw HID report descriptor bytes:
 
