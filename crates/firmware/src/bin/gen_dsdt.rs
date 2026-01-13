@@ -1,14 +1,195 @@
-use std::path::PathBuf;
+//! Utility to regenerate the checked-in ACPI DSDT fixture (`acpi/dsdt.aml`).
+//!
+//! The canonical source of truth is the `aero-acpi` Rust generator; this binary
+//! exists so CI/tests/docs can point to a deterministic regeneration command.
+
+use std::ffi::OsString;
+use std::fmt;
+use std::fs;
+use std::io;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+const REGEN_CMD: &str = "cargo run -p firmware --bin gen_dsdt --locked";
+
+#[derive(Debug)]
+enum Error {
+    Usage(String),
+    Io {
+        action: &'static str,
+        path: PathBuf,
+        source: io::Error,
+    },
+    OutOfDate {
+        path: PathBuf,
+    },
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Usage(msg) => write!(f, "{msg}"),
+            Error::Io {
+                action,
+                path,
+                source,
+            } => write!(
+                f,
+                "failed to {action} {}: {source}",
+                path.display()
+            ),
+            Error::OutOfDate { path } => write!(
+                f,
+                "{} is out of date; regenerate it with: {REGEN_CMD}",
+                path.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 fn main() {
+    if let Err(e) = run() {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Error> {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let mut check = false;
+
+    for arg in args {
+        if arg == "--check" {
+            check = true;
+        } else if arg == "--help" || arg == "-h" {
+            print_usage();
+            return Ok(());
+        } else {
+            return Err(Error::Usage(format!(
+                "unknown argument {:?}\n\nUsage: gen_dsdt [--check]\n\n- --check: verify crates/firmware/acpi/dsdt.aml is up to date without modifying it",
+                arg
+            )));
+        }
+    }
+
+    let generated = generate_dsdt();
+    let out_path = dsdt_fixture_path();
+
+    if check {
+        return check_dsdt_fixture(&out_path, &generated);
+    }
+
+    write_atomically(&out_path, &generated)?;
+    Ok(())
+}
+
+fn print_usage() {
+    println!(
+        "Usage: gen_dsdt [--check]\n\nRegenerates the checked-in ACPI DSDT fixture at crates/firmware/acpi/dsdt.aml.\n\nExamples:\n  {REGEN_CMD}\n  {REGEN_CMD} --check"
+    );
+}
+
+fn generate_dsdt() -> Vec<u8> {
     let cfg = aero_acpi::AcpiConfig::default();
     let placement = aero_acpi::AcpiPlacement::default();
-    let bytes = aero_acpi::AcpiTables::build(&cfg, placement).dsdt;
+    aero_acpi::AcpiTables::build(&cfg, placement).dsdt
+}
 
+fn dsdt_fixture_path() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("acpi");
     path.push("dsdt.aml");
-
-    std::fs::write(&path, bytes).expect("failed to write dsdt.aml");
-    eprintln!("wrote {}", path.display());
+    path
 }
+
+fn check_dsdt_fixture(path: &Path, generated: &[u8]) -> Result<(), Error> {
+    match fs::read(path) {
+        Ok(on_disk) => {
+            if on_disk == generated {
+                Ok(())
+            } else {
+                Err(Error::OutOfDate {
+                    path: path.to_path_buf(),
+                })
+            }
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Err(Error::OutOfDate {
+            path: path.to_path_buf(),
+        }),
+        Err(e) => Err(Error::Io {
+            action: "read",
+            path: path.to_path_buf(),
+            source: e,
+        }),
+    }
+}
+
+fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    let Some(parent) = path.parent() else {
+        return Err(Error::Usage(format!(
+            "output path {} has no parent directory",
+            path.display()
+        )));
+    };
+
+    fs::create_dir_all(parent).map_err(|e| Error::Io {
+        action: "create parent directory for",
+        path: parent.to_path_buf(),
+        source: e,
+    })?;
+
+    let tmp_path = path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("dsdt.aml")
+    ));
+
+    {
+        let mut f = fs::File::create(&tmp_path).map_err(|e| Error::Io {
+            action: "create temporary file",
+            path: tmp_path.clone(),
+            source: e,
+        })?;
+        f.write_all(bytes).map_err(|e| Error::Io {
+            action: "write",
+            path: tmp_path.clone(),
+            source: e,
+        })?;
+        // Best-effort: make sure the bytes hit disk before we rename.
+        f.sync_all().map_err(|e| Error::Io {
+            action: "sync",
+            path: tmp_path.clone(),
+            source: e,
+        })?;
+    }
+
+    // `rename` is atomic on POSIX when the destination is on the same filesystem
+    // (which it is, since we place the temp file next to the destination).
+    //
+    // On Windows, `rename` will fail if the destination exists, so fall back to
+    // `remove_file` + `rename` to keep the tool working cross-platform.
+    match fs::rename(&tmp_path, path) {
+        Ok(()) => Ok(()),
+        Err(rename_err) => {
+            let remove_res = fs::remove_file(path);
+            if remove_res.is_ok() {
+                fs::rename(&tmp_path, path).map_err(|e| Error::Io {
+                    action: "rename temporary file into place",
+                    path: path.to_path_buf(),
+                    source: e,
+                })?;
+                Ok(())
+            } else {
+                Err(Error::Io {
+                    action: "rename temporary file into place",
+                    path: path.to_path_buf(),
+                    source: rename_err,
+                })
+            }
+        }
+    }
+}
+

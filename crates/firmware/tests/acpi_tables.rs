@@ -508,7 +508,7 @@ fn shipped_dsdt_aml_matches_aero_acpi_generator() {
 
     assert_eq!(
         on_disk, generated,
-        "crates/firmware/acpi/dsdt.aml is out of date; regenerate it with: cargo run -p firmware --bin gen_dsdt"
+        "crates/firmware/acpi/dsdt.aml is out of date; regenerate it with: cargo run -p firmware --bin gen_dsdt --locked"
     );
 }
 
