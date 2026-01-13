@@ -373,6 +373,12 @@ fn ata_slave_absent_floats_bus_high_and_does_not_raise_irq() {
     // Status/alt-status should float high.
     assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8, 0xFF);
     assert_eq!(io.read(PRIMARY_PORTS.ctrl_base, 1) as u8, 0xFF);
+    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base, 2) as u16, 0xFFFF);
+    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base, 4), 0xFFFF_FFFF);
+    // Drive Address should also float high.
+    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8, 0xFF);
+    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base + 1, 2) as u16, 0xFFFF);
+    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base + 1, 4), 0xFFFF_FFFF);
 
     // Commands to an absent device should be ignored (no IRQ side effects).
     io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC); // IDENTIFY DEVICE

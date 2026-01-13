@@ -971,6 +971,7 @@ mod tests {
     #[test]
     fn truncate_redactor_truncates_each_record_type() {
         let tracer = NetTracer::new(NetTraceConfig {
+            max_bytes: DEFAULT_MAX_BYTES,
             capture_ethernet: true,
             capture_tcp_proxy: true,
             capture_udp_proxy: true,
@@ -993,18 +994,18 @@ mod tests {
             &[0xff, 0xfe, 0xfd],
         );
 
-        let guard = tracer.records.lock().expect("net trace lock poisoned");
-        assert_eq!(guard.len(), 3);
+        let guard = tracer.state.lock().expect("net trace lock poisoned");
+        assert_eq!(guard.records.len(), 3);
 
-        match &guard[0] {
+        match &guard.records[0] {
             TraceRecord::Ethernet { frame, .. } => assert_eq!(frame.as_slice(), &[1, 2, 3, 4]),
             other => panic!("unexpected record: {other:?}"),
         }
-        match &guard[1] {
+        match &guard.records[1] {
             TraceRecord::TcpProxy { data, .. } => assert_eq!(data.as_slice(), &[10, 11, 12]),
             other => panic!("unexpected record: {other:?}"),
         }
-        match &guard[2] {
+        match &guard.records[2] {
             TraceRecord::UdpProxy { data, .. } => assert_eq!(data.as_slice(), &[0xff, 0xfe]),
             other => panic!("unexpected record: {other:?}"),
         }
@@ -1041,6 +1042,7 @@ mod tests {
         }
 
         let tracer = NetTracer::new(NetTraceConfig {
+            max_bytes: DEFAULT_MAX_BYTES,
             capture_ethernet: true,
             capture_tcp_proxy: true,
             capture_udp_proxy: true,
@@ -1061,9 +1063,10 @@ mod tests {
 
         assert!(
             tracer
-                .records
+                .state
                 .lock()
                 .expect("net trace lock poisoned")
+                .records
                 .is_empty(),
             "records should be dropped when redactor returns None"
         );

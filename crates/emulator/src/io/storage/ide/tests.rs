@@ -145,6 +145,8 @@ fn drive_address_slave_absent_floats_bus_high() {
     // Select slave (no device attached).
     ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xF0);
     assert_eq!(ide.io_read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8, 0xFF);
+    assert_eq!(ide.io_read(PRIMARY_PORTS.ctrl_base + 1, 2) as u16, 0xFFFF);
+    assert_eq!(ide.io_read(PRIMARY_PORTS.ctrl_base + 1, 4), 0xFFFF_FFFF);
 }
 
 #[test]
