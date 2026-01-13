@@ -452,13 +452,13 @@ fn translate_ps(
         }
 
         let depth_reg = io.ps_sv_depth_register.expect("ps_has_depth_output implies depth reg");
-        let depth_param =
-            io.outputs
-                .get(&depth_reg)
-                .ok_or(ShaderTranslateError::SignatureMissingRegister {
-                    io: "output",
-                    register: depth_reg,
-        })?;
+        let depth_param = io
+            .outputs
+            .get(&depth_reg)
+            .ok_or(ShaderTranslateError::SignatureMissingRegister {
+                io: "output",
+                register: depth_reg,
+            })?;
         let depth_expr = apply_sig_mask_to_scalar(&format!("o{depth_reg}"), depth_param.param.mask);
         w.line(&format!("out.depth = {depth_expr};"));
         w.line("return out;");
@@ -466,13 +466,13 @@ fn translate_ps(
         let target_reg = io
             .ps_sv_target0_register
             .ok_or(ShaderTranslateError::PixelShaderMissingSvTarget0)?;
-        let target_param =
-            io.outputs
-                .get(&target_reg)
-                .ok_or(ShaderTranslateError::SignatureMissingRegister {
-                    io: "output",
-                    register: target_reg,
-        })?;
+        let target_param = io
+            .outputs
+            .get(&target_reg)
+            .ok_or(ShaderTranslateError::SignatureMissingRegister {
+                io: "output",
+                register: target_reg,
+            })?;
         let return_expr = apply_sig_mask_to_vec4(&format!("o{target_reg}"), target_param.param.mask);
         w.line(&format!("return {return_expr};"));
     }
@@ -882,6 +882,34 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             } => {
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);
+            }
+            Sm4Inst::Bfi {
+                dst: _,
+                width,
+                offset,
+                insert,
+                base,
+            } => {
+                scan_src_regs(width, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+                scan_src_regs(insert, &mut scan_reg);
+                scan_src_regs(base, &mut scan_reg);
+            }
+            Sm4Inst::Ubfe {
+                dst: _,
+                width,
+                offset,
+                src,
+            }
+            | Sm4Inst::Ibfe {
+                dst: _,
+                width,
+                offset,
+                src,
+            } => {
+                scan_src_regs(width, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+                scan_src_regs(src, &mut scan_reg);
             }
             Sm4Inst::LdRaw { addr, .. } => scan_src_regs(addr, &mut scan_reg),
             Sm4Inst::StoreRaw { addr, value, .. } => {
