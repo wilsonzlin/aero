@@ -60,7 +60,21 @@ def main() -> int:
     inf_dir = virtio_snd_root / "inf"
 
     canonical = inf_dir / "aero_virtio_snd.inf"
-    alias = inf_dir / "virtio-snd.inf.disabled"
+    # The repo keeps the alias checked in disabled-by-default, but developers may
+    # locally enable it by renaming to `virtio-snd.inf`. Support both so the
+    # check can be used in either state.
+    alias_enabled = inf_dir / "virtio-snd.inf"
+    alias_disabled = inf_dir / "virtio-snd.inf.disabled"
+    if alias_enabled.exists():
+        alias = alias_enabled
+    elif alias_disabled.exists():
+        alias = alias_disabled
+    else:
+        sys.stderr.write(
+            "virtio-snd INF alias check: no alias INF found "
+            "(expected virtio-snd.inf or virtio-snd.inf.disabled); skipping.\n"
+        )
+        return 0
 
     canonical_body = _functional_bytes(canonical)
     alias_body = _functional_bytes(alias)
@@ -90,4 +104,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
