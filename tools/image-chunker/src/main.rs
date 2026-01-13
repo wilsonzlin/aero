@@ -1258,11 +1258,19 @@ async fn download_object_bytes_optional_with_retry(
 }
 
 fn is_no_such_key_error<E>(err: &aws_sdk_s3::error::SdkError<E>) -> bool {
-    // AWS SDK error types differ per operation; match on the shared error string to avoid taking a
-    // dependency on every operation-specific error enum.
-    err.to_string().contains("NoSuchKey")
-        || err.to_string().contains("NotFound")
-        || err.to_string().contains("404")
+    use aws_sdk_s3::error::SdkError;
+
+    match err {
+        // Prefer checking the HTTP status code to support S3-compatible endpoints (e.g. MinIO)
+        // where the Display string may not include the canonical AWS error code.
+        SdkError::ServiceError(service_err) => service_err.raw().status().as_u16() == 404,
+        // Fallback to a best-effort string match.
+        _ => {
+            err.to_string().contains("NoSuchKey")
+                || err.to_string().contains("NotFound")
+                || err.to_string().contains("404")
+        }
+    }
 }
 
 fn validate_args(args: &PublishArgs) -> Result<()> {
