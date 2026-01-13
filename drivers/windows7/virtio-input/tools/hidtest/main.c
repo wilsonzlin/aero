@@ -47,10 +47,16 @@
  * older WDKs). When it exists, it's a HID class IOCTL using the same METHOD_NEITHER
  * transfer method as the other IOCTL_HID_* codes.
  *
- * The function code is sequential after IOCTL_HID_GET_COLLECTION_INFORMATION in
- * modern WDKs; 12 is the value used by current Aero builds.
+ * Some header sets appear to disagree on the function code. We provide a
+ * best-effort primary definition here and attempt a small set of fallbacks at
+ * runtime (see IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT).
  */
 #define IOCTL_HID_GET_COLLECTION_DESCRIPTOR HID_CTL_CODE(12)
+#endif
+
+#ifndef IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT
+// Alternate function code observed in some header sets.
+#define IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT HID_CTL_CODE(11)
 #endif
 
 #ifndef IOCTL_HID_GET_DEVICE_DESCRIPTOR
@@ -453,6 +459,18 @@ static void dump_collection_descriptor(HANDLE handle)
 
     ZeroMemory(buf, sizeof(buf));
     ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
+    if (!ok || bytes == 0) {
+        bytes = 0;
+        ok = DeviceIoControl(
+            handle,
+            IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT,
+            NULL,
+            0,
+            buf,
+            (DWORD)sizeof(buf),
+            &bytes,
+            NULL);
+    }
     if (!ok || bytes == 0) {
         print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_COLLECTION_DESCRIPTOR)");
         return;
