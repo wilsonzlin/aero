@@ -481,6 +481,78 @@ bool InitTestDevice(TestDevice* out, bool want_backing_allocations, bool async_f
   return true;
 }
 
+bool CheckDeviceFuncsTableNoNullEntries(const AEROGPU_D3D10_11_DEVICEFUNCS& device_funcs, const char* label) {
+  // The portable `AEROGPU_D3D10_11_DEVICEFUNCS` table is a flat ABI surface of function pointers.
+  // We intentionally treat it as a dense array and assert that none of the entries are left in the
+  // all-zero "NULL function pointer" state after device creation.
+  constexpr size_t kSlotBytes = sizeof(decltype(AEROGPU_D3D10_11_DEVICEFUNCS{}.pfnDestroyDevice));
+  static_assert(kSlotBytes > 0, "function pointer slot size must be non-zero");
+  static_assert(sizeof(AEROGPU_D3D10_11_DEVICEFUNCS) % kSlotBytes == 0,
+                "device funcs table must be densely packed into function pointer slots");
+
+  const size_t slot_count = sizeof(AEROGPU_D3D10_11_DEVICEFUNCS) / kSlotBytes;
+  const auto* bytes = reinterpret_cast<const uint8_t*>(&device_funcs);
+
+  for (size_t i = 0; i < slot_count; i++) {
+    bool all_zero = true;
+    for (size_t j = 0; j < kSlotBytes; j++) {
+      if (bytes[i * kSlotBytes + j] != 0) {
+        all_zero = false;
+        break;
+      }
+    }
+    char msg[256] = {};
+    std::snprintf(msg,
+                  sizeof(msg),
+                  "%s: device-funcs slot[%zu] must be initialized (non-NULL)",
+                  label ? label : "device",
+                  i);
+    if (!Check(!all_zero, msg)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool TestDeviceFuncsTableNoNullEntriesHostOwned() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(device-funcs host-owned)")) {
+    return false;
+  }
+
+  const bool ok = CheckDeviceFuncsTableNoNullEntries(dev.device_funcs, "host-owned");
+
+  if (dev.device_funcs.pfnDestroyDevice) {
+    dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  }
+  if (dev.adapter_funcs.pfnCloseAdapter) {
+    dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  }
+
+  return ok;
+}
+
+bool TestDeviceFuncsTableNoNullEntriesGuestBacked() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(device-funcs guest-backed)")) {
+    return false;
+  }
+
+  const bool ok = CheckDeviceFuncsTableNoNullEntries(dev.device_funcs, "guest-backed");
+
+  if (dev.device_funcs.pfnDestroyDevice) {
+    dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  }
+  if (dev.adapter_funcs.pfnCloseAdapter) {
+    dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  }
+
+  return ok;
+}
+
 struct TestResource {
   D3D10DDI_HRESOURCE hResource = {};
   std::vector<uint8_t> storage;
@@ -6412,6 +6484,8 @@ bool TestMapDoNotWaitRespectsFenceCompletion() {
 
 int main() {
   bool ok = true;
+  ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
+  ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();
   ok &= TestHostOwnedBufferUnmapUploads();
   ok &= TestHostOwnedTextureUnmapUploads();
   ok &= TestCreateTexture2dSrgbFormatEncodesSrgbAerogpuFormat();
