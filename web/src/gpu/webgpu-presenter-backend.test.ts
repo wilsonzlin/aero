@@ -23,6 +23,10 @@ class FakeGpuDevice {
   }
 }
 
+class FakeGpuDeviceOnProperty {
+  onuncapturederror: ((ev: any) => void) | null = null;
+}
+
 describe("WebGpuPresenterBackend uncaptured error handler", () => {
   it("forwards uncapturederror via onError and dedupes identical messages", () => {
     const backend = new WebGpuPresenterBackend();
@@ -63,6 +67,29 @@ describe("WebGpuPresenterBackend uncaptured error handler", () => {
 
     device.emit("uncapturederror", { error: { name: "GPUValidationError", message: "oops" } });
     expect(onError).toHaveBeenCalledTimes(0);
+  });
+
+  it("falls back to onuncapturederror property when addEventListener is unavailable", () => {
+    const backend = new WebGpuPresenterBackend();
+    const device = new FakeGpuDeviceOnProperty();
+
+    const onError = vi.fn();
+    (backend as any).opts = { onError };
+    (backend as any).destroyed = false;
+    (backend as any).device = device;
+
+    (backend as any).installUncapturedErrorHandler(device);
+
+    expect(device.onuncapturederror).toBeTypeOf("function");
+    device.onuncapturederror?.({ error: { name: "GPUValidationError", message: "oops" } });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    const err = onError.mock.calls[0]?.[0] as unknown as PresenterError;
+    expect(err).toBeInstanceOf(PresenterError);
+    expect(err.code).toBe("webgpu_uncaptured_error");
+
+    (backend as any).uninstallUncapturedErrorHandler();
+    expect(device.onuncapturederror).toBeNull();
   });
 
   it("bounds its per-init dedupe cache size", () => {
