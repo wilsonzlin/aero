@@ -88,6 +88,35 @@ describe("executeWebUsbControlIn", () => {
     expect(controlTransferIn.mock.calls[0]?.[1]).toBe(9);
   });
 
+  it("can disable OTHER_SPEED_CONFIGURATION translation (EHCI/high-speed guests)", async () => {
+    const controlTransferIn = vi.fn<[USBControlTransferParameters, number], Promise<USBInTransferResult>>();
+    controlTransferIn.mockResolvedValueOnce({
+      status: "ok",
+      data: dataViewFromBytes([0x09, 0x02, 0x20, 0x00, 0x01, 0x01, 0x00, 0x80, 50]),
+    });
+
+    const res = await executeWebUsbControlIn(
+      { controlTransferIn },
+      {
+        bmRequestType: 0x80,
+        bRequest: 0x06,
+        wValue: 0x0200,
+        wIndex: 0x0000,
+        wLength: 9,
+      },
+      { translateOtherSpeedConfig: false },
+    );
+
+    expect(res.status).toBe("ok");
+    if (res.status !== "ok") throw new Error("unreachable");
+    expect(Array.from(res.data)).toEqual([0x09, 0x02, 0x20, 0x00, 0x01, 0x01, 0x00, 0x80, 50]);
+
+    // Must not attempt the OTHER_SPEED_CONFIGURATION fetch.
+    expect(controlTransferIn).toHaveBeenCalledTimes(1);
+    expect(controlTransferIn.mock.calls[0]?.[0].value).toBe(0x0200);
+    expect(controlTransferIn.mock.calls[0]?.[1]).toBe(9);
+  });
+
   it("falls back to CONFIGURATION when OTHER_SPEED_CONFIGURATION stalls", async () => {
     const controlTransferIn = vi.fn<[USBControlTransferParameters, number], Promise<USBInTransferResult>>();
     controlTransferIn.mockResolvedValueOnce({ status: "stall" });

@@ -178,13 +178,31 @@ export type WebUsbControlInResult =
   | { status: "stall" }
   | { status: "babble" };
 
+export type WebUsbControlInOptions = {
+  /**
+   * When true (default), attempt to fetch `OTHER_SPEED_CONFIGURATION` (0x07) and rewrite it into a
+   * `CONFIGURATION` (0x02) descriptor blob when the guest requests
+   * `GET_DESCRIPTOR(CONFIGURATION)`.
+   *
+   * This is a UHCI/full-speed compatibility hack for WebUSB passthrough:
+   * high-speed devices often return a configuration descriptor with high-speed max packet sizes,
+   * which a USB 1.1 guest cannot use.
+   *
+   * When a passthrough device is attached to an EHCI/xHCI controller (high-speed view), this must
+   * be disabled so the guest sees the device's high-speed descriptors unmodified.
+   */
+  translateOtherSpeedConfig?: boolean;
+};
+
 export async function executeWebUsbControlIn(
   device: Pick<USBDevice, "controlTransferIn">,
   setup: SetupPacket,
+  options: WebUsbControlInOptions = {},
 ): Promise<WebUsbControlInResult> {
   const length = setup.wLength & 0xffff;
 
-  if (shouldTranslateConfigurationDescriptor(setup)) {
+  const translateOtherSpeedConfig = options.translateOtherSpeedConfig ?? true;
+  if (translateOtherSpeedConfig && shouldTranslateConfigurationDescriptor(setup)) {
     const descriptorIndex = setup.wValue & 0x00ff;
     const otherSpeedSetup: SetupPacket = {
       ...setup,
@@ -237,10 +255,12 @@ export class WebUsbBackend {
   private readonly device: USBDevice;
   private claimedConfigurationValue: number | null = null;
   private readonly claimedInterfaces = new Set<number>();
+  private readonly translateOtherSpeedConfig: boolean;
 
-  constructor(device: USBDevice) {
+  constructor(device: USBDevice, options: { translateOtherSpeedConfig?: boolean } = {}) {
     assertWebUsbSupported();
     this.device = device;
+    this.translateOtherSpeedConfig = options.translateOtherSpeedConfig ?? true;
   }
 
   async ensureOpenAndClaimed(): Promise<void> {
@@ -422,7 +442,9 @@ export class WebUsbBackend {
             return { kind: "controlIn", id: action.id, status: "error", message: directionCheck.message };
           }
 
-          const result = await executeWebUsbControlIn(this.device, action.setup);
+          const result = await executeWebUsbControlIn(this.device, action.setup, {
+            translateOtherSpeedConfig: this.translateOtherSpeedConfig,
+          });
           if (result.status === "ok") {
             return { kind: "controlIn", id: action.id, status: "success", data: result.data };
           }
