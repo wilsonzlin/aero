@@ -8088,6 +8088,91 @@ bool TestSetBlendStateEncodesCmd() {
   return true;
 }
 
+bool TestSetBlendStateEncodesConstantFactor() {
+  TestDevice dev{};
+  if (!InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false)) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
+  desc.AlphaToCoverageEnable = 0;
+  for (uint32_t i = 0; i < 8; ++i) {
+    desc.BlendEnable[i] = 1;
+    desc.RenderTargetWriteMask[i] = 0xFu;
+  }
+  desc.SrcBlend = aerogpu::d3d10_11::kD3dBlendBlendFactor;
+  desc.DestBlend = aerogpu::d3d10_11::kD3dBlendInvBlendFactor;
+  desc.BlendOp = aerogpu::d3d10_11::kD3dBlendOpAdd;
+  // Keep alpha in a supported config (doesn't matter much for this test).
+  desc.SrcBlendAlpha = aerogpu::d3d10_11::kD3dBlendOne;
+  desc.DestBlendAlpha = aerogpu::d3d10_11::kD3dBlendZero;
+  desc.BlendOpAlpha = aerogpu::d3d10_11::kD3dBlendOpAdd;
+
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateBlendStateSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateBlendStateSize returned a non-trivial size")) {
+    return false;
+  }
+
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0);
+  D3D10DDI_HBLENDSTATE hState{};
+  hState.pDrvPrivate = storage.data();
+
+  HRESULT hr = dev.device_funcs.pfnCreateBlendState(dev.hDevice, &desc, hState);
+  if (!Check(hr == S_OK, "CreateBlendState(constant factor)")) {
+    return false;
+  }
+
+  const float blend_factor[4] = {0.25f, 0.5f, 0.75f, 1.0f};
+  const UINT sample_mask = 0x01234567u;
+  dev.device_funcs.pfnSetBlendState(dev.hDevice, hState, blend_factor, sample_mask);
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetBlendState(constant factor)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+  CmdLoc loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_BLEND_STATE);
+  if (!Check(loc.hdr != nullptr, "SET_BLEND_STATE emitted")) {
+    return false;
+  }
+
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_blend_state*>(stream + loc.offset);
+  if (!Check(cmd->state.enable == 1u, "blend enable propagated")) {
+    return false;
+  }
+  if (!Check(cmd->state.src_factor == AEROGPU_BLEND_CONSTANT, "src_factor mapped to CONSTANT")) {
+    return false;
+  }
+  if (!Check(cmd->state.dst_factor == AEROGPU_BLEND_INV_CONSTANT, "dst_factor mapped to INV_CONSTANT")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[0] == 0x3E800000u, "blend constant[0] encoded (0.25)")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[1] == 0x3F000000u, "blend constant[1] encoded (0.5)")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[2] == 0x3F400000u, "blend constant[2] encoded (0.75)")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[3] == 0x3F800000u, "blend constant[3] encoded (1.0)")) {
+    return false;
+  }
+  if (!Check(cmd->state.sample_mask == sample_mask, "sample mask propagated")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyBlendState(dev.hDevice, hState);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestDrawInstancedEncodesInstanceFields() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
@@ -8267,6 +8352,7 @@ int main() {
   ok &= TestCreateBlendStateRejectsUnsupportedBlendOp();
   ok &= TestBlendStateValidationRtCountOneIgnoresRt1Mismatch();
   ok &= TestSetBlendStateEncodesCmd();
+  ok &= TestSetBlendStateEncodesConstantFactor();
   ok &= TestDrawInstancedEncodesInstanceFields();
   ok &= TestDrawIndexedInstancedEncodesInstanceFields();
 
