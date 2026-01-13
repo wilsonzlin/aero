@@ -264,12 +264,11 @@ Supported FVF combinations (tested):
 
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE`
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE`
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
 
 Limitations (bring-up):
 
-- Only these position/color/(optional) `TEX1` FVFs are supported by the fixed-function fallback path. Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping but are not guaranteed to render correctly.
+- Only the `XYZRHW` (pre-transformed) + `DIFFUSE` (+ optional `TEX1`) subset is supported by the fixed-function fallback path. Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping but are not guaranteed to render correctly.
+- Untransformed `D3DFVF_XYZ*` fixed-function rendering (world/view/projection transforms) is not implemented yet.
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
 - Fixed-function lighting/material is not implemented (legacy `SetLight`/`SetMaterial` etc are cached for `Get*` and state blocks).
 
@@ -308,14 +307,7 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet (they currently return `D3DERR_NOTAVAILABLE`):
 
-- *(none)*
-
-### Legacy patch / ProcessVertices DDIs (bring-up)
-
-The following legacy DDIs are implemented (but still “bring-up level” and not full-featured):
-
-- `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch`
-- `pfnProcessVertices`
+- `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices`
 
 ### Bring-up no-op DDIs
 

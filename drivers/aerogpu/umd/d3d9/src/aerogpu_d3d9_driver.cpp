@@ -1209,9 +1209,7 @@ AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorProperties, D3d9TraceFunc::DeviceSetCur
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorPosition, D3d9TraceFunc::DeviceSetCursorPosition, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnShowCursor, D3d9TraceFunc::DeviceShowCursor, S_OK);
 
-// Patch rendering (N-Patch/patches) and ProcessVertices are implemented via the
-// fixed-function / legacy vertex-processing path. Keep the entrypoints wired so
-// Win7-era runtimes and apps can exercise these code paths without crashing.
+// Patch rendering (N-Patch/patches) and ProcessVertices are not supported yet.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawRectPatch, D3d9TraceFunc::DeviceDrawRectPatch, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawTriPatch, D3d9TraceFunc::DeviceDrawTriPatch, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDeletePatch, D3d9TraceFunc::DeviceDeletePatch, D3DERR_NOTAVAILABLE);
