@@ -58,9 +58,9 @@ Important: as of this staged bring-up, the **schedule engine is not implemented 
 below still document the *intended* async/periodic schedule contracts because they are part of the
 EHCI MVP design.
 
-### Implemented in Aero’s EHCI MVP (target scope)
+### Planned for Aero’s EHCI MVP (target scope)
 
-The EHCI model implements:
+The EHCI MVP design covers:
 
 1. **Capability and operational registers**
    - Standard EHCI capability regs (`CAPLENGTH`, `HCIVERSION`, `HCSPARAMS`, `HCCPARAMS`) and the full
@@ -225,7 +225,7 @@ EHCI is defined in terms of **frames (1 ms)** subdivided into **microframes (125
   cause multi-second catch-up stalls.
 - Schedule processing is gated by:
   - PCI Bus Master Enable (DMA allowed) at the platform/device integration layer, and
-  - `USBCMD.RunStop` + schedule enable bits (`USBCMD.ASEN` / `USBCMD.PSEN`) inside the controller.
+  - `USBCMD.RunStop` + schedule enable bits (`USBCMD.ASE` / `USBCMD.PSE`) inside the controller.
 
 ---
 

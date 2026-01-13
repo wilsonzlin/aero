@@ -144,6 +144,6 @@ npm -w web run test:unit
 USB-related unit tests commonly live under:
 
 - `web/src/usb/*.test.ts`
-- `web/src/io/devices/uhci*.test.ts` (until an xHCI PCI wrapper exists in `web/src/io/devices/`)
+- `web/src/io/devices/xhci.ts` + `web/src/io/devices/xhci.test.ts` (xHCI PCI wrapper + INTx semantics)
 
 When adding or extending xHCI functionality, prefer adding focused Rust tests (for controller semantics) and/or web unit tests (for host integration and PCI wrapper behavior) alongside the implementation.
