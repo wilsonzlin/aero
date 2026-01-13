@@ -48,6 +48,14 @@ fn exercise_dxbc(bytes: &[u8]) {
     let _ = dxbc.get_signature(FourCC(*b"OSGN"));
     let _ = dxbc.get_signature(FourCC(*b"PSGN"));
 
+    // Other common DXBC reflection/debug chunks used by Aero.
+    if let Some(rdef) = dxbc.get_chunk(FourCC(*b"RDEF")) {
+        let _ = aero_dxbc::parse_rdef_chunk(rdef.data);
+    }
+    if let Some(ctab) = dxbc.get_chunk(FourCC(*b"CTAB")) {
+        let _ = aero_dxbc::parse_ctab_chunk(ctab.data);
+    }
+
     // SM4/SM5 token parsing (no GPU required).
     let _ = aero_dxbc::sm4::Sm4Program::parse_from_dxbc(&dxbc);
 }
@@ -122,6 +130,101 @@ fn build_min_signature_chunk(seed: &[u8]) -> Vec<u8> {
     out
 }
 
+fn build_min_rdef_chunk(seed: &[u8]) -> Vec<u8> {
+    // Minimal RDEF chunk with a single resource binding and a short NUL-terminated name.
+    //
+    // This is enough to reach the table parsing and string decoding paths in `parse_rdef_chunk`.
+    let name_len = (seed.get(0).copied().unwrap_or(0) % 16) as usize + 1;
+    let header_len = 28usize;
+    let entry_len = 32usize;
+    let name_off = header_len + entry_len;
+    let total_len = name_off + name_len + 1;
+    let mut out = vec![0u8; total_len];
+
+    // Header fields (u32).
+    // cb_count, cb_offset
+    out[0..4].copy_from_slice(&0u32.to_le_bytes());
+    out[4..8].copy_from_slice(&0u32.to_le_bytes());
+    // resource_count=1, resource_offset=28
+    out[8..12].copy_from_slice(&1u32.to_le_bytes());
+    out[12..16].copy_from_slice(&(header_len as u32).to_le_bytes());
+    // shader_model, flags, creator_offset
+    out[16..20].copy_from_slice(&0u32.to_le_bytes());
+    out[20..24].copy_from_slice(&0u32.to_le_bytes());
+    out[24..28].copy_from_slice(&0u32.to_le_bytes());
+
+    // Single resource entry.
+    let entry = header_len;
+    out[entry..entry + 4].copy_from_slice(&(name_off as u32).to_le_bytes()); // name_offset
+    out[entry + 4..entry + 8].copy_from_slice(&u32::from(seed.get(1).copied().unwrap_or(0)).to_le_bytes()); // type
+    out[entry + 8..entry + 12].copy_from_slice(&u32::from(seed.get(2).copied().unwrap_or(0)).to_le_bytes()); // return type
+    out[entry + 12..entry + 16].copy_from_slice(&u32::from(seed.get(3).copied().unwrap_or(0)).to_le_bytes()); // dimension
+    out[entry + 16..entry + 20].copy_from_slice(&u32::from(seed.get(4).copied().unwrap_or(0)).to_le_bytes()); // num samples
+    out[entry + 20..entry + 24].copy_from_slice(&u32::from(seed.get(5).copied().unwrap_or(0)).to_le_bytes()); // bind point
+    out[entry + 24..entry + 28].copy_from_slice(&u32::from(seed.get(6).copied().unwrap_or(1)).to_le_bytes()); // bind count
+    out[entry + 28..entry + 32].copy_from_slice(&u32::from(seed.get(7).copied().unwrap_or(0)).to_le_bytes()); // flags
+
+    // Name string.
+    for i in 0..name_len {
+        let b = seed.get(8 + i).copied().unwrap_or(b'A');
+        out[name_off + i] = if b == 0 { b'A' } else { b };
+    }
+    out[name_off + name_len] = 0;
+
+    out
+}
+
+fn build_min_ctab_chunk(seed: &[u8]) -> Vec<u8> {
+    // Minimal CTAB chunk with a single constant and short `target` + `name` strings.
+    //
+    // Enough to reach constant table parsing and string decoding in `parse_ctab_chunk`.
+    let target_str = if seed.get(0).copied().unwrap_or(0) & 1 == 0 {
+        b"ps_2_0"
+    } else {
+        b"vs_3_0"
+    };
+    let name_len = (seed.get(1).copied().unwrap_or(0) % 16) as usize + 1;
+    let header_len = 28usize;
+    let entry_len = 20usize;
+    let target_off = header_len + entry_len;
+    let name_off = target_off + target_str.len() + 1;
+    let total_len = name_off + name_len + 1;
+    let mut out = vec![0u8; total_len];
+
+    // Header.
+    out[0..4].copy_from_slice(&0u32.to_le_bytes()); // size (ignored)
+    out[4..8].copy_from_slice(&0u32.to_le_bytes()); // creator_offset
+    out[8..12].copy_from_slice(&0u32.to_le_bytes()); // version
+    out[12..16].copy_from_slice(&1u32.to_le_bytes()); // constant_count
+    out[16..20].copy_from_slice(&(header_len as u32).to_le_bytes()); // constant_offset
+    out[20..24].copy_from_slice(&0u32.to_le_bytes()); // flags
+    out[24..28].copy_from_slice(&(target_off as u32).to_le_bytes()); // target_offset
+
+    // Constant info entry.
+    let entry = header_len;
+    out[entry..entry + 4].copy_from_slice(&(name_off as u32).to_le_bytes()); // name_offset
+    out[entry + 4..entry + 6].copy_from_slice(&0u16.to_le_bytes()); // register set
+    let reg_index = u16::from(seed.get(2).copied().unwrap_or(0));
+    out[entry + 6..entry + 8].copy_from_slice(&reg_index.to_le_bytes()); // register index
+    let reg_count = (u16::from(seed.get(3).copied().unwrap_or(0)) % 8).max(1);
+    out[entry + 8..entry + 10].copy_from_slice(&reg_count.to_le_bytes()); // register count
+    out[entry + 10..entry + 12].copy_from_slice(&0u16.to_le_bytes()); // reserved
+    out[entry + 12..entry + 16].copy_from_slice(&0u32.to_le_bytes()); // type info offset
+    out[entry + 16..entry + 20].copy_from_slice(&0u32.to_le_bytes()); // default value offset
+
+    // Strings.
+    out[target_off..target_off + target_str.len()].copy_from_slice(target_str);
+    out[target_off + target_str.len()] = 0;
+
+    for i in 0..name_len {
+        let b = seed.get(4 + i).copied().unwrap_or(b'C');
+        out[name_off + i] = if b == 0 { b'C' } else { b };
+    }
+    out[name_off + name_len] = 0;
+
+    out
+}
+
 fn build_patched_dxbc(data: &[u8]) -> Option<Vec<u8>> {
     // Create a small, syntactically valid DXBC container that always contains:
     // - ISGN/OSGN/PSGN signature chunks (minimal valid payloads)
@@ -133,6 +236,8 @@ fn build_patched_dxbc(data: &[u8]) -> Option<Vec<u8>> {
     let sig_isgn = build_min_signature_chunk(data);
     let sig_osgn = build_min_signature_chunk(data.get(16..).unwrap_or(data));
     let sig_psgn = build_min_signature_chunk(data.get(32..).unwrap_or(data));
+    let rdef = build_min_rdef_chunk(data.get(48..).unwrap_or(data));
+    let ctab = build_min_ctab_chunk(data.get(64..).unwrap_or(data));
 
     // Shader chunk payload: copy a prefix of the fuzzer data, but patch the header to be
     // self-consistent (version + declared length).
@@ -167,6 +272,8 @@ fn build_patched_dxbc(data: &[u8]) -> Option<Vec<u8>> {
         (FourCC(*b"ISGN"), &sig_isgn),
         (FourCC(*b"OSGN"), &sig_osgn),
         (FourCC(*b"PSGN"), &sig_psgn),
+        (FourCC(*b"RDEF"), &rdef),
+        (FourCC(*b"CTAB"), &ctab),
         (shader_fourcc, &shdr),
     ])
 }

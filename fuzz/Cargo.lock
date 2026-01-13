@@ -177,6 +177,10 @@ version = "0.1.0"
 [[package]]
 name = "aero-perf"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "aero-platform"
