@@ -4221,6 +4221,13 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
     return E_INVALIDARG;
   }
   auto* state = new (hState.pDrvPrivate) BlendState();
+  const auto fail = [&](HRESULT hr) -> HRESULT {
+    // The runtime does not necessarily call DestroyBlendState on failed creates.
+    // Ensure we run the destructor so future additions to BlendState (handles,
+    // allocations, etc.) don't leak on error paths.
+    state->~BlendState();
+    return hr;
+  };
   state->blend_enable = 0;
   state->src_blend = static_cast<uint32_t>(D3D11_BLEND_ONE);
   state->dest_blend = static_cast<uint32_t>(D3D11_BLEND_ZERO);
@@ -4238,7 +4245,7 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
   __if_exists(D3D11DDIARG_CREATEBLENDSTATE::RenderTarget) {
     __if_exists(D3D11DDIARG_CREATEBLENDSTATE::AlphaToCoverageEnable) {
       if (pDesc->AlphaToCoverageEnable) {
-        return E_NOTIMPL;
+        return fail(E_NOTIMPL);
       }
     }
     bool independent = false;
@@ -4249,12 +4256,12 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
     if (independent) {
       for (UINT i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
         if (!D3D11RtBlendDescEquivalent(pDesc->RenderTarget[i], rt0)) {
-          return E_NOTIMPL;
+          return fail(E_NOTIMPL);
         }
       }
     }
     if (!D3D11RtBlendDescRepresentableByAeroGpu(rt0)) {
-      return E_NOTIMPL;
+      return fail(E_NOTIMPL);
     }
     state->blend_enable = rt0.BlendEnable ? 1u : 0u;
     state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
@@ -4273,7 +4280,7 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
       const auto desc = pDesc->BlendDesc;
       __if_exists(decltype(desc)::AlphaToCoverageEnable) {
         if (desc.AlphaToCoverageEnable) {
-          return E_NOTIMPL;
+          return fail(E_NOTIMPL);
         }
       }
       const bool independent = desc.IndependentBlendEnable ? true : false;
@@ -4281,12 +4288,12 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
       if (independent) {
         for (UINT i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
           if (!D3D11RtBlendDescEquivalent(desc.RenderTarget[i], rt0)) {
-            return E_NOTIMPL;
+            return fail(E_NOTIMPL);
           }
         }
       }
       if (!D3D11RtBlendDescRepresentableByAeroGpu(rt0)) {
-        return E_NOTIMPL;
+        return fail(E_NOTIMPL);
       }
       state->blend_enable = rt0.BlendEnable ? 1u : 0u;
       state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
@@ -4306,7 +4313,7 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
       const auto desc = pDesc->Desc;
       __if_exists(decltype(desc)::AlphaToCoverageEnable) {
         if (desc.AlphaToCoverageEnable) {
-          return E_NOTIMPL;
+          return fail(E_NOTIMPL);
         }
       }
       const bool independent = desc.IndependentBlendEnable ? true : false;
@@ -4314,12 +4321,12 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
       if (independent) {
         for (UINT i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
           if (!D3D11RtBlendDescEquivalent(desc.RenderTarget[i], rt0)) {
-            return E_NOTIMPL;
+            return fail(E_NOTIMPL);
           }
         }
       }
       if (!D3D11RtBlendDescRepresentableByAeroGpu(rt0)) {
-        return E_NOTIMPL;
+        return fail(E_NOTIMPL);
       }
       state->blend_enable = rt0.BlendEnable ? 1u : 0u;
       state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
@@ -4340,7 +4347,7 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
         const auto desc = *pDesc->pBlendDesc;
         __if_exists(decltype(desc)::AlphaToCoverageEnable) {
           if (desc.AlphaToCoverageEnable) {
-            return E_NOTIMPL;
+            return fail(E_NOTIMPL);
           }
         }
         const bool independent = desc.IndependentBlendEnable ? true : false;
@@ -4348,12 +4355,12 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
         if (independent) {
           for (UINT i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
             if (!D3D11RtBlendDescEquivalent(desc.RenderTarget[i], rt0)) {
-              return E_NOTIMPL;
+              return fail(E_NOTIMPL);
             }
           }
         }
         if (!D3D11RtBlendDescRepresentableByAeroGpu(rt0)) {
-          return E_NOTIMPL;
+          return fail(E_NOTIMPL);
         }
         state->blend_enable = rt0.BlendEnable ? 1u : 0u;
         state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
