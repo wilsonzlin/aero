@@ -211,6 +211,8 @@ typedef struct OPTIONS {
     int have_vid;
     int have_pid;
     int have_index;
+    int have_duration;
+    int have_count;
     int have_led_mask;
     int led_via_hidd;
     int have_led_ioctl_set_output;
@@ -237,6 +239,8 @@ typedef struct OPTIONS {
     USHORT vid;
     USHORT pid;
     DWORD index;
+    DWORD duration_secs;
+    DWORD count;
     BYTE led_mask;
     BYTE led_ioctl_set_output_mask;
 } OPTIONS;
@@ -258,6 +262,21 @@ typedef struct SELECTED_DEVICE {
 // Forward decls (used by --selftest helpers).
 static void free_selected_device(SELECTED_DEVICE *dev);
 static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out);
+static volatile LONG g_stop_requested = 0;
+static HANDLE g_stop_event = NULL;
+
+static BOOL WINAPI console_ctrl_handler(DWORD ctrl_type)
+{
+    if (ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT) {
+        InterlockedExchange(&g_stop_requested, 1);
+        if (g_stop_event != NULL) {
+            SetEvent(g_stop_event);
+        }
+        return TRUE;
+    }
+
+    return FALSE;
+}
 
 static int is_virtio_input_device(const HIDD_ATTRIBUTES *attr)
 {
@@ -866,6 +885,7 @@ static void print_usage(void)
     wprintf(L"  hidtest.exe --selftest [--keyboard|--mouse]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-cycle] [--dump-desc]\n");
+    wprintf(L"             [--duration SECS] [--count N]\n");
     wprintf(L"             [--dump-collection-desc]\n");
     wprintf(L"             [--state]\n");
     wprintf(L"             [--counters]\n");
@@ -885,6 +905,8 @@ static void print_usage(void)
     wprintf(L"  --index N       Open HID interface at enumeration index N\n");
     wprintf(L"  --vid 0xVID     Filter by vendor ID (hex)\n");
     wprintf(L"  --pid 0xPID     Filter by product ID (hex)\n");
+    wprintf(L"  --duration SECS Exit report read loop after SECS seconds\n");
+    wprintf(L"  --count N       Exit report read loop after reading N reports\n");
     wprintf(L"  --state         Query virtio-input driver state via IOCTL_VIOINPUT_QUERY_STATE and exit\n");
     wprintf(L"  --led 0xMASK    Send keyboard LED output report (ReportID=1)\n");
     wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock\n");
@@ -939,7 +961,7 @@ static void print_usage(void)
     wprintf(L"  - virtio-input detection: VID 0x1AF4, PID 0x0001 (keyboard) / 0x0002 (mouse)\n");
     wprintf(L"    (legacy/alternate PIDs: 0x1052 / 0x1011).\n");
     wprintf(L"  - Without filters, the tool prefers a virtio-input keyboard interface.\n");
-    wprintf(L"  - Press Ctrl+C to exit the report read loop.\n");
+    wprintf(L"  - Press Ctrl+C to exit the report read loop (a summary is printed on exit).\n");
 }
 
 static void selftest_logf(const wchar_t *device, const wchar_t *check, const wchar_t *status, const wchar_t *fmt, ...)
@@ -1827,18 +1849,107 @@ static void cycle_keyboard_leds(const SELECTED_DEVICE *dev)
     }
 }
 
-static void read_reports_loop(const SELECTED_DEVICE *dev)
+static DWORD qpc_ticks_to_timeout_ms(LONGLONG ticks, LONGLONG freq)
+{
+    ULONGLONG ms;
+
+    if (ticks <= 0) {
+        return 0;
+    }
+
+    // Convert to milliseconds, rounding up so we don't exit early when using a
+    // duration-based timeout.
+    ms = (ULONGLONG)ticks * 1000ULL;
+    ms = (ms + (ULONGLONG)freq - 1ULL) / (ULONGLONG)freq;
+
+    // WaitFor* uses 0xFFFFFFFF (INFINITE) as a sentinel.
+    if (ms >= 0xFFFFFFFFULL) {
+        return 0xFFFFFFFEUL;
+    }
+
+    return (DWORD)ms;
+}
+
+static void read_reports_loop(const SELECTED_DEVICE *dev, const OPTIONS *opt)
 {
     BYTE *buf;
     DWORD buf_len;
     DWORD n;
-    BOOL ok;
     DWORD seq = 0;
     int is_virtio = dev->attr_valid && is_virtio_input_device(&dev->attr);
+    HANDLE read_handle = INVALID_HANDLE_VALUE;
+    HANDLE read_event = NULL;
+    int have_duration = 0;
+    int have_count = 0;
+    DWORD duration_secs = 0;
+    DWORD count_limit = 0;
+    ULONGLONG reports_read = 0;
+    ULONGLONG errors = 0;
+    LARGE_INTEGER qpc_freq;
+    LARGE_INTEGER qpc_start;
+    LARGE_INTEGER qpc_now;
+    LONGLONG deadline_ticks = 0;
+    DWORD wait_rc;
+    DWORD wait_timeout_ms;
+    OVERLAPPED ov;
+    HANDLE wait_handles[2];
+    BOOL ok;
+
+    if (opt != NULL) {
+        if (opt->have_duration) {
+            have_duration = 1;
+            duration_secs = opt->duration_secs;
+        }
+        if (opt->have_count) {
+            have_count = 1;
+            count_limit = opt->count;
+        }
+    }
+
+    QueryPerformanceFrequency(&qpc_freq);
+    QueryPerformanceCounter(&qpc_start);
 
     if (!dev->caps_valid) {
         wprintf(L"Cannot read reports: HID caps not available.\n");
-        return;
+        errors++;
+        goto done;
+    }
+
+    if (dev->path == NULL) {
+        wprintf(L"Cannot read reports: selected device path is unavailable.\n");
+        errors++;
+        goto done;
+    }
+
+    // Open a separate overlapped handle for the report read loop so the rest of
+    // the tool can keep using the original handle (opened without
+    // FILE_FLAG_OVERLAPPED) for DeviceIoControl/WriteFile/etc.
+    read_handle = CreateFileW(dev->path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+                              FILE_FLAG_OVERLAPPED, NULL);
+    if (read_handle == INVALID_HANDLE_VALUE) {
+        print_last_error_w(L"CreateFile(overlapped read handle)");
+        errors++;
+        goto done;
+    }
+
+    read_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (read_event == NULL) {
+        print_last_error_w(L"CreateEvent(read_event)");
+        errors++;
+        goto done;
+    }
+
+    g_stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (g_stop_event == NULL) {
+        print_last_error_w(L"CreateEvent(stop_event)");
+        errors++;
+        goto done;
+    }
+    InterlockedExchange(&g_stop_requested, 0);
+    (VOID)SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
+
+    if (have_duration) {
+        deadline_ticks = qpc_start.QuadPart + (LONGLONG)duration_secs * qpc_freq.QuadPart;
     }
 
     buf_len = dev->caps.InputReportByteLength;
@@ -1849,17 +1960,92 @@ static void read_reports_loop(const SELECTED_DEVICE *dev)
     buf = (BYTE *)malloc(buf_len);
     if (buf == NULL) {
         wprintf(L"Out of memory\n");
-        return;
+        errors++;
+        goto done;
     }
 
     wprintf(L"\nReading input reports (%lu bytes)...\n", buf_len);
+    if (have_duration) {
+        wprintf(L"Auto-exit: --duration %lu\n", duration_secs);
+    }
+    if (have_count) {
+        wprintf(L"Auto-exit: --count %lu\n", count_limit);
+    }
+
+    wait_handles[0] = g_stop_event;
+    wait_handles[1] = read_event;
     for (;;) {
+        if (InterlockedCompareExchange(&g_stop_requested, 0, 0) != 0) {
+            break;
+        }
+        if (have_count && reports_read >= (ULONGLONG)count_limit) {
+            break;
+        }
+        if (have_duration) {
+            QueryPerformanceCounter(&qpc_now);
+            if (qpc_now.QuadPart >= deadline_ticks) {
+                break;
+            }
+        }
+
         ZeroMemory(buf, buf_len);
         n = 0;
-        ok = ReadFile(dev->handle, buf, buf_len, &n, NULL);
+        ZeroMemory(&ov, sizeof(ov));
+        ov.hEvent = read_event;
+        ResetEvent(read_event);
+
+        ok = ReadFile(read_handle, buf, buf_len, &n, &ov);
         if (!ok) {
-            print_last_error_w(L"ReadFile(IOCTL_HID_READ_REPORT)");
-            break;
+            DWORD err = GetLastError();
+            if (err != ERROR_IO_PENDING) {
+                print_win32_error_w(L"ReadFile(IOCTL_HID_READ_REPORT)", err);
+                errors++;
+                break;
+            }
+
+            // Wait for either:
+            // - Ctrl+C (stop event), or
+            // - the read to complete (read event), or
+            // - the duration timer to expire (timeout).
+            if (have_duration) {
+                QueryPerformanceCounter(&qpc_now);
+                wait_timeout_ms = qpc_ticks_to_timeout_ms(deadline_ticks - qpc_now.QuadPart, qpc_freq.QuadPart);
+            } else {
+                wait_timeout_ms = INFINITE;
+            }
+
+            wait_rc = WaitForMultipleObjects(2, wait_handles, FALSE, wait_timeout_ms);
+            if (wait_rc == WAIT_OBJECT_0) {
+                // Ctrl+C requested.
+                CancelIo(read_handle);
+                (VOID)GetOverlappedResult(read_handle, &ov, &n, TRUE);
+                break;
+            }
+            if (wait_rc == WAIT_TIMEOUT) {
+                // Duration timer expired.
+                CancelIo(read_handle);
+                (VOID)GetOverlappedResult(read_handle, &ov, &n, TRUE);
+                break;
+            }
+            if (wait_rc != WAIT_OBJECT_0 + 1) {
+                print_last_error_w(L"WaitForMultipleObjects");
+                errors++;
+                CancelIo(read_handle);
+                (VOID)GetOverlappedResult(read_handle, &ov, &n, TRUE);
+                break;
+            }
+
+            ok = GetOverlappedResult(read_handle, &ov, &n, FALSE);
+            if (!ok) {
+                DWORD err2 = GetLastError();
+                if (err2 == ERROR_OPERATION_ABORTED) {
+                    // Can happen due to CancelIo on Ctrl+C / duration expiry.
+                    break;
+                }
+                print_win32_error_w(L"GetOverlappedResult(ReadFile)", err2);
+                errors++;
+                break;
+            }
         }
 
         wprintf(L"[%lu] %lu bytes: ", seq, n);
@@ -1884,9 +2070,30 @@ static void read_reports_loop(const SELECTED_DEVICE *dev)
         }
 
         seq++;
+        reports_read++;
     }
 
     free(buf);
+
+done:
+    QueryPerformanceCounter(&qpc_now);
+    wprintf(L"\nSummary:\n");
+    wprintf(L"  Reports read: %I64u\n", reports_read);
+    wprintf(L"  Errors:       %I64u\n", errors);
+    wprintf(L"  Elapsed:      %.3f s\n",
+            (double)(qpc_now.QuadPart - qpc_start.QuadPart) / (double)qpc_freq.QuadPart);
+
+    (VOID)SetConsoleCtrlHandler(console_ctrl_handler, FALSE);
+    if (read_event != NULL) {
+        CloseHandle(read_event);
+    }
+    if (read_handle != INVALID_HANDLE_VALUE) {
+        CloseHandle(read_handle);
+    }
+    if (g_stop_event != NULL) {
+        CloseHandle(g_stop_event);
+        g_stop_event = NULL;
+    }
 }
 
 static int ioctl_query_counters_short(const SELECTED_DEVICE *dev)
@@ -2383,6 +2590,26 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if ((wcscmp(argv[i], L"--duration") == 0) && i + 1 < argc) {
+            if (!parse_u32_dec(argv[i + 1], &opt.duration_secs)) {
+                wprintf(L"Invalid duration: %ls\n", argv[i + 1]);
+                return 2;
+            }
+            opt.have_duration = 1;
+            i++;
+            continue;
+        }
+
+        if ((wcscmp(argv[i], L"--count") == 0) && i + 1 < argc) {
+            if (!parse_u32_dec(argv[i + 1], &opt.count)) {
+                wprintf(L"Invalid count: %ls\n", argv[i + 1]);
+                return 2;
+            }
+            opt.have_count = 1;
+            i++;
+            continue;
+        }
+
         if ((wcscmp(argv[i], L"--led") == 0) && i + 1 < argc) {
             USHORT tmp;
             if (!parse_u16_hex(argv[i + 1], &tmp) || tmp > 0xFF) {
@@ -2749,7 +2976,7 @@ int wmain(int argc, wchar_t **argv)
         return rc;
     }
 
-    read_reports_loop(&dev);
+    read_reports_loop(&dev, &opt);
     free_selected_device(&dev);
     return 0;
 }
