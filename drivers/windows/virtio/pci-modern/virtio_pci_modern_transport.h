@@ -220,7 +220,10 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *Transp
  *   VIRTIO_PCI_MSI_NO_VECTOR or a different value, they fail with
  *   STATUS_IO_DEVICE_ERROR.
  * - If Vector == VIRTIO_PCI_MSI_NO_VECTOR, they accept a
- *   VIRTIO_PCI_MSI_NO_VECTOR read-back (disable).
+ *   VIRTIO_PCI_MSI_NO_VECTOR read-back (disables MSI-X routing for that source).
+ *
+ * Note: on Aero Win7 contract devices, NO_VECTOR disables MSI-X delivery but the
+ * device may still deliver interrupts via INTx + ISR fallback.
  */
 NTSTATUS VirtioPciModernTransportSetConfigMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 Vector);
 NTSTATUS VirtioPciModernTransportSetQueueMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex, UINT16 Vector);

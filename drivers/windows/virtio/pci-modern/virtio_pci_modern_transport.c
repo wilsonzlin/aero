@@ -1103,8 +1103,11 @@ NTSTATUS VirtioPciModernTransportSetConfigMsixVector(VIRTIO_PCI_MODERN_TRANSPORT
 	 * Virtio spec: devices return VIRTIO_PCI_MSI_NO_VECTOR when MSI-X vector
 	 * assignment fails.
 	 *
-	 * When disabling vectors (vector == VIRTIO_PCI_MSI_NO_VECTOR), accept a
-	 * VIRTIO_PCI_MSI_NO_VECTOR readback.
+	 * When disabling MSI-X routing for this source (vector == VIRTIO_PCI_MSI_NO_VECTOR),
+	 * accept a VIRTIO_PCI_MSI_NO_VECTOR readback.
+	 *
+	 * Note: on Aero Win7 contract devices, NO_VECTOR disables MSI-X delivery but the
+	 * device may still deliver interrupts via INTx + ISR fallback.
 	 */
 	if (vector == VIRTIO_PCI_MSI_NO_VECTOR) {
 		return (read_vector == VIRTIO_PCI_MSI_NO_VECTOR) ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
