@@ -3484,6 +3484,20 @@ impl Machine {
         Self::new_with_native_config(cfg)
     }
 
+    /// Create a new canonical full-system machine with a custom SMBIOS System UUID seed.
+    ///
+    /// This is a convenience for runtimes that need a stable per-VM identity (notably Windows
+    /// guests). The seed is forwarded to firmware and used to derive the SMBIOS Type 1 UUID.
+    #[wasm_bindgen(js_name = newWithSmbiosUuidSeed)]
+    pub fn new_with_smbios_uuid_seed(
+        ram_size_bytes: u32,
+        smbios_uuid_seed: u64,
+    ) -> Result<Self, JsValue> {
+        let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        cfg.smbios_uuid_seed = smbios_uuid_seed;
+        Self::new_with_native_config(cfg)
+    }
+
     /// Construct a canonical machine with an explicit vCPU count (SMP).
     ///
     /// This is a constructor-like alternative to `new(ram_size_bytes)` that lets JS opt into SMP
@@ -3512,6 +3526,13 @@ impl Machine {
         cfg.enable_aerogpu = enable_aerogpu;
         cfg.enable_vga = enable_vga.unwrap_or(!enable_aerogpu);
         Self::new_with_native_config(cfg)
+    }
+
+    /// Set the SMBIOS System UUID seed used by firmware.
+    ///
+    /// This only takes effect after the next [`Machine::reset`].
+    pub fn set_smbios_uuid_seed(&mut self, seed: u64) {
+        self.inner.set_smbios_uuid_seed(seed);
     }
 
     /// Number of vCPUs configured for this machine.

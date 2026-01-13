@@ -36,6 +36,10 @@ pub struct PcMachineConfig {
     ///
     /// Must be >= 1.
     pub cpu_count: u8,
+    /// Deterministic seed used to generate the SMBIOS Type 1 "System UUID".
+    ///
+    /// See [`firmware::bios::BiosConfig::smbios_uuid_seed`].
+    pub smbios_uuid_seed: u64,
 
     pub enable_hda: bool,
     pub enable_e1000: bool,
@@ -46,6 +50,7 @@ impl Default for PcMachineConfig {
         Self {
             ram_size_bytes: 64 * 1024 * 1024,
             cpu_count: 1,
+            smbios_uuid_seed: 0,
             enable_hda: false,
             enable_e1000: true,
         }
@@ -129,6 +134,7 @@ impl PcMachine {
         Self::new_with_config(PcMachineConfig {
             ram_size_bytes: ram_size_bytes as u64,
             cpu_count: 1,
+            smbios_uuid_seed: 0,
             enable_hda: false,
             enable_e1000: false,
         })
@@ -144,6 +150,7 @@ impl PcMachine {
             PcMachineConfig {
                 ram_size_bytes: ram_size_bytes as u64,
                 cpu_count: 1,
+                smbios_uuid_seed: 0,
                 enable_hda: false,
                 enable_e1000: true,
             },
@@ -313,6 +320,7 @@ impl PcMachine {
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
             cpu_count: self.cfg.cpu_count,
+            smbios_uuid_seed: self.cfg.smbios_uuid_seed,
             ..Default::default()
         });
 

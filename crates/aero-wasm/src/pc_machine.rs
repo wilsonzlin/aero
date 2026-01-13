@@ -35,6 +35,7 @@ impl PcMachine {
         let cfg = aero_machine::PcMachineConfig {
             ram_size_bytes,
             cpu_count: 1,
+            smbios_uuid_seed: 0,
             enable_hda: false,
             enable_e1000: true,
         };

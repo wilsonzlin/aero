@@ -143,6 +143,47 @@ mod tests {
     }
 
     #[test]
+    fn system_uuid_changes_when_uuid_seed_changes() {
+        fn read_type1_uuid(mem: &mut VecMemory, cfg: SmbiosConfig) -> [u8; 16] {
+            write_bda_ebda_segment(mem, 0x9FC0);
+            let eps_addr = SmbiosTables::build_and_write(&cfg, mem);
+            let (table_addr, table_len) = parse_eps(mem, eps_addr);
+            let mut table = vec![0u8; table_len as usize];
+            mem.read_physical(table_addr as u64, &mut table);
+            let structures = parse_table(&table);
+            let type1 = structures
+                .iter()
+                .find(|s| s.ty == 1)
+                .expect("type 1 missing");
+
+            // SMBIOS Type 1 UUID field is at offset 8 and is 16 bytes long.
+            type1.formatted[8..24].try_into().unwrap()
+        }
+
+        let base_cfg = SmbiosConfig {
+            ram_bytes: 768 * 1024 * 1024,
+            cpu_count: 1,
+            uuid_seed: 0,
+            eps_addr: None,
+            table_addr: None,
+        };
+
+        let mut mem1 = VecMemory::new(2 * 1024 * 1024);
+        let uuid1 = read_type1_uuid(&mut mem1, base_cfg.clone());
+
+        let mut mem2 = VecMemory::new(2 * 1024 * 1024);
+        let uuid2 = read_type1_uuid(
+            &mut mem2,
+            SmbiosConfig {
+                uuid_seed: 1234,
+                ..base_cfg
+            },
+        );
+
+        assert_ne!(uuid1, uuid2, "UUID should change when uuid_seed changes");
+    }
+
+    #[test]
     fn memory_sizes_match_config() {
         let mut mem = VecMemory::new(2 * 1024 * 1024);
         write_bda_ebda_segment(&mut mem, 0x9FC0);

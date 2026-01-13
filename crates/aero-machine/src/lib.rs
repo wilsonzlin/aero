@@ -152,6 +152,11 @@ pub struct MachineConfig {
     /// Note: CPU execution in [`Machine`] is still single-core today, but guests may enumerate the
     /// configured CPU topology via ACPI (e.g. MADT) for SMP bring-up contract testing.
     pub cpu_count: u8,
+    /// Deterministic seed used to generate the SMBIOS Type 1 "System UUID".
+    ///
+    /// Runtimes that need stable per-VM identities (e.g. Windows guests) should set this to a
+    /// stable value. The default (`0`) keeps tests deterministic.
+    pub smbios_uuid_seed: u64,
     /// Whether to attach canonical PC platform devices (PIC/APIC/PIT/RTC/PCI/ACPI PM/HPET).
     ///
     /// This is currently opt-in to keep the default machine minimal and deterministic.
@@ -283,6 +288,7 @@ impl Default for MachineConfig {
         Self {
             ram_size_bytes: 64 * 1024 * 1024,
             cpu_count: 1,
+            smbios_uuid_seed: 0,
             enable_pc_platform: false,
             enable_acpi: false,
             enable_ahci: false,
@@ -329,6 +335,7 @@ impl MachineConfig {
         Self {
             ram_size_bytes,
             cpu_count: 1,
+            smbios_uuid_seed: 0,
             enable_pc_platform: true,
             enable_acpi: true,
             enable_ahci: true,
@@ -2717,6 +2724,14 @@ impl Machine {
 
         machine.reset();
         Ok(machine)
+    }
+
+    /// Set the deterministic seed used to generate the SMBIOS Type 1 "System UUID".
+    ///
+    /// This only takes effect after the next [`Machine::reset`], when BIOS POST rebuilds SMBIOS
+    /// tables.
+    pub fn set_smbios_uuid_seed(&mut self, seed: u64) {
+        self.cfg.smbios_uuid_seed = seed;
     }
 
     /// Convenience constructor for the canonical Windows 7 storage topology.
@@ -5741,6 +5756,7 @@ impl Machine {
             memory_size_bytes: self.cfg.ram_size_bytes,
             boot_drive,
             cpu_count: self.cfg.cpu_count,
+            smbios_uuid_seed: self.cfg.smbios_uuid_seed,
             enable_acpi: self.cfg.enable_pc_platform && self.cfg.enable_acpi,
             vbe_lfb_base: use_legacy_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE),
             ..Default::default()

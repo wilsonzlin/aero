@@ -73,7 +73,7 @@ impl Bios {
         let smbios_cfg = SmbiosConfig {
             ram_bytes: self.config.memory_size_bytes,
             cpu_count: self.config.cpu_count.max(1),
-            uuid_seed: 0,
+            uuid_seed: self.config.smbios_uuid_seed,
             eps_addr: Some((EBDA_BASE + 0x200) as u32),
             table_addr: Some((EBDA_BASE + 0x400) as u32),
         };

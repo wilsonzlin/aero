@@ -288,6 +288,12 @@ pub struct BiosConfig {
     pub boot_drive: u8,
     /// Number of virtual CPUs exposed via SMBIOS and ACPI.
     pub cpu_count: u8,
+    /// Deterministic seed used to generate the SMBIOS Type 1 "System UUID".
+    ///
+    /// Real OSes (notably Windows) use this UUID as part of machine identity.
+    /// Keeping the default as `0` preserves deterministic tests while letting
+    /// runtimes choose stable per-VM identities by overriding this value.
+    pub smbios_uuid_seed: u64,
     /// Whether to build and publish ACPI tables during POST.
     pub enable_acpi: bool,
     /// Fixed placement contract for ACPI tables written during POST.
@@ -314,6 +320,7 @@ impl Default for BiosConfig {
             memory_size_bytes: 16 * 1024 * 1024,
             boot_drive: 0x80,
             cpu_count: 1,
+            smbios_uuid_seed: 0,
             enable_acpi: true,
             acpi_placement,
             // Match the default routing in `aero_acpi::AcpiConfig`.
