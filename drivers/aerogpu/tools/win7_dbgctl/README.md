@@ -114,7 +114,7 @@ Minimum supported commands:
   Dumps the raw bytes of the most recent command stream buffer (`cmd_gpa .. cmd_gpa+cmd_size_bytes`) from the ring
   into `<path>` (binary). Use `--index-from-tail K` to select older submissions (0 = newest).
   On AGPU rings, if the submission has an allocation table (`alloc_table_gpa/alloc_table_size_bytes`), it is also dumped
-  to `<path>.alloc_table.bin`.
+  to `<path>.alloc_table.bin`. A small metadata summary is also written to `<path>.txt` (ring/fence/GPAs/sizes).
 
   Safety: by default dbgctl refuses to dump buffers larger than 1 MiB; use `--force` to override.
 
