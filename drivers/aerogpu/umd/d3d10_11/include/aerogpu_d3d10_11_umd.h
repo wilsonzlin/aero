@@ -704,8 +704,20 @@ typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETSAMPLERS)(D3D10DDI_HDEVICE,
                                                          uint32_t sampler_count,
                                                          const D3D10DDI_HSAMPLER *pSamplers);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DRAW)(D3D10DDI_HDEVICE, uint32_t vertex_count, uint32_t start_vertex);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DRAWINSTANCED)(D3D10DDI_HDEVICE,
+                                                             uint32_t vertex_count_per_instance,
+                                                             uint32_t instance_count,
+                                                             uint32_t start_vertex,
+                                                             uint32_t start_instance);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DRAWINDEXED)(D3D10DDI_HDEVICE, uint32_t index_count, uint32_t start_index,
-                                                           int32_t base_vertex);
+                                                            int32_t base_vertex);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DRAWINDEXEDINSTANCED)(D3D10DDI_HDEVICE,
+                                                                    uint32_t index_count_per_instance,
+                                                                    uint32_t instance_count,
+                                                                    uint32_t start_index,
+                                                                    int32_t base_vertex,
+                                                                    uint32_t start_instance);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DRAWAUTO)(D3D10DDI_HDEVICE);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_PRESENT)(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_PRESENT *);
 typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_FLUSH)(D3D10DDI_HDEVICE);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_ROTATERESOURCEIDENTITIES)(D3D10DDI_HDEVICE,
@@ -845,6 +857,9 @@ struct AEROGPU_D3D10_11_DEVICEFUNCS {
 
   PFNAEROGPU_DDI_DRAW pfnDraw;
   PFNAEROGPU_DDI_DRAWINDEXED pfnDrawIndexed;
+  PFNAEROGPU_DDI_DRAWINSTANCED pfnDrawInstanced;
+  PFNAEROGPU_DDI_DRAWINDEXEDINSTANCED pfnDrawIndexedInstanced;
+  PFNAEROGPU_DDI_DRAWAUTO pfnDrawAuto;
   PFNAEROGPU_DDI_MAP pfnMap;
   PFNAEROGPU_DDI_UNMAP pfnUnmap;
   PFNAEROGPU_DDI_PRESENT pfnPresent;

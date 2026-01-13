@@ -5704,6 +5704,42 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, uint32_t vertex_count, uint
   cmd->first_instance = 0;
 }
 
+void AEROGPU_APIENTRY DrawInstanced(D3D10DDI_HDEVICE hDevice,
+                                    uint32_t vertex_count_per_instance,
+                                    uint32_t instance_count,
+                                    uint32_t start_vertex,
+                                    uint32_t start_instance) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  AEROGPU_D3D10_TRACEF_VERBOSE("DrawInstanced hDevice=%p vcpi=%u inst=%u start_v=%u start_i=%u",
+                               hDevice.pDrvPrivate,
+                               vertex_count_per_instance,
+                               instance_count,
+                               start_vertex,
+                               start_instance);
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+  if (vertex_count_per_instance == 0 || instance_count == 0) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->vertex_count = vertex_count_per_instance;
+  cmd->instance_count = instance_count;
+  cmd->first_vertex = start_vertex;
+  cmd->first_instance = start_instance;
+}
+
 void AEROGPU_APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, uint32_t index_count, uint32_t start_index, int32_t base_vertex) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF_VERBOSE("DrawIndexed hDevice=%p ic=%u start=%u base=%d",
@@ -5730,6 +5766,72 @@ void AEROGPU_APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, uint32_t index_count
   cmd->instance_count = 1;
   cmd->first_index = start_index;
   cmd->base_vertex = base_vertex;
+  cmd->first_instance = 0;
+}
+
+void AEROGPU_APIENTRY DrawIndexedInstanced(D3D10DDI_HDEVICE hDevice,
+                                           uint32_t index_count_per_instance,
+                                           uint32_t instance_count,
+                                           uint32_t start_index,
+                                           int32_t base_vertex,
+                                           uint32_t start_instance) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  AEROGPU_D3D10_TRACEF_VERBOSE("DrawIndexedInstanced hDevice=%p icpi=%u inst=%u start=%u base=%d start_i=%u",
+                               hDevice.pDrvPrivate,
+                               index_count_per_instance,
+                               instance_count,
+                               start_index,
+                               base_vertex,
+                               start_instance);
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+  if (index_count_per_instance == 0 || instance_count == 0) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->index_count = index_count_per_instance;
+  cmd->instance_count = instance_count;
+  cmd->first_index = start_index;
+  cmd->base_vertex = base_vertex;
+  cmd->first_instance = start_instance;
+}
+
+void AEROGPU_APIENTRY DrawAuto(D3D10DDI_HDEVICE hDevice) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  AEROGPU_D3D10_TRACEF_VERBOSE("DrawAuto hDevice=%p", hDevice.pDrvPrivate);
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  // Repository builds do not implement stream output yet, so `DrawAuto` cannot
+  // determine a vertex count. Emit a no-op draw so command stream consumers can
+  // still observe the call without crashing the runtime.
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->vertex_count = 0;
+  cmd->instance_count = 1;
+  cmd->first_vertex = 0;
   cmd->first_instance = 0;
 }
 
@@ -6117,6 +6219,9 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
 
   funcs.pfnDraw = &Draw;
   funcs.pfnDrawIndexed = &DrawIndexed;
+  funcs.pfnDrawInstanced = &DrawInstanced;
+  funcs.pfnDrawIndexedInstanced = &DrawIndexedInstanced;
+  funcs.pfnDrawAuto = &DrawAuto;
   funcs.pfnMap = &Map;
   funcs.pfnUnmap = &Unmap;
   funcs.pfnPresent = &Present;

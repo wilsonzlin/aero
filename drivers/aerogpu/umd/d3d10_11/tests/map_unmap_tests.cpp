@@ -8088,6 +8088,104 @@ bool TestSetBlendStateEncodesCmd() {
   return true;
 }
 
+bool TestDrawInstancedEncodesInstanceFields() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(draw instanced)")) {
+    return false;
+  }
+
+  dev.harness.last_stream.clear();
+  dev.device_funcs.pfnDrawInstanced(dev.hDevice,
+                                    /*vertex_count_per_instance=*/6,
+                                    /*instance_count=*/4,
+                                    /*start_vertex=*/2,
+                                    /*start_instance=*/7);
+  HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after DrawInstanced")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  CmdLoc draw_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_DRAW);
+  if (!Check(draw_loc.hdr != nullptr, "DRAW emitted for DrawInstanced")) {
+    return false;
+  }
+  const auto* draw = reinterpret_cast<const aerogpu_cmd_draw*>(stream + draw_loc.offset);
+  if (!Check(draw->vertex_count == 6, "DrawInstanced vertex_count encoded")) {
+    return false;
+  }
+  if (!Check(draw->instance_count == 4, "DrawInstanced instance_count encoded")) {
+    return false;
+  }
+  if (!Check(draw->first_vertex == 2, "DrawInstanced first_vertex encoded")) {
+    return false;
+  }
+  if (!Check(draw->first_instance == 7, "DrawInstanced first_instance encoded")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestDrawIndexedInstancedEncodesInstanceFields() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(draw indexed instanced)")) {
+    return false;
+  }
+
+  dev.harness.last_stream.clear();
+  dev.device_funcs.pfnDrawIndexedInstanced(dev.hDevice,
+                                           /*index_count_per_instance=*/12,
+                                           /*instance_count=*/3,
+                                           /*start_index=*/5,
+                                           /*base_vertex=*/-2,
+                                           /*start_instance=*/9);
+  HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after DrawIndexedInstanced")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  CmdLoc draw_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_DRAW_INDEXED);
+  if (!Check(draw_loc.hdr != nullptr, "DRAW_INDEXED emitted for DrawIndexedInstanced")) {
+    return false;
+  }
+  const auto* draw = reinterpret_cast<const aerogpu_cmd_draw_indexed*>(stream + draw_loc.offset);
+  if (!Check(draw->index_count == 12, "DrawIndexedInstanced index_count encoded")) {
+    return false;
+  }
+  if (!Check(draw->instance_count == 3, "DrawIndexedInstanced instance_count encoded")) {
+    return false;
+  }
+  if (!Check(draw->first_index == 5, "DrawIndexedInstanced first_index encoded")) {
+    return false;
+  }
+  if (!Check(draw->base_vertex == -2, "DrawIndexedInstanced base_vertex encoded")) {
+    return false;
+  }
+  if (!Check(draw->first_instance == 9, "DrawIndexedInstanced first_instance encoded")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -8169,6 +8267,8 @@ int main() {
   ok &= TestCreateBlendStateRejectsUnsupportedBlendOp();
   ok &= TestBlendStateValidationRtCountOneIgnoresRt1Mismatch();
   ok &= TestSetBlendStateEncodesCmd();
+  ok &= TestDrawInstancedEncodesInstanceFields();
+  ok &= TestDrawIndexedInstancedEncodesInstanceFields();
 
   if (!ok) {
     return 1;

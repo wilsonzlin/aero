@@ -6825,18 +6825,10 @@ void APIENTRY ClearDepthStencilView(D3D10DDI_HDEVICE hDevice,
   cmd->stencil = stencil;
 }
 
-void APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertexCount, UINT startVertex) {
-  if (!hDevice.pDrvPrivate) {
-    SetError(hDevice, E_INVALIDARG);
-    return;
-  }
-  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+static bool SoftwareDrawTriangleListLocked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, UINT vertexCount, UINT startVertex) {
   if (!dev) {
-    SetError(hDevice, E_INVALIDARG);
-    return;
+    return true;
   }
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  TrackDrawStateLocked(dev);
 
   AeroGpuResource* primary_rtv = nullptr;
   for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
@@ -6863,7 +6855,7 @@ void APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertexCount, UINT startVertex)
           rt->storage.resize(static_cast<size_t>(rt_bytes));
         } catch (...) {
           SetError(hDevice, E_OUTOFMEMORY);
-          return;
+          return false;
         }
       }
 
@@ -6996,11 +6988,63 @@ void APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertexCount, UINT startVertex)
     }
   }
 
+  return true;
+}
+
+void APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertexCount, UINT startVertex) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackDrawStateLocked(dev);
+  if (!SoftwareDrawTriangleListLocked(hDevice, dev, vertexCount, startVertex)) {
+    return;
+  }
+
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
   cmd->vertex_count = vertexCount;
   cmd->instance_count = 1;
   cmd->first_vertex = startVertex;
   cmd->first_instance = 0;
+}
+
+void APIENTRY DrawInstanced(D3D10DDI_HDEVICE hDevice,
+                            UINT vertexCountPerInstance,
+                            UINT instanceCount,
+                            UINT startVertexLocation,
+                            UINT startInstanceLocation) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  if (vertexCountPerInstance == 0 || instanceCount == 0) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackDrawStateLocked(dev);
+  // The bring-up software renderer does not understand instance data. Draw a
+  // single instance so staging readback tests still have sensible contents.
+  if (!SoftwareDrawTriangleListLocked(hDevice, dev, vertexCountPerInstance, startVertexLocation)) {
+    return;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  cmd->vertex_count = vertexCountPerInstance;
+  cmd->instance_count = instanceCount;
+  cmd->first_vertex = startVertexLocation;
+  cmd->first_instance = startInstanceLocation;
 }
 
 void APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, UINT indexCount, UINT startIndex, INT baseVertex) {
@@ -7021,6 +7065,58 @@ void APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, UINT indexCount, UINT startI
   cmd->instance_count = 1;
   cmd->first_index = startIndex;
   cmd->base_vertex = baseVertex;
+  cmd->first_instance = 0;
+}
+
+void APIENTRY DrawIndexedInstanced(D3D10DDI_HDEVICE hDevice,
+                                   UINT indexCountPerInstance,
+                                   UINT instanceCount,
+                                   UINT startIndexLocation,
+                                   INT baseVertexLocation,
+                                   UINT startInstanceLocation) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  if (indexCountPerInstance == 0 || instanceCount == 0) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackDrawStateLocked(dev);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  cmd->index_count = indexCountPerInstance;
+  cmd->instance_count = instanceCount;
+  cmd->first_index = startIndexLocation;
+  cmd->base_vertex = baseVertexLocation;
+  cmd->first_instance = startInstanceLocation;
+}
+
+void APIENTRY DrawAuto(D3D10DDI_HDEVICE hDevice) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+
+  // `DrawAuto` is defined in terms of the vertex count produced by stream
+  // output. AeroGPU does not implement stream output yet, so treat this as a
+  // no-op draw (keeps runtimes/apps that probe the entrypoint alive).
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackDrawStateLocked(dev);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  cmd->vertex_count = 0;
+  cmd->instance_count = 1;
+  cmd->first_vertex = 0;
   cmd->first_instance = 0;
 }
 
@@ -7556,6 +7652,24 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
 
   // Optional/rare entrypoints: override defaults with more permissive no-op
   // stubs so common runtime state-reset paths don't trip SetErrorCb.
+  __if_exists(D3D10DDI_DEVICEFUNCS::pfnDrawInstanced) {
+    using Fn = decltype(funcs.pfnDrawInstanced);
+    if constexpr (std::is_convertible_v<decltype(&DrawInstanced), Fn>) {
+      funcs.pfnDrawInstanced = &DrawInstanced;
+    }
+  }
+  __if_exists(D3D10DDI_DEVICEFUNCS::pfnDrawIndexedInstanced) {
+    using Fn = decltype(funcs.pfnDrawIndexedInstanced);
+    if constexpr (std::is_convertible_v<decltype(&DrawIndexedInstanced), Fn>) {
+      funcs.pfnDrawIndexedInstanced = &DrawIndexedInstanced;
+    }
+  }
+  __if_exists(D3D10DDI_DEVICEFUNCS::pfnDrawAuto) {
+    using Fn = decltype(funcs.pfnDrawAuto);
+    if constexpr (std::is_convertible_v<decltype(&DrawAuto), Fn>) {
+      funcs.pfnDrawAuto = &DrawAuto;
+    }
+  }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnOpenResource) {
     using Fn = decltype(funcs.pfnOpenResource);
     if constexpr (std::is_convertible_v<decltype(&OpenResource), Fn>) {
