@@ -56,6 +56,15 @@ corresponding bytes through that [`BlockDevice`]:
   Internally, the BIOS reads 2048-byte ISO logical blocks by issuing four 512-byte `read_sector`
   calls.
 
+If your VM/storage stack already represents ISO media as **2048-byte sectors** (common for ATAPI /
+MMC CD-ROM models), you still need to expose it to `firmware::bios` as a 512-byte-sector
+[`BlockDevice`]. The required mapping is:
+
+- `lba2048 = lba512 / 4`
+- `sub_offset = (lba512 % 4) * 512`
+
+…then read the containing 2048-byte block and copy out the requested 512-byte slice.
+
 The BIOS uses the following **drive numbers** in `DL`:
 
 - First HDD: `DL = 0x80`
@@ -78,6 +87,9 @@ The BIOS uses the following **drive numbers** in `DL`:
   - Choose a boot drive number via [`BiosConfig::boot_drive`]. There are currently no separate
     CD-specific POST/dispatch entrypoints; CD boot/reads are selected purely by the `DL` drive
     number.
+  - Pass the matching boot medium as the `disk: &mut dyn BlockDevice` argument to POST/interrupt
+    dispatch (i.e., when booting from `DL=0xE0`, the BIOS expects the `BlockDevice` to contain the
+    ISO image, not the HDD image).
   - Call [`Bios::post`] (or [`Bios::post_with_pci`] if you want PCI IRQ routing).
   - Resume execution at the CPU state configured by POST:
     - MBR boot: `CS:IP = 0000:7C00`
