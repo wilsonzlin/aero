@@ -388,7 +388,11 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         let adapter = context.adapter();
 
         let surface_caps = surface.get_capabilities(adapter);
-        let prefer_srgb_view = matches!(context.kind(), BackendKind::WebGpu);
+        let supports_view_formats = adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
+        let prefer_srgb_view = matches!(context.kind(), BackendKind::WebGpu) && supports_view_formats;
         let (surface_format, mut surface_view_format, view_formats) =
             preferred_surface_config(&surface_caps.formats, prefer_srgb_view);
         let alpha_mode = preferred_composite_alpha_mode(&surface_caps.alpha_modes);
