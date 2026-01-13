@@ -8,8 +8,8 @@ use aero_d3d11::sm4::opcode::{
     OPCODE_CUSTOMDATA, OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
     OPCODE_NOP,
 };
-use aero_d3d11::sm4::{FOURCC_SHDR, FOURCC_SHEX};
-use aero_d3d11::{DxbcFile, Sm4Decl, Sm4Program};
+use aero_d3d11::sm4::{decode_version_token, FOURCC_SHDR, FOURCC_SHEX};
+use aero_d3d11::{DxbcFile, Sm4Decl};
 use anyhow::{bail, Context};
 
 const DEFAULT_HEAD_DWORDS: usize = 32;
@@ -129,47 +129,24 @@ fn real_main() -> anyhow::Result<()> {
     }
 
     println!();
-    let program = Sm4Program::parse_program_tokens(shader_chunk.data).with_context(|| {
+    let toks = parse_sm4_tokens(shader_chunk.data).with_context(|| {
         format!(
             "failed to parse SM4/SM5 token stream from {}",
             shader_chunk.fourcc
         )
     })?;
+    let version_token = toks[0];
+    let (stage, model) = decode_version_token(version_token);
     println!(
         "version: stage={:?} model={}.{} (token=0x{:08x})",
-        program.stage,
-        program.model.major,
-        program.model.minor,
-        program.tokens.get(0).copied().unwrap_or(0)
+        stage, model.major, model.minor, version_token
     );
-
-    let declared_len_raw = program.tokens.get(1).copied().unwrap_or(0) as usize;
-    let declared_len = declared_len_raw.min(program.tokens.len());
-    if declared_len != declared_len_raw {
-        println!(
-            "declared length: {} dwords (clamped from {}, available {})",
-            declared_len,
-            declared_len_raw,
-            program.tokens.len()
-        );
-    } else {
-        println!(
-            "declared length: {} dwords (available {})",
-            declared_len,
-            program.tokens.len()
-        );
-    }
-
-    if declared_len < 2 {
-        println!("token stream too short to contain any opcodes");
-        return Ok(());
-    }
+    println!("declared length: {} dwords", toks.len());
 
     println!();
     println!("opcode stream:");
     println!("  format: <dword_index>: opcode=<id> len=<dwords> token=<opcode_token> <decoded?>");
 
-    let toks = &program.tokens[..declared_len];
     let mut i = 2usize;
     let mut in_decls = true;
     while i < toks.len() {
@@ -255,4 +232,37 @@ fn real_main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_sm4_tokens(bytes: &[u8]) -> anyhow::Result<Vec<u32>> {
+    if !bytes.len().is_multiple_of(4) {
+        bail!(
+            "shader bytecode length {} is not a multiple of 4",
+            bytes.len()
+        );
+    }
+    let available = bytes.len() / 4;
+    if available < 2 {
+        bail!("shader bytecode too short ({available} dwords)");
+    }
+
+    let version = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let declared_len = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    if declared_len < 2 {
+        bail!("shader bytecode declares {declared_len} dwords but needs at least 2");
+    }
+    if declared_len > available {
+        bail!("shader bytecode declares {declared_len} dwords but only {available} provided");
+    }
+
+    let mut tokens = Vec::new();
+    tokens
+        .try_reserve_exact(declared_len)
+        .with_context(|| format!("token stream too large ({declared_len} dwords)"))?;
+    tokens.push(version);
+
+    for chunk in bytes.chunks_exact(4).skip(1).take(declared_len - 1) {
+        tokens.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    Ok(tokens)
 }
