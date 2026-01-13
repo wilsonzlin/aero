@@ -522,15 +522,18 @@ into Aero’s `DiskBackend` abstraction and `MemoryBus` DMA interface.
   - Admin submission/completion queues.
   - I/O submission/completion queues created via admin commands.
 - **Commands**
-  - Admin: `IDENTIFY`, `CREATE IO CQ`, `CREATE IO SQ`.
-  - I/O: `READ`, `WRITE`, `FLUSH`.
+  - Admin: `IDENTIFY`, `CREATE/DELETE IO CQ`, `CREATE/DELETE IO SQ`, `GET/SET FEATURES`.
+  - I/O: `READ`, `WRITE`, `FLUSH`, `WRITE ZEROES`, `DATASET MANAGEMENT (DSM deallocate)`.
 - **DMA**
   - PRP1/PRP2 + PRP list support for multi-page transfers.
-  - SGL is not supported in the MVP (commands using SGL return an error).
+  - Limited SGL support for READ/WRITE:
+    - Data Block descriptors (address + length).
+    - Segment / Last Segment chaining (bounded).
 - **Interrupts**
   - Legacy INTx signalling (sufficient to boot most guests).
-  - **Limitation:** MSI/MSI-X is not implemented yet, so interrupt delivery is less efficient
-    and may limit peak IOPS.
+  - Single-vector MSI is supported by the NVMe PCI wrapper when enabled by the guest and wired up
+    by the platform (`aero_platform::interrupts::msi::MsiTrigger`).
+  - MSI-X is not currently implemented.
 
 ### Windows 7 Compatibility (Driver Requirements)
 
