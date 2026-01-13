@@ -24,6 +24,8 @@
 
 static VOID VioInputSetDeviceKind(_Inout_ PDEVICE_CONTEXT Ctx, _In_ VIOINPUT_DEVICE_KIND Kind);
 static VOID VirtioInputApplyTransportState(_In_ PDEVICE_CONTEXT DeviceContext);
+static VOID VirtioInputInterruptsQuiesceForReset(_Inout_ PDEVICE_CONTEXT DeviceContext);
+static NTSTATUS VirtioInputInterruptsResumeAfterReset(_Inout_ PDEVICE_CONTEXT DeviceContext);
 
 /*
  * virtio-input EV_BITS parsing/validation.
@@ -659,6 +661,40 @@ static void VirtioInputReportReady(_In_ void *context)
     }
 }
 
+static VOID VirtioInputInterruptsQuiesceForReset(_Inout_ PDEVICE_CONTEXT DeviceContext)
+{
+    NTSTATUS status;
+
+    if (DeviceContext == NULL) {
+        return;
+    }
+
+    if (DeviceContext->Interrupts.Mode != VirtioPciInterruptModeMsix) {
+        return;
+    }
+
+    status = VirtioPciInterruptsQuiesce(&DeviceContext->Interrupts, DeviceContext->PciDevice.CommonCfg);
+    if (!NT_SUCCESS(status)) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "VirtioPciInterruptsQuiesce failed: %!STATUS!\n",
+            status);
+    }
+}
+
+static NTSTATUS VirtioInputInterruptsResumeAfterReset(_Inout_ PDEVICE_CONTEXT DeviceContext)
+{
+    if (DeviceContext == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (DeviceContext->Interrupts.Mode != VirtioPciInterruptModeMsix) {
+        return STATUS_SUCCESS;
+    }
+
+    return VirtioPciInterruptsResume(&DeviceContext->Interrupts, DeviceContext->PciDevice.CommonCfg);
+}
+
 static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
 {
     PDEVICE_CONTEXT ctx = VirtioInputGetDeviceContext(Device);
@@ -671,6 +707,7 @@ static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
     VioInputDrainInputReportRing(ctx);
 
     if (ctx->PciDevice.CommonCfg != NULL) {
+        VirtioInputInterruptsQuiesceForReset(ctx);
         VirtioPciResetDevice(&ctx->PciDevice);
     }
 }
@@ -1025,6 +1062,7 @@ NTSTATUS VirtioInputEvtDeviceReleaseHardware(_In_ WDFDEVICE Device, _In_ WDFCMRE
         virtio_input_device_reset_state(&deviceContext->InputDevice, false);
 
         if (deviceContext->PciDevice.CommonCfg != NULL) {
+            VirtioInputInterruptsQuiesceForReset(deviceContext);
             VirtioPciResetDevice(&deviceContext->PciDevice);
         }
 
@@ -1069,9 +1107,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
     /*
      * Transport bring-up:
      *  - Negotiate features (includes reset, ACKNOWLEDGE|DRIVER, FEATURES_OK).
-     *  - Program MSI-X vectors (if present) AFTER reset.
      *  - Configure queues.
      *  - Post initial RX buffers.
+     *  - Program MSI-X vectors (if present) and enable OS interrupt delivery.
      *  - Set DRIVER_OK.
      */
     negotiated = 0;
@@ -1097,16 +1135,6 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "negotiated forbidden feature: EVENT_IDX\n");
         VirtioPciFailDevice(&deviceContext->PciDevice);
         return STATUS_NOT_SUPPORTED;
-    }
-
-    status = VirtioPciInterruptsProgramMsixVectors(&deviceContext->Interrupts, deviceContext->PciDevice.CommonCfg);
-    if (!NT_SUCCESS(status)) {
-        VIOINPUT_LOG(
-            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-            "VirtioPciInterruptsProgramMsixVectors failed: %!STATUS!\n",
-            status);
-        VirtioPciResetDevice(&deviceContext->PciDevice);
-        return status;
     }
 
     /*
@@ -1687,6 +1715,18 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         }
 
         deviceContext->VirtioStarted = 1;
+
+        status = VirtioInputInterruptsResumeAfterReset(deviceContext);
+        if (!NT_SUCCESS(status)) {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "VirtioPciInterruptsResume failed: %!STATUS!\n",
+                status);
+            deviceContext->VirtioStarted = 0;
+            VirtioPciResetDevice(&deviceContext->PciDevice);
+            return status;
+        }
+
         VirtioPciAddStatus(&deviceContext->PciDevice, VIRTIO_STATUS_DRIVER_OK);
 
         virtio_input_device_reset_state(&deviceContext->InputDevice, emitResetReports ? true : false);
@@ -1723,6 +1763,7 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
     VirtioInputApplyTransportState(deviceContext);
 
     if (deviceContext->PciDevice.CommonCfg != NULL) {
+        VirtioInputInterruptsQuiesceForReset(deviceContext);
         VirtioPciResetDevice(&deviceContext->PciDevice);
     }
 
