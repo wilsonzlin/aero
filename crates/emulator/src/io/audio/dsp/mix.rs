@@ -190,6 +190,52 @@ mod tests {
     }
 
     #[test]
+    fn mixer_rejects_invalid_channels() {
+        assert!(matches!(Mixer::new(0), Err(MixError::InvalidChannels)));
+    }
+
+    #[test]
+    fn mixer_empty_stream_list_produces_empty_output() {
+        let mixer = Mixer::new(2).unwrap();
+        let mut out = vec![1.0f32, 2.0, 3.0];
+        mixer.mix_interleaved(&[], &mut out).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn mixer_rejects_stream_length_mismatch() {
+        let mixer = Mixer::new(2).unwrap();
+        let a = [0.0f32, 0.0, 0.0, 0.0];
+        // Even though this stream is also misaligned for 2 channels, length mismatch is
+        // validated first and takes precedence.
+        let b = [0.0f32, 0.0, 0.0];
+        let mut out = vec![1.0f32];
+        assert_eq!(
+            mixer.mix_interleaved(&[&a, &b], &mut out),
+            Err(MixError::StreamLengthMismatch)
+        );
+        // `mix_interleaved` clears the output buffer before validation.
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn mixer_rejects_misaligned_input_lengths() {
+        let mixer = Mixer::new(2).unwrap();
+        let a = [0.0f32, 0.0, 0.0];
+        let mut out = vec![1.0f32];
+        assert_eq!(
+            mixer.mix_interleaved(&[&a], &mut out),
+            Err(MixError::InputLengthNotAligned {
+                expected_multiple: 2
+            })
+        );
+        assert!(out.is_empty());
+
+        // Misalignment of non-first streams is unreachable when lengths match, since the first
+        // stream's alignment implies all equally-sized streams are aligned.
+    }
+
+    #[test]
     fn dither_produces_noise_in_range() {
         let mut d = Dither::new(1);
         for _ in 0..1000 {
