@@ -19,3 +19,4 @@ pub const SECTOR_SIZE: usize = 512;
 pub use cache::{BlockCache, BlockCacheConfig, CoalescedRange, CoalescingBackend};
 pub use disk::{ByteStorage, DiskBackend, DiskFormat, VirtualDrive, WriteCachePolicy};
 pub use error::{DiskError, DiskResult};
+pub use pci_compat::PciConfigSpaceCompat;
