@@ -7,7 +7,7 @@
 //! - [`RawDisk`]: maps a resizable byte backend to a fixed-capacity disk (raw images)
 //! - [`AeroSparseDisk`]: Aero-specific sparse disk format for huge virtual disks
 //! - [`Qcow2Disk`]: QCOW2 v2/v3 (subset) support for common developer images
-//! - [`VhdDisk`]: VHD (fixed + dynamic) support
+//! - [`VhdDisk`]: VHD fixed/dynamic + differencing (explicit parent) support
 //! - [`AeroCowDisk`]: copy-on-write overlay on top of a base disk
 //! - [`BlockCachedDisk`]: LRU, write-back block cache wrapper
 //! - [`DiskImage`]: auto-detect + open wrapper for multiple formats

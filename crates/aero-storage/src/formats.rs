@@ -165,7 +165,7 @@ fn looks_like_vhd_footer(footer: &[u8; VHD_FOOTER_SIZE], file_len: u64) -> bool 
     }
 
     let disk_type = be_u32(&footer[60..64]);
-    if disk_type != 2 && disk_type != 3 {
+    if disk_type != 2 && disk_type != 3 && disk_type != 4 {
         return false;
     }
 
@@ -186,7 +186,7 @@ fn looks_like_vhd_footer(footer: &[u8; VHD_FOOTER_SIZE], file_len: u64) -> bool 
                 return false;
             }
         }
-        3 => {
+        3 | 4 => {
             if data_offset == u64::MAX {
                 return false;
             }

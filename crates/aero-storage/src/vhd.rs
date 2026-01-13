@@ -10,6 +10,7 @@ const VHD_DYNAMIC_COOKIE: [u8; 8] = *b"cxsparse";
 
 const VHD_DISK_TYPE_FIXED: u32 = 2;
 const VHD_DISK_TYPE_DYNAMIC: u32 = 3;
+const VHD_DISK_TYPE_DIFFERENCING: u32 = 4;
 const VHD_FILE_FORMAT_VERSION: u32 = 0x0001_0000;
 
 // Hard caps to avoid absurd allocations from untrusted images.
@@ -71,7 +72,7 @@ impl VhdFooter {
                     return Err(DiskError::CorruptImage("vhd fixed data_offset invalid"));
                 }
             }
-            VHD_DISK_TYPE_DYNAMIC => {
+            VHD_DISK_TYPE_DYNAMIC | VHD_DISK_TYPE_DIFFERENCING => {
                 if data_offset == u64::MAX {
                     return Err(DiskError::CorruptImage("vhd dynamic header offset invalid"));
                 }
@@ -166,8 +167,9 @@ impl VhdDynamicHeader {
 ///   - Dynamic header + BAT + per-block bitmaps
 ///
 /// Unsupported:
-/// - Differencing disks (`disk_type=4`)
-/// - Any features that require interpreting backing chains beyond this single image file
+/// - Any features that require interpreting backing chains automatically (e.g. resolving parent
+///   locators to filesystem paths). Differencing disks (`disk_type=4`) are supported only via
+///   [`VhdDisk::open_differencing`] with an explicitly supplied parent disk.
 pub struct VhdDisk<B> {
     backend: B,
     footer: VhdFooter,
@@ -175,6 +177,7 @@ pub struct VhdDisk<B> {
     bat: Vec<u32>,
     bitmap_cache: LruCache<u64, Arc<Vec<u8>>>,
     fixed_data_offset: u64,
+    parent: Option<Box<dyn VirtualDisk + Send>>,
 }
 
 impl<B: StorageBackend> VhdDisk<B> {
@@ -243,6 +246,7 @@ impl<B: StorageBackend> VhdDisk<B> {
                     bat: Vec::new(),
                     bitmap_cache: LruCache::new(NonZeroUsize::MIN),
                     fixed_data_offset,
+                    parent: None,
                 })
             }
             VHD_DISK_TYPE_DYNAMIC => {
@@ -460,10 +464,245 @@ impl<B: StorageBackend> VhdDisk<B> {
                     bat,
                     bitmap_cache: LruCache::new(cap),
                     fixed_data_offset: 0,
+                    parent: None,
                 })
             }
+            VHD_DISK_TYPE_DIFFERENCING => Err(DiskError::Unsupported(
+                "vhd differencing disks require explicit parent (use VhdDisk::open_differencing)",
+            )),
             _ => Err(DiskError::Unsupported("vhd disk type")),
         }
+    }
+
+    pub fn open_differencing(
+        mut backend: B,
+        parent: Box<dyn VirtualDisk + Send>,
+    ) -> Result<Self> {
+        let len = backend.len()?;
+        if len < SECTOR_SIZE as u64 {
+            return Err(DiskError::CorruptImage("vhd file too small"));
+        }
+        if !len.is_multiple_of(SECTOR_SIZE as u64) {
+            return Err(DiskError::CorruptImage("vhd file length misaligned"));
+        }
+
+        let footer_offset = len - SECTOR_SIZE as u64;
+        let mut raw_footer = [0u8; SECTOR_SIZE];
+        match backend.read_at(footer_offset, &mut raw_footer) {
+            Ok(()) => {}
+            Err(DiskError::OutOfBounds { .. }) => {
+                return Err(DiskError::CorruptImage("vhd footer truncated"));
+            }
+            Err(e) => return Err(e),
+        }
+        let footer = VhdFooter::parse(raw_footer)?;
+
+        if footer.disk_type != VHD_DISK_TYPE_DIFFERENCING {
+            return Err(DiskError::Unsupported(
+                "vhd differencing open requires disk_type=4",
+            ));
+        }
+
+        if parent.capacity_bytes() != footer.current_size {
+            return Err(DiskError::Unsupported(
+                "vhd differencing parent capacity mismatch",
+            ));
+        }
+
+        // Differencing VHDs have the same structural requirements as dynamic VHDs.
+        // Validate the footer copy up front so allocations never clobber unknown bytes at offset 0.
+        let mut raw_footer_copy = [0u8; SECTOR_SIZE];
+        match backend.read_at(0, &mut raw_footer_copy) {
+            Ok(()) => {}
+            Err(DiskError::OutOfBounds { .. }) => {
+                return Err(DiskError::CorruptImage("vhd footer copy truncated"));
+            }
+            Err(e) => return Err(e),
+        }
+        let footer_copy = VhdFooter::parse(raw_footer_copy)?;
+        if footer_copy.raw != footer.raw {
+            return Err(DiskError::CorruptImage("vhd footer copy mismatch"));
+        }
+
+        if footer.data_offset == u64::MAX {
+            return Err(DiskError::CorruptImage("vhd dynamic header offset invalid"));
+        }
+        if !footer.data_offset.is_multiple_of(SECTOR_SIZE as u64) {
+            return Err(DiskError::CorruptImage(
+                "vhd dynamic header offset misaligned",
+            ));
+        }
+        if footer.data_offset < SECTOR_SIZE as u64 {
+            return Err(DiskError::CorruptImage(
+                "vhd dynamic header overlaps footer copy",
+            ));
+        }
+        let footer_offset = len - SECTOR_SIZE as u64;
+        let dyn_header_end = footer
+            .data_offset
+            .checked_add(1024)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if dyn_header_end > len {
+            return Err(DiskError::CorruptImage("vhd dynamic header truncated"));
+        }
+        if dyn_header_end > footer_offset {
+            return Err(DiskError::CorruptImage(
+                "vhd dynamic header overlaps footer",
+            ));
+        }
+
+        let mut raw_header = [0u8; 1024];
+        match backend.read_at(footer.data_offset, &mut raw_header) {
+            Ok(()) => {}
+            Err(DiskError::OutOfBounds { .. }) => {
+                return Err(DiskError::CorruptImage("vhd dynamic header truncated"));
+            }
+            Err(e) => return Err(e),
+        }
+        let dynamic = VhdDynamicHeader::parse(&raw_header)?;
+
+        let required_entries = footer.current_size.div_ceil(dynamic.block_size as u64);
+        if (dynamic.max_table_entries as u64) < required_entries {
+            return Err(DiskError::CorruptImage("vhd bat too small"));
+        }
+
+        let bat_size_on_disk = {
+            let bat_bytes = (dynamic.max_table_entries as u64)
+                .checked_mul(4)
+                .ok_or(DiskError::OffsetOverflow)?;
+            let bat_bytes_aligned = align_up_u64(bat_bytes, SECTOR_SIZE as u64)?;
+            if bat_bytes_aligned > MAX_BAT_BYTES {
+                return Err(DiskError::Unsupported("vhd bat too large"));
+            }
+            bat_bytes_aligned
+        };
+        let bat_end_on_disk = dynamic
+            .table_offset
+            .checked_add(bat_size_on_disk)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if bat_end_on_disk > footer_offset {
+            return Err(DiskError::CorruptImage("vhd bat truncated"));
+        }
+        if dynamic.table_offset < SECTOR_SIZE as u64 {
+            return Err(DiskError::CorruptImage("vhd bat overlaps footer copy"));
+        }
+        if dynamic.table_offset < dyn_header_end && footer.data_offset < bat_end_on_disk {
+            return Err(DiskError::CorruptImage("vhd bat overlaps dynamic header"));
+        }
+
+        let bat_bytes = required_entries
+            .checked_mul(4)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if bat_bytes > MAX_BAT_BYTES {
+            return Err(DiskError::Unsupported("vhd bat too large"));
+        }
+        let entries: usize = required_entries
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
+        let bat_bytes_usize: usize = bat_bytes
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
+
+        let mut bat = Vec::new();
+        bat.try_reserve_exact(entries)
+            .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
+
+        let mut buf = Vec::new();
+        let buf_len = bat_bytes_usize.min(VHD_TABLE_READ_CHUNK_BYTES);
+        buf.try_reserve_exact(buf_len)
+            .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
+        buf.resize(buf_len, 0);
+
+        let mut remaining = bat_bytes_usize;
+        let mut off = dynamic.table_offset;
+        while remaining > 0 {
+            let read_len = remaining.min(buf.len());
+            match backend.read_at(off, &mut buf[..read_len]) {
+                Ok(()) => {}
+                Err(DiskError::OutOfBounds { .. }) => {
+                    return Err(DiskError::CorruptImage("vhd bat truncated"));
+                }
+                Err(e) => return Err(e),
+            }
+            for chunk in buf[..read_len].chunks_exact(4) {
+                bat.push(be_u32(chunk));
+            }
+            off = off
+                .checked_add(read_len as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            remaining -= read_len;
+        }
+
+        let sectors_per_block = (dynamic.block_size as u64) / SECTOR_SIZE as u64;
+        let bitmap_bytes = sectors_per_block.div_ceil(8);
+        let bitmap_size = align_up_u64(bitmap_bytes, SECTOR_SIZE as u64)?;
+        if bitmap_size > MAX_BITMAP_BYTES {
+            return Err(DiskError::Unsupported("vhd bitmap too large"));
+        }
+
+        let block_total_size = bitmap_size
+            .checked_add(dynamic.block_size as u64)
+            .ok_or(DiskError::OffsetOverflow)?;
+        let data_region_start = (SECTOR_SIZE as u64)
+            .max(dyn_header_end)
+            .max(bat_end_on_disk);
+        let block_total_sectors = block_total_size
+            .checked_div(SECTOR_SIZE as u64)
+            .ok_or(DiskError::OffsetOverflow)?;
+
+        let allocated_count = bat.iter().filter(|e| **e != u32::MAX).count();
+        let mut allocated_blocks: Vec<u32> = Vec::new();
+        allocated_blocks
+            .try_reserve_exact(allocated_count)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+
+        for &bat_entry in &bat {
+            if bat_entry == u32::MAX {
+                continue;
+            }
+            let block_start = (bat_entry as u64)
+                .checked_mul(SECTOR_SIZE as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            if block_start < data_region_start {
+                return Err(DiskError::CorruptImage("vhd block overlaps metadata"));
+            }
+            let block_end = block_start
+                .checked_add(block_total_size)
+                .ok_or(DiskError::OffsetOverflow)?;
+            if block_end > footer_offset {
+                return Err(DiskError::CorruptImage("vhd block overlaps footer"));
+            }
+
+            allocated_blocks.push(bat_entry);
+        }
+
+        allocated_blocks.sort_unstable();
+        for w in allocated_blocks.windows(2) {
+            let prev_start = w[0] as u64;
+            let next_start = w[1] as u64;
+            let prev_end = prev_start
+                .checked_add(block_total_sectors)
+                .ok_or(DiskError::OffsetOverflow)?;
+            if next_start < prev_end {
+                return Err(DiskError::CorruptImage("vhd blocks overlap"));
+            }
+        }
+
+        let cap_entries = (VHD_BITMAP_CACHE_BUDGET_BYTES / bitmap_size).max(1) as usize;
+        let cap_entries = cap_entries
+            .min(VHD_BITMAP_CACHE_BUDGET_BYTES as usize / 512)
+            .max(1);
+        let cap = NonZeroUsize::new(cap_entries).ok_or(DiskError::InvalidConfig("vhd cache"))?;
+
+        Ok(Self {
+            backend,
+            footer,
+            dynamic: Some(dynamic),
+            bat,
+            bitmap_cache: LruCache::new(cap),
+            fixed_data_offset: 0,
+            parent: Some(parent),
+        })
     }
 
     pub fn into_backend(self) -> B {
@@ -644,6 +883,12 @@ impl<B: StorageBackend> VhdDisk<B> {
 
         let bat_entry = self.bat[block_index];
         if bat_entry == u32::MAX {
+            if let Some(parent) = self.parent.as_mut() {
+                let off = lba
+                    .checked_mul(SECTOR_SIZE as u64)
+                    .ok_or(DiskError::OffsetOverflow)?;
+                return parent.read_at(off, out);
+            }
             out.fill(0);
             return Ok(());
         }
@@ -654,6 +899,12 @@ impl<B: StorageBackend> VhdDisk<B> {
         self.validate_block_bounds(block_start, bitmap_size)?;
         let bitmap = self.load_bitmap(block_start, bitmap_size)?;
         if !Self::bitmap_get(bitmap.as_slice(), sector_in_block)? {
+            if let Some(parent) = self.parent.as_mut() {
+                let off = lba
+                    .checked_mul(SECTOR_SIZE as u64)
+                    .ok_or(DiskError::OffsetOverflow)?;
+                return parent.read_at(off, out);
+            }
             out.fill(0);
             return Ok(());
         }
@@ -667,7 +918,7 @@ impl<B: StorageBackend> VhdDisk<B> {
     }
 
     fn write_sector_dyn(&mut self, lba: u64, data: &[u8; SECTOR_SIZE]) -> Result<()> {
-        if data.iter().all(|b| *b == 0) {
+        if self.parent.is_none() && data.iter().all(|b| *b == 0) {
             // Keep the image sparse: writing zeros to an unallocated sector doesn't need to
             // allocate anything.
             if !self.is_sector_allocated(lba)? {
@@ -899,7 +1150,11 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
             }
             let bat_entry = self.bat[block_index];
             if bat_entry == u32::MAX {
-                buf[pos..pos + chunk_len].fill(0);
+                if let Some(parent) = self.parent.as_mut() {
+                    parent.read_at(abs, &mut buf[pos..pos + chunk_len])?;
+                } else {
+                    buf[pos..pos + chunk_len].fill(0);
+                }
                 pos += chunk_len;
                 continue;
             }
@@ -941,7 +1196,14 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
                         "vhd block data truncated",
                     )?;
                 } else {
-                    buf[pos..pos + run_len].fill(0);
+                    if let Some(parent) = self.parent.as_mut() {
+                        let abs_run = offset
+                            .checked_add(pos as u64)
+                            .ok_or(DiskError::OffsetOverflow)?;
+                        parent.read_at(abs_run, &mut buf[pos..pos + run_len])?;
+                    } else {
+                        buf[pos..pos + run_len].fill(0);
+                    }
                 }
 
                 within = within
@@ -999,7 +1261,11 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
     }
 
     fn flush(&mut self) -> Result<()> {
-        self.backend.flush()
+        self.backend.flush()?;
+        if let Some(parent) = self.parent.as_mut() {
+            parent.flush()?;
+        }
+        Ok(())
     }
 }
 

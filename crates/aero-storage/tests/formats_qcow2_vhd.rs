@@ -1,5 +1,6 @@
 use aero_storage::{
-    DiskError, MemBackend, Qcow2Disk, StorageBackend, VhdDisk, VirtualDisk, SECTOR_SIZE,
+    detect_format, DiskError, DiskFormat, DiskImage, MemBackend, Qcow2Disk, StorageBackend, VhdDisk,
+    VirtualDisk, SECTOR_SIZE,
 };
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -341,6 +342,29 @@ impl StorageBackend for FailOnWriteBackend {
     }
 }
 
+#[derive(Clone)]
+struct SharedReadOnlyDisk<D> {
+    inner: Arc<Mutex<D>>,
+}
+
+impl<D: VirtualDisk + Send> VirtualDisk for SharedReadOnlyDisk<D> {
+    fn capacity_bytes(&self) -> u64 {
+        self.inner.lock().unwrap().capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        self.inner.lock().unwrap().read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
+        Err(DiskError::Unsupported("parent disk is read-only"))
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.inner.lock().unwrap().flush()
+    }
+}
+
 fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; SECTOR_SIZE] {
     let mut footer = [0u8; SECTOR_SIZE];
     footer[0..8].copy_from_slice(b"conectix");
@@ -418,6 +442,43 @@ fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
     let bat_size = bat_bytes.div_ceil(SECTOR_SIZE as u64) * SECTOR_SIZE as u64;
 
     let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
+    let file_len = (SECTOR_SIZE as u64) + 1024 + bat_size + (SECTOR_SIZE as u64);
+    let mut backend = MemBackend::with_len(file_len).unwrap();
+
+    backend.write_at(0, &footer).unwrap();
+    backend
+        .write_at(file_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
+
+    let mut dyn_header = [0u8; 1024];
+    dyn_header[0..8].copy_from_slice(b"cxsparse");
+    write_be_u64(&mut dyn_header, 8, u64::MAX);
+    write_be_u64(&mut dyn_header, 16, table_offset);
+    write_be_u32(&mut dyn_header, 24, 0x0001_0000);
+    write_be_u32(&mut dyn_header, 28, max_table_entries);
+    write_be_u32(&mut dyn_header, 32, block_size);
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    write_be_u32(&mut dyn_header, 36, checksum);
+    backend.write_at(dyn_header_offset, &dyn_header).unwrap();
+
+    let bat = vec![0xFFu8; bat_size as usize];
+    backend.write_at(table_offset, &bat).unwrap();
+
+    backend
+}
+
+fn make_vhd_differencing_empty(virtual_size: u64, block_size: u32) -> MemBackend {
+    assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
+    assert_eq!(block_size as usize % SECTOR_SIZE, 0);
+
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let table_offset = dyn_header_offset + 1024u64;
+    let blocks = virtual_size.div_ceil(block_size as u64);
+    let max_table_entries = blocks as u32;
+    let bat_bytes = max_table_entries as u64 * 4;
+    let bat_size = bat_bytes.div_ceil(SECTOR_SIZE as u64) * SECTOR_SIZE as u64;
+
+    let footer = make_vhd_footer(virtual_size, 4, dyn_header_offset);
     let file_len = (SECTOR_SIZE as u64) + 1024 + bat_size + (SECTOR_SIZE as u64);
     let mut backend = MemBackend::with_len(file_len).unwrap();
 
@@ -1448,8 +1509,8 @@ fn vhd_fixed_rejects_data_offset_not_max() {
 fn vhd_rejects_unsupported_disk_type() {
     let virtual_size = 64 * 1024u64;
 
-    // Differencing disks (disk_type=4) are currently unsupported.
-    let footer = make_vhd_footer(virtual_size, 4, 0);
+    // disk_type values other than 2/3/4 are unsupported.
+    let footer = make_vhd_footer(virtual_size, 5, 0);
     let mut backend = MemBackend::with_len(SECTOR_SIZE as u64).unwrap();
     backend.write_at(0, &footer).unwrap();
 
@@ -1930,6 +1991,126 @@ fn vhd_dynamic_write_persists_after_reopen() {
     let mut back = vec![0u8; SECTOR_SIZE];
     reopened.read_sectors(3, &mut back).unwrap();
     assert_eq!(back, data);
+}
+
+#[test]
+fn vhd_differencing_reads_fall_back_to_parent_and_writes_overlay() {
+    let virtual_size = 64 * 1024u64;
+
+    let mut parent_backend = make_vhd_fixed_with_pattern();
+    parent_backend
+        .write_at(SECTOR_SIZE as u64, b"parent-s1")
+        .unwrap();
+
+    let parent_disk = VhdDisk::open(parent_backend).unwrap();
+    let parent = Arc::new(Mutex::new(parent_disk));
+
+    let child_backend = make_vhd_differencing_empty(virtual_size, 16 * 1024);
+    let parent_view = SharedReadOnlyDisk {
+        inner: parent.clone(),
+    };
+    let mut disk =
+        VhdDisk::open_differencing(child_backend, Box::new(parent_view)).unwrap();
+
+    // Before any allocations, all reads come from the parent.
+    let mut sector0 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut sector0).unwrap();
+    assert_eq!(&sector0[..10], b"hello vhd!");
+
+    let mut sector1 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(1, &mut sector1).unwrap();
+    assert_eq!(&sector1[..9], b"parent-s1");
+
+    // Write an overlay sector. This should allocate in the child only.
+    let mut write0 = vec![0u8; SECTOR_SIZE];
+    write0[..14].copy_from_slice(b"child-overlay!");
+    disk.write_sectors(0, &write0).unwrap();
+
+    let mut back0 = vec![0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut back0).unwrap();
+    assert_eq!(back0, write0);
+
+    // Another sector in the same allocated block is still unallocated in the child and must fall
+    // back to the parent (not zeros).
+    let mut back1 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(1, &mut back1).unwrap();
+    assert_eq!(&back1[..9], b"parent-s1");
+
+    // Parent must remain unchanged.
+    let mut p0 = [0u8; SECTOR_SIZE];
+    let mut p1 = [0u8; SECTOR_SIZE];
+    {
+        let mut parent_guard = parent.lock().unwrap();
+        parent_guard.read_sectors(0, &mut p0).unwrap();
+        parent_guard.read_sectors(1, &mut p1).unwrap();
+    }
+    assert_eq!(&p0[..10], b"hello vhd!");
+    assert_eq!(&p1[..9], b"parent-s1");
+
+    // Writes must persist in the differencing layer after reopen.
+    disk.flush().unwrap();
+    let backend = disk.into_backend();
+    let parent_view = SharedReadOnlyDisk {
+        inner: parent.clone(),
+    };
+    let mut reopened = VhdDisk::open_differencing(backend, Box::new(parent_view)).unwrap();
+
+    let mut back0_re = vec![0u8; SECTOR_SIZE];
+    reopened.read_sectors(0, &mut back0_re).unwrap();
+    assert_eq!(back0_re, write0);
+
+    let mut back1_re = [0u8; SECTOR_SIZE];
+    reopened.read_sectors(1, &mut back1_re).unwrap();
+    assert_eq!(&back1_re[..9], b"parent-s1");
+}
+
+#[test]
+fn vhd_differencing_open_auto_is_rejected_with_hint() {
+    let virtual_size = 64 * 1024u64;
+    let mut backend = make_vhd_differencing_empty(virtual_size, 16 * 1024);
+    assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::Vhd);
+
+    let err = DiskImage::open_auto(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::Unsupported(
+            "vhd differencing disks require explicit parent (use VhdDisk::open_differencing)"
+        )
+    ));
+}
+
+#[test]
+fn vhd_differencing_rejects_bat_entry_pointing_into_metadata() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_differencing_empty(virtual_size, block_size);
+
+    // Grow the file so a block starting at offset 0 would fit before the footer at EOF.
+    // This ensures the failure is due to "metadata overlap", not "block overlaps footer".
+    let bitmap_size = SECTOR_SIZE as u64;
+    let new_len = bitmap_size + block_size as u64 + SECTOR_SIZE as u64;
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let footer = make_vhd_footer(virtual_size, 4, dyn_header_offset);
+    backend.set_len(new_len).unwrap();
+    backend.write_at(0, &footer).unwrap();
+    backend
+        .write_at(new_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
+
+    // Point block 0 at the start of the file (overlapping the footer copy / dynamic header / BAT).
+    let table_offset = dyn_header_offset + 1024u64;
+    backend.write_at(table_offset, &0u32.to_be_bytes()).unwrap();
+
+    let parent_backend = make_vhd_fixed_with_pattern();
+    let parent_disk = VhdDisk::open(parent_backend).unwrap();
+    let err =
+        VhdDisk::open_differencing(backend, Box::new(parent_disk))
+            .err()
+            .expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd block overlaps metadata")
+    ));
 }
 
 #[test]
