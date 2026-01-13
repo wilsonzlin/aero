@@ -841,7 +841,7 @@ impl VirtioPciDevice {
                 VIRTIO_CAP_DEVICE.to_vec(),
             )));
 
-            // MSI-X capability + table (required for modern virtio drivers on Windows 7).
+            // MSI-X capability + table (optional in the Aero Win7 virtio contract).
             //
             // We expose one vector for config changes plus one vector per virtqueue.
             // The table + PBA live inside BAR0 in an unused region after the device-specific config
@@ -1261,20 +1261,24 @@ impl VirtioPciDevice {
             .map(|q| q.msix_vector)
             .unwrap_or(0xffff);
 
-        // When MSI-X is enabled, virtio-pci uses MSI-X exclusively. If no vector is assigned (or
-        // the entry is masked), do not fall back to INTx: modern Windows drivers expect interrupts
-        // to be suppressed until vectors are programmed.
-        if self.msix_enabled() {
-            if vec != 0xffff {
-                let msg = self
-                    .config
-                    .capability_mut::<MsixCapability>()
-                    .and_then(|msix| msix.trigger(vec));
-                if let Some(msg) = msg {
-                    self.interrupts.signal_msix(msg);
-                }
+        // Aero's Windows 7 virtio contract requires INTx as the baseline interrupt mechanism, with
+        // MSI-X as an optional acceleration. Even when the guest has enabled MSI-X at the PCI
+        // level, drivers may leave `queue_msix_vector = 0xFFFF` (unassigned) while still expecting
+        // INTx + ISR semantics.
+        //
+        // Therefore:
+        // - If MSI-X is enabled and we can successfully form an MSI message, deliver MSI-X.
+        // - Otherwise (vector unassigned, entry masked, address=0, etc), fall back to asserting
+        //   legacy INTx and rely on ISR read-to-ack to clear it.
+        if self.msix_enabled() && vec != 0xffff {
+            let msg = self
+                .config
+                .capability_mut::<MsixCapability>()
+                .and_then(|msix| msix.trigger(vec));
+            if let Some(msg) = msg {
+                self.interrupts.signal_msix(msg);
+                return;
             }
-            return;
         }
 
         self.legacy_irq_pending = true;
@@ -1720,6 +1724,8 @@ mod tests {
     use crate::devices::{VirtioDevice, VirtioDeviceError};
     use crate::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
     use crate::queue::VirtQueue;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[derive(Default)]
     struct NoopInterrupts;
@@ -1797,6 +1803,58 @@ mod tests {
         fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
             self
         }
+    }
+
+    #[derive(Debug, Default, Clone)]
+    struct TestInterruptState {
+        legacy_raise_count: u64,
+        legacy_lower_count: u64,
+        msix_messages: Vec<MsiMessage>,
+    }
+
+    #[derive(Clone)]
+    struct TestInterrupts {
+        state: Rc<RefCell<TestInterruptState>>,
+    }
+
+    impl InterruptSink for TestInterrupts {
+        fn raise_legacy_irq(&mut self) {
+            self.state.borrow_mut().legacy_raise_count += 1;
+        }
+
+        fn lower_legacy_irq(&mut self) {
+            self.state.borrow_mut().legacy_lower_count += 1;
+        }
+
+        fn signal_msix(&mut self, message: MsiMessage) {
+            self.state.borrow_mut().msix_messages.push(message);
+        }
+    }
+
+    fn enable_msix(pci: &mut VirtioPciDevice) {
+        let msix_cap_offset = pci
+            .config
+            .find_capability(aero_devices::pci::msix::PCI_CAP_ID_MSIX)
+            .expect("virtio-pci should expose an MSI-X capability");
+
+        // Set MSI-X Enable (bit 15). The table-size field is read-only in real hardware and is
+        // re-synchronized by the capability implementation after the write.
+        pci.config_write(msix_cap_offset as u16 + 0x02, &(1u16 << 15).to_le_bytes());
+        assert!(pci.msix_enabled());
+    }
+
+    fn program_msix_vector(pci: &mut VirtioPciDevice, vector: u16, address: u64, data: u16) {
+        let Some(msix) = pci.config.capability_mut::<MsixCapability>() else {
+            panic!("missing MSI-X capability");
+        };
+
+        let mut entry = [0u8; 16];
+        entry[0..4].copy_from_slice(&(address as u32).to_le_bytes());
+        entry[4..8].copy_from_slice(&((address >> 32) as u32).to_le_bytes());
+        entry[8..12].copy_from_slice(&u32::from(data).to_le_bytes());
+        entry[12..16].copy_from_slice(&0u32.to_le_bytes()); // unmasked
+
+        msix.table_write(u64::from(vector) * 16, &entry);
     }
 
     fn write_desc(
@@ -1880,5 +1938,81 @@ mod tests {
 
         assert!(pci.driver_ok());
         assert_eq!(pci.device_status(), VIRTIO_STATUS_DRIVER_OK);
+    }
+
+    #[test]
+    fn interrupt_msix_disabled_uses_intx() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        assert!(!pci.msix_enabled());
+        assert!(!pci.irq_level());
+
+        pci.signal_queue_interrupt(0);
+
+        assert!(pci.irq_level());
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 1);
+        assert!(state.msix_messages.is_empty());
+    }
+
+    #[test]
+    fn interrupt_msix_enabled_but_vector_unassigned_falls_back_to_intx() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        enable_msix(&mut pci);
+        assert_eq!(pci.queues[0].msix_vector, 0xffff);
+        assert!(!pci.irq_level());
+
+        pci.signal_queue_interrupt(0);
+
+        // Even with MSI-X enabled at the PCI level, an unassigned vector must fall back to INTx.
+        assert!(pci.irq_level());
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 1);
+        assert!(state.msix_messages.is_empty());
+    }
+
+    #[test]
+    fn interrupt_msix_enabled_with_programmed_vector_emits_msix_message() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        enable_msix(&mut pci);
+
+        // Use vector 1 for queue 0 (vector 0 is typically used for config interrupts).
+        pci.queues[0].msix_vector = 1;
+        program_msix_vector(&mut pci, 1, 0xFEE0_0000, 0x1234);
+
+        pci.signal_queue_interrupt(0);
+
+        // When MSI-X is fully configured, deliver MSI and do not assert legacy INTx.
+        assert!(!pci.irq_level());
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 0);
+        assert_eq!(state.msix_messages.len(), 1);
+        assert_eq!(
+            state.msix_messages[0],
+            MsiMessage {
+                address: 0xFEE0_0000,
+                data: 0x1234
+            }
+        );
     }
 }
