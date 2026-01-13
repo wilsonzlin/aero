@@ -2016,6 +2016,189 @@ test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page })
   }
 });
 
+test("drops oversized L2 tunnel messages and increments metric", async ({ page }) => {
+  const origin = "https://example.com";
+  const token = "e2e-token";
+  const backend = await spawnL2BackendServer({
+    REQUIRE_ORIGIN: origin,
+    REQUIRE_TOKEN: token,
+  });
+  // Use a tiny L2_MAX_MESSAGE_BYTES so we can trigger the oversize path with a
+  // small message (avoids large allocations in tests).
+  const relay = await spawnRelayServer({
+    L2_BACKEND_WS_URL: `ws://127.0.0.1:${backend.port}/l2`,
+    L2_BACKEND_WS_ORIGIN: origin,
+    L2_BACKEND_WS_TOKEN: token,
+    L2_MAX_MESSAGE_BYTES: "4",
+  });
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort }) => {
+        const iceResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`).then((r) => r.json());
+        if (!iceResp?.iceServers || !Array.isArray(iceResp.iceServers)) {
+          throw new Error("invalid ice server response");
+        }
+        const iceServers = iceResp.iceServers;
+
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        const pc = new RTCPeerConnection({ iceServers });
+        const pendingCandidates = [];
+        let remoteDescriptionSet = false;
+        // L2 tunnel MUST be reliable (no partial reliability) and ordered. Do not set maxRetransmits/maxPacketLifeTime.
+        const dc = pc.createDataChannel("l2", { ordered: true });
+        dc.binaryType = "arraybuffer";
+
+        const answerPromise = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for answer")), 10_000);
+          let answered = false;
+          const onMessage = (event) => {
+            let msg;
+            try {
+              msg = JSON.parse(event.data);
+            } catch {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              reject(new Error("invalid signaling message (not JSON)"));
+              return;
+            }
+
+            if (msg?.type === "error") {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              reject(new Error(`signaling error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`));
+              return;
+            }
+
+            if (msg?.type === "candidate") {
+              if (!msg.candidate?.candidate) return;
+              if (remoteDescriptionSet) {
+                pc.addIceCandidate(msg.candidate).catch(() => {});
+              } else {
+                pendingCandidates.push(msg.candidate);
+              }
+              return;
+            }
+
+            if (msg?.type !== "answer") return;
+            if (answered) return;
+            answered = true;
+            clearTimeout(timeout);
+            resolve(msg);
+          };
+          ws.addEventListener("message", onMessage);
+        });
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === "complete") return resolve();
+          const onState = () => {
+            if (pc.iceGatheringState !== "complete") return;
+            pc.removeEventListener("icegatheringstatechange", onState);
+            resolve();
+          };
+          pc.addEventListener("icegatheringstatechange", onState);
+        });
+
+        if (!pc.localDescription?.sdp) {
+          throw new Error("missing local description");
+        }
+
+        ws.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: pc.localDescription.sdp } }));
+
+        const answerMsg = await answerPromise;
+        if (answerMsg?.type !== "answer" || !answerMsg.sdp?.sdp) {
+          throw new Error("invalid answer message shape");
+        }
+
+        await pc.setRemoteDescription(answerMsg.sdp);
+        remoteDescriptionSet = true;
+        for (const candidate of pendingCandidates) {
+          await pc.addIceCandidate(candidate);
+        }
+
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for datachannel open")), 10_000);
+          dc.addEventListener(
+            "open",
+            () => {
+              clearTimeout(timeout);
+              resolve();
+            },
+            { once: true },
+          );
+          dc.addEventListener(
+            "error",
+            () => {
+              clearTimeout(timeout);
+              reject(new Error("datachannel error"));
+            },
+            { once: true },
+          );
+        });
+
+        // First validate the bridge works with an in-limit ping.
+        dc.send(new Uint8Array([0xa2, 0x03, 0x01, 0x00])); // PING
+
+        const pong = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for PONG")), 10_000);
+          dc.addEventListener(
+            "message",
+            (event) => {
+              clearTimeout(timeout);
+              resolve(new Uint8Array(event.data));
+            },
+            { once: true },
+          );
+        });
+
+        // Now send an oversized message (5 bytes > L2_MAX_MESSAGE_BYTES=4) and
+        // ensure the relay closes the channel.
+        const closeRes = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for datachannel close")), 10_000);
+          dc.addEventListener(
+            "close",
+            () => {
+              clearTimeout(timeout);
+              resolve(true);
+            },
+            { once: true },
+          );
+          dc.send(new Uint8Array([0xa2, 0x03, 0x01, 0x00, 0x00]));
+        });
+
+        ws.close();
+        pc.close();
+
+        return { pong: Array.from(pong), closed: closeRes };
+      },
+      { relayPort: relay.port },
+    );
+
+    expect(res.pong).toEqual([0xa2, 0x03, 0x02, 0x00]); // PONG
+    expect(res.closed).toBe(true);
+
+    const metricsResp = await page.request.get(`http://127.0.0.1:${relay.port}/metrics`);
+    expect(metricsResp.ok()).toBeTruthy();
+    const events = parseRelayEventCounters(await metricsResp.text());
+    expect(events.l2_bridge_dials_total).toBeGreaterThanOrEqual(1);
+    expect(events.l2_bridge_dial_errors_total ?? 0).toBe(0);
+    expect(events.l2_bridge_dropped_oversized_total).toBeGreaterThanOrEqual(1);
+  } finally {
+    await Promise.all([web.close(), relay.kill(), backend.kill()]);
+  }
+});
+
 test("bridges an L2 tunnel DataChannel to a backend WebSocket (session cookie forwarding)", async ({ page }) => {
   const web = await startWebServer();
   const requiredCookieValue = "test-session-cookie";
