@@ -3845,6 +3845,215 @@ VertexDecl* create_internal_vertex_decl_locked(Device* dev, const void* pDecl, u
   return decl.release();
 }
 
+// -----------------------------------------------------------------------------
+// Fixed-function fallback shader selection (stage0 COLOROP/ALPHAOP minimal)
+// -----------------------------------------------------------------------------
+namespace {
+
+constexpr uint32_t kD3dTssColorOp = 1u;    // D3DTSS_COLOROP
+constexpr uint32_t kD3dTssColorArg1 = 2u;  // D3DTSS_COLORARG1
+constexpr uint32_t kD3dTssColorArg2 = 3u;  // D3DTSS_COLORARG2
+constexpr uint32_t kD3dTssAlphaOp = 4u;    // D3DTSS_ALPHAOP
+constexpr uint32_t kD3dTssAlphaArg1 = 5u;  // D3DTSS_ALPHAARG1
+constexpr uint32_t kD3dTssAlphaArg2 = 6u;  // D3DTSS_ALPHAARG2
+
+constexpr uint32_t kD3dTopDisable = 1u;     // D3DTOP_DISABLE
+constexpr uint32_t kD3dTopSelectArg1 = 2u;  // D3DTOP_SELECTARG1
+constexpr uint32_t kD3dTopModulate = 4u;    // D3DTOP_MODULATE
+
+constexpr uint32_t kD3dTaSelectMask = 0xFu;  // D3DTA_SELECTMASK
+constexpr uint32_t kD3dTaDiffuse = 0u;       // D3DTA_DIFFUSE
+constexpr uint32_t kD3dTaTexture = 2u;       // D3DTA_TEXTURE
+
+enum class FixedfuncStage0Src : uint8_t {
+  Diffuse = 0,
+  Texture = 1,
+  Modulate = 2,
+};
+
+struct FixedfuncStage0Key {
+  FixedfuncStage0Src color = FixedfuncStage0Src::Diffuse;
+  FixedfuncStage0Src alpha = FixedfuncStage0Src::Diffuse;
+};
+
+bool shader_bytecode_equals(const Shader* sh, const void* bytes, uint32_t size) {
+  if (!sh || !bytes || size == 0) {
+    return false;
+  }
+  if (sh->bytecode.size() != size) {
+    return false;
+  }
+  return std::memcmp(sh->bytecode.data(), bytes, size) == 0;
+}
+
+FixedfuncStage0Src fixedfunc_decode_arg_src(uint32_t arg) {
+  switch (arg & kD3dTaSelectMask) {
+    case kD3dTaTexture:
+      return FixedfuncStage0Src::Texture;
+    case kD3dTaDiffuse:
+    default:
+      return FixedfuncStage0Src::Diffuse;
+  }
+}
+
+FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t arg2) {
+  switch (op) {
+    case kD3dTopDisable:
+      return FixedfuncStage0Src::Diffuse;
+    case kD3dTopSelectArg1:
+      return fixedfunc_decode_arg_src(arg1);
+    case kD3dTopModulate: {
+      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
+      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
+      // Minimal: only the common TEXTURE * DIFFUSE case.
+      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) ||
+          (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
+        return FixedfuncStage0Src::Modulate;
+      }
+      return FixedfuncStage0Src::Diffuse;
+    }
+    default:
+      return FixedfuncStage0Src::Diffuse;
+  }
+}
+
+FixedfuncStage0Key fixedfunc_stage0_key_locked(const Device* dev) {
+  FixedfuncStage0Key key{};
+  if (!dev) {
+    return key;
+  }
+
+  const bool has_tex0 = (dev->textures[0] != nullptr);
+
+  const uint32_t colorop = dev->texture_stage_states[0][kD3dTssColorOp];
+  const uint32_t colorarg1 = dev->texture_stage_states[0][kD3dTssColorArg1];
+  const uint32_t colorarg2 = dev->texture_stage_states[0][kD3dTssColorArg2];
+  const uint32_t alphaop = dev->texture_stage_states[0][kD3dTssAlphaOp];
+  const uint32_t alphaarg1 = dev->texture_stage_states[0][kD3dTssAlphaArg1];
+  const uint32_t alphaarg2 = dev->texture_stage_states[0][kD3dTssAlphaArg2];
+
+  key.color = fixedfunc_decode_op_src(colorop, colorarg1, colorarg2);
+  key.alpha = fixedfunc_decode_op_src(alphaop, alphaarg1, alphaarg2);
+
+  // Defensive: avoid selecting a texture-sampling shader when stage0 has no
+  // bound texture. This prevents regressions in non-textured fixed-function
+  // tests that leave default COLOROP=MODULATE but never bind texture0.
+  if (!has_tex0) {
+    if (key.color != FixedfuncStage0Src::Diffuse) {
+      key.color = FixedfuncStage0Src::Diffuse;
+    }
+    if (key.alpha != FixedfuncStage0Src::Diffuse) {
+      key.alpha = FixedfuncStage0Src::Diffuse;
+    }
+  }
+
+  return key;
+}
+
+const void* fixedfunc_ps_variant_bytes(FixedfuncStage0Key key, uint32_t* size_out) {
+  if (!size_out) {
+    return nullptr;
+  }
+  *size_out = 0;
+
+  const auto set = [&](const void* bytes, size_t size) -> const void* {
+    *size_out = static_cast<uint32_t>(size);
+    return bytes;
+  };
+
+  // Diffuse/diffuse (no texturing).
+  if (key.color == FixedfuncStage0Src::Diffuse && key.alpha == FixedfuncStage0Src::Diffuse) {
+    return set(fixedfunc::kPsPassthroughColor, sizeof(fixedfunc::kPsPassthroughColor));
+  }
+
+  // Texture variants.
+  if (key.color == FixedfuncStage0Src::Texture && key.alpha == FixedfuncStage0Src::Texture) {
+    return set(fixedfunc::kPsStage0TextureTexture, sizeof(fixedfunc::kPsStage0TextureTexture));
+  }
+  if (key.color == FixedfuncStage0Src::Texture && key.alpha == FixedfuncStage0Src::Diffuse) {
+    return set(fixedfunc::kPsStage0TextureDiffuse, sizeof(fixedfunc::kPsStage0TextureDiffuse));
+  }
+  if (key.color == FixedfuncStage0Src::Texture && key.alpha == FixedfuncStage0Src::Modulate) {
+    return set(fixedfunc::kPsStage0TextureModulate, sizeof(fixedfunc::kPsStage0TextureModulate));
+  }
+
+  // Diffuse color with textured alpha.
+  if (key.color == FixedfuncStage0Src::Diffuse && key.alpha == FixedfuncStage0Src::Texture) {
+    return set(fixedfunc::kPsStage0DiffuseTexture, sizeof(fixedfunc::kPsStage0DiffuseTexture));
+  }
+  if (key.color == FixedfuncStage0Src::Diffuse && key.alpha == FixedfuncStage0Src::Modulate) {
+    return set(fixedfunc::kPsStage0DiffuseModulate, sizeof(fixedfunc::kPsStage0DiffuseModulate));
+  }
+
+  // Modulate variants.
+  if (key.color == FixedfuncStage0Src::Modulate && key.alpha == FixedfuncStage0Src::Modulate) {
+    // TEXTURE * DIFFUSE for both RGB and A.
+    return set(fixedfunc::kPsTexturedModulateVertexColor, sizeof(fixedfunc::kPsTexturedModulateVertexColor));
+  }
+  if (key.color == FixedfuncStage0Src::Modulate && key.alpha == FixedfuncStage0Src::Diffuse) {
+    return set(fixedfunc::kPsStage0ModulateDiffuse, sizeof(fixedfunc::kPsStage0ModulateDiffuse));
+  }
+  if (key.color == FixedfuncStage0Src::Modulate && key.alpha == FixedfuncStage0Src::Texture) {
+    return set(fixedfunc::kPsStage0ModulateTexture, sizeof(fixedfunc::kPsStage0ModulateTexture));
+  }
+
+  // Unknown combination: fall back to diffuse.
+  return set(fixedfunc::kPsPassthroughColor, sizeof(fixedfunc::kPsPassthroughColor));
+}
+
+HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot, Shader* fixedfunc_vs) {
+  if (!dev || !ps_slot) {
+    return E_FAIL;
+  }
+
+  const FixedfuncStage0Key key = fixedfunc_stage0_key_locked(dev);
+  uint32_t ps_size = 0;
+  const void* ps_bytes = fixedfunc_ps_variant_bytes(key, &ps_size);
+  if (!ps_bytes || ps_size == 0) {
+    return E_FAIL;
+  }
+
+  if (*ps_slot && shader_bytecode_equals(*ps_slot, ps_bytes, ps_size)) {
+    return S_OK;
+  }
+
+  Shader* old_ps = *ps_slot;
+  Shader* new_ps = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
+  if (!new_ps) {
+    return E_OUTOFMEMORY;
+  }
+
+  *ps_slot = new_ps;
+
+  // If fixed-function shaders are currently bound, rebind to the new PS so the
+  // change takes effect without waiting for a draw-time fallback rebinding path.
+  const bool fixedfunc_bound = (old_ps != nullptr && fixedfunc_vs != nullptr &&
+                                !dev->user_vs && !dev->user_ps &&
+                                dev->vs == fixedfunc_vs && dev->ps == old_ps);
+  if (fixedfunc_bound) {
+    dev->ps = new_ps;
+    if (!emit_bind_shaders_locked(dev)) {
+      dev->ps = old_ps;
+      *ps_slot = old_ps;
+      (void)emit_destroy_shader_locked(dev, new_ps->handle);
+      delete new_ps;
+      return E_OUTOFMEMORY;
+    }
+  }
+
+  if (old_ps) {
+    (void)emit_destroy_shader_locked(dev, old_ps->handle);
+    if (dev->ps == old_ps) {
+      dev->ps = nullptr;
+    }
+    delete old_ps;
+  }
+
+  return S_OK;
+}
+
+} // namespace
+
 HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   if (!dev || !dev->adapter) {
     return E_FAIL;
@@ -3861,8 +4070,6 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   VertexDecl* fvf_decl = nullptr;
   const void* vs_bytes = nullptr;
   uint32_t vs_size = 0;
-  const void* ps_bytes = nullptr;
-  uint32_t ps_size = 0;
 
   if (!tex1) {
     vs_slot = &dev->fixedfunc_vs;
@@ -3872,8 +4079,6 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     }
     vs_bytes = fixedfunc::kVsPassthroughPosColor;
     vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
-    ps_bytes = fixedfunc::kPsPassthroughColor;
-    ps_size = static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor));
   } else {
     vs_slot = &dev->fixedfunc_vs_tex1;
     ps_slot = &dev->fixedfunc_ps_tex1;
@@ -3882,8 +4087,6 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     }
     vs_bytes = fixedfunc::kVsPassthroughPosColorTex1;
     vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1));
-    ps_bytes = fixedfunc::kPsTexturedModulateVertexColor;
-    ps_size = static_cast<uint32_t>(sizeof(fixedfunc::kPsTexturedModulateVertexColor));
   }
 
   if (!*vs_slot) {
@@ -3892,11 +4095,9 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       return E_OUTOFMEMORY;
     }
   }
-  if (!*ps_slot) {
-    *ps_slot = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
-    if (!*ps_slot) {
-      return E_OUTOFMEMORY;
-    }
+  const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot, *vs_slot);
+  if (FAILED(ps_hr)) {
+    return ps_hr;
   }
 
   // Ensure the FVF-derived declaration is bound when the app is using the
@@ -11211,6 +11412,21 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
   const uint32_t v = d3d9_to_u32(value);
   dev->texture_stage_states[st][ss] = v;
   stateblock_record_texture_stage_state_locked(dev, st, ss, v);
+
+  // If the fixed-function fallback path is active, stage0 COLOROP/ALPHAOP changes
+  // must affect rendering. Select an internal PS variant that approximates the
+  // fixed-function texture combiner for the supported subset.
+  if (st == 0 &&
+      (ss == kD3dTssColorOp || ss == kD3dTssColorArg1 || ss == kD3dTssColorArg2 ||
+       ss == kD3dTssAlphaOp || ss == kD3dTssAlphaArg1 || ss == kD3dTssAlphaArg2) &&
+      fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+    Shader** ps_slot = (dev->fvf == kSupportedFvfXyzrhwDiffuse) ? &dev->fixedfunc_ps : &dev->fixedfunc_ps_tex1;
+    Shader* vs_slot = (dev->fvf == kSupportedFvfXyzrhwDiffuse) ? dev->fixedfunc_vs : dev->fixedfunc_vs_tex1;
+    const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot, vs_slot);
+    if (FAILED(ps_hr)) {
+      return trace.ret(ps_hr);
+    }
+  }
   return trace.ret(S_OK);
 }
 

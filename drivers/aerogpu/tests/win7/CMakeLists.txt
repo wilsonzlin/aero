@@ -187,6 +187,10 @@ aerogpu_add_win7_test(d3d9ex_fixedfunc_textured_triangle
   d3d9ex_fixedfunc_textured_triangle/main.cpp
 )
 target_link_libraries(d3d9ex_fixedfunc_textured_triangle PRIVATE user32 gdi32 d3d9)
+aerogpu_add_win7_test(d3d9ex_fixedfunc_texture_stage_state
+  d3d9ex_fixedfunc_texture_stage_state/main.cpp
+)
+target_link_libraries(d3d9ex_fixedfunc_texture_stage_state PRIVATE user32 gdi32 d3d9)
 
 aerogpu_add_win7_test(d3d9ex_stateblock_sanity
   d3d9ex_stateblock_sanity/main.cpp
