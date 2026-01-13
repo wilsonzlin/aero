@@ -26,7 +26,8 @@ static uint32_t to_le32(uint32_t v) {
 static void assert_events(uint8_t bitfield, uint32_t expect_numl, uint32_t expect_capsl, uint32_t expect_scrolll, uint32_t expect_compose,
                           uint32_t expect_kana) {
   struct virtio_input_event_le events[LED_TRANSLATE_EVENT_COUNT];
-  size_t n = led_translate_build_virtio_events(bitfield, events);
+  /* Device advertises all 5 LED codes (0..4). */
+  size_t n = led_translate_build_virtio_events(bitfield, 0x1Fu, events);
   assert(n == LED_TRANSLATE_EVENT_COUNT);
 
   assert(events[0].type == to_le16((uint16_t)VIRTIO_INPUT_EV_LED));
