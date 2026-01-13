@@ -4,6 +4,12 @@ import { chooseDirtyRectsForUpload } from "./dirty-rect-policy";
 import { computeSharedFramebufferLayout, FramebufferFormat, type DirtyRect } from "../ipc/shared-layout";
 
 describe("chooseDirtyRectsForUpload", () => {
+  it("preserves full-frame and empty-rect semantics", () => {
+    const layout = computeSharedFramebufferLayout(64, 64, 64 * 4, FramebufferFormat.RGBA8, 32);
+    expect(chooseDirtyRectsForUpload(layout, null, 256)).toBeNull();
+    expect(chooseDirtyRectsForUpload(layout, [], 256)).toEqual([]);
+  });
+
   it("forces a full-frame upload when the rect list is extremely large", () => {
     const layout = computeSharedFramebufferLayout(256, 256, 256 * 4, FramebufferFormat.RGBA8, 32);
     const rects: DirtyRect[] = Array.from({ length: 2000 }, (_, i) => ({
@@ -33,4 +39,3 @@ describe("chooseDirtyRectsForUpload", () => {
     expect(chosen).toBe(rects);
   });
 });
-

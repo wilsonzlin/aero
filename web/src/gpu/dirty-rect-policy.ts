@@ -49,6 +49,11 @@ export function estimateTextureUploadBytes(
   layout: SharedFramebufferLayout | null,
   dirtyRects: DirtyRect[] | null,
   bytesPerRowAlignment: number,
+  /**
+   * Optional early-exit threshold. When provided, this helper may return once the running
+   * total meets/exceeds this value (useful for "is this close to full-frame?" heuristics).
+   */
+  stopAfterBytes?: number,
 ): number {
   if (!layout) return 0;
 
@@ -66,6 +71,7 @@ export function estimateTextureUploadBytes(
     const rowBytes = w * BYTES_PER_PIXEL_RGBA8;
     const bytesPerRow = bytesPerRowForUpload(rowBytes, h, bytesPerRowAlignment);
     total += requiredDataLen(bytesPerRow, rowBytes, h);
+    if (stopAfterBytes !== undefined && total >= stopAfterBytes) return total;
   }
 
   return total;
@@ -93,11 +99,11 @@ export function chooseDirtyRectsForUpload(
 
   const fullFrameRatioThreshold = opts?.fullFrameRatioThreshold ?? DEFAULT_FULL_FRAME_RATIO_THRESHOLD;
 
-  const dirtyBytes = estimateTextureUploadBytes(layout, rects, bytesPerRowAlignment);
   const fullBytes = estimateFullFrameUploadBytes(layout.width, layout.height, bytesPerRowAlignment);
+  const thresholdBytes = fullBytes * fullFrameRatioThreshold;
+  const dirtyBytes = estimateTextureUploadBytes(layout, rects, bytesPerRowAlignment, thresholdBytes);
 
-  if (dirtyBytes >= fullBytes * fullFrameRatioThreshold) return null;
+  if (dirtyBytes >= thresholdBytes) return null;
 
   return rects;
 }
-
