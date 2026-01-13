@@ -35,7 +35,10 @@ async fn opfs_attach_can_opt_in_to_setting_snapshot_overlay_refs() {
     if let Err(err) = attach_res {
         let msg = err
             .as_string()
-            .or_else(|| err.dyn_ref::<js_sys::Error>().map(|e| e.message()))
+            .or_else(|| {
+                err.dyn_ref::<js_sys::Error>()
+                    .map(|e| String::from(e.message()))
+            })
             .unwrap_or_else(|| format!("{err:?}"));
         // Treat OPFS unavailability (e.g. missing sync access handle support) as a skip.
         if msg.contains("OPFS") || msg.contains("backend unavailable") || msg.contains("not supported")

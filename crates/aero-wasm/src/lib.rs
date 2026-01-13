@@ -3397,15 +3397,39 @@ fn opfs_worker_hint() -> String {
 
 #[cfg(target_arch = "wasm32")]
 fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError) -> JsValue {
+    use aero_opfs::DiskError;
+
+    let err_str = err.to_string();
+
     match err {
-        aero_opfs::DiskError::NotSupported(_) | aero_opfs::DiskError::BackendUnavailable => {
-            let msg = format!(
-                "{operation} failed for OPFS path \"{path}\": {err}\n{}",
-                opfs_worker_hint()
-            );
-            Error::new(&msg).into()
+        DiskError::NotSupported(msg) => {
+            let extra = if msg.contains("sync access handle") || msg.contains("sync access handles")
+            {
+                "OPFS sync access handles (FileSystemSyncAccessHandle) are worker-only and are typically only available in Chromium-based browsers."
+            } else if msg.contains("navigator.storage.getDirectory") {
+                "OPFS is unavailable in this environment (navigator.storage.getDirectory missing)."
+            } else {
+                "OPFS backend is not supported in this environment."
+            };
+
+            let worker_hint = opfs_worker_hint();
+            let probe_tip = "Tip: Call storage_capabilities() to probe { opfsSupported, opfsSyncAccessSupported, isWorkerScope }.";
+            Error::new(&format!(
+                "{operation} failed for OPFS path \"{path}\": {err_str}\n{extra}\n{worker_hint}\n{probe_tip}"
+            ))
+            .into()
         }
-        _ => JsValue::from_str(&err.to_string()),
+        DiskError::BackendUnavailable => {
+            let extra =
+                "Storage APIs may be blocked by browser/privacy settings or iframe restrictions.";
+            let worker_hint = opfs_worker_hint();
+            let probe_tip = "Tip: Call storage_capabilities() to probe availability.";
+            Error::new(&format!(
+                "{operation} failed for OPFS path \"{path}\": {err_str}\n{extra}\n{worker_hint}\n{probe_tip}"
+            ))
+            .into()
+        }
+        other => JsValue::from_str(&other.to_string()),
     }
 }
 
@@ -5073,8 +5097,11 @@ mod machine_mouse_button_cache_tests {
 
 #[cfg(all(test, target_arch = "wasm32"))]
 mod machine_opfs_ide_primary_master_tests {
-    use super::Machine;
+    use super::{Machine, storage_capabilities};
 
+    use js_sys::Reflect;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::JsValue;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     fn unique_path(prefix: &str) -> String {
@@ -5110,6 +5137,51 @@ mod machine_opfs_ide_primary_master_tests {
             .await
             .expect("attach_ide_primary_master_disk_opfs should succeed");
     }
+
+    #[wasm_bindgen_test(async)]
+    async fn opfs_attach_returns_actionable_js_error_when_sync_handles_unavailable() {
+        // If OPFS sync access handles are supported, skip: this test is specifically asserting the
+        // error mapping when the environment *cannot* provide FileSystemSyncAccessHandle (e.g.
+        // Node, main thread, non-Chromium browsers).
+        let caps = storage_capabilities();
+        let bool_field = |key: &str| -> bool {
+            Reflect::get(&caps, &JsValue::from_str(key))
+                .ok()
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        };
+        let opfs_supported = bool_field("opfsSupported");
+        let opfs_sync_supported = bool_field("opfsSyncAccessSupported");
+        let is_worker_scope = bool_field("isWorkerScope");
+        if opfs_supported && opfs_sync_supported && is_worker_scope {
+            return;
+        }
+
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+
+        let err = m
+            .attach_ide_primary_master_disk_opfs_existing("tests/nonexistent.img".to_string())
+            .await
+            .expect_err("expected OPFS attach to fail when sync handles are unavailable");
+
+        assert!(
+            err.is_instance_of::<js_sys::Error>(),
+            "expected a JS Error; got {err:?}"
+        );
+
+        let e: js_sys::Error = err
+            .dyn_into()
+            .expect("error JsValue should be a js_sys::Error");
+        let msg: String = e.message().into();
+        assert!(
+            msg.contains("DedicatedWorker"),
+            "error message should mention DedicatedWorker; got: {msg}"
+        );
+        assert!(
+            msg.contains("storage_capabilities"),
+            "error message should reference storage_capabilities(); got: {msg}"
+        );
+    }
 }
 
 #[cfg(all(test, target_arch = "wasm32"))]
@@ -5117,6 +5189,7 @@ mod reattach_restored_disks_from_opfs_tests {
     use super::*;
 
     use aero_opfs::{DiskError, OpfsByteStorage};
+    use aero_storage::VirtualDisk as _;
     use aero_snapshot::{DiskOverlayRef, DiskOverlayRefs, SnapshotTarget as _};
     use wasm_bindgen_test::wasm_bindgen_test;
 
