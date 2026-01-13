@@ -1,5 +1,13 @@
 #include "virtio_input.h"
 
+typedef struct _VIRTIO_INPUT_CREATE_REQUEST_CONTEXT {
+    VIOINPUT_MAPPED_USER_BUFFER EaBuffer;
+} VIRTIO_INPUT_CREATE_REQUEST_CONTEXT, *PVIRTIO_INPUT_CREATE_REQUEST_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_INPUT_CREATE_REQUEST_CONTEXT, VirtioInputGetCreateRequestContext);
+
+static EVT_WDF_OBJECT_CONTEXT_CLEANUP VirtioInputEvtCreateRequestContextCleanup;
+
 static BOOLEAN VirtioInputAsciiEqualsInsensitive(_In_reads_bytes_(Len) const CHAR *A, _In_ size_t Len, _In_z_ const CHAR *B)
 {
     size_t i;
@@ -55,15 +63,30 @@ static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Req
     PUCHAR cursor;
     PUCHAR end;
 
-    PMDL eaMdl = NULL;
     PUCHAR eaSystem = eaBuffer;
     ULONG collection = 0;
 
     if (WdfRequestGetRequestorMode(Request) == UserMode) {
-        NTSTATUS status = VioInputMapUserAddress(eaBuffer, parseLen, IoReadAccess, &eaMdl, (PVOID *)&eaSystem);
+        PVIRTIO_INPUT_CREATE_REQUEST_CONTEXT reqCtx;
+        WDF_OBJECT_ATTRIBUTES attributes;
+        NTSTATUS status;
+
+        WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, VIRTIO_INPUT_CREATE_REQUEST_CONTEXT);
+        attributes.EvtCleanupCallback = VirtioInputEvtCreateRequestContextCleanup;
+
+        status = WdfObjectAllocateContext(Request, &attributes, (PVOID *)&reqCtx);
         if (!NT_SUCCESS(status)) {
             return 0;
         }
+
+        RtlZeroMemory(reqCtx, sizeof(*reqCtx));
+
+        status = VioInputRequestMapUserBuffer(Request, eaBuffer, parseLen, parseLen, IoReadAccess, &reqCtx->EaBuffer);
+        if (!NT_SUCCESS(status)) {
+            return 0;
+        }
+
+        eaSystem = (PUCHAR)reqCtx->EaBuffer.SystemAddress;
     }
 
     cursor = eaSystem;
@@ -119,8 +142,6 @@ static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Req
 
         cursor += entry->NextEntryOffset;
     }
-
-    VioInputMdlFree(&eaMdl);
 
     return collection;
 }
@@ -216,4 +237,12 @@ NTSTATUS VirtioInputFileConfigure(_Inout_ WDFDEVICE_INIT *DeviceInit)
     WdfDeviceInitSetFileObjectConfig(DeviceInit, &fileConfig, &fileAttributes);
 
     return STATUS_SUCCESS;
+}
+
+static VOID VirtioInputEvtCreateRequestContextCleanup(_In_ WDFOBJECT Object)
+{
+    PVIRTIO_INPUT_CREATE_REQUEST_CONTEXT ctx;
+
+    ctx = VirtioInputGetCreateRequestContext(Object);
+    VioInputMappedUserBufferCleanup(&ctx->EaBuffer);
 }

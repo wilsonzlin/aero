@@ -2,13 +2,11 @@
 #include "led_report_parse.h"
 
 typedef struct _VIRTIO_INPUT_WRITE_REQUEST_CONTEXT {
-    PHID_XFER_PACKET XferPacket;
-    PMDL XferPacketMdl;
+    VIOINPUT_MAPPED_USER_BUFFER XferPacket;
 
     PUCHAR ReportBufferUser;
-    PUCHAR ReportBuffer;
-    PMDL ReportBufferMdl;
     ULONG ReportBufferLen;
+    VIOINPUT_MAPPED_USER_BUFFER ReportBuffer;
 } VIRTIO_INPUT_WRITE_REQUEST_CONTEXT, *PVIRTIO_INPUT_WRITE_REQUEST_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_INPUT_WRITE_REQUEST_CONTEXT, VirtioInputGetWriteRequestContext);
@@ -46,16 +44,22 @@ static NTSTATUS VirtioInputPrepareWriteRequest(
 
     RtlZeroMemory(ctx, sizeof(*ctx));
 
-    status = VioInputMapUserAddress(Packet, sizeof(HID_XFER_PACKET), IoReadAccess, &ctx->XferPacketMdl, (PVOID *)&ctx->XferPacket);
+    status = VioInputRequestMapUserBuffer(
+        Request,
+        Packet,
+        sizeof(HID_XFER_PACKET),
+        sizeof(HID_XFER_PACKET),
+        IoReadAccess,
+        &ctx->XferPacket);
     if (!NT_SUCCESS(status)) {
         return status;
     }
 
-    xfer = ctx->XferPacket;
+    xfer = (const HID_XFER_PACKET *)ctx->XferPacket.SystemAddress;
     ctx->ReportBufferUser = xfer->reportBuffer;
     ctx->ReportBufferLen = xfer->reportBufferLen;
 
-    *MappedPacketOut = ctx->XferPacket;
+    *MappedPacketOut = (const HID_XFER_PACKET *)ctx->XferPacket.SystemAddress;
     *MappedReportBufferOut = NULL;
     return STATUS_SUCCESS;
 }
@@ -64,12 +68,11 @@ static NTSTATUS VirtioInputMapWriteReportBuffer(_In_ WDFREQUEST Request, _Outptr
 {
     PVIRTIO_INPUT_WRITE_REQUEST_CONTEXT ctx;
     NTSTATUS status;
-    SIZE_T mapLen;
 
     ctx = VirtioInputGetWriteRequestContext(Request);
 
-    if (ctx->ReportBufferMdl != NULL) {
-        *MappedReportBufferOut = ctx->ReportBuffer;
+    if (ctx->ReportBuffer.SystemAddress != NULL) {
+        *MappedReportBufferOut = (const UCHAR *)ctx->ReportBuffer.SystemAddress;
         return STATUS_SUCCESS;
     }
 
@@ -82,22 +85,12 @@ static NTSTATUS VirtioInputMapWriteReportBuffer(_In_ WDFREQUEST Request, _Outptr
      * second byte (keyboard LED bitfield). Avoid probing/locking large user
      * buffers unnecessarily.
      */
-    mapLen = ctx->ReportBufferLen;
-    if (mapLen > 2) {
-        mapLen = 2;
-    }
-
-    status = VioInputMapUserAddress(
-        ctx->ReportBufferUser,
-        mapLen,
-        IoReadAccess,
-        &ctx->ReportBufferMdl,
-        (PVOID *)&ctx->ReportBuffer);
+    status = VioInputRequestMapUserBuffer(Request, ctx->ReportBufferUser, ctx->ReportBufferLen, 2, IoReadAccess, &ctx->ReportBuffer);
     if (!NT_SUCCESS(status)) {
         return status;
     }
 
-    *MappedReportBufferOut = ctx->ReportBuffer;
+    *MappedReportBufferOut = (const UCHAR *)ctx->ReportBuffer.SystemAddress;
     return STATUS_SUCCESS;
 }
 
@@ -292,6 +285,6 @@ static VOID VirtioInputEvtWriteRequestContextCleanup(_In_ WDFOBJECT Object)
 
     ctx = VirtioInputGetWriteRequestContext(Object);
 
-    VioInputMdlFree(&ctx->ReportBufferMdl);
-    VioInputMdlFree(&ctx->XferPacketMdl);
+    VioInputMappedUserBufferCleanup(&ctx->ReportBuffer);
+    VioInputMappedUserBufferCleanup(&ctx->XferPacket);
 }

@@ -1,11 +1,8 @@
 #include "virtio_input.h"
 
 typedef struct _VIRTIO_INPUT_READ_REQUEST_CONTEXT {
-    PHID_XFER_PACKET XferPacket;
-    PMDL XferPacketMdl;
-
-    PUCHAR ReportBuffer;
-    PMDL ReportBufferMdl;
+    VIOINPUT_MAPPED_USER_BUFFER XferPacket;
+    VIOINPUT_MAPPED_USER_BUFFER ReportBuffer;
     ULONG ReportBufferLen;
 } VIRTIO_INPUT_READ_REQUEST_CONTEXT, *PVIRTIO_INPUT_READ_REQUEST_CONTEXT;
 
@@ -108,7 +105,6 @@ static NTSTATUS VirtioInputPrepareReadRequest(_In_ WDFREQUEST Request, _In_ size
     PHID_XFER_PACKET xfer;
     PVIRTIO_INPUT_READ_REQUEST_CONTEXT ctx;
     WDF_OBJECT_ATTRIBUTES attributes;
-    KPROCESSOR_MODE requestorMode;
 
     status = VirtioInputGetTransferPacket(Request, OutputBufferLength, &xfer);
     if (!NT_SUCCESS(status)) {
@@ -125,22 +121,18 @@ static NTSTATUS VirtioInputPrepareReadRequest(_In_ WDFREQUEST Request, _In_ size
 
     RtlZeroMemory(ctx, sizeof(*ctx));
 
-    requestorMode = WdfRequestGetRequestorMode(Request);
-    if (requestorMode == UserMode) {
-        status = VioInputMapUserAddress(
-            xfer,
-            sizeof(HID_XFER_PACKET),
-            IoWriteAccess,
-            &ctx->XferPacketMdl,
-            (PVOID *)&ctx->XferPacket);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
-
-        xfer = ctx->XferPacket;
-    } else {
-        ctx->XferPacket = xfer;
+    status = VioInputRequestMapUserBuffer(
+        Request,
+        xfer,
+        sizeof(HID_XFER_PACKET),
+        sizeof(HID_XFER_PACKET),
+        IoWriteAccess,
+        &ctx->XferPacket);
+    if (!NT_SUCCESS(status)) {
+        return status;
     }
+
+    xfer = (PHID_XFER_PACKET)ctx->XferPacket.SystemAddress;
 
     if (xfer->reportBuffer == NULL || xfer->reportBufferLen == 0) {
         return STATUS_INVALID_PARAMETER;
@@ -148,30 +140,15 @@ static NTSTATUS VirtioInputPrepareReadRequest(_In_ WDFREQUEST Request, _In_ size
 
     ctx->ReportBufferLen = xfer->reportBufferLen;
 
-    if (requestorMode == UserMode) {
-        SIZE_T mapLen;
-
-        /*
-         * Only map/lock what we can actually write. The virtio-input HID reports
-         * are small (<= VIRTIO_INPUT_REPORT_MAX_SIZE), so avoid pinning large
-         * user buffers if a caller passes an excessively-large length.
-         */
-        mapLen = xfer->reportBufferLen;
-        if (mapLen > VIRTIO_INPUT_REPORT_MAX_SIZE) {
-            mapLen = VIRTIO_INPUT_REPORT_MAX_SIZE;
-        }
-
-        status = VioInputMapUserAddress(
-            xfer->reportBuffer,
-            mapLen,
-            IoWriteAccess,
-            &ctx->ReportBufferMdl,
-            (PVOID *)&ctx->ReportBuffer);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
-    } else {
-        ctx->ReportBuffer = xfer->reportBuffer;
+    status = VioInputRequestMapUserBuffer(
+        Request,
+        xfer->reportBuffer,
+        (SIZE_T)ctx->ReportBufferLen,
+        VIRTIO_INPUT_REPORT_MAX_SIZE,
+        IoWriteAccess,
+        &ctx->ReportBuffer);
+    if (!NT_SUCCESS(status)) {
+        return status;
     }
 
     return STATUS_SUCCESS;
@@ -186,19 +163,22 @@ static NTSTATUS VirtioInputFillPreparedReadRequest(
 )
 {
     PVIRTIO_INPUT_READ_REQUEST_CONTEXT ctx;
+    PHID_XFER_PACKET xfer;
 
     *BytesWritten = 0;
     ctx = VirtioInputGetReadRequestContext(Request);
 
-    ctx->XferPacket->reportId = ReportId;
+    xfer = (PHID_XFER_PACKET)ctx->XferPacket.SystemAddress;
+
+    xfer->reportId = ReportId;
 
     if (ctx->ReportBufferLen < ReportSize) {
-        ctx->XferPacket->reportBufferLen = 0;
+        xfer->reportBufferLen = 0;
         return STATUS_BUFFER_TOO_SMALL;
     }
 
-    RtlCopyMemory(ctx->ReportBuffer, Report, ReportSize);
-    ctx->XferPacket->reportBufferLen = (ULONG)ReportSize;
+    RtlCopyMemory(ctx->ReportBuffer.SystemAddress, Report, ReportSize);
+    xfer->reportBufferLen = (ULONG)ReportSize;
     *BytesWritten = ReportSize;
     return STATUS_SUCCESS;
 }
@@ -504,7 +484,7 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
     }
 
     reqCtx = VirtioInputGetReadRequestContext(Request);
-    reportId = VirtioInputDetermineReadQueueReportId(Request, reqCtx->XferPacket, OutputBufferLength);
+    reportId = VirtioInputDetermineReadQueueReportId(Request, (HID_XFER_PACKET *)reqCtx->XferPacket.SystemAddress, OutputBufferLength);
     if (!VirtioInputIsValidReportId(reportId)) {
         reportId = VIRTIO_INPUT_REPORT_ID_ANY;
     }
@@ -637,6 +617,6 @@ static VOID VirtioInputEvtReadRequestContextCleanup(_In_ WDFOBJECT Object)
 
     ctx = VirtioInputGetReadRequestContext(Object);
 
-    VioInputMdlFree(&ctx->ReportBufferMdl);
-    VioInputMdlFree(&ctx->XferPacketMdl);
+    VioInputMappedUserBufferCleanup(&ctx->ReportBuffer);
+    VioInputMappedUserBufferCleanup(&ctx->XferPacket);
 }

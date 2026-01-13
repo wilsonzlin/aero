@@ -2,6 +2,14 @@
 
 #include "descriptor.h"
 
+typedef struct _VIRTIO_INPUT_HID_IOCTL_REQUEST_CONTEXT {
+    VIOINPUT_MAPPED_USER_BUFFER OutputBuffer;
+} VIRTIO_INPUT_HID_IOCTL_REQUEST_CONTEXT, *PVIRTIO_INPUT_HID_IOCTL_REQUEST_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_INPUT_HID_IOCTL_REQUEST_CONTEXT, VirtioInputGetHidIoctlRequestContext);
+
+static EVT_WDF_OBJECT_CONTEXT_CLEANUP VirtioInputEvtHidIoctlRequestContextCleanup;
+
 static NTSTATUS VirtioInputWriteRequestOutputBuffer(
     _In_ WDFREQUEST Request, _In_reads_bytes_(SourceLength) const void *Source, _In_ size_t SourceLength, _Out_ size_t *BytesWritten)
 {
@@ -20,19 +28,25 @@ static NTSTATUS VirtioInputWriteRequestOutputBuffer(
     }
 
     if (WdfRequestGetRequestorMode(Request) == UserMode) {
-        PMDL mdl;
-        PVOID systemAddress;
+        PVIRTIO_INPUT_HID_IOCTL_REQUEST_CONTEXT reqCtx;
+        WDF_OBJECT_ATTRIBUTES attributes;
 
-        mdl = NULL;
-        systemAddress = NULL;
-        status = VioInputMapUserAddress(outputBuffer, SourceLength, IoWriteAccess, &mdl, &systemAddress);
+        WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, VIRTIO_INPUT_HID_IOCTL_REQUEST_CONTEXT);
+        attributes.EvtCleanupCallback = VirtioInputEvtHidIoctlRequestContextCleanup;
+
+        status = WdfObjectAllocateContext(Request, &attributes, (PVOID *)&reqCtx);
         if (!NT_SUCCESS(status)) {
             return status;
         }
 
-        RtlCopyMemory(systemAddress, Source, SourceLength);
+        RtlZeroMemory(reqCtx, sizeof(*reqCtx));
 
-        VioInputMdlFree(&mdl);
+        status = VioInputRequestMapUserBuffer(Request, outputBuffer, SourceLength, SourceLength, IoWriteAccess, &reqCtx->OutputBuffer);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+
+        RtlCopyMemory(reqCtx->OutputBuffer.SystemAddress, Source, SourceLength);
     } else {
         RtlCopyMemory(outputBuffer, Source, SourceLength);
     }
@@ -235,4 +249,12 @@ NTSTATUS VirtioInputHandleHidIoctl(
 
     WdfRequestCompleteWithInformation(Request, status, bytesReturned);
     return STATUS_SUCCESS;
+}
+
+static VOID VirtioInputEvtHidIoctlRequestContextCleanup(_In_ WDFOBJECT Object)
+{
+    PVIRTIO_INPUT_HID_IOCTL_REQUEST_CONTEXT ctx;
+
+    ctx = VirtioInputGetHidIoctlRequestContext(Object);
+    VioInputMappedUserBufferCleanup(&ctx->OutputBuffer);
 }

@@ -159,6 +159,73 @@ __forceinline NTSTATUS VioInputMapUserAddress(
     return STATUS_SUCCESS;
 }
 
+typedef struct _VIOINPUT_MAPPED_USER_BUFFER {
+    PMDL Mdl;
+    PVOID SystemAddress;
+    SIZE_T Length;
+} VIOINPUT_MAPPED_USER_BUFFER, *PVIOINPUT_MAPPED_USER_BUFFER;
+
+__forceinline VOID VioInputMappedUserBufferCleanup(_Inout_ PVIOINPUT_MAPPED_USER_BUFFER Buffer)
+{
+    if (Buffer == NULL) {
+        return;
+    }
+
+    VioInputMdlFree(&Buffer->Mdl);
+    Buffer->SystemAddress = NULL;
+    Buffer->Length = 0;
+}
+
+__forceinline NTSTATUS VioInputRequestMapUserBuffer(
+    _In_ WDFREQUEST Request,
+    _In_ PVOID UserAddress,
+    _In_ SIZE_T Length,
+    _In_ SIZE_T MaxLength,
+    _In_ LOCK_OPERATION Operation,
+    _Inout_ PVIOINPUT_MAPPED_USER_BUFFER MappedBuffer
+)
+{
+    NTSTATUS status;
+    SIZE_T mapLen;
+
+    if (MappedBuffer == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (MappedBuffer->SystemAddress != NULL) {
+        return STATUS_SUCCESS;
+    }
+
+    if (UserAddress == NULL || Length == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    mapLen = Length;
+    if (MaxLength != 0 && mapLen > MaxLength) {
+        mapLen = MaxLength;
+    }
+    if (mapLen == 0 || mapLen > (SIZE_T)MAXULONG) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    MappedBuffer->Length = mapLen;
+
+    if (WdfRequestGetRequestorMode(Request) == UserMode) {
+        status = VioInputMapUserAddress(UserAddress, mapLen, Operation, &MappedBuffer->Mdl, &MappedBuffer->SystemAddress);
+        if (!NT_SUCCESS(status)) {
+            MappedBuffer->Length = 0;
+            MappedBuffer->SystemAddress = NULL;
+            MappedBuffer->Mdl = NULL;
+            return status;
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    MappedBuffer->SystemAddress = UserAddress;
+    return STATUS_SUCCESS;
+}
+
 __forceinline NTSTATUS VioInputReadRequestInputUlong(_In_ WDFREQUEST Request, _Out_ ULONG *ValueOut)
 {
     NTSTATUS status;
