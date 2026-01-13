@@ -715,7 +715,23 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
 
     const res = await page.evaluate(
       async ({ relayPort, echoPort, token, invalidToken }) => {
+        const assertNoStoreHeaders = (resp) => {
+          const cacheControl = resp.headers.get("cache-control");
+          if (cacheControl !== "no-store") {
+            throw new Error(`expected Cache-Control=no-store, got ${cacheControl ?? "<missing>"}`);
+          }
+          const pragma = resp.headers.get("pragma");
+          if (pragma !== "no-cache") {
+            throw new Error(`expected Pragma=no-cache, got ${pragma ?? "<missing>"}`);
+          }
+          const expires = resp.headers.get("expires");
+          if (expires !== "0") {
+            throw new Error(`expected Expires=0, got ${expires ?? "<missing>"}`);
+          }
+        };
+
         const unauth = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`);
+        assertNoStoreHeaders(unauth);
         const unauthStatus = unauth.status;
 
         const invalidAuth = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
@@ -723,6 +739,7 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
             Authorization: `Bearer ${invalidToken}`,
           },
         });
+        assertNoStoreHeaders(invalidAuth);
         const invalidAuthStatus = invalidAuth.status;
 
         const apiKeyAuth = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
@@ -730,6 +747,7 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
             "X-API-Key": token,
           },
         });
+        assertNoStoreHeaders(apiKeyAuth);
         const apiKeyAuthStatus = apiKeyAuth.status;
 
         const authHeaderAPIKeyAuthStatus = (
@@ -738,20 +756,27 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
               Authorization: `ApiKey ${token}`,
             },
           })
-        ).status;
+        );
+        assertNoStoreHeaders(authHeaderAPIKeyAuthStatus);
+        const authHeaderAPIKeyAuthStatusCode = authHeaderAPIKeyAuthStatus.status;
 
         const queryTokenAuthStatus = (
           await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice?token=${encodeURIComponent(token)}`)
-        ).status;
+        );
+        assertNoStoreHeaders(queryTokenAuthStatus);
+        const queryTokenAuthStatusCode = queryTokenAuthStatus.status;
         const queryAPIKeyAuthStatus = (
           await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice?apiKey=${encodeURIComponent(token)}`)
-        ).status;
+        );
+        assertNoStoreHeaders(queryAPIKeyAuthStatus);
+        const queryAPIKeyAuthStatusCode = queryAPIKeyAuthStatus.status;
 
         const authIceRes = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
+        assertNoStoreHeaders(authIceRes);
         const authStatus = authIceRes.status;
         const iceResp = await authIceRes.json();
         if (!iceResp?.iceServers || !Array.isArray(iceResp.iceServers)) {
@@ -898,9 +923,9 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
           unauthStatus,
           invalidAuthStatus,
           apiKeyAuthStatus,
-          authHeaderAPIKeyAuthStatus,
-          queryTokenAuthStatus,
-          queryAPIKeyAuthStatus,
+          authHeaderAPIKeyAuthStatus: authHeaderAPIKeyAuthStatusCode,
+          queryTokenAuthStatus: queryTokenAuthStatusCode,
+          queryAPIKeyAuthStatus: queryAPIKeyAuthStatusCode,
           authStatus,
           echoedText,
         };
