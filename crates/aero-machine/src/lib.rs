@@ -124,6 +124,8 @@ pub struct MachineConfig {
     pub ram_size_bytes: u64,
     /// Number of vCPUs exposed via firmware tables (SMBIOS + ACPI).
     ///
+    /// Must be >= 1.
+    ///
     /// Note: CPU execution in [`Machine`] is still single-core today, but guests may enumerate the
     /// configured CPU topology via ACPI (e.g. MADT) for SMP bring-up contract testing.
     pub cpu_count: u8,
@@ -279,7 +281,7 @@ impl MachineConfig {
     /// Other devices are set to explicit, stable defaults to avoid drift:
     ///
     /// - PC platform enabled (PIC/APIC/PIT/RTC/PCI/ACPI PM/HPET) and ACPI tables published
-    /// - 1 vCPU (current machine limitation)
+    /// - `cpu_count` defaults to 1 (override as desired)
     /// - serial (`COM1`) enabled
     /// - i8042 enabled (keyboard/mouse)
     /// - fast A20 gate enabled (port `0x92`)
@@ -333,6 +335,9 @@ impl MachineConfig {
     /// This exists as a more explicit "defaults" naming for callers that want to start from the
     /// canonical Windows 7 storage controller set and then tweak other fields (for example, opt
     /// into the E1000 NIC by setting [`MachineConfig::enable_e1000`] to `true`).
+    ///
+    /// This preset leaves [`MachineConfig::cpu_count`] at 1 by default; callers can override it if
+    /// they want to run with more vCPUs.
     #[must_use]
     pub fn win7_storage_defaults(ram_size_bytes: u64) -> Self {
         Self::win7_storage(ram_size_bytes)

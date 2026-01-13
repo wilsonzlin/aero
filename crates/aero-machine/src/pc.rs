@@ -33,6 +33,8 @@ pub struct PcMachineConfig {
     /// Guest RAM size in bytes.
     pub ram_size_bytes: u64,
     /// Number of vCPUs exposed via firmware tables (SMBIOS + ACPI).
+    ///
+    /// Must be >= 1.
     pub cpu_count: u8,
 
     pub enable_hda: bool,
@@ -103,6 +105,8 @@ impl A20Gate for PlatformBiosBus<'_> {
 }
 
 /// PCI-capable PC machine: CPU + [`PcPlatform`] + BIOS + optional E1000 + network backend.
+///
+/// Note: this integration currently models only a single CPU core (no SMP).
 pub struct PcMachine {
     cfg: PcMachineConfig,
 
