@@ -81,11 +81,32 @@ pub fn run(
     seed: u64,
     report_path: Option<&std::path::Path>,
 ) -> Result<ConformanceReport, String> {
+    let templates = templates_for_run()?;
+    // Fault templates intentionally crash in user mode on the host reference backend.
+    // If isolation is disabled, fail fast with a clear message instead of taking down
+    // the entire test runner process.
+    let isolate = std::env::var("AERO_CONFORMANCE_REFERENCE_ISOLATE")
+        .map(|v| v != "0")
+        .unwrap_or(true);
+    if !isolate
+        && templates.iter().any(|t| {
+            matches!(
+                t.kind,
+                corpus::TemplateKind::Ud2 | corpus::TemplateKind::MovRaxM64Abs0
+            )
+        })
+    {
+        return Err(
+            "fault templates require AERO_CONFORMANCE_REFERENCE_ISOLATE=1 (fork isolation)"
+                .to_string(),
+        );
+    }
+
     let mut reference =
         ReferenceBackend::new().map_err(|e| format!("reference backend unavailable: {e}"))?;
-    let mut aero = aero::AeroBackend::new();
+    let memory_fault_signal = detect_memory_fault_signal(&mut reference, &templates);
+    let mut aero = aero::AeroBackend::new(memory_fault_signal);
 
-    let templates = templates_for_run()?;
     let mut rng = corpus::XorShift64::new(seed);
     let mut report = ConformanceReport::new(cases);
 
@@ -157,9 +178,31 @@ fn parse_filter_terms(filter: &str) -> Vec<String> {
 fn template_matches_filter(template: &InstructionTemplate, terms: &[String]) -> bool {
     let name = template.name.to_ascii_lowercase();
     let coverage_key = template.coverage_key.to_ascii_lowercase();
-    terms.iter().any(|term| {
-        coverage_key == *term || name.contains(term)
-    })
+    terms
+        .iter()
+        .any(|term| coverage_key == *term || name.contains(term))
+}
+
+fn detect_memory_fault_signal(
+    reference: &mut ReferenceBackend,
+    templates: &[InstructionTemplate],
+) -> i32 {
+    // Default to SIGSEGV; overridden if the host backend reports SIGBUS (or another signal) for
+    // user-mode memory faults on this platform.
+    let default = libc::SIGSEGV;
+    let Some(template) = templates
+        .iter()
+        .find(|t| matches!(t.kind, corpus::TemplateKind::MovRaxM64Abs0))
+    else {
+        return default;
+    };
+
+    let mut rng = corpus::XorShift64::new(0x_3a6b_2d2c_1d58_f011);
+    let case = TestCase::generate(0, template, &mut rng, reference.memory_base());
+    match reference.execute(&case).fault {
+        Some(Fault::Signal(sig)) => sig,
+        _ => default,
+    }
 }
 
 fn compare_outcomes(
@@ -241,6 +284,55 @@ mod tests {
                 "template unexpectedly matched filter: {:?} (coverage_key={})",
                 template.name,
                 template.coverage_key
+            );
+        }
+    }
+
+    #[test]
+    fn fault_templates_match_reference() {
+        if !cfg!(all(target_arch = "x86_64", unix)) {
+            eprintln!("skipping fault conformance test on non-x86_64/unix host");
+            return;
+        }
+
+        // Fault templates must always run with reference isolation enabled so signals don't take
+        // down the test runner.
+        let _isolate = EnvGuard::set("AERO_CONFORMANCE_REFERENCE_ISOLATE", "1");
+
+        let templates = corpus::templates();
+        let mut reference = ReferenceBackend::new().expect("reference backend unavailable");
+        let mem_fault_signal = detect_memory_fault_signal(&mut reference, &templates);
+        let mut aero = aero::AeroBackend::new(mem_fault_signal);
+
+        let fault_templates: Vec<&InstructionTemplate> = templates
+            .iter()
+            .filter(|t| {
+                matches!(
+                    t.kind,
+                    corpus::TemplateKind::Ud2 | corpus::TemplateKind::MovRaxM64Abs0
+                )
+            })
+            .collect();
+        assert!(
+            fault_templates.len() >= 2,
+            "expected at least ud2 + memory fault templates"
+        );
+
+        let mut rng = corpus::XorShift64::new(0x_0bad_f00d_f00d_f00d);
+        for (idx, template) in fault_templates.into_iter().enumerate() {
+            let case = TestCase::generate(idx, template, &mut rng, reference.memory_base());
+            let expected = reference.execute(&case);
+            let actual = aero.execute(&case);
+
+            assert!(
+                expected.fault.is_some(),
+                "reference backend did not fault for template {}",
+                template.name
+            );
+            assert_eq!(
+                expected.fault, actual.fault,
+                "fault mismatch for template {}",
+                template.name
             );
         }
     }

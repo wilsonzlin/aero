@@ -39,6 +39,8 @@ pub enum TemplateKind {
     MovRaxM64,
     AddM64Rax,
     SubM64Rax,
+    Ud2,
+    MovRaxM64Abs0,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,6 +229,28 @@ pub fn templates() -> Vec<InstructionTemplate> {
             mem_compare_len: 16,
             init: InitPreset::MemAtRdi { data_off: 0 },
         },
+        InstructionTemplate {
+            name: "ud2",
+            coverage_key: "fault_ud2",
+            bytes: &[0x0F, 0x0B],
+            kind: TemplateKind::Ud2,
+            flags_mask: all_flags,
+            mem_compare_len: 0,
+            init: InitPreset::None,
+        },
+        InstructionTemplate {
+            name: "mov rax, qword ptr [0]",
+            coverage_key: "fault_mem",
+            // Absolute disp32 addressing via SIB (mod=00, r/m=100, base=101) to force a
+            // user-mode page fault at address 0.
+            bytes: &[0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00],
+            kind: TemplateKind::MovRaxM64Abs0,
+            flags_mask: all_flags,
+            mem_compare_len: 0,
+            // Not used by the instruction itself, but needed so the Aero backend anchors its
+            // in-memory buffer at `mem_base` and treats address 0 as out-of-bounds.
+            init: InitPreset::MemAtRdi { data_off: 0 },
+        },
     ]
 }
 
@@ -408,7 +432,7 @@ mod tests {
             "randomized memory already matched expected write"
         );
 
-        let mut aero = crate::aero::AeroBackend::new();
+        let mut aero = crate::aero::AeroBackend::new(libc::SIGSEGV);
         let outcome = aero.execute(&case);
         assert!(outcome.fault.is_none());
         assert_eq!(&outcome.memory[start..end], expected);

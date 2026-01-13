@@ -4,11 +4,13 @@ use crate::{
     FLAG_ZF,
 };
 
-pub struct AeroBackend;
+pub struct AeroBackend {
+    mem_fault_signal: i32,
+}
 
 impl AeroBackend {
-    pub fn new() -> Self {
-        Self
+    pub fn new(mem_fault_signal: i32) -> Self {
+        Self { mem_fault_signal }
     }
 
     pub fn execute(&mut self, case: &TestCase) -> ExecOutcome {
@@ -21,6 +23,7 @@ impl AeroBackend {
             &mut memory,
             case.mem_base,
             case.template.bytes.len(),
+            self.mem_fault_signal,
         ) {
             Ok(()) => ExecOutcome {
                 state,
@@ -42,6 +45,7 @@ fn execute_one(
     memory: &mut [u8],
     mem_base: u64,
     instr_len: usize,
+    mem_fault_signal: i32,
 ) -> Result<(), Fault> {
     match kind {
         TemplateKind::MovRaxRbx => {
@@ -98,24 +102,31 @@ fn execute_one(
             update_flags_dec(state, a, result);
         }
         TemplateKind::MovM64Rax => {
-            write_u64(memory, mem_base, state.rdi, state.rax)?;
+            write_u64(memory, mem_base, state.rdi, state.rax, mem_fault_signal)?;
         }
         TemplateKind::MovRaxM64 => {
-            state.rax = read_u64(memory, mem_base, state.rdi)?;
+            state.rax = read_u64(memory, mem_base, state.rdi, mem_fault_signal)?;
         }
         TemplateKind::AddM64Rax => {
-            let a = read_u64(memory, mem_base, state.rdi)?;
+            let a = read_u64(memory, mem_base, state.rdi, mem_fault_signal)?;
             let b = state.rax;
             let result = a.wrapping_add(b);
-            write_u64(memory, mem_base, state.rdi, result)?;
+            write_u64(memory, mem_base, state.rdi, result, mem_fault_signal)?;
             update_flags_add(state, a, b, result);
         }
         TemplateKind::SubM64Rax => {
-            let a = read_u64(memory, mem_base, state.rdi)?;
+            let a = read_u64(memory, mem_base, state.rdi, mem_fault_signal)?;
             let b = state.rax;
             let result = a.wrapping_sub(b);
-            write_u64(memory, mem_base, state.rdi, result)?;
+            write_u64(memory, mem_base, state.rdi, result, mem_fault_signal)?;
             update_flags_sub(state, a, b, result);
+        }
+        TemplateKind::Ud2 => {
+            return Err(Fault::Signal(libc::SIGILL));
+        }
+        TemplateKind::MovRaxM64Abs0 => {
+            // Force a fault when dereferencing address 0 in user-mode.
+            state.rax = read_u64(memory, mem_base, 0, mem_fault_signal)?;
         }
     }
 
@@ -124,11 +135,12 @@ fn execute_one(
     Ok(())
 }
 
-fn read_u64(memory: &[u8], base: u64, addr: u64) -> Result<u64, Fault> {
-    let offset = addr.checked_sub(base).ok_or(Fault::MemoryOutOfBounds)? as usize;
-    let end = offset.checked_add(8).ok_or(Fault::MemoryOutOfBounds)?;
+fn read_u64(memory: &[u8], base: u64, addr: u64, mem_fault_signal: i32) -> Result<u64, Fault> {
+    let fault = Fault::Signal(mem_fault_signal);
+    let offset = addr.checked_sub(base).ok_or(fault)? as usize;
+    let end = offset.checked_add(8).ok_or(fault)?;
     if end > memory.len() {
-        return Err(Fault::MemoryOutOfBounds);
+        return Err(fault);
     }
     let bytes: [u8; 8] = memory[offset..end]
         .try_into()
@@ -136,11 +148,18 @@ fn read_u64(memory: &[u8], base: u64, addr: u64) -> Result<u64, Fault> {
     Ok(u64::from_le_bytes(bytes))
 }
 
-fn write_u64(memory: &mut [u8], base: u64, addr: u64, value: u64) -> Result<(), Fault> {
-    let offset = addr.checked_sub(base).ok_or(Fault::MemoryOutOfBounds)? as usize;
-    let end = offset.checked_add(8).ok_or(Fault::MemoryOutOfBounds)?;
+fn write_u64(
+    memory: &mut [u8],
+    base: u64,
+    addr: u64,
+    value: u64,
+    mem_fault_signal: i32,
+) -> Result<(), Fault> {
+    let fault = Fault::Signal(mem_fault_signal);
+    let offset = addr.checked_sub(base).ok_or(fault)? as usize;
+    let end = offset.checked_add(8).ok_or(fault)?;
     if end > memory.len() {
-        return Err(Fault::MemoryOutOfBounds);
+        return Err(fault);
     }
     memory[offset..end].copy_from_slice(&value.to_le_bytes());
     Ok(())
