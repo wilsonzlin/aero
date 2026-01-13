@@ -7131,6 +7131,127 @@ bool TestCreateBlendStateRejectsPerRtMismatch() {
   return true;
 }
 
+bool TestCreateBlendStateRejectsPerRtWriteMaskMismatch() {
+  TestDevice dev{};
+  if (!InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false)) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
+  desc.AlphaToCoverageEnable = 0;
+  for (uint32_t i = 0; i < 8; ++i) {
+    desc.BlendEnable[i] = 0;
+    desc.RenderTargetWriteMask[i] = 0xFu;
+  }
+  // Per-RT mismatch: RT1 write mask differs.
+  desc.RenderTargetWriteMask[1] = 0;
+
+  // Use a supported blend configuration to ensure we fail specifically due to the per-RT mismatch.
+  desc.SrcBlend = aerogpu::d3d10_11::kD3dBlendSrcAlpha;
+  desc.DestBlend = aerogpu::d3d10_11::kD3dBlendInvSrcAlpha;
+  desc.BlendOp = aerogpu::d3d10_11::kD3dBlendOpAdd;
+  desc.SrcBlendAlpha = aerogpu::d3d10_11::kD3dBlendOne;
+  desc.DestBlendAlpha = aerogpu::d3d10_11::kD3dBlendZero;
+  desc.BlendOpAlpha = aerogpu::d3d10_11::kD3dBlendOpAdd;
+
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateBlendStateSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateBlendStateSize returned a non-trivial size")) {
+    return false;
+  }
+
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0);
+  D3D10DDI_HBLENDSTATE hState{};
+  hState.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateBlendState(dev.hDevice, &desc, hState);
+  if (!Check(hr == E_NOTIMPL, "CreateBlendState rejects per-RT write mask mismatch")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestCreateBlendStateRejectsAlphaToCoverage() {
+  TestDevice dev{};
+  if (!InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false)) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
+  desc.AlphaToCoverageEnable = 1;
+  for (uint32_t i = 0; i < 8; ++i) {
+    desc.BlendEnable[i] = 0;
+    desc.RenderTargetWriteMask[i] = 0xFu;
+  }
+
+  // Supported blend configuration (ignored when BlendEnable=FALSE, but keeps the test deterministic).
+  desc.SrcBlend = aerogpu::d3d10_11::kD3dBlendSrcAlpha;
+  desc.DestBlend = aerogpu::d3d10_11::kD3dBlendInvSrcAlpha;
+  desc.BlendOp = aerogpu::d3d10_11::kD3dBlendOpAdd;
+  desc.SrcBlendAlpha = aerogpu::d3d10_11::kD3dBlendOne;
+  desc.DestBlendAlpha = aerogpu::d3d10_11::kD3dBlendZero;
+  desc.BlendOpAlpha = aerogpu::d3d10_11::kD3dBlendOpAdd;
+
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateBlendStateSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateBlendStateSize returned a non-trivial size")) {
+    return false;
+  }
+
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0);
+  D3D10DDI_HBLENDSTATE hState{};
+  hState.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateBlendState(dev.hDevice, &desc, hState);
+  if (!Check(hr == E_NOTIMPL, "CreateBlendState rejects AlphaToCoverageEnable")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestCreateBlendStateRejectsUnsupportedBlendOp() {
+  TestDevice dev{};
+  if (!InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false)) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
+  desc.AlphaToCoverageEnable = 0;
+  for (uint32_t i = 0; i < 8; ++i) {
+    desc.BlendEnable[i] = 1;
+    desc.RenderTargetWriteMask[i] = 0xFu;
+  }
+
+  desc.SrcBlend = aerogpu::d3d10_11::kD3dBlendSrcAlpha;
+  desc.DestBlend = aerogpu::d3d10_11::kD3dBlendInvSrcAlpha;
+  desc.BlendOp = 0; // Invalid / unsupported.
+  desc.SrcBlendAlpha = aerogpu::d3d10_11::kD3dBlendOne;
+  desc.DestBlendAlpha = aerogpu::d3d10_11::kD3dBlendZero;
+  desc.BlendOpAlpha = aerogpu::d3d10_11::kD3dBlendOpAdd;
+
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateBlendStateSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateBlendStateSize returned a non-trivial size")) {
+    return false;
+  }
+
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0);
+  D3D10DDI_HBLENDSTATE hState{};
+  hState.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateBlendState(dev.hDevice, &desc, hState);
+  if (!Check(hr == E_NOTIMPL, "CreateBlendState rejects unsupported blend op")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -7203,6 +7324,9 @@ int main() {
   ok &= TestRasterizerStateWireframeDepthBiasEncodesCmd();
   ok &= TestCreateBlendStateRejectsUnsupportedFactor();
   ok &= TestCreateBlendStateRejectsPerRtMismatch();
+  ok &= TestCreateBlendStateRejectsPerRtWriteMaskMismatch();
+  ok &= TestCreateBlendStateRejectsAlphaToCoverage();
+  ok &= TestCreateBlendStateRejectsUnsupportedBlendOp();
 
   if (!ok) {
     return 1;
