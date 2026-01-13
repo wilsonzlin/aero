@@ -20,8 +20,6 @@
 
 DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
 {
-    Name (_S5, Package (0x02) { 0x05, 0x05 })
-
     Name (PICM, Zero)
 
     /*
@@ -50,10 +48,81 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
 
     Scope (\_SB_)
     {
+        Device (SYS0)
+        {
+            Name (_HID, EisaId ("PNP0C02"))
+            Name (_UID, Zero)
+            Name (_STA, 0x0F)
+            Name (_CRS, ResourceTemplate ()
+            {
+                // SMI command port for ACPI enable/disable handshake.
+                IO (Decode16, 0x00B2, 0x00B2, 0x01, 0x01)
+
+                // ACPI PM I/O blocks (PM1a_EVT, PM1a_CNT, PM_TMR, GPE0).
+                IO (Decode16, 0x0400, 0x0400, 0x01, 0x04)
+                IO (Decode16, 0x0404, 0x0404, 0x01, 0x02)
+                IO (Decode16, 0x0408, 0x0408, 0x01, 0x04)
+                IO (Decode16, 0x0420, 0x0420, 0x01, 0x08)
+
+                // Reset control port.
+                IO (Decode16, 0x0CF9, 0x0CF9, 0x01, 0x01)
+            })
+        }
+
         Device (PCI0)
         {
-            Name (_HID, "PNP0A03")
+            Name (_HID, EisaId ("PNP0A03"))
             Name (_UID, Zero)
+            Name (_BBN, Zero)
+            Name (_SEG, Zero)
+
+            /*
+             * PCI0 resource settings.
+             *
+             * This matches the `aero-acpi` generator:
+             * - bus range [0..255]
+             * - config mechanism 1 I/O ports (0xCF8..0xCFF)
+             * - legacy I/O ranges
+             * - PCI MMIO window [0xC0000000..0xFEBFFFFF]
+             */
+            Name (_CRS, ResourceTemplate ()
+            {
+                WordBusNumber (ResourceProducer, MinFixed, MaxFixed, PosDecode,
+                    0x0000,             // Granularity
+                    0x0000,             // Range Minimum
+                    0x00FF,             // Range Maximum
+                    0x0000,             // Translation Offset
+                    0x0100,             // Length
+                    ,, )
+
+                // PCI config mechanism 1 (0xCF8..0xCFF).
+                IO (Decode16, 0x0CF8, 0x0CF8, 0x01, 0x08)
+
+                // Legacy I/O ranges split around the PCI config ports.
+                WordIO (ResourceProducer, MinFixed, MaxFixed, PosDecode, EntireRange,
+                    0x0000,             // Granularity
+                    0x0000,             // Range Minimum
+                    0x0CF7,             // Range Maximum
+                    0x0000,             // Translation Offset
+                    0x0CF8,             // Length
+                    ,, , TypeStatic, DenseTranslation)
+                WordIO (ResourceProducer, MinFixed, MaxFixed, PosDecode, EntireRange,
+                    0x0000,             // Granularity
+                    0x0D00,             // Range Minimum
+                    0xFFFF,             // Range Maximum
+                    0x0000,             // Translation Offset
+                    0xF300,             // Length
+                    ,, , TypeStatic, DenseTranslation)
+
+                // PCI MMIO window.
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed, Cacheable, ReadWrite,
+                    0x00000000,         // Granularity
+                    0xC0000000,         // Range Minimum
+                    0xFEBFFFFF,         // Range Maximum
+                    0x00000000,         // Translation Offset
+                    0x3EC00000,         // Length
+                    ,, , AddressRangeMemory, TypeStatic)
+            })
 
             /*
              * PCI interrupt routing table.
@@ -194,18 +263,20 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
 
         Device (HPET)
         {
-            Name (_HID, "PNP0103")
+            Name (_HID, EisaId ("PNP0103"))
             Name (_UID, Zero)
+            Name (_STA, 0x0F)
             Name (_CRS, ResourceTemplate ()
             {
                 Memory32Fixed (ReadWrite, 0xFED00000, 0x00000400)
             })
         }
 
-        Device (RTC)
+        Device (RTC_)
         {
-            Name (_HID, "PNP0B00")
+            Name (_HID, EisaId ("PNP0B00"))
             Name (_UID, Zero)
+            Name (_STA, 0x0F)
             Name (_CRS, ResourceTemplate ()
             {
                 IO (Decode16, 0x0070, 0x0070, 0x01, 0x02)
@@ -215,8 +286,9 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
 
         Device (TIMR)
         {
-            Name (_HID, "PNP0100")
+            Name (_HID, EisaId ("PNP0100"))
             Name (_UID, Zero)
+            Name (_STA, 0x0F)
             Name (_CRS, ResourceTemplate ()
             {
                 IO (Decode16, 0x0040, 0x0040, 0x01, 0x04)
@@ -224,4 +296,12 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
             })
         }
     }
+
+    // CPU objects (default generator config emits CPU0 only).
+    Scope (\_PR_)
+    {
+        Processor (CPU0, 0x00, 0x00000000, 0x00) {}
+    }
+
+    Name (_S5_, Package (0x02) { 0x05, 0x05 })
 }

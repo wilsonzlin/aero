@@ -1142,7 +1142,9 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     out.extend_from_slice(&word_addr_space_descriptor(
         AddrSpaceDescriptorHeader {
             resource_type: 0x02,
-            general_flags: 0x0D, // producer + min/max fixed
+            // Match the flags emitted by ACPICA iasl for `WordBusNumber (...)`.
+            // We intentionally keep this compatible with `iasl -d` round-trips.
+            general_flags: 0x0C, // min/max fixed
             type_specific_flags: 0x00,
         },
         AddrSpaceDescriptorRange {
@@ -1161,8 +1163,8 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     out.extend_from_slice(&word_addr_space_descriptor(
         AddrSpaceDescriptorHeader {
             resource_type: 0x01,
-            general_flags: 0x0D,
-            // "EntireRange" (ACPICA disassembler token) so the emitted descriptor round-trips.
+            // Match the flags emitted by ACPICA iasl for `WordIO (...)`.
+            general_flags: 0x0C, // min/max fixed
             type_specific_flags: 0x03,
         },
         AddrSpaceDescriptorRange {
@@ -1178,8 +1180,8 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     out.extend_from_slice(&word_addr_space_descriptor(
         AddrSpaceDescriptorHeader {
             resource_type: 0x01,
-            general_flags: 0x0D,
-            // "EntireRange" (ACPICA disassembler token) so the emitted descriptor round-trips.
+            // Match the flags emitted by ACPICA iasl for `WordIO (...)`.
+            general_flags: 0x0C, // min/max fixed
             type_specific_flags: 0x03,
         },
         AddrSpaceDescriptorRange {
@@ -1221,8 +1223,9 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
             out.extend_from_slice(&dword_addr_space_descriptor(
                 AddrSpaceDescriptorHeader {
                     resource_type: 0x00,
-                    general_flags: 0x0D,
-                    type_specific_flags: 0x06, // cacheable, read/write
+                    // Match the flags emitted by ACPICA iasl for `DWordMemory (...)`.
+                    general_flags: 0x0C, // min/max fixed
+                    type_specific_flags: 0x03,
                 },
                 AddrSpaceDescriptorRange {
                     granularity: 0x0000_0000,
@@ -1344,7 +1347,7 @@ fn memory32_fixed_descriptor(address: u32, length: u32) -> [u8; 12] {
     let mut out = [0u8; 12];
     out[0] = 0x86;
     out[1..3].copy_from_slice(&0x0009u16.to_le_bytes());
-    out[3] = 0; // read/write
+    out[3] = 1; // read/write
     out[4..8].copy_from_slice(&address.to_le_bytes());
     out[8..12].copy_from_slice(&length.to_le_bytes());
     out
@@ -1492,6 +1495,17 @@ mod tests {
             aml_device(*b"DEV0", &[]),
             [&[0x5B, 0x82, 0x05][..], &b"DEV0"[..]].concat()
         );
+    }
+
+    #[test]
+    fn pkg_length_for_payload_includes_pkg_length_bytes() {
+        // Single-byte PkgLength.
+        assert_eq!(aml_pkg_length_for_payload(15), vec![0x10]); // 15 payload + 1 length byte
+        assert_eq!(aml_pkg_length_for_payload(25), vec![0x1A]); // 25 payload + 1 length byte
+
+        // Boundary where adding the PkgLength byte forces a two-byte encoding.
+        // payload=0x3F -> total=0x41 (0x3F payload + 2 length bytes)
+        assert_eq!(aml_pkg_length_for_payload(0x3F), vec![0x41, 0x04]);
     }
 
     #[test]
