@@ -346,7 +346,8 @@ foreach ($m in $requiredModelMappings) {
 
 $requiredStrings = @(
   @{ Name = 'AeroVirtioKeyboard.DeviceDesc'; Regex = '(?i)^AeroVirtioKeyboard\.DeviceDesc\s*=\s*".*"$' },
-  @{ Name = 'AeroVirtioMouse.DeviceDesc';    Regex = '(?i)^AeroVirtioMouse\.DeviceDesc\s*=\s*".*"$' }
+  @{ Name = 'AeroVirtioMouse.DeviceDesc';    Regex = '(?i)^AeroVirtioMouse\.DeviceDesc\s*=\s*".*"$' },
+  @{ Name = 'AeroVirtioInput.DeviceDesc';    Regex = '(?i)^AeroVirtioInput\.DeviceDesc\s*=\s*".*"$' }
 )
 
 foreach ($s in $requiredStrings) {
