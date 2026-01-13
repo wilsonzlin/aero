@@ -1,6 +1,6 @@
 use crate::{
     AeroCowDisk, AeroSparseConfig, AeroSparseDisk, AeroSparseHeader, BlockCachedDisk, DiskError,
-    MemBackend, RawDisk, StorageBackend as _, VirtualDisk, SECTOR_SIZE,
+    DiskImage, MemBackend, RawDisk, StorageBackend, VirtualDisk, SECTOR_SIZE,
 };
 
 fn make_header(
@@ -271,6 +271,17 @@ fn boxed_virtual_disk_can_be_used_in_generic_wrappers() {
     let mut buf = [0u8; 4];
     cached.read_at(0, &mut buf).unwrap();
     assert_eq!(&buf, &[1, 2, 3, 4]);
+}
+
+#[test]
+fn boxed_storage_backend_can_open_disk_image() {
+    // Compile-time + runtime check: `Box<dyn StorageBackend>` itself implements `StorageBackend`
+    // so it can be used in generic wrappers like `DiskImage`.
+    let backend: Box<dyn StorageBackend> = Box::new(MemBackend::with_len(1024 * 1024).unwrap());
+    let mut disk = DiskImage::open_auto(backend).unwrap();
+
+    let mut sector = [0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut sector).unwrap();
 }
 
 #[test]

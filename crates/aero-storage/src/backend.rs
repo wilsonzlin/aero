@@ -59,6 +59,50 @@ pub trait StorageBackend {
     fn flush(&mut self) -> Result<()>;
 }
 
+impl<T: StorageBackend + ?Sized> StorageBackend for &mut T {
+    fn len(&mut self) -> Result<u64> {
+        (**self).len()
+    }
+
+    fn set_len(&mut self, len: u64) -> Result<()> {
+        (**self).set_len(len)
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        (**self).read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> Result<()> {
+        (**self).write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        (**self).flush()
+    }
+}
+
+impl<T: StorageBackend + ?Sized> StorageBackend for Box<T> {
+    fn len(&mut self) -> Result<u64> {
+        (**self).len()
+    }
+
+    fn set_len(&mut self, len: u64) -> Result<()> {
+        (**self).set_len(len)
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        (**self).read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> Result<()> {
+        (**self).write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        (**self).flush()
+    }
+}
+
 /// In-memory storage backend used for tests and benchmarks.
 #[derive(Clone, Debug, Default)]
 pub struct MemBackend {
