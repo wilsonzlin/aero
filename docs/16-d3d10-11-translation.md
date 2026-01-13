@@ -356,6 +356,23 @@ Examples:
 This keeps bindings stable (derived directly from D3D slot indices) without requiring per-shader
 rebinding logic.
 
+#### Stage extensions (GS/HS/DS) reuse the compute bind group
+
+WebGPU does not expose native **geometry/hull/domain** stages. Aero emulates these stages by
+compiling them to **compute** entry points and inserting compute passes before the final render.
+
+To avoid adding more stage-scoped bind groups (and to stay consistent with
+`crates/aero-d3d11/src/binding_model.rs`), **GS/HS/DS shaders use the existing compute group**:
+
+- D3D resources referenced by GS/HS/DS (`b#`, `t#`, `s#`) are declared in WGSL at `@group(2)`
+  using the same `@binding` numbers as a normal compute shader.
+- The AeroGPU command stream distinguishes “which D3D stage is being bound” using a small
+  `stage_ex` extension carried in reserved fields of the resource-binding opcodes (see the ABI
+  section below).
+- Internal buffers used for vertex pulling and expansion outputs are **not** placed in the
+  stage-scoped groups; they live in dedicated “internal” bind groups that are only used by the
+  emulation compute pipelines.
+
 #### Only resources used by the shader are emitted/bound
 
 D3D11 exposes many binding slots (e.g. 128 SRVs per stage), but typical shaders use only a small
@@ -379,53 +396,335 @@ The current SM5 translation + binding model supports the D3D11-era buffer view t
 
 Remaining gaps (planned follow-ups) include:
 
+- **Thread group shared memory** (`groupshared`) mapping to WGSL `var<workgroup>`.
 - **Typed UAV textures** (`RWTexture*` / `u#` storage textures) and the required format plumbing.
 - **Atomics** (`Interlocked*`) and the necessary WGSL atomic type mapping.
 - **Explicit ordering/barriers** (D3D UAV barriers, `GroupMemoryBarrier*` / `DeviceMemoryBarrier*` semantics).
 
 ---
 
-## Geometry Shaders (P1)
+## Geometry + Tessellation Emulation (GS/HS/DS) via Compute Expansion (P1/P2)
 
-WebGPU does not expose a geometry shader stage. To support D3D10/11 GS:
+WebGPU exposes only **vertex** + **fragment** (render) and **compute** pipelines. D3D10/11’s
+**GS/HS/DS** stages are therefore implemented by an explicit **compute-expansion pipeline** that:
 
-### Strategy A: Pattern-based lowering (fast path)
+1. Pulls vertices in compute (using the bound IA state and input layout).
+2. Runs the missing D3D stages (VS → HS/DS → GS) as compute kernels, writing expanded vertices (and
+    optional indices) into scratch buffers.
+3. Issues a final `drawIndirect` / `drawIndexedIndirect` that renders from the generated buffers
+    using a small “passthrough” vertex shader + the original pixel shader.
 
-Recognize common GS patterns and lower them:
+Pattern-based lowering remains an optimization opportunity, but the **compatibility baseline** is
+the general compute expansion described below.
 
-- Point sprite expansion (point → quad): expand in VS using instance ID
-- Simple extrusion (triangle → triangle strip): expand in VS with vertex pulling
+### 1) AeroGPU ABI extensions for GS/HS/DS
 
-This requires shader analysis rather than perfect ISA coverage, but covers a large fraction of real-world usage.
+These changes are designed to be **minor-version, forward-compatible**:
+packets grow only by appending new fields, and existing `reserved*` fields are repurposed in a way
+that keeps old drivers valid (they still write zeros).
 
-### Strategy B: General GS emulation (compat path)
+#### 1.1) `stage_ex` in resource-binding opcodes
 
-1. Run VS as usual, write VS outputs into a storage buffer.
-2. Run GS as a compute pass:
-   - Read VS output buffer
-   - Emit expanded primitives into a new vertex buffer (storage)
-   - Write an indirect draw args buffer (vertex count / instance count)
-3. Render from the expanded buffer using a “passthrough” vertex shader.
+Many AeroGPU binding packets already carry a `shader_stage` plus a trailing `reserved0` field:
 
-This is conceptually similar to stream output and works even for complex GS, at the cost of extra passes and memory bandwidth.
+- `AEROGPU_CMD_SET_TEXTURE`
+- `AEROGPU_CMD_SET_SAMPLERS`
+- `AEROGPU_CMD_SET_CONSTANT_BUFFERS`
 
----
+For GS/HS/DS we need to bind D3D resources **per stage**, but the legacy `enum aerogpu_shader_stage`
+only defines `VS/PS/CS`. We extend these packets by interpreting the trailing reserved field as an
+optional `stage_ex`.
 
-## Tessellation (HS/DS) and Advanced Compute (P2)
+**Definition (conceptual):**
 
-WebGPU does not expose fixed-function tessellation. Emulate HS/DS by:
+```c
+// New: used only when binding resources for GS/HS/DS.
+enum aerogpu_shader_stage_ex {
+   AEROGPU_STAGE_EX_NONE     = 0, // Use shader_stage (legacy VS/PS/CS).
+   AEROGPU_STAGE_EX_GEOMETRY = 3,
+   AEROGPU_STAGE_EX_HULL     = 4,
+   AEROGPU_STAGE_EX_DOMAIN   = 5,
+};
 
-1. Compute pass to generate tessellated vertices and indices into storage buffers.
-2. Optional compute pass for patch constant evaluation.
-3. Draw using indirect args.
+// Example: SET_TEXTURE
+struct aerogpu_cmd_set_texture {
+   struct aerogpu_cmd_hdr hdr;       // opcode = AEROGPU_CMD_SET_TEXTURE
+   uint32_t shader_stage;            // enum aerogpu_shader_stage (0=VS,1=PS,2=CS)
+   uint32_t slot;
+   aerogpu_handle_t texture;         // 0 = unbind
+   uint32_t stage_ex;                // enum aerogpu_shader_stage_ex (was reserved0)
+};
+```
 
-This aligns with the GS emulation strategy and can share the same intermediate-buffer allocator.
+**Encoding rules:**
 
-Compute shaders (CS) translate to WGSL `@compute` entry points, with attention to:
+- Legacy stages keep working:
+  - VS: `shader_stage = VERTEX`, `stage_ex = 0`
+  - PS: `shader_stage = PIXEL`,  `stage_ex = 0`
+  - CS: `shader_stage = COMPUTE`, `stage_ex = 0`
+- Emulated stages use the compute bind group (`@group(2)`) but select a different *logical* stage:
+  - GS: `shader_stage = COMPUTE`, `stage_ex = GEOMETRY`
+  - HS: `shader_stage = COMPUTE`, `stage_ex = HULL`
+  - DS: `shader_stage = COMPUTE`, `stage_ex = DOMAIN`
 
-- Thread group shared memory mapping
-- Atomics mapping (`Interlocked*` ops → WGSL atomics) (not yet complete)
-- UAV barriers and ordering constraints (see Synchronization) (not yet complete)
+The host maintains separate binding tables for CS vs GS/HS/DS so that compute dispatch and
+graphics-tess/GS pipelines do not trample each other’s bindings, but they all map to WGSL
+`@group(2)` at shader interface level.
+
+#### 1.2) Extended `BIND_SHADERS` packet layout
+
+`AEROGPU_CMD_BIND_SHADERS` is extended by appending `gs/hs/ds` handles after the existing payload.
+Old guests keep emitting the 24-byte packet; old hosts ignore the extra bytes due to
+`hdr.size_bytes`.
+
+```c
+// Existing prefix (ABI 1.0+):
+//   hdr, vs, ps, cs, reserved0
+//
+// Extension (ABI minor bump): append gs/hs/ds.
+struct aerogpu_cmd_bind_shaders {
+   struct aerogpu_cmd_hdr hdr;       // opcode = AEROGPU_CMD_BIND_SHADERS
+   aerogpu_handle_t vs;              // 0 = unbound
+   aerogpu_handle_t ps;              // 0 = unbound
+   aerogpu_handle_t cs;              // 0 = unbound
+   uint32_t reserved0;               // must be 0
+
+   // Present when hdr.size_bytes >= 36:
+   aerogpu_handle_t gs;              // 0 = unbound
+   aerogpu_handle_t hs;              // 0 = unbound
+   aerogpu_handle_t ds;              // 0 = unbound
+};
+```
+
+**Host decoding rule:** treat missing trailing fields as `0` (unbound).
+
+#### 1.3) Primitive topology extensions: adjacency + patchlists
+
+`AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY` is extended by adding values to
+`enum aerogpu_primitive_topology`:
+
+- **Adjacency topologies** (for GS input):
+   - `AEROGPU_TOPOLOGY_LINELIST_ADJ`      = 10
+   - `AEROGPU_TOPOLOGY_LINESTRIP_ADJ`     = 11
+   - `AEROGPU_TOPOLOGY_TRIANGLELIST_ADJ`  = 12
+   - `AEROGPU_TOPOLOGY_TRIANGLESTRIP_ADJ` = 13
+- **Patchlists** (for tessellation input), matching D3D11 numbering:
+   - `AEROGPU_TOPOLOGY_1_CONTROL_POINT_PATCHLIST`  = 33
+   - …
+   - `AEROGPU_TOPOLOGY_32_CONTROL_POINT_PATCHLIST` = 64
+
+Notes:
+
+- `AEROGPU_TOPOLOGY_TRIANGLEFAN` remains for the D3D9 path; D3D11 does not emit triangle fans.
+- Adjacency/patch topologies always route through the compute-expansion pipeline (even if GS/HS/DS
+   are unbound) so behavior is deterministic and validation errors can be surfaced consistently.
+
+### 2) Compute-expansion runtime pipeline
+
+#### 2.1) When the expansion pipeline triggers
+
+A draw uses compute expansion when **any** of the following are true:
+
+- A **GS** shader is bound (`gs != 0`).
+- A **HS** or **DS** shader is bound (`hs != 0` or `ds != 0`).
+- The IA primitive topology is an **adjacency** topology.
+- The IA primitive topology is a **patchlist** topology (33–64).
+
+Otherwise, the existing “direct render pipeline” path is used (VS+PS render pipeline).
+
+#### 2.2) Scratch buffers (logical) and required WebGPU usages
+
+The expansion pipeline uses per-draw (or per-encoder) scratch allocations. These are *logical*
+buffers; they may be implemented as separate `wgpu::Buffer`s or as sub-allocations of a larger
+transient arena, as long as alignment requirements are respected.
+
+**Alignment requirements:**
+
+- Buffer sizes and offsets must be 4-byte aligned (`wgpu::COPY_BUFFER_ALIGNMENT`) because the
+   pipeline uses `copy_buffer_to_buffer` and may clear/initialize buffers with writes.
+- If sub-allocating a shared scratch buffer and binding with dynamic offsets, each slice must be
+   aligned to `device.limits().min_storage_buffer_offset_alignment` (typically 256).
+
+**Scratch allocations:**
+
+1. **VS-out (`vs_out`)**
+    - Purpose: stores vertex shader outputs (control points) for the draw, consumable by HS/GS.
+    - Usage: `STORAGE` (written/read by compute).
+    - Layout: `array<ExpandedVertex>` (see below).
+
+2. **Tessellation-out (`tess_out_vertices`, `tess_out_indices`)**
+    - Purpose: stores post-DS vertices + optional indices.
+    - Usage (vertices): `STORAGE | VERTEX`
+    - Usage (indices): `STORAGE | INDEX`
+
+3. **GS-out (`gs_out_vertices`, `gs_out_indices`)**
+    - Purpose: stores post-GS vertices + indices suitable for final rasterization.
+    - Usage (vertices): `STORAGE | VERTEX`
+    - Usage (indices): `STORAGE | INDEX`
+
+4. **Indirect args (`indirect_args`)**
+    - Purpose: written by compute, consumed by render pass as indirect draw parameters.
+    - Usage: `STORAGE | INDIRECT`
+
+5. **Counters (`counters`)**
+    - Purpose: atomic counters used during expansion (output vertex count, output index count,
+      overflow flags).
+    - Usage: `STORAGE` (atomics) and optionally `COPY_SRC` for debugging readback.
+
+**Expanded vertex layout (conceptual):**
+
+For compatibility with the existing signature-driven stage linking, expansion outputs store the
+same interface that the pixel shader consumes:
+
+- `pos`: `vec4<f32>` (SV_Position)
+- `vN`: `vec4<f32>` for each user varying location `N` used by the pixel shader
+
+The exact `ExpandedVertex` struct is derived from the linked VS/GS/DS → PS signature (a pipeline
+already exists for trimming/intersecting varyings; expansion reuses that location set).
+
+#### 2.3) Indirect draw argument formats
+
+The indirect args buffer stores one of the WebGPU-defined structs at offset 0:
+
+```c
+// For RenderPass::draw_indirect
+struct DrawIndirectArgs {
+   uint32_t vertex_count;
+   uint32_t instance_count;
+   uint32_t first_vertex;
+   uint32_t first_instance;
+};
+
+// For RenderPass::draw_indexed_indirect
+struct DrawIndexedIndirectArgs {
+   uint32_t index_count;
+   uint32_t instance_count;
+   uint32_t first_index;
+   int32_t  base_vertex;
+   uint32_t first_instance;
+};
+```
+
+Implementation rules:
+
+- Expansion always writes args at **offset 0** (no multi-draw).
+- `first_vertex/first_index/base_vertex` are written as 0 (the expansion output buffers are
+   already in the correct space).
+- `instance_count` may be preserved for true instancing, but the baseline implementation may
+   legally **flatten instancing** by baking instance ID into the expansion passes and setting
+   `instance_count = 1` (this keeps output counts independent of instance).
+
+#### 2.4) Pass sequence (per draw)
+
+The following compute passes are inserted before the final render pass. Each pass is dispatched
+with an implementation-defined workgroup size chosen by the translator/runtime.
+
+1. **VS (compute variant): vertex pulling + VS execution**
+    - Inputs:
+      - IA vertex buffers + index buffer (internal bind group)
+      - VS resources (still `@group(0)`; this is the existing stage-scoped VS bind group)
+      - Draw parameters (first/vertex/index, base vertex, instance info)
+    - Output: `vs_out[i] = ExpandedVertex` for each input control point.
+
+2. **Tessellation (optional): HS/DS emulation**
+    - Trigger: `hs != 0 || ds != 0 || topology is patchlist`.
+    - HS pass:
+      - Reads control points from `vs_out`.
+      - Writes patch constants + optional HS control points to scratch.
+    - Tessellator/DS pass:
+      - Generates tessellated domain points and evaluates DS.
+      - Writes `tess_out_vertices` (+ `tess_out_indices` if indexed rendering is chosen).
+      - Writes `indirect_args` + `counters`.
+
+3. **GS (optional): geometry shader emulation**
+    - Trigger: `gs != 0` or adjacency topology.
+    - Reads primitive inputs from the previous stage output (`vs_out` for no tessellation,
+      otherwise `tess_out_vertices`).
+    - Emits vertices/indices to `gs_out_*`, updates counters, then writes final `indirect_args`.
+
+4. **Final render**
+    - Uses a render pipeline consisting of:
+      - A **passthrough vertex shader** that reads `ExpandedVertex` from the final expansion output
+        buffer and outputs the same `@location`s expected by the pixel shader.
+      - The original pixel shader.
+    - Issues `drawIndirect` or `drawIndexedIndirect` depending on whether an index buffer was
+      generated.
+
+### 3) Binding model for emulation kernels
+
+#### 3.1) User (D3D) resources for GS/HS/DS
+
+GS/HS/DS are compiled as compute entry points but keep the normal D3D binding model:
+
+- D3D resources live in `@group(2)` and use the same binding number scheme as compute shaders:
+   - `b#` (cbuffers) → `@binding(BINDING_BASE_CBUFFER + slot)`
+   - `t#` (SRVs)     → `@binding(BINDING_BASE_TEXTURE + slot)`
+   - `s#` (samplers) → `@binding(BINDING_BASE_SAMPLER + slot)`
+- Resource-binding opcodes specify the logical stage via `stage_ex` so the runtime can maintain
+   separate tables for CS vs GS/HS/DS while still using a single `@group(2)` interface.
+
+#### 3.2) Internal bind groups and reserved bindings
+
+Expansion compute pipelines require additional buffers that are not part of the D3D binding model
+(vertex pulling inputs, scratch outputs, counters, indirect args).
+
+These are bound through a dedicated internal bind group to avoid colliding with the stable
+`@group(0..2)` layout. The internal group index is reserved as:
+
+- `@group(3)`: **Aero internal expansion bindings** (not visible to guest shaders)
+
+Within `@group(3)`, binding numbers are reserved and stable so the runtime can share common helper
+WGSL across VS/GS/HS/DS compute variants:
+
+- `@binding(0)`: `ExpandParams` (uniform/storage; draw parameters + topology info)
+- `@binding(1..=8)`: vertex buffers `vb0..vb7` as read-only storage (after slot compaction)
+- `@binding(9)`: index buffer (read-only storage; absent → bind dummy)
+- `@binding(10)`: `vs_out` (read_write storage)
+- `@binding(11)`: `tess_out_vertices` (read_write storage)
+- `@binding(12)`: `tess_out_indices` (read_write storage)
+- `@binding(13)`: `gs_out_vertices` (read_write storage)
+- `@binding(14)`: `gs_out_indices` (read_write storage)
+- `@binding(15)`: `indirect_args` (read_write storage)
+- `@binding(16)`: `counters` (read_write storage; atomics)
+
+Note: vertex pulling requires reading the guest’s bound vertex/index buffers from compute. The
+host must therefore create buffers with `AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER` /
+`AEROGPU_RESOURCE_USAGE_INDEX_BUFFER` using WebGPU usages that include `STORAGE` (in addition to
+`VERTEX`/`INDEX`), so they can be bound at `@group(3)` as read-only storage buffers.
+
+Buffers bound here must be created with the union of the usages required by the consuming stages
+(e.g. `STORAGE | VERTEX` for final vertex output).
+
+### 4) Testing strategy
+
+The goal is to validate the *pipeline plumbing* (ABI parsing, compute expansion, indirect draw,
+stage linking) with a small set of deterministic pixel-compare scenes.
+
+**Shader fixtures:**
+
+Add DXBC fixtures alongside existing ones in `crates/aero-d3d11/tests/fixtures/`:
+
+- `gs_*.dxbc` – minimal SM4/SM5 geometry shaders (triangle passthrough, point expansion).
+- `hs_*.dxbc` – minimal hull shaders (constant tess factors, pass-through control points).
+- `ds_*.dxbc` – minimal domain shaders (simple interpolation to position).
+
+**Pixel-compare tests (Rust):**
+
+Add new `aero-d3d11` executor tests that render to an offscreen RT and compare readback pixels:
+
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_*.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_*.rs`
+
+Each test should:
+
+1. Upload VS/PS (+ GS/HS/DS) fixtures.
+2. Bind topology (including adjacency/patchlist where relevant).
+3. Issue a draw that exercises the expansion path.
+4. Read back the render target and compare to a tiny reference image (or a simple expected pattern).
+
+When GS support lands, update the existing “ignore GS payloads” robustness test
+(`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`) to reflect the new behavior (GS
+is no longer ignored when bound through the extended `BIND_SHADERS` packet).
 
 ---
 
