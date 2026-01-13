@@ -2454,6 +2454,138 @@ mod tests {
         }
     }
 
+    fn assert_e820_sorted_and_non_overlapping(map: &[E820Entry]) {
+        let mut last_end = 0u64;
+        for entry in map {
+            assert!(
+                entry.base >= last_end,
+                "E820 entries overlap or are out of order: last_end=0x{last_end:x}, entry={entry:?}"
+            );
+            last_end = entry.base.saturating_add(entry.length);
+        }
+    }
+
+    fn assert_no_e820_entry_overlaps_range(map: &[E820Entry], start: u64, end: u64) {
+        for entry in map {
+            let entry_end = entry.base.saturating_add(entry.length);
+            let overlap_start = entry.base.max(start);
+            let overlap_end = entry_end.min(end);
+            assert!(
+                overlap_end <= overlap_start,
+                "E820 entry overlaps reserved window 0x{start:x}..0x{end:x}: {entry:?}"
+            );
+        }
+    }
+
+    fn sum_e820_ram(map: &[E820Entry]) -> u64 {
+        map.iter()
+            .filter(|e| e.region_type == E820_RAM)
+            .map(|e| e.length)
+            .sum()
+    }
+
+    #[test]
+    fn e820_ram_below_ecam_does_not_claim_pci_windows() {
+        const TOTAL_MEMORY: u64 = 512 * 1024 * 1024;
+        const ONE_MIB: u64 = 0x0010_0000;
+        const ECAM_BASE: u64 = 0xB000_0000;
+        const ECAM_SIZE: u64 = 0x1000_0000;
+        const PCI_HOLE_START: u64 = 0xC000_0000;
+        const PCI_HOLE_END: u64 = 0x1_0000_0000;
+
+        // Lock down the expected ECAM window. `cargo test -p firmware` does not run dependency
+        // tests, so validate the re-exported constants here as well.
+        assert_eq!(PCIE_ECAM_BASE, ECAM_BASE);
+        assert_eq!(PCIE_ECAM_SIZE, ECAM_SIZE);
+
+        let map = build_e820_map(TOTAL_MEMORY, None, None);
+        assert_e820_sorted_and_non_overlapping(&map);
+
+        // When RAM ends below the PCIe ECAM window, the E820 map should not mention the ECAM or
+        // PCI/MMIO hole ranges at all.
+        assert_no_e820_entry_overlaps_range(&map, ECAM_BASE, ECAM_BASE + ECAM_SIZE);
+        assert_no_e820_entry_overlaps_range(&map, PCI_HOLE_START, PCI_HOLE_END);
+
+        // Ensure the amount of RAM described by E820 matches the configured guest memory, minus
+        // the legacy VGA + EBDA reserved region within the first MiB.
+        let expected_ram = TOTAL_MEMORY - (ONE_MIB - EBDA_BASE);
+        let ram_reported = sum_e820_ram(&map);
+        assert_eq!(
+            ram_reported, expected_ram,
+            "Unexpected total RAM reported by E820: expected=0x{expected_ram:x}, got=0x{ram_reported:x}, map={map:?}"
+        );
+    }
+
+    #[test]
+    fn e820_ram_above_ecam_reserves_pci_windows_and_remaps_high_memory() {
+        const ONE_MIB: u64 = 0x0010_0000;
+        const ECAM_BASE: u64 = 0xB000_0000;
+        const ECAM_SIZE: u64 = 0x1000_0000;
+        const PCI_HOLE_START: u64 = 0xC000_0000;
+        const PCI_HOLE_END: u64 = 0x1_0000_0000;
+
+        assert_eq!(PCIE_ECAM_BASE, ECAM_BASE);
+        assert_eq!(PCIE_ECAM_SIZE, ECAM_SIZE);
+
+        // Guest RAM extends past the low-RAM end (ECAM base), so the portion that would overlap
+        // the ECAM window must be remapped above 4GiB.
+        let total_memory = ECAM_BASE + 256 * 1024 * 1024;
+        assert_eq!(total_memory, PCI_HOLE_START);
+
+        let map = build_e820_map(total_memory, None, None);
+        assert_e820_sorted_and_non_overlapping(&map);
+
+        // The ECAM window must be reserved exactly.
+        assert!(
+            map.iter().any(|e| {
+                e.base == ECAM_BASE && e.length == ECAM_SIZE && e.region_type == E820_RESERVED
+            }),
+            "E820 should reserve ECAM window 0x{ECAM_BASE:x}..0x{:x}, map={map:?}",
+            ECAM_BASE + ECAM_SIZE
+        );
+
+        // The remaining PCI/MMIO hole (below 4GiB) must also be reserved exactly.
+        assert!(
+            map.iter().any(|e| {
+                e.base == PCI_HOLE_START
+                    && e.length == PCI_HOLE_END - PCI_HOLE_START
+                    && e.region_type == E820_RESERVED
+            }),
+            "E820 should reserve PCI/MMIO hole 0x{PCI_HOLE_START:x}..0x{PCI_HOLE_END:x}, map={map:?}"
+        );
+
+        // RAM above the ECAM base is remapped to start at 4GiB.
+        let expected_high_len = total_memory - ECAM_BASE;
+        assert!(
+            map.iter().any(|e| {
+                e.base == PCI_HOLE_END && e.length == expected_high_len && e.region_type == E820_RAM
+            }),
+            "E820 should expose remapped high RAM at 0x{PCI_HOLE_END:x} length 0x{expected_high_len:x}, map={map:?}"
+        );
+
+        // Ensure no RAM entry overlaps the ECAM or PCI hole ranges.
+        for entry in map.iter().filter(|e| e.region_type == E820_RAM) {
+            let entry_end = entry.base.saturating_add(entry.length);
+            assert!(
+                entry_end <= ECAM_BASE || entry.base >= ECAM_BASE + ECAM_SIZE,
+                "Low RAM must not extend into the ECAM window: {entry:?}"
+            );
+            assert!(
+                entry_end <= PCI_HOLE_START || entry.base >= PCI_HOLE_END,
+                "RAM must not overlap the PCI/MMIO hole: {entry:?}"
+            );
+        }
+
+        // Total RAM should still match the configured guest memory, minus the legacy VGA + EBDA
+        // reserved region within the first MiB.
+        let expected_ram = total_memory - (ONE_MIB - EBDA_BASE);
+        let ram_reported = sum_e820_ram(&map);
+        assert_eq!(
+            ram_reported, expected_ram,
+            "Unexpected total RAM reported by E820: expected=0x{expected_ram:x}, got=0x{ram_reported:x}, map={map:?}"
+        );
+    }
+
     #[test]
     fn e820_with_zero_guest_ram_reports_no_ram_entries() {
         let map = build_e820_map(0, None, None);
@@ -2477,13 +2609,6 @@ mod tests {
         let map = build_e820_map(total, Some(acpi), Some(nvs));
 
         // Ensure strict non-overlap and sortedness by base.
-        let mut last_end = 0u64;
-        for entry in &map {
-            assert!(
-                entry.base >= last_end,
-                "E820 entries overlap or are out of order: last_end=0x{last_end:x}, entry={entry:?}"
-            );
-            last_end = entry.base.saturating_add(entry.length);
-        }
+        assert_e820_sorted_and_non_overlapping(&map);
     }
 }
