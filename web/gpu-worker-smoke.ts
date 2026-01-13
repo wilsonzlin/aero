@@ -18,6 +18,7 @@ declare global {
       pass?: boolean;
       lastStats?: unknown;
       lastWasmStats?: unknown;
+      events?: unknown[];
       samplePixels?: () => Promise<{
         backend: string;
         width: number;
@@ -67,7 +68,7 @@ function renderError(message: string) {
       status.textContent = message;
     }
   }
-  window.__aeroTest = { ready: true, error: message };
+  window.__aeroTest = { ...(window.__aeroTest ?? {}), ready: true, error: message };
 }
 
 function safeJsonStringify(value: unknown): string {
@@ -152,6 +153,7 @@ async function main() {
   const telemetryEl = $("telemetry");
   const backendEl = $("backend");
   let loggedFrameTimings = false;
+  const eventLog: Array<{ time_ms: number; backend_kind: string; severity: string; category: string; message: string }> = [];
 
   const cssWidth = 64;
   const cssHeight = 64;
@@ -194,7 +196,9 @@ async function main() {
         if (!status) return;
         for (const ev of msg.events) {
           status.textContent += `gpu_event ${ev.severity} ${ev.category}: ${ev.message}\n`;
+          eventLog.push(ev);
         }
+        window.__aeroTest = { ...(window.__aeroTest ?? {}), events: eventLog };
       },
       onStats: (msg) => {
         // Print a small preview of WASM telemetry so the page can be used as a
@@ -291,6 +295,7 @@ async function main() {
       hash,
       expectedHash,
       pass,
+      events: eventLog,
       lastStats: window.__aeroTest?.lastStats,
       lastWasmStats: window.__aeroTest?.lastWasmStats,
       samplePixels: async () => ({

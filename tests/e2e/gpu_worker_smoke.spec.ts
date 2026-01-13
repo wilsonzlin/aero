@@ -115,4 +115,15 @@ test("gpu worker smoke: init failure emits structured Init fatal event", async (
     const text = document.getElementById("status")?.textContent ?? "";
     return text.includes("gpu_event fatal Init:") && text.includes("WebGPU backend was disabled");
   });
+
+  const initEvent = await page.evaluate(() => {
+    const events = ((window as any).__aeroTest as any)?.events as any[] | undefined;
+    if (!Array.isArray(events)) return null;
+    return (
+      events.find((ev) => ev && ev.category === "Init" && ev.severity === "fatal" && typeof ev.message === "string") ??
+      null
+    );
+  });
+  expect(initEvent).not.toBeNull();
+  expect(initEvent.backend_kind).toBe("webgpu");
 });
