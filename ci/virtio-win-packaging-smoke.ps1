@@ -128,6 +128,28 @@ function Write-SyntheticInf {
   $lines | Out-File -FilePath $Path -Encoding ascii
 }
 
+function Write-SyntheticInfUtf16LeNoBom {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$BaseName,
+    [string]$HardwareId
+  )
+
+  $tmp = [System.IO.Path]::GetTempFileName()
+  try {
+    Write-SyntheticInf -Path $tmp -BaseName $BaseName -HardwareId $HardwareId
+    $content = Get-Content -LiteralPath $tmp -Raw
+  } finally {
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+  }
+
+  # UTF-16LE without a BOM is a common INF encoding in the wild. Use this encoding to ensure
+  # ci/package-guest-tools.ps1's contract auto-patching (HWID matching + AddService scanning)
+  # does not depend on BOM-based detection.
+  $enc = New-Object System.Text.UnicodeEncoding($false, $false) # little-endian, no BOM
+  [System.IO.File]::WriteAllText($Path, $content, $enc)
+}
+
 function Write-PlaceholderBinary {
   param([Parameter(Mandatory = $true)][string]$Path)
   "placeholder" | Out-File -FilePath $Path -Encoding ascii
@@ -920,6 +942,97 @@ foreach ($want in @(
 # (matching the packaged INF AddService directives), so `guest-tools/setup.cmd` can
 # perform boot-critical storage validation + pre-seeding without /skipstorage.
 Assert-GuestToolsDevicesCmdServices -ZipPath $guestZip -SpecPath $GuestToolsSpecPath
+
+# Regression test: ci/package-guest-tools.ps1 patches the Windows device contract by
+# scanning driver INFs for HWIDs + AddService lines. Some upstream driver bundles ship
+# UTF-16LE INFs without a BOM; ensure the wrapper's INF parsing handles this encoding.
+Write-Host "Running package-guest-tools.ps1 UTF-16LE(no BOM) INF auto-patching smoke test..."
+
+$utf16SmokeRoot = Join-Path $OutRoot "guest-tools-utf16-inf-nobom"
+Ensure-EmptyDirectory -Path $utf16SmokeRoot
+
+$utf16DriversRoot = Join-Path $utf16SmokeRoot "drivers"
+Ensure-Directory -Path $utf16DriversRoot
+Ensure-Directory -Path (Join-Path $utf16DriversRoot "x86")
+Ensure-Directory -Path (Join-Path $utf16DriversRoot "amd64")
+
+$utf16HwidUnique = "PCI\VEN_1AF4&DEV_1042&SUBSYS_DEADBEEF"
+
+# viostor (x86): include both an ASCII INF (for packager HWID validation) and a UTF-16LE(no BOM)
+# INF containing a more specific HWID. The contract auto-patcher should match the latter.
+$viostorUtf16X86Dir = Join-Path (Join-Path $utf16DriversRoot "x86") "viostor"
+Ensure-Directory -Path $viostorUtf16X86Dir
+Write-SyntheticInf -Path (Join-Path $viostorUtf16X86Dir "viostor.inf") -BaseName "viostor" -HardwareId "PCI\VEN_1AF4&DEV_1042"
+Write-SyntheticInfUtf16LeNoBom -Path (Join-Path $viostorUtf16X86Dir "viostor-utf16-nobom.inf") -BaseName "viostor" -HardwareId $utf16HwidUnique
+Write-PlaceholderBinary -Path (Join-Path $viostorUtf16X86Dir "viostor.sys")
+Write-PlaceholderBinary -Path (Join-Path $viostorUtf16X86Dir "viostor.cat")
+
+# viostor (amd64): keep a normal ASCII INF; it should not match the unique HWID used for patching.
+$viostorUtf16Amd64Dir = Join-Path (Join-Path $utf16DriversRoot "amd64") "viostor"
+Ensure-Directory -Path $viostorUtf16Amd64Dir
+Write-SyntheticInf -Path (Join-Path $viostorUtf16Amd64Dir "viostor.inf") -BaseName "viostor" -HardwareId "PCI\VEN_1AF4&DEV_1042"
+Write-PlaceholderBinary -Path (Join-Path $viostorUtf16Amd64Dir "viostor.sys")
+Write-PlaceholderBinary -Path (Join-Path $viostorUtf16Amd64Dir "viostor.cat")
+
+# netkvm (required by win7-virtio-win.json).
+foreach ($arch in @("x86", "amd64")) {
+  $dir = Join-Path (Join-Path $utf16DriversRoot $arch) "netkvm"
+  Ensure-Directory -Path $dir
+  Write-SyntheticInf -Path (Join-Path $dir "netkvm.inf") -BaseName "netkvm" -HardwareId "PCI\VEN_1AF4&DEV_1041"
+  Write-PlaceholderBinary -Path (Join-Path $dir "netkvm.sys")
+  Write-PlaceholderBinary -Path (Join-Path $dir "netkvm.cat")
+}
+
+# Synthetic contract based on the canonical Aero contract, but force virtio-blk to start with
+# the wrong service name and a HWID that only exists in the UTF-16(no BOM) INF above.
+$contractTemplatePath = Join-Path $repoRoot "docs\\windows-device-contract.json"
+$utf16ContractPath = Join-Path $utf16SmokeRoot "windows-device-contract.json"
+$contractObj = Get-Content -LiteralPath $contractTemplatePath -Raw | ConvertFrom-Json
+$patched = $false
+foreach ($d in @($contractObj.devices)) {
+  if ($d -and $d.device -and ($d.device -ieq "virtio-blk")) {
+    $d.driver_service_name = "wrongsvc"
+    $d.hardware_id_patterns = @($utf16HwidUnique)
+    $patched = $true
+    break
+  }
+}
+if (-not $patched) {
+  throw "Synthetic contract generation failed: missing virtio-blk entry in $contractTemplatePath"
+}
+$contractJson = $contractObj | ConvertTo-Json -Depth 50
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($utf16ContractPath, ($contractJson + "`n"), $utf8NoBom)
+
+$utf16SpecPath = Join-Path $repoRoot "tools\\packaging\\specs\\win7-virtio-win.json"
+if (-not (Test-Path -LiteralPath $utf16SpecPath -PathType Leaf)) {
+  throw "Expected packaging spec not found: $utf16SpecPath"
+}
+
+$utf16OutDir = Join-Path $utf16SmokeRoot "out"
+Ensure-EmptyDirectory -Path $utf16OutDir
+$utf16PackLog = Join-Path $logsDir "package-guest-tools-utf16-inf-nobom.log"
+$wrapperScript = Join-Path $repoRoot "ci\\package-guest-tools.ps1"
+
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $wrapperScript `
+  -InputRoot $utf16DriversRoot `
+  -GuestToolsDir (Join-Path $repoRoot "guest-tools") `
+  -SigningPolicy "none" `
+  -SpecPath $utf16SpecPath `
+  -WindowsDeviceContractPath $utf16ContractPath `
+  -OutDir $utf16OutDir `
+  -Version "0.0.0" `
+  -BuildId "ci-utf16-inf-nobom" *>&1 | Tee-Object -FilePath $utf16PackLog
+if ($LASTEXITCODE -ne 0) {
+  throw "package-guest-tools.ps1 UTF-16(no BOM) INF smoke test failed (exit $LASTEXITCODE). See $utf16PackLog"
+}
+
+$utf16Zip = Join-Path $utf16OutDir "aero-guest-tools.zip"
+if (-not (Test-Path -LiteralPath $utf16Zip -PathType Leaf)) {
+  throw "Expected Guest Tools ZIP not found (UTF-16(no BOM) INF smoke test): $utf16Zip"
+}
+$utf16DevicesCmd = ReadZipEntryText -ZipPath $utf16Zip -EntryPath "config/devices.cmd"
+Assert-DevicesCmdVarEquals -DevicesCmdText $utf16DevicesCmd -VarName "AERO_VIRTIO_BLK_SERVICE" -Expected "viostor"
 
 $specDriverNames = Get-SpecDriverNames -SpecPath $GuestToolsSpecPath
 
