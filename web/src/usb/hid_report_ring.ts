@@ -47,6 +47,17 @@ export type HidReportRingRecord = {
   payload: Uint8Array;
 };
 
+export type HidReportRingDebugState = Readonly<{
+  head: number;
+  tail: number;
+  used: number;
+  free: number;
+  dropped: number;
+  cap: number;
+  headIndex: number;
+  tailIndex: number;
+}>;
+
 function u32(n: number): number {
   return n >>> 0;
 }
@@ -89,6 +100,53 @@ export class HidReportRing {
 
   dropped(): number {
     return u32(Atomics.load(this.#ctrl, CtrlIndex.Dropped));
+  }
+
+  isEmpty(): boolean {
+    const head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
+    const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
+    return head === tail;
+  }
+
+  debugState(): HidReportRingDebugState {
+    const head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
+    const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
+    const used = u32(tail - head);
+    const free = used <= this.#cap ? this.#cap - used : 0;
+    const dropped = u32(Atomics.load(this.#ctrl, CtrlIndex.Dropped));
+    return {
+      head,
+      tail,
+      used,
+      free,
+      dropped,
+      cap: this.#cap,
+      headIndex: head % this.#cap,
+      tailIndex: tail % this.#cap,
+    };
+  }
+
+  /**
+   * Best-effort recovery helper that discards any queued data by setting `head = tail`.
+   *
+   * This method is safe to call from either the producer or consumer, but it may race with
+   * concurrent reads/writes (dropping records). It is intended for manual recovery when ring
+   * corruption is detected.
+   */
+  reset(options: { resetDropped?: boolean } = {}): void {
+    const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
+    Atomics.store(this.#ctrl, CtrlIndex.Head, tail | 0);
+    if (options.resetDropped) {
+      Atomics.store(this.#ctrl, CtrlIndex.Dropped, 0);
+    }
+  }
+
+  /**
+   * Returns `true` when the ring is in a state that would prevent the consumer from making
+   * forward progress (e.g. `used > cap` or the next record header is invalid).
+   */
+  isCorrupt(): boolean {
+    return this.#corruptionReason() !== null;
   }
 
   push(deviceId: number, reportType: HidReportType, reportId: number, payload: Uint8Array): boolean {
@@ -146,11 +204,65 @@ export class HidReportRing {
     return true;
   }
 
+  #corruptionReason(): string | null {
+    const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
+    let head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
+
+    let used = u32(tail - head);
+    if (used === 0) return null;
+    if (used > this.#cap) return "tail/head out of range";
+
+    // Simulate the consumer's wrap/marker skipping logic to avoid false positives when
+    // `head` happens to be near the end of the ring.
+    while (used !== 0) {
+      const headIndex = head % this.#cap;
+      const remaining = this.#cap - headIndex;
+
+      // Not enough contiguous bytes for a header; the consumer will skip to the wrap boundary.
+      if (remaining < HID_REPORT_RECORD_HEADER_BYTES) {
+        if (remaining > used) return "head/tail inconsistent (incomplete wrap padding)";
+        head = u32(head + remaining);
+        used = u32(used - remaining);
+        continue;
+      }
+
+      // Even if the header fits contiguously, ensure the ring claims enough used bytes for it.
+      if (used < HID_REPORT_RECORD_HEADER_BYTES) return "head/tail inconsistent (incomplete record header)";
+
+      const reportType = this.#view.getUint8(headIndex + 4) as HidReportType;
+      const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
+
+      if (reportType === HidReportType.WrapMarker) {
+        if (remaining > used) return "head/tail inconsistent (wrap marker beyond tail)";
+        head = u32(head + remaining);
+        used = u32(used - remaining);
+        continue;
+      }
+
+      // Reject unknown tags; the consumer would otherwise treat them as valid report types.
+      if (reportType !== HidReportType.Input && reportType !== HidReportType.Output && reportType !== HidReportType.Feature) {
+        return `unknown report type tag: ${String(reportType)}`;
+      }
+
+      const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
+      if (total > this.#cap) return "record larger than ring capacity";
+      if (total > remaining) return "record straddles wrap boundary";
+      if (total > used) return "head/tail inconsistent (incomplete record payload)";
+
+      // The next record is well-formed enough for the consumer to make forward progress.
+      return null;
+    }
+
+    return null;
+  }
+
   pop(): HidReportRingRecord | null {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       const head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
       const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
+      const used = u32(tail - head);
+      if (used > this.#cap) return null;
       if (head === tail) return null;
 
       const headIndex = head % this.#cap;
@@ -199,6 +311,8 @@ export class HidReportRing {
     while (true) {
       const head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
       const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
+      const used = u32(tail - head);
+      if (used > this.#cap) return false;
       if (head === tail) return false;
 
       const headIndex = head % this.#cap;
