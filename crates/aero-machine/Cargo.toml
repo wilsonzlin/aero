@@ -32,6 +32,12 @@ firmware = { path = "../firmware" }
 memory = { path = "../memory" }
 aero-protocol = { path = "../../emulator/protocol" }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aero-shared = { path = "../aero-shared" }
+
+[target.'cfg(all(target_arch = "wasm32", target_feature = "atomics"))'.dependencies]
+aero-shared = { path = "../aero-shared" }
+
 [dev-dependencies]
 pretty_assertions = "1"
 aero-edid = { path = "../aero-edid" }

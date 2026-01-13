@@ -93,6 +93,11 @@ use aero_virtio::memory::{
     GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
 };
 use aero_virtio::pci::{InterruptSink as VirtioInterruptSink, VirtioPciDevice};
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+use aero_shared::scanout_state::{
+    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
+    SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
+};
 use firmware::bda::BiosDataArea;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
 use memory::{
@@ -2382,6 +2387,13 @@ pub struct Machine {
     // legacy text buffer at `0xB8000` and converting it into pixels.
     aerogpu_text_renderer: Option<VgaDevice>,
 
+    // Optional shared scanout descriptor used by the browser presentation pipeline.
+    //
+    // This is only available when the target supports atomic operations (native builds and
+    // wasm32+atomics); on single-threaded wasm builds, the shared scanout protocol is unavailable.
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    scanout_state: Option<Arc<ScanoutState>>,
+
     // ---------------------------------------------------------------------
     // Host-managed storage overlay references (snapshot DISKS section)
     // ---------------------------------------------------------------------
@@ -2547,6 +2559,8 @@ impl Machine {
             display_width: 0,
             display_height: 0,
             aerogpu_text_renderer: None,
+            #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+            scanout_state: None,
             ahci_port0_overlay: None,
             ide_secondary_master_atapi_overlay: None,
             ide_primary_master_overlay: None,
@@ -3236,6 +3250,18 @@ impl Machine {
     /// framebuffer to live.
     pub fn vbe_lfb_base(&self) -> u32 {
         self.bios.video.vbe.lfb_base
+    }
+
+    /// Install an external scanout descriptor that should receive legacy VGA/VBE mode updates.
+    ///
+    /// When present, BIOS INT 10h mode transitions publish updates to this descriptor so an
+    /// external presentation layer (e.g. browser canvas) can follow VGA text vs VBE LFB scanout.
+    ///
+    /// On single-threaded wasm builds (no atomic support), scanout state publishing is unavailable
+    /// and this method is not compiled.
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    pub fn set_scanout_state(&mut self, state: Option<Arc<ScanoutState>>) {
+        self.scanout_state = state;
     }
 
     /// Returns the shared manual clock backing platform timer devices, if the PC platform is
@@ -5602,6 +5628,21 @@ impl Machine {
         if self.bios.video.vbe.current_mode.is_none() {
             self.sync_text_mode_cursor_bda_to_vga_crtc();
         }
+
+        // Reset returns the machine to legacy text mode; publish this so external presentation
+        // layers can follow (and so any previous WDDM claim is cleared on reset).
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        if let Some(scanout_state) = &self.scanout_state {
+            scanout_state.publish(ScanoutStateUpdate {
+                source: SCANOUT_SOURCE_LEGACY_TEXT,
+                base_paddr_lo: 0,
+                base_paddr_hi: 0,
+                width: 0,
+                height: 0,
+                pitch_bytes: 0,
+                format: SCANOUT_FORMAT_B8G8R8X8,
+            });
+        }
         self.mem.clear_dirty();
     }
 
@@ -6373,6 +6414,49 @@ impl Machine {
         // early boot.
         if vector == 0x10 && self.bios.video.vbe.current_mode.is_none() {
             self.sync_text_mode_cursor_bda_to_vga_crtc();
+        }
+
+        // Publish legacy scanout transitions (text <-> VBE LFB) so external presentation layers
+        // can follow BIOS-driven mode sets.
+        //
+        // If the scanout has already been claimed by the WDDM path, do not allow legacy INT 10h
+        // calls to steal it back (sticky handoff semantics; see docs/16-aerogpu-vga-vesa-compat.md).
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        if vector == 0x10 {
+            let vbe_mode_after = self.bios.video.vbe.current_mode;
+            if vbe_mode_before != vbe_mode_after {
+                if let Some(scanout_state) = &self.scanout_state {
+                    if scanout_state.snapshot().source != SCANOUT_SOURCE_WDDM {
+                        match vbe_mode_after {
+                            None => {
+                                scanout_state.publish(ScanoutStateUpdate {
+                                    source: SCANOUT_SOURCE_LEGACY_TEXT,
+                                    base_paddr_lo: 0,
+                                    base_paddr_hi: 0,
+                                    width: 0,
+                                    height: 0,
+                                    pitch_bytes: 0,
+                                    format: SCANOUT_FORMAT_B8G8R8X8,
+                                });
+                            }
+                            Some(mode) => {
+                                if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
+                                    let base = u64::from(self.bios.video.vbe.lfb_base);
+                                    scanout_state.publish(ScanoutStateUpdate {
+                                        source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+                                        base_paddr_lo: base as u32,
+                                        base_paddr_hi: (base >> 32) as u32,
+                                        width: u32::from(mode_info.width),
+                                        height: u32::from(mode_info.height),
+                                        pitch_bytes: u32::from(self.bios.video.vbe.bytes_per_scan_line),
+                                        format: SCANOUT_FORMAT_B8G8R8X8,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

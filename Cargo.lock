@@ -453,6 +453,7 @@ dependencies = [
  "aero-pci-firmware-adapter",
  "aero-platform",
  "aero-protocol",
+ "aero-shared",
  "aero-snapshot",
  "aero-storage",
  "aero-usb",
