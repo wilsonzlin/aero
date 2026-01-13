@@ -465,8 +465,44 @@ impl VgaDevice {
     fn read_u8_planar(&mut self, off: usize) -> u8 {
         let off = self.plane_offset(off);
         self.load_latches(off);
-        let plane = (self.graphics[4] & 0x03) as usize;
-        self.latches[plane]
+        let gc_mode = self.graphics[5];
+        let read_mode = (gc_mode >> 3) & 0x01;
+        if read_mode == 0 {
+            let plane = (self.graphics[4] & 0x03) as usize;
+            self.latches[plane]
+        } else {
+            let color_compare = self.graphics[2];
+            let color_dont_care = self.graphics[7];
+            self.read_mode_1_color_compare(color_compare, color_dont_care)
+        }
+    }
+
+    fn read_mode_1_color_compare(&self, color_compare: u8, color_dont_care: u8) -> u8 {
+        // VGA "Read Mode 1" returns a byte where each bit indicates whether the corresponding
+        // pixel's 4-bit color matches the Color Compare register (with planes masked by the
+        // Color Don't Care register).
+        let mut diff = 0u8;
+        let compare = color_compare & 0x0F;
+        let dont_care = color_dont_care & 0x0F;
+
+        for plane in 0..4 {
+            let plane_mask_bit = 1u8 << plane;
+            // "Color Don't Care" is a *mask* of planes to compare; cleared bits are treated as
+            // don't-care.
+            let care_mask = if (dont_care & plane_mask_bit) != 0 {
+                0xFF
+            } else {
+                0x00
+            };
+            let compare_byte = if (compare & plane_mask_bit) != 0 {
+                0xFF
+            } else {
+                0x00
+            };
+            diff |= (self.latches[plane] ^ compare_byte) & care_mask;
+        }
+
+        !diff
     }
 
     fn write_u8_planar(&mut self, off: usize, value: u8) {
@@ -1594,5 +1630,38 @@ mod tests {
         dev.mem_write_u8(0xA0000, 0x05);
 
         assert_eq!(dev.vram[0], 0xA5);
+    }
+
+    #[test]
+    fn planar_read_mode0_and_mode1_color_compare() {
+        let mut dev = VgaDevice::new();
+
+        // Configure a basic planar graphics window at A0000.
+        dev.sequencer[4] = 0x00; // chain4 disabled, odd/even disabled
+        dev.graphics[6] = 0x04; // memory map 0b01 => A0000 64KiB
+
+        // Populate one byte of planar data (8 pixels). Each plane byte holds one bit for each
+        // pixel, with bit7 corresponding to the leftmost pixel.
+        //
+        // Colors for the 8 pixels (bit7..bit0): [5, 5, 4, 7, 5, 1, 13, 5]
+        dev.vram[0 * VGA_PLANE_SIZE + 0] = 0xDF; // plane 0
+        dev.vram[1 * VGA_PLANE_SIZE + 0] = 0x10; // plane 1
+        dev.vram[2 * VGA_PLANE_SIZE + 0] = 0xFB; // plane 2
+        dev.vram[3 * VGA_PLANE_SIZE + 0] = 0x02; // plane 3
+
+        // Read Mode 0: return the selected plane latch (Read Map Select).
+        dev.graphics[5] = 0x00; // read mode 0, write mode 0
+        dev.graphics[4] = 0x02; // plane 2
+        assert_eq!(dev.mem_read_u8(0xA0000), 0xFB);
+
+        // Read Mode 1: color compare.
+        dev.graphics[5] = 0x08; // read mode 1
+        dev.graphics[2] = 0x05; // compare against color 5 (0101)
+        dev.graphics[7] = 0x0F; // compare all planes
+        assert_eq!(dev.mem_read_u8(0xA0000), 0xC9);
+
+        // Mask out plane 3; pixel 6 differs only in that plane, so it now compares equal.
+        dev.graphics[7] = 0x07;
+        assert_eq!(dev.mem_read_u8(0xA0000), 0xCB);
     }
 }
