@@ -399,10 +399,138 @@ bool TestSetNullBlendStateEmitsDefaultPacket() {
   if (!Check(cmd->state.blend_constant_rgba_f32[0] == F32Bits(1.0f), "blend.constant[0] default")) {
     return false;
   }
+  if (!Check(cmd->state.blend_constant_rgba_f32[1] == F32Bits(1.0f), "blend.constant[1] default")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[2] == F32Bits(1.0f), "blend.constant[2] default")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[3] == F32Bits(1.0f), "blend.constant[3] default")) {
+    return false;
+  }
   if (!Check(cmd->state.sample_mask == sample_mask, "blend.sample_mask default")) {
     return false;
   }
 
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestSetNullBlendStateUsesProvidedBlendFactor() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(null blend factor)")) {
+    return false;
+  }
+
+  const float blend_factor[4] = {0.125f, 0.25f, 0.5f, 0.75f};
+  const uint32_t sample_mask = 0x76543210u;
+  D3D10DDI_HBLENDSTATE null_state{};
+  dev.device_funcs.pfnSetBlendState(dev.hDevice, null_state, blend_factor, sample_mask);
+
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetBlendState(null, blend_factor)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()),
+             "ValidateStream(null blend factor)")) {
+    return false;
+  }
+
+  CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_BLEND_STATE);
+  if (!Check(loc.hdr != nullptr, "SET_BLEND_STATE emitted (null, blend_factor)")) {
+    return false;
+  }
+
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_blend_state*>(dev.harness.last_stream.data() + loc.offset);
+  if (!Check(cmd->state.enable == 0u, "blend.enable default (null, blend_factor)")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[0] == F32Bits(blend_factor[0]), "blend.constant[0] override")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[1] == F32Bits(blend_factor[1]), "blend.constant[1] override")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[2] == F32Bits(blend_factor[2]), "blend.constant[2] override")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[3] == F32Bits(blend_factor[3]), "blend.constant[3] override")) {
+    return false;
+  }
+  if (!Check(cmd->state.sample_mask == sample_mask, "blend.sample_mask override")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestSetBlendStateNullBlendFactorDefaultsToOnes() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(blend null factor)")) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
+  desc.AlphaToCoverageEnable = 0;
+  desc.SrcBlend = kD3D10BlendBlendFactor;
+  desc.DestBlend = kD3D10BlendInvBlendFactor;
+  desc.BlendOp = kD3D10BlendOpSubtract;
+  desc.SrcBlendAlpha = kD3D10BlendSrcAlpha;
+  desc.DestBlendAlpha = kD3D10BlendInvSrcAlpha;
+  desc.BlendOpAlpha = kD3D10BlendOpAdd;
+  for (uint32_t i = 0; i < 8; ++i) {
+    desc.BlendEnable[i] = 1;
+    desc.RenderTargetWriteMask[i] = 0x3u;
+  }
+
+  TestBlendState bs{};
+  if (!Check(CreateBlendState(&dev, desc, &bs), "CreateBlendState helper (null blend factor)")) {
+    return false;
+  }
+
+  const float first_factor[4] = {0.25f, 0.5f, 0.75f, 0.125f};
+  const uint32_t sample_mask = 0x0F0F0F0Fu;
+  dev.device_funcs.pfnSetBlendState(dev.hDevice, bs.hState, first_factor, sample_mask);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush after SetBlendState(initial factor)")) {
+    return false;
+  }
+
+  // Passing a null blend_factor should reset it to {1,1,1,1}.
+  dev.device_funcs.pfnSetBlendState(dev.hDevice, bs.hState, /*blend_factor=*/nullptr, sample_mask);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetBlendState(blend_factor=null)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()),
+             "ValidateStream(blend_factor=null)")) {
+    return false;
+  }
+
+  CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_BLEND_STATE);
+  if (!Check(loc.hdr != nullptr, "SET_BLEND_STATE emitted (blend_factor=null)")) {
+    return false;
+  }
+
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_blend_state*>(dev.harness.last_stream.data() + loc.offset);
+  if (!Check(cmd->state.blend_constant_rgba_f32[0] == F32Bits(1.0f), "blend.constant[0] null")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[1] == F32Bits(1.0f), "blend.constant[1] null")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[2] == F32Bits(1.0f), "blend.constant[2] null")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[3] == F32Bits(1.0f), "blend.constant[3] null")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyBlendState(dev.hDevice, bs.hState);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
@@ -636,6 +764,8 @@ int main() {
   bool ok = true;
   ok &= TestSetBlendStateEmitsPacket();
   ok &= TestSetNullBlendStateEmitsDefaultPacket();
+  ok &= TestSetNullBlendStateUsesProvidedBlendFactor();
+  ok &= TestSetBlendStateNullBlendFactorDefaultsToOnes();
   ok &= TestSetRasterizerStateEmitsPacket();
   ok &= TestSetNullRasterizerStateEmitsDefaultPacket();
   ok &= TestSetDepthStencilStateEmitsPacket();
