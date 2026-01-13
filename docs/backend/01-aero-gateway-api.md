@@ -199,6 +199,7 @@ Relay contract:
 
 - The relay service is implemented by [`proxy/webrtc-udp-relay`](../../proxy/webrtc-udp-relay/).
 - WebRTC signaling schema and v1/v2 datagram framing (used by both the WebRTC DataChannel and the `GET /udp` WebSocket fallback) are specified in [`proxy/webrtc-udp-relay/PROTOCOL.md`](../../proxy/webrtc-udp-relay/PROTOCOL.md).
+- `GET /webrtc/ice` responses are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`) because they may include sensitive TURN credentials (especially TURN REST ephemeral creds). Clients should not cache ICE responses beyond the lifetime of the returned credentials.
 
 #### Optional: refresh relay token (`POST /udp-relay/token`)
 
