@@ -785,6 +785,10 @@ The device MUST use Linux input event types/codes (`EV_KEY`, `EV_REL`, `EV_SYN`,
 - Wheel:
   - `type = EV_REL`, `code = REL_WHEEL`
   - `value` is signed tick count (typically ±1)
+- Horizontal wheel (optional):
+  - `type = EV_REL`, `code = REL_HWHEEL`
+  - `value` is signed tick count (typically ±1)
+  - If advertised/sent, the Windows 7 `virtio-input` driver maps this to a HID **AC Pan** field (horizontal scroll).
 - Buttons:
   - `type = EV_KEY`, `code = BTN_LEFT / BTN_RIGHT / BTN_MIDDLE / BTN_SIDE / BTN_EXTRA`
   - `value = 1` press, `0` release
