@@ -475,7 +475,7 @@ impl PlatformInterrupts {
     pub fn get_pending_for_apic(&self, apic_id: u8) -> Option<u8> {
         match self.mode {
             PlatformInterruptMode::LegacyPic => {
-                if apic_id == self.lapics.first()?.apic_id() {
+                if apic_id == 0 {
                     self.pic.get_pending_vector()
                 } else {
                     None
@@ -488,7 +488,7 @@ impl PlatformInterrupts {
     pub fn acknowledge_for_apic(&mut self, apic_id: u8, vector: u8) {
         match self.mode {
             PlatformInterruptMode::LegacyPic => {
-                if apic_id == self.lapics.first().map(|lapic| lapic.apic_id()).unwrap_or(0) {
+                if apic_id == 0 {
                     self.pic.acknowledge(vector);
                 }
             }
@@ -503,7 +503,7 @@ impl PlatformInterrupts {
     pub fn eoi_for_apic(&mut self, apic_id: u8, vector: u8) {
         match self.mode {
             PlatformInterruptMode::LegacyPic => {
-                if apic_id == self.lapics.first().map(|lapic| lapic.apic_id()).unwrap_or(0) {
+                if apic_id == 0 {
                     self.pic.eoi(vector);
                 }
             }
@@ -592,29 +592,15 @@ impl PlatformInterrupts {
 
 impl InterruptController for PlatformInterrupts {
     fn get_pending(&self) -> Option<u8> {
-        match self.mode {
-            PlatformInterruptMode::LegacyPic => self.pic.get_pending_vector(),
-            PlatformInterruptMode::Apic => self.lapics[0].get_pending_vector(),
-        }
+        self.get_pending_for_apic(0)
     }
 
     fn acknowledge(&mut self, vector: u8) {
-        match self.mode {
-            PlatformInterruptMode::LegacyPic => self.pic.acknowledge(vector),
-            PlatformInterruptMode::Apic => {
-                let _ = self.lapics[0].ack(vector);
-            }
-        }
+        self.acknowledge_for_apic(0, vector);
     }
 
     fn eoi(&mut self, vector: u8) {
-        match self.mode {
-            PlatformInterruptMode::LegacyPic => self.pic.eoi(vector),
-            PlatformInterruptMode::Apic => {
-                let _ = vector;
-                self.lapics[0].eoi();
-            }
-        }
+        self.eoi_for_apic(0, vector);
     }
 }
 
@@ -893,6 +879,29 @@ mod tests {
 
         ints.raise_irq(InterruptInput::IsaIrq(1));
         assert_eq!(ints.get_pending(), Some(0x31));
+    }
+
+    #[test]
+    fn apic_mode_routes_ioapic_to_specific_apic_id_and_ack_eoi_flow() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // GSI1 -> vector 0x40, level-triggered, unmasked, destination APIC ID 1.
+        let vector = 0x40u32;
+        let low = vector | (1 << 15);
+        let high = 1u32 << 24;
+        program_ioapic_entry(&mut ints, 1, low, high);
+
+        ints.raise_irq(InterruptInput::Gsi(1));
+        assert_eq!(ints.get_pending_for_apic(0), None);
+        assert_eq!(ints.get_pending_for_apic(1), Some(vector as u8));
+
+        ints.acknowledge_for_apic(1, vector as u8);
+        assert_eq!(ints.get_pending_for_apic(1), None);
+
+        // While still asserted, EOI should clear Remote-IRR and re-deliver.
+        ints.eoi_for_apic(1, vector as u8);
+        assert_eq!(ints.get_pending_for_apic(1), Some(vector as u8));
     }
 
     #[test]
