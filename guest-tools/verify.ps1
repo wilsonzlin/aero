@@ -962,6 +962,7 @@ try {
         files_listed = 0
         files_checked = 0
         missing_files = @()
+        size_mismatch_files = @()
         hash_mismatch_files = @()
         unreadable_files = @()
         file_results = @()
@@ -987,6 +988,13 @@ try {
             $schema = $null
             if ($parsed.ContainsKey("schema_version")) { $schema = $parsed["schema_version"] }
             $mediaIntegrity.schema_version = $schema
+            $unsupportedSchema = $false
+            $schemaStr = $null
+            if ($schema -ne $null) { $schemaStr = ("" + $schema).Trim() }
+            if ($schemaStr -and -not (@("2") -contains $schemaStr)) {
+                $unsupportedSchema = $true
+                $mDetails += ("WARN: Unsupported manifest schema_version=" + $schemaStr + " (supported: 2). Integrity checks will continue, but newer manifest fields may be ignored.")
+            }
 
             $pkg = $null
             $version = $null
@@ -1073,8 +1081,17 @@ try {
                         }
 
                         $actualSha = Get-FileSha256Hex $full
+                        if (($expectedSize -ne $null) -and ($actualSize -ne $null)) {
+                            $expSize = $null
+                            try { $expSize = [Int64]$expectedSize } catch { $expSize = $null }
+                            if (($expSize -ne $null) -and ($expSize -ne [Int64]$actualSize)) {
+                                $status = "FAIL"
+                                $mediaIntegrity.size_mismatch_files += $rel
+                            }
+                        }
+
                         if (-not $actualSha) {
-                            $status = "WARN"
+                            if ($status -eq "PASS") { $status = "WARN" }
                             $mediaIntegrity.unreadable_files += $rel
                         } elseif ($expectedSha -and ($actualSha.ToLower() -ne $expectedSha.ToLower())) {
                             $status = "FAIL"
@@ -1095,10 +1112,11 @@ try {
 
                 $mediaIntegrity.files_checked = $mediaIntegrity.file_results.Count
                 $missingCount = $mediaIntegrity.missing_files.Count
+                $sizeMismatchCount = $mediaIntegrity.size_mismatch_files.Count
                 $hashMismatchCount = $mediaIntegrity.hash_mismatch_files.Count
                 $unreadableCount = $mediaIntegrity.unreadable_files.Count
 
-                if ($missingCount -gt 0 -or $hashMismatchCount -gt 0) {
+                if ($missingCount -gt 0 -or $hashMismatchCount -gt 0 -or $sizeMismatchCount -gt 0) {
                     $mStatus = "FAIL"
                 } elseif ($unreadableCount -gt 0) {
                     $mStatus = "WARN"
@@ -1106,7 +1124,10 @@ try {
                     $mStatus = "PASS"
                 }
 
-                $mSummary = "Guest Tools media: version=" + $version + ", build_id=" + $buildId + "; files checked=" + $mediaIntegrity.files_checked + " (missing=" + $missingCount + ", hash_mismatch=" + $hashMismatchCount + ", unreadable=" + $unreadableCount + ")"
+                if ($unsupportedSchema) { $mStatus = Merge-Status $mStatus "WARN" }
+
+                $mSummary = "Guest Tools media: version=" + $version + ", build_id=" + $buildId + "; files checked=" + $mediaIntegrity.files_checked + " (missing=" + $missingCount + ", size_mismatch=" + $sizeMismatchCount + ", hash_mismatch=" + $hashMismatchCount + ", unreadable=" + $unreadableCount + ")"
+                if ($unsupportedSchema) { $mSummary += "; schema_version=" + $schemaStr + " (unsupported)" }
                 if ($gtSigningPolicy) {
                     $mSummary += "; signing_policy=" + $gtSigningPolicy
                     if ($gtCertsRequired -ne $null) { $mSummary += ", certs_required=" + $gtCertsRequired }
@@ -1114,6 +1135,19 @@ try {
 
                 if ($missingCount -gt 0) {
                     foreach ($p in $mediaIntegrity.missing_files) { $mDetails += ("FAIL: Missing file: " + $p) }
+                }
+                if ($sizeMismatchCount -gt 0) {
+                    foreach ($r in $mediaIntegrity.file_results) {
+                        if (($r.exists -eq $true) -and ($r.expected_size -ne $null) -and ($r.actual_size -ne $null)) {
+                            $exp = $null
+                            $act = $null
+                            try { $exp = [Int64]$r.expected_size } catch { $exp = $null }
+                            try { $act = [Int64]$r.actual_size } catch { $act = $null }
+                            if (($exp -ne $null) -and ($act -ne $null) -and ($exp -ne $act)) {
+                                $mDetails += ("FAIL: Size mismatch: " + $r.path + " (expected " + $exp + " bytes, got " + $act + " bytes)")
+                            }
+                        }
+                    }
                 }
                 if ($hashMismatchCount -gt 0) {
                     foreach ($r in $mediaIntegrity.file_results) {
@@ -1132,7 +1166,7 @@ try {
                     foreach ($p in $mediaIntegrity.unreadable_files) { $mDetails += ("WARN: Unable to hash file (read error): " + $p) }
                 }
 
-                if ($mStatus -ne "PASS") {
+                if (($missingCount -gt 0) -or ($sizeMismatchCount -gt 0) -or ($hashMismatchCount -gt 0) -or ($unreadableCount -gt 0)) {
                     $mDetails += "Remediation: Replace the Guest Tools ISO/zip with a fresh copy (do not mix driver folders across versions)."
                     $mDetails += "See: docs/windows7-driver-troubleshooting.md#issue-guest-tools-media-integrity-check-fails-manifest-hash-mismatch"
                 }
