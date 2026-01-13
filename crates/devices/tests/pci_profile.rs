@@ -86,8 +86,11 @@ fn canonical_bdfs_are_stable() {
     // canonical machine and driver/packaging docs assume stable device numbering for predictable
     // guest enumeration and debugging.
     //
-    // In particular, `00:07.0` is reserved for the AeroGPU (A3A0:0001) device contract.
+    // In particular:
+    // - `00:07.0` is reserved for the AeroGPU (A3A0:0001) device contract.
+    // - `00:12.0` is reserved for the canonical EHCI (USB2) controller.
     assert_eq!(AEROGPU.bdf, PciBdf::new(0, 0x07, 0));
+    assert_eq!(USB_EHCI_ICH9.bdf, PciBdf::new(0, 0x12, 0));
 }
 
 #[test]
