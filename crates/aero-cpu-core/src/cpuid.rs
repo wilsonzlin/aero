@@ -115,6 +115,17 @@ impl CpuFeatures {
 
         let ext7_edx = bits::EXT7_EDX_INVARIANT_TSC;
 
+        // Some guests (notably Windows) treat CPUID.1:EBX[23:16] (logical processor count)
+        // as meaningful only when CPUID.1:EDX[HTT] is set. This is a topology/enumeration hint
+        // rather than an instruction feature, so handle it explicitly instead of modeling it
+        // in [`CpuFeatureSet`] profiles.
+        let mut leaf1_edx = advertised.leaf1_edx;
+        if logical_count > 1 {
+            leaf1_edx |= bits::LEAF1_EDX_HTT;
+        } else {
+            leaf1_edx &= !bits::LEAF1_EDX_HTT;
+        }
+
         Ok(Self {
             // We implement up to leaf 0x1F and return 0 for unhandled leaves in-between.
             max_basic_leaf: 0x1F,
@@ -124,7 +135,7 @@ impl CpuFeatures {
             leaf1_eax,
             leaf1_ebx,
             leaf1_ecx: advertised.leaf1_ecx,
-            leaf1_edx: advertised.leaf1_edx,
+            leaf1_edx,
             leaf7_ebx: advertised.leaf7_ebx,
             leaf7_ecx: advertised.leaf7_ecx,
             leaf7_edx: advertised.leaf7_edx,
@@ -606,6 +617,7 @@ pub mod bits {
     pub const LEAF1_EDX_FXSR: u32 = 1 << 24;
     pub const LEAF1_EDX_SSE: u32 = 1 << 25;
     pub const LEAF1_EDX_SSE2: u32 = 1 << 26;
+    pub const LEAF1_EDX_HTT: u32 = 1 << 28;
 
     // CPUID.1:ECX
     pub const LEAF1_ECX_SSE3: u32 = 1 << 0;
@@ -629,4 +641,43 @@ pub mod bits {
 
     // CPUID.80000007:EDX
     pub const EXT7_EDX_INVARIANT_TSC: u32 = 1 << 8;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bits, CpuFeatureOverrides, CpuFeatureSet, CpuFeatures, CpuProfile, CpuTopology};
+
+    #[test]
+    fn leaf1_htt_bit_tracks_logical_count() {
+        let implemented = CpuFeatureSet::win7_minimum();
+
+        let single = CpuFeatures::from_profile(
+            CpuProfile::Win7Minimum,
+            implemented,
+            CpuFeatureOverrides::default(),
+            CpuTopology {
+                cores_per_package: 1,
+                threads_per_core: 1,
+                apic_id: 0,
+                x2apic_id: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(single.leaf1_edx & bits::LEAF1_EDX_HTT, 0);
+
+        let dual = CpuFeatures::from_profile(
+            CpuProfile::Win7Minimum,
+            implemented,
+            CpuFeatureOverrides::default(),
+            CpuTopology {
+                cores_per_package: 2,
+                threads_per_core: 1,
+                apic_id: 0,
+                x2apic_id: 0,
+            },
+        )
+        .unwrap();
+        assert_ne!(dual.leaf1_edx & bits::LEAF1_EDX_HTT, 0);
+        assert_eq!((dual.leaf1_ebx >> 16) & 0xFF, 2);
+    }
 }
