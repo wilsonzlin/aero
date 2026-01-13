@@ -11,10 +11,23 @@ For the consolidated end-to-end virtio-input validation plan (Rust device model 
 Run:
 
 ```bash
-gcc -std=c11 -Wall -Wextra -Werror \
-  -o /tmp/hid_translate_test \
-  hid_translate_test.c ../src/hid_translate.c && /tmp/hid_translate_test
+# From drivers/windows7/virtio-input/
+bash tests/run.sh
 ```
+
+The script will attempt to run the test suite with both `gcc` and `clang` (if present).
+To force a specific compiler, set `CC`:
+
+```bash
+CC=clang bash tests/run.sh
+```
+
+### Adding new host-side tests
+
+Drop a `*_test.c` file in this directory. `tests/run.sh` will build each test into a separate
+binary, and will automatically link `../src/<name>.c` if it exists (where `<name>` is the
+test filename without the `_test` suffix). This is intended for portable C helpers such as
+`hid_translate.c` and LED translation/parsing helpers.
 
 ## Manual tests
 
