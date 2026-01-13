@@ -4,8 +4,10 @@ WebGPU does **not** expose a geometry shader (GS) stage. Aero’s strategy is to
 by expanding primitives into intermediate vertex/index buffers, then drawing those buffers with a normal
 WebGPU render pipeline.
 
-This document describes the **intended/implemented emulation pipeline shape**, its **resource binding
-model**, and the **feature subset + limitations** we target for initial GS compatibility.
+This document describes:
+
+- what is **implemented today** (command-stream plumbing, binding model, current limitations), and
+- the **target** compute-emulation pipeline shape + GS feature subset (as GS bytecode execution lands).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
 
@@ -72,7 +74,30 @@ primitive topologies.
 
 ---
 
-## Supported GS feature subset (initial target)
+## Current implementation status (AeroGPU command-stream executor)
+
+The AeroGPU D3D10/11 command executor currently has the *plumbing* needed to support GS/HS/DS-style
+compute expansion, but it is not yet a full “execute guest GS bytecode” implementation.
+
+Implemented today:
+
+- **`stage_ex` bindings**: resource-binding opcodes can target GS/HS/DS binding tables without
+  clobbering compute-stage bindings (see “Resource binding model” below).
+- **Extended `BIND_SHADERS`**: the `BIND_SHADERS` packet can carry `gs/hs/ds` handles, and draws route
+  through a dedicated “compute prepass” path when any of these stages are bound.
+- **Compute→indirect→render pipeline plumbing**: the executor can run a compute pass that writes an
+  expanded vertex/index buffer + indirect args, then render via `draw_indirect` /
+  `draw_indexed_indirect` (see `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
+
+Current limitation (important):
+
+- The compute prepass is currently a **placeholder** that emits a fixed triangle and does **not**
+  execute the guest’s GS/HS/DS DXBC yet. DXBC payloads that parse as GS/HS/DS are currently
+  accepted-but-ignored at `CREATE_SHADER_DXBC` time.
+
+---
+
+## Target GS feature subset (initial)
 
 ### Input primitive types
 
@@ -146,17 +171,18 @@ Known limitations include:
 
 ### Bind group indices
 
-Aero uses stage-scoped bind groups for translated SM4/SM5 shaders (see `crates/aero-d3d11/src/binding_model.rs`):
+Aero’s binding model is stage-scoped. In the AeroGPU command-stream executor (`crates/aero-d3d11/src/runtime/bindings.rs`):
 
 - `@group(0)`: VS resources
 - `@group(1)`: PS resources
 - `@group(2)`: CS resources
+- `@group(3)`: GS/HS/DS (“stage_ex”) resources (tracked separately from CS to avoid clobbering)
 
-For GS emulation (and future HS/DS emulation):
+GS/HS/DS stages are emulated using compute passes, but their **D3D-stage resource bindings** are
+tracked independently and are expected to be provided to the emulation pipelines via a reserved
+internal bind group:
 
-- GS/HS/DS run as **compute** entry points but bind *their D3D resources* through a reserved internal
-  bind group so they never trample CS bindings:
-  - `@group(3)` for GS/HS/DS resources (selected via the `stage_ex` ABI extension).
+- `@group(3)` for GS/HS/DS resources (selected via the `stage_ex` ABI extension).
 - Expansion-internal buffers (vertex pulling inputs, scratch outputs, counters, indirect args) also
   live in `@group(3)` but use a reserved binding-number range (see
   [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
@@ -183,12 +209,21 @@ Constants (current defaults):
 ### Vertex pulling + expansion internal bindings (`@group(3)`)
 
 When running VS/GS/HS/DS as compute, vertex attributes must be loaded from IA vertex buffers manually
-("vertex pulling"), and intermediate outputs must be written to scratch buffers.
+(“vertex pulling”), and intermediate outputs must be written to scratch buffers.
 
-These bindings are **internal** to the emulation path; they are not visible to the D3D binding model
-and are specified in the compute-expansion section of
+Vertex pulling uses a dedicated bind group (`VERTEX_PULLING_GROUP` in
+`crates/aero-d3d11/src/runtime/vertex_pulling.rs`):
+
+- `@group(3) @binding(i)`: vertex buffer slot `i` as a storage buffer (read-only)
+- `@group(3) @binding(32)`: a small uniform containing per-slot `base_offset` + `stride`
+
+These bindings are **internal** to the emulation path; they are not part of the D3D register binding model.
+The broader compute-expansion pipeline also defines additional internal scratch bindings; see
 [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (including the reserved internal
 binding-number range).
+
+Note: the full GS/HS/DS emulation pipeline will need a unified bind-group layout that accommodates
+both “stage_ex” bindings and vertex pulling; the current executor prepass is still a placeholder.
 
 ### AeroGPU command stream note: `stage_ex`
 
@@ -196,13 +231,14 @@ The AeroGPU command stream historically only had `Vertex/Pixel/Compute` stage en
 To bind resources for additional D3D stages (GS/HS/DS) without breaking ABI, the protocol supports a
 “stage_ex” extension (see `emulator/protocol/aerogpu/aerogpu_cmd.rs`):
 
-- For certain binding commands (`SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`,
-  `SET_SHADER_RESOURCE_BUFFERS`, `SET_UNORDERED_ACCESS_BUFFERS`, `SET_SHADER_CONSTANTS_F`):
-  - set `shader_stage = COMPUTE` (legacy value `2`)
-  - use `reserved0` as a small `stage_ex` tag (values match DXBC program types):
+- For certain binding commands (e.g. `SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`), the trailing
+  `reserved0` field is interpreted as a small `stage_ex` tag when `shader_stage == COMPUTE`:
+  - `stage_ex` values match DXBC program types (`D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE`):
     - `0 = Pixel`, `1 = Vertex`, `2 = Geometry`, `3 = Hull`, `4 = Domain`, `5 = Compute`
-  - for compatibility, `reserved0 == 0` is treated as “legacy compute” in binding packets; any
-    non-zero `stage_ex` value selects an extended stage (GS/HS/DS).
+  - For compatibility, `stage_ex == 0` is treated as “legacy compute” in binding packets (since old
+    guests always write zeros into reserved fields).
+  - To bind GS/HS/DS resources, send `shader_stage = COMPUTE` with:
+    - `stage_ex = 2` (GS), `3` (HS), `4` (DS)
 
 This keeps older hosts/guests forward-compatible while letting newer versions express GS-stage bindings.
 
