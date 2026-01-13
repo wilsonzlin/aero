@@ -250,6 +250,8 @@ Key options (in addition to the existing `sampleRate`/`latencyHint`/`ringBufferF
   - **What it does:** if the playback ring is empty at graph startup, pre-fills it with *silence* up to this many frames.
     (Default: `512` frames.)
     - Frames are **per-channel** (same unit as `ringBufferFrames`) and are clamped to the ring’s `capacityFrames`.
+    - Avoid setting this too close to `ringBufferFrames` (capacity): a near-full ring leaves little headroom for real audio writes
+      and can transiently increase backpressure/overrun counts at startup.
   - **Why it exists:** avoids an initial “startup underrun” window between `AudioWorkletNode` start and the first producer write,
     and gives slow-starting producers a small grace period.
   - **Trade-off:** increases time-to-first-audible-sample by roughly `startupPrefillFrames / AudioContext.sampleRate` seconds.
