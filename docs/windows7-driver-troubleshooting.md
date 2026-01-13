@@ -75,7 +75,7 @@ If you hit a **GPU hang**, **TDR**, or **incorrect rendering** and need to debug
 This produces a small, shareable artifact pair:
 
 - `cmd.bin`: the raw AeroGPU cmd stream for the submission (`cmd_gpa` region).
-- `cmd.bin.alloc_table.bin`: the raw alloc table for the submission (`alloc_table_gpa` region, when present).
+- `cmd.bin.alloc_table.bin`: the raw alloc table for the submission (`alloc_table_gpa` region, when present; AGPU only).
   - Tip: you can rename this to `alloc.bin` on the host if you prefer a shorter name.
 
 ### 1) Guest (Windows 7): dump the last submission
