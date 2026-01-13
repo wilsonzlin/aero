@@ -16,6 +16,37 @@ static void report_ready_cb(void *context) {
   c->calls++;
 }
 
+struct lock_state {
+  bool locked;
+  uint32_t lock_calls;
+  uint32_t unlock_calls;
+};
+
+static void lock_cb(void *context) {
+  struct lock_state *s = (struct lock_state *)context;
+  assert(!s->locked);
+  s->locked = true;
+  s->lock_calls++;
+}
+
+static void unlock_cb(void *context) {
+  struct lock_state *s = (struct lock_state *)context;
+  assert(s->locked);
+  s->locked = false;
+  s->unlock_calls++;
+}
+
+struct report_ready_and_lock {
+  struct report_ready_counter ready;
+  struct lock_state lock;
+};
+
+static void report_ready_assert_unlocked_cb(void *context) {
+  struct report_ready_and_lock *c = (struct report_ready_and_lock *)context;
+  assert(!c->lock.locked);
+  c->ready.calls++;
+}
+
 #define REPORT_SEQ_BYTES 5u
 _Static_assert((size_t)VIRTIO_INPUT_REPORT_MAX_SIZE >= (size_t)REPORT_SEQ_BYTES,
                "test expects enough space to encode a 32-bit sequence number");
@@ -85,8 +116,61 @@ static void test_report_ring_drop_oldest(void) {
   assert(dev.report_ring.count == 0);
 }
 
+static void test_report_ring_locking_and_oversize_drop(void) {
+  struct virtio_input_device dev;
+  struct report_ready_and_lock ctx;
+  memset(&ctx, 0, sizeof(ctx));
+
+  virtio_input_device_init(&dev, report_ready_assert_unlocked_cb, &ctx, lock_cb, unlock_cb, &ctx.lock);
+
+  /* Oversize reports are rejected (should not acquire the lock or call callbacks). */
+  {
+    uint8_t oversize[VIRTIO_INPUT_REPORT_MAX_SIZE + 1u];
+    memset(oversize, 0xCC, sizeof(oversize));
+    dev.translate.emit_report(dev.translate.emit_report_context, oversize, sizeof(oversize));
+    assert(ctx.ready.calls == 0);
+    assert(ctx.lock.lock_calls == 0);
+    assert(ctx.lock.unlock_calls == 0);
+    assert(!ctx.lock.locked);
+    assert(dev.report_ring.count == 0);
+  }
+
+  /* Normal reports should lock/unlock and call report_ready outside the lock. */
+  for (uint32_t seq = 0; seq < 3; seq++) {
+    uint8_t report[VIRTIO_INPUT_REPORT_MAX_SIZE];
+    const size_t report_len = report_len_for_seq(seq);
+    make_report(report, seq);
+    dev.translate.emit_report(dev.translate.emit_report_context, report, report_len);
+  }
+
+  assert(ctx.ready.calls == 3);
+  assert(ctx.lock.lock_calls == 3);
+  assert(ctx.lock.unlock_calls == 3);
+  assert(!ctx.lock.locked);
+  assert(dev.report_ring.count == 3);
+
+  /* Pop should also use the lock, even when empty. */
+  for (uint32_t seq = 0; seq < 3; seq++) {
+    struct virtio_input_report out;
+    assert(virtio_input_try_pop_report(&dev, &out));
+    expect_report_seq(&out, seq);
+  }
+  assert(dev.report_ring.count == 0);
+  assert(ctx.ready.calls == 3);
+  assert(ctx.lock.lock_calls == 6);
+  assert(ctx.lock.unlock_calls == 6);
+
+  {
+    struct virtio_input_report out;
+    assert(!virtio_input_try_pop_report(&dev, &out));
+  }
+  assert(ctx.lock.lock_calls == 7);
+  assert(ctx.lock.unlock_calls == 7);
+}
+
 int main(void) {
   test_report_ring_drop_oldest();
+  test_report_ring_locking_and_oversize_drop();
   printf("report_ring_test: ok\n");
   return 0;
 }
