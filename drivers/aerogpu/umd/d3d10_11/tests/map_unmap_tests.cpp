@@ -7731,6 +7731,94 @@ bool TestCreateBlendStateRejectsUnsupportedBlendOp() {
   return true;
 }
 
+bool TestSetBlendStateEncodesCmd() {
+  TestDevice dev{};
+  if (!InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false)) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
+  desc.AlphaToCoverageEnable = 0;
+  for (uint32_t i = 0; i < 8; ++i) {
+    desc.BlendEnable[i] = 1;
+    desc.RenderTargetWriteMask[i] = 0xFu;
+  }
+  desc.SrcBlend = aerogpu::d3d10_11::kD3dBlendSrcAlpha;
+  desc.DestBlend = aerogpu::d3d10_11::kD3dBlendInvSrcAlpha;
+  desc.BlendOp = aerogpu::d3d10_11::kD3dBlendOpAdd;
+  desc.SrcBlendAlpha = aerogpu::d3d10_11::kD3dBlendOne;
+  desc.DestBlendAlpha = aerogpu::d3d10_11::kD3dBlendZero;
+  desc.BlendOpAlpha = aerogpu::d3d10_11::kD3dBlendOpAdd;
+
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateBlendStateSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateBlendStateSize returned a non-trivial size")) {
+    return false;
+  }
+
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0);
+  D3D10DDI_HBLENDSTATE hState{};
+  hState.pDrvPrivate = storage.data();
+
+  HRESULT hr = dev.device_funcs.pfnCreateBlendState(dev.hDevice, &desc, hState);
+  if (!Check(hr == S_OK, "CreateBlendState(supported)")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnSetBlendState(dev.hDevice, hState);
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetBlendState")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+  CmdLoc loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_BLEND_STATE);
+  if (!Check(loc.hdr != nullptr, "SET_BLEND_STATE emitted")) {
+    return false;
+  }
+
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_blend_state*>(stream + loc.offset);
+  if (!Check(cmd->state.enable == 1u, "blend enable propagated")) {
+    return false;
+  }
+  if (!Check(cmd->state.src_factor == AEROGPU_BLEND_SRC_ALPHA, "src_factor mapped")) {
+    return false;
+  }
+  if (!Check(cmd->state.dst_factor == AEROGPU_BLEND_INV_SRC_ALPHA, "dst_factor mapped")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_op == AEROGPU_BLEND_OP_ADD, "blend_op mapped")) {
+    return false;
+  }
+  if (!Check(cmd->state.color_write_mask == 0xFu, "color_write_mask propagated")) {
+    return false;
+  }
+  if (!Check(cmd->state.src_factor_alpha == AEROGPU_BLEND_ONE, "src_factor_alpha mapped")) {
+    return false;
+  }
+  if (!Check(cmd->state.dst_factor_alpha == AEROGPU_BLEND_ZERO, "dst_factor_alpha mapped")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_op_alpha == AEROGPU_BLEND_OP_ADD, "blend_op_alpha mapped")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[0] == 0x3F800000u, "blend constant defaulted to 1.0")) {
+    return false;
+  }
+  if (!Check(cmd->state.sample_mask == 0xFFFFFFFFu, "sample mask defaulted to all 1s")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyBlendState(dev.hDevice, hState);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -7808,6 +7896,7 @@ int main() {
   ok &= TestCreateBlendStateRejectsPerRtWriteMaskMismatch();
   ok &= TestCreateBlendStateRejectsAlphaToCoverage();
   ok &= TestCreateBlendStateRejectsUnsupportedBlendOp();
+  ok &= TestSetBlendStateEncodesCmd();
 
   if (!ok) {
     return 1;

@@ -5011,10 +5011,61 @@ void AEROGPU_APIENTRY SetDrawState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hV
   dev->current_ps = ps;
 }
 
-void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE) {
+void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HBLENDSTATE hState) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF_VERBOSE("SetBlendState");
-  // Stub (state objects are accepted but not yet encoded).
+  // Note: the portable DDI surface does not expose blend factor / sample mask
+  // parameters, so we emit the blend constant as {1,1,1,1} and sample_mask as
+  // 0xFFFFFFFF (matching D3D11 defaults).
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  aerogpu::d3d10_11::AerogpuBlendStateBase base{};
+  base.enable = 0;
+  base.src_factor = AEROGPU_BLEND_ONE;
+  base.dst_factor = AEROGPU_BLEND_ZERO;
+  base.blend_op = AEROGPU_BLEND_OP_ADD;
+  base.src_factor_alpha = AEROGPU_BLEND_ONE;
+  base.dst_factor_alpha = AEROGPU_BLEND_ZERO;
+  base.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
+  base.color_write_mask = 0xFu;
+
+  if (hState.pDrvPrivate) {
+    auto* bs = FromHandle<D3D10DDI_HBLENDSTATE, AeroGpuBlendState>(hState);
+    if (bs) {
+      base = bs->state;
+    }
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
+
+  cmd->state.enable = base.enable ? 1u : 0u;
+  cmd->state.src_factor = base.src_factor;
+  cmd->state.dst_factor = base.dst_factor;
+  cmd->state.blend_op = base.blend_op;
+  cmd->state.color_write_mask = static_cast<uint8_t>(base.color_write_mask & 0xFu);
+  cmd->state.reserved0[0] = 0;
+  cmd->state.reserved0[1] = 0;
+  cmd->state.reserved0[2] = 0;
+  cmd->state.src_factor_alpha = base.src_factor_alpha;
+  cmd->state.dst_factor_alpha = base.dst_factor_alpha;
+  cmd->state.blend_op_alpha = base.blend_op_alpha;
+  cmd->state.blend_constant_rgba_f32[0] = f32_bits(1.0f);
+  cmd->state.blend_constant_rgba_f32[1] = f32_bits(1.0f);
+  cmd->state.blend_constant_rgba_f32[2] = f32_bits(1.0f);
+  cmd->state.blend_constant_rgba_f32[3] = f32_bits(1.0f);
+  cmd->state.sample_mask = 0xFFFFFFFFu;
 }
 
 void AEROGPU_APIENTRY SetRasterizerState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRASTERIZERSTATE hState) {
