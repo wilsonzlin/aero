@@ -828,3 +828,41 @@ VirtioPciReadIsr(_In_ const VIRTIO_PCI_DEVICE *Dev)
 
     return READ_REGISTER_UCHAR((volatile UCHAR *)Dev->IsrStatus);
 }
+
+NTSTATUS
+VirtioPciDisableMsixVectors(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueCount)
+{
+    KIRQL oldIrql;
+    USHORT readVector;
+    USHORT q;
+
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    VirtioPciCommonCfgLock(Dev, &oldIrql);
+
+    WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
+    KeMemoryBarrier();
+    readVector = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->msix_config);
+    KeMemoryBarrier();
+    if (readVector != VIRTIO_PCI_MSI_NO_VECTOR) {
+        VirtioPciCommonCfgUnlock(Dev, oldIrql);
+        return STATUS_IO_DEVICE_ERROR;
+    }
+
+    for (q = 0; q < QueueCount; q++) {
+        VirtioPciSelectQueueLocked(Dev, q);
+        WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_msix_vector, VIRTIO_PCI_MSI_NO_VECTOR);
+        KeMemoryBarrier();
+        readVector = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_msix_vector);
+        KeMemoryBarrier();
+        if (readVector != VIRTIO_PCI_MSI_NO_VECTOR) {
+            VirtioPciCommonCfgUnlock(Dev, oldIrql);
+            return STATUS_IO_DEVICE_ERROR;
+        }
+    }
+
+    VirtioPciCommonCfgUnlock(Dev, oldIrql);
+    return STATUS_SUCCESS;
+}

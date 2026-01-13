@@ -1560,6 +1560,7 @@ static __forceinline BOOLEAN AerovblkServiceInterrupt(_Inout_ PAEROVBLK_DEVICE_E
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
   AerovblkDrainCompletionsLocked(devExt);
   StorPortReleaseSpinLock(devExt, &lock);
+
   StorPortNotification(NextRequest, devExt, NULL);
   return TRUE;
 }
@@ -1590,8 +1591,13 @@ BOOLEAN AerovblkHwMSInterrupt(_In_ PVOID deviceExtension, _In_ ULONG messageId) 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
 
   /*
-   * MSI/MSI-X path: message interrupts are non-shared; do not rely on the
-   * virtio ISR status byte (it may read as 0). Always service the virtqueue.
+   * MSI/MSI-X interrupt semantics:
+   * - There is no shared INTx line to ACK/deassert.
+   * - Do NOT read the virtio ISR status byte here (read-to-ack is for INTx).
+   *
+   * virtio-blk (contract v1) uses one virtqueue (queue 0). We program config
+   * on message 0 and queue 0 on message 1 when available, with fallback to
+   * sharing message 0. Draining completions is safe regardless of messageId.
    */
   return AerovblkServiceInterrupt(devExt);
 }

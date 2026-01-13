@@ -164,6 +164,14 @@ _Must_inspect_result_
 NTSTATUS VirtioPciSetQueueMsixVector(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex, _In_ USHORT Vector);
 
 /*
+ * Best-effort helper to clear all vectors back to `VIRTIO_PCI_MSI_NO_VECTOR`.
+ * Callers may use this during reset/teardown paths to ensure the device stops
+ * delivering MSI-X interrupts before queues/rings are torn down.
+ */
+_Must_inspect_result_
+NTSTATUS VirtioPciDisableMsixVectors(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueCount);
+
+/*
  * Interrupt status (read-to-ack).
  */
 UCHAR VirtioPciReadIsr(_In_ const VIRTIO_PCI_DEVICE *Dev);
