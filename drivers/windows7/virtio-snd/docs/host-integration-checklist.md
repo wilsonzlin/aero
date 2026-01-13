@@ -18,11 +18,18 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 ## BAR0 + virtio-pci modern capability layout
 
 - [ ] **BAR0** is a **64-bit MMIO** BAR (memory BAR, not I/O port).
+- [ ] **BAR0 size** is at least `0x4000` bytes (contract/strict mode).
+- [ ] PCI config space exposes a valid **PCI capability list** (Status bit 4 set, aligned pointers).
 - [ ] **BAR0** contains a virtio-pci **modern** vendor-cap layout for:
   - [ ] `COMMON_CFG`
   - [ ] `NOTIFY_CFG`
   - [ ] `ISR_CFG`
   - [ ] `DEVICE_CFG`
+- [ ] (Contract/strict mode) The capabilities reference **BAR0** with the fixed offsets/minimum lengths:
+  - [ ] `COMMON_CFG`: `bar=0`, `offset=0x0000`, `length>=0x0100`
+  - [ ] `NOTIFY_CFG`: `bar=0`, `offset=0x1000`, `length>=0x0100`
+  - [ ] `ISR_CFG`: `bar=0`, `offset=0x2000`, `length>=0x0020`
+  - [ ] `DEVICE_CFG`: `bar=0`, `offset=0x3000`, `length>=0x0100`
 - [ ] `NOTIFY_CFG.notify_off_multiplier == 4` (driver rejects other values).
 
 ## Virtio feature bits (negotiation)
@@ -42,12 +49,14 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
   - [ ] `2 txq`: `256`
   - [ ] `3 rxq`: `64`
 - [ ] `queue_notify_off` is valid for each queue (maps to a doorbell address within the NOTIFY region).
+- [ ] (Contract/strict mode) `queue_notify_off(q) == q` for queues `0..3` (driver treats mismatches as unsupported).
 
 ## Interrupt delivery
 
 - [ ] **INTx** is implemented and functional (required).
 - [ ] MSI/MSI-X is **not used** by this driver package.
 - [ ] PCI **Interrupt Pin** register is `1` (INTA#).
+- [ ] ISR status byte is **read-to-ack** (driver relies on read clearing pending bits to deassert INTx).
 
 ## virtio-snd `DEVICE_CFG` (read-only)
 
