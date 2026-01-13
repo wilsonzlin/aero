@@ -7,11 +7,20 @@ param(
     [switch] $NoIso,
     [switch] $MakeFatImage,
     [switch] $FatImageStrict,
-    [int] $FatImageSizeMB = 64
+    [int] $FatImageSizeMB = 64,
+    [switch] $DeterminismSelfTest
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Get-IsWindows {
+    try {
+        return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+    } catch {
+        return $false
+    }
+}
 
 function Resolve-RepoPath {
     param([Parameter(Mandatory = $true)][string] $Path)
@@ -186,6 +195,107 @@ function Get-VersionString {
     }
 
     return "$date-$semver"
+}
+
+function Get-DeterministicZipTimestamp {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+
+    $zipMin = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+    $zipMax = [DateTimeOffset]::new(2107, 12, 31, 23, 59, 59, [TimeSpan]::Zero)
+
+    $sde = $env:SOURCE_DATE_EPOCH
+    if (-not [string]::IsNullOrWhiteSpace($sde)) {
+        $epoch = 0
+        if ([Int64]::TryParse($sde.Trim(), [ref]$epoch)) {
+            $ts = [DateTimeOffset]::FromUnixTimeSeconds($epoch)
+            if ($ts -lt $zipMin) { return $zipMin }
+            if ($ts -gt $zipMax) { return $zipMax }
+            return $ts
+        }
+    }
+
+    try {
+        $ct = (& git -C $RepoRoot show -s --format=%ct HEAD 2>$null).Trim()
+        $epoch = 0
+        if (-not [string]::IsNullOrWhiteSpace($ct) -and [Int64]::TryParse($ct, [ref]$epoch)) {
+            $ts = [DateTimeOffset]::FromUnixTimeSeconds($epoch)
+            if ($ts -lt $zipMin) { return $zipMin }
+            if ($ts -gt $zipMax) { return $zipMax }
+            return $ts
+        }
+    } catch {
+        # ignore and fall back to epoch 0
+    }
+
+    return $zipMin
+}
+
+function Get-RelativePathForZipEntry {
+    param(
+        [Parameter(Mandatory = $true)][string] $Root,
+        [Parameter(Mandatory = $true)][string] $Path
+    )
+
+    $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd("\", "/")
+    $pathFull = [System.IO.Path]::GetFullPath($Path)
+    $prefix = $rootFull + [System.IO.Path]::DirectorySeparatorChar
+
+    $comparison = [System.StringComparison]::Ordinal
+    if (Get-IsWindows) {
+        $comparison = [System.StringComparison]::OrdinalIgnoreCase
+    }
+
+    if (-not $pathFull.StartsWith($prefix, $comparison)) {
+        throw "Path '$pathFull' is not under root '$rootFull'."
+    }
+
+    return $pathFull.Substring($prefix.Length) -replace "\\", "/"
+}
+
+function Get-DeterministicZipEntriesFromFolder {
+    param([Parameter(Mandatory = $true)][string] $Folder)
+
+    $folderFull = [System.IO.Path]::GetFullPath($Folder)
+    $entries = New-Object "System.Collections.Generic.List[object]"
+
+    $dirs = @(Get-ChildItem -LiteralPath $folderFull -Recurse -Directory -Force -ErrorAction SilentlyContinue)
+    foreach ($d in $dirs) {
+        $rel = Get-RelativePathForZipEntry -Root $folderFull -Path $d.FullName
+        if ([string]::IsNullOrWhiteSpace($rel)) {
+            continue
+        }
+        $entries.Add([pscustomobject]@{
+            EntryName = ($rel.TrimEnd("/") + "/")
+            FullPath = $d.FullName
+            IsDirectory = $true
+        }) | Out-Null
+    }
+
+    $files = @(Get-ChildItem -LiteralPath $folderFull -Recurse -File -Force -ErrorAction SilentlyContinue)
+    foreach ($f in $files) {
+        $rel = Get-RelativePathForZipEntry -Root $folderFull -Path $f.FullName
+        if ([string]::IsNullOrWhiteSpace($rel)) {
+            continue
+        }
+        $entries.Add([pscustomobject]@{
+            EntryName = $rel
+            FullPath = $f.FullName
+            IsDirectory = $false
+        }) | Out-Null
+    }
+
+    # Stable ordering: sort by full relative path (case-insensitive), then by path (case-sensitive).
+    $comparer = [System.Collections.Generic.Comparer[object]]::Create([System.Comparison[object]]{
+        param($a, $b)
+        $c = [System.StringComparer]::OrdinalIgnoreCase.Compare($a.EntryName, $b.EntryName)
+        if ($c -ne 0) {
+            return $c
+        }
+        return [System.StringComparer]::Ordinal.Compare($a.EntryName, $b.EntryName)
+    })
+    $entries.Sort($comparer)
+
+    return $entries
 }
 
 function Get-ArchFromPath {
@@ -452,14 +562,78 @@ function New-FatImageInputFromBundle {
 function New-ZipFromFolder {
     param(
         [Parameter(Mandatory = $true)][string] $Folder,
-        [Parameter(Mandatory = $true)][string] $ZipPath
+        [Parameter(Mandatory = $true)][string] $ZipPath,
+        [Parameter(Mandatory = $true)][DateTimeOffset] $DeterministicTimestamp
     )
 
     if (Test-Path $ZipPath) {
         Remove-Item -Force $ZipPath
     }
 
-    Compress-Archive -Path (Join-Path $Folder "*") -DestinationPath $ZipPath -Force
+    $useCompressArchiveFallback = $false
+
+    try {
+        Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop | Out-Null
+    } catch {
+        $useCompressArchiveFallback = $true
+    }
+
+    if (-not $useCompressArchiveFallback) {
+        try {
+            $entries = Get-DeterministicZipEntriesFromFolder -Folder $Folder
+
+            $fs = [System.IO.File]::Open($ZipPath, [System.IO.FileMode]::CreateNew)
+            try {
+                $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+                try {
+                    foreach ($e in $entries) {
+                        if ($e.IsDirectory) {
+                            $entry = $zip.CreateEntry($e.EntryName)
+                            $entry.LastWriteTime = $DeterministicTimestamp
+                            try {
+                                # Best-effort: avoid capturing unpredictable host attributes.
+                                # Mark directory attribute but keep everything else stable.
+                                $entry.ExternalAttributes = 0x10
+                            } catch {
+                            }
+                            continue
+                        }
+
+                        $entry = $zip.CreateEntry($e.EntryName, [System.IO.Compression.CompressionLevel]::Optimal)
+                        $entry.LastWriteTime = $DeterministicTimestamp
+                        try {
+                            # Best-effort: avoid capturing unpredictable host attributes.
+                            $entry.ExternalAttributes = 0
+                        } catch {
+                        }
+
+                        $inStream = [System.IO.File]::OpenRead($e.FullPath)
+                        try {
+                            $outStream = $entry.Open()
+                            try {
+                                $inStream.CopyTo($outStream)
+                            } finally {
+                                $outStream.Dispose()
+                            }
+                        } finally {
+                            $inStream.Dispose()
+                        }
+                    }
+                } finally {
+                    $zip.Dispose()
+                }
+            } finally {
+                $fs.Dispose()
+            }
+        } catch {
+            $useCompressArchiveFallback = $true
+        }
+    }
+
+    if ($useCompressArchiveFallback) {
+        Compress-Archive -Path (Join-Path $Folder "*") -DestinationPath $ZipPath -Force
+    }
+
     $zipFile = Get-Item -Path $ZipPath -ErrorAction SilentlyContinue
     if (-not $zipFile -or $zipFile.Length -le 0) {
         throw "Failed to create ZIP, or ZIP is empty: '$ZipPath'."
@@ -510,101 +684,190 @@ function New-IsoFromFolder {
     }
 }
 
-$inputRootResolved = Resolve-RepoPath -Path $InputRoot
-$certPathResolved = Resolve-RepoPath -Path $CertPath
-$outDirResolved = Resolve-RepoPath -Path $OutDir
-$repoRootResolved = Resolve-RepoPath -Path "."
+function Invoke-PackageDrivers {
+    param(
+        [Parameter(Mandatory = $true)][string] $InputRoot,
+        [Parameter(Mandatory = $true)][string] $CertPath,
+        [Parameter(Mandatory = $true)][string] $OutDir,
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [string] $Version,
+        [switch] $NoIso,
+        [switch] $MakeFatImage,
+        [switch] $FatImageStrict,
+        [int] $FatImageSizeMB = 64
+    )
 
-if (-not (Test-Path $inputRootResolved)) {
-    throw "InputRoot does not exist: '$inputRootResolved'."
-}
-if (-not (Test-Path $certPathResolved)) {
-    throw "CertPath does not exist: '$certPathResolved'."
-}
+    $inputRootResolved = Resolve-RepoPath -Path $InputRoot
+    $certPathResolved = Resolve-RepoPath -Path $CertPath
+    $outDirResolved = Resolve-RepoPath -Path $OutDir
+    $repoRootResolved = Resolve-RepoPath -Path $RepoRoot
 
-Assert-CiPackagedDriversOnly -InputRoot $inputRootResolved -RepoRoot $repoRootResolved
+    if (-not (Test-Path $inputRootResolved)) {
+        throw "InputRoot does not exist: '$inputRootResolved'."
+    }
+    if (-not (Test-Path $certPathResolved)) {
+        throw "CertPath does not exist: '$certPathResolved'."
+    }
 
-if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = Get-VersionString
-}
+    Assert-CiPackagedDriversOnly -InputRoot $inputRootResolved -RepoRoot $repoRootResolved
 
-$envVal = $env:AERO_MAKE_FAT_IMAGE
-if ($null -eq $envVal) {
-    $envVal = ""
-}
-$shouldMakeFatImage = $MakeFatImage -or (@("1", "true", "yes", "on") -contains $envVal.ToLowerInvariant())
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $Version = Get-VersionString
+    }
 
-New-Item -ItemType Directory -Force -Path $outDirResolved | Out-Null
+    $zipTimestamp = Get-DeterministicZipTimestamp -RepoRoot $repoRootResolved
 
-$artifactBase = "AeroVirtIO-Win7-$Version"
-$zipX86 = Join-Path $outDirResolved "$artifactBase-x86.zip"
-$zipX64 = Join-Path $outDirResolved "$artifactBase-x64.zip"
-$zipBundle = Join-Path $outDirResolved "$artifactBase-bundle.zip"
-$isoBundle = Join-Path $outDirResolved "$artifactBase.iso"
-$fatVhd = Join-Path $outDirResolved "$artifactBase-fat.vhd"
+    $envVal = $env:AERO_MAKE_FAT_IMAGE
+    if ($null -eq $envVal) {
+        $envVal = ""
+    }
+    $shouldMakeFatImage = $MakeFatImage -or (@("1", "true", "yes", "on") -contains $envVal.ToLowerInvariant())
 
-$stagingBase = Join-Path $outDirResolved "_staging"
-if (Test-Path $stagingBase) {
-    Remove-Item -Recurse -Force $stagingBase
-}
-New-Item -ItemType Directory -Force -Path $stagingBase | Out-Null
+    New-Item -ItemType Directory -Force -Path $outDirResolved | Out-Null
 
-$stageX86 = Join-Path $stagingBase "x86"
-$stageX64 = Join-Path $stagingBase "x64"
-$stageBundle = Join-Path $stagingBase "bundle"
-$stageFat = Join-Path $stagingBase "fat"
+    $artifactBase = "AeroVirtIO-Win7-$Version"
+    $zipX86 = Join-Path $outDirResolved "$artifactBase-x86.zip"
+    $zipX64 = Join-Path $outDirResolved "$artifactBase-x64.zip"
+    $zipBundle = Join-Path $outDirResolved "$artifactBase-bundle.zip"
+    $isoBundle = Join-Path $outDirResolved "$artifactBase.iso"
+    $fatVhd = Join-Path $outDirResolved "$artifactBase-fat.vhd"
 
-New-DriverArtifactRoot -DestRoot $stageX86 -CertSourcePath $certPathResolved
-New-DriverArtifactRoot -DestRoot $stageX64 -CertSourcePath $certPathResolved
-New-DriverArtifactRoot -DestRoot $stageBundle -CertSourcePath $certPathResolved
+    $stagingBase = Join-Path $outDirResolved "_staging"
+    if (Test-Path $stagingBase) {
+        Remove-Item -Recurse -Force $stagingBase
+    }
+    New-Item -ItemType Directory -Force -Path $stagingBase | Out-Null
 
-Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x86") -DestRoot $stageX86
-Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x64") -DestRoot $stageX64
-Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x86", "x64") -DestRoot $stageBundle
+    $stageX86 = Join-Path $stagingBase "x86"
+    $stageX64 = Join-Path $stagingBase "x64"
+    $stageBundle = Join-Path $stagingBase "bundle"
+    $stageFat = Join-Path $stagingBase "fat"
 
-$success = $false
-try {
-    New-ZipFromFolder -Folder $stageX86 -ZipPath $zipX86
-    New-ZipFromFolder -Folder $stageX64 -ZipPath $zipX64
-    New-ZipFromFolder -Folder $stageBundle -ZipPath $zipBundle
+    New-DriverArtifactRoot -DestRoot $stageX86 -CertSourcePath $certPathResolved
+    New-DriverArtifactRoot -DestRoot $stageX64 -CertSourcePath $certPathResolved
+    New-DriverArtifactRoot -DestRoot $stageBundle -CertSourcePath $certPathResolved
 
-    if (-not $NoIso) {
-        $label = ("AEROVIRTIO_WIN7_" + $Version).ToUpperInvariant() -replace "[^A-Z0-9_]", "_"
-        if ($label.Length -gt 32) {
-            $label = $label.Substring(0, 32)
+    Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x86") -DestRoot $stageX86
+    Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x64") -DestRoot $stageX64
+    Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x86", "x64") -DestRoot $stageBundle
+
+    $success = $false
+    try {
+        New-ZipFromFolder -Folder $stageX86 -ZipPath $zipX86 -DeterministicTimestamp $zipTimestamp
+        New-ZipFromFolder -Folder $stageX64 -ZipPath $zipX64 -DeterministicTimestamp $zipTimestamp
+        New-ZipFromFolder -Folder $stageBundle -ZipPath $zipBundle -DeterministicTimestamp $zipTimestamp
+
+        if (-not $NoIso) {
+            $label = ("AEROVIRTIO_WIN7_" + $Version).ToUpperInvariant() -replace "[^A-Z0-9_]", "_"
+            if ($label.Length -gt 32) {
+                $label = $label.Substring(0, 32)
+            }
+            New-IsoFromFolder -Folder $stageBundle -IsoPath $isoBundle -VolumeLabel $label
         }
-        New-IsoFromFolder -Folder $stageBundle -IsoPath $isoBundle -VolumeLabel $label
+
+        if ($shouldMakeFatImage) {
+            New-FatImageInputFromBundle -BundleRoot $stageBundle -CertSourcePath $certPathResolved -DestRoot $stageFat
+
+            $helper = Join-Path $PSScriptRoot "make-fat-image.ps1"
+            if (-not (Test-Path $helper)) {
+                throw "Missing helper script: '$helper'."
+            }
+
+            & $helper -SourceDir $stageFat -OutFile $fatVhd -SizeMB $FatImageSizeMB -Strict:$FatImageStrict
+        }
+        $success = $true
+    } finally {
+        if ($success -and (Test-Path $stagingBase)) {
+            Remove-Item -Recurse -Force $stagingBase
+        }
+    }
+
+    Write-Host "Artifacts created in '$outDirResolved':"
+    Write-Host "  $zipX86"
+    Write-Host "  $zipX64"
+    Write-Host "  $zipBundle"
+    if (-not $NoIso) {
+        Write-Host "  $isoBundle"
     }
 
     if ($shouldMakeFatImage) {
-        New-FatImageInputFromBundle -BundleRoot $stageBundle -CertSourcePath $certPathResolved -DestRoot $stageFat
+        if (Test-Path $fatVhd) {
+            Write-Host "  $fatVhd"
+        } else {
+            Write-Host "  (FAT image skipped)"
+        }
+    }
 
-        $helper = Join-Path $PSScriptRoot "make-fat-image.ps1"
-        if (-not (Test-Path $helper)) {
-            throw "Missing helper script: '$helper'."
+    return [pscustomobject]@{
+        Version = $Version
+        ZipX86 = $zipX86
+        ZipX64 = $zipX64
+        ZipBundle = $zipBundle
+        IsoBundle = $isoBundle
+        FatVhd = $fatVhd
+        OutDir = $outDirResolved
+    }
+}
+
+function Invoke-DeterminismSelfTest {
+    param(
+        [Parameter(Mandatory = $true)][string] $InputRoot,
+        [Parameter(Mandatory = $true)][string] $CertPath,
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [string] $Version
+    )
+
+    $repoRootResolved = Resolve-RepoPath -Path $RepoRoot
+
+    # Make self-test runnable without pre-built drivers/certs by falling back to checked-in fixtures.
+    $inputCandidate = Resolve-RepoPath -Path $InputRoot
+    if (-not (Test-Path $inputCandidate)) {
+        $inputCandidate = Resolve-RepoPath -Path "tools/packaging/aero_packager/testdata/drivers"
+    }
+
+    $certCandidate = Resolve-RepoPath -Path $CertPath
+    if (-not (Test-Path $certCandidate)) {
+        $certCandidate = Resolve-RepoPath -Path "guest-tools/certs/AeroTestRoot.cer"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $Version = Get-VersionString
+    }
+
+    $tempBase = Join-Path ([System.IO.Path]::GetTempPath()) ("aero-package-drivers-determinism-" + [System.Guid]::NewGuid().ToString("N"))
+    $out1 = Join-Path $tempBase "run1"
+    $out2 = Join-Path $tempBase "run2"
+
+    $oldFatEnv = $env:AERO_MAKE_FAT_IMAGE
+    try {
+        # Ensure the env-var toggle doesn't accidentally make the self-test depend on
+        # external FAT image tooling.
+        $env:AERO_MAKE_FAT_IMAGE = "0"
+
+        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false
+        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false
+
+        $h1 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r1.ZipBundle).Hash
+        $h2 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r2.ZipBundle).Hash
+
+        if ($h1 -ne $h2) {
+            throw "Determinism self-test failed: bundle ZIP SHA-256 mismatch.`r`n  Run1: $($r1.ZipBundle) -> $h1`r`n  Run2: $($r2.ZipBundle) -> $h2`r`nTemp dir preserved for inspection: $tempBase"
         }
 
-        & $helper -SourceDir $stageFat -OutFile $fatVhd -SizeMB $FatImageSizeMB -Strict:$FatImageStrict
-    }
-    $success = $true
-} finally {
-    if ($success -and (Test-Path $stagingBase)) {
-        Remove-Item -Recurse -Force $stagingBase
+        Write-Host "Determinism self-test passed (bundle ZIP SHA-256: $h1)."
+        Remove-Item -Recurse -Force $tempBase -ErrorAction SilentlyContinue
+    } finally {
+        if ($null -eq $oldFatEnv) {
+            Remove-Item env:AERO_MAKE_FAT_IMAGE -ErrorAction SilentlyContinue
+        } else {
+            $env:AERO_MAKE_FAT_IMAGE = $oldFatEnv
+        }
     }
 }
 
-Write-Host "Artifacts created in '$outDirResolved':"
-Write-Host "  $zipX86"
-Write-Host "  $zipX64"
-Write-Host "  $zipBundle"
-if (-not $NoIso) {
-    Write-Host "  $isoBundle"
+if ($DeterminismSelfTest) {
+    Invoke-DeterminismSelfTest -InputRoot $InputRoot -CertPath $CertPath -RepoRoot "." -Version $Version
+    exit 0
 }
 
-if ($shouldMakeFatImage) {
-    if (Test-Path $fatVhd) {
-        Write-Host "  $fatVhd"
-    } else {
-        Write-Host "  (FAT image skipped)"
-    }
-}
+$null = Invoke-PackageDrivers -InputRoot $InputRoot -CertPath $CertPath -OutDir $OutDir -RepoRoot "." -Version $Version -NoIso:$NoIso -MakeFatImage:$MakeFatImage -FatImageStrict:$FatImageStrict -FatImageSizeMB $FatImageSizeMB
