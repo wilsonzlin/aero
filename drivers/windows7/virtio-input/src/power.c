@@ -22,6 +22,8 @@ static VOID VirtioInputFlushPendingReportRings(_In_ PDEVICE_CONTEXT Ctx)
         Ctx->PendingReportRing[i].tail = 0;
         Ctx->PendingReportRing[i].count = 0;
     }
+    // Keep diagnostics counters in sync with the ring state.
+    VioInputCounterSet(&Ctx->Counters.PendingRingDepth, 0);
     WdfSpinLockRelease(Ctx->ReadReportLock);
 }
 
