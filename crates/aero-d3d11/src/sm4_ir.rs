@@ -469,6 +469,11 @@ pub enum Sm4Inst {
         /// Write mask from the `u#` operand (x/y/z/w).
         mask: WriteMask,
     },
+    /// Workgroup barrier + thread-group synchronization (`sync_*_t` in SM5).
+    ///
+    /// This corresponds to HLSL intrinsics such as `GroupMemoryBarrierWithGroupSync()` and
+    /// `DeviceMemoryBarrierWithGroupSync()`.
+    WorkgroupBarrier,
     /// A decoded instruction that the IR producer does not model yet.
     ///
     /// This allows the WGSL backend to fail with a precise opcode + instruction

@@ -602,7 +602,6 @@ mod tests {
         )));
     }
 }
-
 #[doc(hidden)]
 pub fn decode_instruction(
     opcode: u32,
@@ -1013,6 +1012,20 @@ pub fn decode_instruction(
         OPCODE_LD_STRUCTURED => decode_ld_structured(saturate, &mut r),
         OPCODE_STORE_RAW => decode_store_raw(&mut r),
         OPCODE_STORE_STRUCTURED => decode_store_structured(&mut r),
+        OPCODE_SYNC => {
+            // `sync` encodes barrier flags in the opcode token control bits.
+            // We only model the variants that include a full thread-group sync (`*_t`), since
+            // those have an exact WGSL `workgroupBarrier()` mapping. Memory-fence-only variants
+            // (without thread-group sync) are left as unknown for now, because translating them to
+            // a WGSL workgroup barrier would introduce stronger synchronization requirements and
+            // could deadlock if used in divergent control flow.
+            let sync_flags = (opcode_token >> OPCODE_CONTROL_SHIFT) & OPCODE_CONTROL_MASK;
+            if (sync_flags & SYNC_FLAG_THREAD_GROUP_SYNC) == 0 {
+                return Ok(Sm4Inst::Unknown { opcode: OPCODE_SYNC });
+            }
+            r.expect_eof()?;
+            Ok(Sm4Inst::WorkgroupBarrier)
+        }
         other => {
             // Structural fallback for sample/sample_l when opcode IDs differ.
             if let Some(sample) = try_decode_sample_like(saturate, inst_toks, at)? {

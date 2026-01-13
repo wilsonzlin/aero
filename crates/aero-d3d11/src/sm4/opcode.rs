@@ -157,6 +157,25 @@ pub const OPCODE_FIRSTBIT_LO: u32 = 0x5b;
 /// Upstream: `D3D11_SB_OPCODE_FIRSTBIT_SHI`.
 pub const OPCODE_FIRSTBIT_SHI: u32 = 0x5c;
 
+/// `sync` (SM5 barrier / thread-group synchronization).
+///
+/// In DXBC the `sync` instruction encodes a set of barrier flags in the opcode token's
+/// "opcode-specific control" field (bits 24..=30). This is used to represent HLSL intrinsics like:
+/// - `GroupMemoryBarrierWithGroupSync()`
+/// - `DeviceMemoryBarrierWithGroupSync()`
+/// - `AllMemoryBarrierWithGroupSync()`
+pub const OPCODE_SYNC: u32 = 0x5f;
+
+/// Opcode token "opcode-specific control" field (bits 24..=30).
+pub const OPCODE_CONTROL_SHIFT: u32 = 24;
+pub const OPCODE_CONTROL_MASK: u32 = 0x7f;
+
+// `sync` flag bits (subset of `D3D11_SB_SYNC_FLAGS`).
+pub const SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY: u32 = 0x1;
+pub const SYNC_FLAG_UAV_MEMORY: u32 = 0x2;
+/// If set, the instruction is a full workgroup barrier (all threads must participate).
+pub const SYNC_FLAG_THREAD_GROUP_SYNC: u32 = 0x4;
+
 // ---- Declaration opcodes (subset) ----
 //
 // Values are sourced from the D3D10/11 tokenized shader format opcode table in the

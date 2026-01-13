@@ -1060,6 +1060,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
             }
+            Sm4Inst::WorkgroupBarrier => {}
             Sm4Inst::Switch { selector } => scan_src_regs(selector, &mut scan_reg),
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
             Sm4Inst::Emit { .. }
@@ -2242,6 +2243,7 @@ fn scan_resources(
                 validate_slot("uav_buffer", uav.slot, MAX_UAV_SLOTS)?;
                 uav_buffers.insert(uav.slot);
             }
+            Sm4Inst::WorkgroupBarrier => {}
             Sm4Inst::Switch { selector } => {
                 scan_src(selector)?;
             }
@@ -2593,6 +2595,7 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
             }
+            Sm4Inst::WorkgroupBarrier => {}
             Sm4Inst::Switch { selector } => {
                 scan_src_regs(selector, &mut scan_reg);
             }
@@ -3688,6 +3691,30 @@ fn emit_instructions(
                     "bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))"
                 );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
+            }
+            Sm4Inst::WorkgroupBarrier => {
+                if ctx.stage != ShaderStage::Compute {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "workgroup_barrier".to_owned(),
+                    });
+                }
+
+                // SM5 `sync_*_t` instructions are workgroup barriers that optionally include
+                // storage/UAV memory ordering semantics.
+                //
+                // WGSL exposes:
+                // - `workgroupBarrier()` for control + workgroup-memory synchronization.
+                // - `storageBarrier()` for storage-buffer/texture memory ordering.
+                //
+                // We conservatively emit both. This preserves the semantics of
+                // `DeviceMemoryBarrierWithGroupSync()` / `AllMemoryBarrierWithGroupSync()` in
+                // addition to `GroupMemoryBarrierWithGroupSync()`.
+                //
+                // Order matters if `storageBarrier()` is treated as a memory fence without an
+                // execution barrier: we want all invocations to execute it before synchronizing.
+                w.line("storageBarrier();");
+                w.line("workgroupBarrier();");
             }
             Sm4Inst::Unknown { opcode } => {
                 let opcode = opcode_name(*opcode)
