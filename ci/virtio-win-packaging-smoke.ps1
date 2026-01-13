@@ -319,6 +319,24 @@ function Assert-DevicesCmdVarEquals {
   }
 }
 
+function Set-ContractDriverServiceName {
+  param(
+    [Parameter(Mandatory = $true)]$Contract,
+    [Parameter(Mandatory = $true)][string]$DeviceName,
+    [Parameter(Mandatory = $true)][string]$ServiceName
+  )
+
+  foreach ($d in @($Contract.devices)) {
+    if ($null -eq $d) { continue }
+    $n = "" + $d.device
+    if ($n -and ($n.ToLowerInvariant() -eq $DeviceName.ToLowerInvariant())) {
+      $d.driver_service_name = $ServiceName
+      return
+    }
+  }
+  throw "Device contract is missing required device entry: $DeviceName"
+}
+
 function Get-InfAddServiceName {
   param([Parameter(Mandatory = $true)][string]$InfText)
   $m = [regex]::Match($InfText, '(?im)^\s*AddService\s*=\s*([^,\s]+)')
@@ -553,6 +571,106 @@ foreach ($want in @("license.txt", "notice.txt")) {
     throw "Driver pack manifest did not record copied notice file '$want' in source.license_notice_files_copied. Got: $($noticeCopied -join ', ')"
   }
 }
+
+#
+# Contract auto-patching smoke test:
+# Validate `ci/package-guest-tools.ps1` can auto-align Windows device contract driver_service_name
+# values with the staged INF AddService names for all virtio devices (not just virtio-blk).
+#
+# This specifically exercises the "package Guest Tools from external driver bundles" flow where
+# the caller might pass a contract whose service names are stale/incorrect for the staged drivers.
+#
+$contractPatchDriversRoot = Join-Path $OutRoot "guest-tools-packager-drivers"
+Ensure-EmptyDirectory -Path $contractPatchDriversRoot
+Ensure-Directory -Path (Join-Path $contractPatchDriversRoot "x86")
+Ensure-Directory -Path (Join-Path $contractPatchDriversRoot "amd64")
+
+function Copy-DriverPackArchToPackagerLayout {
+  param(
+    [Parameter(Mandatory = $true)][string]$SourceArchDir,
+    [Parameter(Mandatory = $true)][string]$DestArchDir
+  )
+
+  $children = Get-ChildItem -LiteralPath $SourceArchDir -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name
+  foreach ($d in $children) {
+    $dst = Join-Path $DestArchDir $d.Name
+    Copy-Item -LiteralPath $d.FullName -Destination $dst -Recurse -Force
+  }
+}
+
+$driverPackWin7Root = Join-Path $driverPackRoot "win7"
+Copy-DriverPackArchToPackagerLayout -SourceArchDir (Join-Path $driverPackWin7Root "x86") -DestArchDir (Join-Path $contractPatchDriversRoot "x86")
+Copy-DriverPackArchToPackagerLayout -SourceArchDir (Join-Path $driverPackWin7Root "amd64") -DestArchDir (Join-Path $contractPatchDriversRoot "amd64")
+
+$contractTemplate = Join-Path $repoRoot "docs\\windows-device-contract-virtio-win.json"
+if (-not (Test-Path -LiteralPath $contractTemplate -PathType Leaf)) {
+  throw "Expected virtio-win device contract not found: $contractTemplate"
+}
+
+$contractMismatchPath = Join-Path $OutRoot "windows-device-contract-mismatch.json"
+$contractObj = Get-Content -LiteralPath $contractTemplate -Raw | ConvertFrom-Json
+
+# Always mismatch boot-critical storage + network.
+Set-ContractDriverServiceName -Contract $contractObj -DeviceName "virtio-blk" -ServiceName "mismatch_viostor"
+Set-ContractDriverServiceName -Contract $contractObj -DeviceName "virtio-net" -ServiceName "mismatch_netkvm"
+
+# Only mismatch optional devices when the corresponding driver is present in the staged tree; if the
+# driver is absent we keep the correct values so the smoke test can run with -OmitOptionalDrivers.
+$hasVioinput = Test-Path -LiteralPath (Join-Path (Join-Path $contractPatchDriversRoot "x86") "vioinput\\vioinput.inf")
+$hasViosnd = Test-Path -LiteralPath (Join-Path (Join-Path $contractPatchDriversRoot "x86") "viosnd\\viosnd.inf")
+if ($hasVioinput) { Set-ContractDriverServiceName -Contract $contractObj -DeviceName "virtio-input" -ServiceName "mismatch_vioinput" }
+if ($hasViosnd) { Set-ContractDriverServiceName -Contract $contractObj -DeviceName "virtio-snd" -ServiceName "mismatch_viosnd" }
+
+# Sanity-check: ensure we actually wrote a contract that does NOT match the INF AddService names
+# we're going to assert from the packaged ZIP.
+foreach ($pair in @(
+  @{ Device = "virtio-blk"; Expected = "viostor" },
+  @{ Device = "virtio-net"; Expected = "netkvm" }
+)) {
+  foreach ($d in @($contractObj.devices)) {
+    if ($d -and (("" + $d.device).ToLowerInvariant() -eq $pair.Device)) {
+      $svc = ("" + $d.driver_service_name).Trim()
+      if ($svc.ToLowerInvariant() -eq $pair.Expected) {
+        throw "Smoke test setup failure: contract mismatch file already has $($pair.Device) driver_service_name='$svc' (expected it to differ from $($pair.Expected))."
+      }
+    }
+  }
+}
+
+$contractJson = $contractObj | ConvertTo-Json -Depth 50
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($contractMismatchPath, ($contractJson + "`n"), $utf8NoBom)
+
+$contractPatchOutDir = Join-Path $OutRoot "guest-tools-contract-patch"
+Ensure-EmptyDirectory -Path $contractPatchOutDir
+
+$packageGuestTools = Join-Path $repoRoot "ci\\package-guest-tools.ps1"
+if (-not (Test-Path -LiteralPath $packageGuestTools -PathType Leaf)) {
+  throw "Expected Guest Tools packaging wrapper not found: $packageGuestTools"
+}
+
+$contractPatchLog = Join-Path $logsDir "package-guest-tools-contract-patch.log"
+$contractPatchSpec = Join-Path $repoRoot "tools\\packaging\\specs\\win7-virtio-full.json"
+Write-Host "Running package-guest-tools.ps1 (contract auto-patching)..."
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $packageGuestTools `
+  -InputRoot $contractPatchDriversRoot `
+  -GuestToolsDir (Join-Path $repoRoot "guest-tools") `
+  -SigningPolicy "none" `
+  -WindowsDeviceContractPath $contractMismatchPath `
+  -SpecPath $contractPatchSpec `
+  -OutDir $contractPatchOutDir `
+  -Version "0.0.0" `
+  -BuildId "ci-contract-patch" *>&1 | Tee-Object -FilePath $contractPatchLog
+if ($LASTEXITCODE -ne 0) {
+  throw "package-guest-tools.ps1 (contract auto-patching) failed (exit $LASTEXITCODE). See $contractPatchLog"
+}
+
+$contractPatchZip = Join-Path $contractPatchOutDir "aero-guest-tools.zip"
+if (-not (Test-Path -LiteralPath $contractPatchZip -PathType Leaf)) {
+  throw "Expected Guest Tools ZIP output missing (contract auto-patching run): $contractPatchZip"
+}
+
+Assert-GuestToolsDevicesCmdServices -ZipPath $contractPatchZip -SpecPath $contractPatchSpec
 
 if ($TestIsoMode) {
   $winPs = Resolve-WindowsPowerShell

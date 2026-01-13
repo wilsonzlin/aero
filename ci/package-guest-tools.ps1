@@ -597,10 +597,13 @@ function Test-InfTextContainsAnyHardwareId {
   return $false
 }
 
-function Update-WindowsDeviceContractStorageServiceFromDrivers {
+function Update-WindowsDeviceContractDriverServiceNamesFromDrivers {
   param(
     [Parameter(Mandatory = $true)][string] $ContractPath,
-    [Parameter(Mandatory = $true)][string] $StageDriversRoot
+    [Parameter(Mandatory = $true)][string] $StageDriversRoot,
+    # Device names in the Windows device contract that should have driver_service_name auto-aligned
+    # with the staged INF AddService names.
+    [string[]] $Devices = @("virtio-blk", "virtio-net", "virtio-input", "virtio-snd")
   )
 
   if (-not (Test-Path -LiteralPath $ContractPath -PathType Leaf)) {
@@ -612,101 +615,127 @@ function Update-WindowsDeviceContractStorageServiceFromDrivers {
     throw "Windows device contract JSON is missing the required 'devices' field: $ContractPath"
   }
 
-  $virtioBlk = $null
-  foreach ($d in $contract.devices) {
-    if ($d -and $d.device -and ($d.device -ieq "virtio-blk")) {
-      $virtioBlk = $d
-      break
-    }
-  }
-  if (-not $virtioBlk) {
-    throw "Windows device contract JSON does not contain a virtio-blk entry to patch: $ContractPath"
-  }
-
-  $currentService = ("" + $virtioBlk.driver_service_name).Trim()
-  $hwids = @()
-  foreach ($p in $virtioBlk.hardware_id_patterns) {
-    $t = ("" + $p).Trim()
-    if ($t.Length -gt 0) { $hwids += $t }
-  }
-  if (-not $hwids -or $hwids.Count -eq 0) {
-    Write-Warning "virtio-blk entry has no hardware_id_patterns in $ContractPath; skipping storage service auto-detection."
-    return
-  }
-
   $infFiles = @(
     Get-ChildItem -LiteralPath $StageDriversRoot -Recurse -File -ErrorAction SilentlyContinue |
-      Where-Object { $_.Name -match '(?i)\\.inf$' }
+      Where-Object { $_.Name -match '(?i)\\.inf$' } |
+      Sort-Object -Property FullName
   )
   if (-not $infFiles -or $infFiles.Count -eq 0) {
-    Write-Warning "No .inf files found under staged drivers root ($StageDriversRoot); skipping storage service auto-detection."
+    Write-Warning "No .inf files found under staged drivers root ($StageDriversRoot); skipping driver_service_name auto-detection."
     return
   }
 
-  $serviceToInfs = @{}
-  foreach ($inf in $infFiles) {
-    $text = $null
-    try {
-      $text = Get-Content -LiteralPath $inf.FullName -Raw -ErrorAction Stop
-    } catch {
+  function Get-ContractDeviceEntry {
+    param(
+      [Parameter(Mandatory = $true)] $ContractObj,
+      [Parameter(Mandatory = $true)][string] $DeviceName
+    )
+
+    foreach ($d in @($ContractObj.devices)) {
+      if ($d -and $d.device -and ($d.device -ieq $DeviceName)) {
+        return $d
+      }
+    }
+    return $null
+  }
+
+  $anyChanged = $false
+
+  foreach ($deviceName in $Devices) {
+    if ([string]::IsNullOrWhiteSpace($deviceName)) { continue }
+
+    $entry = Get-ContractDeviceEntry -ContractObj $contract -DeviceName $deviceName
+    if (-not $entry) {
+      # Be permissive: allow custom contracts that omit some virtio devices.
       continue
     }
-    if (-not (Test-InfTextContainsAnyHardwareId -InfText $text -HardwareIds $hwids)) { continue }
 
-    foreach ($svc in (Get-InfAddServiceNames -InfPath $inf.FullName)) {
-      $k = $svc.ToLowerInvariant()
-      if (-not $serviceToInfs.ContainsKey($k)) {
-        $serviceToInfs[$k] = New-Object System.Collections.Generic.List[string]
+    $currentService = ("" + $entry.driver_service_name).Trim()
+    $hwids = @()
+    if ($entry.hardware_id_patterns) {
+      foreach ($p in $entry.hardware_id_patterns) {
+        $t = ("" + $p).Trim()
+        if ($t.Length -gt 0) { $hwids += $t }
       }
-      [void]$serviceToInfs[$k].Add($inf.FullName)
     }
-  }
-
-  if ($serviceToInfs.Count -eq 0) {
-    return
-  }
-
-  $serviceCandidates = @($serviceToInfs.Keys | Sort-Object)
-  $selected = $null
-  if (-not [string]::IsNullOrWhiteSpace($currentService)) {
-    $k = $currentService.ToLowerInvariant()
-    if ($serviceToInfs.ContainsKey($k)) {
-      $selected = $currentService
+    if (-not $hwids -or $hwids.Count -eq 0) {
+      continue
     }
-  }
-  if (-not $selected) {
-    if ($serviceCandidates.Count -eq 1) {
-      $selected = $serviceCandidates[0]
-    } else {
-      # Disambiguate using the presence of <service>.sys in the staged driver tree.
-      $matching = @()
-      foreach ($k in $serviceCandidates) {
-        $sysName = "$k.sys"
-        $hit = Get-ChildItem -LiteralPath $StageDriversRoot -Recurse -File -ErrorAction SilentlyContinue |
-          Where-Object { $_.Name -ieq $sysName } |
-          Select-Object -First 1
-        if ($hit) { $matching += $k }
+
+    $serviceToInfs = @{}
+    foreach ($inf in $infFiles) {
+      $text = $null
+      try {
+        $text = Get-Content -LiteralPath $inf.FullName -Raw -ErrorAction Stop
+      } catch {
+        continue
       }
-      if ($matching.Count -eq 1) {
-        $selected = $matching[0]
-      } else {
-        $details = @()
-        foreach ($k in $serviceCandidates) {
-          $infs = $serviceToInfs[$k] | Sort-Object -Unique
-          $details += ("- {0}: {1}" -f $k, ($infs -join ", "))
+      if (-not (Test-InfTextContainsAnyHardwareId -InfText $text -HardwareIds $hwids)) { continue }
+
+      foreach ($svc in (Get-InfAddServiceNames -InfPath $inf.FullName)) {
+        $k = $svc.ToLowerInvariant()
+        if (-not $serviceToInfs.ContainsKey($k)) {
+          $serviceToInfs[$k] = New-Object System.Collections.Generic.List[string]
         }
-        throw "Unable to determine a unique virtio-blk storage service name from staged driver INFs. Candidates: $($serviceCandidates -join ', ').`nINF matches:`n$($details -join \"`n\")"
+        [void]$serviceToInfs[$k].Add($inf.FullName)
       }
     }
+
+    if ($serviceToInfs.Count -eq 0) {
+      continue
+    }
+
+    $serviceCandidates = @($serviceToInfs.Keys | Sort-Object)
+    $selected = $null
+
+    # Prefer the existing contract value if it's among the candidates.
+    if (-not [string]::IsNullOrWhiteSpace($currentService)) {
+      $k = $currentService.ToLowerInvariant()
+      if ($serviceToInfs.ContainsKey($k)) {
+        $selected = $currentService
+      }
+    }
+
+    if (-not $selected) {
+      if ($serviceCandidates.Count -eq 1) {
+        $selected = $serviceCandidates[0]
+      } else {
+        # Disambiguate using the presence of <service>.sys in the staged driver tree.
+        $matching = @()
+        foreach ($k in $serviceCandidates) {
+          $sysName = "$k.sys"
+          $hit = Get-ChildItem -LiteralPath $StageDriversRoot -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ieq $sysName } |
+            Select-Object -First 1
+          if ($hit) { $matching += $k }
+        }
+        if ($matching.Count -eq 1) {
+          $selected = $matching[0]
+        } else {
+          $details = @()
+          foreach ($k in $serviceCandidates) {
+            $infs = $serviceToInfs[$k] | Sort-Object -Unique
+            $details += ("- {0}: {1}" -f $k, ($infs -join ", "))
+          }
+          throw "Unable to determine a unique driver service name for '$deviceName' from staged driver INFs. Candidates: $($serviceCandidates -join ', ').`nINF matches:`n$($details -join \"`n\")"
+        }
+      }
+    }
+
+    if (-not $selected) { continue }
+    if (-not [string]::IsNullOrWhiteSpace($currentService) -and ($selected.ToLowerInvariant() -eq $currentService.ToLowerInvariant())) {
+      continue
+    }
+
+    Write-Host "Patching Windows device contract: $deviceName driver_service_name=$selected"
+    $entry.driver_service_name = $selected
+    $anyChanged = $true
   }
 
-  if (-not $selected) { return }
-  if ($selected -and $currentService -and ($selected.ToLowerInvariant() -eq $currentService.ToLowerInvariant())) {
+  if (-not $anyChanged) {
     return
   }
 
-  Write-Host "Patching Windows device contract: virtio-blk driver_service_name=$selected"
-  $virtioBlk.driver_service_name = $selected
   $json = $contract | ConvertTo-Json -Depth 20
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($ContractPath, ($json + "`n"), $utf8NoBom)
@@ -1339,10 +1368,10 @@ function Invoke-GuestToolsPackagingRun {
     }
 
     # aero_packager generates config/devices.cmd from the Windows device contract.
-    # Patch a staged copy of the contract so the packaged media uses the storage service name
-    # that matches the staged virtio-blk driver (e.g. viostor for upstream virtio-win bundles).
+    # Patch a staged copy of the contract so the packaged media uses driver_service_name values
+    # that match the staged virtio driver INFs (e.g. viostor/netkvm/... for upstream virtio-win bundles).
     Copy-Item -LiteralPath $windowsDeviceContractResolved -Destination $stageDeviceContract -Force
-    Update-WindowsDeviceContractStorageServiceFromDrivers -ContractPath $stageDeviceContract -StageDriversRoot $stageDriversRoot
+    Update-WindowsDeviceContractDriverServiceNamesFromDrivers -ContractPath $stageDeviceContract -StageDriversRoot $stageDriversRoot
 
     New-Item -ItemType Directory -Force -Path $OutDirResolved | Out-Null
 
