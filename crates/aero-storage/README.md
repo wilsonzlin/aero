@@ -6,6 +6,21 @@ In the browser, the primary persistence backend is OPFS. Aero provides a Rust/wa
 implementation in `crates/aero-opfs` (e.g. `aero_opfs::OpfsByteStorage`) that implements
 `aero_storage::StorageBackend`/`aero_storage::VirtualDisk`.
 
+On native (non-wasm32) targets, `aero-storage` also includes a first-party
+`std::fs::File`-backed implementation: `aero_storage::StdFileBackend`. This makes it easy to
+write host-side tooling (inspection, conversion, regression tests) that works directly on disk
+images.
+
+```rust,no_run
+use aero_storage::{DiskImage, StdFileBackend, VirtualDisk};
+
+let backend = StdFileBackend::open("disk.img", false).unwrap();
+let mut disk = DiskImage::open_auto(backend).unwrap();
+
+let mut sector = [0u8; 512];
+disk.read_sectors(0, &mut sector).unwrap();
+```
+
 Higher-level orchestration such as remote HTTP streaming/caching and UI integration may
 still live in the TypeScript host layer.
 
