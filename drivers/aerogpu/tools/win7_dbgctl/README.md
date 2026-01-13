@@ -298,6 +298,7 @@ This tool currently supports JSON output for snapshot-style commands:
 - `--query-fence`
 - `--query-perf`
 - `--query-umd-private`
+- `--query-segments`
 - `--query-scanout`
 - `--query-cursor`
 - `--dump-ring`
@@ -307,8 +308,8 @@ This tool currently supports JSON output for snapshot-style commands:
 - `--selftest`
 - `--list-displays`
 
-The following commands currently return `ok:false` in JSON mode: `--query-segments`, `--watch-fence`, `--watch-ring`, `--wait-vblank`,
-`--query-scanline`, `--dump-scanout-bmp`, `--dump-cursor-bmp`, `--dump-last-cmd`, `--read-gpa`.
+Streaming/binary-output commands (`--watch-fence`, `--watch-ring`, `--wait-vblank`, `--query-scanline`, `--dump-scanout-bmp`,
+`--dump-cursor-bmp`, `--dump-last-cmd`, `--read-gpa`) currently return `ok:false` in JSON mode.
 
 ## Build (Windows 7)
 

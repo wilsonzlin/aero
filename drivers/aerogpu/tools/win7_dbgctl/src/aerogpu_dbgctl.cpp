@@ -1817,6 +1817,16 @@ static void JsonWriteU32Hex(JsonWriter &w, const char *key, uint32_t v) {
   w.String(HexU32(v));
 }
 
+static void JsonWriteBytesAndMiB(JsonWriter &w, const char *key, uint64_t bytes) {
+  w.Key(key);
+  w.BeginObject();
+  w.Key("bytes");
+  w.String(DecU64(bytes));
+  w.Key("mib");
+  w.String(DecU64(bytes / (1024ull * 1024ull)));
+  w.EndObject();
+}
+
 static void JsonWriteDecodedFeatureList(JsonWriter &w, const char *key, const std::wstring &decoded) {
   const std::string utf8 = WideToUtf8(decoded);
   w.Key(key);
@@ -4922,6 +4932,7 @@ static int DoReadGpa(const D3DKMT_FUNCS *f,
     return 3;
   }
   return NT_SUCCESS(op) ? 0 : 2;
+}
 
 static void JsonWriteTopLevelErrno(std::string *out, const char *command, const char *message, int err) {
   if (!out) {
@@ -5471,6 +5482,117 @@ static int DoQueryUmdPrivateJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, 
   w.EndObject();
   w.EndObject();
   out->push_back('\n');
+  return 0;
+}
+
+static int DoQuerySegmentsJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+  if (!f->QueryAdapterInfo) {
+    JsonWriter w(out);
+    w.BeginObject();
+    w.Key("schema_version");
+    w.Uint32(1);
+    w.Key("command");
+    w.String("query-segments");
+    w.Key("ok");
+    w.Bool(false);
+    w.Key("error");
+    w.BeginObject();
+    w.Key("message");
+    w.String("D3DKMTQueryAdapterInfo not available (missing gdi32 export)");
+    w.EndObject();
+    w.EndObject();
+    out->push_back('\n');
+    return 1;
+  }
+
+  UINT queryType = 0;
+  DXGK_QUERYSEGMENTOUT *segments = NULL;
+  if (!FindQuerySegmentTypeAndData(f, hAdapter, /*segmentCapacity=*/64, &queryType, &segments, NULL) || !segments) {
+    JsonWriteTopLevelError(out, "query-segments", f,
+                           "Failed to find a working KMTQAITYPE_QUERYSEGMENT value (probing range exhausted)",
+                           STATUS_NOT_SUPPORTED);
+    return 2;
+  }
+
+  UINT groupSizeType = 0;
+  DXGK_SEGMENTGROUPSIZE groupSizes;
+  const bool haveGroupSizes = FindSegmentGroupSizeTypeAndData(f, hAdapter, segments, &groupSizeType, &groupSizes);
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("query-segments");
+  w.Key("ok");
+  w.Bool(true);
+
+  w.Key("query_segment_type");
+  w.Uint32(queryType);
+  w.Key("segment_count");
+  w.Uint32(segments->NbSegments);
+
+  w.Key("paging");
+  w.BeginObject();
+  w.Key("paging_buffer_private_data_size");
+  w.Uint32(segments->PagingBufferPrivateDataSize);
+  w.Key("paging_buffer_segment_id");
+  w.Uint32(segments->PagingBufferSegmentId);
+  JsonWriteBytesAndMiB(w, "paging_buffer_size", (uint64_t)segments->PagingBufferSize);
+  w.EndObject();
+
+  w.Key("segments");
+  w.BeginArray();
+  for (UINT i = 0; i < segments->NbSegments; ++i) {
+    const DXGK_SEGMENTDESCRIPTOR &d = segments->pSegmentDescriptor[i];
+    w.BeginObject();
+    w.Key("index");
+    w.Uint32((uint32_t)i);
+    w.Key("base_address_hex");
+    w.String(HexU64((uint64_t)d.BaseAddress.QuadPart));
+    JsonWriteBytesAndMiB(w, "size", (uint64_t)d.Size);
+    JsonWriteU32Hex(w, "flags_u32_hex", (uint32_t)d.Flags.Value);
+    w.Key("flags");
+    w.BeginObject();
+    w.Key("aperture");
+    w.Bool(d.Flags.Aperture != 0);
+    w.Key("cpu_visible");
+    w.Bool(d.Flags.CpuVisible != 0);
+    w.Key("cache_coherent");
+    w.Bool(d.Flags.CacheCoherent != 0);
+    w.Key("use_banking");
+    w.Bool(d.Flags.UseBanking != 0);
+    w.EndObject();
+    w.Key("memory_segment_group");
+    w.BeginObject();
+    w.Key("value");
+    w.Uint32((uint32_t)d.MemorySegmentGroup);
+    w.Key("name");
+    w.String(WideToUtf8(DxgkMemorySegmentGroupToString(d.MemorySegmentGroup)));
+    w.EndObject();
+    w.EndObject();
+  }
+  w.EndArray();
+
+  w.Key("segment_group_sizes");
+  if (haveGroupSizes) {
+    w.BeginObject();
+    w.Key("type");
+    w.Uint32(groupSizeType);
+    JsonWriteBytesAndMiB(w, "local_memory_size", (uint64_t)groupSizes.LocalMemorySize);
+    JsonWriteBytesAndMiB(w, "non_local_memory_size", (uint64_t)groupSizes.NonLocalMemorySize);
+    w.EndObject();
+  } else {
+    w.Null();
+  }
+
+  w.EndObject();
+  out->push_back('\n');
+
+  HeapFree(GetProcessHeap(), 0, segments);
   return 0;
 }
 
@@ -6501,10 +6623,7 @@ int wmain(int argc, wchar_t **argv) {
       rc = DoQueryFenceJson(&f, open.hAdapter, &json);
       break;
     case CMD_QUERY_SEGMENTS:
-      JsonWriteTopLevelError(&json, "query-segments", &f,
-                             "JSON output is not supported for this command; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoQuerySegmentsJson(&f, open.hAdapter, &json);
       break;
     case CMD_QUERY_PERF:
       rc = DoQueryPerfJson(&f, open.hAdapter, &json);
