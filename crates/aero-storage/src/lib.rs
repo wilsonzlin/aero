@@ -62,6 +62,8 @@ mod util;
 mod vhd;
 
 pub use backend::{MemBackend, StorageBackend};
+#[cfg(not(target_arch = "wasm32"))]
+pub use backend::StdFileBackend;
 pub use cache::{BlockCacheStats, BlockCachedDisk};
 pub use cow::AeroCowDisk;
 pub use disk::{RawDisk, VirtualDisk, SECTOR_SIZE};

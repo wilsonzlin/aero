@@ -1,5 +1,15 @@
 use crate::{DiskError, Result};
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs::{File, OpenOptions};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::{Path, PathBuf};
+
+#[cfg(all(not(target_arch = "wasm32"), unix))]
+use std::os::unix::fs::FileExt;
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+use std::os::windows::fs::FileExt;
+
 /// A resizable, byte-addressed backing store for disk images.
 ///
 /// In the browser this is typically implemented by OPFS `FileSystemSyncAccessHandle`
@@ -134,5 +144,215 @@ impl StorageBackend for MemBackend {
 
     fn flush(&mut self) -> Result<()> {
         Ok(())
+    }
+}
+
+/// Native `std::fs::File`-backed storage backend.
+///
+/// This backend is available on non-wasm32 targets and is intended for host-side tooling
+/// (conversion, inspection, regression tests, etc.).
+///
+/// I/O is performed using platform-specific `FileExt::{read_at, write_at}` where available
+/// (Unix/Windows) so the OS file cursor is not disturbed.
+///
+/// `flush()` uses [`File::sync_all`] (data + metadata). This is the safest default for disk
+/// images, especially when writes may extend the file length.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct StdFileBackend {
+    file: File,
+    path: Option<PathBuf>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl StdFileBackend {
+    /// Open an existing file.
+    pub fn open<P: AsRef<Path>>(path: P, read_only: bool) -> Result<Self> {
+        let path_ref = path.as_ref();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(!read_only)
+            .open(path_ref)
+            .map_err(|e| {
+                DiskError::Io(format!(
+                    "failed to open file (path={} read_only={}): {e}",
+                    path_ref.display(),
+                    read_only
+                ))
+            })?;
+        Ok(Self {
+            file,
+            path: Some(path_ref.to_path_buf()),
+        })
+    }
+
+    /// Create/truncate a file and set its length to `size` bytes.
+    pub fn create<P: AsRef<Path>>(path: P, size: u64) -> Result<Self> {
+        let path_ref = path.as_ref();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path_ref)
+            .map_err(|e| {
+                DiskError::Io(format!(
+                    "failed to create file (path={} size={}): {e}",
+                    path_ref.display(),
+                    size
+                ))
+            })?;
+
+        let mut backend = Self {
+            file,
+            path: Some(path_ref.to_path_buf()),
+        };
+        backend.set_len(size)?;
+        Ok(backend)
+    }
+
+    /// Consume the backend and return the underlying [`File`].
+    #[must_use]
+    pub fn into_file(self) -> File {
+        self.file
+    }
+
+    fn path_str(&self) -> String {
+        self.path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unknown>".to_string())
+    }
+
+    fn io_err(&self, op: &str, err: std::io::Error) -> DiskError {
+        DiskError::Io(format!("{op} failed (path={}): {err}", self.path_str()))
+    }
+
+    fn io_err_at(&self, op: &str, offset: u64, len: usize, err: std::io::Error) -> DiskError {
+        DiskError::Io(format!(
+            "{op} failed (path={} offset={} len={}): {err}",
+            self.path_str(),
+            offset,
+            len
+        ))
+    }
+
+    #[cfg(any(unix, windows))]
+    fn pread(&self, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+        self.file.read_at(buf, offset)
+    }
+
+    #[cfg(any(unix, windows))]
+    fn pwrite(&self, buf: &[u8], offset: u64) -> std::io::Result<usize> {
+        self.file.write_at(buf, offset)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn pread(&mut self, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+        use std::io::{Read, Seek, SeekFrom};
+        self.file.seek(SeekFrom::Start(offset))?;
+        self.file.read(buf)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn pwrite(&mut self, buf: &[u8], offset: u64) -> std::io::Result<usize> {
+        use std::io::{Seek, SeekFrom, Write};
+        self.file.seek(SeekFrom::Start(offset))?;
+        self.file.write(buf)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl StorageBackend for StdFileBackend {
+    fn len(&mut self) -> Result<u64> {
+        self.file
+            .metadata()
+            .map(|m| m.len())
+            .map_err(|e| self.io_err("metadata", e))
+    }
+
+    fn set_len(&mut self, len: u64) -> Result<()> {
+        self.file.set_len(len).map_err(|e| {
+            DiskError::Io(format!(
+                "set_len failed (path={} len={}): {e}",
+                self.path_str(),
+                len
+            ))
+        })?;
+        Ok(())
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let len_u64 = u64::try_from(buf.len()).map_err(|_| DiskError::OffsetOverflow)?;
+        let end = offset
+            .checked_add(len_u64)
+            .ok_or(DiskError::OffsetOverflow)?;
+
+        let capacity = self.len()?;
+        if end > capacity {
+            return Err(DiskError::OutOfBounds {
+                offset,
+                len: buf.len(),
+                capacity,
+            });
+        }
+
+        let mut read = 0usize;
+        while read < buf.len() {
+            let off = offset
+                .checked_add(u64::try_from(read).map_err(|_| DiskError::OffsetOverflow)?)
+                .ok_or(DiskError::OffsetOverflow)?;
+            let n = self
+                .pread(&mut buf[read..], off)
+                .map_err(|e| self.io_err_at("read_at", off, buf.len() - read, e))?;
+            if n == 0 {
+                // For regular files this typically indicates EOF (short read).
+                return Err(DiskError::OutOfBounds {
+                    offset,
+                    len: buf.len(),
+                    capacity: self.len().unwrap_or(capacity),
+                });
+            }
+            read = read.checked_add(n).ok_or(DiskError::OffsetOverflow)?;
+        }
+        Ok(())
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> Result<()> {
+        let len_u64 = u64::try_from(buf.len()).map_err(|_| DiskError::OffsetOverflow)?;
+        let end = offset
+            .checked_add(len_u64)
+            .ok_or(DiskError::OffsetOverflow)?;
+
+        let capacity = self.len()?;
+        if end > capacity {
+            self.set_len(end)?;
+        }
+
+        let mut written = 0usize;
+        while written < buf.len() {
+            let off = offset
+                .checked_add(u64::try_from(written).map_err(|_| DiskError::OffsetOverflow)?)
+                .ok_or(DiskError::OffsetOverflow)?;
+            let n = self
+                .pwrite(&buf[written..], off)
+                .map_err(|e| self.io_err_at("write_at", off, buf.len() - written, e))?;
+            if n == 0 {
+                return Err(DiskError::Io(format!(
+                    "write_at wrote 0 bytes (path={} offset={} remaining={})",
+                    self.path_str(),
+                    off,
+                    buf.len() - written
+                )));
+            }
+            written = written
+                .checked_add(n)
+                .ok_or(DiskError::OffsetOverflow)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.file.sync_all().map_err(|e| self.io_err("sync_all", e))
     }
 }
