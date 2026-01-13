@@ -150,8 +150,8 @@ impl AerogpuCmdRuntime {
         }
         .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
-        let supports_compute = adapter
-            .get_downlevel_capabilities()
+        let downlevel = adapter.get_downlevel_capabilities();
+        let supports_compute = downlevel
             .flags
             .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
 

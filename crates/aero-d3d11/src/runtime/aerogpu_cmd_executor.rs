@@ -813,6 +813,8 @@ struct AerogpuD3d11State {
     vs: Option<u32>,
     ps: Option<u32>,
     cs: Option<u32>,
+    // NOTE: The AeroGPU command stream does not currently expose binding slots for these stages,
+    // but future backends may emulate D3D11 GS/HS/DS using compute.
     gs: Option<u32>,
     hs: Option<u32>,
     ds: Option<u32>,
@@ -874,9 +876,11 @@ impl Default for AerogpuD3d11State {
 }
 
 pub struct AerogpuD3d11Executor {
+    caps: GpuCapabilities,
     device: wgpu::Device,
     queue: wgpu::Queue,
     backend: wgpu::Backend,
+    supports_indirect: bool,
 
     resources: AerogpuD3d11Resources,
     state: AerogpuD3d11State,
@@ -931,7 +935,9 @@ pub struct AerogpuD3d11Executor {
 impl AerogpuD3d11Executor {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, backend: wgpu::Backend) -> Self {
         let caps = GpuCapabilities::from_device(&device);
-        Self::new_with_caps(device, queue, backend, caps)
+        // The public constructor does not have access to the originating adapter, so we assume
+        // indirect execution is available and rely on `GpuCapabilities::from_device` for the rest.
+        Self::new_with_caps(device, queue, backend, caps, true)
     }
 
     /// Construct an executor with an explicit compute capability override.
@@ -948,7 +954,23 @@ impl AerogpuD3d11Executor {
     ) -> Self {
         let mut caps = GpuCapabilities::from_device(&device);
         caps.supports_compute = supports_compute;
-        Self::new_with_caps(device, queue, backend, caps)
+        Self::new_with_caps(device, queue, backend, caps, true)
+    }
+
+    /// Construct an executor with explicit downlevel capability overrides.
+    ///
+    /// This is used for downlevel/compatibility backends (notably wgpu's WebGL2 path) where
+    /// compute and/or indirect execution may be unavailable.
+    pub fn new_with_supports(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        backend: wgpu::Backend,
+        supports_compute: bool,
+        supports_indirect: bool,
+    ) -> Self {
+        let mut caps = GpuCapabilities::from_device(&device);
+        caps.supports_compute = supports_compute;
+        Self::new_with_caps(device, queue, backend, caps, supports_indirect)
     }
 
     pub fn new_with_caps(
@@ -956,6 +978,7 @@ impl AerogpuD3d11Executor {
         queue: wgpu::Queue,
         backend: wgpu::Backend,
         caps: GpuCapabilities,
+        supports_indirect: bool,
     ) -> Self {
         let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aerogpu_cmd dummy texture"),
@@ -1073,9 +1096,11 @@ impl AerogpuD3d11Executor {
         }
 
         Self {
+            caps,
             device,
             queue,
             backend,
+            supports_indirect,
             resources: AerogpuD3d11Resources::default(),
             state: AerogpuD3d11State::default(),
             shared_surfaces: SharedSurfaceTable::default(),
@@ -1153,10 +1178,13 @@ impl AerogpuD3d11Executor {
         }
         .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
-        let supports_compute = adapter
-            .get_downlevel_capabilities()
+        let downlevel = adapter.get_downlevel_capabilities();
+        let supports_compute = downlevel
             .flags
             .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+        let supports_indirect = downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
 
         let backend = adapter.get_info().backend;
         let requested_features = super::negotiated_features(&adapter);
@@ -1175,7 +1203,13 @@ impl AerogpuD3d11Executor {
         let mut caps = GpuCapabilities::from_device(&device);
         caps.supports_compute = supports_compute;
 
-        Ok(Self::new_with_caps(device, queue, backend, caps))
+        Ok(Self::new_with_caps(
+            device,
+            queue,
+            backend,
+            caps,
+            supports_indirect,
+        ))
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -1189,6 +1223,37 @@ impl AerogpuD3d11Executor {
     #[doc(hidden)]
     pub fn binding_state(&self) -> &BindingState {
         &self.bindings
+    }
+
+    fn gs_hs_ds_emulation_required(&self) -> bool {
+        if self.state.gs.is_some() || self.state.hs.is_some() || self.state.ds.is_some() {
+            return true;
+        }
+
+        matches!(
+            self.state.primitive_topology,
+            CmdPrimitiveTopology::LineListAdj
+                | CmdPrimitiveTopology::LineStripAdj
+                | CmdPrimitiveTopology::TriangleListAdj
+                | CmdPrimitiveTopology::TriangleStripAdj
+                | CmdPrimitiveTopology::PatchList { .. }
+        )
+    }
+
+    fn validate_gs_hs_ds_emulation_capabilities(&self) -> Result<()> {
+        if !self.gs_hs_ds_emulation_required() {
+            return Ok(());
+        }
+
+        if !self.caps.supports_compute {
+            bail!("GS/HS/DS emulation requires compute shaders; backend does not support compute");
+        }
+
+        if !self.supports_indirect {
+            bail!("GS/HS/DS emulation requires indirect draws; backend does not support indirect draws");
+        }
+
+        Ok(())
     }
 
     pub fn reset(&mut self) {
@@ -2880,8 +2945,10 @@ impl AerogpuD3d11Executor {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
 
+        self.validate_gs_hs_ds_emulation_capabilities()?;
+
         let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
- 
+
         // Some D3D11 primitive topologies (patchlists + adjacency) cannot be expressed in WebGPU
         // render pipelines. Accept them in `SET_PRIMITIVE_TOPOLOGY` so the command stream can carry
         // the original D3D11 value, but reject attempts to draw through the non-emulated path.
@@ -10825,6 +10892,7 @@ mod tests {
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
     use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdOpcode;
     use std::sync::Arc;
+    use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
     fn require_webgpu() -> bool {
         let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
@@ -11182,6 +11250,44 @@ fn main() {
                 })
                 .unwrap_err();
             assert_eq!(err, aero_gpu::GpuError::Unsupported("compute"));
+        });
+    }
+
+    #[test]
+    fn gs_hs_ds_emulation_requires_compute() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // Force the compute capability off, regardless of what the host adapter supports.
+            exec.caps.supports_compute = false;
+
+            // Make the state look like it needs GS emulation. The stream itself does not contain a
+            // GS bind command yet; this is a direct state injection for unit testing.
+            exec.state.render_targets.push(Some(1));
+            exec.state.gs = Some(123);
+
+            let mut writer = AerogpuCmdWriter::new();
+            writer.draw(3, 1, 0, 0);
+            let stream = writer.finish();
+
+            let mut guest_mem = VecGuestMemory::new(0);
+            let err = exec
+                .execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect_err(
+                    "draw should fail without compute support when GS/HS/DS emulation is required",
+                );
+            assert!(
+                err.to_string().contains(
+                    "GS/HS/DS emulation requires compute shaders; backend does not support compute"
+                ),
+                "unexpected error: {err:#}"
+            );
         });
     }
 
