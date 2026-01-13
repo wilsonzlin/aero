@@ -5,6 +5,14 @@ import dgram from "node:dgram";
 import { WebSocket } from "ws";
 import { startProxyServer } from "../server";
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram } from "../udpRelayProtocol";
+import {
+  TCP_MUX_SUBPROTOCOL,
+  TcpMuxFrameParser,
+  TcpMuxMsgType,
+  encodeTcpMuxFrame,
+  encodeTcpMuxOpenPayload,
+  type TcpMuxFrame
+} from "../tcpMuxProtocol";
 
 async function fetchText(url: string, timeoutMs = 2_000): Promise<{ status: number; contentType: string | null; body: string }> {
   const controller = new AbortController();
@@ -86,8 +94,8 @@ async function startUdpEchoServer(): Promise<{ port: number; close: () => Promis
   };
 }
 
-async function openWebSocket(url: string): Promise<WebSocket> {
-  const ws = new WebSocket(url);
+async function openWebSocket(url: string, protocol?: string | string[]): Promise<WebSocket> {
+  const ws = protocol ? new WebSocket(url, protocol) : new WebSocket(url);
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket open")), 2_000);
     timeout.unref();
@@ -117,6 +125,63 @@ async function waitForBinaryMessage(ws: WebSocket, timeoutMs = 2_000): Promise<B
       reject(err);
     });
   });
+}
+
+type FrameWaiter = {
+  waitFor: (predicate: (frame: TcpMuxFrame) => boolean, timeoutMs?: number) => Promise<TcpMuxFrame>;
+};
+
+function createTcpMuxFrameWaiter(ws: WebSocket): FrameWaiter {
+  const parser = new TcpMuxFrameParser();
+  const backlog: TcpMuxFrame[] = [];
+  const waiters: Array<{
+    predicate: (frame: TcpMuxFrame) => boolean;
+    resolve: (frame: TcpMuxFrame) => void;
+    reject: (err: Error) => void;
+    timer: NodeJS.Timeout;
+  }> = [];
+
+  ws.on("message", (data, isBinary) => {
+    assert.equal(isBinary, true);
+    const buf = Buffer.isBuffer(data)
+      ? data
+      : Array.isArray(data)
+        ? Buffer.concat(data)
+        : Buffer.from(data as ArrayBuffer);
+    const frames = parser.push(buf);
+    for (const frame of frames) {
+      const waiterIdx = waiters.findIndex((w) => w.predicate(frame));
+      if (waiterIdx !== -1) {
+        const [w] = waiters.splice(waiterIdx, 1);
+        clearTimeout(w!.timer);
+        w!.resolve(frame);
+        continue;
+      }
+      backlog.push(frame);
+    }
+  });
+
+  const waitFor = (predicate: (frame: TcpMuxFrame) => boolean, timeoutMs = 2_000): Promise<TcpMuxFrame> => {
+    const idx = backlog.findIndex(predicate);
+    if (idx !== -1) {
+      return Promise.resolve(backlog.splice(idx, 1)[0]!);
+    }
+
+    return new Promise<TcpMuxFrame>((resolve, reject) => {
+      let waiter: (typeof waiters)[number];
+      const timer = setTimeout(() => {
+        const i = waiters.indexOf(waiter);
+        if (i !== -1) waiters.splice(i, 1);
+        reject(new Error("timeout waiting for frame"));
+      }, timeoutMs);
+      timer.unref();
+
+      waiter = { predicate, resolve, reject, timer };
+      waiters.push(waiter);
+    });
+  };
+
+  return { waitFor };
 }
 
 async function waitForClose(ws: WebSocket, timeoutMs = 2_000): Promise<{ code: number; reason: string }> {
@@ -363,6 +428,106 @@ test("proxy /metrics counts denied connection attempts", async () => {
     }
     assert.ok(denied0 !== null && denied !== null && denied >= denied0 + 1n, "denied counter did not increment");
   } finally {
+    await proxy.close();
+    await echoServer.close();
+  }
+});
+
+test("proxy /metrics counts tcp-mux streams and bytes", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const addr = proxy.server.address();
+  assert.ok(addr && typeof addr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    const origin = `http://127.0.0.1:${addr.port}`;
+    const { body: metrics0Body } = await fetchText(`${origin}/metrics`);
+    const streams0 = parseMetric(metrics0Body, "net_proxy_tcp_connections_active", { proto: "tcp_mux" });
+    const bytesIn0 = parseMetric(metrics0Body, "net_proxy_bytes_in_total", { proto: "tcp_mux" });
+    const bytesOut0 = parseMetric(metrics0Body, "net_proxy_bytes_out_total", { proto: "tcp_mux" });
+    const connsWs0 = parseMetric(metrics0Body, "net_proxy_connections_active", { proto: "tcp_mux" });
+    assert.notEqual(streams0, null, "missing tcp-mux stream gauge");
+    assert.notEqual(bytesIn0, null, "missing tcp-mux bytes_in counter");
+    assert.notEqual(bytesOut0, null, "missing tcp-mux bytes_out counter");
+    assert.notEqual(connsWs0, null, "missing tcp-mux ws gauge");
+
+    ws = await openWebSocket(`ws://127.0.0.1:${addr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
+    const waiter = createTcpMuxFrameWaiter(ws);
+
+    const streamId = 1;
+    const payload = Buffer.from("hello tcp-mux");
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })));
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, streamId, payload));
+
+    // Wait for the echo before checking metrics so we know the stream is active.
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total < payload.length) {
+      const frame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.DATA && f.streamId === streamId);
+      chunks.push(frame.payload);
+      total += frame.payload.length;
+    }
+    assert.deepEqual(Buffer.concat(chunks), payload);
+
+    // Metrics should reflect an active stream and bytes in/out.
+    const deadline = Date.now() + 2_000;
+    let streams: bigint | null = null;
+    let bytesIn: bigint | null = null;
+    let bytesOut: bigint | null = null;
+    let connsWs: bigint | null = null;
+    while (Date.now() < deadline) {
+      const { body } = await fetchText(`${origin}/metrics`);
+      streams = parseMetric(body, "net_proxy_tcp_connections_active", { proto: "tcp_mux" });
+      bytesIn = parseMetric(body, "net_proxy_bytes_in_total", { proto: "tcp_mux" });
+      bytesOut = parseMetric(body, "net_proxy_bytes_out_total", { proto: "tcp_mux" });
+      connsWs = parseMetric(body, "net_proxy_connections_active", { proto: "tcp_mux" });
+      if (
+        streams !== null &&
+        bytesIn !== null &&
+        bytesOut !== null &&
+        connsWs !== null &&
+        streams0 !== null &&
+        bytesIn0 !== null &&
+        bytesOut0 !== null &&
+        connsWs0 !== null &&
+        streams >= streams0 + 1n &&
+        bytesIn >= bytesIn0 + BigInt(payload.length) &&
+        bytesOut >= bytesOut0 + BigInt(payload.length) &&
+        connsWs >= connsWs0 + 1n
+      ) {
+        break;
+      }
+      await sleep(25);
+    }
+
+    assert.ok(streams0 !== null && streams !== null && streams >= streams0 + 1n, "tcp-mux stream gauge did not increment");
+    assert.ok(bytesIn0 !== null && bytesIn !== null && bytesIn >= bytesIn0 + BigInt(payload.length));
+    assert.ok(bytesOut0 !== null && bytesOut !== null && bytesOut >= bytesOut0 + BigInt(payload.length));
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+    ws = null;
+
+    const closeDeadline = Date.now() + 2_000;
+    let streamsClosed: bigint | null = null;
+    let connsWsClosed: bigint | null = null;
+    while (Date.now() < closeDeadline) {
+      const { body } = await fetchText(`${origin}/metrics`);
+      streamsClosed = parseMetric(body, "net_proxy_tcp_connections_active", { proto: "tcp_mux" });
+      connsWsClosed = parseMetric(body, "net_proxy_connections_active", { proto: "tcp_mux" });
+      if (streamsClosed !== null && connsWsClosed !== null && streams0 !== null && connsWs0 !== null && streamsClosed === streams0 && connsWsClosed === connsWs0) {
+        break;
+      }
+      await sleep(25);
+    }
+    assert.equal(streamsClosed, streams0);
+    assert.equal(connsWsClosed, connsWs0);
+  } finally {
+    ws?.terminate();
     await proxy.close();
     await echoServer.close();
   }
