@@ -646,6 +646,35 @@ mod tests {
     }
 
     #[test]
+    fn resolve_supports_large_lengths_without_overflow() {
+        let len = u64::MAX;
+
+        // Clamp end to len-1 without overflow.
+        let specs = [ByteRangeSpec::FromTo {
+            start: 0,
+            end: u64::MAX,
+        }];
+        let resolved = resolve_ranges(&specs, len, false).unwrap();
+        assert_resolved_eq(&resolved, &[(0, u64::MAX - 1)], len);
+
+        // Suffix longer than (or equal to) the length yields the full range.
+        let specs = [ByteRangeSpec::Suffix { len: u64::MAX }];
+        let resolved = resolve_ranges(&specs, len, false).unwrap();
+        assert_resolved_eq(&resolved, &[(0, u64::MAX - 1)], len);
+
+        // Coalescing should merge a suffix range contained within a larger range.
+        let specs = [
+            ByteRangeSpec::FromTo {
+                start: 0,
+                end: u64::MAX,
+            },
+            ByteRangeSpec::Suffix { len: 1 },
+        ];
+        let resolved = resolve_ranges(&specs, len, true).unwrap();
+        assert_resolved_eq(&resolved, &[(0, u64::MAX - 1)], len);
+    }
+
+    #[test]
     fn resolve_drops_out_of_bounds_and_errors_when_none_remain() {
         let specs = parse_range_header("bytes=0-0,20-30").unwrap();
         let resolved = resolve_ranges(&specs, 10, false).unwrap();
