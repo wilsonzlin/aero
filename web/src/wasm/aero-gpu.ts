@@ -167,6 +167,15 @@ export function present_rgba8888(frame: Uint8Array, strideBytes: number): void {
   mod.present_rgba8888(frame, strideBytes);
 }
 
+/**
+ * Request a screenshot from the wasm presenter backend.
+ *
+ * Semantics: returns a tight-packed RGBA8 buffer for the **source framebuffer**
+ * (top-left origin, `width*height*4` bytes). This is *not* a capture of the
+ * presented/canvas output (no scaling/letterboxing/color-management is applied).
+ *
+ * Prefer `request_screenshot_info()` if you also need the dimensions.
+ */
 export async function request_screenshot(): Promise<Uint8Array> {
   const mod = requireLoaded();
   return (await mod.request_screenshot()) as Uint8Array;
@@ -257,10 +266,21 @@ export async function submit_aerogpu_d3d9(
 export type ScreenshotInfo = {
   width: number;
   height: number;
+  /**
+   * RGBA8 bytes for the **source framebuffer** (tight-packed, top-left origin).
+   *
+   * This is intended for deterministic hashing / test automation; it is not a
+   * "what the user sees" capture of the presented canvas.
+   */
   rgba8: ArrayBuffer;
   origin?: "top-left";
 };
 
+/**
+ * Request a screenshot along with its dimensions.
+ *
+ * See `ScreenshotInfo.rgba8` for the screenshot contract (source framebuffer readback).
+ */
 export async function request_screenshot_info(): Promise<ScreenshotInfo> {
   const mod = requireLoaded();
   return (await mod.request_screenshot_info()) as ScreenshotInfo;
