@@ -42,6 +42,12 @@ path = "../crates/aero-dxbc"
 [dependencies.aero-d3d9]
 path = "../crates/aero-d3d9"
 
+[dependencies.aero-audio]
+path = "../crates/aero-audio"
+
+[dependencies.aero-virtio]
+path = "../crates/aero-virtio"
+
 [dependencies.aero-protocol]
 path = "../emulator/protocol"
 
@@ -150,5 +156,23 @@ doc = false
 [[bin]]
 name = "fuzz_d3d9_sm3_decode"
 path = "fuzz_targets/fuzz_d3d9_sm3_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_hda_mmio"
+path = "fuzz_targets/fuzz_hda_mmio.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_hda_corb_verbs"
+path = "fuzz_targets/fuzz_hda_corb_verbs.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_virtio_snd_queues"
+path = "fuzz_targets/fuzz_virtio_snd_queues.rs"
 test = false
 doc = false

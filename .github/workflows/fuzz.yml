@@ -57,5 +57,14 @@ jobs:
       - name: fuzz_ide_busmaster (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_ide_busmaster -- -max_total_time=10
 
+      - name: fuzz_hda_mmio (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_hda_mmio -- -max_total_time=10
+
+      - name: fuzz_hda_corb_verbs (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_hda_corb_verbs -- -max_total_time=10
+
+      - name: fuzz_virtio_snd_queues (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_virtio_snd_queues -- -max_total_time=10
+
       - name: Ensure fuzz lockfile was not modified
         run: git diff --exit-code -- fuzz/Cargo.lock

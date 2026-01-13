@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "aero-audio"
+version = "0.1.0"
+dependencies = [
+ "aero-devices",
+ "aero-platform",
+ "memory",
+]
+
+[[package]]
 name = "aero-cpu-core"
 version = "0.1.0"
 dependencies = [
@@ -120,8 +129,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-ipc"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "aero-mmu"
 version = "0.1.0"
+
+[[package]]
+name = "aero-net-backend"
+version = "0.1.0"
+dependencies = [
+ "aero-ipc",
+]
 
 [[package]]
 name = "aero-pc-constants"
@@ -196,6 +220,21 @@ dependencies = [
  "aero-io-snapshot",
  "serde",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "aero-virtio"
+version = "0.1.0"
+dependencies = [
+ "aero-audio",
+ "aero-devices",
+ "aero-io-snapshot",
+ "aero-net-backend",
+ "aero-platform",
+ "aero-storage",
+ "memory",
+ "nt-packetlib",
+ "virtio-gpu-proto",
 ]
 
 [[package]]
@@ -1233,6 +1272,7 @@ version = "0.1.0"
 name = "memory-fuzz"
 version = "0.0.0"
 dependencies = [
+ "aero-audio",
  "aero-d3d9",
  "aero-devices",
  "aero-devices-storage",
@@ -1243,6 +1283,7 @@ dependencies = [
  "aero-protocol",
  "aero-snapshot",
  "aero-storage",
+ "aero-virtio",
  "arbitrary",
  "libfuzzer-sys",
  "memory",
@@ -1309,6 +1350,10 @@ checksum = "8c196769dd60fd4f363e11d948139556a344e79d451aeb2fa2fd040738ef7691"
 dependencies = [
  "jni-sys",
 ]
+
+[[package]]
+name = "nt-packetlib"
+version = "0.1.0"
 
 [[package]]
 name = "num-traits"
@@ -2044,6 +2089,10 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "virtio-gpu-proto"
+version = "0.1.0"
 
 [[package]]
 name = "want"
