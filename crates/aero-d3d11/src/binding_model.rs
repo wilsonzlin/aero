@@ -30,6 +30,8 @@ pub const BINDING_BASE_SAMPLER: u32 = 160;
 ///
 /// It is safe to place UAVs after samplers because D3D11 enforces a fixed sampler register count
 /// per stage (`s0..s15`), so any valid sampler binding is strictly below `BINDING_BASE_UAV`.
+///
+/// Note: UAVs are currently modeled as WGSL storage buffers/textures.
 pub const BINDING_BASE_UAV: u32 = BINDING_BASE_SAMPLER + MAX_SAMPLER_SLOTS;
 
 /// Maximum number of constant buffer slots that can be represented without colliding with the

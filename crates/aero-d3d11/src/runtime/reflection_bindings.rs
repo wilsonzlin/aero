@@ -530,6 +530,8 @@ pub(super) fn build_bind_group(
 mod tests {
     use super::*;
     use aero_gpu::bindings::samplers::SamplerCache;
+    use anyhow::{anyhow, Context};
+    use std::sync::Arc;
 
     fn require_webgpu() -> bool {
         let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
@@ -547,6 +549,96 @@ mod tests {
             panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
         }
         eprintln!("skipping {test_name}: {reason}");
+    }
+
+    async fn new_device_queue_for_tests() -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+
+            if needs_runtime_dir {
+                let dir = std::env::temp_dir()
+                    .join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                // Prefer "native" backends; this avoids noisy platform warnings from
+                // initializing GL/WAYLAND stacks in headless CI environments.
+                wgpu::Backends::PRIMARY
+            },
+            ..Default::default()
+        });
+
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            })
+            .await
+        {
+            Some(adapter) => Some(adapter),
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
+        }
+        .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
+
+        let requested_features = super::super::negotiated_features(&adapter);
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aero-d3d11 reflection_bindings test device"),
+                    required_features: requested_features,
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+            .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
+
+        Ok((adapter, device, queue))
+    }
+
+    async fn read_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer) -> anyhow::Result<Vec<u8>> {
+        let slice = buffer.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            sender.send(v).ok();
+        });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        device.poll(wgpu::Maintain::Wait);
+        #[cfg(target_arch = "wasm32")]
+        device.poll(wgpu::Maintain::Poll);
+
+        receiver
+            .receive()
+            .await
+            .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+            .context("wgpu: map_async failed")?;
+        let data = slice.get_mapped_range().to_vec();
+        buffer.unmap();
+        Ok(data)
     }
 
     #[test]
@@ -1713,6 +1805,197 @@ mod tests {
             assert_eq!(stats.misses, 1);
             assert_eq!(stats.hits, 1);
             assert!(Arc::ptr_eq(&bg1, &bg2));
+        });
+    }
+
+    #[test]
+    fn wgpu_exec_compute_stage_bindings_use_group_2() {
+        pollster::block_on(async {
+            let (adapter, device, queue) = match new_device_queue_for_tests().await {
+                Ok(v) => v,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+
+            // Some wgpu backends (notably downlevel GL/WebGL) may not support compute.
+            let downlevel = adapter.get_downlevel_capabilities();
+            if !downlevel
+                .flags
+                .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+            {
+                skip_or_panic(module_path!(), "adapter does not support compute shaders");
+                return;
+            }
+
+            // Minimal SM5 compute module:
+            // - numthreads(1,1,1)
+            // - store_raw u0[0] = 0x12345678
+            let module = crate::Sm4Module {
+                stage: crate::ShaderStage::Compute,
+                model: crate::ShaderModel { major: 5, minor: 0 },
+                decls: vec![crate::Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+                instructions: vec![
+                    crate::Sm4Inst::StoreRaw {
+                        uav: crate::UavRef { slot: 0 },
+                        addr: crate::SrcOperand {
+                            kind: crate::SrcKind::ImmediateF32([0, 0, 0, 0]),
+                            swizzle: crate::Swizzle::XYZW,
+                            modifier: crate::OperandModifier::None,
+                        },
+                        value: crate::SrcOperand {
+                            kind: crate::SrcKind::ImmediateF32([0x1234_5678, 0, 0, 0]),
+                            swizzle: crate::Swizzle::XYZW,
+                            modifier: crate::OperandModifier::None,
+                        },
+                        mask: crate::WriteMask::X,
+                    },
+                    crate::Sm4Inst::Ret,
+                ],
+            };
+
+            // Translate to WGSL.
+            let dxbc_bytes = {
+                let mut bytes = Vec::new();
+                bytes.extend_from_slice(b"DXBC");
+                bytes.extend_from_slice(&[0u8; 16]); // checksum
+                bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved
+                bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
+                bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
+                debug_assert_eq!(bytes.len(), 32);
+                bytes
+            };
+            let dxbc = crate::DxbcFile::parse(&dxbc_bytes).expect("minimal dxbc parse");
+            let signatures = crate::ShaderSignatures::default();
+            let translation =
+                crate::translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap();
+
+            // Validate WGSL via naga.
+            let module = naga::front::wgsl::parse_str(&translation.wgsl)
+                .expect("generated compute WGSL failed to parse");
+            let mut validator = naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            );
+            validator
+                .validate(&module)
+                .expect("generated compute WGSL failed to validate");
+
+            // Build pipeline layout with empty group(0) and group(1), plus group(2) from
+            // reflection.
+            let mut layout_cache = BindGroupLayoutCache::new();
+            let pipeline_bindings = build_pipeline_bindings_info(
+                &device,
+                &mut layout_cache,
+                [translation.reflection.bindings.as_slice()],
+            )
+            .expect("build_pipeline_bindings_info");
+            assert_eq!(
+                pipeline_bindings.group_layouts.len(),
+                3,
+                "expected empty bind groups 0 and 1 plus compute group 2"
+            );
+
+            let u0_binding = translation
+                .reflection
+                .bindings
+                .iter()
+                .find(|b| matches!(b.kind, crate::BindingKind::UavBuffer { slot: 0 }))
+                .expect("expected reflected u0 binding");
+            assert_eq!(u0_binding.group, 2);
+
+            let bgl_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
+                .group_layouts
+                .iter()
+                .map(|l| l.layout.as_ref())
+                .collect();
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("reflection_bindings compute test pipeline layout"),
+                bind_group_layouts: &bgl_refs,
+                push_constant_ranges: &[],
+            });
+
+            // Create storage buffer backing `u0`.
+            let u0_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings compute test u0 buffer"),
+                size: 4,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&u0_buffer, 0, &0u32.to_le_bytes());
+
+            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings compute test staging buffer"),
+                size: 4,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let bg0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("reflection_bindings compute test bg0"),
+                layout: pipeline_bindings.group_layouts[0].layout.as_ref(),
+                entries: &[],
+            });
+            let bg1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("reflection_bindings compute test bg1"),
+                layout: pipeline_bindings.group_layouts[1].layout.as_ref(),
+                entries: &[],
+            });
+            let bg2 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("reflection_bindings compute test bg2"),
+                layout: pipeline_bindings.group_layouts[2].layout.as_ref(),
+                entries: &[wgpu::BindGroupEntry {
+                    binding: u0_binding.binding,
+                    resource: u0_buffer.as_entire_binding(),
+                }],
+            });
+
+            // Compile compute pipeline.
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let cs = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("reflection_bindings compute test shader"),
+                source: wgpu::ShaderSource::Wgsl(translation.wgsl.into()),
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("reflection_bindings compute test pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &cs,
+                entry_point: "cs_main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            });
+            if let Some(err) = device.pop_error_scope().await {
+                skip_or_panic(
+                    module_path!(),
+                    &format!("compute pipeline creation failed ({err:?})"),
+                );
+                return;
+            }
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("reflection_bindings compute test encoder"),
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("reflection_bindings compute test pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &bg0, &[]);
+                pass.set_bind_group(1, &bg1, &[]);
+                pass.set_bind_group(2, &bg2, &[]);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+            encoder.copy_buffer_to_buffer(&u0_buffer, 0, &staging, 0, 4);
+            queue.submit([encoder.finish()]);
+
+            let bytes = read_buffer(&device, &staging)
+                .await
+                .expect("read back staging buffer");
+            let value = u32::from_le_bytes(bytes[..4].try_into().unwrap());
+            assert_eq!(value, 0x1234_5678);
         });
     }
 }
