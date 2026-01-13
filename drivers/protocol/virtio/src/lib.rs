@@ -164,6 +164,21 @@ pub const VIRTIO_SND_QUEUE_EVENT: u16 = 1;
 pub const VIRTIO_SND_QUEUE_TX: u16 = 2;
 pub const VIRTIO_SND_QUEUE_RX: u16 = 3;
 
+// virtio-snd eventq messages (virtio-snd specification).
+pub const VIRTIO_SND_EVT_JACK_CONNECTED: u32 = 0x1000;
+pub const VIRTIO_SND_EVT_JACK_DISCONNECTED: u32 = 0x1001;
+pub const VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED: u32 = 0x1100;
+pub const VIRTIO_SND_EVT_PCM_XRUN: u32 = 0x1101;
+pub const VIRTIO_SND_EVT_CTL_NOTIFY: u32 = 0x1200;
+
+/// virtio-snd eventq message (`struct virtio_snd_event`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VirtioSndEvent {
+    pub event_type: u32,
+    pub data: u32,
+}
+
 /// virtio-snd device configuration (`struct virtio_snd_config`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -396,5 +411,12 @@ mod tests {
         assert_eq!(size_of::<VirtioSndPcmStatus>(), 8);
         assert_eq!(offset_of!(VirtioSndPcmStatus, status), 0);
         assert_eq!(offset_of!(VirtioSndPcmStatus, latency_bytes), 4);
+    }
+
+    #[test]
+    fn virtio_snd_event_layout() {
+        assert_eq!(size_of::<VirtioSndEvent>(), 8);
+        assert_eq!(offset_of!(VirtioSndEvent, event_type), 0);
+        assert_eq!(offset_of!(VirtioSndEvent, data), 4);
     }
 }
