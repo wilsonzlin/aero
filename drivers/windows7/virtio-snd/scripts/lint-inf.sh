@@ -344,11 +344,11 @@ elif [ -f "$INF_ALIAS_DISABLED" ]; then
   INF_ALIAS="$INF_ALIAS_DISABLED"
 fi
 
-if [ -n "$INF_ALIAS" ]; then
-  alias_basename=$(basename "$INF_ALIAS")
-  note "checking inf/$alias_basename stays in sync..."
-  tmp1=$(mktemp "${TMPDIR:-/tmp}/aero_virtio_snd.inf.XXXXXX") || fail "mktemp failed"
-  tmp2=$(mktemp "${TMPDIR:-/tmp}/virtio-snd.inf.alias.XXXXXX") || fail "mktemp failed"
+  if [ -n "$INF_ALIAS" ]; then
+    alias_basename=$(basename "$INF_ALIAS")
+    note "checking inf/$alias_basename stays in sync..."
+    tmp1=$(mktemp "${TMPDIR:-/tmp}/aero_virtio_snd.inf.XXXXXX") || fail "mktemp failed"
+    tmp2=$(mktemp "${TMPDIR:-/tmp}/virtio-snd.inf.alias.XXXXXX") || fail "mktemp failed"
 
   strip_leading_comment_header "$INF_CONTRACT" > "$tmp1"
   strip_leading_comment_header "$INF_ALIAS" > "$tmp2"
@@ -356,7 +356,13 @@ if [ -n "$INF_ALIAS" ]; then
   if ! diff -u "$tmp1" "$tmp2" >/dev/null; then
     # Show a unified diff, but label it with the real file paths to make CI logs
     # actionable (instead of referencing mktemp paths).
-    diff -u -L "$INF_CONTRACT" -L "$INF_ALIAS" "$tmp1" "$tmp2" >&2 || true
+    if diff -u -L a -L b /dev/null /dev/null >/dev/null 2>&1; then
+      diff -u -L "$INF_CONTRACT" -L "$INF_ALIAS" "$tmp1" "$tmp2" >&2 || true
+    else
+      # Fallback for diff implementations without -L (label): rewrite headers.
+      diff -u "$tmp1" "$tmp2" \
+        | sed "1s|^--- .*|--- $INF_CONTRACT|;2s|^+++ .*|+++ $INF_ALIAS|" >&2 || true
+    fi
     fail "inf/$alias_basename is out of sync with inf/aero_virtio_snd.inf (ignoring leading comment headers)"
   fi
 fi
