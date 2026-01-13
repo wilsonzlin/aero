@@ -476,6 +476,7 @@ fn exec_op(
         | IrOp::Mul { dst, modifiers, .. }
         | IrOp::Mad { dst, modifiers, .. }
         | IrOp::Lrp { dst, modifiers, .. }
+        | IrOp::Dp2 { dst, modifiers, .. }
         | IrOp::Dp3 { dst, modifiers, .. }
         | IrOp::Dp4 { dst, modifiers, .. }
         | IrOp::Rcp { dst, modifiers, .. }
@@ -531,6 +532,11 @@ fn exec_op(
             let b = exec_src(src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             // D3D9 `lrp`: dst = t*a + (1-t)*b.
             t * a + (Vec4::splat(1.0) - t) * b
+        }
+        IrOp::Dp2 { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            Vec4::splat(a.x * b.x + a.y * b.y)
         }
         IrOp::Dp3 { src0, src1, .. } => {
             let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
