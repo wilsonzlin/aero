@@ -6,6 +6,7 @@ import {
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_HDR_SIZE,
   AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE,
+  AEROGPU_CMD_BIND_SHADERS_SIZE,
   AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
   AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE,
@@ -286,6 +287,36 @@ test("AerogpuCmdWriter emits sampler binding table packets", () => {
   cursor += 16;
 
   assert.equal(cursor, bytes.byteLength);
+});
+
+test("AerogpuShaderStage includes Geometry=3 and AerogpuCmdWriter accepts it", () => {
+  assert.equal(AerogpuShaderStage.Geometry, 3);
+
+  const w = new AerogpuCmdWriter();
+  w.createShaderDxbc(1, AerogpuShaderStage.Geometry, new Uint8Array([0xaa]));
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.CreateShaderDxbc);
+  // stage field @ +12
+  assert.equal(view.getUint32(pkt0 + 12, true), AerogpuShaderStage.Geometry);
+});
+
+test("AerogpuCmdWriter.bindShadersWithGs writes gs handle at the reserved offset", () => {
+  const w = new AerogpuCmdWriter();
+  w.bindShadersWithGs(/* vs */ 10, /* gs */ 11, /* ps */ 12, /* cs */ 13);
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.BindShaders);
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_BIND_SHADERS_SIZE);
+  // Layout: vs @ +8, ps @ +12, cs @ +16, (reserved0=gs) @ +20
+  assert.equal(view.getUint32(pkt0 + 8, true), 10);
+  assert.equal(view.getUint32(pkt0 + 12, true), 12);
+  assert.equal(view.getUint32(pkt0 + 16, true), 13);
+  assert.equal(view.getUint32(pkt0 + 20, true), 11);
 });
 
 test("alignUp handles values > 2^31 without signed 32-bit wrap", () => {
