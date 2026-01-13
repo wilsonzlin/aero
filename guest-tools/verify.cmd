@@ -10,6 +10,11 @@ REM
 REM Notes:
 REM - Run as Administrator for full results (bcdedit, driver/service queries, output dir).
 REM - Uses only built-in Windows 7 tools (cmd + PowerShell + WMI + pnputil + bcdedit).
+REM
+REM Optional PowerShell parameters (forwarded to verify.ps1):
+REM   verify.cmd -PingTarget 192.168.0.1
+REM   verify.cmd -PlayTestSound
+REM   verify.cmd -RunDbgctl
 
 set "SCRIPT_DIR=%~dp0"
 set "PS_SCRIPT=%SCRIPT_DIR%verify.ps1"
@@ -44,7 +49,7 @@ if "%EXITCODE%"=="0" (
 echo Reports:
 echo   C:\AeroGuestTools\report.json
 echo   C:\AeroGuestTools\report.txt
-echo   C:\AeroGuestTools\dbgctl_*.txt  (if aerogpu_dbgctl.exe is present)
+echo   C:\AeroGuestTools\dbgctl_*.txt  (if -RunDbgctl is used and aerogpu_dbgctl.exe is present)
 echo   Note: Optional tools inventory (tools\*.exe) is included in report.txt under "Optional Tools (tools\*)".
 exit /b %EXITCODE%
 

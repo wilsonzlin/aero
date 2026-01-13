@@ -268,9 +268,19 @@ Optional parameters (PowerShell-style; forwarded by `verify.cmd`):
 ```bat
 verify.cmd -PingTarget 192.168.0.1
 verify.cmd -PlayTestSound
+verify.cmd -RunDbgctl
 ```
 
 If `-PingTarget` is not provided, the script will attempt to ping the default gateway (if present).
+
+`-RunDbgctl` is **off by default**. When enabled and an **AeroGPU** device is detected, `verify.ps1` will attempt to run:
+
+- `drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --status --timeout-ms 2000`
+
+The captured stdout/stderr/exit code is embedded into:
+
+- `C:\AeroGuestTools\report.txt`
+- `C:\AeroGuestTools\report.json` (`aerogpu.dbgctl`)
 
 ### Checks performed
 

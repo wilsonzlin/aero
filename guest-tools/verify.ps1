@@ -4,7 +4,11 @@ param(
     [string]$PingTarget = "",
 
     # Optional: attempt to play a system .wav using System.Media.SoundPlayer.
-    [switch]$PlayTestSound
+    [switch]$PlayTestSound,
+
+    # Optional: run aerogpu_dbgctl.exe (if present on the Guest Tools media) and embed its output in the report.
+    # This is intended for richer AeroGPU diagnostics in bug reports.
+    [switch]$RunDbgctl
 )
 
 # PowerShell 2.0 compatible (Windows 7 inbox).
@@ -83,6 +87,10 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
         $fallback += (Join-Path $scriptDir "tools\x86\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "tools\i386\aerogpu_dbgctl.exe")
 
+        # Packaged path (AeroGPU driver payload).
+        $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
+
         $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe")
         $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe")
@@ -92,6 +100,10 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
         $preferred += (Join-Path $scriptDir "tools\i386\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "tools\amd64\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "tools\x64\aerogpu_dbgctl.exe")
+
+        # Packaged path (AeroGPU driver payload).
+        $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
 
         $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe")
         $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\aerogpu_dbgctl.exe")
@@ -126,6 +138,76 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
     }
 
     return @{ found = $false; path = $null; searched = $searched }
+}
+
+function Join-CommandLineArgs([string[]]$args) {
+    # Minimal Windows command-line argument quoting (sufficient for our usage).
+    $parts = @()
+    if ($args) {
+        foreach ($a in $args) {
+            if ($a -eq $null) { continue }
+            $s = "" + $a
+            if ($s -match '[\s"]') {
+                $s = '"' + ($s -replace '"', '\"') + '"'
+            }
+            $parts += $s
+        }
+    }
+    return ($parts -join " ")
+}
+
+function Invoke-CaptureWithTimeout([string]$file, [string[]]$args, [int]$timeoutMs) {
+    # PowerShell 2.0-compatible stdout/stderr capture with a hard timeout.
+    $stdout = ""
+    $stderr = ""
+    $exit = $null
+    $timedOut = $false
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $file
+        $psi.Arguments = Join-CommandLineArgs $args
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+
+        $p = New-Object System.Diagnostics.Process
+        $p.StartInfo = $psi
+        [void]$p.Start()
+
+        $exited = $true
+        if ($timeoutMs -and $timeoutMs -gt 0) {
+            $exited = $p.WaitForExit($timeoutMs)
+            if (-not $exited) {
+                $timedOut = $true
+                try { $p.Kill() } catch { }
+                try { $exited = $p.WaitForExit(1000) } catch { $exited = $false }
+            }
+        } else {
+            [void]$p.WaitForExit()
+        }
+
+        if (-not $exited) {
+            # Avoid blocking on ReadToEnd if the process failed to terminate.
+            $stderr = "Timed out (process did not exit after kill)."
+        } else {
+            try { $stdout = $p.StandardOutput.ReadToEnd() } catch { $stdout = "" }
+            try { $stderr = $p.StandardError.ReadToEnd() } catch { $stderr = "" }
+            if (-not $timedOut) {
+                try { $exit = $p.ExitCode } catch { $exit = $null }
+            }
+        }
+    } catch {
+        $stderr = $_.Exception.Message
+        $exit = 1
+    }
+
+    return @{
+        exit_code = $exit
+        stdout = $stdout
+        stderr = $stderr
+        timed_out = $timedOut
+    }
 }
 
 function Parse-CmdQuotedList([string]$value) {
@@ -931,6 +1013,9 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         "device_binding_storage",
         "device_binding_network",
         "device_binding_graphics",
+        "aerogpu_umd_files",
+        "aerogpu_d3d10_umd_files",
+        "aerogpu_dbgctl",
         "device_binding_audio",
         "device_binding_input",
         "virtio_blk_service",
@@ -938,7 +1023,6 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         "smoke_disk",
         "smoke_network",
         "smoke_graphics",
-        "aerogpu_dbgctl",
         "smoke_audio",
         "smoke_input"
     )
@@ -3688,97 +3772,144 @@ try {
 
 # --- AeroGPU dbgctl (optional in-guest diagnostics) ---
 try {
-    # Only attempt dbgctl when AeroGPU appears present + healthy, to avoid generating noisy
-    # warnings on guests that are intentionally using baseline VGA graphics.
-    $gpuHealthy = $false
+    $dbgStatus = "PASS"
+    $summary = ""
+    $details = @()
+
+    # Template: drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
+    $dbgctlRelTemplate = 'drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe'
+
+    $data = @{
+        enabled = $RunDbgctl
+        aerogpu_detected = $false
+        expected_path_template = $dbgctlRelTemplate
+        expected_path = $null
+        found = $false
+        path = $null
+        searched = @()
+        args = @("--status","--timeout-ms","2000")
+        tool_timeout_ms = 2000
+        host_timeout_ms = 5000
+        exit_code = $null
+        stdout = $null
+        stderr = $null
+        timed_out = $false
+        output_path = $null
+    }
+
+    # Detect AeroGPU presence via the device binding check (A3A0:0001).
+    $aeroOnlyRx = '(?i)^PCI\\(?:VEN|VID)_A3A0&(?:DEV|DID)_0001'
+    $matched = $null
     try {
         if ($report -and $report.checks -and $report.checks.ContainsKey("device_binding_graphics")) {
             $chk = $report.checks["device_binding_graphics"]
             if ($chk -and $chk.data -and $chk.data.matched_devices) {
-                foreach ($d in $chk.data.matched_devices) {
-                    if ($d -and ($d.config_manager_error_code -eq 0)) { $gpuHealthy = $true; break }
+                $matched = $chk.data.matched_devices
+            }
+        }
+    } catch { $matched = $null }
+
+    if ($matched) {
+        foreach ($d in $matched) {
+            $pnpid = "" + $d.pnp_device_id
+            if ($pnpid -and ($pnpid -match $aeroOnlyRx)) { $data.aerogpu_detected = $true; break }
+        }
+    }
+
+    if (-not $RunDbgctl) {
+        $summary = "Skipped: -RunDbgctl not set."
+    } elseif (-not $data.aerogpu_detected) {
+        $summary = "Skipped: no AeroGPU device detected."
+    } else {
+        $is64 = $false
+        if ($report.checks.ContainsKey("os") -and $report.checks.os.data -and $report.checks.os.data.architecture) {
+            $is64 = ("" + $report.checks.os.data.architecture) -match '64'
+        } else {
+            $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
+        }
+
+        $arch = (if ($is64) { "amd64" } else { "x86" })
+        $rel = $dbgctlRelTemplate.Replace("<arch>", $arch)
+        $expectedPath = Join-Path $scriptDir $rel
+        $data.expected_path = $expectedPath
+
+        # Prefer the canonical packaged location, then fall back to a broader search.
+        if (Test-Path $expectedPath) {
+            $data.found = $true
+            $data.path = $expectedPath
+            $data.searched = @($expectedPath)
+        } else {
+            $dbgctlInfo = Find-AeroGpuDbgctl $scriptDir $is64
+            $data.found = $dbgctlInfo.found
+            $data.path = $dbgctlInfo.path
+            $data.searched = $dbgctlInfo.searched
+        }
+
+        if (-not $data.found -or -not $data.path) {
+            $dbgStatus = "WARN"
+            $summary = "aerogpu_dbgctl.exe not found on Guest Tools media; skipping dbgctl diagnostics."
+            $details += "Expected: " + $expectedPath
+        } else {
+            $cap = Invoke-CaptureWithTimeout $data.path $data.args $data.host_timeout_ms
+            $data.exit_code = $cap.exit_code
+            $data.stdout = $cap.stdout
+            $data.stderr = $cap.stderr
+            $data.timed_out = $cap.timed_out
+
+            if ($cap.timed_out -or ($cap.exit_code -ne 0)) {
+                $dbgStatus = "WARN"
+            }
+
+            $summary = "aerogpu_dbgctl --status exit_code=" + (if ($cap.exit_code -ne $null) { $cap.exit_code } else { "null" })
+            if ($cap.timed_out) { $summary += " (timed out)" }
+
+            $details += "Tool: " + $data.path
+            $details += "Args: " + ($data.args -join " ")
+            if ($cap.exit_code -ne $null) { $details += "Exit code: " + $cap.exit_code }
+            if ($cap.timed_out) { $details += ("Timed out: true (host timeout " + $data.host_timeout_ms + " ms)") }
+
+            # Save output as a convenience artifact for bug reports.
+            $statusFile = Join-Path $outDir "dbgctl_status.txt"
+            try {
+                $toWrite = $cap.stdout
+                if (-not $toWrite) { $toWrite = "" }
+                if ($cap.stderr) { $toWrite += "`r`n--- STDERR ---`r`n" + $cap.stderr }
+                Set-Content -Path $statusFile -Value $toWrite -Encoding UTF8
+                $data.output_path = $statusFile
+                $details += "Saved: " + $statusFile
+            } catch { }
+
+            if ($cap.stdout) {
+                $details += "Stdout:"
+                foreach ($line in ($cap.stdout -split "`r?`n")) {
+                    if ($line -eq $null) { continue }
+                    $t = ("" + $line).TrimEnd()
+                    if ($t.Length -eq 0) { continue }
+                    $details += ("  " + $t)
+                }
+            }
+            if ($cap.stderr) {
+                $details += "Stderr:"
+                foreach ($line in ($cap.stderr -split "`r?`n")) {
+                    if ($line -eq $null) { continue }
+                    $t = ("" + $line).TrimEnd()
+                    if ($t.Length -eq 0) { continue }
+                    $details += ("  " + $t)
                 }
             }
         }
-    } catch { $gpuHealthy = $false }
-
-    if (-not $gpuHealthy) {
-        $data = @{
-            skipped = $true
-            gpu_healthy = $false
-            reason = "Skipped: no healthy Aero/virtio GPU device detected (see device_binding_graphics)."
-        }
-        Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" "PASS" "Skipped: no healthy Aero/virtio GPU binding detected." $data @()
-    } else {
-    $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
-    $dbgctlInfo = Find-AeroGpuDbgctl $scriptDir $is64
-    $dbgctlPath = $dbgctlInfo.path
-
-    if (-not $dbgctlInfo.found -or -not $dbgctlPath) {
-        $data = @{
-            found = $false
-            gpu_healthy = $true
-            searched = $dbgctlInfo.searched
-        }
-        Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" "WARN" "aerogpu_dbgctl.exe not found on Guest Tools media; skipping AeroGPU dbgctl diagnostics." $data @()
-    } else {
-        $statusFile = Join-Path $outDir "dbgctl_status.txt"
-        $ringFile = Join-Path $outDir "dbgctl_dump_ring.txt"
-        $vblankFile = Join-Path $outDir "dbgctl_dump_vblank.txt"
-
-        $statusCap = Invoke-Capture $dbgctlPath @("--timeout-ms", "2000", "--status")
-        $ringCap = Invoke-Capture $dbgctlPath @("--timeout-ms", "2000", "--dump-ring", "--ring-id", "0")
-        $vblankCap = Invoke-Capture $dbgctlPath @("--timeout-ms", "2000", "--dump-vblank")
-
-        try { Set-Content -Path $statusFile -Value $statusCap.output -Encoding UTF8 } catch { }
-        try { Set-Content -Path $ringFile -Value $ringCap.output -Encoding UTF8 } catch { }
-        try { Set-Content -Path $vblankFile -Value $vblankCap.output -Encoding UTF8 } catch { }
-
-        $dbgStatus = "PASS"
-        if ($statusCap.exit_code -ne 0) { $dbgStatus = "WARN" }
-        if ($ringCap.exit_code -ne 0) { $dbgStatus = Merge-Status $dbgStatus "WARN" }
-        if ($vblankCap.exit_code -ne 0) { $dbgStatus = Merge-Status $dbgStatus "WARN" }
-
-        $summary = "aerogpu_dbgctl --status exit_code=" + $statusCap.exit_code
-        if ($statusCap.exit_code -ne 0) {
-            $summary += " (AeroGPU may not be installed/bound yet; see dbgctl_*.txt outputs)."
-        }
-
-        $details = @()
-        $details += "Tool: " + $dbgctlPath
-        $details += "Saved: " + $statusFile
-        $details += "Saved: " + $ringFile
-        $details += "Saved: " + $vblankFile
-        $excerpt = Get-TextExcerpt $statusCap.output 20 4000
-        if ($excerpt -and $excerpt.Length -gt 0) {
-            foreach ($line in $excerpt -split "`r?`n") {
-                $details += ("status: " + $line)
-            }
-        }
-
-        $data = @{
-            found = $true
-            gpu_healthy = $true
-            path = $dbgctlPath
-            searched = $dbgctlInfo.searched
-            status = @{
-                exit_code = $statusCap.exit_code
-                output_path = $statusFile
-                output = $statusCap.output
-            }
-            dump_ring = @{
-                exit_code = $ringCap.exit_code
-                output_path = $ringFile
-            }
-            dump_vblank = @{
-                exit_code = $vblankCap.exit_code
-                output_path = $vblankFile
-            }
-        }
-
-        Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" $dbgStatus $summary $data $details
     }
+
+    # Ensure a stable JSON surface for bug reports: aerogpu.dbgctl.
+    if (-not $report.aerogpu) { $report.aerogpu = @{} }
+    $report.aerogpu.dbgctl = @{
+        path = $data.path
+        exit_code = $data.exit_code
+        stdout = $data.stdout
+        stderr = $data.stderr
     }
+
+    Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" $dbgStatus $summary $data $details
 } catch {
     Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
