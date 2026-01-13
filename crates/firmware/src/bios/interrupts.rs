@@ -414,69 +414,114 @@ fn handle_int13(
     // and/or terminate BIOS disk emulation.
     if ah == 0x4B {
         let al = (cpu.gpr[gpr::RAX] & 0xFF) as u8;
-        let Some(info) = bios.el_torito_boot_info else {
-            set_error(bios, cpu, 0x01);
-            return;
-        };
 
-        // The El Torito interface is scoped to the boot drive.
-        if drive != info.boot_drive {
-            set_error(bios, cpu, 0x01);
-            return;
-        }
-
-        match al {
-            0x00 => {
-                // Terminate disk emulation.
-                //
-                // In "no emulation" mode there's nothing to terminate; report success as a no-op
-                // (common BIOS behaviour).
-                if info.media_type != ElToritoBootMediaType::NoEmulation {
-                    set_error(bios, cpu, 0x01);
-                    return;
-                }
-
-                bios.last_int13_status = 0;
-                cpu.rflags &= !FLAG_CF;
-                cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
-            }
-            0x01 => {
-                // Get disk emulation status.
-                //
-                // ES:DI points to a caller-supplied buffer. The first byte may contain the buffer
-                // size; if it is non-zero, enforce a minimum size.
-                const PACKET_SIZE: u8 = 0x13;
-                let di = cpu.gpr[gpr::RDI] & 0xFFFF;
-                let packet_addr = cpu.apply_a20(cpu.segments.es.base.wrapping_add(di));
-                let caller_len = bus.read_u8(packet_addr);
-                if caller_len != 0 && caller_len < PACKET_SIZE {
-                    set_error(bios, cpu, 0x01);
-                    return;
-                }
-
-                bus.write_u8(packet_addr, PACKET_SIZE);
-                bus.write_u8(packet_addr + 1, info.media_type as u8);
-                bus.write_u8(packet_addr + 2, info.boot_drive);
-                bus.write_u8(packet_addr + 3, info.controller_index);
-                // LBA of the boot image (RBA in El Torito terminology).
-                bus.write_u32(packet_addr + 4, info.boot_image_lba.unwrap_or(0));
-                // LBA of the boot catalog.
-                bus.write_u32(packet_addr + 8, info.boot_catalog_lba.unwrap_or(0));
-                bus.write_u16(packet_addr + 12, info.load_segment.unwrap_or(0));
-                bus.write_u16(packet_addr + 14, info.sector_count.unwrap_or(0));
-                // Reserved bytes.
-                bus.write_u8(packet_addr + 16, 0);
-                bus.write_u8(packet_addr + 17, 0);
-                bus.write_u8(packet_addr + 18, 0);
-
-                bios.last_int13_status = 0;
-                cpu.rflags &= !FLAG_CF;
-                cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
-            }
-            _ => {
+        if let Some(info) = bios.el_torito_boot_info {
+            // The El Torito interface is scoped to the boot drive.
+            if drive != info.boot_drive {
                 set_error(bios, cpu, 0x01);
+                return;
+            }
+
+            match al {
+                0x00 => {
+                    // Terminate disk emulation.
+                    //
+                    // In "no emulation" mode there's nothing to terminate; report success as a
+                    // no-op (common BIOS behaviour).
+                    if info.media_type != ElToritoBootMediaType::NoEmulation {
+                        set_error(bios, cpu, 0x01);
+                        return;
+                    }
+
+                    bios.last_int13_status = 0;
+                    cpu.rflags &= !FLAG_CF;
+                    cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+                }
+                0x01 => {
+                    // Get disk emulation status.
+                    //
+                    // ES:DI points to a caller-supplied buffer. The first byte may contain the
+                    // buffer size; if it is non-zero, enforce a minimum size.
+                    const PACKET_SIZE: u8 = 0x13;
+                    let di = cpu.gpr[gpr::RDI] & 0xFFFF;
+                    let packet_addr = cpu.apply_a20(cpu.segments.es.base.wrapping_add(di));
+                    let caller_len = bus.read_u8(packet_addr);
+                    if caller_len != 0 && caller_len < PACKET_SIZE {
+                        set_error(bios, cpu, 0x01);
+                        return;
+                    }
+
+                    bus.write_u8(packet_addr, PACKET_SIZE);
+                    bus.write_u8(packet_addr + 1, info.media_type as u8);
+                    bus.write_u8(packet_addr + 2, info.boot_drive);
+                    bus.write_u8(packet_addr + 3, info.controller_index);
+                    // LBA of the boot image (RBA in El Torito terminology).
+                    bus.write_u32(packet_addr + 4, info.boot_image_lba.unwrap_or(0));
+                    // LBA of the boot catalog.
+                    bus.write_u32(packet_addr + 8, info.boot_catalog_lba.unwrap_or(0));
+                    bus.write_u16(packet_addr + 12, info.load_segment.unwrap_or(0));
+                    bus.write_u16(packet_addr + 14, info.sector_count.unwrap_or(0));
+                    // Reserved bytes.
+                    bus.write_u8(packet_addr + 16, 0);
+                    bus.write_u8(packet_addr + 17, 0);
+                    bus.write_u8(packet_addr + 18, 0);
+
+                    bios.last_int13_status = 0;
+                    cpu.rflags &= !FLAG_CF;
+                    cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+                }
+                _ => {
+                    set_error(bios, cpu, 0x01);
+                }
+            }
+        } else {
+            // Best-effort compatibility: If POST didn't capture El Torito metadata, still report
+            // success for callers probing a CD-ROM drive number by returning consistent zeros for
+            // unknown fields rather than failing the entire call.
+            if classify_drive(drive) != Some(DriveKind::Cd) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+
+            match al {
+                0x00 => {
+                    bios.last_int13_status = 0;
+                    cpu.rflags &= !FLAG_CF;
+                    cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+                }
+                0x01 => {
+                    const PACKET_SIZE: u8 = 0x13;
+                    let di = cpu.gpr[gpr::RDI] & 0xFFFF;
+                    let packet_addr = cpu.apply_a20(cpu.segments.es.base.wrapping_add(di));
+                    let caller_len = bus.read_u8(packet_addr);
+                    if caller_len != 0 && caller_len < PACKET_SIZE {
+                        set_error(bios, cpu, 0x01);
+                        return;
+                    }
+
+                    bus.write_u8(packet_addr, PACKET_SIZE);
+                    bus.write_u8(packet_addr + 1, ElToritoBootMediaType::NoEmulation as u8);
+                    bus.write_u8(packet_addr + 2, drive);
+                    bus.write_u8(packet_addr + 3, 0); // controller index
+                    bus.write_u32(packet_addr + 4, 0); // boot image LBA
+                    bus.write_u32(packet_addr + 8, 0); // boot catalog LBA
+                    bus.write_u16(packet_addr + 12, 0); // load segment
+                    bus.write_u16(packet_addr + 14, 0); // sector count
+                    // Reserved bytes.
+                    bus.write_u8(packet_addr + 16, 0);
+                    bus.write_u8(packet_addr + 17, 0);
+                    bus.write_u8(packet_addr + 18, 0);
+
+                    bios.last_int13_status = 0;
+                    cpu.rflags &= !FLAG_CF;
+                    cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+                }
+                _ => {
+                    set_error(bios, cpu, 0x01);
+                }
             }
         }
+
         return;
     }
 
@@ -2546,24 +2591,57 @@ mod tests {
     }
 
     #[test]
-    fn int13_eltorito_services_report_unsupported_without_boot_metadata() {
+    fn int13_eltorito_services_return_zeroed_fields_without_boot_metadata() {
         let mut bios = Bios::new(BiosConfig::default());
         let mut disk = InMemoryDisk::new(vec![0u8; 512]);
 
         let mut cpu = CpuState::new(CpuMode::Real);
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        cpu.a20_enabled = mem.a20_enabled();
+
+        // Terminate disk emulation should succeed as a no-op for CD boot drive numbers even when
+        // POST hasn't provided El Torito metadata.
+        cpu.gpr[gpr::RAX] = 0x4B00;
+        cpu.gpr[gpr::RDX] = 0xE0;
+        cpu.rflags |= FLAG_CF;
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+
+        // Get disk emulation status should fill the ES:DI buffer with best-effort fields.
         cpu.gpr[gpr::RAX] = 0x4B01; // AH=4Bh AL=01h get status
         cpu.gpr[gpr::RDX] = 0xE0; // DL=CD-ROM boot drive (typical)
         set_real_mode_seg(&mut cpu.segments.es, 0);
         cpu.gpr[gpr::RDI] = 0x0500;
-
-        let mut mem = TestMemory::new(2 * 1024 * 1024);
-        cpu.a20_enabled = mem.a20_enabled();
         mem.write_u8(0x0500, 0x13);
 
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
-        assert_ne!(cpu.rflags & FLAG_CF, 0);
-        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+
+        assert_eq!(mem.read_u8(0x0500), 0x13);
+        assert_eq!(mem.read_u8(0x0501), 0x00); // no emulation
+        assert_eq!(mem.read_u8(0x0502), 0xE0); // boot drive
+        assert_eq!(mem.read_u8(0x0503), 0x00); // controller index
+        assert_eq!(mem.read_u32(0x0504), 0);
+        assert_eq!(mem.read_u32(0x0508), 0);
+        assert_eq!(mem.read_u16(0x050C), 0);
+        assert_eq!(mem.read_u16(0x050E), 0);
+        assert_eq!(mem.read_u8(0x0510), 0);
+        assert_eq!(mem.read_u8(0x0511), 0);
+        assert_eq!(mem.read_u8(0x0512), 0);
+
+        // Verify the returned results remain stable across repeated probes.
+        cpu.gpr[gpr::RAX] = 0x4B01;
+        cpu.gpr[gpr::RBX] = 0xDEAD;
+        cpu.gpr[gpr::RCX] = 0xBEEF;
+        cpu.rflags |= FLAG_CF;
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+        assert_eq!(mem.read_u32(0x0504), 0);
     }
 
     #[test]
