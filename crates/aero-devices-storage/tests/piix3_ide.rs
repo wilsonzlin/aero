@@ -416,7 +416,7 @@ fn drive_address_master_present_is_stable_and_nonzero() {
 }
 
 #[test]
-fn drive_address_slave_absent_floats_bus_high() {
+fn drive_address_slave_absent_reports_presence_bits() {
     let capacity = 4 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
 
@@ -431,7 +431,13 @@ fn drive_address_slave_absent_floats_bus_high() {
 
     // Select slave (no device attached).
     io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xF0);
-    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8, 0xFF);
+    let v = io.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8;
+
+    // Even with the slave selected, the Drive Address register should reflect channel-level
+    // presence information for diagnostics.
+    assert_ne!(v, 0xFF, "DADR should not float high when any device is present");
+    assert_eq!(v & (1 << 6), 1 << 6, "master present bit should remain set");
+    assert_eq!(v & (1 << 7), 0, "slave present bit should remain clear");
 }
 
 #[test]

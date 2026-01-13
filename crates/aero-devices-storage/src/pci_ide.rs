@@ -337,26 +337,38 @@ impl Channel {
         }
     }
 
-    fn selected_drive(&self) -> DriveSelect {
-        DriveSelect::from_device_reg(self.tf.device)
+    fn drive_address(&self) -> u8 {
+        // The ATA Drive Address register is primarily used by guests for diagnostics and for
+        // verifying drive selection. Real controllers typically return a mixture of "which drive is
+        // selected" and "which drives are present".
+        //
+        // We keep this intentionally simple/deterministic:
+        // - bits 0..=3: current head number (from the Device/Head taskfile register)
+        // - bit 4: currently-selected drive (0=master, 1=slave)
+        // - bit 5: always 1
+        // - bit 6: master present
+        // - bit 7: slave present
+        //
+        // If the channel has no devices at all, we float the bus high (0xFF) to match common PATA
+        // probing logic.
+        if !self.drive_present[0] && !self.drive_present[1] {
+            return 0xFF;
+        }
+
+        let head = self.tf.device & 0x0F;
+        let selected = self.tf.device & 0x10;
+        let mut v = head | selected | 0x20;
+        if self.drive_present[0] {
+            v |= 1 << 6;
+        }
+        if self.drive_present[1] {
+            v |= 1 << 7;
+        }
+        v
     }
 
-    fn drive_address(&self) -> u8 {
-        // ATA Drive Address (DADR) register at Control Block base + 1.
-        //
-        // This is primarily used for legacy compatibility (it reports the active-low drive/head
-        // select lines). Reads must not have side effects (e.g. clearing IRQs).
-        //
-        // DADR bits (ATA/ATAPI):
-        //   bits 7..6: 1
-        //   bit 5: nDS1 (active low drive-select 1)
-        //   bit 4: nDS0 (active low drive-select 0)
-        //   bits 3..0: nHS3..nHS0 (active low head-select)
-        let head = self.tf.device & 0x0F;
-        let dev = self.selected_drive() as u8; // 0=master, 1=slave
-        let n_ds0 = dev;
-        let n_ds1 = dev ^ 1;
-        0xC0 | (n_ds1 << 5) | (n_ds0 << 4) | ((!head) & 0x0F)
+    fn selected_drive(&self) -> DriveSelect {
+        DriveSelect::from_device_reg(self.tf.device)
     }
 
     fn set_irq(&mut self) {
@@ -869,8 +881,23 @@ impl IdeController {
     }
 
     fn read_ctrl_reg(chan: &mut Channel, reg: u16, size: u8) -> u32 {
-        let dev_idx = chan.selected_drive() as usize;
-        if !chan.drive_present[dev_idx] {
+        // Most control-block reads float high (all ones) if the selected device slot is empty.
+        //
+        // The Drive Address register is special: guests use it for diagnostics and to verify drive
+        // selection, so we allow it to reflect channel-level state even when the currently-selected
+        // device is absent.
+        if reg != ATA_CTRL_DRIVE_ADDRESS {
+            let dev_idx = chan.selected_drive() as usize;
+            if !chan.drive_present[dev_idx] {
+                return match size {
+                    1 => 0xFF,
+                    2 => 0xFFFF,
+                    4 => 0xFFFF_FFFF,
+                    _ => 0xFFFF_FFFF,
+                };
+            }
+        } else if !chan.drive_present[0] && !chan.drive_present[1] {
+            // No devices on this channel at all.
             return match size {
                 1 => 0xFF,
                 2 => 0xFFFF,
@@ -878,6 +905,7 @@ impl IdeController {
                 _ => 0xFFFF_FFFF,
             };
         }
+
         match reg {
             ATA_CTRL_ALT_STATUS_DEVICE_CTRL => chan.status as u32,
             ATA_CTRL_DRIVE_ADDRESS => chan.drive_address() as u32,
@@ -1741,5 +1769,55 @@ mod tests {
         assert_eq!(chan.status & IDE_STATUS_BSY, 0);
         assert_eq!(chan.status & IDE_STATUS_DRQ, 0);
         assert!(chan.irq_pending);
+    }
+
+    #[test]
+    fn drive_address_reports_master_present_slave_absent() {
+        let mut ctl = IdeController::new(0xFFF0);
+        ctl.primary.drive_present[0] = true;
+        ctl.primary.drive_present[1] = false;
+
+        let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
+        let val = ctl.io_read(drive_addr_port, 1) as u8;
+
+        assert_ne!(val, 0, "drive address must not be hardcoded to 0");
+        assert_eq!(val & 0x20, 0x20, "bit 5 should be set");
+        assert_eq!(val & (1 << 6), 1 << 6, "master present bit should be set");
+        assert_eq!(val & (1 << 7), 0, "slave present bit should be clear");
+        assert_eq!(val & 0x10, 0, "master should be selected by default");
+    }
+
+    #[test]
+    fn drive_address_slave_selected_without_device_still_reports_presence_bits() {
+        let mut ctl = IdeController::new(0xFFF0);
+        ctl.primary.drive_present[0] = true;
+        ctl.primary.drive_present[1] = false;
+
+        let device_port = ctl.primary.ports.cmd_base + ATA_REG_DEVICE;
+        // Select the slave drive (bit 4). Use a realistic value as written by many guests.
+        ctl.io_write(device_port, 1, 0xB0);
+
+        let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
+        let val = ctl.io_read(drive_addr_port, 1) as u8;
+        assert_eq!(val & 0x10, 0x10, "drive address should reflect slave selection");
+        assert_eq!(val & (1 << 6), 1 << 6, "master present bit should remain set");
+        assert_eq!(val & (1 << 7), 0, "slave present bit should remain clear");
+
+        // Other control reads should still float high when the selected device is absent.
+        let alt_status_port = ctl.primary.ports.ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL;
+        assert_eq!(ctl.io_read(alt_status_port, 1) as u8, 0xFF);
+    }
+
+    #[test]
+    fn drive_address_reports_both_master_and_slave_present() {
+        let mut ctl = IdeController::new(0xFFF0);
+        ctl.primary.drive_present[0] = true;
+        ctl.primary.drive_present[1] = true;
+
+        let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
+        let val = ctl.io_read(drive_addr_port, 1) as u8;
+
+        assert_eq!(val & (1 << 6), 1 << 6, "master present bit should be set");
+        assert_eq!(val & (1 << 7), 1 << 7, "slave present bit should be set");
     }
 }
