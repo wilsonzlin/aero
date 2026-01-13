@@ -506,6 +506,9 @@ dependencies = [
 [[package]]
 name = "aero-pc-constants"
 version = "0.1.0"
+dependencies = [
+ "aero-devices",
+]
 
 [[package]]
 name = "aero-pc-platform"
