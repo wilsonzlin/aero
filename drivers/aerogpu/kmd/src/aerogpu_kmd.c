@@ -3667,55 +3667,60 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
                  * set empty while still having a pinned mode selection. Accept
                  * the proposal iff we have a valid pinned mode.
                  */
-                if (!havePinnedSourceDims) {
+                if (status != STATUS_SUCCESS && status != STATUS_GRAPHICS_NO_MORE_ELEMENTS && status != STATUS_NO_MORE_ENTRIES) {
+                    supported = FALSE;
+                } else if (!havePinnedSourceDims) {
                     supported = FALSE;
                 }
             } else {
-                for (;;) {
-                    BOOLEAN ok = FALSE;
-                    if (mode->Type == D3DKMDT_RMT_GRAPHICS) {
-                        const ULONG w = mode->Format.Graphics.PrimSurfSize.cx;
-                        const ULONG h = mode->Format.Graphics.PrimSurfSize.cy;
-                        const D3DDDIFORMAT fmt = mode->Format.Graphics.PixelFormat;
-                        if (AeroGpuIsSupportedVidPnPixelFormat(fmt) && AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
-                            ok = TRUE;
-                            AeroGpuModeListAddUnique(sourceDims,
-                                                     &sourceDimCount,
-                                                     (UINT)(sizeof(sourceDims) / sizeof(sourceDims[0])),
-                                                     w,
-                                                     h);
-                        }
-                    }
-
-                    if (!ok) {
-                        supported = FALSE;
-                        sms.pfnReleaseModeInfo(hSourceModeSet, mode);
-                        mode = NULL;
-                        break;
-                    }
-
-                    const D3DKMDT_VIDPN_SOURCE_MODE* next = NULL;
-                    NTSTATUS stNext = sms.pfnAcquireNextModeInfo(hSourceModeSet, mode, &next);
+                if (status != STATUS_SUCCESS) {
+                    /* Defensive: unexpected failure with a non-null mode pointer. */
+                    supported = FALSE;
                     sms.pfnReleaseModeInfo(hSourceModeSet, mode);
-                    mode = next;
-
-                    if (mode == NULL) {
-                        /* End of enumeration. Some WDDM helpers return STATUS_GRAPHICS_NO_MORE_ELEMENTS here. */
-                        if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS && stNext != STATUS_NO_MORE_ENTRIES) {
-                            supported = FALSE;
-                        } else if (next != NULL) {
-                            /* Defensive: unexpected next pointer at end-of-list. */
-                            sms.pfnReleaseModeInfo(hSourceModeSet, next);
-                            supported = FALSE;
+                } else {
+                    for (;;) {
+                        BOOLEAN ok = FALSE;
+                        if (mode->Type == D3DKMDT_RMT_GRAPHICS) {
+                            const ULONG w = mode->Format.Graphics.PrimSurfSize.cx;
+                            const ULONG h = mode->Format.Graphics.PrimSurfSize.cy;
+                            const D3DDDIFORMAT fmt = mode->Format.Graphics.PixelFormat;
+                            if (AeroGpuIsSupportedVidPnPixelFormat(fmt) && AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
+                                ok = TRUE;
+                                AeroGpuModeListAddUnique(sourceDims,
+                                                         &sourceDimCount,
+                                                         (UINT)(sizeof(sourceDims) / sizeof(sourceDims[0])),
+                                                         w,
+                                                         h);
+                            }
                         }
-                        break;
-                    }
 
-                    if (stNext != STATUS_SUCCESS) {
-                        supported = FALSE;
+                        if (!ok) {
+                            supported = FALSE;
+                            sms.pfnReleaseModeInfo(hSourceModeSet, mode);
+                            mode = NULL;
+                            break;
+                        }
+
+                        const D3DKMDT_VIDPN_SOURCE_MODE* next = NULL;
+                        NTSTATUS stNext = sms.pfnAcquireNextModeInfo(hSourceModeSet, mode, &next);
                         sms.pfnReleaseModeInfo(hSourceModeSet, mode);
-                        mode = NULL;
-                        break;
+                        mode = next;
+
+                        if (mode == NULL) {
+                            /* End of enumeration. Some WDDM helpers return STATUS_GRAPHICS_NO_MORE_ELEMENTS here. */
+                            if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS &&
+                                stNext != STATUS_NO_MORE_ENTRIES) {
+                                supported = FALSE;
+                            }
+                            break;
+                        }
+
+                        if (stNext != STATUS_SUCCESS) {
+                            supported = FALSE;
+                            sms.pfnReleaseModeInfo(hSourceModeSet, mode);
+                            mode = NULL;
+                            break;
+                        }
                     }
                 }
             }
@@ -3775,54 +3780,59 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
             const D3DKMDT_VIDPN_TARGET_MODE* mode = NULL;
             status = tms.pfnAcquireFirstModeInfo(hTargetModeSet, &mode);
             if (mode == NULL) {
-                if (!havePinnedTargetDims) {
+                if (status != STATUS_SUCCESS && status != STATUS_GRAPHICS_NO_MORE_ELEMENTS && status != STATUS_NO_MORE_ENTRIES) {
+                    supported = FALSE;
+                } else if (!havePinnedTargetDims) {
                     supported = FALSE;
                 }
             } else {
-                for (;;) {
-                    BOOLEAN ok = FALSE;
-                    const ULONG w = mode->VideoSignalInfo.ActiveSize.cx;
-                    const ULONG h = mode->VideoSignalInfo.ActiveSize.cy;
-                    const D3DKMDT_VIDEO_SIGNAL_SCANLINE_ORDERING order = mode->VideoSignalInfo.ScanLineOrdering;
-                    if (AeroGpuIsSupportedVidPnModeDimensions(w, h) &&
-                        (order == D3DKMDT_VSSLO_PROGRESSIVE || order == D3DKMDT_VSSLO_UNINITIALIZED) &&
-                        AeroGpuIsSupportedVidPnVSyncFrequency(mode->VideoSignalInfo.VSyncFreq.Numerator,
-                                                             mode->VideoSignalInfo.VSyncFreq.Denominator)) {
-                        ok = TRUE;
-                        AeroGpuModeListAddUnique(targetDims,
-                                                 &targetDimCount,
-                                                 (UINT)(sizeof(targetDims) / sizeof(targetDims[0])),
-                                                 w,
-                                                 h);
-                    }
-
-                    if (!ok) {
-                        supported = FALSE;
-                        tms.pfnReleaseModeInfo(hTargetModeSet, mode);
-                        mode = NULL;
-                        break;
-                    }
-
-                    const D3DKMDT_VIDPN_TARGET_MODE* next = NULL;
-                    NTSTATUS stNext = tms.pfnAcquireNextModeInfo(hTargetModeSet, mode, &next);
+                if (status != STATUS_SUCCESS) {
+                    supported = FALSE;
                     tms.pfnReleaseModeInfo(hTargetModeSet, mode);
-                    mode = next;
-
-                    if (mode == NULL) {
-                        if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS && stNext != STATUS_NO_MORE_ENTRIES) {
-                            supported = FALSE;
-                        } else if (next != NULL) {
-                            tms.pfnReleaseModeInfo(hTargetModeSet, next);
-                            supported = FALSE;
+                } else {
+                    for (;;) {
+                        BOOLEAN ok = FALSE;
+                        const ULONG w = mode->VideoSignalInfo.ActiveSize.cx;
+                        const ULONG h = mode->VideoSignalInfo.ActiveSize.cy;
+                        const D3DKMDT_VIDEO_SIGNAL_SCANLINE_ORDERING order = mode->VideoSignalInfo.ScanLineOrdering;
+                        if (AeroGpuIsSupportedVidPnModeDimensions(w, h) &&
+                            (order == D3DKMDT_VSSLO_PROGRESSIVE || order == D3DKMDT_VSSLO_UNINITIALIZED) &&
+                            AeroGpuIsSupportedVidPnVSyncFrequency(mode->VideoSignalInfo.VSyncFreq.Numerator,
+                                                                 mode->VideoSignalInfo.VSyncFreq.Denominator)) {
+                            ok = TRUE;
+                            AeroGpuModeListAddUnique(targetDims,
+                                                     &targetDimCount,
+                                                     (UINT)(sizeof(targetDims) / sizeof(targetDims[0])),
+                                                     w,
+                                                     h);
                         }
-                        break;
-                    }
 
-                    if (stNext != STATUS_SUCCESS) {
-                        supported = FALSE;
+                        if (!ok) {
+                            supported = FALSE;
+                            tms.pfnReleaseModeInfo(hTargetModeSet, mode);
+                            mode = NULL;
+                            break;
+                        }
+
+                        const D3DKMDT_VIDPN_TARGET_MODE* next = NULL;
+                        NTSTATUS stNext = tms.pfnAcquireNextModeInfo(hTargetModeSet, mode, &next);
                         tms.pfnReleaseModeInfo(hTargetModeSet, mode);
-                        mode = NULL;
-                        break;
+                        mode = next;
+
+                        if (mode == NULL) {
+                            if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS &&
+                                stNext != STATUS_NO_MORE_ENTRIES) {
+                                supported = FALSE;
+                            }
+                            break;
+                        }
+
+                        if (stNext != STATUS_SUCCESS) {
+                            supported = FALSE;
+                            tms.pfnReleaseModeInfo(hTargetModeSet, mode);
+                            mode = NULL;
+                            break;
+                        }
                     }
                 }
             }
