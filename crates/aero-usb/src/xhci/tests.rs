@@ -1,5 +1,10 @@
 use super::command_ring::{CommandRing, CommandRingProcessor, EventRing};
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
+use super::{
+    regs, RingCursor, XhciController, PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR,
+    PORTSC_PRC,
+};
+use aero_io_snapshot::io::state::IoSnapshot;
 use crate::hub::UsbHubDevice;
 use crate::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
@@ -86,6 +91,21 @@ fn read_u32(mem: &mut TestMem, addr: u64) -> u32 {
     let mut buf = [0u8; 4];
     mem.read_physical(addr, &mut buf);
     u32::from_le_bytes(buf)
+}
+
+fn control_no_data(dev: &mut crate::device::AttachedUsbDevice, setup: crate::SetupPacket) {
+    assert_eq!(dev.handle_setup(setup), crate::UsbOutResult::Ack);
+    // Status stage is an IN ZLP. Poll in case the device model NAKs while pending.
+    loop {
+        match dev.handle_in(0, 0) {
+            crate::UsbInResult::Data(data) => {
+                assert!(data.is_empty());
+                break;
+            }
+            crate::UsbInResult::Nak => continue,
+            other => panic!("unexpected status stage response: {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -1168,4 +1188,191 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
     // Interrupt should be asserted for the second batch of events.
     assert!(ctrl.irq_level());
     assert_ne!(ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT, 0);
+}
+
+#[test]
+fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
+    use core::any::Any;
+
+    use crate::hid::UsbHidKeyboardHandle;
+    use crate::SetupPacket;
+
+    let kb0 = UsbHidKeyboardHandle::new();
+    let kb1 = UsbHidKeyboardHandle::new();
+    let mut mem = TestMem::new(0x20_000);
+
+    let mut ctrl = XhciController::with_port_count(2);
+    ctrl.usbcmd = regs::USBCMD_RUN;
+    ctrl.usbsts = 0x1122_3344 & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
+    // CRCR pointers are 64-byte aligned in xHCI; the low bits are flags (cycle state, etc).
+    ctrl.crcr = 0x1234_5678_9abc_de01;
+    ctrl.sync_command_ring_from_crcr();
+    ctrl.set_dcbaap(0xdead_beef_1000);
+    ctrl.config = 0x0208;
+
+    // Attach two devices so we exercise per-port snapshots.
+    ctrl.attach_device(0, Box::new(kb0.clone()));
+    ctrl.attach_device(1, Box::new(kb1.clone()));
+
+    // Port 0: complete a reset so PED/PEC become set.
+    ctrl.write_portsc(0, PORTSC_PR);
+    for _ in 0..50 {
+        ctrl.tick_1ms_no_dma();
+    }
+
+    // Port 1: start a reset and leave it in-progress across snapshot/restore.
+    ctrl.write_portsc(1, PORTSC_PR);
+    for _ in 0..7 {
+        ctrl.tick_1ms_no_dma();
+    }
+
+    // Configure the keyboard on port 0 so it can queue interrupt reports.
+    {
+        let dev0 = ctrl.ports[0].device_mut().expect("device attached");
+        control_no_data(
+            dev0,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+    }
+    // Queue a report and leave it pending across snapshot/restore.
+    kb0.key_event(0x04, true); // 'A'
+
+    // Seed slot state + ring cursors.
+    let slot = &mut ctrl.slots[1];
+    slot.enabled = true;
+    slot.port_id = Some(1);
+    slot.device_attached = true;
+    slot.device_context_ptr = 0x2000;
+    slot.slot_context.set_dword(0, 0xfeed_face);
+    slot.endpoint_contexts[0].set_dword(0, 0x1111_2222);
+    slot.transfer_rings[0] = Some(RingCursor::new(0x3000, true));
+
+    // Configure an event ring and enqueue some in-flight events so the event ring producer has
+    // nontrivial state across snapshot/restore.
+    //
+    // Use a tiny ring segment so it fills up after two events, ensuring we preserve both the guest
+    // event ring producer cursor and the remaining host-side pending event queue.
+    let erstba = 0x1000u64;
+    let event_ring_base = 0x2000u64;
+    mem.write_u64(erstba, event_ring_base);
+    mem.write_u32(erstba + 8, 2); // segment size in TRBs
+
+    ctrl.interrupter0
+        .write_iman(super::interrupter::IMAN_IE);
+    ctrl.interrupter0.write_erstsz(1);
+    ctrl.interrupter0.write_erstba(erstba);
+    ctrl.interrupter0.write_erdp(event_ring_base);
+
+    assert_eq!(ctrl.pending_event_count(), 3);
+    ctrl.service_event_ring(&mut mem);
+    assert_eq!(ctrl.pending_event_count(), 1);
+    let ev0_before = mem.read_trb(event_ring_base + 0 * 16);
+    let ev1_before = mem.read_trb(event_ring_base + 1 * 16);
+    assert_eq!(ev0_before.trb_type(), TrbType::PortStatusChangeEvent);
+    assert_eq!(ev1_before.trb_type(), TrbType::PortStatusChangeEvent);
+    assert!(ev0_before.cycle());
+    assert!(ev1_before.cycle());
+
+    let snapshot1 = ctrl.save_state();
+    let snapshot2 = ctrl.save_state();
+    assert_eq!(snapshot1, snapshot2, "snapshot output must be deterministic");
+
+    let mut restored = XhciController::with_port_count(1);
+    restored
+        .load_state(&snapshot1)
+        .expect("restore should succeed");
+
+    assert_eq!(restored.port_count, 2);
+    assert_eq!(restored.usbcmd, regs::USBCMD_RUN);
+    assert_eq!(restored.usbsts, ctrl.usbsts);
+    assert_eq!(restored.usbsts_read(), ctrl.usbsts_read());
+    assert_eq!(restored.crcr, ctrl.crcr);
+    assert_eq!(restored.dcbaap, 0xdead_beef_1000);
+    assert_eq!(restored.config, ctrl.config);
+    assert_eq!(restored.mfindex, ctrl.mfindex);
+    assert_eq!(restored.dropped_event_trbs(), ctrl.dropped_event_trbs());
+    assert_eq!(restored.pending_event_count(), ctrl.pending_event_count());
+
+    // Ensure the guest event ring producer state was restored by consuming one event (advance ERDP)
+    // and verifying that the next event is written into the consumed slot instead of overwriting
+    // the still-pending event at index 1.
+    assert_eq!(mem.read_trb(event_ring_base + 0 * 16), ev0_before);
+    assert_eq!(mem.read_trb(event_ring_base + 1 * 16), ev1_before);
+
+    // Guest consumes the first event, leaving index 1 unconsumed.
+    restored
+        .interrupter0
+        .write_erdp(event_ring_base + 1 * 16);
+    restored.service_event_ring(&mut mem);
+    assert_eq!(restored.pending_event_count(), 0);
+
+    let ev0_after = mem.read_trb(event_ring_base + 0 * 16);
+    let ev1_after = mem.read_trb(event_ring_base + 1 * 16);
+    assert_eq!(ev1_after, ev1_before, "unconsumed event should not be overwritten");
+    assert_eq!(ev0_after.trb_type(), TrbType::PortStatusChangeEvent);
+    assert!(!ev0_after.cycle(), "producer should have wrapped and toggled cycle");
+    assert_eq!(((ev0_after.parameter >> 24) & 0xff) as u8, 1);
+
+    // Port 0 should be connected/enabled with CSC, PEC, and PRC latched.
+    let port0 = restored.read_portsc(0);
+    assert_ne!(port0 & PORTSC_CCS, 0);
+    assert_ne!(port0 & PORTSC_PED, 0);
+    assert_ne!(port0 & PORTSC_CSC, 0);
+    assert_ne!(port0 & PORTSC_PEC, 0);
+    assert_ne!(port0 & PORTSC_PRC, 0);
+    assert_eq!(port0 & PORTSC_PR, 0);
+
+    // Port 1 should still be resetting (PR=1, PED=0).
+    let port1 = restored.read_portsc(1);
+    assert_ne!(port1 & PORTSC_CCS, 0);
+    assert_eq!(port1 & PORTSC_PED, 0);
+    assert_ne!(port1 & PORTSC_PR, 0);
+    assert_eq!(port1 & PORTSC_PRC, 0);
+
+    // Slot state and transfer ring cursor should survive restore.
+    let slot = &restored.slots[1];
+    assert!(slot.enabled);
+    assert_eq!(slot.port_id, Some(1));
+    assert!(slot.device_attached);
+    assert_eq!(slot.device_context_ptr, 0x2000);
+    assert_eq!(slot.slot_context.dword(0), 0xfeed_face);
+    assert_eq!(slot.endpoint_contexts[0].dword(0), 0x1111_2222);
+    assert_eq!(
+        slot.transfer_ring(1),
+        Some(RingCursor::new(0x3000, true))
+    );
+
+    // The keyboard's pending report should survive snapshot/restore via the nested ADEV/UKBD
+    // snapshot.
+    let restored_dev = restored.ports[0]
+        .device_mut()
+        .expect("device should be reconstructed");
+    match restored_dev.handle_in(1, 8) {
+        crate::UsbInResult::Data(data) => assert!(!data.is_empty()),
+        other => panic!("expected queued report after restore, got {other:?}"),
+    }
+
+    // The restored device should still be a keyboard handle under the hood.
+    let any = restored_dev.model_mut() as &mut dyn Any;
+    assert!(
+        any.downcast_mut::<UsbHidKeyboardHandle>().is_some(),
+        "restored device should be a keyboard model"
+    );
+
+    // Confirm that port 1 reset completes after the remaining 43ms (50 - 7).
+    for _ in 0..42 {
+        restored.tick_1ms_no_dma();
+    }
+    assert_ne!(restored.read_portsc(1) & PORTSC_PR, 0);
+    restored.tick_1ms_no_dma();
+    let port1 = restored.read_portsc(1);
+    assert_eq!(port1 & PORTSC_PR, 0);
+    assert_ne!(port1 & PORTSC_PED, 0);
+    assert_ne!(port1 & PORTSC_PRC, 0);
 }

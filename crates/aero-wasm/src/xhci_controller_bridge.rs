@@ -446,6 +446,7 @@ impl XhciControllerBridge {
         self.ctrl
             .load_state(ctrl_bytes)
             .map_err(|e| js_error(format!("Invalid xHCI controller snapshot: {e}")))?;
+        self.ctrl.reset_host_state_for_restore();
 
         self.tick_count = r
             .u64(TAG_TICK_COUNT)

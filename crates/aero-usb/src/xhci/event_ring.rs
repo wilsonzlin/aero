@@ -9,10 +9,12 @@
 //! - Segment walking and cycle toggling when the producer wraps.
 //! - Tracking ERDP writes so we can (conservatively) detect ring-full scenarios.
 
-use crate::MemoryBus;
+use alloc::vec::Vec;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::SnapshotResult;
+
+use crate::MemoryBus;
 
 use super::interrupter::InterrupterRegs;
 use super::trb::{Trb, TRB_LEN};
@@ -130,7 +132,6 @@ impl EventRingProducer {
                 self.cons_cycle = true;
             }
         }
-
         Ok(())
     }
 

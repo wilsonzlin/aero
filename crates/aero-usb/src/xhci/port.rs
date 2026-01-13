@@ -1,4 +1,5 @@
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotResult};
@@ -280,8 +281,10 @@ impl XhciPort {
         v |= (self.link_state.pls_bits() << PORTSC_PLS_SHIFT) & PORTSC_PLS_MASK;
 
         // Port speed ID. Report 0 when not connected.
-        if let Some(speed) = self.speed {
-            v |= ((port_speed_id(speed) as u32) << PORTSC_PS_SHIFT) & PORTSC_PS_MASK;
+        if self.connected {
+            if let Some(speed) = self.speed {
+                v |= ((port_speed_id(speed) as u32) << PORTSC_PS_SHIFT) & PORTSC_PS_MASK;
+            }
         }
 
         // Change bits.

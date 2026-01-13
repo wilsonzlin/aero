@@ -9,7 +9,7 @@ use aero_io_snapshot::io::state::{
 use super::regs;
 use super::context::{EndpointContext, SlotContext};
 use super::ring::RingCursor;
-use super::trb::{Trb, TRB_LEN};
+use super::trb::{CompletionCode, Trb, TRB_LEN};
 use super::{
     ActiveEndpoint, ControlTdState, SlotState, XhciController, DEFAULT_PORT_COUNT,
     MAX_CONTROL_DATA_LEN, MAX_PENDING_EVENTS,
@@ -270,9 +270,18 @@ fn decode_active_endpoints(
 fn encode_ep0_control_td(td: &[ControlTdState]) -> Vec<u8> {
     let mut enc = Encoder::new().u32(td.len() as u32);
     for state in td {
+        enc = enc.bool(state.td_start.is_some());
+        if let Some(cur) = state.td_start {
+            enc = enc.u64(cur.dequeue_ptr()).bool(cur.cycle_state());
+        }
+        enc = enc.bool(state.td_cursor.is_some());
+        if let Some(cur) = state.td_cursor {
+            enc = enc.u64(cur.dequeue_ptr()).bool(cur.cycle_state());
+        }
         enc = enc
             .u32(state.data_expected as u32)
-            .u32(state.data_transferred as u32);
+            .u32(state.data_transferred as u32)
+            .u8(state.completion_code.raw());
     }
     enc.finish()
 }
@@ -284,14 +293,75 @@ fn decode_ep0_control_td(dst: &mut [ControlTdState], buf: &[u8]) -> SnapshotResu
         return Err(SnapshotError::InvalidFieldEncoding("xhci ep0 td count"));
     }
 
+    // Backwards compatibility: older snapshots stored only (expected, transferred) per entry.
+    let legacy_len = 4usize.saturating_add(count.saturating_mul(8));
+    let legacy_format = buf.len() == legacy_len;
+
     for st in dst.iter_mut().take(count) {
+        if legacy_format {
+            let expected = d.u32()? as usize;
+            let transferred = d.u32()? as usize;
+
+            let expected = expected.min(MAX_CONTROL_DATA_LEN);
+            let transferred = transferred.min(expected);
+            *st = ControlTdState {
+                td_start: None,
+                td_cursor: None,
+                data_expected: expected,
+                data_transferred: transferred,
+                completion_code: CompletionCode::Success,
+            };
+            continue;
+        }
+
+        let td_start = if d.bool()? {
+            let ptr = d.u64()?;
+            let cycle = d.bool()?;
+            Some(RingCursor::new(ptr, cycle))
+        } else {
+            None
+        };
+        let td_cursor = if d.bool()? {
+            let ptr = d.u64()?;
+            let cycle = d.bool()?;
+            Some(RingCursor::new(ptr, cycle))
+        } else {
+            None
+        };
+
         let expected = d.u32()? as usize;
         let transferred = d.u32()? as usize;
+        let cc_raw = d.u8()?;
 
         let expected = expected.min(MAX_CONTROL_DATA_LEN);
         let transferred = transferred.min(expected);
-        st.data_expected = expected;
-        st.data_transferred = transferred;
+
+        let completion_code = match cc_raw {
+            0 => CompletionCode::Invalid,
+            1 => CompletionCode::Success,
+            4 => CompletionCode::UsbTransactionError,
+            5 => CompletionCode::TrbError,
+            6 => CompletionCode::StallError,
+            9 => CompletionCode::NoSlotsAvailableError,
+            11 => CompletionCode::SlotNotEnabledError,
+            12 => CompletionCode::EndpointNotEnabledError,
+            13 => CompletionCode::ShortPacket,
+            17 => CompletionCode::ParameterError,
+            19 => CompletionCode::ContextStateError,
+            _ => {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "xhci completion code",
+                ))
+            }
+        };
+
+        *st = ControlTdState {
+            td_start,
+            td_cursor,
+            data_expected: expected,
+            data_transferred: transferred,
+            completion_code,
+        };
     }
 
     d.finish()?;

@@ -33,6 +33,27 @@
 //!
 //! Finally, this module models a tiny root hub (USB2 ports only) and generates Port Status Change
 //! Event TRBs when devices connect/disconnect or a port reset completes.
+//!
+//! ## Snapshot/restore
+//!
+//! [`XhciController`] implements [`aero_io_snapshot::io::state::IoSnapshot`] using the canonical
+//! `aero-io-snapshot` TLV encoding so it can participate in VM snapshot/restore deterministically.
+//! The snapshot persists controller-local state needed to resume execution:
+//! - MMIO-visible registers (`USBCMD`, `USBSTS`, `CRCR`, `DCBAAP`, ...).
+//! - Root-port state machines (connect/change bits, reset timers, attached device trees).
+//! - Pending event TRBs queued on the host side (until a full guest event ring exists).
+//! - Slot state (slot->port mapping, device context pointers, and transfer ring cursors).
+//!
+//! Attached devices are snapshotted via nested `ADEV` snapshots so restores can reconstruct missing
+//! device instances without requiring the host to pre-attach devices.
+//!
+//! ## WASM / host async restore safety
+//!
+//! Some USB device models (e.g. WebUSB passthrough) keep host-side asynchronous state (queued
+//! actions backed by JS Promises or external handles). That host-side state cannot be resumed after
+//! restoring a VM snapshot. Host integrations should traverse the restored USB topology and clear
+//! any such in-flight state (for WebUSB this is
+//! [`crate::UsbWebUsbPassthroughDevice::reset_host_state_for_restore`]) before resuming execution.
 
 pub mod command;
 pub mod command_ring;
@@ -52,6 +73,7 @@ pub use regs::{PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR, PORTSC
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+use core::any::Any;
 use core::fmt;
 
 use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
@@ -2972,6 +2994,36 @@ impl XhciController {
         let mut buf = [0u8; 4];
         mem.read_bytes(paddr, &mut buf);
         self.interrupter0.set_interrupt_pending(true);
+    }
+
+    /// Traverse the attached USB topology and reset any host-side asynchronous state that cannot
+    /// survive snapshot/restore (e.g. WebUSB JS Promise bookkeeping).
+    ///
+    /// This is intended to be called by host integrations after restoring a VM snapshot. It does
+    /// not modify guest-visible USB state.
+    pub fn reset_host_state_for_restore(&mut self) {
+        fn visit(dev: &mut AttachedUsbDevice) {
+            {
+                let any = dev.model_mut() as &mut dyn Any;
+                if let Some(webusb) = any.downcast_mut::<crate::UsbWebUsbPassthroughDevice>() {
+                    webusb.reset_host_state_for_restore();
+                }
+            }
+
+            if let Some(hub) = dev.as_hub_mut() {
+                for port in 0..hub.num_ports() {
+                    if let Some(child) = hub.downstream_device_mut(port) {
+                        visit(child);
+                    }
+                }
+            }
+        }
+
+        for port in &mut self.ports {
+            if let Some(dev) = port.device_mut() {
+                visit(dev);
+            }
+        }
     }
 }
 
