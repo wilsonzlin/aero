@@ -307,6 +307,48 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID(t *testing.T
 	}
 }
 
+func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessageAuth(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeJWT,
+		JWTSecret:                "supersecret",
+		SignalingAuthTimeout:     2 * time.Second,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	token := makeTestJWT(cfg.JWTSecret, "sess_test")
+
+	c1 := dialWS(t, ts.URL, "/udp")
+	if err := c1.WriteJSON(map[string]any{"type": "auth", "token": token}); err != nil {
+		t.Fatalf("WriteJSON(auth): %v", err)
+	}
+	ready := readWSJSON(t, c1, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+
+	c2 := dialWS(t, ts.URL, "/udp")
+	if err := c2.WriteJSON(map[string]any{"type": "auth", "token": token}); err != nil {
+		t.Fatalf("WriteJSON(auth): %v", err)
+	}
+	errMsg := readWSJSON(t, c2, 2*time.Second)
+	if errMsg["type"] != "error" || errMsg["code"] != "session_already_active" {
+		t.Fatalf("expected session_already_active error, got %#v", errMsg)
+	}
+}
+
 func TestUDPWebSocketServer_RelaysV1IPv4(t *testing.T) {
 	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
 	defer echo.Close()

@@ -732,6 +732,75 @@ func TestAuth_JWT_WebSocketSignal_QueryParamFallback(t *testing.T) {
 	}
 }
 
+func TestAuth_JWT_WebSocketSignal_FirstMessageAuth_RejectsConcurrentSessions(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                      config.AuthModeJWT,
+		JWTSecret:                     "supersecret",
+		SignalingAuthTimeout:          2 * time.Second,
+		MaxSignalingMessageBytes:      64 * 1024,
+		MaxSignalingMessagesPerSecond: 50,
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	api := newTestWebRTCAPI(t)
+	offerSDP := newOfferSDP(t, api)
+
+	token := makeJWT(cfg.JWTSecret, "sess_test")
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+
+	ws1, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial ws1: %v", err)
+	}
+	t.Cleanup(func() { _ = ws1.Close() })
+
+	if err := ws1.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeAuth, Token: token}); err != nil {
+		t.Fatalf("write auth ws1: %v", err)
+	}
+	if err := ws1.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer ws1: %v", err)
+	}
+
+	_ = ws1.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := ws1.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws1: %v", err)
+	}
+	got, err := signaling.ParseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse ws1: %v", err)
+	}
+	if got.Type != signaling.MessageTypeAnswer {
+		t.Fatalf("unexpected ws1 message: %#v", got)
+	}
+
+	ws2, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial ws2: %v", err)
+	}
+	t.Cleanup(func() { _ = ws2.Close() })
+
+	if err := ws2.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeAuth, Token: token}); err != nil {
+		t.Fatalf("write auth ws2: %v", err)
+	}
+	if err := ws2.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer ws2: %v", err)
+	}
+
+	_ = ws2.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err = ws2.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws2: %v", err)
+	}
+	got, err = signaling.ParseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse ws2: %v", err)
+	}
+	if got.Type != signaling.MessageTypeError || got.Code != "session_already_active" {
+		t.Fatalf("unexpected ws2 message: %#v", got)
+	}
+}
+
 func TestAuth_APIKey_WebSocketSignal_QueryTokenAlias(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:                      config.AuthModeAPIKey,
