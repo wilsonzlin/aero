@@ -432,6 +432,13 @@ impl Bios {
         &self.config
     }
 
+    /// Set the BIOS boot drive number (`DL`) used when transferring control to the boot sector.
+    ///
+    /// This value is also used to populate BIOS Data Area drive count fields during POST.
+    pub fn set_boot_drive(&mut self, boot_drive: u8) {
+        self.config.boot_drive = boot_drive;
+    }
+
     pub fn tty_output(&self) -> &[u8] {
         let start = self.tty_output_start.min(self.tty_output.len());
         &self.tty_output[start..]

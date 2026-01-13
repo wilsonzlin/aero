@@ -3531,6 +3531,68 @@ impl Machine {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Set the BIOS boot drive number (`DL`) used when transferring control to the boot sector.
+    ///
+    /// Recommended values:
+    /// - `0x80`: primary HDD (normal boot)
+    /// - `0xE0`: ATAPI CD-ROM (El Torito install media)
+    pub fn set_boot_drive(&mut self, drive: u32) -> Result<(), JsValue> {
+        if drive == 0 {
+            return Err(JsValue::from_str(
+                "boot drive must be non-zero (recommended 0x80 for HDD or 0xE0 for CD-ROM)",
+            ));
+        }
+        // Clamp to the BIOS/INT13 drive number range.
+        let drive = drive.min(u32::from(u8::MAX)) as u8;
+        self.inner.set_boot_drive(drive);
+        Ok(())
+    }
+
+    /// Attach an ISO image (raw bytes) as the machine's canonical install media / ATAPI CD-ROM
+    /// (`disk_id=1`).
+    ///
+    /// This API only attaches the host-side backing store. Snapshot overlay refs for `disk_id=1`
+    /// are configured separately via `set_ide_secondary_master_atapi_overlay_ref`.
+    pub fn attach_install_media_iso_bytes(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        if bytes.is_empty() {
+            return Err(JsValue::from_str("ISO image must be non-empty"));
+        }
+        self.inner
+            .attach_install_media_iso_bytes(bytes.to_vec())
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Open an existing OPFS-backed ISO image (using the file's current size) and attach it as the
+    /// machine's canonical install media / ATAPI CD-ROM (`disk_id=1`).
+    ///
+    /// This is the preferred way to attach large ISOs without copying them into WASM memory.
+    ///
+    /// Note: OPFS sync access handles are worker-only, so this requires running the WASM module in
+    /// a dedicated worker (not the main thread).
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_install_media_iso_opfs_existing(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        #[cfg(target_feature = "atomics")]
+        {
+            let _ = path;
+            return Err(JsValue::from_str(
+                "OPFS-backed install media ISO is unavailable in wasm-threaded (atomics) builds",
+            ));
+        }
+
+        #[cfg(not(target_feature = "atomics"))]
+        {
+            let backend = aero_opfs::OpfsBackend::open_existing(&path)
+                .await
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            self.inner
+                .attach_install_media_iso(Box::new(backend))
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        }
+    }
+
     /// Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.
     ///
     /// This enables large disks without fully loading the image into RAM.

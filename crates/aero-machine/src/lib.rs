@@ -24,7 +24,7 @@ pub use shared_iso_disk::SharedIsoDisk;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{Cursor, Read, Seek, Write};
+use std::io::{self, Cursor, Read, Seek, Write};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -62,6 +62,7 @@ pub use aero_devices_input::Ps2MouseButton;
 use aero_devices_nvme::{add_nvme_msix_capability, NvmeController, NvmePciDevice};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
+use aero_storage::{MemBackend, RawDisk};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_gpu_vga::{DisplayOutput as _, PortIO as _, VgaDevice};
@@ -2686,6 +2687,9 @@ impl Machine {
     /// Defaults to `0x80` (first hard disk) to preserve existing tests and behavior.
     pub fn set_boot_drive(&mut self, boot_drive: u8) {
         self.boot_drive = boot_drive;
+        // Keep the current BIOS config in sync so snapshots capture the selected boot drive and so
+        // `Machine::reset()` can persist it.
+        self.bios.set_boot_drive(boot_drive);
     }
 
     /// Replace the attached disk image.
@@ -3732,6 +3736,29 @@ impl Machine {
         ide.borrow_mut()
             .controller
             .attach_secondary_master_atapi(dev);
+    }
+
+    /// Attach an ISO image as the machine's canonical install media / ATAPI CD-ROM (`disk_id=1`).
+    ///
+    /// This attaches a host-side ISO backend to the IDE secondary master ATAPI device without
+    /// mutating guest-visible tray/media state (it uses the snapshot-restore attachment path).
+    pub fn attach_install_media_iso(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> io::Result<()> {
+        self.attach_ide_secondary_master_iso_for_restore(disk)
+    }
+
+    /// Attach an ISO image (provided as raw bytes) as the machine's canonical install media /
+    /// ATAPI CD-ROM (`disk_id=1`).
+    ///
+    /// This is a convenience wrapper for browser/native hosts that already have the ISO contents
+    /// in memory. For large ISOs, prefer a streaming/file-backed disk and call
+    /// [`Machine::attach_install_media_iso`].
+    pub fn attach_install_media_iso_bytes(&mut self, bytes: Vec<u8>) -> io::Result<()> {
+        let disk = RawDisk::open(MemBackend::from_vec(bytes))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        self.attach_install_media_iso(Box::new(disk))
     }
 
     /// Attach a disk image as an ATAPI CD-ROM ISO on the IDE secondary master, if present.
@@ -5526,6 +5553,11 @@ impl Machine {
         // ACPI tables must only be published when they describe real machine wiring. Since the
         // canonical PC platform devices are behind `enable_pc_platform`, gate ACPI publication on
         // both flags.
+        //
+        // Preserve any host-selected boot drive (e.g. CD vs HDD) across resets and snapshot
+        // restores.
+        let boot_drive = self.bios.config().boot_drive;
+        self.boot_drive = boot_drive;
         // The BIOS is HLE and by default keeps the VBE linear framebuffer inside guest RAM so the
         // firmware-only tests can access it without MMIO routing.
         //
@@ -5538,7 +5570,7 @@ impl Machine {
         // helpers like `int 0x10, ax=0x4F02` to scribble over PCI device BARs).
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
-            boot_drive: self.boot_drive,
+            boot_drive,
             cpu_count: self.cfg.cpu_count,
             enable_acpi: self.cfg.enable_pc_platform && self.cfg.enable_acpi,
             vbe_lfb_base: use_legacy_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE),
