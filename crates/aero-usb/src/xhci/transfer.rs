@@ -135,6 +135,13 @@ struct TdDescriptor {
     next_cycle: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatherTdResult {
+    Incomplete,
+    Ready,
+    Fault { trb_ptr: u64 },
+}
+
 #[derive(Debug, Clone)]
 pub struct TransferRingState {
     pub dequeue_ptr: u64,
@@ -232,7 +239,9 @@ impl XhciTransferExecutor {
     fn process_one_td<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep: &mut EndpointState) {
         // Advance past any link TRBs so the dequeue pointer naturally points at a transfer TRB (or
         // a not-yet-ready TRB).
-        self.skip_link_trbs(mem, ep);
+        if !self.skip_link_trbs(mem, ep) {
+            return;
+        }
 
         let trb = read_trb(mem, ep.ring.dequeue_ptr);
         if trb.cycle() != ep.ring.cycle {
@@ -241,14 +250,32 @@ impl XhciTransferExecutor {
 
         match trb.trb_type() {
             t if t == TrbType::Normal as u8 => {
-                let Some(td) = self.gather_td(mem, ep) else {
-                    return;
+                let mut td = TdDescriptor {
+                    buffers: Vec::new(),
+                    total_len: 0,
+                    last_trb_ptr: ep.ring.dequeue_ptr,
+                    last_ioc: false,
+                    next_dequeue_ptr: ep.ring.dequeue_ptr,
+                    next_cycle: ep.ring.cycle,
                 };
-                self.execute_td(mem, ep, td);
+
+                match self.gather_td(mem, ep, &mut td) {
+                    GatherTdResult::Incomplete => return,
+                    GatherTdResult::Ready => self.execute_td(mem, ep, td),
+                    GatherTdResult::Fault { trb_ptr } => {
+                        ep.halted = true;
+                        self.pending_events.push(TransferEvent {
+                            ep_addr: ep.ep_addr,
+                            trb_ptr,
+                            residual: 0,
+                            completion_code: CompletionCode::TrbError,
+                        });
+                    }
+                }
             }
             t if t == TrbType::Link as u8 => {
                 // If we land on a link TRB after a TD commit, skip it now.
-                self.skip_link_trbs(mem, ep);
+                let _ = self.skip_link_trbs(mem, ep);
             }
             _ => {
                 // Unsupported TRB type; treat as TRB error and advance one TRB so we don't wedge.
@@ -259,48 +286,84 @@ impl XhciTransferExecutor {
                     completion_code: CompletionCode::TrbError,
                 };
                 self.pending_events.push(event);
-                ep.ring.dequeue_ptr = ep.ring.dequeue_ptr.wrapping_add(TRB_SIZE);
+                match ep.ring.dequeue_ptr.checked_add(TRB_SIZE) {
+                    Some(next) => ep.ring.dequeue_ptr = next,
+                    None => ep.halted = true,
+                }
             }
         }
     }
 
-    fn skip_link_trbs<M: MemoryBus + ?Sized>(&self, mem: &mut M, ep: &mut EndpointState) {
+    fn skip_link_trbs<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep: &mut EndpointState) -> bool {
         for _ in 0..MAX_LINK_SKIP {
             let trb = read_trb(mem, ep.ring.dequeue_ptr);
             if trb.cycle() != ep.ring.cycle {
-                break;
+                return true;
             }
             if trb.trb_type() != TrbType::Link as u8 {
-                break;
+                return true;
             }
 
             let target = trb.parameter() & !0xF;
+            if target == 0 {
+                ep.halted = true;
+                self.pending_events.push(TransferEvent {
+                    ep_addr: ep.ep_addr,
+                    trb_ptr: ep.ring.dequeue_ptr,
+                    residual: 0,
+                    completion_code: CompletionCode::TrbError,
+                });
+                return false;
+            }
             let toggle = trb.toggle_cycle();
             ep.ring.dequeue_ptr = target;
             if toggle {
                 ep.ring.cycle = !ep.ring.cycle;
             }
         }
+
+        // Too many link TRBs without reaching a transfer TRB: treat as malformed to keep polling
+        // bounded, and avoid spending MAX_LINK_SKIP work every tick forever.
+        ep.halted = true;
+        self.pending_events.push(TransferEvent {
+            ep_addr: ep.ep_addr,
+            trb_ptr: ep.ring.dequeue_ptr,
+            residual: 0,
+            completion_code: CompletionCode::TrbError,
+        });
+        false
     }
 
-    fn gather_td<M: MemoryBus + ?Sized>(&self, mem: &mut M, ep: &EndpointState) -> Option<TdDescriptor> {
+    fn gather_td<M: MemoryBus + ?Sized>(
+        &self,
+        mem: &mut M,
+        ep: &EndpointState,
+        td: &mut TdDescriptor,
+    ) -> GatherTdResult {
         let mut ptr = ep.ring.dequeue_ptr;
         let mut cycle = ep.ring.cycle;
 
-        let mut buffers = Vec::new();
-        let mut total_len: u32 = 0;
+        td.buffers.clear();
+        td.total_len = 0;
+        td.last_trb_ptr = ptr;
+        td.last_ioc = false;
+        td.next_dequeue_ptr = ptr;
+        td.next_cycle = cycle;
 
         for _ in 0..MAX_TD_TRBS {
             let trb = read_trb(mem, ptr);
             if trb.cycle() != cycle {
                 // TD is not fully written yet (or ring empty).
-                return None;
+                return GatherTdResult::Incomplete;
             }
 
             match trb.trb_type() {
                 t if t == TrbType::Link as u8 => {
                     // Link TRBs are not data buffers; follow them and keep gathering.
                     let target = trb.parameter() & !0xF;
+                    if target == 0 {
+                        return GatherTdResult::Fault { trb_ptr: ptr };
+                    }
                     let toggle = trb.toggle_cycle();
                     ptr = target;
                     if toggle {
@@ -311,41 +374,39 @@ impl XhciTransferExecutor {
                 t if t == TrbType::Normal as u8 => {
                     let trb_ptr = ptr;
                     let len = trb.transfer_len();
-                    buffers.push(BufferSegment {
+                    td.buffers.push(BufferSegment {
                         paddr: trb.parameter(),
                         len,
                     });
-                    total_len = total_len.saturating_add(len);
+                    td.total_len = td.total_len.saturating_add(len);
 
-                    ptr = ptr.wrapping_add(TRB_SIZE);
+                    let Some(next) = ptr.checked_add(TRB_SIZE) else {
+                        return GatherTdResult::Fault { trb_ptr };
+                    };
+                    ptr = next;
 
                     if !trb.chain() {
-                        return Some(TdDescriptor {
-                            buffers,
-                            total_len,
-                            last_trb_ptr: trb_ptr,
-                            last_ioc: trb.ioc(),
-                            next_dequeue_ptr: ptr,
-                            next_cycle: cycle,
-                        });
+                        td.last_trb_ptr = trb_ptr;
+                        td.last_ioc = trb.ioc();
+                        td.next_dequeue_ptr = ptr;
+                        td.next_cycle = cycle;
+                        return GatherTdResult::Ready;
                     }
+
+                    td.last_trb_ptr = trb_ptr;
+                    td.last_ioc = trb.ioc();
                 }
                 _ => {
                     // Unexpected TRB type inside a TD.
-                    return Some(TdDescriptor {
-                        buffers,
-                        total_len,
-                        last_trb_ptr: ptr,
-                        last_ioc: true,
-                        next_dequeue_ptr: ptr.wrapping_add(TRB_SIZE),
-                        next_cycle: cycle,
-                    });
+                    return GatherTdResult::Fault { trb_ptr: ptr };
                 }
             }
         }
 
         // Too many TRBs chained; treat as malformed and refuse to run.
-        None
+        GatherTdResult::Fault {
+            trb_ptr: td.last_trb_ptr,
+        }
     }
 
     fn execute_td<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep: &mut EndpointState, td: TdDescriptor) {
