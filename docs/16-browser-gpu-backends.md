@@ -499,9 +499,9 @@ Add a small “GPU backend smoke test” harness that runs in both modes:
    - a gradient
    - a small glyph atlas sample (optional)
 3. Present to canvas
-4. Read back pixels (test-only):
-   - WebGPU: copy texture to buffer and map for read
-   - WebGL2: `gl.readPixels`
+4. Read back pixels (test-only). Decide which stage you want to validate:
+   - **Source framebuffer hashing:** read back the stable internal `present_src` bytes (deterministic; avoids scaling/color-management ambiguity).
+   - **Presentation pipeline validation:** read back the pixels that were actually rendered to the surface/canvas (catches scaling/gamma/alpha policy differences).
 5. Compare against expected values with a tolerance
 
 ### Browser automation (Playwright)
