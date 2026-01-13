@@ -87,20 +87,31 @@ fn compute_translate_and_run_store_raw_uav_buffer() {
                 return;
             }
         };
+        if !rt.supports_compute() {
+            common::skip_or_panic(TEST_NAME, "compute unsupported");
+            return;
+        }
 
-        const BUF: u32 = 1;
-        const SHADER: u32 = 2;
-        const PIPELINE: u32 = 3;
+        const STORAGE_BUF: u32 = 1;
+        const READBACK_BUF: u32 = 2;
+        const SHADER: u32 = 3;
+        const PIPELINE: u32 = 4;
 
         let binding_u0 = BINDING_BASE_UAV + 0;
+        let size = 16u64;
 
         let mut w = CmdWriter::new();
         w.create_buffer(
-            BUF,
-            16,
-            BufferUsage::MAP_READ | BufferUsage::STORAGE | BufferUsage::COPY_DST,
+            STORAGE_BUF,
+            size,
+            BufferUsage::STORAGE | BufferUsage::COPY_SRC | BufferUsage::COPY_DST,
         );
-        w.update_buffer(BUF, 0, &[0u8; 16]);
+        w.create_buffer(
+            READBACK_BUF,
+            size,
+            BufferUsage::MAP_READ | BufferUsage::COPY_DST,
+        );
+        w.update_buffer(STORAGE_BUF, 0, &[0u8; 16]);
 
         w.create_shader_module_wgsl(SHADER, &translated.wgsl);
         w.create_compute_pipeline(
@@ -115,17 +126,24 @@ fn compute_translate_and_run_store_raw_uav_buffer() {
         );
 
         w.set_pipeline(PipelineKind::Compute, PIPELINE);
-        w.set_bind_buffer(binding_u0, BUF, 0, 0);
+        w.set_bind_buffer(binding_u0, STORAGE_BUF, 0, size);
         w.begin_compute_pass();
         w.dispatch(1, 1, 1);
         w.end_compute_pass();
 
+        // Map-read buffers are generally "staging" resources; copy the results into a dedicated
+        // readback buffer so this test works on backends that don't support mapping a storage
+        // buffer directly.
+        w.copy_buffer_to_buffer(STORAGE_BUF, 0, READBACK_BUF, 0, size);
+
         rt.execute(&w.finish()).expect("execute command stream");
         rt.poll_wait();
 
-        let data = rt.read_buffer(BUF, 0, 4).await.expect("read buffer");
+        let data = rt
+            .read_buffer(READBACK_BUF, 0, 4)
+            .await
+            .expect("read buffer");
         let got = u32::from_le_bytes(data[..4].try_into().expect("read 4 bytes"));
         assert_eq!(got, expected);
     });
 }
-
