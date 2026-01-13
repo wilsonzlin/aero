@@ -1264,6 +1264,31 @@ impl VirtioPciDevice {
         self.sync_legacy_irq_line();
     }
 
+    /// Signal a device-configuration change interrupt.
+    ///
+    /// This corresponds to ISR bit 1 (`CONFIG_INTERRUPT`) and uses `msix_config_vector` when MSI-X
+    /// is enabled.
+    pub fn signal_config_interrupt(&mut self) {
+        self.isr_status |= VIRTIO_PCI_LEGACY_ISR_CONFIG;
+        let vec = self.msix_config_vector;
+
+        // See `signal_queue_interrupt` for the contract rationale: MSI-X is optional, and INTx +
+        // ISR is the baseline delivery mechanism.
+        if self.msix_enabled() && vec != 0xffff {
+            let msg = self
+                .config
+                .capability_mut::<MsixCapability>()
+                .and_then(|msix| msix.trigger(vec));
+            if let Some(msg) = msg {
+                self.interrupts.signal_msix(msg);
+                return;
+            }
+        }
+
+        self.legacy_irq_pending = true;
+        self.sync_legacy_irq_line();
+    }
+
     fn sync_legacy_irq_line(&mut self) {
         let should_assert = self.legacy_irq_pending && !self.intx_disabled();
         if should_assert == self.legacy_irq_line {
@@ -2049,5 +2074,76 @@ mod tests {
         let state = state.borrow();
         assert_eq!(state.legacy_raise_count, 1);
         assert!(state.msix_messages.is_empty());
+    }
+
+    #[test]
+    fn config_interrupt_msix_disabled_uses_intx() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        assert!(!pci.msix_enabled());
+        pci.signal_config_interrupt();
+
+        assert!(pci.irq_level());
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 1);
+        assert!(state.msix_messages.is_empty());
+    }
+
+    #[test]
+    fn config_interrupt_msix_enabled_but_vector_unassigned_falls_back_to_intx() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        enable_msix(&mut pci);
+        assert_eq!(pci.msix_config_vector, 0xffff);
+
+        pci.signal_config_interrupt();
+
+        assert!(pci.irq_level());
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 1);
+        assert!(state.msix_messages.is_empty());
+    }
+
+    #[test]
+    fn config_interrupt_msix_enabled_with_programmed_vector_emits_msix_message() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        enable_msix(&mut pci);
+
+        // Use vector 0 for config interrupts.
+        pci.msix_config_vector = 0;
+        program_msix_vector(&mut pci, 0, 0xFEE0_0000, 0x0046);
+
+        pci.signal_config_interrupt();
+
+        assert!(!pci.irq_level());
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 0);
+        assert_eq!(state.msix_messages.len(), 1);
+        assert_eq!(
+            state.msix_messages[0],
+            MsiMessage {
+                address: 0xFEE0_0000,
+                data: 0x0046
+            }
+        );
     }
 }
