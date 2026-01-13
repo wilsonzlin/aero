@@ -2318,16 +2318,16 @@ mod wasm {
             Ok(frame) => Ok(frame),
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 // Reconfigure and retry once (docs/04-graphics-subsystem.md).
-                gpu_stats().inc_recoveries_attempted();
+                //
+                // Note: This is *surface* recovery (reconfigure + reacquire), not device-lost
+                // recovery. Only `surface_reconfigures` should be incremented here; the
+                // `recoveries_*` counters are reserved for the device-lost recovery state machine.
                 surface.configure(device, config);
                 gpu_stats().inc_surface_reconfigures();
                 match surface.get_current_texture() {
-                    Ok(frame) => {
-                        gpu_stats().inc_recoveries_succeeded();
-                        Ok(frame)
-                    }
+                    Ok(frame) => Ok(frame),
                     Err(err) => {
-                        // If the recovery reconfigure doesn't help, surface the error via the
+                        // If the surface reconfigure doesn't help, surface the error via the
                         // diagnostics channel so the GPU worker can report it even if the caller
                         // discards the thrown JsValue.
                         push_gpu_event(
