@@ -118,11 +118,15 @@ Minimum supported commands:
   (newest is `desc[desc_count-1]`). This is intentionally not limited to the pending `[head, tail)` region so very fast
   devices/emulators still expose the most recent submission(s) to tooling/tests.
 
-- `aerogpu_dbgctl --dump-last-cmd --out <path>`
+- `aerogpu_dbgctl --dump-last-cmd --out <path> [--index-from-tail K] [--count N] [--force]`
   Dumps the raw bytes of the most recent command stream buffer (`cmd_gpa .. cmd_gpa+cmd_size_bytes`) from the ring
   into `<path>` (binary). Use `--index-from-tail K` to select older submissions (0 = newest).
+  Use `--count N` to dump the last N submissions in one run (starting at `index_from_tail=K`).
+  When dumping multiple submissions, `<path>` is treated as a base and output files are written as
+  `<base>_<index_from_tail>.bin` (for example `last_cmd_0.bin`, `last_cmd_1.bin`). If `<path>` ends in `.bin`,
+  the trailing `.bin` is stripped before appending `_<index_from_tail>.bin`.
   On AGPU rings, if the submission has an allocation table (`alloc_table_gpa/alloc_table_size_bytes`), it is also dumped
-  to `<path>.alloc_table.bin`.
+  to `<cmd_path>.alloc_table.bin` (one file per dumped submission).
 
   dbgctl also writes a small metadata summary to `<path>.txt` (ring/fence/GPAs/sizes) when possible.
 
@@ -190,7 +194,7 @@ Minimum supported commands:
 aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] [--json[=PATH]] [--pretty] \
                [--vblank-samples N] [--vblank-interval-ms N] \
                [--samples N] [--interval-ms N] \
-               [--size N] [--out FILE] [--force] <command>
+               [--size N] [--out FILE] [--count N] [--force] <command>
 ```
 
 Examples:
@@ -219,6 +223,7 @@ aerogpu_dbgctl --dump-cursor-png C:\cursor.png
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --watch-ring --ring-id 0 --samples 200 --interval-ms 50
 aerogpu_dbgctl --dump-last-cmd --out last_cmd.bin
+aerogpu_dbgctl --dump-last-cmd --count 4 --out last_cmd.bin
 aerogpu_dbgctl --dump-last-cmd --index-from-tail 1 --out prev_cmd.bin
 aerogpu_dbgctl --dump-createalloc
 aerogpu_dbgctl --dump-createalloc --csv C:\createalloc.csv

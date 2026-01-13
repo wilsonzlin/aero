@@ -738,16 +738,16 @@ static void PrintUsage() {
            L"  --query-segments\n"
            L"  --query-fence\n"
            L"  --watch-fence  (requires: --samples N --interval-ms M)\n"
-            L"  --query-perf  (alias: --perf)\n"
-            L"  --query-scanout\n"
-            L"  --dump-scanout-bmp PATH\n"
-            L"  --dump-scanout-png PATH\n"
-            L"  --query-cursor  (alias: --dump-cursor)\n"
-            L"  --dump-cursor-bmp PATH\n"
-            L"  --dump-cursor-png PATH\n"
-            L"  --dump-ring\n"
-            L"  --dump-last-cmd [--index-from-tail K] --out <path> [--force]\n"
-            L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
+           L"  --query-perf  (alias: --perf)\n"
+           L"  --query-scanout\n"
+           L"  --dump-scanout-bmp PATH\n"
+           L"  --dump-scanout-png PATH\n"
+           L"  --query-cursor  (alias: --dump-cursor)\n"
+           L"  --dump-cursor-bmp PATH\n"
+           L"  --dump-cursor-png PATH\n"
+           L"  --dump-ring\n"
+           L"  --dump-last-cmd [--index-from-tail K] [--count N] --out <path> [--force]\n"
+           L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
            L"      [--csv <path>]  (write CreateAllocation trace as CSV)\n"
            L"  --dump-vblank  (alias: --query-vblank)\n"
@@ -4733,6 +4733,42 @@ static wchar_t *HeapWcsCatSuffix(const wchar_t *base, const wchar_t *suffix) {
   return out;
 }
 
+static wchar_t *HeapBuildIndexedBinPath(const wchar_t *base, uint32_t index) {
+  if (!base || !base[0]) {
+    return NULL;
+  }
+
+  // Common case: user passes something like "last_cmd.bin". When dumping multiple submissions,
+  // generate "last_cmd_<index>.bin" (strip a trailing ".bin" case-insensitively).
+  const wchar_t *kExt = L".bin";
+  const size_t baseLen = wcslen(base);
+  size_t prefixLen = baseLen;
+  if (baseLen >= 4 && _wcsicmp(base + (baseLen - 4), kExt) == 0) {
+    prefixLen = baseLen - 4;
+  }
+
+  wchar_t suffixBuf[32];
+  swprintf_s(suffixBuf, _countof(suffixBuf), L"_%lu%s", (unsigned long)index, kExt);
+  const size_t suffixLen = wcslen(suffixBuf);
+
+  const size_t totalLen = prefixLen + suffixLen + 1;
+  const size_t kMax = (size_t)-1;
+  if (totalLen == 0 || totalLen > (kMax / sizeof(wchar_t))) {
+    return NULL;
+  }
+
+  wchar_t *out = (wchar_t *)HeapAlloc(GetProcessHeap(), 0, totalLen * sizeof(wchar_t));
+  if (!out) {
+    return NULL;
+  }
+
+  if (prefixLen != 0) {
+    memcpy(out, base, prefixLen * sizeof(wchar_t));
+  }
+  memcpy(out + prefixLen, suffixBuf, (suffixLen + 1) * sizeof(wchar_t));
+  return out;
+}
+
 static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_t gpa, uint64_t sizeBytes,
                               const wchar_t *outPath, uint32_t *outFirstDword) {
   if (!f || !outPath) {
@@ -4839,9 +4875,13 @@ static const wchar_t *RingFormatToString(uint32_t fmt) {
 }
 
 static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ringId, uint32_t indexFromTail,
-                         const wchar_t *outPath, bool force) {
+                         uint32_t count, const wchar_t *outPath, bool force) {
   if (!outPath || !outPath[0]) {
     fwprintf(stderr, L"--dump-last-cmd requires --out <path>\n");
+    return 1;
+  }
+  if (count == 0) {
+    fwprintf(stderr, L"--count must be >= 1\n");
     return 1;
   }
 
@@ -4855,11 +4895,12 @@ static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t
   q2.ring_id = ringId;
   q2.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
 
+  aerogpu_escape_dump_ring_inout q1;
+  ZeroMemory(&q1, sizeof(q1));
+  bool usedV2 = false;
+
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q2, sizeof(q2));
 
-  aerogpu_dbgctl_ring_desc_v2 d;
-  ZeroMemory(&d, sizeof(d));
-  uint32_t selectedRingIndex = 0;
   uint32_t ringFormat = AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN;
   uint32_t head = 0;
   uint32_t tail = 0;
@@ -4867,6 +4908,7 @@ static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t
   uint32_t descCount = 0;
 
   if (NT_SUCCESS(st)) {
+    usedV2 = true;
     ringFormat = q2.ring_format;
     head = q2.head;
     tail = q2.tail;
@@ -4879,23 +4921,8 @@ static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t
       wprintf(L"Ring %lu (%s): no descriptors available\n", (unsigned long)ringId, RingFormatToString(ringFormat));
       return 0;
     }
-    if (indexFromTail >= descCount) {
-      fwprintf(stderr, L"--index-from-tail %lu out of range (ring returned %lu descriptors)\n",
-               (unsigned long)indexFromTail, (unsigned long)descCount);
-      return 1;
-    }
-
-    const uint32_t idx = (descCount - 1u) - indexFromTail;
-    d = q2.desc[idx];
-    if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU && tail >= descCount) {
-      selectedRingIndex = (tail - descCount) + idx;
-    } else {
-      selectedRingIndex = idx;
-    }
   } else if (st == STATUS_NOT_SUPPORTED) {
     // Fallback to legacy dump-ring for older KMDs.
-    aerogpu_escape_dump_ring_inout q1;
-    ZeroMemory(&q1, sizeof(q1));
     q1.hdr.version = AEROGPU_ESCAPE_VERSION;
     q1.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING;
     q1.hdr.size = sizeof(q1);
@@ -4921,158 +4948,241 @@ static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t
       wprintf(L"Ring %lu: no descriptors available\n", (unsigned long)ringId);
       return 0;
     }
-    if (indexFromTail >= descCount) {
-      fwprintf(stderr, L"--index-from-tail %lu out of range (ring returned %lu descriptors)\n",
-               (unsigned long)indexFromTail, (unsigned long)descCount);
-      return 1;
-    }
-
-    const uint32_t idx = (descCount - 1u) - indexFromTail;
-    const aerogpu_dbgctl_ring_desc &d1 = q1.desc[idx];
-
-    d.fence = d1.signal_fence;
-    d.cmd_gpa = d1.cmd_gpa;
-    d.cmd_size_bytes = d1.cmd_size_bytes;
-    d.flags = d1.flags;
-    d.alloc_table_gpa = 0;
-    d.alloc_table_size_bytes = 0;
-    d.reserved0 = 0;
-    selectedRingIndex = idx;
   } else {
     PrintNtStatus(L"D3DKMTEscape(dump-ring-v2) failed", f, st);
     return 2;
+  }
+
+  if (indexFromTail >= descCount) {
+    fwprintf(stderr, L"--index-from-tail %lu out of range (ring returned %lu descriptors)\n",
+             (unsigned long)indexFromTail, (unsigned long)descCount);
+    return 1;
+  }
+
+  uint32_t actualCount = count;
+  const uint32_t remaining = descCount - indexFromTail;
+  if (actualCount > remaining) {
+    actualCount = remaining;
   }
 
   wprintf(L"Ring %lu (%s)\n", (unsigned long)ringId, RingFormatToString(ringFormat));
   wprintf(L"  size: %lu bytes\n", (unsigned long)ringSizeBytes);
   wprintf(L"  head: 0x%08lx\n", (unsigned long)head);
   wprintf(L"  tail: 0x%08lx\n", (unsigned long)tail);
-  wprintf(L"  selected: index_from_tail=%lu -> ringIndex=%lu fence=0x%I64x cmdGpa=0x%I64x cmdBytes=%lu flags=0x%08lx\n",
-          (unsigned long)indexFromTail, (unsigned long)selectedRingIndex, (unsigned long long)d.fence,
-          (unsigned long long)d.cmd_gpa, (unsigned long)d.cmd_size_bytes, (unsigned long)d.flags);
-  if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
-    wprintf(L"            allocTableGpa=0x%I64x allocTableBytes=%lu\n", (unsigned long long)d.alloc_table_gpa,
-            (unsigned long)d.alloc_table_size_bytes);
+
+  if (actualCount > 1) {
+    wprintf(L"  dumping: index_from_tail=%lu..%lu (%lu submissions)\n", (unsigned long)indexFromTail,
+            (unsigned long)(indexFromTail + actualCount - 1u), (unsigned long)actualCount);
   }
 
-  const uint64_t cmdGpa = (uint64_t)d.cmd_gpa;
-  const uint64_t cmdSizeBytes = (uint64_t)d.cmd_size_bytes;
-  if (cmdGpa == 0 && cmdSizeBytes == 0) {
-    wprintf(L"  cmd: empty (cmd_gpa=0)\n");
-    FILE *fp = NULL;
-    errno_t ferr = _wfopen_s(&fp, outPath, L"wb");
-    if (ferr != 0 || !fp) {
-      fwprintf(stderr, L"Failed to create output file: %s (errno=%d)\n", outPath, (int)ferr);
-      return 2;
-    }
-    fclose(fp);
-    wprintf(L"  cmd dumped: %s (empty)\n", outPath);
-  } else {
-    if (cmdGpa == 0 || cmdSizeBytes == 0) {
-      fwprintf(stderr, L"Invalid cmd_gpa/cmd_size_bytes pair: cmd_gpa=0x%I64x cmd_size_bytes=%I64u\n",
-               (unsigned long long)cmdGpa, (unsigned long long)cmdSizeBytes);
-      return 2;
-    }
-    if (cmdSizeBytes > kDumpLastCmdHardMaxBytes) {
-      fwprintf(stderr, L"Refusing to dump %I64u bytes (hard cap %I64u bytes)\n", (unsigned long long)cmdSizeBytes,
-               (unsigned long long)kDumpLastCmdHardMaxBytes);
-      return 2;
-    }
-    if (cmdSizeBytes > kDumpLastCmdDefaultMaxBytes && !force) {
-      fwprintf(stderr, L"Refusing to dump %I64u bytes (default cap %I64u bytes). Use --force to override.\n",
-               (unsigned long long)cmdSizeBytes, (unsigned long long)kDumpLastCmdDefaultMaxBytes);
-      return 2;
-    }
-    if (!AddU64NoOverflow(cmdGpa, cmdSizeBytes, NULL)) {
-      fwprintf(stderr, L"Invalid cmd_gpa/cmd_size_bytes range (overflow): gpa=0x%I64x size=%I64u\n",
-               (unsigned long long)cmdGpa, (unsigned long long)cmdSizeBytes);
-      return 2;
+  for (uint32_t dumpIndex = 0; dumpIndex < actualCount; ++dumpIndex) {
+    const uint32_t curIndexFromTail = indexFromTail + dumpIndex;
+    const uint32_t idx = (descCount - 1u) - curIndexFromTail;
+
+    aerogpu_dbgctl_ring_desc_v2 d;
+    ZeroMemory(&d, sizeof(d));
+    if (usedV2) {
+      d = q2.desc[idx];
+    } else {
+      const aerogpu_dbgctl_ring_desc &d1 = q1.desc[idx];
+      d.fence = d1.signal_fence;
+      d.cmd_gpa = d1.cmd_gpa;
+      d.cmd_size_bytes = d1.cmd_size_bytes;
+      d.flags = d1.flags;
+      d.alloc_table_gpa = 0;
+      d.alloc_table_size_bytes = 0;
+      d.reserved0 = 0;
     }
 
-    uint32_t firstDword = 0;
-    const int dumpRc = DumpGpaRangeToFile(f, hAdapter, cmdGpa, cmdSizeBytes, outPath, &firstDword);
-    if (dumpRc != 0) {
-      return dumpRc;
+    uint32_t selectedRingIndex = idx;
+    if (usedV2 && ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU && tail >= descCount) {
+      selectedRingIndex = (tail - descCount) + idx;
     }
-    wprintf(L"  cmd dumped: %s (%I64u bytes)\n", outPath, (unsigned long long)cmdSizeBytes);
 
-    if (cmdSizeBytes >= 4) {
-      if (firstDword == AEROGPU_CMD_STREAM_MAGIC) {
-        wprintf(L"  cmd stream: magic=0x%08lx (ACMD)\n", (unsigned long)firstDword);
+    const wchar_t *curOutPath = outPath;
+    wchar_t *curOutPathOwned = NULL;
+    if (actualCount > 1) {
+      curOutPathOwned = HeapBuildIndexedBinPath(outPath, curIndexFromTail);
+      if (!curOutPathOwned) {
+        fwprintf(stderr, L"Out of memory building output path for index_from_tail=%lu\n",
+                 (unsigned long)curIndexFromTail);
+        return 2;
+      }
+      curOutPath = curOutPathOwned;
+    }
+
+    wprintf(
+        L"  selected: index_from_tail=%lu -> ringIndex=%lu fence=0x%I64x cmdGpa=0x%I64x cmdBytes=%lu flags=0x%08lx\n",
+        (unsigned long)curIndexFromTail, (unsigned long)selectedRingIndex, (unsigned long long)d.fence,
+        (unsigned long long)d.cmd_gpa, (unsigned long)d.cmd_size_bytes, (unsigned long)d.flags);
+    if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+      wprintf(L"            allocTableGpa=0x%I64x allocTableBytes=%lu\n", (unsigned long long)d.alloc_table_gpa,
+              (unsigned long)d.alloc_table_size_bytes);
+    }
+
+    const uint64_t cmdGpa = (uint64_t)d.cmd_gpa;
+    const uint64_t cmdSizeBytes = (uint64_t)d.cmd_size_bytes;
+    if (cmdGpa == 0 && cmdSizeBytes == 0) {
+      wprintf(L"  cmd: empty (cmd_gpa=0)\n");
+      FILE *fp = NULL;
+      errno_t ferr = _wfopen_s(&fp, curOutPath, L"wb");
+      if (ferr != 0 || !fp) {
+        fwprintf(stderr, L"Failed to create output file: %s (errno=%d)\n", curOutPath, (int)ferr);
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        return 2;
+      }
+      fclose(fp);
+      wprintf(L"  cmd dumped: %s (empty)\n", curOutPath);
+    } else {
+      if (cmdGpa == 0 || cmdSizeBytes == 0) {
+        fwprintf(stderr, L"Invalid cmd_gpa/cmd_size_bytes pair: cmd_gpa=0x%I64x cmd_size_bytes=%I64u\n",
+                 (unsigned long long)cmdGpa, (unsigned long long)cmdSizeBytes);
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        return 2;
+      }
+      if (cmdSizeBytes > kDumpLastCmdHardMaxBytes) {
+        fwprintf(stderr, L"Refusing to dump %I64u bytes (hard cap %I64u bytes)\n", (unsigned long long)cmdSizeBytes,
+                 (unsigned long long)kDumpLastCmdHardMaxBytes);
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        return 2;
+      }
+      if (cmdSizeBytes > kDumpLastCmdDefaultMaxBytes && !force) {
+        fwprintf(stderr, L"Refusing to dump %I64u bytes (default cap %I64u bytes). Use --force to override.\n",
+                 (unsigned long long)cmdSizeBytes, (unsigned long long)kDumpLastCmdDefaultMaxBytes);
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        return 2;
+      }
+      if (!AddU64NoOverflow(cmdGpa, cmdSizeBytes, NULL)) {
+        fwprintf(stderr, L"Invalid cmd_gpa/cmd_size_bytes range (overflow): gpa=0x%I64x size=%I64u\n",
+                 (unsigned long long)cmdGpa, (unsigned long long)cmdSizeBytes);
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        return 2;
+      }
+
+      uint32_t firstDword = 0;
+      const int dumpRc = DumpGpaRangeToFile(f, hAdapter, cmdGpa, cmdSizeBytes, curOutPath, &firstDword);
+      if (dumpRc != 0) {
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        return dumpRc;
+      }
+      wprintf(L"  cmd dumped: %s (%I64u bytes)\n", curOutPath, (unsigned long long)cmdSizeBytes);
+
+      if (cmdSizeBytes >= 4) {
+        if (firstDword == AEROGPU_CMD_STREAM_MAGIC) {
+          wprintf(L"  cmd stream: magic=0x%08lx (ACMD)\n", (unsigned long)firstDword);
+        } else {
+          wprintf(L"  cmd stream: magic=0x%08lx (expected 0x%08lx)\n", (unsigned long)firstDword,
+                  (unsigned long)AEROGPU_CMD_STREAM_MAGIC);
+        }
+      }
+    }
+
+    wchar_t *summaryPath = HeapWcsCatSuffix(curOutPath, L".txt");
+    if (summaryPath) {
+      FILE *sf = NULL;
+      errno_t serr = _wfopen_s(&sf, summaryPath, L"wt");
+      if (serr == 0 && sf) {
+        fwprintf(sf, L"ring_id=%lu\n", (unsigned long)ringId);
+        fwprintf(sf, L"ring_format=%s\n", RingFormatToString(ringFormat));
+        fwprintf(sf, L"head=0x%08lx\n", (unsigned long)head);
+        fwprintf(sf, L"tail=0x%08lx\n", (unsigned long)tail);
+        fwprintf(sf, L"selected_index_from_tail=%lu\n", (unsigned long)curIndexFromTail);
+        fwprintf(sf, L"selected_ring_index=%lu\n", (unsigned long)selectedRingIndex);
+        fwprintf(sf, L"fence=0x%I64x\n", (unsigned long long)d.fence);
+        fwprintf(sf, L"flags=0x%08lx\n", (unsigned long)d.flags);
+        fwprintf(sf, L"cmd_gpa=0x%I64x\n", (unsigned long long)d.cmd_gpa);
+        fwprintf(sf, L"cmd_size_bytes=%lu\n", (unsigned long)d.cmd_size_bytes);
+        if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+          fwprintf(sf, L"alloc_table_gpa=0x%I64x\n", (unsigned long long)d.alloc_table_gpa);
+          fwprintf(sf, L"alloc_table_size_bytes=%lu\n", (unsigned long)d.alloc_table_size_bytes);
+        }
+        fclose(sf);
+      }
+      HeapFree(GetProcessHeap(), 0, summaryPath);
+    }
+
+    // Optional alloc table dump (AGPU only).
+    if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+      const uint64_t allocGpa = (uint64_t)d.alloc_table_gpa;
+      const uint64_t allocSizeBytes = (uint64_t)d.alloc_table_size_bytes;
+      if (allocGpa == 0 && allocSizeBytes == 0) {
+        // Nothing to dump.
       } else {
-        wprintf(L"  cmd stream: magic=0x%08lx (expected 0x%08lx)\n", (unsigned long)firstDword,
-                (unsigned long)AEROGPU_CMD_STREAM_MAGIC);
+        if (allocGpa == 0 || allocSizeBytes == 0) {
+          fwprintf(stderr, L"Invalid alloc_table_gpa/alloc_table_size_bytes pair: gpa=0x%I64x size=%I64u\n",
+                   (unsigned long long)allocGpa, (unsigned long long)allocSizeBytes);
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          return 2;
+        }
+        if (allocSizeBytes > kDumpLastCmdHardMaxBytes) {
+          fwprintf(stderr, L"Refusing to dump alloc table %I64u bytes (hard cap %I64u bytes)\n",
+                   (unsigned long long)allocSizeBytes, (unsigned long long)kDumpLastCmdHardMaxBytes);
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          return 2;
+        }
+        if (allocSizeBytes > kDumpLastCmdDefaultMaxBytes && !force) {
+          fwprintf(stderr,
+                   L"Refusing to dump alloc table %I64u bytes (default cap %I64u bytes). Use --force to override.\n",
+                   (unsigned long long)allocSizeBytes, (unsigned long long)kDumpLastCmdDefaultMaxBytes);
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          return 2;
+        }
+        if (!AddU64NoOverflow(allocGpa, allocSizeBytes, NULL)) {
+          fwprintf(stderr, L"Invalid alloc table range (overflow): gpa=0x%I64x size=%I64u\n",
+                   (unsigned long long)allocGpa, (unsigned long long)allocSizeBytes);
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          return 2;
+        }
+
+        wchar_t *allocPath = HeapWcsCatSuffix(curOutPath, L".alloc_table.bin");
+        if (!allocPath) {
+          fwprintf(stderr, L"Out of memory building alloc table output path\n");
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          return 2;
+        }
+        const int dumpAllocRc = DumpGpaRangeToFile(f, hAdapter, allocGpa, allocSizeBytes, allocPath, NULL);
+        if (dumpAllocRc == 0) {
+          wprintf(L"  alloc table dumped: %s\n", allocPath);
+        }
+        HeapFree(GetProcessHeap(), 0, allocPath);
+        if (dumpAllocRc != 0) {
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          return dumpAllocRc;
+        }
       }
     }
-  }
 
-  wchar_t *summaryPath = HeapWcsCatSuffix(outPath, L".txt");
-  if (summaryPath) {
-    FILE *sf = NULL;
-    errno_t serr = _wfopen_s(&sf, summaryPath, L"wt");
-    if (serr == 0 && sf) {
-      fwprintf(sf, L"ring_id=%lu\n", (unsigned long)ringId);
-      fwprintf(sf, L"ring_format=%s\n", RingFormatToString(ringFormat));
-      fwprintf(sf, L"head=0x%08lx\n", (unsigned long)head);
-      fwprintf(sf, L"tail=0x%08lx\n", (unsigned long)tail);
-      fwprintf(sf, L"selected_index_from_tail=%lu\n", (unsigned long)indexFromTail);
-      fwprintf(sf, L"selected_ring_index=%lu\n", (unsigned long)selectedRingIndex);
-      fwprintf(sf, L"fence=0x%I64x\n", (unsigned long long)d.fence);
-      fwprintf(sf, L"flags=0x%08lx\n", (unsigned long)d.flags);
-      fwprintf(sf, L"cmd_gpa=0x%I64x\n", (unsigned long long)d.cmd_gpa);
-      fwprintf(sf, L"cmd_size_bytes=%lu\n", (unsigned long)d.cmd_size_bytes);
-      if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
-        fwprintf(sf, L"alloc_table_gpa=0x%I64x\n", (unsigned long long)d.alloc_table_gpa);
-        fwprintf(sf, L"alloc_table_size_bytes=%lu\n", (unsigned long)d.alloc_table_size_bytes);
-      }
-      fclose(sf);
+    if (curOutPathOwned) {
+      HeapFree(GetProcessHeap(), 0, curOutPathOwned);
     }
-    HeapFree(GetProcessHeap(), 0, summaryPath);
-  }
-
-  // Optional alloc table dump (AGPU only).
-  if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
-    const uint64_t allocGpa = (uint64_t)d.alloc_table_gpa;
-    const uint64_t allocSizeBytes = (uint64_t)d.alloc_table_size_bytes;
-    if (allocGpa == 0 && allocSizeBytes == 0) {
-      return 0;
-    }
-    if (allocGpa == 0 || allocSizeBytes == 0) {
-      fwprintf(stderr, L"Invalid alloc_table_gpa/alloc_table_size_bytes pair: gpa=0x%I64x size=%I64u\n",
-               (unsigned long long)allocGpa, (unsigned long long)allocSizeBytes);
-      return 2;
-    }
-    if (allocSizeBytes > kDumpLastCmdHardMaxBytes) {
-      fwprintf(stderr, L"Refusing to dump alloc table %I64u bytes (hard cap %I64u bytes)\n",
-               (unsigned long long)allocSizeBytes, (unsigned long long)kDumpLastCmdHardMaxBytes);
-      return 2;
-    }
-    if (allocSizeBytes > kDumpLastCmdDefaultMaxBytes && !force) {
-      fwprintf(stderr,
-               L"Refusing to dump alloc table %I64u bytes (default cap %I64u bytes). Use --force to override.\n",
-               (unsigned long long)allocSizeBytes, (unsigned long long)kDumpLastCmdDefaultMaxBytes);
-      return 2;
-    }
-    if (!AddU64NoOverflow(allocGpa, allocSizeBytes, NULL)) {
-      fwprintf(stderr, L"Invalid alloc table range (overflow): gpa=0x%I64x size=%I64u\n",
-               (unsigned long long)allocGpa, (unsigned long long)allocSizeBytes);
-      return 2;
-    }
-
-    wchar_t *allocPath = HeapWcsCatSuffix(outPath, L".alloc_table.bin");
-    if (!allocPath) {
-      fwprintf(stderr, L"Out of memory building alloc table output path\n");
-      return 2;
-    }
-    const int dumpAllocRc = DumpGpaRangeToFile(f, hAdapter, allocGpa, allocSizeBytes, allocPath, NULL);
-    if (dumpAllocRc == 0) {
-      wprintf(L"  alloc table dumped: %s\n", allocPath);
-    }
-    HeapFree(GetProcessHeap(), 0, allocPath);
-    return dumpAllocRc;
   }
 
   return 0;
+
 }
 
 static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId,
@@ -7118,6 +7228,7 @@ int wmain(int argc, wchar_t **argv) {
   bool readGpaForce = false;
   const wchar_t *dumpLastCmdOutPath = NULL;
   uint32_t dumpLastCmdIndexFromTail = 0;
+  uint32_t dumpLastCmdCount = 1;
   bool dumpLastCmdForce = false;
   enum {
     CMD_NONE = 0,
@@ -7370,6 +7481,23 @@ int wmain(int argc, wchar_t **argv) {
         fwprintf(stderr, L"Invalid --index-from-tail value: %s\n", arg);
         return 1;
       }
+      continue;
+    }
+
+    if (wcscmp(a, L"--count") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--count requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      const unsigned long v = wcstoul(arg, &end, 0);
+      if (!end || end == arg || *end != 0 || v == 0) {
+        fwprintf(stderr, L"Invalid --count value: %s\n", arg);
+        return 1;
+      }
+      dumpLastCmdCount = (uint32_t)v;
       continue;
     }
 
@@ -7883,7 +8011,8 @@ int wmain(int argc, wchar_t **argv) {
       rc = DoWatchRing(&f, open.hAdapter, ringId, watchSamples, watchIntervalMs);
       break;
     case CMD_DUMP_LAST_CMD:
-      rc = DoDumpLastCmd(&f, open.hAdapter, ringId, dumpLastCmdIndexFromTail, dumpLastCmdOutPath, dumpLastCmdForce);
+      rc = DoDumpLastCmd(&f, open.hAdapter, ringId, dumpLastCmdIndexFromTail, dumpLastCmdCount, dumpLastCmdOutPath,
+                         dumpLastCmdForce);
       break;
     case CMD_DUMP_CREATEALLOCATION:
       rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath, NULL);
