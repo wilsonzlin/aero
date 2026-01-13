@@ -200,11 +200,12 @@ impl Bios {
 
                 // VGA mode 13h.
                 if BiosDataArea::read_video_mode(memory) == 0x13 {
-                    let x = u32::from(x).min(319);
-                    let y = u32::from(y).min(199);
-                    let off = y.saturating_mul(320).saturating_add(x);
-                    let addr = 0xA0000u64 + off as u64;
-                    memory.write_u8(addr, cpu.al());
+                    // Bounds: 320x200. Out-of-range writes are ignored.
+                    if x < 320 && y < 200 {
+                        let off = u64::from(y) * 320 + u64::from(x);
+                        let addr = 0xA0000u64 + off;
+                        memory.write_u8(addr, cpu.al());
+                    }
                 }
             }
             0x0D => {
@@ -241,13 +242,19 @@ impl Bios {
                     return;
                 }
 
-                if BiosDataArea::read_video_mode(memory) == 0x13 {
-                    let x = u32::from(x).min(319);
-                    let y = u32::from(y).min(199);
-                    let off = y.saturating_mul(320).saturating_add(x);
-                    let addr = 0xA0000u64 + off as u64;
-                    cpu.set_al(memory.read_u8(addr));
+                // VGA mode 13h.
+                if BiosDataArea::read_video_mode(memory) != 0x13 {
+                    cpu.set_al(0);
+                    return;
                 }
+                // Bounds: 320x200. Out-of-range reads return 0.
+                if x >= 320 || y >= 200 {
+                    cpu.set_al(0);
+                    return;
+                }
+                let off = u64::from(y) * 320 + u64::from(x);
+                let addr = 0xA0000u64 + off;
+                cpu.set_al(memory.read_u8(addr));
             }
             0x1A => {
                 // Display Combination Code (VGA).
@@ -289,55 +296,6 @@ impl Bios {
                 let page = cpu.bh();
                 let count = cpu.cx();
                 self.video.vga.write_char_only(memory, page, ch, count);
-            }
-            0x0C => {
-                // Write Graphics Pixel
-                //
-                // Mode 13h: 320x200x256. We model this as a linear framebuffer at 0xA0000.
-                //
-                // Inputs:
-                // - AL = palette index (color)
-                // - CX = x
-                // - DX = y
-                // - BH = page (ignored; mode 13h effectively has only one visible page in this model)
-                if BiosDataArea::read_video_mode(memory) != 0x13 {
-                    return;
-                }
-                let x = cpu.cx();
-                let y = cpu.dx();
-                if x >= 320 || y >= 200 {
-                    return;
-                }
-                const VGA_FB_BASE: u64 = 0xA0000;
-                let addr = VGA_FB_BASE + (u64::from(y) * 320) + u64::from(x);
-                memory.write_u8(addr, cpu.al());
-            }
-            0x0D => {
-                // Read Graphics Pixel
-                //
-                // Mode 13h: 320x200x256. We model this as a linear framebuffer at 0xA0000.
-                //
-                // Inputs:
-                // - CX = x
-                // - DX = y
-                // - BH = page (ignored)
-                //
-                // Output:
-                // - AL = palette index (color)
-                if BiosDataArea::read_video_mode(memory) != 0x13 {
-                    cpu.set_al(0);
-                    return;
-                }
-                let x = cpu.cx();
-                let y = cpu.dx();
-                if x >= 320 || y >= 200 {
-                    cpu.set_al(0);
-                    return;
-                }
-                const VGA_FB_BASE: u64 = 0xA0000;
-                let addr = VGA_FB_BASE + (u64::from(y) * 320) + u64::from(x);
-                let value = memory.read_u8(addr);
-                cpu.set_al(value);
             }
             0x11 => {
                 // Character generator routines.
