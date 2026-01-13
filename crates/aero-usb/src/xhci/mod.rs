@@ -22,8 +22,11 @@
 //!   early enumeration harnesses.
 //! - `command` provides an MVP endpoint-management state machine (Stop/Reset Endpoint + Set TR
 //!   Dequeue Pointer) with doorbell gating semantics.
-//! - `transfer` provides a small, deterministic transfer-ring executor that can process Normal TRBs
-//!   for non-control endpoints (sufficient for HID interrupt IN/OUT).
+//! - `transfer` provides:
+//!   - a small, deterministic transfer-ring executor that can process Normal TRBs for non-control
+//!     endpoints (sufficient for HID interrupt IN/OUT)
+//!   - a minimal control-transfer engine for endpoint 0 (Setup/Data/Status TRBs) used by unit tests
+//!     and early emulator integration.
 //!
 //! Finally, this module models a tiny root hub (USB2 ports only) and generates Port Status Change
 //! Event TRBs when devices connect/disconnect or a port reset completes.

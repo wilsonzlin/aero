@@ -1,13 +1,15 @@
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use core::fmt;
 use alloc::vec::Vec;
 
 pub use super::trb::{CompletionCode, Trb, TrbType};
 use super::trb::TRB_LEN;
 
-use crate::device::{UsbInResult, UsbOutResult};
+use super::trb::{Trb as XhciTrb, TrbType as XhciTrbType};
+use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
 use crate::memory::MemoryBus;
-use crate::UsbDeviceModel;
+use crate::{SetupPacket, UsbDeviceModel};
 
 const TRB_SIZE: u64 = TRB_LEN as u64;
 
@@ -18,7 +20,6 @@ const MAX_LINK_SKIP: usize = 32;
 
 /// Maximum number of TRBs we'll consider part of a single TD (chain).
 const MAX_TD_TRBS: usize = 64;
-
 pub fn read_trb<M: MemoryBus + ?Sized>(mem: &mut M, paddr: u64) -> Trb {
     Trb::read_from(mem, paddr)
 }
@@ -442,5 +443,857 @@ impl XhciTransferExecutor {
         }
         out.truncate(offset);
         out
+    }
+}
+
+// --- Endpoint 0 control transfer-ring engine ---------------------------------
+
+const MAX_TRBS_PER_RUN: usize = 1024;
+const MAX_CONTROL_DATA_LEN: u32 = 64 * 1024;
+
+// Common TRB control bits.
+const TRB_CTRL_IOC: u32 = 1 << 5;
+const TRB_CTRL_IDT: u32 = 1 << 6;
+
+// Data/Status stage direction bit (DIR).
+const DATA_STATUS_TRB_DIR_IN: u32 = 1 << 16;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Direction {
+    Out,
+    In,
+}
+
+impl Direction {
+    fn from_dir_bit_set(dir_in: bool) -> Self {
+        if dir_in {
+            Direction::In
+        } else {
+            Direction::Out
+        }
+    }
+}
+
+fn read_xhci_trb<M: MemoryBus + ?Sized>(mem: &mut M, addr: u64) -> XhciTrb {
+    let mut bytes = [0u8; TRB_LEN];
+    mem.read_bytes(addr, &mut bytes);
+    XhciTrb::from_bytes(bytes)
+}
+
+fn write_xhci_trb<M: MemoryBus + ?Sized>(mem: &mut M, addr: u64, trb: &XhciTrb) {
+    mem.write_bytes(addr, &trb.to_bytes());
+}
+
+fn xhci_trb_transfer_len(trb: &XhciTrb) -> u32 {
+    // Transfer TRBs use bits 0..=16.
+    trb.status & 0x1ffff
+}
+
+fn xhci_trb_idt(trb: &XhciTrb) -> bool {
+    trb.control & TRB_CTRL_IDT != 0
+}
+
+fn xhci_trb_ioc(trb: &XhciTrb) -> bool {
+    trb.control & TRB_CTRL_IOC != 0
+}
+
+fn xhci_trb_data_status_direction(trb: &XhciTrb) -> Direction {
+    Direction::from_dir_bit_set(trb.control & DATA_STATUS_TRB_DIR_IN != 0)
+}
+
+#[derive(Debug)]
+struct EventRing {
+    base: u64,
+    size: u16,
+    enqueue_index: u16,
+    cycle: bool,
+}
+
+impl EventRing {
+    fn new(base: u64, size: u16) -> Self {
+        Self {
+            base,
+            size: size.max(1),
+            enqueue_index: 0,
+            cycle: true,
+        }
+    }
+
+    fn push<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, mut trb: XhciTrb) {
+        // Overwrite the cycle bit according to the producer cycle state.
+        trb.set_cycle(self.cycle);
+
+        let addr = self
+            .base
+            .wrapping_add(self.enqueue_index as u64 * TRB_SIZE);
+        write_xhci_trb(mem, addr, &trb);
+
+        self.enqueue_index = self.enqueue_index.wrapping_add(1);
+        if self.enqueue_index >= self.size {
+            self.enqueue_index = 0;
+            self.cycle = !self.cycle;
+        }
+    }
+
+    fn push_transfer_event<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        trb_pointer: u64,
+        completion: CompletionCode,
+        transfer_len: u32,
+        endpoint_id: u8,
+        slot_id: u8,
+    ) {
+        let status = (transfer_len & 0x00ff_ffff) | ((completion as u32) << 24);
+        let mut trb = XhciTrb::new(trb_pointer, status, 0);
+        trb.set_trb_type(XhciTrbType::TransferEvent);
+        trb.set_endpoint_id(endpoint_id);
+        trb.set_slot_id(slot_id);
+        self.push(mem, trb);
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Ep0RingState {
+    dequeue: u64,
+    cycle: bool,
+}
+
+impl Ep0RingState {
+    fn peek<M: MemoryBus + ?Sized>(&self, mem: &mut M) -> Option<XhciTrb> {
+        let trb = read_xhci_trb(mem, self.dequeue);
+        (trb.cycle() == self.cycle).then_some(trb)
+    }
+
+    fn consume(&mut self, trb: &XhciTrb) {
+        if matches!(trb.trb_type(), XhciTrbType::Link) {
+            self.dequeue = trb.link_segment_ptr();
+            if trb.link_toggle_cycle() {
+                self.cycle = !self.cycle;
+            }
+        } else {
+            self.dequeue = self.dequeue.wrapping_add(TRB_SIZE);
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum ControlEp0State {
+    ExpectSetup,
+    /// SETUP consumed; next TRB should be DATA or STATUS.
+    ExpectDataOrStatus,
+    Data {
+        direction: Direction,
+        trb_addr: u64,
+        buffer_ptr: u64,
+        len: u32,
+        transferred: u32,
+        idt: bool,
+        immediate: [u8; 8],
+    },
+    /// DATA consumed; next TRB should be STATUS.
+    ExpectStatus {
+        expected_data_len: u32,
+        actual_data_len: u32,
+        short_packet: bool,
+    },
+    Status {
+        direction: Direction,
+        trb_addr: u64,
+        expected_data_len: u32,
+        actual_data_len: u32,
+        short_packet: bool,
+        ioc: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct ControlEndpoint {
+    ring: Ep0RingState,
+    max_packet_size: u16,
+    retry_at_ms: u64,
+    doorbell_pending: bool,
+    state: ControlEp0State,
+}
+
+impl ControlEndpoint {
+    fn new(dequeue: u64, cycle: bool, max_packet_size: u16) -> Self {
+        Self {
+            ring: Ep0RingState { dequeue, cycle },
+            max_packet_size: max_packet_size.max(1),
+            retry_at_ms: 0,
+            doorbell_pending: false,
+            state: ControlEp0State::ExpectSetup,
+        }
+    }
+
+    fn has_pending_work(&self) -> bool {
+        self.doorbell_pending || !matches!(self.state, ControlEp0State::ExpectSetup)
+    }
+
+    fn schedule_retry(&mut self, now_ms: u64) {
+        self.retry_at_ms = now_ms.saturating_add(1);
+    }
+
+    fn push_event<M: MemoryBus + ?Sized>(
+        events: &mut Option<EventRing>,
+        mem: &mut M,
+        trb_pointer: u64,
+        completion: CompletionCode,
+        transfer_len: u32,
+        endpoint_id: u8,
+        slot_id: u8,
+    ) {
+        if let Some(events) = events.as_mut() {
+            events.push_transfer_event(
+                mem,
+                trb_pointer,
+                completion,
+                transfer_len,
+                endpoint_id,
+                slot_id,
+            );
+        }
+    }
+
+    fn reset_to_setup(&mut self) {
+        self.state = ControlEp0State::ExpectSetup;
+    }
+
+    fn skip_until_status_or_empty<M: MemoryBus + ?Sized>(&mut self, mem: &mut M) {
+        let mut iterations = 0usize;
+        while iterations < 32 {
+            iterations += 1;
+            let Some(trb) = self.ring.peek(mem) else {
+                break;
+            };
+            let ty = trb.trb_type();
+            self.ring.consume(&trb);
+            if matches!(ty, XhciTrbType::StatusStage) {
+                break;
+            }
+        }
+    }
+
+    fn process<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        dev: &mut AttachedUsbDevice,
+        events: &mut Option<EventRing>,
+        now_ms: u64,
+        slot_id: u8,
+        endpoint_id: u8,
+    ) {
+        if now_ms < self.retry_at_ms {
+            return;
+        }
+
+        let mut processed_any = false;
+
+        for _ in 0..MAX_TRBS_PER_RUN {
+            if now_ms < self.retry_at_ms {
+                break;
+            }
+
+            let Some(trb) = self.ring.peek(mem) else {
+                break;
+            };
+            let trb_addr = self.ring.dequeue;
+
+            // Link TRBs are transparent to the endpoint state machine.
+            if matches!(trb.trb_type(), XhciTrbType::Link) {
+                self.ring.consume(&trb);
+                processed_any = true;
+                continue;
+            }
+
+            match &mut self.state {
+                ControlEp0State::ExpectSetup => {
+                    if !matches!(trb.trb_type(), XhciTrbType::SetupStage) {
+                        // Unexpected TRB: consume it so we don't get stuck on malformed rings.
+                        Self::push_event(
+                            events,
+                            mem,
+                            trb_addr,
+                            CompletionCode::TrbError,
+                            0,
+                            endpoint_id,
+                            slot_id,
+                        );
+                        self.ring.consume(&trb);
+                        processed_any = true;
+                        continue;
+                    }
+
+                    let setup_bytes = trb.parameter.to_le_bytes();
+                    let setup = SetupPacket::from_bytes(setup_bytes);
+                    match dev.handle_setup(setup) {
+                        UsbOutResult::Ack => {
+                            self.ring.consume(&trb);
+                            self.state = ControlEp0State::ExpectDataOrStatus;
+                            processed_any = true;
+                        }
+                        UsbOutResult::Nak => {
+                            self.schedule_retry(now_ms);
+                            break;
+                        }
+                        UsbOutResult::Stall => {
+                            Self::push_event(
+                                events,
+                                mem,
+                                trb_addr,
+                                CompletionCode::StallError,
+                                0,
+                                endpoint_id,
+                                slot_id,
+                            );
+                            self.ring.consume(&trb);
+                            self.skip_until_status_or_empty(mem);
+                            self.reset_to_setup();
+                            processed_any = true;
+                        }
+                        UsbOutResult::Timeout => {
+                            Self::push_event(
+                                events,
+                                mem,
+                                trb_addr,
+                                CompletionCode::UsbTransactionError,
+                                0,
+                                endpoint_id,
+                                slot_id,
+                            );
+                            self.ring.consume(&trb);
+                            self.skip_until_status_or_empty(mem);
+                            self.reset_to_setup();
+                            processed_any = true;
+                        }
+                    }
+                }
+                ControlEp0State::ExpectDataOrStatus => match trb.trb_type() {
+                    XhciTrbType::DataStage => {
+                        let direction = xhci_trb_data_status_direction(&trb);
+                        let len = xhci_trb_transfer_len(&trb).min(MAX_CONTROL_DATA_LEN);
+                        let idt = xhci_trb_idt(&trb);
+                        let immediate = trb.parameter.to_le_bytes();
+                        let buffer_ptr = trb.parameter;
+                        self.state = ControlEp0State::Data {
+                            direction,
+                            trb_addr,
+                            buffer_ptr,
+                            len,
+                            transferred: 0,
+                            idt,
+                            immediate,
+                        };
+                        processed_any = true;
+                    }
+                    XhciTrbType::StatusStage => {
+                        let direction = xhci_trb_data_status_direction(&trb);
+                        let ioc = xhci_trb_ioc(&trb);
+                        self.state = ControlEp0State::Status {
+                            direction,
+                            trb_addr,
+                            expected_data_len: 0,
+                            actual_data_len: 0,
+                            short_packet: false,
+                            ioc,
+                        };
+                        processed_any = true;
+                    }
+                    _ => {
+                        Self::push_event(
+                            events,
+                            mem,
+                            trb_addr,
+                            CompletionCode::TrbError,
+                            0,
+                            endpoint_id,
+                            slot_id,
+                        );
+                        self.ring.consume(&trb);
+                        self.reset_to_setup();
+                        processed_any = true;
+                    }
+                },
+                ControlEp0State::Data {
+                    direction,
+                    trb_addr: expected_addr,
+                    buffer_ptr,
+                    len,
+                    transferred,
+                    idt,
+                    immediate,
+                } => {
+                    if *expected_addr != trb_addr
+                        || !matches!(trb.trb_type(), XhciTrbType::DataStage)
+                    {
+                        // Ring corruption: bail out to SETUP state.
+                        Self::push_event(
+                            events,
+                            mem,
+                            trb_addr,
+                            CompletionCode::TrbError,
+                            0,
+                            endpoint_id,
+                            slot_id,
+                        );
+                        self.reset_to_setup();
+                        processed_any = true;
+                        continue;
+                    }
+
+                    let mut short_packet = false;
+                    let mut completion: Option<CompletionCode> = None;
+                    let max_packet = self.max_packet_size as u32;
+                    let mut remaining = len.saturating_sub(*transferred);
+
+                    while remaining != 0 {
+                        let chunk_max = remaining.min(max_packet) as usize;
+
+                        match direction {
+                            Direction::In => match dev.handle_in(0, chunk_max) {
+                                UsbInResult::Data(chunk) => {
+                                    if *idt {
+                                        // Immediate data for IN is not implemented; treat as TRB
+                                        // error but do not panic.
+                                        completion = Some(CompletionCode::TrbError);
+                                        break;
+                                    }
+                                    let addr = buffer_ptr.wrapping_add(*transferred as u64);
+                                    mem.write_physical(addr, &chunk);
+                                    let got = chunk.len() as u32;
+                                    *transferred = transferred.saturating_add(got);
+                                    remaining = remaining.saturating_sub(got);
+                                    if got < chunk_max as u32 {
+                                        // Short packet terminates the data stage early.
+                                        short_packet = true;
+                                        break;
+                                    }
+                                }
+                                UsbInResult::Nak => {
+                                    self.schedule_retry(now_ms);
+                                    return;
+                                }
+                                UsbInResult::Stall => {
+                                    completion = Some(CompletionCode::StallError);
+                                    break;
+                                }
+                                UsbInResult::Timeout => {
+                                    completion = Some(CompletionCode::UsbTransactionError);
+                                    break;
+                                }
+                            },
+                            Direction::Out => {
+                                let mut chunk = Vec::with_capacity(chunk_max);
+                                if *idt {
+                                    // Immediate data is carried in the parameter field (up to 8
+                                    // bytes). This is rare for control transfers; support the basic
+                                    // OUT case for robustness.
+                                    let avail = immediate.len().min(chunk_max);
+                                    chunk.extend_from_slice(&immediate[..avail]);
+                                    if avail != chunk_max {
+                                        completion = Some(CompletionCode::TrbError);
+                                        break;
+                                    }
+                                } else {
+                                    chunk.resize(chunk_max, 0);
+                                    let addr = buffer_ptr.wrapping_add(*transferred as u64);
+                                    mem.read_physical(addr, &mut chunk);
+                                }
+
+                                match dev.handle_out(0, &chunk) {
+                                    UsbOutResult::Ack => {
+                                        *transferred =
+                                            transferred.saturating_add(chunk_max as u32);
+                                        remaining =
+                                            remaining.saturating_sub(chunk_max as u32);
+                                    }
+                                    UsbOutResult::Nak => {
+                                        // Retry without advancing the transfer offset.
+                                        self.schedule_retry(now_ms);
+                                        return;
+                                    }
+                                    UsbOutResult::Stall => {
+                                        completion = Some(CompletionCode::StallError);
+                                        break;
+                                    }
+                                    UsbOutResult::Timeout => {
+                                        completion = Some(CompletionCode::UsbTransactionError);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(completion) = completion {
+                        let remaining_len = len.saturating_sub(*transferred);
+                        Self::push_event(
+                            events,
+                            mem,
+                            trb_addr,
+                            completion,
+                            remaining_len,
+                            endpoint_id,
+                            slot_id,
+                        );
+                        // Consume the DATA TRB and any following STATUS TRB so the ring can
+                        // continue.
+                        self.ring.consume(&trb);
+                        self.skip_until_status_or_empty(mem);
+                        self.reset_to_setup();
+                        processed_any = true;
+                        continue;
+                    }
+
+                    let expected_data_len = *len;
+                    let actual_data_len = *transferred;
+                    let short = short_packet || actual_data_len < expected_data_len;
+
+                    // DATA stage completed (possibly short). Advance past the DATA TRB and proceed
+                    // to STATUS.
+                    self.ring.consume(&trb);
+                    self.state = ControlEp0State::ExpectStatus {
+                        expected_data_len,
+                        actual_data_len,
+                        short_packet: short,
+                    };
+                    processed_any = true;
+                }
+                ControlEp0State::ExpectStatus {
+                    expected_data_len,
+                    actual_data_len,
+                    short_packet,
+                } => {
+                    if matches!(trb.trb_type(), XhciTrbType::StatusStage) {
+                        let direction = xhci_trb_data_status_direction(&trb);
+                        let ioc = xhci_trb_ioc(&trb);
+                        self.state = ControlEp0State::Status {
+                            direction,
+                            trb_addr,
+                            expected_data_len: *expected_data_len,
+                            actual_data_len: *actual_data_len,
+                            short_packet: *short_packet,
+                            ioc,
+                        };
+                        processed_any = true;
+                    } else {
+                        // Unexpected; consume and abort this transfer.
+                        Self::push_event(
+                            events,
+                            mem,
+                            trb_addr,
+                            CompletionCode::TrbError,
+                            0,
+                            endpoint_id,
+                            slot_id,
+                        );
+                        self.ring.consume(&trb);
+                        self.reset_to_setup();
+                        processed_any = true;
+                    }
+                }
+                ControlEp0State::Status {
+                    direction,
+                    trb_addr: expected_addr,
+                    expected_data_len,
+                    actual_data_len,
+                    short_packet,
+                    ioc,
+                } => {
+                    if *expected_addr != trb_addr
+                        || !matches!(trb.trb_type(), XhciTrbType::StatusStage)
+                    {
+                        Self::push_event(
+                            events,
+                            mem,
+                            trb_addr,
+                            CompletionCode::TrbError,
+                            0,
+                            endpoint_id,
+                            slot_id,
+                        );
+                        self.reset_to_setup();
+                        processed_any = true;
+                        continue;
+                    }
+
+                    let completion = match direction {
+                        Direction::In => match dev.handle_in(0, 0) {
+                            UsbInResult::Data(data) => {
+                                if !data.is_empty() {
+                                    CompletionCode::TrbError
+                                } else if *short_packet {
+                                    CompletionCode::ShortPacket
+                                } else {
+                                    CompletionCode::Success
+                                }
+                            }
+                            UsbInResult::Nak => {
+                                self.schedule_retry(now_ms);
+                                break;
+                            }
+                            UsbInResult::Stall => CompletionCode::StallError,
+                            UsbInResult::Timeout => CompletionCode::UsbTransactionError,
+                        },
+                        Direction::Out => match dev.handle_out(0, &[]) {
+                            UsbOutResult::Ack => {
+                                if *short_packet {
+                                    CompletionCode::ShortPacket
+                                } else {
+                                    CompletionCode::Success
+                                }
+                            }
+                            UsbOutResult::Nak => {
+                                self.schedule_retry(now_ms);
+                                break;
+                            }
+                            UsbOutResult::Stall => CompletionCode::StallError,
+                            UsbOutResult::Timeout => CompletionCode::UsbTransactionError,
+                        },
+                    };
+
+                    // Consume the status TRB regardless of success/error.
+                    self.ring.consume(&trb);
+
+                    // xHCI Transfer Event TRBs report the number of bytes remaining for the TD.
+                    let remaining_len = expected_data_len.saturating_sub(*actual_data_len);
+
+                    // Generate an event on IOC or for non-success completions so software can
+                    // observe failures/short packets.
+                    if *ioc || completion != CompletionCode::Success {
+                        Self::push_event(
+                            events,
+                            mem,
+                            trb_addr,
+                            completion,
+                            remaining_len,
+                            endpoint_id,
+                            slot_id,
+                        );
+                    }
+
+                    self.reset_to_setup();
+                    processed_any = true;
+                }
+            }
+        }
+
+        if processed_any && matches!(self.state, ControlEp0State::ExpectSetup) {
+            // If we've drained the ring and are idle, clear the doorbell latch.
+            if self.ring.peek(mem).is_none() {
+                self.doorbell_pending = false;
+            }
+        }
+    }
+}
+
+/// Minimal xHCI-style root hub used by [`XhciController`](super::XhciController).
+pub struct XhciRootHub {
+    ports: Vec<Option<AttachedUsbDevice>>,
+}
+
+impl XhciRootHub {
+    pub fn new(num_ports: usize) -> Self {
+        Self {
+            ports: (0..num_ports).map(|_| None).collect(),
+        }
+    }
+
+    pub fn num_ports(&self) -> usize {
+        self.ports.len()
+    }
+
+    pub fn attach(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
+        if let Some(slot) = self.ports.get_mut(port) {
+            *slot = Some(AttachedUsbDevice::new(model));
+        }
+    }
+
+    pub fn detach(&mut self, port: usize) {
+        if let Some(slot) = self.ports.get_mut(port) {
+            *slot = None;
+        }
+    }
+
+    fn port_device_mut(&mut self, port: usize) -> Option<&mut AttachedUsbDevice> {
+        self.ports.get_mut(port)?.as_mut()
+    }
+
+    pub fn tick_1ms(&mut self) {
+        for dev in self.ports.iter_mut().filter_map(|p| p.as_mut()) {
+            dev.tick_1ms();
+        }
+    }
+}
+
+impl Default for XhciRootHub {
+    fn default() -> Self {
+        Self::new(1)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Slot {
+    port: usize,
+    ep0: Option<ControlEndpoint>,
+}
+
+/// Endpoint-0 transfer-ring engine.
+///
+/// This is the "transfer ring" portion of an eventual xHCI controller implementation, scoped to
+/// control transfers on endpoint 0 (Setup/Data/Status TRBs).
+pub struct Ep0TransferEngine {
+    hub: XhciRootHub,
+    slots: Vec<Option<Slot>>,
+    event_ring: Option<EventRing>,
+    now_ms: u64,
+}
+
+impl fmt::Debug for Ep0TransferEngine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Ep0TransferEngine")
+            .field("num_ports", &self.hub.num_ports())
+            .field("now_ms", &self.now_ms)
+            .finish()
+    }
+}
+
+impl Ep0TransferEngine {
+    pub fn new_with_ports(num_ports: usize) -> Self {
+        Self {
+            hub: XhciRootHub::new(num_ports),
+            slots: vec![None; 256],
+            event_ring: None,
+            now_ms: 0,
+        }
+    }
+
+    pub fn reset_state(&mut self) {
+        // Preserve attached devices/topology; only reset controller-local transfer state.
+        self.slots = vec![None; 256];
+        self.event_ring = None;
+        self.now_ms = 0;
+    }
+
+    pub fn hub_mut(&mut self) -> &mut XhciRootHub {
+        &mut self.hub
+    }
+
+    pub fn hub(&self) -> &XhciRootHub {
+        &self.hub
+    }
+
+    pub fn set_event_ring(&mut self, base: u64, size: u16) {
+        self.event_ring = Some(EventRing::new(base, size));
+    }
+
+    pub fn enable_slot(&mut self, port: usize) -> Option<u8> {
+        if port >= self.hub.num_ports() {
+            return None;
+        }
+        if self.hub.ports.get(port)?.is_none() {
+            return None;
+        }
+        for slot_id in 1..self.slots.len() {
+            if self.slots[slot_id].is_none() {
+                self.slots[slot_id] = Some(Slot { port, ep0: None });
+                return Some(slot_id as u8);
+            }
+        }
+        None
+    }
+
+    /// Configure the default control endpoint (endpoint ID 1) transfer ring for a slot.
+    pub fn configure_ep0(
+        &mut self,
+        slot_id: u8,
+        dequeue: u64,
+        cycle: bool,
+        max_packet_size: u16,
+    ) -> bool {
+        let Some(slot) = self
+            .slots
+            .get_mut(slot_id as usize)
+            .and_then(|s| s.as_mut())
+        else {
+            return false;
+        };
+        slot.ep0 = Some(ControlEndpoint::new(dequeue, cycle, max_packet_size));
+        true
+    }
+
+    pub fn ring_doorbell<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        slot_id: u8,
+        endpoint_id: u8,
+    ) {
+        if endpoint_id != 1 {
+            return;
+        }
+        let Some(slot) = self
+            .slots
+            .get_mut(slot_id as usize)
+            .and_then(|s| s.as_mut())
+        else {
+            return;
+        };
+        let Some(ep0) = slot.ep0.as_mut() else {
+            return;
+        };
+        ep0.doorbell_pending = true;
+        self.process_slot_ep0(mem, slot_id);
+    }
+
+    pub fn tick_1ms<M: MemoryBus + ?Sized>(&mut self, mem: &mut M) {
+        self.now_ms = self.now_ms.wrapping_add(1);
+        self.hub.tick_1ms();
+
+        // Process any endpoints that are waiting on NAK pacing or were doorbelled.
+        for slot_id in 1..self.slots.len() {
+            let Some(slot) = self.slots[slot_id].as_mut() else {
+                continue;
+            };
+            let Some(ep0) = slot.ep0.as_mut() else {
+                continue;
+            };
+            if !ep0.has_pending_work() {
+                continue;
+            }
+            if self.now_ms < ep0.retry_at_ms {
+                continue;
+            }
+            self.process_slot_ep0(mem, slot_id as u8);
+        }
+    }
+
+    fn process_slot_ep0<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, slot_id: u8) {
+        let now_ms = self.now_ms;
+
+        let Some(slot) = self
+            .slots
+            .get_mut(slot_id as usize)
+            .and_then(|s| s.as_mut())
+        else {
+            return;
+        };
+        let Some(ep0) = slot.ep0.as_mut() else {
+            return;
+        };
+        if now_ms < ep0.retry_at_ms {
+            return;
+        }
+        let Some(dev) = self.hub.port_device_mut(slot.port) else {
+            return;
+        };
+
+        ep0.process(mem, dev, &mut self.event_ring, now_ms, slot_id, 1);
+    }
+}
+
+impl Default for Ep0TransferEngine {
+    fn default() -> Self {
+        Self::new_with_ports(1)
     }
 }
