@@ -178,6 +178,7 @@ Constants (current defaults):
 - `BINDING_BASE_TEXTURE = 32`
 - `BINDING_BASE_SAMPLER = 160`
 - `BINDING_BASE_UAV = 176` (`160 + 16`)
+- `MAX_UAV_SLOTS = 8` (`u0..u7`)
 
 ### Vertex pulling + expansion internal bindings (`@group(3)`)
 
