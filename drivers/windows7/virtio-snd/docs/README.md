@@ -95,7 +95,10 @@ The in-tree virtio-snd driver supports both interrupt delivery modes:
 - If MSI/MSI-X is unavailable, cannot be connected, or vector programming fails, the driver falls back to INTx and (best-effort) disables virtio MSI-X routing
   (`VIRTIO_PCI_MSI_NO_VECTOR` / `0xFFFF`) so the device uses INTx + ISR semantics.
 
-If neither MSI/MSI-X nor INTx resources are available, the driver will fail `START_DEVICE` by default. If `AllowPollingOnly=1` is set under `HKR\\Parameters`,
+If neither MSI/MSI-X nor INTx resources are available, the driver will fail `START_DEVICE` by default. If `AllowPollingOnly=1` is set under:
+
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly`
+
 the driver may start in polling-only mode (reduced interrupt-driven behavior).
 
 #### INF registry keys (Windows 7 MSI opt-in)
