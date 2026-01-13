@@ -97,6 +97,7 @@ import {
 } from '../runtime/shared_layout';
 import { RingBuffer } from '../ipc/ring_buffer';
 import { decodeCommand, encodeEvent, type Command, type Event } from '../ipc/protocol';
+import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
@@ -723,6 +724,61 @@ const refreshFramebufferViews = (): void => {
 
 const BYTES_PER_PIXEL_RGBA8 = 4;
 const COPY_BYTES_PER_ROW_ALIGNMENT = 256;
+
+type WddmScanoutReadback = { width: number; height: number; rgba8: ArrayBuffer };
+
+const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot, guest: Uint8Array): WddmScanoutReadback | null => {
+  if (snap.source !== SCANOUT_SOURCE_WDDM) return null;
+  if (snap.format !== SCANOUT_FORMAT_B8G8R8X8) return null;
+
+  const width = snap.width >>> 0;
+  const height = snap.height >>> 0;
+  const pitchBytes = snap.pitchBytes >>> 0;
+  if (width === 0 || height === 0) return null;
+  if (!Number.isSafeInteger(pitchBytes) || pitchBytes <= 0) return null;
+
+  const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
+  if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) return null;
+  if (pitchBytes < rowBytes) return null;
+
+  const basePaddr =
+    (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
+  if (basePaddr === 0n) return null;
+  if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+
+  const outLen = BigInt(rowBytes) * BigInt(height);
+  if (outLen <= 0n || outLen > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  const out = new Uint8Array(Number(outLen));
+
+  const ramBytes = guest.byteLength;
+
+  for (let y = 0; y < height; y += 1) {
+    const rowPaddrBig = basePaddr + BigInt(pitchBytes) * BigInt(y);
+    if (rowPaddrBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    const rowPaddr = Number(rowPaddrBig);
+
+    try {
+      if (!guestRangeInBounds(ramBytes, rowPaddr, rowBytes)) return null;
+    } catch {
+      return null;
+    }
+
+    const rowOff = guestPaddrToRamOffset(ramBytes, rowPaddr);
+    if (rowOff === null) return null;
+
+    const src = guest.subarray(rowOff, rowOff + rowBytes);
+    const dstBase = y * rowBytes;
+    for (let i = 0; i < rowBytes; i += BYTES_PER_PIXEL_RGBA8) {
+      // B8G8R8X8 -> RGBA8 (force alpha=255).
+      out[dstBase + i + 0] = src[i + 2];
+      out[dstBase + i + 1] = src[i + 1];
+      out[dstBase + i + 2] = src[i + 0];
+      out[dstBase + i + 3] = 255;
+    }
+  }
+
+  return { width, height, rgba8: out.buffer };
+};
 
 const maybePublishWddmScanout = (width: number, height: number): void => {
   const words = scanoutState;
@@ -2808,6 +2864,14 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           }
 
           const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+          let scanoutSnap: ScanoutStateSnapshot | null = null;
+          if (scanoutState) {
+            try {
+              scanoutSnap = snapshotScanoutState(scanoutState);
+            } catch {
+              scanoutSnap = null;
+            }
+          }
 
           const tryPostWddmScanoutScreenshot = (): boolean => {
             const words = scanoutState;
@@ -3164,6 +3228,47 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             ]);
             await maybeSendReady();
             if (await tryScreenshot(true)) return;
+          }
+
+          // If scanout is WDDM-owned and points at guest RAM, attempt a direct readback before
+          // falling back to stale buffers.
+          if (scanoutSnap?.source === SCANOUT_SOURCE_WDDM && guestU8) {
+            const shot = tryReadWddmScanoutRgba8(scanoutSnap, guestU8);
+            if (shot) {
+              const pixels = new Uint8Array(shot.rgba8);
+              if (includeCursor) {
+                try {
+                  compositeCursorOverRgba8(
+                    pixels,
+                    shot.width,
+                    shot.height,
+                    cursorEnabled,
+                    cursorImage,
+                    cursorWidth,
+                    cursorHeight,
+                    cursorX,
+                    cursorY,
+                    cursorHotX,
+                    cursorHotY,
+                  );
+                } catch {
+                  // Ignore; screenshot cursor compositing is best-effort.
+                }
+              }
+              postToMain(
+                {
+                  type: "screenshot",
+                  requestId: req.requestId,
+                  width: shot.width,
+                  height: shot.height,
+                  rgba8: pixels.buffer,
+                  origin: "top-left",
+                  ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+                },
+                [pixels.buffer],
+              );
+              return;
+            }
           }
 
           const last = aerogpuLastPresentedFrame;

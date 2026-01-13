@@ -58,3 +58,20 @@ export const PCIE_ECAM_SIZE = 0x1000_0000n;
 // Convenience number aliases (safe: values are < 2^32).
 export const PCIE_ECAM_BASE_U32 = 0xb000_0000;
 export const PCIE_ECAM_SIZE_U32 = 0x1000_0000;
+
+/**
+ * End of the low guest RAM region for the PC/Q35-style E820 map used by the wasm32 web runtime.
+ *
+ * When the configured guest RAM exceeds this boundary, the "extra" bytes are remapped above 4 GiB
+ * and the region `[LOW_RAM_END, HIGH_RAM_START)` becomes a hole (ECAM + PCI/MMIO).
+ *
+ * NOTE: keep this in sync with the Rust-side mapping helper in `crates/aero-wasm/src/guest_phys.rs`.
+ */
+export const LOW_RAM_END = PCIE_ECAM_BASE_U32;
+
+/**
+ * Start of the high guest RAM remap region (4 GiB).
+ *
+ * NOTE: keep this in sync with the Rust-side mapping helper in `crates/aero-wasm/src/guest_phys.rs`.
+ */
+export const HIGH_RAM_START = 0x1_0000_0000;

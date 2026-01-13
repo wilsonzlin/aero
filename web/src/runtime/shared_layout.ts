@@ -2,6 +2,7 @@ import { RECORD_ALIGN, queueKind, ringCtrl } from "../ipc/layout";
 import { requiredFramebufferBytes } from "../display/framebuffer_protocol";
 import { createIpcBuffer } from "../ipc/ipc";
 import { PCI_MMIO_BASE } from "../arch/guest_phys.ts";
+import { guestPaddrToRamOffset as guestPaddrToRamOffsetRaw, guestRangeInBounds as guestRangeInBoundsRaw } from "../arch/guest_ram_translate.ts";
 import {
   computeSharedFramebufferLayout,
   FramebufferFormat,
@@ -226,17 +227,7 @@ export interface GuestRamLayout {
   wasm_pages: number;
 }
 
-/**
- * Guest physical address layout (PC/Q35 E820) used by the wasm web runtime.
- *
- * When the configured guest RAM exceeds {@link LOW_RAM_END}, the "extra" bytes are remapped above
- * 4GiB and the region {@link LOW_RAM_END}..4GiB becomes a hole (ECAM + PCI/MMIO).
- *
- * Keep these constants in sync with the Rust-side mapping helper in
- * `crates/aero-wasm/src/guest_phys.rs`.
- */
-export const LOW_RAM_END = 0xb000_0000;
-export const HIGH_RAM_START = 0x1_0000_0000;
+export { HIGH_RAM_START, LOW_RAM_END } from "../arch/guest_ram_translate.ts";
 
 // -----------------------------------------------------------------------------
 // Demo guest-memory layout (temporary)
@@ -406,25 +397,7 @@ export function computeGuestRamLayout(desiredGuestBytes: number): GuestRamLayout
  * This mirrors the PC/Q35 address translation in `crates/aero-wasm/src/guest_phys.rs`.
  */
 export function guestPaddrToRamOffset(layout: GuestRamLayout, paddr: number): number | null {
-  const addr = toU64(paddr);
-  const ramBytes = toU64(layout.guest_size);
-
-  if (ramBytes <= LOW_RAM_END) {
-    return addr < ramBytes ? addr : null;
-  }
-
-  // Low RAM.
-  if (addr < LOW_RAM_END) return addr;
-
-  // High RAM remap.
-  const highLen = ramBytes - LOW_RAM_END;
-  const highEnd = HIGH_RAM_START + highLen;
-  if (addr >= HIGH_RAM_START && addr < highEnd) {
-    return LOW_RAM_END + (addr - HIGH_RAM_START);
-  }
-
-  // Hole or out-of-range.
-  return null;
+  return guestPaddrToRamOffsetRaw(layout.guest_size, paddr);
 }
 
 export function guestToLinear(layout: GuestRamLayout, paddr: number): number {
@@ -439,31 +412,7 @@ export function guestToLinear(layout: GuestRamLayout, paddr: number): number {
 }
 
 export function guestRangeInBounds(layout: GuestRamLayout, paddr: number, byteLength: number): boolean {
-  const addr = toU64(paddr);
-  const len = toU64(byteLength);
-  const ramBytes = toU64(layout.guest_size);
-
-  if (ramBytes <= LOW_RAM_END) {
-    if (len === 0) return addr <= ramBytes;
-    return addr < ramBytes && len <= ramBytes - addr;
-  }
-
-  // Low RAM region: [0..LOW_RAM_END).
-  if (addr <= LOW_RAM_END) {
-    if (len === 0) return true;
-    return addr < LOW_RAM_END && len <= LOW_RAM_END - addr;
-  }
-
-  // High RAM remap: [HIGH_RAM_START..HIGH_RAM_START + (ramBytes-LOW_RAM_END)).
-  const highLen = ramBytes - LOW_RAM_END;
-  const highEnd = HIGH_RAM_START + highLen;
-  if (addr >= HIGH_RAM_START && addr <= highEnd) {
-    if (len === 0) return true;
-    return addr < highEnd && len <= highEnd - addr;
-  }
-
-  // Hole or out-of-range.
-  return false;
+  return guestRangeInBoundsRaw(layout.guest_size, paddr, byteLength);
 }
 
 export function readGuestRamLayoutFromStatus(status: Int32Array): GuestRamLayout {
