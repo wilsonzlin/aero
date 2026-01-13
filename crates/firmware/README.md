@@ -65,6 +65,9 @@ MMC CD-ROM models), you still need to expose it to `firmware::bios` as a 512-byt
 
 …then read the containing 2048-byte block and copy out the requested 512-byte slice.
 
+For ISO media, [`BlockDevice::size_in_sectors`] must return the size in **512-byte** units, i.e.
+`iso_sector_count_2048 * 4`.
+
 The BIOS uses the following **drive numbers** in `DL`:
 
 - First HDD: `DL = 0x80`
