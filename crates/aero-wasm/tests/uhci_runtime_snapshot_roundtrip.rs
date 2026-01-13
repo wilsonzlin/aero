@@ -327,6 +327,13 @@ fn load_mouse_collections_json() -> JsValue {
     serde_wasm_bindgen::to_value(&collections).expect("collections to_value")
 }
 
+fn decode_webusb_actions(drained: JsValue) -> Vec<UsbHostAction> {
+    if drained.is_null() || drained.is_undefined() {
+        return Vec::new();
+    }
+    serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]")
+}
+
 #[wasm_bindgen_test]
 fn uhci_runtime_snapshot_is_deterministic() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20_000);
@@ -450,8 +457,8 @@ fn uhci_runtime_snapshot_roundtrip_preserves_irq_and_registers() {
     rt.step_frame();
 
     let drained = rt.webusb_drain_actions().expect("drain_actions ok");
-    let actions: Vec<UsbHostAction> =
-        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    assert!(!drained.is_null(), "expected at least one WebUSB action");
+    let actions = decode_webusb_actions(drained);
     let id = match actions.first() {
         Some(UsbHostAction::ControlIn { id, .. }) => *id,
         other => panic!("expected ControlIn action, got {other:?}"),
@@ -535,8 +542,8 @@ fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
     // First attempt should emit a host action.
     rt.step_frame();
     let drained = rt.webusb_drain_actions().expect("drain_actions ok");
-    let actions: Vec<UsbHostAction> =
-        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    assert!(!drained.is_null(), "expected at least one WebUSB action");
+    let actions = decode_webusb_actions(drained);
     let first_id = match actions.first() {
         Some(UsbHostAction::ControlIn { id, .. }) => *id,
         other => panic!("expected ControlIn action, got {other:?}"),
@@ -593,7 +600,7 @@ fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
 }
 
 #[wasm_bindgen_test]
-fn uhci_runtime_does_not_reuse_action_ids_across_disconnect_reconnect() {
+fn uhci_runtime_webusb_action_ids_are_monotonic_across_disconnect_reconnect() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x50_000);
     let fl_base = {
         // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
@@ -609,20 +616,29 @@ fn uhci_runtime_does_not_reuse_action_ids_across_disconnect_reconnect() {
     rt.port_write(REG_FRBASEADD, 4, fl_base);
     rt.port_write(REG_PORTSC2, 2, PORTSC_PED as u32);
     rt.port_write(REG_USBCMD, 2, USBCMD_RUN as u32);
-    rt.step_frame();
 
+    rt.step_frame();
     let drained = rt.webusb_drain_actions().expect("drain_actions ok");
-    let actions: Vec<UsbHostAction> =
-        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    assert!(
+        !drained.is_null(),
+        "expected a WebUSB action before disconnect"
+    );
+    let actions = decode_webusb_actions(drained);
     let first_id = match actions.first() {
         Some(UsbHostAction::ControlIn { id, .. }) => *id,
         other => panic!("expected ControlIn action, got {other:?}"),
     };
 
+    // Simulate a host-side disconnect+reconnect (usb.selected ok:false then ok:true).
+    // The host action IDs must remain monotonic so stale completions from the pre-disconnect
+    // period cannot match newly queued actions.
+    //
     // Stop the controller so the schedule doesn't run while the port is disconnected.
     rt.port_write(REG_USBCMD, 2, 0);
     rt.webusb_detach();
     rt.webusb_attach(Some(1)).expect("reattach WebUSB");
+    // Re-enable the port to ensure the schedule can reach the device after reconnect.
+    rt.port_write(REG_PORTSC2, 2, PORTSC_PED as u32);
 
     // The previous run mutated the guest frame list and TD/QH state; reinstall a fresh schedule.
     let _ = {
@@ -634,21 +650,25 @@ fn uhci_runtime_does_not_reuse_action_ids_across_disconnect_reconnect() {
     };
 
     rt.port_write(REG_FRBASEADD, 4, fl_base);
-    rt.port_write(REG_PORTSC2, 2, PORTSC_PED as u32);
     rt.port_write(REG_USBCMD, 2, USBCMD_RUN as u32);
-    rt.step_frame();
 
-    let drained = rt.webusb_drain_actions().expect("drain_actions ok");
-    let actions: Vec<UsbHostAction> =
-        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
-    let second_id = match actions.first() {
+    rt.step_frame();
+    let drained2 = rt
+        .webusb_drain_actions()
+        .expect("drain_actions ok after reconnect");
+    assert!(
+        !drained2.is_null(),
+        "expected a WebUSB action after reconnect"
+    );
+    let actions2 = decode_webusb_actions(drained2);
+    let second_id = match actions2.first() {
         Some(UsbHostAction::ControlIn { id, .. }) => *id,
         other => panic!("expected ControlIn action after reconnect, got {other:?}"),
     };
 
-    assert_ne!(
-        first_id, second_id,
-        "expected WebUSB UsbHostAction.id to be monotonic across disconnect/reconnect"
+    assert!(
+        second_id > first_id,
+        "expected WebUSB action ids to be monotonic across disconnect/reconnect (first={first_id}, second={second_id})"
     );
 }
 

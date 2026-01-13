@@ -106,6 +106,9 @@ pub struct UhciControllerBridge {
     ctrl: UhciController,
     guest_base: u32,
     guest_size: u64,
+    /// WebUSB passthrough device handle.
+    ///
+    /// This handle is kept alive across disconnect/reconnect so host action IDs remain monotonic.
     webusb: Option<UsbWebUsbPassthroughDevice>,
     webusb_connected: bool,
     pci_command: u16,
@@ -270,7 +273,7 @@ impl UhciControllerBridge {
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
         if !self.webusb_connected {
             return Ok(JsValue::NULL);
-        };
+        }
         let Some(dev) = self.webusb.as_ref() else {
             return Ok(JsValue::NULL);
         };
@@ -307,10 +310,11 @@ impl UhciControllerBridge {
     pub fn pending_summary(&self) -> Result<JsValue, JsValue> {
         if !self.webusb_connected {
             return Ok(JsValue::NULL);
-        };
-        let Some(summary) = self.webusb.as_ref().map(|d| d.pending_summary()) else {
+        }
+        let Some(dev) = self.webusb.as_ref() else {
             return Ok(JsValue::NULL);
         };
+        let summary = dev.pending_summary();
         serde_wasm_bindgen::to_value(&summary).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
@@ -409,10 +413,11 @@ impl UhciControllerBridge {
             .map_err(|e| js_error(format!("Invalid UHCI controller snapshot: {e}")))?;
 
         if let Some(buf) = r.bytes(TAG_WEBUSB_DEVICE) {
-            let dev = self
-                .webusb
-                .as_mut()
-                .ok_or_else(|| js_error("UHCI bridge snapshot missing WebUSB device"))?;
+            let Some(dev) = self.webusb.as_mut() else {
+                return Err(js_error(
+                    "UHCI bridge snapshot contains WebUSB device state but WebUSB is not connected",
+                ));
+            };
             dev.load_state(buf)
                 .map_err(|e| js_error(format!("Invalid WebUSB device snapshot: {e}")))?;
             dev.reset_host_state_for_restore();

@@ -27,6 +27,9 @@ const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 pub struct WebUsbUhciBridge {
     guest_base: u32,
     controller: UhciController,
+    /// WebUSB passthrough device handle.
+    ///
+    /// This handle is kept alive across disconnect/reconnect so host action IDs remain monotonic.
     webusb: Option<UsbWebUsbPassthroughDevice>,
     webusb_connected: bool,
     pci_command: u16,
@@ -189,9 +192,10 @@ impl WebUsbUhciBridge {
         if !self.webusb_connected {
             return Ok(JsValue::NULL);
         }
-        let Some(summary) = self.webusb.as_ref().map(|d| d.pending_summary()) else {
+        let Some(dev) = self.webusb.as_ref() else {
             return Ok(JsValue::NULL);
         };
+        let summary = dev.pending_summary();
         serde_wasm_bindgen::to_value(&summary).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
@@ -301,11 +305,7 @@ impl WebUsbUhciBridge {
                 Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
             );
         }
-        if r.bytes(TAG_WEBUSB_DEVICE).is_some() {
-            self.set_connected(true);
-        } else {
-            self.set_connected(false);
-        }
+        self.set_connected(r.bytes(TAG_WEBUSB_DEVICE).is_some());
 
         let controller_bytes = r.bytes(TAG_CONTROLLER).ok_or_else(|| {
             JsValue::from_str("WebUSB UHCI bridge snapshot missing controller state")
@@ -324,9 +324,11 @@ impl WebUsbUhciBridge {
         }
 
         if let Some(buf) = r.bytes(TAG_WEBUSB_DEVICE) {
-            let dev = self.webusb.as_mut().ok_or_else(|| {
-                JsValue::from_str("WebUSB UHCI bridge missing passthrough device")
-            })?;
+            let Some(dev) = self.webusb.as_mut() else {
+                return Err(JsValue::from_str(
+                    "WebUSB UHCI bridge snapshot contains WebUSB device state but WebUSB is not connected",
+                ));
+            };
             dev.load_state(buf)
                 .map_err(|e| JsValue::from_str(&format!("Invalid WebUSB device snapshot: {e}")))?;
             dev.reset_host_state_for_restore();

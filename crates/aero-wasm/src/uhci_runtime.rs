@@ -109,8 +109,6 @@ struct WebHidDeviceState {
 
 struct WebUsbDeviceState {
     port: usize,
-    dev: UsbWebUsbPassthroughDevice,
-    connected: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -154,6 +152,11 @@ pub struct UhciRuntime {
     /// applying the hub snapshot so the saved device state can be restored.
     usb_hid_passthrough_devices: HashMap<Vec<u8>, UsbHidPassthroughHandle>,
 
+    /// Persistent WebUSB passthrough device handle.
+    ///
+    /// We keep this handle alive across disconnect/reconnect so host action IDs remain monotonic
+    /// (avoids stale completions matching newly queued actions after hotplug churn).
+    webusb_dev: UsbWebUsbPassthroughDevice,
     webusb: Option<WebUsbDeviceState>,
 }
 
@@ -211,6 +214,7 @@ impl UhciRuntime {
             external_hub: None,
             external_hub_port_count_hint: None,
             usb_hid_passthrough_devices: HashMap::new(),
+            webusb_dev: UsbWebUsbPassthroughDevice::new(),
             webusb: None,
         })
     }
@@ -563,7 +567,7 @@ impl UhciRuntime {
 
         let bytes = if ok {
             if data.is_null() || data.is_undefined() {
-                None
+                Some(Vec::new())
             } else if let Ok(buf) = data.clone().dyn_into::<Uint8Array>() {
                 Some(buf.to_vec())
             } else if Array::is_array(&data) {
@@ -626,49 +630,33 @@ impl UhciRuntime {
         }
 
         let port = WEBUSB_ROOT_PORT;
-        let dev = if let Some(state) = self.webusb.as_ref() {
-            state.dev.clone()
-        } else {
-            UsbWebUsbPassthroughDevice::new()
-        };
-        self.ctrl.hub_mut().attach(port, Box::new(dev.clone()));
-        self.webusb = Some(WebUsbDeviceState {
-            port,
-            dev,
-            connected: true,
-        });
+        self.ctrl
+            .hub_mut()
+            .attach(port, Box::new(self.webusb_dev.clone()));
+        self.webusb = Some(WebUsbDeviceState { port });
         Ok(port as u32)
     }
 
     pub fn webusb_detach(&mut self) {
-        let Some(state) = self.webusb.as_mut() else {
-            return;
-        };
-        if !state.connected {
-            return;
+        if let Some(state) = self.webusb.take() {
+            self.ctrl.hub_mut().detach(state.port);
         }
-        self.ctrl.hub_mut().detach(state.port);
-        state.connected = false;
-        // Preserve pre-existing semantics: detaching clears queued/in-flight host state, but we
-        // keep the handle alive so `UsbPassthroughDevice.next_id` remains monotonic across
-        // reconnects.
-        state.dev.reset();
+        // Clear any in-flight/queued host state so the guest's TD retries re-emit new host actions
+        // after a reconnect. `reset` preserves the monotonically increasing `next_id`.
+        self.webusb_dev.reset();
     }
 
     pub fn webusb_drain_actions(&mut self) -> Result<JsValue, JsValue> {
-        let Some(state) = self.webusb.as_ref() else {
-            return Ok(JsValue::NULL);
-        };
-        if !state.connected {
+        if self.webusb.is_none() {
+            // Avoid allocating an empty JS array on every poll tick when WebUSB is detached.
             return Ok(JsValue::NULL);
         }
-
         // Keep the hot poll path allocation-free when idle.
-        if state.dev.pending_summary().queued_actions == 0 {
+        if self.webusb_dev.pending_summary().queued_actions == 0 {
             return Ok(JsValue::NULL);
         }
 
-        let actions: Vec<UsbHostAction> = state.dev.drain_actions();
+        let actions: Vec<UsbHostAction> = self.webusb_dev.drain_actions();
         if actions.is_empty() {
             return Ok(JsValue::NULL);
         }
@@ -680,10 +668,7 @@ impl UhciRuntime {
     }
 
     pub fn webusb_push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
-        let Some(state) = self.webusb.as_ref() else {
-            return Ok(());
-        };
-        if !state.connected {
+        if self.webusb.is_none() {
             return Ok(());
         }
         let obj: Object = completion
@@ -890,7 +875,7 @@ impl UhciRuntime {
                 )));
             }
         };
-        state.dev.push_completion(completion);
+        self.webusb_dev.push_completion(completion);
         Ok(())
     }
 
@@ -969,10 +954,8 @@ impl UhciRuntime {
             Encoder::new().vec_bytes(&webhid_bytes).finish(),
         );
 
-        if let Some(webusb) = self.webusb.as_ref() {
-            if webusb.connected {
-                w.field_bytes(TAG_WEBUSB_STATE, webusb.dev.save_state());
-            }
+        if self.webusb.is_some() {
+            w.field_bytes(TAG_WEBUSB_STATE, self.webusb_dev.save_state());
         }
 
         if let Some(hub_ports) = external_hub_ports_with_devices {
@@ -1330,9 +1313,10 @@ impl UhciRuntime {
         // Restore WebUSB passthrough device first so root-port occupancy is correct.
         if let Some(buf) = webusb_state_bytes {
             let port = WEBUSB_ROOT_PORT;
-            let mut dev = UsbWebUsbPassthroughDevice::new();
-            self.ctrl.hub_mut().attach(port, Box::new(dev.clone()));
-            if let Err(err) = dev.load_state(buf) {
+            self.ctrl
+                .hub_mut()
+                .attach(port, Box::new(self.webusb_dev.clone()));
+            if let Err(err) = self.webusb_dev.load_state(buf) {
                 self.reset_for_snapshot_restore();
                 return Err(js_error(&format!(
                     "Invalid UHCI runtime snapshot WebUSB device state: {err}"
@@ -1341,12 +1325,8 @@ impl UhciRuntime {
             // WebUSB host actions are backed by JS Promises and cannot be resumed after a VM
             // snapshot restore. Drop any inflight/queued host bookkeeping so UHCI TD retries
             // re-emit fresh actions.
-            dev.reset_host_state_for_restore();
-            self.webusb = Some(WebUsbDeviceState {
-                port,
-                dev,
-                connected: true,
-            });
+            self.webusb_dev.reset_host_state_for_restore();
+            self.webusb = Some(WebUsbDeviceState { port });
         }
 
         // Recreate WebHID devices (using stored static config), then apply their dynamic snapshots.
@@ -1512,10 +1492,8 @@ impl UhciRuntime {
         // Clear WebUSB host state *after* the controller snapshot has been applied so the guest's
         // TD retries will re-emit fresh host actions instead of deadlocking on a completion that
         // will never arrive.
-        if let Some(webusb) = self.webusb.as_ref() {
-            if webusb.connected {
-                webusb.dev.reset_host_state_for_restore();
-            }
+        if self.webusb.is_some() {
+            self.webusb_dev.reset_host_state_for_restore();
         }
 
         Ok(())
@@ -1665,7 +1643,7 @@ impl UhciRuntime {
             return false;
         }
         if let Some(webusb) = self.webusb.as_ref() {
-            if webusb.connected && webusb.port == port {
+            if webusb.port == port {
                 return false;
             }
         }
@@ -1723,6 +1701,7 @@ impl UhciRuntime {
         self.external_hub_port_count_hint = None;
 
         self.webusb = None;
+        self.webusb_dev.reset();
     }
     fn ensure_external_hub(&mut self, min_hub_port: u8) -> Result<(), JsValue> {
         if min_hub_port == 0 {
@@ -1751,7 +1730,7 @@ impl UhciRuntime {
         let webusb_on_root = self
             .webusb
             .as_ref()
-            .is_some_and(|webusb| webusb.connected && webusb.port == EXTERNAL_HUB_ROOT_PORT);
+            .is_some_and(|webusb| webusb.port == EXTERNAL_HUB_ROOT_PORT);
         if webusb_on_root {
             self.webusb_detach();
         }
