@@ -6,6 +6,7 @@
     "SOURCES.md",
     "docs/README.md",
     "docs/design.md",
+    "docs/host-integration-checklist.md",
     "docs/pci-hwids.md",
     "docs/portcls-wavert-design.md",
     "inf/README.md",
@@ -13,6 +14,7 @@
     "scripts/run-host-tests.sh",
     "tests/host/README.md",
     "tests/offline-install/README.md",
-    "tests/qemu/README.md"
+    "tests/qemu/README.md",
+    "tests/qemu/run-virtio-snd.sh"
   ]
 }
