@@ -1847,6 +1847,7 @@ dependencies = [
  "aero-pcapng",
  "aero-platform",
  "aero-protocol",
+ "aero-shared",
  "aero-snapshot",
  "aero-storage",
  "aero-storage-adapters",

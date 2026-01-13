@@ -1,6 +1,7 @@
 use memory::MemoryBus;
 
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat as ProtocolAerogpuFormat;
+use aero_shared::scanout_state::{ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8};
 
 // Values derived from the canonical `aero-protocol` definition of `enum aerogpu_format`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -92,6 +93,19 @@ impl AeroGpuFormat {
             _ => None,
         }
     }
+
+    /// Map an AeroGPU pixel format (`enum aerogpu_format`) to the shared scanout descriptor format
+    /// enum (`aero_shared::scanout_state::SCANOUT_FORMAT_*`).
+    ///
+    /// This mapping is intentionally conservative: the scanout descriptor currently supports only
+    /// a single format, so we only publish a compatible format when we can represent it without
+    /// ambiguity.
+    pub fn to_scanout_state_format(self) -> Option<u32> {
+        match self {
+            Self::B8G8R8X8Unorm => Some(SCANOUT_FORMAT_B8G8R8X8),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +132,87 @@ impl Default for AeroGpuScanoutConfig {
 }
 
 impl AeroGpuScanoutConfig {
+    fn disabled_scanout_state_update(source: u32) -> ScanoutStateUpdate {
+        ScanoutStateUpdate {
+            source,
+            base_paddr_lo: 0,
+            base_paddr_hi: 0,
+            width: 0,
+            height: 0,
+            pitch_bytes: 0,
+            // Keep format at the default/only-representable value even while disabled.
+            format: SCANOUT_FORMAT_B8G8R8X8,
+        }
+    }
+
+    /// Convert this scanout register block into a shared [`ScanoutStateUpdate`].
+    ///
+    /// If the configuration is disabled or invalid (including unsupported pixel formats), this
+    /// returns a "disabled" descriptor with `width/height/base_paddr/pitch = 0`.
+    pub fn to_scanout_state_update(&self, source: u32) -> ScanoutStateUpdate {
+        if !self.enable {
+            return Self::disabled_scanout_state_update(source);
+        }
+
+        let Some(format) = self.format.to_scanout_state_format() else {
+            return Self::disabled_scanout_state_update(source);
+        };
+
+        let width = self.width;
+        let height = self.height;
+        if width == 0 || height == 0 {
+            return Self::disabled_scanout_state_update(source);
+        }
+
+        let fb_gpa = self.fb_gpa;
+        if fb_gpa == 0 {
+            return Self::disabled_scanout_state_update(source);
+        }
+
+        // Today the shared scanout descriptor can only represent B8G8R8X8 (4 bytes per pixel).
+        // Enforce that assumption here so consumers don't misinterpret memory.
+        let Some(bytes_per_pixel) = self.format.bytes_per_pixel() else {
+            return Self::disabled_scanout_state_update(source);
+        };
+        if bytes_per_pixel != 4 {
+            return Self::disabled_scanout_state_update(source);
+        }
+
+        // Validate pitch >= width*bytes_per_pixel and that address arithmetic doesn't overflow.
+        let row_bytes = u64::from(width).checked_mul(bytes_per_pixel as u64);
+        let Some(row_bytes) = row_bytes else {
+            return Self::disabled_scanout_state_update(source);
+        };
+        let pitch = u64::from(self.pitch_bytes);
+        if pitch < row_bytes {
+            return Self::disabled_scanout_state_update(source);
+        }
+
+        // Ensure `fb_gpa + (height-1)*pitch + row_bytes` does not overflow.
+        let Some(last_row_offset) = u64::from(height)
+            .checked_sub(1)
+            .and_then(|rows| rows.checked_mul(pitch))
+        else {
+            return Self::disabled_scanout_state_update(source);
+        };
+        let Some(end_offset) = last_row_offset.checked_add(row_bytes) else {
+            return Self::disabled_scanout_state_update(source);
+        };
+        if fb_gpa.checked_add(end_offset).is_none() {
+            return Self::disabled_scanout_state_update(source);
+        }
+
+        ScanoutStateUpdate {
+            source,
+            base_paddr_lo: fb_gpa as u32,
+            base_paddr_hi: (fb_gpa >> 32) as u32,
+            width,
+            height,
+            pitch_bytes: self.pitch_bytes,
+            format,
+        }
+    }
+
     pub fn read_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
         if !self.enable {
             return None;
@@ -404,6 +499,7 @@ pub fn composite_cursor_rgba_over_scanout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_shared::scanout_state::SCANOUT_SOURCE_WDDM;
 
     #[derive(Clone, Debug)]
     struct VecMemory {
@@ -529,5 +625,42 @@ mod tests {
 
         composite_cursor_rgba_over_scanout(&mut scanout, 1, 1, &cfg, &cursor).unwrap();
         assert_eq!(scanout, vec![128, 0, 127, 255]);
+    }
+
+    #[test]
+    fn scanout_state_format_mapping_is_conservative_and_deterministic() {
+        let cfg = AeroGpuScanoutConfig {
+            enable: true,
+            width: 640,
+            height: 480,
+            pitch_bytes: 640 * 4,
+            fb_gpa: 0x1234_5678,
+            format: AeroGpuFormat::B8G8R8X8Unorm,
+        };
+
+        let update = cfg.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.source, SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.width, 640);
+        assert_eq!(update.height, 480);
+        assert_eq!(update.pitch_bytes, 640 * 4);
+        assert_eq!(update.base_paddr_lo, 0x1234_5678);
+        assert_eq!(update.base_paddr_hi, 0);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8);
+
+        // Unsupported format must not panic and must publish a disabled descriptor.
+        let unsupported = AeroGpuScanoutConfig {
+            format: AeroGpuFormat::R8G8B8A8Unorm,
+            ..cfg
+        };
+        let update0 = unsupported.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update1 = unsupported.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update0, update1, "disabled descriptor must be deterministic");
+        assert_eq!(update0.source, SCANOUT_SOURCE_WDDM);
+        assert_eq!(update0.width, 0);
+        assert_eq!(update0.height, 0);
+        assert_eq!(update0.pitch_bytes, 0);
+        assert_eq!(update0.base_paddr_lo, 0);
+        assert_eq!(update0.base_paddr_hi, 0);
+        assert_eq!(update0.format, SCANOUT_FORMAT_B8G8R8X8);
     }
 }
