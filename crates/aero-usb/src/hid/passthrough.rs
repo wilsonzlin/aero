@@ -475,9 +475,9 @@ impl UsbHidPassthrough {
         }
     }
 
-    fn push_output_report(&mut self, report: UsbHidPassthroughOutputReport) {
+    fn try_push_output_report(&mut self, report: UsbHidPassthroughOutputReport) -> bool {
         if self.pending_output_reports.len() >= self.max_pending_output_reports {
-            self.pending_output_reports.pop_front();
+            return false;
         }
         match report.report_type {
             2 => {
@@ -495,6 +495,7 @@ impl UsbHidPassthrough {
             _ => {}
         }
         self.pending_output_reports.push_back(report);
+        true
     }
 
     fn set_max_pending_input_reports(&mut self, max: usize) {
@@ -913,12 +914,24 @@ impl UsbDeviceModel for UsbHidPassthrough {
                     let report_id = (setup.w_value & 0x00ff) as u8;
                     match (report_type, data_stage) {
                         (2 | 3, Some(data)) => {
+                            if self.pending_output_reports.len() >= self.max_pending_output_reports {
+                                // Backpressure: NAK the STATUS stage until the host drains queued
+                                // output/feature reports.
+                                return ControlResponse::Nak;
+                            }
                             let payload = self.normalize_report_payload(report_type, report_id, data);
-                            self.push_output_report(UsbHidPassthroughOutputReport {
+                            // Idempotence: only enqueue when returning ACK. If we returned NAK
+                            // above, the control pipe will retry the STATUS stage without having
+                            // enqueued anything yet.
+                            let pushed = self.try_push_output_report(UsbHidPassthroughOutputReport {
                                 report_type,
                                 report_id,
                                 data: payload,
                             });
+                            debug_assert!(pushed);
+                            if !pushed {
+                                return ControlResponse::Nak;
+                            }
                             ControlResponse::Ack
                         }
                         _ => ControlResponse::Stall,
@@ -991,6 +1004,12 @@ impl UsbDeviceModel for UsbHidPassthrough {
         if self.configuration == 0 || self.interrupt_out_halted {
             return UsbOutResult::Stall;
         }
+        if self.pending_output_reports.len() >= self.max_pending_output_reports {
+            // Backpressure: NAK the OUT transaction until the host drains queued output reports.
+            // Do not mutate `last_*_reports` so GET_REPORT continues to reflect the last accepted
+            // report rather than a report that was never delivered to the host.
+            return UsbOutResult::Nak;
+        }
 
         let (report_id, payload) = if self.report_ids_in_use {
             if data.is_empty() {
@@ -1003,12 +1022,17 @@ impl UsbDeviceModel for UsbHidPassthrough {
         };
         let payload = self.normalize_report_payload_no_prefix(2, report_id, payload);
 
-        self.push_output_report(UsbHidPassthroughOutputReport {
+        let pushed = self.try_push_output_report(UsbHidPassthroughOutputReport {
             report_type: 2, // Output
             report_id,
             data: payload,
         });
-        UsbOutResult::Ack
+        debug_assert!(pushed);
+        if pushed {
+            UsbOutResult::Ack
+        } else {
+            UsbOutResult::Nak
+        }
     }
 }
 
@@ -1735,6 +1759,7 @@ impl IoSnapshot for UsbHidPassthroughHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::AttachedUsbDevice;
 
     fn w_le(bytes: &[u8], offset: usize) -> u16 {
         u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
@@ -2429,7 +2454,7 @@ mod tests {
     }
 
     #[test]
-    fn set_max_pending_report_limits_drop_oldest_entries() {
+    fn set_max_pending_report_limits_apply_backpressure() {
         let report = sample_report_descriptor_with_ids();
         let mut dev = UsbHidPassthroughHandle::new(
             0x1234,
@@ -2470,7 +2495,7 @@ mod tests {
         );
         assert_eq!(
             dev.handle_interrupt_out(0x01, &[1, 0x20]),
-            UsbOutResult::Ack
+            UsbOutResult::Nak
         );
 
         assert_eq!(
@@ -2478,10 +2503,154 @@ mod tests {
             Some(UsbHidPassthroughOutputReport {
                 report_type: 2,
                 report_id: 1,
-                data: vec![0x20]
+                data: vec![0x10]
             })
         );
         assert_eq!(dev.pop_output_report(), None);
+    }
+
+    #[test]
+    fn interrupt_out_naks_when_output_queue_full_and_preserves_last_report() {
+        let report = sample_report_descriptor_output_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            true,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+        dev.set_max_pending_output_reports(1);
+
+        assert_eq!(
+            dev.handle_interrupt_out(INTERRUPT_OUT_EP, &[2, 0x10, 0x20]),
+            UsbOutResult::Ack
+        );
+        assert_eq!(dev.inner.borrow().pending_output_reports.len(), 1);
+
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                w_index: 0,
+                w_length: 64,
+            },
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Data(vec![2, 0x10, 0x20]));
+
+        // Queue is full; this should NAK and not clobber `last_output_reports`.
+        assert_eq!(
+            dev.handle_interrupt_out(INTERRUPT_OUT_EP, &[2, 0xaa, 0xbb]),
+            UsbOutResult::Nak
+        );
+        assert_eq!(dev.inner.borrow().pending_output_reports.len(), 1);
+
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                w_index: 0,
+                w_length: 64,
+            },
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Data(vec![2, 0x10, 0x20]));
+
+        assert_eq!(
+            dev.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 2,
+                data: vec![0x10, 0x20],
+            })
+        );
+        assert_eq!(dev.pop_output_report(), None);
+    }
+
+    #[test]
+    fn set_report_naks_status_stage_until_output_queue_drained() {
+        let report = sample_report_descriptor_output_with_id();
+        let dev_handle = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            true,
+            None,
+            None,
+            None,
+        );
+        dev_handle.set_max_pending_output_reports(1);
+
+        let mut dev = AttachedUsbDevice::new(Box::new(dev_handle.clone()));
+
+        // Configure the device so interrupt OUT is accepted.
+        assert_eq!(
+            dev.handle_setup(SetupPacket {
+                bm_request_type: 0x00,
+                b_request: USB_REQUEST_SET_CONFIGURATION,
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            }),
+            UsbOutResult::Ack
+        );
+        assert_eq!(dev.handle_in(0, 0), UsbInResult::Data(Vec::new()));
+
+        // Fill the output report queue to capacity (1).
+        assert_eq!(
+            dev.handle_out(1, &[2, 0x10, 0x20]),
+            UsbOutResult::Ack
+        );
+
+        // Begin a control-OUT SET_REPORT transfer while the queue is full.
+        assert_eq!(
+            dev.handle_setup(SetupPacket {
+                bm_request_type: 0x21, // HostToDevice | Class | Interface
+                b_request: HID_REQUEST_SET_REPORT,
+                w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                w_index: 0,
+                w_length: 3,
+            }),
+            UsbOutResult::Ack
+        );
+        // DATA stage completes (ACKed), but the device must NAK the STATUS stage until there's
+        // room to queue the report.
+        assert_eq!(dev.handle_out(0, &[2, 0xaa, 0xbb]), UsbOutResult::Ack);
+        assert_eq!(dev.handle_in(0, 0), UsbInResult::Nak);
+        assert_eq!(dev.handle_in(0, 0), UsbInResult::Nak);
+
+        // Drain one report (simulating the host consuming it) to allow the status stage to finish.
+        assert_eq!(
+            dev_handle.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 2,
+                data: vec![0x10, 0x20],
+            })
+        );
+
+        // STATUS stage should now complete, enqueueing exactly one report.
+        assert_eq!(dev.handle_in(0, 0), UsbInResult::Data(Vec::new()));
+        assert_eq!(
+            dev_handle.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 2,
+                data: vec![0xaa, 0xbb],
+            })
+        );
+        assert_eq!(dev_handle.pop_output_report(), None);
     }
 
     #[test]
@@ -2526,10 +2695,12 @@ mod tests {
 
         // Overflow output queue.
         for i in 0..(DEFAULT_MAX_PENDING_OUTPUT_REPORTS + 17) {
-            assert_eq!(
-                dev.handle_interrupt_out(0x01, &[1, i as u8]),
-                UsbOutResult::Ack
-            );
+            let res = dev.handle_interrupt_out(0x01, &[1, i as u8]);
+            if i < DEFAULT_MAX_PENDING_OUTPUT_REPORTS {
+                assert_eq!(res, UsbOutResult::Ack);
+            } else {
+                assert_eq!(res, UsbOutResult::Nak);
+            }
         }
         assert!(
             dev.inner.borrow().pending_output_reports.len() <= DEFAULT_MAX_PENDING_OUTPUT_REPORTS
@@ -2544,7 +2715,7 @@ mod tests {
             UsbHidPassthroughOutputReport {
                 report_type: 2,
                 report_id: 1,
-                data: vec![(DEFAULT_MAX_PENDING_OUTPUT_REPORTS + 16) as u8]
+                data: vec![(DEFAULT_MAX_PENDING_OUTPUT_REPORTS - 1) as u8]
             }
         );
     }

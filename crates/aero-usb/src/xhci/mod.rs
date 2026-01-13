@@ -22,10 +22,11 @@ pub mod ring;
 pub mod trb;
 pub mod transfer;
 
+use crate::MemoryBus;
+
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-use crate::MemoryBus;
 
 /// Minimal xHCI controller model.
 ///
@@ -160,7 +161,6 @@ impl IoSnapshot for XhciController {
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
-
         self.usbcmd = 0;
         self.usbsts = 0;
         self.crcr = 0;
