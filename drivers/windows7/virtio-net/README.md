@@ -61,6 +61,7 @@ Notes:
 
 - `0x00010001` = `REG_DWORD`
 - `MessageNumberLimit` is a **request**, not a guarantee. The driver remains functional with fewer messages and will fall back as described below.
+- Even when `MSISupported=1` is set, Windows may still assign only a legacy **INTx** interrupt resource (for example when MSI/MSI-X allocation fails). In that case the driver uses the INTx + ISR read-to-ack path.
 
 ### Expected vector mapping
 
