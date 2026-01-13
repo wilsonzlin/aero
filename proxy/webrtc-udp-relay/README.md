@@ -561,15 +561,16 @@ The container + client integration uses the following environment variables and 
   - The relay requires a minimum of 100 ports when a range is configured (rule of thumb: ~100 UDP ports per ~50 concurrent sessions).
   - The provided `docker-compose.yml` defaults the relay to `50000-50100/udp` to avoid colliding
     with the coturn relay range (`49152-49200/udp`).
-- `WEBRTC_SESSION_CONNECT_TIMEOUT` (Go duration, default: `30s`): close server-side WebRTC sessions that fail to reach `PeerConnectionStateConnected` within this duration.
+- `WEBRTC_SESSION_CONNECT_TIMEOUT` / `--webrtc-session-connect-timeout` (Go duration, default `30s`) — max time to wait for newly created WebRTC sessions to connect before the relay closes the server-side PeerConnection.
+  - Applies to sessions created via signaling endpoints (`GET /webrtc/signal`, `POST /webrtc/offer`, `POST /offer`, etc.).
+  - A session is considered "connected" once **either**:
+    - the WebRTC PeerConnection state becomes `connected` (`PeerConnectionStateConnected`), or
+    - the ICE connection state becomes `connected` or `completed` (`ICEConnectionStateConnected` / `ICEConnectionStateCompleted`).
+  - Observability: timeouts increment the `/metrics` event counter `webrtc_session_connect_timeout`.
+  - Warning: setting this too low can break slow networks / delayed ICE or TURN negotiation.
 - `WEBRTC_UDP_LISTEN_IP`: local IP address to bind ICE UDP sockets to (default `0.0.0.0`, meaning "use library defaults / all interfaces").
 - `WEBRTC_NAT_1TO1_IPS`: comma-separated public IPs to advertise for ICE when the relay is behind NAT.
 - `WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE`: `host` or `srflx` (default: `host`).
-- `WEBRTC_SESSION_CONNECT_TIMEOUT` / `--webrtc-session-connect-timeout` (Go duration, default `30s`): bounds how long a server-side PeerConnection may remain half-open (never reaching ICE/DTLS connected) before being closed.
-  - Applies to sessions created via both HTTP offer endpoints (`POST /offer`, `POST /webrtc/offer`) and WebSocket signaling (`GET /webrtc/signal`).
-  - A session counts as "connected" once ICE is connected/completed (`ICEConnectionStateConnected` / `ICEConnectionStateCompleted`) or the PeerConnection state is connected (`PeerConnectionStateConnected`).
-  - Observability: timeouts increment the `/metrics` event counter `webrtc_session_connect_timeout`.
-  - DoS/misbehaving-client hardening knob: prevents clients from holding server resources indefinitely. Setting this too low can break slow networks / delayed ICE or TURN negotiation.
 - WebRTC DataChannel hardening (pion/SCTP caps; mitigate oversized message DoS):
   - `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (default: derived from `MAX_DATAGRAM_PAYLOAD_BYTES` and `L2_MAX_MESSAGE_BYTES`)
   - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (default: derived; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`)
@@ -595,7 +596,6 @@ Equivalent flags:
 - `--webrtc-udp-listen-ip`
 - `--webrtc-nat-1to1-ips`
 - `--webrtc-nat-1to1-ip-candidate-type`
-- `--webrtc-session-connect-timeout`
 - `--webrtc-datachannel-max-message-bytes`
 - `--webrtc-sctp-max-receive-buffer-bytes`
 
