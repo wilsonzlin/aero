@@ -44,24 +44,32 @@ fn int10_vbe_controller_and_mode_info() {
         }
         modes.push(m);
     }
+    assert!(modes.contains(&0x115));
     assert!(modes.contains(&0x118));
+    assert!(modes.contains(&0x160));
 
-    // 4F01: mode info for 0x118.
-    cpu.set_ax(0x4F01);
-    cpu.set_cx(0x118);
-    cpu.set_es(0x2000);
-    cpu.set_di(0x0300);
-    bios.handle_int10(&mut cpu, &mut mem);
-    assert_eq!(cpu.ax(), 0x004F);
-    assert!(!cpu.cf());
+    let mut assert_mode_info = |mode: u16, width: u16, height: u16| {
+        cpu.set_ax(0x4F01);
+        cpu.set_cx(mode);
+        cpu.set_es(0x2000);
+        cpu.set_di(0x0300);
+        bios.handle_int10(&mut cpu, &mut mem);
+        assert_eq!(cpu.ax(), 0x004F);
+        assert!(!cpu.cf());
 
-    let mode_addr = real_addr(cpu.es(), cpu.di());
-    let mut mode = vec![0u8; 256];
-    mem.read_bytes(mode_addr, &mut mode);
-    assert_eq!(read_u16(&mode, 18), 1024); // XResolution
-    assert_eq!(read_u16(&mode, 20), 768); // YResolution
-    assert_eq!(mode[25], 32); // BitsPerPixel
-    assert_eq!(read_u32(&mode, 40), VbeDevice::LFB_BASE_DEFAULT); // PhysBasePtr
+        let mode_addr = real_addr(cpu.es(), cpu.di());
+        let mut info = vec![0u8; 256];
+        mem.read_bytes(mode_addr, &mut info);
+        assert_eq!(read_u16(&info, 18), width); // XResolution
+        assert_eq!(read_u16(&info, 20), height); // YResolution
+        assert_eq!(info[25], 32); // BitsPerPixel
+        assert_eq!(read_u32(&info, 40), VbeDevice::LFB_BASE_DEFAULT); // PhysBasePtr
+    };
+
+    // 4F01: mode info for required 32bpp LFB modes.
+    assert_mode_info(0x115, 800, 600);
+    assert_mode_info(0x118, 1024, 768);
+    assert_mode_info(0x160, 1280, 720);
 }
 
 #[test]
@@ -112,6 +120,25 @@ fn int10_vbe_set_mode_clears_framebuffer_and_reports_current_mode() {
     let mut buf = vec![0u8; 4096];
     mem.read_bytes(fb_base, &mut buf);
     assert!(buf.iter().all(|&b| b == 0x55));
+
+    // New required modes should also be settable.
+    for mode in [0x115u16, 0x160u16] {
+        // Touch the last byte of the expected framebuffer and ensure a clear-mode-set wipes it.
+        let fb_size = match mode {
+            0x115 => 800u64 * 600 * 4,
+            0x160 => 1280u64 * 720 * 4,
+            _ => unreachable!(),
+        };
+        mem.write_u8(fb_base + fb_size - 1, 0xCC);
+
+        cpu.set_ax(0x4F02);
+        cpu.set_bx(mode | 0x4000);
+        bios.handle_int10(&mut cpu, &mut mem);
+        assert_eq!(cpu.ax(), 0x004F);
+        assert!(!cpu.cf());
+        assert_eq!(bios.video.vbe.current_mode, Some(mode));
+        assert_eq!(mem.read_u8(fb_base + fb_size - 1), 0);
+    }
 }
 
 #[test]
