@@ -8,13 +8,29 @@
  */
 
 #include <stddef.h>
+
+/* MSVC before VS2010 lacks <stdint.h>. WDK 7.1 uses an older toolset. */
+#if defined(_MSC_VER) && _MSC_VER < 1600
+typedef unsigned __int8 uint8_t;
+typedef unsigned __int16 uint16_t;
+typedef unsigned __int32 uint32_t;
+typedef unsigned __int64 uint64_t;
+#else
 #include <stdint.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Minimal virtio-net header (`struct virtio_net_hdr`) */
+/*
+ * Minimal virtio-net header (`struct virtio_net_hdr`).
+ *
+ * If a platform header already defines `VIRTIO_NET_HDR` (e.g. the Windows driver
+ * defining it with WDK types), define `VIRTIO_NET_HDR_OFFLOAD_USE_EXTERNAL_HDR`
+ * before including this header to suppress the duplicate typedef.
+ */
+#ifndef VIRTIO_NET_HDR_OFFLOAD_USE_EXTERNAL_HDR
 #pragma pack(push, 1)
 typedef struct _VIRTIO_NET_HDR {
   uint8_t Flags;
@@ -25,21 +41,36 @@ typedef struct _VIRTIO_NET_HDR {
   uint16_t CsumOffset;
 } VIRTIO_NET_HDR;
 #pragma pack(pop)
+#endif
 
 /* Portable static assert for C99/MSVC. */
 #define VIRTIO_NET_HDR_OFFLOAD_STATIC_ASSERT(name, cond) typedef char name[(cond) ? 1 : -1]
 VIRTIO_NET_HDR_OFFLOAD_STATIC_ASSERT(virtio_net_hdr_must_be_10_bytes, sizeof(VIRTIO_NET_HDR) == 10);
 
 /* virtio-net header Flags */
+#ifndef VIRTIO_NET_HDR_F_NEEDS_CSUM
 #define VIRTIO_NET_HDR_F_NEEDS_CSUM 0x01u
+#endif
+#ifndef VIRTIO_NET_HDR_F_DATA_VALID
 #define VIRTIO_NET_HDR_F_DATA_VALID 0x02u
+#endif
 
 /* virtio-net header GsoType */
+#ifndef VIRTIO_NET_HDR_GSO_NONE
 #define VIRTIO_NET_HDR_GSO_NONE 0x00u
+#endif
+#ifndef VIRTIO_NET_HDR_GSO_TCPV4
 #define VIRTIO_NET_HDR_GSO_TCPV4 0x01u
+#endif
+#ifndef VIRTIO_NET_HDR_GSO_UDP
 #define VIRTIO_NET_HDR_GSO_UDP 0x03u
+#endif
+#ifndef VIRTIO_NET_HDR_GSO_TCPV6
 #define VIRTIO_NET_HDR_GSO_TCPV6 0x04u
+#endif
+#ifndef VIRTIO_NET_HDR_GSO_ECN
 #define VIRTIO_NET_HDR_GSO_ECN 0x80u
+#endif
 
 typedef enum _VIRTIO_NET_HDR_OFFLOAD_STATUS {
   VIRTIO_NET_HDR_OFFLOAD_STATUS_OK = 0,
