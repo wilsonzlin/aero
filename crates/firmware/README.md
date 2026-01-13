@@ -106,6 +106,12 @@ cargo xtask fixtures
 To verify the fixture is up to date without modifying it:
 
 ```bash
+cargo xtask fixtures --check
+```
+
+Or, to check just the DSDT fixture:
+
+```bash
 cargo run -p firmware --bin gen_dsdt --locked -- --check
 ```
 

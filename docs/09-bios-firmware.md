@@ -14,6 +14,19 @@ Aero’s canonical boot path is **legacy BIOS**, implemented in Rust as **HLE fi
 UEFI is **not** the canonical path today. If you see older docs implying an external BIOS blob or a
 still-unimplemented firmware stack, treat those as outdated.
 
+## Deterministic firmware fixtures
+
+This repo keeps a handful of **tiny, deterministic, in-repo** firmware blobs for tests and CI:
+
+- `assets/bios.bin` (BIOS ROM image; generated from `firmware::bios::build_bios_rom()`)
+- `crates/firmware/acpi/dsdt.aml` (ACPI DSDT AML; generated from `aero-acpi`)
+
+Regenerate or verify all in-repo fixtures with:
+
+```bash
+cargo xtask fixtures [--check]
+```
+
 ---
 
 ## BIOS dispatch contract (HLT-in-ROM-stub “hypercall”)
