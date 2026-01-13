@@ -962,6 +962,7 @@ _Use_decl_annotations_
 VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     NTSTATUS cancelStatus;
+    KIRQL oldIrql;
 
     if (Dx == NULL) {
         return;
@@ -975,13 +976,10 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
     Dx->Started = FALSE;
 
     /* Best-effort: disable eventq callbacks during teardown. */
-    {
-        KIRQL oldIrql;
-        KeAcquireSpinLock(&Dx->EventqLock, &oldIrql);
-        Dx->EventqCallback = NULL;
-        Dx->EventqCallbackContext = NULL;
-        KeReleaseSpinLock(&Dx->EventqLock, oldIrql);
-    }
+    KeAcquireSpinLock(&Dx->EventqLock, &oldIrql);
+    Dx->EventqCallback = NULL;
+    Dx->EventqCallbackContext = NULL;
+    KeReleaseSpinLock(&Dx->EventqLock, oldIrql);
 
     cancelStatus = Dx->Removed ? STATUS_DEVICE_REMOVED : STATUS_CANCELLED;
 
