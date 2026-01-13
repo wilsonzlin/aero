@@ -50,6 +50,7 @@ For Aero’s in-tree drivers (including AeroGPU), the repo provides an end-to-en
 ```powershell
 .\ci\install-wdk.ps1
 .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json
+.\ci\build-aerogpu-dbgctl.ps1 -ToolchainJson .\out\toolchain.json
 .\ci\make-catalogs.ps1 -ToolchainJson .\out\toolchain.json
 .\ci\sign-drivers.ps1 -ToolchainJson .\out\toolchain.json
 ```

@@ -309,6 +309,7 @@ Typical dev install flows:
       ```powershell
       pwsh ci/install-wdk.ps1
       pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu
+      pwsh ci/build-aerogpu-dbgctl.ps1 -ToolchainJson out/toolchain.json
       pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
       pwsh ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
       ```

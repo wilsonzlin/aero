@@ -913,6 +913,7 @@ See `drivers/aerogpu/README.md` for driver layout/entrypoints and `docs/16-windo
  ```powershell
  .\ci\install-wdk.ps1
  .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json -Drivers aerogpu
+ .\ci\build-aerogpu-dbgctl.ps1 -ToolchainJson .\out\toolchain.json
  .\ci\make-catalogs.ps1 -ToolchainJson .\out\toolchain.json
  .\ci\sign-drivers.ps1 -ToolchainJson .\out\toolchain.json
  ```
