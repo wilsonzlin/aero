@@ -160,7 +160,10 @@ fuzz_target!(|data: &[u8]| {
     // Place a single-entry BDL for each stream inside guest RAM.
     // Output stream (descriptor 0).
     let out_bdl_base = 0x1000u64;
-    let out_buf_base = 0x3000u64;
+    // Place the playback DMA buffer at guest address 0 so it is likely to be influenced by the
+    // fuzzer input (libFuzzer defaults to `-max_len=4096`, and we seed guest RAM from the input
+    // starting at address 0).
+    let out_buf_base = 0x0000u64;
     let out_buf_len = 0x1000u32;
     mem.write_u64(out_bdl_base, out_buf_base);
     mem.write_u32(out_bdl_base + 8, out_buf_len);

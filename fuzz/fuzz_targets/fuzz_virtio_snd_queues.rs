@@ -169,14 +169,18 @@ struct Step {
 }
 
 fn addr_from_seed(seed: u32, allow_oob: bool) -> u64 {
-    // Keep addresses away from the queue structures by default so we hit deeper device logic, but
-    // allow some OOB address cases for negative testing.
+    // Keep addresses away from the queue structures by default so we hit deeper device logic.
+    //
+    // Also, libFuzzer's default `-max_len` is 4096; we seed guest RAM from the input starting at
+    // address 0, so placing buffers in the first page makes it much more likely the fuzzer can
+    // influence the PCM/header bytes (instead of reading zeros).
+    //
+    // Still allow some OOB address cases for negative testing.
     if allow_oob {
         // Large spread that will frequently exceed guest RAM.
         (seed as u64) << 8
     } else {
-        let base = 0x10_000u64;
-        base.wrapping_add((seed as u64) & 0x3fff)
+        (seed as u64) & 0x0fff
     }
 }
 
