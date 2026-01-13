@@ -45,8 +45,8 @@ pub mod memory;
 pub mod passthrough;
 pub mod passthrough_device;
 pub mod uhci;
-pub mod web;
 pub mod xhci;
+pub mod web;
 
 extern crate alloc;
 

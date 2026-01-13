@@ -1,9 +1,32 @@
 use aero_usb::xhci::ring::{RingCursor, RingError, RingPoll};
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
+use aero_usb::MemoryBus;
+use std::collections::BTreeMap;
 
 mod util;
 
 use util::TestMemory;
+
+#[derive(Default)]
+struct SparseMem {
+    bytes: BTreeMap<u64, u8>,
+}
+
+impl MemoryBus for SparseMem {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        for (i, slot) in buf.iter_mut().enumerate() {
+            let addr = paddr.wrapping_add(i as u64);
+            *slot = *self.bytes.get(&addr).unwrap_or(&0);
+        }
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        for (i, val) in buf.iter().enumerate() {
+            let addr = paddr.wrapping_add(i as u64);
+            self.bytes.insert(addr, *val);
+        }
+    }
+}
 
 #[test]
 fn trb_pack_unpack_roundtrip() {
@@ -47,6 +70,36 @@ fn trb_unknown_type_is_preserved() {
 fn ring_cursor_masks_dequeue_pointer_low_bits() {
     let cur = RingCursor::new(0x1234_u64 | 0xf, true);
     assert_eq!(cur.dequeue_ptr(), 0x1230);
+}
+
+#[test]
+fn ring_cursor_zero_step_budget_errors() {
+    let mut mem = TestMemory::new(0x1000);
+    let mut cur = RingCursor::new(0x100, true);
+    assert_eq!(
+        cur.poll(&mut mem, 0),
+        RingPoll::Err(RingError::StepBudgetExceeded)
+    );
+    assert_eq!(cur.dequeue_ptr(), 0x100);
+}
+
+#[test]
+fn ring_cursor_reports_address_overflow() {
+    let mut mem = SparseMem::default();
+
+    let trb_addr = u64::MAX & !0x0f;
+    let mut trb = Trb::default();
+    trb.set_cycle(true);
+    trb.set_trb_type(TrbType::Normal);
+    trb.write_to(&mut mem, trb_addr);
+
+    let mut cur = RingCursor::new(u64::MAX, true);
+    assert_eq!(cur.dequeue_ptr(), trb_addr);
+    assert_eq!(
+        cur.poll(&mut mem, 8),
+        RingPoll::Err(RingError::AddressOverflow)
+    );
+    assert_eq!(cur.dequeue_ptr(), trb_addr);
 }
 
 #[test]

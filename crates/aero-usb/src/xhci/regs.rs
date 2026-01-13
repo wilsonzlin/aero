@@ -3,6 +3,20 @@
 //! This file provides a small set of well-known offsets/constants to support an eventual MMIO
 //! implementation. It is not a complete model of the xHCI register set.
 
+/// Minimal register offsets used by the controller skeleton in [`super::XhciController`].
+///
+/// These are absolute offsets into the controller's MMIO BAR.
+pub const REG_CAPLENGTH_HCIVERSION: u64 = 0x00;
+pub const REG_USBCMD: u64 = 0x40;
+pub const REG_USBSTS: u64 = 0x44;
+pub const REG_CRCR_LO: u64 = 0x58;
+pub const REG_CRCR_HI: u64 = 0x5c;
+
+/// USBCMD bit 0 (Run/Stop).
+pub const USBCMD_RUN: u32 = 1 << 0;
+/// USBSTS bit 3 (Event Interrupt).
+pub const USBSTS_EINT: u32 = 1 << 3;
+
 /// Capability registers (base of MMIO region).
 pub mod cap {
     /// CAPLENGTH (u8): Capability register length (offset to operational registers).
@@ -54,4 +68,3 @@ pub mod doorbell {
     /// Doorbell register stride in bytes.
     pub const DOORBELL_STRIDE: u32 = 0x04;
 }
-
