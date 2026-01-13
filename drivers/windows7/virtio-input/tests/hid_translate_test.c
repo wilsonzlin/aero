@@ -1463,6 +1463,61 @@ static void test_tablet_abs_no_change_does_not_emit(void) {
   assert(cap.count == 1);
 }
 
+static void test_tablet_abs_range_swaps_min_max(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /* Intentionally pass inverted min/max; API should normalize it. */
+  hid_translate_set_tablet_abs_range(&t, 1000, 0, 500, 0);
+
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 500);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 250);
+  send_syn(&t);
+
+  assert(cap.count == 1);
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x00, 0x40, 0x00, 0x40};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
+static void test_tablet_reset_without_xy_does_not_emit(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /* Without ever observing an X/Y pair, reset should not emit a spurious report. */
+  hid_translate_reset(&t, true);
+  assert(cap.count == 0);
+}
+
+static void test_tablet_reset_emits_release_without_xy_when_button_pressed(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /*
+   * Press a tablet button without setting a position; calling reset should still
+   * emit a release report so the HID stacks don't latch the button state.
+   */
+  send_key(&t, VIRTIO_INPUT_BTN_TOUCH, 1);
+  assert(cap.count == 0);
+
+  hid_translate_reset(&t, true);
+  assert(cap.count == 1);
+
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x00, 0x00, 0x00, 0x00};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
 int main(void) {
   test_linux_keycode_abi_values();
   test_linux_rel_code_abi_values();
@@ -1498,6 +1553,9 @@ int main(void) {
   test_tablet_multiple_abs_updates_before_syn_is_deterministic();
   test_tablet_scaling_reports();
   test_tablet_abs_no_change_does_not_emit();
+  test_tablet_abs_range_swaps_min_max();
+  test_tablet_reset_without_xy_does_not_emit();
+  test_tablet_reset_emits_release_without_xy_when_button_pressed();
   printf("hid_translate_test: ok\n");
   return 0;
 }
