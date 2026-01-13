@@ -33,6 +33,20 @@ In a finished package, this directory contains the driver package payload:
 - The legacy I/O-port bring-up package (`aero-virtio-snd-ioport.inf`, service `aeroviosnd_ioport`) is opt-in and not currently covered by the helper scripts.
 - The legacy alias INF is checked in as `virtio-snd.inf.disabled` to avoid accidentally shipping/installing **two**
   INFs that match the same HWIDs.
+
+## Bring-up toggles (registry)
+
+The INFs create per-device registry values with safe defaults (`0`):
+
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\ForceNullBackend` (`REG_DWORD`)
+  - `0` (default): use virtio backend
+  - `1`: force the silent null backend (also allows bring-up without a working virtio transport)
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` (`REG_DWORD`)
+  - `0` (default): INTx-strict (fail START_DEVICE if INTx is unavailable)
+  - `1`: allow polling-only mode when INTx cannot be discovered/connected
+
+You can find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
+
 - **Keep `virtio-snd.inf.disabled` in sync:** the alias INF must remain **byte-for-byte identical** to
   `aero_virtio_snd.inf` in all functional content (everything from `[Version]` onward). Only the filename and the
   leading comment/header block should differ.
