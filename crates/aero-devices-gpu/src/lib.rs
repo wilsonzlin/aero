@@ -7,10 +7,11 @@
 
 pub mod backend;
 pub mod ring;
+pub mod scanout;
 
 pub use backend::{
     AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
     ImmediateAeroGpuBackend, NullAeroGpuBackend,
 };
-
 pub use memory::MemoryBus;
+pub use scanout::{AeroGpuCursorConfig, AeroGpuFormat, AeroGpuScanoutConfig};
