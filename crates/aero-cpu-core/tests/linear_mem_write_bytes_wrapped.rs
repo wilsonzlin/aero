@@ -1,5 +1,6 @@
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
+use std::thread_local;
 
 use aero_cpu_core::linear_mem::write_bytes_wrapped;
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
@@ -10,16 +11,28 @@ use aero_cpu_core::Exception;
 
 struct CountingAlloc;
 
-static ALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
-static REALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
+// Use thread-local counters/enablement so the allocation assertions are not
+// affected by the Rust test runner executing other tests in parallel.
+thread_local! {
+    static COUNT_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+    static ALLOC_CALLS: Cell<usize> = const { Cell::new(0) };
+    static REALLOC_CALLS: Cell<usize> = const { Cell::new(0) };
+}
 
 #[global_allocator]
 static GLOBAL: CountingAlloc = CountingAlloc;
 
 unsafe impl GlobalAlloc for CountingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOC_CALLS.fetch_add(1, Ordering::Relaxed);
-        System.alloc(layout)
+        let ptr = System.alloc(layout);
+        if !ptr.is_null() {
+            COUNT_ALLOCATIONS.with(|enabled| {
+                if enabled.get() {
+                    ALLOC_CALLS.with(|calls| calls.set(calls.get() + 1));
+                }
+            });
+        }
+        ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -27,18 +40,47 @@ unsafe impl GlobalAlloc for CountingAlloc {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        REALLOC_CALLS.fetch_add(1, Ordering::Relaxed);
-        System.realloc(ptr, layout, new_size)
+        let ptr = System.realloc(ptr, layout, new_size);
+        if !ptr.is_null() {
+            COUNT_ALLOCATIONS.with(|enabled| {
+                if enabled.get() {
+                    REALLOC_CALLS.with(|calls| calls.set(calls.get() + 1));
+                }
+            });
+        }
+        ptr
+    }
+}
+
+struct AllocationCountGuard;
+
+impl AllocationCountGuard {
+    fn begin() -> Self {
+        COUNT_ALLOCATIONS.with(|enabled| {
+            assert!(
+                !enabled.get(),
+                "nested AllocationCountGuard::begin calls are not supported"
+            );
+            enabled.set(true);
+        });
+        reset_alloc_counters();
+        Self
+    }
+}
+
+impl Drop for AllocationCountGuard {
+    fn drop(&mut self) {
+        COUNT_ALLOCATIONS.with(|enabled| enabled.set(false));
     }
 }
 
 fn reset_alloc_counters() {
-    ALLOC_CALLS.store(0, Ordering::Relaxed);
-    REALLOC_CALLS.store(0, Ordering::Relaxed);
+    ALLOC_CALLS.with(|calls| calls.set(0));
+    REALLOC_CALLS.with(|calls| calls.set(0));
 }
 
 fn alloc_calls() -> usize {
-    ALLOC_CALLS.load(Ordering::Relaxed) + REALLOC_CALLS.load(Ordering::Relaxed)
+    ALLOC_CALLS.with(|calls| calls.get()) + REALLOC_CALLS.with(|calls| calls.get())
 }
 
 // --- Test busses ------------------------------------------------------------
@@ -305,9 +347,11 @@ fn write_bytes_wrapped_large_a20_wrap_does_not_allocate() {
     let src = vec![0xA5u8; 1 << 20];
 
     // Ensure we only count allocations made by `write_bytes_wrapped`, not by setup.
-    reset_alloc_counters();
-    write_bytes_wrapped(&state, &mut bus, 0x000F_F000, &src).unwrap();
-    assert_eq!(alloc_calls(), 0, "write_bytes_wrapped allocated memory");
+    {
+        let _guard = AllocationCountGuard::begin();
+        write_bytes_wrapped(&state, &mut bus, 0x000F_F000, &src).unwrap();
+        assert_eq!(alloc_calls(), 0, "write_bytes_wrapped allocated memory");
+    }
 
     // Spot-check that the write wrapped across the 1MiB alias boundary.
     assert_eq!(bus.read_u8(0x0FF000).unwrap(), 0xA5);
@@ -323,9 +367,11 @@ fn write_bytes_wrapped_large_32bit_wrap_does_not_allocate() {
     let mut bus = SplitTestBus::new(0x100000, 0xFFFF_F000, 0x1000);
     let src = vec![0x5Au8; 1 << 20];
 
-    reset_alloc_counters();
-    write_bytes_wrapped(&state, &mut bus, 0xFFFF_F000, &src).unwrap();
-    assert_eq!(alloc_calls(), 0, "write_bytes_wrapped allocated memory");
+    {
+        let _guard = AllocationCountGuard::begin();
+        write_bytes_wrapped(&state, &mut bus, 0xFFFF_F000, &src).unwrap();
+        assert_eq!(alloc_calls(), 0, "write_bytes_wrapped allocated memory");
+    }
 
     // First chunk: 0xFFFF_F000..=0xFFFF_FFFF
     assert_eq!(bus.read_u8(0xFFFF_F000).unwrap(), 0x5A);
@@ -354,4 +400,3 @@ fn write_bytes_wrapped_is_fault_atomic_across_segments() {
     assert_eq!(bus.read_u8(0x0FFFFF).unwrap(), 0xAA);
     assert_eq!(bus.read_u8(0x0000_0000).unwrap(), 0xBB);
 }
-
