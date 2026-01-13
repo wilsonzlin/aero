@@ -26,12 +26,17 @@ pub struct WindowsDeviceContractDevice {
 }
 
 pub fn load_windows_device_contract(path: &Path) -> Result<WindowsDeviceContract> {
+    let (contract, _bytes) = load_windows_device_contract_with_bytes(path)?;
+    Ok(contract)
+}
+
+pub fn load_windows_device_contract_with_bytes(path: &Path) -> Result<(WindowsDeviceContract, Vec<u8>)> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     let contract: WindowsDeviceContract =
         serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
     validate_windows_device_contract(&contract)
         .with_context(|| format!("validate {}", path.display()))?;
-    Ok(contract)
+    Ok((contract, bytes))
 }
 
 fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<()> {

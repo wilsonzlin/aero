@@ -178,4 +178,10 @@ impl PackagingSpec {
         let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
         serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
     }
+
+    pub fn load_with_bytes(path: &Path) -> Result<(Self, Vec<u8>)> {
+        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        let spec = serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+        Ok((spec, bytes))
+    }
 }

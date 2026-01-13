@@ -4,13 +4,24 @@ This directory contains the tooling used to produce the distributable **Aero Dri
 
 - `aero-guest-tools.iso` (mountable CD-ROM image)
 - `aero-guest-tools.zip` (manual extraction)
-- `manifest.json` (SHA-256 hashes + build metadata)
+- `manifest.json` (SHA-256 hashes + build metadata + input provenance)
 
 The packager is implemented as a small, self-contained Rust CLI under `tools/packaging/aero_packager/`.
 
 Redistribution note: the packaged ISO/zip includes `THIRD_PARTY_NOTICES.md` at the
 media root, and may include additional third-party license texts under `licenses/`
 when present in the input directory.
+
+`manifest.json` schema v3+ also includes an `inputs` object that records **which packaging inputs**
+produced the media:
+
+- `inputs.packaging_spec`: the spec file path (basename) + SHA-256
+- `inputs.windows_device_contract`: the device contract path (basename) + SHA-256 + contract name/version/schema_version
+- `inputs.aero_packager_version` (optional): the `aero_packager` crate version
+
+This provenance is surfaced by `guest-tools/verify.ps1` as an informational check so it’s easy to
+confirm whether a given ISO/zip was built from the expected spec/contract (helps avoid debugging
+confusion caused by spec/contract drift).
 
 ## Quickstart
 

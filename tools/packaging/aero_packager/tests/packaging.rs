@@ -82,7 +82,9 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         fs::read(&outputs3.manifest_path)?
     );
 
-    // Legacy spec schema (`required_drivers`) should still work and produce identical output.
+    // Legacy spec schema (`required_drivers`) should still work. Note that `manifest.json`
+    // records the SHA-256 of the exact spec bytes used as an input, so the overall media will
+    // differ when the spec JSON differs (even if it is semantically equivalent).
     let legacy_spec_dir = tempfile::tempdir()?;
     let legacy_spec_path = legacy_spec_dir.path().join("spec.json");
     let legacy_spec = serde_json::json!({
@@ -102,12 +104,8 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         ..config1.clone()
     };
     let outputs4 = aero_packager::package_guest_tools(&config4)?;
-    assert_eq!(fs::read(&outputs1.iso_path)?, fs::read(&outputs4.iso_path)?);
-    assert_eq!(fs::read(&outputs1.zip_path)?, fs::read(&outputs4.zip_path)?);
-    assert_eq!(
-        fs::read(&outputs1.manifest_path)?,
-        fs::read(&outputs4.manifest_path)?
-    );
+    let manifest4_bytes = fs::read(&outputs4.manifest_path)?;
+    let manifest4: aero_packager::Manifest = serde_json::from_slice(&manifest4_bytes)?;
 
     // Verify ISO contains expected tree (via Joliet directory records).
     let iso_bytes = fs::read(&outputs1.iso_path)?;
@@ -179,11 +177,74 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     // Verify manifest hashes match the packaged bytes (via the zip).
     let manifest_bytes = fs::read(&outputs1.manifest_path)?;
     let manifest: aero_packager::Manifest = serde_json::from_slice(&manifest_bytes)?;
+    assert_eq!(manifest.schema_version, 3);
     assert_eq!(manifest.package.version, "1.2.3");
     assert_eq!(manifest.package.build_id, "test");
     assert_eq!(manifest.package.source_date_epoch, 0);
     assert_eq!(manifest.signing_policy, aero_packager::SigningPolicy::Test);
     assert!(manifest.certs_required);
+
+    // Input provenance should be present.
+    let inputs = manifest.inputs.as_ref().expect("manifest.inputs");
+    let spec_input = inputs
+        .packaging_spec
+        .as_ref()
+        .expect("manifest.inputs.packaging_spec");
+    assert_eq!(spec_input.path, "spec.json");
+    let contract_input = inputs
+        .windows_device_contract
+        .as_ref()
+        .expect("manifest.inputs.windows_device_contract");
+    assert_eq!(contract_input.path, "windows-device-contract.json");
+    assert_eq!(
+        contract_input.contract_name,
+        "aero-windows-pci-device-contract"
+    );
+    assert!(!contract_input.contract_version.trim().is_empty());
+    assert_eq!(contract_input.schema_version, 1);
+    assert_eq!(
+        inputs
+            .aero_packager_version
+            .as_deref()
+            .expect("manifest.inputs.aero_packager_version"),
+        env!("CARGO_PKG_VERSION")
+    );
+
+    // Verify input hashes are correct.
+    let spec_bytes = fs::read(&spec_path)?;
+    let mut h = sha2::Sha256::new();
+    h.update(&spec_bytes);
+    let spec_sha256 = hex::encode(h.finalize());
+    assert_eq!(spec_input.sha256, spec_sha256);
+
+    let contract_bytes = fs::read(&windows_device_contract_path)?;
+    let mut h = sha2::Sha256::new();
+    h.update(&contract_bytes);
+    let contract_sha256 = hex::encode(h.finalize());
+    assert_eq!(contract_input.sha256, contract_sha256);
+
+    // Legacy spec schema should still produce the exact same packaged file list/hashes, even
+    // though the overall media differs due to `manifest.inputs.packaging_spec.sha256`.
+    assert_eq!(manifest4.schema_version, 3);
+    assert_eq!(manifest4.files, manifest.files);
+    let legacy_inputs = manifest4.inputs.as_ref().expect("manifest4.inputs");
+    let legacy_spec_input = legacy_inputs
+        .packaging_spec
+        .as_ref()
+        .expect("manifest4.inputs.packaging_spec");
+    assert_eq!(legacy_spec_input.path, "spec.json");
+    assert_ne!(legacy_spec_input.sha256, spec_sha256);
+    let legacy_spec_bytes = fs::read(&config4.spec_path)?;
+    let mut h = sha2::Sha256::new();
+    h.update(&legacy_spec_bytes);
+    let legacy_spec_sha256 = hex::encode(h.finalize());
+    assert_eq!(legacy_spec_input.sha256, legacy_spec_sha256);
+
+    let legacy_contract_input = legacy_inputs
+        .windows_device_contract
+        .as_ref()
+        .expect("manifest4.inputs.windows_device_contract");
+    assert_eq!(legacy_contract_input.sha256, contract_sha256);
 
     let mut manifest_paths = BTreeSet::new();
     for entry in &manifest.files {

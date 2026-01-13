@@ -1271,6 +1271,71 @@ try {
             $gtSigningPolicy = $signingPolicy
             $gtCertsRequired = $certsRequired
 
+            # Optional: packaging input provenance (added in manifest schema v3).
+            # Keep backward-compatible: older manifests may not contain an `inputs` object.
+            $inputs = $null
+            if ($parsed.ContainsKey("inputs")) { $inputs = $parsed["inputs"] }
+            if ($inputs -and ($inputs -is [System.Collections.IDictionary])) {
+                $inputsData = @{
+                    aero_packager_version = $null
+                    packaging_spec = $null
+                    windows_device_contract = $null
+                }
+                $inputsDetails = @()
+                $inputsStatus = "PASS"
+                $inputsSummary = "Packager input provenance recorded in manifest.json."
+
+                if ($inputs.ContainsKey("aero_packager_version")) {
+                    $inputsData.aero_packager_version = "" + $inputs["aero_packager_version"]
+                    if ($inputsData.aero_packager_version) {
+                        $inputsDetails += ("aero_packager_version: " + $inputsData.aero_packager_version)
+                    }
+                }
+
+                $specIn = $null
+                if ($inputs.ContainsKey("packaging_spec")) { $specIn = $inputs["packaging_spec"] }
+                if ($specIn -and ($specIn -is [System.Collections.IDictionary])) {
+                    $specPath = $null
+                    $specSha = $null
+                    if ($specIn.ContainsKey("path")) { $specPath = "" + $specIn["path"] }
+                    if ($specIn.ContainsKey("sha256")) { $specSha = "" + $specIn["sha256"] }
+                    $inputsData.packaging_spec = @{ path = $specPath; sha256 = $specSha }
+                    if ($specPath -or $specSha) {
+                        $inputsDetails += ("packaging_spec: " + $specPath + " sha256=" + $specSha)
+                    }
+                }
+
+                $contractIn = $null
+                if ($inputs.ContainsKey("windows_device_contract")) { $contractIn = $inputs["windows_device_contract"] }
+                if ($contractIn -and ($contractIn -is [System.Collections.IDictionary])) {
+                    $cPath = $null
+                    $cSha = $null
+                    $cName = $null
+                    $cVer = $null
+                    $cSchema = $null
+                    if ($contractIn.ContainsKey("path")) { $cPath = "" + $contractIn["path"] }
+                    if ($contractIn.ContainsKey("sha256")) { $cSha = "" + $contractIn["sha256"] }
+                    if ($contractIn.ContainsKey("contract_name")) { $cName = "" + $contractIn["contract_name"] }
+                    if ($contractIn.ContainsKey("contract_version")) { $cVer = "" + $contractIn["contract_version"] }
+                    if ($contractIn.ContainsKey("schema_version")) { $cSchema = $contractIn["schema_version"] }
+                    $inputsData.windows_device_contract = @{
+                        path = $cPath
+                        sha256 = $cSha
+                        contract_name = $cName
+                        contract_version = $cVer
+                        schema_version = $cSchema
+                    }
+                    if ($cPath -or $cSha) {
+                        $inputsDetails += ("windows_device_contract: " + $cPath + " sha256=" + $cSha)
+                    }
+                    if ($cName -or $cVer -or ($cSchema -ne $null)) {
+                        $inputsDetails += ("contract: " + $cName + " v" + $cVer + " (schema_version=" + $cSchema + ")")
+                    }
+                }
+
+                Add-Check "guest_tools_manifest_inputs" "Guest Tools Packaging Inputs (manifest.json)" $inputsStatus $inputsSummary $inputsData $inputsDetails
+            }
+
             $files = $null
             if ($parsed.ContainsKey("files")) { $files = $parsed["files"] }
 

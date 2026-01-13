@@ -19,7 +19,10 @@ pub use iso9660::read_joliet_file_entries;
 pub use iso9660::read_joliet_tree;
 pub use iso9660::{IsoFileEntry, IsoFileTree};
 pub use iso_from_dir::write_iso9660_joliet_from_dir;
-pub use manifest::{Manifest, ManifestFileEntry, SigningPolicy};
+pub use manifest::{
+    Manifest, ManifestFileEntry, ManifestInputFile, ManifestInputs,
+    ManifestWindowsDeviceContractInput, SigningPolicy,
+};
 pub use spec::{DriverSpec, PackagingSpec};
 
 const CANONICAL_WINDOWS_DEVICE_CONTRACT_NAME: &str = "aero-windows-pci-device-contract";
@@ -109,16 +112,20 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
     fs::create_dir_all(&config.out_dir)
         .with_context(|| format!("create output dir {}", config.out_dir.display()))?;
 
-    let spec = PackagingSpec::load(&config.spec_path).with_context(|| "load packaging spec")?;
+    let (spec, spec_bytes) =
+        PackagingSpec::load_with_bytes(&config.spec_path).with_context(|| "load packaging spec")?;
+    let spec_sha256 = sha256_hex(&spec_bytes);
 
-    let contract =
-        windows_device_contract::load_windows_device_contract(&config.windows_device_contract_path)
-            .with_context(|| {
-                format!(
-                    "load windows device contract {}",
-                    config.windows_device_contract_path.display()
-                )
-            })?;
+    let (contract, contract_bytes) = windows_device_contract::load_windows_device_contract_with_bytes(
+        &config.windows_device_contract_path,
+    )
+    .with_context(|| {
+        format!(
+            "load windows device contract {}",
+            config.windows_device_contract_path.display()
+        )
+    })?;
+    let contract_sha256 = sha256_hex(&contract_bytes);
 
     let service_overrides = guest_tools_devices_cmd_service_overrides_for_spec(&contract, &spec);
     let devices_cmd_bytes = generate_guest_tools_devices_cmd_bytes_with_overrides(
@@ -170,6 +177,21 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
         config.signing_policy,
         file_entries,
     );
+    let mut manifest = manifest;
+    manifest.inputs = Some(ManifestInputs {
+        packaging_spec: Some(ManifestInputFile {
+            path: manifest_input_path(&config.spec_path),
+            sha256: spec_sha256,
+        }),
+        windows_device_contract: Some(ManifestWindowsDeviceContractInput {
+            path: manifest_input_path(&config.windows_device_contract_path),
+            sha256: contract_sha256,
+            contract_name: contract.contract_name.clone(),
+            contract_version: contract.contract_version.clone(),
+            schema_version: contract.schema_version,
+        }),
+        aero_packager_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+    });
 
     let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest.json")?;
     let manifest_file = FileToPackage {
@@ -457,7 +479,7 @@ fn collect_files(
                 .path()
                 .strip_prefix(&config.guest_tools_dir)
                 .expect("walkdir under guest_tools_dir");
-            let rel_str = path_to_slash(rel);
+            let rel_str = path_to_slash(rel, entry.path())?;
             if !should_include_driver_file(entry.path(), &rel_str, &allowlist)
                 .with_context(|| format!("filter guest tools file {}", entry.path().display()))?
             {
@@ -1707,6 +1729,13 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     hex::encode(h.finalize())
+}
+
+fn manifest_input_path(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or_else(|| path.as_os_str())
+        .to_string_lossy()
+        .to_string()
 }
 
 fn path_to_slash(path: &Path, full_path: &Path) -> Result<String> {
