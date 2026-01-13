@@ -5333,10 +5333,45 @@ void AEROGPU_APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice,
 
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
-    if (aer_fmt == AEROGPU_FORMAT_INVALID || bpp != 4) {
-      // Only maintain CPU-side shadow clears for the uncompressed 32-bit RGBA/BGRA formats
-      // used by the bring-up render-target path.
+    const bool is_b5 = (res->dxgi_format == kDxgiFormatB5G6R5Unorm || res->dxgi_format == kDxgiFormatB5G5R5A1Unorm);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID || (is_b5 ? (bpp != 2) : (bpp != 4))) {
+      // Only maintain CPU-side shadow clears for the uncompressed 32-bit RGBA/BGRA formats and
+      // the 16-bit B5 formats used by the bring-up render-target path.
       goto EmitClearCmd;
+    }
+
+    uint16_t packed16 = 0;
+    if (is_b5) {
+      auto float_to_unorm = [](float v, uint32_t max) -> uint32_t {
+        // Use ordered comparisons so NaNs resolve to zero.
+        if (!(v > 0.0f)) {
+          return 0;
+        }
+        if (v >= 1.0f) {
+          return max;
+        }
+        const float scaled = v * static_cast<float>(max) + 0.5f;
+        if (!(scaled > 0.0f)) {
+          return 0;
+        }
+        if (scaled >= static_cast<float>(max)) {
+          return max;
+        }
+        return static_cast<uint32_t>(scaled);
+      };
+
+      if (res->dxgi_format == kDxgiFormatB5G6R5Unorm) {
+        const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(rgba[0], 31));
+        const uint16_t g6 = static_cast<uint16_t>(float_to_unorm(rgba[1], 63));
+        const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(rgba[2], 31));
+        packed16 = static_cast<uint16_t>((r5 << 11) | (g6 << 5) | b5);
+      } else {
+        const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(rgba[0], 31));
+        const uint16_t g5 = static_cast<uint16_t>(float_to_unorm(rgba[1], 31));
+        const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(rgba[2], 31));
+        const uint16_t a1 = static_cast<uint16_t>(float_to_unorm(rgba[3], 1));
+        packed16 = static_cast<uint16_t>((a1 << 15) | (r5 << 10) | (g5 << 5) | b5);
+      }
     }
 
     if (res->row_pitch_bytes == 0) {
@@ -5356,34 +5391,40 @@ void AEROGPU_APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice,
       const uint32_t row_bytes = res->width * bpp;
       for (uint32_t y = 0; y < res->height; ++y) {
         uint8_t* row = res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes;
-        for (uint32_t x = 0; x < res->width; ++x) {
-          uint8_t* px = row + static_cast<size_t>(x) * 4;
-          switch (res->dxgi_format) {
-            case kDxgiFormatR8G8B8A8Unorm:
-            case kDxgiFormatR8G8B8A8UnormSrgb:
-            case kDxgiFormatR8G8B8A8Typeless:
-              px[0] = r;
-              px[1] = g;
-              px[2] = b;
-              px[3] = a;
-              break;
-            case kDxgiFormatB8G8R8X8Unorm:
-            case kDxgiFormatB8G8R8X8UnormSrgb:
-            case kDxgiFormatB8G8R8X8Typeless:
-              px[0] = b;
-              px[1] = g;
-              px[2] = r;
-              px[3] = 255;
-              break;
-            case kDxgiFormatB8G8R8A8Unorm:
-            case kDxgiFormatB8G8R8A8UnormSrgb:
-            case kDxgiFormatB8G8R8A8Typeless:
-            default:
-              px[0] = b;
-              px[1] = g;
-              px[2] = r;
-              px[3] = a;
-              break;
+        if (is_b5) {
+          for (uint32_t x = 0; x < res->width; ++x) {
+            std::memcpy(row + static_cast<size_t>(x) * 2, &packed16, sizeof(packed16));
+          }
+        } else {
+          for (uint32_t x = 0; x < res->width; ++x) {
+            uint8_t* px = row + static_cast<size_t>(x) * 4;
+            switch (res->dxgi_format) {
+              case kDxgiFormatR8G8B8A8Unorm:
+              case kDxgiFormatR8G8B8A8UnormSrgb:
+              case kDxgiFormatR8G8B8A8Typeless:
+                px[0] = r;
+                px[1] = g;
+                px[2] = b;
+                px[3] = a;
+                break;
+              case kDxgiFormatB8G8R8X8Unorm:
+              case kDxgiFormatB8G8R8X8UnormSrgb:
+              case kDxgiFormatB8G8R8X8Typeless:
+                px[0] = b;
+                px[1] = g;
+                px[2] = r;
+                px[3] = 255;
+                break;
+              case kDxgiFormatB8G8R8A8Unorm:
+              case kDxgiFormatB8G8R8A8UnormSrgb:
+              case kDxgiFormatB8G8R8A8Typeless:
+              default:
+                px[0] = b;
+                px[1] = g;
+                px[2] = r;
+                px[3] = a;
+                break;
+            }
           }
         }
         if (res->row_pitch_bytes > row_bytes) {
