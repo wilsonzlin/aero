@@ -2490,34 +2490,44 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
             finalize_collection(ctx);
           }
         } else if (tag == 0x8) {
-          // HID "Input" item flags bit 2: Absolute(0) / Relative(1).
+          // HID "Input" item flags:
+          //   bit0: Data(0) / Constant(1)
+          //   bit1: Array(0) / Variable(1)
+          //   bit2: Absolute(0) / Relative(1)
+          //
+          // For pointer axis classification we only consider the common X/Y fields which are
+          // expected to be Input(Data,Var,Abs/Rel). Ignore Constant/Array inputs to avoid
+          // misclassifying unrelated fields.
+          const bool is_data = (value & 0x01u) == 0;
+          const bool is_var = (value & 0x02u) != 0;
           const bool is_relative = (value & 0x04u) != 0;
+          if (is_data && is_var) {
+            // Detect X/Y (Generic Desktop page).
+            const bool has_x = (usage_page == 0x01) && local_usage_includes(0x30); // X
+            const bool has_y = (usage_page == 0x01) && local_usage_includes(0x31); // Y
 
-          // Detect X/Y (Generic Desktop page).
-          const bool has_x = (usage_page == 0x01) && local_usage_includes(0x30); // X
-          const bool has_y = (usage_page == 0x01) && local_usage_includes(0x31); // Y
+            if (has_x || has_y) {
+              // Attribute the axis flags to the nearest enclosing Application collection.
+              for (auto it = collection_stack.rbegin(); it != collection_stack.rend(); ++it) {
+                if (!it->is_application) continue;
+                if (it->kind != CollectionCtx::Kind::MouseOrPointer) break;
 
-          if (has_x || has_y) {
-            // Attribute the axis flags to the nearest enclosing Application collection.
-            for (auto it = collection_stack.rbegin(); it != collection_stack.rend(); ++it) {
-              if (!it->is_application) continue;
-              if (it->kind != CollectionCtx::Kind::MouseOrPointer) break;
-
-              if (has_x) {
-                if (is_relative) {
-                  it->saw_x_rel = true;
-                } else {
-                  it->saw_x_abs = true;
+                if (has_x) {
+                  if (is_relative) {
+                    it->saw_x_rel = true;
+                  } else {
+                    it->saw_x_abs = true;
+                  }
                 }
-              }
-              if (has_y) {
-                if (is_relative) {
-                  it->saw_y_rel = true;
-                } else {
-                  it->saw_y_abs = true;
+                if (has_y) {
+                  if (is_relative) {
+                    it->saw_y_rel = true;
+                  } else {
+                    it->saw_y_abs = true;
+                  }
                 }
+                break;
               }
-              break;
             }
           }
         }
@@ -3004,6 +3014,15 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const Virt
 
   std::wstring keyboard_path = input.keyboard_device_path;
   std::wstring mouse_path = input.mouse_device_path;
+
+  // If multiple virtio-input mice are present, do not rely on the first path recorded during the
+  // enumeration probe (SetupDi enumeration order can vary). Instead, force a fresh selection pass
+  // that deterministically picks a relative-mouse HID interface.
+  if (input.mouse_devices > 1) {
+    log.Logf("virtio-input-events: multiple mouse devices detected (%d); selecting deterministically",
+             input.mouse_devices);
+    mouse_path.clear();
+  }
 
   // If `VirtioInputTest` selected a pointing device, validate that it is actually a *relative* mouse.
   // When both a mouse and a tablet are attached, both may advertise a Mouse application collection,
