@@ -322,3 +322,146 @@ fn amp_out_caps() -> u32 {
     // Minimal non-zero amp caps: 0 steps, 0 offset.
     0x0000_0000
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ROOT: Nid = Nid(0);
+    const AFG: Nid = Nid(1);
+    const OUT_CONV: Nid = Nid(2);
+    const OUT_PIN: Nid = Nid(3);
+    const IN_CONV: Nid = Nid(4);
+    const MIC_PIN: Nid = Nid(5);
+
+    fn verb_get_parameter(param: u8) -> u32 {
+        (0xF00u32 << 8) | (param as u32)
+    }
+
+    fn verb_get_configuration_default() -> u32 {
+        0xF1Cu32 << 8
+    }
+
+    fn verb_get_converter_format() -> u32 {
+        0xA00u32 << 8
+    }
+
+    fn verb_set_converter_format(format: u16) -> u32 {
+        // SET verbs with a 16-bit payload encode the high payload bits in the low 8 bits of
+        // the 12-bit verb ID (HDA spec §7.3.3.1).
+        let verb_id = 0x200u32 | u32::from((format >> 8) as u8);
+        (verb_id << 8) | u32::from(format as u8)
+    }
+
+    fn verb_get_stream_channel() -> u32 {
+        0xF06u32 << 8
+    }
+
+    fn verb_set_stream_channel(stream_chan: u8) -> u32 {
+        (0x706u32 << 8) | u32::from(stream_chan)
+    }
+
+    #[test]
+    fn get_parameter_exposes_basic_ids_and_topology() {
+        let mut codec = HdaCodec::new_minimal();
+
+        // IDs.
+        assert_eq!(
+            codec.execute_verb(ROOT, verb_get_parameter(0x00)),
+            codec.vendor_id()
+        );
+        assert_eq!(
+            codec.execute_verb(ROOT, verb_get_parameter(0x01)),
+            0x0000_0000
+        );
+        assert_eq!(
+            codec.execute_verb(ROOT, verb_get_parameter(0x02)),
+            0x0001_0000
+        );
+
+        // Root: one function group at NID 1.
+        let root_subnodes = codec.execute_verb(ROOT, verb_get_parameter(0x04));
+        assert_eq!(root_subnodes >> 16, 1);
+        assert_eq!(root_subnodes & 0xFF, 1);
+
+        // Audio Function Group: 4 nodes at NID 2..=5.
+        let afg_subnodes = codec.execute_verb(AFG, verb_get_parameter(0x04));
+        assert_eq!(afg_subnodes >> 16, 2);
+        assert_eq!(afg_subnodes & 0xFF, 4);
+
+        // Function group type.
+        assert_eq!(codec.execute_verb(AFG, verb_get_parameter(0x05)), 0x01);
+
+        // Ensure the enumerated NIDs exist by asking for widget caps (param 0x09).
+        for nid in 2..=5 {
+            let caps = codec.execute_verb(Nid(nid), verb_get_parameter(0x09));
+            assert_ne!(caps, 0, "expected non-zero widget caps for NID {nid}");
+        }
+    }
+
+    #[test]
+    fn pin_configuration_defaults_are_non_zero_and_plausible() {
+        let mut codec = HdaCodec::new_minimal();
+
+        let out_cfg = codec.execute_verb(OUT_PIN, verb_get_configuration_default());
+        let mic_cfg = codec.execute_verb(MIC_PIN, verb_get_configuration_default());
+
+        assert_ne!(out_cfg, 0);
+        assert_ne!(mic_cfg, 0);
+
+        // Bits 23:20 are "Default Device" (HDA spec §7.3.4.13). Ensure the
+        // line-out and microphone pins don't claim the same device type.
+        let out_dev = (out_cfg >> 20) & 0xF;
+        let mic_dev = (mic_cfg >> 20) & 0xF;
+        assert_ne!(out_dev, mic_dev);
+
+        // Default Device values: 0x0 = Line Out, 0xA = Mic In. We don't care about
+        // exact bitfields beyond basic plausibility.
+        assert_eq!(out_dev, 0x0);
+        assert_eq!(mic_dev, 0xA);
+    }
+
+    #[test]
+    fn converter_state_round_trips_and_reset_restores_defaults() {
+        let mut codec = HdaCodec::new_minimal();
+
+        // Converter format (output + input).
+        let out_default_fmt = codec.execute_verb(OUT_CONV, verb_get_converter_format()) as u16;
+        let in_default_fmt = codec.execute_verb(IN_CONV, verb_get_converter_format()) as u16;
+        assert_eq!(out_default_fmt, 0x0011);
+        assert_eq!(in_default_fmt, 0x0010);
+
+        let new_fmt = 0x1234;
+        codec.execute_verb(OUT_CONV, verb_set_converter_format(new_fmt));
+        assert_eq!(
+            codec.execute_verb(OUT_CONV, verb_get_converter_format()) as u16,
+            new_fmt
+        );
+
+        // Stream/channel ID.
+        assert_eq!(
+            codec.execute_verb(OUT_CONV, verb_get_stream_channel()) as u8,
+            0
+        );
+        codec.execute_verb(OUT_CONV, verb_set_stream_channel(0x3A));
+        assert_eq!(
+            codec.execute_verb(OUT_CONV, verb_get_stream_channel()) as u8,
+            0x3A
+        );
+
+        // Reset must restore defaults.
+        codec.reset();
+        assert_eq!(
+            codec.execute_verb(OUT_CONV, verb_get_converter_format()) as u16,
+            out_default_fmt
+        );
+        assert_eq!(
+            codec.execute_verb(IN_CONV, verb_get_converter_format()) as u16,
+            in_default_fmt
+        );
+        assert_eq!(
+            codec.execute_verb(OUT_CONV, verb_get_stream_channel()) as u8,
+            0
+        );
+    }
+}
