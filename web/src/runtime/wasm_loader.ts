@@ -993,6 +993,38 @@ export interface WasmApi {
     };
 
     /**
+     * WebUSB EHCI passthrough harness (dev-only): drives a tiny EHCI-style control-transfer state
+     * machine and emits `UsbHostAction`s.
+     *
+     * Optional until all deployed WASM builds include it.
+     */
+    WebUsbEhciPassthroughHarness?: new () => {
+        attach_controller(): void;
+        detach_controller(): void;
+        attach_device(): void;
+        detach_device(): void;
+        cmd_get_device_descriptor(): void;
+        cmd_get_config_descriptor(): void;
+        tick(): void;
+
+        controller_attached(): boolean;
+        device_attached(): boolean;
+        usbsts(): number;
+        irq_level(): boolean;
+        last_error(): string | null;
+        clear_usbsts(bits: number): void;
+
+        drain_actions(): UsbHostAction[] | null;
+        push_completion(completion: UsbHostCompletion): void;
+
+        device_descriptor(): Uint8Array | null;
+        config_descriptor(): Uint8Array | null;
+        config_total_len(): number;
+
+        free(): void;
+    };
+
+    /**
       * Worker-side UHCI controller + WebUSB passthrough bridge.
       *
       * This exports a guest-visible UHCI controller (PIO registers + TD/QH traversal)
@@ -1568,6 +1600,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         VirtioNetPciBridge: mod.VirtioNetPciBridge,
         VirtioSndPciBridge: mod.VirtioSndPciBridge,
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
+        WebUsbEhciPassthroughHarness: mod.WebUsbEhciPassthroughHarness,
         UhciControllerBridge: mod.UhciControllerBridge,
         XhciControllerBridge: mod.XhciControllerBridge,
         E1000Bridge: mod.E1000Bridge,

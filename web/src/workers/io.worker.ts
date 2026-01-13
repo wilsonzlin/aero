@@ -94,6 +94,18 @@ import { setUsbProxyCompletionRingDispatchPaused } from "../usb/usb_proxy_ring_d
 import { applyUsbSelectedToWebUsbUhciBridge, type WebUsbUhciHotplugBridgeLike } from "../usb/uhci_webusb_bridge";
 import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
 import { WebUsbUhciHarnessRuntime } from "../usb/webusb_harness_runtime";
+import type {
+  UsbEhciHarnessStatusMessage,
+  WebUsbEhciHarnessRuntimeSnapshot,
+  UsbEhciHarnessAttachControllerMessage,
+  UsbEhciHarnessDetachControllerMessage,
+  UsbEhciHarnessAttachDeviceMessage,
+  UsbEhciHarnessDetachDeviceMessage,
+  UsbEhciHarnessGetDeviceDescriptorMessage,
+  UsbEhciHarnessGetConfigDescriptorMessage,
+  UsbEhciHarnessClearUsbStsMessage,
+} from "../usb/webusb_ehci_harness_runtime";
+import { WebUsbEhciHarnessRuntime } from "../usb/webusb_ehci_harness_runtime";
 import { WebUsbPassthroughRuntime, type UsbPassthroughBridgeLike } from "../usb/webusb_passthrough_runtime";
 import { hex16 } from "../usb/usb_hex";
 import {
@@ -454,6 +466,7 @@ let wasmApi: WasmApi | null = null;
 let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
+let usbEhciHarnessRuntime: WebUsbEhciHarnessRuntime | null = null;
 let uhciDevice: UhciPciDevice | null = null;
 let xhciDevice: XhciPciDevice | null = null;
 let virtioNetDevice: VirtioNetPciDevice | null = null;
@@ -3464,6 +3477,24 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
             usbUhciHarnessRuntime = null;
           }
         }
+
+        if (import.meta.env.DEV && api.WebUsbEhciPassthroughHarness && !usbEhciHarnessRuntime) {
+          const ctor = api.WebUsbEhciPassthroughHarness;
+          try {
+            usbEhciHarnessRuntime = new WebUsbEhciHarnessRuntime({
+              createHarness: () => new ctor(),
+              port: ctx,
+              initiallyBlocked: true,
+              initialRingAttach: usbRingAttach ?? undefined,
+              onUpdate: (snapshot) => {
+                ctx.postMessage({ type: "usb.ehciHarness.status", snapshot } satisfies UsbEhciHarnessStatusMessage);
+              },
+            });
+          } catch (err) {
+            console.warn("[io.worker] Failed to initialize WebUSB EHCI harness runtime", err);
+            usbEhciHarnessRuntime = null;
+          }
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (err instanceof WasmMemoryWiringError) {
@@ -3905,6 +3936,102 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
+    if ((data as Partial<UsbEhciHarnessAttachControllerMessage>).type === "usb.ehciHarness.attachController") {
+      if (usbEhciHarnessRuntime) {
+        usbEhciHarnessRuntime.attachController();
+      } else {
+        const snapshot: WebUsbEhciHarnessRuntimeSnapshot = {
+          available: false,
+          blocked: true,
+          controllerAttached: false,
+          deviceAttached: false,
+          tickCount: 0,
+          actionsForwarded: 0,
+          completionsApplied: 0,
+          pendingCompletions: 0,
+          irqLevel: false,
+          usbSts: 0,
+          usbStsUsbInt: false,
+          usbStsUsbErrInt: false,
+          usbStsPcd: false,
+          lastAction: null,
+          lastCompletion: null,
+          deviceDescriptor: null,
+          configDescriptor: null,
+          lastError: "WebUsbEhciPassthroughHarness export unavailable (or dev-only harness disabled).",
+        };
+        ctx.postMessage({ type: "usb.ehciHarness.status", snapshot } satisfies UsbEhciHarnessStatusMessage);
+      }
+      return;
+    }
+
+    if ((data as Partial<UsbEhciHarnessDetachControllerMessage>).type === "usb.ehciHarness.detachController") {
+      if (usbEhciHarnessRuntime) {
+        usbEhciHarnessRuntime.detachController();
+      } else {
+        const snapshot: WebUsbEhciHarnessRuntimeSnapshot = {
+          available: false,
+          blocked: true,
+          controllerAttached: false,
+          deviceAttached: false,
+          tickCount: 0,
+          actionsForwarded: 0,
+          completionsApplied: 0,
+          pendingCompletions: 0,
+          irqLevel: false,
+          usbSts: 0,
+          usbStsUsbInt: false,
+          usbStsUsbErrInt: false,
+          usbStsPcd: false,
+          lastAction: null,
+          lastCompletion: null,
+          deviceDescriptor: null,
+          configDescriptor: null,
+          lastError: null,
+        };
+        ctx.postMessage({ type: "usb.ehciHarness.status", snapshot } satisfies UsbEhciHarnessStatusMessage);
+      }
+      return;
+    }
+
+    if ((data as Partial<UsbEhciHarnessAttachDeviceMessage>).type === "usb.ehciHarness.attachDevice") {
+      if (usbEhciHarnessRuntime) {
+        usbEhciHarnessRuntime.attachDevice();
+      }
+      return;
+    }
+
+    if ((data as Partial<UsbEhciHarnessDetachDeviceMessage>).type === "usb.ehciHarness.detachDevice") {
+      if (usbEhciHarnessRuntime) {
+        usbEhciHarnessRuntime.detachDevice();
+      }
+      return;
+    }
+
+    if ((data as Partial<UsbEhciHarnessGetDeviceDescriptorMessage>).type === "usb.ehciHarness.getDeviceDescriptor") {
+      if (usbEhciHarnessRuntime) {
+        usbEhciHarnessRuntime.runGetDeviceDescriptor();
+      }
+      return;
+    }
+
+    if ((data as Partial<UsbEhciHarnessGetConfigDescriptorMessage>).type === "usb.ehciHarness.getConfigDescriptor") {
+      if (usbEhciHarnessRuntime) {
+        usbEhciHarnessRuntime.runGetConfigDescriptor();
+      }
+      return;
+    }
+
+    if ((data as Partial<UsbEhciHarnessClearUsbStsMessage>).type === "usb.ehciHarness.clearUsbSts") {
+      if (usbEhciHarnessRuntime) {
+        const msg = data as Partial<UsbEhciHarnessClearUsbStsMessage>;
+        if (typeof msg.bits === "number") {
+          usbEhciHarnessRuntime.clearUsbSts(msg.bits);
+        }
+      }
+      return;
+    }
+
     if (isHidRingDetachMessage(data)) {
       const reason = data.reason ?? "HID proxy rings disabled.";
       detachHidRings(reason, { notifyBroker: false });
@@ -4300,6 +4427,7 @@ function startIoIpcServer(): void {
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
       usbUhciHarnessRuntime?.pollOnce();
+      usbEhciHarnessRuntime?.pollOnce();
       if (usbDemo) {
         try {
           usbDemo.tick();
@@ -5044,6 +5172,8 @@ function shutdown(): void {
 
       usbUhciHarnessRuntime?.destroy();
       usbUhciHarnessRuntime = null;
+      usbEhciHarnessRuntime?.destroy();
+      usbEhciHarnessRuntime = null;
       uhciDevice?.destroy();
       uhciDevice = null;
       xhciDevice?.destroy();
