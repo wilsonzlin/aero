@@ -165,6 +165,7 @@ Minimum supported commands:
 - `aerogpu_dbgctl --selftest`  
   Triggers a simple KMD-side self-test.
   Exit code is **0** on PASS; on failure it returns the KMD-provided selftest error code (`error_code`).
+  If the escape transport fails (e.g. `D3DKMTEscape` / `D3DKMTCloseAdapter` failure), it returns **254**.
 
 ## Usage
 

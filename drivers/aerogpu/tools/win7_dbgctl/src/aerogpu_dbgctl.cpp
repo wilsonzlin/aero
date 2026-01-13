@@ -3782,7 +3782,9 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"D3DKMTEscape(selftest) failed", f, st);
-    return 2;
+    // Use an out-of-band nonzero value to distinguish transport failures from
+    // KMD-reported selftest failures (whose exit codes match error_code).
+    return 254;
   }
 
   wprintf(L"Selftest: %s\n", q.passed ? L"PASS" : L"FAIL");
@@ -4435,7 +4437,10 @@ int wmain(int argc, wchar_t **argv) {
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"D3DKMTCloseAdapter failed", &f, st);
     if (rc == 0) {
-      rc = 4;
+      // Preserve stable selftest exit codes: use an out-of-band nonzero value
+      // for tool/transport failures so it won't be confused with a KMD-reported
+      // selftest error_code.
+      rc = (cmd == CMD_SELFTEST) ? 254 : 4;
     }
   }
   return rc;
