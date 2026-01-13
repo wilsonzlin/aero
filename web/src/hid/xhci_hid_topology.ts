@@ -17,6 +17,20 @@ function clampHubPortCount(value: number): number {
   return Math.max(1, Math.min(XHCI_MAX_HUB_PORT_COUNT, int));
 }
 
+function isValidDownstreamPortNumber(value: number): boolean {
+  return Number.isFinite(value) && Number.isInteger(value) && value >= 1 && value <= XHCI_MAX_HUB_PORT_COUNT;
+}
+
+function isValidDevicePath(path: GuestUsbPath): boolean {
+  if (!Array.isArray(path) || path.length === 0) return false;
+  const root = path[0];
+  if (typeof root !== "number" || !Number.isFinite(root) || !Number.isInteger(root) || root < 0) return false;
+  for (let i = 1; i < path.length; i += 1) {
+    if (!isValidDownstreamPortNumber(path[i]!)) return false;
+  }
+  return true;
+}
+
 /**
  * Subset of the WASM `XhciControllerBridge` API required to manage guest USB topology.
  *
@@ -108,6 +122,8 @@ export class XhciHidTopologyManager {
     if (prev) {
       this.#maybeDetachPath(prev.path);
     }
+    this.#devices.delete(deviceId);
+    if (!isValidDevicePath(normalizedPath)) return;
     this.#devices.set(deviceId, { path: normalizedPath, kind, device });
     this.#maybeAttachDevice(deviceId);
   }
@@ -218,4 +234,3 @@ export class XhciHidTopologyManager {
     }
   }
 }
-

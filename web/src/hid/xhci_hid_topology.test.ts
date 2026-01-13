@@ -84,5 +84,22 @@ describe("hid/xhci_hid_topology", () => {
     expect(xhci.detach_at_path).toHaveBeenLastCalledWith([0, 1]);
     expect(xhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([0, 1], dev);
   });
-});
 
+  it("ignores device attachments with invalid downstream port numbers (>15)", () => {
+    const mgr = new XhciHidTopologyManager({ defaultHubPortCount: 8 });
+    const xhci = createFakeXhci();
+    const dev1 = { kind: "device-1" };
+    const dev2 = { kind: "device-2" };
+
+    mgr.setXhciBridge(xhci);
+    mgr.attachDevice(1, [0, 1], "webhid", dev1);
+    expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
+
+    mgr.attachDevice(2, [0, 20], "webhid", dev2);
+
+    // The invalid port should not cause the hub to be resized or the device to be attached.
+    expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledTimes(1);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev1);
+  });
+});
