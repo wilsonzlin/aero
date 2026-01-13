@@ -206,6 +206,18 @@ section_contains_norm \
 
 section_contains_norm \
   "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT' \
+  'copyfiles=aerovirtiosnd.copyfiles' \
+  "inf/aero_virtio_snd.inf must stage files via: CopyFiles = AeroVirtioSnd.CopyFiles"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT' \
+  'addreg=aerovirtiosnd.addreg' \
+  "inf/aero_virtio_snd.inf must apply registry settings via: AddReg = AeroVirtioSnd.AddReg"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
   'AeroVirtioSnd_Install.NT.Interfaces' \
   'addinterface=%kscategory_render%' \
   "inf/aero_virtio_snd.inf must AddInterface for KSCATEGORY_RENDER"
@@ -223,6 +235,12 @@ section_contains_norm \
   "inf/aero_virtio_snd.inf must declare: CatalogFile = aero_virtio_snd.cat"
 
 note "checking SYS/CAT name consistency..."
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'DestinationDirs' \
+  'aerovirtiosnd.copyfiles=12' \
+  "inf/aero_virtio_snd.inf must install SYS to %12% via: [DestinationDirs] AeroVirtioSnd.CopyFiles = 12"
+
 section_contains_norm \
   "$INF_CONTRACT" \
   'AeroVirtioSnd.AddReg' \
@@ -271,6 +289,12 @@ section_contains_norm \
   'AeroVirtioSnd_Service_Inst' \
   'servicebinary=%12%\aero_virtio_snd.sys' \
   "inf/aero_virtio_snd.inf must reference aero_virtio_snd.sys via ServiceBinary"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT.Services' \
+  'addservice=aero_virtio_snd' \
+  "inf/aero_virtio_snd.inf must install the aero_virtio_snd service (AddService)"
 
 section_contains_norm \
   "$INF_CONTRACT" \
