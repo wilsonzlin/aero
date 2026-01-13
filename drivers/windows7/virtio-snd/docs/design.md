@@ -62,7 +62,7 @@ CI guardrail: PRs must keep `aero_virtio_snd.vcxproj` on the modern-only backend
 - **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four; PortCls
   uses `controlq` (0) + `txq` (2) for render (stream 0) and `controlq` (0) + `rxq` (3) for capture (stream 1).
   `eventq` is currently unused by the PortCls endpoints.
-- **Interrupts:** INTx only.
+- **Interrupts:** INTx (MSI/MSI-X is not currently used by the shipped virtio-snd driver build; adding MSI/MSI-X would require INF opt-in and driver-side virtio MSI-X vector programming).
 - **Protocol:** PCM control + TX/RX protocol engines for streams 0/1.
 - **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used
   entries are treated as resource reclamation rather than timing.
@@ -165,7 +165,7 @@ Current behavior:
 Baseline requirements:
 
 - Work correctly with **PCI INTx** + the virtio ISR status register (contract v1).
-- MSI/MSI-X is an optional enhancement over INTx; enabling it on Windows 7 requires INF opt-in and driver-side virtio MSI-X vector programming.
+- MSI/MSI-X is an optional enhancement over INTx. This driver build currently uses INTx only; enabling message interrupts requires INF opt-in and driver-side virtio MSI-X vector programming.
 
 Behavior:
 
