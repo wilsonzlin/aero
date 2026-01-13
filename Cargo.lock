@@ -254,6 +254,7 @@ dependencies = [
  "bitflags 2.10.0",
  "blake3",
  "bytemuck",
+ "criterion",
  "futures-intrusive",
  "js-sys",
  "lru",

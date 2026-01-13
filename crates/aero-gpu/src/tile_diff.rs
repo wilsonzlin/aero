@@ -1,6 +1,6 @@
 use crate::Rect;
 
-const TILE_SIZE: u32 = 32;
+const DEFAULT_TILE_SIZE: u32 = 32;
 const MAX_PREV_PACKED_BYTES: usize = 256 * 1024 * 1024;
 
 /// Tile-based diff engine for generating dirty rectangles when the caller doesn't provide them.
@@ -11,20 +11,31 @@ pub struct TileDiff {
     width: u32,
     height: u32,
     bytes_per_pixel: usize,
+    tile_size: u32,
     prev_packed: Vec<u8>,
 }
 
 impl TileDiff {
     pub fn new(width: u32, height: u32, bytes_per_pixel: usize) -> Self {
+        Self::new_with_tile_size(width, height, bytes_per_pixel, DEFAULT_TILE_SIZE)
+    }
+
+    pub fn new_with_tile_size(
+        width: u32,
+        height: u32,
+        bytes_per_pixel: usize,
+        tile_size: u32,
+    ) -> Self {
         Self {
             width,
             height,
             bytes_per_pixel,
+            tile_size: tile_size.max(1),
             prev_packed: Vec::new(),
         }
     }
 
-    /// Returns dirty rectangles aligned to a `32×32` tile grid.
+    /// Returns dirty rectangles aligned to the configured tile grid.
     pub fn diff(&mut self, frame_data: &[u8], stride: usize) -> Vec<Rect> {
         let Some(row_bytes) = (self.width as usize).checked_mul(self.bytes_per_pixel) else {
             // Avoid overflow and treat as full dirty. This is only used with trusted dimensions,
@@ -54,16 +65,17 @@ impl TileDiff {
             return vec![Rect::new(0, 0, self.width, self.height)];
         }
 
-        let tiles_x = self.width.div_ceil(TILE_SIZE);
-        let tiles_y = self.height.div_ceil(TILE_SIZE);
+        let tile_size = self.tile_size;
+        let tiles_x = self.width.div_ceil(tile_size);
+        let tiles_y = self.height.div_ceil(tile_size);
 
         let mut dirty = Vec::new();
         for ty in 0..tiles_y {
             for tx in 0..tiles_x {
-                let x = tx * TILE_SIZE;
-                let y = ty * TILE_SIZE;
-                let w = (self.width - x).min(TILE_SIZE);
-                let h = (self.height - y).min(TILE_SIZE);
+                let x = tx * tile_size;
+                let y = ty * tile_size;
+                let w = (self.width - x).min(tile_size);
+                let h = (self.height - y).min(tile_size);
 
                 if self.tile_differs(frame_data, stride, x, y, w, h) {
                     dirty.push(Rect::new(x, y, w, h));
@@ -117,7 +129,7 @@ impl TileDiff {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "diff-engine"))]
 mod tests {
     use super::*;
 

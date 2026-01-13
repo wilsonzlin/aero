@@ -36,6 +36,9 @@ wasm-bindgen = "0.2"
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 js-sys = "0.3"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
+
 [dev-dependencies]
 aero-dxbc = { path = "../aero-dxbc", features = ["test-utils"] }
 pollster = "0.3"
@@ -44,3 +47,7 @@ serde_json = "1"
 naga = { version = "0.20.0", features = ["wgsl-in", "glsl-out"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-test = "0.3"
+
+[[bench]]
+name = "tile_diff"
+harness = false
