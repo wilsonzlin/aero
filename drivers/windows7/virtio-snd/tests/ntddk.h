@@ -24,6 +24,10 @@
 #include <string.h>
 #include <time.h>
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -200,6 +204,32 @@ static __forceinline void ExQueueWorkItem(_Inout_ PWORK_QUEUE_ITEM Item, _In_ WO
 
 /* ---- Interlocked operations (single-process host tests) ---- */
 
+#if defined(_WIN32) || defined(_MSC_VER)
+/*
+ * The host unit tests are single-threaded, so these helpers only need to preserve
+ * return-value semantics (not atomicity).
+ *
+ * Keep the signatures matching the WDK surface area used by the driver sources.
+ */
+static __forceinline LONG InterlockedIncrement(volatile LONG *addend) { return ++(*addend); }
+static __forceinline LONG InterlockedDecrement(volatile LONG *addend) { return --(*addend); }
+
+static __forceinline LONG InterlockedExchange(volatile LONG *target, LONG value)
+{
+    LONG old = *target;
+    *target = value;
+    return old;
+}
+
+static __forceinline LONG InterlockedCompareExchange(volatile LONG *dest, LONG exchange, LONG comparand)
+{
+    LONG old = *dest;
+    if (old == comparand) {
+        *dest = exchange;
+    }
+    return old;
+}
+#else
 static __forceinline LONG InterlockedIncrement(volatile LONG *addend) { return __sync_add_and_fetch(addend, 1); }
 static __forceinline LONG InterlockedDecrement(volatile LONG *addend) { return __sync_sub_and_fetch(addend, 1); }
 static __forceinline LONG InterlockedExchange(volatile LONG *target, LONG value) { return __sync_lock_test_and_set(target, value); }
@@ -207,6 +237,7 @@ static __forceinline LONG InterlockedCompareExchange(volatile LONG *dest, LONG e
 {
     return __sync_val_compare_and_swap(dest, comparand, exchange);
 }
+#endif
 
 /* ---- IRQL/spinlock shims ---- */
 
@@ -256,7 +287,23 @@ static __forceinline void KeReleaseSpinLock(KSPIN_LOCK *lock, KIRQL old_irql)
     g_virtiosnd_test_current_irql = old_irql;
 }
 
-static __forceinline void KeMemoryBarrier(void) { __sync_synchronize(); }
+static __forceinline void KeMemoryBarrier(void)
+{
+#if defined(_WIN32) || defined(_MSC_VER)
+    /*
+     * Host tests are single-threaded, but keep this as a compiler barrier to
+     * prevent reordering across buffer accesses in the protocol engines.
+     */
+#if defined(_MSC_VER)
+    _ReadWriteBarrier();
+#else
+    /* Best-effort compiler barrier for other Windows toolchains. */
+    asm volatile("" ::: "memory");
+#endif
+#else
+    __sync_synchronize();
+#endif
+}
 
 /* ---- LIST_ENTRY (doubly-linked list) ---- */
 
@@ -356,6 +403,89 @@ typedef struct _LARGE_INTEGER {
     LONGLONG QuadPart;
 } LARGE_INTEGER;
 
+#if defined(_WIN32)
+/*
+ * Minimal Win32 declarations for monotonic time/sleep without pulling in
+ * <windows.h> (which would clash with our WDK shim typedefs).
+ */
+#ifndef WINAPI
+#define WINAPI __stdcall
+#endif
+typedef int WINBOOL;
+extern WINBOOL WINAPI QueryPerformanceCounter(LARGE_INTEGER *lpPerformanceCount);
+extern WINBOOL WINAPI QueryPerformanceFrequency(LARGE_INTEGER *lpFrequency);
+extern void WINAPI Sleep(unsigned long dwMilliseconds);
+
+static __forceinline uint64_t virtiosnd_test_monotonic_time_ns(void)
+{
+    LARGE_INTEGER counter;
+    uint64_t freq;
+    uint64_t ticks;
+    uint64_t sec;
+    uint64_t rem;
+    uint64_t ns;
+
+    /*
+     * QueryPerformanceFrequency() is constant for the lifetime of the process.
+     * Cache it to avoid repeated syscalls.
+     */
+    static uint64_t cached_freq = 0;
+    if (cached_freq == 0) {
+        LARGE_INTEGER f;
+        if (QueryPerformanceFrequency(&f) == 0 || f.QuadPart <= 0) {
+            cached_freq = 1; /* avoid division by zero */
+        } else {
+            cached_freq = (uint64_t)f.QuadPart;
+        }
+    }
+
+    freq = cached_freq;
+    (void)QueryPerformanceCounter(&counter);
+
+    ticks = (uint64_t)counter.QuadPart;
+    sec = ticks / freq;
+    rem = ticks % freq;
+
+    /* (rem * 1e9) fits in uint64_t since rem < freq and freq <= ~10^9 on Windows. */
+    ns = sec * 1000ull * 1000ull * 1000ull + (rem * 1000ull * 1000ull * 1000ull) / freq;
+    return ns;
+}
+
+static __forceinline void virtiosnd_test_sleep_ns(uint64_t ns)
+{
+    unsigned long ms;
+
+    if (ns == 0) {
+        return;
+    }
+
+    /*
+     * Sleep() granularity is milliseconds. Round up to guarantee forward progress
+     * (the polling loop uses this as a backoff, not for precise timing).
+     */
+    ms = (unsigned long)((ns + 999999ull) / 1000000ull);
+    if (ms == 0) {
+        ms = 1;
+    }
+    Sleep(ms);
+}
+#else
+static __forceinline uint64_t virtiosnd_test_monotonic_time_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ull * 1000ull * 1000ull + (uint64_t)ts.tv_nsec;
+}
+
+static __forceinline void virtiosnd_test_sleep_ns(uint64_t ns)
+{
+    struct timespec req;
+    req.tv_sec = (time_t)(ns / (1000ull * 1000ull * 1000ull));
+    req.tv_nsec = (long)(ns % (1000ull * 1000ull * 1000ull));
+    (void)nanosleep(&req, NULL);
+}
+#endif
+
 /*
  * KeWaitForSingleObject: minimal event wait.
  *
@@ -397,32 +527,22 @@ static __forceinline NTSTATUS KeWaitForSingleObject(
         timeout_ns = (uint64_t)timeout_opt->QuadPart * 100ull;
     }
 
-    {
-        struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        start_ns = (uint64_t)ts.tv_sec * 1000ull * 1000ull * 1000ull + (uint64_t)ts.tv_nsec;
-    }
+    start_ns = virtiosnd_test_monotonic_time_ns();
 
     for (;;) {
-        struct timespec ts;
         uint64_t now_ns;
 
         if (event->signaled != 0) {
             return STATUS_SUCCESS;
         }
 
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        now_ns = (uint64_t)ts.tv_sec * 1000ull * 1000ull * 1000ull + (uint64_t)ts.tv_nsec;
+        now_ns = virtiosnd_test_monotonic_time_ns();
         if (now_ns - start_ns >= timeout_ns) {
             return STATUS_TIMEOUT;
         }
 
-        {
-            struct timespec req;
-            req.tv_sec = 0;
-            req.tv_nsec = 50 * 1000; /* 50us */
-            (void)nanosleep(&req, NULL);
-        }
+        /* Small backoff to keep polling behavior deterministic without busy-spinning. */
+        virtiosnd_test_sleep_ns(50ull * 1000ull); /* 50us */
     }
 }
 
@@ -432,9 +552,8 @@ static __forceinline NTSTATUS KeWaitForSingleObject(
  */
 static __forceinline ULONGLONG KeQueryInterruptTime(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (ULONGLONG)ts.tv_sec * 10000000ull + (ULONGLONG)(ts.tv_nsec / 100u);
+    uint64_t now_ns = virtiosnd_test_monotonic_time_ns();
+    return (ULONGLONG)(now_ns / 100ull);
 }
 
 /* ---- Assertions ---- */
