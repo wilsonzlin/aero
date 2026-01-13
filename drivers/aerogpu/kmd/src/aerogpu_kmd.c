@@ -8617,23 +8617,104 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 return STATUS_SUCCESS;
             }
 
+            /* Save original MMIO cursor register state. */
+            const ULONG origEnable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE);
             const ULONG origX = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X);
             const ULONG origY = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y);
-            const ULONG testX = origX ^ 1u;
-            const ULONG testY = origY ^ 1u;
+            const ULONG origHotX = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X);
+            const ULONG origHotY = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y);
+            const ULONG origW = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH);
+            const ULONG origH = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT);
+            const ULONG origFmt = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT);
+            const ULONG origPitch = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES);
+            const ULONG origFbLo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO);
+            const ULONG origFbHi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI);
+
+            /*
+             * Program a small cursor config and verify that the register writes stick.
+             *
+             * This intentionally does not rely on any backing store; fb_gpa is 0 and we
+             * validate the config via readback only.
+             */
+            const ULONG testEnable = 1u;
+            const ULONG testX = origX ^ 0x10u;
+            const ULONG testY = origY ^ 0x20u;
+            const ULONG testHotX = 0u;
+            const ULONG testHotY = 0u;
+            const ULONG testW = 16u;
+            const ULONG testH = 16u;
+            const ULONG testFmt = (ULONG)AEROGPU_FORMAT_B8G8R8A8_UNORM;
+            const ULONG testPitch = testW * 4u;
+            const ULONG testFbLo = 0u;
+            const ULONG testFbHi = 0u;
+
+            /* Disable while programming to avoid any transient DMA from a stale cursor GPA. */
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
+            KeMemoryBarrier();
 
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, testX);
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, testY);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X, testHotX);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y, testHotY);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, testW);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, testH);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, testFmt);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, testPitch);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, testFbLo);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, testFbHi);
+            KeMemoryBarrier();
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, testEnable);
             KeMemoryBarrier();
 
-            const ULONG readX = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X);
-            const ULONG readY = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y);
+            BOOLEAN ok = TRUE;
+            if (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE) != testEnable) {
+                ok = FALSE;
+            }
+            if (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X) != testX) {
+                ok = FALSE;
+            }
+            if (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y) != testY) {
+                ok = FALSE;
+            }
+            if (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X) != testHotX) {
+                ok = FALSE;
+            }
+            if (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y) != testHotY) {
+                ok = FALSE;
+            }
+            if (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH) != testW) {
+                ok = FALSE;
+            }
+            if (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT) != testH) {
+                ok = FALSE;
+            }
+            if (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT) != testFmt) {
+                ok = FALSE;
+            }
+            if (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES) != testPitch) {
+                ok = FALSE;
+            }
+            if (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO) != testFbLo ||
+                AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI) != testFbHi) {
+                ok = FALSE;
+            }
 
-            /* Restore the original position regardless of the readback result. */
+            /* Restore original cursor register state regardless of the readback result. */
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, origX);
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, origY);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X, origHotX);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y, origHotY);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, origW);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, origH);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, origFmt);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, origPitch);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, origFbLo);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, origFbHi);
+            KeMemoryBarrier();
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, origEnable);
 
-            if (readX != testX || readY != testY) {
+            if (!ok) {
                 io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH;
                 return STATUS_SUCCESS;
             }
