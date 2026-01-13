@@ -296,6 +296,17 @@ typedef struct _AEROGPU_ADAPTER {
     BOOLEAN CursorVisible;
     BOOLEAN CursorShapeValid;
 
+    /*
+     * Post-display ownership state (WDDM 1.1 Acquire/Release callbacks).
+     *
+     * When dxgkrnl asks us to release post-display ownership, we disable scanout
+     * and vblank IRQ delivery. When ownership is reacquired, we restore scanout
+     * register programming and re-enable vblank IRQs if they were previously
+     * enabled by dxgkrnl.
+     */
+    BOOLEAN PostDisplayOwnershipReleased;
+    BOOLEAN PostDisplayVblankWasEnabled;
+
     /* VBlank / scanline estimation state (see DxgkDdiGetScanLine). */
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankSeq;
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankTimeNs;

@@ -1959,6 +1959,10 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     *NumberOfVideoPresentSources = 1;
     *NumberOfChildren = 1;
 
+    /* Reset post-display ownership bookkeeping on each (re)start. */
+    adapter->PostDisplayOwnershipReleased = FALSE;
+    adapter->PostDisplayVblankWasEnabled = FALSE;
+
     PCM_RESOURCE_LIST resList = DxgkStartInfo->TranslatedResourceList;
     if (!resList || resList->Count < 1) {
         return STATUS_DEVICE_CONFIGURATION_ERROR;
@@ -2573,6 +2577,121 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
         AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
     } else {
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
+    _In_ const PVOID MiniportDeviceContext,
+    _Inout_ DXGKARG_STOPDEVICEANDRELEASEPOSTDISPLAYOWNERSHIP* pStopDeviceAndReleasePostDisplayOwnership)
+{
+    UNREFERENCED_PARAMETER(pStopDeviceAndReleasePostDisplayOwnership);
+
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)MiniportDeviceContext;
+    if (!adapter) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    AEROGPU_LOG0("StopDeviceAndReleasePostDisplayOwnership");
+
+    /*
+     * dxgkrnl can request post-display ownership release during shutdown /
+     * display transitions. Keep this path minimal and robust:
+     *   - disable scanout so the device stops reading guest memory
+     *   - disable vblank IRQ delivery
+     *
+     * Then, run the regular StopDevice teardown so BAR mappings, ring memory,
+     * and interrupt handlers are released consistently.
+     */
+    if (adapter->Bar0) {
+        /* Snapshot vblank enable state once per release cycle. */
+        if (!adapter->PostDisplayOwnershipReleased) {
+            adapter->PostDisplayVblankWasEnabled =
+                (adapter->IrqEnableMask & AEROGPU_IRQ_SCANOUT_VBLANK) != 0 ? TRUE : FALSE;
+        }
+        adapter->PostDisplayOwnershipReleased = TRUE;
+
+        /* Disable vblank IRQ generation. */
+        if (adapter->SupportsVblank && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+            KIRQL oldIrql;
+            KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+
+            ULONG enable = adapter->IrqEnableMask;
+            enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+            adapter->IrqEnableMask = enable;
+
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+
+            /* Be robust against stale pending bits when disabling. */
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+
+            KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+        }
+
+        /* Disable scanout to stop the device from continuously touching guest memory. */
+        AeroGpuSetScanoutEnable(adapter, 0);
+    } else {
+        adapter->PostDisplayOwnershipReleased = TRUE;
+        adapter->PostDisplayVblankWasEnabled = FALSE;
+    }
+
+    return AeroGpuDdiStopDevice(MiniportDeviceContext);
+}
+
+static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
+    _In_ const HANDLE hAdapter,
+    _Inout_ DXGKARG_ACQUIREPOSTDISPLAYOWNERSHIP* pAcquirePostDisplayOwnership)
+{
+    UNREFERENCED_PARAMETER(pAcquirePostDisplayOwnership);
+
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    AEROGPU_LOG0("AcquirePostDisplayOwnership");
+
+    /*
+     * Reacquire is expected to make the miniport responsible for programming
+     * scanout again. This is best-effort: if the device isn't mapped yet (early
+     * init) or is being torn down, just succeed.
+     */
+    if (!adapter->Bar0) {
+        adapter->PostDisplayOwnershipReleased = FALSE;
+        return STATUS_SUCCESS;
+    }
+
+    /* Re-program scanout registers using the last cached mode + FB address. */
+    AeroGpuProgramScanout(adapter, adapter->CurrentScanoutFbPa);
+
+    if (adapter->PostDisplayOwnershipReleased) {
+        /*
+         * Restore vblank IRQ generation if it was enabled before the release.
+         *
+         * dxgkrnl typically re-enables via DxgkDdiControlInterrupt, but some
+         * transition paths assume the miniport restores its prior state.
+         */
+        if (adapter->PostDisplayVblankWasEnabled && adapter->SupportsVblank &&
+            adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+            KIRQL oldIrql;
+            KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+
+            ULONG enable = adapter->IrqEnableMask;
+
+            /* Clear any stale vblank status before enabling delivery. */
+            if ((enable & AEROGPU_IRQ_SCANOUT_VBLANK) == 0) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+            }
+
+            enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
+            adapter->IrqEnableMask = enable;
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+
+            KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+        }
+
+        adapter->PostDisplayOwnershipReleased = FALSE;
     }
 
     return STATUS_SUCCESS;
@@ -6937,9 +7056,12 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
     init.DxgkDdiAddDevice = AeroGpuDdiAddDevice;
     init.DxgkDdiStartDevice = AeroGpuDdiStartDevice;
     init.DxgkDdiStopDevice = AeroGpuDdiStopDevice;
+    init.DxgkDdiStopDeviceAndReleasePostDisplayOwnership = AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership;
     init.DxgkDdiSetPowerState = AeroGpuDdiSetPowerState;
     init.DxgkDdiRemoveDevice = AeroGpuDdiRemoveDevice;
     init.DxgkDdiUnload = AeroGpuDdiUnload;
+
+    init.DxgkDdiAcquirePostDisplayOwnership = AeroGpuDdiAcquirePostDisplayOwnership;
 
     init.DxgkDdiQueryAdapterInfo = AeroGpuDdiQueryAdapterInfo;
 

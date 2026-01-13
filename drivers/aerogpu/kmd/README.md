@@ -204,6 +204,29 @@ Semantics:
 This power callback is intentionally minimal: it prioritizes avoiding stuck IRQ/vblank state after resume over
 preserving in-flight rendering across a power cycle.
 
+## Post-display ownership (boot/shutdown handoff)
+
+Windows may call the WDDM 1.1 post-display ownership DDIs during boot, shutdown, and other
+transitions:
+
+- `DxgkDdiStopDeviceAndReleasePostDisplayOwnership`
+- `DxgkDdiAcquirePostDisplayOwnership`
+
+The AeroGPU KMD implements **minimal, safe** behavior:
+
+- On **release**, it disables scanout and disables vblank IRQ delivery (so the device stops
+  continuously reading guest memory during the handoff).
+- On **acquire**, it re-programs scanout registers using the last cached mode + framebuffer address
+  (from `DxgkDdiSetVidPnSourceAddress`) and restores vblank IRQ enable state if it was previously
+  enabled by dxgkrnl.
+
+Limitations:
+
+- The driver does **not** snapshot the last scanout into a driver-owned buffer, so a transition may
+  briefly blank the display instead of preserving the last frame.
+- This is best-effort and intentionally tolerant of being called during partial initialization or
+  teardown (e.g. missing BAR mapping).
+
 ## Stable `alloc_id` / `share_token` (shared allocations)
 
 To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, AeroGPU relies on stable identifiers:
