@@ -611,6 +611,11 @@ You can tune the reported budget via the device registry parameter:
   - Default 512; clamped min 128; max 2048 on x64; max 1024 on x86
 
 This does **not** reserve memory up front; it is a **budget hint** (system-memory-backed), not dedicated VRAM.
+
+Quick guest-side validation:
+
+- Run `drivers/aerogpu/tests/win7/segment_budget_sanity` to print the current `NonLocalMemorySize` budget as observed via
+  `D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE)` (and best-effort `QUERYSEGMENT`).
 See `drivers/aerogpu/kmd/README.md` and `docs/graphics/win7-aerogpu-validation.md` for tuning guidance.
   
 ### 5.2 Allocation backing and “guest physical” mapping
