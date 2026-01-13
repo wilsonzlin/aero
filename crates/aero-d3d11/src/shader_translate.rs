@@ -2904,6 +2904,12 @@ fn emit_src_vec4_u32(
             let expr = match reg.file {
                 RegFile::Temp => format!("r{}", reg.index),
                 RegFile::Output => format!("o{}", reg.index),
+                RegFile::OutputDepth => {
+                    let depth_reg = ctx.io.ps_sv_depth_register.ok_or(
+                        ShaderTranslateError::MissingSignature("pixel output SV_Depth"),
+                    )?;
+                    format!("o{depth_reg}")
+                }
                 RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
             };
             format!("bitcast<vec4<u32>>({expr})")
