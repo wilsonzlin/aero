@@ -385,11 +385,26 @@ fn translate_ps(
         io.emit_ps_structs(&mut w)?;
     }
 
+    let ps_has_depth_output = io.ps_sv_depth_register.is_some();
+    if ps_has_depth_output {
+        w.line("struct PsOut {");
+        w.indent();
+        // Preserve the existing single-target model: `SV_Target0` always maps to `@location(0)`.
+        if io.ps_sv_target0_register.is_some() {
+            w.line("@location(0) target0: vec4<f32>,");
+        }
+        w.line("@builtin(frag_depth) depth: f32,");
+        w.dedent();
+        w.line("};");
+        w.line("");
+    }
+
     w.line("@fragment");
-    if ps_has_inputs {
-        w.line("fn fs_main(input: PsIn) -> @location(0) vec4<f32> {");
-    } else {
-        w.line("fn fs_main() -> @location(0) vec4<f32> {");
+    match (ps_has_inputs, ps_has_depth_output) {
+        (true, true) => w.line("fn fs_main(input: PsIn) -> PsOut {"),
+        (false, true) => w.line("fn fs_main() -> PsOut {"),
+        (true, false) => w.line("fn fs_main(input: PsIn) -> @location(0) vec4<f32> {"),
+        (false, false) => w.line("fn fs_main() -> @location(0) vec4<f32> {"),
     }
     w.indent();
     w.line("");
@@ -402,19 +417,47 @@ fn translate_ps(
     };
     emit_instructions(&mut w, module, &ctx)?;
 
-    let target_reg = io
-        .ps_sv_target0_register
-        .ok_or(ShaderTranslateError::PixelShaderMissingSvTarget0)?;
-    let target_param =
-        io.outputs
-            .get(&target_reg)
-            .ok_or(ShaderTranslateError::SignatureMissingRegister {
-                io: "output",
-                register: target_reg,
-            })?;
     w.line("");
-    let return_expr = apply_sig_mask_to_vec4(&format!("o{target_reg}"), target_param.param.mask);
-    w.line(&format!("return {return_expr};"));
+
+    if ps_has_depth_output {
+        w.line("var out: PsOut;");
+
+        if let Some(target_reg) = io.ps_sv_target0_register {
+            let target_param = io.outputs.get(&target_reg).ok_or(
+                ShaderTranslateError::SignatureMissingRegister {
+                    io: "output",
+                    register: target_reg,
+                },
+            )?;
+            let expr = apply_sig_mask_to_vec4(&format!("o{target_reg}"), target_param.param.mask);
+            w.line(&format!("out.target0 = {expr};"));
+        }
+
+        let depth_reg = io.ps_sv_depth_register.expect("ps_has_depth_output implies depth reg");
+        let depth_param =
+            io.outputs
+                .get(&depth_reg)
+                .ok_or(ShaderTranslateError::SignatureMissingRegister {
+                    io: "output",
+                    register: depth_reg,
+        })?;
+        let depth_expr = apply_sig_mask_to_scalar(&format!("o{depth_reg}"), depth_param.param.mask);
+        w.line(&format!("out.depth = {depth_expr};"));
+        w.line("return out;");
+    } else {
+        let target_reg = io
+            .ps_sv_target0_register
+            .ok_or(ShaderTranslateError::PixelShaderMissingSvTarget0)?;
+        let target_param =
+            io.outputs
+                .get(&target_reg)
+                .ok_or(ShaderTranslateError::SignatureMissingRegister {
+                    io: "output",
+                    register: target_reg,
+        })?;
+        let return_expr = apply_sig_mask_to_vec4(&format!("o{target_reg}"), target_param.param.mask);
+        w.line(&format!("return {return_expr};"));
+    }
     w.dedent();
     w.line("}");
 
@@ -587,6 +630,27 @@ fn build_io_maps(
         }
     }
 
+    let mut ps_sv_depth_reg = None;
+    if module.stage == ShaderStage::Pixel {
+        ps_sv_depth_reg = outputs
+            .values()
+            .find(|p| p.sys_value == Some(D3D_NAME_DEPTH))
+            .map(|p| p.param.register);
+        if ps_sv_depth_reg.is_none() {
+            // Some toolchains emit the legacy `DEPTH` semantic with `system_value_type` unset.
+            ps_sv_depth_reg = osgn
+                .parameters
+                .iter()
+                .find(|p| p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("DEPTH"))
+                .map(|p| p.register);
+            if let Some(reg) = ps_sv_depth_reg {
+                if let Some(p) = outputs.get_mut(&reg) {
+                    p.sys_value = Some(D3D_NAME_DEPTH);
+                }
+            }
+        }
+    }
+
     let vs_vertex_id_reg = (module.stage == ShaderStage::Vertex)
         .then(|| {
             inputs
@@ -620,6 +684,7 @@ fn build_io_maps(
         vs_position_register: vs_position_reg,
         ps_position_register: ps_position_reg,
         ps_sv_target0_register: ps_sv_target0_reg,
+        ps_sv_depth_register: ps_sv_depth_reg,
         vs_vertex_id_register: vs_vertex_id_reg,
         vs_instance_id_register: vs_instance_id_reg,
         ps_front_facing_register: ps_front_facing_reg,
@@ -705,6 +770,7 @@ fn build_cs_io_maps(module: &Sm4Module) -> IoMaps {
         vs_position_register: None,
         ps_position_register: None,
         ps_sv_target0_register: None,
+        ps_sv_depth_register: None,
         vs_vertex_id_register: None,
         vs_instance_id_register: None,
         ps_front_facing_register: None,
@@ -897,6 +963,7 @@ struct IoMaps {
     vs_position_register: Option<u32>,
     ps_position_register: Option<u32>,
     ps_sv_target0_register: Option<u32>,
+    ps_sv_depth_register: Option<u32>,
     vs_vertex_id_register: Option<u32>,
     vs_instance_id_register: Option<u32>,
     ps_front_facing_register: Option<u32>,
@@ -1221,6 +1288,7 @@ const D3D_NAME_GROUP_ID: u32 = 21;
 const D3D_NAME_GROUP_INDEX: u32 = 22;
 const D3D_NAME_GROUP_THREAD_ID: u32 = 23;
 const D3D_NAME_TARGET: u32 = 64;
+const D3D_NAME_DEPTH: u32 = 65;
 
 fn builtin_from_d3d_name(name: u32) -> Option<Builtin> {
     match name {
@@ -1273,6 +1341,9 @@ fn semantic_to_d3d_name(name: &str) -> Option<u32> {
     if is_sv_target(name) {
         return Some(D3D_NAME_TARGET);
     }
+    if is_sv_depth(name) {
+        return Some(D3D_NAME_DEPTH);
+    }
     None
 }
 
@@ -1297,7 +1368,8 @@ fn is_sv_target(name: &str) -> bool {
 }
 
 fn is_sv_dispatch_thread_id(name: &str) -> bool {
-    name.eq_ignore_ascii_case("SV_DispatchThreadID") || name.eq_ignore_ascii_case("SV_DISPATCHTHREADID")
+    name.eq_ignore_ascii_case("SV_DispatchThreadID")
+        || name.eq_ignore_ascii_case("SV_DISPATCHTHREADID")
 }
 
 fn is_sv_group_thread_id(name: &str) -> bool {
@@ -1310,6 +1382,12 @@ fn is_sv_group_id(name: &str) -> bool {
 
 fn is_sv_group_index(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_GroupIndex") || name.eq_ignore_ascii_case("SV_GROUPINDEX")
+}
+
+fn is_sv_depth(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_Depth")
+        || name.eq_ignore_ascii_case("SV_DEPTH")
+        || name.eq_ignore_ascii_case("DEPTH")
 }
 
 fn expand_to_vec4(expr: &str, p: &ParamInfo) -> String {
@@ -1373,6 +1451,23 @@ fn apply_sig_mask_to_vec4(expr: &str, mask: u8) -> String {
     }
 
     format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3])
+}
+
+fn apply_sig_mask_to_scalar(expr: &str, mask: u8) -> String {
+    let mask = mask & 0xF;
+    let comp = if (mask & 1) != 0 {
+        'x'
+    } else if (mask & 2) != 0 {
+        'y'
+    } else if (mask & 4) != 0 {
+        'z'
+    } else if (mask & 8) != 0 {
+        'w'
+    } else {
+        // `ParamInfo::from_sig_param` rejects mask==0; fall back defensively anyway.
+        'x'
+    };
+    format!("({expr}).{comp}")
 }
 
 fn component_char(c: u8) -> char {
