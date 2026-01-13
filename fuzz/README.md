@@ -146,6 +146,10 @@ cd fuzz && cargo fuzz run fuzz_aerogpu_parse -- -runs=10000
 
 # DXBC container + signature + SM4/SM5 token parsing
 cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000
+
+# Optional: use the bundled dictionary to help libFuzzer find DXBC/signature chunk IDs faster
+cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000 -dict=fuzz_targets/fuzz_dxbc_sm4_parse.dict
+
 cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000
 
 # D3D9 shader model 3 decode
