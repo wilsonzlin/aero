@@ -1474,6 +1474,18 @@ impl UhciRuntime {
             )));
         }
 
+        // `RootHub::load_snapshot_ports` (invoked by `UhciController::load_state`) restores the
+        // nested device-model snapshots for every attached device, including the WebUSB
+        // passthrough model. Those nested snapshots may reintroduce host-side bookkeeping
+        // (queued actions + in-flight maps) that cannot be resumed after a VM snapshot restore.
+        //
+        // Clear WebUSB host state *after* the controller snapshot has been applied so the guest's
+        // TD retries will re-emit fresh host actions instead of deadlocking on a completion that
+        // will never arrive.
+        if let Some(webusb) = self.webusb.as_ref() {
+            webusb.dev.reset_host_state_for_restore();
+        }
+
         Ok(())
     }
 
