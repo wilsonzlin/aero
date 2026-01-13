@@ -5,6 +5,7 @@
 //! `crate::io::usb` path stable by re-exporting the shared implementation and
 //! providing thin integration glue (PCI + PortIO wiring, descriptor fixups, etc).
 pub mod descriptor_fixups;
+pub mod ehci;
 pub mod passthrough;
 pub mod uhci;
 pub mod xhci;

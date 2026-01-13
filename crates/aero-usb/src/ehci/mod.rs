@@ -86,6 +86,16 @@ impl EhciController {
         &self.hub
     }
 
+    /// Forces status bits in USBSTS for tests and diagnostics.
+    ///
+    /// Reserved bits are masked out; the HCHALTED bit is driven by `USBCMD.RS` and should not be
+    /// set manually.
+    pub fn set_usbsts_bits(&mut self, bits: u32) {
+        let bits = bits & (USBSTS_READ_MASK & !USBSTS_HCHALTED);
+        self.regs.usbsts |= bits;
+        self.update_irq();
+    }
+
     fn hcsparams(&self) -> u32 {
         // EHCI 1.0 spec: HCSPARAMS.N_PORTS (bits 0..=3) + PPC (bit 4).
         let n_ports = (self.hub.num_ports() as u32) & 0x0f;

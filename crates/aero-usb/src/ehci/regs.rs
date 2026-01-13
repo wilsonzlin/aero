@@ -4,6 +4,9 @@
 //! (capability + operational registers + root hub ports). The schedule engine is implemented in
 //! follow-up tasks (EHCI-003/004).
 
+/// Size of the EHCI MMIO register window exposed through PCI BAR0.
+pub const MMIO_SIZE: u32 = 0x1000;
+
 /// Capability register length (offset to operational registers).
 ///
 /// Most EHCI controllers use 0x20 bytes of capability registers.
@@ -100,4 +103,3 @@ pub const PORTSC_WKD: u32 = 1 << 21;
 pub const PORTSC_WKO: u32 = 1 << 22;
 
 pub const PORTSC_W1C_MASK: u32 = PORTSC_CSC | PORTSC_PEDC | PORTSC_OCC;
-
