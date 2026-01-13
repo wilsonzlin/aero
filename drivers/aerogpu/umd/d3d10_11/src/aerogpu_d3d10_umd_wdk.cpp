@@ -4245,6 +4245,12 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
       top = box->top;
       right = box->right;
       bottom = box->bottom;
+      AEROGPU_D3D10_11_LOG("D3D10 UpdateSubresourceUP: tex2d sub=%u box=(%u,%u)-(%u,%u)",
+                           static_cast<unsigned>(pUpdate->DstSubresource),
+                           static_cast<unsigned>(left),
+                           static_cast<unsigned>(top),
+                           static_cast<unsigned>(right),
+                           static_cast<unsigned>(bottom));
     }
     if (right > mip_w || bottom > mip_h) {
       SetError(hDevice, E_INVALIDARG);
@@ -4323,102 +4329,12 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
         return;
       }
       std::memcpy(res->storage.data() + dst_off, src_bytes + src_off, row_bytes);
-      // For boxed updates, preserve any per-row padding outside the updated
-      // rectangle. Only clear padding for full-subresource uploads.
-      if (!pUpdate->pDstBox && full_row_update && dst_layout.row_pitch_bytes > row_bytes) {
+      // Only clear per-row padding when the update covers the full row width; if
+      // we clear beyond the box width we can clobber unrelated texels.
+      if (full_row_update && dst_layout.row_pitch_bytes > row_bytes) {
         const size_t dst_row_start = dst_base + static_cast<size_t>(block_top + y) * dst_layout.row_pitch_bytes;
         std::memset(res->storage.data() + dst_row_start + row_bytes, 0, dst_layout.row_pitch_bytes - row_bytes);
       }
-    }
-
-    if (res->backing_alloc_id == 0 && pUpdate->pDstBox) {
-      // Host-owned boxed texture uploads must be row-aligned for the host-side
-      // executor. Upload the affected row range (full rows) rather than
-      // attempting to upload per-row subranges.
-      const uint64_t row_pitch_u64 = static_cast<uint64_t>(dst_layout.row_pitch_bytes);
-      const uint64_t upload_offset =
-          dst_layout.offset_bytes + static_cast<uint64_t>(block_top) * row_pitch_u64;
-      const uint64_t upload_size =
-          static_cast<uint64_t>(copy_height_blocks) * row_pitch_u64;
-      EmitUploadLocked(hDevice, dev, res, upload_offset, upload_size);
-      return;
-    }
-
-    if (res->backing_alloc_id != 0 && pUpdate->pDstBox) {
-      const D3DDDI_DEVICECALLBACKS* ddi = dev->um_callbacks;
-      if (!ddi || !ddi->pfnLockCb || !ddi->pfnUnlockCb || res->wddm_allocation_handle == 0) {
-        SetError(hDevice, E_FAIL);
-        return;
-      }
-
-      D3DDDICB_LOCK lock_args = {};
-      lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
-      __if_exists(D3DDDICB_LOCK::SubresourceIndex) { lock_args.SubresourceIndex = 0; }
-      __if_exists(D3DDDICB_LOCK::SubResourceIndex) { lock_args.SubResourceIndex = 0; }
-      InitLockForWrite(&lock_args);
-
-      HRESULT hr = CallCbMaybeHandle(ddi->pfnLockCb, dev->hrt_device, &lock_args);
-      if (FAILED(hr) || !lock_args.pData) {
-        SetError(hDevice, FAILED(hr) ? hr : E_FAIL);
-        return;
-      }
-
-      HRESULT copy_hr = S_OK;
-      uint32_t wddm_pitch = 0;
-      __if_exists(D3DDDICB_LOCK::Pitch) { wddm_pitch = lock_args.Pitch; }
-
-      uint32_t dst_pitch = dst_layout.row_pitch_bytes;
-      if (!ValidateWddmTexturePitch(res, wddm_pitch)) {
-        copy_hr = E_FAIL;
-      } else {
-        __if_exists(D3DDDICB_LOCK::Pitch) {
-          if (wddm_pitch && dst_layout.mip_level == 0) {
-            dst_pitch = wddm_pitch;
-          }
-        }
-        if (dst_pitch < row_bytes) {
-          copy_hr = E_INVALIDARG;
-        } else {
-          uint8_t* dst_alloc_base = static_cast<uint8_t*>(lock_args.pData) + dst_base;
-          for (uint32_t y = 0; y < copy_height_blocks; ++y) {
-            const size_t dst_off =
-                static_cast<size_t>(block_top + y) * dst_pitch +
-                static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
-            const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
-            std::memcpy(dst_alloc_base + dst_off, src_bytes + src_off, row_bytes);
-            if (!pUpdate->pDstBox && full_row_update && dst_pitch > row_bytes) {
-              const size_t dst_row_start = static_cast<size_t>(block_top + y) * dst_pitch;
-              std::memset(dst_alloc_base + dst_row_start + row_bytes, 0, dst_pitch - row_bytes);
-            }
-          }
-        }
-      }
-
-      D3DDDICB_UNLOCK unlock_args = {};
-      unlock_args.hAllocation = lock_args.hAllocation;
-      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
-      hr = CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
-      if (FAILED(hr)) {
-        SetError(hDevice, hr);
-        return;
-      }
-      if (FAILED(copy_hr)) {
-        SetError(hDevice, copy_hr);
-        return;
-      }
-
-      TrackWddmAllocForSubmitLocked(dev, res);
-      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      if (!dirty) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        return;
-      }
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = dst_layout.offset_bytes;
-      dirty->size_bytes = dst_layout.size_bytes;
-      return;
     }
 
     do_tex_upload = true;
