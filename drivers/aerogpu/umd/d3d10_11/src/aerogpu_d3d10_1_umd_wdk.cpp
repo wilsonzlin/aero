@@ -185,6 +185,7 @@ constexpr uint32_t kD3D10BindDepthStencil = 0x40;
 
 constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kAeroGpuD3D10MaxSrvSlots = 128;
+constexpr uint32_t kAeroGpuD3D10MaxSamplerSlots = 16;
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
 constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
@@ -703,8 +704,90 @@ struct AeroGpuDepthStencilState {
 };
 
 struct AeroGpuSampler {
-  uint32_t dummy = 0;
+  aerogpu_handle_t handle = 0;
+  uint32_t filter = AEROGPU_SAMPLER_FILTER_LINEAR;
+  uint32_t address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  uint32_t address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  uint32_t address_w = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
 };
+
+template <typename T, typename = void>
+struct has_member_Desc : std::false_type {};
+template <typename T>
+struct has_member_Desc<T, std::void_t<decltype(std::declval<T>().Desc)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SamplerDesc : std::false_type {};
+template <typename T>
+struct has_member_SamplerDesc<T, std::void_t<decltype(std::declval<T>().SamplerDesc)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Filter : std::false_type {};
+template <typename T>
+struct has_member_Filter<T, std::void_t<decltype(std::declval<T>().Filter)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AddressU : std::false_type {};
+template <typename T>
+struct has_member_AddressU<T, std::void_t<decltype(std::declval<T>().AddressU)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AddressV : std::false_type {};
+template <typename T>
+struct has_member_AddressV<T, std::void_t<decltype(std::declval<T>().AddressV)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AddressW : std::false_type {};
+template <typename T>
+struct has_member_AddressW<T, std::void_t<decltype(std::declval<T>().AddressW)>> : std::true_type {};
+
+static uint32_t aerogpu_sampler_filter_from_d3d_filter(uint32_t filter) {
+  // D3D10 point filtering is encoded as 0 for MIN_MAG_MIP_POINT; treat all other
+  // filters as linear for the MVP bring-up path.
+  return filter == 0 ? AEROGPU_SAMPLER_FILTER_NEAREST : AEROGPU_SAMPLER_FILTER_LINEAR;
+}
+
+static uint32_t aerogpu_sampler_address_from_d3d_mode(uint32_t mode) {
+  // D3D10 numeric values: 1=WRAP, 2=MIRROR, 3=CLAMP, 4=BORDER, 5=MIRROR_ONCE.
+  switch (mode) {
+    case 1:
+      return AEROGPU_SAMPLER_ADDRESS_REPEAT;
+    case 2:
+      return AEROGPU_SAMPLER_ADDRESS_MIRROR_REPEAT;
+    default:
+      return AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  }
+}
+
+template <typename DescT>
+static void InitSamplerFromDesc(AeroGpuSampler* sampler, const DescT& desc) {
+  if (!sampler) {
+    return;
+  }
+
+  uint32_t filter = 1;
+  uint32_t addr_u = 3;
+  uint32_t addr_v = 3;
+  uint32_t addr_w = 3;
+
+  if constexpr (has_member_Filter<DescT>::value) {
+    filter = static_cast<uint32_t>(desc.Filter);
+  }
+  if constexpr (has_member_AddressU<DescT>::value) {
+    addr_u = static_cast<uint32_t>(desc.AddressU);
+  }
+  if constexpr (has_member_AddressV<DescT>::value) {
+    addr_v = static_cast<uint32_t>(desc.AddressV);
+  }
+  if constexpr (has_member_AddressW<DescT>::value) {
+    addr_w = static_cast<uint32_t>(desc.AddressW);
+  }
+
+  sampler->filter = aerogpu_sampler_filter_from_d3d_filter(filter);
+  sampler->address_u = aerogpu_sampler_address_from_d3d_mode(addr_u);
+  sampler->address_v = aerogpu_sampler_address_from_d3d_mode(addr_v);
+  sampler->address_w = aerogpu_sampler_address_from_d3d_mode(addr_w);
+}
 
 // Win7-era WDK headers disagree on whether pfnSetErrorCb takes HRTDEVICE or
 // HDEVICE. Keep the callback typed exactly as declared by the active headers,
@@ -757,6 +840,8 @@ struct AeroGpuDevice {
   std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots> ps_constant_buffers{};
   std::array<AeroGpuResource*, kMaxConstantBufferSlots> current_vs_cb_resources{};
   std::array<AeroGpuResource*, kMaxConstantBufferSlots> current_ps_cb_resources{};
+  std::array<aerogpu_handle_t, kAeroGpuD3D10MaxSamplerSlots> current_vs_samplers{};
+  std::array<aerogpu_handle_t, kAeroGpuD3D10MaxSamplerSlots> current_ps_samplers{};
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_input_layout = 0;
@@ -5046,22 +5131,70 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateSamplerSize(D3D10DDI_HDEVICE, const D3D10DDIA
 }
 
 HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
-                                       const D3D10DDIARG_CREATESAMPLER*,
+                                       const D3D10DDIARG_CREATESAMPLER* pDesc,
                                        D3D10DDI_HSAMPLER hSampler,
                                        D3D10DDI_HRTSAMPLER) {
   if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  new (hSampler.pDrvPrivate) AeroGpuSampler();
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* sampler = new (hSampler.pDrvPrivate) AeroGpuSampler();
+  sampler->handle = AllocateGlobalHandle(dev->adapter);
+  if (!sampler->handle) {
+    sampler->~AeroGpuSampler();
+    return E_FAIL;
+  }
+
+  if (pDesc) {
+    if constexpr (has_member_Desc<D3D10DDIARG_CREATESAMPLER>::value) {
+      InitSamplerFromDesc(sampler, pDesc->Desc);
+    } else if constexpr (has_member_SamplerDesc<D3D10DDIARG_CREATESAMPLER>::value) {
+      InitSamplerFromDesc(sampler, pDesc->SamplerDesc);
+    }
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
+  if (!cmd) {
+    sampler->~AeroGpuSampler();
+    return E_OUTOFMEMORY;
+  }
+  cmd->sampler_handle = sampler->handle;
+  cmd->filter = sampler->filter;
+  cmd->address_u = sampler->address_u;
+  cmd->address_v = sampler->address_v;
+  cmd->address_w = sampler->address_w;
   return S_OK;
 }
 
-void AEROGPU_APIENTRY DestroySampler(D3D10DDI_HDEVICE, D3D10DDI_HSAMPLER hSampler) {
-  if (!hSampler.pDrvPrivate) {
+void AEROGPU_APIENTRY DestroySampler(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSAMPLER hSampler) {
+  if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
     return;
   }
-  auto* s = FromHandle<D3D10DDI_HSAMPLER, AeroGpuSampler>(hSampler);
-  s->~AeroGpuSampler();
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* sampler = FromHandle<D3D10DDI_HSAMPLER, AeroGpuSampler>(hSampler);
+  if (!dev || !sampler) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (sampler->handle) {
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_sampler>(AEROGPU_CMD_DESTROY_SAMPLER);
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+    } else {
+      cmd->sampler_handle = sampler->handle;
+      cmd->reserved0 = 0;
+    }
+  }
+  sampler->~AeroGpuSampler();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateBlendStateSize(D3D10DDI_HDEVICE, const D3D10_1_DDI_BLEND_DESC*) {
@@ -5724,6 +5857,116 @@ void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
   }
 }
 
+static void SetSamplersCommon(D3D10DDI_HDEVICE hDevice,
+                              uint32_t shader_stage,
+                              UINT start_slot,
+                              UINT sampler_count,
+                              const D3D10DDI_HSAMPLER* phSamplers) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  if (sampler_count == 0) {
+    return;
+  }
+  if (start_slot >= kAeroGpuD3D10MaxSamplerSlots) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+  if (!phSamplers) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+
+  UINT count = sampler_count;
+  if (start_slot + count > kAeroGpuD3D10MaxSamplerSlots) {
+    count = kAeroGpuD3D10MaxSamplerSlots - start_slot;
+  }
+
+  std::array<aerogpu_handle_t, kAeroGpuD3D10MaxSamplerSlots> handles{};
+  bool changed = false;
+  auto& table =
+      (shader_stage == AEROGPU_SHADER_STAGE_VERTEX) ? dev->current_vs_samplers : dev->current_ps_samplers;
+
+  for (UINT i = 0; i < count; ++i) {
+    aerogpu_handle_t handle = 0;
+    if (phSamplers[i].pDrvPrivate) {
+      auto* sampler = FromHandle<D3D10DDI_HSAMPLER, AeroGpuSampler>(phSamplers[i]);
+      handle = sampler ? sampler->handle : 0;
+    }
+    handles[i] = handle;
+    if (!changed && table[start_slot + i] != handle) {
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return;
+  }
+
+  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
+      AEROGPU_CMD_SET_SAMPLERS, handles.data(), static_cast<size_t>(count) * sizeof(handles[0]));
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->shader_stage = shader_stage;
+  cmd->start_slot = start_slot;
+  cmd->sampler_count = count;
+  cmd->reserved0 = 0;
+
+  for (UINT i = 0; i < count; ++i) {
+    table[start_slot + i] = handles[i];
+  }
+}
+
+void AEROGPU_APIENTRY VsSetSamplers(D3D10DDI_HDEVICE hDevice,
+                                   UINT start_slot,
+                                   UINT sampler_count,
+                                   const D3D10DDI_HSAMPLER* phSamplers) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  AEROGPU_D3D10_TRACEF_VERBOSE("VsSetSamplers hDevice=%p start=%u count=%u",
+                               hDevice.pDrvPrivate,
+                               static_cast<unsigned>(start_slot),
+                               static_cast<unsigned>(sampler_count));
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  SetSamplersCommon(hDevice, AEROGPU_SHADER_STAGE_VERTEX, start_slot, sampler_count, phSamplers);
+}
+
+void AEROGPU_APIENTRY PsSetSamplers(D3D10DDI_HDEVICE hDevice,
+                                   UINT start_slot,
+                                   UINT sampler_count,
+                                   const D3D10DDI_HSAMPLER* phSamplers) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  AEROGPU_D3D10_TRACEF_VERBOSE("PsSetSamplers hDevice=%p start=%u count=%u",
+                               hDevice.pDrvPrivate,
+                               static_cast<unsigned>(start_slot),
+                               static_cast<unsigned>(sampler_count));
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  SetSamplersCommon(hDevice, AEROGPU_SHADER_STAGE_PIXEL, start_slot, sampler_count, phSamplers);
+}
+
 void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   if (!hDevice.pDrvPrivate) {
     return;
@@ -5789,6 +6032,35 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
       cmd->reserved0 = 0;
     }
   }
+
+  auto clear_samplers = [&](uint32_t shader_stage, std::array<aerogpu_handle_t, kAeroGpuD3D10MaxSamplerSlots>& table) {
+    bool any = false;
+    for (aerogpu_handle_t h : table) {
+      if (h != 0) {
+        any = true;
+        break;
+      }
+    }
+    if (!any) {
+      return;
+    }
+
+    table.fill(0);
+    std::array<aerogpu_handle_t, kAeroGpuD3D10MaxSamplerSlots> zeros{};
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
+        AEROGPU_CMD_SET_SAMPLERS, zeros.data(), zeros.size() * sizeof(zeros[0]));
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+      return;
+    }
+    cmd->shader_stage = shader_stage;
+    cmd->start_slot = 0;
+    cmd->sampler_count = static_cast<uint32_t>(zeros.size());
+    cmd->reserved0 = 0;
+  };
+
+  clear_samplers(AEROGPU_SHADER_STAGE_VERTEX, dev->current_vs_samplers);
+  clear_samplers(AEROGPU_SHADER_STAGE_PIXEL, dev->current_ps_samplers);
 
   dev->current_rtv_count = 0;
   std::memset(dev->current_rtvs, 0, sizeof(dev->current_rtvs));
@@ -7260,8 +7532,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers = &PsSetConstantBuffers;
   pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources = &VsSetShaderResources;
   pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources = &PsSetShaderResources;
-  AEROGPU_D3D10_ASSIGN_STUB(pfnVsSetSamplers, VsSetSamplers);
-  AEROGPU_D3D10_ASSIGN_STUB(pfnPsSetSamplers, PsSetSamplers);
+  pCreateDevice->pDeviceFuncs->pfnVsSetSamplers = &VsSetSamplers;
+  pCreateDevice->pDeviceFuncs->pfnPsSetSamplers = &PsSetSamplers;
 
   AEROGPU_D3D10_ASSIGN_STUB(pfnGsSetShader, GsSetShader);
   AEROGPU_D3D10_ASSIGN_STUB(pfnGsSetConstantBuffers, GsSetConstantBuffers);
@@ -7451,10 +7723,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers = &PsSetConstantBuffers;
   pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources = &VsSetShaderResources;
   pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources = &PsSetShaderResources;
-  pCreateDevice->pDeviceFuncs->pfnVsSetSamplers =
-      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetSamplers)>::Call;
-  pCreateDevice->pDeviceFuncs->pfnPsSetSamplers =
-      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetSamplers)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnVsSetSamplers = &VsSetSamplers;
+  pCreateDevice->pDeviceFuncs->pfnPsSetSamplers = &PsSetSamplers;
 
   pCreateDevice->pDeviceFuncs->pfnGsSetShader = &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetShader)>::Call;
   pCreateDevice->pDeviceFuncs->pfnGsSetConstantBuffers =
