@@ -50,6 +50,12 @@ For convenience when scraping CI logs, the harness may also emit a host-side vir
 includes large-transfer fields:
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...`
+
+It may also mirror guest-side IRQ diagnostics (when present) into per-device host markers:
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 """
 
 from __future__ import annotations
@@ -2023,6 +2029,9 @@ def main() -> int:
 
         _emit_virtio_blk_irq_host_marker(tail)
         _emit_virtio_net_large_host_marker(tail)
+        _emit_virtio_net_irq_host_marker(tail)
+        _emit_virtio_snd_irq_host_marker(tail)
+        _emit_virtio_input_irq_host_marker(tail)
 
         return result_code if result_code is not None else 2
 
@@ -2542,6 +2551,56 @@ def _emit_virtio_blk_irq_host_marker(tail: bytes) -> None:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))
 
+
+def _emit_virtio_irq_host_marker(tail: bytes, *, device: str, host_marker: str) -> None:
+    """
+    Best-effort: emit a host-side marker describing the guest's IRQ mode/message count diagnostics.
+
+    The guest-side selftest may include fields like `irq_mode=msi/msix/intx` and `irq_message_count=<n>`
+    on its per-device TEST marker. This helper mirrors those fields into a stable host-side marker for
+    log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(
+        tail, f"AERO_VIRTIO_SELFTEST|TEST|{device}|".encode("utf-8")
+    )
+    if marker_line is None:
+        return
+
+    fields = _parse_marker_kv_fields(marker_line)
+    if not any(k.startswith("irq_") for k in fields):
+        return
+
+    status = "INFO"
+    if "FAIL" in marker_line.split("|"):
+        status = "FAIL"
+    elif "PASS" in marker_line.split("|"):
+        status = "PASS"
+
+    parts = [f"AERO_VIRTIO_WIN7_HOST|{host_marker}|{status}"]
+
+    # Keep ordering stable for log scraping.
+    ordered = ["irq_mode", "irq_message_count"]
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k.startswith("irq_") and k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    print("|".join(parts))
+
+
+def _emit_virtio_net_irq_host_marker(tail: bytes) -> None:
+    _emit_virtio_irq_host_marker(tail, device="virtio-net", host_marker="VIRTIO_NET_IRQ")
+
+
+def _emit_virtio_snd_irq_host_marker(tail: bytes) -> None:
+    _emit_virtio_irq_host_marker(tail, device="virtio-snd", host_marker="VIRTIO_SND_IRQ")
+
+
+def _emit_virtio_input_irq_host_marker(tail: bytes) -> None:
+    _emit_virtio_irq_host_marker(tail, device="virtio-input", host_marker="VIRTIO_INPUT_IRQ")
 
 def _verify_virtio_snd_wav_non_silent(path: Path, *, peak_threshold: int, rms_threshold: int) -> bool:
     marker_prefix = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV"
