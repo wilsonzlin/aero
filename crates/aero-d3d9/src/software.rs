@@ -691,6 +691,57 @@ fn run_vertex_shader(
                             v,
                         );
                     }
+                    Op::Exp => {
+                        let dst = inst.dst.unwrap();
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let v = Vec4::new(a.x.exp2(), a.y.exp2(), a.z.exp2(), a.w.exp2());
+                        let v = apply_result_modifier(v, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut o_pos,
+                            &mut o_attr,
+                            &mut o_tex,
+                            &mut dummy_color,
+                            v,
+                        );
+                    }
+                    Op::Log => {
+                        let dst = inst.dst.unwrap();
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let v = Vec4::new(a.x.log2(), a.y.log2(), a.z.log2(), a.w.log2());
+                        let v = apply_result_modifier(v, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut o_pos,
+                            &mut o_attr,
+                            &mut o_tex,
+                            &mut dummy_color,
+                            v,
+                        );
+                    }
+                    Op::Pow => {
+                        let dst = inst.dst.unwrap();
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let v = Vec4::new(
+                            a.x.powf(b.x),
+                            a.y.powf(b.y),
+                            a.z.powf(b.z),
+                            a.w.powf(b.w),
+                        );
+                        let v = apply_result_modifier(v, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut o_pos,
+                            &mut o_attr,
+                            &mut o_tex,
+                            &mut dummy_color,
+                            v,
+                        );
+                    }
                     Op::Frc => {
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
@@ -1001,6 +1052,57 @@ fn run_pixel_shader(
                         let inv_sqrt = |v: f32| 1.0 / v.sqrt();
                         let v =
                             Vec4::new(inv_sqrt(a.x), inv_sqrt(a.y), inv_sqrt(a.z), inv_sqrt(a.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut dummy_pos,
+                            &mut dummy_attr,
+                            &mut dummy_tex,
+                            &mut o_color,
+                            v,
+                        );
+                    }
+                    Op::Exp => {
+                        let dst = inst.dst.unwrap();
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let v = Vec4::new(a.x.exp2(), a.y.exp2(), a.z.exp2(), a.w.exp2());
+                        let v = apply_result_modifier(v, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut dummy_pos,
+                            &mut dummy_attr,
+                            &mut dummy_tex,
+                            &mut o_color,
+                            v,
+                        );
+                    }
+                    Op::Log => {
+                        let dst = inst.dst.unwrap();
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let v = Vec4::new(a.x.log2(), a.y.log2(), a.z.log2(), a.w.log2());
+                        let v = apply_result_modifier(v, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut dummy_pos,
+                            &mut dummy_attr,
+                            &mut dummy_tex,
+                            &mut o_color,
+                            v,
+                        );
+                    }
+                    Op::Pow => {
+                        let dst = inst.dst.unwrap();
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let v = Vec4::new(
+                            a.x.powf(b.x),
+                            a.y.powf(b.y),
+                            a.z.powf(b.z),
+                            a.w.powf(b.w),
+                        );
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,

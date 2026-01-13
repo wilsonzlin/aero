@@ -114,6 +114,15 @@ fn assemble_ps_math_ops() -> Vec<u32> {
     out.extend(enc_inst(0x0007, &[enc_dst(0, 2, 0xF), enc_src(2, 4, 0xE4)]));
     // frc r3, c5
     out.extend(enc_inst(0x0013, &[enc_dst(0, 3, 0xF), enc_src(2, 5, 0xE4)]));
+    // exp r7, c0
+    out.extend(enc_inst(0x000E, &[enc_dst(0, 7, 0xF), enc_src(2, 0, 0xE4)]));
+    // log r8, c1
+    out.extend(enc_inst(0x000F, &[enc_dst(0, 8, 0xF), enc_src(2, 1, 0xE4)]));
+    // pow r9, c0, c1
+    out.extend(enc_inst(
+        0x0020,
+        &[enc_dst(0, 9, 0xF), enc_src(2, 0, 0xE4), enc_src(2, 1, 0xE4)],
+    ));
     // slt r4, c6, c7
     out.extend(enc_inst(
         0x000C,
@@ -446,6 +455,9 @@ fn translates_additional_ps_ops_to_wgsl() {
     assert!(wgsl.wgsl.contains("max("));
     assert!(wgsl.wgsl.contains("inverseSqrt"));
     assert!(wgsl.wgsl.contains("fract("));
+    assert!(wgsl.wgsl.contains("exp2("));
+    assert!(wgsl.wgsl.contains("log2("));
+    assert!(wgsl.wgsl.contains("pow("));
     assert!(wgsl.wgsl.contains("select("));
 }
 

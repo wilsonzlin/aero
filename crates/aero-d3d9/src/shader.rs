@@ -128,6 +128,9 @@ pub enum Op {
     Mad,
     Dp3,
     Dp4,
+    Exp,
+    Log,
+    Pow,
     Rcp,
     Rsq,
     Min,
@@ -420,7 +423,10 @@ fn opcode_to_op(opcode: u16) -> Option<Op> {
         0x000B => Some(Op::Max),
         0x000C => Some(Op::Slt),
         0x000D => Some(Op::Sge),
+        0x000E => Some(Op::Exp),
+        0x000F => Some(Op::Log),
         0x0013 => Some(Op::Frc),
+        0x0020 => Some(Op::Pow),
         0x0028 => Some(Op::If),
         0x0029 => Some(Op::Ifc),
         0x002A => Some(Op::Else),
@@ -715,6 +721,8 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             | Op::Mad
             | Op::Dp3
             | Op::Dp4
+            | Op::Exp
+            | Op::Log
             | Op::Rcp
             | Op::Rsq
             | Op::Min
@@ -724,7 +732,8 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             | Op::Sge
             | Op::Seq
             | Op::Sne
-            | Op::Frc => {
+            | Op::Frc
+            | Op::Pow => {
                 if params.len() < 2 {
                     return Err(ShaderError::UnexpectedEof);
                 }
@@ -1491,6 +1500,49 @@ fn emit_inst(
             let dst = inst.dst.unwrap();
             let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
             let mut expr = format!("inverseSqrt({})", src0);
+            expr = apply_result_modifier(expr, inst.result_modifier);
+            let dst_name = reg_var_name(dst.reg);
+            if let Some(mask) = mask_suffix(dst.mask) {
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
+            }
+        }
+        Op::Exp => {
+            let dst = inst.dst.unwrap();
+            let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let mut expr = format!("exp2({})", src0);
+            expr = apply_result_modifier(expr, inst.result_modifier);
+            let dst_name = reg_var_name(dst.reg);
+            if let Some(mask) = mask_suffix(dst.mask) {
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
+            }
+        }
+        Op::Log => {
+            let dst = inst.dst.unwrap();
+            let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let mut expr = format!("log2({})", src0);
+            expr = apply_result_modifier(expr, inst.result_modifier);
+            let dst_name = reg_var_name(dst.reg);
+            if let Some(mask) = mask_suffix(dst.mask) {
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
+            }
+        }
+        Op::Pow => {
+            let dst = inst.dst.unwrap();
+            let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let src1 = src_expr(&inst.src[1], const_defs_f32, const_base);
+            let mut expr = format!("pow({}, {})", src0, src1);
             expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
