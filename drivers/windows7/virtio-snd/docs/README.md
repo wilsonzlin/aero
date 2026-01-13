@@ -85,7 +85,7 @@ Virtqueues (indices and sizes):
 `AERO-W7-VIRTIO` v1 requires the device/driver pair to work correctly with **PCI INTx** + the virtio ISR status register (read-to-ack).
 The contract also permits **MSI-X** as an optional enhancement; Windows reports both MSI and MSI-X as “message-signaled interrupts”.
 
-Current state of the in-tree virtio-snd driver package:
+The in-tree virtio-snd driver supports both interrupt delivery modes:
 
 - The driver supports both **message-signaled interrupts** (MSI/MSI-X) and legacy **INTx**.
 - If Windows provides message interrupts (INF opt-in), the driver prefers MSI/MSI-X and programs virtio MSI-X vectors:
@@ -101,7 +101,7 @@ On Windows 7, MSI/MSI-X is typically enabled via INF `HKR` settings under:
 
 `Interrupt Management\\MessageSignaledInterruptProperties`
 
-The shipped `inf/aero_virtio_snd.inf` opts into MSI/MSI-X on Windows 7 via an `AddReg` section like the following:
+As shipped in `inf/aero_virtio_snd.inf`:
 
 ```inf
 [AeroVirtioSnd_Install.NT.HW]
@@ -264,7 +264,7 @@ Notes:
     resulting plug/unplug state via topology jack properties (`KSPROPERTY_JACK_DESCRIPTION*`) and generates a
     `KSEVENTSETID_Jack` / `KSEVENT_JACK_INFO_CHANGE` notification so user-mode can refresh jack state without polling.
     Audio streaming remains correct even if eventq is silent or absent.
-* **Interrupts:** the driver supports both MSI/MSI-X (message interrupts) and INTx. The canonical INF opts into MSI/MSI-X; if Windows does not grant message interrupts (or the device rejects MSI-X vector programming), the driver falls back to INTx.
+* **Interrupts:** the driver supports both MSI/MSI-X (preferred when Windows grants message interrupts) and INTx fallback (required by contract v1). If Windows does not grant message interrupts (or the device rejects MSI-X vector programming), the driver falls back to INTx.
 * **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32) and `VIRTIO_F_RING_INDIRECT_DESC` (bit 28).
 
 ## Legacy / transitional virtio-pci paths (opt-in bring-up)
@@ -759,6 +759,6 @@ For additional safety in environments that expose multiple virtio-snd devices, y
 Notes:
 
 - The **transitional/legacy** virtio-snd PCI device ID (`DEV_1018`) is intentionally **not** matched by this INF (Aero contract v1 is modern-only).
-- This driver package supports both MSI/MSI-X and INTx. The canonical INF opts into MSI/MSI-X; if Windows does not grant message interrupts (or MSI/MSI-X setup fails), the driver falls back to INTx.
+- This driver package opts into **MSI/MSI-X** in `inf/aero_virtio_snd.inf` and prefers message interrupts when granted, but still supports **INTx** fallback (contract v1 requirement). Windows may grant fewer messages than requested; the driver will fall back to “all sources on vector 0” mapping when needed.
 
 If this README or the INF disagrees with `AERO-W7-VIRTIO`, treat the contract as authoritative.

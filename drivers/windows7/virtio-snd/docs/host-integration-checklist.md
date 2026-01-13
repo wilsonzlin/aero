@@ -68,11 +68,12 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 
 ## Interrupt delivery
 
-- [ ] **INTx** is implemented and functional (required).
-- [ ] MSI/MSI-X is **not used** by this driver package.
-- [ ] Guest must see a **line-based** interrupt resource (not MSI/MSI-X-only / “message interrupt” only).
-- [ ] PCI **Interrupt Pin** register is `1` (INTA#).
-- [ ] ISR status byte is **read-to-ack** (driver relies on read clearing pending bits to deassert INTx).
+- [ ] **INTx** is implemented and functional (required by contract v1; used as fallback).
+- [ ] (Optional) MSI/MSI-X is implemented and functional.
+  - The driver will prefer **message interrupts** when Windows grants them (INF opt-in).
+- [ ] PCI **Interrupt Pin** register is `1` (INTA#) for INTx fallback.
+- [ ] INTx ISR status byte is **read-to-ack** (driver relies on read clearing pending bits to deassert INTx).
+- [ ] If MSI/MSI-X is used, virtio MSI-X vector routing works (readback of `msix_config` / `queue_msix_vector` matches programmed values).
 
 ## virtio-snd `DEVICE_CFG` (read-only)
 

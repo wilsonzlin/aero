@@ -62,7 +62,7 @@ CI guardrail: PRs must keep `aero_virtio_snd.vcxproj` on the modern-only backend
 - **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four; PortCls
   uses `controlq` (0) + `txq` (2) for render (stream 0) and `controlq` (0) + `rxq` (3) for capture (stream 1).
   `eventq` is currently unused by the PortCls endpoints.
-- **Interrupts:** INTx (MSI/MSI-X is not currently used by the shipped virtio-snd driver build; adding MSI/MSI-X would require INF opt-in and driver-side virtio MSI-X vector programming).
+- **Interrupts:** MSI/MSI-X (preferred when granted by Windows) with INTx fallback (required by contract v1).
 - **Protocol:** PCM control + TX/RX protocol engines for streams 0/1.
 - **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used
   entries are treated as resource reclamation rather than timing.
@@ -165,13 +165,13 @@ Current behavior:
 Baseline requirements:
 
 - Work correctly with **PCI INTx** + the virtio ISR status register (contract v1).
-- MSI/MSI-X is an optional enhancement over INTx. This driver build currently uses INTx only; enabling message interrupts requires INF opt-in and driver-side virtio MSI-X vector programming.
+- Prefer **MSI/MSI-X** when Windows grants message interrupts (program virtio MSI-X vectors), and fall back to **INTx** when message interrupts are unavailable or cannot be programmed.
 
 Behavior:
 
 - ISR does minimal work:
-  - acknowledge/deassert INTx by reading the ISR status register,
-  - queue a DPC to do the real processing.
+  - **INTx:** acknowledge/deassert by reading the ISR status register, then queue a DPC to do the real processing.
+  - **MSI/MSI-X:** treat interrupts as non-shared; do not read the ISR status byte in the ISR. Queue a DPC to drain the relevant queues.
 - DPC drains used rings for any queues with pending work and completes requests.
 - Playback pacing should be stable under load:
   - Use virtqueue interrupt suppression to avoid interrupt storms (contract v1 does
