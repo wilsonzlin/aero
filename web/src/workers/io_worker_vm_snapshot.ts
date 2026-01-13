@@ -13,12 +13,14 @@ import {
   vmSnapshotDeviceIdToKind,
   vmSnapshotDeviceKindToId,
 } from "./vm_snapshot_wasm";
+import { decodeUsbSnapshotContainer, encodeUsbSnapshotContainer, USB_SNAPSHOT_TAG_EHCI, USB_SNAPSHOT_TAG_UHCI } from "./usb_snapshot_container";
 
 export type IoWorkerSnapshotDeviceState = { kind: string; bytes: Uint8Array };
 
 export type IoWorkerSnapshotRuntimes = Readonly<{
   usbUhciRuntime: unknown | null;
   usbUhciControllerBridge: unknown | null;
+  usbEhciControllerBridge: unknown | null;
   i8042?: unknown | null;
   audioHda?: unknown | null;
   netE1000: unknown | null;
@@ -68,28 +70,50 @@ function tryLoadState(instance: unknown, bytes: Uint8Array): boolean {
   return true;
 }
 
-export function snapshotUsbDeviceState(runtimes: Pick<IoWorkerSnapshotRuntimes, "usbUhciRuntime" | "usbUhciControllerBridge">): IoWorkerSnapshotDeviceState | null {
+export function snapshotUsbDeviceState(
+  runtimes: Pick<IoWorkerSnapshotRuntimes, "usbUhciRuntime" | "usbUhciControllerBridge" | "usbEhciControllerBridge">,
+): IoWorkerSnapshotDeviceState | null {
+  let uhciBytes: Uint8Array | null = null;
   const runtime = runtimes.usbUhciRuntime;
   if (runtime) {
     try {
       const bytes = trySaveState(runtime);
-      if (bytes) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes };
+      if (bytes) uhciBytes = bytes;
     } catch (err) {
       console.warn("[io.worker] UhciRuntime save_state failed:", err);
     }
   }
 
   const bridge = runtimes.usbUhciControllerBridge;
-  if (bridge) {
+  if (!uhciBytes && bridge) {
     try {
       const bytes = trySaveState(bridge);
-      if (bytes) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes };
+      if (bytes) uhciBytes = bytes;
     } catch (err) {
       console.warn("[io.worker] UhciControllerBridge save_state failed:", err);
     }
   }
 
-  return null;
+  let ehciBytes: Uint8Array | null = null;
+  const ehci = runtimes.usbEhciControllerBridge;
+  if (ehci) {
+    try {
+      const bytes = trySaveState(ehci);
+      if (bytes) ehciBytes = bytes;
+    } catch (err) {
+      console.warn("[io.worker] EhciControllerBridge save_state failed:", err);
+    }
+  }
+
+  if (!uhciBytes && !ehciBytes) return null;
+
+  // Backwards compatibility: older snapshots contain a single UHCI blob.
+  if (uhciBytes && !ehciBytes) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: uhciBytes };
+
+  const entries: Array<{ tag: string; bytes: Uint8Array }> = [];
+  if (uhciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_UHCI, bytes: uhciBytes });
+  if (ehciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_EHCI, bytes: ehciBytes });
+  return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: encodeUsbSnapshotContainer(entries) };
 }
 
 export function snapshotI8042DeviceState(i8042: unknown | null): IoWorkerSnapshotDeviceState | null {
@@ -157,24 +181,56 @@ export function collectIoWorkerSnapshotDeviceStates(runtimes: IoWorkerSnapshotRu
   return devices;
 }
 
-export function restoreUsbDeviceState(runtimes: Pick<IoWorkerSnapshotRuntimes, "usbUhciRuntime" | "usbUhciControllerBridge">, bytes: Uint8Array): void {
-  const runtime = runtimes.usbUhciRuntime;
-  if (runtime) {
-    try {
-      if (tryLoadState(runtime, bytes)) return;
-    } catch (err) {
-      console.warn("[io.worker] UhciRuntime load_state failed:", err);
+export function restoreUsbDeviceState(
+  runtimes: Pick<IoWorkerSnapshotRuntimes, "usbUhciRuntime" | "usbUhciControllerBridge" | "usbEhciControllerBridge">,
+  bytes: Uint8Array,
+): void {
+  const restoreUhci = (uhciBytes: Uint8Array): void => {
+    // Backwards compatibility: the entire blob is a UHCI snapshot.
+    const runtime = runtimes.usbUhciRuntime;
+    if (runtime) {
+      try {
+        if (tryLoadState(runtime, uhciBytes)) return;
+      } catch (err) {
+        console.warn("[io.worker] UhciRuntime load_state failed:", err);
+      }
     }
+
+    const bridge = runtimes.usbUhciControllerBridge;
+    if (bridge) {
+      try {
+        tryLoadState(bridge, uhciBytes);
+      } catch (err) {
+        console.warn("[io.worker] UhciControllerBridge load_state failed:", err);
+      }
+    }
+  };
+
+  const decoded = decodeUsbSnapshotContainer(bytes);
+  if (decoded) {
+    const uhci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)?.bytes ?? null;
+    const ehci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_EHCI)?.bytes ?? null;
+    if (uhci) restoreUhci(uhci);
+    if (ehci) {
+      const bridge = runtimes.usbEhciControllerBridge;
+      if (!bridge) {
+        console.warn("[io.worker] Snapshot contains EHCI USB state but EhciControllerBridge runtime is unavailable; ignoring blob.");
+      } else {
+        try {
+          if (!tryLoadState(bridge, ehci)) {
+            console.warn(
+              "[io.worker] Snapshot contains EHCI USB state but EhciControllerBridge has no load_state/restore_state hook; ignoring blob.",
+            );
+          }
+        } catch (err) {
+          console.warn("[io.worker] EhciControllerBridge load_state failed:", err);
+        }
+      }
+    }
+    return;
   }
 
-  const bridge = runtimes.usbUhciControllerBridge;
-  if (bridge) {
-    try {
-      tryLoadState(bridge, bytes);
-    } catch (err) {
-      console.warn("[io.worker] UhciControllerBridge load_state failed:", err);
-    }
-  }
+  restoreUhci(bytes);
 }
 
 export function restoreI8042DeviceState(i8042: unknown | null, bytes: Uint8Array): void {

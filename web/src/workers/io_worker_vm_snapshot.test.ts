@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { vi } from "vitest";
 
 import type { WasmApi } from "../runtime/wasm_loader";
-import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs } from "./io_worker_vm_snapshot";
+import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs, snapshotUsbDeviceState, restoreUsbDeviceState } from "./io_worker_vm_snapshot";
 import {
   VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
   VM_SNAPSHOT_DEVICE_ID_E1000,
@@ -46,6 +46,7 @@ describe("workers/io_worker_vm_snapshot", () => {
       runtimes: {
         usbUhciRuntime,
         usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
         i8042,
         audioHda,
         netE1000,
@@ -106,6 +107,7 @@ describe("workers/io_worker_vm_snapshot", () => {
       runtimes: {
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
         i8042: { load_state: i8042Load },
         audioHda: { load_state: hdaLoad },
         netE1000: { load_state: e1000Load },
@@ -168,6 +170,7 @@ describe("workers/io_worker_vm_snapshot", () => {
       runtimes: {
         usbUhciRuntime: { save_state: () => usbState },
         usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
         i8042: { save_state: () => i8042State },
         audioHda: { save_state: () => hdaState },
         netE1000: { save_state: () => e1000State },
@@ -230,6 +233,7 @@ describe("workers/io_worker_vm_snapshot", () => {
       runtimes: {
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
         i8042: { load_state: i8042Load },
         audioHda: { load_state: hdaLoad },
         netE1000: { load_state: e1000Load },
@@ -268,6 +272,7 @@ describe("workers/io_worker_vm_snapshot", () => {
           runtimes: {
             usbUhciRuntime: null,
             usbUhciControllerBridge: null,
+            usbEhciControllerBridge: null,
             netE1000: null,
             netStack: null,
           },
@@ -278,5 +283,35 @@ describe("workers/io_worker_vm_snapshot", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it("round-trips a synthetic USB snapshot container with both UHCI + EHCI controller blobs", () => {
+    const uhciBytes = new Uint8Array([0x01, 0x02, 0x03]);
+    const ehciBytes = new Uint8Array([0x04, 0x05]);
+
+    const usbBlob = snapshotUsbDeviceState({
+      usbUhciRuntime: { save_state: () => uhciBytes },
+      usbUhciControllerBridge: null,
+      usbEhciControllerBridge: { save_state: () => ehciBytes },
+    });
+
+    expect(usbBlob?.kind).toBe("usb.uhci");
+    expect(usbBlob?.bytes).toBeInstanceOf(Uint8Array);
+
+    const uhciLoad = vi.fn();
+    const ehciLoad = vi.fn();
+    restoreUsbDeviceState(
+      {
+        usbUhciRuntime: { load_state: uhciLoad },
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: { load_state: ehciLoad },
+      },
+      usbBlob!.bytes,
+    );
+
+    expect(uhciLoad).toHaveBeenCalledWith(expect.any(Uint8Array));
+    expect((uhciLoad.mock.calls[0]![0] as Uint8Array)).toEqual(uhciBytes);
+    expect(ehciLoad).toHaveBeenCalledWith(expect.any(Uint8Array));
+    expect((ehciLoad.mock.calls[0]![0] as Uint8Array)).toEqual(ehciBytes);
   });
 });

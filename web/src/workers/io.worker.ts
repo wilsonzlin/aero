@@ -163,6 +163,7 @@ import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy
 import { drainIoHidInputRing } from "./io_hid_input_ring";
 import { forwardHidSendReportToMainThread } from "./io_hid_output_report_forwarding";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
+import { decodeUsbSnapshotContainer, encodeUsbSnapshotContainer, USB_SNAPSHOT_TAG_EHCI, USB_SNAPSHOT_TAG_UHCI } from "./usb_snapshot_container";
 import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
   VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND,
@@ -483,6 +484,9 @@ let virtioNetDevice: VirtioNetPciDevice | null = null;
 let virtioSndDevice: VirtioSndPciDevice | null = null;
 type UhciControllerBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
 let uhciControllerBridge: UhciControllerBridge | null = null;
+// EHCI is optional and not yet present in all builds; keep as `unknown` so snapshot plumbing can
+// preserve controller state when a bridge is wired in.
+let ehciControllerBridge: unknown | null = null;
 
 let e1000Device: E1000PciDevice | null = null;
 type E1000Bridge = InstanceType<NonNullable<WasmApi["E1000Bridge"]>>;
@@ -642,35 +646,55 @@ ctx.addEventListener(
 );
 
 function snapshotUsbDeviceState(): { kind: string; bytes: Uint8Array } | null {
+  const trySave = (instance: unknown): Uint8Array | null => {
+    if (!instance || typeof instance !== "object") return null;
+    const save =
+      (instance as unknown as { save_state?: unknown }).save_state ??
+      (instance as unknown as { snapshot_state?: unknown }).snapshot_state;
+    if (typeof save !== "function") return null;
+    const bytes = save.call(instance) as unknown;
+    return bytes instanceof Uint8Array ? bytes : null;
+  };
+
+  let uhciBytes: Uint8Array | null = null;
   const runtime = uhciRuntime;
   if (runtime) {
-    const save =
-      (runtime as unknown as { save_state?: unknown }).save_state ?? (runtime as unknown as { snapshot_state?: unknown }).snapshot_state;
-    if (typeof save === "function") {
-      try {
-        const bytes = save.call(runtime) as unknown;
-        if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes };
-      } catch (err) {
-        console.warn("[io.worker] UhciRuntime save_state failed:", err);
-      }
+    try {
+      uhciBytes = trySave(runtime);
+    } catch (err) {
+      console.warn("[io.worker] UhciRuntime save_state failed:", err);
     }
   }
-
-  const bridge = uhciControllerBridge;
-  if (bridge) {
-    const save =
-      (bridge as unknown as { save_state?: unknown }).save_state ?? (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
-    if (typeof save === "function") {
+  if (!uhciBytes) {
+    const bridge = uhciControllerBridge;
+    if (bridge) {
       try {
-        const bytes = save.call(bridge) as unknown;
-        if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes };
+        uhciBytes = trySave(bridge);
       } catch (err) {
         console.warn("[io.worker] UhciControllerBridge save_state failed:", err);
       }
     }
   }
 
-  return null;
+  let ehciBytes: Uint8Array | null = null;
+  const ehci = ehciControllerBridge;
+  if (ehci) {
+    try {
+      ehciBytes = trySave(ehci);
+    } catch (err) {
+      console.warn("[io.worker] EhciControllerBridge save_state failed:", err);
+    }
+  }
+
+  if (!uhciBytes && !ehciBytes) return null;
+
+  // Backwards compatibility: when only UHCI exists, keep emitting the legacy raw UHCI blob.
+  if (uhciBytes && !ehciBytes) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: uhciBytes };
+
+  const entries: Array<{ tag: string; bytes: Uint8Array }> = [];
+  if (uhciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_UHCI, bytes: uhciBytes });
+  if (ehciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_EHCI, bytes: ehciBytes });
+  return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: encodeUsbSnapshotContainer(entries) };
 }
 
 function snapshotI8042DeviceState(): { kind: string; bytes: Uint8Array } | null {
@@ -710,23 +734,69 @@ function snapshotE1000DeviceState(): { kind: string; bytes: Uint8Array } | null 
 }
 
 function restoreUsbDeviceState(bytes: Uint8Array): void {
-  const runtime = uhciRuntime;
-  if (runtime) {
+  const tryLoad = (instance: unknown, data: Uint8Array): boolean => {
+    if (!instance || typeof instance !== "object") return false;
     const load =
-      (runtime as unknown as { load_state?: unknown }).load_state ?? (runtime as unknown as { restore_state?: unknown }).restore_state;
-    if (typeof load === "function") {
-      load.call(runtime, bytes);
-      return;
+      (instance as unknown as { load_state?: unknown }).load_state ??
+      (instance as unknown as { restore_state?: unknown }).restore_state;
+    if (typeof load !== "function") return false;
+    load.call(instance, data);
+    return true;
+  };
+
+  const restoreUhci = (data: Uint8Array): void => {
+    const runtime = uhciRuntime;
+    if (runtime) {
+      try {
+        if (tryLoad(runtime, data)) return;
+      } catch (err) {
+        console.warn("[io.worker] UhciRuntime load_state failed:", err);
+      }
     }
+
+    const bridge = uhciControllerBridge;
+    if (bridge) {
+      try {
+        tryLoad(bridge, data);
+      } catch (err) {
+        console.warn("[io.worker] UhciControllerBridge load_state failed:", err);
+      }
+    }
+  };
+
+  const decoded = decodeUsbSnapshotContainer(bytes);
+  if (decoded) {
+    const uhci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)?.bytes ?? null;
+    const ehci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_EHCI)?.bytes ?? null;
+    if (uhci) restoreUhci(uhci);
+    if (ehci) {
+      const bridge = ehciControllerBridge;
+      if (!bridge) {
+        console.warn("[io.worker] Snapshot contains EHCI USB state but EhciControllerBridge runtime is unavailable; ignoring blob.");
+      } else {
+        try {
+          if (!tryLoad(bridge, ehci)) {
+            console.warn("[io.worker] Snapshot contains EHCI USB state but EhciControllerBridge has no load_state/restore_state hook; ignoring blob.");
+          }
+        } catch (err) {
+          console.warn("[io.worker] EhciControllerBridge load_state failed:", err);
+        }
+      }
+    }
+  } else {
+    // Backwards compatibility: legacy snapshots stored only a UHCI blob.
+    restoreUhci(bytes);
   }
 
-  const bridge = uhciControllerBridge;
-  if (bridge) {
-    const load =
-      (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
-    if (typeof load === "function") {
-      load.call(bridge, bytes);
-      return;
+  // WebUSB host actions are backed by JS Promises and cannot be resumed after restoring a VM
+  // snapshot. Cancel any in-flight worker-side awaits so the guest can re-emit actions instead of
+  // deadlocking on completions that will never arrive.
+  if (usbPassthroughRuntime) {
+    try {
+      usbPassthroughRuntime.stop();
+      usbPassthroughRuntime.start();
+    } catch (err) {
+      console.warn("[io.worker] Failed to reset WebUSB passthrough runtime after snapshot restore", err);
     }
   }
 }
