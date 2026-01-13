@@ -15,7 +15,7 @@ use std::io;
 use crate::ata::{
     AtaDrive, ATA_CMD_FLUSH_CACHE, ATA_CMD_FLUSH_CACHE_EXT, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA,
     ATA_CMD_READ_DMA_EXT, ATA_CMD_SET_FEATURES, ATA_CMD_WRITE_DMA, ATA_CMD_WRITE_DMA_EXT,
-    ATA_ERROR_ABRT, ATA_STATUS_DRDY, ATA_STATUS_DSC, ATA_STATUS_ERR,
+    ATA_ERROR_ABRT, ATA_STATUS_BSY, ATA_STATUS_DRDY, ATA_STATUS_DSC, ATA_STATUS_ERR,
 };
 use aero_devices::irq::IrqLine;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
@@ -73,6 +73,10 @@ const PORT_IS_TFES: u32 = 1 << 30;
 
 /// SATA drive signature (PxSIG) for an ATA device.
 const SATA_SIG_ATA: u32 = 0x0000_0101;
+
+// PxSCTL.DET (Device Detection Initialization) values.
+const SCTL_DET_MASK: u32 = 0x0F;
+const SCTL_DET_COMRESET: u32 = 1;
 
 #[derive(Debug, Clone, Copy)]
 struct HbaRegs {
@@ -409,7 +413,52 @@ impl AhciController {
                 port.regs.cmd = val & !(PORT_CMD_FR | PORT_CMD_CR);
                 port.regs.update_running_bits();
             }
-            PORT_REG_SCTL => port.regs.sctl = val,
+            PORT_REG_SCTL => {
+                // Model the minimal PxSCTL.DET COMRESET sequence that many AHCI drivers use for
+                // link bring-up.
+                //
+                // Typical flow:
+                //   PxSCTL.DET = 1 (COMRESET)
+                //   PxSCTL.DET = 0 (idle)
+                //   Poll PxSSTS/PxTFD for device present/ready.
+                //
+                // We emulate this synchronously: DET=1 immediately forces the port into a
+                // transient "resetting" view (DET=0, BSY set). A subsequent transition back to
+                // DET=0 immediately completes the reset, restoring the link status and task file
+                // status for any attached drive.
+                let old_det = port.regs.sctl & SCTL_DET_MASK;
+                let new_det = val & SCTL_DET_MASK;
+
+                port.regs.sctl = val;
+
+                // COMRESET asserted: drop link status and mark device busy.
+                if new_det == SCTL_DET_COMRESET {
+                    port.regs.ssts = 0;
+                    port.regs.sig = 0;
+                    port.regs.tfd = if port.present {
+                        u32::from(ATA_STATUS_BSY)
+                    } else {
+                        0
+                    };
+                }
+
+                // COMRESET deasserted: if we were previously in DET=1, bring the link back up.
+                if old_det == SCTL_DET_COMRESET && new_det == 0 {
+                    if port.present {
+                        // DET=3 (device present), SPD=1 (Gen1), IPM=1 (active).
+                        port.regs.ssts = (1 << 8) | (1 << 4) | 3;
+                        port.regs.sig = SATA_SIG_ATA;
+                        port.regs.tfd = u32::from(ATA_STATUS_DRDY | ATA_STATUS_DSC);
+
+                        // Signal that the device-to-host register FIS has been received.
+                        port.regs.is |= PORT_IS_DHRS;
+                    } else {
+                        port.regs.ssts = 0;
+                        port.regs.sig = 0;
+                        port.regs.tfd = 0;
+                    }
+                }
+            }
             PORT_REG_SERR => {
                 // Write 1 to clear.
                 port.regs.serr &= !val;
@@ -1153,6 +1202,51 @@ mod tests {
         // present and respond to IDENTIFY.
         program_regs(&mut ctl);
         run_identify(&mut ctl, &mut mem);
+    }
+
+    #[test]
+    fn comreset_sequence_sets_link_up_and_ready_and_interrupts() {
+        let (mut ctl, irq, _mem, drive) = setup_controller();
+        ctl.attach_drive(0, drive);
+
+        // Enable the DHRS interrupt so we can observe link-reset completion.
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        ctl.write_u32(PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+
+        // Assert COMRESET.
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 1);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 0);
+        assert_ne!(
+            ctl.read_u32(PORT_BASE + PORT_REG_TFD) & (ATA_STATUS_BSY as u32),
+            0
+        );
+        assert!(!irq.level(), "COMRESET assert should not raise DHRS");
+
+        // Deassert COMRESET and complete synchronously.
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 0);
+
+        // DET=3, SPD=1, IPM=1.
+        let ssts = ctl.read_u32(PORT_BASE + PORT_REG_SSTS);
+        assert_eq!(ssts & 0xF, 3);
+        assert_eq!((ssts >> 4) & 0xF, 1);
+        assert_eq!((ssts >> 8) & 0xF, 1);
+
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), SATA_SIG_ATA);
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_TFD) & 0xFF,
+            (ATA_STATUS_DRDY | ATA_STATUS_DSC) as u32
+        );
+
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_IS) & PORT_IS_DHRS,
+            PORT_IS_DHRS
+        );
+        assert!(irq.level(), "reset completion should assert IRQ via DHRS");
+
+        // Clear the interrupt and verify the line deasserts.
+        ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+        assert!(!irq.level());
+        assert_eq!(irq.transitions(), vec![true, false]);
     }
 
     #[test]
