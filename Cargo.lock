@@ -55,6 +55,8 @@ dependencies = [
  "aero-platform",
  "criterion",
  "memory",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
