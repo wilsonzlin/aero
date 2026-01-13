@@ -5446,6 +5446,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, status);
 
         ULONG completedFence32 = 0;
+        ULONG lastSubmitted32Snapshot = 0;
         BOOLEAN haveCompletedFence = FALSE;
         if ((handled & (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_ERROR)) != 0) {
             const ULONGLONG completedFence64 = AeroGpuReadCompletedFence(adapter);
@@ -5458,6 +5459,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             completedFence32 = (ULONG)completedFence64;
             const ULONG lastCompleted32 = (ULONG)adapter->LastCompletedFence;
             const ULONG lastSubmitted32 = (ULONG)adapter->LastSubmittedFence;
+            lastSubmitted32Snapshot = lastSubmitted32;
             if (completedFence32 < lastCompleted32) {
                 completedFence32 = lastCompleted32;
             }
@@ -5473,7 +5475,23 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
 
         if ((handled & AEROGPU_IRQ_ERROR) != 0) {
             InterlockedExchange(&adapter->DeviceErrorLatched, 1);
-            const ULONGLONG errorFence = haveCompletedFence ? (ULONGLONG)completedFence32 : adapter->LastCompletedFence;
+            /*
+             * Choose a faulted fence ID that dxgkrnl can associate with a DMA buffer.
+             *
+             * If the interrupt also carried a fence completion bit, the completed fence is the best
+             * approximation. If the device signaled ERROR without FENCE (for example, a failure that
+             * arrives before a vsync-delayed fence completes), report the *next* in-flight fence so the
+             * faulted fence ID is not trivially <= the last completed fence.
+             */
+            ULONG errorFence32 = haveCompletedFence ? completedFence32 : (ULONG)adapter->LastCompletedFence;
+            if (((handled & AEROGPU_IRQ_FENCE) == 0) && (errorFence32 < lastSubmitted32Snapshot) && (errorFence32 != 0xFFFFFFFFu)) {
+                ULONG nextFence = errorFence32 + 1;
+                if (nextFence > lastSubmitted32Snapshot) {
+                    nextFence = lastSubmitted32Snapshot;
+                }
+                errorFence32 = nextFence;
+            }
+            const ULONGLONG errorFence = (ULONGLONG)errorFence32;
             AeroGpuAtomicWriteU64(&adapter->LastErrorFence, errorFence);
 
             const ULONGLONG n = (ULONGLONG)InterlockedIncrement64((volatile LONGLONG*)&adapter->ErrorIrqCount);
@@ -5690,7 +5708,16 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                     }
                     adapter->LastCompletedFence = (ULONGLONG)completedFence32;
 
-                    const ULONGLONG errorFence = (ULONGLONG)completedFence32;
+                    /* Legacy MMIO ERROR interrupts do not carry a fence completion bit; report the next in-flight fence. */
+                    ULONG errorFence32 = completedFence32;
+                    if ((errorFence32 < lastSubmitted32) && (errorFence32 != 0xFFFFFFFFu)) {
+                        ULONG nextFence = errorFence32 + 1;
+                        if (nextFence > lastSubmitted32) {
+                            nextFence = lastSubmitted32;
+                        }
+                        errorFence32 = nextFence;
+                    }
+                    const ULONGLONG errorFence = (ULONGLONG)errorFence32;
                     AeroGpuAtomicWriteU64(&adapter->LastErrorFence, errorFence);
                     const ULONGLONG n =
                         (ULONGLONG)InterlockedIncrement64((volatile LONGLONG*)&adapter->ErrorIrqCount);
