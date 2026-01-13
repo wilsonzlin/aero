@@ -193,7 +193,17 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
         // declarations are preserved as `Sm4Decl::Unknown` so later stages can still decide
         // whether they're important.
         if in_decls && opcode >= DECLARATION_OPCODE_MIN {
-            let decl = decode_decl(opcode, inst_toks, i).unwrap_or(Sm4Decl::Unknown { opcode });
+            // Most declarations are best-effort decoded: if we can't interpret the encoding we
+            // preserve them as `Unknown` and continue.
+            //
+            // `dcl_thread_group` is special: its payload is required for compute translation
+            // (`@workgroup_size`), and its encoding is fixed (three immediate DWORDs). If it is
+            // malformed, surface the decode error rather than silently dropping the declaration.
+            let decl = if opcode == OPCODE_DCL_THREAD_GROUP {
+                decode_decl(opcode, inst_toks, i)?
+            } else {
+                decode_decl(opcode, inst_toks, i).unwrap_or(Sm4Decl::Unknown { opcode })
+            };
             decls.push(decl);
             i += len;
             continue;

@@ -1353,6 +1353,24 @@ fn rejects_truncated_sm5_thread_group_decl() {
 }
 
 #[test]
+fn rejects_sm5_thread_group_decl_with_too_small_declared_len() {
+    // Malformed opcode token that claims the declaration is shorter than its fixed payload.
+    // (Still in-bounds per the length field, so this exercises the per-declaration reader.)
+    let body = [opcode_token(OPCODE_DCL_THREAD_GROUP, 1), opcode_token(OPCODE_RET, 1)];
+
+    let tokens = make_sm5_program_tokens(5, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+
+    let err = decode_program(&program).expect_err("decode should fail");
+    assert_eq!(err.at_dword, 3);
+    assert!(matches!(
+        err.kind,
+        aero_d3d11::sm4::decode::Sm4DecodeErrorKind::UnexpectedEof { .. }
+    ));
+}
+
+#[test]
 fn decodes_ld_raw() {
     let mut body = Vec::<u32>::new();
 
