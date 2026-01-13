@@ -432,6 +432,21 @@ For L2 tunnel bridging, the relevant counters include:
 - `l2_bridge_dropped_oversized_total` (message exceeded `L2_MAX_MESSAGE_BYTES`)
 - `l2_bridge_dropped_rate_limited_total` (relay→client frame dropped by per-session DataChannel quota)
 
+### L2 bridge logs
+
+For production debugging, the relay emits structured logs (via `log/slog`) for key L2 bridge lifecycle events:
+
+- `l2_bridge_backend_dial_succeeded` (INFO): backend WebSocket dial succeeded
+  - fields: `session_id`, `backend_ws_url` (query/userinfo stripped), `dial_duration_ms`
+- `l2_bridge_backend_dial_failed` (WARN): backend WebSocket dial failed
+  - fields: `session_id`, `backend_ws_url` (query/userinfo stripped), `dial_duration_ms`, optional `status_code`, `err` (redacted)
+- `l2_bridge_shutdown` (INFO/WARN): bridge torn down (e.g. backend closed, datachannel closed, oversized message)
+  - fields: `reason`, `session_id`, optional `direction`, `msg_bytes`, `max_bytes`, optional `ws_close_code`, `ws_close_text` (redacted), `err` (redacted)
+- `l2_bridge_dropped_rate_limited` (WARN, emitted once per bridge): backend→client frame dropped by DataChannel quota
+  - fields: `session_id`, `msg_bytes`
+
+Note: logs are best-effort redacted to avoid leaking credentials (query tokens, forwarded cookies, etc.).
+
 ### Quota + rate limiting (env + flags)
 
 Per-session quotas and rate limits are enforced on the **data plane** (WebRTC DataChannel ↔ UDP):
