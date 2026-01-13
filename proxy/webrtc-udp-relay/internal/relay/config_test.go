@@ -1,8 +1,6 @@
 package relay
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestDefaultConfig_UDPReadBufferBytes_IsMaxDatagramPayloadBytesPlusOne(t *testing.T) {
 	cfg := DefaultConfig()
@@ -28,5 +26,19 @@ func TestConfigWithDefaults_UDPReadBufferBytes_DefaultsRelativeToMaxPayload(t *t
 	}
 	if cfg.UDPReadBufferBytes != 1401 {
 		t.Fatalf("UDPReadBufferBytes=%d, want %d (max payload + 1)", cfg.UDPReadBufferBytes, 1401)
+	}
+}
+
+func TestConfigWithDefaults_DefaultInboundFilterModeIsAddressAndPort(t *testing.T) {
+	cfg := (Config{}).WithDefaults()
+	if cfg.InboundFilterMode != InboundFilterAddressAndPort {
+		t.Fatalf("InboundFilterMode=%v, want %v", cfg.InboundFilterMode, InboundFilterAddressAndPort)
+	}
+}
+
+func TestConfigWithDefaults_ClampsInvalidInboundFilterMode(t *testing.T) {
+	cfg := (Config{InboundFilterMode: InboundFilterMode(123)}).WithDefaults()
+	if cfg.InboundFilterMode != InboundFilterAddressAndPort {
+		t.Fatalf("InboundFilterMode=%v, want %v", cfg.InboundFilterMode, InboundFilterAddressAndPort)
 	}
 }
