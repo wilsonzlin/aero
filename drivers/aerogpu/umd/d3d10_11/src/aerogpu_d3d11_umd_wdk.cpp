@@ -6840,7 +6840,48 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
           return;
         }
 
+        uint32_t lock_pitch = 0;
+        __if_exists(D3DDDICB_LOCK::Pitch) {
+          lock_pitch = lock_args.Pitch;
+        }
+        if (lock_pitch) {
+          uint32_t expected_pitch = dst->row_pitch_bytes;
+          if (!dst->tex2d_subresources.empty()) {
+            expected_pitch = dst->tex2d_subresources[0].row_pitch_bytes;
+          }
+          if (expected_pitch && lock_pitch != expected_pitch) {
+            LogTextureLockPitchMismatchOnce("CopySubresourceRegion11", expected_pitch, lock_pitch);
+            D3DDDICB_UNLOCK unlock_args = {};
+            unlock_args.hAllocation = lock_args.hAllocation;
+            __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+              unlock_args.SubresourceIndex = 0;
+            }
+            __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+              unlock_args.SubResourceIndex = 0;
+            }
+            (void)unlock(&unlock_args);
+            SetError(dev, E_FAIL);
+            return;
+          }
+        }
+
         dst_wddm_pitch = dst_sub_layout.row_pitch_bytes;
+        if (dst_sub_layout.mip_level == 0 && lock_pitch) {
+          dst_wddm_pitch = lock_pitch;
+        }
+        if (dst_sub_layout.offset_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+          D3DDDICB_UNLOCK unlock_args = {};
+          unlock_args.hAllocation = lock_args.hAllocation;
+          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+            unlock_args.SubresourceIndex = 0;
+          }
+          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+            unlock_args.SubResourceIndex = 0;
+          }
+          (void)unlock(&unlock_args);
+          SetError(dev, E_FAIL);
+          return;
+        }
         dst_wddm_bytes = static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(dst_sub_layout.offset_bytes);
       }
 
