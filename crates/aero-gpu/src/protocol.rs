@@ -668,11 +668,12 @@ pub fn parse_cmd_stream(
                 }
             }
             Some(AeroGpuOpcode::BindShaders) => {
-                let cmd: protocol::AerogpuCmdBindShaders = read_packed_prefix(packet)?;
+                let (cmd, _ex) = protocol::decode_cmd_bind_shaders_payload_le(packet)
+                    .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 AeroGpuCmd::BindShaders {
-                    vs: u32::from_le(cmd.vs),
-                    ps: u32::from_le(cmd.ps),
-                    cs: u32::from_le(cmd.cs),
+                    vs: cmd.vs,
+                    ps: cmd.ps,
+                    cs: cmd.cs,
                 }
             }
             Some(AeroGpuOpcode::SetShaderConstantsF) => {

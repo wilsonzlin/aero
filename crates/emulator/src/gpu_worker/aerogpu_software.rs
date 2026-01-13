@@ -3505,17 +3505,16 @@ impl AeroGpuSoftwareExecutor {
                 self.shaders.remove(&handle);
             }
             cmd::AerogpuCmdOpcode::BindShaders => {
-                let packet_cmd =
-                    match Self::read_packed_prefix::<cmd::AerogpuCmdBindShaders>(packet) {
-                        Some(v) => v,
-                        None => {
-                            Self::record_error(regs);
-                            return false;
-                        }
-                    };
-                self.state.vs = u32::from_le(packet_cmd.vs);
-                self.state.ps = u32::from_le(packet_cmd.ps);
-                self.state.cs = u32::from_le(packet_cmd.cs);
+                let (packet_cmd, _ex) = match cmd::decode_cmd_bind_shaders_payload_le(packet) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        Self::record_error(regs);
+                        return false;
+                    }
+                };
+                self.state.vs = packet_cmd.vs;
+                self.state.ps = packet_cmd.ps;
+                self.state.cs = packet_cmd.cs;
             }
             cmd::AerogpuCmdOpcode::SetShaderConstantsF => {
                 // Currently ignored by the software backend.
