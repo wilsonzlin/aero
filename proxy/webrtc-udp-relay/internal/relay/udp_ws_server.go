@@ -135,6 +135,33 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 	}
 
+	// Keepalive / idle detection for long-lived /udp connections.
+	//
+	// We install the ping handler immediately (before auth) to ensure we serialize
+	// any pong writes with our write mutex. The default gorilla/websocket ping
+	// handler writes a pong frame directly and can race with our concurrent writers
+	// (pings, ready/error messages, close frames).
+	authenticated := s.cfg.AuthMode == config.AuthModeNone
+	sessionKey := ""
+	idleTimeout := s.cfg.UDPWSIdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = config.DefaultUDPWSIdleTimeout
+	}
+	pingInterval := s.cfg.UDPWSPingInterval
+	if pingInterval <= 0 {
+		pingInterval = config.DefaultUDPWSPingInterval
+	}
+	conn.SetPingHandler(func(appData string) error {
+		// Only extend the idle deadline once authenticated; we still want the auth
+		// timeout to apply even if a client is pinging without authenticating.
+		if authenticated {
+			_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
+		}
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(wsUDPWriteWait))
+	})
+
 	sendErrorAndClose := func(wsCloseCode int, code, message string) {
 		writeMu.Lock()
 		defer writeMu.Unlock()
@@ -161,8 +188,6 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		metricsSink.Inc(metrics.UDPWSConnections)
 	}
 
-	authenticated := s.cfg.AuthMode == config.AuthModeNone
-	sessionKey := ""
 	if !authenticated {
 		if cred, err := auth.CredentialFromQuery(s.cfg.AuthMode, r.URL.Query()); err == nil {
 			var verifyErr error
@@ -270,15 +295,7 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		authenticated = true
 	}
 
-	// Keepalive / idle detection for long-lived /udp connections (after auth).
-	idleTimeout := s.cfg.UDPWSIdleTimeout
-	if idleTimeout <= 0 {
-		idleTimeout = config.DefaultUDPWSIdleTimeout
-	}
-	pingInterval := s.cfg.UDPWSPingInterval
-	if pingInterval <= 0 {
-		pingInterval = config.DefaultUDPWSPingInterval
-	}
+	// Activate the idle timeout + keepalive ticker after authentication.
 	_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(idleTimeout))

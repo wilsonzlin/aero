@@ -986,6 +986,20 @@ func (wss *wsSession) run() {
 	wss.origin = httpserver.NormalizedOriginFromRequest(wss.req)
 
 	wss.conn.SetReadLimit(wss.maxMessageBytes)
+	// Ensure we always respond to peer pings while serializing writes with the
+	// session's write mutex. The default gorilla/websocket ping handler writes a
+	// pong frame directly and can race with our own concurrent writers (pings,
+	// signaling messages, close frames).
+	wss.conn.SetPingHandler(func(appData string) error {
+		// Only extend the idle deadline once keepalive is active; we still want the
+		// auth timeout to apply even if a client is pinging without authenticating.
+		if wss.keepaliveDone != nil {
+			_ = wss.conn.SetReadDeadline(time.Now().Add(wss.idleTimeout))
+		}
+		wss.writeMu.Lock()
+		defer wss.writeMu.Unlock()
+		return wss.conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(wsWriteWait))
+	})
 
 	var haveOffer bool
 
