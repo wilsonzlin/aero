@@ -6,7 +6,10 @@ use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
 use aero_jit_x86::jit_ctx::{self, JitContext};
 use aero_jit_x86::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
-use aero_jit_x86::tier1::{Tier1WasmCodegen, Tier1WasmOptions, EXPORT_BLOCK_FN};
+use aero_jit_x86::tier1::{
+    discover_block_mode, translate_block, BlockLimits, Tier1WasmCodegen, Tier1WasmOptions,
+    EXPORT_BLOCK_FN,
+};
 use aero_jit_x86::wasm::{
     IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
     IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
@@ -18,7 +21,7 @@ use aero_jit_x86::{
     TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
 };
 use aero_types::{Gpr, Width};
-use tier1_common::{write_cpu_to_wasm_bytes, CpuSnapshot};
+use tier1_common::{write_cpu_to_wasm_bytes, CpuSnapshot, SimpleBus};
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
@@ -1216,6 +1219,52 @@ fn tier1_inline_tlb_mmio_load_exits_to_runtime() {
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_mmio_exit_reports_faulting_rip() {
+    // x86_64:
+    //   mov eax, 0xF000
+    //   mov eax, [rax]   ; MMIO (ram_size is only 0x8000)
+    let entry_rip = 0x1000u64;
+    let code: [u8; 7] = [
+        0xB8, 0x00, 0xF0, 0x00, 0x00, // mov eax, 0xF000
+        0x8B, 0x00, // mov eax, [rax]
+    ];
+
+    let mut bus = SimpleBus::new(0x2000);
+    bus.load(entry_rip, &code);
+
+    let x86_block = discover_block_mode(
+        &bus,
+        entry_rip,
+        BlockLimits {
+            max_insts: 2,
+            max_bytes: 64,
+        },
+        64,
+    );
+    assert_eq!(x86_block.insts.len(), 2);
+
+    let second_rip = x86_block.insts[1].rip;
+    assert_eq!(second_rip, x86_block.insts[0].next_rip());
+
+    let block = translate_block(&x86_block);
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: entry_rip,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x10000];
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
+
+    // MMIO should report the RIP of the faulting *second* instruction, not block entry.
+    assert_eq!(next_rip, second_rip);
+    assert_eq!(got_cpu.rip, second_rip);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 1);
 }
 
 #[test]

@@ -167,6 +167,12 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
     };
 
     for inst in &block.insts {
+        // Keep `CpuState.rip` up to date within the block so runtime exits (MMIO/helper) can resume
+        // precisely at the faulting x86 instruction rather than conservatively restarting at the
+        // block entry RIP.
+        let rip_v = b.const_int(Width::W64, inst.rip & ip_mask);
+        b.write_reg(GuestReg::Rip, rip_v);
+
         match &inst.kind {
             InstKind::Nop => {}
             InstKind::Mov { dst, src, width } => {
