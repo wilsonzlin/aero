@@ -120,7 +120,9 @@ Minimum supported commands:
 
 - `aerogpu_dbgctl --watch-ring --samples N --interval-ms M [--ring-id N]`  
   Polls ring head/tail in a loop and prints **one line per sample** with:
-  - `head`, `tail`, and `pending` (queue depth, computed as `tail-head` / best-effort legacy wraparound), and
+  - `head`, `tail`, and `pending` (queue depth, computed as `tail-head` / best-effort legacy wraparound),
+  - `d_pending` (delta pending since the previous sample),
+  - a stall warning if `pending` stays non-zero and unchanged for multiple intervals, and
   - (when available) the newest descriptor's `fence` and `flags` for quick correlation with fence progression.
   
   Useful for diagnosing whether the emulator/backend is draining submissions (head catches up to tail) and whether the guest is over-submitting.

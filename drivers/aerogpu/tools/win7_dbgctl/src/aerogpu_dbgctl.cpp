@@ -3609,6 +3609,9 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
 
 static int DoWatchRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ringId, uint32_t samples,
                        uint32_t intervalMs) {
+  // Stall threshold: warn after ~2 seconds of no observed pending-count change while work is pending.
+  static const uint32_t kStallWarnTimeMs = 2000;
+
   if (samples == 0 || intervalMs == 0) {
     fwprintf(stderr, L"--watch-ring requires --samples N and --interval-ms N\n");
     PrintUsage();
@@ -3662,6 +3665,10 @@ static int DoWatchRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t r
   bool decided = false;
   bool useV2 = false;
   uint32_t v2DescCapacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+  bool havePrevPending = false;
+  uint64_t prevPending = 0;
+  uint32_t stallIntervals = 0;
+  const uint32_t stallWarnIntervals = (intervalMs != 0) ? ((kStallWarnTimeMs + intervalMs - 1) / intervalMs) : 3;
 
   for (uint32_t i = 0; i < samples; ++i) {
     uint32_t head = 0;
@@ -3771,15 +3778,29 @@ static int DoWatchRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t r
       }
     }
 
-    if (haveLast) {
-      wprintf(L"ring[%lu/%lu] fmt=%s head=%lu tail=%lu pending=%I64u last_fence=0x%I64x last_flags=0x%08lx\n",
-              (unsigned long)(i + 1), (unsigned long)samples, fmtStr, (unsigned long)head, (unsigned long)tail,
-              (unsigned long long)pending, (unsigned long long)lastFence, (unsigned long)lastFlags);
+    const int64_t dPending = havePrevPending ? ((int64_t)pending - (int64_t)prevPending) : 0;
+    if (havePrevPending && pending != 0 && pending == prevPending) {
+      stallIntervals += 1;
     } else {
-      wprintf(L"ring[%lu/%lu] fmt=%s head=%lu tail=%lu pending=%I64u\n", (unsigned long)(i + 1),
-              (unsigned long)samples, fmtStr, (unsigned long)head, (unsigned long)tail, (unsigned long long)pending);
+      stallIntervals = 0;
+    }
+    const bool warnStall = (stallIntervals != 0 && stallIntervals >= stallWarnIntervals);
+    const wchar_t *warn = warnStall ? L"STALL" : L"-";
+
+    if (haveLast) {
+      wprintf(L"ring[%lu/%lu] fmt=%s head=%lu tail=%lu pending=%I64u d_pending=%I64d stall_intervals=%lu warn=%s last_fence=0x%I64x last_flags=0x%08lx\n",
+              (unsigned long)(i + 1), (unsigned long)samples, fmtStr, (unsigned long)head, (unsigned long)tail,
+              (unsigned long long)pending, (long long)dPending, (unsigned long)stallIntervals, warn,
+              (unsigned long long)lastFence, (unsigned long)lastFlags);
+    } else {
+      wprintf(L"ring[%lu/%lu] fmt=%s head=%lu tail=%lu pending=%I64u d_pending=%I64d stall_intervals=%lu warn=%s\n",
+              (unsigned long)(i + 1), (unsigned long)samples, fmtStr, (unsigned long)head, (unsigned long)tail,
+              (unsigned long long)pending, (long long)dPending, (unsigned long)stallIntervals, warn);
     }
     fflush(stdout);
+
+    prevPending = pending;
+    havePrevPending = true;
 
     if (i + 1 < samples) {
       Sleep(intervalMs);
@@ -6345,14 +6366,14 @@ int wmain(int argc, wchar_t **argv) {
     return (rc != 0) ? rc : writeRc;
   }
 
-  if (cmd == CMD_WATCH_FENCE) {
+  if (cmd == CMD_WATCH_FENCE || cmd == CMD_WATCH_RING) {
     if (!watchSamplesSet) {
-      fwprintf(stderr, L"--watch-fence requires --samples N\n");
+      fwprintf(stderr, L"%s requires --samples N\n", (cmd == CMD_WATCH_RING) ? L"--watch-ring" : L"--watch-fence");
       PrintUsage();
       return 1;
     }
     if (!watchIntervalSet) {
-      fwprintf(stderr, L"--watch-fence requires --interval-ms M\n");
+      fwprintf(stderr, L"%s requires --interval-ms M\n", (cmd == CMD_WATCH_RING) ? L"--watch-ring" : L"--watch-fence");
       PrintUsage();
       return 1;
     }
