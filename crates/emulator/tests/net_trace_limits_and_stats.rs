@@ -57,6 +57,26 @@ fn drops_records_when_max_bytes_exceeded_and_clear_resets_counters() {
 }
 
 #[test]
+fn drops_records_when_max_records_exceeded() {
+    let tracer = NetTracer::new(NetTraceConfig {
+        max_records: 1,
+        max_bytes: 1024,
+        ..NetTraceConfig::default()
+    });
+    tracer.enable();
+
+    let frame = [0u8; 14];
+    tracer.record_ethernet(FrameDirection::GuestTx, &frame);
+    tracer.record_ethernet(FrameDirection::GuestRx, &frame);
+
+    let stats = tracer.stats();
+    assert_eq!(stats.records, 1);
+    assert_eq!(stats.bytes, 14);
+    assert_eq!(stats.dropped_records, 1);
+    assert_eq!(stats.dropped_bytes, 14);
+}
+
+#[test]
 fn export_pcapng_has_section_header_block() {
     let tracer = NetTracer::new(NetTraceConfig::default());
     tracer.enable();
