@@ -9,6 +9,7 @@ use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
 use aero_pc_constants::{
     PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_SIZE, PCIE_ECAM_START_BUS,
 };
+use aero_pci_routing as pci_routing;
 use firmware::acpi::{
     checksum8, find_rsdp_in_memory, parse_header, parse_rsdp_v2, parse_rsdt_entries,
     parse_xsdt_entries, validate_table_checksum, AcpiConfig, AcpiTables, DEFAULT_EBDA_BASE,
@@ -553,8 +554,8 @@ fn dsdt_contains_pci_routing_and_resources() {
     for dev in 1u32..=31 {
         let addr = (dev << 16) | 0xFFFF;
         for pin in 0u8..=3 {
-            let pirq = ((dev as usize) + (pin as usize)) & 3;
-            expected.push((addr, pin, pirq_to_gsi[pirq]));
+            let gsi = pci_routing::gsi_for_intx(pirq_to_gsi, dev as u8, pin);
+            expected.push((addr, pin, gsi));
         }
     }
     assert_eq!(prt, expected);

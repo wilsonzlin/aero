@@ -2,6 +2,7 @@ use aero_acpi::{
     AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory, DEFAULT_ACPI_ALIGNMENT,
     DEFAULT_ACPI_NVS_SIZE,
 };
+use aero_pci_routing as pci_routing;
 
 struct TestMemory {
     mem: Vec<u8>,
@@ -320,8 +321,7 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     for dev in 1u32..=31 {
         let addr = (dev << 16) | 0xFFFF;
         for pin in 0u8..=3 {
-            let pirq = ((dev as usize) + (pin as usize)) & 3;
-            let gsi = cfg.pirq_to_gsi[pirq];
+            let gsi = pci_routing::gsi_for_intx(cfg.pirq_to_gsi, dev as u8, pin);
             expected.push((addr, pin, gsi));
         }
     }

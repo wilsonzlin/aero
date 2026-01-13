@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 resolver = "2"
 members = [
     "crates/aero-acpi",
+    "crates/aero-pci-routing",
     "crates/aero-audio",
     "crates/aero-auth-tokens",
     "crates/aero-gpu",

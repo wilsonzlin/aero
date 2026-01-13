@@ -43,6 +43,7 @@ name = "aero-acpi"
 version = "0.1.0"
 dependencies = [
  "aero-devices",
+ "aero-pci-routing",
  "aero-platform",
 ]
 
@@ -163,6 +164,7 @@ dependencies = [
  "aero-devices-input",
  "aero-interrupts",
  "aero-io-snapshot",
+ "aero-pci-routing",
  "aero-platform",
  "aero-snapshot",
  "aero-storage",
@@ -565,6 +567,10 @@ dependencies = [
  "firmware",
  "memory",
 ]
+
+[[package]]
+name = "aero-pci-routing"
+version = "0.1.0"
 
 [[package]]
 name = "aero-perf"
@@ -1923,6 +1929,7 @@ dependencies = [
  "aero-devices",
  "aero-edid",
  "aero-pc-constants",
+ "aero-pci-routing",
  "aero-platform",
  "font8x8",
  "memory",

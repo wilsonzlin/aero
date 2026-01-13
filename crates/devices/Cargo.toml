@@ -11,6 +11,7 @@ name = "aero_devices"
 aero-platform = { path = "../platform" }
 aero-interrupts = { path = "../aero-interrupts" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
+aero-pci-routing = { path = "../aero-pci-routing" }
 aero-devices-input = { path = "../aero-devices-input" }
 aero-storage-adapters = { path = "../aero-storage-adapters" }
 aero-storage = { path = "../aero-storage" }

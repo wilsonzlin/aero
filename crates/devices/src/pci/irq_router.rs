@@ -4,6 +4,7 @@ use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
+use aero_pci_routing as pci_routing;
 use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 
 use super::{PciBdf, PciConfigSpace, PciInterruptPin};
@@ -119,13 +120,12 @@ impl PciIntxRouter {
 
     /// Computes the PIRQ index (0 = A, 1 = B, 2 = C, 3 = D) for a device/pin pair.
     pub fn pirq_index(&self, bdf: PciBdf, pin: PciInterruptPin) -> usize {
-        (pin.index() + bdf.device as usize) & 3
+        pci_routing::pirq_index(bdf.device, pin.index() as u8) as usize
     }
 
     /// Returns the routed GSI for a device/pin pair.
     pub fn gsi_for_intx(&self, bdf: PciBdf, pin: PciInterruptPin) -> u32 {
-        let pirq = self.pirq_index(bdf, pin);
-        self.cfg.pirq_to_gsi[pirq]
+        pci_routing::gsi_for_intx(self.cfg.pirq_to_gsi, bdf.device, pin.index() as u8)
     }
 
     /// Updates a device's config-space `Interrupt Line` and `Interrupt Pin` registers.
@@ -139,8 +139,8 @@ impl PciIntxRouter {
     ) {
         match pin {
             Some(pin) => {
-                let gsi = self.gsi_for_intx(bdf, pin);
-                let line = u8::try_from(gsi).unwrap_or(0xFF);
+                let line =
+                    pci_routing::irq_line_for_intx(self.cfg.pirq_to_gsi, bdf.device, pin.to_config_u8());
                 config.set_interrupt_pin(pin.to_config_u8());
                 config.set_interrupt_line(line);
             }
@@ -655,6 +655,30 @@ mod tests {
                     "_PRT GSI mismatch for device {dev} pin {pin_enum:?}: expected {expected}, got {actual}",
                 );
             }
+        }
+    }
+
+    #[test]
+    fn swizzle_matches_canonical_aero_pci_routing_helpers() {
+        let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+        let pirq_to_gsi = router.cfg.pirq_to_gsi;
+
+        // A small representative set that exercises swizzle + wrap-around.
+        for (device, pin) in [
+            (0, PciInterruptPin::IntA),
+            (0, PciInterruptPin::IntD),
+            (1, PciInterruptPin::IntA),
+            (2, PciInterruptPin::IntD),
+            (4, PciInterruptPin::IntA),
+        ] {
+            let bdf = PciBdf::new(0, device, 0);
+            let pin_index = pin.index() as u8;
+
+            let expected_pirq = pci_routing::pirq_index(device, pin_index) as usize;
+            assert_eq!(router.pirq_index(bdf, pin), expected_pirq);
+
+            let expected_gsi = pci_routing::gsi_for_intx(pirq_to_gsi, device, pin_index);
+            assert_eq!(router.gsi_for_intx(bdf, pin), expected_gsi);
         }
     }
 }

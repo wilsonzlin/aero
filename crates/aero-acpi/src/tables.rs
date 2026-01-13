@@ -1,5 +1,7 @@
 use core::fmt;
 
+use aero_pci_routing as pci_routing;
+
 pub const DEFAULT_ACPI_ALIGNMENT: u64 = 16;
 pub const DEFAULT_ACPI_NVS_SIZE: u64 = 0x1000;
 
@@ -1198,17 +1200,17 @@ fn pci0_prt(cfg: &AcpiConfig) -> Vec<Vec<u8>> {
     // Provide a simple static _PRT mapping for PCI INTx. We follow the common
     // PIRQ swizzle used by many virtual platforms:
     //   PIRQA-D -> GSIs 10,11,12,13.
-    let pirq_gsi: [u64; 4] = cfg.pirq_to_gsi.map(u64::from);
     let mut entries = Vec::new();
     for dev in 1u32..=31 {
         let addr = (dev << 16) | 0xFFFF;
-        for pin in 0u64..=3 {
-            let gsi = pirq_gsi[((dev as usize) + (pin as usize)) & 3];
+        let device = dev as u8;
+        for pin in 0u8..=3 {
+            let gsi = pci_routing::gsi_for_intx(cfg.pirq_to_gsi, device, pin);
             entries.push(aml_package(&[
                 aml_integer(addr as u64),
-                aml_integer(pin),
+                aml_integer(u64::from(pin)),
                 aml_integer(0), // Source (always Zero)
-                aml_integer(gsi),
+                aml_integer(u64::from(gsi)),
             ]));
         }
     }

@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+aero-pci-routing = { path = "../aero-pci-routing" }
 
 [dev-dependencies]
 aero-devices = { path = "../devices" }
