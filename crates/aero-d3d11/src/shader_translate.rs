@@ -224,6 +224,64 @@ pub fn reflect_resource_bindings(module: &Sm4Module) -> Result<Vec<Binding>, Sha
     Ok(scan_resources(module)?.bindings(module.stage))
 }
 
+fn translate_cs(module: &Sm4Module) -> Result<ShaderTranslation, ShaderTranslateError> {
+    let io = build_cs_io_maps(module);
+    let resources = scan_resources(module)?;
+
+    let reflection = ShaderReflection {
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        bindings: resources.bindings(ShaderStage::Compute),
+    };
+
+    let used_sivs = scan_used_compute_sivs(module, &io);
+
+    let mut w = WgslWriter::new();
+    resources.emit_decls(&mut w, ShaderStage::Compute)?;
+
+    if !used_sivs.is_empty() {
+        w.line("struct CsIn {");
+        w.indent();
+        for siv in &used_sivs {
+            w.line(&format!(
+                "@builtin({}) {}: {},",
+                siv.wgsl_builtin(),
+                siv.wgsl_field_name(),
+                siv.wgsl_ty()
+            ));
+        }
+        w.dedent();
+        w.line("};");
+        w.line("");
+    }
+
+    w.line("@compute @workgroup_size(1, 1, 1)");
+    if used_sivs.is_empty() {
+        w.line("fn cs_main() {");
+    } else {
+        w.line("fn cs_main(input: CsIn) {");
+    }
+    w.indent();
+    w.line("");
+    emit_temp_and_output_decls(&mut w, module, &io)?;
+
+    let ctx = EmitCtx {
+        stage: ShaderStage::Compute,
+        io: &io,
+        resources: &resources,
+    };
+    emit_instructions(&mut w, module, &ctx)?;
+
+    w.dedent();
+    w.line("}");
+
+    Ok(ShaderTranslation {
+        wgsl: w.finish(),
+        stage: ShaderStage::Compute,
+        reflection,
+    })
+}
+
 fn translate_vs(
     module: &Sm4Module,
     isgn: &DxbcSignature,
@@ -573,7 +631,162 @@ fn build_io_maps(
         vs_vertex_id_register: vs_vertex_id_reg,
         vs_instance_id_register: vs_instance_id_reg,
         ps_front_facing_register: ps_front_facing_reg,
+        cs_inputs: BTreeMap::new(),
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ComputeSysValue {
+    DispatchThreadId,
+    GroupThreadId,
+    GroupId,
+    GroupIndex,
+}
+
+impl ComputeSysValue {
+    fn wgsl_builtin(self) -> &'static str {
+        match self {
+            ComputeSysValue::DispatchThreadId => "global_invocation_id",
+            ComputeSysValue::GroupThreadId => "local_invocation_id",
+            ComputeSysValue::GroupId => "workgroup_id",
+            ComputeSysValue::GroupIndex => "local_invocation_index",
+        }
+    }
+
+    fn wgsl_field_name(self) -> &'static str {
+        // Use the WGSL builtin name as the field name for easy/greppable lowering.
+        self.wgsl_builtin()
+    }
+
+    fn wgsl_ty(self) -> &'static str {
+        match self {
+            ComputeSysValue::DispatchThreadId
+            | ComputeSysValue::GroupThreadId
+            | ComputeSysValue::GroupId => "vec3<u32>",
+            ComputeSysValue::GroupIndex => "u32",
+        }
+    }
+
+    fn expand_to_vec4(self) -> String {
+        match self {
+            ComputeSysValue::DispatchThreadId
+            | ComputeSysValue::GroupThreadId
+            | ComputeSysValue::GroupId => {
+                let field = format!("input.{}", self.wgsl_field_name());
+                format!(
+                    "vec4<f32>(f32({field}.x), f32({field}.y), f32({field}.z), 1.0)"
+                )
+            }
+            ComputeSysValue::GroupIndex => {
+                let field = format!("input.{}", self.wgsl_field_name());
+                format!("vec4<f32>(f32({field}), 0.0, 0.0, 1.0)")
+            }
+        }
+    }
+}
+
+fn compute_sys_value_from_d3d_name(name: u32) -> Option<ComputeSysValue> {
+    match name {
+        D3D_NAME_DISPATCH_THREAD_ID => Some(ComputeSysValue::DispatchThreadId),
+        D3D_NAME_GROUP_THREAD_ID => Some(ComputeSysValue::GroupThreadId),
+        D3D_NAME_GROUP_ID => Some(ComputeSysValue::GroupId),
+        D3D_NAME_GROUP_INDEX => Some(ComputeSysValue::GroupIndex),
+        _ => None,
+    }
+}
+
+fn build_cs_io_maps(module: &Sm4Module) -> IoMaps {
+    let mut cs_inputs = BTreeMap::<u32, ComputeSysValue>::new();
+    for decl in &module.decls {
+        if let Sm4Decl::InputSiv { reg, sys_value, .. } = decl {
+            if let Some(siv) = compute_sys_value_from_d3d_name(*sys_value) {
+                cs_inputs.insert(*reg, siv);
+            }
+        }
+    }
+
+    IoMaps {
+        inputs: BTreeMap::new(),
+        outputs: BTreeMap::new(),
+        vs_input_fields: Vec::new(),
+        vs_input_fields_by_register: BTreeMap::new(),
+        vs_position_register: None,
+        ps_position_register: None,
+        ps_sv_target0_register: None,
+        vs_vertex_id_register: None,
+        vs_instance_id_register: None,
+        ps_front_facing_register: None,
+        cs_inputs,
+    }
+}
+
+fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
+    let mut inputs = BTreeSet::<u32>::new();
+    for inst in &module.instructions {
+        let mut scan_reg = |reg: RegisterRef| {
+            if reg.file == RegFile::Input {
+                inputs.insert(reg.index);
+            }
+        };
+        match inst {
+            Sm4Inst::Mov { dst: _, src } => scan_src_regs(src, &mut scan_reg),
+            Sm4Inst::Add { dst: _, a, b }
+            | Sm4Inst::Mul { dst: _, a, b }
+            | Sm4Inst::Dp3 { dst: _, a, b }
+            | Sm4Inst::Dp4 { dst: _, a, b }
+            | Sm4Inst::Min { dst: _, a, b }
+            | Sm4Inst::Max { dst: _, a, b } => {
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+            }
+            Sm4Inst::Mad { dst: _, a, b, c } => {
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+                scan_src_regs(c, &mut scan_reg);
+            }
+            Sm4Inst::Rcp { dst: _, src } | Sm4Inst::Rsq { dst: _, src } => {
+                scan_src_regs(src, &mut scan_reg)
+            }
+            Sm4Inst::Sample {
+                dst: _,
+                coord,
+                texture: _,
+                sampler: _,
+            } => scan_src_regs(coord, &mut scan_reg),
+            Sm4Inst::SampleL {
+                dst: _,
+                coord,
+                texture: _,
+                sampler: _,
+                lod,
+            } => {
+                scan_src_regs(coord, &mut scan_reg);
+                scan_src_regs(lod, &mut scan_reg);
+            }
+            Sm4Inst::Ld {
+                dst: _,
+                coord,
+                texture: _,
+                lod,
+            } => {
+                scan_src_regs(coord, &mut scan_reg);
+                scan_src_regs(lod, &mut scan_reg);
+            }
+            Sm4Inst::Unknown { .. } | Sm4Inst::Ret => {}
+        }
+    }
+    inputs
+}
+
+fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSysValue> {
+    let used_regs = scan_used_input_registers(module);
+    let mut out = BTreeSet::<ComputeSysValue>::new();
+    for reg in used_regs {
+        if let Some(siv) = io.cs_inputs.get(&reg) {
+            out.insert(*siv);
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone)]
@@ -676,6 +889,7 @@ struct IoMaps {
     vs_vertex_id_register: Option<u32>,
     vs_instance_id_register: Option<u32>,
     ps_front_facing_register: Option<u32>,
+    cs_inputs: BTreeMap<u32, ComputeSysValue>,
 }
 
 impl IoMaps {
@@ -988,6 +1202,15 @@ impl IoMaps {
                     p.param.mask,
                 ))
             }
+            ShaderStage::Compute => {
+                let siv = self.cs_inputs.get(&reg).ok_or(
+                    ShaderTranslateError::SignatureMissingRegister {
+                        io: "input",
+                        register: reg,
+                    },
+                )?;
+                Ok(siv.expand_to_vec4())
+            }
             _ => Err(ShaderTranslateError::UnsupportedStage(stage)),
         }
     }
@@ -997,6 +1220,10 @@ const D3D_NAME_POSITION: u32 = 1;
 const D3D_NAME_VERTEX_ID: u32 = 6;
 const D3D_NAME_INSTANCE_ID: u32 = 8;
 const D3D_NAME_IS_FRONT_FACE: u32 = 9;
+const D3D_NAME_DISPATCH_THREAD_ID: u32 = 20;
+const D3D_NAME_GROUP_ID: u32 = 21;
+const D3D_NAME_GROUP_INDEX: u32 = 22;
+const D3D_NAME_GROUP_THREAD_ID: u32 = 23;
 const D3D_NAME_TARGET: u32 = 64;
 
 fn builtin_from_d3d_name(name: u32) -> Option<Builtin> {
@@ -1035,6 +1262,18 @@ fn semantic_to_d3d_name(name: &str) -> Option<u32> {
     if is_sv_is_front_face(name) {
         return Some(D3D_NAME_IS_FRONT_FACE);
     }
+    if is_sv_dispatch_thread_id(name) {
+        return Some(D3D_NAME_DISPATCH_THREAD_ID);
+    }
+    if is_sv_group_thread_id(name) {
+        return Some(D3D_NAME_GROUP_THREAD_ID);
+    }
+    if is_sv_group_id(name) {
+        return Some(D3D_NAME_GROUP_ID);
+    }
+    if is_sv_group_index(name) {
+        return Some(D3D_NAME_GROUP_INDEX);
+    }
     if is_sv_target(name) {
         return Some(D3D_NAME_TARGET);
     }
@@ -1059,6 +1298,22 @@ fn is_sv_is_front_face(name: &str) -> bool {
 
 fn is_sv_target(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_Target") || name.eq_ignore_ascii_case("SV_TARGET")
+}
+
+fn is_sv_dispatch_thread_id(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_DispatchThreadID") || name.eq_ignore_ascii_case("SV_DISPATCHTHREADID")
+}
+
+fn is_sv_group_thread_id(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_GroupThreadID") || name.eq_ignore_ascii_case("SV_GROUPTHREADID")
+}
+
+fn is_sv_group_id(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_GroupID") || name.eq_ignore_ascii_case("SV_GROUPID")
+}
+
+fn is_sv_group_index(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_GroupIndex") || name.eq_ignore_ascii_case("SV_GROUPINDEX")
 }
 
 fn expand_to_vec4(expr: &str, p: &ParamInfo) -> String {
@@ -1871,6 +2126,17 @@ impl WgslWriter {
 mod tests {
     use super::*;
 
+    fn assert_wgsl_validates(wgsl: &str) {
+        let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        );
+        validator
+            .validate(&module)
+            .expect("generated WGSL failed to validate");
+    }
+
     #[test]
     fn resource_usage_bindings_compute_visibility_is_compute() {
         let mut cbuffers = BTreeMap::new();
@@ -1975,5 +2241,68 @@ mod tests {
                 max: 31
             }
         ));
+    }
+
+    #[test]
+    fn compute_dispatch_thread_id_is_mapped_to_global_invocation_id_builtin() {
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![Sm4Decl::InputSiv {
+                reg: 0,
+                mask: WriteMask::XYZW,
+                sys_value: D3D_NAME_DISPATCH_THREAD_ID,
+            }],
+            instructions: vec![
+                Sm4Inst::Mov {
+                    dst: crate::sm4_ir::DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: crate::sm4_ir::SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Input,
+                            index: 0,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        // The compute path doesn't depend on the DXBC container today, but the
+        // public API requires one; construct the smallest valid DXBC header.
+        let mut dxbc_bytes = Vec::new();
+        dxbc_bytes.extend_from_slice(b"DXBC");
+        dxbc_bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
+        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved
+        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
+        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
+        assert_eq!(dxbc_bytes.len(), 32);
+
+        let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+        let signatures = ShaderSignatures::default();
+
+        let translated =
+            translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(translated.wgsl.contains("@compute"));
+        assert!(translated.wgsl.contains("@builtin(global_invocation_id)"));
+        assert!(translated
+            .wgsl
+            .contains("f32(input.global_invocation_id.x)"));
+        assert!(translated
+            .wgsl
+            .contains("f32(input.global_invocation_id.y)"));
+        assert!(translated
+            .wgsl
+            .contains("f32(input.global_invocation_id.z)"));
     }
 }
