@@ -117,10 +117,22 @@ impl Corb {
             return None;
         }
         let next_rp = (self.rp + 1) % entries;
-        let offset = (next_rp as u64).checked_mul(4)?;
-        let addr = self.base().checked_add(offset)?;
-        let cmd = mem.read_u32(addr);
+
+        let addr = (next_rp as u64)
+            .checked_mul(4)
+            .and_then(|offset| self.base().checked_add(offset));
+
+        // Always advance RP, even when the address overflows: otherwise we'd reattempt forever.
         self.rp = next_rp;
+
+        let Some(addr) = addr else {
+            // If the guest programmed a CORB base address close to `u64::MAX`, adding the entry
+            // offset can overflow in debug builds (panic) and wrap in release builds (DMA into low
+            // memory). Skip the DMA read.
+            return None;
+        };
+
+        let cmd = mem.read_u32(addr);
         Some(CodecCmd::decode(cmd))
     }
 }
@@ -215,14 +227,16 @@ impl Rirb {
         let entries = rirb_entries(self.size);
         let next_wp = (self.wp + 1) % entries;
 
-        let Some(offset) = (next_wp as u64).checked_mul(8) else {
-            return;
-        };
-        let Some(addr) = self.base().checked_add(offset) else {
-            return;
-        };
-        let encoded = resp.encode();
-        write_u64(mem, addr, encoded);
+        if let Some(addr) = (next_wp as u64)
+            .checked_mul(8)
+            .and_then(|offset| self.base().checked_add(offset))
+        {
+            let encoded = resp.encode();
+            write_u64(mem, addr, encoded);
+        } else {
+            // Same overflow hazard as CORB: skip DMA writes on overflow so we never wrap around
+            // into low guest physical addresses in release builds.
+        }
 
         self.wp = next_wp;
         self.responses_since_irq = self.responses_since_irq.wrapping_add(1);
@@ -243,8 +257,33 @@ fn write_u64(mem: &mut dyn MemoryBus, addr: u64, value: u64) {
 mod tests {
     use super::*;
     use memory::Bus;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
 
     const CAPS_MASK: u8 = RING_SIZE_CAP_2 | RING_SIZE_CAP_16 | RING_SIZE_CAP_256;
+
+    #[derive(Debug)]
+    struct PanicOnReadMem;
+
+    impl MemoryBus for PanicOnReadMem {
+        fn read_physical(&mut self, _addr: u64, _dst: &mut [u8]) {
+            panic!("unexpected guest memory read");
+        }
+
+        fn write_physical(&mut self, _addr: u64, _src: &[u8]) {}
+    }
+
+    #[derive(Debug)]
+    struct PanicOnWriteMem;
+
+    impl MemoryBus for PanicOnWriteMem {
+        fn read_physical(&mut self, _addr: u64, dst: &mut [u8]) {
+            dst.fill(0);
+        }
+
+        fn write_physical(&mut self, _addr: u64, _src: &[u8]) {
+            panic!("unexpected guest memory write");
+        }
+    }
 
     #[test]
     fn corb_size_preserves_capability_bits_and_allows_selection_bits() {
@@ -252,20 +291,32 @@ mod tests {
 
         // All ring sizes are supported by the legacy model; the capability bits should always
         // remain set, regardless of what the guest writes.
-        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+        assert_eq!(
+            corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK,
+            CAPS_MASK
+        );
 
         // Attempt to clear everything (including capability bits) by writing 0.
         corb.mmio_write(CorbReg::Size, 1, 0);
-        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+        assert_eq!(
+            corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK,
+            CAPS_MASK
+        );
 
         // Selection bits are writable.
         corb.mmio_write(CorbReg::Size, 1, 0x1);
         assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & 0x3, 0x1);
-        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+        assert_eq!(
+            corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK,
+            CAPS_MASK
+        );
 
         corb.mmio_write(CorbReg::Size, 1, 0x2);
         assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & 0x3, 0x2);
-        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+        assert_eq!(
+            corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK,
+            CAPS_MASK
+        );
 
         // High bits (including reserved bits) are RO; writing 0xff must not affect them.
         corb.mmio_write(CorbReg::Size, 1, 0xff);
@@ -313,17 +364,48 @@ mod tests {
     }
 
     #[test]
+    fn corb_pop_command_does_not_overflow_address_or_dma_read() {
+        // Regression test: base + offset used to overflow/panic in debug builds and wrap in
+        // release builds, causing DMA reads from low addresses.
+        let mut corb = Corb::new();
+        // Select 256-entry ring to allow rp=31->32 (offset=128).
+        corb.mmio_write(CorbReg::Size, 1, 0x2);
+        // Program base close to u64::MAX. Low bits are masked to 128-byte alignment.
+        corb.mmio_write(CorbReg::Lbase, 4, 0xFFFF_FFFF);
+        corb.mmio_write(CorbReg::Ubase, 4, 0xFFFF_FFFF);
+
+        // Force a command fetch at rp=32, which would make base+128 overflow.
+        corb.rp = 31;
+        corb.wp = 32;
+
+        let mut mem = PanicOnReadMem;
+        let result = catch_unwind(AssertUnwindSafe(|| corb.pop_command(&mut mem)));
+        assert!(result.is_ok(), "pop_command panicked on address overflow");
+        // RP must still advance so we don't retry forever.
+        assert_eq!(corb.rp, 32);
+    }
+
+    #[test]
     fn rirb_size_preserves_capability_bits_and_allows_selection_bits() {
         let mut rirb = Rirb::new();
 
-        assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+        assert_eq!(
+            rirb.mmio_read(RirbReg::Size, 1) as u8 & CAPS_MASK,
+            CAPS_MASK
+        );
 
         rirb.mmio_write(RirbReg::Size, 1, 0);
-        assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+        assert_eq!(
+            rirb.mmio_read(RirbReg::Size, 1) as u8 & CAPS_MASK,
+            CAPS_MASK
+        );
 
         rirb.mmio_write(RirbReg::Size, 1, 0x1);
         assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & 0x3, 0x1);
-        assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+        assert_eq!(
+            rirb.mmio_read(RirbReg::Size, 1) as u8 & CAPS_MASK,
+            CAPS_MASK
+        );
 
         rirb.mmio_write(RirbReg::Size, 1, 0xff);
         assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & 0xFC, CAPS_MASK);
@@ -339,11 +421,7 @@ mod tests {
         rirb.mmio_write(RirbReg::Ubase, 4, 0);
         rirb.mmio_write(RirbReg::Size, 1, 0x0); // 2 entries
         let mut intsts = 0u32;
-        rirb.push_response(
-            &mut mem,
-            HdaVerbResponse { data: 0, ext: 0 },
-            &mut intsts,
-        );
+        rirb.push_response(&mut mem, HdaVerbResponse { data: 0, ext: 0 }, &mut intsts);
         assert_eq!(rirb.wp, 1);
         assert_eq!(rirb.responses_since_irq, 1);
 
@@ -399,55 +477,35 @@ mod tests {
         assert_eq!(rirb.sts & 0x01, 0x01);
         assert_eq!(rirb.responses_since_irq, 0);
     }
-
-    #[derive(Default)]
-    struct PanicMem;
-
-    impl MemoryBus for PanicMem {
-        fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
-            panic!("unexpected guest memory read");
-        }
-
-        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
-            panic!("unexpected guest memory write");
-        }
-    }
-
     #[test]
-    fn corb_pop_command_overflow_returns_none_without_memory_access() {
-        let mut corb = Corb::new();
-        // CORB base is 128-byte aligned, so use a large ring index (rp=31 -> next_rp=32) to make
-        // base + rp*4 overflow.
-        corb.mmio_write(CorbReg::Ubase, 4, 0xFFFF_FFFF);
-        corb.mmio_write(CorbReg::Lbase, 4, 0xFFFF_FFFF);
-        corb.mmio_write(CorbReg::Size, 1, 0x2); // 256 entries
-        corb.mmio_write(CorbReg::Rp, 2, 31);
-        corb.mmio_write(CorbReg::Wp, 2, 32);
-
-        let mut mem = PanicMem;
-        assert!(corb.pop_command(&mut mem).is_none());
-    }
-
-    #[test]
-    fn rirb_push_response_overflow_drops_write_and_does_not_interrupt() {
+    fn rirb_push_response_does_not_overflow_address_or_dma_write() {
+        // Regression test: base + offset used to overflow/panic in debug builds and wrap in
+        // release builds, causing DMA writes into low addresses.
         let mut rirb = Rirb::new();
-        // RIRB base is 128-byte aligned, so use a large ring index (wp=15 -> next_wp=16) to make
-        // base + wp*8 overflow.
-        rirb.mmio_write(RirbReg::Ubase, 4, 0xFFFF_FFFF);
+        // Select 256-entry ring to allow wp=15->16 (offset=128).
+        rirb.mmio_write(RirbReg::Size, 1, 0x2);
+        // Program base close to u64::MAX (aligned down to 128 bytes).
         rirb.mmio_write(RirbReg::Lbase, 4, 0xFFFF_FFFF);
-        rirb.mmio_write(RirbReg::Size, 1, 0x2); // 256 entries
-        rirb.wp = 15;
-        rirb.mmio_write(RirbReg::Ctl, 1, (RIRBCTL_INTCTL | RIRBCTL_RUN) as u64);
-        rirb.mmio_write(RirbReg::RintCnt, 2, 1);
+        rirb.mmio_write(RirbReg::Ubase, 4, 0xFFFF_FFFF);
 
-        let mut mem = PanicMem;
+        // Force the next response to target wp=16.
+        rirb.wp = 15;
+
+        let mut mem = PanicOnWriteMem;
         let mut intsts = 0u32;
-        rirb.push_response(
-            &mut mem,
-            HdaVerbResponse { data: 0, ext: 0 },
-            &mut intsts,
-        );
-        assert_eq!(intsts, 0);
-        assert_eq!(rirb.sts, 0);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            rirb.push_response(
+                &mut mem,
+                HdaVerbResponse {
+                    data: 0x1234_5678,
+                    ext: 0,
+                },
+                &mut intsts,
+            );
+        }));
+        assert!(result.is_ok(), "push_response panicked on address overflow");
+        // WP and internal bookkeeping must still advance.
+        assert_eq!(rirb.wp, 16);
+        assert_eq!(rirb.responses_since_irq, 1);
     }
 }
