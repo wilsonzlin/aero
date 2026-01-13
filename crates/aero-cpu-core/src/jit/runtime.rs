@@ -3,8 +3,23 @@ use crate::jit::profile::HotnessProfile;
 use crate::jit::JitMetricsSink;
 use std::sync::Arc;
 
+use core::cell::Cell;
+
 pub const PAGE_SIZE: u64 = 4096;
 pub const PAGE_SHIFT: u32 = 12;
+
+/// Default number of guest 4KiB pages tracked by the page-version table.
+///
+/// This covers 4GiB of guest physical address space:
+/// `4GiB / 4KiB = 1,048,576` pages, requiring a 4MiB `u32` table.
+pub const DEFAULT_CODE_VERSION_MAX_PAGES: usize = 1_048_576;
+
+const _: () = {
+    // Ensure the JIT-visible table layout matches `u32[]` so WASM `i32.load`/`i32.store` works.
+    use core::mem::{align_of, size_of};
+    assert!(size_of::<Cell<u32>>() == size_of::<u32>());
+    assert!(align_of::<Cell<u32>>() == align_of::<u32>());
+};
 
 #[derive(Debug, Clone)]
 pub struct JitConfig {
@@ -12,6 +27,12 @@ pub struct JitConfig {
     pub hot_threshold: u32,
     pub cache_max_blocks: usize,
     pub cache_max_bytes: usize,
+    /// Maximum number of 4KiB guest pages tracked by the page-version table.
+    ///
+    /// The table is exposed to generated JIT code as a contiguous `u32` array with one entry per
+    /// page (`paddr >> 12`). Pages outside this range implicitly have version 0 and writes to them
+    /// do not update the table.
+    pub code_version_max_pages: usize,
 }
 
 impl Default for JitConfig {
@@ -21,6 +42,7 @@ impl Default for JitConfig {
             hot_threshold: 32,
             cache_max_blocks: 1024,
             cache_max_bytes: 0,
+            code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
         }
     }
 }
@@ -97,28 +119,40 @@ pub struct JitBlockExit {
     pub committed: bool,
 }
 
-#[derive(Debug, Default, Clone)]
 pub struct PageVersionTracker {
     /// Page version table indexed by 4KiB physical page number.
     ///
     /// This is intentionally a dense table so it can be exposed to generated JIT code as a
     /// contiguous `u32` array (one entry per page). Pages outside the table implicitly have
     /// version 0.
-    versions: Vec<u32>,
+    versions: Box<[Cell<u32>]>,
+}
+
+impl Default for PageVersionTracker {
+    fn default() -> Self {
+        Self::new(DEFAULT_CODE_VERSION_MAX_PAGES)
+    }
+}
+
+impl core::fmt::Debug for PageVersionTracker {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PageVersionTracker")
+            .field("max_pages", &self.versions.len())
+            .finish()
+    }
+}
+
+impl Clone for PageVersionTracker {
+    fn clone(&self) -> Self {
+        let out = Self::new(self.versions.len());
+        for i in 0..self.versions.len() {
+            out.versions[i].set(self.versions[i].get());
+        }
+        out
+    }
 }
 
 impl PageVersionTracker {
-    /// Hard cap on the number of tracked 4KiB pages in [`Self::versions`].
-    ///
-    /// The table is dense and grows on-demand when guest writes are observed. Without a cap, a
-    /// hostile/buggy caller could pass an absurd guest physical address (e.g. `u64::MAX`) to
-    /// [`Self::bump_write`] and force `Vec::resize()` to attempt allocating terabytes.
-    ///
-    /// `4_194_304` pages = 16GiB of guest-physical address space, and requires at most 16MiB of host
-    /// memory for the version table (`u32` per page). This comfortably covers realistic guests
-    /// while remaining safe for CI / memory-limited sandboxes.
-    pub const MAX_TRACKED_PAGES: usize = 4_194_304;
-
     /// Maximum number of page-version entries returned by [`Self::snapshot`].
     ///
     /// A snapshot is stored in every compiled block's metadata. Even though `byte_len` is a `u32`,
@@ -132,81 +166,90 @@ impl PageVersionTracker {
     /// snapshot does not cover the full `byte_len` span as stale and rejects them.
     pub const MAX_SNAPSHOT_PAGES: usize = 4096;
 
-    /// Ensure the internal dense version table contains at least `len` entries.
+    /// Creates a new bounded tracker with a stable backing table.
     ///
-    /// This is used by runtimes that want to expose the table to generated JIT code as a stable
-    /// contiguous `u32` array. Those runtimes must size the table up-front so it never needs to be
-    /// reallocated (which would invalidate any shared raw pointer).
-    ///
-    /// The table is capped at [`Self::MAX_TRACKED_PAGES`].
-    pub fn ensure_table_len(&mut self, len: usize) {
-        let len = len.min(Self::MAX_TRACKED_PAGES);
-        if self.versions.len() < len {
-            self.versions.resize(len, 0);
+    /// `max_pages` is the number of 4KiB pages tracked. The backing storage is allocated once and
+    /// never resized, so the table pointer returned by [`Self::table_ptr_len`] remains stable for
+    /// the lifetime of the tracker.
+    pub fn new(max_pages: usize) -> Self {
+        let mut versions = Vec::with_capacity(max_pages);
+        versions.resize_with(max_pages, || Cell::new(0));
+        Self {
+            versions: versions.into_boxed_slice(),
         }
     }
 
-    /// Returns the raw pointer and length of the dense version table.
+    /// Ensure the internal dense version table contains at least `len` entries.
     ///
-    /// The returned pointer is only stable as long as the table is not reallocated (i.e. the
-    /// caller must ensure [`Self::ensure_table_len`] is called with a large enough `len` up-front).
+    /// For the bounded, pointer-stable tracker this is a no-op: the table length is fixed at
+    /// construction time. Calls with `len > table_len` are ignored (out-of-range pages behave as
+    /// version 0).
+    pub fn ensure_table_len(&mut self, _len: usize) {}
+
+    /// Returns `(ptr, len_entries)` for the JIT-visible page-version table.
+    ///
+    /// The table is a contiguous `u32` array with one entry per 4KiB page (`paddr >> 12`).
+    ///
+    /// Pointer stability: `ptr` remains valid for the lifetime of the tracker (no reallocations).
     pub fn table_ptr_len(&mut self) -> (*mut u32, usize) {
-        (self.versions.as_mut_ptr(), self.versions.len())
+        (self.versions.as_ptr() as *mut u32, self.versions.len())
+    }
+
+    /// WASM32 helper returning the page-version table pointer + length as `u32`.
+    ///
+    /// `ptr` is a wasm linear-memory byte offset.
+    #[cfg(target_arch = "wasm32")]
+    pub fn table_ptr_len_u32(&mut self) -> (u32, u32) {
+        let (ptr, len) = self.table_ptr_len();
+        (ptr as u32, len as u32)
     }
 
     pub fn version(&self, page: u64) -> u32 {
-        if page >= Self::MAX_TRACKED_PAGES as u64 {
+        let len = self.versions.len() as u64;
+        if page >= len {
             return 0;
         }
-        let Ok(idx) = usize::try_from(page) else {
-            return 0;
-        };
-        self.versions.get(idx).copied().unwrap_or(0)
+        let idx = page as usize;
+        self.versions[idx].get()
     }
 
     /// Sets an explicit version for a page.
     ///
     /// This is primarily used by unit tests and tooling; normal execution should use
     /// [`Self::bump_write`].
-    pub fn set_version(&mut self, page: u64, version: u32) {
-        if page >= Self::MAX_TRACKED_PAGES as u64 {
+    pub fn set_version(&self, page: u64, version: u32) {
+        let len = self.versions.len() as u64;
+        if page >= len {
             return;
         }
-        let Ok(idx) = usize::try_from(page) else {
-            return;
-        };
-        if self.versions.len() <= idx {
-            self.versions.resize(idx + 1, 0);
-        }
-        self.versions[idx] = version;
+        let idx = page as usize;
+        self.versions[idx].set(version);
     }
 
-    pub fn bump_write(&mut self, paddr: u64, len: usize) {
+    pub fn bump_write(&self, paddr: u64, len: usize) {
         if len == 0 {
             return;
         }
 
-        let start_page = paddr >> PAGE_SHIFT;
-        let end = paddr.saturating_add(len as u64 - 1);
-        let end_page = end >> PAGE_SHIFT;
-
-        let max_page = (Self::MAX_TRACKED_PAGES as u64).saturating_sub(1);
-        if start_page > max_page {
+        let max_pages = self.versions.len() as u64;
+        if max_pages == 0 {
             return;
-        };
-        let clamped_end_page = end_page.min(max_page);
-
-        let Ok(end_idx) = usize::try_from(clamped_end_page) else {
-            return;
-        };
-
-        if self.versions.len() <= end_idx {
-            self.versions.resize(end_idx + 1, 0);
         }
 
+        let start_page = paddr >> PAGE_SHIFT;
+        let end = paddr.saturating_add((len as u64).saturating_sub(1));
+        let end_page = end >> PAGE_SHIFT;
+
+        if start_page >= max_pages {
+            return;
+        }
+
+        let end_page = end_page.min(max_pages - 1);
         let start_idx = start_page as usize;
-        for v in &mut self.versions[start_idx..=end_idx] {
-            *v = v.saturating_add(1);
+        let end_idx = end_page as usize;
+        for i in start_idx..=end_idx {
+            let cell = &self.versions[i];
+            cell.set(cell.get().saturating_add(1));
         }
     }
 
@@ -215,14 +258,17 @@ impl PageVersionTracker {
             return Vec::new();
         }
         let start_page = code_paddr >> PAGE_SHIFT;
-        let end = code_paddr.saturating_add(byte_len as u64 - 1);
+        let end = code_paddr.saturating_add(u64::from(byte_len).saturating_sub(1));
         let end_page = end >> PAGE_SHIFT;
 
         let page_count = end_page
             .saturating_sub(start_page)
             .saturating_add(1);
-        let max_pages = Self::MAX_SNAPSHOT_PAGES as u64;
-        let clamped_pages = page_count.min(max_pages);
+        let clamped_pages = page_count.min(Self::MAX_SNAPSHOT_PAGES as u64);
+        // `byte_len != 0` implies at least one spanned page, but keep the logic robust.
+        if clamped_pages == 0 {
+            return Vec::new();
+        }
         let clamped_end_page = start_page.saturating_add(clamped_pages - 1);
 
         let mut out = Vec::with_capacity(clamped_pages as usize);
@@ -237,14 +283,15 @@ impl PageVersionTracker {
 
     /// Number of entries currently allocated in the dense page-version table.
     ///
-    /// This is primarily intended for tests and tooling; the version table grows on-demand up to
-    /// [`Self::MAX_TRACKED_PAGES`].
+    /// This is primarily intended for tests and tooling.
     pub fn versions_len(&self) -> usize {
         self.versions.len()
     }
 
-    pub fn reset(&mut self) {
-        self.versions.clear();
+    pub fn reset(&self) {
+        for v in self.versions.iter() {
+            v.set(0);
+        }
     }
 }
 
@@ -265,6 +312,7 @@ where
     C: CompileRequestSink,
 {
     pub fn new(config: JitConfig, backend: B, compile: C) -> Self {
+        let page_versions = PageVersionTracker::new(config.code_version_max_pages);
         let cache = CodeCache::new(config.cache_max_blocks, config.cache_max_bytes);
         let profile_capacity = HotnessProfile::recommended_capacity(config.cache_max_blocks);
         let profile = HotnessProfile::new_with_capacity(config.hot_threshold, profile_capacity);
@@ -275,7 +323,7 @@ where
             compile,
             cache,
             profile,
-            page_versions: PageVersionTracker::default(),
+            page_versions,
             metrics_sink: None,
         }
     }
@@ -330,7 +378,8 @@ where
 
     /// Access the runtime's guest-physical page version tracker.
     ///
-    /// This is primarily intended for debugging and unit tests.
+    /// The tracker exposes a stable, JIT-visible `u32[]` table via
+    /// [`PageVersionTracker::table_ptr_len`].
     pub fn page_versions(&self) -> &PageVersionTracker {
         &self.page_versions
     }
@@ -838,9 +887,11 @@ mod tests {
     fn reset_clears_page_versions_and_invalidates_old_snapshots() {
         let entry_rip = 0x3000u64;
         let code_paddr = 0x4000u64;
+        let max_pages = 64usize;
         let config = JitConfig {
             hot_threshold: 1,
             cache_max_blocks: 16,
+            code_version_max_pages: max_pages,
             ..Default::default()
         };
 
@@ -862,7 +913,7 @@ mod tests {
             0,
             "reset should restore all pages to version 0"
         );
-        assert_eq!(jit.page_versions().versions_len(), 0);
+        assert_eq!(jit.page_versions().versions_len(), max_pages);
 
         let old_handle = CompiledBlockHandle {
             entry_rip,
@@ -884,6 +935,7 @@ mod tests {
     fn reset_updates_metrics_cache_bytes() {
         let mut rt = make_runtime(JitConfig {
             cache_max_bytes: 10,
+            code_version_max_pages: 64,
             ..Default::default()
         });
         let metrics = Arc::new(MockMetricsSink::default());

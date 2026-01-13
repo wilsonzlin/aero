@@ -1,6 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitConfig, JitRuntime};
+use aero_cpu_core::jit::runtime::{
+    CompileRequestSink, JitBackend, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES,
+};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::backend::WasmtimeBackend;
 use aero_jit_x86::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
@@ -45,6 +47,7 @@ fn jit_backend_executes_tier1_block_by_table_index() {
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let mut jit = JitRuntime::new(config, backend, NullCompileSink);
     jit.install_block(entry, table_index, entry, code.len() as u32);

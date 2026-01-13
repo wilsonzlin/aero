@@ -2,7 +2,9 @@
 
 mod tier1_common;
 
-use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit, JitConfig, JitRuntime};
+use aero_cpu_core::jit::runtime::{
+    JitBackend, JitBlockExit, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES,
+};
 use aero_jit_x86::tier1_pipeline::{Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry};
 use aero_jit_x86::BlockLimits;
 use tier1_common::SimpleBus;
@@ -51,6 +53,7 @@ fn tier1_code_version_guard_ignores_trailing_invalid_page() {
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let mut jit: JitRuntime<DummyBackend, Tier1CompileQueue> =
         JitRuntime::new(config, DummyBackend, queue.clone());

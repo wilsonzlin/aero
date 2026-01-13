@@ -23,11 +23,13 @@ impl CompileRequestSink for NullCompileSink {
 
 #[test]
 fn huge_guest_write_does_not_grow_page_versions_table_unbounded() {
+    let max_pages = 64usize;
     let config = JitConfig {
         enabled: true,
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: max_pages,
     };
     let mut jit = JitRuntime::new(config, NullBackend::default(), NullCompileSink::default());
 
@@ -36,9 +38,10 @@ fn huge_guest_write_does_not_grow_page_versions_table_unbounded() {
     let huge_paddr = u64::MAX - 0x1000;
     jit.on_guest_write(huge_paddr, 1);
 
-    assert!(
-        jit.page_versions().versions_len() <= PageVersionTracker::MAX_TRACKED_PAGES,
-        "page version table exceeded cap"
+    assert_eq!(
+        jit.page_versions().versions_len(),
+        max_pages,
+        "page version table length must remain bounded"
     );
 
     let huge_page = huge_paddr >> PAGE_SHIFT;
@@ -51,11 +54,13 @@ fn huge_guest_write_does_not_grow_page_versions_table_unbounded() {
 
 #[test]
 fn snapshot_meta_is_bounded_for_absurd_byte_len() {
+    let max_pages = 64usize;
     let config = JitConfig {
         enabled: true,
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: max_pages,
     };
     let jit = JitRuntime::new(config, NullBackend::default(), NullCompileSink::default());
 
@@ -67,4 +72,3 @@ fn snapshot_meta_is_bounded_for_absurd_byte_len() {
         meta.page_versions.len()
     );
 }
-

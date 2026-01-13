@@ -6,7 +6,9 @@ use std::rc::Rc;
 use aero_cpu_core::exec::{
     ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, StepOutcome,
 };
-use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit, JitConfig, JitRuntime};
+use aero_cpu_core::jit::runtime::{
+    JitBackend, JitBlockExit, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES,
+};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
 use aero_jit_x86::backend::{Tier1Cpu, WasmtimeBackend};
@@ -136,6 +138,7 @@ fn setup_runtime(hot_threshold: u32) -> RuntimeHarness {
         hot_threshold,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = JitRuntime::new(config, backend.clone(), compile_queue.clone());
     let interp = Tier1Interpreter {

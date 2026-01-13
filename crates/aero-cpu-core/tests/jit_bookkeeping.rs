@@ -5,6 +5,7 @@ use aero_cpu_core::interrupts::CpuCore;
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
 use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
+    DEFAULT_CODE_VERSION_MAX_PAGES,
 };
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF};
@@ -123,6 +124,7 @@ fn committed_exit_to_interpreter_advances_tsc_and_forces_one_interpreter_step() 
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
     let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
@@ -212,6 +214,7 @@ fn rollback_exit_to_interpreter_forces_one_interpreter_step() {
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
     let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
@@ -283,6 +286,7 @@ fn inhibit_interrupts_after_block_creates_and_ages_shadow() {
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
     let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
@@ -367,6 +371,7 @@ fn rollback_does_not_create_interrupt_shadow_even_if_meta_requests_it() {
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
     let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
@@ -439,6 +444,7 @@ fn tsc_advances_on_committed_jit_blocks() {
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
     let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
@@ -497,6 +503,7 @@ fn interrupt_shadow_ages_across_committed_jit_blocks() {
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
     let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
@@ -565,6 +572,7 @@ fn rollback_jit_exits_do_not_advance_time_or_age_interrupt_shadow() {
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
     let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);

@@ -2,7 +2,7 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime};
+use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES};
 use aero_cpu_core::state::{CpuMode, CpuState};
 use aero_jit_x86::backend::{Tier1Cpu, WasmBackend};
 use aero_jit_x86::tier1_pipeline::{Tier1CompileQueue, Tier1Compiler};
@@ -103,6 +103,7 @@ fn run_pf008_payload_32(payload: &[u8], expected_checksum: u32, scratch: Option<
         hot_threshold: 1,
         cache_max_blocks: 64,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let mut jit: JitRuntime<WasmBackend<TestCpu>, Tier1CompileQueue> =
         JitRuntime::new(config, backend.clone(), queue);

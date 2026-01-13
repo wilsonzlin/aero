@@ -30,6 +30,7 @@ use aero_cpu_core::exec::{ExecDispatcher, ExecutedTier, StepOutcome, Tier0Interp
 use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
 use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PAGE_SHIFT,
+    DEFAULT_CODE_VERSION_MAX_PAGES,
 };
 use aero_cpu_core::state::{
     CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, CpuMode, Segment,
@@ -1017,6 +1018,7 @@ impl WasmTieredVm {
             hot_threshold: 3,
             cache_max_blocks: 1024,
             cache_max_bytes: 0,
+            code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
         };
 
         let mut jit = JitRuntime::new(jit_config.clone(), backend, compile_queue.clone());

@@ -4,6 +4,7 @@ use std::rc::Rc;
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
 use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PageVersionTracker,
+    DEFAULT_CODE_VERSION_MAX_PAGES,
 };
 use aero_cpu_core::state::RFLAGS_DF;
 use aero_types::{Flag, FlagSet, Gpr};
@@ -385,6 +386,7 @@ fn tier2_trace_is_invalidated_via_jit_runtime_page_versions() {
         hot_threshold: 1_000_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let compile = RecordingCompileSink::default();
     let mut jit = JitRuntime::new(config, backend, compile.clone());

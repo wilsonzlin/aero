@@ -9,6 +9,7 @@ use aero_cpu_core::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMet
 use aero_cpu_core::jit::profile::HotnessProfile;
 use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
+    DEFAULT_CODE_VERSION_MAX_PAGES,
 };
 
 type JitBlockFn = Box<dyn FnMut(&mut TestCpu) -> JitBlockExit>;
@@ -138,6 +139,7 @@ fn hotness_threshold_triggers_compile_request_once() {
         hot_threshold: 3,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let compile = RecordingCompileSink::default();
     let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
@@ -162,6 +164,7 @@ fn hotness_profile_is_memory_bounded() {
         hot_threshold: 1_000_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let mut jit = JitRuntime::new(config.clone(), TestJitBackend::default(), RecordingCompileSink::default());
 
@@ -190,6 +193,7 @@ fn hot_blocks_still_trigger_compile_requests_under_eviction_pressure() {
         hot_threshold: 5,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let compile = RecordingCompileSink::default();
     let mut jit = JitRuntime::new(config.clone(), TestJitBackend::default(), compile.clone());
@@ -316,6 +320,7 @@ fn page_version_invalidation_evicts_and_requests_recompile() {
         hot_threshold: 1_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let compile = RecordingCompileSink::default();
     let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
@@ -346,6 +351,7 @@ fn stale_page_version_snapshot_rejected_on_install() {
         hot_threshold: 1_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
 
     let compile = RecordingCompileSink::default();
@@ -377,6 +383,7 @@ fn stale_install_does_not_evict_newer_valid_block() {
         hot_threshold: 1_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
 
     let compile = RecordingCompileSink::default();
@@ -417,6 +424,7 @@ fn runtime_stats_counts_cache_evictions() {
         hot_threshold: 1_000,
         cache_max_blocks: 1,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
 
     let compile = RecordingCompileSink::default();
@@ -440,6 +448,7 @@ fn runtime_stats_counts_invalidate_calls() {
         hot_threshold: 1_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
 
     let compile = RecordingCompileSink::default();
@@ -524,6 +533,7 @@ fn mixed_mode_exit_to_interpreter_forces_one_interpreter_block() {
         hot_threshold: 1_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
 
     let mut backend = TestJitBackend::default();
@@ -588,6 +598,7 @@ fn interrupt_shadow_is_respected_across_jit_blocks() {
         hot_threshold: 1_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
 
     let mut backend = TestJitBackend::default();
@@ -635,6 +646,7 @@ fn pending_interrupt_delivered_at_jit_block_boundaries() {
         hot_threshold: 1_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
 
     let mut backend = TestJitBackend::default();
@@ -680,6 +692,7 @@ fn step_reports_retired_instruction_counts_across_tiers() {
         hot_threshold: 1_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
 
     let mut backend = TestJitBackend::default();

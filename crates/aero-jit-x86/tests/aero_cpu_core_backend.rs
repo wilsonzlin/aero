@@ -9,7 +9,9 @@ use aero_cpu_core::exec::{
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
 #[cfg(feature = "tier1-inline-tlb")]
 use aero_cpu_core::jit::runtime::JitBackend;
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitConfig, JitRuntime};
+use aero_cpu_core::jit::runtime::{
+    CompileRequestSink, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES,
+};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::backend::{Tier1Cpu, WasmtimeBackend};
 use aero_jit_x86::tier1::ir::{BinOp, GuestReg, IrBuilder, IrTerminator};
@@ -142,6 +144,7 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
         hot_threshold: 1,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
     let calls = Rc::new(Cell::new(0));

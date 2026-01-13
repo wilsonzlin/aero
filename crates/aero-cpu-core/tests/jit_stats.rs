@@ -27,12 +27,11 @@ impl JitBackend for NullBackend {
 
 fn base_config() -> JitConfig {
     JitConfig {
-        enabled: true,
         // Keep the hotness threshold unreachable in unit tests so cache miss paths don't
         // implicitly generate compile requests.
         hot_threshold: u32::MAX,
         cache_max_blocks: 16,
-        cache_max_bytes: 0,
+        ..Default::default()
     }
 }
 

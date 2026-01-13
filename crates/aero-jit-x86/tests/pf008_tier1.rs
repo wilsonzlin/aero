@@ -10,7 +10,7 @@
 use aero_cpu_core::exec::{
     ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, StepOutcome,
 };
-use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime};
+use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
 use aero_jit_x86::backend::{Tier1Cpu, WasmBackend};
@@ -136,6 +136,7 @@ fn run_pf008_payload_64(
         hot_threshold: 1,
         cache_max_blocks: 4096,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = JitRuntime::new(config, backend.clone(), queue.clone());
     let mut dispatcher = ExecDispatcher::new(interpreter, jit);

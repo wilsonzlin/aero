@@ -5,7 +5,9 @@ mod tier1_common;
 use aero_cpu_core::exec::{
     ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, StepOutcome,
 };
-use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit, JitConfig};
+use aero_cpu_core::jit::runtime::{
+    JitBackend, JitBlockExit, JitConfig, DEFAULT_CODE_VERSION_MAX_PAGES,
+};
 use aero_jit_x86::tier1::pipeline::{
     Tier1CompileError, Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry,
 };
@@ -115,6 +117,7 @@ fn tier1_zero_progress_block_is_not_installed() {
         hot_threshold: 3,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
     let jit = aero_cpu_core::jit::runtime::JitRuntime::new(config, PanicBackend, queue.clone());
     let mut dispatcher = ExecDispatcher::new(interpreter, jit);
