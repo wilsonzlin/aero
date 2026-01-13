@@ -1,17 +1,11 @@
+// TEST_DEPS: led_report_parse.c led_translate.c
+
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 
 #include "../src/led_report_parse.h"
 #include "../src/led_translate.h"
-
-/*
- * tests/run.sh only auto-links ../src/<module>.c for a matching <module>_test.c file.
- * This test exercises the combined HID-output->virtio LED path, so pull in both
- * translation units directly.
- */
-#include "../src/led_report_parse.c"
-#include "../src/led_translate.c"
 
 static uint16_t to_le16(uint16_t v) {
 #if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
@@ -106,4 +100,3 @@ int main(void) {
   printf("led_output_pipeline_test: ok\n");
   return 0;
 }
-
