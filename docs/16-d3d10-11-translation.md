@@ -130,9 +130,15 @@ fn cb0_load_vec4_f32(reg: u32) -> vec4<f32> {
 
 This mirrors how SM4/5 actually addresses constants and removes the need to precisely reproduce HLSL packing rules in WGSL structs.
 
-Note: the `@group(N)` index is **stage-scoped** in Aero (VS=0, PS=1, CS=2). The example above shows
-the vertex shader group; a pixel shader cbuffer declaration would use `@group(1)` instead (see
-“Resource binding mapping”).
+Note: the `@group(N)` index is **stage-scoped** in Aero. The stable stage→group mapping is:
+
+- `@group(0)`: vertex shader (VS)
+- `@group(1)`: pixel/fragment shader (PS)
+- `@group(2)`: compute shader (CS)
+- `@group(3)`: reserved internal group for emulated D3D11 stages (GS/HS/DS) and helper bindings
+
+The example above shows the vertex shader group; a pixel shader cbuffer declaration would use
+`@group(1)` instead (see “Resource binding mapping”).
 
 ### Dynamic updates and renaming
 
@@ -444,8 +450,10 @@ bring up correctness incrementally:
     expansion) without any compute passes. This is optional and can be added later.
   - **P1b (baseline):** general GS emulation via compute expansion as specified below.
   - Initial P1b limitations (explicit):
-    - no stream-out / transform feedback,
-    - only stream 0,
+    - no stream-out / transform feedback (`CreateGeometryShaderWithStreamOutput`),
+    - only stream 0 (no `EmitStream` / `CutStream` / `SV_StreamID`),
+    - no adjacency input primitives (`lineadj`, `triadj`),
+    - output strip topologies are expanded into lists (`line_strip` → `line_list`, `triangle_strip` → `triangle_list`),
     - no layered rendering system values (`SV_RenderTargetArrayIndex`, `SV_ViewportArrayIndex`),
     - output ordering is implementation-defined unless we add a deterministic prefix-sum mode (affects
       strict `SV_PrimitiveID` expectations).
@@ -457,6 +465,28 @@ bring up correctness incrementally:
     - **P2c:** `domain("isoline")`.
     - **P2d:** fractional partitioning + crack-free edge rules.
 
+#### Capabilities required
+
+GS/HS/DS emulation requires the underlying WebGPU device/backend to support:
+
+- compute pipelines (and storage buffers/atomics)
+- indirect draws (to consume the generated draw args)
+
+#### How to debug GS issues
+
+Geometry shader failures are often “silent” (nothing draws) because the expansion pass can legally
+emit zero primitives. Recommended debug workflow:
+
+1. Use the `sm4_dump` tool (GS-TOOL-016) on the DXBC to confirm:
+   - declared input primitive type and output topology
+   - `maxvertexcount`
+   - input/output signatures (semantics + component masks)
+2. Confirm the command stream is binding the expected GS/HS/DS shader handles (via the extended
+   `BIND_SHADERS` packet) and that stage-specific resources are being populated (via `stage_ex`).
+3. Enable wgpu/WebGPU validation and inspect errors around the expansion compute pass and the
+   subsequent indirect draw (binding visibility, usage flags, and out-of-bounds writes are common
+   root causes).
+
 ### 1) AeroGPU ABI extensions for GS/HS/DS
 
 These changes are designed to be **minor-version, forward-compatible**:
@@ -464,6 +494,10 @@ packets grow only by appending new fields, and existing `reserved*` fields are r
 that keeps old drivers valid (they still write zeros).
 
 #### 1.1) `stage_ex` in resource-binding opcodes
+
+The legacy `enum aerogpu_shader_stage` is extended with `GEOMETRY = 3`, but most GS/HS/DS resource
+bindings use a `stage_ex` extension so compute-shader bindings (`@group(2)`) and emulated-stage
+bindings (`@group(3)`) do not trample each other.
 
 Many AeroGPU binding packets already carry a `shader_stage` plus a trailing `reserved0` field:
 
