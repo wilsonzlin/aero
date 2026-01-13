@@ -41,7 +41,7 @@ On Windows 7, MSI/MSI-X is typically opt-in via `HKR` settings under:
 
 `Interrupt Management\\MessageSignaledInterruptProperties`
 
-Example (add to `inf/aero_virtio_net.inf`):
+As shipped in `inf/aero_virtio_net.inf`:
 
 ```inf
 [AeroVirtioNet_Install.NT.HW]
