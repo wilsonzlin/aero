@@ -3096,6 +3096,15 @@ impl Machine {
         (self.display_width, self.display_height)
     }
 
+    /// Return the BIOS-reported VBE linear framebuffer (LFB) base address.
+    ///
+    /// This is the value reported via `INT 10h AX=4F01h` (`VBE ModeInfoBlock.PhysBasePtr`) and is
+    /// the canonical way for host-side tests/glue code to discover where the firmware expects the
+    /// framebuffer to live.
+    pub fn vbe_lfb_base(&self) -> u32 {
+        self.bios.video.vbe.lfb_base
+    }
+
     /// Returns the shared manual clock backing platform timer devices, if the PC platform is
     /// enabled.
     pub fn platform_clock(&self) -> Option<ManualClock> {
@@ -3110,6 +3119,40 @@ impl Machine {
     /// Returns the PCI config mechanism #1 ports device, if present.
     pub fn pci_config_ports(&self) -> Option<SharedPciConfigPorts> {
         self.pci_cfg.clone()
+    }
+
+    /// Returns the base address assigned to a device's PCI BAR.
+    ///
+    /// This consults the device's PCI config space (as exposed via [`Machine::pci_config_ports`]).
+    /// It returns `None` if the PC platform is disabled, the device function is missing, or the
+    /// BAR index is not implemented by that device.
+    pub fn pci_bar_base(&self, bdf: PciBdf, bar: u8) -> Option<u64> {
+        let pci_cfg = self.pci_config_ports()?;
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg.bus_mut().device_config(bdf)?;
+        Some(cfg.bar_range(bar)?.base)
+    }
+
+    /// Returns the canonical AeroGPU PCI function BDF if the device is present.
+    ///
+    /// The canonical AeroGPU identity contract reserves `00:07.0` for
+    /// `VID:DID = A3A0:0001` (see `docs/abi/aerogpu-pci-identity.md`). This helper allows
+    /// integration tests and wasm glue code to detect whether an AeroGPU device model is attached
+    /// without reaching into machine internals.
+    pub fn aerogpu(&self) -> Option<PciBdf> {
+        let pci_cfg = self.pci_config_ports()?;
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+
+        let bdf = aero_devices::pci::profile::AEROGPU.bdf;
+        let vendor = bus.read_config(bdf, 0x00, 2) as u16;
+        if vendor == 0xFFFF {
+            return None;
+        }
+        let device = bus.read_config(bdf, 0x02, 2) as u16;
+        (vendor == aero_devices::pci::profile::PCI_VENDOR_ID_AERO
+            && device == aero_devices::pci::profile::PCI_DEVICE_ID_AERO_AEROGPU)
+            .then_some(bdf)
     }
 
     /// Returns the PCI INTx router, if present.
