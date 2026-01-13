@@ -482,6 +482,13 @@ impl StorageBackend for StdFileBackend {
     }
 
     fn flush(&mut self) -> Result<()> {
+        // On some platforms (notably Windows), syncing a file handle opened without write access
+        // may fail with a permission error. Since this backend performs no writes in read-only
+        // mode, treat flush as a no-op for read-only handles so higher-level abstractions (e.g.
+        // COW base disks) can call `flush()` unconditionally.
+        if self.read_only {
+            return Ok(());
+        }
         self.file.sync_all().map_err(|e| self.io_err("sync_all", e))
     }
 }

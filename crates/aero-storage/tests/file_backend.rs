@@ -116,6 +116,7 @@ fn file_backend_read_only_rejects_writes() {
     backend.flush().unwrap();
 
     let mut backend = StdFileBackend::open(&path, true).unwrap();
+    backend.flush().unwrap();
     let err = backend.write_at(0, &[9]).unwrap_err();
     assert!(matches!(
         err,
