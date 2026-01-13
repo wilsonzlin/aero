@@ -1190,6 +1190,16 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
         self.resources.samplers.get(&handle)
     }
 
+    fn srv_buffer(&self, _slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        // The aerogpu test runtime does not currently model buffer SRV bindings.
+        None
+    }
+
+    fn uav_buffer(&self, _slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        // The aerogpu test runtime does not currently model buffer UAV bindings.
+        None
+    }
+
     fn dummy_uniform(&self) -> &wgpu::Buffer {
         self.dummy_uniform
     }

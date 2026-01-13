@@ -2,8 +2,8 @@ use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, D3D11_MAX_CONSTANT_BUFFER_SLOTS,
-    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
+    D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::ShaderStage;
@@ -57,8 +57,10 @@ pub struct Binding {
 pub enum BindingKind {
     ConstantBuffer { slot: u32, reg_count: u32 },
     Texture2D { slot: u32 },
+    /// A `t#` SRV that is backed by a buffer (e.g. `ByteAddressBuffer`, `StructuredBuffer`).
     SrvBuffer { slot: u32 },
     Sampler { slot: u32 },
+    /// A `u#` UAV that is backed by a buffer (e.g. `RWByteAddressBuffer`, `RWStructuredBuffer`).
     UavBuffer { slot: u32 },
 }
 
@@ -163,6 +165,10 @@ impl fmt::Display for ShaderTranslateError {
                     "texture" => write!(
                         f,
                         "texture slot {slot} is out of range (max {max}); t# slots map to @binding({BINDING_BASE_TEXTURE} + slot) and must stay below the sampler base @binding({BINDING_BASE_SAMPLER})"
+                    ),
+                    "uav" => write!(
+                        f,
+                        "uav slot {slot} is out of range (max {max}); u# slots map to @binding({BINDING_BASE_UAV} + slot)"
                     ),
                     "sampler" => write!(
                         f,
@@ -1511,7 +1517,9 @@ fn apply_modifier(expr: String, modifier: OperandModifier) -> String {
 struct ResourceUsage {
     cbuffers: BTreeMap<u32, u32>,
     textures: BTreeSet<u32>,
+    srv_buffers: BTreeSet<u32>,
     samplers: BTreeSet<u32>,
+    uav_buffers: BTreeSet<u32>,
 }
 
 impl ResourceUsage {
@@ -1550,12 +1558,28 @@ impl ResourceUsage {
                 kind: BindingKind::Texture2D { slot },
             });
         }
+        for &slot in &self.srv_buffers {
+            out.push(Binding {
+                group,
+                binding: BINDING_BASE_TEXTURE + slot,
+                visibility,
+                kind: BindingKind::SrvBuffer { slot },
+            });
+        }
         for &slot in &self.samplers {
             out.push(Binding {
                 group,
                 binding: BINDING_BASE_SAMPLER + slot,
                 visibility,
                 kind: BindingKind::Sampler { slot },
+            });
+        }
+        for &slot in &self.uav_buffers {
+            out.push(Binding {
+                group,
+                binding: BINDING_BASE_UAV + slot,
+                visibility,
+                kind: BindingKind::UavBuffer { slot },
             });
         }
         out
@@ -1588,6 +1612,21 @@ impl ResourceUsage {
         if !self.textures.is_empty() {
             w.line("");
         }
+        if !self.srv_buffers.is_empty() || !self.uav_buffers.is_empty() {
+            // WGSL requires storage buffers to have a `struct` as the top-level type; arrays
+            // cannot be declared directly as a `var<storage>`.
+            w.line("struct AeroStorageBufferU32 { data: array<u32> };");
+            w.line("");
+        }
+        for &slot in &self.srv_buffers {
+            w.line(&format!(
+                "@group({group}) @binding({}) var<storage, read> t{slot}: AeroStorageBufferU32;",
+                BINDING_BASE_TEXTURE + slot
+            ));
+        }
+        if !self.srv_buffers.is_empty() {
+            w.line("");
+        }
         for &slot in &self.samplers {
             w.line(&format!(
                 "@group({group}) @binding({}) var s{slot}: sampler;",
@@ -1595,6 +1634,15 @@ impl ResourceUsage {
             ));
         }
         if !self.samplers.is_empty() {
+            w.line("");
+        }
+        for &slot in &self.uav_buffers {
+            w.line(&format!(
+                "@group({group}) @binding({}) var<storage, read_write> u{slot}: AeroStorageBufferU32;",
+                BINDING_BASE_UAV + slot
+            ));
+        }
+        if !self.uav_buffers.is_empty() {
             w.line("");
         }
         Ok(())
@@ -1618,13 +1666,26 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
     }
     let mut cbuffers: BTreeMap<u32, u32> = BTreeMap::new();
     let mut textures = BTreeSet::new();
+    let mut srv_buffers = BTreeSet::new();
     let mut samplers = BTreeSet::new();
+    let mut uav_buffers = BTreeSet::new();
     let mut declared_cbuffer_sizes: BTreeMap<u32, u32> = BTreeMap::new();
 
     for decl in &module.decls {
-        if let Sm4Decl::ConstantBuffer { slot, reg_count } = decl {
-            let entry = declared_cbuffer_sizes.entry(*slot).or_insert(0);
-            *entry = (*entry).max(*reg_count);
+        match decl {
+            Sm4Decl::ConstantBuffer { slot, reg_count } => {
+                let entry = declared_cbuffer_sizes.entry(*slot).or_insert(0);
+                *entry = (*entry).max(*reg_count);
+            }
+            Sm4Decl::ResourceBuffer { slot, .. } => {
+                validate_slot("texture", *slot, MAX_TEXTURE_SLOTS)?;
+                srv_buffers.insert(*slot);
+            }
+            Sm4Decl::UavBuffer { slot, .. } => {
+                validate_slot("uav", *slot, MAX_UAV_SLOTS)?;
+                uav_buffers.insert(*slot);
+            }
+            _ => {}
         }
     }
 
@@ -1729,25 +1790,39 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
                 validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
                 textures.insert(texture.slot);
             }
-            Sm4Inst::LdRaw { dst: _, addr, .. } => {
+            Sm4Inst::LdRaw {
+                dst: _,
+                addr,
+                buffer,
+            } => {
                 scan_src(addr)?;
+                validate_slot("texture", buffer.slot, MAX_TEXTURE_SLOTS)?;
+                srv_buffers.insert(buffer.slot);
             }
             Sm4Inst::StoreRaw {
-                addr, value, ..
+                uav,
+                addr,
+                value,
+                ..
             } => {
                 scan_src(addr)?;
                 scan_src(value)?;
+                validate_slot("uav", uav.slot, MAX_UAV_SLOTS)?;
+                uav_buffers.insert(uav.slot);
             }
             Sm4Inst::LdStructured {
                 dst: _,
                 index,
                 offset,
-                ..
+                buffer,
             } => {
                 scan_src(index)?;
                 scan_src(offset)?;
+                validate_slot("texture", buffer.slot, MAX_TEXTURE_SLOTS)?;
+                srv_buffers.insert(buffer.slot);
             }
             Sm4Inst::StoreStructured {
+                uav,
                 index,
                 offset,
                 value,
@@ -1756,6 +1831,8 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
                 scan_src(index)?;
                 scan_src(offset)?;
                 scan_src(value)?;
+                validate_slot("uav", uav.slot, MAX_UAV_SLOTS)?;
+                uav_buffers.insert(uav.slot);
             }
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Ret => {}
@@ -1773,7 +1850,9 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
     Ok(ResourceUsage {
         cbuffers,
         textures,
+        srv_buffers,
         samplers,
+        uav_buffers,
     })
 }
 
@@ -2394,16 +2473,88 @@ mod tests {
     fn resource_usage_bindings_compute_visibility_is_compute() {
         let mut cbuffers = BTreeMap::new();
         cbuffers.insert(0, 1);
+        let mut uav_buffers = BTreeSet::new();
+        uav_buffers.insert(0);
 
         let usage = ResourceUsage {
             cbuffers,
             textures: BTreeSet::new(),
+            srv_buffers: BTreeSet::new(),
             samplers: BTreeSet::new(),
+            uav_buffers,
         };
 
         let bindings = usage.bindings(ShaderStage::Compute);
-        assert_eq!(bindings.len(), 1);
-        assert_eq!(bindings[0].visibility, wgpu::ShaderStages::COMPUTE);
+        assert_eq!(bindings.len(), 2);
+        assert!(
+            bindings
+                .iter()
+                .all(|b| b.visibility == wgpu::ShaderStages::COMPUTE),
+            "expected compute-stage bindings to be visible to the compute stage"
+        );
+    }
+
+    #[test]
+    fn uav_buffer_binding_numbers_use_uav_base_offset() {
+        let max_slot = MAX_UAV_SLOTS - 1;
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: crate::sm4::ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::UavBuffer {
+                    slot: 0,
+                    stride: 0,
+                    kind: crate::sm4_ir::BufferKind::Raw,
+                },
+                Sm4Decl::UavBuffer {
+                    slot: max_slot,
+                    stride: 0,
+                    kind: crate::sm4_ir::BufferKind::Raw,
+                },
+            ],
+            instructions: Vec::new(),
+        };
+
+        let bindings = reflect_resource_bindings(&module).unwrap();
+        let uav_bindings: BTreeMap<u32, Binding> = bindings
+            .into_iter()
+            .filter_map(|b| match b.kind {
+                BindingKind::UavBuffer { slot } => Some((slot, b)),
+                _ => None,
+            })
+            .collect();
+
+        let b0 = uav_bindings.get(&0).expect("u0 binding");
+        assert_eq!(b0.group, 2);
+        assert_eq!(b0.visibility, wgpu::ShaderStages::COMPUTE);
+        assert_eq!(b0.binding, BINDING_BASE_UAV);
+
+        let bmax = uav_bindings.get(&max_slot).expect("u(max) binding");
+        assert_eq!(bmax.binding, BINDING_BASE_UAV + max_slot);
+    }
+
+    #[test]
+    fn uav_slot_out_of_range_triggers_error() {
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: crate::sm4::ShaderModel { major: 4, minor: 0 },
+            decls: vec![Sm4Decl::UavBuffer {
+                slot: MAX_UAV_SLOTS,
+                stride: 0,
+                kind: crate::sm4_ir::BufferKind::Raw,
+            }],
+            instructions: Vec::new(),
+        };
+
+        let err = scan_resources(&module).unwrap_err();
+        assert!(matches!(
+            err,
+            ShaderTranslateError::ResourceSlotOutOfRange {
+                kind: "uav",
+                slot,
+                max,
+            } if slot == MAX_UAV_SLOTS && max == MAX_UAV_SLOTS - 1
+        ));
     }
 
     fn minimal_module(instructions: Vec<Sm4Inst>) -> Sm4Module {

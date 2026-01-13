@@ -3945,14 +3945,14 @@ impl AerogpuD3d11Executor {
                                             self.encoder_used_textures.insert(tex.texture);
                                         }
                                     }
-                                    crate::BindingKind::SrvBuffer { .. }
-                                    | crate::BindingKind::UavBuffer { .. } => {}
                                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
                                             self.encoder_used_buffers.insert(cb.buffer);
                                         }
                                     }
-                                    crate::BindingKind::Sampler { .. } => {}
+                                    crate::BindingKind::Sampler { .. }
+                                    | crate::BindingKind::SrvBuffer { .. }
+                                    | crate::BindingKind::UavBuffer { .. } => {}
                                 }
                             }
                         }
@@ -4068,14 +4068,14 @@ impl AerogpuD3d11Executor {
                                             self.encoder_used_textures.insert(tex.texture);
                                         }
                                     }
-                                    crate::BindingKind::SrvBuffer { .. }
-                                    | crate::BindingKind::UavBuffer { .. } => {}
                                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
                                             self.encoder_used_buffers.insert(cb.buffer);
                                         }
                                     }
-                                    crate::BindingKind::Sampler { .. } => {}
+                                    crate::BindingKind::Sampler { .. }
+                                    | crate::BindingKind::SrvBuffer { .. }
+                                    | crate::BindingKind::UavBuffer { .. } => {}
                                 }
                             }
                         }
@@ -8477,6 +8477,16 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
     fn sampler(&self, slot: u32) -> Option<&aero_gpu::bindings::samplers::CachedSampler> {
         let bound = self.stage_state.sampler(slot)?;
         self.resources.samplers.get(&bound.sampler)
+    }
+
+    fn srv_buffer(&self, _slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        // The aerogpu_cmd executor does not yet model SRV buffer bindings; fall back to dummy.
+        None
+    }
+
+    fn uav_buffer(&self, _slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        // The aerogpu_cmd executor does not yet model UAV buffer bindings; fall back to dummy.
+        None
     }
 
     fn dummy_uniform(&self) -> &wgpu::Buffer {

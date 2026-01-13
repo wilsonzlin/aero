@@ -1037,6 +1037,14 @@ mod tests {
                     None
                 }
 
+                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                    None
+                }
+
+                fn uav_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                    None
+                }
+
                 fn dummy_uniform(&self) -> &wgpu::Buffer {
                     self.dummy_uniform
                 }
@@ -1215,6 +1223,14 @@ mod tests {
                 }
 
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                    None
+                }
+
+                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                    None
+                }
+
+                fn uav_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 
@@ -1637,6 +1653,14 @@ mod tests {
                 }
 
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                    None
+                }
+
+                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                    None
+                }
+
+                fn uav_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 
