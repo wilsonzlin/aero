@@ -358,17 +358,29 @@ bool hwnd_is_occluded(HWND hwnd) {
   if (!IsWindow(hwnd)) {
     return false;
   }
-  if (IsIconic(hwnd)) {
+  // If clients pass a child HWND, the real present target is the root/top-level
+  // window; use that for "minimized" state checks.
+  HWND root = GetAncestor(hwnd, GA_ROOT);
+  HWND top = root ? root : hwnd;
+
+  if (IsIconic(top)) {
     return true;
   }
   // Optional: treat hidden/invisible windows as occluded. Disabled by default
   // because some D3D9Ex tests intentionally present to hidden windows (they
   // still require PresentEx to succeed and exercise pacing/throttling).
-  if (hwnd_occlude_invisible_enabled() && !IsWindowVisible(hwnd)) {
+  if (hwnd_occlude_invisible_enabled() && !IsWindowVisible(top)) {
     return true;
   }
   RECT rc{};
   if (GetClientRect(hwnd, &rc)) {
+    const LONG w = rc.right - rc.left;
+    const LONG h = rc.bottom - rc.top;
+    if (w <= 0 || h <= 0) {
+      return true;
+    }
+  }
+  if (top != hwnd && GetClientRect(top, &rc)) {
     const LONG w = rc.right - rc.left;
     const LONG h = rc.bottom - rc.top;
     if (w <= 0 || h <= 0) {
