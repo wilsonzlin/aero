@@ -188,6 +188,93 @@ impl LinearResampler {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_sample() -> impl Strategy<Value = f32> {
+            // Use a small fixed-point-ish distribution to avoid NaNs/infs/subnormals while still
+            // spanning [-1.0, 1.0].
+            any::<i16>().prop_map(|v| v as f32 / 32_768.0)
+        }
+
+        fn arb_interleaved_input(
+            channels: impl Strategy<Value = usize>,
+            frames: impl Strategy<Value = usize>,
+        ) -> impl Strategy<Value = (usize, usize, Vec<f32>)> {
+            (channels, frames).prop_flat_map(|(channels, frames)| {
+                let len = channels * frames;
+                (
+                    Just(channels),
+                    Just(frames),
+                    proptest::collection::vec(arb_sample(), len),
+                )
+            })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            #[test]
+            fn linear_resampler_process_and_flush_are_structurally_valid(
+                src_rate in 8_000u32..=96_000,
+                dst_rate in 8_000u32..=96_000,
+                (channels, _frames_in, input) in arb_interleaved_input(1usize..=8, 0usize..=256),
+            ) {
+                let mut r = LinearResampler::new(src_rate, dst_rate, channels).unwrap();
+
+                let mut out = Vec::new();
+                r.process_interleaved(&input, &mut out).unwrap();
+                prop_assert_eq!(out.len() % channels, 0);
+
+                let mut tail = Vec::new();
+                r.flush_interleaved(&mut tail);
+                prop_assert_eq!(tail.len() % channels, 0);
+            }
+
+            #[test]
+            fn linear_resampler_is_identity_for_equal_rates(
+                rate in 8_000u32..=96_000,
+                (channels, _frames_in, input) in arb_interleaved_input(1usize..=8, 0usize..=256),
+            ) {
+                let mut r = LinearResampler::new(rate, rate, channels).unwrap();
+
+                let mut out = Vec::new();
+                r.process_interleaved(&input, &mut out).unwrap();
+                prop_assert_eq!(out, input);
+
+                let mut tail = Vec::new();
+                r.flush_interleaved(&mut tail);
+                prop_assert!(tail.is_empty());
+            }
+        }
+
+        #[cfg(feature = "sinc-resampler")]
+        proptest! {
+            // Sinc resampling is more expensive; keep the number and size of cases small to
+            // avoid slowing down the test suite.
+            #![proptest_config(ProptestConfig::with_cases(32))]
+
+            #[test]
+            fn sinc_resampler_process_and_flush_are_structurally_valid(
+                src_rate in 8_000u32..=96_000,
+                dst_rate in 8_000u32..=96_000,
+                (channels, _frames_in, input) in arb_interleaved_input(1usize..=4, 0usize..=128),
+            ) {
+                let mut r = SincResampler::new(src_rate, dst_rate, channels).unwrap();
+
+                let mut out = Vec::new();
+                r.process_interleaved(&input, &mut out).unwrap();
+                prop_assert_eq!(out.len() % channels, 0);
+
+                let mut tail = Vec::new();
+                r.flush_interleaved(&mut tail);
+                prop_assert_eq!(tail.len() % channels, 0);
+            }
+        }
+    }
+
     #[test]
     fn linear_resampler_preserves_dc() {
         let mut r = LinearResampler::new(44_100, 48_000, 2).unwrap();
