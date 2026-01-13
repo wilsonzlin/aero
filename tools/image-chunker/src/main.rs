@@ -1099,7 +1099,9 @@ async fn verify_chunk_with_retry(
 fn is_retryable_chunk_error(err: &anyhow::Error) -> bool {
     // Treat all size/hash mismatches as non-retryable (deterministic integrity failures).
     let msg = err.to_string();
-    !msg.contains("size mismatch") && !msg.contains("sha256 mismatch")
+    !msg.contains("size mismatch")
+        && !msg.contains("sha256 mismatch")
+        && !msg.contains("object not found (404)")
 }
 
 async fn verify_chunk_once(
@@ -1115,6 +1117,13 @@ async fn verify_chunk_once(
         .key(key)
         .send()
         .await
+        .map_err(|err| {
+            if is_no_such_key_error(&err) {
+                anyhow!("object not found (404)")
+            } else {
+                anyhow!(err)
+            }
+        })
         .with_context(|| format!("GET s3://{bucket}/{key}"))?;
 
     if let Some(content_length) = resp.content_length() {
@@ -1178,6 +1187,9 @@ async fn head_object_with_retry(
         let resp = s3.head_object().bucket(bucket).key(key).send().await;
         match resp {
             Ok(_) => return Ok(()),
+            Err(err) if is_no_such_key_error(&err) => {
+                return Err(anyhow!("object not found (404) for s3://{bucket}/{key}"));
+            }
             Err(err) if attempt < retries => {
                 let sleep_for = retry_backoff(attempt);
                 eprintln!(
@@ -1240,6 +1252,9 @@ async fn download_object_bytes_with_retry(
                     .with_context(|| format!("read s3://{bucket}/{key}"))?;
                 return Ok(aggregated.into_bytes());
             }
+            Err(err) if is_no_such_key_error(&err) => {
+                return Err(anyhow!("object not found (404) for s3://{bucket}/{key}"));
+            }
             Err(err) if attempt < retries => {
                 let sleep_for = retry_backoff(attempt);
                 eprintln!(
@@ -1295,18 +1310,24 @@ async fn download_object_bytes_optional_with_retry(
 }
 
 fn is_no_such_key_error<E>(err: &aws_sdk_s3::error::SdkError<E>) -> bool {
+    // Prefer checking the HTTP status code to support S3-compatible endpoints (e.g. MinIO) where
+    // the Display string may not include the canonical AWS error code.
+    if matches!(sdk_error_status_code(err), Some(404)) {
+        return true;
+    }
+
+    // Fallback to a best-effort string match.
+    err.to_string().contains("NoSuchKey")
+        || err.to_string().contains("NotFound")
+        || err.to_string().contains("404")
+}
+
+fn sdk_error_status_code<E>(err: &aws_sdk_s3::error::SdkError<E>) -> Option<u16> {
     use aws_sdk_s3::error::SdkError;
 
     match err {
-        // Prefer checking the HTTP status code to support S3-compatible endpoints (e.g. MinIO)
-        // where the Display string may not include the canonical AWS error code.
-        SdkError::ServiceError(service_err) => service_err.raw().status().as_u16() == 404,
-        // Fallback to a best-effort string match.
-        _ => {
-            err.to_string().contains("NoSuchKey")
-                || err.to_string().contains("NotFound")
-                || err.to_string().contains("404")
-        }
+        SdkError::ServiceError(service_err) => Some(service_err.raw().status().as_u16()),
+        _ => None,
     }
 }
 
