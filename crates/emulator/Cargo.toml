@@ -15,10 +15,10 @@ net_log = []
 sinc-resampler = []
 # Opt-in dependency edges to canonical storage device/controller crates.
 #
-# This is kept behind a feature flag for now to avoid pulling the new crates into all build
-# configurations (and to keep dependency graphs minimal until the legacy controller copies are
-# removed).
-storage-device-crates = ["dep:aero-devices-storage", "dep:aero-devices-nvme"]
+# Note: `aero-devices-storage` is now a required dependency because the emulator AHCI controller is
+# implemented as a compatibility wrapper around it. This feature remains for other storage device
+# crates that are still optional.
+storage-device-crates = ["dep:aero-devices-nvme"]
 # Legacy audio stack (AC97/HDA/DSP + the old virtio-snd model). This is not part of the
 # browser/WASM runtime path; it is retained for reference and for targeted tests.
 legacy-audio = []
@@ -30,7 +30,7 @@ aerogpu-legacy = []
 aero-usb = { path = "../aero-usb" }
 aero-devices = { path = "../devices" }
 aero-devices-input = { path = "../aero-devices-input" }
-aero-devices-storage = { path = "../aero-devices-storage", optional = true }
+aero-devices-storage = { path = "../aero-devices-storage" }
 aero-devices-nvme = { path = "../aero-devices-nvme", optional = true }
 aero-edid = { path = "../aero-edid" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
