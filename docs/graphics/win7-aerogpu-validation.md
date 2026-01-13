@@ -309,6 +309,7 @@ For quick guest-side sanity checks:
 * DWM pacing (end-to-end compositor path): `drivers/aerogpu/tests/win7/dwm_flush_pacing`
 * Direct vblank interrupt/wait path (independent of DWM): `drivers/aerogpu/tests/win7/wait_vblank_pacing` (targets VidPn source 0; tune hang detection via `--wait-timeout-ms`)
   * Escape ABI/device identity (`QUERY_DEVICE(_V2)`): `drivers/aerogpu/tests/win7/device_state_sanity`
+  * WDDM segment budgets (`D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE)` / best-effort `QUERYSEGMENT`): `drivers/aerogpu/tests/win7/segment_budget_sanity` (validates `HKR\Parameters\NonLocalMemorySizeMB` takes effect)
   * Scanline/raster status plumbing (`D3DKMTGetScanLine` → `DxgkDdiGetScanLine`): `drivers/aerogpu/tests/win7/get_scanline_sanity`
   * Vblank counter/timestamp registers (`AEROGPU_ESCAPE_OP_QUERY_VBLANK`): `drivers/aerogpu/tests/win7/vblank_state_sanity`
   * Fence counters (`AEROGPU_ESCAPE_OP_QUERY_FENCE`): `drivers/aerogpu/tests/win7/fence_state_sanity`
@@ -547,6 +548,11 @@ Once this recipe is stable, expand: more modes, more features, better pacing acc
 AeroGPU is a **system-memory-only** WDDM adapter: allocations are backed by **guest RAM**, not dedicated VRAM. However, Win7’s
 dxgkrnl still relies on the KMD-reported “non-local” segment size as an **allocation budget**. If the reported budget is too small,
 D3D9/D3D11 can fail resource creation with `E_OUTOFMEMORY` / `D3DERR_OUTOFVIDEOMEMORY` even when the guest still has free RAM.
+
+Quick validation:
+
+- Run `drivers/aerogpu/tests/win7/segment_budget_sanity` to print the current WDDM budgets and verify that the KMD-reported
+  `NonLocalMemorySize` matches your configured `NonLocalMemorySizeMB` (after reboot / device restart).
 
 The AeroGPU Win7 KMD allows overriding this budget via a device registry parameter:
 

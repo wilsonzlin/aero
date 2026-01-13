@@ -415,9 +415,11 @@ static int RunSegmentBudgetSanity(int argc, char** argv) {
         "Usage: %s.exe [--json[=PATH]] [--allow-remote] [--strict-default] [--min-nonlocal-mb=N]",
         kTestName);
     aerogpu_test::PrintfStdout(
-      "Queries WDDM segment budget via D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE) and validates that the non-local "
-      "segment size is sane. For AeroGPU, this budget is controlled by the registry value "
-      "HKR\\Parameters\\NonLocalMemorySizeMB (default 512; clamped 128..1024 on x86, 128..2048 on x64).");
+        "Queries WDDM segment budget via D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE) and validates that the non-local "
+        "segment size is sane. Also logs best-effort QUERYSEGMENT details (segment descriptor + paging buffer fields) "
+        "when available.\n"
+        "For AeroGPU, this budget is controlled by the registry value HKR\\Parameters\\NonLocalMemorySizeMB "
+        "(default 512; clamped 128..1024 on x86, 128..2048 on x64).");
     return 0;
   }
 
