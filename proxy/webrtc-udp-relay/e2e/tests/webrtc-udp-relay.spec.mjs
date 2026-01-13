@@ -18,6 +18,18 @@ function sleep(ms) {
   });
 }
 
+function parseRelayEventCounters(metricsText) {
+  const out = {};
+  for (const rawLine of metricsText.split("\n")) {
+    const line = rawLine.trim();
+    if (!line.startsWith("aero_webrtc_udp_relay_events_total{event=")) continue;
+    const match = /^aero_webrtc_udp_relay_events_total\{event="([^"]+)"\} ([0-9]+)$/.exec(line);
+    if (!match) continue;
+    out[match[1]] = Number.parseInt(match[2], 10);
+  }
+  return out;
+}
+
 function waitForChildClose(child) {
   if (child.exitCode !== null) return Promise.resolve();
   return new Promise((resolve) => {
@@ -1044,6 +1056,17 @@ test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page })
     expect(debugJSON.origin).toBe(origin);
     expect(debugJSON.token).toBe(token);
     expect(debugJSON.tokenSource).toBe("subprotocol");
+
+    const metricsResp = await page.request.get(`http://127.0.0.1:${relay.port}/metrics`);
+    expect(metricsResp.ok()).toBeTruthy();
+    const events = parseRelayEventCounters(await metricsResp.text());
+    expect(events.l2_bridge_dials_total).toBeGreaterThanOrEqual(1);
+    expect(events.l2_bridge_messages_from_client_total).toBeGreaterThanOrEqual(1);
+    expect(events.l2_bridge_messages_to_client_total).toBeGreaterThanOrEqual(1);
+    expect(events.l2_bridge_bytes_from_client_total).toBeGreaterThanOrEqual(4);
+    expect(events.l2_bridge_bytes_to_client_total).toBeGreaterThanOrEqual(4);
+    expect(events.l2_bridge_dropped_oversized_total ?? 0).toBe(0);
+    expect(events.l2_bridge_dropped_rate_limited_total ?? 0).toBe(0);
   } finally {
     await Promise.all([web.close(), relay.kill(), backend.kill()]);
   }
