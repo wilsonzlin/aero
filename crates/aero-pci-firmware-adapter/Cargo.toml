@@ -1,0 +1,14 @@
+[package]
+name = "aero-pci-firmware-adapter"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+aero-devices = { path = "../devices" }
+firmware = { path = "../firmware" }
+
+[dev-dependencies]
+aero-cpu-core = { path = "../aero-cpu-core" }
+memory = { path = "../memory" }
+

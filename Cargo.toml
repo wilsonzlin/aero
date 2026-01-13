@@ -67,6 +67,7 @@ members = [
     "crates/platform",
     "crates/aero-pc-constants",
     "crates/aero-pc-platform",
+    "crates/aero-pci-firmware-adapter",
     "crates/perf",
     "crates/aero-devices-input",
     "crates/aero-devices-nvme",

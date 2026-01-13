@@ -17,6 +17,7 @@ aero-mmu = { path = "../aero-mmu" }
 aero-net-backend = { path = "../aero-net-backend" }
 aero-net-pump = { path = "../aero-net-pump" }
 aero-pc-platform = { path = "../aero-pc-platform" }
+aero-pci-firmware-adapter = { path = "../aero-pci-firmware-adapter" }
 aero-platform = { path = "../platform" }
 aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
 aero-gpu-vga = { path = "../aero-gpu-vga", features = ["io-snapshot"] }

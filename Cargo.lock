@@ -411,6 +411,7 @@ dependencies = [
  "aero-net-e1000",
  "aero-net-pump",
  "aero-pc-platform",
+ "aero-pci-firmware-adapter",
  "aero-platform",
  "aero-snapshot",
  "aero-storage",
@@ -521,6 +522,7 @@ dependencies = [
  "aero-mmu",
  "aero-net-e1000",
  "aero-pc-constants",
+ "aero-pci-firmware-adapter",
  "aero-platform",
  "aero-snapshot",
  "aero-storage",
@@ -533,6 +535,16 @@ dependencies = [
 [[package]]
 name = "aero-pcapng"
 version = "0.1.0"
+
+[[package]]
+name = "aero-pci-firmware-adapter"
+version = "0.1.0"
+dependencies = [
+ "aero-cpu-core",
+ "aero-devices",
+ "firmware",
+ "memory",
+]
 
 [[package]]
 name = "aero-perf"
