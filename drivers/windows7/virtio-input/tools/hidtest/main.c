@@ -3710,28 +3710,100 @@ static int ioctl_bad_xfer_packet(const SELECTED_DEVICE *dev)
 
 static int ioctl_bad_read_xfer_packet(const SELECTED_DEVICE *dev)
 {
+    const DWORD timeout_ms = 2000;
+    const DWORD cancel_wait_ms = 1000;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    HANDLE ev = NULL;
+    OVERLAPPED ov;
     DWORD bytes = 0;
     BOOL ok;
+    DWORD err;
+    DWORD wait;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
         return 1;
     }
-
+    if (dev->path == NULL) {
+        wprintf(L"Selected device path unavailable; cannot open an overlapped handle for IOCTL_HID_READ_REPORT\n");
+        return 1;
+    }
     if ((dev->desired_access & GENERIC_READ) == 0) {
         wprintf(L"Device was not opened with GENERIC_READ; cannot issue IOCTL_HID_READ_REPORT\n");
         return 1;
     }
 
-    wprintf(L"\nIssuing IOCTL_HID_READ_REPORT with invalid HID_XFER_PACKET pointer...\n");
-    ok = DeviceIoControl(dev->handle, IOCTL_HID_READ_REPORT, (PVOID)(ULONG_PTR)0x1, 64, NULL, 0, &bytes, NULL);
-    if (ok) {
-        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+    // Use a separate overlapped handle so we can enforce a timeout.
+    h = CreateFileW(dev->path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        print_last_error_w(L"CreateFile(overlapped IOCTL_HID_READ_REPORT)");
         return 1;
     }
 
-    print_last_error_w(L"DeviceIoControl(IOCTL_HID_READ_REPORT bad HID_XFER_PACKET)");
-    return 0;
+    ev = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (ev == NULL) {
+        print_last_error_w(L"CreateEvent(IOCTL_HID_READ_REPORT)");
+        CloseHandle(h);
+        return 1;
+    }
+
+    ZeroMemory(&ov, sizeof(ov));
+    ov.hEvent = ev;
+    ResetEvent(ev);
+
+    wprintf(L"\nIssuing IOCTL_HID_READ_REPORT with invalid HID_XFER_PACKET pointer...\n");
+    ok = DeviceIoControl(h, IOCTL_HID_READ_REPORT, (PVOID)(ULONG_PTR)0x1, 64, NULL, 0, &bytes, &ov);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        CloseHandle(ev);
+        CloseHandle(h);
+        return 1;
+    }
+
+    err = GetLastError();
+    if (err != ERROR_IO_PENDING) {
+        print_win32_error_w(L"DeviceIoControl(IOCTL_HID_READ_REPORT bad HID_XFER_PACKET)", err);
+        CloseHandle(ev);
+        CloseHandle(h);
+        return 0;
+    }
+
+    wait = WaitForSingleObject(ev, timeout_ms);
+    if (wait == WAIT_OBJECT_0) {
+        ok = GetOverlappedResult(h, &ov, &bytes, FALSE);
+        if (ok) {
+            wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+            CloseHandle(ev);
+            CloseHandle(h);
+            return 1;
+        }
+        err = GetLastError();
+        print_win32_error_w(L"DeviceIoControl(IOCTL_HID_READ_REPORT bad HID_XFER_PACKET)", err);
+        CloseHandle(ev);
+        CloseHandle(h);
+        return 0;
+    }
+
+    if (wait == WAIT_TIMEOUT) {
+        wprintf(L"IOCTL_HID_READ_REPORT did not complete within %lu ms; cancelling...\n", timeout_ms);
+        (VOID)CancelIo(h);
+        wait = WaitForSingleObject(ev, cancel_wait_ms);
+        if (wait != WAIT_OBJECT_0) {
+            wprintf(L"[FATAL] IOCTL_HID_READ_REPORT did not cancel within %lu ms; terminating.\n", cancel_wait_ms);
+            ExitProcess(1);
+        }
+        // Timed out => negative test failed (it should fail fast on invalid pointers).
+        CloseHandle(ev);
+        CloseHandle(h);
+        return 1;
+    }
+
+    err = GetLastError();
+    print_win32_error_w(L"WaitForSingleObject(IOCTL_HID_READ_REPORT)", err);
+    (VOID)CancelIo(h);
+    CloseHandle(ev);
+    CloseHandle(h);
+    return 1;
 }
 
 static int ioctl_bad_read_report(const SELECTED_DEVICE *dev)
@@ -3742,36 +3814,113 @@ static int ioctl_bad_read_report(const SELECTED_DEVICE *dev)
         UCHAR reportId;
     } HID_XFER_PACKET_MIN;
 
+    const DWORD timeout_ms = 2000;
+    const DWORD cancel_wait_ms = 1000;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    HANDLE ev = NULL;
+    OVERLAPPED ov;
     BYTE inbuf[64];
     HID_XFER_PACKET_MIN *pkt;
     DWORD bytes = 0;
     BOOL ok;
+    DWORD err;
+    DWORD wait;
+    ULONG report_len = 16;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
         return 1;
     }
-
+    if (dev->path == NULL) {
+        wprintf(L"Selected device path unavailable; cannot open an overlapped handle for IOCTL_HID_READ_REPORT\n");
+        return 1;
+    }
     if ((dev->desired_access & GENERIC_READ) == 0) {
         wprintf(L"Device was not opened with GENERIC_READ; cannot issue IOCTL_HID_READ_REPORT\n");
         return 1;
     }
 
+    if (dev->caps_valid && dev->caps.InputReportByteLength != 0) {
+        report_len = dev->caps.InputReportByteLength;
+    }
+
     ZeroMemory(inbuf, sizeof(inbuf));
     pkt = (HID_XFER_PACKET_MIN *)inbuf;
     pkt->reportId = 1; // keyboard
-    pkt->reportBufferLen = 64;
+    pkt->reportBufferLen = report_len;
     pkt->reportBuffer = (PUCHAR)(ULONG_PTR)0x1; // invalid user pointer
 
-    wprintf(L"\nIssuing IOCTL_HID_READ_REPORT with invalid reportBuffer=%p...\n", pkt->reportBuffer);
-    ok = DeviceIoControl(dev->handle, IOCTL_HID_READ_REPORT, inbuf, (DWORD)sizeof(inbuf), NULL, 0, &bytes, NULL);
-    if (ok) {
-        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+    // Use a separate overlapped handle so we can enforce a timeout.
+    h = CreateFileW(dev->path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        print_last_error_w(L"CreateFile(overlapped IOCTL_HID_READ_REPORT)");
         return 1;
     }
 
-    print_last_error_w(L"DeviceIoControl(IOCTL_HID_READ_REPORT bad reportBuffer)");
-    return 0;
+    ev = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (ev == NULL) {
+        print_last_error_w(L"CreateEvent(IOCTL_HID_READ_REPORT)");
+        CloseHandle(h);
+        return 1;
+    }
+
+    ZeroMemory(&ov, sizeof(ov));
+    ov.hEvent = ev;
+    ResetEvent(ev);
+
+    wprintf(L"\nIssuing IOCTL_HID_READ_REPORT with invalid reportBuffer=%p (len=%lu)...\n", pkt->reportBuffer, (DWORD)pkt->reportBufferLen);
+    ok = DeviceIoControl(h, IOCTL_HID_READ_REPORT, inbuf, (DWORD)sizeof(inbuf), NULL, 0, &bytes, &ov);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        CloseHandle(ev);
+        CloseHandle(h);
+        return 1;
+    }
+
+    err = GetLastError();
+    if (err != ERROR_IO_PENDING) {
+        print_win32_error_w(L"DeviceIoControl(IOCTL_HID_READ_REPORT bad reportBuffer)", err);
+        CloseHandle(ev);
+        CloseHandle(h);
+        return 0;
+    }
+
+    wait = WaitForSingleObject(ev, timeout_ms);
+    if (wait == WAIT_OBJECT_0) {
+        ok = GetOverlappedResult(h, &ov, &bytes, FALSE);
+        if (ok) {
+            wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+            CloseHandle(ev);
+            CloseHandle(h);
+            return 1;
+        }
+        err = GetLastError();
+        print_win32_error_w(L"DeviceIoControl(IOCTL_HID_READ_REPORT bad reportBuffer)", err);
+        CloseHandle(ev);
+        CloseHandle(h);
+        return 0;
+    }
+
+    if (wait == WAIT_TIMEOUT) {
+        wprintf(L"IOCTL_HID_READ_REPORT did not complete within %lu ms; cancelling...\n", timeout_ms);
+        (VOID)CancelIo(h);
+        wait = WaitForSingleObject(ev, cancel_wait_ms);
+        if (wait != WAIT_OBJECT_0) {
+            wprintf(L"[FATAL] IOCTL_HID_READ_REPORT did not cancel within %lu ms; terminating.\n", cancel_wait_ms);
+            ExitProcess(1);
+        }
+        // Timed out => negative test failed (it should fail fast on invalid pointers).
+        CloseHandle(ev);
+        CloseHandle(h);
+        return 1;
+    }
+
+    err = GetLastError();
+    print_win32_error_w(L"WaitForSingleObject(IOCTL_HID_READ_REPORT)", err);
+    (VOID)CancelIo(h);
+    CloseHandle(ev);
+    CloseHandle(h);
+    return 1;
 }
 
 static int ioctl_bad_set_output_xfer_packet(const SELECTED_DEVICE *dev)
