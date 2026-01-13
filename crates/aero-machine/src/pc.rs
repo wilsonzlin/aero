@@ -120,6 +120,7 @@ pub struct PcMachine {
     cfg: PcMachineConfig,
 
     pub cpu: CpuCore,
+    ap_cpus: Vec<CpuCore>,
     guest_time: GuestTime,
     assist: AssistContext,
     pub bus: PcCpuBus,
@@ -199,6 +200,7 @@ impl PcMachine {
         let mut machine = Self {
             cfg,
             cpu: CpuCore::new(CpuMode::Real),
+            ap_cpus: Vec::new(),
             guest_time: GuestTime::default(),
             assist: AssistContext::default(),
             bus: PcCpuBus::new(platform),
@@ -320,6 +322,24 @@ impl PcMachine {
         self.assist = AssistContext::default();
         self.cpu = CpuCore::new(CpuMode::Real);
         self.guest_time = GuestTime::new_from_cpu(&self.cpu);
+
+        // Initialize application processor (AP) vCPU state.
+        //
+        // PcMachine's run loop is still single-core today; the additional vCPU states exist so
+        // firmware can advertise an SMP topology and so tests/hosts can inspect per-vCPU reset MSRs.
+        self.ap_cpus.clear();
+        let cpu_count = self.cfg.cpu_count as usize;
+        if cpu_count > 1 {
+            self.ap_cpus = (1..cpu_count)
+                .map(|apic_id| {
+                    let mut cpu = CpuCore::new(CpuMode::Real);
+                    cpu.state.msr.apic_base &= !(1 << 8); // clear BSP bit
+                    cpu.state.msr.tsc_aux = apic_id as u32;
+                    cpu.state.halted = true;
+                    cpu
+                })
+                .collect();
+        }
 
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
