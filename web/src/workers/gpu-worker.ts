@@ -199,6 +199,8 @@ let presenterInitPromise: Promise<void> | null = null;
 let presenterErrorGeneration = 0;
 let presenterErrorEventGeneration = -1;
 const presenterErrorEventKeys = new Set<string>();
+let presenterInitBackendHint: PresenterBackendKind | null = null;
+let presenterInitBackendHintGeneration = 0;
 let presenterSrcWidth = 0;
 let presenterSrcHeight = 0;
 let presenterNeedsFullUpload = true;
@@ -2171,6 +2173,8 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
   presenterFallback = undefined;
   presenterErrorGeneration += 1;
   const generation = presenterErrorGeneration;
+  presenterInitBackendHintGeneration = generation;
+  presenterInitBackendHint = null;
 
   if (prevPresenterBackend === "webgl2_wgpu") {
     // `WgpuWebGl2Presenter.destroy()` calls `aero-gpu-wasm.destroy_gpu()`, which clears both the
@@ -2220,12 +2224,18 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
     backends = filtered;
   }
 
+  // For init failure diagnostics, keep track of the backend we were attempting when the error
+  // occurred. `postPresenterError()` can use this to populate `backend_kind` even when the
+  // presenter was never successfully created.
+  presenterInitBackendHint = backends[0] ?? null;
+
   const firstBackend = backends[0];
   let firstError: unknown | null = null;
   let lastError: unknown | null = null;
 
   for (const backend of backends) {
     try {
+      presenterInitBackendHint = backend;
       presenter = await tryInitBackend(backend, canvas, width, height, dpr, opts, generation);
       presenterSrcWidth = width;
       presenterSrcHeight = height;
@@ -2310,7 +2320,9 @@ async function maybeSendReady(): Promise<void> {
   if (!presenterInitPromise) {
     presenterInitPromise = initPresenterForRuntime(runtimeCanvas, frame.width, frame.height)
       .catch((err) => {
-        postPresenterError(err);
+        const backendHint =
+          presenterInitBackendHintGeneration === presenterErrorGeneration ? presenterInitBackendHint ?? undefined : undefined;
+        postPresenterError(err, backendHint);
       })
       .finally(() => {
         presenterInitPromise = null;
