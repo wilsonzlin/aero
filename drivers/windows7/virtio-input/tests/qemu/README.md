@@ -60,6 +60,15 @@ Options:
 - `--i8042-off` — disable the emulated PS/2 controller (`-machine ...,i8042=off`). Only use this after the
   virtio-input driver is installed and confirmed working, otherwise you may lose input.
 
+Passing extra QEMU args:
+
+The scripts accept additional QEMU arguments after the disk image path. For clarity you can insert an
+optional `--` separator:
+
+```bash
+./run-win7-x64.sh /path/to/win7-x64.qcow2 -- -smp 2 -display gtk
+```
+
 Environment overrides:
 
 - `QEMU_BIN=...` — override the QEMU binary (defaults: `qemu-system-i386` / `qemu-system-x86_64`).
@@ -176,6 +185,12 @@ Equivalent helper-script flag:
 
 ```bash
 ./run-win7-x64.sh --i8042-off /path/to/win7-x64.qcow2
+```
+
+Equivalent for x86:
+
+```bash
+./run-win7-x86.sh --i8042-off /path/to/win7-x86.qcow2
 ```
 
 Only do this after you have a known-good virtio-input driver; otherwise you may lose keyboard/mouse access in the guest.
