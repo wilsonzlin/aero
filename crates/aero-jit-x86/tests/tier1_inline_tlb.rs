@@ -4,7 +4,7 @@ mod tier1_common;
 
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
-use aero_jit_x86::jit_ctx::JitContext;
+use aero_jit_x86::jit_ctx::{self, JitContext};
 use aero_jit_x86::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::{Tier1WasmCodegen, Tier1WasmOptions, EXPORT_BLOCK_FN};
 use aero_jit_x86::wasm::{
@@ -442,6 +442,88 @@ fn run_wasm_inner(
     (next_rip, got_cpu, got_ram, host_state)
 }
 
+fn run_wasm_inner_with_code_version_table(
+    block: &aero_jit_x86::tier1::ir::IrBlock,
+    cpu: CpuState,
+    ram: Vec<u8>,
+    ram_size: u64,
+    options: Tier1WasmOptions,
+    code_version_table_len: u32,
+) -> (u64, CpuState, Vec<u8>, HostState, Vec<u32>) {
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(block, options);
+    validate_wasm(&wasm);
+
+    // Place the Tier-2 context and code-version table between the Tier-1 `JitContext` and the RAM
+    // backing store (matching the real runtime layout).
+    let table_ptr = u64::from(jit_ctx::TIER2_CTX_OFFSET + jit_ctx::TIER2_CTX_SIZE);
+    let table_bytes = usize::try_from(code_version_table_len)
+        .unwrap()
+        .checked_mul(4)
+        .unwrap();
+    let ram_base = table_ptr + (table_bytes as u64);
+
+    let total_len = ram_base as usize + ram.len();
+    let mut mem = vec![0u8; total_len];
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    let cpu_base = CPU_PTR as usize;
+    mem[cpu_base..cpu_base + cpu_bytes.len()].copy_from_slice(&cpu_bytes);
+
+    // Configure Tier-1 JIT context.
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: TLB_SALT,
+    };
+    ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    // Configure code-version table.
+    mem[jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize
+        ..jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize + 4]
+        .copy_from_slice(&(table_ptr as u32).to_le_bytes());
+    mem[jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize
+        ..jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize + 4]
+        .copy_from_slice(&code_version_table_len.to_le_bytes());
+
+    // RAM backing store.
+    mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
+
+    let pages = total_len.div_ceil(65_536) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let snap =
+        CpuSnapshot::from_wasm_bytes(&got_mem[cpu_base..cpu_base + abi::CPU_STATE_SIZE as usize]);
+    let mut got_cpu = CpuState {
+        gpr: snap.gpr,
+        rip: snap.rip,
+        ..Default::default()
+    };
+    got_cpu.set_rflags(snap.rflags);
+
+    let next_rip = if ret == JIT_EXIT_SENTINEL_I64 {
+        got_cpu.rip
+    } else {
+        ret as u64
+    };
+
+    let got_ram = got_mem[ram_base as usize..ram_base as usize + ram.len()].to_vec();
+
+    let mut table = Vec::new();
+    for i in 0..code_version_table_len {
+        let off = table_ptr as usize + (i as usize) * 4;
+        table.push(u32::from_le_bytes(got_mem[off..off + 4].try_into().unwrap()));
+    }
+
+    let host_state = *store.data();
+    (next_rip, got_cpu, got_ram, host_state, table)
+}
+
 fn run_wasm(
     block: &aero_jit_x86::tier1::ir::IrBlock,
     cpu: CpuState,
@@ -873,6 +955,49 @@ fn tier1_inline_tlb_cross_page_store_can_use_fastpath_when_enabled() {
     assert_eq!(host_state.mmio_exit_calls, 0);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_bumps_both_code_pages() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    // Two RAM pages so the cross-page store spans RAM→RAM.
+    let ram = vec![0u8; 0x2000];
+
+    let (next_rip, got_cpu, got_ram, host_state, table) = run_wasm_inner_with_code_version_table(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+        2,
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes(),
+    );
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(table, vec![1, 1]);
 }
 
 #[test]
