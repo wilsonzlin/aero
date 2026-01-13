@@ -391,7 +391,15 @@ virtio-input appears as a **PCI virtio** function. In QEMU this is typically cre
 - `virtio-mouse-pci`
 - `virtio-tablet-pci`
 
-All of these use the virtio-input transport and should enumerate with `VEN_1AF4` and a virtio-input device ID (commonly `DEV_1011` for legacy/transitional or `DEV_1052` for modern).
+All of these use the virtio-input transport and should enumerate with `VEN_1AF4` and a virtio-input device ID.
+
+- **Aero contract v1 / modern virtio-pci:** `DEV_1052` (what this in-tree driver package binds to)
+- **Virtio transitional ID space:** `DEV_1011` (defined by the virtio spec, but **not** matched by `inf/aero_virtio_input.inf`)
+
+For contract-v1 testing under QEMU, you typically want:
+
+- `disable-legacy=on` (modern-only virtio-pci)
+- `x-pci-revision=0x01` (so the device matches the `REV_01` contract major version / INF HWID gate)
 
 ## Testing
 
