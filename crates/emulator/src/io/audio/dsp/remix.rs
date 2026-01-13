@@ -223,6 +223,16 @@ mod tests {
     }
 
     #[test]
+    fn remix_4_to_2_folds_multiple_extra_channels_half_gain() {
+        // One 4-channel frame: [L, R, C1, C2]
+        let input = [1.0f32, 2.0, 4.0, 6.0];
+        let mut out = Vec::new();
+        remix_interleaved(&input, 4, 2, &mut out).unwrap();
+        // Extra channels are folded into both L/R at half gain: +2.0 and +3.0.
+        assert_eq!(out, vec![6.0, 7.0]);
+    }
+
+    #[test]
     fn remix_4_to_1_downmixes_by_average() {
         // Two 4-channel frames.
         let input = [1.0f32, 2.0, 3.0, 4.0, -1.0, -1.0, -1.0, -1.0];
