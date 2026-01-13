@@ -77,6 +77,18 @@ impl From<TraceReadError> for ReplayError {
 ///
 /// This is intentionally minimal and exists to provide a deterministic regression test surface.
 pub fn replay_trace<R: Read + Seek>(reader: R) -> Result<Vec<ReplayedFrame>, ReplayError> {
+    replay_trace_filtered(reader, None)
+}
+
+/// Replay a trace and return only the frames matching `frame_filter`.
+///
+/// When `frame_filter` is `Some(n)`, the replayer still processes earlier frames to build up the
+/// necessary state (blobs/resources), but it avoids retaining skipped frames and stops once the
+/// requested frame is presented.
+pub fn replay_trace_filtered<R: Read + Seek>(
+    reader: R,
+    frame_filter: Option<u32>,
+) -> Result<Vec<ReplayedFrame>, ReplayError> {
     let mut reader = TraceReader::open(reader)?;
     let mut blobs: HashMap<u64, (BlobKind, Vec<u8>)> = HashMap::new();
     let mut executor = AerogpuSoftwareExecutor::new();
@@ -96,12 +108,19 @@ pub fn replay_trace<R: Read + Seek>(reader: R) -> Result<Vec<ReplayedFrame>, Rep
                     let frame = executor
                         .take_presented_frame()
                         .ok_or(ReplayError::FrameNotPresented { frame_index })?;
-                    out.push(ReplayedFrame {
+                    let replayed = ReplayedFrame {
                         frame_index,
                         width: frame.width,
                         height: frame.height,
                         rgba8: frame.rgba8,
-                    });
+                    };
+
+                    if frame_filter.is_none() || frame_filter == Some(frame_index) {
+                        out.push(replayed);
+                    }
+                    if frame_filter == Some(frame_index) {
+                        return Ok(out);
+                    }
                     current_frame = Some(frame_index);
                 }
                 TraceRecord::Packet { .. } => {
