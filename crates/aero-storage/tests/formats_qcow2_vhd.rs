@@ -1,6 +1,6 @@
 use aero_storage::{
-    detect_format, DiskError, DiskFormat, DiskImage, MemBackend, Qcow2Disk, StorageBackend, VhdDisk,
-    VirtualDisk, SECTOR_SIZE,
+    detect_format, DiskError, DiskFormat, DiskImage, MemBackend, Qcow2Disk, RawDisk, StorageBackend,
+    VhdDisk, VirtualDisk, SECTOR_SIZE,
 };
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -71,6 +71,60 @@ fn make_qcow2_empty(virtual_size: u64) -> MemBackend {
     write_be_u32(&mut header, 96, 4); // refcount_order (16-bit)
     write_be_u32(&mut header, 100, 104); // header_length
     backend.write_at(0, &header).unwrap();
+
+    backend
+        .write_at(refcount_table_offset, &refcount_block_offset.to_be_bytes())
+        .unwrap();
+
+    let l1_entry = l2_table_offset | QCOW2_OFLAG_COPIED;
+    backend
+        .write_at(l1_table_offset, &l1_entry.to_be_bytes())
+        .unwrap();
+
+    for cluster_index in 0u64..5 {
+        let off = refcount_block_offset + cluster_index * 2;
+        backend.write_at(off, &1u16.to_be_bytes()).unwrap();
+    }
+
+    backend
+}
+
+fn make_qcow2_empty_with_backing(virtual_size: u64) -> MemBackend {
+    assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
+
+    // Keep fixtures small while still exercising the full metadata path.
+    let cluster_bits = 12u32; // 4 KiB clusters
+    let cluster_size = 1u64 << cluster_bits;
+
+    let refcount_table_offset = cluster_size;
+    let l1_table_offset = cluster_size * 2;
+    let refcount_block_offset = cluster_size * 3;
+    let l2_table_offset = cluster_size * 4;
+
+    let file_len = cluster_size * 5;
+    let mut backend = MemBackend::with_len(file_len).unwrap();
+
+    let backing_name = b"backing.img";
+    let backing_file_offset = 104u64; // immediately after v3 header
+
+    let mut header = [0u8; 104];
+    header[0..4].copy_from_slice(b"QFI\xfb");
+    write_be_u32(&mut header, 4, 3); // version
+    write_be_u64(&mut header, 8, backing_file_offset);
+    write_be_u32(&mut header, 16, backing_name.len() as u32);
+    write_be_u32(&mut header, 20, cluster_bits);
+    write_be_u64(&mut header, 24, virtual_size);
+    write_be_u32(&mut header, 36, 1); // l1_size
+    write_be_u64(&mut header, 40, l1_table_offset);
+    write_be_u64(&mut header, 48, refcount_table_offset);
+    write_be_u32(&mut header, 56, 1); // refcount_table_clusters
+    write_be_u64(&mut header, 72, 0); // incompatible_features
+    write_be_u64(&mut header, 80, 0); // compatible_features
+    write_be_u64(&mut header, 88, 0); // autoclear_features
+    write_be_u32(&mut header, 96, 4); // refcount_order (16-bit)
+    write_be_u32(&mut header, 100, 104); // header_length
+    backend.write_at(0, &header).unwrap();
+    backend.write_at(backing_file_offset, backing_name).unwrap();
 
     backend
         .write_at(refcount_table_offset, &refcount_block_offset.to_be_bytes())
@@ -550,6 +604,140 @@ fn qcow2_unallocated_reads_zero() {
     let mut buf = vec![0xAAu8; SECTOR_SIZE * 4];
     disk.read_sectors(0, &mut buf).unwrap();
     assert!(buf.iter().all(|b| *b == 0));
+}
+
+#[test]
+fn qcow2_open_rejects_backing_file_without_explicit_parent() {
+    let backend = make_qcow2_empty_with_backing(64 * 1024);
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::Unsupported("qcow2 backing file")));
+}
+
+#[test]
+fn qcow2_with_backing_reads_fall_back_and_writes_are_copy_on_write() {
+    let virtual_size = 64 * 1024u64;
+
+    // Backing disk with known data.
+    let mut backing_backend = MemBackend::with_len(virtual_size).unwrap();
+    let mut backing_sector0 = [0u8; SECTOR_SIZE];
+    backing_sector0[..15].copy_from_slice(b"backing sector0");
+    backing_backend.write_at(0, &backing_sector0).unwrap();
+
+    let mut backing_sector1 = [0u8; SECTOR_SIZE];
+    backing_sector1[..15].copy_from_slice(b"backing sector1");
+    backing_backend
+        .write_at(SECTOR_SIZE as u64, &backing_sector1)
+        .unwrap();
+
+    // First sector of guest cluster 1 (cluster_size=4096 => lba 8).
+    let cluster_size = 1u64 << 12;
+    let cluster1_lba = cluster_size / SECTOR_SIZE as u64;
+    let mut backing_cluster1_sector0 = [0u8; SECTOR_SIZE];
+    backing_cluster1_sector0[..16].copy_from_slice(b"backing cluster1");
+    backing_backend
+        .write_at(cluster1_lba * SECTOR_SIZE as u64, &backing_cluster1_sector0)
+        .unwrap();
+
+    let backing_disk = RawDisk::open(backing_backend).unwrap();
+    let qcow2_backend = make_qcow2_empty_with_backing(virtual_size);
+    let mut disk = Qcow2Disk::open_with_backing(qcow2_backend, Box::new(backing_disk)).unwrap();
+
+    // Unallocated clusters should read from the backing disk.
+    let mut buf0 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut buf0).unwrap();
+    assert_eq!(buf0, backing_sector0);
+    let mut buf1 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(1, &mut buf1).unwrap();
+    assert_eq!(buf1, backing_sector1);
+
+    let mut buf_cluster1 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(cluster1_lba, &mut buf_cluster1).unwrap();
+    assert_eq!(buf_cluster1, backing_cluster1_sector0);
+
+    // Write into an unallocated cluster (cluster 0). This should allocate a cluster in the qcow2
+    // child and seed untouched bytes from the backing disk.
+    let mut overlay_sector0 = [0u8; SECTOR_SIZE];
+    overlay_sector0[..15].copy_from_slice(b"overlay sector0");
+    disk.write_sectors(0, &overlay_sector0).unwrap();
+
+    let mut read0 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut read0).unwrap();
+    assert_eq!(read0, overlay_sector0);
+
+    // Sector 1 shares the same qcow2 guest cluster as sector 0; it should still match the backing
+    // disk due to copy-on-write seeding.
+    let mut read1 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(1, &mut read1).unwrap();
+    assert_eq!(read1, backing_sector1);
+
+    // Guest cluster 1 should remain unallocated in the qcow2 child; it must still fall back to
+    // the backing disk.
+    let mut read_cluster1 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(cluster1_lba, &mut read_cluster1).unwrap();
+    assert_eq!(read_cluster1, backing_cluster1_sector0);
+
+    disk.flush().unwrap();
+
+    // Writes must never affect the backing disk.
+    let (mut child_backend, backing_opt) = disk.into_backend_and_backing();
+    let mut backing = backing_opt.unwrap();
+
+    let mut backing0_after = [0u8; SECTOR_SIZE];
+    backing.read_sectors(0, &mut backing0_after).unwrap();
+    assert_eq!(backing0_after, backing_sector0);
+
+    let mut backing1_after = [0u8; SECTOR_SIZE];
+    backing.read_sectors(1, &mut backing1_after).unwrap();
+    assert_eq!(backing1_after, backing_sector1);
+
+    // The qcow2 image must have grown due to cluster allocation.
+    let final_len = child_backend.len().unwrap();
+    assert_eq!(final_len, cluster_size * 6);
+}
+
+#[test]
+fn qcow2_backing_zero_cluster_flag_falls_back_to_parent() {
+    let virtual_size = 64 * 1024u64;
+    let cluster_size = 1u64 << 12;
+    let l2_table_offset = cluster_size * 4;
+
+    let mut backing_backend = MemBackend::with_len(virtual_size).unwrap();
+    let mut backing_sector0 = [0u8; SECTOR_SIZE];
+    backing_sector0[..15].copy_from_slice(b"backing sector0");
+    backing_backend.write_at(0, &backing_sector0).unwrap();
+    let mut backing_sector1 = [0u8; SECTOR_SIZE];
+    backing_sector1[..15].copy_from_slice(b"backing sector1");
+    backing_backend
+        .write_at(SECTOR_SIZE as u64, &backing_sector1)
+        .unwrap();
+
+    let backing_disk = RawDisk::open(backing_backend).unwrap();
+
+    let mut qcow2_backend = make_qcow2_empty_with_backing(virtual_size);
+    // Mark guest cluster 0 as a v3 "zero cluster". The implementation treats this as unallocated,
+    // and with a backing disk it should therefore fall back to the parent.
+    qcow2_backend
+        .write_at(l2_table_offset, &QCOW2_OFLAG_ZERO.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open_with_backing(qcow2_backend, Box::new(backing_disk)).unwrap();
+
+    let mut read0 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut read0).unwrap();
+    assert_eq!(read0, backing_sector0);
+
+    // Writes should allocate a real data cluster and preserve backing bytes for sectors we don't
+    // overwrite.
+    let data = vec![0xCCu8; SECTOR_SIZE];
+    disk.write_sectors(0, &data).unwrap();
+
+    let mut read_back = vec![0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut read_back).unwrap();
+    assert_eq!(read_back, data);
+
+    let mut read1 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(1, &mut read1).unwrap();
+    assert_eq!(read1, backing_sector1);
 }
 
 #[test]
