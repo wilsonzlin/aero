@@ -1229,3 +1229,128 @@ fn rejects_sampler_slot_out_of_range() {
         } if max == MAX_SAMPLER_SLOTS - 1
     ));
 }
+
+#[test]
+fn translates_ubfe_to_extract_bits() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let imm_scalar_bits = |v: u32| SrcOperand {
+        kind: SrcKind::ImmediateF32([v; 4]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Ubfe {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                width: imm_scalar_bits(8),
+                offset: imm_scalar_bits(0),
+                src: imm_scalar_bits(0x1234_5678),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("extractBits"),
+        "expected ubfe translation to use WGSL extractBits:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn translates_ibfe_to_extract_bits() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let imm_scalar_bits = |v: u32| SrcOperand {
+        kind: SrcKind::ImmediateF32([v; 4]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Ibfe {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                width: imm_scalar_bits(8),
+                offset: imm_scalar_bits(0),
+                // Extract from a negative `i32` bit-pattern.
+                src: imm_scalar_bits(0x8765_4321),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("extractBits"),
+        "expected ibfe translation to use WGSL extractBits:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn translates_bfi_to_insert_bits() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let imm_scalar_bits = |v: u32| SrcOperand {
+        kind: SrcKind::ImmediateF32([v; 4]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Bfi {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                width: imm_scalar_bits(8),
+                offset: imm_scalar_bits(0),
+                insert: imm_scalar_bits(0xaa),
+                base: imm_scalar_bits(0x1234_5678),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("insertBits"),
+        "expected bfi translation to use WGSL insertBits:\n{}",
+        translated.wgsl
+    );
+}

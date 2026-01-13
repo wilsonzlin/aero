@@ -559,6 +559,50 @@ fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Rsq { dst, src })
         }
+        OPCODE_BFI => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let width = decode_src(&mut r)?;
+            let offset = decode_src(&mut r)?;
+            let insert = decode_src(&mut r)?;
+            let base = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Bfi {
+                dst,
+                width,
+                offset,
+                insert,
+                base,
+            })
+        }
+        OPCODE_UBFE => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let width = decode_src(&mut r)?;
+            let offset = decode_src(&mut r)?;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Ubfe {
+                dst,
+                width,
+                offset,
+                src,
+            })
+        }
+        OPCODE_IBFE => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let width = decode_src(&mut r)?;
+            let offset = decode_src(&mut r)?;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Ibfe {
+                dst,
+                width,
+                offset,
+                src,
+            })
+        }
         OPCODE_RET => {
             r.expect_eof()?;
             Ok(Sm4Inst::Ret)

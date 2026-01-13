@@ -1026,7 +1026,117 @@ fn does_not_decode_ld_with_offset_like_trailing_operand_as_explicit_lod() {
         Sm4Inst::Unknown { opcode: OPCODE_LD }
     ));
 }
+#[test]
+fn decodes_ubfe_ibfe_bfi_bitfield_ops() {
+    let mut body = Vec::<u32>::new();
 
+    // ubfe r0, l(8), l(0), r1
+    let width = imm32_scalar(8);
+    let offset = imm32_scalar(0);
+    let src = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut ubfe = vec![opcode_token(
+        OPCODE_UBFE,
+        (1 + 2 + width.len() + offset.len() + src.len()) as u32,
+    )];
+    ubfe.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ubfe.extend_from_slice(&width);
+    ubfe.extend_from_slice(&offset);
+    ubfe.extend_from_slice(&src);
+    body.extend_from_slice(&ubfe);
+
+    // ibfe r2, l(8), l(0), r3
+    let width = imm32_scalar(8);
+    let offset = imm32_scalar(0);
+    let src = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[3],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut ibfe = vec![opcode_token(
+        OPCODE_IBFE,
+        (1 + 2 + width.len() + offset.len() + src.len()) as u32,
+    )];
+    ibfe.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    ibfe.extend_from_slice(&width);
+    ibfe.extend_from_slice(&offset);
+    ibfe.extend_from_slice(&src);
+    body.extend_from_slice(&ibfe);
+
+    // bfi r4, l(8), l(0), r5, r6
+    let width = imm32_scalar(8);
+    let offset = imm32_scalar(0);
+    let insert = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[5],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let base = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[6],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut bfi = vec![opcode_token(
+        OPCODE_BFI,
+        (1 + 2 + width.len() + offset.len() + insert.len() + base.len()) as u32,
+    )];
+    bfi.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    bfi.extend_from_slice(&width);
+    bfi.extend_from_slice(&offset);
+    bfi.extend_from_slice(&insert);
+    bfi.extend_from_slice(&base);
+    body.extend_from_slice(&bfi);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    let imm_scalar = |v: u32| SrcOperand {
+        kind: SrcKind::ImmediateF32([v, v, v, v]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    };
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Ubfe {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            width: imm_scalar(8),
+            offset: imm_scalar(0),
+            src: src_reg(RegFile::Temp, 1),
+        }
+    );
+    assert_eq!(
+        module.instructions[1],
+        Sm4Inst::Ibfe {
+            dst: dst(RegFile::Temp, 2, WriteMask::XYZW),
+            width: imm_scalar(8),
+            offset: imm_scalar(0),
+            src: src_reg(RegFile::Temp, 3),
+        }
+    );
+    assert_eq!(
+        module.instructions[2],
+        Sm4Inst::Bfi {
+            dst: dst(RegFile::Temp, 4, WriteMask::XYZW),
+            width: imm_scalar(8),
+            offset: imm_scalar(0),
+            insert: src_reg(RegFile::Temp, 5),
+            base: src_reg(RegFile::Temp, 6),
+        }
+    );
+}
 
 #[test]
 fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {

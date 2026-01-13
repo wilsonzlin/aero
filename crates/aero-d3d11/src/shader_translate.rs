@@ -1664,6 +1664,34 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
                 scan_src(c)?;
             }
             Sm4Inst::Rcp { dst: _, src } | Sm4Inst::Rsq { dst: _, src } => scan_src(src)?,
+            Sm4Inst::Bfi {
+                dst: _,
+                width,
+                offset,
+                insert,
+                base,
+            } => {
+                scan_src(width)?;
+                scan_src(offset)?;
+                scan_src(insert)?;
+                scan_src(base)?;
+            }
+            Sm4Inst::Ubfe {
+                dst: _,
+                width,
+                offset,
+                src,
+            }
+            | Sm4Inst::Ibfe {
+                dst: _,
+                width,
+                offset,
+                src,
+            } => {
+                scan_src(width)?;
+                scan_src(offset)?;
+                scan_src(src)?;
+            }
             Sm4Inst::Sample {
                 dst: _,
                 coord,
@@ -1797,6 +1825,36 @@ fn emit_temp_and_output_decls(
             }
             Sm4Inst::Rcp { dst, src } | Sm4Inst::Rsq { dst, src } => {
                 scan_reg(dst.reg);
+                scan_src_regs(src, &mut scan_reg);
+            }
+            Sm4Inst::Bfi {
+                dst,
+                width,
+                offset,
+                insert,
+                base,
+            } => {
+                scan_reg(dst.reg);
+                scan_src_regs(width, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+                scan_src_regs(insert, &mut scan_reg);
+                scan_src_regs(base, &mut scan_reg);
+            }
+            Sm4Inst::Ubfe {
+                dst,
+                width,
+                offset,
+                src,
+            }
+            | Sm4Inst::Ibfe {
+                dst,
+                width,
+                offset,
+                src,
+            } => {
+                scan_reg(dst.reg);
+                scan_src_regs(width, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(src, &mut scan_reg);
             }
             Sm4Inst::Sample { dst, coord, .. } => {
@@ -1983,6 +2041,66 @@ fn emit_instructions(
                 let src = emit_src_vec4(src, inst_index, "rsq", ctx)?;
                 let expr = maybe_saturate(dst, format!("inverseSqrt({src})"));
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "rsq", ctx)?;
+            }
+            Sm4Inst::Bfi {
+                dst,
+                width,
+                offset,
+                insert,
+                base,
+            } => {
+                let width_i = emit_src_vec4_i32(width, inst_index, "bfi", ctx)?;
+                let offset_i = emit_src_vec4_i32(offset, inst_index, "bfi", ctx)?;
+                let insert_i = emit_src_vec4_i32(insert, inst_index, "bfi", ctx)?;
+                let base_i = emit_src_vec4_i32(base, inst_index, "bfi", ctx)?;
+
+                // WGSL expects `offset`/`count` to be `u32`.
+                let offset_u = format!("u32(({offset_i}).x)");
+                let count_u = format!("u32(({width_i}).x)");
+                let insert_u = format!("bitcast<u32>(({insert_i}).x)");
+                let base_u = format!("bitcast<u32>(({base_i}).x)");
+
+                let expr = format!(
+                    "vec4<f32>(bitcast<f32>(insertBits({base_u}, {insert_u}, {offset_u}, {count_u})))"
+                );
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bfi", ctx)?;
+            }
+            Sm4Inst::Ubfe {
+                dst,
+                width,
+                offset,
+                src,
+            } => {
+                let width_i = emit_src_vec4_i32(width, inst_index, "ubfe", ctx)?;
+                let offset_i = emit_src_vec4_i32(offset, inst_index, "ubfe", ctx)?;
+                let src_i = emit_src_vec4_i32(src, inst_index, "ubfe", ctx)?;
+
+                let offset_u = format!("u32(({offset_i}).x)");
+                let count_u = format!("u32(({width_i}).x)");
+                let src_u = format!("bitcast<u32>(({src_i}).x)");
+
+                let expr =
+                    format!("vec4<f32>(bitcast<f32>(extractBits({src_u}, {offset_u}, {count_u})))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ubfe", ctx)?;
+            }
+            Sm4Inst::Ibfe {
+                dst,
+                width,
+                offset,
+                src,
+            } => {
+                let width_i = emit_src_vec4_i32(width, inst_index, "ibfe", ctx)?;
+                let offset_i = emit_src_vec4_i32(offset, inst_index, "ibfe", ctx)?;
+                let src_i = emit_src_vec4_i32(src, inst_index, "ibfe", ctx)?;
+
+                let offset_u = format!("u32(({offset_i}).x)");
+                let count_u = format!("u32(({width_i}).x)");
+                let src_s = format!("({src_i}).x");
+
+                // `extractBits(i32, ...)` sign-extends in WGSL, matching D3D's `ibfe`.
+                let expr =
+                    format!("vec4<f32>(bitcast<f32>(extractBits({src_s}, {offset_u}, {count_u})))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ibfe", ctx)?;
             }
             Sm4Inst::Sample {
                 dst,

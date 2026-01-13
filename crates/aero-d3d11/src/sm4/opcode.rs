@@ -30,6 +30,13 @@ pub const OPCODE_DP4: u32 = 0x09;
 pub const OPCODE_MIN: u32 = 0x0a;
 pub const OPCODE_MAX: u32 = 0x0b;
 
+/// `bfi` (bitfield insert).
+pub const OPCODE_BFI: u32 = 0x67;
+/// `ubfe` (unsigned bitfield extract).
+pub const OPCODE_UBFE: u32 = 0x68;
+/// `ibfe` (signed bitfield extract).
+pub const OPCODE_IBFE: u32 = 0x69;
+
 /// Non-executable custom data / comment block.
 ///
 /// Used for embedded comments, debug data, and immediate constant buffers.

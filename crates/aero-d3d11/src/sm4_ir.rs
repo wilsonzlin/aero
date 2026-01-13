@@ -161,6 +161,34 @@ pub enum Sm4Inst {
         dst: DstOperand,
         src: SrcOperand,
     },
+    /// `bfi dst, width, offset, insert, base`
+    ///
+    /// Inserts `width` bits from `insert` into `base` starting at bit `offset`.
+    Bfi {
+        dst: DstOperand,
+        width: SrcOperand,
+        offset: SrcOperand,
+        insert: SrcOperand,
+        base: SrcOperand,
+    },
+    /// `ubfe dst, width, offset, src`
+    ///
+    /// Extracts `width` bits from `src` starting at bit `offset`, zero-extending the result.
+    Ubfe {
+        dst: DstOperand,
+        width: SrcOperand,
+        offset: SrcOperand,
+        src: SrcOperand,
+    },
+    /// `ibfe dst, width, offset, src`
+    ///
+    /// Extracts `width` bits from `src` starting at bit `offset`, sign-extending the result.
+    Ibfe {
+        dst: DstOperand,
+        width: SrcOperand,
+        offset: SrcOperand,
+        src: SrcOperand,
+    },
     /// `sample dest, coord, t#, s#`
     Sample {
         dst: DstOperand,
