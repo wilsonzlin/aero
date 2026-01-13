@@ -7466,9 +7466,13 @@ impl AerogpuD3d11Executor {
             crate::ShaderStage::Vertex => Some(ShaderStage::Vertex),
             crate::ShaderStage::Pixel => Some(ShaderStage::Pixel),
             crate::ShaderStage::Compute => Some(ShaderStage::Compute),
-            // Geometry/hull/domain stages are not supported by the AeroGPU/WebGPU pipeline. Accept
-            // the create call to keep the command stream robust, but ignore the shader since it
-            // cannot be executed.
+            // Geometry/hull/domain stages are not directly executed by the WebGPU backend.
+            //
+            // Accept the create to keep the command stream robust, but ignore the shader program.
+            // The corresponding handles may still be bound via `BIND_SHADERS` (legacy `reserved0`
+            // or the append-only GS/HS/DS extension) to trigger the compute-prepass emulation path
+            // and stage_ex binding routing, but we do not currently translate/execute the actual
+            // DXBC program.
             crate::ShaderStage::Geometry | crate::ShaderStage::Hull | crate::ShaderStage::Domain => {
                 return Ok(());
             }
