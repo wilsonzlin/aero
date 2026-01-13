@@ -3,30 +3,50 @@
     {
       "name": "aerogpu",
       "required": true,
+      "expected_inf_files": [
+        "aerogpu_dx11.inf"
+      ],
+      "expected_add_services_from_devices_cmd_var": "AERO_GPU_SERVICE",
       "expected_hardware_ids": [],
       "expected_hardware_ids_from_devices_cmd_var": "AERO_GPU_HWIDS"
     },
     {
       "name": "virtio-blk",
       "required": true,
+      "expected_inf_files": [
+        "aero_virtio_blk.inf"
+      ],
+      "expected_add_services_from_devices_cmd_var": "AERO_VIRTIO_BLK_SERVICE",
       "expected_hardware_ids": [],
       "expected_hardware_ids_from_devices_cmd_var": "AERO_VIRTIO_BLK_HWIDS"
     },
     {
       "name": "virtio-net",
       "required": true,
+      "expected_inf_files": [
+        "aero_virtio_net.inf"
+      ],
+      "expected_add_services_from_devices_cmd_var": "AERO_VIRTIO_NET_SERVICE",
       "expected_hardware_ids": [],
       "expected_hardware_ids_from_devices_cmd_var": "AERO_VIRTIO_NET_HWIDS"
     },
     {
       "name": "virtio-input",
       "required": true,
+      "expected_inf_files": [
+        "aero_virtio_input.inf"
+      ],
+      "expected_add_services_from_devices_cmd_var": "AERO_VIRTIO_INPUT_SERVICE",
       "expected_hardware_ids": [],
       "expected_hardware_ids_from_devices_cmd_var": "AERO_VIRTIO_INPUT_HWIDS"
     },
     {
       "name": "virtio-snd",
       "required": false,
+      "expected_inf_files": [
+        "aero_virtio_snd.inf"
+      ],
+      "expected_add_services_from_devices_cmd_var": "AERO_VIRTIO_SND_SERVICE",
       "expected_hardware_ids": [],
       "expected_hardware_ids_from_devices_cmd_var": "AERO_VIRTIO_SND_HWIDS"
     }

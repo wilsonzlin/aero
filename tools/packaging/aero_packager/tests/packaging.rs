@@ -379,23 +379,27 @@ fn win7_aero_guest_tools_spec_rejects_transitional_virtio_ids_in_infs() -> anyho
     for arch in ["x86", "amd64"] {
         write_stub_pci_driver(
             &drivers_dir.join(arch).join("aerogpu"),
+            "aerogpu_dx11",
             "aerogpu",
             r"PCI\VEN_A3A0&DEV_0001",
         )?;
         write_stub_pci_driver(
             &drivers_dir.join(arch).join("virtio-blk"),
-            "virtio_blk",
+            "aero_virtio_blk",
+            "aero_virtio_blk",
             // Modern-only virtio-blk ID (AERO-W7-VIRTIO v1).
             r"PCI\VEN_1AF4&DEV_1042&REV_01",
         )?;
         write_stub_pci_driver(
             &drivers_dir.join(arch).join("virtio-net"),
-            "virtio_net",
+            "aero_virtio_net",
+            "aero_virtio_net",
             r"PCI\VEN_1AF4&DEV_1041&REV_01",
         )?;
         write_stub_pci_driver(
             &drivers_dir.join(arch).join("virtio-input"),
-            "virtio_input",
+            "aero_virtio_input",
+            "aero_virtio_input",
             r"PCI\VEN_1AF4&DEV_1052&REV_01",
         )?;
     }
@@ -424,23 +428,27 @@ fn win7_aero_guest_tools_spec_rejects_transitional_virtio_ids_in_infs() -> anyho
     for arch in ["x86", "amd64"] {
         write_stub_pci_driver(
             &drivers_bad_dir.join(arch).join("aerogpu"),
+            "aerogpu_dx11",
             "aerogpu",
             r"PCI\VEN_A3A0&DEV_0001",
         )?;
         write_stub_pci_driver(
             &drivers_bad_dir.join(arch).join("virtio-blk"),
-            "virtio_blk",
+            "aero_virtio_blk",
+            "aero_virtio_blk",
             // Transitional virtio-blk ID (must not satisfy the spec).
             r"PCI\VEN_1AF4&DEV_1001&REV_01",
         )?;
         write_stub_pci_driver(
             &drivers_bad_dir.join(arch).join("virtio-net"),
-            "virtio_net",
+            "aero_virtio_net",
+            "aero_virtio_net",
             r"PCI\VEN_1AF4&DEV_1041&REV_01",
         )?;
         write_stub_pci_driver(
             &drivers_bad_dir.join(arch).join("virtio-input"),
-            "virtio_input",
+            "aero_virtio_input",
+            "aero_virtio_input",
             r"PCI\VEN_1AF4&DEV_1052&REV_01",
         )?;
     }
@@ -2062,7 +2070,12 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<
     Ok(())
 }
 
-fn write_stub_pci_driver(dir: &std::path::Path, base_name: &str, hwid: &str) -> anyhow::Result<()> {
+fn write_stub_pci_driver(
+    dir: &std::path::Path,
+    base_name: &str,
+    service_name: &str,
+    hwid: &str,
+) -> anyhow::Result<()> {
     fs::create_dir_all(dir)?;
     fs::write(
         dir.join(format!("{base_name}.inf")),
@@ -2082,9 +2095,13 @@ fn write_stub_pci_driver(dir: &std::path::Path, base_name: &str, hwid: &str) -> 
                 "\n",
                 "[Install]\n",
                 "CopyFiles=CopyFilesSection\n",
+                "AddService = {service_name}, 0x00000002, Service_Inst\n",
                 "\n",
                 "[CopyFilesSection]\n",
                 "{base_name}.sys\n",
+                "\n",
+                "[Service_Inst]\n",
+                "ServiceBinary=%12%\\\\{base_name}.sys\n",
                 "\n",
                 "[SourceDisksFiles]\n",
                 "{base_name}.sys=1\n",
@@ -2094,6 +2111,7 @@ fn write_stub_pci_driver(dir: &std::path::Path, base_name: &str, hwid: &str) -> 
                 "Dev=\"Test\"\n",
             ),
             hwid = hwid,
+            service_name = service_name,
             base_name = base_name
         ),
     )?;

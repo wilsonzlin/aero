@@ -33,6 +33,26 @@ pub struct DriverSpec {
     /// If true, missing driver artifacts are fatal. If false, missing driver
     /// artifacts are logged as a warning and skipped.
     pub required: bool,
+    /// A list of INF filenames (no paths) that must be present in the packaged
+    /// driver directory (per-architecture).
+    ///
+    /// Matching is case-insensitive.
+    #[serde(default)]
+    pub expected_inf_files: Vec<String>,
+    /// A list of Windows service names that must appear in at least one
+    /// non-comment `AddService = <svc>` directive across the packaged INF files
+    /// (per-architecture).
+    ///
+    /// Matching is case-insensitive.
+    #[serde(default)]
+    pub expected_add_services: Vec<String>,
+    /// Optional `guest-tools/config/devices.cmd` variable name to source an
+    /// expected service name from.
+    ///
+    /// The variable's value is treated as a single service name and appended
+    /// to `expected_add_services` if not already present.
+    #[serde(default)]
+    pub expected_add_services_from_devices_cmd_var: Option<String>,
     /// A list of regex patterns that must appear somewhere in at least one INF
     /// file for this driver (per-architecture).
     #[serde(default)]
@@ -127,6 +147,9 @@ impl From<PackagingSpecRaw> for PackagingSpec {
             out.push(DriverSpec {
                 name,
                 required: true,
+                expected_inf_files: Vec::new(),
+                expected_add_services: Vec::new(),
+                expected_add_services_from_devices_cmd_var: None,
                 expected_hardware_ids: legacy.expected_hardware_ids,
                 expected_hardware_ids_from_devices_cmd_var: legacy
                     .expected_hardware_ids_from_devices_cmd_var,

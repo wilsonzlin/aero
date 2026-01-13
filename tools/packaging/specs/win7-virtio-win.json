@@ -3,6 +3,12 @@
     {
       "name": "viostor",
       "required": true,
+      "expected_inf_files": [
+        "viostor.inf"
+      ],
+      "expected_add_services": [
+        "viostor"
+      ],
       "expected_hardware_ids": [
         "PCI\\\\VEN_1AF4&DEV_1042"
       ]
@@ -10,6 +16,12 @@
     {
       "name": "netkvm",
       "required": true,
+      "expected_inf_files": [
+        "netkvm.inf"
+      ],
+      "expected_add_services": [
+        "netkvm"
+      ],
       "expected_hardware_ids": [
         "PCI\\\\VEN_1AF4&DEV_1041"
       ]

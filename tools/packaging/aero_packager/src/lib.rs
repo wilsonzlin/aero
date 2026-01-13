@@ -678,6 +678,9 @@ fn validate_driver_dir(
     let mut found_sys = false;
     let mut found_cat = false;
     let mut infs = Vec::<(String, String)>::new();
+    let mut all_inf_paths = Vec::<String>::new();
+    let mut all_inf_base_names = HashSet::<String>::new();
+    let mut packaged_inf_base_names = HashSet::<String>::new();
 
     // Collect a view of the files that would be packaged for this driver, so we can
     // validate that any INF-referenced payloads are actually present.
@@ -700,6 +703,14 @@ fn validate_driver_dir(
         let include = should_include_driver_file(path, &rel_str, &allowlist)
             .with_context(|| format!("filter driver file {}", path.display()))?;
 
+        if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+            let lower = name.to_ascii_lowercase();
+            if lower.ends_with(".inf") {
+                all_inf_paths.push(rel_str.clone());
+                all_inf_base_names.insert(lower);
+            }
+        }
+
         if include {
             packaged_rel_paths.insert(rel_str.to_ascii_lowercase());
             if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
@@ -710,6 +721,7 @@ fn validate_driver_dir(
             let lower = name.to_ascii_lowercase();
             if lower.ends_with(".inf") {
                 found_inf = true;
+                packaged_inf_base_names.insert(lower);
                 let text = read_inf_text(path)
                     .with_context(|| format!("read INF for {} ({})", driver.name, arch))?;
                 infs.push((rel_str, text));
@@ -727,6 +739,200 @@ fn validate_driver_dir(
             driver.name,
             arch
         );
+    }
+
+    let scanned_packaged_inf_paths = || -> String {
+        let mut paths: Vec<String> = infs.iter().map(|(p, _)| p.clone()).collect();
+        paths.sort();
+        if paths.is_empty() {
+            "<none>".to_string()
+        } else {
+            paths.join(", ")
+        }
+    };
+
+    if !driver.expected_inf_files.is_empty() {
+        let mut missing = Vec::<String>::new();
+        let mut excluded = Vec::<String>::new();
+
+        for raw_expected in &driver.expected_inf_files {
+            let expected = raw_expected.trim();
+            if expected.is_empty() {
+                bail!(
+                    "driver {} ({}) expected_inf_files contains an empty entry",
+                    driver.name,
+                    arch
+                );
+            }
+            if expected.contains('/') || expected.contains('\\') {
+                bail!(
+                    "driver {} ({}) expected_inf_files entry must be a filename without paths, got: {expected}",
+                    driver.name,
+                    arch
+                );
+            }
+            if !expected.to_ascii_lowercase().ends_with(".inf") {
+                bail!(
+                    "driver {} ({}) expected_inf_files entry must end with .inf, got: {expected}",
+                    driver.name,
+                    arch
+                );
+            }
+
+            let expected_lower = expected.to_ascii_lowercase();
+            if !all_inf_base_names.contains(&expected_lower) {
+                missing.push(expected.to_string());
+                continue;
+            }
+            if !packaged_inf_base_names.contains(&expected_lower) {
+                excluded.push(expected.to_string());
+            }
+        }
+
+        if !missing.is_empty() || !excluded.is_empty() {
+            let mut msg = format!(
+                "driver {} ({}) INF file validation failed ({}):",
+                driver.name,
+                arch,
+                driver_dir.display()
+            );
+            if !missing.is_empty() {
+                msg.push_str(&format!(
+                    "\n- missing expected INF files: {}",
+                    missing.join(", ")
+                ));
+            }
+            if !excluded.is_empty() {
+                msg.push_str(&format!(
+                    "\n- expected INF files are present but would be excluded from packaged output: {}",
+                    excluded.join(", ")
+                ));
+            }
+            msg.push_str(&format!(
+                "\nexpected_inf_files: {}",
+                driver.expected_inf_files.join(", ")
+            ));
+            msg.push_str(&format!(
+                "\nscanned packaged INF files: {}",
+                scanned_packaged_inf_paths()
+            ));
+            if all_inf_paths.is_empty() {
+                msg.push_str("\nscanned INF files under driver directory: <none>");
+            } else {
+                msg.push_str(&format!(
+                    "\nscanned INF files under driver directory: {}",
+                    all_inf_paths.join(", ")
+                ));
+            }
+            bail!("{msg}");
+        }
+    }
+
+    // Similar to `expected_hardware_ids`: ignore comment-only matches so shipping a commented-out
+    // AddService line does not satisfy the packaging validation.
+    fn inf_text_matches_expected_add_service(text: &str, expected_service_name: &str) -> bool {
+        for raw_line in text.lines() {
+            let line = raw_line
+                .split_once(';')
+                .map(|(before, _comment)| before)
+                .unwrap_or(raw_line)
+                .trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if !key.trim().eq_ignore_ascii_case("addservice") {
+                continue;
+            }
+
+            let first = value.split(',').next().unwrap_or("");
+            let svc = first.trim().trim_matches(|c| c == '"' || c == '\'');
+            if svc.eq_ignore_ascii_case(expected_service_name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    let mut expected_add_services = Vec::<String>::new();
+    for raw in &driver.expected_add_services {
+        let svc = raw.trim();
+        if svc.is_empty() {
+            bail!(
+                "driver {} ({}) expected_add_services contains an empty entry",
+                driver.name,
+                arch
+            );
+        }
+        if !expected_add_services.iter().any(|s| s.eq_ignore_ascii_case(svc)) {
+            expected_add_services.push(svc.to_string());
+        }
+    }
+    let mut expected_add_services_var_value = None::<(String, String)>;
+    if let Some(var) = &driver.expected_add_services_from_devices_cmd_var {
+        let key = var.to_ascii_uppercase();
+        let raw = devices_cmd_vars.get(&key).ok_or_else(|| {
+            anyhow::anyhow!(
+                "driver {} ({}) references missing devices.cmd variable: {}",
+                driver.name,
+                arch,
+                var
+            )
+        })?;
+        let value = raw.trim();
+        if value.is_empty() {
+            bail!(
+                "driver {} ({}) devices.cmd variable {} is empty",
+                driver.name,
+                arch,
+                var
+            );
+        }
+        expected_add_services_var_value = Some((var.clone(), value.to_string()));
+        if !expected_add_services
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(value))
+        {
+            expected_add_services.push(value.to_string());
+        }
+    }
+
+    if !expected_add_services.is_empty() {
+        let mut missing = Vec::<String>::new();
+        for svc in &expected_add_services {
+            if !infs
+                .iter()
+                .any(|(_path, text)| inf_text_matches_expected_add_service(text, svc))
+            {
+                missing.push(svc.clone());
+            }
+        }
+
+        if !missing.is_empty() {
+            let mut msg = format!(
+                "driver {} ({}) INF files missing expected AddService directive(s): {}",
+                driver.name,
+                arch,
+                missing.join(", ")
+            );
+            msg.push_str(&format!(
+                "\nexpected_add_services: {}",
+                expected_add_services.join(", ")
+            ));
+            if let Some((var, value)) = expected_add_services_var_value {
+                msg.push_str(&format!(
+                    "\nexpected_add_services_from_devices_cmd_var: {var}={value}",
+                ));
+            }
+            msg.push_str(&format!(
+                "\nscanned packaged INF files: {}",
+                scanned_packaged_inf_paths()
+            ));
+            msg.push_str(&format!("\ndriver directory: {}", driver_dir.display()));
+            bail!("{msg}");
+        }
     }
 
     // INF files often contain commented-out HWID lines from previous iterations or debugging.

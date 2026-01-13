@@ -61,13 +61,19 @@ fn virtio_win_packaging_overrides_service_names_in_devices_cmd() -> anyhow::Resu
 
         let viostor = arch_dir.join("viostor");
         fs::create_dir_all(&viostor)?;
-        fs::write(viostor.join("viostor.inf"), "PCI\\VEN_1AF4&DEV_1042\n")?;
+        fs::write(
+            viostor.join("viostor.inf"),
+            "PCI\\VEN_1AF4&DEV_1042\nAddService = viostor\n",
+        )?;
         fs::write(viostor.join("viostor.sys"), b"dummy")?;
         fs::write(viostor.join("viostor.cat"), b"dummy")?;
 
         let netkvm = arch_dir.join("netkvm");
         fs::create_dir_all(&netkvm)?;
-        fs::write(netkvm.join("netkvm.inf"), "PCI\\VEN_1AF4&DEV_1041\n")?;
+        fs::write(
+            netkvm.join("netkvm.inf"),
+            "PCI\\VEN_1AF4&DEV_1041\nAddService = netkvm\n",
+        )?;
         fs::write(netkvm.join("netkvm.sys"), b"dummy")?;
         fs::write(netkvm.join("netkvm.cat"), b"dummy")?;
     }
@@ -160,13 +166,19 @@ fn virtio_win_contract_service_names_are_not_overridden() -> anyhow::Result<()> 
 
         let viostor = arch_dir.join("viostor");
         fs::create_dir_all(&viostor)?;
-        fs::write(viostor.join("viostor.inf"), "PCI\\VEN_1AF4&DEV_1042\n")?;
+        fs::write(
+            viostor.join("viostor.inf"),
+            "PCI\\VEN_1AF4&DEV_1042\nAddService = viostor\n",
+        )?;
         fs::write(viostor.join("viostor.sys"), b"dummy")?;
         fs::write(viostor.join("viostor.cat"), b"dummy")?;
 
         let netkvm = arch_dir.join("netkvm");
         fs::create_dir_all(&netkvm)?;
-        fs::write(netkvm.join("netkvm.inf"), "PCI\\VEN_1AF4&DEV_1041\n")?;
+        fs::write(
+            netkvm.join("netkvm.inf"),
+            "PCI\\VEN_1AF4&DEV_1041\nAddService = netkvm\n",
+        )?;
         fs::write(netkvm.join("netkvm.sys"), b"dummy")?;
         fs::write(netkvm.join("netkvm.cat"), b"dummy")?;
     }
