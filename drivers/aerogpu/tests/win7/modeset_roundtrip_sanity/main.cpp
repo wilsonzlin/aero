@@ -154,6 +154,11 @@ static bool FindModeByResolution(DWORD target_w, DWORD target_h, const DEVMODEW&
     if (dm.dmPelsWidth == current.dmPelsWidth && dm.dmPelsHeight == current.dmPelsHeight) {
       continue;
     }
+    // Keep the mode switch conservative: stick to the current desktop bit depth. The scanout
+    // validation logic assumes a 32bpp desktop (pitch >= width*4) like scanout_state_sanity.
+    if (dm.dmBitsPerPel != current.dmBitsPerPel) {
+      continue;
+    }
 
     int score = 0;
     if (dm.dmBitsPerPel == 32) {
@@ -206,6 +211,9 @@ static bool FindAnyAlternateMode(const DEVMODEW& current, DEVMODEW* out) {
       continue;
     }
     if (dm.dmPelsWidth == 0 || dm.dmPelsHeight == 0) {
+      continue;
+    }
+    if (dm.dmBitsPerPel != current.dmBitsPerPel) {
       continue;
     }
 
@@ -549,6 +557,10 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   }
   PrintModeInfo("original", original);
   aerogpu_test::PrintfStdout("INFO: %s: GetSystemMetrics: %dx%d", kTestName, initial_w, initial_h);
+  if (original.dmBitsPerPel != 32) {
+    return reporter.Fail("expected a 32bpp desktop mode (dmBitsPerPel=32), but got %lu",
+                         (unsigned long)original.dmBitsPerPel);
+  }
 
   DEVMODEW alternate;
   std::string alt_err;
