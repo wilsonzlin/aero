@@ -46,6 +46,8 @@ pub enum Builtin {
     Position,
     VertexIndex,
     InstanceIndex,
+    PrimitiveIndex,
+    GsInstanceIndex,
     FrontFacing,
 }
 
@@ -709,6 +711,14 @@ fn build_io_maps(
                 .map(|p| p.param.register)
         })
         .flatten();
+    let ps_primitive_id_reg = (module.stage == ShaderStage::Pixel)
+        .then(|| {
+            inputs
+                .values()
+                .find(|p| p.sys_value == Some(D3D_NAME_PRIMITIVE_ID))
+                .map(|p| p.param.register)
+        })
+        .flatten();
 
     Ok(IoMaps {
         inputs,
@@ -717,6 +727,7 @@ fn build_io_maps(
         vs_input_fields_by_register,
         vs_position_register: vs_position_reg,
         ps_position_register: ps_position_reg,
+        ps_primitive_id_register: ps_primitive_id_reg,
         ps_sv_target0_register: ps_sv_target0_reg,
         ps_sv_depth_register: ps_sv_depth_reg,
         vs_vertex_id_register: vs_vertex_id_reg,
@@ -803,6 +814,7 @@ fn build_cs_io_maps(module: &Sm4Module) -> IoMaps {
         vs_input_fields_by_register: BTreeMap::new(),
         vs_position_register: None,
         ps_position_register: None,
+        ps_primitive_id_register: None,
         ps_sv_target0_register: None,
         ps_sv_depth_register: None,
         vs_vertex_id_register: None,
@@ -992,7 +1004,10 @@ impl ParamInfo {
         // We still keep the vec4<f32> internal register model and expand scalar builtins into x
         // with D3D default fill (0,0,0,1).
         let (wgsl_ty, component_count, components) = match builtin {
-            Some(Builtin::VertexIndex) | Some(Builtin::InstanceIndex) => ("u32", 1, [0, 0, 0, 0]),
+            Some(Builtin::VertexIndex)
+            | Some(Builtin::InstanceIndex)
+            | Some(Builtin::PrimitiveIndex)
+            | Some(Builtin::GsInstanceIndex) => ("u32", 1, [0, 0, 0, 0]),
             Some(Builtin::FrontFacing) => ("bool", 1, [0, 0, 0, 0]),
             _ => (wgsl_ty, count, comps),
         };
@@ -1040,6 +1055,7 @@ struct IoMaps {
     vs_input_fields_by_register: BTreeMap<u32, Vec<usize>>,
     vs_position_register: Option<u32>,
     ps_position_register: Option<u32>,
+    ps_primitive_id_register: Option<u32>,
     ps_sv_target0_register: Option<u32>,
     ps_sv_depth_register: Option<u32>,
     vs_vertex_id_register: Option<u32>,
@@ -1159,11 +1175,15 @@ impl IoMaps {
         if let Some(_pos_reg) = self.ps_position_register {
             w.line("@builtin(position) pos: vec4<f32>,");
         }
+        if self.ps_primitive_id_register.is_some() {
+            w.line("@builtin(primitive_index) primitive_id: u32,");
+        }
         if self.ps_front_facing_register.is_some() {
             w.line("@builtin(front_facing) front_facing: bool,");
         }
         for p in self.inputs.values() {
             if Some(p.param.register) == self.ps_position_register
+                || Some(p.param.register) == self.ps_primitive_id_register
                 || Some(p.param.register) == self.ps_front_facing_register
             {
                 continue;
@@ -1332,6 +1352,15 @@ impl IoMaps {
                     )?;
                     return Ok(apply_sig_mask_to_vec4("input.pos", p.param.mask));
                 }
+                if Some(reg) == self.ps_primitive_id_register {
+                    let p = self.inputs.get(&reg).ok_or(
+                        ShaderTranslateError::SignatureMissingRegister {
+                            io: "input",
+                            register: reg,
+                        },
+                    )?;
+                    return Ok(expand_to_vec4("f32(input.primitive_id)", p));
+                }
                 if Some(reg) == self.ps_front_facing_register {
                     let p = self.inputs.get(&reg).ok_or(
                         ShaderTranslateError::SignatureMissingRegister {
@@ -1377,8 +1406,12 @@ impl IoMaps {
 
 const D3D_NAME_POSITION: u32 = 1;
 const D3D_NAME_VERTEX_ID: u32 = 6;
+const D3D_NAME_PRIMITIVE_ID: u32 = 7;
 const D3D_NAME_INSTANCE_ID: u32 = 8;
 const D3D_NAME_IS_FRONT_FACE: u32 = 9;
+// D3D10+ geometry-shader instancing builtin (`SV_GSInstanceID`). This value is shared between
+// signature `system_value_type` and `dcl_input_siv` declaration encodings.
+const D3D_NAME_GS_INSTANCE_ID: u32 = 11;
 const D3D_NAME_DISPATCH_THREAD_ID: u32 = 20;
 const D3D_NAME_GROUP_ID: u32 = 21;
 const D3D_NAME_GROUP_INDEX: u32 = 22;
@@ -1390,7 +1423,9 @@ fn builtin_from_d3d_name(name: u32) -> Option<Builtin> {
     match name {
         D3D_NAME_POSITION => Some(Builtin::Position),
         D3D_NAME_VERTEX_ID => Some(Builtin::VertexIndex),
+        D3D_NAME_PRIMITIVE_ID => Some(Builtin::PrimitiveIndex),
         D3D_NAME_INSTANCE_ID => Some(Builtin::InstanceIndex),
+        D3D_NAME_GS_INSTANCE_ID => Some(Builtin::GsInstanceIndex),
         D3D_NAME_IS_FRONT_FACE => Some(Builtin::FrontFacing),
         _ => None,
     }
@@ -1416,8 +1451,14 @@ fn semantic_to_d3d_name(name: &str) -> Option<u32> {
     if is_sv_vertex_id(name) {
         return Some(D3D_NAME_VERTEX_ID);
     }
+    if is_sv_primitive_id(name) {
+        return Some(D3D_NAME_PRIMITIVE_ID);
+    }
     if is_sv_instance_id(name) {
         return Some(D3D_NAME_INSTANCE_ID);
+    }
+    if is_sv_gs_instance_id(name) {
+        return Some(D3D_NAME_GS_INSTANCE_ID);
     }
     if is_sv_is_front_face(name) {
         return Some(D3D_NAME_IS_FRONT_FACE);
@@ -1453,6 +1494,14 @@ fn is_sv_vertex_id(name: &str) -> bool {
 
 fn is_sv_instance_id(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_InstanceID") || name.eq_ignore_ascii_case("SV_INSTANCEID")
+}
+
+fn is_sv_primitive_id(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_PrimitiveID") || name.eq_ignore_ascii_case("SV_PRIMITIVEID")
+}
+
+fn is_sv_gs_instance_id(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_GSInstanceID") || name.eq_ignore_ascii_case("SV_GSINSTANCEID")
 }
 
 fn is_sv_is_front_face(name: &str) -> bool {
@@ -3408,25 +3457,27 @@ mod tests {
                     sys_value: D3D_NAME_DISPATCH_THREAD_ID,
                 },
             ],
-            instructions: vec![Sm4Inst::Mov {
-                dst: crate::sm4_ir::DstOperand {
-                    reg: RegisterRef {
-                        file: RegFile::Temp,
-                        index: 0,
+            instructions: vec![
+                Sm4Inst::Mov {
+                    dst: crate::sm4_ir::DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
                     },
-                    mask: WriteMask::XYZW,
-                    saturate: false,
+                    src: crate::sm4_ir::SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Input,
+                            index: 0,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
                 },
-                src: crate::sm4_ir::SrcOperand {
-                    kind: SrcKind::Register(RegisterRef {
-                        file: RegFile::Input,
-                        index: 0,
-                    }),
-                    swizzle: Swizzle::XYZW,
-                    modifier: OperandModifier::None,
-                },
-            },
-            Sm4Inst::Ret],
+                Sm4Inst::Ret,
+            ],
         };
 
         let mut dxbc_bytes = Vec::new();
@@ -3474,6 +3525,34 @@ mod tests {
         assert!(
             msg.contains("if_nz"),
             "expected friendly opcode name in error message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn semantic_to_d3d_name_recognizes_gs_builtins() {
+        assert_eq!(
+            semantic_to_d3d_name("SV_PrimitiveID"),
+            Some(D3D_NAME_PRIMITIVE_ID)
+        );
+        assert_eq!(
+            semantic_to_d3d_name("SV_PRIMITIVEID"),
+            Some(D3D_NAME_PRIMITIVE_ID)
+        );
+        assert_eq!(
+            semantic_to_d3d_name("sv_gsinstanceid"),
+            Some(D3D_NAME_GS_INSTANCE_ID)
+        );
+    }
+
+    #[test]
+    fn builtin_from_d3d_name_maps_gs_builtins() {
+        assert_eq!(
+            builtin_from_d3d_name(D3D_NAME_PRIMITIVE_ID),
+            Some(Builtin::PrimitiveIndex)
+        );
+        assert_eq!(
+            builtin_from_d3d_name(D3D_NAME_GS_INSTANCE_ID),
+            Some(Builtin::GsInstanceIndex)
         );
     }
 }

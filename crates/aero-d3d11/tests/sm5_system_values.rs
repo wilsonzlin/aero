@@ -13,6 +13,7 @@ const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
 // `D3D_NAME` system-value IDs (subset).
 const D3D_NAME_POSITION: u32 = 1;
 const D3D_NAME_VERTEX_ID: u32 = 6;
+const D3D_NAME_PRIMITIVE_ID: u32 = 7;
 const D3D_NAME_INSTANCE_ID: u32 = 8;
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
@@ -387,6 +388,51 @@ fn translates_front_facing_builtin() {
     assert!(translated.reflection.inputs.iter().any(|p| {
         p.semantic_name.eq_ignore_ascii_case("SV_IsFrontFace")
             && p.builtin == Some(Builtin::FrontFacing)
+            && p.location.is_none()
+    }));
+}
+
+#[test]
+fn translates_primitive_id_builtin() {
+    let isgn = build_signature_chunk(&[
+        // Explicit `system_value_type` is set here, but the translator also accepts semantic name
+        // matching (`SV_PrimitiveID`).
+        sig_param("PID", 0, 0, 0b0001, D3D_NAME_PRIMITIVE_ID),
+    ]);
+    let osgn = build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111, 0)]);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, isgn),
+        (FOURCC_OSGN, osgn),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("signature parse");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Input, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(translated
+        .wgsl
+        .contains("@builtin(primitive_index) primitive_id: u32"));
+    assert!(translated.wgsl.contains("f32(input.primitive_id)"));
+
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name == "PID"
+            && p.builtin == Some(Builtin::PrimitiveIndex)
             && p.location.is_none()
     }));
 }
