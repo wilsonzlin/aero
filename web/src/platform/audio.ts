@@ -828,7 +828,12 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       return getRingBufferOverrunCount(ringBuffer);
     },
     getMetrics() {
-      const baseLatencySeconds = finiteNonNegative(context.baseLatency);
+      // `baseLatency`/`outputLatency` are optional Web Audio introspection fields (not exposed in
+      // all browsers). Read them via a loose type guard so TypeScript builds remain compatible
+      // even if the DOM lib definitions change.
+      const baseLatencySeconds = finiteNonNegative(
+        (context as AudioContext & { baseLatency?: unknown }).baseLatency,
+      );
       const outputLatencySeconds = finiteNonNegative(
         (context as AudioContext & { outputLatency?: unknown }).outputLatency,
       );
