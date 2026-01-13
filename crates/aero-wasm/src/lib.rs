@@ -3573,6 +3573,31 @@ impl Machine {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk,
+    /// reporting create/resize progress via a JS callback, and set the snapshot overlay reference
+    /// (`DISKS` entry) for `disk_id=0`.
+    ///
+    /// This helper sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// This method is intentionally separate from [`Machine::set_disk_opfs_with_progress`] so
+    /// callers do not silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_opfs_with_progress_and_set_overlay_ref(
+        &mut self,
+        path: String,
+        create: bool,
+        size_bytes: u64,
+        progress: js_sys::Function,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.set_disk_opfs_with_progress(path, create, size_bytes, progress)
+            .await?;
+        self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
+        Ok(())
+    }
+
     /// Open an existing OPFS-backed disk image (using the file's current size) and attach it as the
     /// machine's canonical disk.
     ///
@@ -3987,6 +4012,26 @@ impl Machine {
             .map_err(|e| js_error(&e.to_string()))
     }
 
+    /// Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM and set the
+    /// snapshot overlay reference (`DISKS` entry) for `disk_id=1`.
+    ///
+    /// This sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// This method is intentionally separate from [`Machine::attach_install_media_iso_opfs`] so
+    /// callers do not silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_install_media_iso_opfs_and_set_overlay_ref(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.attach_install_media_iso_opfs(path).await?;
+        self.set_ide_secondary_master_atapi_overlay_ref(&overlay_path, "");
+        Ok(())
+    }
+
     /// Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM, preserving
     /// guest-visible ATAPI media state.
     ///
@@ -4009,6 +4054,28 @@ impl Machine {
         self.inner
             .attach_ide_secondary_master_iso_for_restore(Box::new(disk))
             .map_err(|e| js_error(&e.to_string()))
+    }
+
+    /// Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM, preserving
+    /// guest-visible ATAPI media state, and set the snapshot overlay reference (`DISKS` entry) for
+    /// `disk_id=1`.
+    ///
+    /// This sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// This method is intentionally separate from
+    /// [`Machine::attach_install_media_iso_opfs_for_restore`] so callers do not silently overwrite
+    /// previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_install_media_iso_opfs_for_restore_and_set_overlay_ref(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.attach_install_media_iso_opfs_for_restore(path).await?;
+        self.set_ide_secondary_master_atapi_overlay_ref(&overlay_path, "");
+        Ok(())
     }
 
     pub fn run_slice(&mut self, max_insts: u32) -> RunExit {

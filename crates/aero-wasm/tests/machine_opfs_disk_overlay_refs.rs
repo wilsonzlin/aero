@@ -28,8 +28,9 @@ async fn opfs_attach_can_opt_in_to_setting_snapshot_overlay_refs() {
 
     let mut machine = Machine::new(2 * 1024 * 1024).expect("Machine::new");
 
+    let progress = js_sys::Function::new_no_args("");
     let attach_res = machine
-        .set_disk_opfs_and_set_overlay_ref(path.clone(), true, 4096)
+        .set_disk_opfs_with_progress_and_set_overlay_ref(path.clone(), true, 4096, progress)
         .await;
 
     if let Err(err) = attach_res {
@@ -45,7 +46,7 @@ async fn opfs_attach_can_opt_in_to_setting_snapshot_overlay_refs() {
         {
             return;
         }
-        panic!("set_disk_opfs_and_set_overlay_ref failed unexpectedly: {msg}");
+        panic!("set_disk_opfs_with_progress_and_set_overlay_ref failed unexpectedly: {msg}");
     }
 
     // Snapshot should include a DISKS section carrying the overlay refs we set.
