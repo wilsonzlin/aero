@@ -447,7 +447,10 @@ fn handle_def_i32(inst: &DecodedInstruction, out: &mut Vec<ConstDefI32>) -> Resu
     Ok(())
 }
 
-fn handle_def_bool(inst: &DecodedInstruction, out: &mut Vec<ConstDefBool>) -> Result<(), BuildError> {
+fn handle_def_bool(
+    inst: &DecodedInstruction,
+    out: &mut Vec<ConstDefBool>,
+) -> Result<(), BuildError> {
     let dst = match inst.operands.first() {
         Some(Operand::Dst(dst)) => dst,
         _ => return Err(err(inst, "defb missing destination operand")),
