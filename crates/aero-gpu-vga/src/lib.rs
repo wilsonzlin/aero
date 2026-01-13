@@ -1048,6 +1048,15 @@ impl PortIO for VgaDevice {
             // VGA misc output.
             (0x3CC, 1) => self.misc_output as u32,
 
+            // VGA register files are exposed as adjacent index/data port pairs. Some software
+            // (e.g. BIOS register tables) uses `inw`/`outw` on the index port to access both
+            // bytes in a single instruction.
+            (0x3C4 | 0x3CE | 0x3D4 | 0x3B4, 2) => {
+                let lo = self.port_read(port, 1) & 0xFF;
+                let hi = self.port_read(port.wrapping_add(1), 1) & 0xFF;
+                lo | (hi << 8)
+            }
+
             // Sequencer.
             (0x3C4, 1) => self.sequencer_index as u32,
             (0x3C5, 1) => {
@@ -1130,6 +1139,15 @@ impl PortIO for VgaDevice {
             (0x3C2, 1) => {
                 self.misc_output = val as u8;
                 self.dirty = true;
+            }
+
+            // VGA register files are exposed as adjacent index/data port pairs. Support
+            // `outw dx, ax` on the index port by splitting the word into two byte writes.
+            (0x3C4 | 0x3CE | 0x3D4 | 0x3B4, 2) => {
+                let lo = val & 0xFF;
+                let hi = (val >> 8) & 0xFF;
+                self.port_write(port, 1, lo);
+                self.port_write(port.wrapping_add(1), 1, hi);
             }
 
             // Sequencer.
@@ -1755,5 +1773,33 @@ mod tests {
         // Mask out plane 3; pixel 6 differs only in that plane, so it now compares equal.
         dev.graphics[7] = 0x07;
         assert_eq!(dev.mem_read_u8(0xA0000), 0xCB);
+    }
+
+    #[test]
+    fn outw_to_sequencer_index_port_writes_index_and_data() {
+        let mut dev = VgaDevice::new();
+
+        dev.port_write(0x3C4, 2, 0x0F02);
+
+        assert_eq!(dev.sequencer_index, 0x02);
+        assert_eq!(dev.sequencer[0x02], 0x0F);
+    }
+
+    #[test]
+    fn outw_to_crtc_index_port_writes_index_and_data() {
+        let mut dev = VgaDevice::new();
+
+        dev.port_write(0x3D4, 2, 0x120E);
+
+        assert_eq!(dev.crtc_index, 0x0E);
+        assert_eq!(dev.crtc[0x0E], 0x12);
+    }
+
+    #[test]
+    fn inw_from_sequencer_index_port_returns_index_and_data() {
+        let mut dev = VgaDevice::new();
+
+        dev.port_write(0x3C4, 2, 0x0F02);
+        assert_eq!(dev.port_read(0x3C4, 2), 0x0F02);
     }
 }
