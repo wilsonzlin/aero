@@ -361,6 +361,20 @@ All values are `REG_DWORD`.
 
 Changes take effect the next time the driver is started (reboot or disable/enable the device).
 
+### Debugging `StatusQDropOnFull`
+
+To enable drop-on-full (elevated cmd):
+
+```cmd
+reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
+  /v StatusQDropOnFull /t REG_DWORD /d 1 /f
+```
+
+Then reboot (or disable/enable the device). With the included `hidtest.exe`, you can generate many LED writes and observe drops via:
+
+- `hidtest.exe --keyboard --led-cycle --count 10000`
+- `hidtest.exe --keyboard --counters` (watch `VirtioStatusDrops`)
+
 ## QEMU / emulator notes (expected device)
 
 virtio-input appears as a **PCI virtio** function. In QEMU this is typically created with devices like:
