@@ -166,7 +166,7 @@ Environment variables:
 | `AERO_PROXY_ALLOW` | (empty) | Comma-separated allowlist rules, e.g. `example.com:80,example.com:443,10.0.0.0/8:53` |
 | `AERO_PROXY_CONNECT_TIMEOUT_MS` | `10000` | TCP connect timeout |
 | `AERO_PROXY_DNS_TIMEOUT_MS` | `5000` | DNS lookup timeout |
-| `AERO_PROXY_DOH_MAX_QUERY_BYTES` | `512` | Max `POST /dns-query` request body size (bytes) |
+| `AERO_PROXY_DOH_MAX_QUERY_BYTES` | `512` | Max `/dns-query` DNS message size (decoded GET `dns` param or POST body), in bytes |
 | `AERO_PROXY_DOH_MAX_QNAME_LENGTH` | `253` | Max DoH query name length (bytes) |
 | `AERO_PROXY_DOH_ANSWER_TTL_SECONDS` | `60` | TTL seconds used for DoH answers (clamped to `AERO_PROXY_DOH_MAX_ANSWER_TTL_SECONDS`) |
 | `AERO_PROXY_DOH_MAX_ANSWER_TTL_SECONDS` | `300` | Max TTL seconds allowed for DoH answers |
