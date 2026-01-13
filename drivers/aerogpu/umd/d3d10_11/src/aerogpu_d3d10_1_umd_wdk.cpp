@@ -186,6 +186,7 @@ constexpr uint32_t kD3D10BindDepthStencil = 0x40;
 constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kAeroGpuD3D10MaxSrvSlots = 128;
 constexpr uint32_t kAeroGpuD3D10MaxSamplerSlots = 16;
+constexpr uint32_t kMaxVertexBufferSlots = D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT;
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
 constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
@@ -862,6 +863,7 @@ struct AeroGpuDevice {
   AeroGpuResource* current_rtv_resources[AEROGPU_MAX_RENDER_TARGETS] = {};
   AeroGpuResource* current_dsv_res = nullptr;
   AeroGpuResource* current_vb_res = nullptr;
+  std::array<AeroGpuResource*, kMaxVertexBufferSlots> current_vb_resources{};
   AeroGpuResource* current_ib_res = nullptr;
   uint32_t current_vb_stride = 0;
   uint32_t current_vb_offset = 0;
@@ -1369,7 +1371,9 @@ static void TrackDrawStateLocked(AeroGpuDevice* dev) {
   }
 
   TrackBoundTargetsForSubmitLocked(dev);
-  TrackWddmAllocForSubmitLocked(dev, dev->current_vb_res);
+  for (AeroGpuResource* res : dev->current_vb_resources) {
+    TrackWddmAllocForSubmitLocked(dev, res);
+  }
   TrackWddmAllocForSubmitLocked(dev, dev->current_ib_res);
 
   for (AeroGpuResource* res : dev->current_vs_srvs) {
@@ -3758,13 +3762,33 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (rt_state_changed) {
     EmitSetRenderTargetsLocked(dev);
   }
-  if (dev->current_vb_res == res) {
-    dev->current_vb_res = nullptr;
-    dev->current_vb_stride = 0;
-    dev->current_vb_offset = 0;
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS, nullptr, 0);
-    cmd->start_slot = 0;
-    cmd->buffer_count = 0;
+  // Unbind any IA vertex buffer slots that reference this resource.
+  for (uint32_t slot = 0; slot < dev->current_vb_resources.size(); ++slot) {
+    if (dev->current_vb_resources[slot] != res) {
+      continue;
+    }
+    dev->current_vb_resources[slot] = nullptr;
+    if (slot == 0) {
+      dev->current_vb_res = nullptr;
+      dev->current_vb_stride = 0;
+      dev->current_vb_offset = 0;
+    }
+
+    aerogpu_vertex_buffer_binding binding{};
+    binding.buffer = 0;
+    binding.stride_bytes = 0;
+    binding.offset_bytes = 0;
+    binding.reserved0 = 0;
+
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
+                                                                             &binding,
+                                                                             sizeof(binding));
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+      break;
+    }
+    cmd->start_slot = slot;
+    cmd->buffer_count = 1;
   }
   if (dev->current_ib_res == res) {
     dev->current_ib_res = nullptr;
@@ -6140,59 +6164,80 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
-  if (buffer_count == 0) {
-    // We only model vertex buffer slot 0 in the minimal bring-up path. If the
-    // runtime unbinds a different slot, ignore it rather than accidentally
-    // clearing slot 0 state.
-    if (start_slot != 0) {
-      return;
-    }
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->current_vb_res = nullptr;
-    dev->current_vb_stride = 0;
-    dev->current_vb_offset = 0;
-
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
-        AEROGPU_CMD_SET_VERTEX_BUFFERS, nullptr, 0);
-    cmd->start_slot = 0;
-    cmd->buffer_count = 0;
-    return;
-  }
-
-  if (!pBuffers || !pStrides || !pOffsets) {
+  if (start_slot > kMaxVertexBufferSlots) {
     set_error(dev, E_INVALIDARG);
     return;
   }
 
-  // Minimal: only slot 0 / count 1 is wired up.
-  if (start_slot != 0 || buffer_count != 1) {
-    set_error(dev, E_NOTIMPL);
-    return;
+  // D3D10.1 allows updating any subrange of IA vertex buffer slots.
+  UINT bind_count = buffer_count;
+  if (bind_count != 0) {
+    if (!pBuffers || !pStrides || !pOffsets) {
+      set_error(dev, E_INVALIDARG);
+      return;
+    }
+    if (start_slot >= kMaxVertexBufferSlots) {
+      set_error(dev, E_INVALIDARG);
+      return;
+    }
+    if (bind_count > (kMaxVertexBufferSlots - start_slot)) {
+      set_error(dev, E_INVALIDARG);
+      return;
+    }
+  } else {
+    // Treat NumBuffers==0 as an unbind request from StartSlot to the end of the
+    // slot range.
+    if (start_slot == kMaxVertexBufferSlots) {
+      return;
+    }
+    bind_count = kMaxVertexBufferSlots - start_slot;
   }
-  AEROGPU_D3D10_TRACEF_VERBOSE("IaSetVertexBuffers hDevice=%p buf=%p stride=%u offset=%u",
+
+  AEROGPU_D3D10_TRACEF_VERBOSE("IaSetVertexBuffers hDevice=%p start_slot=%u count=%u",
                                hDevice.pDrvPrivate,
-                               pBuffers[0].pDrvPrivate,
-                               pStrides[0],
-                               pOffsets[0]);
+                               start_slot,
+                               bind_count);
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* vb_res = pBuffers[0].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pBuffers[0]) : nullptr;
-  dev->current_vb_res = vb_res;
-  dev->current_vb_stride = pStrides[0];
-  dev->current_vb_offset = pOffsets[0];
+  std::array<aerogpu_vertex_buffer_binding, kMaxVertexBufferSlots> bindings{};
+  for (UINT i = 0; i < bind_count; ++i) {
+    const uint32_t slot = static_cast<uint32_t>(start_slot + i);
 
-  aerogpu_vertex_buffer_binding binding{};
-  binding.buffer = vb_res ? vb_res->handle : 0;
-  binding.stride_bytes = pStrides[0];
-  binding.offset_bytes = pOffsets[0];
-  binding.reserved0 = 0;
+    aerogpu_vertex_buffer_binding b{};
+    AeroGpuResource* vb_res = nullptr;
+    if (buffer_count != 0) {
+      vb_res = pBuffers[i].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pBuffers[i]) : nullptr;
+      b.buffer = vb_res ? vb_res->handle : 0;
+      b.stride_bytes = pStrides[i];
+      b.offset_bytes = pOffsets[i];
+    } else {
+      b.buffer = 0;
+      b.stride_bytes = 0;
+      b.offset_bytes = 0;
+    }
+    b.reserved0 = 0;
+    bindings[i] = b;
+
+    dev->current_vb_resources[slot] = vb_res;
+    if (slot == 0) {
+      dev->current_vb_res = vb_res;
+      dev->current_vb_stride = b.stride_bytes;
+      dev->current_vb_offset = b.offset_bytes;
+    }
+
+    TrackWddmAllocForSubmitLocked(dev, vb_res);
+  }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
-                                                                           &binding,
-                                                                           sizeof(binding));
-  cmd->start_slot = 0;
-  cmd->buffer_count = 1;
+                                                                           bindings.data(),
+                                                                           static_cast<size_t>(bind_count) * sizeof(bindings[0]));
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->start_slot = start_slot;
+  cmd->buffer_count = bind_count;
 }
 
 void AEROGPU_APIENTRY IaSetIndexBuffer(D3D10DDI_HDEVICE hDevice,
@@ -6716,11 +6761,19 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   topo_cmd->reserved0 = 0;
 
   dev->current_vb_res = nullptr;
+  dev->current_vb_resources.fill(nullptr);
   dev->current_vb_stride = 0;
   dev->current_vb_offset = 0;
-  auto* vb_cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS, nullptr, 0);
+  std::array<aerogpu_vertex_buffer_binding, kMaxVertexBufferSlots> vb_zeros{};
+  auto* vb_cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
+                                                                              vb_zeros.data(),
+                                                                              vb_zeros.size() * sizeof(vb_zeros[0]));
+  if (!vb_cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   vb_cmd->start_slot = 0;
-  vb_cmd->buffer_count = 0;
+  vb_cmd->buffer_count = static_cast<uint32_t>(vb_zeros.size());
 
   dev->current_ib_res = nullptr;
   auto* ib_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
