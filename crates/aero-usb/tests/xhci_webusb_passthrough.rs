@@ -59,12 +59,14 @@ struct Completion {
 struct Ep0PendingControlIn {
     buf_ptr: u64,
     len: usize,
+    next_cursor: RingCursor,
 }
 
 #[derive(Debug)]
 struct BulkOutPending {
     ep: u8,
     data: Vec<u8>,
+    next_cursor: RingCursor,
 }
 
 #[derive(Debug)]
@@ -72,6 +74,7 @@ struct BulkInPending {
     ep: u8,
     buf_ptr: u64,
     len: usize,
+    next_cursor: RingCursor,
 }
 
 /// A minimal xHCI-style command + transfer engine harness.
@@ -160,7 +163,12 @@ impl XhciHarness {
 
     fn tick_ep0_control_in(&mut self, mem: &mut TestMemory, cursor: &mut RingCursor) {
         if self.ep0_pending.is_none() {
-            let setup_trb = match cursor.poll(mem, 64) {
+            // xHCI does not advance the transfer ring dequeue pointer until the TD completes.
+            // Read the TRBs using a temporary cursor and only commit cursor advancement once the
+            // transfer has finished.
+            let mut probe = *cursor;
+
+            let setup_trb = match probe.poll(mem, 64) {
                 RingPoll::Ready(item) => item.trb,
                 RingPoll::NotReady => return,
                 RingPoll::Err(err) => panic!("ep0 ring error: {err:?}"),
@@ -180,7 +188,7 @@ impl XhciHarness {
 
             assert_eq!(self.dev.handle_setup(setup), UsbOutResult::Ack);
 
-            let data_trb = match cursor.poll(mem, 64) {
+            let data_trb = match probe.poll(mem, 64) {
                 RingPoll::Ready(item) => item.trb,
                 RingPoll::NotReady => panic!("missing Data Stage TRB"),
                 RingPoll::Err(err) => panic!("ep0 ring error: {err:?}"),
@@ -190,9 +198,21 @@ impl XhciHarness {
                 TrbType::DataStage,
                 "expected Data Stage TRB"
             );
+            let status_trb = match probe.poll(mem, 64) {
+                RingPoll::Ready(item) => item.trb,
+                RingPoll::NotReady => panic!("missing Status Stage TRB"),
+                RingPoll::Err(err) => panic!("ep0 ring error: {err:?}"),
+            };
+            assert_eq!(
+                status_trb.trb_type(),
+                TrbType::StatusStage,
+                "expected Status Stage TRB"
+            );
+
             self.ep0_pending = Some(Ep0PendingControlIn {
                 buf_ptr: data_trb.parameter,
                 len: data_trb.status as usize,
+                next_cursor: probe,
             });
         }
 
@@ -201,20 +221,9 @@ impl XhciHarness {
             UsbInResult::Nak => return,
             UsbInResult::Data(data) => {
                 mem.write(pending.buf_ptr as u32, &data);
-
                 // STATUS stage: for control-IN, the status stage is an OUT ZLP.
-                let status_trb = match cursor.poll(mem, 64) {
-                    RingPoll::Ready(item) => item.trb,
-                    RingPoll::NotReady => panic!("missing Status Stage TRB"),
-                    RingPoll::Err(err) => panic!("ep0 ring error: {err:?}"),
-                };
-                assert_eq!(
-                    status_trb.trb_type(),
-                    TrbType::StatusStage,
-                    "expected Status Stage TRB"
-                );
-
                 assert_eq!(self.dev.handle_out(0, &[]), UsbOutResult::Ack);
+                *cursor = pending.next_cursor;
                 self.completions.push_back(Completion {
                     kind: CompletionKind::ControlIn,
                     bytes_transferred: data.len(),
@@ -222,6 +231,7 @@ impl XhciHarness {
                 self.ep0_pending = None;
             }
             UsbInResult::Stall | UsbInResult::Timeout => {
+                *cursor = pending.next_cursor;
                 self.completions.push_back(Completion {
                     kind: CompletionKind::ControlIn,
                     bytes_transferred: 0,
@@ -238,7 +248,9 @@ impl XhciHarness {
         );
 
         if self.bulk_out_pending.is_none() {
-            let trb = match cursor.poll(mem, 64) {
+            // Like the EP0 helper above, keep the dequeue pointer stable until the TD completes.
+            let mut probe = *cursor;
+            let trb = match probe.poll(mem, 64) {
                 RingPoll::Ready(item) => item.trb,
                 RingPoll::NotReady => return,
                 RingPoll::Err(err) => panic!("bulk out ring error: {err:?}"),
@@ -248,7 +260,11 @@ impl XhciHarness {
             let len = trb.status as usize;
             let mut data = vec![0u8; len];
             mem.read(trb.parameter as u32, &mut data);
-            self.bulk_out_pending = Some(BulkOutPending { ep, data });
+            self.bulk_out_pending = Some(BulkOutPending {
+                ep,
+                data,
+                next_cursor: probe,
+            });
         }
 
         let pending = self
@@ -258,6 +274,7 @@ impl XhciHarness {
         match self.dev.handle_out(pending.ep, &pending.data) {
             UsbOutResult::Nak => return,
             UsbOutResult::Ack => {
+                *cursor = pending.next_cursor;
                 self.completions.push_back(Completion {
                     kind: CompletionKind::BulkOut,
                     bytes_transferred: pending.data.len(),
@@ -265,6 +282,7 @@ impl XhciHarness {
                 self.bulk_out_pending = None;
             }
             UsbOutResult::Stall | UsbOutResult::Timeout => {
+                *cursor = pending.next_cursor;
                 self.completions.push_back(Completion {
                     kind: CompletionKind::BulkOut,
                     bytes_transferred: 0,
@@ -281,7 +299,8 @@ impl XhciHarness {
         );
 
         if self.bulk_in_pending.is_none() {
-            let trb = match cursor.poll(mem, 64) {
+            let mut probe = *cursor;
+            let trb = match probe.poll(mem, 64) {
                 RingPoll::Ready(item) => item.trb,
                 RingPoll::NotReady => return,
                 RingPoll::Err(err) => panic!("bulk in ring error: {err:?}"),
@@ -291,6 +310,7 @@ impl XhciHarness {
                 ep,
                 buf_ptr: trb.parameter,
                 len: trb.status as usize,
+                next_cursor: probe,
             });
         }
 
@@ -302,6 +322,7 @@ impl XhciHarness {
             UsbInResult::Nak => return,
             UsbInResult::Data(data) => {
                 mem.write(pending.buf_ptr as u32, &data);
+                *cursor = pending.next_cursor;
                 self.completions.push_back(Completion {
                     kind: CompletionKind::BulkIn,
                     bytes_transferred: data.len(),
@@ -309,6 +330,7 @@ impl XhciHarness {
                 self.bulk_in_pending = None;
             }
             UsbInResult::Stall | UsbInResult::Timeout => {
+                *cursor = pending.next_cursor;
                 self.completions.push_back(Completion {
                     kind: CompletionKind::BulkIn,
                     bytes_transferred: 0,
@@ -392,6 +414,11 @@ fn xhci_control_in_get_descriptor_queues_action_then_completes_and_dmas_data() {
     // Tick #1: SETUP is executed, DATA stage NAKs (pending), and the passthrough model queues a
     // single host action.
     xhci.tick_ep0_control_in(&mut mem, &mut ep0_cursor);
+    assert_eq!(
+        ep0_cursor.dequeue_ptr(),
+        ep0_ring,
+        "xHCI should not advance the dequeue pointer while a TD is NAK/pending"
+    );
 
     let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1, "expected exactly one queued host action");
@@ -421,6 +448,7 @@ fn xhci_control_in_get_descriptor_queues_action_then_completes_and_dmas_data() {
     // Tick again without a completion: the DATA stage should keep NAKing and must not emit a
     // duplicate host action.
     xhci.tick_ep0_control_in(&mut mem, &mut ep0_cursor);
+    assert_eq!(ep0_cursor.dequeue_ptr(), ep0_ring);
     assert!(
         dev.drain_actions().is_empty(),
         "in-flight control transfers must not queue duplicate host actions"
@@ -441,6 +469,11 @@ fn xhci_control_in_get_descriptor_queues_action_then_completes_and_dmas_data() {
 
     // Tick #2: DATA stage completes and DMA writes into guest memory; STATUS stage completes.
     xhci.tick_ep0_control_in(&mut mem, &mut ep0_cursor);
+    assert_eq!(
+        ep0_cursor.dequeue_ptr(),
+        ep0_ring + (3 * TRB_LEN) as u64,
+        "completion should advance the dequeue pointer past the control TD"
+    );
 
     assert_eq!(
         xhci.pop_completion(),
@@ -508,6 +541,11 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     let mut bulk_out_cursor = RingCursor::new(bulk_out_ring, true);
 
     xhci.tick_bulk_out(&mut mem, &mut bulk_out_cursor, 1);
+    assert_eq!(
+        bulk_out_cursor.dequeue_ptr(),
+        bulk_out_ring,
+        "bulk OUT NAK should leave the TRB pending"
+    );
 
     let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
@@ -520,6 +558,7 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
 
     // Retry without completion should not emit a duplicate host action.
     xhci.tick_bulk_out(&mut mem, &mut bulk_out_cursor, 1);
+    assert_eq!(bulk_out_cursor.dequeue_ptr(), bulk_out_ring);
     assert!(
         dev.drain_actions().is_empty(),
         "in-flight bulk OUT must not queue duplicate host actions"
@@ -533,6 +572,11 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
         },
     });
     xhci.tick_bulk_out(&mut mem, &mut bulk_out_cursor, 1);
+    assert_eq!(
+        bulk_out_cursor.dequeue_ptr(),
+        bulk_out_ring + TRB_LEN as u64,
+        "bulk OUT completion should advance the dequeue pointer"
+    );
     assert_eq!(
         xhci.pop_completion(),
         Some(Completion {
@@ -555,6 +599,11 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
 
     let mut bulk_in_cursor = RingCursor::new(bulk_in_ring, true);
     xhci.tick_bulk_in(&mut mem, &mut bulk_in_cursor, 1);
+    assert_eq!(
+        bulk_in_cursor.dequeue_ptr(),
+        bulk_in_ring,
+        "bulk IN NAK should leave the TRB pending"
+    );
 
     let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
@@ -567,6 +616,7 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
 
     // Retry without completion should not emit a duplicate host action.
     xhci.tick_bulk_in(&mut mem, &mut bulk_in_cursor, 1);
+    assert_eq!(bulk_in_cursor.dequeue_ptr(), bulk_in_ring);
     assert!(
         dev.drain_actions().is_empty(),
         "in-flight bulk IN must not queue duplicate host actions"
@@ -580,6 +630,11 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
         },
     });
     xhci.tick_bulk_in(&mut mem, &mut bulk_in_cursor, 1);
+    assert_eq!(
+        bulk_in_cursor.dequeue_ptr(),
+        bulk_in_ring + TRB_LEN as u64,
+        "bulk IN completion should advance the dequeue pointer"
+    );
     assert_eq!(
         xhci.pop_completion(),
         Some(Completion {
