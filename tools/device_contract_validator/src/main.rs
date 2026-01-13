@@ -1173,14 +1173,14 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
 }
 
 fn validate_emulator_ids(repo_root: &Path, devices: &BTreeMap<String, DeviceEntry>) -> Result<()> {
-    // Virtio PCI IDs: crates/devices/src/pci/profile.rs
-    let virtio_profile_rs = repo_root.join("crates/devices/src/pci/profile.rs");
-    let virtio_vendor = parse_rust_u16_const(&virtio_profile_rs, "PCI_VENDOR_ID_VIRTIO")
+    // Canonical PCI IDs: crates/devices/src/pci/profile.rs
+    let pci_profile_rs = repo_root.join("crates/devices/src/pci/profile.rs");
+    let virtio_vendor = parse_rust_u16_const(&pci_profile_rs, "PCI_VENDOR_ID_VIRTIO")
         .with_context(|| "parse PCI_VENDOR_ID_VIRTIO")?;
     if virtio_vendor != 0x1AF4 {
         bail!(
             "emulator virtio vendor ID mismatch in {}: expected 0x1AF4, found {virtio_vendor:#06x}",
-            virtio_profile_rs.display()
+            pci_profile_rs.display()
         );
     }
 
@@ -1195,12 +1195,12 @@ fn validate_emulator_ids(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
         let dev = devices.get(*device_name).unwrap();
         let expected = parse_hex_u16(&dev.pci_device_id)
             .with_context(|| format!("{device_name}: parse pci_device_id"))?;
-        let found = parse_rust_u16_const(&virtio_profile_rs, const_name)
+        let found = parse_rust_u16_const(&pci_profile_rs, const_name)
             .with_context(|| format!("parse {const_name}"))?;
         if found != expected {
             bail!(
                 "emulator PCI ID mismatch for {device_name}: contract pci_device_id={expected:#06x}, but {const_name}={found:#06x} in {}",
-                virtio_profile_rs.display()
+                pci_profile_rs.display()
             );
         }
     }
@@ -1218,12 +1218,12 @@ fn validate_emulator_ids(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                 anyhow::anyhow!("{device_name}: missing pci_device_id_transitional")
             })?)
             .with_context(|| format!("{device_name}: parse pci_device_id_transitional"))?;
-        let found = parse_rust_u16_const(&virtio_profile_rs, const_name)
+        let found = parse_rust_u16_const(&pci_profile_rs, const_name)
             .with_context(|| format!("parse {const_name}"))?;
         if found != expected {
             bail!(
                 "emulator PCI ID mismatch for {device_name} transitional: contract pci_device_id_transitional={expected:#06x}, but {const_name}={found:#06x} in {}",
-                virtio_profile_rs.display()
+                pci_profile_rs.display()
             );
         }
     }
@@ -1260,6 +1260,60 @@ fn validate_emulator_ids(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
         bail!(
             "AeroGPU protocol header ID mismatch in {}: expected {expected_vendor:#06x}:{expected_did:#06x}, found {found_vendor_h:#06x}:{found_did_h:#06x}",
             aerogpu_header_h.display()
+        );
+    }
+
+    // Canonical AeroGPU PCI constants must match the protocol IDs.
+    //
+    // Source of truth for the canonical machine PCI layout is `crates/devices/src/pci/profile.rs`
+    // (not the contract JSON). Ensure those constants do not drift from the protocol.
+    let aero_vendor_profile = parse_rust_u16_const(&pci_profile_rs, "PCI_VENDOR_ID_AERO")
+        .with_context(|| format!("parse PCI_VENDOR_ID_AERO in {}", pci_profile_rs.display()))?;
+    let aero_did_profile = parse_rust_u16_const(&pci_profile_rs, "PCI_DEVICE_ID_AERO_AEROGPU")
+        .with_context(|| {
+            format!(
+                "parse PCI_DEVICE_ID_AERO_AEROGPU in {}",
+                pci_profile_rs.display()
+            )
+        })?;
+
+    if aero_vendor_profile != found_vendor_rs || aero_did_profile != found_did_rs {
+        bail!(
+            "AeroGPU PCI ID mismatch between canonical PCI profile and protocol: {} defines PCI_VENDOR_ID_AERO={aero_vendor_profile:#06x} / PCI_DEVICE_ID_AERO_AEROGPU={aero_did_profile:#06x}, but {} defines AEROGPU_PCI_VENDOR_ID={found_vendor_rs:#06x} / AEROGPU_PCI_DEVICE_ID={found_did_rs:#06x}",
+            pci_profile_rs.display(),
+            aerogpu_proto_rs.display(),
+        );
+    }
+    if aero_vendor_profile != found_vendor_h || aero_did_profile != found_did_h {
+        bail!(
+            "AeroGPU PCI ID mismatch between canonical PCI profile and protocol header: {} defines PCI_VENDOR_ID_AERO={aero_vendor_profile:#06x} / PCI_DEVICE_ID_AERO_AEROGPU={aero_did_profile:#06x}, but {} defines AEROGPU_PCI_VENDOR_ID={found_vendor_h:#06x} / AEROGPU_PCI_DEVICE_ID={found_did_h:#06x}",
+            pci_profile_rs.display(),
+            aerogpu_header_h.display(),
+        );
+    }
+
+    // Canonical BDF + class code for AeroGPU are part of the Windows driver binding contract.
+    // Validate against docs/pci-device-compatibility.md (00:07.0, class 03/00/00).
+    let parsed = parse_pci_device_profile_bdf_and_class(&pci_profile_rs, "AEROGPU")
+        .with_context(|| format!("parse AEROGPU profile in {}", pci_profile_rs.display()))?;
+    let (bus, dev, func) = parsed.bdf;
+    if (bus, dev, func) != (0, 7, 0) {
+        bail!(
+            "AeroGPU BDF mismatch in {}: profile::AEROGPU uses {:02x}:{:02x}.{}, expected 00:07.0 (see docs/pci-device-compatibility.md)",
+            pci_profile_rs.display(),
+            bus,
+            dev,
+            func
+        );
+    }
+    let (base, sub, prog) = parsed.class;
+    if (base, sub, prog) != (0x03, 0x00, 0x00) {
+        bail!(
+            "AeroGPU class code mismatch in {}: profile::AEROGPU uses {:02X}/{:02X}/{:02X}, expected 03/00/00 (see docs/pci-device-compatibility.md)",
+            pci_profile_rs.display(),
+            base,
+            sub,
+            prog
         );
     }
 
@@ -1447,6 +1501,90 @@ fn parse_rust_u16_const(path: &Path, const_name: &str) -> Result<u16> {
     })?;
     let hex = caps.get(1).unwrap().as_str();
     u16::from_str_radix(hex, 16).with_context(|| format!("parse {const_name} value 0x{hex}"))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ParsedPciDeviceProfileBdfAndClass {
+    bdf: (u8, u8, u8),
+    class: (u8, u8, u8),
+}
+
+fn parse_int_literal_u8(s: &str) -> Result<u8> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        return u8::from_str_radix(hex, 16).with_context(|| format!("parse hex u8 from '{s}'"));
+    }
+    s.parse::<u8>()
+        .with_context(|| format!("parse decimal u8 from '{s}'"))
+}
+
+fn parse_pci_device_profile_body(path: &Path, const_name: &str) -> Result<String> {
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let re = regex::Regex::new(&format!(
+        // Extract the struct literal for `pub const <NAME>: PciDeviceProfile = PciDeviceProfile { ... };`.
+        r"(?s)pub\s+const\s+{}\s*:\s*PciDeviceProfile\s*=\s*PciDeviceProfile\s*\{{(?P<body>.*?)\}}\s*;",
+        regex::escape(const_name)
+    ))
+    .expect("static regex must compile");
+    let caps = re.captures(&text).ok_or_else(|| {
+        anyhow::anyhow!(
+            "could not find PciDeviceProfile constant '{}' in {}",
+            const_name,
+            path.display()
+        )
+    })?;
+    Ok(caps
+        .name("body")
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default())
+}
+
+fn parse_pci_device_profile_bdf_and_class(
+    path: &Path,
+    const_name: &str,
+) -> Result<ParsedPciDeviceProfileBdfAndClass> {
+    let body = parse_pci_device_profile_body(path, const_name)?;
+
+    let bdf_re = regex::Regex::new(
+        r"(?m)^\s*bdf\s*:\s*PciBdf::new\s*\(\s*([^,\s]+)\s*,\s*([^,\s]+)\s*,\s*([^)\s]+)\s*\)\s*,",
+    )
+    .expect("static regex must compile");
+    let bdf_caps = bdf_re.captures(&body).ok_or_else(|| {
+        anyhow::anyhow!(
+            "could not find 'bdf: PciBdf::new(..)' field in profile::{} in {}",
+            const_name,
+            path.display()
+        )
+    })?;
+    let bus = parse_int_literal_u8(bdf_caps.get(1).unwrap().as_str())
+        .with_context(|| format!("parse {}.bdf bus", const_name))?;
+    let dev = parse_int_literal_u8(bdf_caps.get(2).unwrap().as_str())
+        .with_context(|| format!("parse {}.bdf device", const_name))?;
+    let func = parse_int_literal_u8(bdf_caps.get(3).unwrap().as_str())
+        .with_context(|| format!("parse {}.bdf function", const_name))?;
+
+    let class_re = regex::Regex::new(
+        r"(?m)^\s*class\s*:\s*PciClassCode::new\s*\(\s*([^,\s]+)\s*,\s*([^,\s]+)\s*,\s*([^)\s]+)\s*\)\s*,",
+    )
+    .expect("static regex must compile");
+    let class_caps = class_re.captures(&body).ok_or_else(|| {
+        anyhow::anyhow!(
+            "could not find 'class: PciClassCode::new(..)' field in profile::{} in {}",
+            const_name,
+            path.display()
+        )
+    })?;
+    let base = parse_int_literal_u8(class_caps.get(1).unwrap().as_str())
+        .with_context(|| format!("parse {}.class base_class", const_name))?;
+    let sub = parse_int_literal_u8(class_caps.get(2).unwrap().as_str())
+        .with_context(|| format!("parse {}.class sub_class", const_name))?;
+    let prog = parse_int_literal_u8(class_caps.get(3).unwrap().as_str())
+        .with_context(|| format!("parse {}.class prog_if", const_name))?;
+
+    Ok(ParsedPciDeviceProfileBdfAndClass {
+        bdf: (bus, dev, func),
+        class: (base, sub, prog),
+    })
 }
 
 fn parse_c_define_hex_u16(path: &Path, define: &str) -> Result<u16> {
