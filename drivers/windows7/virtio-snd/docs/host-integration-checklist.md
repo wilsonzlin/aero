@@ -25,16 +25,17 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
   - `NOTIFY_CFG` (`cfg_type=2`, `cap_len>=20`)
   - `ISR_CFG` (`cfg_type=3`, `cap_len>=16`)
   - `DEVICE_CFG` (`cfg_type=4`, `cap_len>=16`)
-- [ ] **BAR0** contains a virtio-pci **modern** vendor-cap layout for:
-  - [ ] `COMMON_CFG`
-  - [ ] `NOTIFY_CFG`
-  - [ ] `ISR_CFG`
-  - [ ] `DEVICE_CFG`
-- [ ] (Contract/strict mode) The capabilities reference **BAR0** with the fixed offsets/minimum lengths:
-  - [ ] `COMMON_CFG`: `bar=0`, `offset=0x0000`, `length>=0x0100`
-  - [ ] `NOTIFY_CFG`: `bar=0`, `offset=0x1000`, `length>=0x0100`
-  - [ ] `ISR_CFG`: `bar=0`, `offset=0x2000`, `length>=0x0020`
-  - [ ] `DEVICE_CFG`: `bar=0`, `offset=0x3000`, `length>=0x0100`
+- [ ] All four capabilities reference **BAR0** (`bar=0`) and have **minimum lengths**:
+  - [ ] `COMMON_CFG.length >= 0x0100`
+  - [ ] `NOTIFY_CFG.length >= 0x0100`
+  - [ ] `ISR_CFG.length >= 0x0020`
+  - [ ] `DEVICE_CFG.length >= 0x0100`
+- [ ] All four capability `(offset + length)` ranges fit within BAR0 (driver rejects regions that run past BAR0).
+- [ ] (Contract/strict mode) The capabilities use the fixed BAR0 offsets:
+  - [ ] `COMMON_CFG.offset == 0x0000`
+  - [ ] `NOTIFY_CFG.offset == 0x1000`
+  - [ ] `ISR_CFG.offset == 0x2000`
+  - [ ] `DEVICE_CFG.offset == 0x3000`
 - [ ] `NOTIFY_CFG.notify_off_multiplier == 4` (driver rejects other values).
 
 ## Virtio feature bits (negotiation)
@@ -62,6 +63,7 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 
 - [ ] **INTx** is implemented and functional (required).
 - [ ] MSI/MSI-X is **not used** by this driver package.
+- [ ] Guest must see a **line-based** interrupt resource (not MSI/MSI-X-only / “message interrupt” only).
 - [ ] PCI **Interrupt Pin** register is `1` (INTA#).
 - [ ] ISR status byte is **read-to-ack** (driver relies on read clearing pending bits to deassert INTx).
 
