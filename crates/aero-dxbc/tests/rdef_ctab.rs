@@ -150,6 +150,82 @@ fn dxbc_get_rdef_parses_chunk() {
 }
 
 #[test]
+fn dxbc_get_rdef_falls_back_to_rd11_chunk_id() {
+    // Same payload as a minimal RDEF, but stored under the alternate `RD11` chunk ID.
+    let mut chunk = Vec::new();
+    push_u32(&mut chunk, 0); // cb count
+    push_u32(&mut chunk, 0); // cb offset
+    push_u32(&mut chunk, 1); // resource count
+    push_u32(&mut chunk, 28); // resource offset (header size)
+    push_u32(&mut chunk, 0); // shader model
+    push_u32(&mut chunk, 0); // flags
+    push_u32(&mut chunk, 0); // creator offset
+
+    // Resource entry (32 bytes).
+    push_u32(&mut chunk, 60); // name offset
+    push_u32(&mut chunk, 0); // type
+    push_u32(&mut chunk, 0); // return type
+    push_u32(&mut chunk, 0); // dimension
+    push_u32(&mut chunk, 0); // num samples
+    push_u32(&mut chunk, 3); // bind point
+    push_u32(&mut chunk, 1); // bind count
+    push_u32(&mut chunk, 0); // flags
+    chunk.extend_from_slice(b"tex0\0");
+
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"RD11"), &chunk)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let rdef = dxbc
+        .get_rdef()
+        .expect("expected an RD11 chunk via get_rdef()")
+        .expect("RD11 payload should parse as RDEF");
+    assert_eq!(rdef.bound_resources.len(), 1);
+    assert_eq!(rdef.bound_resources[0].name, "tex0");
+    assert_eq!(rdef.bound_resources[0].bind_point, 3);
+}
+
+#[test]
+fn dxbc_get_rdef_uses_rd11_if_rdef_is_malformed() {
+    // If the container contains a malformed `RDEF` but a valid `RD11`, `get_rdef()` should return
+    // the first successfully-parsed chunk (mirrors signature helper behavior).
+    let bad_chunk = [0u8; 4]; // truncated RDEF header
+
+    let mut good_chunk = Vec::new();
+    push_u32(&mut good_chunk, 0); // cb count
+    push_u32(&mut good_chunk, 0); // cb offset
+    push_u32(&mut good_chunk, 1); // resource count
+    push_u32(&mut good_chunk, 28); // resource offset (header size)
+    push_u32(&mut good_chunk, 0); // shader model
+    push_u32(&mut good_chunk, 0); // flags
+    push_u32(&mut good_chunk, 0); // creator offset
+
+    // Resource entry (32 bytes).
+    push_u32(&mut good_chunk, 60); // name offset
+    push_u32(&mut good_chunk, 0); // type
+    push_u32(&mut good_chunk, 0); // return type
+    push_u32(&mut good_chunk, 0); // dimension
+    push_u32(&mut good_chunk, 0); // num samples
+    push_u32(&mut good_chunk, 3); // bind point
+    push_u32(&mut good_chunk, 1); // bind count
+    push_u32(&mut good_chunk, 0); // flags
+    good_chunk.extend_from_slice(b"tex0\0");
+
+    let dxbc_bytes = build_dxbc(&[
+        (FourCC(*b"RDEF"), &bad_chunk),
+        (FourCC(*b"RD11"), &good_chunk),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let rdef = dxbc
+        .get_rdef()
+        .expect("expected a resource definition chunk")
+        .expect("should fall back to RD11 when RDEF is malformed");
+    assert_eq!(rdef.bound_resources.len(), 1);
+    assert_eq!(rdef.bound_resources[0].name, "tex0");
+    assert_eq!(rdef.bound_resources[0].bind_point, 3);
+}
+
+#[test]
 fn dxbc_get_ctab_parses_chunk() {
     let mut chunk = Vec::new();
     push_u32(&mut chunk, 0); // size (ignored)
