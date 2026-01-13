@@ -50,7 +50,8 @@ AddReg = AeroVirtioNet_InterruptManagement_AddReg
 [AeroVirtioNet_InterruptManagement_AddReg]
 HKR, "Interrupt Management",,0x00000010
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
-HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 3
+; virtio-net needs config + RX + TX = 3 vectors, but request extra for future growth.
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
 ```
 
 Notes:
