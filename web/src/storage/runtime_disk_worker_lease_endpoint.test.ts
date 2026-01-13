@@ -37,11 +37,13 @@ describe("RuntimeDiskWorker (leaseEndpoint)", () => {
     closeServer = null;
   });
 
-  it("refreshes chunked manifest leases on 403 and does not persist signed URLs in snapshots", async () => {
-    const chunkSize = 512 * 1024; // must be within IDB bounds (see idb_remote_chunk_cache.ts)
-    const chunkCount = 2;
-    const totalSize = chunkSize * chunkCount;
-    const bytes = buildTestBytes(totalSize);
+  it(
+    "refreshes chunked manifest leases on 403 and does not persist signed URLs in snapshots",
+    async () => {
+      const chunkSize = 512 * 1024; // must be within IDB bounds (see idb_remote_chunk_cache.ts)
+      const chunkCount = 2;
+      const totalSize = chunkSize * chunkCount;
+      const bytes = buildTestBytes(totalSize);
 
     let currentToken = "t1";
     let baseUrl = "";
@@ -223,8 +225,13 @@ describe("RuntimeDiskWorker (leaseEndpoint)", () => {
       } satisfies RuntimeDiskRequestMessage);
       const closeResp = posted.shift();
       expect(closeResp.ok).toBe(true);
-    } finally {
-      (globalThis as any).location = oldLocation;
-    }
-  });
+      } finally {
+        (globalThis as any).location = oldLocation;
+      }
+    },
+    // This test can be sensitive to Vitest's file-level parallelism (other suites may
+    // be running CPU-intensive Vite builds), so keep the timeout a bit higher than
+    // the default 5s to avoid flakes.
+    20_000,
+  );
 });

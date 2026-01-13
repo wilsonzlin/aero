@@ -202,6 +202,7 @@ describe("hid/WebHidBroker", () => {
     expect(ringAttach).toBeTruthy();
 
     const outputRing = new HidReportRing(ringAttach!.outputRing);
+    expect(outputRing.dataCapacityBytes()).toBeGreaterThan(64 * 1024);
 
     const device = new FakeHidDevice();
     const id = await broker.attachDevice(device as unknown as HIDDevice);
@@ -219,9 +220,47 @@ describe("hid/WebHidBroker", () => {
     expect(Array.from(decoded!.data)).toEqual([1, 2, 3]);
 
     // Worker -> main output/feature reports also flow through the ring.
-    outputRing.push(id, HidReportType.Output, 7, Uint8Array.of(9));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(device.sendReport).toHaveBeenCalledWith(7, Uint8Array.of(9));
+    // Use payload sizes large enough that a legacy 64KiB ring would drop after ~2 records.
+    const payloadBytes = 24 * 1024;
+    const p1 = new Uint8Array(payloadBytes).fill(0x11);
+    const p2 = new Uint8Array(payloadBytes).fill(0x22);
+    const p3 = new Uint8Array(payloadBytes).fill(0x33);
+    expect(outputRing.push(id, HidReportType.Output, 7, p1)).toBe(true);
+    expect(outputRing.push(id, HidReportType.Output, 8, p2)).toBe(true);
+    expect(outputRing.push(id, HidReportType.Output, 9, p3)).toBe(true);
+    expect(outputRing.dropped()).toBe(0);
+
+    await new Promise((r) => setTimeout(r, 40));
+    expect(device.sendReport).toHaveBeenCalledTimes(3);
+    const calls = device.sendReport.mock.calls as Array<[number, Uint8Array]>;
+    expect(calls[0][0]).toBe(7);
+    expect(calls[1][0]).toBe(8);
+    expect(calls[2][0]).toBe(9);
+    expect(calls[0][1].byteLength).toBe(payloadBytes);
+    expect(calls[1][1].byteLength).toBe(payloadBytes);
+    expect(calls[2][1].byteLength).toBe(payloadBytes);
+    expect(calls[0][1][0]).toBe(0x11);
+    expect(calls[1][1][0]).toBe(0x22);
+    expect(calls[2][1][0]).toBe(0x33);
+
+    broker.destroy();
+  });
+
+  it("respects configured output ring capacity", () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager, outputRingCapacityBytes: 128 * 1024 });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+
+    const outputRing = new HidReportRing(ringAttach!.outputRing);
+    expect(outputRing.dataCapacityBytes()).toBe(128 * 1024);
 
     broker.destroy();
   });

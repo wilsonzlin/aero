@@ -17,12 +17,49 @@ import {
   type HidSendReportMessage,
 } from "./hid_proxy_protocol";
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
-import { createHidReportRingBuffer, HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
+import {
+  createHidReportRingBuffer,
+  HID_REPORT_RECORD_ALIGN,
+  HidReportRing,
+  HidReportType as HidRingReportType,
+} from "../usb/hid_report_ring";
 import {
   HID_INPUT_REPORT_RECORD_MAGIC,
   HID_INPUT_REPORT_RECORD_HEADER_BYTES,
   HID_INPUT_REPORT_RECORD_VERSION,
 } from "./hid_input_report_ring";
+
+const LEGACY_HID_INPUT_RING_CAPACITY_BYTES = 64 * 1024;
+
+/**
+ * Default capacity for the worker->main thread HID output/feature report ring.
+ *
+ * The previous 64KiB default was too small to reliably carry feature reports and
+ * to buffer bursts when the main thread is momentarily busy (GC, rendering, etc).
+ *
+ * Keep this bounded and deterministic: this is a fixed-size SharedArrayBuffer.
+ */
+const DEFAULT_HID_OUTPUT_RING_CAPACITY_BYTES = 1024 * 1024;
+
+/**
+ * Hard cap to avoid accidental multi-gigabyte SharedArrayBuffer allocations when
+ * a caller passes a bogus value.
+ */
+const MAX_HID_OUTPUT_RING_CAPACITY_BYTES = 16 * 1024 * 1024;
+
+function assertValidHidRingCapacityBytes(name: string, capacityBytes: number): number {
+  if (!Number.isSafeInteger(capacityBytes) || capacityBytes <= 0) {
+    throw new Error(`invalid ${name}: ${capacityBytes}`);
+  }
+  if (capacityBytes > 0xffff_ffff) {
+    throw new Error(`invalid ${name}: ${capacityBytes}`);
+  }
+  const cap = capacityBytes >>> 0;
+  if (cap > MAX_HID_OUTPUT_RING_CAPACITY_BYTES) {
+    throw new Error(`${name} must be <= ${MAX_HID_OUTPUT_RING_CAPACITY_BYTES}`);
+  }
+  return alignUp(cap, HID_REPORT_RECORD_ALIGN);
+}
 
 export type WebHidBrokerState = {
   workerAttached: boolean;
@@ -119,13 +156,24 @@ export class WebHidBroker {
   #inputRing: HidReportRing | null = null;
   #outputRing: HidReportRing | null = null;
   #outputRingDrainTimer: ReturnType<typeof setInterval> | null = null;
+  readonly #outputRingCapacityBytes: number;
 
   #managerUnsubscribe: (() => void) | null = null;
   #prevManagerAttached = new Set<HIDDevice>();
 
-  constructor(options: { manager?: WebHidPassthroughManager; inputReportRingCapacityBytes?: number } = {}) {
+  constructor(
+    options: {
+      manager?: WebHidPassthroughManager;
+      inputReportRingCapacityBytes?: number;
+      outputRingCapacityBytes?: number;
+    } = {},
+  ) {
     this.manager = options.manager ?? new WebHidPassthroughManager();
     this.#inputReportRingCapacityBytes = options.inputReportRingCapacityBytes ?? 2 * 1024 * 1024;
+    this.#outputRingCapacityBytes =
+      options.outputRingCapacityBytes === undefined
+        ? DEFAULT_HID_OUTPUT_RING_CAPACITY_BYTES
+        : assertValidHidRingCapacityBytes("outputRingCapacityBytes", options.outputRingCapacityBytes);
 
     // Ensure we clean up bridged state when the underlying manager closes a device
     // (e.g., after a physical disconnect).
@@ -284,8 +332,8 @@ export class WebHidBroker {
     if (this.#inputRing && this.#outputRing) return;
     if (!this.#canUseSharedMemory()) return;
 
-    const inputSab = createHidReportRingBuffer(64 * 1024);
-    const outputSab = createHidReportRingBuffer(64 * 1024);
+    const inputSab = createHidReportRingBuffer(LEGACY_HID_INPUT_RING_CAPACITY_BYTES);
+    const outputSab = createHidReportRingBuffer(this.#outputRingCapacityBytes);
     this.#inputRing = new HidReportRing(inputSab);
     this.#outputRing = new HidReportRing(outputSab);
 

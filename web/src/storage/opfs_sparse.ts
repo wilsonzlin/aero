@@ -309,6 +309,17 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
       if (!Number.isSafeInteger(fileSize) || fileSize < 0) {
         throw new Error(`invalid file size: ${fileSize}`);
       }
+
+      // Validate table sizing before doing any file-length-dependent checks so corrupted
+      // headers fail deterministically (and without requiring the backing file to be large
+      // enough to cover the claimed data region).
+      const tableBytesLenBig = BigInt(header.tableEntries) * 8n;
+      if (tableBytesLenBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error("sparse table size overflow");
+      }
+      if (tableBytesLenBig > BigInt(MAX_TABLE_BYTES)) {
+        throw new Error(`sparse table too large: ${tableBytesLenBig} bytes (max ${MAX_TABLE_BYTES})`);
+      }
       if (fileSize < header.dataOffset) {
         throw new Error("data region out of bounds");
       }
