@@ -4005,8 +4005,11 @@ impl Machine {
         let storage = aero_opfs::OpfsByteStorage::open(&path, false)
             .await
             .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_aerospar_opfs_open", &path, e))?;
-        let disk = aero_storage::AeroSparseDisk::open(storage)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let disk = aero_storage::AeroSparseDisk::open(storage).map_err(|e| {
+            JsValue::from_str(&format!(
+                "Machine.set_disk_aerospar_opfs_open failed for OPFS path \"{path}\": {e}"
+            ))
+        })?;
         self.inner
             .set_disk_backend(Box::new(disk))
             .map_err(js_error)
@@ -4050,8 +4053,11 @@ impl Machine {
                 let paths = format!("base={base_path}, overlay={overlay_path}");
                 opfs_disk_error_to_js("Machine.set_disk_cow_opfs_create(base)", &paths, e)
             })?;
-        let base_disk = aero_storage::DiskImage::open_auto(base_storage)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let base_disk = aero_storage::DiskImage::open_auto(base_storage).map_err(|e| {
+            JsValue::from_str(&format!(
+                "Machine.set_disk_cow_opfs_create failed for base=\"{base_path}\" overlay=\"{overlay_path}\": {e}"
+            ))
+        })?;
 
         let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_path, true)
             .await
@@ -4060,9 +4066,16 @@ impl Machine {
                 opfs_disk_error_to_js("Machine.set_disk_cow_opfs_create(overlay)", &paths, e)
             })?;
 
-        let disk =
-            aero_storage::AeroCowDisk::create(base_disk, overlay_backend, overlay_block_size_bytes)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let disk = aero_storage::AeroCowDisk::create(
+            base_disk,
+            overlay_backend,
+            overlay_block_size_bytes,
+        )
+        .map_err(|e| {
+            JsValue::from_str(&format!(
+                "Machine.set_disk_cow_opfs_create failed for base=\"{base_path}\" overlay=\"{overlay_path}\": {e}"
+            ))
+        })?;
 
         self.inner
             .set_disk_backend(Box::new(disk))
@@ -4107,8 +4120,11 @@ impl Machine {
                 let paths = format!("base={base_path}, overlay={overlay_path}");
                 opfs_disk_error_to_js("Machine.set_disk_cow_opfs_open(base)", &paths, e)
             })?;
-        let base_disk = aero_storage::DiskImage::open_auto(base_storage)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let base_disk = aero_storage::DiskImage::open_auto(base_storage).map_err(|e| {
+            JsValue::from_str(&format!(
+                "Machine.set_disk_cow_opfs_open failed for base=\"{base_path}\" overlay=\"{overlay_path}\": {e}"
+            ))
+        })?;
 
         let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_path, false)
             .await
@@ -4160,12 +4176,7 @@ impl Machine {
     pub async fn attach_install_media_iso_opfs(&mut self, path: String) -> Result<(), JsValue> {
         let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
             .await
-            .map_err(|e| match e {
-                aero_opfs::DiskError::NotSupported(msg) if msg.contains("sync access handles") => {
-                    js_error("OPFS sync access handles (FileSystemSyncAccessHandle) are unavailable. This API is worker-only (Dedicated Worker) and cannot run on the main thread.")
-                }
-                other => js_error(&other.to_string()),
-            })?;
+            .map_err(|e| opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs", &path, e))?;
 
         self.inner
             .attach_ide_secondary_master_iso(Box::new(disk))
@@ -4204,11 +4215,8 @@ impl Machine {
     ) -> Result<(), JsValue> {
         let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
             .await
-            .map_err(|e| match e {
-                aero_opfs::DiskError::NotSupported(msg) if msg.contains("sync access handles") => {
-                    js_error("OPFS sync access handles (FileSystemSyncAccessHandle) are unavailable. This API is worker-only (Dedicated Worker) and cannot run on the main thread.")
-                }
-                other => js_error(&other.to_string()),
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs_for_restore", &path, e)
             })?;
 
         self.inner
@@ -4954,22 +4962,13 @@ impl Machine {
             return Ok(());
         };
 
-        let opfs_error = |disk_id: u32,
-                          which: &str,
-                          path: &str,
-                          err: aero_opfs::DiskError|
-         -> JsValue {
-            let msg = format!(
-                "Machine.reattach_restored_disks_from_opfs: failed to open OPFS {which} for disk_id={disk_id} ({path:?}): {err}"
-            );
-            match err {
-                aero_opfs::DiskError::NotSupported(_)
-                | aero_opfs::DiskError::BackendUnavailable => {
-                    Error::new(&format!("{msg}\n{}", opfs_worker_hint())).into()
-                }
-                _ => JsValue::from_str(&msg),
-            }
-        };
+        let opfs_error =
+            |disk_id: u32, which: &str, path: &str, err: aero_opfs::DiskError| -> JsValue {
+                let op = format!(
+                    "Machine.reattach_restored_disks_from_opfs: open OPFS {which} for disk_id={disk_id}"
+                );
+                opfs_disk_error_to_js(&op, path, err)
+            };
 
         for disk in overlays.disks {
             let disk_id = disk.disk_id;
