@@ -73,8 +73,11 @@ This module is **transport-only**. Drivers integrating it must provide:
 - DMA allocations for virtqueues and request buffers (device sees guest physical addresses)
 - Interrupt wiring (INTx + ISR polling/ack)
 
-If a driver uses MSI-X routing, vector selectors may be disabled by programming
-`VIRTIO_PCI_MSI_NO_VECTOR` into `msix_config` / `queue_msix_vector`.
+If a driver uses MSI-X routing, vector selectors may be disabled (i.e. MSI-X delivery stopped) by
+programming `VIRTIO_PCI_MSI_NO_VECTOR` into `msix_config` / `queue_msix_vector`.
+
+Note: on Aero Win7 contract devices, NO_VECTOR disables MSI-X delivery but the device will fall
+back to INTx + ISR rather than fully suppressing interrupts.
 
 ## Integration sketch
 
