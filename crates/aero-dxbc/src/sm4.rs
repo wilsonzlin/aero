@@ -50,7 +50,11 @@ pub struct Sm4Program {
     pub stage: ShaderStage,
     /// Shader model version decoded from the version token.
     pub model: ShaderModel,
-    /// Full token stream (DWORDs), including the version and length tokens.
+    /// Program token stream (DWORDs), including the version and length tokens.
+    ///
+    /// The bytecode header contains a declared length (DWORD count) at token index 1; this
+    /// `tokens` vector is truncated to that declared length (any trailing bytes in the DXBC chunk
+    /// payload are ignored).
     pub tokens: Vec<u32>,
 }
 
@@ -87,32 +91,32 @@ impl Sm4Program {
         if !bytes.len().is_multiple_of(4) {
             return Err(Sm4Error::MisalignedTokens { len: bytes.len() });
         }
-
-        // Convert to u32 tokens (little-endian).
-        let mut tokens = Vec::with_capacity(bytes.len() / 4);
-        for chunk in bytes.chunks_exact(4) {
-            tokens.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        let available = bytes.len() / 4;
+        if available < 2 {
+            return Err(Sm4Error::TooShort { dwords: available });
         }
 
-        if tokens.len() < 2 {
-            return Err(Sm4Error::TooShort {
-                dwords: tokens.len(),
-            });
-        }
-
-        let version = tokens[0];
-        let declared_len = tokens[1] as usize;
+        // Read the header (version + declared length) first so we can avoid allocating and
+        // decoding trailing bytes when the stream is truncated or malformed.
+        let version = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let declared_len = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
         if declared_len < 2 {
             return Err(Sm4Error::DeclaredLengthTooSmall { declared: declared_len });
         }
-        if declared_len > tokens.len() {
+        if declared_len > available {
             return Err(Sm4Error::DeclaredLengthOutOfBounds {
                 declared: declared_len,
-                available: tokens.len(),
+                available,
             });
         }
 
         let (stage, model) = decode_version_token(version);
+
+        // Convert the declared token range to u32 tokens (little-endian).
+        let mut tokens = Vec::with_capacity(declared_len);
+        for chunk in bytes.chunks_exact(4).take(declared_len) {
+            tokens.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        }
 
         Ok(Self {
             stage,
@@ -208,4 +212,3 @@ impl fmt::Display for Sm4Error {
 }
 
 impl std::error::Error for Sm4Error {}
-

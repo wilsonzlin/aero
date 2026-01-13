@@ -35,6 +35,7 @@ cargo +"$nightly" fuzz run fuzz_aerosparse_open
 cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
 cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
 cargo +"$nightly" fuzz run fuzz_aerogpu_parse
+cargo +"$nightly" fuzz run fuzz_dxbc_sm4_parse
 ```
 
 To run time-bounded:
@@ -128,4 +129,7 @@ cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000
 
 # AeroGPU command stream + alloc-table parsing
 cd fuzz && cargo fuzz run fuzz_aerogpu_parse -- -runs=10000
+
+# DXBC container + signature + SM4/SM5 token parsing
+cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000
 ```
