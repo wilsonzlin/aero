@@ -423,7 +423,8 @@ AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=.
 
 This mirrors the guest's virtio-net marker fields when present and does not affect overall PASS/FAIL.
 
-The harnesses may also surface interrupt mode diagnostics when the guest selftest emits them (informational; does not affect overall PASS/FAIL):
+The harnesses may also surface IRQ-related diagnostics in the output for log scraping. These are informational by default
+and do not affect overall PASS/FAIL.
 
 - Standalone guest lines:
   - `virtio-<dev>-irq|INFO|...`

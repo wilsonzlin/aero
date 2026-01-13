@@ -8,6 +8,7 @@ These tests validate small, host-side helpers used by the Win7 QEMU harness:
 - QEMU keyval quoting
 - QMP `input-send-event` command formatting for virtio-input injection
 - WAV parsing / non-silence verification helpers for virtio-snd
+- Serial marker parsing helpers for IRQ diagnostics (`virtio-<dev>-irq|INFO/WARN|...`)
 
 They are intentionally runnable without QEMU or a Windows guest image.
 
