@@ -64,6 +64,15 @@ fn valid_header_with_specs() -> impl Strategy<Value = (Vec<ByteRangeSpec>, Strin
     )
 }
 
+fn arbitrary_spec() -> impl Strategy<Value = ByteRangeSpec> {
+    prop_oneof![
+        (any::<u64>(), any::<u64>())
+            .prop_map(|(start, end)| ByteRangeSpec::FromTo { start, end }),
+        any::<u64>().prop_map(|start| ByteRangeSpec::From { start }),
+        any::<u64>().prop_map(|len| ByteRangeSpec::Suffix { len }),
+    ]
+}
+
 proptest! {
     // Parser should never panic on arbitrary inputs.
     #[test]
@@ -116,6 +125,43 @@ proptest! {
     fn parse_roundtrips_for_generated_specs((expected, header) in valid_header_with_specs()) {
         let parsed = parse_range_header(&header).expect("generated header must parse");
         prop_assert_eq!(parsed, expected);
+    }
+
+    // `resolve_ranges` should never panic, even when given syntactically-invalid specs
+    // directly (e.g. suffix len 0 or end < start).
+    #[test]
+    fn resolve_never_panics_on_arbitrary_specs(
+        specs in prop::collection::vec(arbitrary_spec(), 0..50),
+        len in 0u64..2_000u64,
+        coalesce in any::<bool>(),
+    ) {
+        let resolved = resolve_ranges(&specs, len, coalesce);
+        match resolved {
+            Err(RangeResolveError::Unsatisfiable) => {
+                // OK: len == 0 or all ranges dropped.
+            }
+            Ok(ranges) => {
+                prop_assert!(len > 0);
+                prop_assert!(!ranges.is_empty());
+
+                for r in &ranges {
+                    prop_assert!(r.start <= r.end);
+                    prop_assert!(r.end < len);
+                    let expected_len = r.end - r.start + 1;
+                    prop_assert_eq!(r.len(), expected_len);
+                    prop_assert!(r.len() > 0);
+                }
+
+                if coalesce {
+                    for pair in ranges.windows(2) {
+                        let a = pair[0];
+                        let b = pair[1];
+                        prop_assert!(a.start <= b.start);
+                        prop_assert!(a.end.saturating_add(1) < b.start);
+                    }
+                }
+            }
+        }
     }
 
     // Coalescing should not change the *set* of bytes covered by the resolved
