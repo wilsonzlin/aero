@@ -9,6 +9,7 @@ pub mod render;
 mod timing;
 pub mod vbe;
 
+use core::cell::Cell;
 use crate::io::PortIO;
 use core::sync::atomic::Ordering;
 
@@ -260,9 +261,8 @@ pub struct Vga {
     dac: VgaDac,
     renderer: VgaRenderer,
 
-    dac_write_index: u8,
-    dac_write_component: u8,
-    dac_write_latch: [u8; 3],
+    dac_read_index: Cell<u8>,
+    dac_read_component: Cell<u8>,
 }
 
 impl Default for Vga {
@@ -278,9 +278,8 @@ impl Vga {
             vram: VgaMemory::new(),
             dac: VgaDac::new(),
             renderer: VgaRenderer::new(),
-            dac_write_index: 0,
-            dac_write_component: 0,
-            dac_write_latch: [0; 3],
+            dac_read_index: Cell::new(0),
+            dac_read_component: Cell::new(0),
         }
     }
 
@@ -342,31 +341,12 @@ impl Vga {
 
     fn dac_port_write_u8(&mut self, port: u16, val: u8) {
         match port {
-            // PEL mask.
-            0x3C6 => {
-                self.dac.set_pel_mask(val);
-            }
-            // DAC write index.
-            0x3C8 => {
-                self.dac_write_index = val;
-                self.dac_write_component = 0;
-            }
-            // DAC data.
-            0x3C9 => {
-                let component = val & 0x3F;
-                let idx = (self.dac_write_component as usize).min(2);
-                self.dac_write_latch[idx] = component;
-                self.dac_write_component = self.dac_write_component.wrapping_add(1);
-                if self.dac_write_component >= 3 {
-                    self.dac.set_entry_6bit(
-                        self.dac_write_index,
-                        self.dac_write_latch[0],
-                        self.dac_write_latch[1],
-                        self.dac_write_latch[2],
-                    );
-                    self.dac_write_index = self.dac_write_index.wrapping_add(1);
-                    self.dac_write_component = 0;
-                }
+            // DAC ports (0x3C6..=0x3C9).
+            0x3C6 | 0x3C8 | 0x3C9 => self.dac.port_write(port, val),
+            // DAC read index.
+            0x3C7 => {
+                self.dac_read_index.set(val);
+                self.dac_read_component.set(0);
             }
             _ => {}
         }
@@ -375,8 +355,23 @@ impl Vga {
     fn dac_port_read_u8(&self, port: u16) -> Option<u8> {
         match port {
             0x3C6 => Some(self.dac.pel_mask()),
-            0x3C8 => Some(self.dac_write_index),
-            0x3C9 => Some(0),
+            0x3C7 => Some(self.dac_read_index.get()),
+            0x3C8 => Some(self.dac.write_index()),
+            0x3C9 => {
+                let idx = self.dac_read_index.get() as usize;
+                let component = (self.dac_read_component.get() as usize).min(2);
+                let out = self.dac.palette_rgb6()[idx][component];
+
+                let next_component = self.dac_read_component.get().wrapping_add(1);
+                if next_component >= 3 {
+                    self.dac_read_component.set(0);
+                    self.dac_read_index
+                        .set(self.dac_read_index.get().wrapping_add(1));
+                } else {
+                    self.dac_read_component.set(next_component);
+                }
+                Some(out)
+            }
             _ => None,
         }
     }
@@ -412,7 +407,7 @@ impl PortIO for Vga {
         match size {
             1 => {
                 let b0 = val as u8;
-                if matches!(port, 0x3C6 | 0x3C8 | 0x3C9) {
+                if matches!(port, 0x3C6 | 0x3C7 | 0x3C8 | 0x3C9) {
                     self.dac_port_write_u8(port, b0);
                 } else {
                     self.regs.port_write(port, 1, val);

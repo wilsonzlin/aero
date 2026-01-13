@@ -55,8 +55,7 @@ impl Default for XhciController {
 impl XhciController {
     /// Size of the MMIO BAR exposed by the emulator integration.
     ///
-    /// The real xHCI register set is larger; the skeleton only implements a subset and keeps the
-    /// BAR small for now.
+    /// The real xHCI register set is larger; the current model only implements a small subset.
     pub const MMIO_SIZE: u32 = 0x1000;
 
     pub fn new() -> Self {

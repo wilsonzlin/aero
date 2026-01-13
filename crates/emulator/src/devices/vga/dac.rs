@@ -66,6 +66,18 @@ impl VgaDac {
         self.pel_mask
     }
 
+    /// Current DAC write index (address register written via port `0x3C8`).
+    #[inline]
+    pub fn write_index(&self) -> u8 {
+        self.write_index
+    }
+
+    /// Current DAC read index (address register written via port `0x3C7`).
+    #[inline]
+    pub fn read_index(&self) -> u8 {
+        self.read_index
+    }
+
     #[inline]
     pub fn palette_rgba(&self) -> &[u32; 256] {
         &self.palette_rgba
