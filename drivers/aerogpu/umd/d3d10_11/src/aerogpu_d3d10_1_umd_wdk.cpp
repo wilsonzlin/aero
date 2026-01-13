@@ -265,10 +265,6 @@ uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
     case kDxgiFormatR8G8B8A8UnormSrgb:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB;
-    case kDxgiFormatB5G6R5Unorm:
-      return AEROGPU_FORMAT_B5G6R5_UNORM;
-    case kDxgiFormatB5G5R5A1Unorm:
-      return AEROGPU_FORMAT_B5G5R5A1_UNORM;
     case kDxgiFormatBc1Typeless:
     case kDxgiFormatBc1Unorm:
       return AEROGPU_FORMAT_BC1_RGBA_UNORM;
@@ -7337,12 +7333,6 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG
                                        D3D10_FORMAT_SUPPORT_BLENDABLE | D3D10_FORMAT_SUPPORT_CPU_LOCKABLE)
                                    : 0;
             break;
-          case kDxgiFormatB5G6R5Unorm:
-          case kDxgiFormatB5G5R5A1Unorm:
-            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
-                      D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY |
-                      D3D10_FORMAT_SUPPORT_BLENDABLE | D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
-            break;
           case kDxgiFormatBc1Typeless:
           case kDxgiFormatBc1Unorm:
           case kDxgiFormatBc1UnormSrgb:
@@ -7560,12 +7550,6 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10_1DDIARG
                                        D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY |
                                        D3D10_FORMAT_SUPPORT_BLENDABLE | D3D10_FORMAT_SUPPORT_CPU_LOCKABLE)
                                    : 0;
-            break;
-          case kDxgiFormatB5G6R5Unorm:
-          case kDxgiFormatB5G5R5A1Unorm:
-            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
-                      D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY |
-                      D3D10_FORMAT_SUPPORT_BLENDABLE | D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
             break;
           case kDxgiFormatBc1Typeless:
           case kDxgiFormatBc1Unorm:

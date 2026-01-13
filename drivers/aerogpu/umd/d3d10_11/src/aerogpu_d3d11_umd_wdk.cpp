@@ -2043,13 +2043,7 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
           support = supports_srgb ? (D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
                                      D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
                                      D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY)
-                                 : 0;
-          break;
-        case kDxgiFormatB5G6R5Unorm:
-        case kDxgiFormatB5G5R5A1Unorm:
-          support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
-                    D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
-                    D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY;
+                                  : 0;
           break;
         case kDxgiFormatBc1Typeless:
         case kDxgiFormatBc1Unorm:
@@ -3859,6 +3853,62 @@ void AEROGPU_APIENTRY DestroyElementLayout11(D3D11DDI_HDEVICE hDevice, D3D11DDI_
 
 // Fixed-function state objects (accepted and bindable; conservative encoding).
 
+static bool IsSupportedD3D11BlendFactor(uint32_t factor) {
+  switch (static_cast<D3D11_BLEND>(factor)) {
+    case D3D11_BLEND_ZERO:
+    case D3D11_BLEND_ONE:
+    case D3D11_BLEND_SRC_ALPHA:
+    case D3D11_BLEND_INV_SRC_ALPHA:
+    case D3D11_BLEND_DEST_ALPHA:
+    case D3D11_BLEND_INV_DEST_ALPHA:
+    case D3D11_BLEND_BLEND_FACTOR:
+    case D3D11_BLEND_INV_BLEND_FACTOR:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static bool IsSupportedD3D11BlendOp(uint32_t blend_op) {
+  switch (static_cast<D3D11_BLEND_OP>(blend_op)) {
+    case D3D11_BLEND_OP_ADD:
+    case D3D11_BLEND_OP_SUBTRACT:
+    case D3D11_BLEND_OP_REV_SUBTRACT:
+    case D3D11_BLEND_OP_MIN:
+    case D3D11_BLEND_OP_MAX:
+      return true;
+    default:
+      return false;
+  }
+}
+
+template <typename RtBlendDescT>
+static bool D3D11RtBlendDescEquivalent(const RtBlendDescT& a, const RtBlendDescT& b) {
+  return a.BlendEnable == b.BlendEnable &&
+         a.SrcBlend == b.SrcBlend &&
+         a.DestBlend == b.DestBlend &&
+         a.BlendOp == b.BlendOp &&
+         a.SrcBlendAlpha == b.SrcBlendAlpha &&
+         a.DestBlendAlpha == b.DestBlendAlpha &&
+         a.BlendOpAlpha == b.BlendOpAlpha &&
+         a.RenderTargetWriteMask == b.RenderTargetWriteMask;
+}
+
+template <typename RtBlendDescT>
+static bool D3D11RtBlendDescRepresentableByAeroGpu(const RtBlendDescT& rt) {
+  if (!rt.BlendEnable) {
+    // When BlendEnable=FALSE, blend factors/ops are ignored by the pipeline.
+    // Do not reject states solely due to unsupported factors in this case.
+    return true;
+  }
+  return IsSupportedD3D11BlendFactor(static_cast<uint32_t>(rt.SrcBlend)) &&
+         IsSupportedD3D11BlendFactor(static_cast<uint32_t>(rt.DestBlend)) &&
+         IsSupportedD3D11BlendFactor(static_cast<uint32_t>(rt.SrcBlendAlpha)) &&
+         IsSupportedD3D11BlendFactor(static_cast<uint32_t>(rt.DestBlendAlpha)) &&
+         IsSupportedD3D11BlendOp(static_cast<uint32_t>(rt.BlendOp)) &&
+         IsSupportedD3D11BlendOp(static_cast<uint32_t>(rt.BlendOpAlpha));
+}
+
 SIZE_T AEROGPU_APIENTRY CalcPrivateBlendStateSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATEBLENDSTATE*) {
   return sizeof(BlendState);
 }
@@ -3886,7 +3936,21 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
 
   bool filled = false;
   __if_exists(D3D11DDIARG_CREATEBLENDSTATE::RenderTarget) {
+    bool independent = false;
+    __if_exists(D3D11DDIARG_CREATEBLENDSTATE::IndependentBlendEnable) {
+      independent = pDesc->IndependentBlendEnable ? true : false;
+    }
     const auto& rt0 = pDesc->RenderTarget[0];
+    if (independent) {
+      for (UINT i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
+        if (!D3D11RtBlendDescEquivalent(pDesc->RenderTarget[i], rt0)) {
+          return E_NOTIMPL;
+        }
+      }
+    }
+    if (!D3D11RtBlendDescRepresentableByAeroGpu(rt0)) {
+      return E_NOTIMPL;
+    }
     state->blend_enable = rt0.BlendEnable ? 1u : 0u;
     state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
     state->dest_blend = static_cast<uint32_t>(rt0.DestBlend);
@@ -3900,7 +3964,18 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
   if (!filled) {
     __if_exists(D3D11DDIARG_CREATEBLENDSTATE::BlendDesc) {
       const auto& desc = pDesc->BlendDesc;
+      const bool independent = desc.IndependentBlendEnable ? true : false;
       const auto& rt0 = desc.RenderTarget[0];
+      if (independent) {
+        for (UINT i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
+          if (!D3D11RtBlendDescEquivalent(desc.RenderTarget[i], rt0)) {
+            return E_NOTIMPL;
+          }
+        }
+      }
+      if (!D3D11RtBlendDescRepresentableByAeroGpu(rt0)) {
+        return E_NOTIMPL;
+      }
       state->blend_enable = rt0.BlendEnable ? 1u : 0u;
       state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
       state->dest_blend = static_cast<uint32_t>(rt0.DestBlend);
@@ -3915,7 +3990,18 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
   if (!filled) {
     __if_exists(D3D11DDIARG_CREATEBLENDSTATE::Desc) {
       const auto& desc = pDesc->Desc;
+      const bool independent = desc.IndependentBlendEnable ? true : false;
       const auto& rt0 = desc.RenderTarget[0];
+      if (independent) {
+        for (UINT i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
+          if (!D3D11RtBlendDescEquivalent(desc.RenderTarget[i], rt0)) {
+            return E_NOTIMPL;
+          }
+        }
+      }
+      if (!D3D11RtBlendDescRepresentableByAeroGpu(rt0)) {
+        return E_NOTIMPL;
+      }
       state->blend_enable = rt0.BlendEnable ? 1u : 0u;
       state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
       state->dest_blend = static_cast<uint32_t>(rt0.DestBlend);
@@ -3931,7 +4017,18 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
     __if_exists(D3D11DDIARG_CREATEBLENDSTATE::pBlendDesc) {
       if (pDesc->pBlendDesc) {
         const auto& desc = *pDesc->pBlendDesc;
+        const bool independent = desc.IndependentBlendEnable ? true : false;
         const auto& rt0 = desc.RenderTarget[0];
+        if (independent) {
+          for (UINT i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
+            if (!D3D11RtBlendDescEquivalent(desc.RenderTarget[i], rt0)) {
+              return E_NOTIMPL;
+            }
+          }
+        }
+        if (!D3D11RtBlendDescRepresentableByAeroGpu(rt0)) {
+          return E_NOTIMPL;
+        }
         state->blend_enable = rt0.BlendEnable ? 1u : 0u;
         state->src_blend = static_cast<uint32_t>(rt0.SrcBlend);
         state->dest_blend = static_cast<uint32_t>(rt0.DestBlend);
@@ -4970,13 +5067,36 @@ static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
   uint32_t write_mask = 0xFu;
   if (bs) {
     blend_enable = bs->blend_enable;
-    src_blend = bs->src_blend;
-    dst_blend = bs->dest_blend;
-    blend_op = bs->blend_op;
-    src_blend_alpha = bs->src_blend_alpha;
-    dst_blend_alpha = bs->dest_blend_alpha;
-    blend_op_alpha = bs->blend_op_alpha;
     write_mask = bs->render_target_write_mask;
+    if (blend_enable) {
+      src_blend = bs->src_blend;
+      dst_blend = bs->dest_blend;
+      blend_op = bs->blend_op;
+      src_blend_alpha = bs->src_blend_alpha;
+      dst_blend_alpha = bs->dest_blend_alpha;
+      blend_op_alpha = bs->blend_op_alpha;
+    }
+  }
+
+  if (blend_enable) {
+    if (!IsSupportedD3D11BlendFactor(src_blend) ||
+        !IsSupportedD3D11BlendFactor(dst_blend) ||
+        !IsSupportedD3D11BlendFactor(src_blend_alpha) ||
+        !IsSupportedD3D11BlendFactor(dst_blend_alpha) ||
+        !IsSupportedD3D11BlendOp(blend_op) ||
+        !IsSupportedD3D11BlendOp(blend_op_alpha)) {
+      // Avoid silent incorrect blending: if a non-representable blend state slips
+      // through (e.g. due to header drift), flag the device error state once per
+      // bind and disable blending for this emission.
+      SetError(dev, E_NOTIMPL);
+      blend_enable = 0u;
+      src_blend = static_cast<uint32_t>(D3D11_BLEND_ONE);
+      dst_blend = static_cast<uint32_t>(D3D11_BLEND_ZERO);
+      blend_op = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
+      src_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ONE);
+      dst_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ZERO);
+      blend_op_alpha = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
+    }
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
