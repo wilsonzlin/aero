@@ -6944,13 +6944,34 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     return trace.ret(D3DERR_INVALIDCALL);
   }
 
+  // AeroGPU only supports 2D textures/surfaces (CREATE_TEXTURE2D) plus buffers.
+  // Reject volume / 3D resources up front so we never silently mis-create them as
+  // 2D textures.
+  const uint32_t create_size_bytes = d3d9_resource_size(*pCreateResource);
+  const uint32_t create_depth = std::max(1u, d3d9_resource_depth(*pCreateResource));
+  if (create_size_bytes == 0 && create_depth > 1) {
+    return trace.ret(D3DERR_INVALIDCALL);
+  }
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  // When compiling against WDK headers we can identify cube/volume resource
+  // types explicitly. This avoids accidentally treating them as 2D surfaces via
+  // the size-vs-(w,h) heuristic.
+  {
+    const D3DDDIRESTYPE create_type = static_cast<D3DDDIRESTYPE>(d3d9_resource_type(*pCreateResource));
+    if (create_size_bytes == 0 &&
+        (create_type == D3DDDIRESTYPE_CUBETEXTURE || create_type == D3DDDIRESTYPE_VOLUMETEXTURE || create_type == D3DDDIRESTYPE_VOLUME)) {
+      return trace.ret(D3DERR_INVALIDCALL);
+    }
+  }
+#endif
+
   auto res = std::make_unique<Resource>();
   res->handle = allocate_global_handle(dev->adapter);
   res->type = d3d9_resource_type(*pCreateResource);
   res->format = d3d9_resource_format(*pCreateResource);
   res->width = d3d9_resource_width(*pCreateResource);
   res->height = d3d9_resource_height(*pCreateResource);
-  res->depth = std::max(1u, d3d9_resource_depth(*pCreateResource));
+  res->depth = create_depth;
   res->mip_levels = mip_levels;
   res->usage = d3d9_resource_usage(*pCreateResource);
   res->pool = d3d9_resource_pool(*pCreateResource);
@@ -6975,7 +6996,6 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
                             /*is_shared_resource=*/true);
   }
 
-  const uint32_t create_size_bytes = d3d9_resource_size(*pCreateResource);
   // Heuristic: if size is provided, treat as buffer; otherwise treat as a 2D image.
   if (create_size_bytes) {
     res->kind = ResourceKind::Buffer;
@@ -7658,6 +7678,21 @@ static HRESULT device_open_resource_impl(
   res->usage = d3d9_resource_usage(*pOpenResource);
   res->pool = d3d9_resource_pool(*pOpenResource);
   const uint32_t open_size_bytes = d3d9_resource_size(*pOpenResource);
+
+  // AeroGPU cannot represent non-2D textures/surfaces in the protocol. Reject
+  // shared allocations that describe volume/cube resources to avoid importing a
+  // handle that the host will interpret incorrectly.
+  if (open_size_bytes == 0 && res->depth > 1) {
+    return D3DERR_INVALIDCALL;
+  }
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  if (open_size_bytes == 0) {
+    const D3DDDIRESTYPE open_type = static_cast<D3DDDIRESTYPE>(res->type);
+    if (open_type == D3DDDIRESTYPE_CUBETEXTURE || open_type == D3DDDIRESTYPE_VOLUMETEXTURE || open_type == D3DDDIRESTYPE_VOLUME) {
+      return D3DERR_INVALIDCALL;
+    }
+  }
+#endif
 
   const aerogpu_wddm_alloc_priv_v2* priv2 = nullptr;
   if (priv.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2 &&

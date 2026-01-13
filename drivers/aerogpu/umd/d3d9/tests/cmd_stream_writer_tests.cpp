@@ -954,9 +954,6 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
       24u, // D3DFMT_X1R5G5B5
       25u, // D3DFMT_A1R5G5B5
       32u, // D3DFMT_A8B8G8R8
-      23u, // D3DFMT_R5G6B5
-      24u, // D3DFMT_X1R5G5B5
-      25u, // D3DFMT_A1R5G5B5
       75u, // D3DFMT_D24S8
       static_cast<uint32_t>(kD3dFmtDxt1), // D3DFMT_DXT1
       static_cast<uint32_t>(kD3dFmtDxt2), // D3DFMT_DXT2
@@ -1291,6 +1288,97 @@ bool TestCreateResourceRejectsUnsupportedGpuFormat() {
     return false;
   }
   return Check(create_res.hResource.pDrvPrivate == nullptr, "CreateResource failure does not return a handle");
+}
+
+bool TestCreateResourceRejectsNon2dDepth() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Bind a span-backed command buffer so we can assert that no CREATE_TEXTURE2D
+  // packets are emitted when CreateResource fails validation.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 4;
+  create_res.height = 4;
+  create_res.depth = 2; // volume/3D implied, not supported by AeroGPU protocol
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == D3DERR_INVALIDCALL, "CreateResource rejects depth>1 (non-2D) resources")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate == nullptr, "CreateResource failure does not return a handle")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates after failed CreateResource")) {
+    return false;
+  }
+  return Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D) == 0,
+               "failed CreateResource must not emit CREATE_TEXTURE2D");
 }
 
 bool TestCreateResourceComputesBcTexturePitchAndSize() {
@@ -10726,6 +10814,7 @@ int main() {
   failures += !aerogpu::TestAdapterMultisampleQualityLevels();
   failures += !aerogpu::TestAdapterCachingUpdatesCallbacks();
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
+  failures += !aerogpu::TestCreateResourceRejectsNon2dDepth();
   failures += !aerogpu::TestCreateResourceComputesBcTexturePitchAndSize();
   failures += !aerogpu::TestCreateResourceMipmappedTextureEmitsMipLevels();
   failures += !aerogpu::TestRgb16FormatMappingAndLayout();

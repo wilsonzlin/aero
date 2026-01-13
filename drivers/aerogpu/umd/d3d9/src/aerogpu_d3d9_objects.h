@@ -122,15 +122,6 @@ inline uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format) {
     // D3DFMT_A8B8G8R8
     case 32u:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
-    // D3DFMT_R5G6B5
-    case 23u:
-      return AEROGPU_FORMAT_B5G6R5_UNORM;
-    // D3DFMT_X1R5G5B5 / D3DFMT_A1R5G5B5
-    // Note: X1 treats alpha as 1. The UMD fixes up CPU writes to set the top
-    // bit so texture sampling observes opaque alpha.
-    case 24u:
-    case 25u:
-      return AEROGPU_FORMAT_B5G5R5A1_UNORM;
     // D3DFMT_D24S8
     case 75u:
       return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
