@@ -367,56 +367,6 @@ uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
   return (value + mask) & ~mask;
 }
 
-uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
-  switch (dxgi_format) {
-    case kDxgiFormatB5G6R5Unorm:
-      return AEROGPU_FORMAT_B5G6R5_UNORM;
-    case kDxgiFormatB5G5R5A1Unorm:
-      return AEROGPU_FORMAT_B5G5R5A1_UNORM;
-    case kDxgiFormatB8G8R8A8Unorm:
-    case kDxgiFormatB8G8R8A8Typeless:
-      return AEROGPU_FORMAT_B8G8R8A8_UNORM;
-    case kDxgiFormatB8G8R8A8UnormSrgb:
-      return AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB;
-    case kDxgiFormatB8G8R8X8Unorm:
-    case kDxgiFormatB8G8R8X8Typeless:
-      return AEROGPU_FORMAT_B8G8R8X8_UNORM;
-    case kDxgiFormatB8G8R8X8UnormSrgb:
-      return AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB;
-    case kDxgiFormatR8G8B8A8Unorm:
-    case kDxgiFormatR8G8B8A8Typeless:
-      return AEROGPU_FORMAT_R8G8B8A8_UNORM;
-    case kDxgiFormatR8G8B8A8UnormSrgb:
-      return AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB;
-    case kDxgiFormatBc1Typeless:
-    case kDxgiFormatBc1Unorm:
-      return AEROGPU_FORMAT_BC1_RGBA_UNORM;
-    case kDxgiFormatBc1UnormSrgb:
-      return AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB;
-    case kDxgiFormatBc2Typeless:
-    case kDxgiFormatBc2Unorm:
-      return AEROGPU_FORMAT_BC2_RGBA_UNORM;
-    case kDxgiFormatBc2UnormSrgb:
-      return AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB;
-    case kDxgiFormatBc3Typeless:
-    case kDxgiFormatBc3Unorm:
-      return AEROGPU_FORMAT_BC3_RGBA_UNORM;
-    case kDxgiFormatBc3UnormSrgb:
-      return AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB;
-    case kDxgiFormatBc7Typeless:
-    case kDxgiFormatBc7Unorm:
-      return AEROGPU_FORMAT_BC7_RGBA_UNORM;
-    case kDxgiFormatBc7UnormSrgb:
-      return AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB;
-    case kDxgiFormatD24UnormS8Uint:
-      return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
-    case kDxgiFormatD32Float:
-      return AEROGPU_FORMAT_D32_FLOAT;
-    default:
-      return AEROGPU_FORMAT_INVALID;
-  }
-}
-
 struct AerogpuTextureFormatLayout {
   uint32_t block_width = 0;
   uint32_t block_height = 0;
@@ -1944,7 +1894,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return E_NOTIMPL;
     }
 
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu(pDesc->Format);
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu(pDesc->Format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       AEROGPU_D3D10_RET_HR(E_NOTIMPL);
     }
@@ -2262,7 +2212,7 @@ uint64_t resource_total_bytes(const AeroGpuResource* res) {
     return res->size_bytes;
   }
   if (res->kind == ResourceKind::Texture2D) {
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu(res->dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       return 0;
     }
@@ -2602,7 +2552,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   uint32_t mapped_depth_pitch = 0;
 
   if (res->kind == ResourceKind::Texture2D) {
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu(res->dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       return E_INVALIDARG;
     }
@@ -3148,7 +3098,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
       dirty_offset_bytes = 0;
       dirty_size_bytes = res->size_bytes;
     } else if (res->kind == ResourceKind::Texture2D) {
-      const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu(res->dxgi_format);
       if (aer_fmt == AEROGPU_FORMAT_INVALID) {
         cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
         return;
@@ -3314,7 +3264,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     }
 
     if (res->kind == ResourceKind::Texture2D) {
-      const uint32_t aerogpu_format = dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu(res->dxgi_format);
       const AerogpuTextureFormatLayout fmt_layout = aerogpu_texture_format_layout(aerogpu_format);
       Texture2DSubresourceLayout sub_layout{};
       if (!fmt_layout.valid ||
@@ -3408,7 +3358,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
   }
 
   if (res->kind == ResourceKind::Texture2D) {
-    const uint32_t aerogpu_format = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu(res->dxgi_format);
     const AerogpuTextureFormatLayout fmt_layout = aerogpu_texture_format_layout(aerogpu_format);
     Texture2DSubresourceLayout sub_layout{};
     if (!fmt_layout.valid ||
@@ -3628,7 +3578,7 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
         src->height == 0) {
       return;
     }
-    const uint32_t aerogpu_format = dxgi_format_to_aerogpu(src->dxgi_format);
+    const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu(src->dxgi_format);
     const AerogpuTextureFormatLayout fmt_layout = aerogpu_texture_format_layout(aerogpu_format);
     if (!fmt_layout.valid) {
       return;
@@ -3885,7 +3835,7 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
       return E_INVALIDARG;
     }
 
-    const uint32_t aerogpu_format = dxgi_format_to_aerogpu(src->dxgi_format);
+    const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu(src->dxgi_format);
     const AerogpuTextureFormatLayout fmt_layout = aerogpu_texture_format_layout(aerogpu_format);
     if (!fmt_layout.valid) {
       return E_INVALIDARG;
