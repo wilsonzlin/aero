@@ -72,7 +72,22 @@ class VirtioBlkIrqMarkerTests(unittest.TestCase):
         out = self._emit(tail)
         self.assertEqual(out, "")
 
+    def test_emits_irq_marker_and_keeps_blk_pass_marker_parseable(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS\n"
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-irq|INFO|mode=msix|messages=2|vectors=41,42\n"
+        )
+
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|INFO|irq_mode=msix|irq_message_count=2|irq_vectors=41,42",
+        )
+
+        # Ensure the existing virtio-blk PASS marker can still be extracted deterministically.
+        blk_marker = self.harness._try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+        self.assertEqual(blk_marker, "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS")
+
 
 if __name__ == "__main__":
     unittest.main()
-

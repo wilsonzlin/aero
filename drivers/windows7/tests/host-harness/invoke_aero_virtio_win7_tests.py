@@ -2672,15 +2672,83 @@ def _emit_virtio_blk_irq_host_marker(tail: bytes) -> None:
 
     This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
     """
-    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+    # Prefer dedicated virtio-blk IRQ marker lines, but fall back to fields attached to the
+    # virtio-blk per-test marker when present.
+    marker_line: Optional[str] = None
+    for prefix in (
+        b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-irq|",
+        b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|IRQ|",
+        b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|INFO|",
+        b"AERO_VIRTIO_SELFTEST|MARKER|virtio-blk-irq|",
+    ):
+        line = _try_extract_last_marker_line(tail, prefix)
+        if line is None:
+            continue
+        fields = _parse_marker_kv_fields(line)
+        if not fields:
+            continue
+        if (
+            any(k.startswith("irq_") for k in fields)
+            or any(k.startswith(("msi_", "msix_")) for k in fields)
+            or any(k in fields for k in ("mode", "messages", "vectors", "vector"))
+        ):
+            marker_line = line
+            break
+
+    blk_test_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+    if marker_line is None and blk_test_line is not None:
+        marker_line = blk_test_line
+
+    # Last resort: accept any AERO_VIRTIO_SELFTEST line that mentions virtio-blk + irq.
+    if marker_line is None:
+        last: Optional[bytes] = None
+        for line in tail.splitlines():
+            if not line.startswith(b"AERO_VIRTIO_SELFTEST|"):
+                continue
+            if b"virtio-blk" not in line:
+                continue
+            if b"irq" not in line.lower():
+                continue
+            last = line
+        if last is not None:
+            try:
+                marker_line = last.decode("utf-8", errors="replace").strip()
+            except Exception:
+                marker_line = None
     if marker_line is None:
         return
 
     fields = _parse_marker_kv_fields(marker_line)
+    if not fields:
+        return
+
+    # Normalize a few common field name variants so the host-side marker is stable even if
+    # the guest reports slightly different key names (IOCTL vs resource enumeration).
+    if "irq_mode" not in fields and "mode" in fields:
+        fields["irq_mode"] = fields["mode"]
+    if "irq_message_count" not in fields:
+        if "messages" in fields:
+            fields["irq_message_count"] = fields["messages"]
+        elif "irq_messages" in fields:
+            fields["irq_message_count"] = fields["irq_messages"]
+        elif "msi_messages" in fields:
+            fields["irq_message_count"] = fields["msi_messages"]
+    if "irq_vectors" not in fields and "vectors" in fields:
+        fields["irq_vectors"] = fields["vectors"]
+    if "msi_vector" not in fields and "vector" in fields:
+        fields["msi_vector"] = fields["vector"]
+
     # Backward compatible: older guest selftests will not include these fields. Emit nothing
     # unless we see at least one interrupt-related key.
-    interesting_keys = ("irq_mode", "msi_vector", "msix_config_vector", "msix_queue_vector")
-    if not any(k in fields for k in interesting_keys):
+    ordered_keys = (
+        "irq_mode",
+        "irq_message_count",
+        "irq_vectors",
+        "msi_vector",
+        "msix_config_vector",
+        "msix_queue_vector",
+    )
+    if not any(k in fields for k in ordered_keys) and not any(k.startswith("irq_") for k in fields):
         return
 
     status = "INFO"
@@ -2690,11 +2758,20 @@ def _emit_virtio_blk_irq_host_marker(tail: bytes) -> None:
         status = "PASS"
 
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|{status}"]
-    for k in interesting_keys:
+    for k in ordered_keys:
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
-    print("|".join(parts))
 
+    extra_irq = sorted(k for k in fields if k.startswith("irq_") and k not in ordered_keys)
+    for k in extra_irq:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra_msi = sorted(
+        k for k in fields if (k.startswith("msi_") or k.startswith("msix_")) and k not in ordered_keys
+    )
+    for k in extra_msi:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
 
 def _emit_virtio_irq_host_marker(tail: bytes, *, device: str, host_marker: str) -> None:
     """
@@ -2704,9 +2781,7 @@ def _emit_virtio_irq_host_marker(tail: bytes, *, device: str, host_marker: str) 
     on its per-device TEST marker. This helper mirrors those fields into a stable host-side marker for
     log scraping/diagnostics.
     """
-    marker_line = _try_extract_last_marker_line(
-        tail, f"AERO_VIRTIO_SELFTEST|TEST|{device}|".encode("utf-8")
-    )
+    marker_line = _try_extract_last_marker_line(tail, f"AERO_VIRTIO_SELFTEST|TEST|{device}|".encode("utf-8"))
     if marker_line is None:
         return
 
@@ -2745,7 +2820,6 @@ def _emit_virtio_snd_irq_host_marker(tail: bytes) -> None:
 
 def _emit_virtio_input_irq_host_marker(tail: bytes) -> None:
     _emit_virtio_irq_host_marker(tail, device="virtio-input", host_marker="VIRTIO_INPUT_IRQ")
-
 def _verify_virtio_snd_wav_non_silent(path: Path, *, peak_threshold: int, rms_threshold: int) -> bool:
     marker_prefix = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV"
     try:

@@ -746,6 +746,95 @@ function Sanitize-AeroMarkerValue {
   return $Value.Replace("|", "/").Replace("`r", " ").Replace("`n", " ").Trim()
 }
 
+function Try-EmitAeroVirtioBlkIrqMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail
+  )
+
+  # Prefer a dedicated virtio-blk IRQ marker, but fall back to fields attached to the
+  # virtio-blk per-test marker when present.
+  $line = $null
+  foreach ($prefix in @(
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-irq|",
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|IRQ|",
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|INFO|",
+      "AERO_VIRTIO_SELFTEST|MARKER|virtio-blk-irq|"
+    )) {
+    $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
+    if ($matches.Count -gt 0) {
+      $line = $matches[$matches.Count - 1].Value
+      break
+    }
+  }
+
+  if (-not $line) {
+    $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|"
+    $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
+    if ($matches.Count -gt 0) {
+      $candidate = $matches[$matches.Count - 1].Value
+      $candidateFields = @{}
+      foreach ($tok in $candidate.Split("|")) {
+        $idx = $tok.IndexOf("=")
+        if ($idx -le 0) { continue }
+        $k = $tok.Substring(0, $idx)
+        $v = $tok.Substring($idx + 1)
+        if (-not [string]::IsNullOrEmpty($k)) {
+          $candidateFields[$k] = $v
+        }
+      }
+
+      if ($candidateFields.ContainsKey("mode") -or $candidateFields.ContainsKey("irq_mode") -or $candidateFields.ContainsKey("messages") -or $candidateFields.ContainsKey("irq_messages") -or $candidateFields.ContainsKey("vectors") -or $candidateFields.ContainsKey("irq_vectors") -or $candidateFields.ContainsKey("vector") -or $candidateFields.ContainsKey("irq_vector")) {
+        $line = $candidate
+      }
+    }
+  }
+
+  if (-not $line) {
+    # Fallback: accept any AERO_VIRTIO_SELFTEST line that mentions virtio-blk + irq.
+    $matches = [regex]::Matches($Tail, "AERO_VIRTIO_SELFTEST\|[^`r`n]*virtio-blk[^`r`n]*irq[^`r`n]*")
+    if ($matches.Count -gt 0) {
+      $line = $matches[$matches.Count - 1].Value
+    }
+  }
+
+  if (-not $line) { return }
+
+  $fields = @{}
+  foreach ($tok in $line.Split("|")) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx)
+    $v = $tok.Substring($idx + 1)
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $mode = $null
+  if ($fields.ContainsKey("mode")) { $mode = $fields["mode"] }
+  elseif ($fields.ContainsKey("irq_mode")) { $mode = $fields["irq_mode"] }
+  elseif ($fields.ContainsKey("interrupt_mode")) { $mode = $fields["interrupt_mode"] }
+
+  $messages = $null
+  if ($fields.ContainsKey("messages")) { $messages = $fields["messages"] }
+  elseif ($fields.ContainsKey("irq_messages")) { $messages = $fields["irq_messages"] }
+  elseif ($fields.ContainsKey("msi_messages")) { $messages = $fields["msi_messages"] }
+
+  $vectors = $null
+  if ($fields.ContainsKey("vectors")) { $vectors = $fields["vectors"] }
+  elseif ($fields.ContainsKey("irq_vectors")) { $vectors = $fields["irq_vectors"] }
+  elseif ($fields.ContainsKey("vector")) { $vectors = $fields["vector"] }
+  elseif ($fields.ContainsKey("irq_vector")) { $vectors = $fields["irq_vector"] }
+
+  if (-not $mode -and -not $messages -and -not $vectors) { return }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|INFO"
+  if ($mode) { $out += "|mode=$(Sanitize-AeroMarkerValue $mode)" }
+  if ($messages) { $out += "|messages=$(Sanitize-AeroMarkerValue $messages)" }
+  if ($vectors) { $out += "|vectors=$(Sanitize-AeroMarkerValue $vectors)" }
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioNetLargeMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail
@@ -1589,6 +1678,7 @@ try {
     }
   }
 
+  Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail
   Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail
 
