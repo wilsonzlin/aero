@@ -88,6 +88,9 @@ pub enum InitPreset {
     SmallRcx { max: u32 },
     /// Force `RDI` to point at `mem_base + data_off`.
     MemAtRdi { data_off: u32 },
+    /// Ensure `RBX` is non-zero (useful for instructions like BSF/BSR where a zero source
+    /// produces architecturally-undefined destination results).
+    NonZeroRbx,
 }
 
 impl InitPreset {
@@ -104,6 +107,9 @@ impl InitPreset {
             }
             InitPreset::MemAtRdi { data_off } => {
                 init.rdi = mem_base + data_off as u64;
+            }
+            InitPreset::NonZeroRbx => {
+                init.rbx |= 1;
             }
         }
     }
@@ -404,7 +410,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::BsfRaxRbx,
             flags_mask: FLAG_ZF,
             mem_compare_len: 0,
-            init: InitPreset::None,
+            init: InitPreset::NonZeroRbx,
         },
         InstructionTemplate {
             name: "bsr rax, rbx",
@@ -413,7 +419,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
             kind: TemplateKind::BsrRaxRbx,
             flags_mask: FLAG_ZF,
             mem_compare_len: 0,
-            init: InitPreset::None,
+            init: InitPreset::NonZeroRbx,
         },
         InstructionTemplate {
             name: "add eax, ebx",
@@ -663,6 +669,25 @@ mod tests {
         let case = TestCase::generate(0, &template, &mut rng, mem_base);
         assert_eq!(case.init.rdi, mem_base + data_off as u64);
         assert!(case.memory.len() >= data_off as usize + 64);
+    }
+
+    #[test]
+    fn init_preset_non_zero_rbx_forces_bit0() {
+        let template = InstructionTemplate {
+            name: "test",
+            coverage_key: "test",
+            bytes: &[0x90],
+            kind: TemplateKind::MovRaxRbx,
+            flags_mask: 0,
+            mem_compare_len: 0,
+            init: InitPreset::NonZeroRbx,
+        };
+        let mut rng = XorShift64::new(1);
+        for case_idx in 0..256 {
+            let case = TestCase::generate(case_idx, &template, &mut rng, 0x1000);
+            assert_ne!(case.init.rbx, 0, "RBX must be non-zero");
+            assert_eq!(case.init.rbx & 1, 1, "RBX low bit should be set");
+        }
     }
 
     #[test]
