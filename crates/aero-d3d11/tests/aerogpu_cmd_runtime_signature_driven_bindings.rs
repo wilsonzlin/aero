@@ -1892,7 +1892,7 @@ fn aerogpu_cmd_runtime_signature_driven_constant_buffer_binding() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2003,7 +2003,7 @@ fn aerogpu_cmd_runtime_signature_driven_vs_two_constant_buffers_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2087,7 +2087,7 @@ fn aerogpu_cmd_runtime_signature_driven_ps_add_sat_fixture() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2170,7 +2170,7 @@ fn aerogpu_cmd_runtime_signature_driven_vs_sig_v1_position_binding() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2291,7 +2291,7 @@ fn aerogpu_cmd_runtime_signature_driven_vs_cb0_and_ps_texture_binding() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2410,7 +2410,7 @@ fn aerogpu_cmd_runtime_signature_driven_vs_and_ps_texture_sampler_binding_sm5() 
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2490,7 +2490,7 @@ fn aerogpu_cmd_runtime_signature_driven_trims_unused_ps_inputs_for_linking() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2576,7 +2576,7 @@ fn aerogpu_cmd_runtime_signature_driven_links_mismatched_varying_masks() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2657,7 +2657,7 @@ fn aerogpu_cmd_runtime_signature_driven_fills_missing_ps_output_alpha() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2795,7 +2795,7 @@ fn aerogpu_cmd_runtime_signature_driven_max_slot_resource_bindings() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2888,7 +2888,7 @@ fn aerogpu_cmd_runtime_signature_driven_ps_constant_buffer_binding() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -2984,7 +2984,7 @@ fn aerogpu_cmd_runtime_signature_driven_ps_constant_buffer_binding_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -3089,7 +3089,7 @@ fn aerogpu_cmd_runtime_signature_driven_ps_two_constant_buffers_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -3185,7 +3185,7 @@ fn aerogpu_cmd_runtime_signature_driven_too_small_constant_buffer_uses_dummy() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -3278,7 +3278,7 @@ fn aerogpu_cmd_runtime_signature_driven_ps_constant_buffer_binding_sm5_sig_v1() 
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -3377,7 +3377,7 @@ fn aerogpu_cmd_runtime_signature_driven_texture_sampler_binding_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -3472,7 +3472,7 @@ fn aerogpu_cmd_runtime_signature_driven_texture_load_binding_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -3571,7 +3571,7 @@ fn aerogpu_cmd_runtime_signature_driven_texture_load_binding_sm4() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -3676,7 +3676,7 @@ fn aerogpu_cmd_runtime_signature_driven_texture_sampler_slot1_binding_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -3807,7 +3807,7 @@ fn aerogpu_cmd_runtime_signature_driven_ps_cb0_texture_sampler_binding_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -3921,7 +3921,7 @@ fn aerogpu_cmd_runtime_signature_driven_ps_two_texture_sampler_bindings_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -4021,7 +4021,7 @@ fn aerogpu_cmd_runtime_signature_driven_vs_texture_sampler_binding() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -4147,7 +4147,7 @@ fn aerogpu_cmd_runtime_signature_driven_vs_texture_sampler_binding_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -4269,7 +4269,7 @@ fn aerogpu_cmd_runtime_signature_driven_vs_texture_load_binding_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -4383,7 +4383,7 @@ fn aerogpu_cmd_runtime_signature_driven_vs_two_texture_sampler_bindings_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -4498,7 +4498,7 @@ fn aerogpu_cmd_runtime_signature_driven_vs_cb0_texture_sampler_binding_sm5() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -4604,7 +4604,7 @@ fn aerogpu_cmd_runtime_signature_driven_texture_sampler_binding() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,

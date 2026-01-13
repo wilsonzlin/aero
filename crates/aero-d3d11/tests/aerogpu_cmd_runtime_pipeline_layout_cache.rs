@@ -89,7 +89,7 @@ fn aerogpu_cmd_runtime_reuses_pipeline_layout_across_pipeline_misses() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,

@@ -403,7 +403,7 @@ fn aerogpu_render_pipeline_is_cached_across_draws() {
         let mut colors = [None; 8];
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(ILAY));
         rt.set_vertex_buffers(
             0,
@@ -492,7 +492,7 @@ fn aerogpu_compacts_sparse_vertex_slots() {
         let mut colors_rt = [None; 8];
         colors_rt[0] = Some(RTEX);
         rt.set_render_targets(&colors_rt, None);
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(ILAY));
         rt.set_vertex_buffers(
             0,
@@ -590,7 +590,7 @@ fn aerogpu_mixes_signature_driven_vs_with_bootstrap_ps() {
         let mut colors = [None; 8];
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(ILAY));
         rt.set_vertex_buffers(
             0,
@@ -673,7 +673,7 @@ fn aerogpu_mixes_bootstrap_vs_with_signature_driven_ps() {
         let mut colors = [None; 8];
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(ILAY));
         rt.set_vertex_buffers(
             0,

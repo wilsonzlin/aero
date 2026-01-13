@@ -474,6 +474,10 @@ impl AerogpuCmdRuntime {
             crate::ShaderStage::Geometry
             | crate::ShaderStage::Hull
             | crate::ShaderStage::Domain => {
+                eprintln!(
+                    "aero-d3d11 aerogpu_cmd_runtime: ignoring unsupported shader stage {:?} for handle {}",
+                    program.stage, handle
+                );
                 return Ok(());
             }
             other => bail!("unsupported shader stage for aerogpu_cmd executor: {other:?}"),
@@ -557,9 +561,21 @@ impl AerogpuCmdRuntime {
         Ok(())
     }
 
-    pub fn bind_shaders(&mut self, vs: Option<AerogpuHandle>, ps: Option<AerogpuHandle>) {
+    pub fn bind_shaders(
+        &mut self,
+        vs: Option<AerogpuHandle>,
+        gs: Option<AerogpuHandle>,
+        ps: Option<AerogpuHandle>,
+    ) {
         self.state.vs = vs;
+        self.state.gs = gs;
         self.state.ps = ps;
+
+        if let Some(handle) = gs {
+            eprintln!(
+                "aero-d3d11 aerogpu_cmd_runtime: geometry shader {handle} bound but geometry shaders are not supported; ignoring"
+            );
+        }
     }
 
     pub fn set_input_layout(&mut self, layout: Option<AerogpuHandle>) {
@@ -637,6 +653,18 @@ impl AerogpuCmdRuntime {
         self.state.bindings.ps.constant_buffers[slot] = buffer;
     }
 
+    pub fn set_gs_constant_buffer(&mut self, slot: u32, buffer: Option<AerogpuHandle>) {
+        let slot = slot as usize;
+        if self.state.bindings.gs.constant_buffers.len() <= slot {
+            self.state
+                .bindings
+                .gs
+                .constant_buffers
+                .resize(slot + 1, None);
+        }
+        self.state.bindings.gs.constant_buffers[slot] = buffer;
+    }
+
     pub fn set_vs_texture(&mut self, slot: u32, texture: Option<AerogpuHandle>) {
         let slot = slot as usize;
         if self.state.bindings.vs.textures.len() <= slot {
@@ -653,6 +681,14 @@ impl AerogpuCmdRuntime {
         self.state.bindings.ps.textures[slot] = texture;
     }
 
+    pub fn set_gs_texture(&mut self, slot: u32, texture: Option<AerogpuHandle>) {
+        let slot = slot as usize;
+        if self.state.bindings.gs.textures.len() <= slot {
+            self.state.bindings.gs.textures.resize(slot + 1, None);
+        }
+        self.state.bindings.gs.textures[slot] = texture;
+    }
+
     pub fn set_vs_sampler(&mut self, slot: u32, sampler: Option<AerogpuHandle>) {
         let slot = slot as usize;
         if self.state.bindings.vs.samplers.len() <= slot {
@@ -667,6 +703,14 @@ impl AerogpuCmdRuntime {
             self.state.bindings.ps.samplers.resize(slot + 1, None);
         }
         self.state.bindings.ps.samplers[slot] = sampler;
+    }
+
+    pub fn set_gs_sampler(&mut self, slot: u32, sampler: Option<AerogpuHandle>) {
+        let slot = slot as usize;
+        if self.state.bindings.gs.samplers.len() <= slot {
+            self.state.bindings.gs.samplers.resize(slot + 1, None);
+        }
+        self.state.bindings.gs.samplers[slot] = sampler;
     }
 
     pub fn draw(
@@ -710,6 +754,12 @@ impl AerogpuCmdRuntime {
             .state
             .ps
             .ok_or_else(|| anyhow!("draw without a bound PS"))?;
+
+        if let Some(handle) = self.state.gs {
+            eprintln!(
+                "aero-d3d11 aerogpu_cmd_runtime: geometry shader {handle} is currently ignored"
+            );
+        }
 
         let vs = self
             .resources
@@ -945,12 +995,18 @@ impl AerogpuCmdRuntime {
         )?;
 
         let mut bind_groups: Vec<Arc<wgpu::BindGroup>> = Vec::with_capacity(group_layouts.len());
+        let has_geometry_group = group_layouts.len() > 2;
         for (group_index, (layout, bindings)) in
             group_layouts.iter().zip(group_bindings.iter()).enumerate()
         {
             let stage_state = match group_index as u32 {
                 0 => Some(&self.state.bindings.vs),
-                1 => Some(&self.state.bindings.ps),
+                1 => Some(if has_geometry_group {
+                    &self.state.bindings.gs
+                } else {
+                    &self.state.bindings.ps
+                }),
+                2 => has_geometry_group.then_some(&self.state.bindings.ps),
                 _ => None,
             };
             let provider = RuntimeBindGroupProvider {

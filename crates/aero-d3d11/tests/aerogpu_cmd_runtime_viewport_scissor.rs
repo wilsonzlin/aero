@@ -72,7 +72,7 @@ fn aerogpu_cmd_runtime_clamps_viewport_to_render_target() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -174,7 +174,7 @@ fn aerogpu_cmd_runtime_clamps_scissor_to_render_target() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,

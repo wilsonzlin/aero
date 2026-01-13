@@ -226,7 +226,7 @@ fn aerogpu_cmd_runtime_binds_constant_buffer_smoke() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,
@@ -328,7 +328,7 @@ fn aerogpu_cmd_runtime_binds_texture_sampling_smoke() {
         colors[0] = Some(RTEX);
         rt.set_render_targets(&colors, None);
 
-        rt.bind_shaders(Some(VS), Some(PS));
+        rt.bind_shaders(Some(VS), None, Some(PS));
         rt.set_input_layout(Some(IL));
         rt.set_vertex_buffers(
             0,

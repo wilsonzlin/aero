@@ -148,6 +148,7 @@ impl Default for StageBindings {
 #[derive(Clone, Debug, Default)]
 pub struct ResourceBindings {
     pub vs: StageBindings,
+    pub gs: StageBindings,
     pub ps: StageBindings,
 }
 
@@ -160,6 +161,11 @@ pub struct ResourceBindings {
 #[derive(Clone, Debug)]
 pub struct D3D11ShadowState {
     pub vs: Option<AerogpuHandle>,
+    /// Geometry shader handle.
+    ///
+    /// WebGPU does not expose a geometry stage; the `aerogpu_execute` runtime currently ignores
+    /// this field (see `aerogpu_execute.rs`).
+    pub gs: Option<AerogpuHandle>,
     pub ps: Option<AerogpuHandle>,
 
     pub input_layout: Option<AerogpuHandle>,
@@ -183,6 +189,7 @@ impl Default for D3D11ShadowState {
     fn default() -> Self {
         Self {
             vs: None,
+            gs: None,
             ps: None,
             input_layout: None,
             vertex_buffers: vec![None; 16],
