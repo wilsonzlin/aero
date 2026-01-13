@@ -26,6 +26,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     VIRTIOSND_TRACE("DriverEntry\n");
 
     VirtIoSndAdapterContext_Initialize();
+    VirtIoSndTopology_Initialize();
 
     status = PcInitializeAdapterDriver(DriverObject, RegistryPath, VirtIoSndAddDevice);
     if (!NT_SUCCESS(status)) {

@@ -20,6 +20,13 @@
 #define VIRTIOSND_JACK_ID_MICROPHONE  1u
 #define VIRTIOSND_JACK_ID_COUNT       2u
 
+/*
+ * Initialize global topology helper state (spinlocks, default jack state).
+ *
+ * Called from DriverEntry so that event callbacks can safely use shared state.
+ */
+VOID VirtIoSndTopology_Initialize(VOID);
+
 _IRQL_requires_max_(DISPATCH_LEVEL)
 VOID VirtIoSndTopology_ResetJackState(VOID);
 

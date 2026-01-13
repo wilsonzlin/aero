@@ -165,6 +165,23 @@ static LIST_ENTRY g_VirtIoSndTopoJackInfoChangeEventList[VIRTIOSND_JACK_ID_COUNT
 
 static KSPIN_LOCK g_VirtIoSndTopoJackEventListLock = 0;
 
+_Use_decl_annotations_
+VOID VirtIoSndTopology_Initialize(VOID)
+{
+    /*
+     * PortCls/KS can dispatch property/event requests concurrently on multiple
+     * threads/IRQLs. Keep global helper state explicitly initialized rather than
+     * relying on BSS zero-initialization semantics.
+     */
+    KeInitializeSpinLock(&g_VirtIoSndTopoJackEventListLock);
+
+    /*
+     * Reset the default jack state at driver load so early property queries
+     * (before any eventq notifications arrive) report a connected endpoint.
+     */
+    VirtIoSndTopology_ResetJackState();
+}
+
 static VOID VirtIoSndTopoNotifyJackInfoChange(_In_ ULONG JackId)
 {
     KIRQL oldIrql;
@@ -188,7 +205,6 @@ _Use_decl_annotations_
 VOID VirtIoSndTopology_ResetJackState(VOID)
 {
     ULONG i;
-    KeInitializeSpinLock(&g_VirtIoSndTopoJackEventListLock);
     for (i = 0; i < RTL_NUMBER_OF(g_VirtIoSndTopoJackConnected); ++i) {
         (VOID)InterlockedExchange(&g_VirtIoSndTopoJackConnected[i], 1);
     }
