@@ -15,7 +15,9 @@ export type ScanoutDescriptor = Readonly<{
 export type ScanoutReadbackResult = Readonly<{
   width: number;
   height: number;
-  rgba8: Uint8Array;
+  // The readback buffer is always owned by the caller and transferred across workers,
+  // so it must be backed by a non-shared ArrayBuffer (not SharedArrayBuffer).
+  rgba8: Uint8Array<ArrayBuffer>;
 }>;
 
 const MAX_SAFE_U64_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);

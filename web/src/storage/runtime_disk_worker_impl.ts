@@ -1052,29 +1052,47 @@ async function openRemoteBackedDisk(
   const rangeCacheVersion = (remote.version ?? "1").trim();
   if (!rangeCacheVersion) throw new Error("remote version must not be empty");
 
+  const cacheBackend: DiskBackend = remote.cacheBackend ?? pickDefaultBackend();
+  const cacheLimitBytes = remote.cacheLimitBytes;
+
   const base: AsyncSectorDisk =
     remote.delivery === "range"
       ? await (async () => {
           const chunkSize = remote.chunkSizeBytes ?? RANGE_STREAM_CHUNK_SIZE;
 
-          // Backward-compat cleanup: older clients keyed range caches as `deliveryType: "range"`,
-          // which collides across different chunkSize values.
-          await bestEffortDeleteLegacyRemoteRangeCache(cacheImageId, rangeCacheVersion);
+          // `RemoteRangeDisk` uses an unbounded sparse OPFS cache (no eviction); only select it
+          // when the caller explicitly requested an unbounded OPFS cache.
+          if (cacheBackend === "opfs" && cacheLimitBytes === null && hasOpfsSyncAccessHandle()) {
+            // Backward-compat cleanup: older clients keyed range caches as `deliveryType: "range"`,
+            // which collides across different chunkSize values.
+            await bestEffortDeleteLegacyRemoteRangeCache(cacheImageId, rangeCacheVersion);
 
-          return await RemoteRangeDisk.open(remote.url, {
-            cacheKeyParts: {
-              imageId: cacheImageId,
-              version: rangeCacheVersion,
-              deliveryType: remoteRangeDeliveryType(chunkSize),
-            },
+            return await RemoteRangeDisk.open(remote.url, {
+              cacheKeyParts: {
+                imageId: cacheImageId,
+                version: rangeCacheVersion,
+                deliveryType: remoteRangeDeliveryType(chunkSize),
+              },
+              credentials,
+              chunkSize,
+              sha256Manifest: await loadSha256Manifest(remote.integrity, fetchFn),
+              fetchFn,
+            });
+          }
+
+          return await RemoteStreamingDisk.open(remote.url, {
             credentials,
-            chunkSize,
-            sha256Manifest: await loadSha256Manifest(remote.integrity, fetchFn),
-            fetchFn,
+            cacheBackend,
+            cacheLimitBytes,
+            cacheImageId,
+            cacheVersion: rangeCacheVersion,
+            blockSize: chunkSize,
           });
         })()
       : await RemoteChunkedDisk.open(remote.manifestUrl, {
           credentials,
+          cacheBackend,
+          cacheLimitBytes,
           cacheImageId,
           cacheVersion: remote.version,
         });

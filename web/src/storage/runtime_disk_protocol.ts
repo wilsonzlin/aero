@@ -31,6 +31,24 @@ type RemoteDiskOpenBase = {
   cacheKey: string;
 
   /**
+   * Persistent cache backend selection.
+   *
+   * - `undefined` (default): use the runtime default backend.
+   * - `"opfs"`: store cache data in Origin Private File System (best when available).
+   * - `"idb"`: store cache data in IndexedDB.
+   */
+  cacheBackend?: "opfs" | "idb";
+
+  /**
+   * Persistent cache size limit (LRU-evicted for streaming/chunked backends).
+   *
+   * - `undefined` (default): use the default limit (currently 512 MiB)
+   * - `null`: disable eviction (unbounded cache; subject to browser storage quota)
+   * - `0`: disable caching entirely (no OPFS/IDB usage; always fetch via the network)
+   */
+  cacheLimitBytes?: number | null;
+
+  /**
    * Optional stable identifiers carried for observability/debugging.
    * These must also be non-secret.
    */
