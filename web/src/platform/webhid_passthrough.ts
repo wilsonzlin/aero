@@ -69,6 +69,8 @@ export type WebHidPassthroughListener = (state: WebHidPassthroughState) => void;
 
 type HidLike = Pick<HID, "getDevices" | "requestDevice" | "addEventListener" | "removeEventListener">;
 
+type HidOutputReportSendTask = () => Promise<void>;
+
 function getNavigatorHid(): HidLike | null {
   if (typeof navigator === "undefined") return null;
   const maybe = (navigator as Navigator & { hid?: unknown }).hid;
@@ -114,7 +116,9 @@ export class WebHidPassthroughManager {
   // WebHID output/feature report sends must be serialized per physical device. Multiple sendReport
   // requests can arrive back-to-back from the I/O worker; queue them per `deviceId` so they execute
   // in guest order without stalling other devices.
-  readonly #outputReportChainByDeviceId = new Map<string, Promise<void>>();
+  readonly #outputReportQueueByDeviceId = new Map<string, HidOutputReportSendTask[]>();
+  readonly #outputReportRunnerTokenByDeviceId = new Map<string, number>();
+  #nextOutputReportRunnerToken = 1;
 
   #inputReportRing: RingBuffer | null = null;
   #status: Int32Array | null = null;
@@ -202,8 +206,52 @@ export class WebHidPassthroughManager {
       }
     }
     this.#inputReportListeners.clear();
-    this.#outputReportChainByDeviceId.clear();
+    this.#outputReportQueueByDeviceId.clear();
+    this.#outputReportRunnerTokenByDeviceId.clear();
     this.#listeners.clear();
+  }
+
+  #enqueueOutputReportSend(deviceId: string, task: HidOutputReportSendTask): void {
+    let queue = this.#outputReportQueueByDeviceId.get(deviceId);
+    if (!queue) {
+      queue = [];
+      this.#outputReportQueueByDeviceId.set(deviceId, queue);
+    }
+    queue.push(task);
+    if (this.#outputReportRunnerTokenByDeviceId.has(deviceId)) return;
+    const token = this.#nextOutputReportRunnerToken++;
+    this.#outputReportRunnerTokenByDeviceId.set(deviceId, token);
+    void this.#runOutputReportSendQueue(deviceId, token);
+  }
+
+  #dequeueOutputReportSend(deviceId: string): HidOutputReportSendTask | null {
+    const queue = this.#outputReportQueueByDeviceId.get(deviceId);
+    if (!queue || queue.length === 0) return null;
+    const task = queue.shift()!;
+    if (queue.length === 0) {
+      this.#outputReportQueueByDeviceId.delete(deviceId);
+    }
+    return task;
+  }
+
+  async #runOutputReportSendQueue(deviceId: string, token: number): Promise<void> {
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (this.#outputReportRunnerTokenByDeviceId.get(deviceId) !== token) break;
+        const task = this.#dequeueOutputReportSend(deviceId);
+        if (!task) break;
+        try {
+          await task();
+        } catch (err) {
+          console.warn("WebHID output report send task failed", err);
+        }
+      }
+    } finally {
+      if (this.#outputReportRunnerTokenByDeviceId.get(deviceId) === token) {
+        this.#outputReportRunnerTokenByDeviceId.delete(deviceId);
+      }
+    }
   }
 
   /**
@@ -218,12 +266,14 @@ export class WebHidPassthroughManager {
     if (!attachment) return;
 
     const deviceId = msg.deviceId;
-    const device = attachment.device;
     const reportType = msg.reportType;
     const reportId = msg.reportId;
     const bytes = new Uint8Array(msg.data);
 
-    const run = async () => {
+    this.#enqueueOutputReportSend(deviceId, async () => {
+      const current = this.#attachedDevices.find((d) => d.deviceId === deviceId);
+      if (!current) return;
+      const device = current.device;
       try {
         if (reportType === "feature") {
           await device.sendFeatureReport(reportId, bytes);
@@ -232,16 +282,6 @@ export class WebHidPassthroughManager {
         }
       } catch (err) {
         console.warn(`WebHID ${reportType === "feature" ? "sendFeatureReport" : "sendReport"}() failed`, err);
-      }
-    };
-
-    const prev = this.#outputReportChainByDeviceId.get(deviceId);
-    const safePrev = prev ? prev.catch(() => undefined) : Promise.resolve();
-    const next = safePrev.then(run);
-    this.#outputReportChainByDeviceId.set(deviceId, next);
-    void next.finally(() => {
-      if (this.#outputReportChainByDeviceId.get(deviceId) === next) {
-        this.#outputReportChainByDeviceId.delete(deviceId);
       }
     });
   }
@@ -541,7 +581,8 @@ export class WebHidPassthroughManager {
   async detachDevice(device: HIDDevice): Promise<void> {
     const deviceId = this.#deviceIds.get(device);
     if (!deviceId) return;
-    this.#outputReportChainByDeviceId.delete(deviceId);
+    this.#outputReportQueueByDeviceId.delete(deviceId);
+    this.#outputReportRunnerTokenByDeviceId.delete(deviceId);
 
     const listener = this.#inputReportListeners.get(deviceId);
     if (listener) {
