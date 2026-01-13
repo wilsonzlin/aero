@@ -190,24 +190,56 @@ VOID VirtioInputEvtIoDeviceControl(
 
     switch (IoControlCode) {
     case IOCTL_VIOINPUT_QUERY_COUNTERS: {
-        PVIOINPUT_COUNTERS outCounters;
+        PUCHAR outBuf;
         size_t outBytes;
+        size_t availBytes;
         VIOINPUT_COUNTERS snapshot;
 
-        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*outCounters), (PVOID *)&outCounters, &outBytes);
+        outBuf = NULL;
+        outBytes = 0;
+        status = WdfRequestRetrieveOutputBuffer(Request, 0, (PVOID *)&outBuf, &outBytes);
         if (!NT_SUCCESS(status)) {
             break;
         }
 
-        if (OutputBufferLength < sizeof(*outCounters) || outBytes < sizeof(*outCounters)) {
-            status = STATUS_BUFFER_TOO_SMALL;
+        VioInputCountersSnapshot(&devCtx->Counters, &snapshot);
+
+        availBytes = outBytes;
+        if (OutputBufferLength < availBytes) {
+            availBytes = OutputBufferLength;
+        }
+
+        if (availBytes >= sizeof(snapshot)) {
+            RtlCopyMemory(outBuf, &snapshot, sizeof(snapshot));
+            status = STATUS_SUCCESS;
+            info = sizeof(snapshot);
             break;
         }
 
-        VioInputCountersSnapshot(&devCtx->Counters, &snapshot);
-        RtlCopyMemory(outCounters, &snapshot, sizeof(snapshot));
-        status = STATUS_SUCCESS;
-        info = sizeof(snapshot);
+        /*
+         * Buffer is too small to return a full snapshot. Still try to return at
+         * least Size + Version so callers can discover the expected struct size
+         * and version even across version bumps.
+         *
+         * Keep METHOD_BUFFERED semantics: we only touch the request's system
+         * buffer and report the number of bytes we actually wrote.
+         */
+        if (availBytes >= sizeof(VIOINPUT_COUNTERS_V1_MIN)) {
+            VIOINPUT_COUNTERS_V1_MIN minOut;
+
+            minOut.Size = snapshot.Size;
+            minOut.Version = snapshot.Version;
+            RtlCopyMemory(outBuf, &minOut, sizeof(minOut));
+            info = sizeof(minOut);
+        } else if (availBytes >= sizeof(ULONG)) {
+            // Best-effort: return Size only.
+            RtlCopyMemory(outBuf, &snapshot.Size, sizeof(snapshot.Size));
+            info = sizeof(snapshot.Size);
+        } else {
+            info = 0;
+        }
+
+        status = STATUS_BUFFER_TOO_SMALL;
         break;
     }
     default:

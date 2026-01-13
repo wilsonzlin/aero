@@ -129,6 +129,13 @@ hidtest.exe --keyboard --ioctl-bad-get-string-out
 hidtest.exe --keyboard --ioctl-bad-get-indexed-string-out
 ```
 
+Probe the driver-private counters IOCTL with a short output buffer (verifies the driver returns
+`STATUS_BUFFER_TOO_SMALL` while still returning `Size`/`Version` so tools can adapt to version bumps):
+
+```bat
+hidtest.exe --ioctl-query-counters-short
+```
+
 Negative test (invalid `HidD_SetOutputReport` buffer pointer; should fail cleanly without crashing the guest):
 
 ```bat
