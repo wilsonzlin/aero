@@ -2,12 +2,14 @@ package signaling
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -433,6 +435,117 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 	if elapsed > 250*time.Millisecond {
 		t.Fatalf("request took too long: %s", elapsed)
 	}
+}
+
+func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
+	cfg := config.Config{MaxSessions: 1}
+	m := metrics.New()
+	sm := relay.NewSessionManager(cfg, m, nil)
+
+	// Force GatheringCompletePromise to never resolve so the handler blocks until
+	// the request is canceled. This makes the test deterministic and ensures the
+	// session is actually created.
+	oldPromise := gatheringCompletePromise
+	started := make(chan struct{})
+	var startedOnce sync.Once
+	gatheringCompletePromise = func(*webrtc.PeerConnection) <-chan struct{} {
+		startedOnce.Do(func() { close(started) })
+		return make(chan struct{})
+	}
+	t.Cleanup(func() { gatheringCompletePromise = oldPromise })
+
+	api := webrtc.NewAPI()
+
+	srv := NewServer(Config{
+		Sessions:            sm,
+		WebRTC:              api,
+		RelayConfig:         relay.DefaultConfig(),
+		Policy:              policy.NewDevDestinationPolicy(),
+		Authorizer:          AllowAllAuthorizer{},
+		ICEGatheringTimeout: 30 * time.Second,
+	})
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(func() {
+		srv.Close()
+		ts.Close()
+	})
+
+	// Create a valid offer SDP.
+	pc, err := api.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new peerconnection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := false
+	maxRetransmits := uint16(0)
+	if _, err := pc.CreateDataChannel("udp", &webrtc.DataChannelInit{Ordered: &ordered, MaxRetransmits: &maxRetransmits}); err != nil {
+		t.Fatalf("create datachannel: %v", err)
+	}
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatalf("create offer: %v", err)
+	}
+	if err := pc.SetLocalDescription(offer); err != nil {
+		t.Fatalf("set local description: %v", err)
+	}
+	local := pc.LocalDescription()
+	if local == nil {
+		t.Fatalf("missing local description")
+	}
+
+	body, err := json.Marshal(httpOfferRequest{SDP: SDPFromPion(*local)})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, ts.URL+"/webrtc/offer", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	done := make(chan error, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		done <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatalf("timed out waiting for handler to start ICE gathering wait")
+	}
+
+	if got := sm.ActiveSessions(); got != 1 {
+		cancel()
+		t.Fatalf("active sessions=%d, want 1", got)
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for client request to return after cancellation")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if sm.ActiveSessions() == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected session to be released after cancellation; active=%d", sm.ActiveSessions())
 }
 
 type unauthorizedAuthorizer struct{}

@@ -47,7 +47,6 @@ func TestL2Bridge_SanitizeStringForLog_RedactsCredentialAndEscapedCredential(t *
 		t.Fatalf("expected sanitized message to contain <redacted>: %q", s)
 	}
 }
-
 func TestL2Bridge_SanitizeStringForLog_RedactsQueryTokenEvenWhenValueUnknown(t *testing.T) {
 	b := &l2Bridge{}
 	msg := "dial ws://example.com/l2?token=sekrit&foo=bar: 403"
