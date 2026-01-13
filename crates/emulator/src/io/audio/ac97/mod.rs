@@ -424,16 +424,25 @@ impl Ac97PciDevice {
     }
 
     fn port_to_nam_offset(&self, port: u16) -> Option<u64> {
-        if port >= self.bar_nam && port < self.bar_nam.wrapping_add(NAM_SIZE) {
-            Some(u64::from(port.wrapping_sub(self.bar_nam)))
+        // BARs in PCI config space are 32-bit, but x86 port space is 16-bit. When the BAR base
+        // is near 0xFFFF, `base + size` can overflow a u16 and erroneously make the decoded
+        // range empty. Use wider arithmetic so a base like 0xFF00 still decodes 0xFF00..0xFFFF.
+        let base = u32::from(self.bar_nam);
+        let port = u32::from(port);
+        let end = base + u32::from(NAM_SIZE);
+        if port >= base && port < end {
+            Some(u64::from(port - base))
         } else {
             None
         }
     }
 
     fn port_to_nabm_offset(&self, port: u16) -> Option<u64> {
-        if port >= self.bar_nabm && port < self.bar_nabm.wrapping_add(NABM_SIZE) {
-            Some(u64::from(port.wrapping_sub(self.bar_nabm)))
+        let base = u32::from(self.bar_nabm);
+        let port = u32::from(port);
+        let end = base + u32::from(NABM_SIZE);
+        if port >= base && port < end {
+            Some(u64::from(port - base))
         } else {
             None
         }
@@ -721,6 +730,28 @@ mod tests {
         let flags1 = mask1 & 0x3;
         assert_eq!(dev.config_read(0x14, 4), (0x5679 & addr_mask1) | flags1);
         assert_eq!(dev.bar_nabm, (0x5679 & addr_mask1) as u16);
+    }
+
+    #[test]
+    fn pci_wrapper_decodes_ports_when_io_bars_are_near_u16_max() {
+        // Regression test: when BAR base + size overflows a u16, the device should still decode
+        // the portion of the range that exists in x86's 16-bit I/O port space.
+
+        // NAM at 0xFF00 would wrap on `0xFF00u16.wrapping_add(0x100) == 0x0000`.
+        let mut dev = Ac97PciDevice::new(0xFF00, 0xFE00);
+        dev.config_write(0x04, 2, 1 << 0);
+
+        let vid1_port = 0xFF00u16 + NAM_VENDOR_ID1 as u16;
+        let vid2_port = 0xFF00u16 + NAM_VENDOR_ID2 as u16;
+        assert_eq!(dev.port_read(vid1_port, 2) as u16, 0x8384);
+        assert_eq!(dev.port_read(vid2_port, 2) as u16, 0x7600);
+
+        // Also cover the NABM path with a BAR that would overflow.
+        let mut dev = Ac97PciDevice::new(0xFE00, 0xFF00);
+        dev.config_write(0x04, 2, 1 << 0);
+
+        let civ_port = 0xFF00u16 + NABM_PO_CIV as u16;
+        assert_eq!(dev.port_read(civ_port, 1) as u8, 0);
     }
 
     #[test]
