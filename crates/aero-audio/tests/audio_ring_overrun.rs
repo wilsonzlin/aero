@@ -111,3 +111,18 @@ fn audio_ring_wraparound_bulk_copy_preserves_order() {
     let out = ring.pop_interleaved_stereo(4);
     assert_eq!(out, stereo_frames(&[2.0, 3.0, 4.0, 5.0]));
 }
+
+#[test]
+fn audio_ring_pop_into_zero_fills_underrun_tail() {
+    let mut ring = AudioRingBuffer::new_stereo(4);
+    ring.push_interleaved_stereo(&stereo_frames(&[1.0, 2.0]));
+
+    // Pre-fill the output buffer with non-zero data to ensure the underrun path
+    // overwrites/clears the tail even when reusing a `Vec`.
+    let mut out = vec![42.0f32; 4 * 2];
+    ring.pop_interleaved_stereo_into(4, &mut out);
+
+    assert_eq!(out, stereo_frames(&[1.0, 2.0, 0.0, 0.0]));
+    assert_eq!(ring.available_frames(), 0);
+    assert_eq!(ring.telemetry().underrun_frames, 2);
+}
