@@ -126,6 +126,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-gpu-trace"
+version = "0.1.0"
+
+[[package]]
 name = "aero-http-range"
 version = "0.1.0"
 
@@ -1324,6 +1328,7 @@ dependencies = [
  "aero-devices-storage",
  "aero-dxbc",
  "aero-gpu",
+ "aero-gpu-trace",
  "aero-http-range",
  "aero-io-snapshot",
  "aero-l2-protocol",

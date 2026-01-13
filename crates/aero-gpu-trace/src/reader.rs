@@ -73,15 +73,34 @@ pub struct TraceReader<R> {
 
 impl<R: Read + Seek> TraceReader<R> {
     pub fn open(mut reader: R) -> Result<Self, TraceReadError> {
+        // Read+Seek lets us validate untrusted length fields against the actual file size before
+        // allocating.
+        //
+        // This is important for robustness because `meta_len` comes from the input bytes and is
+        // otherwise used directly for allocation.
+        let file_len = reader.seek(SeekFrom::End(0))?;
+        reader.seek(SeekFrom::Start(0))?;
+
         let header = read_header(&mut reader)?;
-        let mut meta_json = vec![0u8; header.meta_len as usize];
+
+        let meta_len = header.meta_len as u64;
+        let meta_start = reader.stream_position()?;
+        let meta_end = meta_start
+            .checked_add(meta_len)
+            .ok_or(TraceReadError::RecordOutOfBounds)?;
+        if meta_end > file_len {
+            return Err(TraceReadError::RecordOutOfBounds);
+        }
+
+        let meta_len_usize =
+            usize::try_from(header.meta_len).map_err(|_| TraceReadError::RecordOutOfBounds)?;
+        let mut meta_json = vec![0u8; meta_len_usize];
         reader.read_exact(&mut meta_json)?;
 
-        let file_len = reader.seek(SeekFrom::End(0))?;
         if file_len < TRACE_FOOTER_SIZE as u64 {
             return Err(TraceReadError::TocOutOfBounds);
         }
-        reader.seek(SeekFrom::End(-(TRACE_FOOTER_SIZE as i64)))?;
+        reader.seek(SeekFrom::Start(file_len - TRACE_FOOTER_SIZE as u64))?;
         let footer = read_footer(&mut reader)?;
 
         if footer.container_version != header.container_version {
@@ -90,12 +109,36 @@ impl<R: Read + Seek> TraceReader<R> {
             ));
         }
 
-        if footer.toc_offset + footer.toc_len > file_len {
+        let toc_end = footer
+            .toc_offset
+            .checked_add(footer.toc_len)
+            .ok_or(TraceReadError::TocOutOfBounds)?;
+        if toc_end > file_len {
             return Err(TraceReadError::TocOutOfBounds);
         }
 
         reader.seek(SeekFrom::Start(footer.toc_offset))?;
         let toc = read_toc(&mut reader, footer.toc_len)?;
+
+        // TOC entries are untrusted; validate they point inside the record stream region.
+        let record_stream_start = (TRACE_HEADER_SIZE as u64)
+            .checked_add(meta_len)
+            .ok_or(TraceReadError::TocOutOfBounds)?;
+        let record_stream_end = footer.toc_offset;
+        for entry in &toc.entries {
+            if entry.start_offset < record_stream_start || entry.start_offset > record_stream_end {
+                return Err(TraceReadError::TocOutOfBounds);
+            }
+            if entry.end_offset < entry.start_offset || entry.end_offset > record_stream_end {
+                return Err(TraceReadError::TocOutOfBounds);
+            }
+            if entry.present_offset != 0
+                && (entry.present_offset < entry.start_offset
+                    || entry.present_offset > entry.end_offset)
+            {
+                return Err(TraceReadError::TocOutOfBounds);
+            }
+        }
 
         Ok(Self {
             reader,
@@ -118,6 +161,14 @@ impl<R: Read + Seek> TraceReader<R> {
         if start > end {
             return Err(TraceReadError::RecordOutOfBounds);
         }
+
+        // Prevent potentially unbounded allocations when callers pass an `end` offset that is
+        // outside the actual file length.
+        let file_len = self.reader.seek(SeekFrom::End(0))?;
+        if start > file_len || end > file_len {
+            return Err(TraceReadError::RecordOutOfBounds);
+        }
+
         self.reader.seek(SeekFrom::Start(start))?;
         let mut out = Vec::new();
         while self.reader.stream_position()? < end {
@@ -200,7 +251,13 @@ fn read_toc<R: Read>(reader: &mut R, toc_len: u64) -> Result<TraceToc, TraceRead
     }
 
     let frame_count = read_u32(reader)? as usize;
-    let expected_len = TOC_HEADER_SIZE as u64 + (frame_count as u64) * (TOC_ENTRY_SIZE as u64);
+    let expected_len = (TOC_HEADER_SIZE as u64)
+        .checked_add(
+            (frame_count as u64)
+                .checked_mul(TOC_ENTRY_SIZE as u64)
+                .ok_or(TraceReadError::TocOutOfBounds)?,
+        )
+        .ok_or(TraceReadError::TocOutOfBounds)?;
     if toc_len != expected_len {
         return Err(TraceReadError::TocOutOfBounds);
     }
