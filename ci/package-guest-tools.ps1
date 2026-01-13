@@ -21,7 +21,13 @@
 param(
   [string] $InputRoot = "out/packages",
   [string] $GuestToolsDir = "guest-tools",
-
+  # Optional directory whose contents are staged under `guest-tools/tools/` in the packaged
+  # ISO/zip. This is intended for CI/local builds that want to ship extra guest-side utilities
+  # (e.g. debug/selftest helpers) without checking them into `guest-tools/`.
+  [string] $ExtraToolsDir,
+  [ValidateSet("merge", "replace")]
+  [string] $ExtraToolsDirMode = "merge",
+ 
   # Driver signing / boot policy embedded in Guest Tools manifest.json.
   #
   # - test: media is intended for test-signed/custom-signed drivers (default)
@@ -82,6 +88,87 @@ function Ensure-EmptyDirectory {
     Remove-Item -LiteralPath $Path -Recurse -Force
   }
   New-Item -ItemType Directory -Force -Path $Path | Out-Null
+}
+
+function Test-PrivateKeyExtension {
+  param([Parameter(Mandatory = $true)][string] $ExtensionNoDotLower)
+ 
+  return $ExtensionNoDotLower -in @("pfx", "pvk", "snk", "key", "pem")
+}
+
+function Test-HiddenRelPath {
+  param([Parameter(Mandatory = $true)][string] $RelPath)
+
+  $parts = @($RelPath -split '[\\/]')
+  foreach ($p in $parts) {
+    if ([string]::IsNullOrEmpty($p)) { continue }
+    if ($p.StartsWith(".")) { return $true }
+    if ($p -eq "__MACOSX") { return $true }
+  }
+  return $false
+}
+
+function Copy-TreeWithSafetyFilters {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][string] $SourceDir,
+    [Parameter(Mandatory = $true)][string] $DestDir
+  )
+
+  if (-not (Test-Path -LiteralPath $SourceDir -PathType Container)) {
+    throw "ExtraToolsDir does not exist: '$SourceDir'."
+  }
+
+  if (-not (Test-Path -LiteralPath $DestDir -PathType Container)) {
+    New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
+  }
+
+  $srcRoot = (Resolve-Path -LiteralPath $SourceDir).Path
+  $srcPrefix = $srcRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+
+  $copied = New-Object System.Collections.Generic.List[string]
+
+  $files = @(
+    Get-ChildItem -LiteralPath $SourceDir -Recurse -Force -File -ErrorAction Stop |
+      Sort-Object -Property FullName
+  )
+  foreach ($f in $files) {
+    $ext = $f.Extension
+    $extNoDot = $ext
+    if ($extNoDot.StartsWith(".")) {
+      $extNoDot = $extNoDot.Substring(1)
+    }
+    $extNoDotLower = $extNoDot.ToLowerInvariant()
+    if (-not [string]::IsNullOrEmpty($extNoDotLower) -and (Test-PrivateKeyExtension -ExtensionNoDotLower $extNoDotLower)) {
+      throw "Refusing to stage private key material (.$extNoDotLower) from ExtraToolsDir: $($f.FullName)"
+    }
+
+    if (-not $f.FullName.StartsWith($srcPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw "Internal error: expected '$($f.FullName)' to be under '$srcRoot'."
+    }
+    $rel = $f.FullName.Substring($srcPrefix.Length)
+
+    # Skip hidden files/dirs to keep outputs stable across hosts.
+    if (Test-HiddenRelPath -RelPath $rel) {
+      continue
+    }
+
+    # Ignore common Windows shell metadata files.
+    $nameLower = $f.Name.ToLowerInvariant()
+    if ($nameLower -in @("thumbs.db", "ehthumbs.db", "desktop.ini")) {
+      continue
+    }
+
+    $dst = Join-Path $DestDir $rel
+    $dstParent = Split-Path -Parent $dst
+    if (-not (Test-Path -LiteralPath $dstParent -PathType Container)) {
+      New-Item -ItemType Directory -Force -Path $dstParent | Out-Null
+    }
+    Copy-Item -LiteralPath $f.FullName -Destination $dst -Force
+    [void]$copied.Add(("tools/" + ($rel.Replace("\", "/"))))
+  }
+
+  return ,$copied.ToArray()
 }
 
 function Require-Command {
@@ -863,6 +950,35 @@ function Assert-ZipContainsFile {
   }
 }
 
+function Assert-ZipContainsFiles {
+  param(
+    [Parameter(Mandatory = $true)][string] $ZipPath,
+    [Parameter(Mandatory = $true)][string[]] $EntryPaths
+  )
+
+  if (-not $EntryPaths -or $EntryPaths.Count -eq 0) {
+    return
+  }
+
+  Add-Type -AssemblyName System.IO.Compression
+  $fs = [System.IO.File]::OpenRead($ZipPath)
+  $zip = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Read, $false)
+  try {
+    $set = @{}
+    foreach ($e in $zip.Entries) {
+      $set[$e.FullName] = $true
+    }
+    foreach ($p in $EntryPaths) {
+      if (-not $set.ContainsKey($p)) {
+        throw "Expected ZIP '$ZipPath' to contain entry '$p'."
+      }
+    }
+  } finally {
+    $zip.Dispose()
+    $fs.Dispose()
+  }
+}
+
 function Show-PackagerHwidDiagnostics {
   param(
     [Parameter(Mandatory = $true)][string] $StageDriversRoot,
@@ -1107,6 +1223,12 @@ function Show-PackagerHwidDiagnostics {
 
 $inputRootResolved = Resolve-RepoPath -Path $InputRoot
 $guestToolsResolved = Resolve-RepoPath -Path $GuestToolsDir
+$extraToolsResolved = $null
+$extraToolsDirModeNorm = $ExtraToolsDirMode
+if (-not [string]::IsNullOrWhiteSpace($ExtraToolsDir)) {
+  $extraToolsResolved = Resolve-RepoPath -Path $ExtraToolsDir
+  $extraToolsDirModeNorm = $ExtraToolsDirMode.Trim().ToLowerInvariant()
+}
 $certPathResolved = Resolve-RepoPath -Path $CertPath
 $specPathResolved = Resolve-RepoPath -Path $SpecPath
 $outDirResolved = Resolve-RepoPath -Path $OutDir
@@ -1118,6 +1240,14 @@ if (-not (Test-Path -LiteralPath $inputRootResolved)) {
 }
 if (-not (Test-Path -LiteralPath $guestToolsResolved -PathType Container)) {
   throw "GuestToolsDir does not exist: '$guestToolsResolved'."
+}
+if ($extraToolsResolved) {
+  if (-not (Test-Path -LiteralPath $extraToolsResolved -PathType Container)) {
+    throw "ExtraToolsDir does not exist: '$extraToolsResolved'."
+  }
+  if ($extraToolsDirModeNorm -ne "merge" -and $extraToolsDirModeNorm -ne "replace") {
+    throw "Invalid ExtraToolsDirMode: '$ExtraToolsDirMode'. Expected merge or replace."
+  }
 }
 $includeCerts = $SigningPolicy -eq "test"
 if ($includeCerts) {
@@ -1173,6 +1303,7 @@ $stageInputExtract = Join-Path $stageRoot "input"
 $stageDeviceContract = Join-Path $stageRoot "windows-device-contract.json"
 
 $success = $false
+$extraToolsZipEntries = @()
 try {
   Ensure-EmptyDirectory -Path $stageRoot
   Ensure-EmptyDirectory -Path $stageDriversRoot
@@ -1180,6 +1311,22 @@ try {
 
   Write-Host "Staging Guest Tools..."
   Stage-GuestTools -SourceDir $guestToolsResolved -DestDir $stageGuestTools -CertSourcePath $certPathResolved -IncludeCerts:$includeCerts
+  if ($extraToolsResolved) {
+    Write-Host "Staging extra Guest Tools utilities..."
+    $stageToolsDir = Join-Path $stageGuestTools "tools"
+    if ($extraToolsDirModeNorm -eq "replace") {
+      if (Test-Path -LiteralPath $stageToolsDir) {
+        Remove-Item -LiteralPath $stageToolsDir -Recurse -Force
+      }
+    }
+    New-Item -ItemType Directory -Force -Path $stageToolsDir | Out-Null
+    $extraToolsZipEntries = Copy-TreeWithSafetyFilters -SourceDir $extraToolsResolved -DestDir $stageToolsDir
+    if (-not $extraToolsZipEntries -or $extraToolsZipEntries.Count -eq 0) {
+      Write-Warning "ExtraToolsDir was provided but no files were staged (all were filtered or the directory is empty)."
+    } else {
+      Write-Host ("  Staged {0} file(s) under guest-tools/tools/." -f $extraToolsZipEntries.Count)
+    }
+  }
 
   Write-Host "Staging signed drivers..."
 
@@ -1285,6 +1432,9 @@ try {
   if ($includeCerts) {
     $certLeaf = Split-Path -Leaf $certPathResolved
     Assert-ZipContainsFile -ZipPath $zipPath -EntryPath ("certs/{0}" -f $certLeaf)
+  }
+  if ($extraToolsZipEntries -and $extraToolsZipEntries.Count -gt 0) {
+    Assert-ZipContainsFiles -ZipPath $zipPath -EntryPaths $extraToolsZipEntries
   }
 
   $success = $true

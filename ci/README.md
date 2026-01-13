@@ -178,6 +178,30 @@ contract JSON during packaging (default: `docs/windows-device-contract.json`). U
 `ci/package-guest-tools.ps1 -WindowsDeviceContractPath` to override the contract when packaging
 Guest Tools from a different driver stack (for example, upstream virtio-win service names).
 
+### Optional extra Guest Tools utilities (`-ExtraToolsDir`)
+
+`ci/package-guest-tools.ps1` can optionally stage additional guest-side helper binaries/scripts
+under `tools/` in the packaged ISO/zip without requiring them to be checked into `guest-tools/`:
+
+```powershell
+pwsh -File ci/package-guest-tools.ps1 -ExtraToolsDir out/guest-tools-extra
+```
+
+This copies the contents of `-ExtraToolsDir` into the staged Guest Tools tree at `guest-tools/tools/`
+before calling `aero_packager`.
+
+By default it **merges** with any existing `guest-tools/tools/` content. To replace any existing
+staged `tools/` contents instead, pass:
+
+```powershell
+pwsh -File ci/package-guest-tools.ps1 -ExtraToolsDir out/guest-tools-extra -ExtraToolsDirMode replace
+```
+
+Safety notes:
+
+- Hidden files/dirs are skipped (for stable outputs across hosts).
+- Private key material extensions are refused (`*.pfx`, `*.pvk`, `*.snk`, `*.key`, `*.pem`).
+
 ### Spec selection (CI vs local)
 
 `ci/package-guest-tools.ps1` uses `-SpecPath` to control which driver directories are required/allowed
