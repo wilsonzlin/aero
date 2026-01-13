@@ -581,6 +581,7 @@ impl IoSnapshot for PlatformInterrupts {
         const TAG_LAPIC: u16 = 7;
         const TAG_GSI_LEVEL: u16 = 8;
         const TAG_LAPIC_CLOCK_NOW_NS: u16 = 9;
+        const TAG_LAPICS: u16 = 10;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -609,7 +610,18 @@ impl IoSnapshot for PlatformInterrupts {
 
         w.field_bytes(TAG_PIC, self.pic.save_state());
         w.field_bytes(TAG_IOAPIC, self.ioapic.lock().unwrap().save_state());
-        w.field_bytes(TAG_LAPIC, self.lapics[0].save_state());
+        if self.lapics.len() == 1 {
+            // Preserve the legacy single-LAPIC tag for smaller snapshots and backward
+            // compatibility.
+            w.field_bytes(TAG_LAPIC, self.lapics[0].save_state());
+        } else {
+            let mut enc = Encoder::new().u32(self.lapics.len() as u32);
+            for lapic in &self.lapics {
+                let state = lapic.save_state();
+                enc = enc.u64(state.len() as u64).bytes(&state);
+            }
+            w.field_bytes(TAG_LAPICS, enc.finish());
+        }
 
         w.finish()
     }
@@ -624,8 +636,11 @@ impl IoSnapshot for PlatformInterrupts {
         const TAG_LAPIC: u16 = 7;
         const TAG_GSI_LEVEL: u16 = 8;
         const TAG_LAPIC_CLOCK_NOW_NS: u16 = 9;
+        const TAG_LAPICS: u16 = 10;
 
         const MAX_SNAPSHOT_GSI_LEVELS: usize = 4096;
+        const MAX_SNAPSHOT_LAPICS: usize = 256;
+        const MAX_SNAPSHOT_LAPIC_STATE_LEN: usize = 1024 * 1024;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -703,7 +718,43 @@ impl IoSnapshot for PlatformInterrupts {
         if let Some(buf) = r.bytes(TAG_IOAPIC) {
             self.ioapic.lock().unwrap().load_state(buf)?;
         }
-        if let Some(buf) = r.bytes(TAG_LAPIC) {
+        if let Some(buf) = r.bytes(TAG_LAPICS) {
+            // SMP snapshots: restore LAPIC state by CPU index.
+            //
+            // This snapshot does not currently store a per-entry APIC ID mapping, so we require
+            // `lapic_count` to match the runtime CPU/LAPIC count exactly and restore entries in
+            // order.
+            let mut d = Decoder::new(buf);
+            let lapic_count = d.u32()? as usize;
+            if lapic_count == 0 || lapic_count > MAX_SNAPSHOT_LAPICS {
+                return Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                    "lapic_count",
+                ));
+            }
+            if lapic_count != self.lapics.len() {
+                return Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                    "lapic_count_mismatch",
+                ));
+            }
+
+            for idx in 0..lapic_count {
+                let entry_len_u64 = d.u64()?;
+                let entry_len: usize = entry_len_u64
+                    .try_into()
+                    .map_err(|_| aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                        "lapic_entry_len",
+                    ))?;
+                if entry_len == 0 || entry_len > MAX_SNAPSHOT_LAPIC_STATE_LEN {
+                    return Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                        "lapic_entry_len",
+                    ));
+                }
+                let entry = d.bytes(entry_len)?;
+                self.lapics[idx].restore_state(entry)?;
+            }
+            d.finish()?;
+        } else if let Some(buf) = r.bytes(TAG_LAPIC) {
+            // Backward compatibility: old snapshots contain a single LAPIC.
             self.lapics[0].restore_state(buf)?;
         }
 
@@ -926,5 +977,70 @@ mod tests {
 
         // LAPIC0 should be unaffected.
         assert!(ints.lapics[0].is_pending(0x40));
+    }
+
+    fn lapic_read_u32(lapic: &LocalApic, offset: u64) -> u32 {
+        let mut buf = [0u8; 4];
+        lapic.mmio_read(offset, &mut buf);
+        u32::from_le_bytes(buf)
+    }
+
+    fn lapic_write_u32(lapic: &LocalApic, offset: u64, value: u32) {
+        lapic.mmio_write(offset, &value.to_le_bytes());
+    }
+
+    #[test]
+    fn snapshot_round_trip_preserves_multiple_lapics() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(4);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // Mutate each CPU's LAPIC state:
+        // - SVR/TPR
+        // - ICR_HIGH
+        // - a one-shot timer interrupt pending in IRR
+        for (cpu, lapic) in ints.lapics.iter().enumerate() {
+            let cpu_u32 = cpu as u32;
+
+            // SVR: set software enable + unique spurious vector.
+            lapic_write_u32(lapic, 0xF0, (1 << 8) | (0xF0 + cpu_u32));
+            // TPR: unique priority class per CPU (low enough not to mask our timer vector).
+            lapic_write_u32(lapic, 0x80, cpu_u32 << 4);
+            // ICR high: unique destination field.
+            lapic_write_u32(lapic, 0x310, cpu_u32 << 24);
+
+            // Program one-shot LAPIC timer (vector 0x40 + cpu).
+            lapic_write_u32(lapic, 0x3E0, 0xB); // Divide config: divisor 1
+            lapic_write_u32(lapic, 0x320, 0x40 + cpu_u32); // LVT Timer
+            lapic_write_u32(lapic, 0x380, 10 + cpu_u32); // Initial count
+        }
+
+        // Advance time enough to fire all timers and make the IRR bit visible in snapshots.
+        ints.tick(13);
+
+        for cpu in 0..4 {
+            let lapic = &ints.lapics[cpu];
+            let cpu_u32 = cpu as u32;
+            assert_eq!(lapic_read_u32(lapic, 0xF0), (1 << 8) | (0xF0 + cpu_u32));
+            assert_eq!(lapic_read_u32(lapic, 0x80), cpu_u32 << 4);
+            assert_eq!(lapic_read_u32(lapic, 0x310), cpu_u32 << 24);
+            assert!(lapic.is_pending((0x40 + cpu_u32) as u8));
+        }
+
+        let bytes = ints.save_state();
+
+        let mut restored = PlatformInterrupts::new_with_cpu_count(4);
+        restored.load_state(&bytes).unwrap();
+        restored.finalize_restore();
+
+        assert_eq!(restored.lapic_clock.now_ns(), 13);
+
+        for cpu in 0..4 {
+            let lapic = &restored.lapics[cpu];
+            let cpu_u32 = cpu as u32;
+            assert_eq!(lapic_read_u32(lapic, 0xF0), (1 << 8) | (0xF0 + cpu_u32));
+            assert_eq!(lapic_read_u32(lapic, 0x80), cpu_u32 << 4);
+            assert_eq!(lapic_read_u32(lapic, 0x310), cpu_u32 << 24);
+            assert!(lapic.is_pending((0x40 + cpu_u32) as u8));
+        }
     }
 }
