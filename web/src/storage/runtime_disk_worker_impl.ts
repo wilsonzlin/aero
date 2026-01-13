@@ -124,9 +124,10 @@ async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise
   const cacheBackend: DiskBackend = options?.cacheBackend ?? pickDefaultBackend();
   const cacheLimitBytes = options?.cacheLimitBytes;
   // `RemoteRangeDisk` uses OPFS sparse files (requires SyncAccessHandle) and does not
-  // implement cache eviction. Only select it when OPFS is explicitly requested and
-  // caching has not been disabled via `cacheLimitBytes: 0`.
-  if (cacheBackend === "opfs" && cacheLimitBytes !== 0 && hasOpfsSyncAccessHandle()) {
+  // implement cache eviction. Only select it when OPFS is requested *and* the caller
+  // explicitly opts into an unbounded cache (`cacheLimitBytes: null`). Otherwise fall
+  // back to `RemoteStreamingDisk`, which implements bounded eviction (default 512 MiB).
+  if (cacheBackend === "opfs" && cacheLimitBytes === null && hasOpfsSyncAccessHandle()) {
     const chunkSize = options?.blockSize ?? RANGE_STREAM_CHUNK_SIZE;
     const cacheKeyParts = {
       imageId: (options?.cacheImageId ?? stableImageIdFromUrl(url)).trim(),
