@@ -257,6 +257,69 @@ class ValidateConfigTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 validate_config.validate(devices, spec_path, expected)
 
+    def test_win7_aerogpu_only_spec_validates_repo_devices_cmd(self) -> None:
+        # Ensure the AeroGPU-only packaging spec stays compatible with the in-repo
+        # Guest Tools devices.cmd.
+        spec_path = validate_config.REPO_ROOT / "tools/packaging/specs/win7-aerogpu-only.json"
+        self.assertTrue(spec_path.exists(), f"Missing packaging spec: {spec_path}")
+
+        devices_cmd = validate_config.REPO_ROOT / "guest-tools/config/devices.cmd"
+        devices = validate_config.load_devices_cmd(devices_cmd)
+        expected = validate_config.load_packaging_spec(spec_path)
+        with redirect_stdout(io.StringIO()):
+            validate_config.validate(devices, spec_path, expected)
+
+    def test_win7_aerogpu_only_spec_requires_aerogpu_entry(self) -> None:
+        # The AeroGPU-only spec must always include the AeroGPU driver entry; if it
+        # is accidentally removed, validation should fail loudly.
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            devices_cmd = tmp_path / "devices.cmd"
+            virtio_blk = _contract_device("virtio-blk")
+            virtio_net = _contract_device("virtio-net")
+            devices_cmd.write_text(
+                "\n".join(
+                    [
+                        f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
+                        f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            # Omit the required aerogpu entry.
+            spec_path = tmp_path / "win7-aerogpu-only.json"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "drivers": [
+                            {
+                                "name": "virtio-blk",
+                                "required": True,
+                                "expected_hardware_ids": [_ven_dev_regex_from_hwid(virtio_blk.hardware_id_patterns[0])],
+                            },
+                            {
+                                "name": "virtio-net",
+                                "required": True,
+                                "expected_hardware_ids": [_ven_dev_regex_from_hwid(virtio_net.hardware_id_patterns[0])],
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            devices = validate_config.load_devices_cmd(devices_cmd)
+            expected = validate_config.load_packaging_spec(spec_path)
+            with self.assertRaises(validate_config.ValidationError) as ctx:
+                with redirect_stdout(io.StringIO()):
+                    validate_config.validate(devices, spec_path, expected)
+
+            msg = str(ctx.exception).lower()
+            self.assertIn("missing required driver entries", msg)
+            self.assertIn("aerogpu", msg)
+
     def test_windows_device_contract_override_supports_virtio_win_services(self) -> None:
         # The in-repo Guest Tools config uses Aero in-tree service names (aero_virtio_blk, etc), but
         # virtio-win Guest Tools packaging needs to validate against upstream service names

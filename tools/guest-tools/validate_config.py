@@ -845,6 +845,8 @@ def validate(
         required_groups = (("viostor",), ("netkvm",))
     elif spec_path.name == "win7-aero-virtio.json":
         required_groups = (("aero_virtio_blk",), ("aero_virtio_net",))
+    elif spec_path.name == "win7-aerogpu-only.json":
+        required_groups = (("aerogpu", "aero-gpu"),)
     elif spec_path.name in ("win7-aero-guest-tools.json", "win7-signed.json"):
         # The in-repo driver folder name for AeroGPU is `aerogpu`, but keep
         # backwards-compatible aliases to avoid renames breaking CI history.
