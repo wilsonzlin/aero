@@ -1,8 +1,10 @@
+use std::cell::RefCell;
 use std::ops::Range;
+use std::rc::Rc;
 
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::xhci::transfer::{write_trb, CompletionCode, Trb, TrbType, XhciTransferExecutor};
-use aero_usb::{ControlResponse, MemoryBus, SetupPacket};
+use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbOutResult};
 
 const RING_BASE: u64 = 0x1000;
 const NORMAL_TRB_ADDR: u64 = RING_BASE;
@@ -70,6 +72,34 @@ fn make_link_trb(target: u64, cycle: bool, toggle_cycle: bool) -> Trb {
     }
 }
 
+#[derive(Clone, Debug)]
+struct TestOutDevice {
+    log: Rc<RefCell<Vec<(u8, Vec<u8>)>>>,
+}
+
+impl TestOutDevice {
+    fn new() -> Self {
+        Self {
+            log: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+}
+
+impl UsbDeviceModel for TestOutDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn handle_out_transfer(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
+        self.log.borrow_mut().push((ep, data.to_vec()));
+        UsbOutResult::Ack
+    }
+}
+
 #[test]
 fn xhci_interrupt_in_completes_only_when_report_available() {
     let keyboard = UsbHidKeyboardHandle::new();
@@ -132,4 +162,71 @@ fn xhci_interrupt_in_completes_only_when_report_available() {
         mem.slice(DATA_BUF as usize..DATA_BUF as usize + 8),
         &[0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00]
     );
+}
+
+#[test]
+fn xhci_interrupt_out_dmas_and_completes_normal_trb() {
+    let dev = TestOutDevice::new();
+    let log = dev.log.clone();
+
+    let mut xhci = XhciTransferExecutor::new(Box::new(dev));
+
+    let mut mem = TestMemBus::new(0x10000);
+    mem.write_physical(DATA_BUF, &[0xde, 0xad, 0xbe, 0xef]);
+
+    write_trb(
+        &mut mem,
+        NORMAL_TRB_ADDR,
+        make_normal_trb(DATA_BUF, 4, true, true),
+    );
+
+    xhci.add_endpoint(0x01, RING_BASE);
+    xhci.tick_1ms(&mut mem);
+
+    let events = xhci.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].ep_addr, 0x01);
+    assert_eq!(events[0].completion_code, CompletionCode::Success);
+    assert_eq!(events[0].residual, 0);
+
+    let received = log.borrow().clone();
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].0, 0x01);
+    assert_eq!(received[0].1, vec![0xde, 0xad, 0xbe, 0xef]);
+}
+
+#[test]
+fn xhci_stall_marks_endpoint_halted_and_completes_with_stall_error() {
+    let keyboard = UsbHidKeyboardHandle::new();
+    let mut xhci = XhciTransferExecutor::new(Box::new(keyboard));
+
+    const BUF2: u64 = 0x3000;
+    let mut mem = TestMemBus::new(0x10000);
+
+    // Two Normal TRBs in sequence. The first will STALL because the keyboard only implements EP 0x81.
+    write_trb(
+        &mut mem,
+        RING_BASE,
+        make_normal_trb(DATA_BUF, 8, true, false),
+    );
+    write_trb(
+        &mut mem,
+        RING_BASE + 0x10,
+        make_normal_trb(BUF2, 8, true, true),
+    );
+
+    xhci.add_endpoint(0x82, RING_BASE);
+    xhci.tick_1ms(&mut mem);
+
+    let events = xhci.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].ep_addr, 0x82);
+    assert_eq!(events[0].completion_code, CompletionCode::StallError);
+    assert_eq!(events[0].residual, 8);
+    assert!(xhci.endpoint_state(0x82).unwrap().halted);
+
+    // Further ticks must not process additional TRBs while halted.
+    xhci.tick_1ms(&mut mem);
+    assert!(xhci.take_events().is_empty());
+    assert_eq!(mem.slice(BUF2 as usize..BUF2 as usize + 8), &[0; 8]);
 }
