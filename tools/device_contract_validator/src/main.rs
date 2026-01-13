@@ -879,7 +879,8 @@ fn parse_inf_active_pci_hwids(inf_text: &str) -> BTreeSet<String> {
     //
     // - ignore full-line comments (`; ...`)
     // - strip inline comments (`... ; ...`)
-    // - take the last comma-separated field as the candidate HWID
+    // - scan comma-separated fields from the end and pick the last one that looks
+    //   like a PCI HWID (this tolerates extra fields like compatible IDs after the HWID)
     //
     // This avoids false positives from header comments describing the HWIDs without
     // actually matching them.
@@ -898,16 +899,252 @@ fn parse_inf_active_pci_hwids(inf_text: &str) -> BTreeSet<String> {
         if line.is_empty() {
             continue;
         }
-        let candidate = line
-            .split(',')
-            .map(|p| p.trim())
-            .next_back()
-            .unwrap_or_default();
-        if candidate.to_ascii_uppercase().starts_with("PCI\\VEN_") {
-            out.insert(candidate.to_string());
+        let mut hwid = None;
+        for part in line.split(',').map(|p| p.trim()).rev() {
+            if part.to_ascii_uppercase().starts_with("PCI\\VEN_") {
+                hwid = Some(part);
+                break;
+            }
+        }
+        if let Some(hwid) = hwid {
+            out.insert(hwid.to_string());
         }
     }
     out
+}
+
+#[derive(Debug, Clone)]
+struct InfModelLine {
+    device_desc: String,
+    install_section: String,
+    hardware_id: String,
+    raw_line: String,
+}
+
+fn parse_inf_strings(inf_text: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let mut current_section: Option<String> = None;
+    for raw in inf_text.lines() {
+        let mut line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with(';') {
+            continue;
+        }
+        if let Some((before, _)) = line.split_once(';') {
+            line = before.trim_end();
+        }
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') && line.len() >= 2 {
+            let name = &line[1..line.len() - 1];
+            current_section = Some(name.trim().to_string());
+            continue;
+        }
+        let Some(section) = &current_section else {
+            continue;
+        };
+        if !section.eq_ignore_ascii_case("Strings") {
+            continue;
+        }
+        let Some((key_raw, val_raw)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key_raw.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let mut val = val_raw.trim();
+        if val.starts_with('"') && val.ends_with('"') && val.len() >= 2 {
+            val = &val[1..val.len() - 1];
+        }
+        out.insert(key.to_ascii_lowercase(), val.to_string());
+    }
+    out
+}
+
+fn parse_inf_models_section(inf_text: &str, section_name: &str) -> Vec<InfModelLine> {
+    let mut out = Vec::new();
+    let mut current_section: Option<String> = None;
+    for raw in inf_text.lines() {
+        let mut line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with(';') {
+            continue;
+        }
+        if let Some((before, _)) = line.split_once(';') {
+            line = before.trim_end();
+        }
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') && line.len() >= 2 {
+            let name = &line[1..line.len() - 1];
+            current_section = Some(name.trim().to_string());
+            continue;
+        }
+        let Some(section) = &current_section else {
+            continue;
+        };
+        if !section.eq_ignore_ascii_case(section_name) {
+            continue;
+        }
+        let Some((lhs, rhs)) = line.split_once('=') else {
+            continue;
+        };
+        let device_desc = lhs.trim();
+        let rhs = rhs.trim();
+        if device_desc.is_empty() || rhs.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = rhs
+            .split(',')
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let install = parts[0];
+        let hwid = parts
+            .iter()
+            .rev()
+            .copied()
+            .find(|p| p.to_ascii_uppercase().starts_with("PCI\\VEN_"));
+        let Some(hwid) = hwid else {
+            continue;
+        };
+        out.push(InfModelLine {
+            device_desc: device_desc.to_string(),
+            install_section: install.to_string(),
+            hardware_id: hwid.to_string(),
+            raw_line: line.to_string(),
+        });
+    }
+    out
+}
+
+fn resolve_inf_device_desc(desc: &str, strings: &BTreeMap<String, String>) -> Result<String> {
+    let d = desc.trim();
+    if d.starts_with('%') && d.ends_with('%') && d.len() >= 3 {
+        let key = d[1..d.len() - 1].trim().to_ascii_lowercase();
+        let Some(value) = strings.get(&key) else {
+            bail!("undefined [Strings] token referenced by models section: {desc:?}");
+        };
+        return Ok(value.clone());
+    }
+    Ok(d.to_string())
+}
+
+fn validate_virtio_input_device_desc_split(
+    inf_path: &Path,
+    inf_text: &str,
+    base_hwid: &str,
+    expected_rev: u8,
+) -> Result<()> {
+    // The in-tree virtio-input INF binds both keyboard and mouse PCI functions to the same
+    // install sections, but should use distinct DeviceDesc strings so the two functions
+    // appear with different names in Device Manager.
+    let strings = parse_inf_strings(inf_text);
+    let rev = format!("{expected_rev:02X}");
+    let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");
+    let ms_hwid = format!("{base_hwid}&SUBSYS_00111AF4&REV_{rev}");
+    let fb_hwid = format!("{base_hwid}&REV_{rev}");
+
+    for models_section in ["Aero.NTx86", "Aero.NTamd64"] {
+        let lines = parse_inf_models_section(inf_text, models_section);
+        let kb: Vec<_> = lines
+            .iter()
+            .filter(|l| l.hardware_id.eq_ignore_ascii_case(&kb_hwid))
+            .collect();
+        let ms: Vec<_> = lines
+            .iter()
+            .filter(|l| l.hardware_id.eq_ignore_ascii_case(&ms_hwid))
+            .collect();
+        let fb: Vec<_> = lines
+            .iter()
+            .filter(|l| l.hardware_id.eq_ignore_ascii_case(&fb_hwid))
+            .collect();
+
+        if kb.len() != 1 {
+            bail!(
+                "virtio-input INF {}: expected exactly one keyboard model entry in [{}] for HWID {} (found {}): {:?}",
+                inf_path.display(),
+                models_section,
+                kb_hwid,
+                kb.len(),
+                kb.iter().map(|e| e.raw_line.as_str()).collect::<Vec<_>>()
+            );
+        }
+        if ms.len() != 1 {
+            bail!(
+                "virtio-input INF {}: expected exactly one mouse model entry in [{}] for HWID {} (found {}): {:?}",
+                inf_path.display(),
+                models_section,
+                ms_hwid,
+                ms.len(),
+                ms.iter().map(|e| e.raw_line.as_str()).collect::<Vec<_>>()
+            );
+        }
+        if fb.len() != 1 {
+            bail!(
+                "virtio-input INF {}: expected exactly one fallback model entry in [{}] for HWID {} (found {}): {:?}",
+                inf_path.display(),
+                models_section,
+                fb_hwid,
+                fb.len(),
+                fb.iter().map(|e| e.raw_line.as_str()).collect::<Vec<_>>()
+            );
+        }
+
+        let kb = kb[0];
+        let ms = ms[0];
+        let fb = fb[0];
+
+        if !kb.install_section.eq_ignore_ascii_case(&ms.install_section)
+            || !kb.install_section.eq_ignore_ascii_case(&fb.install_section)
+        {
+            bail!(
+                "virtio-input INF {}: model entries in [{}] must share the same install section.\nkeyboard: {}\nmouse:    {}\nfallback: {}",
+                inf_path.display(),
+                models_section,
+                kb.raw_line,
+                ms.raw_line,
+                fb.raw_line,
+            );
+        }
+
+        let kb_desc = resolve_inf_device_desc(&kb.device_desc, &strings)?;
+        let ms_desc = resolve_inf_device_desc(&ms.device_desc, &strings)?;
+        let fb_desc = resolve_inf_device_desc(&fb.device_desc, &strings)?;
+
+        if kb_desc.eq_ignore_ascii_case(&ms_desc) {
+            bail!(
+                "virtio-input INF {}: keyboard and mouse model entries in [{}] must have distinct DeviceDesc strings (got {:?}).\nkeyboard: {}\nmouse:    {}",
+                inf_path.display(),
+                models_section,
+                kb_desc,
+                kb.raw_line,
+                ms.raw_line,
+            );
+        }
+        if fb_desc.eq_ignore_ascii_case(&kb_desc) || fb_desc.eq_ignore_ascii_case(&ms_desc) {
+            bail!(
+                "virtio-input INF {}: fallback model entry in [{}] must use a generic DeviceDesc string (not the keyboard/mouse string).\nkeyboard: {}\nmouse:    {}\nfallback: {}",
+                inf_path.display(),
+                models_section,
+                kb.raw_line,
+                ms.raw_line,
+                fb.raw_line,
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_pci_vendor_device_from_hwid(hwid: &str) -> Option<(u16, u16)> {
@@ -1149,6 +1386,11 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         inf_path.display(),
                         format_bullets(&wrong_rev)
                     );
+                }
+
+                if dev.device == "virtio-input" {
+                    validate_virtio_input_device_desc_split(inf_path, &inf_text, &base, expected_rev)
+                        .with_context(|| format!("{name}: validate virtio-input DeviceDesc split"))?;
                 }
             }
 
