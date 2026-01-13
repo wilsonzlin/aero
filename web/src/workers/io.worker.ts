@@ -49,6 +49,8 @@ import {
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
+  type CursorSetImageMessage,
+  type CursorSetStateMessage,
   MessageType,
   type ProtocolMessage,
   type WorkerInitMessage,
@@ -65,6 +67,7 @@ import { I8042Controller } from "../io/devices/i8042";
 import { E1000PciDevice } from "../io/devices/e1000";
 import { HdaPciDevice, type HdaControllerBridgeLike } from "../io/devices/hda";
 import { PciTestDevice } from "../io/devices/pci_test_device";
+import { AeroGpuPciDevice } from "../io/devices/aerogpu";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
 import { EhciPciDevice } from "../io/devices/ehci";
 import { XhciPciDevice } from "../io/devices/xhci";
@@ -471,6 +474,7 @@ let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 let usbEhciHarnessRuntime: WebUsbEhciHarnessRuntime | null = null;
+let aerogpuDevice: AeroGpuPciDevice | null = null;
 let uhciDevice: UhciPciDevice | null = null;
 let ehciDevice: EhciPciDevice | null = null;
 let xhciDevice: XhciPciDevice | null = null;
@@ -2717,6 +2721,20 @@ type HdaMicCaptureTestMessage = {
   requestId: number;
 };
 
+type AerogpuCursorTestProgramMessage = {
+  type: "aerogpu.cursorTest.program";
+  enabled: boolean;
+  x: number;
+  y: number;
+  hotX: number;
+  hotY: number;
+  width: number;
+  height: number;
+  format: number;
+  fbGpa: number;
+  pitchBytes: number;
+};
+
 type ActiveDisk = { handle: number; sectorSize: number; capacityBytes: number; readOnly: boolean };
 let diskClient: RuntimeDiskClient | null = null;
 let activeDisk: ActiveDisk | null = null;
@@ -3826,6 +3844,31 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       }
  
       mgr.registerPciDevice(new PciTestDevice());
+      // Minimal AeroGPU PCI device model used to forward the guest-programmed hardware cursor
+      // registers (`AEROGPU_MMIO_REG_CURSOR_*`) into the runtime cursor overlay channel.
+      //
+      // This is intentionally inert until the guest (or a harness) touches the cursor regs so
+      // synthetic cursor demos can continue to drive the overlay without being overridden.
+      try {
+        if (!guestLayout) throw new Error("guestLayout is not initialized");
+        aerogpuDevice = new AeroGpuPciDevice({
+          guestU8,
+          guestLayout,
+          sink: {
+            setImage: (width, height, rgba8) => {
+              ctx.postMessage({ kind: "cursor.set_image", width, height, rgba8 } satisfies CursorSetImageMessage, [rgba8]);
+            },
+            setState: (enabled, x, y, hotX, hotY) => {
+              ctx.postMessage({ kind: "cursor.set_state", enabled, x, y, hotX, hotY } satisfies CursorSetStateMessage);
+            },
+          },
+        });
+        mgr.registerPciDevice(aerogpuDevice);
+        mgr.addTickable(aerogpuDevice);
+      } catch (err) {
+        aerogpuDevice = null;
+        console.warn("[io.worker] Failed to initialize AeroGPU cursor forwarding device", err);
+      }
       maybeInitUhciDevice();
       maybeInitEhciDevice();
       maybeInitXhciDevice();
@@ -3890,6 +3933,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<SetMicrophoneRingBufferMessage>
       | Partial<SetAudioRingBufferMessage>
       | Partial<HdaMicCaptureTestMessage>
+      | Partial<AerogpuCursorTestProgramMessage>
       | Partial<HidProxyMessage>
       | Partial<UsbRingDetachMessage>
       | Partial<UsbSelectedMessage>
@@ -4071,6 +4115,32 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       const msg = data as Partial<HdaMicCaptureTestMessage>;
       if (typeof msg.requestId !== "number") return;
       runHdaMicCaptureTest(msg.requestId);
+      return;
+    }
+
+    if ((data as Partial<AerogpuCursorTestProgramMessage>).type === "aerogpu.cursorTest.program") {
+      const msg = data as Partial<AerogpuCursorTestProgramMessage>;
+      const dev = aerogpuDevice;
+      if (!dev) return;
+      if (typeof msg.enabled !== "boolean") return;
+      if (typeof msg.x !== "number" || typeof msg.y !== "number") return;
+      if (typeof msg.hotX !== "number" || typeof msg.hotY !== "number") return;
+      if (typeof msg.width !== "number" || typeof msg.height !== "number") return;
+      if (typeof msg.format !== "number") return;
+      if (typeof msg.fbGpa !== "number") return;
+      if (typeof msg.pitchBytes !== "number") return;
+      dev.debugProgramCursor({
+        enabled: msg.enabled,
+        x: msg.x | 0,
+        y: msg.y | 0,
+        hotX: msg.hotX >>> 0,
+        hotY: msg.hotY >>> 0,
+        width: msg.width >>> 0,
+        height: msg.height >>> 0,
+        format: msg.format >>> 0,
+        fbGpa: msg.fbGpa >>> 0,
+        pitchBytes: msg.pitchBytes >>> 0,
+      });
       return;
     }
 
