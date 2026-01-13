@@ -6483,19 +6483,14 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   EmitSetRenderTargetsLocked(dev);
 }
 
-void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT start_vertex) {
-  if (!hDevice.pDrvPrivate) {
-    return;
-  }
-  AEROGPU_D3D10_TRACEF_VERBOSE("Draw hDevice=%p vc=%u start=%u", hDevice.pDrvPrivate, vertex_count, start_vertex);
-  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+static bool SoftwareDrawTriangleListBringupLocked(AeroGpuDevice* dev, UINT vertex_count, UINT start_vertex) {
   if (!dev) {
-    return;
+    return true;
   }
 
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  TrackDrawStateLocked(dev);
-
+  // The bring-up software rasterizer only understands a single triangle list
+  // with a fixed vertex format. This is used by staging readback tests (render
+  // a triangle, Present, CopyResource staging, Map).
   AeroGpuResource* primary_rtv = nullptr;
   for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
     if (dev->current_rtv_resources[i]) {
@@ -6503,7 +6498,6 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT sta
       break;
     }
   }
-
   if (vertex_count == 3 && dev->current_topology == static_cast<uint32_t>(D3D10_DDI_PRIMITIVE_TOPOLOGY_TRIANGLELIST) &&
       primary_rtv && dev->current_vb_res) {
     auto* rt = primary_rtv;
@@ -6515,7 +6509,7 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT sta
       const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, rt->dxgi_format);
       const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
       if (aer_fmt == AEROGPU_FORMAT_INVALID || bpp != 4) {
-        goto EmitDrawCmd;
+        return true;
       }
 
       if (rt->row_pitch_bytes == 0) {
@@ -6527,7 +6521,7 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT sta
           rt->storage.resize(static_cast<size_t>(rt_bytes));
         } catch (...) {
           set_error(dev, E_OUTOFMEMORY);
-          return;
+          return false;
         }
       }
 
@@ -6660,12 +6654,68 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT sta
     }
   }
 
-EmitDrawCmd:
+  return true;
+}
+
+void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT start_vertex) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  AEROGPU_D3D10_TRACEF_VERBOSE("Draw hDevice=%p vc=%u start=%u", hDevice.pDrvPrivate, vertex_count, start_vertex);
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackDrawStateLocked(dev);
+
+  if (!SoftwareDrawTriangleListBringupLocked(dev, vertex_count, start_vertex)) {
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
   cmd->vertex_count = vertex_count;
   cmd->instance_count = 1;
   cmd->first_vertex = start_vertex;
   cmd->first_instance = 0;
+}
+
+void AEROGPU_APIENTRY DrawInstanced(D3D10DDI_HDEVICE hDevice,
+                                   UINT vertex_count_per_instance,
+                                   UINT instance_count,
+                                   UINT start_vertex_location,
+                                   UINT start_instance_location) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  AEROGPU_D3D10_TRACEF_VERBOSE("DrawInstanced hDevice=%p vcpi=%u ic=%u startV=%u startI=%u",
+                               hDevice.pDrvPrivate,
+                               vertex_count_per_instance,
+                               instance_count,
+                               start_vertex_location,
+                               start_instance_location);
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+  if (vertex_count_per_instance == 0 || instance_count == 0) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackDrawStateLocked(dev);
+
+  // The bring-up software rasterizer does not understand instance data. Draw a
+  // single instance so staging readback tests still have sensible contents.
+  if (!SoftwareDrawTriangleListBringupLocked(dev, vertex_count_per_instance, start_vertex_location)) {
+    return;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  cmd->vertex_count = vertex_count_per_instance;
+  cmd->instance_count = instance_count;
+  cmd->first_vertex = start_vertex_location;
+  cmd->first_instance = start_instance_location;
 }
 
 void AEROGPU_APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, UINT index_count, UINT start_index, INT base_vertex) {
@@ -6691,6 +6741,41 @@ void AEROGPU_APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, UINT index_count, UI
   cmd->first_index = start_index;
   cmd->base_vertex = base_vertex;
   cmd->first_instance = 0;
+}
+
+void AEROGPU_APIENTRY DrawIndexedInstanced(D3D10DDI_HDEVICE hDevice,
+                                          UINT index_count_per_instance,
+                                          UINT instance_count,
+                                          UINT start_index_location,
+                                          INT base_vertex_location,
+                                          UINT start_instance_location) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  AEROGPU_D3D10_TRACEF_VERBOSE("DrawIndexedInstanced hDevice=%p icpi=%u ic=%u startIndex=%u baseVertex=%d startI=%u",
+                               hDevice.pDrvPrivate,
+                               index_count_per_instance,
+                               instance_count,
+                               start_index_location,
+                               base_vertex_location,
+                               start_instance_location);
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+  if (index_count_per_instance == 0 || instance_count == 0) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackDrawStateLocked(dev);
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  cmd->index_count = index_count_per_instance;
+  cmd->instance_count = instance_count;
+  cmd->first_index = start_index_location;
+  cmd->base_vertex = base_vertex_location;
+  cmd->first_instance = start_instance_location;
 }
 
 HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRESENT* pPresent) {
@@ -7628,8 +7713,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
 
   pCreateDevice->pDeviceFuncs->pfnDraw = &Draw;
   pCreateDevice->pDeviceFuncs->pfnDrawIndexed = &DrawIndexed;
-  AEROGPU_D3D10_ASSIGN_STUB(pfnDrawInstanced, DrawInstanced);
-  AEROGPU_D3D10_ASSIGN_STUB(pfnDrawIndexedInstanced, DrawIndexedInstanced);
+  pCreateDevice->pDeviceFuncs->pfnDrawInstanced = &DrawInstanced;
+  pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced = &DrawIndexedInstanced;
   AEROGPU_D3D10_ASSIGN_STUB(pfnDrawAuto, DrawAuto);
   pCreateDevice->pDeviceFuncs->pfnPresent = &Present;
   pCreateDevice->pDeviceFuncs->pfnFlush = &Flush;
@@ -7822,9 +7907,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
 
   pCreateDevice->pDeviceFuncs->pfnDraw = &Draw;
   pCreateDevice->pDeviceFuncs->pfnDrawIndexed = &DrawIndexed;
-  pCreateDevice->pDeviceFuncs->pfnDrawInstanced = &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawInstanced)>::Call;
-  pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced =
-      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnDrawInstanced = &DrawInstanced;
+  pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced = &DrawIndexedInstanced;
   pCreateDevice->pDeviceFuncs->pfnDrawAuto = &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawAuto)>::Call;
   pCreateDevice->pDeviceFuncs->pfnPresent = &Present;
   pCreateDevice->pDeviceFuncs->pfnFlush = &Flush;
