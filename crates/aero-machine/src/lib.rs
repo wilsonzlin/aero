@@ -1803,14 +1803,15 @@ impl MmioHandler for VgaLfbMmio {
 /// Size of the legacy VGA memory window (`0xA0000..0xC0000`) in bytes.
 ///
 /// This is aliased to `VRAM[0..LEGACY_VGA_WINDOW_SIZE]` when AeroGPU is enabled.
-const LEGACY_VGA_WINDOW_SIZE: usize = 0x20000; // 128KiB
+const LEGACY_VGA_WINDOW_SIZE: usize =
+    (aero_gpu_vga::VGA_LEGACY_MEM_END - aero_gpu_vga::VGA_LEGACY_MEM_START + 1) as usize;
 
 /// Offset within VRAM where the VBE linear framebuffer (LFB) begins.
 ///
 /// This keeps the LFB aligned to 64KiB and leaves the first 128KiB reserved for legacy VGA
 /// mappings.
 #[allow(dead_code)]
-pub const VBE_LFB_OFFSET: usize = 0x20000;
+pub const VBE_LFB_OFFSET: usize = LEGACY_VGA_WINDOW_SIZE;
 
 /// Total VRAM size exposed via AeroGPU BAR1.
 const AEROGPU_VRAM_SIZE: usize = aero_devices::pci::profile::AEROGPU_VRAM_SIZE as usize;
@@ -5024,8 +5025,8 @@ impl Machine {
 
                 // Minimal legacy VGA port decode (`0x3B0..0x3DF`).
                 self.io.register_range(
-                    0x03B0,
-                    0x0030, // 0x3B0..0x3DF
+                    aero_gpu_vga::VGA_LEGACY_IO_START,
+                    aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
                     Box::new(AeroGpuVgaPortWindow {
                         dev: aerogpu.clone(),
                     }),
@@ -5034,14 +5035,18 @@ impl Machine {
                 // Map the legacy VGA memory window (`0xA0000..0xC0000`) as an MMIO overlay that
                 // aliases `VRAM[0..128KiB]`.
                 self.mem
-                    .map_mmio_once(0xA0000, LEGACY_VGA_WINDOW_SIZE as u64, {
-                        let aerogpu = aerogpu.clone();
-                        move || {
-                            Box::new(AeroGpuLegacyVgaMmio {
-                                dev: aerogpu.clone(),
-                            })
-                        }
-                    });
+                    .map_mmio_once(
+                        aero_gpu_vga::VGA_LEGACY_MEM_START as u64,
+                        LEGACY_VGA_WINDOW_SIZE as u64,
+                        {
+                            let aerogpu = aerogpu.clone();
+                            move || {
+                                Box::new(AeroGpuLegacyVgaMmio {
+                                    dev: aerogpu.clone(),
+                                })
+                            }
+                        },
+                    );
             } else {
                 self.aerogpu = None;
                 self.aerogpu_mmio = None;
