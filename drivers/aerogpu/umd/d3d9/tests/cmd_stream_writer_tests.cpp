@@ -252,6 +252,30 @@ const aerogpu_cmd_create_shader_dxbc* FindCreateShaderByHandle(
   return nullptr;
 }
 
+size_t CountCreateShaderDxbcWithHandle(const uint8_t* buf, size_t capacity, aerogpu_handle_t shader_handle, uint32_t stage) {
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return 0;
+  }
+
+  size_t count = 0;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_CREATE_SHADER_DXBC) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
+      if (cmd->shader_handle == shader_handle && cmd->stage == stage) {
+        count++;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return count;
+}
+
 bool CheckLastBoundPixelShaderMatches(
     const uint8_t* buf,
     size_t capacity,
@@ -290,6 +314,30 @@ bool CheckLastBoundPixelShaderMatches(
     return false;
   }
   return true;
+}
+
+size_t CountCreateInputLayoutWithHandle(const uint8_t* buf, size_t capacity, aerogpu_handle_t layout_handle) {
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return 0;
+  }
+
+  size_t count = 0;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_CREATE_INPUT_LAYOUT) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_input_layout*>(hdr);
+      if (cmd->input_layout_handle == layout_handle) {
+        count++;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return count;
 }
 
 bool ValidateStream(const uint8_t* buf, size_t capacity) {
@@ -6691,13 +6739,7 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
     return false;
   }
-  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
-    return false;
-  }
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
-    return false;
-  }
-  if (!Check(cleanup.device_funcs.pfnSetSamplerState != nullptr, "SetSamplerState must be available")) {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
@@ -6706,6 +6748,14 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Reset so the stream only contains commands relevant to this test.
+  dev->cmd.reset();
 
   D3DDDIVIEWPORTINFO vp{};
   vp.X = 0.0f;
@@ -6719,7 +6769,8 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
 
-  // Create a tiny host-backed texture and upload some bytes.
+  // Create a tiny host-backed texture so stage0 can select a texture-sampling
+  // fixed-function pixel shader.
   D3D9DDIARG_CREATERESOURCE create_tex{};
   create_tex.type = 0;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
@@ -6732,8 +6783,8 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   create_tex.size = 0;
   create_tex.hResource.pDrvPrivate = nullptr;
   create_tex.pSharedHandle = nullptr;
-  create_tex.pKmdAllocPrivateData = nullptr;
-  create_tex.KmdAllocPrivateDataSize = 0;
+  create_tex.pPrivateDriverData = nullptr;
+  create_tex.PrivateDriverDataSize = 0;
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
@@ -6746,52 +6797,8 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   cleanup.hTex = create_tex.hResource;
   cleanup.has_tex = true;
 
-  D3D9DDIARG_LOCK lock{};
-  lock.hResource = create_tex.hResource;
-  lock.offset_bytes = 0;
-  lock.size_bytes = 0;
-  lock.flags = 0;
-  D3DDDI_LOCKEDBOX locked{};
-  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &locked);
-  if (!Check(hr == S_OK, "Lock(texture)")) {
-    return false;
-  }
-  if (!Check(locked.pData != nullptr, "Lock(texture) returns pData")) {
-    return false;
-  }
-
-  // Fill 2x2 pixels (BGRA/X8R8G8B8 in memory).
-  for (uint32_t y = 0; y < 2; ++y) {
-    uint8_t* row = reinterpret_cast<uint8_t*>(locked.pData) + static_cast<size_t>(y) * locked.RowPitch;
-    for (uint32_t x = 0; x < 2; ++x) {
-      row[x * 4 + 0] = 0xFF; // B
-      row[x * 4 + 1] = 0x00; // G
-      row[x * 4 + 2] = 0x00; // R
-      row[x * 4 + 3] = 0xFF; // X/A
-    }
-  }
-
-  D3D9DDIARG_UNLOCK unlock{};
-  unlock.hResource = create_tex.hResource;
-  unlock.offset_bytes = 0;
-  unlock.size_bytes = 0;
-  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
-  if (!Check(hr == S_OK, "Unlock(texture)")) {
-    return false;
-  }
-
   hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, create_tex.hResource);
   if (!Check(hr == S_OK, "SetTexture(0)")) {
-    return false;
-  }
-
-  // D3DSAMP_MINFILTER=6, D3DSAMP_MAGFILTER=5. D3DTEXF_POINT=1.
-  hr = cleanup.device_funcs.pfnSetSamplerState(create_dev.hDevice, 0, 6u, 1u);
-  if (!Check(hr == S_OK, "SetSamplerState(MINFILTER=POINT)")) {
-    return false;
-  }
-  hr = cleanup.device_funcs.pfnSetSamplerState(create_dev.hDevice, 0, 5u, 1u);
-  if (!Check(hr == S_OK, "SetSamplerState(MAGFILTER=POINT)")) {
     return false;
   }
 
@@ -6811,59 +6818,79 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
     float v;
   };
 
-  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  constexpr uint32_t kGreen = 0xFF00FF00u;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen, 0.0f, 0.0f};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen, 1.0f, 0.0f};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kGreen, 0.5f, 1.0f};
 
-  // Two triangles forming a quad.
-  Vertex verts[6]{};
-  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite, 0.0f, 0.0f};
-  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite, 1.0f, 0.0f};
-  verts[2] = {256.0f * 0.75f, 256.0f * 0.75f, 0.5f, 1.0f, kWhite, 1.0f, 1.0f};
-  verts[3] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite, 0.0f, 0.0f};
-  verts[4] = {256.0f * 0.75f, 256.0f * 0.75f, 0.5f, 1.0f, kWhite, 1.0f, 1.0f};
-  verts[5] = {256.0f * 0.25f, 256.0f * 0.75f, 0.5f, 1.0f, kWhite, 0.0f, 1.0f};
-
-  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 2, verts, sizeof(Vertex));
-  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
-    return false;
+  // Draw twice to ensure fixed-function internal objects are cached.
+  for (int i = 0; i < 2; ++i) {
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+    if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+      return false;
+    }
   }
 
-  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Internal fixed-function shaders should have been created.
-  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2,
-             "fixed-function fallback creates shaders")) {
+  if (!Check(dev->fvf_vertex_decl_tex1 != nullptr, "internal FVF vertex decl created")) {
     return false;
   }
-  // Verify we created the textured fixed-function shader pair (vs: 44 bytes, ps: 52 bytes).
-  {
-    size_t textured_vs = 0;
-    size_t textured_ps = 0;
-    size_t offset = sizeof(aerogpu_cmd_stream_header);
-    while (offset + sizeof(aerogpu_cmd_hdr) <= len) {
-      const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
-      if (hdr->opcode == AEROGPU_CMD_CREATE_SHADER_DXBC) {
-        const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
-        if (cmd->stage == AEROGPU_SHADER_STAGE_VERTEX && cmd->dxbc_size_bytes == 44u) {
-          textured_vs++;
-        } else if (cmd->stage == AEROGPU_SHADER_STAGE_PIXEL && cmd->dxbc_size_bytes == 52u) {
-          textured_ps++;
-        }
-      }
-      if (hdr->size_bytes == 0 || hdr->size_bytes > len - offset) {
-        break;
-      }
-      offset += hdr->size_bytes;
-    }
-    if (!Check(textured_vs >= 1, "textured fixed-function VS created")) {
-      return false;
-    }
-    if (!Check(textured_ps >= 1, "textured fixed-function PS created")) {
-      return false;
-    }
+  if (!Check(dev->fixedfunc_vs_tex1 != nullptr && dev->fixedfunc_ps_tex1 != nullptr,
+             "internal fixed-function shaders created")) {
+    return false;
+  }
+
+  const aerogpu_handle_t decl_handle = dev->fvf_vertex_decl_tex1->handle;
+  const aerogpu_handle_t vs_handle = dev->fixedfunc_vs_tex1->handle;
+  const aerogpu_handle_t ps_handle = dev->fixedfunc_ps_tex1->handle;
+
+  if (!Check(decl_handle != 0, "internal decl handle non-zero")) {
+    return false;
+  }
+  if (!Check(vs_handle != 0 && ps_handle != 0, "fixed-function shader handles non-zero")) {
+    return false;
+  }
+
+  // Verify internal decl blob matches the expected FVF layout.
+  const D3DVERTEXELEMENT9_COMPAT expected_decl[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+  if (!Check(dev->fvf_vertex_decl_tex1->blob.size() == sizeof(expected_decl), "FVF TEX1 decl blob size")) {
+    return false;
+  }
+  if (!Check(std::memcmp(dev->fvf_vertex_decl_tex1->blob.data(), expected_decl, sizeof(expected_decl)) == 0,
+             "FVF TEX1 decl blob matches expected layout")) {
+    return false;
+  }
+
+  if (!Check(CountCreateInputLayoutWithHandle(buf, len, decl_handle) == 1,
+             "fixed-function TEX1 path creates internal input layout once")) {
+    return false;
+  }
+  if (!Check(CountCreateShaderDxbcWithHandle(buf, len, vs_handle, AEROGPU_SHADER_STAGE_VERTEX) == 1,
+             "fixed-function TEX1 path creates internal VS once")) {
+    return false;
+  }
+  if (!Check(CountCreateShaderDxbcWithHandle(buf, len, ps_handle, AEROGPU_SHADER_STAGE_PIXEL) == 1,
+             "fixed-function TEX1 path creates internal PS once")) {
+    return false;
+  }
+
+  const CmdLoc set_layout = FindLastOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!Check(set_layout.hdr != nullptr, "set_input_layout emitted")) {
+    return false;
+  }
+  const auto* set_cmd = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(set_layout.hdr);
+  if (!Check(set_cmd->input_layout_handle == decl_handle, "set_input_layout binds TEX1 internal decl")) {
+    return false;
   }
 
   const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
@@ -6871,16 +6898,68 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
   const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
-  if (!Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles")) {
+  if (!Check(bind_cmd->vs == vs_handle, "bind_shaders VS matches fixed-function TEX1 VS")) {
+    return false;
+  }
+  if (!Check(bind_cmd->ps == ps_handle, "bind_shaders PS matches fixed-function TEX1 PS")) {
     return false;
   }
 
+  // Validate that the XYZRHW vertices were converted to clip-space and that the
+  // extra TEXCOORD field is preserved by the conversion.
   const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
   if (!Check(draw.hdr != nullptr, "draw emitted")) {
     return false;
   }
+  const CmdLoc upload = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "upload_resource emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource size matches vertex data")) {
+    return false;
+  }
 
-  return true;
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  float u0 = 0.0f;
+  float v0 = 0.0f;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 20, sizeof(float));
+  std::memcpy(&v0, payload + 24, sizeof(float));
+
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
+  if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "XYZRHW|TEX1->clip: x0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected_y0) < 1e-6f, "XYZRHW|TEX1->clip: y0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZRHW|TEX1->clip: z preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - 1.0f) < 1e-6f, "XYZRHW|TEX1->clip: w preserved")) {
+    return false;
+  }
+  if (!Check(c0 == kGreen, "XYZRHW|TEX1->clip: diffuse color preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZRHW|TEX1->clip: u preserved")) {
+    return false;
+  }
+  return Check(std::fabs(v0 - verts[0].v) < 1e-6f, "XYZRHW|TEX1->clip: v preserved");
 }
 
 bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
@@ -7415,66 +7494,29 @@ bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
              "fixed-function fallback creates shaders")) {
     return false;
   }
+  if (!Check(dev->fixedfunc_vs_tex1 != nullptr && dev->fixedfunc_ps_tex1 != nullptr,
+             "fixed-function TEX1 shaders cached on device")) {
+    return false;
+  }
+
   const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
   if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
     return false;
   }
   const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
-  if (!Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles")) {
+  if (!Check(bind_cmd->vs == dev->fixedfunc_vs_tex1->handle, "bind_shaders uses TEX1 fixed-function VS")) {
+    return false;
+  }
+  if (!Check(bind_cmd->ps == dev->fixedfunc_ps_tex1->handle, "bind_shaders uses TEX1 fixed-function PS")) {
     return false;
   }
 
-  // Validate that the XYZRHW vertices were converted to clip-space and that the
-  // extra TEXCOORD field is preserved by the conversion.
-  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
-  if (!Check(upload.hdr != nullptr, "upload_resource emitted")) {
-    return false;
-  }
-  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource offset is 0")) {
-    return false;
-  }
-  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource size matches vertex data")) {
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "draw emitted")) {
     return false;
   }
 
-  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
-  float x0 = 0.0f;
-  float y0 = 0.0f;
-  float z0 = 0.0f;
-  float w0 = 0.0f;
-  uint32_t c0 = 0;
-  float u0 = 0.0f;
-  float v0 = 0.0f;
-  std::memcpy(&x0, payload + 0, sizeof(float));
-  std::memcpy(&y0, payload + 4, sizeof(float));
-  std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
-  std::memcpy(&u0, payload + 20, sizeof(float));
-  std::memcpy(&v0, payload + 24, sizeof(float));
-
-  const float expected_x0 = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
-  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
-  if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "XYZRHW|TEX1->clip: x0 matches half-pixel convention")) {
-    return false;
-  }
-  if (!Check(std::fabs(y0 - expected_y0) < 1e-6f, "XYZRHW|TEX1->clip: y0 matches half-pixel convention")) {
-    return false;
-  }
-  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZRHW|TEX1->clip: z preserved")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - 1.0f) < 1e-6f, "XYZRHW|TEX1->clip: w preserved")) {
-    return false;
-  }
-  if (!Check(c0 == kGreen, "XYZRHW|TEX1->clip: diffuse color preserved")) {
-    return false;
-  }
-  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZRHW|TEX1->clip: u preserved")) {
-    return false;
-  }
-  return Check(std::fabs(v0 - verts[0].v) < 1e-6f, "XYZRHW|TEX1->clip: v preserved");
+  return true;
 }
 
 bool TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
