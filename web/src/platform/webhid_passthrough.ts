@@ -1,7 +1,9 @@
 import {
   HID_INPUT_REPORT_RECORD_HEADER_BYTES,
-  writeHidInputReportRingRecord,
+  HID_INPUT_REPORT_RECORD_MAGIC,
+  HID_INPUT_REPORT_RECORD_VERSION,
 } from "../hid/hid_input_report_ring";
+import { computeInputReportPayloadByteLengths } from "../hid/hid_report_sizes";
 import { normalizeCollections, type HidCollectionInfo } from "../hid/webhid_normalize";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
@@ -101,6 +103,7 @@ function getBrowserSiteSettingsUrl(): string {
 }
 
 const NOOP_TARGET: HidPassthroughTarget = { postMessage: () => {} };
+const UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES = 64;
 
 export class WebHidPassthroughManager {
   readonly #hid: HidLike | null;
@@ -440,20 +443,64 @@ export class WebHidPassthroughManager {
         throw err;
       }
 
+      const expectedInputPayloadBytes = computeInputReportPayloadByteLengths(normalizedCollections);
+      const warned = new Set<string>();
+      const warnOnce = (key: string, message: string): void => {
+        if (warned.has(key)) return;
+        warned.add(key);
+        console.warn(message);
+      };
+
       const onInputReport = (event: HIDInputReportEvent): void => {
         try {
-          const src = new Uint8Array(event.data.buffer, event.data.byteOffset, event.data.byteLength);
+          const view = event.data;
+          if (!(view instanceof DataView)) return;
+
+          const reportId = (typeof event.reportId === "number" ? event.reportId : 0) >>> 0;
+          const srcLen = view.byteLength;
+
+          const expected = expectedInputPayloadBytes.get(reportId);
+          let destLen: number;
+          if (expected !== undefined) {
+            destLen = expected;
+            if (srcLen > expected) {
+              warnOnce(
+                `${reportId}:truncated`,
+                `[webhid] inputreport length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); truncating`,
+              );
+            } else if (srcLen < expected) {
+              warnOnce(
+                `${reportId}:padded`,
+                `[webhid] inputreport length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); zero-padding`,
+              );
+            }
+          } else if (srcLen > UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES) {
+            destLen = UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES;
+            warnOnce(
+              `${reportId}:hardCap`,
+              `[webhid] inputreport reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES}`,
+            );
+          } else {
+            destLen = srcLen;
+          }
+
+          const copyLen = Math.min(srcLen, destLen);
+          const src = new Uint8Array(view.buffer, view.byteOffset, copyLen);
           const ring = this.#inputReportRing;
           if (ring && this.#canUseSharedMemory()) {
             const ts = (event as unknown as { timeStamp?: unknown }).timeStamp;
             const tsMs = typeof ts === "number" ? (Math.max(0, Math.floor(ts)) >>> 0) : 0;
-            const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + src.byteLength, (dest) => {
-              writeHidInputReportRingRecord(dest, {
-                deviceId: numericDeviceId >>> 0,
-                reportId: event.reportId >>> 0,
-                tsMs,
-                data: src,
-              });
+            const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + destLen, (dest) => {
+              const dv = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
+              dv.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
+              dv.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
+              dv.setUint32(8, numericDeviceId >>> 0, true);
+              dv.setUint32(12, reportId, true);
+              dv.setUint32(16, tsMs, true);
+              dv.setUint32(20, destLen >>> 0, true);
+              const payload = dest.subarray(HID_INPUT_REPORT_RECORD_HEADER_BYTES);
+              payload.set(src);
+              if (copyLen < destLen) payload.fill(0, copyLen);
             });
             if (ok) return;
             const status = this.#status;
@@ -467,10 +514,10 @@ export class WebHidPassthroughManager {
             return;
           }
 
-          const out = new Uint8Array(src.byteLength);
+          const out = new Uint8Array(destLen);
           out.set(src);
           const data = out.buffer;
-          this.#target.postMessage({ type: "hid:inputReport", deviceId, reportId: event.reportId, data }, [data]);
+          this.#target.postMessage({ type: "hid:inputReport", deviceId, reportId, data }, [data]);
         } catch (err) {
           console.warn("WebHID inputreport forwarding failed", err);
         }

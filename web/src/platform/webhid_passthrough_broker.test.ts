@@ -23,7 +23,7 @@ class FakeHidDevice {
   readonly vendorId = 0x1234;
   readonly productId = 0xabcd;
   readonly productName = "Fake HID";
-  readonly collections: HIDCollectionInfo[] = [
+  collections: HIDCollectionInfo[] = [
     {
       usagePage: 1,
       usage: 2,
@@ -132,6 +132,48 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     const transfer = target.posted[2]!.transfer;
     expect(transfer).toHaveLength(1);
     expect(transfer?.[0]).toBe(data);
+  });
+
+  it("clamps oversized inputreport payloads to the expected report size before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [
+            {
+              reportId: 1,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3, 4], 0);
+      device.dispatchInputReport(1, new DataView(huge.buffer));
+
+      const input = target.posted.find((p) => p.message.type === "hid:inputReport")!.message as any;
+      expect(input.deviceId).toBe(deviceId);
+      expect(input.reportId).toBe(1);
+      const data = input.data as ArrayBuffer;
+      expect(new Uint8Array(data).byteLength).toBe(4);
+      expect(Array.from(new Uint8Array(data))).toEqual([1, 2, 3, 4]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("handles hid:sendReport from the worker and detaches cleanly", async () => {
@@ -251,5 +293,57 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     const record = decodeHidInputReportRingRecord(payload!);
     expect(record).toMatchObject({ deviceId: attach.numericDeviceId, reportId: 7, tsMs: 0 });
     expect(Array.from(record!.data)).toEqual([0xad, 0xbe]);
+  });
+
+  it("clamps oversized inputreport payloads before writing to the configured SAB ring", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [
+            {
+              reportId: 1,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      const kind = 1;
+      const sab = createIpcBuffer([{ kind, capacityBytes: 4096 }]).buffer;
+      const ring = openRingByKind(sab, kind);
+      const status = new Int32Array(new SharedArrayBuffer(64 * 4));
+      manager.setInputReportRing(ring, status);
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((p) => p.message.type === "hid:attach")!.message as any;
+      expect(typeof attach.numericDeviceId).toBe("number");
+
+      const before = target.posted.length;
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3, 4], 0);
+      device.dispatchInputReport(1, new DataView(huge.buffer));
+      expect(target.posted.length).toBe(before);
+
+      const payload = ring.tryPop();
+      expect(payload).not.toBeNull();
+      const record = decodeHidInputReportRingRecord(payload!);
+      expect(record).toMatchObject({ deviceId: attach.numericDeviceId, reportId: 1, tsMs: 0 });
+      expect(record!.data.byteLength).toBe(4);
+      expect(Array.from(record!.data)).toEqual([1, 2, 3, 4]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
