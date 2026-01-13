@@ -2789,6 +2789,29 @@ impl Machine {
             .map_err(js_error)
     }
 
+    /// Open (or create) an OPFS-backed disk image, attach it as the IDE primary channel master ATA
+    /// disk, and set the snapshot overlay reference (`DISKS` entry) for `disk_id=2`.
+    ///
+    /// This sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// This method is intentionally separate from [`Machine::attach_ide_primary_master_disk_opfs`]
+    /// so callers do not silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_ide_primary_master_disk_opfs_and_set_overlay_ref(
+        &mut self,
+        path: String,
+        create: bool,
+        size_bytes: u64,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.attach_ide_primary_master_disk_opfs(path, create, size_bytes)
+            .await?;
+        self.set_ide_primary_master_ata_overlay_ref(&overlay_path, "");
+        Ok(())
+    }
+
     /// Open an existing OPFS-backed disk image (using the file's current size) and attach it as
     /// the IDE primary channel master ATA disk.
     ///
@@ -2810,6 +2833,27 @@ impl Machine {
         self.inner
             .attach_ide_primary_master_disk(Box::new(backend))
             .map_err(js_error)
+    }
+
+    /// Open an existing OPFS-backed disk image, attach it as the IDE primary channel master ATA
+    /// disk, and set the snapshot overlay reference (`DISKS` entry) for `disk_id=2`.
+    ///
+    /// This sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// This method is intentionally separate from
+    /// [`Machine::attach_ide_primary_master_disk_opfs_existing`] so callers do not silently
+    /// overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.attach_ide_primary_master_disk_opfs_existing(path).await?;
+        self.set_ide_primary_master_ata_overlay_ref(&overlay_path, "");
+        Ok(())
     }
 
     /// Open an existing OPFS-backed disk image, attach it as the machine's canonical disk, and set
