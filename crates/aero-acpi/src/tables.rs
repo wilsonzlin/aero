@@ -1488,4 +1488,188 @@ mod tests {
             "expected _PIC method to program the IMCR (0x22/0x23) for PIC/APIC routing"
         );
     }
+
+    #[test]
+    fn mcfg_emitted_with_expected_allocation_and_checksum() {
+        let cfg = AcpiConfig {
+            pcie_ecam_base: 0xB000_0000,
+            pcie_segment: 0,
+            pcie_start_bus: 0,
+            pcie_end_bus: 0xFF,
+            ..Default::default()
+        };
+        let placement = AcpiPlacement::default();
+        let tables = AcpiTables::build(&cfg, placement);
+
+        assert!(
+            tables.mcfg.is_some(),
+            "expected AcpiTables::build to emit MCFG when pcie_ecam_base is non-zero"
+        );
+        let mcfg = tables.mcfg.as_ref().unwrap();
+
+        // SDT header.
+        assert_eq!(&mcfg[0..4], b"MCFG");
+        assert_eq!(u32::from_le_bytes(mcfg[4..8].try_into().unwrap()) as usize, mcfg.len());
+
+        // One allocation entry follows an 8-byte reserved region.
+        assert_eq!(mcfg.len(), 36 + 8 + 16);
+        let alloc = &mcfg[44..60];
+        let base = u64::from_le_bytes(alloc[0..8].try_into().unwrap());
+        let segment = u16::from_le_bytes(alloc[8..10].try_into().unwrap());
+        let start_bus = alloc[10];
+        let end_bus = alloc[11];
+
+        assert_eq!(base, cfg.pcie_ecam_base);
+        assert_eq!(segment, cfg.pcie_segment);
+        assert_eq!(start_bus, cfg.pcie_start_bus);
+        assert_eq!(end_bus, cfg.pcie_end_bus);
+
+        // Checksum: sum of all bytes must wrap to 0.
+        let sum: u8 = mcfg.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+        assert_eq!(sum, 0, "MCFG checksum invalid");
+    }
+
+    fn parse_pci_mmio_dword_descriptors(crs: &[u8]) -> Vec<(u32, u32, u32)> {
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        while i < crs.len() {
+            let tag = crs[i];
+            if tag == 0x79 {
+                break;
+            }
+
+            // Small vs large item format.
+            if (tag & 0x80) == 0 {
+                let len = (tag & 0x07) as usize;
+                i = i.saturating_add(1 + len);
+                continue;
+            }
+
+            if i + 3 > crs.len() {
+                break;
+            }
+            let len = u16::from_le_bytes([crs[i + 1], crs[i + 2]]) as usize;
+            let total = 3 + len;
+            if i + total > crs.len() {
+                break;
+            }
+
+            // We only emit one kind of DWord address descriptor here (for PCI MMIO).
+            if tag == 0x87 && len == 0x0017 {
+                let desc = &crs[i..i + total];
+                assert_eq!(desc[3], 0x00, "expected Memory address space descriptor");
+                assert_eq!(desc[4], 0x0D, "unexpected general flags");
+                assert_eq!(desc[5], 0x06, "unexpected type-specific flags");
+
+                let min = u32::from_le_bytes(desc[10..14].try_into().unwrap());
+                let max = u32::from_le_bytes(desc[14..18].try_into().unwrap());
+                let length = u32::from_le_bytes(desc[22..26].try_into().unwrap());
+                out.push((min, max, length));
+            }
+
+            i += total;
+        }
+        out
+    }
+
+    #[test]
+    fn pci0_crs_splits_mmio_window_around_ecam_when_overlapping() {
+        let cfg = AcpiConfig {
+            pcie_ecam_base: 0xB000_0000,
+            pcie_segment: 0,
+            pcie_start_bus: 0,
+            pcie_end_bus: 0xFF,
+            pci_mmio_base: 0xA000_0000,
+            pci_mmio_size: 0x4000_0000,
+            ..Default::default()
+        };
+
+        let crs = pci0_crs(&cfg);
+
+        let mmio_start = u64::from(cfg.pci_mmio_base);
+        let mmio_end = mmio_start + u64::from(cfg.pci_mmio_size);
+        let ecam_start = cfg.pcie_ecam_base;
+        let bus_count = u64::from(cfg.pcie_end_bus - cfg.pcie_start_bus) + 1;
+        let ecam_end = ecam_start + bus_count * (1 << 20);
+
+        assert!(
+            mmio_start < ecam_start && ecam_end < mmio_end,
+            "test config should have overlapping ECAM inside the PCI MMIO window"
+        );
+
+        // Expect two MMIO descriptors: [MMIO..ECAM) and [ECAM_end..MMIO_end).
+        let mmio_descs = parse_pci_mmio_dword_descriptors(&crs);
+        assert_eq!(
+            mmio_descs.len(),
+            2,
+            "expected PCI0._CRS to contain exactly two DWord memory descriptors when ECAM overlaps"
+        );
+
+        let expected = [
+            (
+                mmio_start as u32,
+                (ecam_start - 1) as u32,
+                (ecam_start - mmio_start) as u32,
+            ),
+            (
+                ecam_end as u32,
+                (mmio_end - 1) as u32,
+                (mmio_end - ecam_end) as u32,
+            ),
+        ];
+        assert_eq!(
+            mmio_descs.as_slice(),
+            expected.as_slice(),
+            "PCI0 MMIO window was not split around ECAM as expected"
+        );
+
+        // Sanity: ensure no descriptor overlaps the ECAM window.
+        for &(min, max, _) in &mmio_descs {
+            let r_start = u64::from(min);
+            let r_end = u64::from(max) + 1;
+            assert!(
+                r_end <= ecam_start || r_start >= ecam_end,
+                "MMIO descriptor [{r_start:#x}..{r_end:#x}) overlaps ECAM [{ecam_start:#x}..{ecam_end:#x})"
+            );
+        }
+
+        // Make sure the exact byte encoding matches the descriptor helpers (catches regressions in
+        // descriptor packing as well as range splitting).
+        let expected_before = dword_addr_space_descriptor(
+            AddrSpaceDescriptorHeader {
+                resource_type: 0x00,
+                general_flags: 0x0D,
+                type_specific_flags: 0x06,
+            },
+            AddrSpaceDescriptorRange {
+                granularity: 0,
+                min: mmio_start as u32,
+                max: (ecam_start - 1) as u32,
+                translation: 0,
+                length: (ecam_start - mmio_start) as u32,
+            },
+        );
+        let expected_after = dword_addr_space_descriptor(
+            AddrSpaceDescriptorHeader {
+                resource_type: 0x00,
+                general_flags: 0x0D,
+                type_specific_flags: 0x06,
+            },
+            AddrSpaceDescriptorRange {
+                granularity: 0,
+                min: ecam_end as u32,
+                max: (mmio_end - 1) as u32,
+                translation: 0,
+                length: (mmio_end - ecam_end) as u32,
+            },
+        );
+        assert!(
+            contains_subslice(&crs, &expected_before),
+            "expected PCI0._CRS to contain MMIO descriptor below ECAM"
+        );
+        assert!(
+            contains_subslice(&crs, &expected_after),
+            "expected PCI0._CRS to contain MMIO descriptor above ECAM"
+        );
+    }
 }
