@@ -11,7 +11,7 @@
 //!
 //! The JS/TS implementation mirrors this exactly. See `docs/ipc-protocol.md`.
 
-use crate::layout::{align_up, ring_ctrl, RECORD_ALIGN, WRAP_MARKER};
+use crate::layout::{ring_ctrl, RECORD_ALIGN, WRAP_MARKER};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,11 +78,12 @@ impl RingBuffer {
 
     pub fn try_push(&self, payload: &[u8]) -> Result<(), PushError> {
         let payload_len = payload.len();
-        if payload_len > (u32::MAX as usize).saturating_sub(4) {
+        // Payload length is stored as a `u32`, and `WRAP_MARKER` reserves `u32::MAX` as a sentinel.
+        if payload_len > (u32::MAX as usize).saturating_sub(1) {
             return Err(PushError::TooLarge);
         }
 
-        let record_size = align_up(4 + payload_len, RECORD_ALIGN);
+        let record_size = record_size_checked(payload_len).ok_or(PushError::TooLarge)?;
         if record_size > self.cap as usize {
             return Err(PushError::TooLarge);
         }
@@ -350,5 +351,5 @@ pub fn max_payload_len_for_capacity(capacity_bytes: usize) -> usize {
 
 /// Compute the number of bytes the next record will consume in the buffer.
 pub fn record_size(payload_len: usize) -> usize {
-    align_up(4 + payload_len, RECORD_ALIGN)
+    record_size_checked(payload_len).unwrap_or(usize::MAX)
 }

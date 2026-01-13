@@ -15,7 +15,7 @@
 //! Note: Browsers currently allow `Atomics.wait` only in worker contexts.
 
 use crate::layout::{
-    align_up, ipc_header, queue_desc, ring_ctrl, IPC_MAGIC, IPC_VERSION, RECORD_ALIGN, WRAP_MARKER,
+    ipc_header, queue_desc, ring_ctrl, IPC_MAGIC, IPC_VERSION, RECORD_ALIGN, WRAP_MARKER,
 };
 use crate::ring::PopError;
 use wasm_bindgen::prelude::*;
@@ -82,7 +82,15 @@ impl SharedRingBuffer {
     /// Non-blocking MPSC-safe push.
     pub fn try_push(&self, payload: &[u8]) -> bool {
         let payload_len = payload.len();
-        let record_size = align_up(4 + payload_len, RECORD_ALIGN);
+        // Payload length is stored as a `u32`, and `WRAP_MARKER` reserves `u32::MAX` as a sentinel.
+        if payload_len > (u32::MAX as usize).saturating_sub(1) {
+            return false;
+        }
+
+        let record_size = match record_size_checked(payload_len) {
+            Some(v) => v,
+            None => return false,
+        };
         if record_size > self.cap as usize {
             return false;
         }
@@ -237,7 +245,13 @@ impl SharedRingBuffer {
 
     /// Block until `payload` can be pushed (worker contexts only).
     pub fn push_blocking(&self, payload: &[u8]) -> Result<(), JsValue> {
-        let record_size = align_up(4 + payload.len(), RECORD_ALIGN);
+        let payload_len = payload.len();
+        if payload_len > (u32::MAX as usize).saturating_sub(1) {
+            return Err(JsValue::from_str("payload too large for ring buffer"));
+        }
+
+        let record_size = record_size_checked(payload_len)
+            .ok_or_else(|| JsValue::from_str("payload too large for ring buffer"))?;
         if record_size > self.cap as usize {
             return Err(JsValue::from_str("payload too large for ring buffer"));
         }
