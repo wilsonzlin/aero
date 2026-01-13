@@ -495,11 +495,33 @@ The browser runtime already has unit tests for the TypeScript PCI wrapper:
 
 - `web/src/io/devices/ehci.test.ts` (MMIO forwarding/masking, INTx level→edge transitions, tick→frame conversion)
 
-In the web runtime, include a dev-facing panel (similar to existing WebUSB panels) that can:
+#### Current dev harness: WebUSB EHCI passthrough harness (not a full schedule engine)
 
-- display key EHCI registers live (`USBCMD/USBSTS/FRINDEX/PORTSC`)
-- attach/detach synthetic devices to ports
-- run a minimal enumeration/polling harness and print progress (QH/qTD state, interrupt causes)
+The repo includes a developer-facing “EHCI-like” WebUSB passthrough harness that is deliberately
+**not** the full EHCI DMA schedule walker. It exists to validate the WebUSB action↔completion
+plumbing and basic EHCI-style interrupt/status reporting (`USBSTS` bits + IRQ level) without needing
+a guest OS EHCI driver.
+
+Implementation pointers:
+
+- WASM harness: `crates/aero-wasm/src/webusb_ehci_passthrough_harness.rs` (`WebUsbEhciPassthroughHarness`)
+- Worker runtime pump + message schema: `web/src/usb/webusb_ehci_harness_runtime.ts`
+- UI panel (IO worker): `web/src/main.ts` (`renderWebUsbEhciHarnessWorkerPanel`)
+
+The panel can:
+
+- attach/detach the harness “controller” and a passthrough device
+- execute basic control transfers (`GET_DESCRIPTOR(Device)` / `GET_DESCRIPTOR(Config)`)
+- display:
+  - last forwarded `UsbHostAction` and last applied `UsbHostCompletion`
+  - `USBSTS` bits (`USBINT`/`USBERRINT`/`PCD`) and the derived INTx level
+  - descriptor bytes received
+
+#### Future: full EHCI controller introspection panel
+
+Once EHCI schedule walking (async/periodic) is implemented, expand the dev harness/panel to show
+controller-level state (e.g. `USBCMD/USBSTS/FRINDEX/PORTSC`) and schedule traversal (QH/qTD overlay
+state, IOC behavior, periodic polling cadence).
 
 This is invaluable for debugging timing and schedule traversal issues that are hard to see from
 inside the guest OS alone.
