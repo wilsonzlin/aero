@@ -7,7 +7,7 @@ use crate::sm3::ir::{
     Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
     Stmt,
 };
-use crate::sm3::types::ShaderStage;
+use crate::sm3::types::{ShaderStage, ShaderVersion};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WgslError {
@@ -39,6 +39,48 @@ pub struct WgslOutput {
 pub struct BindGroupLayout {
     /// Binding 0 is always the constants buffer.
     pub sampler_bindings: HashMap<u32, (u32, u32)>, // sampler_index -> (texture_binding, sampler_binding)
+}
+
+/// Output of SM2/SM3 bytecode → WGSL translation.
+#[derive(Debug, Clone)]
+pub struct WgslTranslation {
+    pub version: ShaderVersion,
+    pub wgsl: String,
+    pub entry_point: &'static str,
+    pub bind_group_layout: BindGroupLayout,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Sm3WgslError {
+    #[error(transparent)]
+    Decode(#[from] crate::sm3::decode::DecodeError),
+    #[error(transparent)]
+    Build(#[from] crate::sm3::ir_builder::BuildError),
+    #[error(transparent)]
+    Verify(#[from] crate::sm3::verify::VerifyError),
+    #[error(transparent)]
+    Wgsl(#[from] WgslError),
+}
+
+/// Translates a raw D3D9 SM2/SM3 token stream (DWORD bytecode) to WGSL.
+///
+/// The input must be the legacy D3D9 token stream itself (i.e. the `SHDR`/`SHEX` payload), not a
+/// DXBC container.
+pub fn translate_to_wgsl(token_stream: &[u8]) -> Result<WgslTranslation, Sm3WgslError> {
+    let decoded = crate::sm3::decode_u8_le_bytes(token_stream)?;
+    let ir = crate::sm3::build_ir(&decoded)?;
+    crate::sm3::verify_ir(&ir)?;
+    let WgslOutput {
+        wgsl,
+        entry_point,
+        bind_group_layout,
+    } = generate_wgsl(&ir)?;
+    Ok(WgslTranslation {
+        version: ir.version,
+        wgsl,
+        entry_point,
+        bind_group_layout,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

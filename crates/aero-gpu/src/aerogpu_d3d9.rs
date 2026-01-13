@@ -15,8 +15,9 @@
 
 use std::collections::HashMap;
 
-use aero_d3d9::dxbc::{self, DxbcError};
-use aero_d3d9::shader::{self, ShaderError, ShaderStage, ShaderVersion};
+use aero_d3d9::sm3::wgsl::{BindGroupLayout, Sm3WgslError};
+use aero_d3d9::sm3::{ShaderStage, ShaderVersion};
+use aero_dxbc::{DxbcError, DxbcFile};
 use tracing::debug;
 
 /// On-the-wire shader blob format carried by `CREATE_SHADER_DXBC`.
@@ -44,8 +45,8 @@ pub enum D3d9ShaderCacheError {
     DxbcMissingShaderChunk,
     #[error("dxbc error: {0}")]
     Dxbc(#[from] DxbcError),
-    #[error("shader translation error: {0}")]
-    Shader(#[from] ShaderError),
+    #[error("sm3 translation error: {0}")]
+    Sm3(#[from] Sm3WgslError),
     #[error("shader handle {0} already exists")]
     HandleAlreadyExists(u32),
     #[error("shader stage mismatch: expected {expected:?}, found {found:?}")]
@@ -62,7 +63,7 @@ pub struct CachedD3d9Shader {
     pub version: ShaderVersion,
     pub wgsl: String,
     pub entry_point: &'static str,
-    pub bind_group_layout: shader::BindGroupLayout,
+    pub bind_group_layout: BindGroupLayout,
     pub module: wgpu::ShaderModule,
 }
 
@@ -113,38 +114,35 @@ impl D3d9ShaderCache {
             std::collections::hash_map::Entry::Occupied(entry) => *entry.key(),
             std::collections::hash_map::Entry::Vacant(entry) => {
                 let token_stream = extract_token_stream(payload_format, bytes)?;
-                let program = shader::parse(token_stream)?;
+                let translated = aero_d3d9::sm3::wgsl::translate_to_wgsl(token_stream)?;
 
                 let hash = *entry.key();
                 debug!(
                     shader_hash = %hash.to_hex(),
                     format = ?payload_format,
-                    stage = ?program.version.stage,
-                    sm_major = program.version.model.major,
-                    sm_minor = program.version.model.minor,
+                    stage = ?translated.version.stage,
+                    sm_major = translated.version.major,
+                    sm_minor = translated.version.minor,
                     "aerogpu d3d9 shader payload"
                 );
 
-                let ir = shader::to_ir(&program);
-                let wgsl = shader::generate_wgsl(&ir)?;
-
                 let label = format!(
                     "aerogpu-d3d9-shader-{:?}-{}",
-                    program.version.stage,
+                    translated.version.stage,
                     hash.to_hex()
                 );
                 let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(&label),
-                    source: wgpu::ShaderSource::Wgsl(wgsl.wgsl.clone().into()),
+                    source: wgpu::ShaderSource::Wgsl(translated.wgsl.clone().into()),
                 });
 
                 entry.insert(CachedD3d9Shader {
                     hash,
                     payload_format,
-                    version: program.version,
-                    wgsl: wgsl.wgsl,
-                    entry_point: wgsl.entry_point,
-                    bind_group_layout: wgsl.bind_group_layout,
+                    version: translated.version,
+                    wgsl: translated.wgsl,
+                    entry_point: translated.entry_point,
+                    bind_group_layout: translated.bind_group_layout,
                     module,
                 });
                 hash
@@ -177,13 +175,10 @@ fn extract_token_stream(
     match format {
         ShaderPayloadFormat::D3d9TokenStream => Ok(bytes),
         ShaderPayloadFormat::Dxbc => {
-            match dxbc::extract_shader_bytecode(bytes) {
-                Ok(token_stream) => Ok(token_stream),
-                Err(DxbcError::MissingShaderChunk) => {
-                    Err(D3d9ShaderCacheError::DxbcMissingShaderChunk)
-                }
-                Err(err) => Err(D3d9ShaderCacheError::Dxbc(err)),
-            }
+            let dxbc = DxbcFile::parse(bytes)?;
+            dxbc.find_first_shader_chunk()
+                .map(|chunk| chunk.data)
+                .ok_or(D3d9ShaderCacheError::DxbcMissingShaderChunk)
         }
     }
 }

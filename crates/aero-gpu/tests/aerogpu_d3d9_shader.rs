@@ -1,7 +1,7 @@
 mod common;
 
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
-use aero_d3d9::shader::ShaderStage;
+use aero_d3d9::sm3::ShaderStage;
 use aero_gpu::aerogpu_d3d9::{D3d9ShaderCache, ShaderPayloadFormat};
 use aero_gpu::{readback_rgba8, TextureRegion};
 
@@ -212,34 +212,27 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
         ..Default::default()
     });
 
-    // Match `aero-d3d9` token stream shader translation binding contract:
-    // - group(0): constants
-    // - group(1): VS samplers
-    // - group(2): PS samplers
-    //
-    // The test vertex shader does not sample textures, so group(1) can be empty.
-    let constants_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("d3d9 constants bgl"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(512 * 16),
-            },
-            count: None,
-        }],
-    });
-    let vs_samplers_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("d3d9 vs samplers bgl"),
-        entries: &[],
-    });
-    let ps_samplers_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("d3d9 ps samplers bgl"),
+    // Match `aero-d3d9::sm3::wgsl` binding contract:
+    // - group(0): constants buffer + texture/sampler bindings
+    //   - binding(0): constants buffer
+    //   - binding(1 + 2*s): texture for sampler s#
+    //   - binding(2 + 2*s): sampler for sampler s#
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("d3d9 sm3 shader bgl"),
         entries: &[
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(512 * 16),
+                },
+                count: None,
+            },
+            // s0 texture.
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -248,8 +241,9 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
                 },
                 count: None,
             },
+            // s0 sampler.
             wgpu::BindGroupLayoutEntry {
-                binding: 1,
+                binding: 2,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
@@ -257,29 +251,20 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
         ],
     });
 
-    let constants_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("d3d9 constants bg"),
-        layout: &constants_bgl,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: constants.as_entire_binding(),
-        }],
-    });
-    let vs_samplers_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("d3d9 vs samplers bg"),
-        layout: &vs_samplers_bgl,
-        entries: &[],
-    });
-    let ps_samplers_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("d3d9 ps samplers bg"),
-        layout: &ps_samplers_bgl,
+    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("d3d9 sm3 shader bg"),
+        layout: &bgl,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&texture_view),
+                resource: constants.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
+                resource: wgpu::BindingResource::TextureView(&texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
                 resource: wgpu::BindingResource::Sampler(&sampler),
             },
         ],
@@ -287,7 +272,7 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("d3d9 pipeline layout"),
-        bind_group_layouts: &[&constants_bgl, &vs_samplers_bgl, &ps_samplers_bgl],
+        bind_group_layouts: &[&bgl],
         push_constant_ranges: &[],
     });
 
@@ -409,9 +394,7 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
             occlusion_query_set: None,
         });
         pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &constants_bg, &[]);
-        pass.set_bind_group(1, &vs_samplers_bg, &[]);
-        pass.set_bind_group(2, &ps_samplers_bg, &[]);
+        pass.set_bind_group(0, &bg, &[]);
         pass.set_vertex_buffer(0, vb.slice(..));
         pass.draw(0..3, 0..1);
     }
@@ -464,6 +447,6 @@ fn dxbc_prefixed_payload_is_detected_and_translated() {
 
     let shader = cache.get(1).unwrap();
     assert_eq!(shader.payload_format, ShaderPayloadFormat::Dxbc);
-    assert_eq!(shader.version.model.major, 2);
+    assert_eq!(shader.version.major, 2);
     assert!(shader.wgsl.contains("textureSample"));
 }
