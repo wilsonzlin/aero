@@ -52,6 +52,15 @@ pub struct AeroGpuAcmdExecutor {
     shared_surfaces: SharedSurfaceTable,
 }
 
+impl Drop for AeroGpuAcmdExecutor {
+    fn drop(&mut self) {
+        // Some wgpu backends (particularly headless CI configurations) are sensitive to devices
+        // being dropped while work is still in-flight. Ensure all submitted work completes before
+        // tearing down the executor to avoid sporadic driver/backend crashes across tests.
+        self.device.poll(wgpu::Maintain::Wait);
+    }
+}
+
 fn is_x8_format(format: u32) -> bool {
     format == AerogpuFormat::B8G8R8X8Unorm as u32
         || format == AerogpuFormat::R8G8B8X8Unorm as u32

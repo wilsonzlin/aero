@@ -973,39 +973,39 @@ fn build_alpha_test_wgsl_variant(
     alpha_test_func: u32,
     alpha_test_ref: u8,
 ) -> Result<String, AerogpuD3d9Error> {
-    // Match both the legacy SM1/2 WGSL names (PsInput/PsOutput) and the newer SM3 translator
-    // output (FsIn/FsOut).
-    const FS_SIG_WITH_INPUT_PS: &str = "@fragment\nfn fs_main(input: PsInput) -> PsOutput {\n";
-    const FS_SIG_NO_INPUT_PS: &str = "@fragment\nfn fs_main() -> PsOutput {\n";
-    const FS_SIG_WITH_INPUT_FS: &str = "@fragment\nfn fs_main(input: FsIn) -> FsOut {\n";
-    const FS_SIG_NO_INPUT_FS: &str = "@fragment\nfn fs_main() -> FsOut {\n";
+    // SM3 WGSL generator signatures.
+    const FS_SIG_WITH_INPUT: &str = "@fragment\nfn fs_main(input: FsIn) -> FsOut {\n";
+    const FS_SIG_NO_INPUT: &str = "@fragment\nfn fs_main() -> FsOut {\n";
+    // Legacy signature used by the old token-stream translator.
+    const FS_SIG_WITH_INPUT_LEGACY: &str = "@fragment\nfn fs_main(input: PsInput) -> PsOutput {\n";
+    const FS_SIG_NO_INPUT_LEGACY: &str = "@fragment\nfn fs_main() -> PsOutput {\n";
 
-    let (old_sig, new_sig, wrapper_sig, call_expr) = if base.contains(FS_SIG_WITH_INPUT_PS) {
+    let (old_sig, new_sig, wrapper_sig, call_expr) = if base.contains(FS_SIG_WITH_INPUT) {
         (
-            FS_SIG_WITH_INPUT_PS,
-            "fn fs_main_inner(input: PsInput) -> PsOutput {\n",
-            "fn fs_main(input: PsInput) -> PsOutput {\n",
-            "fs_main_inner(input)",
-        )
-    } else if base.contains(FS_SIG_NO_INPUT_PS) {
-        (
-            FS_SIG_NO_INPUT_PS,
-            "fn fs_main_inner() -> PsOutput {\n",
-            "fn fs_main() -> PsOutput {\n",
-            "fs_main_inner()",
-        )
-    } else if base.contains(FS_SIG_WITH_INPUT_FS) {
-        (
-            FS_SIG_WITH_INPUT_FS,
+            FS_SIG_WITH_INPUT,
             "fn fs_main_inner(input: FsIn) -> FsOut {\n",
             "fn fs_main(input: FsIn) -> FsOut {\n",
             "fs_main_inner(input)",
         )
-    } else if base.contains(FS_SIG_NO_INPUT_FS) {
+    } else if base.contains(FS_SIG_NO_INPUT) {
         (
-            FS_SIG_NO_INPUT_FS,
+            FS_SIG_NO_INPUT,
             "fn fs_main_inner() -> FsOut {\n",
             "fn fs_main() -> FsOut {\n",
+            "fs_main_inner()",
+        )
+    } else if base.contains(FS_SIG_WITH_INPUT_LEGACY) {
+        (
+            FS_SIG_WITH_INPUT_LEGACY,
+            "fn fs_main_inner(input: PsInput) -> PsOutput {\n",
+            "fn fs_main(input: PsInput) -> PsOutput {\n",
+            "fs_main_inner(input)",
+        )
+    } else if base.contains(FS_SIG_NO_INPUT_LEGACY) {
+        (
+            FS_SIG_NO_INPUT_LEGACY,
+            "fn fs_main_inner() -> PsOutput {\n",
+            "fn fs_main() -> PsOutput {\n",
             "fs_main_inner()",
         )
     } else {
@@ -1186,27 +1186,36 @@ impl AerogpuD3d9Executor {
             }
         }
 
-        // On Linux, avoid wgpu's GL backend for this executor: wgpu-hal's GLES pipeline reflection
-        // can panic for some D3D9 shader pipelines (observed in CI sandboxes), which turns test
-        // runs into hard failures. Prefer the native backends and let tests skip on machines
-        // without a usable adapter.
-        let backends = if cfg!(target_os = "linux") {
-            wgpu::Backends::PRIMARY
+        // On Linux CI we prefer the GL backend for headless tests to avoid crashes seen with some
+        // Vulkan software adapters (lavapipe/llvmpipe).
+        let adapter = if cfg!(target_os = "linux") {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::GL,
+                ..Default::default()
+            });
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
         } else {
-            wgpu::Backends::all()
-        };
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends,
-            ..Default::default()
-        });
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or(AerogpuD3d9Error::AdapterNotFound)?;
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                // Prefer "native" backends; this avoids initializing GL stacks on platforms where
+                // they're more likely to require a windowing system.
+                backends: wgpu::Backends::PRIMARY,
+                ..Default::default()
+            });
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+        }
+        .ok_or(AerogpuD3d9Error::AdapterNotFound)?;
 
         let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 

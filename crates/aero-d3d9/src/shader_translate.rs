@@ -9,7 +9,7 @@ use crate::shader;
 use crate::shader_limits::MAX_D3D9_SHADER_BLOB_BYTES;
 use crate::sm3;
 use crate::sm3::decode::TextureType;
-use crate::vertex::{AdaptiveLocationMap, DeclUsage, VertexLocationMap};
+use crate::vertex::DeclUsage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderTranslateBackend {
@@ -550,11 +550,10 @@ fn collect_semantic_locations_sm3(ir: &sm3::ir::ShaderIr) -> Vec<shader::Semanti
         return Vec::new();
     }
 
-    // Vertex input semantics are remapped using the adaptive semantic→location allocator in the
-    // SM3 IR builder. Mirror that mapping here so callers can bind vertex buffers using the same
-    // locations as the generated WGSL.
-    let mut input_dcl_order = Vec::<(DeclUsage, u8)>::new();
+    let mut out = Vec::<shader::SemanticLocation>::new();
     let mut seen = HashSet::<(DeclUsage, u8)>::new();
+
+    // Iterate in DCL order so the mapping is deterministic.
     for decl in &ir.inputs {
         if decl.reg.file != sm3::ir::RegFile::Input {
             continue;
@@ -562,32 +561,20 @@ fn collect_semantic_locations_sm3(ir: &sm3::ir::ShaderIr) -> Vec<shader::Semanti
         let Some((usage, usage_index)) = semantic_to_decl_usage(&decl.semantic) else {
             continue;
         };
-        if seen.insert((usage, usage_index)) {
-            input_dcl_order.push((usage, usage_index));
+        if !seen.insert((usage, usage_index)) {
+            continue;
         }
-    }
-    if input_dcl_order.is_empty() {
-        return Vec::new();
+        out.push(shader::SemanticLocation {
+            usage,
+            usage_index,
+            // The SM3 IR builder rewrites `v#` indices to match the chosen WGSL location map when
+            // `uses_semantic_locations` is enabled, so the post-remap register index is already the
+            // WGSL location.
+            location: decl.reg.index,
+        });
     }
 
-    let Ok(map) = AdaptiveLocationMap::new(input_dcl_order.iter().copied()) else {
-        // If semantic remapping was enabled, the IR builder already succeeded in constructing a
-        // location map. This should be unreachable, but avoid panicking in release builds.
-        return Vec::new();
-    };
-
-    input_dcl_order
-        .into_iter()
-        .filter_map(|(usage, usage_index)| {
-            map.location_for(usage, usage_index)
-                .ok()
-                .map(|location| shader::SemanticLocation {
-                    usage,
-                    usage_index,
-                    location,
-                })
-        })
-        .collect()
+    out
 }
 
 fn collect_used_samplers_sm3(ir: &sm3::ir::ShaderIr) -> BTreeSet<u16> {
