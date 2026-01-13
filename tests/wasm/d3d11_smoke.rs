@@ -283,6 +283,10 @@ fn d3d11_compute_writes_storage_buffer() {
         let Some(mut rt) = new_runtime(test_name).await else {
             return;
         };
+        if !rt.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
 
         const OUT: u32 = 101;
         const READBACK: u32 = 102;
@@ -362,6 +366,10 @@ fn d3d11_compute_writes_storage_texture() {
         let Some(mut rt) = new_runtime(test_name).await else {
             return;
         };
+        if !rt.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
 
         const TEX: u32 = 201;
         const VIEW: u32 = 202;

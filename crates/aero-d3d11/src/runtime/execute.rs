@@ -35,6 +35,7 @@ pub struct D3D11CacheStats {
 pub struct D3D11Runtime {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    supports_compute: bool,
     pub resources: D3D11Resources,
     pub state: D3D11State,
     sampler_cache: SamplerCache,
@@ -103,6 +104,11 @@ impl D3D11Runtime {
         }
         .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
+        let downlevel = adapter.get_downlevel_capabilities();
+        let supports_compute = downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+
         let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
             .request_device(
@@ -119,6 +125,7 @@ impl D3D11Runtime {
         Ok(Self {
             device,
             queue,
+            supports_compute,
             resources: D3D11Resources::default(),
             state: D3D11State::new(),
             sampler_cache: SamplerCache::new(),
@@ -131,6 +138,10 @@ impl D3D11Runtime {
 
     pub fn device(&self) -> &wgpu::Device {
         &self.device
+    }
+
+    pub fn supports_compute(&self) -> bool {
+        self.supports_compute
     }
 
     pub fn cache_stats(&self) -> D3D11CacheStats {
