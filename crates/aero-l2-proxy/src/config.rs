@@ -537,12 +537,15 @@ impl ProxyConfig {
             .ok()
             .and_then(|v| (!v.trim().is_empty()).then(|| PathBuf::from(v)));
 
-        let capture_max_bytes = read_env_u64_clamped("AERO_L2_CAPTURE_MAX_BYTES", 0, 0, u64::MAX);
+        // Default to a conservative per-session cap so enabling `AERO_L2_CAPTURE_DIR` in
+        // production does not risk unbounded disk usage. Set to `0` to disable the cap.
+        let capture_max_bytes =
+            read_env_u64_clamped("AERO_L2_CAPTURE_MAX_BYTES", 64 * 1024 * 1024, 0, u64::MAX);
 
         let capture_flush_interval_ms =
             read_env_u64_clamped("AERO_L2_CAPTURE_FLUSH_INTERVAL_MS", 1000, 0, u64::MAX);
-        let capture_flush_interval =
-            (capture_flush_interval_ms > 0).then(|| Duration::from_millis(capture_flush_interval_ms));
+        let capture_flush_interval = (capture_flush_interval_ms > 0)
+            .then(|| Duration::from_millis(capture_flush_interval_ms));
 
         let security = SecurityConfig::from_env().context("parse security config")?;
 
