@@ -7,7 +7,7 @@ import { formatWebUsbError } from "../platform/webusb_troubleshooting";
 import { isWebUsbProtectedInterfaceClass } from "../platform/webusb";
 
 import type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
-import { hex8 } from "./usb_hex";
+import { hex16, hex8 } from "./usb_hex";
 
 export type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
 
@@ -305,7 +305,9 @@ export class WebUsbBackend {
     // but do not fail the whole device if some interfaces cannot be claimed.
     // Instead, we only throw if *none* of the interfaces can be claimed.
     let claimedAny = false;
+    let attemptedAnyClaim = false;
     let firstClaimErr: unknown = null;
+    const protectedInterfaces: number[] = [];
     for (const iface of configuration.interfaces) {
       const ifaceNum = iface.interfaceNumber;
       if (iface.claimed) {
@@ -320,9 +322,11 @@ export class WebUsbBackend {
       }
       if (interfaceIsWebUsbProtected(iface)) {
         // Skip interfaces that are likely blocked by Chromium's protected interface class list.
+        protectedInterfaces.push(ifaceNum);
         continue;
       }
       try {
+        attemptedAnyClaim = true;
         await this.device.claimInterface(ifaceNum);
       } catch (err) {
         firstClaimErr ??= err;
@@ -337,6 +341,25 @@ export class WebUsbBackend {
       if (firstClaimErr) {
         throw wrapWithCause("Failed to claim any USB interface", firstClaimErr);
       }
+
+      // If we never attempted a claim, it usually means every interface was skipped
+      // as "protected" by Chromium's WebUSB restrictions (HID, Mass Storage, ...).
+      // Surface that clearly so downstream bulk transfers don't fail with confusing
+      // errors while the backend looks "ready".
+      if (
+        !attemptedAnyClaim &&
+        configuration.interfaces.length > 0 &&
+        protectedInterfaces.length === configuration.interfaces.length
+      ) {
+        const vid = (this.device as unknown as { vendorId?: number }).vendorId;
+        const pid = (this.device as unknown as { productId?: number }).productId;
+        const vidPid = vid !== undefined && pid !== undefined ? `${hex16(vid)}:${hex16(pid)}` : "unknown VID:PID";
+        const ifaceList = protectedInterfaces.join(", ");
+        throw new Error(
+          `No claimable USB interfaces: all interfaces are protected by Chromium WebUSB restrictions (device ${vidPid}, protected interfaces: ${ifaceList})`,
+        );
+      }
+
       throw new Error(
         [
           "No claimable interface was found on this USB device.",
