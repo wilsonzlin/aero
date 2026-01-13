@@ -112,3 +112,32 @@ fn enable_e1000_and_enable_virtio_net_are_mutually_exclusive() {
         Err(MachineError::MultipleNicsEnabled)
     ));
 }
+
+#[test]
+fn browser_defaults_preset_is_valid_and_stable() {
+    let cfg = MachineConfig::browser_defaults(2 * 1024 * 1024);
+
+    assert_eq!(cfg.cpu_count, 1);
+    assert!(cfg.enable_pc_platform);
+
+    // Win7 storage topology.
+    assert!(cfg.enable_ahci);
+    assert!(cfg.enable_ide);
+    assert!(!cfg.enable_nvme);
+    assert!(!cfg.enable_virtio_blk);
+
+    // Browser runtime devices.
+    assert!(cfg.enable_e1000);
+    assert!(!cfg.enable_virtio_net);
+    assert!(cfg.enable_uhci);
+
+    // Deterministic core devices.
+    assert!(cfg.enable_vga);
+    assert!(!cfg.enable_aerogpu);
+    assert!(cfg.enable_serial);
+    assert!(cfg.enable_i8042);
+    assert!(cfg.enable_a20_gate);
+    assert!(cfg.enable_reset_ctrl);
+
+    Machine::new(cfg).expect("MachineConfig::browser_defaults should pass Machine::new validation");
+}

@@ -299,23 +299,44 @@ impl MachineConfig {
     /// Configuration preset for the canonical browser runtime machine.
     ///
     /// This is the "batteries included" configuration that the wasm-bindgen wrapper
-    /// (`crates/aero-wasm`) uses for `new Machine(ramSize)`:
+    /// (`crates/aero-wasm`) uses for `new Machine(ramSize)`.
     ///
-    /// - Canonical PC platform topology enabled (PIC/APIC/PIT/RTC/PCI/ACPI/HPET).
-    /// - Canonical Windows 7 boot/install storage controller set:
-    ///   - AHCI (ICH9) at `00:02.0`
-    ///   - IDE (PIIX3) at `00:01.1`
-    /// - E1000 NIC enabled (for the current browser networking runtime).
-    /// - UHCI (USB 1.1) enabled.
-    /// - VGA enabled.
+    /// This starts from [`MachineConfig::win7_storage_defaults`] (canonical Windows 7 storage
+    /// topology) and then enables the guest-visible devices expected by the browser runtime:
+    ///
+    /// - E1000 NIC enabled (virtio-net disabled)
+    /// - UHCI (USB 1.1) enabled
+    /// - VGA enabled (transitional; AeroGPU disabled)
     ///
     /// See `docs/05-storage-topology-win7.md` for the normative storage BDFs and media attachment
     /// mapping.
     #[must_use]
     pub fn browser_defaults(ram_size_bytes: u64) -> Self {
         let mut cfg = Self::win7_storage_defaults(ram_size_bytes);
+
+        // Browser runtime expects a guest-visible NIC and (optionally) USB.
         cfg.enable_e1000 = true;
+        cfg.enable_virtio_net = false;
         cfg.enable_uhci = true;
+
+        // Keep Win7 storage topology explicit even if `win7_storage_defaults` evolves.
+        cfg.enable_ahci = true;
+        cfg.enable_ide = true;
+        cfg.enable_nvme = false;
+        cfg.enable_virtio_blk = false;
+
+        // Keep deterministic core devices explicit.
+        cfg.enable_vga = true;
+        cfg.enable_aerogpu = false;
+        cfg.enable_serial = true;
+        cfg.enable_i8042 = true;
+        cfg.enable_a20_gate = true;
+        cfg.enable_reset_ctrl = true;
+
+        // Enforce the required platform topology for these devices.
+        cfg.enable_pc_platform = true;
+        cfg.cpu_count = 1;
+
         cfg
     }
 }
