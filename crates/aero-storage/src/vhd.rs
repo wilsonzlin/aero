@@ -16,7 +16,7 @@ const VHD_FILE_FORMAT_VERSION: u32 = 0x0001_0000;
 // Hard caps to avoid absurd allocations from untrusted images.
 const MAX_BAT_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 const MAX_BITMAP_BYTES: u64 = 32 * 1024 * 1024; // 32 MiB
-                                                 // DoS guard: keep dynamic VHD allocation units bounded. Extremely large block sizes can cause
+                                                // DoS guard: keep dynamic VHD allocation units bounded. Extremely large block sizes can cause
                                                 // pathological file growth on the first write to a new block (the image must be extended by
                                                 // `block_size` bytes).
                                                 //

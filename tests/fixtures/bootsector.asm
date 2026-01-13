@@ -6,7 +6,12 @@
 ;   - Print a sentinel string to COM1 for serial-based assertions
 ;   - Halt in a tight loop
 ;
-; Build:
+; Regenerate (authoritative):
+;   cargo xtask fixtures
+;
+; This `.asm` is kept as documentation; CI does **not** require `nasm`.
+; `scripts/build-bootsector.sh` is kept as a thin wrapper around the Rust-based
+; generator above:
 ;   bash ./scripts/build-bootsector.sh
 ;
 bits 16

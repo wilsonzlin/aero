@@ -4,6 +4,11 @@
  * binary by a harness that enters 16-bit real mode and starts execution at
  * offset 0.
  *
+ * Regenerate (authoritative):
+ *   cargo xtask fixtures
+ *
+ * This `.s` file is kept as documentation; CI does **not** require GNU `as`.
+ *
  * NOTE: The Rust test suite currently calls the BIOS handlers directly.
  * This fixture exists to enable future end-to-end execution tests.
  */
@@ -39,4 +44,3 @@ _start:
 hang:
     hlt
     jmp hang
-

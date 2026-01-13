@@ -13,11 +13,14 @@ mod cmd_web;
 mod cmd_conformance;
 mod error;
 
-// Fixture "sources" live under `tests/fixtures/` so they can be consumed by
-// system/integration tests and by this generator.
+// Fixture "sources" are compiled into the `xtask` binary to keep generation
+// deterministic and license-safe (no external OS images or assembler toolchains
+// required in CI).
 //
-// We compile them into the `xtask` binary via `#[path]` in the module definition
-// (see `xtask/src/fixture_sources/`) to avoid any external build tooling.
+// Some sources live under `tests/fixtures/` (so they can also be consumed by
+// integration tests), and others live directly under `xtask/src/fixture_sources/`.
+// Modules under `tests/fixtures/` are compiled in via `#[path]` (see
+// `xtask/src/fixture_sources/mod.rs`).
 mod fixture_sources;
 mod paths;
 mod runner;
@@ -95,18 +98,43 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
     }
 
     let root = paths::repo_root()?;
-    let out_dir = root.join("tests/fixtures/boot");
-    fs::create_dir_all(&out_dir)
-        .map_err(|e| XtaskError::Message(format!("create {out_dir:?}: {e}")))?;
+    let fixtures_dir = root.join("tests/fixtures");
+    fs::create_dir_all(&fixtures_dir)
+        .map_err(|e| XtaskError::Message(format!("create {fixtures_dir:?}: {e}")))?;
+
+    let boot_fixtures_dir = fixtures_dir.join("boot");
+    fs::create_dir_all(&boot_fixtures_dir)
+        .map_err(|e| XtaskError::Message(format!("create {boot_fixtures_dir:?}: {e}")))?;
 
     let boot_sector = boot_sector_from_code(fixture_sources::boot_vga_serial::CODE)?;
 
     // Raw boot sector (exactly 512 bytes).
-    ensure_file(&out_dir.join("boot_vga_serial.bin"), &boot_sector, check)?;
+    ensure_file(
+        &boot_fixtures_dir.join("boot_vga_serial.bin"),
+        &boot_sector,
+        check,
+    )?;
 
     // Tiny "disk image" (8 sectors / 4KiB) whose first sector is the boot sector.
     let disk_img = disk_image_with_fill(&boot_sector, 8)?;
-    ensure_file(&out_dir.join("boot_vga_serial_8s.img"), &disk_img, check)?;
+    ensure_file(
+        &boot_fixtures_dir.join("boot_vga_serial_8s.img"),
+        &disk_img,
+        check,
+    )?;
+
+    // Legacy tiny boot fixtures at `tests/fixtures/*.bin` (generated here to
+    // avoid requiring external assemblers like `nasm` / GNU `as` in CI).
+    ensure_file(
+        &fixtures_dir.join("bootsector.bin"),
+        &fixture_sources::bootsector::BIN,
+        check,
+    )?;
+    ensure_file(
+        &fixtures_dir.join("realmode_vbe_test.bin"),
+        &fixture_sources::realmode_vbe_test::BIN,
+        check,
+    )?;
 
     // Firmware fixtures (kept in-repo; must remain small and deterministic).
     //

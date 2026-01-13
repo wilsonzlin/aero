@@ -226,14 +226,13 @@ dev-dependencies that significantly slow compilation.
 
 - `qemu-system-i386`
 - `mtools` (for patching floppy images in `scripts/prepare-freedos.sh`)
-- `nasm` (for building the custom boot sector)
 - `unzip` + `curl` (for downloading FreeDOS)
 
 ### Boot sector + FreeDOS (open-source, CI-safe)
 
 ```bash
-# Build the synthetic boot sector used by the test (committed output is checked in CI).
-bash ./scripts/build-bootsector.sh
+# Generate the synthetic boot fixtures used by the tests (committed output is checked in CI).
+cargo xtask fixtures
 
 # Download + patch FreeDOS 1.4 floppy image (written under gitignored test-images/).
 bash ./scripts/prepare-freedos.sh
