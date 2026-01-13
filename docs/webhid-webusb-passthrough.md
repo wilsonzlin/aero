@@ -238,8 +238,9 @@ and pushed into the ring with `tryPushWithWriter(...)`. This path is best-effort
 full, reports are dropped and a drop counter is incremented.
 
 If the worker fails to decode a ring record (invalid magic/version/length), the record is treated
-as dropped (incrementing the invalid/drop counters). If the ring appears persistently corrupted,
-the runtime may detach the ring and continue forwarding input reports via `postMessage`.
+as dropped (incrementing the invalid/drop counters). This ring is a best-effort performance
+optimization: it is not required for correctness, and when SAB rings are unavailable the runtime
+continues using the `postMessage` forwarding path.
 
 Implementation pointers:
 
@@ -274,9 +275,10 @@ Semantics / guarantees:
   serializes calls per device so later reports are not started until earlier ones have settled.
   (Reports from different devices may interleave.)
 - **Fallback on ring overflow/corruption:** the SAB rings are an optimization, not a correctness
-  requirement. If a report cannot be enqueued (ring full, record too large) or the consumer detects
-  ring corruption, the runtime detaches/ignores the ring and falls back to `postMessage` forwarding
-  so guest→device reports are not silently lost.
+  requirement. If a report cannot be enqueued (ring full, record too large), the I/O worker falls
+  back to `postMessage` (`hid.sendReport`) for that report so guest→device reports are not silently
+  lost. If the consumer detects ring corruption and can no longer drain, the ring fast path may stop
+  making progress and subsequent reports will likewise use the `postMessage` path.
 - **Size limits:** the SAB `HidReportRing` record format stores `len` as a `u16` and the default
   ring size is 64 KiB. Feature reports larger than the maximum ring record payload (≈64 KiB) are
   forwarded via `postMessage` even when rings are enabled.
@@ -292,8 +294,8 @@ Note: `SharedArrayBuffer` requires cross-origin isolation (COOP/COEP) in modern 
 page is not `crossOriginIsolated`, the runtime automatically falls back to the `postMessage` path.
 See [`docs/11-browser-apis.md`](./11-browser-apis.md).
 
-When rings were previously attached but later become unavailable (worker restart, explicit detach,
-or detected ring corruption), the runtime should treat this as a performance downgrade only and
+When rings were previously attached but later become unavailable (e.g., worker restart/reattach, or
+detected ring corruption), the runtime should treat this as a performance downgrade only and
 continue operating via the `postMessage` path.
 
 ## Guest-side model (UHCI + generic HID passthrough device)
