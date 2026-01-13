@@ -45,5 +45,6 @@ echo Reports:
 echo   C:\AeroGuestTools\report.json
 echo   C:\AeroGuestTools\report.txt
 echo   C:\AeroGuestTools\dbgctl_*.txt  (if aerogpu_dbgctl.exe is present)
+echo   Note: Optional tools inventory (tools\*.exe) is included in report.txt under "Optional Tools (tools\*)".
 exit /b %EXITCODE%
 
