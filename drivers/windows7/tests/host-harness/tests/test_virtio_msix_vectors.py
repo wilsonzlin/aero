@@ -50,6 +50,10 @@ class VirtioMsixVectorsTests(unittest.TestCase):
             "virtio-mouse-pci,id=aero_virtio_mouse0,disable-legacy=on,x-pci-revision=0x01,vectors=4",
         )
         self.assertEqual(
+            f("virtio-tablet-pci,id=aero_virtio_tablet0,disable-legacy=on,x-pci-revision=0x01", 4),
+            "virtio-tablet-pci,id=aero_virtio_tablet0,disable-legacy=on,x-pci-revision=0x01,vectors=4",
+        )
+        self.assertEqual(
             f("virtio-sound-pci,audiodev=snd0,disable-legacy=on,x-pci-revision=0x01", 4),
             "virtio-sound-pci,audiodev=snd0,disable-legacy=on,x-pci-revision=0x01,vectors=4",
         )
@@ -64,4 +68,3 @@ class VirtioMsixVectorsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

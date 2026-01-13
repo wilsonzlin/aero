@@ -1227,7 +1227,10 @@ def main() -> int:
                 if need_input_tablet_events:
                     virtio_input_args += [
                         "-device",
-                        f"virtio-tablet-pci,id={_VIRTIO_INPUT_QMP_TABLET_ID}",
+                        _qemu_device_arg_add_vectors(
+                            f"virtio-tablet-pci,id={_VIRTIO_INPUT_QMP_TABLET_ID}",
+                            args.virtio_msix_vectors,
+                        ),
                     ]
             else:
                 print(
@@ -1320,8 +1323,9 @@ def main() -> int:
             )
             virtio_tablet = None
             if need_input_tablet_events:
-                virtio_tablet = (
-                    f"virtio-tablet-pci,id={_VIRTIO_INPUT_QMP_TABLET_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}"
+                virtio_tablet = _qemu_device_arg_add_vectors(
+                    f"virtio-tablet-pci,id={_VIRTIO_INPUT_QMP_TABLET_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
+                    args.virtio_msix_vectors,
                 )
 
             virtio_snd_args: list[str] = []

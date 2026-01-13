@@ -15,9 +15,10 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
   - Windows PowerShell 5.1 or PowerShell 7+ should work
 - A **prepared Windows 7 image** that:
   - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input, modern-only)
-    - To enable the optional end-to-end virtio-input event delivery smoke test (HID input reports),
-      the guest selftest must be provisioned with `--test-input-events` (or env var
-      `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`).
+    - To enable the optional end-to-end virtio-input event delivery smoke tests (HID input reports),
+      the guest selftest must be provisioned with:
+      - keyboard + relative mouse: `--test-input-events` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`)
+      - tablet / absolute pointer: `--test-input-tablet-events` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1`)
   - has virtio-snd installed if you intend to test audio
     - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present and confirm
       a capture endpoint is registered
@@ -132,6 +133,60 @@ marker at all (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harnes
 
 If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support `input-send-event`),
 the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
+
+### virtio-input tablet (absolute pointer) event delivery (QMP input injection)
+
+When a virtio tablet device (`virtio-tablet-pci`) is attached, the guest selftest can optionally validate **absolute
+pointer** report delivery end-to-end (virtio queues → KMDF HID → user-mode `ReadFile`) via the marker:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...`
+
+To enable end-to-end testing:
+
+1. Provision the guest image so the scheduled selftest runs with `--test-input-tablet-events`
+   (for example via `New-AeroWin7TestImage.ps1 -TestInputTabletEvents`, or env var
+   `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1`).
+2. Run the host harness with `-WithInputTabletEvents` / `--with-input-tablet-events` so it:
+   - attaches `virtio-tablet-pci`
+   - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
+   - requires the guest marker to PASS
+
+The injected sequence is:
+
+- move to (0,0) (reset)
+- move to (10000,20000) (target)
+- left click down + up
+
+The harness also emits a host-side marker for each injection attempt:
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=<n>|tablet_mode=device/broadcast`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
+
+PowerShell:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -WithInputTabletEvents `
+  -TimeoutSeconds 600
+```
+
+Python:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --with-input-tablet-events \
+  --timeout-seconds 600 \
+  --snapshot
+```
+
+Note: If the guest was provisioned without `--test-input-tablet-events`, it will emit:
+`AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set`.
+When `-WithInputTabletEvents` / `--with-input-tablet-events` is enabled, the host harness treats this as a hard failure.
+
 ### virtio-snd (audio)
 
 If your test image includes the virtio-snd driver, you can ask the harness to attach a virtio-snd PCI device:
