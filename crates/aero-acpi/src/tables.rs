@@ -960,7 +960,6 @@ fn aml_device_pci0(cfg: &AcpiConfig) -> Vec<u8> {
         body.extend_from_slice(&aml_name_eisa_id(*b"_HID", "PNP0A03"));
     }
     body.extend_from_slice(&aml_name_integer(*b"_UID", 0));
-    body.extend_from_slice(&aml_name_integer(*b"_ADR", 0));
     body.extend_from_slice(&aml_name_integer(*b"_BBN", u64::from(cfg.pcie_start_bus)));
     body.extend_from_slice(&aml_name_integer(*b"_SEG", u64::from(cfg.pcie_segment)));
     if pcie {

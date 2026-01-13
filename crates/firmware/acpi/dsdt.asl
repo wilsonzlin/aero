@@ -45,7 +45,6 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
         {
             Name (_HID, "PNP0A03")
             Name (_UID, Zero)
-            Name (_ADR, Zero)
 
             /*
              * PCI interrupt routing table.
