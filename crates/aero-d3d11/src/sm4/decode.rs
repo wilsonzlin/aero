@@ -462,7 +462,9 @@ mod tests {
         );
     }
 }
-fn decode_instruction(
+
+#[doc(hidden)]
+pub fn decode_instruction(
     opcode: u32,
     inst_toks: &[u32],
     at: usize,
@@ -739,7 +741,9 @@ fn decode_store_structured(r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4Decode
         mask,
     })
 }
-fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl, Sm4DecodeError> {
+
+#[doc(hidden)]
+pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl, Sm4DecodeError> {
     let mut r = InstrReader::new(inst_toks, at);
     let opcode_token = r.read_u32()?;
     // Declarations can also have extended opcode tokens; consume them even if we don't

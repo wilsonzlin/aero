@@ -234,6 +234,10 @@ web/src/wasm/aero_microbench/*
 **/*.exp
 **/*.lib
 
+# Rust binary targets live in `src/bin/` (source, not build output).
+!**/src/bin/
+!**/src/bin/**
+
 # Benchmark output (local runs)
 backend/aero-gateway/bench/results*.json
 
