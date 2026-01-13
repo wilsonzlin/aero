@@ -1,5 +1,7 @@
 use crate::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
 use crate::jit::profile::HotnessProfile;
+use crate::jit::JitMetricsSink;
+use std::sync::Arc;
 
 pub const PAGE_SIZE: u64 = 4096;
 pub const PAGE_SHIFT: u32 = 12;
@@ -196,6 +198,7 @@ pub struct JitRuntime<B, C> {
     cache: CodeCache,
     profile: HotnessProfile,
     page_versions: PageVersionTracker,
+    metrics_sink: Option<Arc<dyn JitMetricsSink + Send + Sync>>,
 }
 
 impl<B, C> JitRuntime<B, C>
@@ -215,7 +218,26 @@ where
             cache,
             profile,
             page_versions: PageVersionTracker::default(),
+            metrics_sink: None,
         }
+    }
+
+    pub fn set_metrics_sink(&mut self, sink: Option<Arc<dyn JitMetricsSink + Send + Sync>>) {
+        self.metrics_sink = sink;
+        if let Some(sink) = self.metrics_sink.as_deref() {
+            sink.set_cache_bytes(
+                self.cache.current_bytes() as u64,
+                self.config.cache_max_bytes as u64,
+            );
+        }
+    }
+
+    pub fn with_metrics_sink(
+        mut self,
+        sink: Arc<dyn JitMetricsSink + Send + Sync>,
+    ) -> Self {
+        self.set_metrics_sink(Some(sink));
+        self
     }
 
     pub fn config(&self) -> &JitConfig {
@@ -279,11 +301,15 @@ where
     /// If the block's page-version snapshot is already stale, the block is rejected and a new
     /// compilation request is issued for the same entry RIP.
     pub fn install_handle(&mut self, handle: CompiledBlockHandle) -> Vec<u64> {
+        let metrics = self.metrics_sink.as_deref();
         if !self.is_block_valid(&handle) {
             self.stats.stale_install_rejected_total =
                 self.stats.stale_install_rejected_total.saturating_add(1);
             // A background compilation result can arrive after the guest has modified the code.
             // Installing such a block would be incorrect; reject it and request recompilation.
+            if let Some(metrics) = metrics {
+                metrics.record_stale_install_reject();
+            }
             let entry_rip = handle.entry_rip;
             // If we already have a valid block for this RIP, ignore the stale result. This can
             // happen if multiple compilation jobs raced and the newest one installed first.
@@ -297,13 +323,25 @@ where
                 if self.cache.remove(entry_rip).is_some() {
                     self.stats.blocks_invalidated_total =
                         self.stats.blocks_invalidated_total.saturating_add(1);
+                    if let Some(metrics) = metrics {
+                        metrics.record_invalidate();
+                    }
                 }
                 self.profile.clear_requested(entry_rip);
+                if let Some(metrics) = metrics {
+                    metrics.set_cache_bytes(
+                        self.cache.current_bytes() as u64,
+                        self.config.cache_max_bytes as u64,
+                    );
+                }
             }
 
             self.profile.mark_requested(entry_rip);
             self.stats.compile_requests_total =
                 self.stats.compile_requests_total.saturating_add(1);
+            if let Some(metrics) = metrics {
+                metrics.record_compile_request();
+            }
             self.compile.request_compile(entry_rip);
             return Vec::new();
         }
@@ -315,6 +353,16 @@ where
             .stats
             .blocks_evicted_total
             .saturating_add(evicted_count);
+        if let Some(metrics) = metrics {
+            metrics.record_install();
+            if !evicted.is_empty() {
+                metrics.record_evict(evicted_count);
+            }
+            metrics.set_cache_bytes(
+                self.cache.current_bytes() as u64,
+                self.config.cache_max_bytes as u64,
+            );
+        }
         for rip in &evicted {
             self.profile.clear_requested(*rip);
         }
@@ -340,6 +388,13 @@ where
             self.stats.blocks_invalidated_total =
                 self.stats.blocks_invalidated_total.saturating_add(1);
             self.profile.clear_requested(entry_rip);
+            if let Some(metrics) = self.metrics_sink.as_deref() {
+                metrics.record_invalidate();
+                metrics.set_cache_bytes(
+                    self.cache.current_bytes() as u64,
+                    self.config.cache_max_bytes as u64,
+                );
+            }
             return true;
         }
         false
@@ -350,34 +405,57 @@ where
             return None;
         }
 
+        let metrics = self.metrics_sink.as_deref();
         let mut handle = self.cache.get_cloned(entry_rip);
         if let Some(ref h) = handle {
             if !self.is_block_valid(h) {
                 if self.cache.remove(entry_rip).is_some() {
                     self.stats.blocks_invalidated_total =
                         self.stats.blocks_invalidated_total.saturating_add(1);
+                    if let Some(metrics) = metrics {
+                        metrics.record_invalidate();
+                    }
                 }
                 self.profile.clear_requested(entry_rip);
+                if let Some(metrics) = metrics {
+                    metrics.set_cache_bytes(
+                        self.cache.current_bytes() as u64,
+                        self.config.cache_max_bytes as u64,
+                    );
+                }
                 self.profile.mark_requested(entry_rip);
                 self.stats.compile_requests_total =
                     self.stats.compile_requests_total.saturating_add(1);
+                if let Some(metrics) = metrics {
+                    metrics.record_compile_request();
+                }
                 self.compile.request_compile(entry_rip);
                 handle = None;
             }
         }
 
-        if handle.is_some() {
+        let has_compiled = handle.is_some();
+        if has_compiled {
             self.stats.cache_lookup_hit_total =
                 self.stats.cache_lookup_hit_total.saturating_add(1);
         } else {
             self.stats.cache_lookup_miss_total =
                 self.stats.cache_lookup_miss_total.saturating_add(1);
         }
+        if let Some(metrics) = metrics {
+            if has_compiled {
+                metrics.record_cache_hit();
+            } else {
+                metrics.record_cache_miss();
+            }
+        }
 
-        let has_compiled = handle.is_some();
         if self.profile.record_hit(entry_rip, has_compiled) {
             self.stats.compile_requests_total =
                 self.stats.compile_requests_total.saturating_add(1);
+            if let Some(metrics) = metrics {
+                metrics.record_compile_request();
+            }
             self.compile.request_compile(entry_rip);
         }
 
@@ -425,5 +503,203 @@ where
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Default)]
+    struct MockMetricsSink {
+        cache_hit: AtomicU64,
+        cache_miss: AtomicU64,
+        install: AtomicU64,
+        evict: AtomicU64,
+        invalidate: AtomicU64,
+        stale_reject: AtomicU64,
+        compile_request: AtomicU64,
+        cache_used: AtomicU64,
+        cache_capacity: AtomicU64,
+    }
+
+    impl MockMetricsSink {
+        fn cache_hit(&self) -> u64 {
+            self.cache_hit.load(Ordering::Relaxed)
+        }
+        fn cache_miss(&self) -> u64 {
+            self.cache_miss.load(Ordering::Relaxed)
+        }
+        fn install(&self) -> u64 {
+            self.install.load(Ordering::Relaxed)
+        }
+        fn evict(&self) -> u64 {
+            self.evict.load(Ordering::Relaxed)
+        }
+        fn stale_reject(&self) -> u64 {
+            self.stale_reject.load(Ordering::Relaxed)
+        }
+        fn compile_request(&self) -> u64 {
+            self.compile_request.load(Ordering::Relaxed)
+        }
+        fn cache_used(&self) -> u64 {
+            self.cache_used.load(Ordering::Relaxed)
+        }
+        fn cache_capacity(&self) -> u64 {
+            self.cache_capacity.load(Ordering::Relaxed)
+        }
+    }
+
+    impl JitMetricsSink for MockMetricsSink {
+        fn record_cache_hit(&self) {
+            self.cache_hit.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn record_cache_miss(&self) {
+            self.cache_miss.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn record_install(&self) {
+            self.install.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn record_evict(&self, n: u64) {
+            self.evict.fetch_add(n, Ordering::Relaxed);
+        }
+
+        fn record_invalidate(&self) {
+            self.invalidate.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn record_stale_install_reject(&self) {
+            self.stale_reject.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn record_compile_request(&self) {
+            self.compile_request.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn set_cache_bytes(&self, used: u64, capacity: u64) {
+            self.cache_used.store(used, Ordering::Relaxed);
+            self.cache_capacity.store(capacity, Ordering::Relaxed);
+        }
+    }
+
+    #[derive(Default)]
+    struct MockCompileSink {
+        requests: Vec<u64>,
+    }
+
+    impl CompileRequestSink for MockCompileSink {
+        fn request_compile(&mut self, entry_rip: u64) {
+            self.requests.push(entry_rip);
+        }
+    }
+
+    struct DummyBackend;
+
+    impl JitBackend for DummyBackend {
+        type Cpu = ();
+
+        fn execute(&mut self, _table_index: u32, _cpu: &mut Self::Cpu) -> JitBlockExit {
+            JitBlockExit {
+                next_rip: 0,
+                exit_to_interpreter: true,
+                committed: false,
+            }
+        }
+    }
+
+    fn make_runtime(config: JitConfig) -> JitRuntime<DummyBackend, MockCompileSink> {
+        JitRuntime::new(config, DummyBackend, MockCompileSink::default())
+    }
+
+    #[test]
+    fn metrics_cache_miss() {
+        let mut rt = make_runtime(JitConfig {
+            hot_threshold: 100,
+            ..Default::default()
+        });
+        let metrics = Arc::new(MockMetricsSink::default());
+        rt.set_metrics_sink(Some(metrics.clone()));
+
+        assert!(rt.prepare_block(0x1000).is_none());
+
+        assert_eq!(metrics.cache_hit(), 0);
+        assert_eq!(metrics.cache_miss(), 1);
+    }
+
+    #[test]
+    fn metrics_cache_hit() {
+        let mut rt = make_runtime(JitConfig::default());
+        let metrics = Arc::new(MockMetricsSink::default());
+        rt.set_metrics_sink(Some(metrics.clone()));
+
+        rt.install_block(0x1000, 1, 0, 4);
+        let handle = rt.prepare_block(0x1000);
+        assert!(handle.is_some());
+
+        assert_eq!(metrics.cache_hit(), 1);
+        assert_eq!(metrics.cache_miss(), 0);
+    }
+
+    #[test]
+    fn metrics_compile_request_only_once_per_entry() {
+        let mut rt = make_runtime(JitConfig {
+            hot_threshold: 1,
+            ..Default::default()
+        });
+        let metrics = Arc::new(MockMetricsSink::default());
+        rt.set_metrics_sink(Some(metrics.clone()));
+
+        for _ in 0..5 {
+            assert!(rt.prepare_block(0x2000).is_none());
+        }
+
+        assert_eq!(metrics.compile_request(), 1);
+        assert_eq!(rt.compile.requests.len(), 1);
+        assert_eq!(rt.compile.requests[0], 0x2000);
+    }
+
+    #[test]
+    fn metrics_eviction_updates_cache_bytes() {
+        let mut rt = make_runtime(JitConfig {
+            cache_max_bytes: 10,
+            ..Default::default()
+        });
+        let metrics = Arc::new(MockMetricsSink::default());
+        rt.set_metrics_sink(Some(metrics.clone()));
+
+        rt.install_block(0x1000, 0, 0, 6);
+        assert_eq!(metrics.cache_used(), 6);
+        assert_eq!(metrics.cache_capacity(), 10);
+
+        rt.install_block(0x2000, 1, 0, 6);
+        // Second install should evict the first (6+6 > 10), leaving one entry.
+        assert_eq!(metrics.evict(), 1);
+        assert_eq!(metrics.cache_used(), 6);
+        assert_eq!(metrics.cache_capacity(), 10);
+        assert_eq!(rt.cache_len(), 1);
+    }
+
+    #[test]
+    fn metrics_stale_install_reject() {
+        let mut rt = make_runtime(JitConfig::default());
+        let metrics = Arc::new(MockMetricsSink::default());
+        rt.set_metrics_sink(Some(metrics.clone()));
+
+        let meta = rt.snapshot_meta(0, 1);
+        // Mutate the page versions after taking the snapshot, making `meta` stale.
+        rt.on_guest_write(0, 1);
+
+        rt.install_handle(CompiledBlockHandle {
+            entry_rip: 0x3000,
+            table_index: 0,
+            meta,
+        });
+
+        assert_eq!(metrics.stale_reject(), 1);
+        assert_eq!(metrics.install(), 0);
     }
 }
