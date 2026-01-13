@@ -46,7 +46,7 @@ pub fn write_iso9660_joliet_from_dir(
         if rel.as_os_str().is_empty() {
             continue;
         }
-        let rel_str = path_to_slash(rel)?;
+        let rel_str = path_to_slash(rel, entry.path())?;
         if !should_include_rel_path(&rel_str) {
             continue;
         }
@@ -95,23 +95,17 @@ fn should_include_rel_path(rel_path: &str) -> bool {
     true
 }
 
-fn path_to_slash(path: &Path) -> Result<String> {
-    // Require UTF-8 so output paths are stable and independent of platform encoding details.
-    let mut components = Vec::<String>::new();
+fn path_to_slash(path: &Path, full_path: &Path) -> Result<String> {
+    // Packaged ISO paths are UTF-8 strings. On Unix hosts, filenames are raw bytes and may not be
+    // valid UTF-8; refusing non-UTF8 paths avoids silently mangling/dropping components and risking
+    // collisions inside the ISO.
+    let mut components = Vec::new();
     for c in path.components() {
         let s = c
             .as_os_str()
             .to_str()
-            .with_context(|| format!("path component is not valid UTF-8: {}", path.display()))?;
-        if s.is_empty() {
-            continue;
-        }
-        components.push(s.to_string());
+            .ok_or_else(|| anyhow::anyhow!("non-UTF8 path component: {:?}", full_path))?;
+        components.push(s);
     }
-
-    if components.is_empty() {
-        bail!("unexpected empty relative path for {}", path.display());
-    }
-
     Ok(components.join("/"))
 }

@@ -50,3 +50,30 @@ fn iso_from_dir_is_deterministic_and_filters_host_metadata() -> anyhow::Result<(
 
     Ok(())
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn iso_from_dir_fails_on_non_utf8_paths() -> anyhow::Result<()> {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt as _;
+
+    let input = tempfile::tempdir()?;
+    let root = input.path();
+
+    fs::write(root.join("ok.txt"), b"ok\n")?;
+
+    let invalid_name = OsString::from_vec(vec![b'b', b'a', b'd', 0xFF, b'.', b'b', b'i', b'n']);
+    fs::write(root.join(invalid_name), b"bad\n")?;
+
+    let out = tempfile::tempdir()?;
+    let iso = out.path().join("out.iso");
+
+    let err = aero_packager::write_iso9660_joliet_from_dir(root, &iso, "TEST_VOL", 0).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("non-UTF8") && msg.contains("\\xFF"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
