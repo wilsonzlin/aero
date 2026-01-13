@@ -523,14 +523,19 @@ Output merger / rasterizer
 * Rasterizer state
 * Viewports + scissor rects
 
-### 4.3 UAVs (defer until FL11_0)
+### 4.3 UAVs (optional for FL10_0 bring-up; buffer UAVs first)
 
 UAVs only become required once you support compute or advanced pixel pipeline features.
 
 **Win7 bring-up recommendation:**
 
 * Implement RTV/DSV/SRV first.
-* Return NOT_SUPPORTED for `CreateUnorderedAccessView` and any `*SetUnorderedAccessViews` style bindings until you claim FL11_0.
+* For an initial FL10_0 path, it is valid to return NOT_SUPPORTED / `E_NOTIMPL` for `CreateUnorderedAccessView` and the `*SetUnorderedAccessViews` family.
+
+When you do add compute + UAV support (FL11_0-era features), start with **buffer UAVs**:
+
+* `u#` bindings for `RWByteAddressBuffer` / `RWStructuredBuffer`-like access (`u0..u7` in D3D11 compute).
+* You can still defer **typed UAV textures** (`RWTexture*`) until the required format plumbing exists.
 
 ### 4.4 Hazard rules (minimal correctness)
 
