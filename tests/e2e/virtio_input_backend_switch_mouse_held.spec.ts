@@ -634,6 +634,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
       const backendAfterHeldMove = Atomics.load(status, StatusIndex.IoInputMouseBackend) | 0;
       const buttonsMaskAfterHeldMove = Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) | 0;
       const virtioMouseDriverOkAfterHeldMove = Atomics.load(status, StatusIndex.IoInputVirtioMouseDriverOk) | 0;
+      const mouseBackendSwitchCounterAfterHeldMove = Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0;
 
       // ---------------------------------------------------------------------
       // Phase 3: Release the button. This should allow backend switching.
@@ -644,6 +645,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
       const phase3BtnUp = await cpuCall("drainI8042");
       const usedIdxAfterBtnUp = await cpuCall("virtioUsedIdx");
       const buttonsMaskAfterBtnUp = Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) | 0;
+      const mouseBackendSwitchCounterAfterBtnUp = Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0;
 
       // ---------------------------------------------------------------------
       // Phase 4: With no buttons held, mouse move should route via virtio-input.
@@ -665,9 +667,11 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
         backendAfterHeldMove,
         buttonsMaskAfterHeldMove,
         virtioMouseDriverOkAfterHeldMove,
+        mouseBackendSwitchCounterAfterHeldMove,
         phase3BtnUp,
         usedIdxAfterBtnUp,
         buttonsMaskAfterBtnUp,
+        mouseBackendSwitchCounterAfterBtnUp,
         phase4MoveVirtio,
         backendAfterMoveVirtio,
         mouseBackendSwitchCounter: Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0,
@@ -700,6 +704,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
   // 0 = ps2 (see StatusIndex docs / input_backend_status.ts).
   expect(result.backendAfterHeldMove).toBe(0);
   expect(result.virtioMouseDriverOkAfterHeldMove).toBe(1);
+  expect(result.mouseBackendSwitchCounterAfterHeldMove).toBe(0);
 
   // Phase 3: button-up should still be routed through PS/2. A regression where the backend switches
   // before injecting the release would drop the PS/2 "button up", leaving the guest stuck dragging.
@@ -707,6 +712,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
   expect(result.phase3BtnUp.statuses.some((st: number) => (st & 0x20) !== 0)).toBe(true);
   expect(result.usedIdxAfterBtnUp.usedIdx).toBe(result.virtioInit.usedIdxBefore);
   expect(result.buttonsMaskAfterBtnUp).toBe(0x00);
+  expect(result.mouseBackendSwitchCounterAfterBtnUp).toBe(1);
 
   // Phase 4: after releasing the button, backend can switch to virtio.
   expect(result.phase4MoveVirtio.i8042.bytes).toEqual([]);

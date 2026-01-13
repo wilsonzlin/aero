@@ -487,6 +487,14 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
     let virtioUsedIdxAfter = 0;
     let virtioEvents: Array<{ type: number; code: number; value: number }> = [];
 
+    let keyboardBackendSwitchCounterAfterHold = 0;
+    let keyboardBackendSwitchCounterAfterRelease = 0;
+    let keyboardBackendAfterHold = 0;
+    let keyboardBackendAfterRelease = 0;
+    let keyboardHeldCountAfterHold = 0;
+    let keyboardHeldCountAfterRelease = 0;
+    let virtioKeyboardDriverOkAfterHold = 0;
+
     try {
       await waitForAtomic(StatusIndex.IoReady, 1, 10_000);
       await callCpu("init", { ioIpcSab: segments.ioIpc, guestSab: segments.guestMemory.buffer, guestBase }, 5000);
@@ -501,11 +509,15 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
       sendKeyAPressNoRelease();
       await waitForIoInputBatchCounter(batch0, 2000);
       keyAPressBytes = await drainI8042UntilNonEmpty(2000);
+      // Wait for the worker's status telemetry to observe the held key.
+      await waitForAtomic(StatusIndex.IoInputKeyboardHeldCount, 1, 2000);
 
       // Bring virtio-input online (DRIVER_OK + eventq provisioning) while KeyA is still held.
       const virtioInit = (await callCpu("virtioInit", {}, 5000)) as { idFn0: number; usedIdx: number };
       virtioIdFn0 = virtioInit.idFn0 >>> 0;
       virtioUsedIdxInitial = virtioInit.usedIdx >>> 0;
+      // Confirm the IO worker sees virtio-input DRIVER_OK.
+      await waitForAtomic(StatusIndex.IoInputVirtioKeyboardDriverOk, 1, 2000);
 
       // ---------------------------------------------------------------------
       // Phase 2: While KeyA is still held, backend must stay PS/2.
@@ -518,6 +530,11 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
       keyBWhileHeldBytes = await drainI8042UntilNonEmpty(2000);
       const afterHoldVirtio = (await callCpu("readVirtioEvents", { maxEvents: 0 }, 2000)) as { usedIdx: number };
       virtioUsedIdxAfterHold = afterHoldVirtio.usedIdx >>> 0;
+      // Backend must not have switched yet.
+      keyboardBackendSwitchCounterAfterHold = Atomics.load(status, StatusIndex.IoKeyboardBackendSwitchCounter) >>> 0;
+      keyboardBackendAfterHold = Atomics.load(status, StatusIndex.IoInputKeyboardBackend) | 0;
+      keyboardHeldCountAfterHold = Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) | 0;
+      virtioKeyboardDriverOkAfterHold = Atomics.load(status, StatusIndex.IoInputVirtioKeyboardDriverOk) | 0;
 
       // ---------------------------------------------------------------------
       // Phase 3: Release KeyA. The release should still be delivered via PS/2.
@@ -529,6 +546,12 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
       keyAReleaseBytes = await drainI8042UntilNonEmpty(2000);
       const afterReleaseVirtio = (await callCpu("readVirtioEvents", { maxEvents: 0 }, 2000)) as { usedIdx: number };
       virtioUsedIdxAfterRelease = afterReleaseVirtio.usedIdx >>> 0;
+      // After the key-up, the backend should now be able to switch to virtio.
+      await waitForAtomic(StatusIndex.IoInputKeyboardHeldCount, 0, 2000);
+      await waitForAtomic(StatusIndex.IoInputKeyboardBackend, 2, 2000);
+      keyboardBackendSwitchCounterAfterRelease = Atomics.load(status, StatusIndex.IoKeyboardBackendSwitchCounter) >>> 0;
+      keyboardBackendAfterRelease = Atomics.load(status, StatusIndex.IoInputKeyboardBackend) | 0;
+      keyboardHeldCountAfterRelease = Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) | 0;
 
       // ---------------------------------------------------------------------
       // Phase 4: With no keys held, KeyB should now route via virtio-input.
@@ -569,6 +592,13 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
       virtioUsedIdxAfter,
       virtioEvents,
       keyboardBackendSwitchCounter: Atomics.load(status, StatusIndex.IoKeyboardBackendSwitchCounter) >>> 0,
+      keyboardBackendSwitchCounterAfterHold,
+      keyboardBackendSwitchCounterAfterRelease,
+      keyboardBackendAfterHold,
+      keyboardBackendAfterRelease,
+      keyboardHeldCountAfterHold,
+      keyboardHeldCountAfterRelease,
+      virtioKeyboardDriverOkAfterHold,
     };
   });
 
@@ -590,6 +620,11 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
     [0x30, 0xb0], // Set-1 (translated)
   ]).toContainEqual(result.keyBWhileHeldBytes);
   expect(result.virtioUsedIdxAfterHold).toBe(result.virtioUsedIdxInitial);
+  expect(result.keyboardBackendSwitchCounterAfterHold).toBe(0);
+  // 0 = ps2
+  expect(result.keyboardBackendAfterHold).toBe(0);
+  expect(result.keyboardHeldCountAfterHold).toBe(1);
+  expect(result.virtioKeyboardDriverOkAfterHold).toBe(1);
 
   // Release KeyA is still injected via PS/2 (the backend switch happens after the batch).
   // Depending on translation settings, this is either the Set-2 break sequence or the Set-1 break byte.
@@ -598,6 +633,10 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
     [0x9e], // Set-1 (translated): 0x1e | 0x80
   ]).toContainEqual(result.keyAReleaseBytes);
   expect(result.virtioUsedIdxAfterRelease).toBe(result.virtioUsedIdxInitial);
+  expect(result.keyboardBackendSwitchCounterAfterRelease).toBe(1);
+  // 2 = virtio
+  expect(result.keyboardBackendAfterRelease).toBe(2);
+  expect(result.keyboardHeldCountAfterRelease).toBe(0);
 
   // Phase 4: after release, KeyB should route via virtio and i8042 must stay quiet.
   expect(result.i8042AfterVirtioBytes).toEqual([]);
