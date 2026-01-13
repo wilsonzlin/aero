@@ -81,7 +81,7 @@ target_link_libraries(device_state_sanity PRIVATE user32 gdi32)
 aerogpu_add_win7_test(segment_budget_sanity
   segment_budget_sanity/main.cpp
 )
-target_link_libraries(segment_budget_sanity PRIVATE user32 gdi32)
+target_link_libraries(segment_budget_sanity PRIVATE user32 gdi32 setupapi advapi32)
 
 aerogpu_add_win7_test(fence_state_sanity
   fence_state_sanity/main.cpp

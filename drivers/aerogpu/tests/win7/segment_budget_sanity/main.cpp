@@ -4,6 +4,10 @@
 
 #include "..\\..\\..\\protocol\\aerogpu_win7_abi.h"
 
+#include <initguid.h>
+#include <devguid.h>
+#include <setupapi.h>
+
 using aerogpu_test::kmt::D3DKMT_FUNCS;
 using aerogpu_test::kmt::D3DKMT_HANDLE;
 using aerogpu_test::kmt::NTSTATUS;
@@ -14,6 +18,8 @@ static const uint64_t kOneMiB = 1024ull * 1024ull;
 
 static const uint32_t kExpectedPagingBufferPrivateDataSize = AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES;
 static const uint32_t kExpectedPagingBufferSegmentId = 1;  // AEROGPU_SEGMENT_ID_SYSTEM
+
+static const wchar_t* kAeroGpuHwidNeedle = L"PCI\\VEN_A3A0&DEV_0001";
 
 struct SegmentGroupSize {
   uint64_t LocalMemorySize;
@@ -48,6 +54,18 @@ struct QuerySegmentParsed {
 static bool IsOs64Bit() {
   // If this is a native 64-bit process OR a 32-bit process running under WOW64, the OS is x64.
   return aerogpu_test::Is64BitProcess() || aerogpu_test::IsRunningUnderWow64();
+}
+
+static uint32_t ClampNonLocalMbForOs(uint32_t mb) {
+  const uint32_t min_mb = 128;
+  const uint32_t max_mb = IsOs64Bit() ? 2048 : 1024;
+  if (mb < min_mb) {
+    return min_mb;
+  }
+  if (mb > max_mb) {
+    return max_mb;
+  }
+  return mb;
 }
 
 static uint64_t ClampMaxNonLocalBytesForOs() {
@@ -247,6 +265,132 @@ static bool TryParseQuerySegment(const unsigned char* buf, size_t buf_size, Quer
   }
 
   // Header parsed, but couldn't find the descriptor array reliably.
+  return true;
+}
+
+static bool MultiSzContainsCaseInsensitive(const wchar_t* multi_sz, const wchar_t* needle) {
+  if (!multi_sz || !needle || !*needle) {
+    return false;
+  }
+  for (const wchar_t* p = multi_sz; *p; p += wcslen(p) + 1) {
+    if (aerogpu_test::StrIContainsW(p, needle)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool ReadAeroGpuNonLocalMemorySizeMbFromRegistry(uint32_t* out_mb, std::string* err) {
+  if (out_mb) {
+    *out_mb = 0;
+  }
+  if (err) {
+    err->clear();
+  }
+  if (!out_mb) {
+    if (err) {
+      *err = "out_mb == NULL";
+    }
+    return false;
+  }
+
+  HDEVINFO devs = SetupDiGetClassDevsW(&GUID_DEVCLASS_DISPLAY, NULL, NULL, DIGCF_PRESENT);
+  if (devs == INVALID_HANDLE_VALUE) {
+    if (err) {
+      *err = "SetupDiGetClassDevsW failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    return false;
+  }
+
+  bool found = false;
+  uint32_t mb = 0;
+  std::string last_err;
+
+  SP_DEVINFO_DATA devinfo;
+  ZeroMemory(&devinfo, sizeof(devinfo));
+  devinfo.cbSize = sizeof(devinfo);
+
+  for (DWORD idx = 0; SetupDiEnumDeviceInfo(devs, idx, &devinfo); ++idx) {
+    wchar_t hwid[4096];
+    ZeroMemory(hwid, sizeof(hwid));
+    DWORD reg_type = 0;
+    DWORD required = 0;
+    if (!SetupDiGetDeviceRegistryPropertyW(devs,
+                                           &devinfo,
+                                           SPDRP_HARDWAREID,
+                                           &reg_type,
+                                           (PBYTE)hwid,
+                                           sizeof(hwid),
+                                           &required)) {
+      continue;
+    }
+    if (reg_type != REG_MULTI_SZ) {
+      continue;
+    }
+    if (!MultiSzContainsCaseInsensitive(hwid, kAeroGpuHwidNeedle)) {
+      continue;
+    }
+
+    // Found the AeroGPU display adapter. Read HKR\Parameters\NonLocalMemorySizeMB.
+    HKEY drv_key = SetupDiOpenDevRegKey(devs, &devinfo, DICS_FLAG_GLOBAL, 0, DIREG_DRV, KEY_READ);
+    if (drv_key == INVALID_HANDLE_VALUE) {
+      last_err = "SetupDiOpenDevRegKey failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+      continue;
+    }
+
+    HKEY params_key = NULL;
+    LONG r = RegOpenKeyExW(drv_key, L"Parameters", 0, KEY_READ, &params_key);
+    RegCloseKey(drv_key);
+    drv_key = NULL;
+    if (r != ERROR_SUCCESS) {
+      // Parameters subkey may not exist if the driver isn't installed via the INF yet.
+      last_err = "RegOpenKeyExW(Parameters) failed: " + aerogpu_test::Win32ErrorToString((DWORD)r);
+      continue;
+    }
+
+    DWORD value_type = 0;
+    DWORD value = 0;
+    DWORD value_size = sizeof(value);
+    r = RegQueryValueExW(params_key,
+                         L"NonLocalMemorySizeMB",
+                         NULL,
+                         &value_type,
+                         (LPBYTE)&value,
+                         &value_size);
+    RegCloseKey(params_key);
+    params_key = NULL;
+
+    if (r != ERROR_SUCCESS) {
+      last_err = "RegQueryValueExW(NonLocalMemorySizeMB) failed: " + aerogpu_test::Win32ErrorToString((DWORD)r);
+      continue;
+    }
+    if (value_type != REG_DWORD || value_size != sizeof(DWORD)) {
+      last_err = "NonLocalMemorySizeMB has unexpected registry type/size";
+      continue;
+    }
+
+    mb = (uint32_t)value;
+    found = true;
+    break;
+  }
+
+  const DWORD enum_err = GetLastError();
+  SetupDiDestroyDeviceInfoList(devs);
+
+  if (!found) {
+    if (enum_err != ERROR_NO_MORE_ITEMS && enum_err != ERROR_SUCCESS) {
+      if (err) {
+        *err = "SetupDiEnumDeviceInfo failed: " + aerogpu_test::Win32ErrorToString(enum_err);
+      }
+      return false;
+    }
+    if (err) {
+      *err = last_err;
+    }
+    return false;
+  }
+
+  *out_mb = mb;
   return true;
 }
 
@@ -503,6 +647,12 @@ static int RunSegmentBudgetSanity(int argc, char** argv) {
       (unsigned long long)sizes.LocalMemorySize,
       (unsigned long long)sizes.NonLocalMemorySize);
 
+  if (sizes.LocalMemorySize != 0) {
+    aerogpu_test::PrintfStdout("WARN: %s: LocalMemorySize is non-zero (%I64u MiB). AeroGPU is expected to be system-memory-only (LocalMemorySize=0).",
+                               kTestName,
+                               (unsigned long long)(sizes.LocalMemorySize / kOneMiB));
+  }
+
   if (have_query_segment && query_segment.present && query_segment_type != 0xFFFFFFFFu) {
     aerogpu_test::PrintfStdout(
         "INFO: %s: QUERYSEGMENT type=%lu nbSegments=%lu pagingPrivSize=%lu pagingSegId=%lu "
@@ -531,6 +681,38 @@ static int RunSegmentBudgetSanity(int argc, char** argv) {
     aerogpu_test::PrintfStdout("INFO: %s: QUERYSEGMENT not available (probe last NTSTATUS=0x%08lX); skipping",
                                kTestName,
                                (unsigned long)last_status_query);
+  }
+
+  // Registry override cross-check (best-effort).
+  //
+  // If we can locate the AeroGPU display adapter by HWID and read HKR\Parameters\NonLocalMemorySizeMB, verify the
+  // reported segment budget matches the clamped registry value. This directly validates that registry overrides take
+  // effect after reboot/device restart.
+  uint32_t reg_mb = 0;
+  std::string reg_err;
+  if (ReadAeroGpuNonLocalMemorySizeMbFromRegistry(&reg_mb, &reg_err)) {
+    const uint32_t reg_mb_clamped = ClampNonLocalMbForOs(reg_mb);
+    const uint64_t expected_bytes = (uint64_t)reg_mb_clamped * kOneMiB;
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: registry NonLocalMemorySizeMB=%lu (clamped=%lu) => expected=%I64u MiB",
+        kTestName,
+        (unsigned long)reg_mb,
+        (unsigned long)reg_mb_clamped,
+        (unsigned long long)(expected_bytes / kOneMiB));
+
+    if (sizes.NonLocalMemorySize != expected_bytes) {
+      return reporter.Fail(
+          "NonLocalMemorySize mismatch: GETSEGMENTGROUPSIZE reports %I64u MiB, but HKR\\\\Parameters\\\\NonLocalMemorySizeMB=%lu (clamped=%lu) implies %I64u MiB. "
+          "Reboot the guest (or disable/enable the AeroGPU device) after changing the registry value.",
+          (unsigned long long)(sizes.NonLocalMemorySize / kOneMiB),
+          (unsigned long)reg_mb,
+          (unsigned long)reg_mb_clamped,
+          (unsigned long long)(expected_bytes / kOneMiB));
+    }
+  } else if (!reg_err.empty()) {
+    aerogpu_test::PrintfStdout("INFO: %s: registry NonLocalMemorySizeMB not available: %s", kTestName, reg_err.c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: registry NonLocalMemorySizeMB not available; skipping registry cross-check", kTestName);
   }
 
   if (sizes.NonLocalMemorySize == 0) {
