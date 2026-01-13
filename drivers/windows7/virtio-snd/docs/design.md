@@ -62,7 +62,7 @@ CI guardrail: PRs must keep `aero_virtio_snd.vcxproj` on the modern-only backend
 - **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four; PortCls
   uses `controlq` (0) + `txq` (2) for render (stream 0) and `controlq` (0) + `rxq` (3) for capture (stream 1).
   `eventq` is currently unused by the PortCls endpoints.
-- **Interrupts:** MSI/MSI-X (preferred when granted by Windows) with INTx fallback (required by contract v1).
+- **Interrupts:** MSI/MSI-X (message interrupts) preferred when granted by Windows (the shipped INF opts in), with INTx fallback (required by contract v1).
 - **Protocol:** PCM control + TX/RX protocol engines for streams 0/1.
 - **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used
   entries are treated as resource reclamation rather than timing.
@@ -165,14 +165,16 @@ Current behavior:
 Baseline requirements:
 
 - Work correctly with **PCI INTx** + the virtio ISR status register (contract v1).
-- Prefer **MSI/MSI-X** when Windows grants message interrupts (program virtio MSI-X vectors), and fall back to **INTx** when message interrupts are unavailable or cannot be programmed.
+- Prefer **MSI/MSI-X** when Windows assigns message interrupts (INF `Interrupt Management\\MessageSignaledInterruptProperties` opt-in) and virtio MSI-X vector programming succeeds, and fall back to INTx when message interrupts are unavailable or cannot be connected/programmed.
 
 Behavior:
 
-- ISR does minimal work:
-  - **INTx:** acknowledge/deassert by reading the ISR status register, then queue a DPC to do the real processing.
-  - **MSI/MSI-X:** treat interrupts as non-shared; do not read the ISR status byte in the ISR. Queue a DPC to drain the relevant queues.
-- DPC drains used rings for any queues with pending work and completes requests.
+- ISR does minimal work and queues a DPC to do the real processing:
+  - **INTx:** acknowledge/deassert by reading the virtio ISR status register.
+  - **MSI/MSI-X:** treat interrupts as message-based/non-shared; do not read the ISR status byte in the ISR.
+- DPC drains used rings and completes requests:
+  - **INTx:** drain all queues (INTx does not identify which queue fired).
+  - **MSI/MSI-X:** dispatch based on the message ID when enough vectors are granted (vector 0 = config, vector 1..4 = queues 0..3); otherwise drain all sources from vector 0.
 - Playback pacing should be stable under load:
   - Use virtqueue interrupt suppression to avoid interrupt storms (contract v1 does
     not use EVENT_IDX).

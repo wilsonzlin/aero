@@ -92,7 +92,7 @@ The in-tree virtio-snd driver supports both interrupt delivery modes:
 - When message interrupts are present, the driver prefers MSI/MSI-X and programs virtio MSI-X vector routing:
   - if Windows grants enough messages: **vector 0 = config**, **vectors 1..4 = queues 0..3** (`controlq`/`eventq`/`txq`/`rxq`)
   - otherwise: **all sources on vector 0**
-- If MSI/MSI-X is unavailable or vector programming fails, the driver falls back to INTx and (best-effort) disables virtio MSI-X routing
+- If MSI/MSI-X is unavailable, cannot be connected, or vector programming fails, the driver falls back to INTx and (best-effort) disables virtio MSI-X routing
   (`VIRTIO_PCI_MSI_NO_VECTOR` / `0xFFFF`) so the device uses INTx + ISR semantics.
 
 If neither MSI/MSI-X nor INTx resources are available, the driver will fail `START_DEVICE` by default. If `AllowPollingOnly=1` is set under `HKR\\Parameters`,
@@ -124,7 +124,7 @@ Notes:
 
 #### Expected vector mapping
 
-When MSI/MSI-X is active and Windows grants enough messages, the expected mapping is:
+When MSI/MSI-X is active and Windows grants enough messages (at least `1 + numQueues`), the expected mapping is:
 
 - **Vector/message 0:** virtio **config** interrupt (`common_cfg.msix_config`)
 - **Vector/message 1..4:** queues 0..3 (`controlq`, `eventq`, `txq`, `rxq`)
@@ -241,6 +241,7 @@ Backend layer (WaveRT ↔ virtio-snd):
   - When `AllowPollingOnly=1`, the driver may start even if no usable interrupt resource can be discovered/connected (neither MSI/MSI-X nor INTx).
   - In that case it relies on polling used rings (driven by the WaveRT period timer DPC) instead of ISR/DPC delivery, and disables per-queue virtqueue interrupts best-effort to reduce interrupt storm risk.
   - This is intended for early emulator/device-model bring-up and debugging; the default behavior remains interrupt-driven (prefers MSI/MSI-X when available and falls back to INTx).
+  - With `AllowPollingOnly=0` (default), `START_DEVICE` normally fails if no usable interrupt resource can be connected.
   - Applies to the modern virtio-pci transport packages (`aero_virtio_snd.sys` and `virtiosnd_legacy.sys`); the legacy I/O-port bring-up package does not use this toggle.
   - After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
 
@@ -250,11 +251,11 @@ Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 * `src/backend_virtio.c` — virtio-snd backend implementation (PortCls ↔ virtio glue)
 * `src/backend_null.c` — silent backend implementation (fallback / debugging)
 * `src/virtiosnd_hw.c` — virtio-snd WDM bring-up + queue ownership
-  - `VirtIoSndStartHardware` / `VirtIoSndStopHardware` handle BAR0 MMIO discovery/mapping, PCI vendor capability parsing, feature negotiation, queue setup, interrupt wiring (MSI/MSI-X or INTx), and reset/teardown
+  - `VirtIoSndStartHardware` / `VirtIoSndStopHardware` handle BAR0 MMIO discovery/mapping, PCI vendor capability parsing, feature negotiation, queue setup, interrupt wiring (MSI/MSI-X preferred with INTx fallback), and reset/teardown
 * Canonical virtio-pci modern transport (BAR0 MMIO + PCI vendor capability parsing):
   - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
-* INTx integration:
+* Interrupt integration (INTx + MSI/MSI-X):
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
   - `src/virtiosnd_intx.c`
 * `src/virtiosnd_queue_split.c` — split-ring virtqueue wrapper used by the virtio-snd engines
@@ -276,7 +277,7 @@ Notes:
     resulting plug/unplug state via topology jack properties (`KSPROPERTY_JACK_DESCRIPTION*`) and generates a
     `KSEVENTSETID_Jack` / `KSEVENT_JACK_INFO_CHANGE` notification so user-mode can refresh jack state without polling.
     Audio streaming remains correct even if eventq is silent or absent.
-* **Interrupts:** the driver supports both MSI/MSI-X (preferred when Windows grants message interrupts) and INTx fallback (required by contract v1). If Windows does not grant message interrupts (or the device rejects MSI-X vector programming), the driver falls back to INTx.
+* **Interrupts:** **INTx** is required by contract v1. The driver supports MSI/MSI-X as an optional enhancement and prefers it when Windows grants message interrupts (the shipped INF opts in), with fallback to INTx when message interrupts are unavailable or MSI-X vector programming is rejected.
 * **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32) and `VIRTIO_F_RING_INDIRECT_DESC` (bit 28).
 
 ## Legacy / transitional virtio-pci paths (opt-in bring-up)
@@ -781,6 +782,6 @@ For additional safety in environments that expose multiple virtio-snd devices, y
 Notes:
 
 - The **transitional/legacy** virtio-snd PCI device ID (`DEV_1018`) is intentionally **not** matched by this INF (Aero contract v1 is modern-only).
-- This driver package opts into **MSI/MSI-X** in `inf/aero_virtio_snd.inf` and prefers message interrupts when granted, but still supports **INTx** fallback (contract v1 requirement). Windows may grant fewer messages than requested; the driver will fall back to “all sources on vector 0” mapping when needed.
+- This driver package opts into **MSI/MSI-X** in `inf/aero_virtio_snd.inf` and prefers message interrupts when granted, but still supports **INTx** fallback (contract v1 requirement). Windows may grant fewer messages than requested; the driver will fall back to “all sources on vector 0” mapping when needed, and will fall back to INTx if message interrupts cannot be connected or MSI-X vector programming fails.
 
 If this README or the INF disagrees with `AERO-W7-VIRTIO`, treat the contract as authoritative.

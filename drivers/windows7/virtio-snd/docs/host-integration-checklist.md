@@ -91,9 +91,10 @@ The driver needs **at least one usable interrupt mechanism** (unless you explici
 
 ### INTx (line interrupt, contract v1 baseline)
 
-- [ ] **INTx** is implemented and functional (baseline requirement for `AERO-W7-VIRTIO` v1; also used as fallback if MSI/MSI-X connect or vector programming fails).
 - [ ] PCI **Interrupt Pin** register is `1` (INTA#).
 - [ ] ISR status byte is **read-to-ack** (driver relies on read clearing pending bits to deassert INTx).
+- [ ] **INTx** is implemented and functional (baseline requirement for `AERO-W7-VIRTIO` v1; also used as fallback if MSI/MSI-X connect or vector programming fails).
+- [ ] When the driver programs all virtio MSI-X vectors to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`), the device uses legacy virtio ISR semantics and delivers interrupts via INTx.
 
 ## virtio-snd `DEVICE_CFG` (read-only)
 
