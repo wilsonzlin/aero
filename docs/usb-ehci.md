@@ -110,6 +110,15 @@ capability registers; the operational registers start at offset `CAPLENGTH`.
 The following contract is what Aero’s implementation targets; consult the EHCI spec for full bit
 definitions.
 
+Implementation note (bring-up):
+
+- In the web runtime, the EHCI PCI function exposes a **4 KiB MMIO BAR** (`web/src/io/devices/ehci.ts`).
+- The current `aero-usb` EHCI model only implements the subset of registers needed for early driver
+  bring-up (capability regs, operational regs, and `PORTSC[n]`). Reads from unimplemented offsets
+  inside the “core” register window return `0`; reads beyond the modelled window are treated as
+  open-bus (`0xff` bytes). This may be tightened to “reserved reads as 0” across the full 4 KiB
+  window as the model matures.
+
 ### Capability registers (read-only)
 
 The EHCI capability registers primarily allow the guest driver to discover:
