@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 pub trait PortIoDevice {
     fn read(&mut self, port: u16, size: u8) -> u32;
     fn write(&mut self, port: u16, size: u8, value: u32);
@@ -26,20 +24,31 @@ impl RangeDevice {
 }
 
 pub struct IoPortBus {
-    devices: HashMap<u16, Box<dyn PortIoDevice>>,
+    /// Exact port dispatch table.
+    ///
+    /// This is an intentionally fixed-size table (one entry per 16-bit I/O port) to keep port
+    /// dispatch O(1) and avoid hashing overhead on the extremely hot port I/O path.
+    devices: Box<[Option<Box<dyn PortIoDevice>>]>,
     ranges: Vec<RangeDevice>,
 }
 
 impl IoPortBus {
     pub fn new() -> Self {
+        const IO_PORT_COUNT: usize = 0x1_0000;
+
+        // `vec![None; IO_PORT_COUNT]` doesn't work here because `Option<Box<dyn PortIoDevice>>`
+        // isn't `Clone`. Build the fixed table with `resize_with` instead.
+        let mut devices = Vec::with_capacity(IO_PORT_COUNT);
+        devices.resize_with(IO_PORT_COUNT, || None);
+
         Self {
-            devices: HashMap::new(),
+            devices: devices.into_boxed_slice(),
             ranges: Vec::new(),
         }
     }
 
     pub fn register(&mut self, port: u16, device: Box<dyn PortIoDevice>) {
-        self.devices.insert(port, device);
+        self.devices[usize::from(port)] = Some(device);
     }
 
     /// Unregister an I/O port handler, returning the removed device (if any).
@@ -49,7 +58,7 @@ impl IoPortBus {
     /// mapped BAR range and re-register it at the new base without rebuilding the
     /// entire bus.
     pub fn unregister(&mut self, port: u16) -> Option<Box<dyn PortIoDevice>> {
-        self.devices.remove(&port)
+        self.devices[usize::from(port)].take()
     }
 
     /// Unregister a contiguous range of I/O ports.
@@ -165,7 +174,7 @@ impl IoPortBus {
         if !matches!(size, 1 | 2 | 4) {
             return 0xFFFF_FFFF;
         }
-        if let Some(dev) = self.devices.get_mut(&port) {
+        if let Some(dev) = self.devices[usize::from(port)].as_mut() {
             return dev.read(port, size);
         }
 
@@ -193,7 +202,7 @@ impl IoPortBus {
         if !matches!(size, 1 | 2 | 4) {
             return;
         }
-        if let Some(device) = self.devices.get_mut(&port) {
+        if let Some(device) = self.devices[usize::from(port)].as_mut() {
             device.write(port, size, value);
             return;
         }
@@ -216,7 +225,7 @@ impl IoPortBus {
     }
 
     pub fn reset(&mut self) {
-        for dev in self.devices.values_mut() {
+        for dev in self.devices.iter_mut().filter_map(|d| d.as_mut()) {
             dev.reset();
         }
 
