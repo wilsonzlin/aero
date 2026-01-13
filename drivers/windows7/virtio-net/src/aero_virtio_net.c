@@ -1276,12 +1276,18 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
     } else if (QueueIndex == 1) {
       Vector = Adapter->MsixTxVector;
     } else {
-      return NDIS_STATUS_NOT_SUPPORTED;
+      Vector = VIRTIO_PCI_MSI_NO_VECTOR;
     }
 
-    // MSI/MSI-X: route virtqueue interrupts to the desired vector.
-    if (AerovNetProgramQueueMsixVector(Adapter, QueueIndex, Vector) != NDIS_STATUS_SUCCESS) {
-      return NDIS_STATUS_FAILURE;
+    if (Vector != VIRTIO_PCI_MSI_NO_VECTOR) {
+      // MSI/MSI-X: route virtqueue interrupts to the desired vector.
+      if (AerovNetProgramQueueMsixVector(Adapter, QueueIndex, Vector) != NDIS_STATUS_SUCCESS) {
+        return NDIS_STATUS_FAILURE;
+      }
+    } else {
+      // Extra virtqueues (e.g. virtio-net control virtqueue) do not get a dedicated
+      // MSI-X vector. Leave them disabled; the control path polls for completion.
+      AerovNetDisableQueueMsixVector(Adapter, QueueIndex);
     }
   } else {
     // INTx: disable MSI-X routing for this queue; INTx/ISR is required by contract v1.
