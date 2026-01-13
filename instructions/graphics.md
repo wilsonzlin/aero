@@ -29,7 +29,7 @@ Graphics is what makes Windows 7 "usable." The Aero glass interface, DWM composi
 | `crates/aero-gpu-vga/` | VGA/VBE mode emulation |
 | `crates/aero-gpu-wasm/` | WASM bindings for GPU |
 | `crates/aero-d3d9/` | DirectX 9 state machine and translation |
-| `crates/aero-d3d9-shader/` | D3D9 shader parsing |
+| `crates/aero-d3d9-shader/` | Legacy SM2/SM3 token-stream parser + disassembler (not used by runtime) |
 | `crates/aero-d3d11/` | DirectX 10/11 translation |
 | `crates/aero-dxbc/` | DXBC bytecode parser (shared) |
 | `crates/aero-webgpu/` | WebGPU abstraction layer |

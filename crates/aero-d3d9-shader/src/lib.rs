@@ -1,4 +1,7 @@
-//! Parser + debug disassembler for Direct3D 9 SM2/SM3 shader token streams.
+//! Legacy parser + debug disassembler for Direct3D 9 SM2/SM3 shader token streams.
+//!
+//! This crate is kept for reference and debugging, but it is no longer used by the runtime D3D9
+//! translation pipeline. Prefer the canonical implementation in `crates/aero-d3d9/src/sm3`.
 
 mod disasm;
 mod error;
