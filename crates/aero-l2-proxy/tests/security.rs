@@ -222,12 +222,14 @@ async fn subprotocol_required_rejects_missing_protocol() {
     let proxy = start_server(cfg).await.unwrap();
     let addr = proxy.local_addr();
 
-    let ws_url = format!("ws://{addr}/l2");
-    let req = ws_url.into_client_request().unwrap();
-    let err = tokio_tungstenite::connect_async(req)
-        .await
-        .expect_err("expected missing subprotocol to be rejected");
-    assert_http_status(err, StatusCode::BAD_REQUEST);
+    for path in ["/l2", "/eth"] {
+        let ws_url = format!("ws://{addr}{path}");
+        let req = ws_url.into_client_request().unwrap();
+        let err = tokio_tungstenite::connect_async(req)
+            .await
+            .expect_err("expected missing subprotocol to be rejected");
+        assert_http_status(err, StatusCode::BAD_REQUEST);
+    }
 
     proxy.shutdown().await;
 }
