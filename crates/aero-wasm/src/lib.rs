@@ -633,8 +633,8 @@ pub fn synthesize_webhid_report_descriptor_bytes(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn js_error(message: &str) -> JsValue {
-    js_sys::Error::new(message).into()
+fn js_error(message: impl core::fmt::Display) -> JsValue {
+    js_sys::Error::new(&message.to_string()).into()
 }
 
 /// WASM export: synthesize a HID report descriptor from WebHID-normalized metadata.
@@ -2658,7 +2658,7 @@ impl Machine {
             .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_opfs", &path, e))?;
         self.inner
             .set_disk_backend(Box::new(backend))
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(js_error)
     }
 
     /// Open an existing OPFS-backed disk image (using the file's current size) and attach it as the
@@ -2675,7 +2675,53 @@ impl Machine {
             .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_opfs_existing", &path, e))?;
         self.inner
             .set_disk_backend(Box::new(backend))
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(js_error)
+    }
+
+    /// Open (or create) an OPFS-backed disk image and attach it as the IDE primary channel master
+    /// ATA disk.
+    ///
+    /// This corresponds to the canonical Windows 7 storage topology slot:
+    /// Intel PIIX3 IDE primary channel, master drive (`disk_id=2`).
+    ///
+    /// Note: OPFS sync access handles are worker-only, so this requires running the WASM module in
+    /// a dedicated worker (not the main thread).
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_ide_primary_master_disk_opfs(
+        &mut self,
+        path: String,
+        create: bool,
+        size_bytes: u64,
+    ) -> Result<(), JsValue> {
+        let backend = aero_opfs::OpfsBackend::open(&path, create, size_bytes)
+            .await
+            .map_err(|e| opfs_disk_error_to_js("Machine.attach_ide_primary_master_disk_opfs", &path, e))?;
+        self.inner
+            .attach_ide_primary_master_disk(Box::new(backend))
+            .map_err(js_error)
+    }
+
+    /// Open an existing OPFS-backed disk image (using the file's current size) and attach it as
+    /// the IDE primary channel master ATA disk.
+    ///
+    /// This corresponds to the canonical Windows 7 storage topology slot:
+    /// Intel PIIX3 IDE primary channel, master drive (`disk_id=2`).
+    ///
+    /// Note: OPFS sync access handles are worker-only, so this requires running the WASM module in
+    /// a dedicated worker (not the main thread).
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_ide_primary_master_disk_opfs_existing(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        let backend = aero_opfs::OpfsBackend::open_existing(&path)
+            .await
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.attach_ide_primary_master_disk_opfs_existing", &path, e)
+            })?;
+        self.inner
+            .attach_ide_primary_master_disk(Box::new(backend))
+            .map_err(js_error)
     }
 
     /// Create a new OPFS-backed Aero sparse disk (`.aerospar`) and attach it as the machine's
@@ -3812,5 +3858,46 @@ mod machine_mouse_button_cache_tests {
         m.inject_mouse_buttons_mask(0x18);
         let packet: Vec<u8> = (0..4).map(|_| m.inner.io_read(0x60, 1) as u8).collect();
         assert_eq!(packet, vec![0x08, 0x00, 0x00, 0x30]);
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod machine_opfs_ide_primary_master_tests {
+    use super::Machine;
+
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn unique_path(prefix: &str) -> String {
+        let now = js_sys::Date::now() as u64;
+        format!("tests/{prefix}-{now}.img")
+    }
+
+    #[wasm_bindgen_test(async)]
+    async fn attach_ide_primary_master_disk_opfs_apis_compile_and_skip_when_unsupported() {
+        let existing_path = unique_path("ide-primary-master-existing");
+        let create_path = unique_path("ide-primary-master-create");
+        let size_bytes = 1024 * 1024u64;
+
+        // Seed an on-disk file so we can exercise the `_existing` API when OPFS sync handles are
+        // supported. Node-based wasm-bindgen tests (and browsers without OPFS) will hit the
+        // `NotSupported` path; treat that as a runtime skip.
+        let mut seed = match aero_opfs::OpfsBackend::open(&existing_path, true, size_bytes).await {
+            Ok(backend) => backend,
+            Err(aero_opfs::DiskError::NotSupported(_))
+            | Err(aero_opfs::DiskError::BackendUnavailable)
+            | Err(aero_opfs::DiskError::QuotaExceeded) => return,
+            Err(e) => panic!("unexpected OPFS error while seeding disk: {e:?}"),
+        };
+        seed.close().expect("seed disk close should succeed");
+
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+
+        m.attach_ide_primary_master_disk_opfs_existing(existing_path)
+            .await
+            .expect("attach_ide_primary_master_disk_opfs_existing should succeed");
+
+        m.attach_ide_primary_master_disk_opfs(create_path, true, size_bytes)
+            .await
+            .expect("attach_ide_primary_master_disk_opfs should succeed");
     }
 }
