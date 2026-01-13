@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 cmake_minimum_required(VERSION 3.15)
-project(virtiosnd_sg_tests C)
+project(virtiosnd_tests C)
 
 enable_testing()
 
