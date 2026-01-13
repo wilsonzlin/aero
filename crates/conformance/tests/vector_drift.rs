@@ -220,6 +220,9 @@ struct ConformanceTcpMuxFrameVector {
 #[derive(Debug, Deserialize)]
 struct ConformanceTcpMuxOpenPayloadVector {
     name: String,
+    host: String,
+    port: u16,
+    metadata: Option<String>,
     #[serde(rename = "payloadHex")]
     payload_hex: String,
 }
@@ -235,6 +238,8 @@ struct ConformanceTcpMuxClosePayloadVector {
 #[derive(Debug, Deserialize)]
 struct ConformanceTcpMuxErrorPayloadVector {
     name: String,
+    code: Option<u16>,
+    message: Option<String>,
     #[serde(rename = "payloadHex")]
     payload_hex: String,
     #[serde(rename = "expectError")]
@@ -320,6 +325,9 @@ struct ProtocolTcpMuxFrameVector {
 #[derive(Debug, Deserialize)]
 struct ProtocolTcpMuxOpenPayloadVector {
     name: String,
+    host: String,
+    port: u16,
+    metadata: Option<String>,
     payload_b64: String,
 }
 
@@ -333,6 +341,8 @@ struct ProtocolTcpMuxClosePayloadVector {
 #[derive(Debug, Deserialize)]
 struct ProtocolTcpMuxErrorPayloadVector {
     name: String,
+    code: Option<u16>,
+    message: Option<String>,
     payload_b64: String,
     #[serde(rename = "expectError")]
     expect_error: Option<bool>,
@@ -958,6 +968,9 @@ fn tcp_mux_vectors_do_not_drift() {
         let proto_v = proto_open.get(v.name.as_str()).copied().unwrap_or_else(|| {
             panic!("{ctx}: missing entry in {proto_path:?} (openPayloads)")
         });
+        assert_eq!(proto_v.host, v.host, "{ctx}: host drift");
+        assert_eq!(proto_v.port, v.port, "{ctx}: port drift");
+        assert_eq!(proto_v.metadata, v.metadata, "{ctx}: metadata drift");
         let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
         let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
         assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
@@ -987,17 +1000,18 @@ fn tcp_mux_vectors_do_not_drift() {
         let proto_v = proto_error.get(v.name.as_str()).copied().unwrap_or_else(|| {
             panic!("{ctx}: missing entry in {proto_path:?} (errorPayloads)")
         });
-        assert_eq!(
-            proto_v.expect_error.unwrap_or(false),
-            v.expect_error.unwrap_or(false),
-            "{ctx}: expectError drift"
-        );
-        if proto_v.expect_error.unwrap_or(false) {
+        let proto_is_error = proto_v.expect_error.unwrap_or(false);
+        let conf_is_error = v.expect_error.unwrap_or(false);
+        assert_eq!(proto_is_error, conf_is_error, "{ctx}: expectError drift");
+        if proto_is_error {
             assert_eq!(
                 proto_v.error_contains.as_deref(),
                 v.error_contains.as_deref(),
                 "{ctx}: errorContains drift"
             );
+        } else {
+            assert_eq!(proto_v.code, v.code, "{ctx}: code drift");
+            assert_eq!(proto_v.message, v.message, "{ctx}: message drift");
         }
         let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
         let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
