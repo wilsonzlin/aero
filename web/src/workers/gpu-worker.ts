@@ -98,7 +98,10 @@ import {
 } from '../runtime/shared_layout';
 import { RingBuffer } from '../ipc/ring_buffer';
 import { decodeCommand, encodeEvent, type Command, type Event } from '../ipc/protocol';
-import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
+import {
+  guestPaddrToRamOffset as guestPaddrToRamOffsetRaw,
+  guestRangeInBounds as guestRangeInBoundsRaw,
+} from "../arch/guest_ram_translate.ts";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
@@ -759,12 +762,12 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot, guest: Uint8Array):
     const rowPaddr = Number(rowPaddrBig);
 
     try {
-      if (!guestRangeInBounds(ramBytes, rowPaddr, rowBytes)) return null;
+      if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) return null;
     } catch {
       return null;
     }
 
-    const rowOff = guestPaddrToRamOffset(ramBytes, rowPaddr);
+    const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
     if (rowOff === null) return null;
 
     const src = guest.subarray(rowOff, rowOff + rowBytes);

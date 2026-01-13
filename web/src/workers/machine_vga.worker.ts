@@ -647,10 +647,11 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
   const ramSizeBytes = typeof msg.ramSizeBytes === "number" ? msg.ramSizeBytes : 2 * 1024 * 1024;
   const enableAerogpu = !!msg.enableAerogpu;
   const enableVga = typeof msg.enableVga === "boolean" ? msg.enableVga : undefined;
-  const canEnableAerogpu = enableAerogpu && typeof api.Machine.new_with_config === "function";
+  const newWithConfig = api.Machine.new_with_config;
+  const canEnableAerogpu = enableAerogpu && typeof newWithConfig === "function";
   machine =
-    canEnableAerogpu
-      ? api.Machine.new_with_config(ramSizeBytes >>> 0, true, enableVga)
+    enableAerogpu && typeof newWithConfig === "function"
+      ? newWithConfig(ramSizeBytes >>> 0, true, enableVga)
       : new api.Machine(ramSizeBytes >>> 0);
   const bootMessage = msg.message ?? "Hello from machine_vga.worker\\n";
   // Bochs VBE programming requires the legacy VGA/VBE device model. When running with AeroGPU

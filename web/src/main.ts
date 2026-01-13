@@ -833,10 +833,12 @@ function renderMachinePanel(): HTMLElement {
         if (normalized === "0" || normalized === "false") return false;
         return true;
       })();
-      const canEnableAerogpu = enableAerogpu && typeof api.Machine.new_with_config === "function";
-      const machine = canEnableAerogpu
-        ? api.Machine.new_with_config(ramSizeBytes, true, enableVgaOverride)
-        : new api.Machine(ramSizeBytes);
+      const newWithConfig = api.Machine.new_with_config;
+      const canEnableAerogpu = enableAerogpu && typeof newWithConfig === "function";
+      const machine =
+        enableAerogpu && typeof newWithConfig === "function"
+          ? newWithConfig(ramSizeBytes, true, enableVgaOverride)
+          : new api.Machine(ramSizeBytes);
       const vbeRaw = search.get("machineVbe");
       let diskImage = buildSerialBootSector(bootMessage);
       // Bochs VBE programming requires the legacy VGA/VBE device model. If the user requested the
