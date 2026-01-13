@@ -270,6 +270,7 @@ static UINT AeroGpuBuildModeList(_Out_writes_(Capacity) AEROGPU_DISPLAY_MODE* Mo
      * Keep this small/deterministic for Win7 bring-up stability.
      */
     static const AEROGPU_DISPLAY_MODE kFallback[] = {
+        {640, 480},
         {800, 600},
         {1024, 768},
         {1280, 720},
