@@ -132,6 +132,24 @@ void trace_create_resource_desc(const AEROGPU_DDIARG_CREATERESOURCE* pDesc) {
 }
 #endif  // AEROGPU_UMD_TRACE_RESOURCES
 
+// Reuse the shared D3D10/11 helpers from `aerogpu_d3d10_11_internal.h` in the
+// portable (non-WDK) UMD so format/packing logic stays in sync with the Win7
+// WDK path.
+using aerogpu::d3d10_11::AerogpuTextureFormatLayout;
+using aerogpu::d3d10_11::Texture2DSubresourceLayout;
+using aerogpu::d3d10_11::aerogpu_div_round_up_u32;
+using aerogpu::d3d10_11::aerogpu_format_is_block_compressed;
+using aerogpu::d3d10_11::aerogpu_mip_dim;
+using aerogpu::d3d10_11::aerogpu_texture_format_layout;
+using aerogpu::d3d10_11::aerogpu_texture_min_row_pitch_bytes;
+using aerogpu::d3d10_11::aerogpu_texture_num_rows;
+using aerogpu::d3d10_11::aerogpu_texture_required_size_bytes;
+using aerogpu::d3d10_11::bind_flags_to_usage_flags;
+using aerogpu::d3d10_11::bytes_per_pixel_aerogpu;
+using aerogpu::d3d10_11::dxgi_index_format_to_aerogpu;
+using aerogpu::d3d10_11::f32_bits;
+using aerogpu::d3d10_11::HashSemanticName;
+
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
@@ -332,140 +350,12 @@ uint32_t d3d11_format_support_flags(uint32_t dxgi_format) {
   }
 }
 
-uint32_t f32_bits(float v) {
-  uint32_t bits = 0;
-  static_assert(sizeof(bits) == sizeof(v), "float must be 32-bit");
-  std::memcpy(&bits, &v, sizeof(bits));
-  return bits;
-}
-
-// FNV-1a 32-bit hash for stable semantic name IDs.
-//
-// D3D semantic matching is case-insensitive. The AeroGPU ILAY protocol only stores a 32-bit hash
-// (not the original string), so we canonicalize to ASCII uppercase before hashing.
-uint32_t HashSemanticName(const char* s) {
-  if (!s) {
-    return 0;
-  }
-  uint32_t hash = 2166136261u;
-  for (const unsigned char* p = reinterpret_cast<const unsigned char*>(s); *p; ++p) {
-    unsigned char c = *p;
-    if (c >= 'a' && c <= 'z') {
-      c = static_cast<unsigned char>(c - 'a' + 'A');
-    }
-    hash ^= c;
-    hash *= 16777619u;
-  }
-  return hash;
-}
-
 uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
   if (alignment == 0) {
     return value;
   }
   const uint64_t mask = alignment - 1;
   return (value + mask) & ~mask;
-}
-
-struct AerogpuTextureFormatLayout {
-  uint32_t block_width = 0;
-  uint32_t block_height = 0;
-  uint32_t bytes_per_block = 0;
-  bool valid = false;
-};
-
-AerogpuTextureFormatLayout aerogpu_texture_format_layout(uint32_t aerogpu_format) {
-  switch (aerogpu_format) {
-    case AEROGPU_FORMAT_B8G8R8A8_UNORM:
-    case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
-    case AEROGPU_FORMAT_B8G8R8X8_UNORM:
-    case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
-    case AEROGPU_FORMAT_R8G8B8A8_UNORM:
-    case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
-    case AEROGPU_FORMAT_R8G8B8X8_UNORM:
-    case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
-    case AEROGPU_FORMAT_D24_UNORM_S8_UINT:
-    case AEROGPU_FORMAT_D32_FLOAT:
-      return AerogpuTextureFormatLayout{1, 1, 4, true};
-    case AEROGPU_FORMAT_B5G6R5_UNORM:
-    case AEROGPU_FORMAT_B5G5R5A1_UNORM:
-      return AerogpuTextureFormatLayout{1, 1, 2, true};
-    case AEROGPU_FORMAT_BC1_RGBA_UNORM:
-    case AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB:
-      return AerogpuTextureFormatLayout{4, 4, 8, true};
-    case AEROGPU_FORMAT_BC2_RGBA_UNORM:
-    case AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB:
-    case AEROGPU_FORMAT_BC3_RGBA_UNORM:
-    case AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB:
-    case AEROGPU_FORMAT_BC7_RGBA_UNORM:
-    case AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB:
-      return AerogpuTextureFormatLayout{4, 4, 16, true};
-    default:
-      return AerogpuTextureFormatLayout{};
-  }
-}
-
-bool aerogpu_format_is_block_compressed(uint32_t aerogpu_format) {
-  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
-  return layout.valid && (layout.block_width != 1 || layout.block_height != 1);
-}
-
-uint32_t aerogpu_div_round_up_u32(uint32_t value, uint32_t divisor) {
-  return (value + divisor - 1) / divisor;
-}
-
-uint32_t aerogpu_texture_min_row_pitch_bytes(uint32_t aerogpu_format, uint32_t width) {
-  if (width == 0) {
-    return 0;
-  }
-  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
-  if (!layout.valid || layout.block_width == 0 || layout.bytes_per_block == 0) {
-    return 0;
-  }
-  const uint64_t blocks_w = static_cast<uint64_t>(aerogpu_div_round_up_u32(width, layout.block_width));
-  const uint64_t row_bytes = blocks_w * static_cast<uint64_t>(layout.bytes_per_block);
-  if (row_bytes == 0 || row_bytes > UINT32_MAX) {
-    return 0;
-  }
-  return static_cast<uint32_t>(row_bytes);
-}
-
-uint32_t aerogpu_texture_num_rows(uint32_t aerogpu_format, uint32_t height) {
-  if (height == 0) {
-    return 0;
-  }
-  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
-  if (!layout.valid || layout.block_height == 0) {
-    return 0;
-  }
-  return aerogpu_div_round_up_u32(height, layout.block_height);
-}
-
-uint64_t aerogpu_texture_required_size_bytes(uint32_t aerogpu_format, uint32_t row_pitch_bytes, uint32_t height) {
-  if (row_pitch_bytes == 0) {
-    return 0;
-  }
-  const uint32_t rows = aerogpu_texture_num_rows(aerogpu_format, height);
-  return static_cast<uint64_t>(row_pitch_bytes) * static_cast<uint64_t>(rows);
-}
-
-struct Texture2DSubresourceLayout {
-  uint32_t mip_level = 0;
-  uint32_t array_layer = 0;
-  uint32_t width = 0;
-  uint32_t height = 0;
-  uint64_t offset_bytes = 0;
-  uint32_t row_pitch_bytes = 0;
-  uint32_t rows_in_layout = 0;
-  uint64_t size_bytes = 0;
-};
-
-uint32_t aerogpu_mip_dim(uint32_t base, uint32_t mip_level) {
-  if (base == 0) {
-    return 0;
-  }
-  const uint32_t shifted = (mip_level >= 32) ? 0u : (base >> mip_level);
-  return std::max(1u, shifted);
 }
 
 bool compute_texture2d_subresource_layout(uint32_t aerogpu_format,
@@ -616,24 +506,6 @@ bool compute_texture2d_total_bytes(uint32_t aerogpu_format,
   return true;
 }
 
-uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
-  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
-  if (!layout.valid || layout.block_width != 1 || layout.block_height != 1) {
-    return 0;
-  }
-  return layout.bytes_per_block;
-}
-
-uint32_t dxgi_index_format_to_aerogpu(uint32_t dxgi_format) {
-  switch (dxgi_format) {
-    case kDxgiFormatR32Uint:
-      return AEROGPU_INDEX_FORMAT_UINT32;
-    case kDxgiFormatR16Uint:
-    default:
-      return AEROGPU_INDEX_FORMAT_UINT16;
-  }
-}
-
 uint32_t d3d11_filter_to_aerogpu(uint32_t filter) {
   switch (filter) {
     case kD3D11FilterMinMagMipPoint:
@@ -659,29 +531,6 @@ uint32_t d3d11_address_mode_to_aerogpu(uint32_t mode) {
     default:
       return AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
   }
-}
-
-uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
-  uint32_t usage = AEROGPU_RESOURCE_USAGE_NONE;
-  if (bind_flags & kD3D11BindVertexBuffer) {
-    usage |= AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER;
-  }
-  if (bind_flags & kD3D11BindIndexBuffer) {
-    usage |= AEROGPU_RESOURCE_USAGE_INDEX_BUFFER;
-  }
-  if (bind_flags & kD3D11BindConstantBuffer) {
-    usage |= AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER;
-  }
-  if (bind_flags & kD3D11BindShaderResource) {
-    usage |= AEROGPU_RESOURCE_USAGE_TEXTURE;
-  }
-  if (bind_flags & kD3D11BindRenderTarget) {
-    usage |= AEROGPU_RESOURCE_USAGE_RENDER_TARGET;
-  }
-  if (bind_flags & kD3D11BindDepthStencil) {
-    usage |= AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL;
-  }
-  return usage;
 }
 
 enum class ResourceKind : uint32_t {
