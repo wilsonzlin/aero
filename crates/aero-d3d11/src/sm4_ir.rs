@@ -172,6 +172,17 @@ pub enum Sm4Inst {
         dst: DstOperand,
         src: SrcOperand,
     },
+    /// Bitwise AND (`and dest, a, b`).
+    ///
+    /// SM4/SM5 register files are untyped; integer values are typically represented as raw bits in
+    /// the same registers that also carry float values. The translator therefore preserves the raw
+    /// bit patterns by bitcasting to integer vectors in WGSL, performing the `&`, then bitcasting
+    /// back into the internal `vec4<f32>` register model.
+    And {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
     Add {
         dst: DstOperand,
         a: SrcOperand,

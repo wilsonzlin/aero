@@ -383,7 +383,7 @@ fn translates_front_facing_builtin() {
         .contains("@builtin(front_facing) front_facing: bool"));
     assert!(translated
         .wgsl
-        .contains("select(0.0, 1.0, input.front_facing)"));
+        .contains("vec4<f32>(bitcast<f32>(select(0u, 0xffffffffu, input.front_facing)))"));
 
     assert!(translated.reflection.inputs.iter().any(|p| {
         p.semantic_name.eq_ignore_ascii_case("SV_IsFrontFace")

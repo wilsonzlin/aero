@@ -842,7 +842,8 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
             }
-            Sm4Inst::Add { dst: _, a, b }
+            Sm4Inst::And { dst: _, a, b }
+            | Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
             | Sm4Inst::Dp3 { dst: _, a, b }
             | Sm4Inst::Dp4 { dst: _, a, b }
@@ -1334,20 +1335,22 @@ impl IoMaps {
                     return Ok(expand_to_vec4("f32(input.primitive_id)", p));
                 }
                 if Some(reg) == self.ps_front_facing_register {
-                    let p = self.inputs.get(&reg).ok_or(
+                    let _p = self.inputs.get(&reg).ok_or(
                         ShaderTranslateError::SignatureMissingRegister {
                             io: "input",
                             register: reg,
                         },
                     )?;
-                    // `SV_IsFrontFace` is a boolean system value. For now we expand it to a
-                    // numeric 0.0/1.0 in the internal `vec4<f32>` register model.
+                    // `SV_IsFrontFace` is a bool in HLSL, but in SM4/5 the register file is untyped
+                    // and most compilers represent boolean values as an all-bits-set mask (0xffffffff)
+                    // for true and 0 for false. Integer/bitwise code expects this representation.
                     //
-                    // Note: D3D-style boolean "mask bits" (0 / 0xffffffff) can be represented as:
-                    // `bitcast<f32>(select(0u, 0xffffffffu, input.front_facing))`.
-                    // We intentionally keep the numeric representation until we translate boolean
-                    // and integer ops that depend on the mask form.
-                    return Ok(expand_to_vec4("select(0.0, 1.0, input.front_facing)", p));
+                    // Store the mask bits in our internal `vec4<f32>` register model by
+                    // bitcasting the u32 mask into an f32 and splatting across lanes.
+                    return Ok(
+                        "vec4<f32>(bitcast<f32>(select(0u, 0xffffffffu, input.front_facing)))"
+                            .to_owned(),
+                    );
                 }
                 let p = self.inputs.get(&reg).ok_or(
                     ShaderTranslateError::SignatureMissingRegister {
@@ -1828,7 +1831,8 @@ fn scan_resources(
                 scan_src(a)?;
                 scan_src(b)?;
             }
-            Sm4Inst::Add { dst: _, a, b }
+            Sm4Inst::And { dst: _, a, b }
+            | Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
             | Sm4Inst::Dp3 { dst: _, a, b }
             | Sm4Inst::Dp4 { dst: _, a, b }
@@ -2038,7 +2042,8 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
             }
-            Sm4Inst::Add { dst, a, b }
+            Sm4Inst::And { dst, a, b }
+            | Sm4Inst::Add { dst, a, b }
             | Sm4Inst::Mul { dst, a, b }
             | Sm4Inst::Dp3 { dst, a, b }
             | Sm4Inst::Dp4 { dst, a, b }
@@ -2294,6 +2299,14 @@ fn emit_instructions(
                 let rhs = format!("vec4<f32>(bitcast<vec4<u32>>({src_bits}))");
                 let rhs = maybe_saturate(dst, rhs);
                 emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "utof", ctx)?;
+            }
+            Sm4Inst::And { dst, a, b } => {
+                let a_vec = emit_src_vec4(a, inst_index, "and", ctx)?;
+                let b_vec = emit_src_vec4(b, inst_index, "and", ctx)?;
+                let rhs = format!(
+                    "bitcast<vec4<f32>>(bitcast<vec4<u32>>({a_vec}) & bitcast<vec4<u32>>({b_vec}))"
+                );
+                emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "and", ctx)?;
             }
             Sm4Inst::Add { dst, a, b } => {
                 let a = emit_src_vec4(a, inst_index, "add", ctx)?;

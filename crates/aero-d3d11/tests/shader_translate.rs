@@ -1276,6 +1276,75 @@ fn translates_ps_front_facing_builtin_from_system_value_type() {
 }
 
 #[test]
+fn translates_front_facing_as_d3d_boolean_mask_for_bitwise_ops() {
+    // Validate that `SV_IsFrontFace` is represented as a D3D-style boolean mask
+    // (0xffffffff/0) in the untyped register file, so integer/bitwise code can
+    // operate on it directly.
+    const D3D_NAME_IS_FRONT_FACE: u32 = 9;
+
+    let mut front_facing = sig_param("SV_IsFrontFace", 0, 0, 0b0001);
+    front_facing.system_value_type = D3D_NAME_IS_FRONT_FACE;
+
+    let isgn_params = vec![front_facing];
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // AND a constant mask with the front-facing value. If `SV_IsFrontFace` is
+    // represented as 1.0/0.0, the AND would produce nonsensical masks.
+    let mask_imm = SrcOperand {
+        kind: SrcKind::ImmediateF32([0x000000ffu32; 4]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::And {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                a: src_reg(RegFile::Input, 0),
+                b: mask_imm,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated
+            .wgsl
+            .contains("select(0u, 0xffffffffu, input.front_facing)"),
+        "expected `SV_IsFrontFace` to expand to a 0xffffffff/0 mask:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("&"),
+        "expected bitwise AND to be present in generated WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<u32>>"),
+        "expected integer bitcasts to be present in generated WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn rejects_texture_slot_out_of_range() {
     let isgn_params = vec![
         sig_param("SV_Position", 0, 0, 0b1111),
