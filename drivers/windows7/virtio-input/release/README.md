@@ -10,6 +10,7 @@ This folder documents how to produce a redistributable driver bundle once you ha
 - The matching `*.inf` from `drivers/windows7/virtio-input/inf/` (see naming below)
 - The matching `*.cat` if present (either next to the INF, or under `-InputDir`)
 - A KMDF coinstaller `WdfCoInstaller*.dll` **if present** (either referenced by the INF, or discovered under `-InputDir`)
+- An `INSTALL.txt` with minimal Windows 7 test-signing + “Have Disk…” install steps
 - A `manifest.json` describing file hashes + metadata (driver id, arch, version, etc.)
 - A `SHA256SUMS` file containing SHA-256 for every file in the zip (including `manifest.json`) for easy integrity checks
 

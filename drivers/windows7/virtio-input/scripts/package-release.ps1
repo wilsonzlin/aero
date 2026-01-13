@@ -9,7 +9,9 @@ optionally a signed CAT and KMDF coinstaller DLL, then emits:
 
   aero-virtio-input-win7-<arch>-<version>.zip
 
-The zip always includes a manifest.json listing file hashes and metadata.
+The zip always includes:
+  - INSTALL.txt with minimal test-signing + "Have Disk..." install steps
+  - manifest.json listing file hashes and metadata
 #>
 
 [CmdletBinding()]
@@ -32,10 +34,13 @@ $ErrorActionPreference = 'Stop'
 
 $script:DriverId = 'aero-virtio-input'
 $script:InfBaseName = 'aero_virtio_input'
+$script:ServiceNameFallback = $script:InfBaseName
 $script:TargetOs = 'win7'
 $script:FixedZipTimestamp = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:FallbackSysName = (($script:DriverId -replace '-', '_') + '.sys')
+$script:InstallInstructionsName = 'INSTALL.txt'
+$script:InstallInstructionsTemplateName = 'INSTALL.txt.in'
 
 function Normalize-Arch([string]$ArchValue) {
     if ($ArchValue -eq 'x64') { return 'amd64' }
@@ -271,6 +276,26 @@ function Get-WdfCoInstallerDllNameFromInf([string]$InfPath) {
     return $null
 }
 
+function Get-ServiceNameFromInf([string]$InfPath, [string]$DefaultName) {
+    $lines = Get-Content -LiteralPath $InfPath -ErrorAction Stop
+    $names = @()
+    foreach ($line in $lines) {
+        $m = [regex]::Match(
+            $line,
+            '^\s*AddService\s*=\s*([^,\s]+)\s*,',
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
+        if ($m.Success) { $names += $m.Groups[1].Value.Trim() }
+    }
+
+    $names = @($names | Select-Object -Unique)
+    if ($names.Count -eq 1) { return $names[0] }
+    if ($names.Count -gt 1) {
+        throw ("INF contains multiple distinct AddService service names: {0}" -f ($names -join ', '))
+    }
+    return $DefaultName
+}
+
 function New-DeterministicZip([string]$SourceDir, [string]$ZipPath) {
     Add-Type -AssemblyName System.IO.Compression | Out-Null
     Add-Type -AssemblyName System.IO.Compression.FileSystem | Out-Null
@@ -340,6 +365,32 @@ function Write-Sha256SumsFile([string]$DirPath) {
     Write-Utf8NoBomFile -Path (Join-Path $DirPath 'SHA256SUMS') -Contents $contents
 }
 
+function Get-NormalizedCrlfText([string]$Text) {
+    $t = $Text -replace "`r`n", "`n"
+    $t = $t -replace "`r", "`n"
+    return ($t -replace "`n", "`r`n")
+}
+
+function New-InstallInstructionsText(
+    [string]$TemplatePath,
+    [ValidateSet('x86', 'amd64')] [string]$ArchValue,
+    [string]$Version,
+    [string]$InfLeaf,
+    [string]$SysName,
+    [string]$ServiceName
+ ) {
+    $template = Get-Content -LiteralPath $TemplatePath -Raw -ErrorAction Stop
+    $template = Get-NormalizedCrlfText $template
+
+    $text = $template
+    $text = $text.Replace('{{ARCH}}', $ArchValue)
+    $text = $text.Replace('{{VERSION}}', $Version)
+    $text = $text.Replace('{{INF}}', $InfLeaf)
+    $text = $text.Replace('{{SYS}}', $SysName)
+    $text = $text.Replace('{{SERVICE}}', $ServiceName)
+    return $text
+}
+
 function Package-OneArch(
     [ValidateSet('x86', 'amd64')] [string]$ArchValue,
     [string]$InputDirResolved,
@@ -354,6 +405,8 @@ function Package-OneArch(
         throw ("Version mismatch between packages. Previous arch used version '{0}', but INF '{1}' reports '{2}'." -f $SharedVersion.Value, $infPath, $driverVer.version)
     }
     $SharedVersion.Value = $driverVer.version
+
+    $serviceName = Get-ServiceNameFromInf -InfPath $infPath -DefaultName $script:ServiceNameFallback
 
     $sysName = Get-SysFileNameFromInf -InfPath $infPath -DefaultName $script:FallbackSysName
     $sysPath = Find-PeFileForArch -RootDir $InputDirResolved -FileName $sysName -ArchValue $ArchValue
@@ -399,6 +452,16 @@ function Package-OneArch(
         if ($null -ne $coInstallerPath) {
             Copy-Item -LiteralPath $coInstallerPath -Destination (Join-Path $stageDir (Split-Path -Leaf $coInstallerPath)) -Force
         }
+
+        $installPath = Join-Path $stageDir $script:InstallInstructionsName
+        $installText = New-InstallInstructionsText `
+            -TemplatePath $script:InstallInstructionsTemplatePath `
+            -ArchValue $ArchValue `
+            -Version $driverVer.version `
+            -InfLeaf $infLeaf `
+            -SysName $sysName `
+            -ServiceName $serviceName
+        Write-Utf8NoBomFile -Path $installPath -Contents $installText
 
         $payloadFiles = @(
             Get-ChildItem -LiteralPath $stageDir -File | Sort-Object -Property Name
@@ -455,6 +518,12 @@ $virtioInputRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')
 $infDirResolved = Join-Path $virtioInputRoot.Path 'inf'
 if (-not (Test-Path -LiteralPath $infDirResolved -PathType Container)) {
     throw "INF directory not found: $infDirResolved"
+}
+
+$releaseDirResolved = Join-Path $virtioInputRoot.Path 'release'
+$script:InstallInstructionsTemplatePath = Join-Path $releaseDirResolved $script:InstallInstructionsTemplateName
+if (-not (Test-Path -LiteralPath $script:InstallInstructionsTemplatePath -PathType Leaf)) {
+    throw ("Install instructions template not found: {0}" -f $script:InstallInstructionsTemplatePath)
 }
 
 $archList = if ($Arch -eq 'both') { @('x86', 'amd64') } else { @(Normalize-Arch $Arch) }

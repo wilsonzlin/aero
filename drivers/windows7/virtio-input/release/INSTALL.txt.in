@@ -1,0 +1,42 @@
+INSTALLATION (Aero virtio-input Windows 7 driver)
+=================================================
+
+Package: Aero virtio-input (win7)
+Architecture: {{ARCH}}
+Version: {{VERSION}}
+
+This folder/ZIP should contain at least:
+  - {{INF}}
+  - {{SYS}}
+  - manifest.json
+
+1) Enable test-signing (required for test-signed builds)
+--------------------------------------------------------
+Open an elevated Command Prompt and run:
+
+  bcdedit /set testsigning on
+
+Reboot.
+
+2) Install the test certificate (Root + TrustedPublisher)
+---------------------------------------------------------
+If the driver is test-signed, you must install the signing certificate (.cer)
+into the Local Machine certificate stores:
+
+  certutil -addstore -f Root <path-to-cert>.cer
+  certutil -addstore -f TrustedPublisher <path-to-cert>.cer
+
+3) Install the driver (Device Manager -> "Have Disk...")
+---------------------------------------------------------
+1. Extract this ZIP somewhere.
+2. Device Manager -> find the virtio-input device -> Update Driver Software...
+3. Browse my computer for driver software -> Let me pick -> Have Disk...
+4. Browse to the extracted folder and select {{INF}}.
+
+4) Quick verification
+---------------------
+  sc query {{SERVICE}}
+  dir %SystemRoot%\System32\drivers\{{SYS}}
+
+(Optional) Disable test-signing (requires reboot):
+  bcdedit /set testsigning off
