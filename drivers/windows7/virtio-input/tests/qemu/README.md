@@ -35,6 +35,33 @@ Hardware ID (HWID) references are documented in:
 
 ## QEMU command lines
 
+This directory contains helper scripts that wrap the recommended QEMU arguments and always include the
+virtio-input **Aero contract v1** flags (`disable-legacy=on,x-pci-revision=0x01`):
+
+- [`run-win7-x86.sh`](./run-win7-x86.sh)
+- [`run-win7-x64.sh`](./run-win7-x64.sh)
+
+They print the exact QEMU command line and then `exec` QEMU.
+
+### Quick start (recommended)
+
+```bash
+# x86 guest
+./run-win7-x86.sh /path/to/win7-x86.qcow2
+
+# x64 guest
+./run-win7-x64.sh /path/to/win7-x64.qcow2
+```
+
+Options:
+
+- `--multifunction` — place keyboard + mouse on the same PCI slot (`00:0a.0` + `00:0a.1`) to mirror the
+  Aero contract topology.
+- `--i8042-off` — disable the emulated PS/2 controller (`-machine ...,i8042=off`). Only use this after the
+  virtio-input driver is installed and confirmed working, otherwise you may lose input.
+
+### Equivalent explicit command lines
+
 The examples below are intentionally explicit and can be used as a starting point. Adjust paths, CPU accel, and disk/network options as needed.
 
 Note: QEMU’s `virtio-keyboard-pci` and `virtio-mouse-pci` are separate device frontends. If you
@@ -65,6 +92,12 @@ Optional (place both on slot 0x0A, functions 0 and 1):
 -device virtio-mouse-pci,addr=0x0a.1,disable-legacy=on,x-pci-revision=0x01
 ```
 
+Equivalent helper-script flag:
+
+```bash
+./run-win7-x86.sh --multifunction /path/to/win7-x86.qcow2
+```
+
 ### Windows 7 SP1 x64
 
 ```bash
@@ -83,6 +116,12 @@ Optional (place both on slot 0x0A, functions 0 and 1):
 ```bash
 -device virtio-keyboard-pci,addr=0x0a,multifunction=on,disable-legacy=on,x-pci-revision=0x01 \
 -device virtio-mouse-pci,addr=0x0a.1,disable-legacy=on,x-pci-revision=0x01
+```
+
+Equivalent helper-script flag:
+
+```bash
+./run-win7-x64.sh --multifunction /path/to/win7-x64.qcow2
 ```
 
 ### Modern-only vs transitional virtio-input
@@ -124,6 +163,12 @@ qemu-system-x86_64 \
   ... \
   -device virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01 \
   -device virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01
+```
+
+Equivalent helper-script flag:
+
+```bash
+./run-win7-x64.sh --i8042-off /path/to/win7-x64.qcow2
 ```
 
 Only do this after you have a known-good virtio-input driver; otherwise you may lose keyboard/mouse access in the guest.
