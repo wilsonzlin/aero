@@ -234,7 +234,6 @@ fn encode_speed(speed: UsbSpeed) -> u8 {
     match speed {
         UsbSpeed::Full => 0,
         UsbSpeed::Low => 1,
-        UsbSpeed::High => 2,
     }
 }
 
@@ -242,7 +241,7 @@ fn decode_speed(val: u8) -> SnapshotResult<UsbSpeed> {
     match val {
         0 => Ok(UsbSpeed::Full),
         1 => Ok(UsbSpeed::Low),
-        2 => Ok(UsbSpeed::High),
+        2 => Ok(UsbSpeed::Full), /* legacy: treat removed High-speed enum as Full-speed */
         _ => Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
             "usb speed",
         )),

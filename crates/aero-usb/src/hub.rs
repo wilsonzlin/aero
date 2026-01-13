@@ -131,7 +131,7 @@ impl Port {
         if let Some(dev) = self.device.as_ref() {
             match dev.speed() {
                 UsbSpeed::Low => v |= LSDA,
-                UsbSpeed::Full | UsbSpeed::High => {}
+                UsbSpeed::Full => {}
             }
         }
         if self.reset {
@@ -1594,13 +1594,13 @@ mod tests {
             }
         }
 
-        for speed in [UsbSpeed::Full, UsbSpeed::Low, UsbSpeed::High] {
+        for speed in [UsbSpeed::Full, UsbSpeed::Low] {
             let mut hub = RootHub::new();
             hub.attach(0, Box::new(SpeedModel { speed }));
             let portsc = hub.read_portsc(0);
             let expected_lsda = match speed {
                 UsbSpeed::Low => true,
-                UsbSpeed::Full | UsbSpeed::High => false,
+                UsbSpeed::Full => false,
             };
             assert_eq!((portsc & LSDA) != 0, expected_lsda, "speed={speed:?}");
         }

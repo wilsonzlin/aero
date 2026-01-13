@@ -531,7 +531,10 @@ impl MmioDevice for AeroGpuPciDevice {
 mod tests {
     use super::*;
 
-    use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC};
+    use aero_protocol::aerogpu::aerogpu_cmd::{
+        AerogpuCmdHdr, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdStreamHeader,
+        AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
+    };
     use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
     use crate::gpu_worker::aerogpu_backend::{AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission};
     use memory::bus::PhysicalMemoryBus;
@@ -671,6 +674,126 @@ mod tests {
         dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
         // Fence must still advance even on backend error, and the ERROR IRQ bit must latch.
+        assert_eq!(dev.regs.completed_fence, 1);
+        assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+        assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+        assert!(dev.irq_level());
+    }
+
+    #[test]
+    fn backend_exec_error_with_vsync_present_sets_error_before_fence_and_fence_advances_on_vblank() {
+        let mut mem = PhysicalMemoryBus::new(Box::new(DenseMemory::new(0x10000).unwrap()));
+
+        let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+        dev.set_backend(Box::new(FailOnceBackend::default()));
+
+        // Enable PCI MMIO decode and DMA.
+        dev.config_write(0x04, 2, (1u32 << 1) | (1u32 << 2));
+
+        // Program IRQ mask (fence + error).
+        dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE | irq_bits::ERROR);
+
+        // Enable scanout0 so vblank pacing is active (needed for VSYNC presents).
+        dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+
+        // Ring + fence page.
+        let ring_gpa: u64 = 0x1000;
+        let cmd_gpa: u64 = 0x2000;
+        let fence_gpa: u64 = 0x3000;
+
+        // Command stream: [stream header][PRESENT(vsync)].
+        let stream = AerogpuCmdStreamHeader {
+            magic: AEROGPU_CMD_STREAM_MAGIC,
+            abi_version: AEROGPU_ABI_VERSION_U32,
+            size_bytes: (AerogpuCmdStreamHeader::SIZE_BYTES + AerogpuCmdPresent::SIZE_BYTES) as u32,
+            flags: 0,
+            reserved0: 0,
+            reserved1: 0,
+        };
+        let present = AerogpuCmdPresent {
+            hdr: AerogpuCmdHdr {
+                opcode: AerogpuCmdOpcode::Present as u32,
+                size_bytes: AerogpuCmdPresent::SIZE_BYTES as u32,
+            },
+            scanout_id: 0,
+            flags: AEROGPU_PRESENT_FLAG_VSYNC,
+        };
+
+        let mut cmd_bytes = Vec::with_capacity(stream.size_bytes as usize);
+        cmd_bytes.extend_from_slice(&stream.magic.to_le_bytes());
+        cmd_bytes.extend_from_slice(&stream.abi_version.to_le_bytes());
+        cmd_bytes.extend_from_slice(&stream.size_bytes.to_le_bytes());
+        cmd_bytes.extend_from_slice(&stream.flags.to_le_bytes());
+        cmd_bytes.extend_from_slice(&stream.reserved0.to_le_bytes());
+        cmd_bytes.extend_from_slice(&stream.reserved1.to_le_bytes());
+        cmd_bytes.extend_from_slice(&present.hdr.opcode.to_le_bytes());
+        cmd_bytes.extend_from_slice(&present.hdr.size_bytes.to_le_bytes());
+        cmd_bytes.extend_from_slice(&present.scanout_id.to_le_bytes());
+        cmd_bytes.extend_from_slice(&present.flags.to_le_bytes());
+        assert_eq!(cmd_bytes.len(), stream.size_bytes as usize);
+        mem.write_physical(cmd_gpa, &cmd_bytes);
+
+        // Ring header: 8 entries, 64-byte stride.
+        let entry_count: u32 = 8;
+        let entry_stride: u32 = crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES;
+        let ring_size_bytes: u32 = (crate::devices::aerogpu_ring::AEROGPU_RING_HEADER_SIZE_BYTES
+            + u64::from(entry_count) * u64::from(entry_stride)) as u32;
+
+        let mut ring_hdr = [0u8; crate::devices::aerogpu_ring::AeroGpuRingHeader::SIZE_BYTES as usize];
+        ring_hdr[0..4].copy_from_slice(&crate::devices::aerogpu_ring::AEROGPU_RING_MAGIC.to_le_bytes());
+        ring_hdr[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        ring_hdr[8..12].copy_from_slice(&ring_size_bytes.to_le_bytes());
+        ring_hdr[12..16].copy_from_slice(&entry_count.to_le_bytes());
+        ring_hdr[16..20].copy_from_slice(&entry_stride.to_le_bytes());
+        ring_hdr[20..24].copy_from_slice(&0u32.to_le_bytes()); // flags
+        ring_hdr[24..28].copy_from_slice(&0u32.to_le_bytes()); // head
+        ring_hdr[28..32].copy_from_slice(&1u32.to_le_bytes()); // tail (1 pending)
+        // reserved fields already zero.
+        mem.write_physical(ring_gpa, &ring_hdr);
+
+        // Submission descriptor at slot 0.
+        let mut desc = [0u8; crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES as usize];
+        desc[0..4].copy_from_slice(&crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES.to_le_bytes());
+        desc[4..8].copy_from_slice(
+            &crate::devices::aerogpu_ring::AeroGpuSubmitDesc::FLAG_PRESENT.to_le_bytes(),
+        );
+        desc[8..12].copy_from_slice(&0u32.to_le_bytes()); // context_id
+        desc[12..16].copy_from_slice(&0u32.to_le_bytes()); // engine_id
+        desc[16..24].copy_from_slice(&cmd_gpa.to_le_bytes());
+        desc[24..28].copy_from_slice(&(cmd_bytes.len() as u32).to_le_bytes());
+        desc[28..32].copy_from_slice(&0u32.to_le_bytes()); // cmd_reserved0
+        desc[32..40].copy_from_slice(&0u64.to_le_bytes()); // alloc_table_gpa
+        desc[40..44].copy_from_slice(&0u32.to_le_bytes()); // alloc_table_size_bytes
+        desc[44..48].copy_from_slice(&0u32.to_le_bytes()); // alloc_table_reserved0
+        desc[48..56].copy_from_slice(&1u64.to_le_bytes()); // signal_fence
+        desc[56..64].copy_from_slice(&0u64.to_le_bytes()); // reserved0
+
+        mem.write_physical(
+            ring_gpa + crate::devices::aerogpu_ring::AEROGPU_RING_HEADER_SIZE_BYTES,
+            &desc,
+        );
+
+        // Program device registers.
+        dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+        dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+        dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, 0x1000);
+        dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
+        dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
+        dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+
+        // Kick.
+        dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+        // Backend error should set ERROR before the vsync-delayed fence completes.
+        assert_eq!(dev.regs.completed_fence, 0);
+        assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
+        assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+        assert!(dev.irq_level());
+
+        // Force a vblank edge and ensure the fence still advances (even though the backend errored).
+        let next = dev.next_vblank.expect("vblank scheduling should be active");
+        dev.tick(&mut mem, next);
+
         assert_eq!(dev.regs.completed_fence, 1);
         assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
         assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
