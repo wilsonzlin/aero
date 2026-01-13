@@ -2568,11 +2568,6 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     crate::BindingKind::Sampler { .. } => {}
-                    crate::BindingKind::UavBuffer { slot } => {
-                        if let Some(buf) = stage_bindings.uav_buffer(*slot) {
-                            self.encoder_used_buffers.insert(buf.buffer);
-                        }
-                    }
                 }
             }
         }
