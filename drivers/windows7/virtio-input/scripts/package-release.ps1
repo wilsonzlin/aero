@@ -487,7 +487,9 @@ function Package-OneArch(
         if ($null -ne $coInstallerPath) {
             Copy-Item -LiteralPath $coInstallerPath -Destination (Join-Path $stageDir (Split-Path -Leaf $coInstallerPath)) -Force
         }
-        if ($null -ne $TestCertPath) {
+        # Note: $TestCertPath is a [string] parameter, so when the caller passes
+        # $null it is coerced to an empty string. Treat empty as "not provided".
+        if (-not [string]::IsNullOrEmpty($TestCertPath)) {
             Copy-Item -LiteralPath $TestCertPath -Destination (Join-Path $stageDir $script:TestCertFileName) -Force
         }
 
