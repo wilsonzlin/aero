@@ -407,7 +407,7 @@ The Win7 bring-up set of flags you should expect to set in practice:
   * AeroGPU MVP often sets this for *all* allocations because it uses the single CPU-visible system segment.
 > Note: “RenderTarget vs ZBuffer” classification is commonly expressed via `D3DDDICB_ALLOCATE::ResourceFlags`
 > (e.g. `ResourceFlags.RenderTarget`, `ResourceFlags.ZBuffer`) rather than per-allocation flags.
-
+>
 > `D3DDDI_ALLOCATIONINFOFLAGS` contains more bits (overlay, shared, etc). Keep your initial implementation conservative: set only what you understand and what your KMD uses.
 
 ### 4.4 `D3D11DDI_ALLOCATIONINFO` vs `D3DDDI_ALLOCATIONINFO`

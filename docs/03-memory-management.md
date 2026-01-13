@@ -7,7 +7,7 @@ Memory management is critical for both correctness and performance. Windows 7 he
 > **Note (implementation):** The canonical paging/MMU implementation is `crates/aero-mmu`, integrated into the CPU core via `aero_cpu_core::PagingBus` (a `CpuBus` adapter that translates Tier-0 linear addresses using `aero-mmu`).
 > - `aero-mmu`: [`crates/aero-mmu/src/lib.rs`](../crates/aero-mmu/src/lib.rs)
 > - `PagingBus`: [`crates/aero-cpu-core/src/paging_bus.rs`](../crates/aero-cpu-core/src/paging_bus.rs)
-
+>
 > **Browser reality:** In the web build, guest RAM is backed by wasm32 `WebAssembly.Memory`, so the emulator is constrained to **≤ 4 GiB** of linear memory total. Large control/IPC buffers (rings, status, audio) should live in separate `SharedArrayBuffer`s.  
 > See [ADR 0003](./adr/0003-shared-memory-layout.md).
 

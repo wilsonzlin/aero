@@ -103,7 +103,7 @@ relying on size matching).
 > Note: some swapchains (notably single-buffer `DXGI_SWAP_EFFECT_DISCARD`) may not call
 > `RotateResourceIdentities`. In that case, use the handle printed in the `Present`
 > trace line (`src_handle=` / `backbuffer_handle=`) and/or the `primary=1` marker.
-
+>
 > Tip: when using the WDK-backed DDI path, `CreateResource` descriptors may also include:
 >
 > * `primary_desc=<ptr>` (mirrors `D3D10DDIARG_CREATERESOURCE::pPrimaryDesc` / `D3D11DDIARG_CREATERESOURCE::pPrimaryDesc`)

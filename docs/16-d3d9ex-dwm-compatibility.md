@@ -188,7 +188,7 @@ Define a guest/host sharing model that does **not** attempt to expose host OS ha
 
 - The D3D9/D3D9Ex API surface uses a user-mode `HANDLE` (`pSharedHandle`) to represent “shared resources”.
   - This value is a normal Windows handle: **process-local**, not stable cross-process, and commonly different in the consumer after `DuplicateHandle`.
-  - **AeroGPU does _not_ use the numeric `HANDLE` value as the protocol `share_token`.**
+  - **AeroGPU does *not* use the numeric `HANDLE` value as the protocol `share_token`.**
 - In the AeroGPU protocol, `share_token` is a stable 64-bit value persisted in the preserved WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
   - The Win7 KMD generates a stable non-zero `share_token` for each shared allocation and writes it into the blob during `DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation`.
   - dxgkrnl preserves the blob and returns the exact same bytes on cross-process `OpenResource` / `DxgkDdiOpenAllocation`, so both processes observe the same `share_token`.
