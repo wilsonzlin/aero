@@ -1,12 +1,20 @@
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 use aero_mmu::{AccessType, MemoryBus, Mmu};
+#[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+#[cfg(not(target_arch = "wasm32"))]
 use std::convert::TryInto;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 struct BenchMemory {
     data: Vec<u8>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl BenchMemory {
     fn new(size: usize) -> Self {
         Self {
@@ -20,6 +28,7 @@ impl BenchMemory {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MemoryBus for BenchMemory {
     #[inline]
     fn read_u8(&mut self, paddr: u64) -> u8 {
@@ -68,6 +77,7 @@ impl MemoryBus for BenchMemory {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_tlb_lookup_hit_long4_4k(c: &mut Criterion) {
     // x86-64 paging-structure bits (subset; repeated here so benches don't rely on crate privates).
     const PTE_P64: u64 = 1 << 0;
@@ -115,5 +125,7 @@ fn bench_tlb_lookup_hit_long4_4k(c: &mut Criterion) {
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group!(benches, bench_tlb_lookup_hit_long4_4k);
+#[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
