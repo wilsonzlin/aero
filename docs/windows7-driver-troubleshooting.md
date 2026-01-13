@@ -710,6 +710,11 @@ reg add "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08
 
 3. Reboot the guest (or disable/enable the AeroGPU device) for the new budget to take effect.
 
+Quick validation:
+
+- Run `drivers\\aerogpu\\tests\\win7\\bin\\segment_budget_sanity.exe` to confirm the updated `NonLocalMemorySize` is visible
+  from user mode (it queries `D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE)` and prints the segment budget in MiB).
+
 If you need to revert, delete the value:
 
 ```bat
