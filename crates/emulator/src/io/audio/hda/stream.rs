@@ -415,6 +415,13 @@ impl HdaStream {
                 // (e.g. 0xffff) cannot drive out-of-range descriptor indexing.
                 if byte == 0 {
                     self.lvi = value;
+                    // Keep the stream's BDL cursor consistent with the guest-programmed LVI. This
+                    // matches the canonical model behaviour and avoids out-of-range BDL entry
+                    // reads if the guest shrinks LVI while a stream is running.
+                    if self.bdl_index > u16::from(self.lvi) {
+                        self.bdl_index = 0;
+                        self.bdl_offset = 0;
+                    }
                 }
             }
             StreamReg::Fifow => {
@@ -608,6 +615,8 @@ impl HdaStream {
                 ioc: false,
             };
         };
+
+        // Guard against overflow for the remaining fields within the 16-byte BDL entry.
         let Some(len_addr) = addr.checked_add(8) else {
             return BdlEntry {
                 addr: 0,
@@ -984,5 +993,72 @@ mod tests {
 
         assert_eq!(capture.len(), before);
         assert_eq!(intsts, 0);
+    }
+
+    #[test]
+    fn stream_lvi_shrink_resets_bdl_cursor() {
+        const BDL_BASE: u64 = 0x1000;
+        const BUF0: u64 = 0x2000;
+
+        let mut stream = HdaStream::new(super::StreamId::Out0);
+        let mut stream_intsts = 0u32;
+        stream.mmio_write(super::StreamReg::Bdpl, 4, BDL_BASE, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Bdpu, 4, 0, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Cbl, 4, 1, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Lvi, 2, 1, &mut stream_intsts);
+        stream.mmio_write(
+            super::StreamReg::CtlSts,
+            4,
+            (super::SD_CTL_RUN | super::SD_CTL_SRST) as u64,
+            &mut stream_intsts,
+        );
+
+        let mut mem = CountingMem::new(0x3000, 128);
+        // BDL entry 0: 1 byte at BUF0, no IOC.
+        mem.data[BDL_BASE as usize..BDL_BASE as usize + 8].copy_from_slice(&BUF0.to_le_bytes());
+        mem.data[BDL_BASE as usize + 8..BDL_BASE as usize + 12].copy_from_slice(&1u32.to_le_bytes());
+        mem.data[BDL_BASE as usize + 12..BDL_BASE as usize + 16]
+            .copy_from_slice(&0u32.to_le_bytes());
+        mem.data[BUF0 as usize] = 0xaa;
+
+        let mut audio = AudioRingBuffer::new(8);
+        let mut intsts = 0u32;
+
+        // Consume the first (and only) byte, advancing to BDL index 1.
+        stream.process(&mut mem, &mut audio, &mut intsts);
+        assert_eq!(stream.bdl_index, 1);
+
+        // Shrink LVI to 0; the cursor should reset back to entry 0.
+        stream.mmio_write(super::StreamReg::Lvi, 2, 0, &mut intsts);
+        assert_eq!(stream.lvi, 0);
+        assert_eq!(stream.bdl_index, 0);
+        assert_eq!(stream.bdl_offset, 0);
+    }
+
+    #[test]
+    fn bdl_entry_address_overflow_is_treated_as_empty_entry() {
+        struct PanicMem;
+
+        impl MemoryBus for PanicMem {
+            fn read_physical(&mut self, _addr: u64, _dst: &mut [u8]) {
+                panic!("unexpected guest memory read");
+            }
+
+            fn write_physical(&mut self, _addr: u64, _src: &[u8]) {
+                panic!("unexpected guest memory write");
+            }
+        }
+
+        let mut stream = HdaStream::new(super::StreamId::Out0);
+        let mut intsts = 0u32;
+        // Place the BDL base near u64::MAX so index * 16 will overflow for small indices.
+        stream.mmio_write(super::StreamReg::Bdpl, 4, 0xffff_ff80, &mut intsts);
+        stream.mmio_write(super::StreamReg::Bdpu, 4, 0xffff_ffff, &mut intsts);
+
+        let mut mem = PanicMem;
+        let entry = stream.read_bdl_entry(&mut mem, 8);
+        assert_eq!(entry.addr, 0);
+        assert_eq!(entry.len, 0);
+        assert!(!entry.ioc);
     }
 }

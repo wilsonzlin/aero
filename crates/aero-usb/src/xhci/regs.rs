@@ -8,7 +8,8 @@ pub const XHCI_MMIO_SIZE: u32 = 0x1000;
 
 /// Minimal register offsets used by the controller skeleton in [`super::XhciController`].
 ///
-/// These are absolute offsets into the controller's MMIO BAR.
+/// These are absolute offsets into the controller's MMIO BAR. They are also used by the emulator's
+/// thin PCI/MMIO wrapper (`emulator::io::usb::xhci`), so keep them stable.
 pub const REG_CAPLENGTH_HCIVERSION: u64 = 0x00;
 pub const REG_HCSPARAMS1: u64 = 0x04;
 pub const REG_HCCPARAMS1: u64 = 0x10;

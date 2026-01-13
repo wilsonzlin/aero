@@ -307,7 +307,6 @@ pub struct NetTraceConfig {
     /// use emulator::io::net::trace::{NetTraceConfig, TruncateRedactor};
     ///
     /// let cfg = NetTraceConfig {
-    ///     capture_ethernet: true,
     ///     capture_tcp_proxy: true,
     ///     capture_udp_proxy: true,
     ///     redactor: Some(Arc::new(TruncateRedactor {
