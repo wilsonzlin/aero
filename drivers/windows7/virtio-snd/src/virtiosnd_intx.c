@@ -512,7 +512,7 @@ NTSTATUS VirtIoSndInterruptConnectMessage(PVIRTIOSND_DEVICE_EXTENSION Dx)
     params.MessageBased.ServiceRoutine = VirtIoSndMessageIsr;
     params.MessageBased.ServiceContext = Dx;
     params.MessageBased.SpinLock = NULL;
-    params.MessageBased.SynchronizeIrql = 0;
+    params.MessageBased.SynchronizeIrql = (ULONG)Dx->MessageInterruptDesc.u.MessageInterrupt.Level;
     params.MessageBased.FloatingSave = FALSE;
     params.MessageBased.MessageCount = usedVectorCount;
     params.MessageBased.MessageInfo = NULL;
