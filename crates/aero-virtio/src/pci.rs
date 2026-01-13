@@ -1823,6 +1823,16 @@ mod tests {
     }
 
     fn program_msix_vector(pci: &mut VirtioPciDevice, vector: u16, address: u64, data: u16) {
+        program_msix_vector_with_mask(pci, vector, address, data, false);
+    }
+
+    fn program_msix_vector_with_mask(
+        pci: &mut VirtioPciDevice,
+        vector: u16,
+        address: u64,
+        data: u16,
+        masked: bool,
+    ) {
         let Some(msix) = pci.config.capability_mut::<MsixCapability>() else {
             panic!("missing MSI-X capability");
         };
@@ -1831,7 +1841,7 @@ mod tests {
         entry[0..4].copy_from_slice(&(address as u32).to_le_bytes());
         entry[4..8].copy_from_slice(&((address >> 32) as u32).to_le_bytes());
         entry[8..12].copy_from_slice(&u32::from(data).to_le_bytes());
-        entry[12..16].copy_from_slice(&0u32.to_le_bytes()); // unmasked
+        entry[12..16].copy_from_slice(&u32::from(masked).to_le_bytes());
 
         msix.table_write(u64::from(vector) * 16, &entry);
     }
@@ -1993,5 +2003,51 @@ mod tests {
                 data: 0x1234
             }
         );
+    }
+
+    #[test]
+    fn interrupt_msix_enabled_with_vector_but_unprogrammed_entry_falls_back_to_intx() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        enable_msix(&mut pci);
+
+        // Vector assigned, but leave the MSI-X table entry at its reset state (addr=0).
+        pci.queues[0].msix_vector = 1;
+
+        pci.signal_queue_interrupt(0);
+
+        assert!(pci.irq_level());
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 1);
+        assert!(state.msix_messages.is_empty());
+    }
+
+    #[test]
+    fn interrupt_msix_enabled_with_masked_entry_falls_back_to_intx() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        enable_msix(&mut pci);
+
+        pci.queues[0].msix_vector = 1;
+        program_msix_vector_with_mask(&mut pci, 1, 0xFEE0_0000, 0x1234, true);
+
+        pci.signal_queue_interrupt(0);
+
+        assert!(pci.irq_level());
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 1);
+        assert!(state.msix_messages.is_empty());
     }
 }
