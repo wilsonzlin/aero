@@ -66,6 +66,11 @@ NTSTATUS VirtioInputHidDeactivateDevice(_In_ WDFDEVICE Device)
     ctx->HidActivated = FALSE;
     VirtioInputUpdateStatusQActiveState(ctx);
     if (emitResetReports && ctx->InD0) {
+        /*
+         * Drop any queued input reports so the release report is the next thing
+         * the HID stack observes during deactivation.
+         */
+        VirtioInputHidFlushQueue(Device);
         virtio_input_device_reset_state(&ctx->InputDevice, true);
     }
     VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);

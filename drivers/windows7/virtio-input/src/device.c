@@ -941,6 +941,12 @@ static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
      * that could re-latch key state after the reset.
      */
     if (emitResetReports) {
+        /*
+         * Drop any queued input reports so the release report is the next thing
+         * the HID stack observes (prevents an older "key down" report from being
+         * delivered after the release report during teardown).
+         */
+        VirtioInputHidFlushQueue(Device);
         virtio_input_device_reset_state(&ctx->InputDevice, true);
     }
 
@@ -2209,6 +2215,11 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
      */
     emitResetReports = deviceContext->HidActivated ? TRUE : FALSE;
     if (emitResetReports) {
+        /*
+         * Drop any queued input reports so the release report is the next thing
+         * the HID stack observes during power-down.
+         */
+        VirtioInputHidFlushQueue(Device);
         virtio_input_device_reset_state(&deviceContext->InputDevice, true);
     }
 
