@@ -17,6 +17,10 @@ pub struct ShaderIr {
     /// `defb b#` constants embedded in the shader bytecode.
     pub const_defs_bool: Vec<ConstDefBool>,
     pub body: Block,
+    /// True when vertex shader input registers were remapped from raw `v#` indices to canonical
+    /// WGSL `@location(n)` values based on `dcl_*` semantics (see
+    /// [`crate::vertex::StandardLocationMap`]).
+    pub uses_semantic_locations: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -263,12 +267,19 @@ pub enum RegFile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Semantic {
     Position(u8),
+    BlendWeight(u8),
+    BlendIndices(u8),
     Color(u8),
     TexCoord(u8),
     Normal(u8),
     Fog(u8),
     PointSize(u8),
     Depth(u8),
+    Tangent(u8),
+    Binormal(u8),
+    TessFactor(u8),
+    PositionT(u8),
+    Sample(u8),
     Other { usage: u8, index: u8 },
 }
 

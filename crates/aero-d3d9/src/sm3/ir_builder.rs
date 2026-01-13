@@ -8,6 +8,8 @@ use crate::sm3::ir::{
     TexSampleKind,
 };
 use crate::sm3::types::ShaderStage;
+use crate::vertex::{DeclUsage, StandardLocationMap, VertexLocationMap};
+use std::collections::{BTreeSet, HashMap};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildError {
@@ -287,7 +289,7 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
         }
     };
 
-    Ok(ShaderIr {
+    let mut ir = ShaderIr {
         version,
         inputs,
         outputs,
@@ -296,12 +298,17 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
         const_defs_i32,
         const_defs_bool,
         body,
-    })
+        uses_semantic_locations: false,
+    };
+
+    apply_vertex_input_remap(&mut ir)?;
+
+    Ok(ir)
 }
 
 fn handle_dcl(
     inst: &DecodedInstruction,
-    version: &crate::sm3::types::ShaderVersion,
+    _version: &crate::sm3::types::ShaderVersion,
     dcl: &DclInfo,
     inputs: &mut Vec<IoDecl>,
     outputs: &mut Vec<IoDecl>,
@@ -326,7 +333,7 @@ fn handle_dcl(
             });
         }
         _ => {
-            let semantic = map_semantic(&dcl.usage, dcl.usage_index, version.stage);
+            let semantic = map_semantic(&dcl.usage, dcl.usage_index);
             match reg.file {
                 RegFile::Input | RegFile::Texture => inputs.push(IoDecl {
                     reg,
@@ -432,28 +439,443 @@ fn handle_def_bool(inst: &DecodedInstruction, out: &mut Vec<ConstDefBool>) -> Re
     Ok(())
 }
 
-fn map_semantic(usage: &DclUsage, index: u8, stage: ShaderStage) -> Semantic {
+fn map_semantic(usage: &DclUsage, index: u8) -> Semantic {
     match usage {
         DclUsage::Position => Semantic::Position(index),
+        DclUsage::BlendWeight => Semantic::BlendWeight(index),
+        DclUsage::BlendIndices => Semantic::BlendIndices(index),
         DclUsage::Color => Semantic::Color(index),
         DclUsage::TexCoord => Semantic::TexCoord(index),
         DclUsage::Normal => Semantic::Normal(index),
         DclUsage::Fog => Semantic::Fog(index),
         DclUsage::PointSize => Semantic::PointSize(index),
         DclUsage::Depth => Semantic::Depth(index),
+        DclUsage::Tangent => Semantic::Tangent(index),
+        DclUsage::Binormal => Semantic::Binormal(index),
+        DclUsage::TessFactor => Semantic::TessFactor(index),
+        DclUsage::PositionT => Semantic::PositionT(index),
+        DclUsage::Sample => Semantic::Sample(index),
         DclUsage::Unknown(u) => Semantic::Other { usage: *u, index },
         DclUsage::TextureType(_) => Semantic::Other { usage: 0xFE, index },
-        _ => {
-            let fallback_usage = match stage {
-                ShaderStage::Vertex => 0xFF,
-                ShaderStage::Pixel => 0xFE,
-            };
-            Semantic::Other {
-                usage: fallback_usage,
-                index,
+    }
+}
+
+fn semantic_to_decl_usage(semantic: &Semantic) -> Option<(DeclUsage, u8)> {
+    let (usage, index) = match semantic {
+        Semantic::Position(i) => (DeclUsage::Position, *i),
+        Semantic::BlendWeight(i) => (DeclUsage::BlendWeight, *i),
+        Semantic::BlendIndices(i) => (DeclUsage::BlendIndices, *i),
+        Semantic::Normal(i) => (DeclUsage::Normal, *i),
+        Semantic::Tangent(i) => (DeclUsage::Tangent, *i),
+        Semantic::Binormal(i) => (DeclUsage::Binormal, *i),
+        Semantic::Color(i) => (DeclUsage::Color, *i),
+        Semantic::TexCoord(i) => (DeclUsage::TexCoord, *i),
+        Semantic::PositionT(i) => (DeclUsage::PositionT, *i),
+        Semantic::PointSize(i) => (DeclUsage::PSize, *i),
+        Semantic::Fog(i) => (DeclUsage::Fog, *i),
+        Semantic::Depth(i) => (DeclUsage::Depth, *i),
+        Semantic::Sample(i) => (DeclUsage::Sample, *i),
+        Semantic::TessFactor(i) => (DeclUsage::TessFactor, *i),
+        Semantic::Other { usage, index } => {
+            let usage = DeclUsage::from_u8(*usage).ok()?;
+            return Some((usage, *index));
+        }
+    };
+    Some((usage, index))
+}
+
+fn collect_used_input_regs_block(block: &Block, out: &mut BTreeSet<u32>) {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Op(op) => collect_used_input_regs_op(op, out),
+            Stmt::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                collect_used_input_regs_cond(cond, out);
+                collect_used_input_regs_block(then_block, out);
+                if let Some(else_block) = else_block {
+                    collect_used_input_regs_block(else_block, out);
+                }
+            }
+            Stmt::Loop { body } => collect_used_input_regs_block(body, out),
+            Stmt::Break => {}
+            Stmt::BreakIf { cond } => collect_used_input_regs_cond(cond, out),
+            Stmt::Discard { src } => collect_used_input_regs_src(src, out),
+        }
+    }
+}
+
+fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
+    match op {
+        IrOp::Mov {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Rcp {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Rsq {
+            dst,
+            src,
+            modifiers,
+        } => {
+            collect_used_input_regs_dst(dst, out);
+            collect_used_input_regs_src(src, out);
+            collect_used_input_regs_modifiers(modifiers, out);
+        }
+        IrOp::Add {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Sub {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Mul {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Min {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Max {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Dp3 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Dp4 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Cmp {
+            dst,
+            src0,
+            src1,
+            modifiers,
+            ..
+        } => {
+            collect_used_input_regs_dst(dst, out);
+            collect_used_input_regs_src(src0, out);
+            collect_used_input_regs_src(src1, out);
+            collect_used_input_regs_modifiers(modifiers, out);
+        }
+        IrOp::Mad {
+            dst,
+            src0,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            collect_used_input_regs_dst(dst, out);
+            collect_used_input_regs_src(src0, out);
+            collect_used_input_regs_src(src1, out);
+            collect_used_input_regs_src(src2, out);
+            collect_used_input_regs_modifiers(modifiers, out);
+        }
+        IrOp::TexSample {
+            dst,
+            coord,
+            ddx,
+            ddy,
+            modifiers,
+            ..
+        } => {
+            collect_used_input_regs_dst(dst, out);
+            collect_used_input_regs_src(coord, out);
+            if let Some(ddx) = ddx {
+                collect_used_input_regs_src(ddx, out);
+            }
+            if let Some(ddy) = ddy {
+                collect_used_input_regs_src(ddy, out);
+            }
+            collect_used_input_regs_modifiers(modifiers, out);
+        }
+    }
+}
+
+fn collect_used_input_regs_dst(dst: &Dst, out: &mut BTreeSet<u32>) {
+    collect_used_input_regs_reg(&dst.reg, out);
+}
+
+fn collect_used_input_regs_src(src: &Src, out: &mut BTreeSet<u32>) {
+    collect_used_input_regs_reg(&src.reg, out);
+}
+
+fn collect_used_input_regs_cond(cond: &Cond, out: &mut BTreeSet<u32>) {
+    match cond {
+        Cond::NonZero { src } => collect_used_input_regs_src(src, out),
+        Cond::Compare { src0, src1, .. } => {
+            collect_used_input_regs_src(src0, out);
+            collect_used_input_regs_src(src1, out);
+        }
+        Cond::Predicate { pred } => collect_used_input_regs_reg(&pred.reg, out),
+    }
+}
+
+fn collect_used_input_regs_modifiers(mods: &InstModifiers, out: &mut BTreeSet<u32>) {
+    if let Some(pred) = &mods.predicate {
+        collect_used_input_regs_reg(&pred.reg, out);
+    }
+}
+
+fn collect_used_input_regs_reg(reg: &RegRef, out: &mut BTreeSet<u32>) {
+    if reg.file == RegFile::Input {
+        out.insert(reg.index);
+    }
+    if let Some(rel) = &reg.relative {
+        collect_used_input_regs_reg(&rel.reg, out);
+    }
+}
+
+fn remap_input_regs_in_block(block: &mut Block, remap: &HashMap<u32, u32>) {
+    for stmt in &mut block.stmts {
+        match stmt {
+            Stmt::Op(op) => remap_input_regs_in_op(op, remap),
+            Stmt::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                remap_input_regs_in_cond(cond, remap);
+                remap_input_regs_in_block(then_block, remap);
+                if let Some(else_block) = else_block {
+                    remap_input_regs_in_block(else_block, remap);
+                }
+            }
+            Stmt::Loop { body } => remap_input_regs_in_block(body, remap),
+            Stmt::Break => {}
+            Stmt::BreakIf { cond } => remap_input_regs_in_cond(cond, remap),
+            Stmt::Discard { src } => remap_input_regs_in_src(src, remap),
+        }
+    }
+}
+
+fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
+    match op {
+        IrOp::Mov {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Rcp {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Rsq {
+            dst,
+            src,
+            modifiers,
+        } => {
+            remap_input_regs_in_dst(dst, remap);
+            remap_input_regs_in_src(src, remap);
+            remap_input_regs_in_modifiers(modifiers, remap);
+        }
+        IrOp::Add {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Sub {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Mul {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Min {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Max {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Dp3 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Dp4 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Cmp {
+            dst,
+            src0,
+            src1,
+            modifiers,
+            ..
+        } => {
+            remap_input_regs_in_dst(dst, remap);
+            remap_input_regs_in_src(src0, remap);
+            remap_input_regs_in_src(src1, remap);
+            remap_input_regs_in_modifiers(modifiers, remap);
+        }
+        IrOp::Mad {
+            dst,
+            src0,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            remap_input_regs_in_dst(dst, remap);
+            remap_input_regs_in_src(src0, remap);
+            remap_input_regs_in_src(src1, remap);
+            remap_input_regs_in_src(src2, remap);
+            remap_input_regs_in_modifiers(modifiers, remap);
+        }
+        IrOp::TexSample {
+            dst,
+            coord,
+            ddx,
+            ddy,
+            modifiers,
+            ..
+        } => {
+            remap_input_regs_in_dst(dst, remap);
+            remap_input_regs_in_src(coord, remap);
+            if let Some(ddx) = ddx {
+                remap_input_regs_in_src(ddx, remap);
+            }
+            if let Some(ddy) = ddy {
+                remap_input_regs_in_src(ddy, remap);
+            }
+            remap_input_regs_in_modifiers(modifiers, remap);
+        }
+    }
+}
+
+fn remap_input_regs_in_dst(dst: &mut Dst, remap: &HashMap<u32, u32>) {
+    remap_input_regs_in_reg(&mut dst.reg, remap);
+}
+
+fn remap_input_regs_in_src(src: &mut Src, remap: &HashMap<u32, u32>) {
+    remap_input_regs_in_reg(&mut src.reg, remap);
+}
+
+fn remap_input_regs_in_cond(cond: &mut Cond, remap: &HashMap<u32, u32>) {
+    match cond {
+        Cond::NonZero { src } => remap_input_regs_in_src(src, remap),
+        Cond::Compare { src0, src1, .. } => {
+            remap_input_regs_in_src(src0, remap);
+            remap_input_regs_in_src(src1, remap);
+        }
+        Cond::Predicate { pred } => remap_input_regs_in_reg(&mut pred.reg, remap),
+    }
+}
+
+fn remap_input_regs_in_modifiers(mods: &mut InstModifiers, remap: &HashMap<u32, u32>) {
+    if let Some(pred) = &mut mods.predicate {
+        remap_input_regs_in_reg(&mut pred.reg, remap);
+    }
+}
+
+fn remap_input_regs_in_reg(reg: &mut RegRef, remap: &HashMap<u32, u32>) {
+    if reg.file == RegFile::Input {
+        if let Some(&new_idx) = remap.get(&reg.index) {
+            reg.index = new_idx;
+        }
+    }
+    if let Some(rel) = &mut reg.relative {
+        remap_input_regs_in_reg(&mut rel.reg, remap);
+    }
+}
+
+fn apply_vertex_input_remap(ir: &mut ShaderIr) -> Result<(), BuildError> {
+    if ir.version.stage != ShaderStage::Vertex {
+        return Ok(());
+    }
+
+    let mut used_vs_inputs = BTreeSet::<u32>::new();
+    collect_used_input_regs_block(&ir.body, &mut used_vs_inputs);
+
+    if used_vs_inputs.is_empty() {
+        return Ok(());
+    }
+
+    // Only enable semantic remapping when we have DCL declarations for all used input registers.
+    // Otherwise, fall back to raw v# indices (legacy behavior).
+    let mut dcl_map = HashMap::<u32, (DeclUsage, u8)>::new();
+    for decl in &ir.inputs {
+        if decl.reg.file != RegFile::Input {
+            continue;
+        }
+        let Some((usage, usage_index)) = semantic_to_decl_usage(&decl.semantic) else {
+            continue;
+        };
+        dcl_map.insert(decl.reg.index, (usage, usage_index));
+    }
+
+    let map = StandardLocationMap;
+    let mut remap = HashMap::<u32, u32>::new();
+    let mut used_locations = HashMap::<u32, u32>::new();
+
+    for &v in &used_vs_inputs {
+        let Some(&(usage, usage_index)) = dcl_map.get(&v) else {
+            return Ok(());
+        };
+
+        let loc = map
+            .location_for(usage, usage_index)
+            .map_err(|e| err_internal(&e.to_string()))?;
+        if let Some(prev_v) = used_locations.insert(loc, v) {
+            if prev_v != v {
+                return Err(err_internal(&format!(
+                    "vertex shader input DCL declarations map multiple input registers to WGSL @location({loc}): v{prev_v} and v{v}"
+                )));
+            }
+        }
+        remap.insert(v, loc);
+    }
+
+    for decl in &mut ir.inputs {
+        if decl.reg.file == RegFile::Input {
+            if let Some(&new_idx) = remap.get(&decl.reg.index) {
+                decl.reg.index = new_idx;
             }
         }
     }
+
+    remap_input_regs_in_block(&mut ir.body, &remap);
+    ir.uses_semantic_locations = true;
+    Ok(())
 }
 
 fn build_modifiers(inst: &DecodedInstruction) -> Result<InstModifiers, BuildError> {
