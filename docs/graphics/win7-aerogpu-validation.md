@@ -559,6 +559,8 @@ Quick validation:
 
 - Run `drivers/aerogpu/tests/win7/segment_budget_sanity` to print the current WDDM budgets and verify that the KMD-reported
   `NonLocalMemorySize` matches your configured `NonLocalMemorySizeMB` (after reboot / device restart).
+- If you installed Aero Guest Tools, re-run `verify.cmd` and check `C:\AeroGuestTools\report.txt` / `report.json` for the effective
+  `NonLocalMemorySizeMB` value (after clamping).
 
 The AeroGPU Win7 KMD allows overriding this budget via a device registry parameter:
 
