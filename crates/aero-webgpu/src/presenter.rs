@@ -817,7 +817,7 @@ fn preferred_surface_format(formats: &[wgpu::TextureFormat]) -> wgpu::TextureFor
     formats
         .first()
         .copied()
-        .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb)
+        .unwrap_or(wgpu::TextureFormat::Bgra8Unorm)
 }
 
 fn preferred_surface_config(
@@ -1039,6 +1039,11 @@ mod tests {
             wgpu::TextureFormat::Rgba8Unorm,
             wgpu::TextureFormat::Bgra8Unorm,
         ];
+        let chosen = preferred_surface_format(&formats);
+        assert_eq!(chosen, wgpu::TextureFormat::Bgra8Unorm);
+
+        // Empty format list should use a conservative, widely supported default.
+        let formats: [wgpu::TextureFormat; 0] = [];
         let chosen = preferred_surface_format(&formats);
         assert_eq!(chosen, wgpu::TextureFormat::Bgra8Unorm);
     }
