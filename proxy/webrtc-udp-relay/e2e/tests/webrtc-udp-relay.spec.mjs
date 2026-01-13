@@ -1812,6 +1812,7 @@ test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page })
     expect(metricsResp.ok()).toBeTruthy();
     const events = parseRelayEventCounters(await metricsResp.text());
     expect(events.l2_bridge_dials_total).toBeGreaterThanOrEqual(1);
+    expect(events.l2_bridge_dial_errors_total ?? 0).toBe(0);
     expect(events.l2_bridge_messages_from_client_total).toBeGreaterThanOrEqual(1);
     expect(events.l2_bridge_messages_to_client_total).toBeGreaterThanOrEqual(1);
     expect(events.l2_bridge_bytes_from_client_total).toBeGreaterThanOrEqual(4);
