@@ -140,16 +140,33 @@ impl AudioRingBuffer {
     /// If the buffer does not contain enough audio, the remaining frames will be
     /// filled with silence.
     pub fn pop_interleaved_stereo(&mut self, frames: usize) -> Vec<f32> {
+        let mut out = Vec::new();
+        self.pop_interleaved_stereo_into(frames, &mut out);
+        out
+    }
+
+    /// Pop `frames` frames as interleaved stereo into a caller-provided buffer.
+    ///
+    /// This is a convenience for native/unit-test code that wants to avoid
+    /// per-call allocations by reusing an output `Vec`.
+    ///
+    /// On underrun, the remaining frames are filled with silence and
+    /// `underrun_frames` is incremented by the number of missing frames.
+    ///
+    /// If `out` cannot be resized (allocation failure), this leaves the ring
+    /// buffer state unchanged and clears `out`.
+    pub fn pop_interleaved_stereo_into(&mut self, frames: usize, out: &mut Vec<f32>) {
+        out.clear();
+
         // Bound output allocation/work: callers may treat `frames` as untrusted.
         let frames = frames.min(MAX_CAPACITY_FRAMES);
         if frames == 0 {
-            return Vec::new();
+            return;
         }
 
         let out_len = frames.saturating_mul(self.channels);
-        let mut out = Vec::new();
         if out.try_reserve_exact(out_len).is_err() {
-            return Vec::new();
+            return;
         }
         out.resize(out_len, 0.0f32);
 
@@ -183,7 +200,5 @@ impl AudioRingBuffer {
                 .underrun_frames
                 .saturating_add((frames - available) as u64);
         }
-
-        out
     }
 }

@@ -25,13 +25,19 @@ fn bench_audio_ring(c: &mut Criterion) {
     let mut group = c.benchmark_group("audio_ring");
     group.throughput(Throughput::Bytes(bytes_per_call));
 
-    for &(name, capacity_frames) in &[("contiguous", 1024usize), ("wrap", 1000usize)] {
+    for &(name, capacity_frames) in &[
+        ("contiguous", 1024usize),
+        // `frames_per_call + 1` ensures we frequently exercise the wrap-around
+        // path while still fitting a full write/read without overruns.
+        ("wrap", frames_per_call + 1),
+    ] {
         group.bench_function(BenchmarkId::new("push_pop", name), |b| {
             let mut ring = AudioRingBuffer::new_stereo(capacity_frames);
+            let mut out = Vec::with_capacity(frames_per_call * 2);
             b.iter(|| {
                 ring.push_interleaved_stereo(black_box(&samples));
-                let out = ring.pop_interleaved_stereo(frames_per_call);
-                black_box(out);
+                ring.pop_interleaved_stereo_into(frames_per_call, &mut out);
+                black_box(&out);
             })
         });
     }
