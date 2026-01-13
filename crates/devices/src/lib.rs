@@ -13,6 +13,13 @@ pub mod pit8254;
 pub mod serial;
 pub mod usb;
 
+// Legacy virtio stack; new code should use the canonical `aero_virtio` crate.
+//
+// NOTE: We only deprecate this module for non-test builds to keep the
+// auto-generated unit test harness warning-free (it references test functions
+// by full path, e.g. `aero_devices::io::virtio::...`).
+#[cfg_attr(not(test), deprecated(note = "use aero_virtio crate instead"))]
+#[allow(deprecated)]
 pub mod io;
 pub mod storage;
 
