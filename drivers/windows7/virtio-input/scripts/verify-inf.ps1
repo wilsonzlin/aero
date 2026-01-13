@@ -79,11 +79,31 @@ $infPathResolved = Resolve-ExistingFile -Path $InfPath -ArgName '-InfPath'
 
 $rawLines = Get-Content -LiteralPath $infPathResolved -ErrorAction Stop
 $lines = New-Object System.Collections.Generic.List[string]
+$sections = @{}
+$currentSection = $null
+
 foreach ($l in $rawLines) {
   $stripped = Strip-InfComments -Line $l
   $trimmed = $stripped.Trim()
   if ($trimmed.Length -eq 0) { continue }
+
   $lines.Add($trimmed)
+
+  if ($trimmed -match '^\[(?<name>[^\]]+)\]$') {
+    $currentSection = $Matches['name'].Trim()
+    if (-not $sections.ContainsKey($currentSection)) {
+      $sections[$currentSection] = (New-Object System.Collections.Generic.List[string])
+    }
+    continue
+  }
+
+  if ($null -ne $currentSection) {
+    # INF syntax allows the same section name to appear multiple times. Coalesce.
+    if (-not $sections.ContainsKey($currentSection)) {
+      $sections[$currentSection] = (New-Object System.Collections.Generic.List[string])
+    }
+    $sections[$currentSection].Add($trimmed)
+  }
 }
 
 $failures = New-Object System.Collections.Generic.List[string]
@@ -92,8 +112,13 @@ $failures = New-Object System.Collections.Generic.List[string]
 # Version section basics
 #------------------------------------------------------------------------------
 $expectedClassLine = 'Class = HIDClass'
-if ((Get-MatchingLines -Lines $lines -Regex '(?i)^Class\s*=\s*HIDClass$').Count -eq 0) {
-  $found = Get-MatchingLines -Lines $lines -Regex '(?i)^Class\s*='
+if (-not $sections.ContainsKey('Version')) {
+  Add-Failure -Failures $failures -Message "Missing required section [Version]."
+}
+$versionLines = if ($sections.ContainsKey('Version')) { $sections['Version'] } else { $lines }
+
+if ((Get-MatchingLines -Lines $versionLines -Regex '(?i)^Class\s*=\s*HIDClass$').Count -eq 0) {
+  $found = Get-MatchingLines -Lines $versionLines -Regex '(?i)^Class\s*='
   if ($found.Count -eq 0) {
     Add-Failure -Failures $failures -Message ("Missing '{0}'. Ensure [Version] sets Class = HIDClass." -f $expectedClassLine)
   }
@@ -103,8 +128,8 @@ if ((Get-MatchingLines -Lines $lines -Regex '(?i)^Class\s*=\s*HIDClass$').Count 
 }
 
 $expectedCatalogLine = 'CatalogFile = aero_virtio_input.cat'
-if ((Get-MatchingLines -Lines $lines -Regex '(?i)^CatalogFile\s*=\s*aero_virtio_input\.cat$').Count -eq 0) {
-  $found = Get-MatchingLines -Lines $lines -Regex '(?i)^CatalogFile\s*='
+if ((Get-MatchingLines -Lines $versionLines -Regex '(?i)^CatalogFile\s*=\s*aero_virtio_input\.cat$').Count -eq 0) {
+  $found = Get-MatchingLines -Lines $versionLines -Regex '(?i)^CatalogFile\s*='
   if ($found.Count -eq 0) {
     Add-Failure -Failures $failures -Message ("Missing '{0}'. The package is expected to ship a catalog named aero_virtio_input.cat." -f $expectedCatalogLine)
   }
@@ -117,8 +142,13 @@ if ((Get-MatchingLines -Lines $lines -Regex '(?i)^CatalogFile\s*=\s*aero_virtio_
 # KMDF targeting
 #------------------------------------------------------------------------------
 $expectedKmdfLine = 'KmdfLibraryVersion = 1.9'
-if ((Get-MatchingLines -Lines $lines -Regex '(?i)^KmdfLibraryVersion\s*=\s*1\.9$').Count -eq 0) {
-  $found = Get-MatchingLines -Lines $lines -Regex '(?i)^KmdfLibraryVersion\s*='
+if (-not $sections.ContainsKey('AeroVirtioInput_WdfSect')) {
+  Add-Failure -Failures $failures -Message "Missing required section [AeroVirtioInput_WdfSect] (KMDF settings)."
+}
+$wdfLines = if ($sections.ContainsKey('AeroVirtioInput_WdfSect')) { $sections['AeroVirtioInput_WdfSect'] } else { $lines }
+
+if ((Get-MatchingLines -Lines $wdfLines -Regex '(?i)^KmdfLibraryVersion\s*=\s*1\.9$').Count -eq 0) {
+  $found = Get-MatchingLines -Lines $wdfLines -Regex '(?i)^KmdfLibraryVersion\s*='
   if ($found.Count -eq 0) {
     Add-Failure -Failures $failures -Message ("Missing '{0}'. Windows 7 SP1 includes KMDF 1.9 in-box and the INF must declare it." -f $expectedKmdfLine)
   }
@@ -136,28 +166,64 @@ $requiredHwids = @(
   'PCI\VEN_1AF4&DEV_1052&REV_01'
 )
 
-foreach ($id in $requiredHwids) {
-  $regex = '(?i)' + [regex]::Escape($id)
-  if ((Get-MatchingLines -Lines $lines -Regex $regex).Count -eq 0) {
-    Add-Failure -Failures $failures -Message ("Missing required Aero contract v1 HWID: {0}" -f $id)
+$modelSections = @('Aero.NTx86', 'Aero.NTamd64')
+foreach ($sect in $modelSections) {
+  if (-not $sections.ContainsKey($sect)) {
+    Add-Failure -Failures $failures -Message ("Missing required models section [{0}]." -f $sect)
+    continue
+  }
+  $sectLines = $sections[$sect]
+  foreach ($id in $requiredHwids) {
+    $regex = '(?i)' + [regex]::Escape($id)
+    if ((Get-MatchingLines -Lines $sectLines -Regex $regex).Count -eq 0) {
+      Add-Failure -Failures $failures -Message ("Missing required Aero contract v1 HWID in [{0}]: {1}" -f $sect, $id)
+    }
   }
 }
 
 #------------------------------------------------------------------------------
 # Interrupt Management (MSI/MSI-X)
 #------------------------------------------------------------------------------
+# Verify the AddReg section contents (ensures removal of the section or one line fails fast).
+$msiSectionName = 'AeroVirtioInput_InterruptManagement_AddReg'
+if (-not $sections.ContainsKey($msiSectionName)) {
+  Add-Failure -Failures $failures -Message ("Missing required section [{0}] (MSI/MSI-X AddReg entries)." -f $msiSectionName)
+}
+$msiLines = if ($sections.ContainsKey($msiSectionName)) { $sections[$msiSectionName] } else { $lines }
+
 # Key creation: HKR, "Interrupt Management",,0x00000010
-if ((Get-MatchingLines -Lines $lines -Regex '(?i)^HKR\s*,\s*"Interrupt Management"\s*,\s*,').Count -eq 0) {
+if ((Get-MatchingLines -Lines $msiLines -Regex '(?i)^HKR\s*,\s*"Interrupt Management"\s*,\s*,').Count -eq 0) {
   Add-Failure -Failures $failures -Message 'Missing MSI registry key creation (expected HKR, "Interrupt Management",,0x00000010).'
 }
 
 # Enable MSI: HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
-if ((Get-MatchingLines -Lines $lines -Regex '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MSISupported\s*,').Count -eq 0) {
+$msiSupportedLines = Get-MatchingLines -Lines $msiLines -Regex '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MSISupported\s*,'
+if ($msiSupportedLines.Count -eq 0) {
   Add-Failure -Failures $failures -Message 'Missing MSI enablement (expected HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, ..., 1).'
+}
+else {
+  $parsed = $false
+  foreach ($line in $msiSupportedLines) {
+    if ($line -match '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MSISupported\s*,\s*[^,]*\s*,\s*(?<val>[^,\s]+)\s*$') {
+      $parsed = $true
+      try {
+        $val = Parse-InfInteger -Text $Matches['val']
+        if ($val -ne 1) {
+          Add-Failure -Failures $failures -Message ("MSISupported is {0}, expected 1 (enabled). Line: {1}" -f $val, $line)
+        }
+      }
+      catch {
+        Add-Failure -Failures $failures -Message ("Unable to parse MSISupported value in line: {0}" -f $line)
+      }
+    }
+  }
+  if (-not $parsed) {
+    Add-Failure -Failures $failures -Message ("Unable to parse MSISupported line(s): {0}" -f ($msiSupportedLines -join '; '))
+  }
 }
 
 # Request enough messages (>= 3): HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, <n>
-$msgLines = Get-MatchingLines -Lines $lines -Regex '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MessageNumberLimit\s*,'
+$msgLines = Get-MatchingLines -Lines $msiLines -Regex '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MessageNumberLimit\s*,'
 if ($msgLines.Count -eq 0) {
   Add-Failure -Failures $failures -Message 'Missing MSI message count request (expected HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, ..., <n>).'
 }
