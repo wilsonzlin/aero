@@ -1647,11 +1647,19 @@ fn fs_main() -> @location(0) vec4<f32> {
         };
 
         let mut wgpu_usage = wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
+        let mut needs_storage = false;
         if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER) != 0 {
             wgpu_usage |= wgpu::BufferUsages::VERTEX;
+            needs_storage = true;
         }
         if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0 {
             wgpu_usage |= wgpu::BufferUsages::INDEX;
+            needs_storage = true;
+        }
+        // IA buffers may be consumed by compute prepasses (vertex pulling / expansion). WebGPU
+        // requires them to be created with `STORAGE` in order to bind as `var<storage>`.
+        if needs_storage {
+            wgpu_usage |= wgpu::BufferUsages::STORAGE;
         }
         if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER) != 0 {
             wgpu_usage |= wgpu::BufferUsages::UNIFORM;
@@ -4521,6 +4529,109 @@ mod tests {
             }
             other => panic!("expected validation error, got {other:?}"),
         }
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn ia_buffers_are_bindable_as_storage_for_vertex_pulling() {
+        pollster::block_on(async {
+            let Some((device, queue)) = create_device_queue(wgpu::Features::empty()).await else {
+                return;
+            };
+
+            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+
+            // Ensure the backend supports compute+storage before asserting. Some downlevel
+            // backends (e.g. WebGL2) cannot run vertex pulling compute prepasses.
+            let wgsl = r#"
+struct Data {
+    values: array<u32>,
+};
+
+@group(0) @binding(0) var<storage, read> data: Data;
+
+@compute @workgroup_size(1)
+fn main() {
+    let _x: u32 = data.values[0];
+}
+"#;
+            let shader = exec.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("aerogpu.executor ia storage bind test shader"),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(wgsl)),
+            });
+            let bgl = exec
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("aerogpu.executor ia storage bind test bgl"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(4),
+                        },
+                        count: None,
+                    }],
+                });
+            let pipeline_layout = exec
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aerogpu.executor ia storage bind test pipeline layout"),
+                    bind_group_layouts: &[&bgl],
+                    push_constant_ranges: &[],
+                });
+
+            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            exec.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("aerogpu.executor ia storage bind test pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: "main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                });
+            exec.device.poll(wgpu::Maintain::Wait);
+            let err = exec.device.pop_error_scope().await;
+            if err.is_some() {
+                // Compute/storage pipelines aren't available on this adapter.
+                return;
+            }
+
+            const VB: u32 = 1;
+            const IB: u32 = 2;
+            for (handle, usage_flags) in [
+                (VB, cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER),
+                (IB, cmd::AEROGPU_RESOURCE_USAGE_INDEX_BUFFER),
+            ] {
+                exec.exec_create_buffer(handle, usage_flags, 16, 0, 0, None)
+                    .expect("CREATE_BUFFER should succeed");
+            }
+
+            for (label, handle) in [("vertex", VB), ("index", IB)] {
+                let buffer = &exec
+                    .buffers
+                    .get(&handle)
+                    .unwrap_or_else(|| panic!("{label} buffer should exist"))
+                    .buffer;
+
+                exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+                exec.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu.executor ia storage bind test bg"),
+                    layout: &bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                });
+                exec.device.poll(wgpu::Maintain::Wait);
+                let err = exec.device.pop_error_scope().await;
+                assert!(
+                    err.is_none(),
+                    "{label} buffer must be bindable as STORAGE for vertex pulling, got: {err:?}"
+                );
+            }
+        });
     }
 
     #[test]
