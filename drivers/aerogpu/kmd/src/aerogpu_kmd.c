@@ -5911,6 +5911,23 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
     if (!adapter || !adapter->Bar0) {
         return FALSE;
     }
+
+    /*
+     * Be defensive during power transitions: dxgkrnl can deliver an interrupt while the adapter is
+     * transitioning away from D0 (or after we have marked it non-D0 but before IRQ_ENABLE is fully
+     * quiesced). Avoid doing any normal ISR work in non-D0 states; best-effort ACK any pending bits
+     * to deassert a level-triggered line.
+     */
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) !=
+        DxgkDevicePowerStateD0) {
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
+        }
+        if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+        }
+        return TRUE;
+    }
     BOOLEAN any = FALSE;
     BOOLEAN queueDpc = FALSE;
 
