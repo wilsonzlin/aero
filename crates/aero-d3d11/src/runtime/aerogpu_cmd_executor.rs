@@ -10920,7 +10920,6 @@ mod tests {
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
     use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdOpcode;
     use std::sync::Arc;
-    use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
     fn require_webgpu() -> bool {
         let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
