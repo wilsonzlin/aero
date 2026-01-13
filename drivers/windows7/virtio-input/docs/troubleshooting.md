@@ -20,6 +20,29 @@ dir %SystemRoot%\System32\DriverStore\FileRepository\aero_virtio_input.inf_*
 
 If you are using QEMU, keep PS/2 input enabled during install so you do not lose control, then disable it *after* virtio-input works (see “No input events” below).
 
+## Enable diagnostics logging (DBG builds)
+
+The virtio-input driver has lightweight diagnostics that are compiled in when `VIOINPUT_DIAGNOSTICS==1` (typically **checked/DBG** driver builds).
+
+### Persistent (registry, takes effect on restart)
+
+The driver reads its diagnostics mask from:
+
+`HKLM\\System\\CurrentControlSet\\Services\\aero_virtio_input\\Parameters\\DiagnosticsMask` (REG_DWORD)
+
+Changes take effect the next time the driver is started (reboot or disable/enable the device).
+
+### Runtime (IOCTLs, no reboot)
+
+On diagnostics builds, you can also toggle the mask at runtime using `hidtest.exe`:
+
+```bat
+hidtest.exe --get-log-mask
+hidtest.exe --set-log-mask 0x8000000F
+```
+
+See `drivers/windows7/virtio-input/src/log.h` for bit definitions (`VIOINPUT_LOG_*`).
+
 ## Device Manager: Code 28 (“The drivers for this device are not installed”)
 
 **Meaning:** Windows didn’t find a matching INF (or you never installed it).
