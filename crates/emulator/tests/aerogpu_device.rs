@@ -1022,6 +1022,123 @@ fn vsynced_present_does_not_complete_on_catchup_vblank_before_submission() {
 }
 
 #[test]
+fn vsynced_present_does_not_complete_on_elapsed_vblank_before_submission() {
+    // Repro case for [AEROGPU-PRESENT-PACING-01]:
+    //
+    // vblank period = 10ms
+    // tick at t=9ms (no vblank yet)
+    // submit a vsync present at t=11ms via DOORBELL without an intervening tick
+    // ensure completion happens on the *next* vblank (>=20ms), not at 10ms.
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(100),
+        ..Default::default()
+    };
+
+    let mut mem = VecMemory::new(0x40_000);
+    let mut dev = new_test_device(cfg);
+
+    // Enable scanout so vblank ticks run.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE);
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
+
+    // Command buffer: ACMD header + PRESENT(vsync).
+    let cmd_gpa = 0x4000u64;
+    let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32 + CMD_PRESENT_SIZE_BYTES;
+
+    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(
+        cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET,
+        dev.regs.abi_version,
+    );
+    mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, cmd_size_bytes);
+    mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
+
+    let present_gpa = cmd_gpa + CMD_STREAM_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        present_gpa + CMD_HDR_OPCODE_OFFSET,
+        AerogpuCmdOpcode::Present as u32,
+    );
+    mem.write_u32(
+        present_gpa + CMD_HDR_SIZE_BYTES_OFFSET,
+        CMD_PRESENT_SIZE_BYTES,
+    );
+    mem.write_u32(present_gpa + CMD_PRESENT_SCANOUT_ID_OFFSET, 0);
+    mem.write_u32(
+        present_gpa + CMD_PRESENT_FLAGS_OFFSET,
+        AEROGPU_PRESENT_FLAG_VSYNC,
+    );
+
+    // Submit descriptor at slot 0.
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    ); // desc_size_bytes
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_FLAGS_OFFSET,
+        AeroGpuSubmitDesc::FLAG_PRESENT,
+    ); // flags
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes); // cmd_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
+
+    // Fence page.
+    let fence_gpa = 0x3000u64;
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+
+    // Establish a vblank schedule such that the next vblank is at t=10ms.
+    //
+    // We use a base time slightly in the past so the DOORBELL handler's internal `Instant::now()`
+    // call lines up with our intended t=11ms submission point without sleeping.
+    let t0 = Instant::now() - Duration::from_millis(11);
+    dev.tick(&mut mem, t0);
+    dev.tick(&mut mem, t0 + Duration::from_millis(9));
+
+    // Submit at ~t=11ms without a host tick at t=10ms. DOORBELL must catch up the vblank clock
+    // before accepting new work, so the vsynced present can't complete on the already-elapsed
+    // vblank edge at t=10ms.
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    assert_eq!(dev.regs.completed_fence, 0);
+
+    // No completion before the next vblank.
+    dev.tick(&mut mem, t0 + Duration::from_millis(19));
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
+
+    // Fence completes on (or after) the next vblank at t=20ms.
+    dev.tick(&mut mem, t0 + Duration::from_millis(20));
+    assert_eq!(dev.regs.completed_fence, 42);
+    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+}
+
+#[test]
 fn scanout_disable_stops_vblank_and_clears_pending_irq() {
     let cfg = AeroGpuDeviceConfig {
         vblank_hz: Some(10),
