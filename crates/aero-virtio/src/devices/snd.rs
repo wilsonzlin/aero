@@ -3458,6 +3458,16 @@ mod tests {
             snd.decoded_frames_scratch.is_empty() && snd.resampled_scratch.is_empty(),
             "PCM_STOP should clear playback scratch buffers"
         );
+        assert_eq!(
+            snd.resampler.src_rate_hz(),
+            PCM_SAMPLE_RATE_HZ,
+            "PCM_STOP should preserve playback resampler src rate"
+        );
+        assert_eq!(
+            snd.resampler.dst_rate_hz(),
+            snd.host_sample_rate_hz(),
+            "PCM_STOP should preserve playback resampler dst rate"
+        );
         control_simple(&mut snd, VIRTIO_SND_R_PCM_START, PLAYBACK_STREAM_ID);
 
         // Process the second TX and ensure the queued frame from the first TX was not replayed.
@@ -3624,6 +3634,16 @@ mod tests {
                 && snd.capture_samples_scratch.is_empty(),
             "PCM_STOP should clear capture scratch buffers"
         );
+        assert_eq!(
+            snd.capture_resampler.src_rate_hz(),
+            snd.capture_sample_rate_hz(),
+            "PCM_STOP should preserve capture resampler src rate"
+        );
+        assert_eq!(
+            snd.capture_resampler.dst_rate_hz(),
+            PCM_SAMPLE_RATE_HZ,
+            "PCM_STOP should preserve capture resampler dst rate"
+        );
         control_simple(&mut snd, VIRTIO_SND_R_PCM_START, CAPTURE_STREAM_ID);
 
         let chain = pop_chain(&mut queue, &mem);
@@ -3760,6 +3780,16 @@ mod tests {
         assert!(
             snd.decoded_frames_scratch.is_empty() && snd.resampled_scratch.is_empty(),
             "PCM_RELEASE should clear playback scratch buffers"
+        );
+        assert_eq!(
+            snd.resampler.src_rate_hz(),
+            PCM_SAMPLE_RATE_HZ,
+            "PCM_RELEASE should preserve playback resampler src rate"
+        );
+        assert_eq!(
+            snd.resampler.dst_rate_hz(),
+            snd.host_sample_rate_hz(),
+            "PCM_RELEASE should preserve playback resampler dst rate"
         );
         control_set_params(&mut snd, PLAYBACK_STREAM_ID);
         control_simple(&mut snd, VIRTIO_SND_R_PCM_PREPARE, PLAYBACK_STREAM_ID);
@@ -3909,6 +3939,16 @@ mod tests {
                 && snd.capture_interleaved_scratch.is_empty()
                 && snd.capture_samples_scratch.is_empty(),
             "PCM_RELEASE should clear capture scratch buffers"
+        );
+        assert_eq!(
+            snd.capture_resampler.src_rate_hz(),
+            snd.capture_sample_rate_hz(),
+            "PCM_RELEASE should preserve capture resampler src rate"
+        );
+        assert_eq!(
+            snd.capture_resampler.dst_rate_hz(),
+            PCM_SAMPLE_RATE_HZ,
+            "PCM_RELEASE should preserve capture resampler dst rate"
         );
         control_set_params(&mut snd, CAPTURE_STREAM_ID);
         control_simple(&mut snd, VIRTIO_SND_R_PCM_PREPARE, CAPTURE_STREAM_ID);
