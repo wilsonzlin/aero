@@ -57,6 +57,7 @@ See:
     - `ci-package.README.md` (field reference)
     - `ci-package.json` (starter template; replace `infFiles` placeholder `REPLACE_ME.inf`, or remove `infFiles` to enable CI auto-discovery)
     - `ci-package.inf-wow64-example.json` (INF selection + WOW64 payload DLL example)
+    - `ci-package.tools-example.json` (INF selection + user-mode tool(s) via `toolFiles`)
     - `ci-package.wdf-example.json` (WDF coinstaller example)
 
 ### Legacy WDK BUILD / NMake wrapper projects
@@ -109,6 +110,9 @@ staged contents to keep artifacts redistributable and stable:
 
 If you need to ship extra (non-binary) files intentionally, add them under the driver source tree and include
 them via `drivers/<driver>/ci-package.json` → `additionalFiles`.
+
+If you need to ship user-mode helper tool binaries (`.exe`) alongside the driver package, use
+`drivers/<driver>/ci-package.json` → `toolFiles` (explicit opt-in; `.exe` remains disallowed in `additionalFiles`).
 
 If a legitimate redistributable artifact is removed by sanitation, update the allowlist in
 `ci/make-catalogs.ps1` in a follow-up (we prefer explicit allowlist additions over copying all build outputs
