@@ -17,7 +17,9 @@ use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::state::CpuMode;
 use aero_cpu_core::{CpuCore, Exception};
 use firmware::bios::{A20Gate, Bios, BiosBus, BlockDevice, FirmwareMemory};
-use memory::{GuestMemory, GuestMemoryError, GuestMemoryResult, MapError, MemoryBus as _, PhysicalMemoryBus};
+use memory::{
+    GuestMemory, GuestMemoryError, GuestMemoryResult, MapError, MemoryBus as _, PhysicalMemoryBus,
+};
 
 pub use snapshot::{SnapshotError, SnapshotOptions};
 
@@ -139,11 +141,13 @@ impl DirtyRam {
             len: buf.len(),
             size: self.len() as u64,
         })?;
-        let end = start.checked_add(buf.len()).ok_or(GuestMemoryError::OutOfRange {
-            paddr: addr,
-            len: buf.len(),
-            size: self.len() as u64,
-        })?;
+        let end = start
+            .checked_add(buf.len())
+            .ok_or(GuestMemoryError::OutOfRange {
+                paddr: addr,
+                len: buf.len(),
+                size: self.len() as u64,
+            })?;
         if end > self.data.len() {
             return Err(GuestMemoryError::OutOfRange {
                 paddr: addr,
@@ -209,11 +213,13 @@ impl GuestMemory for SharedDirtyRam {
             len: dst.len(),
             size: self.size(),
         })?;
-        let end = start.checked_add(dst.len()).ok_or(GuestMemoryError::OutOfRange {
-            paddr,
-            len: dst.len(),
-            size: self.size(),
-        })?;
+        let end = start
+            .checked_add(dst.len())
+            .ok_or(GuestMemoryError::OutOfRange {
+                paddr,
+                len: dst.len(),
+                size: self.size(),
+            })?;
         if end > self.len() {
             return Err(GuestMemoryError::OutOfRange {
                 paddr,
@@ -349,6 +355,7 @@ impl memory::MemoryBus for VmMemory {
 
 struct VmCpuBus<'a> {
     mem: &'a mut VmMemory,
+    serial: &'a mut Vec<u8>,
 }
 
 impl CpuBus for VmCpuBus<'_> {
@@ -410,7 +417,20 @@ impl CpuBus for VmCpuBus<'_> {
         Ok(0)
     }
 
-    fn io_write(&mut self, _port: u16, _size: u32, _val: u64) -> Result<(), Exception> {
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        // Tiny UART stub: capture COM1 output written by real-mode tests.
+        //
+        // The legacy `vm` harness does not emulate full UART behaviour. It only records writes to
+        // the COM1 data register (0x3F8) so integration tests can assert that guest code executed.
+        if port == 0x3F8 {
+            match size {
+                1 => self.serial.push(val as u8),
+                2 => self.serial.extend_from_slice(&(val as u16).to_le_bytes()),
+                4 => self.serial.extend_from_slice(&(val as u32).to_le_bytes()),
+                8 => self.serial.extend_from_slice(&val.to_le_bytes()),
+                _ => return Err(Exception::InvalidOpcode),
+            }
+        }
         Ok(())
     }
 }
@@ -430,6 +450,7 @@ pub struct Vm<D: BlockDevice> {
     pub mem: VmMemory,
     pub bios: Bios,
     pub disk: D,
+    serial: Vec<u8>,
     assist: AssistContext,
     snapshot_seq: u64,
     last_snapshot_id: Option<u64>,
@@ -442,6 +463,7 @@ impl<D: BlockDevice> Vm<D> {
             mem: VmMemory::new(mem_size),
             bios,
             disk,
+            serial: Vec::new(),
             assist: AssistContext::default(),
             snapshot_seq: 1,
             last_snapshot_id: None,
@@ -452,6 +474,7 @@ impl<D: BlockDevice> Vm<D> {
         self.assist = AssistContext::default();
         self.cpu = CpuCore::new(CpuMode::Real);
         self.cpu.a20_enabled = self.mem.a20_enabled();
+        self.serial.clear();
 
         let bus: &mut dyn BiosBus = &mut self.mem;
         self.bios.post(&mut self.cpu, bus, &mut self.disk);
@@ -468,9 +491,13 @@ impl<D: BlockDevice> Vm<D> {
         // Keep the CPU's A20 view coherent with the memory bus latch.
         self.cpu.a20_enabled = self.mem.a20_enabled();
 
-        let mut bus = VmCpuBus { mem: &mut self.mem };
+        let mut bus = VmCpuBus {
+            mem: &mut self.mem,
+            serial: &mut self.serial,
+        };
         let cfg = Tier0Config::from_cpuid(&self.assist.features);
-        let res = run_batch_cpu_core_with_assists(&cfg, &mut self.assist, &mut self.cpu, &mut bus, 1);
+        let res =
+            run_batch_cpu_core_with_assists(&cfg, &mut self.assist, &mut self.cpu, &mut bus, 1);
 
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => CpuExit::Continue,
@@ -494,6 +521,10 @@ impl<D: BlockDevice> Vm<D> {
 
     pub fn restore_snapshot(&mut self, bytes: &[u8]) -> Result<(), SnapshotError> {
         snapshot::restore_vm_snapshot(self, bytes)
+    }
+
+    pub fn serial_output(&self) -> &[u8] {
+        &self.serial
     }
 
     pub(crate) fn snapshot_meta(&mut self) -> aero_snapshot::SnapshotMeta {
