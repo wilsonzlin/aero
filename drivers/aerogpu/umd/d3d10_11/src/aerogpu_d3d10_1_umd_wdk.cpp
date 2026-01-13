@@ -5134,6 +5134,66 @@ void AEROGPU_APIENTRY DestroyBlendState(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE h
   s->~AeroGpuBlendState();
 }
 
+void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice,
+                                    D3D10DDI_HBLENDSTATE hState,
+                                    const FLOAT blend_factor[4],
+                                    UINT sample_mask) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  AEROGPU_D3D10_TRACEF_VERBOSE("SetBlendState hDevice=%p hState=%p",
+                               hDevice.pDrvPrivate,
+                               hState.pDrvPrivate);
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  // Default to the D3D10 default blend state (disabled, write RGBA).
+  aerogpu::d3d10_11::AerogpuBlendStateBase base{};
+  base.enable = 0;
+  base.src_factor = AEROGPU_BLEND_ONE;
+  base.dst_factor = AEROGPU_BLEND_ZERO;
+  base.blend_op = AEROGPU_BLEND_OP_ADD;
+  base.src_factor_alpha = AEROGPU_BLEND_ONE;
+  base.dst_factor_alpha = AEROGPU_BLEND_ZERO;
+  base.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
+  base.color_write_mask = 0xFu;
+
+  if (hState.pDrvPrivate) {
+    auto* bs = FromHandle<D3D10DDI_HBLENDSTATE, AeroGpuBlendState>(hState);
+    if (bs) {
+      base = bs->state;
+    }
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+
+  cmd->state.enable = base.enable ? 1u : 0u;
+  cmd->state.src_factor = base.src_factor;
+  cmd->state.dst_factor = base.dst_factor;
+  cmd->state.blend_op = base.blend_op;
+  cmd->state.color_write_mask = static_cast<uint8_t>(base.color_write_mask & 0xFu);
+  cmd->state.reserved0[0] = 0;
+  cmd->state.reserved0[1] = 0;
+  cmd->state.reserved0[2] = 0;
+  cmd->state.src_factor_alpha = base.src_factor_alpha;
+  cmd->state.dst_factor_alpha = base.dst_factor_alpha;
+  cmd->state.blend_op_alpha = base.blend_op_alpha;
+  cmd->state.blend_constant_rgba_f32[0] = f32_bits(blend_factor ? blend_factor[0] : 1.0f);
+  cmd->state.blend_constant_rgba_f32[1] = f32_bits(blend_factor ? blend_factor[1] : 1.0f);
+  cmd->state.blend_constant_rgba_f32[2] = f32_bits(blend_factor ? blend_factor[2] : 1.0f);
+  cmd->state.blend_constant_rgba_f32[3] = f32_bits(blend_factor ? blend_factor[3] : 1.0f);
+  cmd->state.sample_mask = sample_mask;
+}
+
 SIZE_T AEROGPU_APIENTRY CalcPrivateRasterizerStateSize(D3D10DDI_HDEVICE, const D3D10_DDI_RASTERIZER_DESC*) {
   return sizeof(AeroGpuRasterizerState);
 }
@@ -5601,6 +5661,29 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   ib_cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
   ib_cmd->offset_bytes = 0;
   ib_cmd->reserved0 = 0;
+
+  // Reset blend state to D3D10 defaults (disabled, write RGBA).
+  auto* bs_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
+  if (!bs_cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+  bs_cmd->state.enable = 0;
+  bs_cmd->state.src_factor = AEROGPU_BLEND_ONE;
+  bs_cmd->state.dst_factor = AEROGPU_BLEND_ZERO;
+  bs_cmd->state.blend_op = AEROGPU_BLEND_OP_ADD;
+  bs_cmd->state.color_write_mask = 0xFu;
+  bs_cmd->state.reserved0[0] = 0;
+  bs_cmd->state.reserved0[1] = 0;
+  bs_cmd->state.reserved0[2] = 0;
+  bs_cmd->state.src_factor_alpha = AEROGPU_BLEND_ONE;
+  bs_cmd->state.dst_factor_alpha = AEROGPU_BLEND_ZERO;
+  bs_cmd->state.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
+  bs_cmd->state.blend_constant_rgba_f32[0] = f32_bits(1.0f);
+  bs_cmd->state.blend_constant_rgba_f32[1] = f32_bits(1.0f);
+  bs_cmd->state.blend_constant_rgba_f32[2] = f32_bits(1.0f);
+  bs_cmd->state.blend_constant_rgba_f32[3] = f32_bits(1.0f);
+  bs_cmd->state.sample_mask = 0xFFFFFFFFu;
 }
 
 void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
@@ -6930,7 +7013,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
     pCreateDevice->pDeviceFuncs->field = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->field)>::Call
 #endif
 
-  AEROGPU_D3D10_ASSIGN_STUB(pfnSetBlendState, SetBlendState);
+  pCreateDevice->pDeviceFuncs->pfnSetBlendState = &SetBlendState;
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateRasterizerStateSize = &CalcPrivateRasterizerStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateRasterizerState = &CreateRasterizerState;
@@ -7119,8 +7202,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateBlendStateSize = &CalcPrivateBlendStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateBlendState = &CreateBlendState;
   pCreateDevice->pDeviceFuncs->pfnDestroyBlendState = &DestroyBlendState;
-  pCreateDevice->pDeviceFuncs->pfnSetBlendState =
-      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetBlendState)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnSetBlendState = &SetBlendState;
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateRasterizerStateSize = &CalcPrivateRasterizerStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateRasterizerState = &CreateRasterizerState;
