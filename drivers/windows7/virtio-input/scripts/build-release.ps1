@@ -119,5 +119,7 @@ Write-Host ""
 Write-Host "Done. Output written to:"
 Write-Host ("  {0}" -f $OutDir)
 Write-Host ""
-Write-Host "Next (inside the guest): enable test signing and install the .cer into Root + TrustedPublisher."
+Write-Host "Next (inside the guest): enable test signing (x64) and run the helper scripts from the extracted ZIP:"
+Write-Host "  - INSTALL_CERT.cmd (if test-signed; installs cert into Root + TrustedPublisher; requires elevation)"
+Write-Host "  - INSTALL_DRIVER.cmd (installs aero_virtio_input.inf via pnputil; requires elevation)"
 
