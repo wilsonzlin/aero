@@ -4449,17 +4449,7 @@ fn emit_instructions(
                 w.line("}");
             }
             Sm4Inst::If { cond, test } => {
-                let cond_vec = emit_src_vec4(cond, inst_index, "if", ctx)?;
-                let cond_scalar = format!("({cond_vec}).x");
-                // DXBC register files are untyped 32-bit lanes. `if_z` / `if_nz` are defined as a
-                // raw non-zero test on the underlying bits (not a float numeric compare), so we
-                // must compare via `bitcast<u32>` to preserve patterns like `0x80000000` (`-0.0`)
-                // used for boolean masks.
-                let cond_bits = format!("bitcast<u32>({cond_scalar})");
-                let expr = match test {
-                    crate::sm4_ir::Sm4TestBool::Zero => format!("{cond_bits} == 0u"),
-                    crate::sm4_ir::Sm4TestBool::NonZero => format!("{cond_bits} != 0u"),
-                };
+                let expr = emit_test_bool_scalar(cond, *test, inst_index, "if", ctx)?;
                 w.line(&format!("if ({expr}) {{"));
                 w.indent();
                 blocks.push(BlockKind::If { has_else: false });
@@ -4585,12 +4575,7 @@ fn emit_instructions(
                     _ => {}
                 }
 
-                let base = format!("p{}.{}", pred.reg.index, component_char(pred.component));
-                let cond = if pred.invert {
-                    format!("!({base})")
-                } else {
-                    base
-                };
+                let cond = emit_test_predicate_scalar(pred);
                 w.line(&format!("if ({cond}) {{"));
                 w.indent();
                 let inner_module = Sm4Module {
@@ -4640,19 +4625,16 @@ fn emit_instructions(
                 emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "mov", ctx)?;
             }
             Sm4Inst::Movc { dst, cond, a, b } => {
-                let cond_vec = emit_src_vec4(cond, inst_index, "movc", ctx)?;
                 let a_vec = emit_src_vec4(a, inst_index, "movc", ctx)?;
                 let b_vec = emit_src_vec4(b, inst_index, "movc", ctx)?;
-
-                let cond_bits = format!("movc_cond_bits_{inst_index}");
-                let cond_bool = format!("movc_cond_bool_{inst_index}");
-                w.line(&format!(
-                    "let {cond_bits} = bitcast<vec4<u32>>({cond_vec});"
-                ));
-                w.line(&format!("let {cond_bool} = {cond_bits} != vec4<u32>(0u);"));
-
-                let expr =
-                    maybe_saturate(dst, format!("select(({b_vec}), ({a_vec}), {cond_bool})"));
+                let cond_bool = emit_test_bool_vec4(
+                    cond,
+                    crate::sm4_ir::Sm4TestBool::NonZero,
+                    inst_index,
+                    "movc",
+                    ctx,
+                )?;
+                let expr = maybe_saturate(dst, format!("select(({b_vec}), ({a_vec}), {cond_bool})"));
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "movc", ctx)?;
             }
             Sm4Inst::And { dst, a, b } => {
@@ -5166,12 +5148,7 @@ fn emit_instructions(
                     });
                 }
 
-                let cond_vec = emit_src_vec4(cond, inst_index, "discard", ctx)?;
-                let cond_bits = format!("bitcast<u32>(({cond_vec}).x)");
-                let cmp = match test {
-                    crate::sm4_ir::Sm4TestBool::Zero => format!("{cond_bits} == 0u"),
-                    crate::sm4_ir::Sm4TestBool::NonZero => format!("{cond_bits} != 0u"),
-                };
+                let cmp = emit_test_bool_scalar(cond, *test, inst_index, "discard", ctx)?;
 
                 w.line(&format!("if ({cmp}) {{"));
                 w.indent();
@@ -5932,6 +5909,54 @@ fn emit_src_vec4(
     }
     expr = apply_modifier(expr, src.modifier);
     Ok(expr)
+}
+
+/// Emits a WGSL boolean expression for SM4/SM5 "test bool" instructions (e.g. `if_z`, `discard_nz`).
+///
+/// SM4/SM5 registers are untyped 32-bit lanes. For consistency across all "zero/nonzero" tests we
+/// interpret the test as a raw-bit check on the selected scalar lane *after* swizzle/modifiers are
+/// applied:
+/// - `Zero`: `bitcast<u32>(lane) == 0u`
+/// - `NonZero`: `bitcast<u32>(lane) != 0u`
+fn emit_test_bool_scalar(
+    src: &crate::sm4_ir::SrcOperand,
+    test: crate::sm4_ir::Sm4TestBool,
+    inst_index: usize,
+    opcode: &'static str,
+    ctx: &EmitCtx<'_>,
+) -> Result<String, ShaderTranslateError> {
+    let vec = emit_src_vec4(src, inst_index, opcode, ctx)?;
+    let lane = format!("({vec}).x");
+    let bits = format!("bitcast<u32>({lane})");
+    Ok(match test {
+        crate::sm4_ir::Sm4TestBool::Zero => format!("{bits} == 0u"),
+        crate::sm4_ir::Sm4TestBool::NonZero => format!("{bits} != 0u"),
+    })
+}
+
+/// Like [`emit_test_bool_scalar`], but returns a per-component `vec4<bool>` expression.
+fn emit_test_bool_vec4(
+    src: &crate::sm4_ir::SrcOperand,
+    test: crate::sm4_ir::Sm4TestBool,
+    inst_index: usize,
+    opcode: &'static str,
+    ctx: &EmitCtx<'_>,
+) -> Result<String, ShaderTranslateError> {
+    let vec = emit_src_vec4(src, inst_index, opcode, ctx)?;
+    let bits = format!("bitcast<vec4<u32>>({vec})");
+    Ok(match test {
+        crate::sm4_ir::Sm4TestBool::Zero => format!("{bits} == vec4<u32>(0u)"),
+        crate::sm4_ir::Sm4TestBool::NonZero => format!("{bits} != vec4<u32>(0u)"),
+    })
+}
+
+fn emit_test_predicate_scalar(pred: &crate::sm4_ir::PredicateOperand) -> String {
+    let base = format!("p{}.{}", pred.reg.index, component_char(pred.component));
+    if pred.invert {
+        format!("!({base})")
+    } else {
+        base
+    }
 }
 
 fn emit_src_vec4_u32(

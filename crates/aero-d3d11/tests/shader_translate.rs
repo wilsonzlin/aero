@@ -3486,3 +3486,76 @@ fn translates_atomic_add_uav_buffer() {
         "expected reflection to include u0 binding"
     );
 }
+
+#[test]
+fn translates_sm4_bool_tests_consistently() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            // r0 = 1.0 (used as a non-zero condition), r1 = 0.0 (zero condition).
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_imm([1.0, 1.0, 1.0, 1.0]),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                src: src_imm([0.0, 0.0, 0.0, 0.0]),
+            },
+            // Scalar test site: `if_nz`.
+            Sm4Inst::If {
+                cond: src_reg(RegFile::Temp, 0),
+                test: Sm4TestBool::NonZero,
+            },
+            // Scalar test site: `discard_nz`.
+            Sm4Inst::Discard {
+                cond: src_reg(RegFile::Temp, 1),
+                test: Sm4TestBool::NonZero,
+            },
+            Sm4Inst::EndIf,
+            // Vector test site: `movc`.
+            Sm4Inst::Movc {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                cond: src_reg(RegFile::Temp, 0),
+                a: src_imm([10.0, 20.0, 30.0, 40.0]),
+                b: src_imm([50.0, 60.0, 70.0, 80.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Ensure all SM4 boolean-test sites use the same raw-bit test semantics (bitcast to u32).
+    assert!(
+        translated.wgsl.contains("bitcast<u32>"),
+        "expected scalar bool tests to use bitcast<u32>:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<u32>>"),
+        "expected vector bool tests to use bitcast<vec4<u32>>:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("== 0.0"),
+        "found numeric == 0.0 test:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("!= 0.0"),
+        "found numeric != 0.0 test:\n{}",
+        translated.wgsl
+    );
+}

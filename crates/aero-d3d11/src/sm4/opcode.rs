@@ -734,8 +734,8 @@ mod tests {
                 .expect("failed to parse opcode const value");
 
             // We only care about opcode constants defined with a literal numeric value. Some
-            // constants are aliases for readability (e.g. `OPCODE_IFC = OPCODE_IF`), and those
-            // should not participate in uniqueness checks.
+            // constants are aliases for readability (e.g. `OPCODE_IFC = OPCODE_IF`) or are derived
+            // from other constants, and those should not participate in uniqueness checks.
             let value_str = value_str.replace('_', "");
             // Ignore alias/derived opcode constants (e.g. `pub const OPCODE_IFC: u32 = OPCODE_IF;`)
             // since this test only aims to assert that the *numeric opcode IDs* are globally unique.
@@ -750,9 +750,6 @@ mod tests {
                     .parse::<u32>()
                     .expect("invalid decimal opcode const value")
             } else {
-                // Some opcode IDs are intentionally aliases (e.g. `OPCODE_IFC = OPCODE_IF`) or are
-                // derived from other constants. These are not new numeric opcode assignments, so
-                // ignore them for the purposes of collision detection.
                 continue;
             };
 
