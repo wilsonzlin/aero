@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 # Optional tile-based diffing when the caller doesn't supply dirty rectangles.
 # Kept off by default until validated for correctness/perf across browsers.
 diff-engine = []
+wgpu = []
 
 [dependencies]
 bcdec_rs = "0.2"

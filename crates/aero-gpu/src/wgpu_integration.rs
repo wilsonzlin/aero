@@ -7,24 +7,21 @@ use crate::{
     now_ms, GpuBackendKind, GpuErrorCategory, GpuErrorEvent, GpuErrorSeverityKind, GpuSurfaceError,
 };
 
-fn classify_wgpu_error(message: &str) -> (GpuErrorSeverityKind, GpuErrorCategory) {
-    // `wgpu::Error` does not expose a stable machine-readable code across
-    // versions; keep this robust by classifying via the formatted message.
-    let msg = message.to_ascii_lowercase();
-    if msg.contains("outofmemory") || msg.contains("out of memory") {
-        (GpuErrorSeverityKind::Fatal, GpuErrorCategory::OutOfMemory)
-    } else if msg.contains("validation") {
-        (GpuErrorSeverityKind::Error, GpuErrorCategory::Validation)
-    } else if msg.contains("device lost") || msg.contains("devicelost") {
-        (GpuErrorSeverityKind::Error, GpuErrorCategory::DeviceLost)
-    } else {
-        (GpuErrorSeverityKind::Error, GpuErrorCategory::Unknown)
+fn classify_wgpu_error(err: &wgpu::Error) -> (GpuErrorSeverityKind, GpuErrorCategory) {
+    match err {
+        wgpu::Error::Validation { .. } => {
+            (GpuErrorSeverityKind::Error, GpuErrorCategory::Validation)
+        }
+        wgpu::Error::OutOfMemory { .. } => {
+            (GpuErrorSeverityKind::Fatal, GpuErrorCategory::OutOfMemory)
+        }
+        _ => (GpuErrorSeverityKind::Error, GpuErrorCategory::Unknown),
     }
 }
 
 pub fn wgpu_error_to_event(backend_kind: GpuBackendKind, err: &wgpu::Error) -> GpuErrorEvent {
     let message = err.to_string();
-    let (severity, category) = classify_wgpu_error(&message);
+    let (severity, category) = classify_wgpu_error(err);
     GpuErrorEvent::new(now_ms(), backend_kind, severity, category, message)
         .with_detail("wgpu_debug", format!("{err:?}"))
 }
@@ -52,5 +49,39 @@ impl From<wgpu::SurfaceError> for GpuSurfaceError {
             wgpu::SurfaceError::Timeout => GpuSurfaceError::Timeout,
             wgpu::SurfaceError::OutOfMemory => GpuSurfaceError::OutOfMemory,
         }
+    }
+}
+
+#[cfg(all(test, feature = "wgpu"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_wgpu_error_maps_by_variant() {
+        let oom = wgpu::Error::OutOfMemory {
+            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "oom")),
+        };
+        assert_eq!(
+            classify_wgpu_error(&oom),
+            (GpuErrorSeverityKind::Fatal, GpuErrorCategory::OutOfMemory)
+        );
+
+        let validation = wgpu::Error::Validation {
+            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "validation")),
+            description: "validation error".into(),
+        };
+        assert_eq!(
+            classify_wgpu_error(&validation),
+            (GpuErrorSeverityKind::Error, GpuErrorCategory::Validation)
+        );
+
+        let internal = wgpu::Error::Internal {
+            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "internal")),
+            description: "internal error".into(),
+        };
+        assert_eq!(
+            classify_wgpu_error(&internal),
+            (GpuErrorSeverityKind::Error, GpuErrorCategory::Unknown)
+        );
     }
 }
