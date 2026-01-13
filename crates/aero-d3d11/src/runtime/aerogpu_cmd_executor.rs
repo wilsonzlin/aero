@@ -11979,26 +11979,16 @@ mod tests {
             const VB: u32 = 1;
             const IB: u32 = 2;
 
-            let allocs = AllocTable::new(None).unwrap();
+            // Create buffers via the actual AeroGPU command stream path, so the test exercises the
+            // same usage-flag mapping that guest D3D11 would hit.
+            let mut writer = AerogpuCmdWriter::new();
+            writer.create_buffer(VB, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 16, 0, 0);
+            writer.create_buffer(IB, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, 16, 0, 0);
+            let stream = writer.finish();
 
-            for (handle, usage_flags) in [
-                (VB, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER),
-                (IB, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER),
-            ] {
-                let mut cmd_bytes = Vec::new();
-                cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
-                cmd_bytes.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
-                cmd_bytes.extend_from_slice(&handle.to_le_bytes());
-                cmd_bytes.extend_from_slice(&usage_flags.to_le_bytes());
-                cmd_bytes.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
-                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
-                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
-                cmd_bytes.extend_from_slice(&0u64.to_le_bytes()); // reserved0
-                assert_eq!(cmd_bytes.len(), 40);
-
-                exec.exec_create_buffer(&cmd_bytes, &allocs)
-                    .expect("CREATE_BUFFER should succeed");
-            }
+            let mut guest_mem = VecGuestMemory::new(0);
+            exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect("execute_cmd_stream should succeed");
 
             let wgsl = r#"
 struct Data {
