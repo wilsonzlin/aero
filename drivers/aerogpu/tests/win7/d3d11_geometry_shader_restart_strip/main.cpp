@@ -480,13 +480,18 @@ static int RunD3D11GeometryShaderRestartStrip(int argc, char** argv) {
                          (unsigned)min_row_pitch);
   }
 
-  const int y = kHeight / 2;
-  const uint32_t left_px = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 8, y);
-  const uint32_t mid_px = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth / 2, y);
-  const uint32_t right_px = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 8, y);
+  const int y_mid = kHeight / 2;
+  const int gap_y_top = y_mid - 8;
+  const int gap_y_bottom = y_mid + 8;
+  const uint32_t left_px = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 8, y_mid);
+  const uint32_t gap_top_px =
+      aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth / 2, gap_y_top);
+  const uint32_t gap_bottom_px =
+      aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth / 2, gap_y_bottom);
+  const uint32_t right_px = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 8, y_mid);
 
   const uint32_t expected_left = 0xFF00FF00u;   // green
-  const uint32_t expected_mid = 0xFF000000u;    // black (clear)
+  const uint32_t expected_gap = 0xFF000000u;    // black (clear)
   const uint32_t expected_right = 0xFF0000FFu;  // blue
 
   if (dump) {
@@ -523,12 +528,14 @@ static int RunD3D11GeometryShaderRestartStrip(int argc, char** argv) {
                          (unsigned long)right_px,
                          (unsigned long)expected_right);
   }
-  if ((mid_px & 0x00FFFFFFu) != (expected_mid & 0x00FFFFFFu)) {
+  if ((gap_top_px & 0x00FFFFFFu) != (expected_gap & 0x00FFFFFFu) ||
+      (gap_bottom_px & 0x00FFFFFFu) != (expected_gap & 0x00FFFFFFu)) {
     PrintDeviceRemovedReasonIfAny(kTestName, device.get());
     return reporter.Fail(
-        "gap pixel mismatch (RestartStrip/cut semantics broken?): got 0x%08lX expected clear ~0x%08lX",
-        (unsigned long)mid_px,
-        (unsigned long)expected_mid);
+        "gap pixel mismatch (RestartStrip/cut semantics broken?): got top=0x%08lX bottom=0x%08lX expected clear ~0x%08lX",
+        (unsigned long)gap_top_px,
+        (unsigned long)gap_bottom_px,
+        (unsigned long)expected_gap);
   }
 
   return reporter.Pass();
@@ -538,4 +545,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunD3D11GeometryShaderRestartStrip(argc, argv);
 }
-
