@@ -575,6 +575,28 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
     return reporter.Fail("D3DKMTEscape(query-scanout) failed (NTSTATUS=0x%08lX)", (unsigned long)st0);
   }
 
+  // Baseline sanity: scanout should already match the current desktop mode before we mode-set.
+  aerogpu_escape_query_scanout_out q_init;
+  NTSTATUS st_init = 0;
+  std::string scanout_err0;
+  if (!WaitForScanoutMatch(&kmt,
+                           adapter,
+                           (DWORD)initial_w,
+                           (DWORD)initial_h,
+                           2000,
+                           &q_init,
+                           &st_init,
+                           &scanout_err0)) {
+    aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+    return reporter.Fail("%s (cached=%lux%lu mmio=%lux%lu)",
+                         scanout_err0.c_str(),
+                         (unsigned long)q_init.cached_width,
+                         (unsigned long)q_init.cached_height,
+                         (unsigned long)q_init.mmio_width,
+                         (unsigned long)q_init.mmio_height);
+  }
+
   // Ensure we always attempt to restore the original mode on any early-return failure.
   ScopedModeRestore restore(original);
   // Arm the restore guard before attempting the mode set: even if the mode change partially
