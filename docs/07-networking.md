@@ -109,7 +109,9 @@ contributors.
 - Browser runs a slirp-like stack (ARP/DHCP + TCP/UDP NAT).
 - TCP egress is implemented via the gateway’s WebSocket endpoints (`/tcp` or `/tcp-mux`,
   subprotocol `aero-tcp-mux-v1`).
-- DNS resolution uses the gateway’s DoH endpoints (`/dns-query`, optional `/dns-json`).
+- DNS resolution uses DoH endpoints (`/dns-query`, optional `/dns-json`).
+  - Production deployments expose these via `backend/aero-gateway`.
+  - Local dev can use `net-proxy` which implements the same DoH paths; see [`net-proxy/README.md`](../net-proxy/README.md).
 - UDP egress is implemented via `proxy/webrtc-udp-relay` (WebRTC DataChannel `udp`, with `/udp`
   WebSocket fallback; see `proxy/webrtc-udp-relay/PROTOCOL.md`).
 
