@@ -28,6 +28,8 @@ pub struct OptResult {
 }
 
 pub fn optimize_trace(trace: &mut TraceIr, cfg: &OptConfig) -> OptResult {
+    debug_assert!(trace.validate().is_ok());
+
     for _ in 0..cfg.max_iters {
         let mut changed = false;
         changed |= passes::addr_simplify::run(trace);
@@ -41,6 +43,8 @@ pub fn optimize_trace(trace: &mut TraceIr, cfg: &OptConfig) -> OptResult {
             break;
         }
     }
+
+    debug_assert!(trace.validate().is_ok());
 
     let regalloc = passes::regalloc::run(trace);
     OptResult { regalloc }

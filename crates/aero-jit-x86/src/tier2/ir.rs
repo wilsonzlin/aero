@@ -1,4 +1,5 @@
 use aero_types::{Flag, FlagSet, Gpr, Width};
+use std::collections::HashMap;
 
 pub const REG_COUNT: usize = 16;
 
@@ -497,6 +498,127 @@ impl TraceIr {
             }
         }
         written
+    }
+
+    /// Validate Tier-2 trace IR invariants.
+    ///
+    /// This is intended as a debug-only verifier; callers should typically gate it behind
+    /// `debug_assertions` (e.g. via `debug_assert!(trace.validate().is_ok())`).
+    pub fn validate(&self) -> Result<(), String> {
+        if self.kind == TraceKind::Loop && self.body.is_empty() {
+            return Err("TraceKind::Loop must have a non-empty body".to_owned());
+        }
+
+        // `Instr::SideExit` is an unconditional terminator. Having any instructions after it is
+        // always a bug because they will never execute.
+        if let Some(pos) = self
+            .prologue
+            .iter()
+            .position(|i| matches!(i, Instr::SideExit { .. }))
+        {
+            if pos + 1 != self.prologue.len() {
+                return Err(format!(
+                    "Instr::SideExit must be the final instruction of the trace prologue: found at prologue[{pos}] but prologue has {} instructions",
+                    self.prologue.len()
+                ));
+            }
+            if !self.body.is_empty() {
+                return Err(format!(
+                    "Instr::SideExit in the prologue terminates the trace, but the trace body is non-empty ({} instructions)",
+                    self.body.len()
+                ));
+            }
+        }
+
+        if let Some(pos) = self
+            .body
+            .iter()
+            .position(|i| matches!(i, Instr::SideExit { .. }))
+        {
+            if self.kind == TraceKind::Linear && pos + 1 != self.body.len() {
+                return Err(format!(
+                    "Instr::SideExit is a terminator and must be the final instruction of a linear trace body: found at body[{pos}] but body has {} instructions",
+                    self.body.len()
+                ));
+            }
+            if pos + 1 != self.body.len() {
+                return Err(format!(
+                    "Instr::SideExit must be the final instruction of the trace body: found at body[{pos}] but body has {} instructions",
+                    self.body.len()
+                ));
+            }
+        }
+
+        let prologue_len = self.prologue.len();
+        let fmt_loc = |i: usize| -> String {
+            if i < prologue_len {
+                format!("prologue[{i}]")
+            } else {
+                format!("body[{}]", i - prologue_len)
+            }
+        };
+
+        // Collect all SSA definitions and compute a "max_value_id" based solely on definitions.
+        // This lets us cheaply catch operands that refer to completely out-of-range ValueIds
+        // without allocating huge vectors (which many passes do based on max_id).
+        let mut defs: HashMap<ValueId, usize> = HashMap::new();
+        let mut max_value_id: u32 = 0;
+
+        for (idx, inst) in self.iter_instrs().enumerate() {
+            let Some(dst) = inst.dst() else { continue };
+            if let Some(prev) = defs.insert(dst, idx) {
+                return Err(format!(
+                    "ValueId {dst:?} is defined multiple times (at {} and {})",
+                    fmt_loc(prev),
+                    fmt_loc(idx)
+                ));
+            }
+            let next = dst
+                .0
+                .checked_add(1)
+                .ok_or_else(|| format!("ValueId {dst:?} overflows max_value_id"))?;
+            max_value_id = max_value_id.max(next);
+        }
+
+        // Validate all uses: bounds check, SSA resolution, and use-before-def.
+        for (idx, inst) in self.iter_instrs().enumerate() {
+            let mut err: Option<String> = None;
+            inst.for_each_operand(|op| {
+                if err.is_some() {
+                    return;
+                }
+                let Operand::Value(v) = op else { return };
+
+                if v.0 >= max_value_id {
+                    err = Some(format!(
+                        "use of {v:?} at {} exceeds max_value_id ({max_value_id})",
+                        fmt_loc(idx)
+                    ));
+                    return;
+                }
+
+                let Some(&def_idx) = defs.get(&v) else {
+                    err = Some(format!(
+                        "use of undefined {v:?} at {} (no defining instruction)",
+                        fmt_loc(idx)
+                    ));
+                    return;
+                };
+
+                if def_idx >= idx {
+                    err = Some(format!(
+                        "use-before-def of {v:?} at {} (defined at {})",
+                        fmt_loc(idx),
+                        fmt_loc(def_idx)
+                    ));
+                }
+            });
+            if let Some(e) = err {
+                return Err(e);
+            }
+        }
+
+        Ok(())
     }
 }
 

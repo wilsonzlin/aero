@@ -146,6 +146,11 @@ impl Tier2WasmCodegen {
         plan: &RegAllocPlan,
         options: Tier2WasmOptions,
     ) -> Vec<u8> {
+        #[cfg(debug_assertions)]
+        trace
+            .validate()
+            .expect("Tier-2 TraceIr failed validation before WASM codegen");
+
         let mut has_load_mem = false;
         let mut has_store_mem = false;
         let mut has_code_version_guards = false;
