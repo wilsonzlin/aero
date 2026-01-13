@@ -55,10 +55,12 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - When enabled, the test emits a readiness marker (`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY`), then waits
       (with a hard timeout) for host-injected events (intended to be paired with QMP `input-send-event` injection) and emits
       `...|PASS|...` or `...|FAIL|reason=...|...`.
-  - Optional end-to-end **tablet / absolute pointer** event delivery smoke test (`virtio-input-tablet-events`):
-    - Disabled by default.
-    - Enable with `--test-input-tablet-events` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1`).
+  - Optional end-to-end **tablet (absolute pointer)** event delivery smoke test (`virtio-input-tablet-events`):
+    - Disabled by default (requires host-side QMP injection).
+    - Enable with `--test-input-tablet-events` (alias: `--test-tablet-events`) or env var
+      `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`.
     - The selftest opens the virtio tablet HID interface and reads input reports via `ReadFile` (no window focus required).
+    - Requires a virtio tablet device (typically QEMU `-device virtio-tablet-pci`) to be present and bound to virtio-input.
     - Expected injected sequence (used by the host harness via QMP `input-send-event`):
       - absolute move to (0,0) (reset)
       - absolute move to (10000,20000) (target)

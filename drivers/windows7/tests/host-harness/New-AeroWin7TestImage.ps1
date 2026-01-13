@@ -105,10 +105,13 @@ param(
   [switch]$TestInputEvents,
 
   # If set, enable the guest selftest's end-to-end virtio-input tablet (absolute pointer) event delivery test
-  # (adds `--test-input-tablet-events` to the scheduled task).
+  # (adds `--test-input-tablet-events` (alias: `--test-tablet-events`) to the scheduled task).
   #
-  # This is required when running the host harness with `-WithInputTabletEvents` / `--with-input-tablet-events`.
+  # This is required when running the host harness with:
+  # - PowerShell: `-WithInputTabletEvents` / `-WithTabletEvents`
+  # - Python: `--with-input-tablet-events` / `--with-tablet-events`
   [Parameter(Mandatory = $false)]
+  [Alias("TestTabletEvents")]
   [switch]$TestInputTabletEvents
 )
 
@@ -508,8 +511,9 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
   - The virtio-input end-to-end event delivery tests (HID input reports) are disabled by default.
     - To enable keyboard/mouse injection (required when running the host harness with `-WithInputEvents` / `--with-input-events`),
       generate this media with `-TestInputEvents` (adds `--test-input-events` to the scheduled task).
-    - To enable tablet (absolute pointer) injection (required when running the host harness with `-WithInputTabletEvents` / `--with-input-tablet-events`),
-      generate this media with `-TestInputTabletEvents` (adds `--test-input-tablet-events` to the scheduled task).
+    - To enable tablet (absolute pointer) injection (required when running the host harness with `-WithInputTabletEvents` / `-WithTabletEvents` /
+      `--with-input-tablet-events` / `--with-tablet-events`), generate this media with `-TestInputTabletEvents` (alias: `-TestTabletEvents`)
+      (adds `--test-input-tablet-events` (alias: `--test-tablet-events`) to the scheduled task).
   - By default, virtio-snd is optional (SKIP if missing). To require it, generate this media with `-RequireSnd` (adds `--require-snd`).
     - To skip the virtio-snd test entirely, generate this media with `-DisableSnd`.
       Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).
