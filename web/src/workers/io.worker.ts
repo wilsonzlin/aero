@@ -66,6 +66,7 @@ import { E1000PciDevice } from "../io/devices/e1000";
 import { HdaPciDevice, type HdaControllerBridgeLike } from "../io/devices/hda";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
+import { XhciPciDevice } from "../io/devices/xhci";
 import { VirtioInputPciFunction, hidUsageToLinuxKeyCode, type VirtioInputPciDeviceLike } from "../io/devices/virtio_input";
 import { VirtioNetPciDevice } from "../io/devices/virtio_net";
 import { VirtioSndPciDevice } from "../io/devices/virtio_snd";
@@ -176,6 +177,7 @@ import {
 } from "./vm_snapshot_wasm";
 import { tryInitVirtioNetDevice } from "./io_virtio_net_init";
 import { tryInitVirtioSndDevice } from "./io_virtio_snd_init";
+import { tryInitXhciDevice } from "./io_xhci_init";
 import { registerVirtioInputKeyboardPciFunction } from "./io_virtio_input_register";
 import { VmTimebase } from "../runtime/vm_timebase";
 
@@ -453,6 +455,7 @@ let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 let uhciDevice: UhciPciDevice | null = null;
+let xhciDevice: XhciPciDevice | null = null;
 let virtioNetDevice: VirtioNetPciDevice | null = null;
 let virtioSndDevice: VirtioSndPciDevice | null = null;
 type UhciControllerBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
@@ -460,6 +463,8 @@ let uhciControllerBridge: UhciControllerBridge | null = null;
 // EHCI is optional and not yet present in all builds; keep as `unknown` so snapshot plumbing can
 // preserve controller state when a bridge is wired in.
 let ehciControllerBridge: unknown | null = null;
+type XhciControllerBridge = InstanceType<NonNullable<WasmApi["XhciControllerBridge"]>>;
+let xhciControllerBridge: XhciControllerBridge | null = null;
 
 let e1000Device: E1000PciDevice | null = null;
 type E1000Bridge = InstanceType<NonNullable<WasmApi["E1000Bridge"]>>;
@@ -1729,6 +1734,20 @@ function maybeInitUhciDevice(): void {
 
   emitWebUsbGuestStatus();
   }
+}
+
+function maybeInitXhciDevice(): void {
+  if (xhciDevice) return;
+  const api = wasmApi;
+  const mgr = deviceManager;
+  if (!api || !mgr) return;
+  if (!guestBase) return;
+
+  const res = tryInitXhciDevice({ api, mgr, guestBase, guestSize });
+  if (!res) return;
+
+  xhciControllerBridge = res.bridge;
+  xhciDevice = res.device;
 }
 
 function maybeInitHdaDevice(): void {
@@ -3356,6 +3375,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         maybeSendWasmReady();
         usbHid = new api.UsbHidBridge();
         maybeInitUhciDevice();
+        maybeInitXhciDevice();
         maybeInitVirtioNetDevice();
         if (!virtioNetDevice) maybeInitE1000Device();
         maybeInitVirtioInput();
@@ -3590,6 +3610,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
 
       mgr.registerPciDevice(new PciTestDevice());
       maybeInitUhciDevice();
+      maybeInitXhciDevice();
       maybeInitVirtioNetDevice();
       if (!virtioNetDevice) maybeInitE1000Device();
       maybeInitVirtioInput();
@@ -5021,9 +5042,12 @@ function shutdown(): void {
       usbUhciHarnessRuntime = null;
       uhciDevice?.destroy();
       uhciDevice = null;
+      xhciDevice?.destroy();
+      xhciDevice = null;
       virtioNetDevice?.destroy();
       virtioNetDevice = null;
       uhciControllerBridge = null;
+      xhciControllerBridge = null;
       e1000Device?.destroy();
       e1000Device = null;
       e1000Bridge = null;

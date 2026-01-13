@@ -63,6 +63,8 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
   readonly revisionId = 0x01;
   readonly irqLine = XHCI_IRQ_LINE;
   readonly interruptPin = 0x01 as const; // INTA#
+  // Keep a stable BDF so guest driver installation and snapshots are deterministic.
+  readonly bdf = { bus: 0, device: 2, function: 0 };
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: XHCI_MMIO_BAR_SIZE }, null, null, null, null, null];
 

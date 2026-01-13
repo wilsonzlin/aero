@@ -591,6 +591,48 @@ export interface WasmApi {
     };
 
     /**
+     * Guest-visible xHCI controller bridge.
+     *
+     * Optional and has multiple constructor signatures depending on the deployed WASM build:
+     * - `new (guestBase)` for legacy builds.
+     * - `new (guestBase, guestSize)` for newer builds (guestSize=0 means "use remainder of linear memory").
+     */
+    XhciControllerBridge?: {
+        new (guestBase: number): {
+            mmio_read(offset: number, size: number): number;
+            mmio_write(offset: number, size: number, value: number): void;
+            tick?(nowMs?: number): void;
+            poll?(): void;
+            irq_asserted(): boolean;
+            /**
+             * Update the device model's PCI command register (offset 0x04, low 16 bits).
+             *
+             * Optional for older WASM builds.
+             */
+            set_pci_command?(command: number): void;
+            free(): void;
+        };
+        new (guestBase: number, guestSize: number): {
+            mmio_read(offset: number, size: number): number;
+            mmio_write(offset: number, size: number, value: number): void;
+            tick?(nowMs?: number): void;
+            poll?(): void;
+            irq_asserted(): boolean;
+            /**
+             * Update the device model's PCI command register (offset 0x04, low 16 bits).
+             *
+             * Optional for older WASM builds.
+             */
+            set_pci_command?(command: number): void;
+            save_state?(): Uint8Array;
+            load_state?(bytes: Uint8Array): void;
+            snapshot_state?: () => Uint8Array;
+            restore_state?: (bytes: Uint8Array) => void;
+            free(): void;
+        };
+    };
+
+    /**
      * Guest-visible Intel E1000 NIC bridge.
      *
      * The I/O worker exposes this as a PCI function with:
@@ -1527,6 +1569,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         VirtioSndPciBridge: mod.VirtioSndPciBridge,
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
         UhciControllerBridge: mod.UhciControllerBridge,
+        XhciControllerBridge: mod.XhciControllerBridge,
         E1000Bridge: mod.E1000Bridge,
         PcMachine: mod.PcMachine,
         WebUsbUhciBridge: mod.WebUsbUhciBridge,
