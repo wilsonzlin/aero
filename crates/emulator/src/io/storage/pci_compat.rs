@@ -126,24 +126,36 @@ impl PciConfigSpaceCompat {
         };
 
         if is_pci_bar_offset(offset) && (offset & 0x3 != 0 || size != 4) {
-            let aligned = align_pci_dword(offset);
+            // Perform a byte-granular write split across dword boundaries, issuing canonical
+            // 32-bit writes for any bytes that land in the BAR window. This avoids panics from the
+            // canonical BAR alignment assertions while still behaving like real hardware for
+            // hostile/unaligned config accesses.
+            let bytes = value.to_le_bytes();
+            for i in 0..size {
+                let byte_off = offset.wrapping_add(i as u16);
+                let byte_val = u32::from(bytes[i]);
 
-            // Defensively validate the aligned dword too, even though it should always be in range
-            // for valid BAR offsets.
-            if !Self::validate_access(aligned, 4) {
-                return;
+                if !Self::validate_access(byte_off, 1) {
+                    continue;
+                }
+
+                if is_pci_bar_offset(byte_off) {
+                    let aligned = align_pci_dword(byte_off);
+                    if !Self::validate_access(aligned, 4) {
+                        continue;
+                    }
+
+                    let old = read_bar_dword_programmed(&mut cfg, aligned);
+                    let shift = u32::from(byte_off - aligned) * 8;
+                    let merged = (old & !(0xFF << shift)) | (byte_val << shift);
+                    cfg.write(aligned, 4, merged);
+                } else {
+                    // The original access started in the BAR window but can still spill into the
+                    // next dword outside the BAR registers (e.g. offset=0x27 size=2). For those
+                    // bytes, fall back to a normal byte write.
+                    cfg.write(byte_off, 1, byte_val);
+                }
             }
-
-            let old = read_bar_dword_programmed(&mut cfg, aligned);
-            let shift = u32::from(offset - aligned) * 8;
-            let mask = match size {
-                1 => 0xFF,
-                2 => 0xFFFF,
-                4 => 0xFFFF_FFFF,
-                _ => return,
-            };
-            let merged = (old & !(mask << shift)) | ((value & mask) << shift);
-            cfg.write(aligned, 4, merged);
             return;
         }
 
@@ -219,5 +231,24 @@ mod tests {
         // programmed base (0), not from the probe response (0xFFFF_F000).
         compat.write_u32(0x12, 2, 0xE000);
         assert_eq!(compat.read_u32(0x10, 4), 0xE000_0000);
+    }
+
+    #[test]
+    fn unaligned_bar_write_that_crosses_dword_boundary_splits_cleanly() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x10,
+                prefetchable: false,
+            },
+        );
+
+        let compat = PciConfigSpaceCompat::new(cfg);
+
+        // 16-bit write at 0x13 crosses BAR0 (0x10..0x13) into BAR1 low byte at 0x14.
+        compat.write_u32(0x13, 2, 0xABCD);
+        assert_eq!(compat.read_u32(0x10, 4), 0xCD00_0000);
+        assert_eq!(compat.read_u32(0x14, 4), 0x0000_00AB);
     }
 }
