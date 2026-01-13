@@ -6157,13 +6157,18 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
     }
 
     /*
-     * Be defensive during power transitions: dxgkrnl can deliver an interrupt while the adapter is
-     * transitioning away from D0 (or after we have marked it non-D0 but before IRQ_ENABLE is fully
-     * quiesced). Avoid doing any normal ISR work in non-D0 states; best-effort ACK any pending bits
-     * to deassert a level-triggered line.
+     * Be defensive during power transitions:
+     * - dxgkrnl can deliver an interrupt while the adapter is transitioning away from D0
+     *   (or after we have marked it non-D0 but before IRQ_ENABLE is fully quiesced).
+     * - During resume-to-D0, the driver temporarily blocks submissions while reinitialising ring/IRQ
+     *   state; avoid running normal ISR logic during that window as well.
+     *
+     * In both cases, skip normal ISR processing and best-effort ACK any pending bits to deassert a
+     * level-triggered line.
      */
     if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) !=
-        DxgkDevicePowerStateD0) {
+            DxgkDevicePowerStateD0 ||
+        InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) == 0) {
         if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
         }
