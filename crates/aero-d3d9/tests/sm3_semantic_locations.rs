@@ -10,8 +10,8 @@ fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
 }
 
 fn opcode_token(op: u16, operand_count: u8) -> u32 {
-    // SM2/3 encode the *total* instruction length in tokens (including the opcode token) in
-    // bits 24..27.
+    // D3D9 SM2/SM3 encodes the *total* instruction length in tokens (including the opcode token)
+    // in bits 24..27.
     (op as u32) | (((operand_count as u32) + 1) << 24)
 }
 

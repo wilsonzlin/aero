@@ -642,11 +642,11 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             break;
         }
 
-        // D3D9 SM2/3 encodes the *total* instruction length (in DWORD tokens),
-        // including the opcode token itself, in bits 24..27.
+        // D3D9 SM2/SM3 encodes instruction length as the total number of DWORD tokens in the
+        // instruction, including the opcode token itself, in bits 24..27.
         //
-        // Many instructions that take no operands encode this length as `0`,
-        // which is interpreted as a 1-token instruction.
+        // Many instructions that take no operands encode this length as `0`, which is interpreted
+        // as a 1-token instruction.
         let mut length = ((opcode_token >> 24) & 0x0F) as usize;
         if length == 0 {
             length = 1;

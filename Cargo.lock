@@ -136,6 +136,7 @@ dependencies = [
  "bitflags 2.10.0",
  "blake3",
  "bytemuck",
+ "criterion",
  "futures",
  "futures-intrusive",
  "half",

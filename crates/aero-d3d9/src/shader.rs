@@ -503,17 +503,12 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     while idx < words.len() {
         let token = read_u32(&words, &mut idx)?;
         let opcode = (token & 0xFFFF) as u16;
-        // D3D9 SM2/SM3 encode the *total* instruction length in DWORD tokens (including the
-        // opcode token itself) in bits 24..27. Many operand-less instructions encode this length
-        // as `0`, which is interpreted as a 1-token instruction.
+        // D3D9 SM2/SM3 encode instruction length as the *total* number of DWORD tokens in the
+        // instruction, including the opcode token itself, in bits 24..27.
         //
-        // Higher bits in the same byte are flags (predication/co-issue) and must not affect
-        // operand count.
+        // Higher bits in the same byte are flags (predication/co-issue) and must not affect the
+        // decoded length.
         let mut inst_len = ((token >> 24) & 0x0F) as usize;
-        if inst_len == 0 {
-            inst_len = 1;
-        }
-        let param_count = inst_len.saturating_sub(1);
         let result_modifier = decode_result_modifier(token);
 
         // Comments are variable-length data blocks that should be skipped.
@@ -527,28 +522,43 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             continue;
         }
 
+        if opcode == 0xFFFF {
+            // `end` has no operands and does not use the length field.
+            inst_len = 1;
+        } else if inst_len == 0 {
+            // Some opcodes encode length=0 for 1-DWORD instructions (e.g. else/endif).
+            inst_len = 1;
+        }
+
+        let operand_count = inst_len.saturating_sub(1);
+        if idx + operand_count > words.len() {
+            return Err(ShaderError::UnexpectedEof);
+        }
+
+        let mut params = Vec::with_capacity(operand_count);
+        for _ in 0..operand_count {
+            params.push(read_u32(&words, &mut idx)?);
+        }
+
         // Declarations (DCL).
         //
         // Layout (SM2/SM3):
-        //   dcl <decl_token>, <dst_register_token>
+        // - `dcl_*` for inputs: opcode token encodes usage/usage_index, followed by a single
+        //   destination register token.
+        // - Some encodings use an additional "declaration token" operand; accept both so we can
+        //   parse fixtures and synthetic shaders.
         //
         // We currently only use vertex shader input declarations to remap D3D9 input registers
         // (`v#`) to canonical WGSL `@location(n)` values.
         if opcode == 0x001F {
-            if idx + param_count > words.len() {
+            if params.is_empty() {
                 return Err(ShaderError::UnexpectedEof);
             }
-            let mut params = Vec::with_capacity(param_count);
-            for _ in 0..param_count {
-                params.push(read_u32(&words, &mut idx)?);
-            }
-
             // D3D9 `DCL` encoding differs between toolchains:
-            // - The common SM2/SM3 form (as emitted by modern `D3DCompiler`) uses a single
-            //   destination register token, with usage/texture-type information packed into the
-            //   opcode token itself.
-            // - Some older assemblers emit a second "decl token" operand (usage in low bits,
-            //   sampler texture type in high bits).
+            // - Modern form: a single destination register token, with usage/texture-type info
+            //   packed into the opcode token itself.
+            // - Legacy form: a second "decl token" operand (usage in low bits, sampler texture
+            //   type in high bits).
             //
             // Be tolerant and accept both.
             let (decl_token, dst_token) = match params.as_slice() {
@@ -594,7 +604,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 continue;
             }
 
-            // D3D9 `DCL` encoding:
+            // D3D9 `DCL` usage encoding:
             // - Modern form (no decl token): usage_raw = opcode_token[16..20], usage_index = opcode_token[20..24].
             // - Legacy form: usage_raw = decl_token[0..5], usage_index = decl_token[16..20].
             let (usage_raw, usage_index) = if decl_token == token {
@@ -612,11 +622,6 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 input_dcl_map.insert(dst.reg.index, (usage, usage_index));
             }
             continue;
-        }
-
-        let mut params = Vec::with_capacity(param_count);
-        for _ in 0..param_count {
-            params.push(read_u32(&words, &mut idx)?);
         }
 
         // `def` (define float constant) is not part of the executable instruction stream; instead
