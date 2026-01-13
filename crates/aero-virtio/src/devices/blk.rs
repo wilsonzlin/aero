@@ -167,6 +167,93 @@ fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
     }
 }
 
+/// Adapter for treating an `aero-virtio` [`BlockBackend`] as an `aero-storage`
+/// [`aero_storage::VirtualDisk`].
+///
+/// This is primarily useful for reusing `aero-storage` disk wrappers (cache/sparse/COW/etc) on
+/// top of an existing virtio-blk backend implementation.
+pub struct BlockBackendAsAeroVirtualDisk {
+    backend: Box<dyn BlockBackend>,
+}
+
+impl BlockBackendAsAeroVirtualDisk {
+    pub fn new(backend: Box<dyn BlockBackend>) -> Self {
+        Self { backend }
+    }
+
+    pub fn into_inner(self) -> Box<dyn BlockBackend> {
+        self.backend
+    }
+
+    fn check_bounds(&self, offset: u64, len: usize, capacity: u64) -> aero_storage::Result<()> {
+        let len_u64 = u64::try_from(len).map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
+        let end = offset
+            .checked_add(len_u64)
+            .ok_or(aero_storage::DiskError::OffsetOverflow)?;
+        if end > capacity {
+            return Err(aero_storage::DiskError::OutOfBounds {
+                offset,
+                len,
+                capacity,
+            });
+        }
+        Ok(())
+    }
+
+    fn map_backend_error(
+        &self,
+        err: BlockBackendError,
+        offset: u64,
+        len: usize,
+        capacity: u64,
+    ) -> aero_storage::DiskError {
+        match err {
+            BlockBackendError::OutOfBounds => aero_storage::DiskError::OutOfBounds {
+                offset,
+                len,
+                capacity,
+            },
+            BlockBackendError::IoError => aero_storage::DiskError::Io(format!(
+                "BlockBackendError::{err:?}"
+            )),
+        }
+    }
+}
+
+impl aero_storage::VirtualDisk for BlockBackendAsAeroVirtualDisk {
+    fn capacity_bytes(&self) -> u64 {
+        self.backend.len()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        let capacity = self.backend.len();
+        self.check_bounds(offset, buf.len(), capacity)?;
+        self.backend
+            .read_at(offset, buf)
+            .map_err(|e| self.map_backend_error(e, offset, buf.len(), capacity))
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        let capacity = self.backend.len();
+        self.check_bounds(offset, buf.len(), capacity)?;
+        self.backend
+            .write_at(offset, buf)
+            .map_err(|e| self.map_backend_error(e, offset, buf.len(), capacity))
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.backend.flush().map_err(|e| match e {
+            BlockBackendError::IoError => aero_storage::DiskError::Io(format!(
+                "BlockBackendError::{e:?}"
+            )),
+            // `flush` is not expected to return `OutOfBounds`; map it to an I/O error.
+            BlockBackendError::OutOfBounds => aero_storage::DiskError::Io(format!(
+                "unexpected BlockBackendError::{e:?} during flush"
+            )),
+        })
+    }
+}
+
 /// Allow `aero-storage` virtual disks to be used directly as virtio-blk backends.
 ///
 /// This means platform code can do:
@@ -821,10 +908,10 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockBackend, MemDisk, VirtioBlk, VIRTIO_BLK_S_OK, VIRTIO_BLK_T_GET_ID,
-        VIRTIO_BLK_T_OUT,
+        BlockBackend, BlockBackendAsAeroVirtualDisk, MemDisk, VirtioBlk, VIRTIO_BLK_S_OK,
+        VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT,
     };
-    use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
+    use aero_storage::{DiskError, MemBackend, RawDisk, SECTOR_SIZE, VirtualDisk};
     use crate::devices::VirtioDevice;
     use crate::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
     use crate::queue::{VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
@@ -1009,5 +1096,42 @@ mod tests {
         // Regression guard: ensure we didn't accidentally reuse the OUT opcode constant when adding
         // GET_ID support.
         assert_ne!(VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT);
+    }
+
+    #[test]
+    fn block_backend_as_virtual_disk_read_write_roundtrip() {
+        let backend = Box::new(MemDisk::new(8));
+        let mut disk = BlockBackendAsAeroVirtualDisk::new(backend);
+
+        disk.write_at(2, b"abc").unwrap();
+        let mut out = [0u8; 3];
+        disk.read_at(2, &mut out).unwrap();
+        assert_eq!(&out, b"abc");
+    }
+
+    #[test]
+    fn block_backend_as_virtual_disk_reports_out_of_bounds() {
+        let backend = Box::new(MemDisk::new(4));
+        let mut disk = BlockBackendAsAeroVirtualDisk::new(backend);
+
+        let mut out = [0u8; 1];
+        let err = disk.read_at(4, &mut out).unwrap_err();
+        assert!(matches!(err, DiskError::OutOfBounds { .. }));
+
+        let err = disk.write_at(4, &[0u8; 1]).unwrap_err();
+        assert!(matches!(err, DiskError::OutOfBounds { .. }));
+    }
+
+    #[test]
+    fn block_backend_as_virtual_disk_reports_offset_overflow() {
+        let backend = Box::new(MemDisk::new(4));
+        let mut disk = BlockBackendAsAeroVirtualDisk::new(backend);
+
+        let mut out = [0u8; 1];
+        let err = disk.read_at(u64::MAX, &mut out).unwrap_err();
+        assert!(matches!(err, DiskError::OffsetOverflow));
+
+        let err = disk.write_at(u64::MAX, &[0u8; 1]).unwrap_err();
+        assert!(matches!(err, DiskError::OffsetOverflow));
     }
 }
