@@ -29,6 +29,11 @@ const INTERRUPT_IN_EP: u8 = 0x81;
 const MAX_PENDING_REPORTS: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Canonical input fields for Aero's USB HID gamepad report.
+///
+/// The 8-byte packed layout is kept in sync with the browser-side packing helpers
+/// (`web/src/input/gamepad.ts`) via the shared fixture:
+/// `docs/fixtures/hid_gamepad_report_vectors.json`.
 pub struct GamepadReport {
     pub buttons: u16,
     /// Hat switch value (low 4 bits). `8` is used as the null/centered state.
