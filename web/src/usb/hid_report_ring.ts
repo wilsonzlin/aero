@@ -337,7 +337,12 @@ export class HidReportRing {
         continue;
       }
 
+      if (reportType !== HidReportType.Input && reportType !== HidReportType.Output && reportType !== HidReportType.Feature) {
+        throw hidReportRingCorruption(`unknown report type tag: ${String(reportType)}`);
+      }
+
       const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
+      if (total > this.#cap) throw hidReportRingCorruption("record larger than ring capacity");
       if (total > remaining) throw hidReportRingCorruption("record straddles wrap boundary");
       if (total > used) throw hidReportRingCorruption("record exceeds available bytes");
 
@@ -427,7 +432,12 @@ export class HidReportRing {
         continue;
       }
 
+      if (reportType !== HidReportType.Input && reportType !== HidReportType.Output && reportType !== HidReportType.Feature) {
+        throw hidReportRingCorruption(`unknown report type tag: ${String(reportType)}`);
+      }
+
       const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
+      if (total > this.#cap) throw hidReportRingCorruption("record larger than ring capacity");
       if (total > remaining) throw hidReportRingCorruption("record straddles wrap boundary");
       if (total > used) throw hidReportRingCorruption("record exceeds available bytes");
 

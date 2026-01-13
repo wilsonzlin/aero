@@ -234,4 +234,40 @@ describe("HidReportRing", () => {
 
     expect(() => ring.consumeNextOrThrow(() => undefined)).toThrow(/exceeds available bytes/);
   });
+
+  it("popOrThrow throws on unknown report type tags", () => {
+    const cap = 32;
+    const sab = createHidReportRingBuffer(cap);
+    const ring = new HidReportRing(sab);
+
+    const view = new DataView(sab, HID_REPORT_RING_CTRL_BYTES, cap);
+    view.setUint32(0, 0xdeadbeef, true);
+    view.setUint8(4, 0x42); // unknown tag
+    view.setUint8(5, 1);
+    view.setUint16(6, 0, true);
+
+    const ctrl = new Int32Array(sab, 0, HID_REPORT_RING_CTRL_WORDS);
+    Atomics.store(ctrl, 0, 0);
+    Atomics.store(ctrl, 1, 8);
+
+    expect(() => ring.popOrThrow()).toThrow(/unknown report type tag/);
+  });
+
+  it("consumeNextOrThrow throws on unknown report type tags", () => {
+    const cap = 32;
+    const sab = createHidReportRingBuffer(cap);
+    const ring = new HidReportRing(sab);
+
+    const view = new DataView(sab, HID_REPORT_RING_CTRL_BYTES, cap);
+    view.setUint32(0, 0xdeadbeef, true);
+    view.setUint8(4, 0x42); // unknown tag
+    view.setUint8(5, 1);
+    view.setUint16(6, 0, true);
+
+    const ctrl = new Int32Array(sab, 0, HID_REPORT_RING_CTRL_WORDS);
+    Atomics.store(ctrl, 0, 0);
+    Atomics.store(ctrl, 1, 8);
+
+    expect(() => ring.consumeNextOrThrow(() => undefined)).toThrow(/unknown report type tag/);
+  });
 });
