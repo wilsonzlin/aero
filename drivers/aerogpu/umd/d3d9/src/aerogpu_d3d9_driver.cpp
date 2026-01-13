@@ -137,9 +137,9 @@ struct StateBlock {
   std::bitset<16 * 16> sampler_state_mask{}; // stage * 16 + state
   std::array<uint32_t, 16 * 16> sampler_state_values{};
 
-  // Texture stage state (D3DTSS_*). Fixed-function and not currently consumed
-  // by the AeroGPU shader pipeline, but tracked for deterministic Get* queries
-  // and state blocks.
+  // Texture stage state (D3DTSS_*). Fixed-function; most of it is cached-only
+  // (Get* queries + state blocks), but stage0 is consulted by the UMD's minimal
+  // fixed-function fallback path to select a pixel shader variant.
   std::bitset<16 * 256> texture_stage_state_mask{}; // stage * 256 + state
   std::array<uint32_t, 16 * 256> texture_stage_state_values{};
 
@@ -11471,10 +11471,15 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     return trace.ret(S_OK);
   }
 
-  // The AeroGPU fixed-function fallback supports only a small FVF subset (see
-  // `drivers/aerogpu/umd/d3d9/README.md`). Other FVFs may be accepted and cached
-  // so GetFVF + state blocks behave deterministically, but rendering is not
-  // guaranteed for unsupported formats.
+  // The AeroGPU fixed-function fallback renders only a small FVF subset (see
+  // `drivers/aerogpu/umd/d3d9/README.md`). The SetFVF path synthesizes/binds an
+  // internal vertex declaration for:
+  // - the pre-transformed XYZRHW variants, and
+  // - the `XYZ | DIFFUSE | TEX1` WVP-transform path.
+  // Other `XYZ*` variants may rely on explicit SetVertexDecl pattern detection.
+  //
+  // Other FVFs may be accepted and cached so GetFVF + state blocks behave
+  // deterministically, but rendering is not guaranteed for unsupported formats.
   if (fixedfunc_fvf_supported(fvf)) {
     VertexDecl** decl_slot =
         (fvf == kSupportedFvfXyzrhwDiffuse) ? &dev->fvf_vertex_decl : &dev->fvf_vertex_decl_tex1;

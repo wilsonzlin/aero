@@ -5,7 +5,7 @@
 namespace aerogpu {
 
 // Minimal built-in D3D9 SM2.0 shader token streams used by the AeroGPU D3D9 UMD
-// fixed-function fallback path (bring-up FVF subset).
+// fixed-function fallback path (bring-up FVF subset; see `drivers/aerogpu/umd/d3d9/README.md`).
 //
 // These are intentionally tiny and avoid declarations so they can be consumed by
 // early bring-up shader translators (mov/add/mul subset).
@@ -299,4 +299,3 @@ static constexpr uint32_t kPsStage0ModulateTexture[] = {
 
 } // namespace fixedfunc
 } // namespace aerogpu
-

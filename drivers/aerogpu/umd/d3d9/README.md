@@ -284,35 +284,43 @@ Unsupported states are handled defensively; unknown state enums are accepted and
 
 The AeroGPU D3D9 UMD includes a small **fixed-function fallback path** used by DWM and older D3D9 apps that rely on FVFs instead of explicit shaders + vertex declarations.
 
-Supported FVF combinations (currently implemented):
+Supported FVF combinations (bring-up subset):
 
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE`
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE`
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE` (passthrough; see limitations)
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform; see limitations)
 
 Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 
 - `fixedfunc_supported_fvf()` + `kSupportedFvfXyz{,rhw}Diffuse{,Tex1}`
-- `fixedfunc_fvf_supported()` (internal SetFVF→vertex-decl synthesis; **XYZRHW variants only**; also required by patch emulation)
+- `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `ensure_draw_pipeline_locked()`
+- Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
-  - Note: `device_set_fvf()` only synthesizes an internal declaration for `fixedfunc_fvf_supported()` (XYZRHW variants).
-    The `D3DFVF_XYZ*` bring-up path relies on a compatible vertex declaration being set (via `SetVertexDecl`) so
-    `device_set_vertex_decl()` can infer the implied FVF.
+  - Note: `device_set_fvf()` synthesizes an internal vertex declaration for:
+    - `fixedfunc_fvf_supported()` (XYZRHW variants), and
+    - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform path).
+    The untextured `D3DFVF_XYZ | D3DFVF_DIFFUSE` bring-up path relies on a compatible vertex declaration being set
+    (via `SetVertexDecl`) so `device_set_vertex_decl()` can infer the implied FVF.
 
 Not yet implemented (examples; expected by some fixed-function apps):
 
 - Any FVF requiring fixed-function lighting/material (`D3DFVF_NORMAL`, `D3DFVF_SPECULAR`, etc)
 - Multiple texture coordinate sets (`D3DFVF_TEX2+`) or non-`float2` `TEXCOORD0` encodings
-- Stage-state-driven fixed-function emulation (texture stage state, WVP transforms, etc)
+- Full stage-state-driven fixed-function emulation beyond the minimal stage0 subset (stages `> 0`, full D3DTSS_* shader generation, etc)
 
 Implementation notes (bring-up):
 
 - For `POSITIONT`/`XYZRHW` vertices, the fallback path converts screen-space `XYZRHW` to clip-space on the CPU
   (`convert_xyzrhw_to_clipspace_locked()` in `src/aerogpu_d3d9_driver.cpp`) and then draws using a tiny built-in
   `vs_2_0`/`ps_2_0` pair.
+- `D3DFVF_XYZRHW*` is supported via the `SetFVF` path (the UMD builds/binds an internal vertex declaration).
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` is supported via both `SetFVF` and `SetVertexDecl`, and uses a fixed-function
+  VS that applies the combined world/view/projection matrix (uploaded into a reserved VS constant range by the UMD).
+- The untextured `D3DFVF_XYZ | D3DFVF_DIFFUSE` bring-up path is currently exercised via the `SetVertexDecl` path (the UMD
+  detects common declaration patterns and sets `dev->fvf` accordingly).
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
   for bring-up).
 - Patch rendering (`DrawRectPatch` / `DrawTriPatch`) is supported for the bring-up subset of **cubic Bezier patches**:
@@ -323,14 +331,19 @@ Limitations (bring-up):
 
 - The fixed-function fallback supports only the FVFs listed above (see `ensure_fixedfunc_pipeline_locked()` in `src/aerogpu_d3d9_driver.cpp`). Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping, but fixed-function draws will fail with `D3DERR_INVALIDCALL` if the active FVF is unsupported.
 - For `D3DFVF_XYZRHW*` FVFs, the UMD converts `POSITIONT` (screen-space `XYZRHW`) vertices to clip-space on the CPU (`convert_xyzrhw_to_clipspace_locked()`).
-- For `D3DFVF_XYZ*` FVFs, the built-in fixed-function shader path is currently **passthrough** (no world/view/projection transforms are applied). In other words, `XYZ` positions are treated as already in clip-space; transform state is cached for `Get*`/state blocks but is not consumed by the fixed-function shader path yet.
+- For `D3DFVF_XYZ | D3DFVF_DIFFUSE`, the fixed-function shader path is currently **passthrough** (no world/view/projection
+  transforms are applied). In other words, `XYZ` positions are treated as already in clip-space; transform state is cached
+  for `Get*`/state blocks but is not consumed by this fixed-function path yet.
+- For `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`, the fixed-function VS applies the combined world/view/projection matrix
+  (built from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD). Fixed-function
+  lighting/material is still not implemented.
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
-- The `TEX1` fixed-function path uses a fixed shader: sample `Texture(0)` and multiply by the per-vertex diffuse color (classic “modulate”). `D3DTSS_*` texture stage state is cached for `Get*`/state blocks but is not interpreted by the fixed-function shader path.
+- Only a minimal subset of **stage0** texture stage state is interpreted to select a built-in pixel shader variant (Diffuse / Texture0 / Texture0*Diffuse modulate, with independent color vs alpha selection). Stages `> 0` and other `D3DTSS_*` state is cached for `Get*`/state blocks but is not interpreted by the fixed-function shader path.
 - Fixed-function lighting/material is not implemented (legacy `SetLight`/`SetMaterial` etc are cached for `Get*` and state blocks).
 
 ### Known limitations / next steps
 
-- **Fixed-function pipeline is minimal:** `ensure_fixedfunc_pipeline_locked()` selects between a small set of built-in shader pairs (e.g. `fixedfunc::kVsPassthroughPosColor` / `fixedfunc::kPsPassthroughColor` and `fixedfunc::kVsPassthroughPosColorTex1` / `fixedfunc::kPsTexturedModulateVertexColor`) rather than generating shaders from texture stage state (D3DTSS_*) / other fixed-function state.
+- **Fixed-function pipeline is minimal:** `ensure_fixedfunc_pipeline_locked()` selects between a small set of built-in shader pairs and a handful of stage0 pixel shader variants, rather than implementing full fixed-function shader generation from `D3DTSS_*` / other fixed-function state (stages `> 0` ignored).
 - **Shader int/bool constants are cached only:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks, but do not currently emit constant updates into the AeroGPU command stream.
 - **Bring-up no-ops:** `pfnGenerateMipSubLevels` and cursor DDIs (`pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`) are wired as `S_OK` no-ops via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
 
