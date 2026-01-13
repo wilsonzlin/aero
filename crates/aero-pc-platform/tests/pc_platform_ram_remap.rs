@@ -21,6 +21,7 @@ fn pc_platform_remaps_ram_above_4gib_when_total_ram_exceeds_ecam_base() {
             mac_addr: None,
             enable_uhci: false,
             enable_virtio_blk: false,
+            enable_virtio_msix: false,
         },
     );
 

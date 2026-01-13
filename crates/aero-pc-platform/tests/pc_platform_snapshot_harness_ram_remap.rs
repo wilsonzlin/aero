@@ -22,6 +22,7 @@ fn pc_platform_snapshot_harness_translates_dense_ram_offsets_when_remap_is_activ
             mac_addr: None,
             enable_uhci: false,
             enable_virtio_blk: false,
+            enable_virtio_msix: false,
         },
     );
     pc.chipset.a20().set_enabled(true);

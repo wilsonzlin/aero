@@ -401,6 +401,7 @@ fn pc_platform_reset_preserves_nvme_disk_backend() {
             mac_addr: None,
             enable_uhci: false,
             enable_virtio_blk: false,
+            enable_virtio_msix: false,
         },
         Box::new(disk),
     );
@@ -440,6 +441,7 @@ fn pc_platform_reset_preserves_ide_disk_backend() {
             mac_addr: None,
             enable_uhci: false,
             enable_virtio_blk: false,
+            enable_virtio_msix: false,
         },
     );
 
@@ -482,6 +484,7 @@ fn pc_platform_reset_preserves_ide_iso_backend() {
             mac_addr: None,
             enable_uhci: false,
             enable_virtio_blk: false,
+            enable_virtio_msix: false,
         },
     );
 

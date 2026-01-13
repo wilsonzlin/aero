@@ -10,9 +10,10 @@ use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32};
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, MsiCapability, PciBarDefinition, PciBdf, PciConfigPorts,
-    PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
-    PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
+    bios_post, register_pci_config_ports, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability,
+    PciBarDefinition, PciBdf, PciConfigPorts, PciDevice, PciEcamConfig, PciEcamMmio,
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
+    PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -30,7 +31,7 @@ use aero_net_e1000::E1000Device;
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
 use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
-use aero_platform::interrupts::msi::MsiMessage;
+use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
 use aero_platform::interrupts::PlatformInterrupts;
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
@@ -89,6 +90,11 @@ pub struct PcPlatformConfig {
     pub mac_addr: Option<[u8; 6]>,
     pub enable_uhci: bool,
     pub enable_virtio_blk: bool,
+    /// Expose MSI-X in virtio PCI config space and route virtio interrupts as MSI.
+    ///
+    /// When disabled, virtio devices continue to operate in INTx-only mode using the platform's
+    /// INTx polling loop.
+    pub enable_virtio_msix: bool,
 }
 
 impl Default for PcPlatformConfig {
@@ -106,6 +112,7 @@ impl Default for PcPlatformConfig {
             // can discover a basic USB 1.1 controller without opting in to extra devices.
             enable_uhci: true,
             enable_virtio_blk: false,
+            enable_virtio_msix: false,
         }
     }
 }
@@ -218,12 +225,33 @@ impl PciDevice for E1000PciConfigDevice {
 
 struct VirtioBlkPciConfigDevice {
     config: aero_devices::pci::PciConfigSpace,
+    msix: Option<VirtioMsixConfig>,
 }
 
 impl VirtioBlkPciConfigDevice {
-    fn new() -> Self {
-        let config = aero_devices::pci::profile::VIRTIO_BLK.build_config_space();
-        Self { config }
+    fn new(msix: Option<VirtioMsixConfig>) -> Self {
+        // The upstream virtio PCI profiles include MSI-X by default, but the PC platform keeps
+        // virtio MSI-X behind a runtime config knob (`PcPlatformConfig::enable_virtio_msix`) so
+        // existing INTx-only integrations can remain stable.
+        //
+        // Build a config space that contains only the vendor-specific virtio capabilities, and
+        // then optionally layer MSI-X on top.
+        let profile = aero_devices::pci::profile::VIRTIO_BLK;
+        let profile_no_msix = aero_devices::pci::profile::PciDeviceProfile {
+            capabilities: &aero_devices::pci::profile::VIRTIO_VENDOR_CAPS,
+            ..profile
+        };
+        let mut config = profile_no_msix.build_config_space();
+        if let Some(msix) = msix {
+            config.add_capability(Box::new(MsixCapability::new(
+                msix.table_size,
+                msix.table_bir,
+                msix.table_offset,
+                msix.pba_bir,
+                msix.pba_offset,
+            )));
+        }
+        Self { config, msix }
     }
 }
 
@@ -237,8 +265,17 @@ impl PciDevice for VirtioBlkPciConfigDevice {
     }
 
     fn reset(&mut self) {
-        *self = Self::new();
+        *self = Self::new(self.msix);
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VirtioMsixConfig {
+    table_size: u16,
+    table_bir: u8,
+    table_offset: u32,
+    pba_bir: u8,
+    pba_offset: u32,
 }
 
 struct NvmePciConfigDevice {
@@ -655,6 +692,25 @@ impl VirtioInterruptSink for NoopVirtioInterruptSink {
     fn signal_msix(&mut self, _message: MsiMessage) {}
 }
 
+#[derive(Clone)]
+struct VirtioPlatformInterruptSink {
+    interrupts: Rc<RefCell<PlatformInterrupts>>,
+}
+
+impl VirtioInterruptSink for VirtioPlatformInterruptSink {
+    fn raise_legacy_irq(&mut self) {
+        // INTx delivery for virtio devices is driven by the platform's polling loop.
+    }
+
+    fn lower_legacy_irq(&mut self) {
+        // INTx delivery for virtio devices is driven by the platform's polling loop.
+    }
+
+    fn signal_msix(&mut self, message: MsiMessage) {
+        self.interrupts.borrow_mut().trigger_msi(message);
+    }
+}
+
 fn all_ones(size: usize) -> u64 {
     if size == 0 {
         return 0;
@@ -672,22 +728,37 @@ struct VirtioPciBar0Mmio {
 }
 
 impl VirtioPciBar0Mmio {
-    fn sync_pci_command(&mut self) {
-        let command = {
+    fn sync_pci_config(&mut self) {
+        let (command, msix_enabled, msix_masked) = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(self.bdf)
-                .map(|cfg| cfg.command())
-                .unwrap_or(0)
+            match pci_cfg.bus_mut().device_config(self.bdf) {
+                Some(cfg) => {
+                    let msix = cfg.capability::<MsixCapability>();
+                    (
+                        cfg.command(),
+                        msix.is_some_and(|msix| msix.enabled()),
+                        msix.is_some_and(|msix| msix.function_masked()),
+                    )
+                }
+                None => (0, false, false),
+            }
         };
-        self.dev.borrow_mut().set_pci_command(command);
+
+        let mut dev = self.dev.borrow_mut();
+        dev.set_pci_command(command);
+
+        // Keep MSI-X enable + function mask bits coherent between the canonical PCI config space
+        // owned by the PC platform and the virtio transport's internal PCI config model.
+        //
+        // This is required because virtio-pci programs per-queue MSI-X vectors via BAR0 common
+        // config, and those writes are gated on `msix.enabled()`.
+        sync_virtio_msix_from_platform(&mut dev, msix_enabled, msix_masked);
     }
 }
 
 impl PciBarMmioHandler for VirtioPciBar0Mmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
-        self.sync_pci_command();
+        self.sync_pci_config();
         let mut dev = self.dev.borrow_mut();
         match size {
             1 | 2 | 4 | 8 => {
@@ -700,7 +771,7 @@ impl PciBarMmioHandler for VirtioPciBar0Mmio {
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
-        self.sync_pci_command();
+        self.sync_pci_config();
         let mut dev = self.dev.borrow_mut();
         match size {
             1 | 2 | 4 | 8 => {
@@ -709,6 +780,26 @@ impl PciBarMmioHandler for VirtioPciBar0Mmio {
             }
             _ => {}
         }
+    }
+}
+
+fn sync_virtio_msix_from_platform(dev: &mut VirtioPciDevice, enabled: bool, function_masked: bool) {
+    let Some(off) = dev.config_mut().find_capability(PCI_CAP_ID_MSIX) else {
+        return;
+    };
+
+    // Preserve the read-only table size bits and only synchronize the guest-writable enable/mask
+    // bits.
+    let ctrl = dev.config_mut().read(u16::from(off) + 0x02, 2) as u16;
+    let mut new_ctrl = ctrl & !((1 << 15) | (1 << 14));
+    if enabled {
+        new_ctrl |= 1 << 15;
+    }
+    if function_masked {
+        new_ctrl |= 1 << 14;
+    }
+    if new_ctrl != ctrl {
+        dev.config_mut().write(u16::from(off) + 0x02, 2, u32::from(new_ctrl));
     }
 }
 
@@ -1605,9 +1696,17 @@ impl PcPlatform {
                             .expect("failed to allocate in-memory virtio-blk disk"),
                     )
                 });
+
+            let interrupts_sink: Box<dyn VirtioInterruptSink> = if config.enable_virtio_msix {
+                Box::new(VirtioPlatformInterruptSink {
+                    interrupts: interrupts.clone(),
+                })
+            } else {
+                Box::new(NoopVirtioInterruptSink)
+            };
             let virtio_blk = Rc::new(RefCell::new(VirtioPciDevice::new(
                 Box::new(VirtioBlk::new(backend)),
-                Box::new(NoopVirtioInterruptSink),
+                interrupts_sink,
             )));
 
             {
@@ -1635,7 +1734,23 @@ impl PcPlatform {
                 });
             }
 
-            let mut dev = VirtioBlkPciConfigDevice::new();
+            let msix_cfg = if config.enable_virtio_msix {
+                virtio_blk
+                    .borrow()
+                    .config()
+                    .capability::<MsixCapability>()
+                    .map(|msix| VirtioMsixConfig {
+                        table_size: msix.table_size(),
+                        table_bir: msix.table_bir(),
+                        table_offset: msix.table_offset(),
+                        pba_bir: msix.pba_bir(),
+                        pba_offset: msix.pba_offset(),
+                    })
+            } else {
+                None
+            };
+
+            let mut dev = VirtioBlkPciConfigDevice::new(msix_cfg);
             pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
             pci_cfg
                 .borrow_mut()
@@ -2336,13 +2451,19 @@ impl PcPlatform {
         };
 
         let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
-        let command = {
+        let (command, msix_enabled, msix_masked) = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(bdf)
-                .map(|cfg| cfg.command())
-                .unwrap_or(0)
+            match pci_cfg.bus_mut().device_config(bdf) {
+                Some(cfg) => {
+                    let msix = cfg.capability::<MsixCapability>();
+                    (
+                        cfg.command(),
+                        msix.is_some_and(|msix| msix.enabled()),
+                        msix.is_some_and(|msix| msix.function_masked()),
+                    )
+                }
+                None => (0, false, false),
+            }
         };
 
         let mut virtio_blk = virtio_blk.borrow_mut();
@@ -2350,6 +2471,7 @@ impl PcPlatform {
         // bus. The PC platform maintains a separate canonical config-space model for enumeration,
         // so the virtio transport must be updated explicitly.
         virtio_blk.set_pci_command(command);
+        sync_virtio_msix_from_platform(&mut virtio_blk, msix_enabled, msix_masked);
         if (command & (1 << 2)) == 0 {
             return;
         }
@@ -2582,6 +2704,7 @@ mod tests {
                 mac_addr: None,
                 enable_uhci: false,
                 enable_virtio_blk: false,
+                enable_virtio_msix: false,
             },
         );
 
