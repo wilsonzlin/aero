@@ -103,6 +103,8 @@ type l2Bridge struct {
 
 	sendMu sync.Mutex
 
+	wsWriteMu sync.Mutex
+
 	rateLimitedLogOnce sync.Once
 }
 
@@ -130,6 +132,20 @@ func (b *l2Bridge) run() {
 	b.wsMu.Lock()
 	b.ws = ws
 	b.wsMu.Unlock()
+
+	// Ensure control frame responses (pong/close handshake) are serialized with
+	// writes from wsWriteLoop. The default gorilla/websocket ping/close handlers
+	// write frames directly and can race with our wsWriteLoop goroutine.
+	ws.SetPingHandler(func(appData string) error {
+		b.wsWriteMu.Lock()
+		defer b.wsWriteMu.Unlock()
+		return ws.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(l2WriteTimeout))
+	})
+	ws.SetCloseHandler(func(code int, text string) error {
+		b.wsWriteMu.Lock()
+		defer b.wsWriteMu.Unlock()
+		return ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, text), time.Now().Add(l2WriteTimeout))
+	})
 
 	readErrCh := make(chan error, 1)
 	writeErrCh := make(chan error, 1)
@@ -311,8 +327,11 @@ func (b *l2Bridge) wsWriteLoop(ws *websocket.Conn) error {
 					max:       b.dialCfg.MaxMessageBytes,
 				}
 			}
+			b.wsWriteMu.Lock()
 			_ = ws.SetWriteDeadline(time.Now().Add(l2WriteTimeout))
-			if err := ws.WriteMessage(websocket.BinaryMessage, msg); err != nil {
+			err := ws.WriteMessage(websocket.BinaryMessage, msg)
+			b.wsWriteMu.Unlock()
+			if err != nil {
 				return err
 			}
 			if m := b.metrics(); m != nil {
