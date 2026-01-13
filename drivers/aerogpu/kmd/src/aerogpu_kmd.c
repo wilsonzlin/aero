@@ -2929,96 +2929,35 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryDeviceDescriptor(_In_ const HANDLE hAdap
 
 static BOOLEAN AeroGpuIsSupportedVidPnModeDimensions(_In_ ULONG Width, _In_ ULONG Height)
 {
-    if (Width == 0 || Height == 0) {
+    if (!AeroGpuModeWithinMax(Width, Height)) {
         return FALSE;
     }
 
     /*
-     * Conservative mode whitelist:
-     * - Prefer deriving supported modes from the EDID blob we expose.
-     * - Allow minor horizontal rounding differences (for example 1366 vs 1368)
-     *   that can arise from EDID standard timing quantisation.
+     * Keep the supported-mode predicate consistent with our VidPN mode enumeration
+     * (AeroGpuBuildModeList / EnumVidPnCofuncModality) so Windows does not offer
+     * modes that we later reject.
      */
-    ULONG preferredW = 0;
-    ULONG preferredH = 0;
-    if (AeroGpuTryParseEdidPreferredMode(g_AeroGpuEdid, &preferredW, &preferredH)) {
-        if (Width == preferredW && Height == preferredH) {
-            return TRUE;
-        }
-    }
+    AEROGPU_DISPLAY_MODE modes[16];
+    const UINT count = AeroGpuBuildModeList(modes, (UINT)(sizeof(modes) / sizeof(modes[0])));
 
-    /* Established timings (EDID bytes 35..37). */
-    const UCHAR est1 = g_AeroGpuEdid[35];
-    const UCHAR est2 = g_AeroGpuEdid[36];
-    const UCHAR man = g_AeroGpuEdid[37];
-
-    /* Established timing bits we care about (enough for Win7 mode selection). */
-    if ((est1 & 0x20u) && Width == 640u && Height == 480u) { /* 640x480@60 */
+    if (AeroGpuModeListContains(modes, count, Width, Height)) {
         return TRUE;
-    }
-    if ((est1 & 0x01u) && Width == 800u && Height == 600u) { /* 800x600@60 */
-        return TRUE;
-    }
-    if ((est2 & 0x08u) && Width == 1024u && Height == 768u) { /* 1024x768@60 */
-        return TRUE;
-    }
-    if ((man & 0x80u) && Width == 1152u && Height == 870u) { /* 1152x870@75 */
-        return TRUE;
-    }
-
-    /* Standard timing identifiers (EDID bytes 38..53, 8 entries). */
-    for (ULONG i = 0; i < 8; ++i) {
-        const UCHAR b1 = g_AeroGpuEdid[38 + i * 2];
-        const UCHAR b2 = g_AeroGpuEdid[38 + i * 2 + 1];
-        if (b1 == 0x01u && b2 == 0x01u) {
-            continue; /* unused */
-        }
-
-        const ULONG h = ((ULONG)b1 + 31u) * 8u;
-        ULONG v = 0;
-        switch ((b2 >> 6) & 0x3u) {
-        case 0: /* 16:10 */
-            v = (h * 10u) / 16u;
-            break;
-        case 1: /* 4:3 */
-            v = (h * 3u) / 4u;
-            break;
-        case 2: /* 5:4 */
-            v = (h * 4u) / 5u;
-            break;
-        case 3: /* 16:9 */
-        default:
-            v = (h * 9u) / 16u;
-            break;
-        }
-
-        /*
-         * Some standard timing derived vertical values can land on non-standard
-         * boundaries (e.g. 1368*9/16=769). Round down to a multiple-of-8 line
-         * count, matching common Windows mode enumeration behavior.
-         */
-        v &= ~7u;
-
-        if (v == 0) {
-            continue;
-        }
-
-        if (Height != v) {
-            continue;
-        }
-
-        ULONG diff = (Width > h) ? (Width - h) : (h - Width);
-        if (diff <= 2u) {
-            return TRUE;
-        }
     }
 
     /*
-     * Explicitly accept 1366x768 (common panel mode) even though the standard
-     * timing quantisation produces 1368x768.
+     * Allow minor horizontal rounding differences (for example 1366 vs 1368)
+     * that can arise from EDID standard timing quantisation.
      */
-    if (Width == 1366u && Height == 768u) {
-        return TRUE;
+    for (UINT i = 0; i < count; ++i) {
+        if (modes[i].Height != Height) {
+            continue;
+        }
+        const ULONG mw = modes[i].Width;
+        const ULONG diff = (mw > Width) ? (mw - Width) : (Width - mw);
+        if (diff <= 2u) {
+            return TRUE;
+        }
     }
 
     return FALSE;
