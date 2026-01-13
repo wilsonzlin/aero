@@ -1048,7 +1048,7 @@ function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
     param([Parameter(Mandatory = $true)] [string]$Text)
     $map = @{}
     foreach ($line in ($Text -split "`r?`n")) {
-      if ($line -match "^virtio-(.+)-irq\|(INFO|WARN)(?:\|(.*))?$") {
+      if ($line -match "^\s*virtio-(.+)-irq\|(INFO|WARN)(?:\|(.*))?$") {
         $dev = $Matches[1]
         $level = $Matches[2]
         $rest = $Matches[3]
@@ -1084,9 +1084,49 @@ function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
   $byDev = & $parseText $Tail
   if ($byDev.Count -eq 0 -and (-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath)) {
     try {
-      $full = (Get-Content -LiteralPath $SerialLogPath -Raw -ErrorAction SilentlyContinue)
-      if ($null -ne $full) {
-        $byDev = & $parseText ([string]$full)
+      # Avoid reading the entire file into memory; scan line-by-line and keep the last marker per device.
+      $fs = [System.IO.File]::Open($SerialLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+      try {
+        $sr = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8, $true, 4096, $true)
+        try {
+          while ($true) {
+            $line = $sr.ReadLine()
+            if ($null -eq $line) { break }
+            if ($line -match "^\s*virtio-(.+)-irq\|(INFO|WARN)(?:\|(.*))?$") {
+              $dev = $Matches[1]
+              $level = $Matches[2]
+              $rest = $Matches[3]
+              $fields = @{}
+              $extras = @()
+              if (-not [string]::IsNullOrEmpty($rest)) {
+                foreach ($tok in $rest.Split("|")) {
+                  if ([string]::IsNullOrEmpty($tok)) { continue }
+                  $idx = $tok.IndexOf("=")
+                  if ($idx -gt 0) {
+                    $k = $tok.Substring(0, $idx).Trim()
+                    $v = $tok.Substring($idx + 1).Trim()
+                    if (-not [string]::IsNullOrEmpty($k)) {
+                      $fields[$k] = $v
+                    }
+                  } else {
+                    $extras += $tok.Trim()
+                  }
+                }
+              }
+              if ($extras.Count -gt 0) {
+                $fields["msg"] = ($extras -join "|")
+              }
+              $byDev[$dev] = @{
+                Level = $level
+                Fields = $fields
+              }
+            }
+          }
+        } finally {
+          $sr.Dispose()
+        }
+      } finally {
+        $fs.Dispose()
       }
     } catch { }
   }
