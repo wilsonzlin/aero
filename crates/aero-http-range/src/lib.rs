@@ -465,6 +465,12 @@ mod tests {
             parse_range_header("bytes 0-1").unwrap_err(),
             RangeParseError::InvalidSyntax
         ));
+
+        // Extra '=' after the unit should be treated as an invalid number in the first spec.
+        assert!(matches!(
+            parse_range_header("bytes==0-1").unwrap_err(),
+            RangeParseError::InvalidNumber
+        ));
     }
 
     #[test]
@@ -672,6 +678,30 @@ mod tests {
         ];
         let resolved = resolve_ranges(&specs, len, true).unwrap();
         assert_resolved_eq(&resolved, &[(0, u64::MAX - 1)], len);
+    }
+
+    #[test]
+    fn coalesce_sorted_handles_u64_max_end_without_overflow() {
+        // `coalesce_sorted` uses `saturating_add(1)` to avoid overflow when testing
+        // for adjacency. Ensure it merges correctly when the current end is u64::MAX.
+        let ranges = vec![
+            ResolvedByteRange {
+                start: 0,
+                end: u64::MAX,
+            },
+            ResolvedByteRange {
+                start: u64::MAX,
+                end: u64::MAX,
+            },
+        ];
+        let merged = coalesce_sorted(ranges);
+        assert_eq!(
+            merged,
+            vec![ResolvedByteRange {
+                start: 0,
+                end: u64::MAX
+            }]
+        );
     }
 
     #[test]
