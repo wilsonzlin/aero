@@ -8,6 +8,7 @@ import (
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 )
 
@@ -33,7 +34,7 @@ func TestSession_RejectsOversizedUDPDataChannelMessage_Metrics(t *testing.T) {
 	relayCfg := relay.DefaultConfig()
 	relayCfg.MaxDatagramPayloadBytes = 8 // => max UDP DC msg bytes = 8 + 24 = 32
 
-	serverSession, err := NewSession(api, nil, relayCfg, nil, quota, "", "", nil, 0, SessionOptions{}, nil)
+	serverSession, err := NewSession(api, nil, relayCfg, policy.NewDevDestinationPolicy(), quota, "", "", nil, 0, SessionOptions{}, nil)
 	if err != nil {
 		t.Fatalf("NewSession(server): %v", err)
 	}

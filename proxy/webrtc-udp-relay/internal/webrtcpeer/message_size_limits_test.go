@@ -23,7 +23,7 @@ func TestWebRTCDataChannel_OversizeMessageNotDelivered(t *testing.T) {
 		WebRTCDataChannelMaxMessageBytes: 1 << 30,
 		// Keep the receive buffer small enough that a large message cannot be
 		// fully reassembled.
-		WebRTCSCTPMaxReceiveBufferBytes: 16 * 1024,
+		WebRTCSCTPMaxReceiveBufferBytes: 4 * 1024,
 	}
 
 	api, err := NewAPI(cfg)
@@ -93,7 +93,7 @@ func TestWebRTCDataChannel_OversizeMessageNotDelivered(t *testing.T) {
 		t.Fatalf("timed out waiting for server datachannel open")
 	}
 
-	oversize := make([]byte, cfg.WebRTCSCTPMaxReceiveBufferBytes*4) // 64KiB
+	oversize := make([]byte, cfg.WebRTCSCTPMaxReceiveBufferBytes*4) // 16KiB
 	if err := clientDC.Send(oversize); err != nil {
 		t.Fatalf("Send(oversize): %v", err)
 	}
