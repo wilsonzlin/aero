@@ -193,6 +193,7 @@ fn madt_lapic_base_and_cpu_apic_ids(machine: &mut Machine, madt_addr: u64) -> (u
 fn bios_acpi_madt_exposes_configured_cpu_count() {
     let mut machine = Machine::new(MachineConfig {
         enable_pc_platform: true,
+        enable_acpi: true,
         cpu_count: 4,
         ..Default::default()
     })

@@ -9,13 +9,19 @@ fn boot_sector() -> [u8; 512] {
 
 #[test]
 fn exposes_acpi_rsdp_and_smbios_eps_addresses() {
-    let mut m = Machine::new(MachineConfig::default()).unwrap();
+    // ACPI table publication is only enabled when the PC platform is wired in.
+    let mut m = Machine::new(MachineConfig {
+        enable_pc_platform: true,
+        enable_acpi: true,
+        ..Default::default()
+    })
+    .unwrap();
     m.set_disk_image(boot_sector().to_vec()).unwrap();
     m.reset();
 
     let rsdp_addr = m
         .acpi_rsdp_addr()
-        .expect("ACPI is enabled by default; expected an RSDP address");
+        .expect("expected an RSDP address after firmware POST with ACPI enabled");
     let rsdp_sig = m.read_physical_bytes(rsdp_addr, 8);
     assert_eq!(&rsdp_sig[..], b"RSD PTR ");
 
@@ -25,4 +31,3 @@ fn exposes_acpi_rsdp_and_smbios_eps_addresses() {
     let eps_sig = m.read_physical_bytes(eps_addr, 4);
     assert_eq!(&eps_sig[..], b"_SM_");
 }
-
