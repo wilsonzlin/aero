@@ -146,7 +146,28 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
             }
             Opcode::TexKill => {
                 let src = extract_src(inst, 0)?;
-                push_stmt(&mut stack, Stmt::Discard { src })?;
+                if let Some(pred) = &inst.predicate {
+                    let cond = Cond::Predicate {
+                        pred: PredicateRef {
+                            reg: to_ir_reg(inst, &pred.reg)?,
+                            component: pred.component,
+                            negate: pred.negate,
+                        },
+                    };
+                    let then_block = Block {
+                        stmts: vec![Stmt::Discard { src }],
+                    };
+                    push_stmt(
+                        &mut stack,
+                        Stmt::If {
+                            cond,
+                            then_block,
+                            else_block: None,
+                        },
+                    )?;
+                } else {
+                    push_stmt(&mut stack, Stmt::Discard { src })?;
+                }
             }
 
             Opcode::Mov => {

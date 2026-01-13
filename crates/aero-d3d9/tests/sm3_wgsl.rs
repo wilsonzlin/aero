@@ -418,3 +418,81 @@ fn wgsl_dsx_dsy_derivatives_compile() {
     .validate(&module)
     .expect("wgsl validate");
 }
+
+#[test]
+fn wgsl_texkill_is_conditional() {
+    // ps_3_0:
+    //   texkill r0
+    //   mov oC0, c0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // texkill r0
+        opcode_token(65, 1),
+        src_token(0, 0, 0xE4, 0),
+        // mov oC0, c0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+
+    // Ensure `texkill` generates the D3D9 rule (discard if any component < 0), not an unconditional
+    // discard.
+    assert!(wgsl.contains("if (any("), "{wgsl}");
+    assert!(wgsl.contains("< vec4<f32>(0.0)"), "{wgsl}");
+    assert!(wgsl.contains("discard;"), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_predicated_texkill_is_nested_under_if() {
+    // ps_3_0:
+    //   texkill (p0) r0
+    //   mov oC0, c0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // texkill (p0) r0
+        opcode_token(65, 2) | 0x1000_0000, // predicated
+        src_token(0, 0, 0xE4, 0),
+        src_token(19, 0, 0x00, 0), // p0.x
+        // mov oC0, c0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("if (p0.x)"), "{wgsl}");
+    let pred_if = wgsl.find("if (p0.x)").expect("predicate if");
+    assert!(wgsl[pred_if..].contains("if (any("), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}

@@ -1098,9 +1098,19 @@ fn emit_stmt(
             let cond = cond_expr(cond, f32_defs)?;
             let _ = writeln!(wgsl, "{pad}if ({cond}) {{ break; }}");
         }
-        Stmt::Discard { .. } => {
-            // texkill semantics are more complex than a straight unconditional discard.
-            let _ = writeln!(wgsl, "{pad}discard;");
+        Stmt::Discard { src } => {
+            // D3D9 texkill: discard the pixel if any component of the source is < 0.
+            //
+            // The source operand swizzle and modifier are already applied by `src_expr`.
+            let (src_e, src_ty) = src_expr(src)?;
+            if src_ty != ScalarTy::F32 {
+                return Err(err("texkill requires a float source"));
+            }
+
+            let _ = writeln!(wgsl, "{pad}if (any(({src_e}) < vec4<f32>(0.0))) {{");
+            let inner_pad = "  ".repeat(indent + 1);
+            let _ = writeln!(wgsl, "{inner_pad}discard;");
+            let _ = writeln!(wgsl, "{pad}}}");
         }
     }
     Ok(())
