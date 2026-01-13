@@ -114,6 +114,7 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         let byte_len = (memory_pages as usize)
             .checked_mul(65_536)
             .expect("memory_pages overflow");
+        assert!(cpu_ptr >= 0, "cpu_ptr must be non-negative (got {cpu_ptr})");
         let jit_ctx_ptr = cpu_ptr
             .checked_add(abi::CPU_STATE_SIZE as i32)
             .expect("jit_ctx_ptr overflow");
@@ -138,6 +139,75 @@ impl<Cpu> WasmtimeBackend<Cpu> {
             jit_ctx::TIER2_CTX_OFFSET + jit_ctx::JIT_CTX_SIZE,
             byte_len
         );
+
+        // Allocate a simple code-version table for self-modifying code invalidation.
+        //
+        // Layout contract (mirrors `tests/tier2_wasm_codegen.rs`):
+        // - The Tier-2 context is stored at `cpu_ptr + jit_ctx::TIER2_CTX_OFFSET`.
+        // - The code-version table immediately follows that context.
+        //
+        // The table covers the guest RAM window used by this backend: `[0..cpu_ptr)`.
+        let table_ptr = cpu_ptr
+            .checked_add((jit_ctx::TIER2_CTX_OFFSET + jit_ctx::JIT_CTX_SIZE) as i32)
+            .expect("code version table ptr overflow");
+        let table_len = {
+            let cpu_ptr_u64 = u64::try_from(cpu_ptr).expect("cpu_ptr must be non-negative");
+            let pages = cpu_ptr_u64
+                .saturating_add(crate::PAGE_SIZE - 1)
+                .checked_div(crate::PAGE_SIZE)
+                .expect("PAGE_SIZE must be non-zero");
+            u32::try_from(pages).expect("code version table too large")
+        };
+        let table_bytes = u64::from(table_len)
+            .checked_mul(4)
+            .expect("code version table byte size overflow");
+        let table_end = u64::try_from(table_ptr)
+            .expect("code version table ptr must be non-negative")
+            .checked_add(table_bytes)
+            .expect("code version table end overflow");
+        let table_fits = table_end <= byte_len as u64;
+
+        // If the configured memory isn't large enough to hold the full table, disable the table
+        // by setting `len = 0`. This disables Tier-1 inline store bumps and Tier-2 inline guard
+        // loads while keeping the backend usable for basic execution.
+        let (table_ptr_u32, table_len_u32) = if table_fits {
+            (
+                u32::try_from(table_ptr).expect("code version table ptr must fit in u32"),
+                table_len,
+            )
+        } else {
+            (0, 0)
+        };
+
+        // Write the pointer/len into the Tier-2 context region.
+        let code_version_ptr_off =
+            cpu_ptr as usize + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize;
+        let code_version_len_off =
+            cpu_ptr as usize + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize;
+        memory
+            .write(&mut store, code_version_ptr_off, &table_ptr_u32.to_le_bytes())
+            .expect("write code version table ptr");
+        memory
+            .write(&mut store, code_version_len_off, &table_len_u32.to_le_bytes())
+            .expect("write code version table len");
+
+        // Ensure the allocated table region is fully within linear memory (and start it zeroed).
+        let table_end = (table_ptr_u32 as usize)
+            .checked_add(
+                (table_len_u32 as usize)
+                    .checked_mul(4)
+                    .expect("code version table byte size overflow"),
+            )
+            .expect("code version table end overflow");
+        assert!(
+            table_end <= byte_len,
+            "code version table (end=0x{table_end:x}) must fit in linear memory ({} bytes)",
+            byte_len
+        );
+        if table_len_u32 != 0 {
+            let mem = memory.data_mut(&mut store);
+            mem[table_ptr_u32 as usize..table_end].fill(0);
+        }
 
         Self {
             engine,
