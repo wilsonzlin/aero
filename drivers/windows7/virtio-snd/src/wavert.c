@@ -529,6 +529,23 @@ VirtIoSndWaveRtDpcRoutine(
 
     InterlockedIncrement(&stream->DpcActive);
 
+    /*
+     * Optional polling-only bring-up path:
+     *
+     * When the device was started without INTx, completions are not delivered by
+     * the virtio ISR/DPC. Poll all used rings once per WaveRT period tick so the
+     * control/event queues (and any TX/RX completions) are reliably drained.
+     *
+     * IRQL: this routine runs at DISPATCH_LEVEL; VirtIoSndHwPollAllUsed is
+     * DISPATCH_LEVEL-safe.
+     */
+    dx = (stream->Miniport != NULL) ? stream->Miniport->Dx : NULL;
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    if (dx != NULL && dx->AllowPollingOnly && dx->Started && !dx->Removed && dx->Intx.InterruptObject == NULL) {
+        VirtIoSndHwPollAllUsed(dx);
+    }
+#endif
+
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
 
     if (stream->Stopping || stream->State != KSSTATE_RUN || stream->BufferDma.Va == NULL || stream->BufferSize == 0 || stream->PeriodBytes == 0 ||

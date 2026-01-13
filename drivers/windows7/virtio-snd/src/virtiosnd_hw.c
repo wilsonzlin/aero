@@ -590,6 +590,130 @@ static VOID VirtIoSndEventqInitBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx
     VirtioSndQueueKick(q);
 }
 
+typedef struct _VIRTIOSND_EVENTQ_POLL_CONTEXT {
+    PVIRTIOSND_DEVICE_EXTENSION Dx;
+    ULONG Reposted;
+} VIRTIOSND_EVENTQ_POLL_CONTEXT, *PVIRTIOSND_EVENTQ_POLL_CONTEXT;
+
+static VOID
+VirtIoSndHwDrainEventqUsed(
+    _In_ USHORT QueueIndex,
+    _In_opt_ void* Cookie,
+    _In_ UINT32 UsedLen,
+    _In_opt_ void* Context)
+{
+    PVIRTIOSND_EVENTQ_POLL_CONTEXT ctx;
+    PVIRTIOSND_DEVICE_EXTENSION dx;
+    ULONG_PTR poolBase;
+    ULONG_PTR poolEnd;
+    ULONG_PTR cookiePtr;
+    ULONG_PTR off;
+    VIRTIOSND_SG sg;
+    NTSTATUS status;
+
+    UNREFERENCED_PARAMETER(QueueIndex);
+    UNREFERENCED_PARAMETER(UsedLen);
+
+    ctx = (PVIRTIOSND_EVENTQ_POLL_CONTEXT)Context;
+    if (ctx == NULL) {
+        return;
+    }
+
+    dx = ctx->Dx;
+    if (dx == NULL) {
+        return;
+    }
+
+    /*
+     * Contract v1 defines no event messages; ignore contents. Still drain used
+     * entries to avoid ring space leaks if a future device emits events (or a
+     * buggy device completes event buffers).
+     */
+    if (Cookie == NULL) {
+        return;
+    }
+
+    if (dx->Removed) {
+        /*
+         * On surprise removal avoid MMIO accesses; do not repost/kick.
+         * Best-effort draining is still useful to keep queue state consistent.
+         */
+        return;
+    }
+
+    if (dx->EventqBufferPool.Va == NULL || dx->EventqBufferPool.DmaAddr == 0 || dx->EventqBufferPool.Size == 0) {
+        return;
+    }
+
+    poolBase = (ULONG_PTR)dx->EventqBufferPool.Va;
+    poolEnd = poolBase + (ULONG_PTR)dx->EventqBufferPool.Size;
+    cookiePtr = (ULONG_PTR)Cookie;
+
+    if (cookiePtr < poolBase || cookiePtr >= poolEnd) {
+        return;
+    }
+
+    /* Ensure cookie points at the start of one of our fixed-size buffers. */
+    off = cookiePtr - poolBase;
+    if ((off % (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE) != 0) {
+        return;
+    }
+
+    if (off + (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE > poolEnd - poolBase) {
+        return;
+    }
+
+    sg.addr = dx->EventqBufferPool.DmaAddr + (UINT64)off;
+    sg.len = (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE;
+    sg.write = TRUE;
+
+    status = VirtioSndQueueSubmit(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &sg, 1, Cookie);
+    if (!NT_SUCCESS(status)) {
+        return;
+    }
+
+    ctx->Reposted++;
+}
+
+_Use_decl_annotations_
+VOID
+VirtIoSndHwPollAllUsed(PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    VIRTIOSND_EVENTQ_POLL_CONTEXT eventqDrain;
+
+    if (Dx == NULL) {
+        return;
+    }
+
+    if (KeGetCurrentIrql() > DISPATCH_LEVEL) {
+        return;
+    }
+
+    if (Dx->Removed || !Dx->Started) {
+        return;
+    }
+
+    /*
+     * When INTx is not connected, no virtio ISR/DPC runs to drain used rings.
+     * Poll the queues that can accumulate completions/cookies:
+     *  - eventq: best-effort recycle (contract v1 defines no events)
+     *  - controlq: late completions (including timeouts)
+     *  - txq: recycle TX contexts (in addition to submit-time draining)
+     *  - rxq: deliver capture completions via the registered callback
+     */
+    eventqDrain.Dx = Dx;
+    eventqDrain.Reposted = 0;
+    VirtioSndQueueSplitDrainUsed(&Dx->QueueSplit[VIRTIOSND_QUEUE_EVENT], VirtIoSndHwDrainEventqUsed, &eventqDrain);
+    if (eventqDrain.Reposted != 0 && !Dx->Removed) {
+        VirtioSndQueueKick(&Dx->Queues[VIRTIOSND_QUEUE_EVENT]);
+    }
+
+    VirtioSndCtrlProcessUsed(&Dx->Control);
+
+    (VOID)VirtIoSndHwDrainTxCompletions(Dx);
+    (VOID)VirtIoSndHwDrainRxCompletions(Dx, NULL, NULL);
+}
+
 static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     NTSTATUS status;
@@ -1008,8 +1132,14 @@ NTSTATUS VirtIoSndStartHardware(
 
     status = VirtIoSndIntxCaptureResources(Dx, TranslatedResources);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("failed to locate INTx resource: 0x%08X\n", (UINT)status);
-        goto fail;
+        if (Dx->AllowPollingOnly && (status == STATUS_RESOURCE_TYPE_NOT_FOUND || status == STATUS_NOT_SUPPORTED)) {
+            VIRTIOSND_TRACE(
+                "AllowPollingOnly=1: INTx unavailable (%!STATUS!) - continuing in polling-only mode\n",
+                status);
+        } else {
+            VIRTIOSND_TRACE_ERROR("failed to locate INTx resource: 0x%08X\n", (UINT)status);
+            goto fail;
+        }
     }
 
     status = VirtIoSndSetupQueues(Dx);
@@ -1028,9 +1158,22 @@ NTSTATUS VirtIoSndStartHardware(
     RtlZeroMemory(&Dx->Rx, sizeof(Dx->Rx));
     Dx->RxEngineInitialized = 0;
 
-    status = VirtIoSndIntxConnect(Dx);
-    if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("failed to connect INTx: 0x%08X\n", (UINT)status);
+    if (Dx->InterruptDescPresent) {
+        status = VirtIoSndIntxConnect(Dx);
+        if (!NT_SUCCESS(status)) {
+            VIRTIOSND_TRACE_ERROR("failed to connect INTx: 0x%08X\n", (UINT)status);
+            goto fail;
+        }
+    } else if (Dx->AllowPollingOnly) {
+        VIRTIOSND_TRACE("AllowPollingOnly=1: skipping INTx connect; relying on used-ring polling\n");
+    } else {
+        /*
+         * Should be unreachable (capture resources would have failed and the
+         * strict path would have aborted above). Treat as a hard failure anyway
+         * to keep the contract-v1 default strict.
+         */
+        VIRTIOSND_TRACE_ERROR("INTx resource missing and AllowPollingOnly=0\n");
+        status = STATUS_RESOURCE_TYPE_NOT_FOUND;
         goto fail;
     }
 

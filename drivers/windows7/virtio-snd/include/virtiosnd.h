@@ -160,6 +160,17 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     CM_PARTIAL_RESOURCE_DESCRIPTOR InterruptDesc;
     BOOLEAN InterruptDescPresent;
 
+    /*
+     * Registry: AllowPollingOnly (REG_DWORD)
+     *
+     * When TRUE, the driver is permitted to start even if an INTx resource cannot
+     * be discovered/connected. In that case, higher layers are expected to rely
+     * on polling used rings for completion delivery.
+     *
+     * Default: FALSE (contract v1 remains INTx-strict).
+     */
+    BOOLEAN AllowPollingOnly;
+
     VIRTIOSND_DMA_CONTEXT DmaCtx;
 
     /* Minimal eventq RX buffer pool (see VIRTIOSND_EVENTQ_*). */
@@ -200,6 +211,18 @@ VirtIoSndStopHardware(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
 _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID
 VirtIoSndHwResetDeviceForTeardown(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
+
+/*
+ * Poll all relevant virtqueues for used entries and deliver completions.
+ *
+ * This is intended for bring-up/debug environments where INTx cannot be wired up
+ * and the driver must operate in a polling-only configuration.
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID
+VirtIoSndHwPollAllUsed(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
 
 /*
  * Hardware-facing protocol helpers intended for use by future PortCls/WaveRT

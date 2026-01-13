@@ -90,14 +90,19 @@ HKR,,FriendlyName,,%AeroVirtioSnd.TopologyDesc%
 ; "Topology"; WDMAudio / KSProxy use these keys for per-filter metadata.
 [AeroVirtioSnd.AddReg]
 HKR,,CLSID,,%KSProxy.CLSID%
-HKR,,FriendlyName,,%AeroVirtioSnd.DeviceDesc%
-HKR,,DevLoader,,*ntkern
-HKR,,NTMPDriver,,aero_virtio_snd.sys
-HKR,Parameters,ForceNullBackend,0x00010001,0
-HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
+ HKR,,FriendlyName,,%AeroVirtioSnd.DeviceDesc%
+ HKR,,DevLoader,,*ntkern
+ HKR,,NTMPDriver,,aero_virtio_snd.sys
+ HKR,Parameters,ForceNullBackend,0x00010001,0
+; Optional bring-up flag (debug/dev only):
+;  - 0 (default): require INTx (strict contract v1 behavior)
+;  - 1: allow START_DEVICE to succeed even when INTx cannot be discovered/connected,
+;       relying on periodic used-ring polling in the WaveRT timer DPC.
+HKR,Parameters,AllowPollingOnly,0x00010001,0
+ HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
 ; WDMAudio expects a list of audio subdevices exposed by the adapter.
-HKR,Drivers,SubClasses,,"wave,topology"
-HKR,Drivers,Driver,,wdmaud.sys
+ HKR,Drivers,SubClasses,,"wave,topology"
+ HKR,Drivers,Driver,,wdmaud.sys
 HKR,Drivers\wave,Driver,,aero_virtio_snd.sys
 HKR,Drivers\wave,Description,,%AeroVirtioSnd.EndpointDesc%
 HKR,Drivers\topology,Driver,,aero_virtio_snd.sys

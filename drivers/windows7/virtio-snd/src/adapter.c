@@ -138,6 +138,40 @@ static BOOLEAN VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
     return forceNullBackend;
 }
 
+static BOOLEAN VirtIoSndReadAllowPollingOnly(_In_ PDEVICE_OBJECT DeviceObject)
+{
+    HANDLE key;
+    UNICODE_STRING valueName;
+    UCHAR buf[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
+    PKEY_VALUE_PARTIAL_INFORMATION info;
+    ULONG resultLen;
+    BOOLEAN allowPollingOnly;
+
+    allowPollingOnly = FALSE;
+    key = NULL;
+
+    if (DeviceObject == NULL) {
+        return FALSE;
+    }
+
+    if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &key)) || key == NULL) {
+        return FALSE;
+    }
+
+    RtlInitUnicodeString(&valueName, L"AllowPollingOnly");
+    info = (PKEY_VALUE_PARTIAL_INFORMATION)buf;
+    RtlZeroMemory(buf, sizeof(buf));
+    resultLen = 0;
+
+    if (NT_SUCCESS(ZwQueryValueKey(key, &valueName, KeyValuePartialInformation, info, sizeof(buf), &resultLen)) &&
+        info->Type == REG_DWORD && info->DataLength >= sizeof(ULONG)) {
+        allowPollingOnly = (*(UNALIGNED const ULONG*)info->Data) ? TRUE : FALSE;
+    }
+
+    ZwClose(key);
+    return allowPollingOnly;
+}
+
 static NTSTATUS
 VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
 {
@@ -322,6 +356,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
     BOOLEAN topologyRegistered;
     BOOLEAN waveRegistered;
     BOOLEAN forceNullBackend;
+    BOOLEAN allowPollingOnly;
     PUNKNOWN unknownAdapter;
     PUNKNOWN unknownWave;
     PUNKNOWN unknownWavePort;
@@ -341,6 +376,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
     topologyRegistered = FALSE;
     waveRegistered = FALSE;
     forceNullBackend = FALSE;
+    allowPollingOnly = FALSE;
     unknownAdapter = NULL;
     unknownWave = NULL;
     unknownWavePort = NULL;
@@ -435,6 +471,8 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
      * still be exercised using the null backend.
      */
     forceNullBackend = VirtIoSndReadForceNullBackend(DeviceObject);
+    allowPollingOnly = VirtIoSndReadAllowPollingOnly(DeviceObject);
+    dx->AllowPollingOnly = allowPollingOnly;
     status = VirtIoSndStartHardware(dx, raw, translated);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("VirtIoSndStartHardware failed: 0x%08X\n", (UINT)status);
