@@ -37,6 +37,7 @@ use crate::io::{ReadLeExt, WriteLeExt};
 const DUPLICATE_DEVICE_ENTRY: &str = "duplicate device entry (id/version/flags must be unique)";
 const DUPLICATE_DISK_ENTRY: &str = "duplicate disk entry (disk_id must be unique)";
 const DUPLICATE_APIC_ID: &str = "duplicate APIC ID in CPU list (apic_id must be unique)";
+const DUPLICATE_APIC_ID_MMU: &str = "duplicate APIC ID in MMU list (apic_id must be unique)";
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SaveOptions {
@@ -74,10 +75,20 @@ pub trait SnapshotSource {
     /// [`save_snapshot`] canonicalizes the list by sorting on `apic_id` and rejects duplicate
     /// `apic_id` values.
     fn mmu_states(&self) -> Vec<VcpuMmuSnapshot> {
-        vec![VcpuMmuSnapshot {
-            apic_id: 0,
-            mmu: self.mmu_state(),
-        }]
+        // Backward-compatible default: replicate the legacy `mmu_state()` payload across all vCPUs
+        // returned by `cpu_states()`, preserving their `apic_id` mapping.
+        //
+        // This keeps multi-vCPU snapshot sources working even if they have not been updated to
+        // implement `mmu_states()` explicitly, at the cost of cloning the `cpu_states()` list to
+        // extract APIC IDs.
+        let mmu = self.mmu_state();
+        self.cpu_states()
+            .into_iter()
+            .map(|cpu| VcpuMmuSnapshot {
+                apic_id: cpu.apic_id,
+                mmu: mmu.clone(),
+            })
+            .collect()
     }
     /// Snapshot representation of device state entries.
     ///
@@ -243,7 +254,47 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
         })?;
     }
 
-    write_section(w, SectionId::MMU, 2, 0, |w| source.mmu_state().encode_v2(w))?;
+    let mut mmus = source.mmu_states();
+    if mmus.is_empty() {
+        return Err(SnapshotError::Corrupt("missing MMU entry"));
+    }
+    if mmus.len() > limits::MAX_CPU_COUNT as usize {
+        return Err(SnapshotError::Corrupt("too many MMU states"));
+    }
+    mmus.sort_by_key(|m| m.apic_id);
+    if mmus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
+        return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID_MMU));
+    }
+
+    // Preserve the legacy single-CPU MMU section encoding when representable.
+    if mmus.len() == 1 && mmus[0].apic_id == 0 {
+        write_section(w, SectionId::MMU, 2, 0, |w| mmus[0].mmu.encode_v2(w))?;
+    } else {
+        write_section(w, SectionId::MMUS, 2, 0, |w| {
+            let count: u32 = mmus
+                .len()
+                .try_into()
+                .map_err(|_| SnapshotError::Corrupt("too many MMU states"))?;
+            w.write_u32_le(count)?;
+
+            for mmu in &mmus {
+                // Match the CPUS section entry encoding strategy: prefix each entry with a length
+                // so we can skip forward-compatible additions without buffering the entire list.
+                let len_pos = w.stream_position()?;
+                w.write_u64_le(0)?; // placeholder entry_len
+                let entry_start = w.stream_position()?;
+                mmu.encode_v2(w)?;
+                let entry_end = w.stream_position()?;
+                let entry_len = entry_end
+                    .checked_sub(entry_start)
+                    .ok_or(SnapshotError::Corrupt("stream position underflow"))?;
+                w.seek(SeekFrom::Start(len_pos))?;
+                w.write_u64_le(entry_len)?;
+                w.seek(SeekFrom::Start(entry_end))?;
+            }
+            Ok(())
+        })?;
+    }
 
     write_section(w, SectionId::DEVICES, 1, 0, |w| {
         let mut devices = source.device_states();
@@ -618,13 +669,93 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                 }
             }
             id if id == SectionId::MMUS => {
-                if seen_mmu_section {
-                    return Err(SnapshotError::Corrupt("snapshot contains both MMU and MMUS"));
+                if header.version == 1 {
+                    if seen_mmu_section {
+                        return Err(SnapshotError::Corrupt("snapshot contains both MMU and MMUS"));
+                    }
+                    if seen_mmus_section {
+                        return Err(SnapshotError::Corrupt("duplicate MMUS section"));
+                    }
+                    seen_mmus_section = true;
+
+                    let count = section_reader.read_u32_le()? as usize;
+                    if count == 0 {
+                        return Err(SnapshotError::Corrupt("missing MMU entry"));
+                    }
+                    if count > limits::MAX_CPU_COUNT as usize {
+                        return Err(SnapshotError::Corrupt("too many MMU states"));
+                    }
+
+                    let mut mmus = Vec::with_capacity(count.min(64));
+                    for _ in 0..count {
+                        let entry_len = section_reader.read_u64_le()?;
+                        if entry_len > section_reader.limit() {
+                            return Err(SnapshotError::Corrupt("truncated MMU entry"));
+                        }
+                        let mut entry_reader = (&mut section_reader).take(entry_len);
+
+                        let apic_id = entry_reader.read_u32_le()?;
+                        let mmu = MmuState::decode_v1(&mut entry_reader)?;
+
+                        // Skip any forward-compatible additions to the vCPU entry.
+                        std::io::copy(&mut entry_reader, &mut std::io::sink())?;
+
+                        mmus.push(VcpuMmuSnapshot { apic_id, mmu });
+                    }
+
+                    // Provide deterministic ordering to snapshot targets regardless of snapshot file
+                    // ordering. Snapshot encoding already canonicalizes by `apic_id`, but older or
+                    // external snapshot producers might not.
+                    mmus.sort_by_key(|m| m.apic_id);
+                    if mmus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
+                        return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID_MMU));
+                    }
+
+                    target.restore_mmu_states(mmus)?;
+                } else if header.version >= 2 {
+                    if seen_mmu_section {
+                        return Err(SnapshotError::Corrupt("snapshot contains both MMU and MMUS"));
+                    }
+                    if seen_mmus_section {
+                        return Err(SnapshotError::Corrupt("duplicate MMUS section"));
+                    }
+                    seen_mmus_section = true;
+
+                    let count = section_reader.read_u32_le()? as usize;
+                    if count == 0 {
+                        return Err(SnapshotError::Corrupt("missing MMU entry"));
+                    }
+                    if count > limits::MAX_CPU_COUNT as usize {
+                        return Err(SnapshotError::Corrupt("too many MMU states"));
+                    }
+
+                    let mut mmus = Vec::with_capacity(count.min(64));
+                    for _ in 0..count {
+                        let entry_len = section_reader.read_u64_le()?;
+                        if entry_len > section_reader.limit() {
+                            return Err(SnapshotError::Corrupt("truncated MMU entry"));
+                        }
+                        let mut entry_reader = (&mut section_reader).take(entry_len);
+
+                        let apic_id = entry_reader.read_u32_le()?;
+                        let mmu = MmuState::decode_v2(&mut entry_reader)?;
+
+                        // Skip any forward-compatible additions to the vCPU entry.
+                        std::io::copy(&mut entry_reader, &mut std::io::sink())?;
+
+                        mmus.push(VcpuMmuSnapshot { apic_id, mmu });
+                    }
+
+                    // Provide deterministic ordering to snapshot targets regardless of snapshot file
+                    // ordering. Snapshot encoding already canonicalizes by `apic_id`, but older or
+                    // external snapshot producers might not.
+                    mmus.sort_by_key(|m| m.apic_id);
+                    if mmus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
+                        return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID_MMU));
+                    }
+
+                    target.restore_mmu_states(mmus)?;
                 }
-                if seen_mmus_section {
-                    return Err(SnapshotError::Corrupt("duplicate MMUS section"));
-                }
-                seen_mmus_section = true;
             }
             id if id == SectionId::DEVICES => {
                 if header.version == 1 {

@@ -28,6 +28,12 @@ impl snapshot::SnapshotTarget for CaptureTarget {
     }
 
     fn restore_mmu_state(&mut self, _state: snapshot::MmuState) {}
+    fn restore_mmu_states(
+        &mut self,
+        _states: Vec<snapshot::VcpuMmuSnapshot>,
+    ) -> snapshot::Result<()> {
+        Ok(())
+    }
 
     fn restore_device_states(&mut self, _states: Vec<snapshot::DeviceState>) {}
 
