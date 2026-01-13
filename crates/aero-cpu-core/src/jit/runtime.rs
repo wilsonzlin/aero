@@ -100,6 +100,28 @@ impl PageVersionTracker {
     /// snapshot does not cover the full `byte_len` span as stale and rejects them.
     pub const MAX_SNAPSHOT_PAGES: usize = 4096;
 
+    /// Ensure the internal dense version table contains at least `len` entries.
+    ///
+    /// This is used by runtimes that want to expose the table to generated JIT code as a stable
+    /// contiguous `u32` array. Those runtimes must size the table up-front so it never needs to be
+    /// reallocated (which would invalidate any shared raw pointer).
+    ///
+    /// The table is capped at [`Self::MAX_TRACKED_PAGES`].
+    pub fn ensure_table_len(&mut self, len: usize) {
+        let len = len.min(Self::MAX_TRACKED_PAGES);
+        if self.versions.len() < len {
+            self.versions.resize(len, 0);
+        }
+    }
+
+    /// Returns the raw pointer and length of the dense version table.
+    ///
+    /// The returned pointer is only stable as long as the table is not reallocated (i.e. the
+    /// caller must ensure [`Self::ensure_table_len`] is called with a large enough `len` up-front).
+    pub fn table_ptr_len(&mut self) -> (*mut u32, usize) {
+        (self.versions.as_mut_ptr(), self.versions.len())
+    }
+
     pub fn version(&self, page: u64) -> u32 {
         if page >= Self::MAX_TRACKED_PAGES as u64 {
             return 0;
@@ -278,6 +300,23 @@ where
 
     pub fn on_guest_write(&mut self, paddr: u64, len: usize) {
         self.page_versions.bump_write(paddr, len);
+    }
+
+    /// Ensure the internal page-version table is a dense array of at least `len` `u32` entries.
+    ///
+    /// When exposing the table to generated JIT code (e.g. WASM inline stores / code-version
+    /// guards), the caller must size the table up-front so it does not need to grow during
+    /// execution. If the table needs to grow after its pointer has been shared with JIT code, the
+    /// pointer would change and any cached value would become stale.
+    pub fn ensure_code_version_table_len(&mut self, len: usize) {
+        self.page_versions.ensure_table_len(len);
+    }
+
+    /// Returns the raw pointer/length of the page-version table.
+    ///
+    /// See [`Self::ensure_code_version_table_len`] for the stability contract.
+    pub fn code_version_table_ptr_len(&mut self) -> (*mut u32, usize) {
+        self.page_versions.table_ptr_len()
     }
 
     /// Reset all runtime-managed JIT state.

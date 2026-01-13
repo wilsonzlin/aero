@@ -755,6 +755,33 @@ impl JitAbiBuffer {
         };
         ctx.write_header_to_mem(self.slice_mut(), base);
     }
+
+    fn write_code_version_table(&mut self, ptr: u32, len: u32) {
+        fn write_u32(mem: &mut [u8], off: u32, value: u32) {
+            let start = off as usize;
+            let end = start
+                .checked_add(4)
+                .unwrap_or_else(|| panic!("jit abi write overflow: off={off}"));
+            assert!(
+                end <= mem.len(),
+                "jit abi write out of bounds: off={off} mem_len={}",
+                mem.len()
+            );
+            mem[start..end].copy_from_slice(&value.to_le_bytes());
+        }
+
+        let mem = self.slice_mut();
+        write_u32(
+            mem,
+            aero_jit_x86::jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET,
+            ptr,
+        );
+        write_u32(
+            mem,
+            aero_jit_x86::jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
+            len,
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -897,6 +924,44 @@ impl WasmTieredVm {
             .bus
             .drain_write_log_to(|paddr, len| jit.on_guest_write(paddr, len));
     }
+
+    fn init_code_version_table_fields(
+        jit_abi: &mut JitAbiBuffer,
+        jit: &mut JitRuntime<WasmJitBackend, CompileQueue>,
+        guest_size: u64,
+    ) {
+        // The code-version table is exposed to generated WASM blocks/traces as a `(ptr,len)` pair
+        // stored in the Tier-2 context region. Inline store fast-paths and Tier-2 code-version
+        // guards require a non-zero `len`; if the runtime reports `len == 0`, the JIT pipeline must
+        // disable those inline fast-paths and fall back to host imports.
+        //
+        // The pointer/len must remain stable for the lifetime of the VM instance: once shared with
+        // JIT code, reallocation would make any cached pointer stale. Size the table up-front to
+        // cover the full guest-physical span so it never needs to grow.
+        let phys_end = guest_ram_phys_end_exclusive(guest_size);
+        let page_bytes = 1u64 << PAGE_SHIFT;
+        let pages_u64 = phys_end
+            .saturating_add(page_bytes.saturating_sub(1))
+            .checked_shr(PAGE_SHIFT)
+            .unwrap_or(0);
+        let Ok(pages) = usize::try_from(pages_u64) else {
+            jit_abi.write_code_version_table(0, 0);
+            return;
+        };
+
+        jit.ensure_code_version_table_len(pages);
+        let (table_ptr, table_len) = jit.code_version_table_ptr_len();
+        let Ok(table_len_u32) = u32::try_from(table_len) else {
+            jit_abi.write_code_version_table(0, 0);
+            return;
+        };
+        let table_ptr_u32 = if table_len_u32 == 0 {
+            0
+        } else {
+            table_ptr as usize as u32
+        };
+        jit_abi.write_code_version_table(table_ptr_u32, table_len_u32);
+    }
 }
 
 #[wasm_bindgen]
@@ -954,7 +1019,8 @@ impl WasmTieredVm {
             cache_max_bytes: 0,
         };
 
-        let jit = JitRuntime::new(jit_config.clone(), backend, compile_queue.clone());
+        let mut jit = JitRuntime::new(jit_config.clone(), backend, compile_queue.clone());
+        Self::init_code_version_table_fields(&mut jit_abi, &mut jit, guest_size_u64);
 
         let interp = Tier0Interpreter::new(10_000);
         let dispatcher = ExecDispatcher::new(interp, jit);
@@ -1029,7 +1095,9 @@ impl WasmTieredVm {
         let cpu_ptr = self.jit_abi.cpu_ptr();
         let jit_ctx_ptr = self.jit_abi.jit_ctx_ptr();
         let backend = WasmJitBackend::new(cpu_ptr, jit_ctx_ptr, self.guest_base, self.tlb_salt);
-        let jit = JitRuntime::new(self.jit_config.clone(), backend, self.compile_queue.clone());
+        let mut jit =
+            JitRuntime::new(self.jit_config.clone(), backend, self.compile_queue.clone());
+        Self::init_code_version_table_fields(&mut self.jit_abi, &mut jit, self.guest_size);
         let interp = Tier0Interpreter::new(10_000);
         self.dispatcher = ExecDispatcher::new(interp, jit);
     }
@@ -1485,7 +1553,9 @@ fn page_snapshot_from_js(obj: JsValue) -> Result<PageVersionSnapshot, JsValue> {
 mod tests {
     use super::{WasmBus, WasmTieredVm, meta_from_js};
 
+    use aero_cpu_core::jit::runtime::PAGE_SHIFT;
     use aero_cpu_core::CpuBus;
+    use aero_jit_x86::jit_ctx;
     use js_sys::{Array, Object, Reflect};
     use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
@@ -1948,5 +2018,47 @@ export function installAeroTieredMmioTestShims() {
             guest[0x0000_0200], 0x11,
             "A20 disabled: 0x1_00000 should alias to 0x0"
         );
+    }
+
+    #[wasm_bindgen_test]
+    fn wasm_tiered_vm_wires_code_version_table_into_jit_abi_buffer() {
+        let mut guest = vec![0u8; 0x4000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
+
+        let cpu_ptr = vm.jit_abi.cpu_ptr();
+        let table_ptr_addr = cpu_ptr
+            .checked_add(jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET)
+            .expect("table_ptr_addr overflow");
+        let table_len_addr = cpu_ptr
+            .checked_add(jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET)
+            .expect("table_len_addr overflow");
+
+        // Safety: `cpu_ptr` points into the dedicated JIT ABI buffer allocated by `WasmTieredVm`.
+        let table_ptr = unsafe { core::ptr::read_unaligned(table_ptr_addr as *const u32) };
+        let table_len = unsafe { core::ptr::read_unaligned(table_len_addr as *const u32) };
+
+        assert!(table_len > 0, "expected non-zero code version table len");
+        assert!(table_ptr != 0, "expected non-zero code version table ptr");
+
+        // Bump a single page and ensure the corresponding table entry increments.
+        let paddr = 0x1000u64;
+        let page = (paddr >> PAGE_SHIFT) as u32;
+        assert!(
+            page < table_len,
+            "test page index must be within table_len (page={page} table_len={table_len})"
+        );
+        let entry_off = table_ptr
+            .checked_add(page.checked_mul(4).expect("page*4 overflow"))
+            .expect("entry_off overflow");
+        let entry_ptr = entry_off as *const u32;
+
+        // Safety: `entry_ptr` points inside the version table allocated by the wasm runtime.
+        let before = unsafe { core::ptr::read_unaligned(entry_ptr) };
+        vm.jit_on_guest_write(paddr, 1);
+        let after = unsafe { core::ptr::read_unaligned(entry_ptr) };
+        assert_eq!(after, before.wrapping_add(1));
     }
 }
