@@ -57,6 +57,7 @@ pub enum Opcode {
     Add,
     Sub,
     Mad,
+    Lrp,
     Mul,
     Dp3,
     Dp4,
@@ -107,6 +108,7 @@ impl Opcode {
             3 => Self::Sub,
             4 => Self::Mad,
             5 => Self::Mul,
+            18 => Self::Lrp,
             6 => Self::Rcp,
             7 => Self::Rsq,
             8 => Self::Dp3,
@@ -159,6 +161,7 @@ impl Opcode {
             Self::Add => "add",
             Self::Sub => "sub",
             Self::Mad => "mad",
+            Self::Lrp => "lrp",
             Self::Mul => "mul",
             Self::Dp3 => "dp3",
             Self::Dp4 => "dp4",
@@ -785,6 +788,22 @@ fn decode_operands_and_extras(
         }
         Opcode::Cmp => {
             // D3D9 `cmp`: dst, src0, src1, src2.
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[
+                    OperandKind::Dst,
+                    OperandKind::Src,
+                    OperandKind::Src,
+                    OperandKind::Src,
+                ],
+                &mut operands,
+            )?;
+        }
+        Opcode::Lrp => {
+            // lrp dst, src0, src1, src2
             parse_fixed_operands(
                 opcode,
                 stage,

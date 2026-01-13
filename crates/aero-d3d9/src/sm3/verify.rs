@@ -149,6 +149,18 @@ fn verify_op(op: &IrOp) -> Result<(), VerifyError> {
             verify_src(src2)?;
             verify_modifiers(modifiers)?;
         }
+        IrOp::Lrp {
+            dst: _,
+            src0,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            verify_src(src0)?;
+            verify_src(src1)?;
+            verify_src(src2)?;
+            verify_modifiers(modifiers)?;
+        }
         IrOp::TexSample {
             kind: _,
             dst: _,

@@ -213,6 +213,23 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                     }),
                 )?;
             }
+            Opcode::Lrp => {
+                let dst = extract_dst(inst, 0)?;
+                let src0 = extract_src(inst, 1)?;
+                let src1 = extract_src(inst, 2)?;
+                let src2 = extract_src(inst, 3)?;
+                let modifiers = build_modifiers(inst)?;
+                push_stmt(
+                    &mut stack,
+                    Stmt::Op(IrOp::Lrp {
+                        dst,
+                        src0,
+                        src1,
+                        src2,
+                        modifiers,
+                    }),
+                )?;
+            }
             Opcode::Dp3 => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Dp3 {
                 dst,
                 src0,
@@ -669,6 +686,19 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             collect_used_input_regs_src(src2, out);
             collect_used_input_regs_modifiers(modifiers, out);
         }
+        IrOp::Lrp {
+            dst,
+            src0,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            collect_used_input_regs_dst(dst, out);
+            collect_used_input_regs_src(src0, out);
+            collect_used_input_regs_src(src1, out);
+            collect_used_input_regs_src(src2, out);
+            collect_used_input_regs_modifiers(modifiers, out);
+        }
         IrOp::TexSample {
             dst,
             coord,
@@ -862,6 +892,19 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             remap_input_regs_in_modifiers(modifiers, remap);
         }
         IrOp::Mad {
+            dst,
+            src0,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            remap_input_regs_in_dst(dst, remap);
+            remap_input_regs_in_src(src0, remap);
+            remap_input_regs_in_src(src1, remap);
+            remap_input_regs_in_src(src2, remap);
+            remap_input_regs_in_modifiers(modifiers, remap);
+        }
+        IrOp::Lrp {
             dst,
             src0,
             src1,

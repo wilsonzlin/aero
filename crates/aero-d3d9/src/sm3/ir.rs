@@ -128,6 +128,14 @@ pub enum IrOp {
         src2: Src,
         modifiers: InstModifiers,
     },
+    /// Linear interpolation: `dst = src0 * src1 + (1 - src0) * src2` (per-component).
+    Lrp {
+        dst: Dst,
+        src0: Src,
+        src1: Src,
+        src2: Src,
+        modifiers: InstModifiers,
+    },
     Dp3 {
         dst: Dst,
         src0: Src,
@@ -570,6 +578,17 @@ fn format_op(op: &IrOp) -> String {
         } => format!(
             "{} {}",
             format_inst("mad", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone(), src2.clone()])
+        ),
+        IrOp::Lrp {
+            dst,
+            src0,
+            src1,
+            src2,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("lrp", modifiers),
             format_dst_src(dst, &[src0.clone(), src1.clone(), src2.clone()])
         ),
         IrOp::Dp3 {

@@ -247,6 +247,77 @@ fn assemble_ps3_tex_ifc_def() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_predicated_lrp() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+
+    // def c0, 0.25, 0.25, 0.25, 0.25
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3E80_0000,
+            0x3E80_0000,
+            0x3E80_0000,
+            0x3E80_0000,
+        ],
+    ));
+    // def c1, 1.0, 0.0, 0.0, 1.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c2, 0.0, 1.0, 0.0, 1.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x0000_0000,
+            0x3F80_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+
+    // setp_eq p0, c0, c0  (compare op 1 = eq)
+    out.extend(enc_inst_with_extra(
+        0x004E,
+        1u32 << 16,
+        &[
+            enc_dst(19, 0, 0xF), // p0
+            enc_src(2, 0, 0xE4), // c0
+            enc_src(2, 0, 0xE4), // c0
+        ],
+    ));
+
+    // predicated lrp_sat_x2 r0, c0, c1, c2, p0.x
+    // - opcode 0x12 (lrp)
+    // - predicated flag = bit 28 (0x1000_0000)
+    // - result modifier: saturate + x2 shift => mod_bits = 0b0011 => 3<<20
+    out.extend(enc_inst_with_extra(
+        0x0012,
+        0x1000_0000 | (3u32 << 20),
+        &[
+            enc_dst(0, 0, 0xF),    // r0
+            enc_src(2, 0, 0xE4),   // c0 (t)
+            enc_src(2, 1, 0xE4),   // c1 (a)
+            enc_src(2, 2, 0xE4),   // c2 (b)
+            enc_src(19, 0, 0x00),  // p0.x predicate token
+        ],
+    ));
+
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn to_bytes(words: &[u32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(words.len() * 4);
     for w in words {
@@ -383,6 +454,28 @@ fn translates_ps3_ifc_def_to_wgsl() {
     assert!(wgsl.wgsl.contains("if ("));
     assert!(wgsl.wgsl.contains("} else {"));
     assert!(wgsl.wgsl.contains("let c0: vec4<f32>"));
+}
+
+#[test]
+fn sm3_translates_predicated_lrp_to_wgsl() {
+    let ps_tokens = assemble_ps3_predicated_lrp();
+    let decoded = crate::sm3::decode_u32_tokens(&ps_tokens).unwrap();
+    let ir = crate::sm3::build_ir(&decoded).unwrap();
+    crate::sm3::verify_ir(&ir).unwrap();
+    let wgsl = crate::sm3::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("mix("), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("* 2.0"), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("if (p0.x)"), "wgsl:\n{}", wgsl.wgsl);
 }
 
 #[test]
