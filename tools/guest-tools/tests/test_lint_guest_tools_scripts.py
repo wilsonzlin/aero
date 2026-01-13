@@ -29,6 +29,7 @@ def _synthetic_setup_text(
     include_skipstorage_flag: bool = True,
     include_storage_skip_marker: bool = True,
     include_cert_policy_gating: bool = True,
+    include_cert_install_skip_policy: bool = True,
 ) -> str:
     lines: list[str] = []
     if include_cdd_base_path:
@@ -63,6 +64,16 @@ def _synthetic_setup_text(
 
     if include_cert_policy_gating:
         lines.append('if /i "%SIGNING_POLICY%"=="test" set "CERTS_REQUIRED=1"')
+
+    if include_cert_install_skip_policy:
+        lines.extend(
+            [
+                "/installcerts",
+                'if /i not "%SIGNING_POLICY%"=="test" if not "%ARG_INSTALL_CERTS%"=="1" (',
+                "  exit /b 0",
+                ")",
+            ]
+        )
 
     return "\n".join(lines) + "\n"
 
@@ -200,6 +211,26 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             self.assertTrue(
                 any("Certificate install requirement" in e for e in errs),
                 msg="expected missing cert-policy gating error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_cert_install_skip_policy(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_cert_install_skip_policy=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Certificate installation is skipped by policy" in e for e in errs),
+                msg="expected missing cert-install skip-policy error. Errors:\n" + "\n".join(errs),
             )
 
 

@@ -179,6 +179,19 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
                 r'\bif\b\s+(?:/i\s+)?"?%SIGNING_POLICY%"?\s*==\s*"test"\s+set\s+"?CERTS_REQUIRED=1"?'
             ),
         ),
+        Invariant(
+            description="Certificate installation is skipped by policy for signing_policy=production|none unless explicitly overridden",
+            expected_hint=(
+                'If signing_policy != test, setup should skip importing certs by default '
+                '(e.g. `if /i not \"%SIGNING_POLICY%\"==\"test\" if not \"%ARG_INSTALL_CERTS%\"==\"1\" (...) exit /b 0`).'
+            ),
+            predicate=lambda text: (
+                "/installcerts" in text
+                and _regex(
+                    r'(?is)if\s+/i\s+not\s+"%SIGNING_POLICY%"\s*==\s*"test"\s+if\s+not\s+"%ARG_INSTALL_CERTS%"\s*==\s*"1"\s*\(.*?exit\s+/b\s+0'
+                )(text)
+            ),
+        ),
     ]
 
     verify_invariants = [
