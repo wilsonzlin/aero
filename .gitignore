@@ -10,6 +10,10 @@ handoff.md
 .cargo_home/
 /target-worker*/
 
+# `crates/aero-d3d9-shader` is excluded from the workspace. When building it standalone via
+# `--manifest-path`, Cargo may generate a per-crate lockfile; keep it untracked.
+crates/aero-d3d9-shader/Cargo.lock
+
 # Python
 __pycache__/
 *.py[cod]
