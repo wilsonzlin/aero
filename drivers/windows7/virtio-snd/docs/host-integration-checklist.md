@@ -43,14 +43,16 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 
 - [ ] Device offers `VIRTIO_F_VERSION_1` (**bit 32**).
 - [ ] Device offers `VIRTIO_F_RING_INDIRECT_DESC` (**bit 28**).
+- [ ] Device implements **64-bit** feature negotiation via `*_feature_select` (`0` = low 32 bits, `1` = high 32 bits).
 - [ ] Device does **not** require `VIRTIO_F_RING_EVENT_IDX` / packed rings.
   - The Win7 driver will **not negotiate** `EVENT_IDX` or `PACKED`.
-  - Contract v1 device models should avoid offering them (they are unused here).
+  - The device must operate correctly without them (the driver never enables them).
   - `EVENT_IDX` is **bit 29**; `PACKED` is **bit 34**.
 
 ## Virtqueues (must exist and match exact sizes)
 
 - [ ] Virtqueues **0..3** exist.
+- [ ] `COMMON_CFG.num_queues >= 4`.
 - [ ] Queue sizes are **exactly**:
   - [ ] `0 controlq`: `64`
   - [ ] `1 eventq`: `64`
@@ -60,6 +62,7 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 - [ ] (Contract/strict mode) `queue_notify_off(q) == q` for queues `0..3` (driver treats mismatches as unsupported).
 - [ ] `queue_enable` readback works: after the driver programs a queue and writes `queue_enable=1`, reading `queue_enable` returns `1`.
 - [ ] Notify “doorbell” accepts a **16-bit** write of the queue index (this driver uses 16-bit MMIO writes).
+- [ ] Device correctly supports **indirect descriptors** (`VRING_DESC_F_INDIRECT`) on all queues (the Win7 driver uses indirect descriptors for submissions).
 
 ## Interrupt delivery
 
