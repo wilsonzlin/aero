@@ -186,27 +186,29 @@ static bool FindAlternateDesktopMode(const DEVMODE& current, DEVMODE* out, std::
   struct TargetRes {
     DWORD w;
     DWORD h;
+    TargetRes() : w(0), h(0) {}
+    TargetRes(DWORD w_, DWORD h_) : w(w_), h(h_) {}
   };
 
   // Prefer switching between common, conservative modes. If we're already at one, prefer the other.
   std::vector<TargetRes> targets;
   if (current.dmPelsWidth == 800 && current.dmPelsHeight == 600) {
-    targets.push_back(TargetRes{1024, 768});
-    targets.push_back(TargetRes{800, 600});
+    targets.push_back(TargetRes(1024, 768));
+    targets.push_back(TargetRes(800, 600));
   } else if (current.dmPelsWidth == 1024 && current.dmPelsHeight == 768) {
-    targets.push_back(TargetRes{800, 600});
-    targets.push_back(TargetRes{1024, 768});
+    targets.push_back(TargetRes(800, 600));
+    targets.push_back(TargetRes(1024, 768));
   } else {
     // If we're above ~1024x768, prefer downscaling to 800x600; otherwise, prefer upscaling to 1024x768.
     const unsigned long long cur_area =
         (unsigned long long)current.dmPelsWidth * (unsigned long long)current.dmPelsHeight;
     const unsigned long long ref_area = 1024ull * 768ull;
     if (cur_area >= ref_area) {
-      targets.push_back(TargetRes{800, 600});
-      targets.push_back(TargetRes{1024, 768});
+      targets.push_back(TargetRes(800, 600));
+      targets.push_back(TargetRes(1024, 768));
     } else {
-      targets.push_back(TargetRes{1024, 768});
-      targets.push_back(TargetRes{800, 600});
+      targets.push_back(TargetRes(1024, 768));
+      targets.push_back(TargetRes(800, 600));
     }
   }
 
@@ -545,4 +547,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunModesetRoundtripSanity(argc, argv);
 }
-
