@@ -1,4 +1,4 @@
-# Virtio PCI modern transport bring-up (Windows 7, WDM + INTx)
+# Virtio PCI modern transport bring-up (Windows 7, WDM)
 
 This page describes the **WDM** (non-KMDF) bring-up flow for Aero
 **virtio-pci modern** devices (Virtio 1.0+, PCI vendor capabilities + MMIO).
@@ -20,6 +20,17 @@ For the shared Windows 7 **INTx** helper (ISR read-to-ack + DPC dispatch), use:
 
 - `drivers/windows7/virtio/common/include/virtio_pci_intx_wdm.h`
 - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
+
+For optional **MSI/MSI-X** (message-signaled) interrupts in WDM drivers, use:
+
+- `drivers/windows7/virtio/common/include/virtio_pci_msix_wdm.h`
+- `drivers/windows7/virtio/common/src/virtio_pci_msix_wdm.c`
+
+This helper connects message interrupts via `IoConnectInterruptEx(CONNECT_MESSAGE_BASED)` and dispatches:
+
+- message/vector 0: config callback
+- when `MessageCount >= (1 + QueueCount)`: vectors 1..QueueCount drain queues 0..QueueCount-1
+- otherwise: all queues are drained on vector 0.
 
 For the binding device/driver contract, see:
 [`docs/windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md).
@@ -103,7 +114,7 @@ even if the device does not complete the reset handshake within that budget.
 spinlock (provided by the OS interface) and uses it internally to serialize
 selector-based sequences.
 
-## Canonical WDM PnP flow (modern transport + INTx)
+## Canonical WDM PnP flow (modern transport + interrupts)
 
 High-level sequencing for `IRP_MN_START_DEVICE` (omitting IRP forwarding boilerplate):
 
@@ -112,10 +123,16 @@ High-level sequencing for `IRP_MN_START_DEVICE` (omitting IRP forwarding boilerp
     physical address/length to `VirtioPciModernTransportInit`
 3. **Negotiate features**
 4. **Allocate and program virtqueues**
-5. **Connect INTx** using `VirtioIntxConnect` (from `virtio_pci_intx_wdm`)
+5. **Connect interrupts**:
+   - Prefer MSI/MSI-X when the resource list contains `CM_RESOURCE_INTERRUPT_MESSAGE`:
+     - Connect via `VirtioMsixConnect` (from `virtio_pci_msix_wdm`)
+     - Program `common_cfg.msix_config` / `common_cfg.queue_msix_vector` using the helper's
+       `ConfigVector` / `QueueVectors[]` (and the transport helpers
+       `VirtioPciModernTransportSetConfigMsixVector` / `VirtioPciModernTransportSetQueueMsixVector`).
+   - Fall back to legacy INTx using `VirtioIntxConnect` (from `virtio_pci_intx_wdm`).
 6. **Set `DRIVER_OK`**
 
-For stop/remove, disconnect INTx first, reset the device, free queue resources,
+For stop/remove, disconnect interrupts first, reset the device, free queue resources,
 then uninit the transport.
 
 ## Minimal pseudo-code (WDM START/STOP with the transport + INTx helper)
