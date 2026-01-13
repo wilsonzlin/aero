@@ -77,7 +77,8 @@ Minimum supported commands:
   `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
 
 - `aerogpu_dbgctl --dump-scanout-png C:\scanout.png`  
-  Same as `--dump-scanout-bmp`, but writes a PNG (RGBA8). The encoder uses stored (uncompressed) deflate blocks for simplicity.
+  Same as `--dump-scanout-bmp`, but writes a PNG (RGBA8). The encoder uses stored (uncompressed) deflate blocks for simplicity,
+  so the PNG may be slightly larger than the BMP.
 
 - `aerogpu_dbgctl --query-cursor` *(alias: `--dump-cursor`)*  
   Dumps cursor MMIO state (`CURSOR_*` registers), including:
@@ -96,7 +97,7 @@ Minimum supported commands:
   `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
 
 - `aerogpu_dbgctl --dump-cursor-png C:\cursor.png`  
-  Same as `--dump-cursor-bmp`, but writes a PNG (RGBA8).
+  Same as `--dump-cursor-bmp`, but writes a PNG (RGBA8; preserves alpha).
 
 - `aerogpu_dbgctl --read-gpa GPA --size N [--out FILE] [--force]`  
   Reads a **bounded** slice of guest physical memory (GPA) from buffers that the KMD/device tracks (for example: scanout framebuffer,
