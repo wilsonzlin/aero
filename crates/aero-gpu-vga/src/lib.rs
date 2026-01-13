@@ -1059,15 +1059,6 @@ impl VgaDevice {
             // reads from either port for maximum guest compatibility.
             0x3CC | 0x3C2 => self.misc_output,
 
-            // VGA register files are exposed as adjacent index/data port pairs. Some software
-            // (e.g. BIOS register tables) uses `inw`/`outw` on the index port to access both
-            // bytes in a single instruction.
-            (0x3C4 | 0x3CE | 0x3D4 | 0x3B4, 2) => {
-                let lo = self.port_read(port, 1) & 0xFF;
-                let hi = self.port_read(port.wrapping_add(1), 1) & 0xFF;
-                lo | (hi << 8)
-            }
-
             // Sequencer.
             0x3C4 => self.sequencer_index,
             0x3C5 => {
@@ -1127,15 +1118,6 @@ impl VgaDevice {
             0x3C2 => {
                 self.misc_output = val;
                 self.dirty = true;
-            }
-
-            // VGA register files are exposed as adjacent index/data port pairs. Support
-            // `outw dx, ax` on the index port by splitting the word into two byte writes.
-            (0x3C4 | 0x3CE | 0x3D4 | 0x3B4, 2) => {
-                let lo = val & 0xFF;
-                let hi = (val >> 8) & 0xFF;
-                self.port_write(port, 1, lo);
-                self.port_write(port.wrapping_add(1), 1, hi);
             }
 
             // Sequencer.
