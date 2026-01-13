@@ -62,6 +62,7 @@ use super::vertex_pulling::{
     VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP,
     VERTEX_PULLING_UNIFORM_BINDING,
 };
+use super::scratch_allocator::GpuScratchAllocator;
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 // D3D11 exposes 128 SRV slots per stage. Our shader translation keeps the D3D register index as the
@@ -1003,6 +1004,7 @@ pub struct AerogpuD3d11Executor {
     bindings: BindingState,
     legacy_constants: HashMap<ShaderStage, wgpu::Buffer>,
 
+    gpu_scratch: GpuScratchAllocator,
     cbuffer_scratch: HashMap<(ShaderStage, u32), ConstantBufferScratch>,
     gs_scratch: GsScratchPool,
     next_scratch_buffer_id: u64,
@@ -1235,6 +1237,8 @@ impl AerogpuD3d11Executor {
             bindings.stage_mut(stage).clear_dirty();
         }
 
+        let gpu_scratch = GpuScratchAllocator::new(&device);
+
         Self {
             caps,
             device,
@@ -1245,6 +1249,7 @@ impl AerogpuD3d11Executor {
             shared_surfaces: SharedSurfaceTable::default(),
             bindings,
             legacy_constants,
+            gpu_scratch,
             cbuffer_scratch: HashMap::new(),
             gs_scratch: GsScratchPool::default(),
             next_scratch_buffer_id: 1u64 << 32,
@@ -1399,12 +1404,18 @@ impl AerogpuD3d11Executor {
         Ok(())
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn gpu_scratch_allocator_mut(&mut self) -> &mut GpuScratchAllocator {
+        &mut self.gpu_scratch
+    }
+
     pub fn reset(&mut self) {
         self.resources = AerogpuD3d11Resources::default();
         self.state = AerogpuD3d11State::default();
         self.shared_surfaces.clear();
         self.pipeline_cache.clear();
         self.cbuffer_scratch.clear();
+        self.gpu_scratch.clear();
         self.gs_scratch.clear();
         self.expansion_scratch.reset();
         self.encoder_used_buffers.clear();
@@ -2031,6 +2042,9 @@ impl AerogpuD3d11Executor {
         pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<ExecuteReport> {
         self.encoder_has_commands = false;
+        // Scratch allocations are per-command-stream; reset the bump cursor so new work can reuse
+        // existing backing buffers.
+        self.gpu_scratch.reset();
         let iter = AerogpuCmdStreamIter::new(stream_bytes)
             .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
         let stream_size = iter.header().size_bytes as usize;
@@ -13233,6 +13247,7 @@ mod tests {
                     dirty: false,
                     guest_backing_is_current: true,
                     host_shadow: None,
+                    host_shadow_valid: Vec::new(),
                 },
             );
 
@@ -13359,6 +13374,7 @@ mod tests {
                         dirty: false,
                         guest_backing_is_current: true,
                         host_shadow: None,
+                        host_shadow_valid: Vec::new(),
                     },
                 );
             }

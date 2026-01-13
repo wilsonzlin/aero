@@ -8,6 +8,7 @@ pub mod execute;
 pub mod indirect_args;
 pub mod index_pulling;
 pub mod pipeline_layout_cache;
+pub mod scratch_allocator;
 mod reflection_bindings;
 pub mod resources;
 pub mod state;
