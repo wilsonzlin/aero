@@ -132,6 +132,10 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
     idx = VirtioStatusQPopFreeTxBuffer(Q);
     if (idx == VIRTQ_SPLIT_NO_DESC) {
         if (Q->DropOnFull) {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
+                "statusq dropping pending LED report (queue full): leds=0x%02X\n",
+                (ULONG)Q->PendingLedBitfield);
             Q->PendingValid = FALSE;
         }
         return STATUS_SUCCESS;
@@ -153,6 +157,10 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
         VirtioStatusQPushFreeTxBuffer(Q, idx);
         VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "statusq VirtqSplitAddBuffer failed: %!STATUS!\n", status);
         if (Q->DropOnFull) {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
+                "statusq dropping pending LED report (VirtqSplitAddBuffer failed): leds=0x%02X\n",
+                (ULONG)Q->PendingLedBitfield);
             Q->PendingValid = FALSE;
         }
         return STATUS_SUCCESS;
