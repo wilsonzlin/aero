@@ -327,6 +327,11 @@ From an elevated command prompt:
 pnputil -i -a C:\path\to\aero_virtio_input.inf
 ```
 
+If you are using the deterministic release ZIP produced by `scripts/package-release.ps1`, the extracted folder also includes:
+
+- `INSTALL_CERT.cmd` (optional; installs `aero-virtio-input-test.cer` into `Root` + `TrustedPublisher`; requires elevation)
+- `INSTALL_DRIVER.cmd` (runs `pnputil -i -a aero_virtio_input.inf`)
+
 ## Verifying the driver loaded
 
 ### Device Manager
@@ -398,6 +403,8 @@ Once the driver binary exists, you can produce a deterministic, redistributable 
 
 - `release/README.md`
 - `scripts/package-release.ps1`
+
+The packaged ZIP includes guest-side helper scripts (`INSTALL_CERT.cmd`, `INSTALL_DRIVER.cmd`) intended to be run from the extracted package directory on Windows 7.
 
 ## Known limitations
 This driver intentionally implements a **minimal, contract-first** subset of virtio-input sufficient

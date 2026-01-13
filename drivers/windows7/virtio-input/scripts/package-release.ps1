@@ -428,6 +428,7 @@ function Package-OneArch(
     [ValidateSet('x86', 'amd64')] [string]$ArchValue,
     [string]$InputDirResolved,
     [string]$InfDirResolved,
+    [string]$ReleaseDirResolved,
     [string]$OutDirResolved,
     [string]$TestCertPath,
     [ref]$SharedVersion
@@ -500,6 +501,15 @@ function Package-OneArch(
             -ServiceName $serviceName
         Write-Utf8NoBomFile -Path $installPath -Contents $installText
 
+        # Guest-side helper scripts (run from the extracted driver package directory).
+        foreach ($name in @('INSTALL_CERT.cmd', 'INSTALL_DRIVER.cmd')) {
+            $src = Join-Path $ReleaseDirResolved $name
+            if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+                throw "Required release helper script not found: $src"
+            }
+            Copy-Item -LiteralPath $src -Destination (Join-Path $stageDir $name) -Force
+        }
+
         $payloadFiles = @(
             Get-ChildItem -LiteralPath $stageDir -File | Sort-Object -Property Name
         )
@@ -558,6 +568,10 @@ if (-not (Test-Path -LiteralPath $infDirResolved -PathType Container)) {
 }
 
 $releaseDirResolved = Join-Path $virtioInputRoot.Path 'release'
+if (-not (Test-Path -LiteralPath $releaseDirResolved -PathType Container)) {
+    throw "Release directory not found: $releaseDirResolved"
+}
+
 $script:InstallInstructionsTemplatePath = Join-Path $releaseDirResolved $script:InstallInstructionsTemplateName
 if (-not (Test-Path -LiteralPath $script:InstallInstructionsTemplatePath -PathType Leaf)) {
     throw ("Install instructions template not found: {0}" -f $script:InstallInstructionsTemplatePath)
@@ -576,5 +590,5 @@ if ($IncludeTestCert) {
 }
 
 foreach ($a in $archList) {
-    Package-OneArch -ArchValue $a -InputDirResolved $inputDirResolved -InfDirResolved $infDirResolved -OutDirResolved $outDirResolved -TestCertPath $testCertPath -SharedVersion ([ref]$sharedVersion)
+    Package-OneArch -ArchValue $a -InputDirResolved $inputDirResolved -InfDirResolved $infDirResolved -ReleaseDirResolved $releaseDirResolved -OutDirResolved $outDirResolved -TestCertPath $testCertPath -SharedVersion ([ref]$sharedVersion)
 }

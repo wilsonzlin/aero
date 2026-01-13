@@ -10,6 +10,9 @@ This folder documents how to produce a redistributable driver bundle once you ha
 - The matching `*.inf` from `drivers/windows7/virtio-input/inf/` (see naming below)
 - The matching `*.cat` if present (either next to the INF, or under `-InputDir`)
 - A KMDF coinstaller `WdfCoInstaller*.dll` **if present** (either referenced by the INF, or discovered under `-InputDir`)
+- Guest-side install helpers:
+  - `INSTALL_CERT.cmd` (installs a test cert into `Root` + `TrustedPublisher`; requires elevation)
+  - `INSTALL_DRIVER.cmd` (runs `pnputil -i -a aero_virtio_input.inf`)
 - An `INSTALL.txt` with minimal Windows 7 test-signing + “Have Disk…” install steps
 - (Optional) the public **test-signing certificate** `aero-virtio-input-test.cer` when `-IncludeTestCert` is specified
 - A `manifest.json` describing file hashes + metadata (driver id, arch, version, etc.)
@@ -26,6 +29,23 @@ The output filename is:
 `<arch>` is `x86` or `amd64` (you can pass `x64` as an alias for `amd64`). The zip name and `manifest.json` always use the normalized `amd64` spelling.
 
 The `<version>` value is derived from the `DriverVer=...,<version>` line in the packaged INF.
+
+## Installing from the ZIP (inside the Windows 7 guest)
+
+1. Extract the `aero-virtio-input-win7-<arch>-<version>.zip` somewhere (e.g. `C:\Temp\aero-virtio-input\`).
+2. If the driver package is **test-signed**, ensure `aero-virtio-input-test.cer` is present in the extracted folder (either included via `-IncludeTestCert` or copied manually), then run (elevated):
+
+   ```cmd
+   INSTALL_CERT.cmd
+   ```
+
+3. Install the driver package (elevated):
+
+   ```cmd
+   INSTALL_DRIVER.cmd
+   ```
+
+4. Reboot (recommended after the first install), then verify in Device Manager.
 
 ## Usage
 
