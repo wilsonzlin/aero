@@ -623,6 +623,15 @@ fn aerogpu_cmd_sampler_and_texture_bindings_accept_trailing_bytes() {
             stream.extend_from_slice(&PS.to_le_bytes());
             stream.extend_from_slice(&0u32.to_le_bytes()); // cs
             stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            if with_trailing {
+                // Forward-compatible extension: GS/HS/DS handles (append-only).
+                //
+                // Set to 0 so the test doesn't require executing geometry/hull/domain shaders; we
+                // only want to validate that the executor accepts larger `size_bytes` packets.
+                stream.extend_from_slice(&0u32.to_le_bytes()); // gs
+                stream.extend_from_slice(&0u32.to_le_bytes()); // hs
+                stream.extend_from_slice(&0u32.to_le_bytes()); // ds
+            }
             end_cmd(&mut stream, start);
 
             // CREATE_INPUT_LAYOUT
@@ -771,8 +780,11 @@ fn aerogpu_cmd_sampler_and_texture_bindings_accept_trailing_bytes() {
 
         let pixels_base = {
             let mut guest_mem = VecGuestMemory::new(0x1000);
-            exec.execute_cmd_stream(&build_stream(false), None, &mut guest_mem)
+            let report = exec
+                .execute_cmd_stream(&build_stream(false), None, &mut guest_mem)
                 .unwrap();
+            assert_eq!(report.unknown_opcodes, 0);
+            assert_eq!(report.presents.len(), 1);
             exec.poll_wait();
             exec.read_texture_rgba8(RT).await.unwrap()
         };
@@ -792,8 +804,11 @@ fn aerogpu_cmd_sampler_and_texture_bindings_accept_trailing_bytes() {
 
         let pixels_ext = {
             let mut guest_mem = VecGuestMemory::new(0x1000);
-            exec.execute_cmd_stream(&build_stream(true), None, &mut guest_mem)
+            let report = exec
+                .execute_cmd_stream(&build_stream(true), None, &mut guest_mem)
                 .unwrap();
+            assert_eq!(report.unknown_opcodes, 0);
+            assert_eq!(report.presents.len(), 1);
             exec.poll_wait();
             exec.read_texture_rgba8(RT).await.unwrap()
         };
