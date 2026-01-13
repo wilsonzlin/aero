@@ -237,6 +237,7 @@ pub struct I8042Controller {
     output_port: u8,
     output_buffer: Option<OutputByte>,
     pending_output: VecDeque<OutputByte>,
+    dropped_output_bytes: u64,
     pending_write: Option<PendingWrite>,
     last_write_was_command: bool,
 
@@ -263,6 +264,7 @@ impl I8042Controller {
             output_port: OUTPUT_PORT_RESET,
             output_buffer: None,
             pending_output: VecDeque::new(),
+            dropped_output_bytes: 0,
             pending_write: None,
             last_write_was_command: false,
             keyboard: Ps2Keyboard::new(),
@@ -424,6 +426,15 @@ impl I8042Controller {
 
     pub fn mouse_buttons_mask(&self) -> u8 {
         self.mouse.buttons_mask()
+    }
+
+    /// Total number of bytes evicted from the bounded output queue due to overflow.
+    ///
+    /// The i8042 model caps `pending_output` at `MAX_PENDING_OUTPUT` by dropping the oldest byte
+    /// when full. This counter provides host-side telemetry for diagnosing situations where
+    /// output is produced faster than the guest drains port 0x60.
+    pub fn dropped_output_bytes(&self) -> u64 {
+        self.dropped_output_bytes
     }
 
     fn read_status(&mut self) -> u8 {
@@ -623,6 +634,7 @@ impl I8042Controller {
     fn push_pending_output(&mut self, out: OutputByte) {
         if self.pending_output.len() >= MAX_PENDING_OUTPUT {
             let _ = self.pending_output.pop_front();
+            self.dropped_output_bytes = self.dropped_output_bytes.saturating_add(1);
         }
         self.pending_output.push_back(out);
     }
@@ -780,7 +792,7 @@ impl Default for I8042Controller {
 
 impl IoSnapshot for I8042Controller {
     const DEVICE_ID: [u8; 4] = *b"8042";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 2);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 3);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_REGS: u16 = 1;
@@ -793,6 +805,7 @@ impl IoSnapshot for I8042Controller {
         const TAG_TRANSLATOR: u16 = 8;
         const TAG_PREFER_MOUSE: u16 = 9;
         const TAG_OUTPUT_PORT: u16 = 10;
+        const TAG_DROPPED_OUTPUT_BYTES: u16 = 11;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -807,6 +820,7 @@ impl IoSnapshot for I8042Controller {
         // `SystemControlSink::a20_enabled`, this keeps snapshots consistent even if the internal
         // latch is stale (e.g. A20 toggled via port 0x92).
         w.field_u8(TAG_OUTPUT_PORT, self.output_port_for_guest());
+        w.field_u64(TAG_DROPPED_OUTPUT_BYTES, self.dropped_output_bytes);
 
         if let Some(out) = self.output_buffer {
             let source = match out.source {
@@ -877,6 +891,7 @@ impl IoSnapshot for I8042Controller {
         const TAG_TRANSLATOR: u16 = 8;
         const TAG_PREFER_MOUSE: u16 = 9;
         const TAG_OUTPUT_PORT: u16 = 10;
+        const TAG_DROPPED_OUTPUT_BYTES: u16 = 11;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -886,6 +901,7 @@ impl IoSnapshot for I8042Controller {
         self.command_byte = 0x45;
         self.output_port = OUTPUT_PORT_RESET;
         self.pending_output.clear();
+        self.dropped_output_bytes = 0;
         self.pending_write = None;
         self.last_write_was_command = false;
         self.translator = Set2ToSet1::default();
@@ -901,6 +917,8 @@ impl IoSnapshot for I8042Controller {
         if let Some(port) = r.u8(TAG_OUTPUT_PORT)? {
             self.output_port = port;
         }
+
+        self.dropped_output_bytes = r.u64(TAG_DROPPED_OUTPUT_BYTES)?.unwrap_or(0);
 
         self.output_buffer = if let Some(buf) = r.bytes(TAG_OUTPUT_BUFFER) {
             let mut d = Decoder::new(buf);
@@ -1012,6 +1030,7 @@ mod tests {
         }
 
         assert_eq!(dev.pending_output.len(), MAX_PENDING_OUTPUT);
+        assert_eq!(dev.dropped_output_bytes(), 10);
         assert_eq!(dev.pending_output.front().unwrap().value, 10);
         assert_eq!(
             dev.pending_output.back().unwrap().value,
@@ -1043,6 +1062,30 @@ mod tests {
             dev.pending_output.back().unwrap().value,
             (MAX_PENDING_OUTPUT + 9) as u8
         );
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_dropped_output_bytes() {
+        let mut dev = I8042Controller::new();
+
+        // Fill the output buffer so subsequent controller writes accumulate in the pending queue.
+        dev.write_port(0x64, 0xD2);
+        dev.write_port(0x60, 0xAA);
+        assert!(dev.output_buffer.is_some());
+
+        for i in 0..(MAX_PENDING_OUTPUT + 10) {
+            dev.write_port(0x64, 0xD2);
+            dev.write_port(0x60, i as u8);
+        }
+        assert_eq!(dev.dropped_output_bytes(), 10);
+
+        let snap = dev.save_state();
+        let mut restored = I8042Controller::new();
+        restored
+            .load_state(&snap)
+            .expect("snapshot restore should succeed");
+
+        assert_eq!(restored.dropped_output_bytes(), 10);
     }
 
     #[test]
