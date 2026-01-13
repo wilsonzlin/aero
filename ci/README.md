@@ -22,6 +22,7 @@ Example local usage:
 ```powershell
 pwsh -File ci/install-wdk.ps1
 pwsh -File ci/build-drivers.ps1 -ToolchainJson out/toolchain.json
+# Required when drivers/aerogpu/ci-package.json declares dbgctl via `requiredBuildOutputFiles`.
 pwsh -File ci/build-aerogpu-dbgctl.ps1 -ToolchainJson out/toolchain.json
 pwsh -File ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
 pwsh -File ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
@@ -43,6 +44,10 @@ Builds the standalone Win7 AeroGPU debug/control tool (`aerogpu_dbgctl.exe`) usi
 In CI, this script is run after `ci/build-drivers.ps1` so it can also copy the built tool into
 `out/drivers/aerogpu/<arch>/tools/aerogpu_dbgctl.exe`, allowing downstream catalog/sign/package steps to
 ship it inside driver packages and Guest Tools media.
+
+This is required when `drivers/aerogpu/ci-package.json` lists `tools/aerogpu_dbgctl.exe` under
+`requiredBuildOutputFiles` — `ci/make-catalogs.ps1` will fail packaging if the tool was not staged into
+the per-arch build output directories.
 
 ### CI packaging gate (`ci-package.json`)
 

@@ -315,6 +315,7 @@ See [`docs/16-windows7-driver-build-and-signing.md`](../docs/16-windows7-driver-
 # Recommended (CI-like; builds + stages drivers under out/)
 pwsh ci/install-wdk.ps1
 pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu windows7/virtio-blk windows7/virtio-net windows7/virtio-input windows7/virtio-snd
+pwsh ci/build-aerogpu-dbgctl.ps1 -ToolchainJson out/toolchain.json  # required when drivers/aerogpu/ci-package.json declares dbgctl via requiredBuildOutputFiles
 
 # Note: CI only builds/packages drivers that explicitly opt in via `ci-package.json`
 # under the driver directory (and have at least one `.inf`), to avoid accidentally

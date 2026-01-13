@@ -45,6 +45,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/build-drivers.ps1' -ToolchainJson 'out/toolchain.json' -RequireDrivers
 
+      - name: Build AeroGPU dbgctl tool (ci/build-aerogpu-dbgctl.ps1)
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/build-aerogpu-dbgctl.ps1' -ToolchainJson 'out/toolchain.json'
+
       - name: Generate catalogs (ci/make-catalogs.ps1)
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/make-catalogs.ps1' -ToolchainJson 'out/toolchain.json'
