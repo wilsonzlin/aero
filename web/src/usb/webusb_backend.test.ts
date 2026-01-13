@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { isWebUsbProtectedInterfaceClass } from "../platform/webusb";
+
 import {
   WebUsbBackend,
   dataViewToUint8Array,
@@ -185,6 +187,41 @@ describe("WebUsbBackend.ensureOpenAndClaimed", () => {
       } finally {
         warn.mockRestore();
       }
+    });
+  });
+
+  it("throws when no claimable interfaces exist (all interfaces are WebUSB-protected)", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const hidClass = 0x03;
+      expect(isWebUsbProtectedInterfaceClass(hidClass)).toBe(true);
+
+      const iface1 = {
+        interfaceNumber: 1,
+        claimed: false,
+        alternates: [
+          { alternateSetting: 0, interfaceClass: hidClass, interfaceSubclass: 0, interfaceProtocol: 0 },
+          { alternateSetting: 1, interfaceClass: hidClass, interfaceSubclass: 0, interfaceProtocol: 0 },
+        ],
+        alternate: { alternateSetting: 0, interfaceClass: hidClass, interfaceSubclass: 0, interfaceProtocol: 0 },
+      };
+      const config = { configurationValue: 1, interfaces: [iface1] };
+
+      const device: Partial<USBDevice> = {
+        vendorId: 0x1234,
+        productId: 0x5678,
+        opened: true,
+        configuration: config as unknown as USBConfiguration,
+        configurations: [config as unknown as USBConfiguration],
+        open: vi.fn(async () => {}),
+        selectConfiguration: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {
+          throw new Error("claimInterface should not be called for protected interfaces");
+        }),
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      await expect(backend.ensureOpenAndClaimed()).rejects.toThrow(/claimable interface/i);
+      expect(device.claimInterface).not.toHaveBeenCalled();
     });
   });
 

@@ -29,10 +29,16 @@ function dataViewFromBytes(bytes: number[]): DataView {
 }
 
 function fakeUsbDevice(partial: Partial<USBDevice>): USBDevice {
+  const iface0 = {
+    interfaceNumber: 0,
+    claimed: false,
+    alternates: [{ alternateSetting: 0, interfaceClass: 0xff, interfaceSubclass: 0, interfaceProtocol: 0 }],
+    alternate: { alternateSetting: 0, interfaceClass: 0xff, interfaceSubclass: 0, interfaceProtocol: 0 },
+  };
   const configuration: USBConfiguration = {
     configurationValue: 1,
     configurationName: null,
-    interfaces: [],
+    interfaces: [iface0 as unknown as USBInterface],
   };
 
   return {
@@ -43,7 +49,11 @@ function fakeUsbDevice(partial: Partial<USBDevice>): USBDevice {
     configuration,
     open: vi.fn(async () => {}),
     selectConfiguration: vi.fn(async () => {}),
-    claimInterface: vi.fn(async () => {}),
+    claimInterface: vi.fn(async (ifaceNum: number) => {
+      if (ifaceNum === iface0.interfaceNumber) {
+        iface0.claimed = true;
+      }
+    }),
     controlTransferIn: vi.fn(async () => ({ status: "stall", data: null })),
     controlTransferOut: vi.fn(async () => ({ status: "stall", bytesWritten: 0 })),
     transferIn: vi.fn(async () => ({ status: "stall", data: null })),

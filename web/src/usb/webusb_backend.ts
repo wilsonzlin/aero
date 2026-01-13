@@ -313,8 +313,16 @@ export class WebUsbBackend {
       claimedAny = true;
     }
 
-    if (!claimedAny && firstClaimErr) {
-      throw wrapWithCause("Failed to claim any USB interface", firstClaimErr);
+    if (!claimedAny) {
+      if (firstClaimErr) {
+        throw wrapWithCause("Failed to claim any USB interface", firstClaimErr);
+      }
+      throw new Error(
+        [
+          "No claimable interface was found on this USB device.",
+          "The device is likely blocked by Chromium's protected interface class list (e.g. HID, Mass Storage), so WebUSB cannot claim any interfaces for bulk/interrupt transfers.",
+        ].join("\n"),
+      );
     }
   }
 
