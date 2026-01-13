@@ -162,3 +162,127 @@ func TestStartupSecurityWarnings_AllowedOriginsWildcard(t *testing.T) {
 		t.Fatalf("expected warning_code=allowed_origins_wildcard, got %#v", records())
 	}
 }
+
+func TestStartupSecurityWarnings_DestinationPolicyPresetDev(t *testing.T) {
+	logger, records := newRecordingLogger()
+
+	cfg := config.Config{
+		Mode:        config.ModeProd,
+		AuthMode:    config.AuthModeAPIKey,
+		APIKey:      "secret",
+		MaxSessions: 1,
+	}
+	destPolicy := policy.NewDevDestinationPolicy()
+
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
+	var found bool
+	for _, r := range records() {
+		if r.level != slog.LevelWarn {
+			continue
+		}
+		if r.attrs["warning_code"] == "destination_policy_preset_dev" {
+			found = true
+			if r.attrs["destination_policy_preset"] != "dev" {
+				t.Fatalf("destination_policy_preset=%#v, want %q", r.attrs["destination_policy_preset"], "dev")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning_code=destination_policy_preset_dev, got %#v", records())
+	}
+}
+
+func TestStartupSecurityWarnings_AllowPrivateNetworksInProd(t *testing.T) {
+	logger, records := newRecordingLogger()
+
+	cfg := config.Config{
+		Mode:        config.ModeProd,
+		AuthMode:    config.AuthModeAPIKey,
+		APIKey:      "secret",
+		MaxSessions: 1,
+	}
+	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy.AllowPrivateNetworks = true
+
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
+	var found bool
+	for _, r := range records() {
+		if r.level != slog.LevelWarn {
+			continue
+		}
+		if r.attrs["warning_code"] == "allow_private_networks_in_prod" {
+			found = true
+			if r.attrs["allow_private_networks"] != true {
+				t.Fatalf("allow_private_networks=%#v, want true", r.attrs["allow_private_networks"])
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning_code=allow_private_networks_in_prod, got %#v", records())
+	}
+}
+
+func TestStartupSecurityWarnings_MaxSessionsUnlimitedInProd(t *testing.T) {
+	logger, records := newRecordingLogger()
+
+	cfg := config.Config{
+		Mode:        config.ModeProd,
+		AuthMode:    config.AuthModeAPIKey,
+		APIKey:      "secret",
+		MaxSessions: 0,
+	}
+	destPolicy := policy.NewProductionDestinationPolicy()
+
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
+	var found bool
+	for _, r := range records() {
+		if r.level != slog.LevelWarn {
+			continue
+		}
+		if r.attrs["warning_code"] == "max_sessions_unlimited_in_prod" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning_code=max_sessions_unlimited_in_prod, got %#v", records())
+	}
+}
+
+func TestStartupSecurityWarnings_L2AuthForwardModeQuery(t *testing.T) {
+	logger, records := newRecordingLogger()
+
+	cfg := config.Config{
+		Mode:                     config.ModeDev,
+		AuthMode:                 config.AuthModeJWT,
+		JWTSecret:                "secret",
+		MaxSessions:              1,
+		L2BackendWSURL:           "wss://example.com/l2",
+		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeQuery,
+	}
+	destPolicy := policy.NewProductionDestinationPolicy()
+
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
+	var found bool
+	for _, r := range records() {
+		if r.level != slog.LevelWarn {
+			continue
+		}
+		if r.attrs["warning_code"] == "l2_backend_auth_forward_mode_query" {
+			found = true
+			if r.attrs["l2_backend_ws_host"] != "example.com" {
+				t.Fatalf("l2_backend_ws_host=%#v, want %q", r.attrs["l2_backend_ws_host"], "example.com")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning_code=l2_backend_auth_forward_mode_query, got %#v", records())
+	}
+}
