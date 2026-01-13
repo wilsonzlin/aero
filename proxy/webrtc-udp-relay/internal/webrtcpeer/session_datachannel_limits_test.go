@@ -119,9 +119,12 @@ func TestSession_RejectsUnknownAndDuplicateDataChannels(t *testing.T) {
 		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelUDP, err)
 	}
 
-	l2c1, err := CreateL2DataChannel(clientPC)
+	l2Ordered := true
+	l2c1, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{
+		Ordered: &l2Ordered,
+	})
 	if err != nil {
-		t.Fatalf("CreateL2DataChannel: %v", err)
+		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
 	}
 
 	connectPeerConnections(t, clientPC, serverSession.PeerConnection())
@@ -156,9 +159,11 @@ func TestSession_RejectsUnknownAndDuplicateDataChannels(t *testing.T) {
 	waitForDataChannelState(t, unknown, webrtc.DataChannelStateClosed, 5*time.Second)
 
 	// Duplicate "l2" must be rejected/closed.
-	l2c2, err := CreateL2DataChannel(clientPC)
+	l2c2, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{
+		Ordered: &l2Ordered,
+	})
 	if err != nil {
-		t.Fatalf("CreateL2DataChannel duplicate: %v", err)
+		t.Fatalf("CreateDataChannel(%q) duplicate: %v", DataChannelLabelL2, err)
 	}
 	waitForDataChannelState(t, l2c2, webrtc.DataChannelStateClosed, 5*time.Second)
 

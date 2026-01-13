@@ -102,7 +102,10 @@ func TestL2DataChannel_ReliableDeliveryUnderLoss(t *testing.T) {
 		}
 	})
 
-	localDC, err := webrtcpeer.CreateL2DataChannel(pcA)
+	ordered := true
+	localDC, err := pcA.CreateDataChannel(webrtcpeer.DataChannelLabelL2, &webrtc.DataChannelInit{
+		Ordered: &ordered,
+	})
 	if err != nil {
 		t.Fatalf("create l2 datachannel: %v", err)
 	}

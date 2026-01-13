@@ -56,21 +56,3 @@ func validateL2DataChannel(dc *webrtc.DataChannel) error {
 	}
 	return nil
 }
-
-// NewL2DataChannelInit returns the recommended DataChannelInit for the L2
-// tunnel.
-//
-// The L2 tunnel MUST be reliable. Do not set MaxRetransmits/MaxPacketLifeTime.
-// Ordered delivery is required.
-func NewL2DataChannelInit() *webrtc.DataChannelInit {
-	ordered := true
-	return &webrtc.DataChannelInit{
-		Ordered: &ordered,
-	}
-}
-
-// CreateL2DataChannel creates a DataChannel labeled "l2" with fully reliable and
-// ordered delivery semantics.
-func CreateL2DataChannel(pc *webrtc.PeerConnection) (*webrtc.DataChannel, error) {
-	return pc.CreateDataChannel(DataChannelLabelL2, NewL2DataChannelInit())
-}
