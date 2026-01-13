@@ -98,6 +98,7 @@ The in-tree virtio-snd driver supports both interrupt delivery modes:
 If neither MSI/MSI-X nor INTx resources are available, the driver will fail `START_DEVICE` by default. If `AllowPollingOnly=1` is set under:
 
 - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly`
+  - Find `<DeviceInstancePath>` via Device Manager → device → Details → “Device instance path”.
 
 the driver may start in polling-only mode (reduced interrupt-driven behavior).
 
