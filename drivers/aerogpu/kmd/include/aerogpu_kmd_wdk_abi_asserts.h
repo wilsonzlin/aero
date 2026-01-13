@@ -42,6 +42,18 @@ AEROGPU_ABI_STATIC_ASSERT(offsetof(DXGKARGCB_NOTIFY_INTERRUPT, CrtcVsync) == off
 AEROGPU_ABI_STATIC_ASSERT(offsetof(DXGKARGCB_NOTIFY_INTERRUPT, CrtcVsync.VidPnSourceId) == offsetof(DXGKARGCB_NOTIFY_INTERRUPT, CrtcVsync),
                           "DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId must be at union base offset");
 
+/*
+ * Invariants we rely on when reporting DMA faults.
+ *
+ * We write `DXGKARGCB_NOTIFY_INTERRUPT.DmaFaulted.{FaultedFenceId,NodeOrdinal,EngineOrdinal}`
+ * in the ISR when the device signals `AEROGPU_IRQ_ERROR`. Keep layout assumptions explicit so
+ * header/toolchain drift is caught early when building with real WDK headers.
+ */
+AEROGPU_ABI_STATIC_ASSERT(offsetof(DXGKARGCB_NOTIFY_INTERRUPT, DmaFaulted) == offsetof(DXGKARGCB_NOTIFY_INTERRUPT, DmaCompleted),
+                          "DXGKARGCB_NOTIFY_INTERRUPT.DmaFaulted must share union base offset with DmaCompleted");
+AEROGPU_ABI_STATIC_ASSERT(offsetof(DXGKARGCB_NOTIFY_INTERRUPT, DmaFaulted.FaultedFenceId) == offsetof(DXGKARGCB_NOTIFY_INTERRUPT, DmaFaulted),
+                          "DXGKARGCB_NOTIFY_INTERRUPT.DmaFaulted.FaultedFenceId must be at DmaFaulted base offset");
+
 /* ------------------------------------------------------------------------- */
 /* Optional expected-value checks (define macros to enable)                    */
 /* ------------------------------------------------------------------------- */
