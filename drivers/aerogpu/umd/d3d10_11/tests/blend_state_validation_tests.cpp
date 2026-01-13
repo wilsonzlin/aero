@@ -221,11 +221,9 @@ bool TestWriteMaskHighBitsReturnsNotImpl() {
   desc.BlendOpAlpha = kBlendOpAdd;
   for (uint32_t i = 0; i < 8; ++i) {
     desc.BlendEnable[i] = 0;
-    desc.RenderTargetWriteMask[i] = 0xF;
+    // Bits outside RGBA are not representable by the AeroGPU protocol.
+    desc.RenderTargetWriteMask[i] = 0x1F;
   }
-
-  // Bits outside RGBA are not representable by the AeroGPU protocol.
-  desc.RenderTargetWriteMask[0] = 0x1F;
 
   std::vector<uint8_t> state_storage;
   D3D10DDI_HBLENDSTATE hState = MakeBlendState(&dev, desc, &state_storage);
