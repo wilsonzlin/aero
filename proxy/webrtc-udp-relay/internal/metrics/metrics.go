@@ -48,6 +48,13 @@ const (
 	WebRTCUDPDroppedTooManyBindings = "webrtc_udp_dropped_too_many_bindings"
 )
 
+// WebRTC DataChannel rejection counters.
+const (
+	WebRTCDataChannelRejectedUnknownLabel = "webrtc_datachannel_rejected_unknown_label"
+	WebRTCDataChannelRejectedDuplicateUDP = "webrtc_datachannel_rejected_duplicate_udp"
+	WebRTCDataChannelRejectedDuplicateL2  = "webrtc_datachannel_rejected_duplicate_l2"
+)
+
 // L2 tunnel bridge (WebRTC DataChannel "l2" <-> backend WS) counters.
 const (
 	L2BridgeDialsTotal              = "l2_bridge_dials_total"

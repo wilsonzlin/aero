@@ -6,9 +6,18 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 )
+
+// webrtcDataChannelUDPFrameOverheadBytes is the worst-case overhead (in bytes)
+// for a single UDP relay DataChannel message on top of MAX_DATAGRAM_PAYLOAD_BYTES.
+//
+// This matches the v2 header carrying an IPv6 address (see udpproto.EncodeV2):
+//
+//	magic+version+af+type (4) + guest_port (2) + ipv6 (16) + remote_port (2) = 24
+const webrtcDataChannelUDPFrameOverheadBytes = 24
 
 // Session owns a server-side PeerConnection and binds relay adapters to specific
 // DataChannel labels:
@@ -32,6 +41,25 @@ type Session struct {
 	r     *relay.SessionRelay
 	l2    *l2Bridge
 	close sync.Once
+}
+
+func (s *Session) incMetric(name string) {
+	if s.quota == nil {
+		return
+	}
+	m := s.quota.Metrics()
+	if m == nil {
+		return
+	}
+	m.Inc(name)
+}
+
+func rejectDataChannel(dc *webrtc.DataChannel) {
+	// Ensure the channel is closed even if it's not yet fully open on this side.
+	dc.OnOpen(func() {
+		_ = dc.Close()
+	})
+	_ = dc.Close()
 }
 
 func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, origin, credential string, aeroSessionCookie *string, maxDataChannelMessageBytes int, onClose func()) (*Session, error) {
@@ -77,14 +105,18 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				return
 			}
 
-			udpCfg := relayCfg.WithDefaults()
-			r := relay.NewSessionRelay(dc, udpCfg, destPolicy, quota, nil)
-			r.EnableWebRTCUDPMetrics()
-
+			// Bind exactly one active "udp" DataChannel per PeerConnection.
 			s.mu.Lock()
 			if s.r != nil {
-				s.r.Close()
+				s.mu.Unlock()
+				s.incMetric(metrics.WebRTCDataChannelRejectedDuplicateUDP)
+				rejectDataChannel(dc)
+				return
 			}
+
+			udpCfg := relayCfg
+			r := relay.NewSessionRelay(dc, udpCfg, destPolicy, quota, nil)
+			r.EnableWebRTCUDPMetrics()
 			s.r = r
 			s.mu.Unlock()
 
@@ -97,6 +129,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				// Close asynchronously so we never block a pion callback on teardown.
 				go func() { _ = s.Close() }()
 			})
+
 			// Defensive cap on inbound DataChannel message size. The UDP relay frames
 			// themselves are bounded by the application-level payload limit plus the
 			// framing overhead (v2 IPv6 is the worst case at 24 bytes).
@@ -104,7 +137,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			// Note: This runs after pion has already allocated msg.Data, so it is not
 			// a replacement for SCTP-level receive caps. It is still valuable to
 			// quickly tear down misbehaving peers that send oversized messages.
-			udpMaxMsgBytes := udpCfg.MaxDatagramPayloadBytes + 24
+			udpMaxMsgBytes := udpCfg.MaxDatagramPayloadBytes + webrtcDataChannelUDPFrameOverheadBytes
 			if udpMaxMsgBytes < 0 {
 				udpMaxMsgBytes = 0
 			}
@@ -143,9 +176,19 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				}
 				r.HandleDataChannelMessage(msg.Data)
 			})
-			dc.OnClose(func() {
+
+			cleanup := func() {
+				s.mu.Lock()
+				if s.r == r {
+					s.r = nil
+				}
+				s.mu.Unlock()
 				r.Close()
-			})
+			}
+			dc.OnClose(cleanup)
+			if dc.ReadyState() == webrtc.DataChannelStateClosed {
+				cleanup()
+			}
 		case DataChannelLabelL2:
 			if err := validateL2DataChannel(dc); err != nil {
 				reason := "invalid_datachannel"
@@ -183,9 +226,17 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				return
 			}
 
-			cfg := relayCfg.WithDefaults()
+			cfg := relayCfg
 			if cfg.L2BackendWSURL == "" {
 				_ = dc.Close()
+				return
+			}
+
+			s.mu.Lock()
+			if s.l2 != nil {
+				s.mu.Unlock()
+				s.incMetric(metrics.WebRTCDataChannelRejectedDuplicateL2)
+				rejectDataChannel(dc)
 				return
 			}
 
@@ -203,11 +254,6 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				MaxMessageBytes:       cfg.L2MaxMessageBytes,
 			}
 			b := newL2Bridge(dc, dialCfg, quota)
-
-			s.mu.Lock()
-			if s.l2 != nil {
-				s.l2.Close()
-			}
 			s.l2 = b
 			s.mu.Unlock()
 
@@ -220,6 +266,8 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				// Close asynchronously so we never block a pion callback on teardown.
 				go func() { _ = s.Close() }()
 			})
+
+			maxL2MessageBytes := dialCfg.MaxMessageBytes
 			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 				if s.maxDataChannelMessageBytes > 0 && len(msg.Data) > s.maxDataChannelMessageBytes {
 					var sessionID any
@@ -238,19 +286,31 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				if msg.IsString {
 					return
 				}
+				if maxL2MessageBytes > 0 && len(msg.Data) > maxL2MessageBytes {
+					// Close asynchronously so we never block a pion callback on teardown.
+					go func() { _ = dc.Close() }()
+					return
+				}
 				// Copy because pion reuses internal buffers.
 				data := append([]byte(nil), msg.Data...)
 				b.HandleDataChannelMessage(data)
 			})
-			dc.OnClose(func() {
+
+			cleanup := func() {
 				s.mu.Lock()
 				if s.l2 == b {
 					s.l2 = nil
 				}
 				s.mu.Unlock()
 				b.Close()
-			})
+			}
+			dc.OnClose(cleanup)
+			if dc.ReadyState() == webrtc.DataChannelStateClosed {
+				cleanup()
+			}
 		default:
+			s.incMetric(metrics.WebRTCDataChannelRejectedUnknownLabel)
+			rejectDataChannel(dc)
 			return
 		}
 	})
