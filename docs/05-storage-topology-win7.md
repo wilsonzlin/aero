@@ -70,8 +70,8 @@ enables the same canonical controller set in the full-system `Machine` integrati
 
 ### 1) Windows 7 install / recovery flow
 
-1. Host/BIOS boot configuration selects **CD-ROM (El Torito)** first by choosing a **CD boot drive
-   number** in `DL` (recommend **`DL=0xE0`** for the first CD-ROM drive).
+1. Host/BIOS boot configuration selects **CD-ROM (El Torito)** first by configuring the BIOS boot
+   drive number in `DL` to a CD drive (recommend **`DL=0xE0`** for the first CD-ROM drive).
 2. The boot ISO is presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary master**.
 3. BIOS performs an **El Torito no-emulation** boot from that CD drive (see
    [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md) for the detailed El Torito + INT 13h
