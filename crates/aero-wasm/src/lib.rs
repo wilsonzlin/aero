@@ -2223,14 +2223,14 @@ mod legacy_demo_vm {
         pub async fn snapshot_full_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
             let mut file = OpfsSyncFile::create(&path)
                 .await
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e))?;
 
             self.inner
                 .save_snapshot_full_to(&mut file)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
             file.close()
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e))?;
             Ok(())
         }
 
@@ -2238,14 +2238,14 @@ mod legacy_demo_vm {
         pub async fn snapshot_dirty_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
             let mut file = OpfsSyncFile::create(&path)
                 .await
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e))?;
 
             self.inner
                 .save_snapshot_dirty_to(&mut file)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
             file.close()
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e))?;
             Ok(())
         }
 
@@ -2253,14 +2253,14 @@ mod legacy_demo_vm {
         pub async fn restore_snapshot_from_opfs(&mut self, path: String) -> Result<(), JsValue> {
             let mut file = OpfsSyncFile::open(&path, false)
                 .await
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.restore_snapshot_from_opfs", &path, e))?;
 
             self.inner
                 .restore_snapshot_from_checked(&mut file)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
             file.close()
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.restore_snapshot_from_opfs", &path, e))?;
             Ok(())
         }
     }
@@ -2602,16 +2602,50 @@ pub struct Machine {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn opfs_cross_origin_isolated() -> Option<bool> {
+    Reflect::get(&js_sys::global(), &JsValue::from_str("crossOriginIsolated"))
+        .ok()
+        .and_then(|v| v.as_bool())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn opfs_worker_hint() -> String {
+    let mut hint = "Hint: Run the wasm module in a DedicatedWorker (not the main thread)."
+        .to_string();
+    // Many Aero browser flows require the threaded WASM build, which in turn requires COOP/COEP
+    // (cross-origin isolation) to unlock `SharedArrayBuffer`. Mention this only when we can
+    // observe that the current context is *not* cross-origin isolated.
+    if matches!(opfs_cross_origin_isolated(), Some(false)) {
+        hint.push_str(" If you are using the threaded build, also ensure the page is cross-origin isolated (COOP/COEP) so SharedArrayBuffer is available.");
+    }
+    hint
+}
+
+#[cfg(target_arch = "wasm32")]
 fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError) -> JsValue {
     match err {
         aero_opfs::DiskError::NotSupported(_) | aero_opfs::DiskError::BackendUnavailable => {
             let msg = format!(
-                "{operation} failed for OPFS path \"{path}\": {err}\nHint: Run the wasm module in a DedicatedWorker (not the main thread)."
+                "{operation} failed for OPFS path \"{path}\": {err}\n{}",
+                opfs_worker_hint()
             );
             Error::new(&msg).into()
         }
         _ => JsValue::from_str(&err.to_string()),
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsValue {
+    let kind = err.kind();
+    if matches!(kind, std::io::ErrorKind::Unsupported | std::io::ErrorKind::NotConnected) {
+        let msg = format!(
+            "{operation} failed for OPFS path \"{path}\": {err}\n{}",
+            opfs_worker_hint()
+        );
+        return Error::new(&msg).into();
+    }
+    JsValue::from_str(&err.to_string())
 }
 
 #[wasm_bindgen]
@@ -3666,14 +3700,14 @@ impl Machine {
     pub async fn snapshot_full_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
         let mut file = OpfsSyncFile::create(&path)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_io_error_to_js("Machine.snapshot_full_to_opfs", &path, e))?;
 
         self.inner
             .save_snapshot_full_to(&mut file)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         file.close()
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_io_error_to_js("Machine.snapshot_full_to_opfs", &path, e))?;
         Ok(())
     }
 
@@ -3681,14 +3715,14 @@ impl Machine {
     pub async fn snapshot_dirty_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
         let mut file = OpfsSyncFile::create(&path)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_io_error_to_js("Machine.snapshot_dirty_to_opfs", &path, e))?;
 
         self.inner
             .save_snapshot_dirty_to(&mut file)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         file.close()
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_io_error_to_js("Machine.snapshot_dirty_to_opfs", &path, e))?;
         Ok(())
     }
 
@@ -3696,14 +3730,14 @@ impl Machine {
     pub async fn restore_snapshot_from_opfs(&mut self, path: String) -> Result<(), JsValue> {
         let mut file = OpfsSyncFile::open(&path, false)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_io_error_to_js("Machine.restore_snapshot_from_opfs", &path, e))?;
 
         self.inner
             .restore_snapshot_from_checked(&mut file)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         file.close()
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_io_error_to_js("Machine.restore_snapshot_from_opfs", &path, e))?;
         // Restoring rewinds machine device state; we no longer know the current mouse buttons.
         self.mouse_buttons_known = false;
         Ok(())
