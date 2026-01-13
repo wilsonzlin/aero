@@ -56,8 +56,8 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
   `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`).
 - With `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`), boot display is provided by
   the standalone `aero_gpu_vga` VGA/VBE device model, and the machine exposes a minimal PCI VGA
-  function at `00:0c.0` (`1234:1111`) so the VBE LFB is reachable via the PCI MMIO router (with an
-  LFB base derived from the BIOS/PCI BAR assignment, not hard-coded).
+  function at `00:0c.0` (`1234:1111`) so the VBE LFB is reachable via the PCI MMIO router (the stub
+  BAR mirrors the configured LFB base, historically defaulting to `0xE000_0000`).
 - This `enable_vga` VGA/VBE path is a stepping stone and does **not** implement the full AeroGPU
   WDDM MMIO/ring protocol described by
   [`16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md).

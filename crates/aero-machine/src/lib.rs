@@ -224,13 +224,14 @@ pub struct MachineConfig {
     /// integration tests.
     ///
     /// When enabled, guest physical accesses to the legacy VGA window (`0xA0000..0xC0000`), the
-    /// Bochs VBE linear framebuffer (LFB) at [`aero_gpu_vga::SVGA_LFB_BASE`], and VGA/VBE port I/O
-    /// are routed to an [`aero_gpu_vga::VgaDevice`].
+    /// Bochs VBE linear framebuffer (LFB) (legacy default base: [`aero_gpu_vga::SVGA_LFB_BASE`]),
+    /// and VGA/VBE port I/O are routed to an [`aero_gpu_vga::VgaDevice`].
     ///
     /// When the PC platform is enabled ([`MachineConfig::enable_pc_platform`]), the canonical
     /// machine also exposes a transitional Bochs/QEMU-compatible VGA PCI function (currently at
-    /// `00:0c.0`) so the fixed VBE LFB can be routed through the PCI MMIO window. This PCI stub is
-    /// not present when [`MachineConfig::enable_aerogpu`] is enabled.
+    /// `00:0c.0`) so the VBE LFB can be routed through the PCI MMIO window (the stub BAR mirrors the
+    /// configured LFB base). This PCI stub is not present when [`MachineConfig::enable_aerogpu`] is
+    /// enabled.
     ///
     /// Note: [`MachineConfig::enable_vga`] and [`MachineConfig::enable_aerogpu`] are mutually
     /// exclusive; [`Machine::new`] rejects configurations that enable both to avoid conflicting
@@ -6080,9 +6081,9 @@ impl Machine {
         // The BIOS is HLE and by default keeps the VBE linear framebuffer inside guest RAM so the
         // firmware-only tests can access it without MMIO routing.
         //
-        // When VGA is enabled, configure the BIOS to report the fixed Bochs/QEMU-compatible LFB
-        // base that our VGA device is mapped at (`SVGA_LFB_BASE`) so OSes and bootloaders see a
-        // stable, MMIO-safe framebuffer address.
+        // When VGA is enabled, configure the BIOS to report the Bochs/QEMU-compatible LFB base
+        // that our VGA device is mapped at (legacy default: `SVGA_LFB_BASE`) so OSes and
+        // bootloaders see an MMIO-safe framebuffer address.
         //
         // When VGA is disabled, keep the default LFB base in conventional RAM: pointing the BIOS
         // at `SVGA_LFB_BASE` would overlap the canonical PCI MMIO window (and could cause BIOS VBE
@@ -6652,7 +6653,7 @@ impl Machine {
         // Keep the BIOS-reported VBE linear framebuffer base coherent with the active display
         // device model.
         //
-        // - Legacy VGA/VBE device model: fixed `SVGA_LFB_BASE`.
+        // - Legacy VGA/VBE device model: configured base (legacy default: `SVGA_LFB_BASE`).
         // - AeroGPU: BAR1_BASE + VBE_LFB_OFFSET (within the VRAM aperture).
         // - Headless: default RAM-backed base (safe, avoids overlap with PCI MMIO window).
         let use_legacy_vga = self.cfg.enable_vga && !self.cfg.enable_aerogpu;
@@ -8083,8 +8084,8 @@ impl snapshot::SnapshotTarget for Machine {
             }
         }
 
-        // Ensure the BIOS VBE LFB base matches the machine's active display wiring (VGA fixed base,
-        // AeroGPU BAR1-derived base, or the default RAM-backed base for headless configs).
+        // Ensure the BIOS VBE LFB base matches the machine's active display wiring (VGA configured
+        // base, AeroGPU BAR1-derived base, or the default RAM-backed base for headless configs).
         self.sync_bios_vbe_lfb_base_to_display_wiring();
     }
 

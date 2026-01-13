@@ -366,7 +366,7 @@ With `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`), the canonica
 * VBE ports: `0x01CE/0x01CF`
 * Legacy VRAM window: `0xA0000..0xBFFFF`
 * SVGA linear framebuffer (LFB): base is **configurable** and should match the VGA PCI stub’s
-  BIOS-assigned BAR (often near `0xE000_0000` with the current default PCI MMIO allocator base)
+  BAR (historically defaulting to `0xE000_0000` via `aero_gpu_vga::SVGA_LFB_BASE`)
 
 To make the LFB reachable via PCI MMIO, the machine also exposes a **minimal PCI VGA function**
 (Bochs/QEMU "Standard VGA"-like IDs) at `00:0c.0`.

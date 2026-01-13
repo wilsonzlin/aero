@@ -26,7 +26,7 @@ Goal for Win7 UX: **the same virtual GPU** should provide *both* boot VGA/VBE ou
 - [x] VGA text mode rendering (80×25) in `crates/aero-gpu-vga/`
   - Entry: [`crates/aero-gpu-vga/src/lib.rs`](../../crates/aero-gpu-vga/src/lib.rs)
 - [x] Bochs/QEMU-style VBE (`VBE_DISPI`) register interface and **linear framebuffer** (LFB)
-  - LFB base: `aero_gpu_vga::SVGA_LFB_BASE` (`0xE000_0000`)
+  - LFB base: configurable (legacy default: `aero_gpu_vga::SVGA_LFB_BASE` / `0xE000_0000`)
   - Entry: [`crates/aero-gpu-vga/src/lib.rs`](../../crates/aero-gpu-vga/src/lib.rs)
 - [x] Canonical machine boot display is **`aero_gpu_vga::VgaDevice`** wired into `aero_machine::Machine`
   - Entry: [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs) (VGA integration + PCI stub)
