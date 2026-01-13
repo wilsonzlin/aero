@@ -473,6 +473,7 @@ The **L2 tunnel proxy** (`aero-l2-proxy`) provides an Ethernet (L2) tunnel over
 WebSocket:
 
 - The browser connects to `wss://<AERO_DOMAIN>/l2`
+- Legacy alias: `wss://<AERO_DOMAIN>/eth` (prefer `/l2` for new clients)
 - Caddy proxies the WebSocket upgrade to the `aero-l2-proxy` container
 - The connection uses subprotocol: `aero-l2-tunnel-v1`
 
