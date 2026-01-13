@@ -91,6 +91,9 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                 Some(cmd::AerogpuCmdOpcode::CreateShaderDxbc) => {
                     let _ = pkt.decode_create_shader_dxbc_payload_le();
                 }
+                Some(cmd::AerogpuCmdOpcode::BindShaders) => {
+                    let _ = pkt.decode_bind_shaders_payload_le();
+                }
                 Some(cmd::AerogpuCmdOpcode::UploadResource) => {
                     let _ = pkt.decode_upload_resource_payload_le();
                 }
@@ -129,7 +132,11 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
                         continue;
                     };
-                    let _ = cmd::decode_cmd_set_shader_constants_f_payload_le(packet_bytes);
+                    if let Ok((cmd_sc, _data)) =
+                        cmd::decode_cmd_set_shader_constants_f_payload_le(packet_bytes)
+                    {
+                        let _ = cmd::decode_stage_ex(cmd_sc.stage, cmd_sc.reserved0);
+                    }
                 }
                 Some(cmd::AerogpuCmdOpcode::CopyBuffer) => {
                     let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
@@ -146,11 +153,24 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                 Some(cmd::AerogpuCmdOpcode::SetVertexBuffers) => {
                     let _ = pkt.decode_set_vertex_buffers_payload_le();
                 }
+                Some(cmd::AerogpuCmdOpcode::SetTexture) => {
+                    if pkt.payload.len() >= 16 {
+                        let shader_stage =
+                            u32::from_le_bytes(pkt.payload[0..4].try_into().unwrap());
+                        let reserved0 = u32::from_le_bytes(pkt.payload[12..16].try_into().unwrap());
+                        let _ = cmd::decode_stage_ex(shader_stage, reserved0);
+                    }
+                }
                 Some(cmd::AerogpuCmdOpcode::SetSamplers) => {
-                    let _ = pkt.decode_set_samplers_payload_le();
+                    if let Ok((cmd_samplers, _handles)) = pkt.decode_set_samplers_payload_le() {
+                        let _ =
+                            cmd::decode_stage_ex(cmd_samplers.shader_stage, cmd_samplers.reserved0);
+                    }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetConstantBuffers) => {
-                    let _ = pkt.decode_set_constant_buffers_payload_le();
+                    if let Ok((cmd_cb, _bindings)) = pkt.decode_set_constant_buffers_payload_le() {
+                        let _ = cmd::decode_stage_ex(cmd_cb.shader_stage, cmd_cb.reserved0);
+                    }
                 }
                 _ => {}
             }
@@ -749,6 +769,9 @@ fuzz_target!(|data: &[u8]| {
     // Synthetic command stream: a fixed sequence of minimal valid packets using the fuzzer input
     // as filler. This ensures we consistently exercise a broad set of typed decoders.
     const SET_BLEND_STATE_LEGACY_SIZE_BYTES: usize = 28;
+    const BIND_SHADERS_BASE_SIZE_BYTES: usize = cmd::AerogpuCmdBindShaders::SIZE_BYTES;
+    // Variable-length `BIND_SHADERS` extension: base + optional gs/hs/ds handles (3 * u32).
+    const BIND_SHADERS_EXTENDED_SIZE_BYTES: usize = cmd::AerogpuCmdBindShaders::SIZE_BYTES + 12;
 
     const SYNTH_DXBC_BYTES: usize = 4;
     const SYNTH_UPLOAD_BYTES: usize = 4;
@@ -788,7 +811,8 @@ fuzz_target!(|data: &[u8]| {
         + cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES
         + CREATE_SHADER_DXBC_SYNTH_SIZE_BYTES
         + cmd::AerogpuCmdDestroyShader::SIZE_BYTES
-        + cmd::AerogpuCmdBindShaders::SIZE_BYTES
+        + BIND_SHADERS_BASE_SIZE_BYTES
+        + BIND_SHADERS_EXTENDED_SIZE_BYTES
         + SET_SHADER_CONSTANTS_F_SYNTH_SIZE_BYTES
         + CREATE_INPUT_LAYOUT_SYNTH_SIZE_BYTES
         + cmd::AerogpuCmdDestroyInputLayout::SIZE_BYTES
@@ -829,6 +853,10 @@ fuzz_target!(|data: &[u8]| {
     cmd_synth[8..12].copy_from_slice(&cmd_synth_size_bytes.to_le_bytes());
 
     let mut off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
+    let stage_ex_seed0 = data.get(0).copied().unwrap_or(0) & 7;
+    let stage_ex_seed1 = data.get(1).copied().unwrap_or(0) & 7;
+    let stage_ex_seed2 = data.get(2).copied().unwrap_or(0) & 7;
+    let stage_ex_seed3 = data.get(3).copied().unwrap_or(0) & 7;
 
     // NOP
     let _ = write_pkt_hdr(
@@ -898,12 +926,19 @@ fuzz_target!(|data: &[u8]| {
         cmd::AerogpuCmdDestroyShader::SIZE_BYTES,
     );
 
-    // BIND_SHADERS (fixed-size)
+    // BIND_SHADERS (base)
     let _ = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::BindShaders as u32,
-        cmd::AerogpuCmdBindShaders::SIZE_BYTES,
+        BIND_SHADERS_BASE_SIZE_BYTES,
+    );
+    // BIND_SHADERS (extended: base + gs/hs/ds)
+    let _ = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::BindShaders as u32,
+        BIND_SHADERS_EXTENDED_SIZE_BYTES,
     );
 
     // UPLOAD_RESOURCE (size_bytes=4)
@@ -1026,8 +1061,14 @@ fuzz_target!(|data: &[u8]| {
         cmd::AerogpuCmdOpcode::SetShaderConstantsF as u32,
         SET_SHADER_CONSTANTS_F_SYNTH_SIZE_BYTES,
     ) {
+        if let Some(stage) = cmd_synth.get_mut(pkt + 8..pkt + 12) {
+            stage.copy_from_slice(&(cmd::AerogpuShaderStage::Compute as u32).to_le_bytes());
+        }
         if let Some(vec4_count) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
             vec4_count.copy_from_slice(&(SYNTH_SHADER_CONST_VEC4_COUNT as u32).to_le_bytes());
+        }
+        if let Some(reserved0) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
+            reserved0.copy_from_slice(&(stage_ex_seed3 as u32).to_le_bytes());
         }
     }
 
@@ -1059,13 +1100,20 @@ fuzz_target!(|data: &[u8]| {
         cmd::AerogpuCmdSetPrimitiveTopology::SIZE_BYTES,
     );
 
-    // SET_TEXTURE (fixed-size)
-    let _ = write_pkt_hdr(
+    // SET_TEXTURE (fixed-size; stage_ex: shader_stage=COMPUTE, reserved0=fuzzed)
+    if let Some(pkt) = write_pkt_hdr(
         cmd_synth.as_mut_slice(),
         &mut off,
         cmd::AerogpuCmdOpcode::SetTexture as u32,
         cmd::AerogpuCmdSetTexture::SIZE_BYTES,
-    );
+    ) {
+        if let Some(shader_stage) = cmd_synth.get_mut(pkt + 8..pkt + 12) {
+            shader_stage.copy_from_slice(&(cmd::AerogpuShaderStage::Compute as u32).to_le_bytes());
+        }
+        if let Some(reserved0) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
+            reserved0.copy_from_slice(&(stage_ex_seed0 as u32).to_le_bytes());
+        }
+    }
 
     // SET_SAMPLER_STATE (fixed-size)
     let _ = write_pkt_hdr(
@@ -1106,8 +1154,14 @@ fuzz_target!(|data: &[u8]| {
         cmd::AerogpuCmdOpcode::SetSamplers as u32,
         SET_SAMPLERS_SYNTH_SIZE_BYTES,
     ) {
+        if let Some(shader_stage) = cmd_synth.get_mut(pkt + 8..pkt + 12) {
+            shader_stage.copy_from_slice(&(cmd::AerogpuShaderStage::Compute as u32).to_le_bytes());
+        }
         if let Some(sampler_count) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
             sampler_count.copy_from_slice(&(SYNTH_SAMPLER_COUNT as u32).to_le_bytes());
+        }
+        if let Some(reserved0) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
+            reserved0.copy_from_slice(&(stage_ex_seed1 as u32).to_le_bytes());
         }
     }
 
@@ -1118,8 +1172,14 @@ fuzz_target!(|data: &[u8]| {
         cmd::AerogpuCmdOpcode::SetConstantBuffers as u32,
         SET_CONSTANT_BUFFERS_SYNTH_SIZE_BYTES,
     ) {
+        if let Some(shader_stage) = cmd_synth.get_mut(pkt + 8..pkt + 12) {
+            shader_stage.copy_from_slice(&(cmd::AerogpuShaderStage::Compute as u32).to_le_bytes());
+        }
         if let Some(buffer_count) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
             buffer_count.copy_from_slice(&(SYNTH_CONSTANT_BUFFER_COUNT as u32).to_le_bytes());
+        }
+        if let Some(reserved0) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
+            reserved0.copy_from_slice(&(stage_ex_seed2 as u32).to_le_bytes());
         }
     }
 
