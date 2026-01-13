@@ -69,7 +69,7 @@ describe("workers/io_xhci_init", () => {
     expect((bridge as unknown as FakeXhciControllerBridge).size).toBe(0x0200_0000);
 
     const cfg = makeCfgIo(mgr);
-    const bdf = dev.bdf ?? { bus: 0, device: 2, function: 0 };
+    const bdf = dev.bdf ?? { bus: 0, device: 0x0d, function: 0 };
     expect(cfg.readU32(bdf.device, bdf.function, 0x00)).toBe(((dev.deviceId & 0xffff) << 16) | (dev.vendorId & 0xffff));
 
     // Enable PCI Bus Master so the JS wrapper calls into the bridge on tick.
