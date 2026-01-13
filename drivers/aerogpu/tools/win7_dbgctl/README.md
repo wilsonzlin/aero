@@ -181,10 +181,10 @@ Minimum supported commands:
   The KMD currently validates:
   - ring submission + ring head advancement (basic GPU forward progress), and
   - when `AEROGPU_FEATURE_VBLANK` is present and scanout is enabled:
-    - vblank sequence counter advances,
+    - vblank sequence counter advances (monotonic),
     - vblank IRQ enable/latch/ack logic works (best-effort), and
-    - vblank IRQ delivery reaches the ISR (wiring sanity),
-  - when `AEROGPU_FEATURE_CURSOR` is present: cursor MMIO regs are in-range and writable.
+    - vblank IRQ delivery reaches the ISR and DPC (IRQ plumbing sanity),
+  - when `AEROGPU_FEATURE_CURSOR` is present: cursor MMIO regs are in-range and read back after a small test config write.
   Exit code is **0** on PASS; on failure it returns the KMD-provided selftest error code (`error_code`).
   If the escape transport fails (e.g. `D3DKMTEscape` / `D3DKMTCloseAdapter` failure), it returns **254**.
   If `--timeout-ms` is too small for all subtests to run, the KMD may fail with `TIME_BUDGET_EXHAUSTED`.
