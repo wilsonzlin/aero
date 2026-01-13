@@ -1,0 +1,167 @@
+[
+  {
+    "name": "empty buffer (read_pos == write_pos)",
+    "read_pos": 0,
+    "write_pos": 0,
+    "capacity_samples": 8,
+    "expected": {
+      "samples_available": 0,
+      "samples_available_clamped": 0,
+      "samples_free": 8
+    }
+  },
+  {
+    "name": "normal monotonic positions (partially filled)",
+    "read_pos": 0,
+    "write_pos": 3,
+    "capacity_samples": 8,
+    "expected": {
+      "samples_available": 3,
+      "samples_available_clamped": 3,
+      "samples_free": 5
+    }
+  },
+  {
+    "name": "normal monotonic positions (exactly full)",
+    "read_pos": 0,
+    "write_pos": 8,
+    "capacity_samples": 8,
+    "expected": {
+      "samples_available": 8,
+      "samples_available_clamped": 8,
+      "samples_free": 0
+    }
+  },
+  {
+    "name": "write_pos ahead by > capacity (clamp to capacity)",
+    "read_pos": 0,
+    "write_pos": 10,
+    "capacity_samples": 8,
+    "expected": {
+      "samples_available": 10,
+      "samples_available_clamped": 8,
+      "samples_free": 0
+    }
+  },
+  {
+    "name": "normal monotonic positions (read advanced)",
+    "read_pos": 5,
+    "write_pos": 9,
+    "capacity_samples": 8,
+    "expected": {
+      "samples_available": 4,
+      "samples_available_clamped": 4,
+      "samples_free": 4
+    }
+  },
+  {
+    "name": "u32 wrap-around (write_pos < read_pos) small delta",
+    "read_pos": 4294967294,
+    "write_pos": 1,
+    "capacity_samples": 4,
+    "expected": {
+      "samples_available": 3,
+      "samples_available_clamped": 3,
+      "samples_free": 1
+    }
+  },
+  {
+    "name": "u32 wrap-around (write_pos < read_pos) exactly full after wrap",
+    "read_pos": 4294967292,
+    "write_pos": 1,
+    "capacity_samples": 5,
+    "expected": {
+      "samples_available": 5,
+      "samples_available_clamped": 5,
+      "samples_free": 0
+    }
+  },
+  {
+    "name": "u32 wrap-around (write_pos < read_pos) delta > capacity (clamp)",
+    "read_pos": 4294967280,
+    "write_pos": 10,
+    "capacity_samples": 8,
+    "expected": {
+      "samples_available": 26,
+      "samples_available_clamped": 8,
+      "samples_free": 0
+    }
+  },
+  {
+    "name": "capacity=1 (empty)",
+    "read_pos": 123,
+    "write_pos": 123,
+    "capacity_samples": 1,
+    "expected": {
+      "samples_available": 0,
+      "samples_available_clamped": 0,
+      "samples_free": 1
+    }
+  },
+  {
+    "name": "capacity=1 (full)",
+    "read_pos": 123,
+    "write_pos": 124,
+    "capacity_samples": 1,
+    "expected": {
+      "samples_available": 1,
+      "samples_available_clamped": 1,
+      "samples_free": 0
+    }
+  },
+  {
+    "name": "capacity=1 (available > capacity clamps)",
+    "read_pos": 123,
+    "write_pos": 125,
+    "capacity_samples": 1,
+    "expected": {
+      "samples_available": 2,
+      "samples_available_clamped": 1,
+      "samples_free": 0
+    }
+  },
+  {
+    "name": "capacity=2 (write_pos < read_pos extreme wrap delta)",
+    "read_pos": 1,
+    "write_pos": 0,
+    "capacity_samples": 2,
+    "expected": {
+      "samples_available": 4294967295,
+      "samples_available_clamped": 2,
+      "samples_free": 0
+    }
+  },
+  {
+    "name": "capacity=2 (partially filled)",
+    "read_pos": 10,
+    "write_pos": 11,
+    "capacity_samples": 2,
+    "expected": {
+      "samples_available": 1,
+      "samples_available_clamped": 1,
+      "samples_free": 1
+    }
+  },
+  {
+    "name": "capacity=2 (exactly full)",
+    "read_pos": 10,
+    "write_pos": 12,
+    "capacity_samples": 2,
+    "expected": {
+      "samples_available": 2,
+      "samples_available_clamped": 2,
+      "samples_free": 0
+    }
+  },
+  {
+    "name": "capacity=3 (normal positions but delta > capacity clamps)",
+    "read_pos": 1000,
+    "write_pos": 1005,
+    "capacity_samples": 3,
+    "expected": {
+      "samples_available": 5,
+      "samples_available_clamped": 3,
+      "samples_free": 0
+    }
+  }
+]
