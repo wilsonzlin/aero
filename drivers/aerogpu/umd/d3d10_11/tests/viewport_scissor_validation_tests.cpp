@@ -63,6 +63,103 @@ const aerogpu_cmd_hdr* FindLastOpcode(const uint8_t* buf, size_t len, uint32_t o
   return last;
 }
 
+struct Harness {
+  std::vector<uint8_t> last_stream;
+  std::vector<HRESULT> errors;
+
+  static HRESULT AEROGPU_APIENTRY SubmitCmdStream(void* user,
+                                                  const void* cmd_stream,
+                                                  uint32_t cmd_stream_size_bytes,
+                                                  const AEROGPU_WDDM_ALLOCATION_HANDLE*,
+                                                  uint32_t,
+                                                  uint64_t*) {
+    if (!user || !cmd_stream || cmd_stream_size_bytes < sizeof(aerogpu_cmd_stream_header)) {
+      return E_INVALIDARG;
+    }
+    auto* h = reinterpret_cast<Harness*>(user);
+    const auto* bytes = reinterpret_cast<const uint8_t*>(cmd_stream);
+    h->last_stream.assign(bytes, bytes + cmd_stream_size_bytes);
+    return S_OK;
+  }
+
+  static void AEROGPU_APIENTRY SetError(void* user, HRESULT hr) {
+    if (!user) {
+      return;
+    }
+    auto* h = reinterpret_cast<Harness*>(user);
+    h->errors.push_back(hr);
+  }
+};
+
+struct TestDevice {
+  Harness harness;
+
+  D3D10DDI_HADAPTER hAdapter = {};
+  D3D10DDI_ADAPTERFUNCS adapter_funcs = {};
+
+  D3D10DDI_HDEVICE hDevice = {};
+  AEROGPU_D3D10_11_DEVICEFUNCS device_funcs = {};
+  std::vector<uint8_t> device_mem;
+
+  AEROGPU_D3D10_11_DEVICECALLBACKS callbacks = {};
+};
+
+bool InitTestDevice(TestDevice* out) {
+  if (!out) {
+    return false;
+  }
+
+  out->callbacks.pUserContext = &out->harness;
+  out->callbacks.pfnSubmitCmdStream = &Harness::SubmitCmdStream;
+  out->callbacks.pfnSetError = &Harness::SetError;
+
+  D3D10DDIARG_OPENADAPTER open = {};
+  open.pAdapterFuncs = &out->adapter_funcs;
+  HRESULT hr = OpenAdapter10(&open);
+  if (!Check(hr == S_OK, "OpenAdapter10")) {
+    return false;
+  }
+  out->hAdapter = open.hAdapter;
+
+  D3D10DDIARG_CREATEDEVICE create = {};
+  create.hDevice.pDrvPrivate = nullptr;
+  const SIZE_T dev_size = out->adapter_funcs.pfnCalcPrivateDeviceSize(out->hAdapter, &create);
+  if (!Check(dev_size >= sizeof(void*), "CalcPrivateDeviceSize returned a non-trivial size")) {
+    return false;
+  }
+
+  out->device_mem.assign(static_cast<size_t>(dev_size), 0);
+  create.hDevice.pDrvPrivate = out->device_mem.data();
+  create.pDeviceFuncs = &out->device_funcs;
+  create.pDeviceCallbacks = &out->callbacks;
+
+  hr = out->adapter_funcs.pfnCreateDevice(out->hAdapter, &create);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    out->adapter_funcs.pfnCloseAdapter(out->hAdapter);
+    out->hAdapter = {};
+    return false;
+  }
+
+  out->hDevice = create.hDevice;
+  out->harness.errors.clear();
+  out->harness.last_stream.clear();
+  return true;
+}
+
+void DestroyTestDevice(TestDevice* dev) {
+  if (!dev) {
+    return;
+  }
+  if (dev->device_funcs.pfnDestroyDevice) {
+    dev->device_funcs.pfnDestroyDevice(dev->hDevice);
+  }
+  if (dev->adapter_funcs.pfnCloseAdapter) {
+    dev->adapter_funcs.pfnCloseAdapter(dev->hAdapter);
+  }
+  dev->hDevice = {};
+  dev->hAdapter = {};
+}
+
 bool TestMultiViewportReportsNotImplAndEmitsFirst() {
   Device dev{};
   std::vector<HRESULT> errors;
@@ -363,6 +460,182 @@ bool TestViewportAndScissorDisableEncodesDefaults() {
   return true;
 }
 
+bool TestPortableUmdMultiViewportReportsNotImplAndEmitsFirst() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(portable multi-viewport)")) {
+    return false;
+  }
+
+  const AEROGPU_DDI_VIEWPORT viewports[2] = {
+      AEROGPU_DDI_VIEWPORT{/*TopLeftX=*/1.0f, /*TopLeftY=*/2.0f, /*Width=*/3.0f, /*Height=*/4.0f, /*MinDepth=*/0.0f, /*MaxDepth=*/1.0f},
+      AEROGPU_DDI_VIEWPORT{/*TopLeftX=*/10.0f, /*TopLeftY=*/20.0f, /*Width=*/30.0f, /*Height=*/40.0f, /*MinDepth=*/0.25f, /*MaxDepth=*/0.75f},
+  };
+
+  dev.device_funcs.pfnSetViewports(dev.hDevice, /*num_viewports=*/2, viewports);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetViewports")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  if (!Check(dev.harness.errors.size() == 1, "Portable SetViewports(2 distinct) should report exactly one error")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(dev.harness.errors[0] == E_NOTIMPL, "Portable SetViewports(2 distinct) should report E_NOTIMPL")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_VIEWPORT);
+  if (!Check(hdr != nullptr, "expected SET_VIEWPORT to be emitted")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_viewport*>(hdr);
+  const auto& vp0 = viewports[0];
+  if (!Check(cmd->x_f32 == f32_bits(vp0.TopLeftX), "SET_VIEWPORT x matches first viewport")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->y_f32 == f32_bits(vp0.TopLeftY), "SET_VIEWPORT y matches first viewport")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->width_f32 == f32_bits(vp0.Width), "SET_VIEWPORT width matches first viewport")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->height_f32 == f32_bits(vp0.Height), "SET_VIEWPORT height matches first viewport")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  DestroyTestDevice(&dev);
+  return true;
+}
+
+bool TestPortableUmdMultiScissorReportsNotImplAndEmitsFirst() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(portable multi-scissor)")) {
+    return false;
+  }
+
+  const AEROGPU_DDI_RECT rects[2] = {
+      AEROGPU_DDI_RECT{/*left=*/1, /*top=*/2, /*right=*/3, /*bottom=*/4},
+      AEROGPU_DDI_RECT{/*left=*/10, /*top=*/20, /*right=*/30, /*bottom=*/40},
+  };
+
+  dev.device_funcs.pfnSetScissorRects(dev.hDevice, /*num_rects=*/2, rects);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetScissorRects")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  if (!Check(dev.harness.errors.size() == 1, "Portable SetScissorRects(2 distinct) should report exactly one error")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(dev.harness.errors[0] == E_NOTIMPL, "Portable SetScissorRects(2 distinct) should report E_NOTIMPL")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_SCISSOR);
+  if (!Check(hdr != nullptr, "expected SET_SCISSOR to be emitted")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_scissor*>(hdr);
+  const auto& r0 = rects[0];
+  if (!Check(cmd->x == r0.left, "SET_SCISSOR x matches first rect")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->y == r0.top, "SET_SCISSOR y matches first rect")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->width == (r0.right - r0.left), "SET_SCISSOR width matches first rect")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->height == (r0.bottom - r0.top), "SET_SCISSOR height matches first rect")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  DestroyTestDevice(&dev);
+  return true;
+}
+
+bool TestPortableUmdDisableEncodesDefaultsAndDoesNotReportErrors() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(portable disable viewport/scissor)")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnSetViewports(dev.hDevice, /*num_viewports=*/0, /*viewports=*/nullptr);
+  dev.device_funcs.pfnSetScissorRects(dev.hDevice, /*num_rects=*/0, /*rects=*/nullptr);
+
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after disable viewport/scissor")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  if (!Check(dev.harness.errors.empty(), "Portable disable viewport/scissor should not report errors")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  const auto* vp_hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_VIEWPORT);
+  if (!Check(vp_hdr != nullptr, "expected SET_VIEWPORT (disable) to be emitted")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* vp_cmd = reinterpret_cast<const aerogpu_cmd_set_viewport*>(vp_hdr);
+  if (!Check(vp_cmd->width_f32 == f32_bits(0.0f) && vp_cmd->height_f32 == f32_bits(0.0f),
+             "Disable viewport encodes 0x0 dimensions")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  const auto* sc_hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_SCISSOR);
+  if (!Check(sc_hdr != nullptr, "expected SET_SCISSOR (disable) to be emitted")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* sc_cmd = reinterpret_cast<const aerogpu_cmd_set_scissor*>(sc_hdr);
+  if (!Check(sc_cmd->width == 0 && sc_cmd->height == 0, "Disable scissor encodes 0x0 dimensions")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  DestroyTestDevice(&dev);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -372,6 +645,9 @@ int main() {
   ok &= TestMultiScissorReportsNotImplAndEmitsFirst();
   ok &= TestMultiScissorIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestViewportAndScissorDisableEncodesDefaults();
+  ok &= TestPortableUmdMultiViewportReportsNotImplAndEmitsFirst();
+  ok &= TestPortableUmdMultiScissorReportsNotImplAndEmitsFirst();
+  ok &= TestPortableUmdDisableEncodesDefaultsAndDoesNotReportErrors();
   if (!ok) {
     return 1;
   }

@@ -60,6 +60,7 @@ add_test(NAME aerogpu_d3d10_11_depth_stencil_state_tests COMMAND aerogpu_d3d10_1
 
 add_executable(aerogpu_d3d10_11_viewport_scissor_validation_tests
     viewport_scissor_validation_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d10_11_umd.cpp
 )
 
 target_include_directories(aerogpu_d3d10_11_viewport_scissor_validation_tests PRIVATE
