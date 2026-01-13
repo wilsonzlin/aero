@@ -1393,23 +1393,36 @@ impl Emitter<'_> {
                     .instruction(&Instruction::LocalSet(self.layout.scratch_vpn_local()));
 
                 // table[page] += 1
+                //
+                // Note: when the module imports a shared memory, we must use atomic operations for
+                // correctness under concurrency. Non-atomic `i32.load`/`i32.store` sequences can
+                // lose increments when multiple agents bump the same entry concurrently.
                 self.func
                     .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
                 self.func.instruction(&Instruction::I32WrapI64);
-                self.func.instruction(&Instruction::I32Load(memarg(0, 2)));
-                self.func.instruction(&Instruction::I32Const(1));
-                self.func.instruction(&Instruction::I32Add);
-                self.func.instruction(&Instruction::I64ExtendI32U);
-                self.func
-                    .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+                if self.options.memory_shared {
+                    self.func.instruction(&Instruction::I32Const(1));
+                    self.func
+                        .instruction(&Instruction::I32AtomicRmwAdd(memarg(0, 2)));
+                    // `i32.atomic.rmw.add` returns the old value; we only care that the increment
+                    // happens.
+                    self.func.instruction(&Instruction::Drop);
+                } else {
+                    self.func.instruction(&Instruction::I32Load(memarg(0, 2)));
+                    self.func.instruction(&Instruction::I32Const(1));
+                    self.func.instruction(&Instruction::I32Add);
+                    self.func.instruction(&Instruction::I64ExtendI32U);
+                    self.func
+                        .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
 
-                self.func
-                    .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
-                self.func.instruction(&Instruction::I32WrapI64);
-                self.func
-                    .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-                self.func.instruction(&Instruction::I32WrapI64);
-                self.func.instruction(&Instruction::I32Store(memarg(0, 2)));
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
+                    self.func.instruction(&Instruction::I32WrapI64);
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                    self.func.instruction(&Instruction::I32WrapI64);
+                    self.func.instruction(&Instruction::I32Store(memarg(0, 2)));
+                }
             }
             self.func.instruction(&Instruction::End);
         }

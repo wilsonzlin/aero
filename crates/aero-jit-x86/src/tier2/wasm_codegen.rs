@@ -823,7 +823,11 @@ impl Emitter<'_> {
                         self.f.instruction(&Instruction::I64Const(byte_off));
                         self.f.instruction(&Instruction::I64Add);
                         self.f.instruction(&Instruction::I32WrapI64);
-                        self.f.instruction(&Instruction::I32Load(memarg(0, 2)));
+                        if self.options.memory_shared {
+                            self.f.instruction(&Instruction::I32AtomicLoad(memarg(0, 2)));
+                        } else {
+                            self.f.instruction(&Instruction::I32Load(memarg(0, 2)));
+                        }
                         self.f.instruction(&Instruction::I64ExtendI32U);
                     }
                     self.f.instruction(&Instruction::Else);
@@ -1592,23 +1596,36 @@ impl Emitter<'_> {
                     .instruction(&Instruction::LocalSet(self.layout.scratch_vpn_local()));
 
                 // table[page] += 1
+                //
+                // Note: when the module imports a shared memory, we must use atomic operations for
+                // correctness under concurrency. Non-atomic `i32.load`/`i32.store` sequences can
+                // lose increments when multiple agents bump the same entry concurrently.
                 self.f
                     .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
                 self.f.instruction(&Instruction::I32WrapI64);
-                self.f.instruction(&Instruction::I32Load(memarg(0, 2)));
-                self.f.instruction(&Instruction::I32Const(1));
-                self.f.instruction(&Instruction::I32Add);
-                self.f.instruction(&Instruction::I64ExtendI32U);
-                self.f
-                    .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+                if self.options.memory_shared {
+                    self.f.instruction(&Instruction::I32Const(1));
+                    self.f
+                        .instruction(&Instruction::I32AtomicRmwAdd(memarg(0, 2)));
+                    // `i32.atomic.rmw.add` returns the old value; we only care that the increment
+                    // happens.
+                    self.f.instruction(&Instruction::Drop);
+                } else {
+                    self.f.instruction(&Instruction::I32Load(memarg(0, 2)));
+                    self.f.instruction(&Instruction::I32Const(1));
+                    self.f.instruction(&Instruction::I32Add);
+                    self.f.instruction(&Instruction::I64ExtendI32U);
+                    self.f
+                        .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
 
-                self.f
-                    .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
-                self.f.instruction(&Instruction::I32WrapI64);
-                self.f
-                    .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-                self.f.instruction(&Instruction::I32WrapI64);
-                self.f.instruction(&Instruction::I32Store(memarg(0, 2)));
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
+                    self.f.instruction(&Instruction::I32WrapI64);
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                    self.f.instruction(&Instruction::I32WrapI64);
+                    self.f.instruction(&Instruction::I32Store(memarg(0, 2)));
+                }
             }
             self.f.instruction(&Instruction::End);
         }
