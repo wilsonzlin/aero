@@ -796,6 +796,36 @@ def validate(
             f"{contract_name_hint}"
         )
 
+    def maybe_validate_service_name(*, devices_var: str, device_name: str) -> None:
+        raw_actual = devices.vars_map.get(devices_var.upper())
+        if raw_actual is None:
+            return
+        actual = raw_actual.strip()
+        contract_device = contract.devices.get(device_name)
+        if contract_device is None:
+            raise ValidationError(f"Windows device contract {contract_path} is missing the required {device_name!r} entry.")
+        expected = contract_device.driver_service_name
+        if actual.lower() != expected.strip().lower():
+            raise ValidationError(
+                f"Mismatch: devices.cmd {device_name} service name does not match the Windows device contract.\n"
+                "\n"
+                f"devices.cmd {devices_var}: {actual!r}\n"
+                f"{contract_path} {device_name}.driver_service_name: {expected!r}\n"
+                "\n"
+                "Remediation:\n"
+                f"- Update {contract_path} ({device_name}.driver_service_name) to match the {device_name} INF AddService name.\n"
+                "- Regenerate guest-tools/config/devices.cmd (it is derived from the contract).\n"
+                f"{contract_name_hint}"
+            )
+
+    # Validate service-name variables declared in devices.cmd against the selected Windows
+    # device contract. These are used by Guest Tools scripts to locate/seed the correct
+    # services; mismatches tend to surface only at boot time, so catch them here.
+    maybe_validate_service_name(devices_var="AERO_VIRTIO_NET_SERVICE", device_name="virtio-net")
+    maybe_validate_service_name(devices_var="AERO_VIRTIO_INPUT_SERVICE", device_name="virtio-input")
+    maybe_validate_service_name(devices_var="AERO_VIRTIO_SND_SERVICE", device_name="virtio-snd")
+    maybe_validate_service_name(devices_var="AERO_GPU_SERVICE", device_name="aero-gpu")
+
     virtio_net_contract = contract.devices.get("virtio-net")
     if virtio_net_contract is None:
         raise ValidationError(f"Windows device contract {contract_path} is missing the required 'virtio-net' entry.")

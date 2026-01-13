@@ -67,6 +67,7 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
                     ]
                 ),
@@ -112,6 +113,7 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
                     ]
                 ),
@@ -153,6 +155,56 @@ class ValidateConfigTests(unittest.TestCase):
 
             self.assertIn("AERO_VIRTIO_INPUT_HWIDS", str(ctx.exception))
 
+    def test_devices_cmd_service_name_mismatch_is_detected(self) -> None:
+        # `devices.cmd` must stay in sync with the device contract's service-name declarations.
+        # Service-name mismatches are easy to miss because they only surface at install/boot time.
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            devices_cmd = tmp_path / "devices.cmd"
+            virtio_blk = _contract_device("virtio-blk")
+            virtio_net = _contract_device("virtio-net")
+            devices_cmd.write_text(
+                "\n".join(
+                    [
+                        f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
+                        f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        # Wrong on purpose.
+                        'set "AERO_VIRTIO_NET_SERVICE=not_the_real_service"',
+                        f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            spec_path = tmp_path / "spec.json"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "drivers": [
+                            {
+                                "name": "viostor",
+                                "required": True,
+                                "expected_hardware_ids": [_ven_dev_regex_from_hwid(virtio_blk.hardware_id_patterns[0])],
+                            },
+                            {
+                                "name": "netkvm",
+                                "required": True,
+                                "expected_hardware_ids": [_ven_dev_regex_from_hwid(virtio_net.hardware_id_patterns[0])],
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            devices = validate_config.load_devices_cmd(devices_cmd)
+            expected = validate_config.load_packaging_spec(spec_path)
+            with self.assertRaises(validate_config.ValidationError) as ctx:
+                with redirect_stdout(io.StringIO()):
+                    validate_config.validate(devices, spec_path, expected)
+
+            self.assertIn("AERO_VIRTIO_NET_SERVICE", str(ctx.exception))
+
     def test_regex_matching_is_case_insensitive(self) -> None:
         # Spec regexes should match HWIDs regardless of case.
         match = validate_config._find_first_match(
@@ -176,7 +228,9 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                        f'set "AERO_GPU_SERVICE={aerogpu.driver_service_name}"',
                         f"set AERO_GPU_HWIDS={_quote_items(aerogpu.hardware_id_patterns)}",
                     ]
                 ),
@@ -227,9 +281,13 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_INPUT_SERVICE={virtio_input.driver_service_name}"',
                         f"set AERO_VIRTIO_INPUT_HWIDS={_quote_items(virtio_input.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_SND_SERVICE={virtio_snd.driver_service_name}"',
                         f"set AERO_VIRTIO_SND_HWIDS={_quote_items(virtio_snd.hardware_id_patterns)}",
+                        f'set "AERO_GPU_SERVICE={aerogpu.driver_service_name}"',
                         f"set AERO_GPU_HWIDS={_quote_items(aerogpu.hardware_id_patterns)}",
                     ]
                 ),
@@ -337,6 +395,7 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
                     ]
                 ),
@@ -466,8 +525,11 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_INPUT_SERVICE={virtio_input.driver_service_name}"',
                         f"set AERO_VIRTIO_INPUT_HWIDS={_quote_items(virtio_input.hardware_id_patterns)}",
+                        f'set "AERO_GPU_SERVICE={aerogpu.driver_service_name}"',
                         f"set AERO_GPU_HWIDS={_quote_items(aerogpu.hardware_id_patterns)}",
                     ]
                 ),
@@ -531,8 +593,11 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_INPUT_SERVICE={virtio_input.driver_service_name}"',
                         f"set AERO_VIRTIO_INPUT_HWIDS={_quote_items(virtio_input.hardware_id_patterns)}",
+                        f'set "AERO_GPU_SERVICE={aerogpu.driver_service_name}"',
                         f"set AERO_GPU_HWIDS={_quote_items(aerogpu.hardware_id_patterns)}",
                     ]
                 ),
@@ -597,8 +662,11 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_INPUT_SERVICE={virtio_input.driver_service_name}"',
                         f"set AERO_VIRTIO_INPUT_HWIDS={_quote_items(virtio_input.hardware_id_patterns)}",
+                        f'set "AERO_GPU_SERVICE={aerogpu.driver_service_name}"',
                         f"set AERO_GPU_HWIDS={_quote_items(aerogpu.hardware_id_patterns)}",
                     ]
                 ),
@@ -661,6 +729,7 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
                     ]
                 ),
@@ -712,8 +781,11 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_INPUT_SERVICE={virtio_input.driver_service_name}"',
                         f"set AERO_VIRTIO_INPUT_HWIDS={_quote_items(virtio_input.hardware_id_patterns)}",
+                        f'set "AERO_GPU_SERVICE={aerogpu.driver_service_name}"',
                         f"set AERO_GPU_HWIDS={_quote_items(aerogpu.hardware_id_patterns)}",
                     ]
                 ),
@@ -776,8 +848,11 @@ class ValidateConfigTests(unittest.TestCase):
                     [
                         f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
                         f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_NET_SERVICE={virtio_net.driver_service_name}"',
                         f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_INPUT_SERVICE={virtio_input.driver_service_name}"',
                         f"set AERO_VIRTIO_INPUT_HWIDS={_quote_items(virtio_input.hardware_id_patterns)}",
+                        f'set "AERO_VIRTIO_SND_SERVICE={virtio_snd.driver_service_name}"',
                         f"set AERO_VIRTIO_SND_HWIDS={_quote_items(virtio_snd.hardware_id_patterns)}",
                     ]
                 ),
