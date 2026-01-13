@@ -95,35 +95,96 @@ pub fn write_bytes_wrapped<B: CpuBus>(
         return bus.write_bytes(start, src);
     }
 
-    // Split the access into maximal contiguous runs in masked linear address
-    // space, then preflight *all* runs before committing any writes. This keeps
-    // multi-byte stores atomic w.r.t page faults even when the architectural
-    // address space wraps (32-bit linear wrap, A20 alias wrap).
-    let mut segments: Vec<(u64, &[u8])> = Vec::new();
-    let mut offset = 0usize;
-    while offset < src.len() {
-        let seg_start = state.apply_a20(addr.wrapping_add(offset as u64));
+    #[derive(Clone, Copy)]
+    struct Segment {
+        start: u64,
+        offset: usize,
+        len: usize,
+    }
 
-        let mut seg_len = 1usize;
-        while offset + seg_len < src.len() {
-            let cur = state.apply_a20(addr.wrapping_add((offset + seg_len - 1) as u64));
-            let next = state.apply_a20(addr.wrapping_add((offset + seg_len) as u64));
-            if cur.checked_add(1) != Some(next) {
-                break;
+    // Upper bound on how many segments we will record on the heap. In pathological
+    // wrap patterns (e.g. A20 aliasing every 1MiB for very large buffers), the
+    // number of segments can become very large and we want to avoid allocating a
+    // Vec proportional to the write length.
+    const MAX_STORED_SEGMENTS: usize = 4096;
+
+    // Split the access into maximal contiguous runs in masked linear address space,
+    // then preflight *all* runs before committing any writes. This keeps multi-byte
+    // stores atomic w.r.t page faults even when the architectural address space
+    // wraps (32-bit linear wrap, A20 alias wrap).
+    //
+    // We store segments only up to MAX_STORED_SEGMENTS; if the write fragments
+    // further, we fall back to a second pass for the tail without allocating.
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut segment_count = 0usize;
+
+    let mut seg_start_offset = 0usize;
+    let mut seg_start_addr = state.apply_a20(addr);
+    let mut prev = seg_start_addr;
+
+    // Preflight pass (no writes).
+    for i in 1..src.len() {
+        let masked = state.apply_a20(addr.wrapping_add(i as u64));
+        if prev.checked_add(1) != Some(masked) {
+            let seg_len = i - seg_start_offset;
+            bus.preflight_write_bytes(seg_start_addr, seg_len)?;
+            segment_count += 1;
+            if segment_count <= MAX_STORED_SEGMENTS {
+                segments.push(Segment {
+                    start: seg_start_addr,
+                    offset: seg_start_offset,
+                    len: seg_len,
+                });
             }
-            seg_len += 1;
+            seg_start_offset = i;
+            seg_start_addr = masked;
         }
-
-        segments.push((seg_start, &src[offset..offset + seg_len]));
-        offset += seg_len;
+        prev = masked;
     }
 
-    for (start, chunk) in &segments {
-        bus.preflight_write_bytes(*start, chunk.len())?;
+    let seg_len = src.len() - seg_start_offset;
+    bus.preflight_write_bytes(seg_start_addr, seg_len)?;
+    segment_count += 1;
+    if segment_count <= MAX_STORED_SEGMENTS {
+        segments.push(Segment {
+            start: seg_start_addr,
+            offset: seg_start_offset,
+            len: seg_len,
+        });
     }
-    for (start, chunk) in segments {
-        bus.write_bytes(start, chunk)?;
+
+    // Commit pass: if the segmentation is small, use the stored descriptors;
+    // otherwise, write the stored prefix and redo segmentation for the tail
+    // without allocation.
+    for seg in &segments {
+        bus.write_bytes(seg.start, &src[seg.offset..seg.offset + seg.len])?;
     }
+
+    if segment_count <= MAX_STORED_SEGMENTS {
+        return Ok(());
+    }
+
+    // Too many segments to store: recompute segmentation for the remaining
+    // portion (after the prefix we already wrote), without building a large Vec.
+    let offset = segments.iter().map(|s| s.len).sum::<usize>();
+    debug_assert!(offset < src.len());
+
+    let mut seg_start_offset = offset;
+    let mut seg_start_addr = state.apply_a20(addr.wrapping_add(offset as u64));
+    let mut prev = seg_start_addr;
+
+    for i in (offset + 1)..src.len() {
+        let masked = state.apply_a20(addr.wrapping_add(i as u64));
+        if prev.checked_add(1) != Some(masked) {
+            let seg_len = i - seg_start_offset;
+            bus.write_bytes(seg_start_addr, &src[seg_start_offset..seg_start_offset + seg_len])?;
+            seg_start_offset = i;
+            seg_start_addr = masked;
+        }
+        prev = masked;
+    }
+    let seg_len = src.len() - seg_start_offset;
+    bus.write_bytes(seg_start_addr, &src[seg_start_offset..seg_start_offset + seg_len])?;
     Ok(())
 }
 
