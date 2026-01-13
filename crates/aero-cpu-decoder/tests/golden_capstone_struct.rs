@@ -6,28 +6,8 @@ use aero_cpu_decoder::{
 use capstone::arch::x86::{X86Operand, X86OperandType};
 use capstone::prelude::*;
 
-// Tiny deterministic PRNG for test input generation.
-struct XorShift64(u64);
-
-impl XorShift64 {
-    fn next_u64(&mut self) -> u64 {
-        // xorshift64*
-        let mut x = self.0;
-        x ^= x >> 12;
-        x ^= x << 25;
-        x ^= x >> 27;
-        self.0 = x;
-        x.wrapping_mul(0x2545F4914F6CDD1D)
-    }
-
-    fn fill(&mut self, buf: &mut [u8]) {
-        for chunk in buf.chunks_mut(8) {
-            let v = self.next_u64().to_le_bytes();
-            let n = chunk.len();
-            chunk.copy_from_slice(&v[..n]);
-        }
-    }
-}
+mod common;
+use common::XorShift64;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum OperandCat {

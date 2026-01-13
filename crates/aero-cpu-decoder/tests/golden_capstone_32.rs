@@ -7,10 +7,10 @@ mod common;
 use common::XorShift64;
 
 #[test]
-fn golden_decode_len_matches_capstone_x86_64() {
+fn golden_decode_len_matches_capstone_x86_32() {
     let mut cs = Capstone::new()
         .x86()
-        .mode(arch::x86::ArchMode::Mode64)
+        .mode(arch::x86::ArchMode::Mode32)
         .syntax(arch::x86::ArchSyntax::Intel)
         .detail(false)
         .build()
@@ -19,11 +19,11 @@ fn golden_decode_len_matches_capstone_x86_64() {
     // Ensure Capstone doesn't try to "skipdata" over invalid bytes; we want strict decode.
     let _ = cs.set_skipdata(false);
 
-    let mut rng = XorShift64(0xD1CE_BA5E_C0DE_CAFE);
+    let mut rng = XorShift64(0x32B1_75E5_1EED_F00Du64);
 
     // Collect a large set of random byte sequences and compare decoded length for all
     // cases where both decoders agree the first instruction is valid.
-    const TARGET_MATCHES: usize = 10_000;
+    const TARGET_MATCHES: usize = 5_000;
     const MAX_ATTEMPTS: usize = 500_000;
 
     let mut matches = 0usize;
@@ -35,7 +35,7 @@ fn golden_decode_len_matches_capstone_x86_64() {
         rng.fill(&mut bytes);
 
         let ip = 0x1000u64;
-        let ours = decode_one(DecodeMode::Bits64, ip, &bytes);
+        let ours = decode_one(DecodeMode::Bits32, ip, &bytes);
         let cap = cs.disasm_count(&bytes, ip, 1);
 
         let (Ok(ours), Ok(cap)) = (ours, cap) else {
@@ -65,3 +65,4 @@ fn golden_decode_len_matches_capstone_x86_64() {
         "only matched {matches} instructions after {attempts} attempts"
     );
 }
+
