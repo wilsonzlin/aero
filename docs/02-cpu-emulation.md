@@ -223,25 +223,20 @@ The CPU’s timestamp counter is modeled by [`time::TimeSource`](../crates/aero-
 ### Perf counters integration
 
 Instruction retirement is also the unit used by `aero-perf` counters (`PerfWorker::retire_instructions`).
-When driving the CPU through `ExecDispatcher`, embedders should use the dispatcher-provided retirement count,
-which already accounts for interpreter vs JIT and committed vs rollback exits:
+When driving the CPU through `ExecDispatcher`, embedders should use the dispatcher-provided retirement count.
+The canonical integration is [`aero_perf::retire_from_step_outcome`], which already accounts for interpreter vs
+JIT execution and committed vs rollback exits (rollback retires 0 instructions):
 
 ```rust
 use aero_cpu_core::exec::StepOutcome;
 
 loop {
     let outcome = dispatcher.step(&mut vcpu);
-    match outcome {
-        StepOutcome::InterruptDelivered => {}
-        StepOutcome::Block {
-            tier,
-            instructions_retired,
-            ..
-        } => {
-            perf.retire_instructions(instructions_retired);
-            // `tier` can be used for profiling, but instruction counting does not need to special-case it.
-            let _ = tier;
-        }
+    aero_perf::retire_from_step_outcome(&mut perf, &outcome);
+
+    // `tier` can be used for profiling, but instruction counting does not need to special-case it.
+    if let StepOutcome::Block { tier, .. } = outcome {
+        let _ = tier;
     }
 }
 ```

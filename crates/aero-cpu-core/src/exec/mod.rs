@@ -47,6 +47,19 @@ pub enum StepOutcome {
     },
 }
 
+impl aero_perf::InstructionRetirement for StepOutcome {
+    #[inline(always)]
+    fn instructions_retired(&self) -> u64 {
+        match *self {
+            StepOutcome::InterruptDelivered => 0,
+            StepOutcome::Block {
+                instructions_retired,
+                ..
+            } => instructions_retired,
+        }
+    }
+}
+
 pub struct ExecDispatcher<I, B, C> {
     interpreter: I,
     jit: JitRuntime<B, C>,

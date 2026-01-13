@@ -130,14 +130,14 @@ impl PerfWorker {
     /// Retire `n` guest architectural instructions (interpreter: `n=1`,
     /// JIT: `n=block_instruction_count` on committed exits, `n=0` on rollback exits).
     ///
-    /// In a tiered execution loop, prefer feeding this with the CPU dispatcher's
-    /// reported `instructions_retired` count so embedders don't need to special-case
-    /// interpreter vs JIT execution.
+    /// In a tiered execution loop, prefer feeding this with the CPU dispatcher's reported
+    /// `instructions_retired` count (or use [`retire_from_step_outcome`]) so embedders don't need
+    /// to special-case interpreter vs JIT execution.
     ///
-    /// When driving an `aero_cpu_core::exec::ExecDispatcher`, prefer using
-    /// `ExecDispatcher::step_with_perf()` which performs one tiered step and
-    /// applies these retirement semantics automatically (including skipping
-    /// interrupt-delivery steps and JIT rollback exits).
+    /// When driving an `aero_cpu_core::exec::ExecDispatcher`, `ExecDispatcher::step_with_perf()`
+    /// provides a convenience wrapper that performs one tiered step and applies these retirement
+    /// semantics automatically (including skipping interrupt-delivery steps and JIT rollback
+    /// exits).
     #[inline(always)]
     pub fn retire_instructions(&mut self, n: u64) {
         self.local_instructions += n;
@@ -206,6 +206,45 @@ impl PerfWorker {
         let delta = self.benchmark_delta();
         self.benchmark_start = None;
         delta
+    }
+}
+
+/// A small adapter trait for "execution step outcome" types that report the
+/// number of **retired guest architectural instructions**.
+///
+/// This is primarily intended for wiring [`PerfWorker`] up to tiered CPU
+/// execution loops (e.g. `aero_cpu_core::exec::ExecDispatcher`), where some
+/// steps can deliver interrupts without retiring any instructions.
+pub trait InstructionRetirement {
+    /// Number of guest architectural instructions retired by this step.
+    ///
+    /// Implementations should return `0` for steps that do not retire guest
+    /// instructions (for example, interrupt delivery at an instruction
+    /// boundary).
+    fn instructions_retired(&self) -> u64;
+}
+
+/// Canonical helper for feeding tiered execution outcomes into [`PerfWorker`].
+///
+/// When driving `aero_cpu_core::exec::ExecDispatcher`, call this once per
+/// `step()` result:
+///
+/// ```ignore
+/// let outcome = dispatcher.step(&mut vcpu);
+/// aero_perf::retire_from_step_outcome(&mut perf, &outcome);
+/// ```
+///
+/// The dispatcher already accounts for interpreter vs JIT execution, and for
+/// committed vs rollback exits (`instructions_retired == 0` on rollback). This
+/// helper simply forwards that count into [`PerfWorker::retire_instructions`].
+#[inline(always)]
+pub fn retire_from_step_outcome<O: InstructionRetirement + ?Sized>(
+    perf: &mut PerfWorker,
+    outcome: &O,
+) {
+    let n = outcome.instructions_retired();
+    if n != 0 {
+        perf.retire_instructions(n);
     }
 }
 

@@ -587,6 +587,7 @@ version = "0.1.0"
 name = "aero-perf"
 version = "0.1.0"
 dependencies = [
+ "aero-cpu-core",
  "serde",
  "serde_json",
 ]
