@@ -1175,7 +1175,10 @@ export interface WasmApi {
         /**
          * Create a machine with explicit graphics configuration.
          *
-         * When `enableAerogpu=true`, VGA is disabled by default; pass `enableVga=true` explicitly to keep VGA enabled.
+         * When `enableAerogpu=true`, VGA is disabled by default.
+         *
+         * Note: `enableAerogpu` and `enableVga` are mutually exclusive in the native machine
+         * configuration; passing `enableAerogpu=true` and `enableVga=true` will fail construction.
          *
          * Optional for older WASM builds.
          */
