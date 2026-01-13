@@ -672,22 +672,14 @@ fn js_error(message: impl core::fmt::Display) -> JsValue {
 pub fn synthesize_webhid_report_descriptor(
     collections_json: JsValue,
 ) -> Result<Uint8Array, JsValue> {
-    let collections_json_str = js_sys::JSON::stringify(&collections_json)
-        .map_err(|err| {
-            js_error(&format!(
-                "Invalid WebHID collection schema (stringify failed): {err:?}"
-            ))
-        })?
-        .as_string()
-        .ok_or_else(|| {
-            js_error("Invalid WebHID collection schema (stringify returned non-string)")
-        })?;
-
     // Improve deserialization errors with a precise path into the collections metadata.
     // Example: `at [0].inputReports[0].items[0].reportSize: invalid type ...`.
-    let mut deserializer = serde_json::Deserializer::from_str(&collections_json_str);
+    //
+    // Note: We intentionally avoid a JSON stringify/parse roundtrip here. Complex devices can
+    // produce very large normalized collection trees, and `JSON.stringify` would allocate a
+    // similarly large intermediate string.
     let collections: Vec<aero_usb::hid::webhid::HidCollectionInfo> =
-        serde_path_to_error::deserialize(&mut deserializer)
+        serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(collections_json))
             .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
 
     let bytes = synthesize_webhid_report_descriptor_bytes(&collections).map_err(|err| {
