@@ -10,3 +10,4 @@ build/
 *.png
 *.bin
 *.json
+cursor_state_sanity_diag.txt

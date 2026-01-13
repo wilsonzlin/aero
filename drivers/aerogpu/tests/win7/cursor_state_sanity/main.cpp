@@ -701,6 +701,13 @@ cleanup:
   RestoreCursorShowing(ensure_show_calls, ensure_hide_calls);
 
   if (want_diag) {
+    // Capture the final outcome for easier debugging from automation artifacts.
+    DiagAppend(&diag, "exit_code=%d", result);
+    const std::string last_failure = aerogpu_test::GetLastFailureMessageCopy();
+    if (!last_failure.empty()) {
+      DiagAppend(&diag, "failure=%s", last_failure.c_str());
+    }
+
     const std::wstring dir = aerogpu_test::GetModuleDir();
     const std::wstring diag_path = aerogpu_test::JoinPath(dir, L"cursor_state_sanity_diag.txt");
     std::string write_err;
