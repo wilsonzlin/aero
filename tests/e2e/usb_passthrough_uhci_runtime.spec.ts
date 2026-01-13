@@ -674,7 +674,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
             );
 
             // Schedule a single interrupt-OUT TD (endpoint 1). The guest should get an ACK and the
-            // host should observe an output report via `webhid_drain_output_reports`.
+            // host should observe an output report via 'webhid_drain_output_reports'.
             const TD_OUT = 0x3030;
             const BUF_OUT = 0x4200;
             const outLen = outBytes.length;
