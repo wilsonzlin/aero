@@ -36,6 +36,12 @@ Run it from any PowerShell prompt:
 ..\scripts\verify-inf.ps1
 ```
 
+To validate a different INF path:
+
+```powershell
+..\scripts\verify-inf.ps1 -InfPath .\aero_virtio_input.inf
+```
+
 ### Catalog generation (`Inf2Cat`)
 
 `Inf2Cat` hashes every file referenced by the INF. That means:
