@@ -1,3 +1,8 @@
+//! PF-006 JIT optimization analysis metrics.
+//!
+//! This module provides a cheap-to-update surface for tracking tiered JIT
+//! compilation cost, cache behavior, and stability (deopts/guard failures).
+
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -310,11 +315,7 @@ pub struct JitRollingExport {
     pub blocks_compiled_per_s: f64,
 }
 
-pub fn totals_to_export(
-    enabled: bool,
-    totals: JitMetricsTotals,
-    rolling: JitRollingExport,
-) -> JitExport {
+pub fn totals_to_export(enabled: bool, totals: JitMetricsTotals, rolling: JitRollingExport) -> JitExport {
     JitExport {
         enabled,
         totals: JitTotalsExport {

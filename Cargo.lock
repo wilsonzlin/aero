@@ -3265,7 +3265,6 @@ name = "perf"
 version = "0.1.0"
 dependencies = [
  "aero-perf",
- "serde_json",
 ]
 
 [[package]]

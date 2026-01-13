@@ -1,5 +1,5 @@
-use perf::jit::{JitTier, JitTier2Pass};
-use perf::telemetry::Telemetry;
+use aero_perf::jit::{JitTier, JitTier2Pass};
+use aero_perf::telemetry::Telemetry;
 use std::hint::black_box;
 use std::time::Duration;
 use std::time::Instant;
@@ -77,5 +77,5 @@ fn main() {
 
     let snapshot = telemetry.snapshot();
     println!("{}", snapshot.jit_hud_line());
-    println!("{}", serde_json::to_string_pretty(&snapshot).unwrap());
+    println!("{}", snapshot.to_json_pretty());
 }

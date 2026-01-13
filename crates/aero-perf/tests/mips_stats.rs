@@ -1,5 +1,5 @@
 use aero_perf::{compute_mips, MipsWindow, PerfMonitor, PerfSnapshot};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[test]
 fn perf_snapshot_delta_saturates_when_called_with_newer_snapshot_as_earlier() {
@@ -35,28 +35,28 @@ fn mips_window_avg_and_p95() {
 
 #[test]
 fn perf_monitor_tracks_window_stats() {
-    let t0 = Instant::now();
-    let mut monitor = PerfMonitor::new(5, PerfSnapshot::default(), t0);
+    let t0_ns = 0u64;
+    let mut monitor = PerfMonitor::new(5, PerfSnapshot::default(), t0_ns);
 
-    let t1 = t0 + Duration::from_secs(1);
+    let t1_ns = t0_ns + 1_000_000_000;
     let s1 = monitor.update(
         PerfSnapshot {
             instructions_executed: 2_000_000,
             rep_iterations: 0,
         },
-        t1,
+        t1_ns,
     );
     assert!((s1.mips - 2.0).abs() < 1e-9);
     assert!((s1.mips_avg - 2.0).abs() < 1e-9);
     assert!((s1.mips_p95 - 2.0).abs() < 1e-9);
 
-    let t2 = t1 + Duration::from_secs(1);
+    let t2_ns = t1_ns + 1_000_000_000;
     let s2 = monitor.update(
         PerfSnapshot {
             instructions_executed: 3_000_000,
             rep_iterations: 0,
         },
-        t2,
+        t2_ns,
     );
     assert!((s2.mips - 1.0).abs() < 1e-9);
     assert!((s2.mips_avg - 1.5).abs() < 1e-9);
@@ -65,17 +65,17 @@ fn perf_monitor_tracks_window_stats() {
 
 #[test]
 fn perf_monitor_handles_non_monotonic_timestamps() {
-    let t0 = Instant::now();
     // Start with a baseline that is *after* the timestamps we will pass to update.
-    let t1 = t0 + Duration::from_secs(1);
-    let mut monitor = PerfMonitor::new(5, PerfSnapshot::default(), t1);
+    let t0_ns = 0u64;
+    let t1_ns = t0_ns + 1_000_000_000;
+    let mut monitor = PerfMonitor::new(5, PerfSnapshot::default(), t1_ns);
 
     let sample = monitor.update(
         PerfSnapshot {
             instructions_executed: 1,
             rep_iterations: 0,
         },
-        t0,
+        t0_ns,
     );
 
     assert_eq!(sample.wall_time_delta, Duration::ZERO);

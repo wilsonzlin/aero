@@ -910,7 +910,7 @@ pub struct JitMetricsTotals {
 
 Compilation-phase timings should be captured at **pass boundaries** (not per instruction/IR node), so instrumentation stays negligible relative to actual compile work.
 
-The repository includes a small, self-contained implementation of these counters + exports in `crates/aero-perf` (`aero_perf::jit` and `aero_perf::telemetry`). For convenience/backwards-compatibility, `crates/perf` re-exports the same modules and includes a synthetic demo you can run via:
+The repository includes a small, self-contained implementation of these counters + exports in `crates/aero-perf` (`aero_perf::jit` and `aero_perf::telemetry`). `crates/perf` remains as a deprecated compatibility shim that re-exports the same modules and includes a synthetic demo you can run via:
 
 ```sh
 cargo run --locked -p perf --example jit_metrics_demo

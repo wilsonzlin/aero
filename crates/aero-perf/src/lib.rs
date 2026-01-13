@@ -14,7 +14,7 @@ pub mod telemetry;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Thread-safe totals that can be sampled from outside a CPU worker thread.
 ///
@@ -281,7 +281,7 @@ impl MipsWindow {
 /// Helper to compute deltas and MIPS samples from periodic snapshots.
 pub struct PerfMonitor {
     prev_snapshot: PerfSnapshot,
-    prev_wall_time: Instant,
+    prev_wall_time_ns: u64,
     mips_window: MipsWindow,
 }
 
@@ -295,27 +295,25 @@ pub struct PerfMonitorSample {
 }
 
 impl PerfMonitor {
-    pub fn new(window_capacity: usize, initial_snapshot: PerfSnapshot, now: Instant) -> Self {
+    /// `now_ns` is a monotonic timestamp in nanoseconds from an arbitrary origin.
+    pub fn new(window_capacity: usize, initial_snapshot: PerfSnapshot, now_ns: u64) -> Self {
         Self {
             prev_snapshot: initial_snapshot,
-            prev_wall_time: now,
+            prev_wall_time_ns: now_ns,
             mips_window: MipsWindow::new(window_capacity),
         }
     }
 
-    pub fn update(&mut self, snapshot: PerfSnapshot, now: Instant) -> PerfMonitorSample {
+    /// `now_ns` is a monotonic timestamp in nanoseconds from an arbitrary origin.
+    pub fn update(&mut self, snapshot: PerfSnapshot, now_ns: u64) -> PerfMonitorSample {
         let delta = snapshot.delta_since(self.prev_snapshot);
-        // `Instant::duration_since` panics when `now < prev_wall_time`. Callers should always
-        // supply monotonic timestamps, but avoid crashing the emulator on clock skew or
-        // test harness mistakes.
-        let wall_time_delta = now
-            .checked_duration_since(self.prev_wall_time)
-            .unwrap_or(Duration::ZERO);
+        // Avoid crashing on clock skew or test harness mistakes.
+        let wall_time_delta = Duration::from_nanos(now_ns.saturating_sub(self.prev_wall_time_ns));
         let mips = compute_mips(delta.instructions_executed, wall_time_delta);
         self.mips_window.push(mips);
 
         self.prev_snapshot = snapshot;
-        self.prev_wall_time = now;
+        self.prev_wall_time_ns = now_ns;
 
         PerfMonitorSample {
             delta,
