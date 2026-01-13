@@ -5658,8 +5658,10 @@ impl AerogpuD3d11Executor {
         }
 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
-        let signature_driven = stage == ShaderStage::Compute
-            || (signatures.isgn.is_some() && signatures.osgn.is_some());
+        // Compute-stage DXBC frequently omits signature chunks entirely. The signature-driven
+        // translator can still handle compute shaders, so only require ISGN/OSGN for VS/PS.
+        let signature_driven =
+            stage == ShaderStage::Compute || (signatures.isgn.is_some() && signatures.osgn.is_some());
         let (wgsl, reflection) = if signature_driven {
             let translated = try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?;
             (translated.wgsl, translated.reflection)

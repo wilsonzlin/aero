@@ -354,7 +354,12 @@ impl AerogpuResourceManager {
             bail!("CreateShaderDxbc: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
-        let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
+        // Compute shaders often omit signature chunks entirely. The signature-driven translator
+        // can still handle compute modules, so only require ISGN/OSGN for VS/PS.
+        let signature_driven = match stage {
+            AerogpuShaderStage::Compute => true,
+            _ => signatures.isgn.is_some() && signatures.osgn.is_some(),
+        };
         let wgsl = if signature_driven {
             try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?
         } else {
