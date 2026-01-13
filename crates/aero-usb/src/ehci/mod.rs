@@ -1,9 +1,11 @@
 //! Minimal EHCI (USB 2.0) host controller model.
 //!
 //! This is intentionally a *bring-up* implementation: it models the capability/operational MMIO
-//! registers and an EHCI root hub with per-port state machines. A minimal asynchronous schedule
-//! engine (QH/qTD) is implemented for high-speed control + bulk/interrupt transfers (sufficient for
-//! Windows enumeration and WebUSB passthrough).
+//! registers and an EHCI root hub with per-port state machines. Minimal schedule engines are
+//! implemented for:
+//! - the **asynchronous** schedule (QH/qTD), used for high-speed control + bulk/interrupt transfers
+//!   (sufficient for Windows enumeration and WebUSB passthrough)
+//! - the **periodic** schedule (frame list + interrupt QH/qTD), used for HID-style polling
 //!
 //! ## Companion controller handoff
 //!
@@ -21,6 +23,7 @@ mod hub;
 pub use hub::RootHub;
 
 mod schedule_async;
+mod schedule_periodic;
 
 pub mod regs;
 
@@ -28,6 +31,7 @@ use crate::memory::MemoryBus;
 
 use regs::*;
 use schedule_async::{process_async_schedule, AsyncScheduleContext};
+use schedule_periodic::{process_periodic_frame, PeriodicScheduleContext};
 
 /// Default number of EHCI root hub ports.
 ///
@@ -458,7 +462,17 @@ impl EhciController {
             };
             process_async_schedule(&mut ctx, self.regs.asynclistaddr);
         }
-        // Periodic schedule (iTD/siTD) is not yet implemented.
+
+        // Periodic schedule (interrupt endpoints) using PERIODICLISTBASE + FRINDEX. We currently
+        // support QH/qTD traversal; iTD/siTD/FSTN are ignored.
+        if (self.regs.usbcmd & USBCMD_PSE) != 0 && self.regs.periodiclistbase != 0 {
+            let mut ctx = PeriodicScheduleContext {
+                mem,
+                hub: &mut self.hub,
+                usbsts: &mut self.regs.usbsts,
+            };
+            process_periodic_frame(&mut ctx, self.regs.periodiclistbase, self.regs.frindex);
+        }
     }
 
     fn service_async_advance_doorbell(&mut self) {
@@ -476,15 +490,14 @@ impl EhciController {
         self.hub.tick_1ms();
 
         if self.regs.usbcmd & USBCMD_RS != 0 {
-            // FRINDEX is a microframe counter. We tick in 1ms increments, so add 8 microframes so
-            // the microframe bits (0..=2) remain 0 at tick boundaries.
-            self.regs.frindex = self.regs.frindex.wrapping_add(8) & FRINDEX_MASK;
-
             if self.regs.usbcmd & (USBCMD_PSE | USBCMD_ASE) != 0 {
                 self.process_schedules(mem);
             }
 
             self.service_async_advance_doorbell();
+            // FRINDEX is a microframe counter. We tick in 1ms increments, so add 8 microframes so
+            // the microframe bits (0..=2) remain stable at 1ms tick boundaries.
+            self.regs.frindex = self.regs.frindex.wrapping_add(8) & FRINDEX_MASK;
         }
 
         self.update_irq();
