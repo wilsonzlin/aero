@@ -149,4 +149,54 @@ describe("hid/WasmHidGuestBridge", () => {
     );
     expect(attachSpy).toHaveBeenCalledWith(attach.deviceId, attach.guestPath, "webhid", bridgeInstance);
   });
+
+  it("clamps oversized input reports before forwarding to the WASM bridge", () => {
+    let bridgeInstance: FakeBridge | null = null;
+    class FakeBridge {
+      readonly push_input_report = vi.fn();
+      readonly drain_next_output_report = vi.fn();
+      readonly configured = vi.fn(() => true);
+      readonly free = vi.fn();
+      constructor() {
+        bridgeInstance = this;
+      }
+    }
+
+    const host = {
+      sendReport: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const topology = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const api = {
+      WebHidPassthroughBridge: FakeBridge,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any as WasmApi;
+
+    const guest = new WasmHidGuestBridge(api, host, topology);
+    guest.attach({
+      type: "hid.attach",
+      deviceId: 1,
+      vendorId: 0x1234,
+      productId: 0xabcd,
+      collections: [{ some: "collection" }] as any,
+      hasInterruptOut: false,
+    });
+
+    const huge = new Uint8Array(1024 * 1024);
+    huge.set([1, 2, 3], 0);
+    guest.inputReport({
+      type: "hid.inputReport",
+      deviceId: 1,
+      reportId: 7,
+      data: huge as Uint8Array<ArrayBuffer>,
+    });
+
+    expect(bridgeInstance).toBeTruthy();
+    expect(bridgeInstance!.push_input_report).toHaveBeenCalledTimes(1);
+    const arg = bridgeInstance!.push_input_report.mock.calls[0]![1] as Uint8Array;
+    expect(arg.byteLength).toBe(64);
+    expect(Array.from(arg.slice(0, 3))).toEqual([1, 2, 3]);
+  });
 });

@@ -5,6 +5,7 @@ import type { HidAttachMessage, HidDetachMessage, HidInputReportMessage } from "
 import type { HidGuestBridge, HidHostSink } from "./wasm_hid_guest_bridge";
 
 const MAX_HID_OUTPUT_REPORTS_PER_TICK = 64;
+const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
 
 export type UhciRuntimeHidApi = {
   webhid_attach(
@@ -117,7 +118,15 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
 
   inputReport(msg: HidInputReportMessage): void {
     try {
-      this.#uhci.webhid_push_input_report(msg.deviceId >>> 0, msg.reportId >>> 0, msg.data);
+      const data = (() => {
+        if (msg.data.byteLength <= MAX_HID_INPUT_REPORT_PAYLOAD_BYTES) return msg.data;
+        // Defensive clamp: UHCI WebHID passthrough is modeled as full-speed interrupt transfers
+        // (<= 64 bytes payload). Avoid copying oversized reports into WASM memory.
+        const out = new Uint8Array(MAX_HID_INPUT_REPORT_PAYLOAD_BYTES);
+        out.set(msg.data.subarray(0, MAX_HID_INPUT_REPORT_PAYLOAD_BYTES));
+        return out as Uint8Array<ArrayBuffer>;
+      })();
+      this.#uhci.webhid_push_input_report(msg.deviceId >>> 0, msg.reportId >>> 0, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.#host.error(`UHCI runtime hid.inputReport failed: ${message}`, msg.deviceId);

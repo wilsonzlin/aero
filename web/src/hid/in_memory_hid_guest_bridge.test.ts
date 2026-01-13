@@ -51,5 +51,24 @@ describe("InMemoryHidGuestBridge", () => {
     bridge.attach(makeAttach(1));
     expect(bridge.inputReports.get(1)?.length).toBe(0);
   });
-});
 
+  it("clamps oversized input reports before buffering (defense-in-depth)", () => {
+    const bridge = new InMemoryHidGuestBridge(noopHost);
+
+    const huge = new Uint8Array(1024 * 1024);
+    huge.set([0xaa, 0xbb, 0xcc], 0);
+    bridge.inputReport({
+      type: "hid.inputReport",
+      deviceId: 1,
+      reportId: 1,
+      data: huge as Uint8Array<ArrayBuffer>,
+    });
+
+    const buffered = bridge.inputReports.get(1);
+    expect(buffered?.length).toBe(1);
+    expect(buffered?.[0]!.data.byteLength).toBe(64);
+    expect(Array.from(buffered?.[0]!.data.slice(0, 3) ?? [])).toEqual([0xaa, 0xbb, 0xcc]);
+    // The buffered copy should not retain the original huge backing buffer.
+    expect(buffered?.[0]!.data.buffer.byteLength).toBe(64);
+  });
+});

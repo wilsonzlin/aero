@@ -23,6 +23,7 @@ export interface HidGuestBridge {
 }
 
 const MAX_HID_OUTPUT_REPORTS_PER_TICK = 64;
+const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
 
 type WebHidPassthroughBridge = InstanceType<WasmApi["WebHidPassthroughBridge"]>;
 type UsbHidPassthroughBridge = InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>;
@@ -101,7 +102,16 @@ export class WasmHidGuestBridge implements HidGuestBridge {
     const bridge = this.#bridges.get(msg.deviceId);
     if (!bridge) return;
     try {
-      bridge.push_input_report(msg.reportId, msg.data);
+      const data = (() => {
+        if (msg.data.byteLength <= MAX_HID_INPUT_REPORT_PAYLOAD_BYTES) return msg.data;
+        // Defensive clamp: WebHID input reports are validated/synthesized as full-speed interrupt
+        // payloads (<= 64 bytes). If a buggy browser/device delivers a larger report (or if the
+        // SharedArrayBuffer ring is corrupted), avoid copying the entire payload into WASM memory.
+        const out = new Uint8Array(MAX_HID_INPUT_REPORT_PAYLOAD_BYTES);
+        out.set(msg.data.subarray(0, MAX_HID_INPUT_REPORT_PAYLOAD_BYTES));
+        return out as Uint8Array<ArrayBuffer>;
+      })();
+      bridge.push_input_report(msg.reportId, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.host.error(`WebHID push_input_report failed: ${message}`, msg.deviceId);

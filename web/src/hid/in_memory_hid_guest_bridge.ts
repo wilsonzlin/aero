@@ -2,6 +2,7 @@ import type { HidAttachMessage, HidDetachMessage, HidInputReportMessage } from "
 import type { HidGuestBridge, HidHostSink } from "./wasm_hid_guest_bridge";
 
 const MAX_BUFFERED_HID_INPUT_REPORTS_PER_DEVICE = 256;
+const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
 
 export function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   // HID proxy messages transfer the underlying ArrayBuffer between threads.
@@ -53,7 +54,16 @@ export class InMemoryHidGuestBridge implements HidGuestBridge {
     // transferred over postMessage. Some fast paths (SharedArrayBuffer rings)
     // can deliver views backed by SharedArrayBuffer; copy those so buffered
     // reports remain valid after the ring memory is reused.
-    const data = ensureArrayBufferBacked(msg.data);
+    const clamped = (() => {
+      if (msg.data.byteLength <= MAX_HID_INPUT_REPORT_PAYLOAD_BYTES) return msg.data;
+      // Defensive clamp: avoid copying arbitrarily large reports into the in-memory buffer
+      // (or into the WASM bridge once replayed). Valid full-speed HID interrupt reports are
+      // capped at 64 bytes of payload.
+      const out = new Uint8Array(MAX_HID_INPUT_REPORT_PAYLOAD_BYTES);
+      out.set(msg.data.subarray(0, MAX_HID_INPUT_REPORT_PAYLOAD_BYTES));
+      return out as Uint8Array<ArrayBuffer>;
+    })();
+    const data = ensureArrayBufferBacked(clamped);
     queue.push({ ...msg, data });
     if (queue.length > MAX_BUFFERED_HID_INPUT_REPORTS_PER_DEVICE) {
       queue.splice(0, queue.length - MAX_BUFFERED_HID_INPUT_REPORTS_PER_DEVICE);
@@ -68,4 +78,3 @@ export class InMemoryHidGuestBridge implements HidGuestBridge {
     }
   }
 }
-
