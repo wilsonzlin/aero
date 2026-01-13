@@ -50,7 +50,7 @@ Tracing is **disabled by default**. Enable it by setting environment variables i
   Note: the filter applies to recording and per-entrypoint dump triggers (`AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1` / `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` will only fire for filtered-in entrypoints).
   The present-count dump trigger (`AEROGPU_D3D9_TRACE_DUMP_PRESENT`) is not suppressed by the filter, but the filter still controls which calls are recorded (including whether the triggering `Present` call is force-recorded).
   Example: `AEROGPU_D3D9_TRACE_FILTER=StateBlock,ValidateDevice`
-  Tip: use `AEROGPU_D3D9_TRACE_FILTER=stub` to record only stubbed entrypoints (trace names include the substring `(stub)`).
+  Tip: use `AEROGPU_D3D9_TRACE_FILTER=stub` to record only stub-tagged entrypoints (trace names include the substring `(stub)`).
 
 - `AEROGPU_D3D9_TRACE_STDERR=1` (Windows-only; optional)  
   By default, trace output on Windows is emitted via `OutputDebugStringA` (for DebugView/WinDbg). When this is set, the trace output is also echoed to `stderr` (useful for console repro apps and host-side unit tests).
@@ -74,7 +74,7 @@ If you suspect the app is failing early, you can also use:
 set AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1
 ```
 
-#### Identify the first stubbed DDI hit
+#### Identify the first stub-tagged DDI hit
 
 When you suspect the runtime or `dwm.exe` is calling an unimplemented DDI, a useful setup is:
 
@@ -85,6 +85,7 @@ set AEROGPU_D3D9_TRACE_FILTER=stub
 set AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1
 set AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1
 ```
+Note: this relies on the `(stub)` marker in the trace name (`func_name()`); host tests use the trace-only `TraceTestStub` entrypoint to exercise this behavior without depending on real DDI stubs.
 
 ### Dump triggers (on-demand)
 

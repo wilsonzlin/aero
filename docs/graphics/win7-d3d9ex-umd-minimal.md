@@ -542,7 +542,7 @@ In this repo, the AeroGPU D3D9 UMD already includes an **in-process DDI call tra
 
 * `docs/graphics/win7-d3d9-umd-tracing.md`
 
-For example, to quickly identify the first stubbed DDI hit:
+For example, to quickly identify the first stub-tagged DDI hit:
 
 ```cmd
 set AEROGPU_D3D9_TRACE=1
