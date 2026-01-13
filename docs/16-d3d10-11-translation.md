@@ -429,6 +429,30 @@ WebGPU exposes only **vertex** + **fragment** (render) and **compute** pipelines
 Pattern-based lowering remains an optimization opportunity, but the **compatibility baseline** is
 the general compute expansion described below.
 
+### P1/P2 tiers and limitations (what we implement first vs later)
+
+This section defines the *shape* of the emulation pipeline (compute expansion + passthrough VS),
+but not every D3D feature is required on day one. We explicitly tier the work so implementers can
+bring up correctness incrementally:
+
+- **P1 (geometry shader)**
+  - **P1a (fast path):** pattern-based lowering for a few common GS uses (e.g. point sprites / quad
+    expansion) without any compute passes. This is optional and can be added later.
+  - **P1b (baseline):** general GS emulation via compute expansion as specified below.
+  - Initial P1b limitations (explicit):
+    - no stream-out / transform feedback,
+    - only stream 0,
+    - no layered rendering system values (`SV_RenderTargetArrayIndex`, `SV_ViewportArrayIndex`),
+    - output ordering is implementation-defined unless we add a deterministic prefix-sum mode (affects
+      strict `SV_PrimitiveID` expectations).
+
+- **P2 (tessellation: HS/DS)**
+  - Tessellation is staged by supported **domain / partitioning**:
+    - **P2a:** `domain("tri")` with integer partitioning, conservative clamping of tess factors.
+    - **P2b:** `domain("quad")` with integer partitioning.
+    - **P2c:** `domain("isoline")`.
+    - **P2d:** fractional partitioning + crack-free edge rules.
+
 ### 1) AeroGPU ABI extensions for GS/HS/DS
 
 These changes are designed to be **minor-version, forward-compatible**:
@@ -627,16 +651,40 @@ transient arena, as long as alignment requirements are respected.
       overflow flags).
     - Usage: `STORAGE` (atomics) and optionally `COPY_SRC` for debugging readback.
 
-**Expanded vertex layout (conceptual):**
+**Expanded vertex layout (concrete):**
 
-For compatibility with the existing signature-driven stage linking, expansion outputs store the
-same interface that the pixel shader consumes:
+For compatibility with signature-driven stage linking *and* to preserve integer/float bit patterns,
+expansion outputs store the same logical interface that the pixel shader consumes, but encoded as
+raw 32-bit lanes:
 
-- `pos`: `vec4<f32>` (SV_Position)
-- `vN`: `vec4<f32>` for each user varying location `N` used by the pixel shader
+- `pos_bits`: `vec4<u32>` containing IEEE-754 `f32` bits for `SV_Position`
+- `vN_bits`: `vec4<u32>` per linked varying location `N`
 
-The exact `ExpandedVertex` struct is derived from the linked VS/GS/DS → PS signature (a pipeline
-already exists for trimming/intersecting varyings; expansion reuses that location set).
+One concrete layout:
+
+```wgsl
+// One entry per expanded vertex (post-VS, post-DS, or post-GS depending on which scratch buffer).
+struct ExpandedVertex {
+  pos_bits: vec4<u32>;
+  varyings: array<vec4<u32>, VARYING_COUNT>;
+}
+```
+
+Where `VARYING_COUNT` is derived from the linked VS/GS/DS → PS signature intersection (the same
+location set used by the direct render path). The passthrough vertex shader then:
+
+- loads `pos_bits` and `bitcast<vec4<f32>>()` to write `@builtin(position)`, and
+- for each location `N`, loads `varyings[N]` and bitcasts to the exact WGSL type declared by the
+  translated PS input (respecting interpolation modifiers).
+
+Stride (bytes):
+
+```
+expanded_vertex_stride = 16 * (1 + VARYING_COUNT)
+```
+
+This encoding is intentionally “register-like”: it avoids WGSL struct layout pitfalls and keeps the
+expansion pipeline independent of scalar type.
 
 #### 2.3) Indirect draw argument formats
 
@@ -705,6 +753,20 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - The original pixel shader.
     - Issues `drawIndirect` or `drawIndexedIndirect` depending on whether an index buffer was
       generated.
+
+#### 2.5) Render-pass splitting constraints
+
+WebGPU forbids running compute work inside an active render pass. The D3D11 command stream has no
+explicit “pass” boundaries, so the executor must be prepared to split:
+
+- If a render pass is currently open (batched draws with the same attachments) and we encounter a
+  draw that triggers compute expansion, we MUST:
+  1. end the current render pass (`StoreOp::Store`),
+  2. run the compute expansion passes,
+  3. begin a new render pass targeting the same attachments with `LoadOp::Load`, and
+  4. re-apply dynamic state (viewport/scissor/stencil ref) before continuing.
+
+This preserves D3D semantics but increases render pass count and can affect performance (expected).
 
 ### 3) Binding model for emulation kernels
 
@@ -792,6 +854,22 @@ When GS support lands, update the existing “ignore GS payloads” robustness t
 (`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`) to reflect the new behavior (GS
 is no longer ignored when bound through the extended `BIND_SHADERS` packet).
 
+**Unit tests (non-rendering):**
+
+Pixel-compare scenes catch many issues, but the emulation path also needs cheap unit tests that can
+run in CI without a GPU backend:
+
+1. **Protocol decoding/encoding**
+   - `stage_ex` encode/decode rules (legacy vs extended paths)
+   - `BIND_SHADERS` size handling (24 vs 36 bytes)
+   - topology decoding for adjacency + patchlists
+   - Location: `emulator/protocol/tests/*` (Rust + TS mirrors).
+
+2. **Sizing functions**
+   - topology → input primitive count calculations (strip/list/adj/patch)
+   - conservative output buffer sizing for strip→list expansion
+   - Location: pure Rust tests under `crates/aero-d3d11/tests/*`.
+
 ---
 
 ## Synchronization and Queries
@@ -829,12 +907,22 @@ The translation layer needs a targeted, growing set of reference scenes with **p
 
 ### P1 scenes
 
-7. **Geometry expansion**: point sprites, triangle extrusion
+7. **GS fast-path (point sprite)**: input `pointlist` + GS expands to quads; verify UVs and
+   per-sprite size from a cbuffer.
+8. **GS compute-path (variable emit)**: GS emits 0..N triangles depending on a uniform; validates
+   indirect-draw arg generation and counter reset.
+9. **GS compute-path (RestartStrip)**: GS outputs a triangle strip with multiple `CutVertex` /
+   `RestartStrip()` boundaries; validates strip→list conversion.
+10. **Adjacency input**: `TRIANGLELIST_ADJ` + GS consumes adjacency vertices; validates adjacency
+   topology decode + binding (even if the initial GS subset does not yet implement adjacency ops).
 
 ### P2 scenes
 
-8. **Compute blur**: run CS to blur a texture then render it
-9. **UAV write**: CS writes to structured buffer; PS reads and visualizes
+11. **Compute blur**: run CS to blur a texture then render it
+12. **UAV write**: CS writes to structured buffer; PS reads and visualizes
+13. **Tess P2a (tri domain, integer)**: `PATCHLIST_3` + simple HS/DS produces a subdivided triangle
+    grid (color = `SV_DomainLocation`), validates patchlist topology + HS/DS execution.
+14. **Tess P2b (quad domain, integer)**: `PATCHLIST_4` + simple HS/DS produces a subdivided quad.
 
 Each scene should render to an offscreen texture and read back for comparison, using:
 
