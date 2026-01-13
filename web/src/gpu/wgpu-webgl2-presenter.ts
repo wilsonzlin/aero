@@ -234,13 +234,33 @@ export class WgpuWebGl2Presenter implements Presenter {
 
     const raw = new Uint8Array(w * h * 4);
 
+    const prevReadFbo = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const prevReadBuffer = gl.getParameter(gl.READ_BUFFER) as number;
+    const prevPackBuffer = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING) as WebGLBuffer | null;
     const prevPackAlignment = gl.getParameter(gl.PACK_ALIGNMENT) as number;
     try {
+      // Ensure we read from the default framebuffer (the actual canvas output), not whatever
+      // internal FBO wgpu last used.
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      // Ensure readPixels writes into client memory (not a PIXEL_PACK_BUFFER).
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
       gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+      try {
+        gl.readBuffer(gl.BACK);
+      } catch {
+        // Ignore: some browsers are strict about readBuffer on default framebuffers.
+      }
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, raw);
     } finally {
       // Restore state to avoid surprising the wasm/wgpu rendering pipeline.
       gl.pixelStorei(gl.PACK_ALIGNMENT, prevPackAlignment);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, prevPackBuffer);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevReadFbo);
+      try {
+        gl.readBuffer(prevReadBuffer);
+      } catch {
+        // Ignore.
+      }
     }
 
     // WebGL readPixels returns bottom-to-top rows; normalize to a top-left origin.
