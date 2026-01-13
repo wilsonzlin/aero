@@ -133,7 +133,7 @@ const UCHAR VirtioInputMouseReportDescriptor[] = {
  *
  * Total: 48 bytes (8 buttons + X/Y/Wheel).
  */
-C_ASSERT(sizeof(VirtioInputMouseReportDescriptor) == 48);
+C_ASSERT(sizeof(VirtioInputMouseReportDescriptor) == 57);
 
 const USHORT VirtioInputMouseReportDescriptorLength = (USHORT)sizeof(VirtioInputMouseReportDescriptor);
 

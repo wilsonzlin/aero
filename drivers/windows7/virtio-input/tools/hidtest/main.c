@@ -109,12 +109,12 @@
 // Keyboard report descriptor includes both the keyboard+LED collection (ReportID 1)
 // and Consumer Control/media keys (ReportID 3). Total: 104 bytes.
 #define VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN 104
-// Mouse report descriptor advertises 8 buttons (no padding bits), reducing the
-// descriptor size vs the older 5-button+padding variant. Total: 48 bytes.
-#define VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN 48
+// Mouse report descriptor advertises 8 buttons (no padding bits) and includes
+// a Consumer/AC Pan field for horizontal scrolling. Total: 57 bytes.
+#define VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN 57
 #define VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN 9
 #define VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN 2
-#define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 5
+#define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 6
 
 /*
  * Aero virtio-input driver diagnostics (see `src/log.h` in the driver sources).
