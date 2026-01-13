@@ -276,7 +276,9 @@ For the browser USB stack (guest-visible USB controller(s) + runtime/bridge stat
 
 - Outer `DeviceState.id = DeviceId::USB`
 - `DeviceState.data = aero-io-snapshot` TLV blob produced by the USB stack.
-  - Inner `DEVICE_ID` examples: `UHRT` for `UhciRuntime`, `UHCB` for `UhciControllerBridge`, `WUHB` for `WebUsbUhciBridge`.
+  - Inner `DEVICE_ID` examples:
+    - UHCI: `UHRT` for `UhciRuntime`, `UHCB` for `UhciControllerBridge`, `WUHB` for `WebUsbUhciBridge`.
+    - xHCI: controller-specific tags (e.g. `XHRT` for an xHCI runtime/bridge implementation).
   - `aero_machine::Machine` snapshots may store `DeviceId::USB` as a small adapter-level wrapper TLV (`USBC`) that nests the guest-visible UHCI PCI device snapshot (`UHCP`) plus host-managed timing accumulator state used for deterministic 1ms ticking.
 - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)` per the `aero_snapshot::io_snapshot_bridge` convention
 
@@ -285,8 +287,8 @@ Note (current browser runtime wiring):
 - The outer web snapshot `kind` for `DeviceId::USB` remains `usb.uhci` for backward compatibility
   (see `web/src/workers/vm_snapshot_wasm.ts`).
 - Newer snapshots may encode multiple controller blobs inside a single `"AUSB"` container so UHCI
-  state can coexist with EHCI state:
-  - `web/src/workers/usb_snapshot_container.ts` (`USB_SNAPSHOT_TAG_UHCI`, `USB_SNAPSHOT_TAG_EHCI`)
+  state can coexist with EHCI/xHCI state:
+  - `web/src/workers/usb_snapshot_container.ts` (`USB_SNAPSHOT_TAG_UHCI`, `USB_SNAPSHOT_TAG_EHCI`, `USB_SNAPSHOT_TAG_XHCI`)
 
 Restore note: USB snapshots capture guest-visible controller/runtime state only. Any host-side "action" state (e.g. in-flight WebUSB/WebHID requests) should be treated as reset on restore; the host integration is responsible for resuming action execution post-restore.
 
