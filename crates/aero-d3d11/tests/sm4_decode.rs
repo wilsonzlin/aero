@@ -1,7 +1,7 @@
 use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
-    BufferRef, OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module,
-    Sm4Program, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
+    BufferKind, BufferRef, OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst,
+    Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -971,12 +971,17 @@ fn does_not_decode_ld_with_offset_like_trailing_operand_as_explicit_lod() {
     ));
 }
 
+
 #[test]
 fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     // These constants are used by upcoming compute/UAV decoding work. Keep this test in sync with
     // `d3d11tokenizedprogramformat.h` (`D3D11_SB_*` enums).
     assert_eq!(OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 30);
     assert_eq!(OPCODE_DCL_THREAD_GROUP, 0x11f);
+    assert_eq!(OPCODE_DCL_RESOURCE_RAW, 0x205);
+    assert_eq!(OPCODE_DCL_RESOURCE_STRUCTURED, 0x206);
+    assert_eq!(OPCODE_DCL_UAV_RAW, 0x207);
+    assert_eq!(OPCODE_DCL_UAV_STRUCTURED, 0x208);
     assert_eq!(OPCODE_LD_RAW, 0x53);
     assert_eq!(OPCODE_LD_STRUCTURED, 0x54);
     assert_eq!(OPCODE_STORE_RAW, 0x56);
@@ -1151,5 +1156,94 @@ fn decodes_store_raw_with_mask() {
             },
             mask: WriteMask(0b0011),
         }
+    );
+}
+
+#[test]
+fn decodes_buffer_srv_and_uav_declarations() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_resource_raw t0
+    let t0 = reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    body.extend_from_slice(&[opcode_token(
+        OPCODE_DCL_RESOURCE_RAW,
+        (1 + t0.len()) as u32,
+    )]);
+    body.extend_from_slice(&t0);
+
+    // dcl_resource_structured t1, 16
+    let t1 = reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    body.extend_from_slice(&[opcode_token(
+        OPCODE_DCL_RESOURCE_STRUCTURED,
+        (1 + t1.len() + 1) as u32,
+    )]);
+    body.extend_from_slice(&t1);
+    body.push(16);
+
+    // dcl_uav_raw u0
+    let u0 = reg_src(
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_UAV_RAW, (1 + u0.len()) as u32)]);
+    body.extend_from_slice(&u0);
+
+    // dcl_uav_structured u1, 32
+    let u1 = reg_src(
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    body.extend_from_slice(&[opcode_token(
+        OPCODE_DCL_UAV_STRUCTURED,
+        (1 + u1.len() + 1) as u32,
+    )]);
+    body.extend_from_slice(&u1);
+    body.push(32);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.decls,
+        vec![
+            Sm4Decl::ResourceBuffer {
+                slot: 0,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+            Sm4Decl::ResourceBuffer {
+                slot: 1,
+                stride: 16,
+                kind: BufferKind::Structured,
+            },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+            Sm4Decl::UavBuffer {
+                slot: 1,
+                stride: 32,
+                kind: BufferKind::Structured,
+            },
+        ]
     );
 }

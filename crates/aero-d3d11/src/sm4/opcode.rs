@@ -62,6 +62,23 @@ pub const OPCODE_STORE_STRUCTURED: u32 = 0x57;
 /// Upstream: `D3D11_SB_OPCODE_DCL_THREAD_GROUP`.
 pub const OPCODE_DCL_THREAD_GROUP: u32 = 0x11f;
 
+/// `dcl_resource_raw t#` (raw SRV buffer; `ByteAddressBuffer`).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_RESOURCE_RAW`.
+pub const OPCODE_DCL_RESOURCE_RAW: u32 = 0x205;
+/// `dcl_resource_structured t#, stride` (structured SRV buffer; `StructuredBuffer`).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_RESOURCE_STRUCTURED`.
+pub const OPCODE_DCL_RESOURCE_STRUCTURED: u32 = 0x206;
+/// `dcl_uav_raw u#` (raw UAV buffer; `RWByteAddressBuffer`).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_UAV_RAW`.
+pub const OPCODE_DCL_UAV_RAW: u32 = 0x207;
+/// `dcl_uav_structured u#, stride` (structured UAV buffer; `RWStructuredBuffer`).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_UAV_STRUCTURED`.
+pub const OPCODE_DCL_UAV_STRUCTURED: u32 = 0x208;
+
 // ---- Operand token bitfields ----
 
 pub const OPERAND_NUM_COMPONENTS_MASK: u32 = 0x3;

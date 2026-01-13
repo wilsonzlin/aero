@@ -1,8 +1,8 @@
 use core::fmt;
 
 use crate::sm4_ir::{
-    BufferRef, DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Decl, Sm4Inst,
-    Sm4Module, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
+    BufferKind, BufferRef, DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Decl,
+    Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 use super::opcode::*;
@@ -713,7 +713,61 @@ fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl, Sm4
         }
         OPERAND_TYPE_RESOURCE => {
             let slot = one_index(op.ty, &op.indices, r.base_at)?;
-            return Ok(Sm4Decl::ResourceTexture2D { slot });
+            match opcode {
+                OPCODE_DCL_RESOURCE_RAW => {
+                    return Ok(Sm4Decl::ResourceBuffer {
+                        slot,
+                        stride: 0,
+                        kind: BufferKind::Raw,
+                    });
+                }
+                OPCODE_DCL_RESOURCE_STRUCTURED => {
+                    let stride = if r.is_eof() {
+                        return Ok(Sm4Decl::Unknown { opcode });
+                    } else {
+                        r.read_u32()?
+                    };
+                    return Ok(Sm4Decl::ResourceBuffer {
+                        slot,
+                        stride,
+                        kind: BufferKind::Structured,
+                    });
+                }
+                _ => {
+                    // Typed resources encode their dimensionality in an extra token. We only model
+                    // `Texture2D` today; other dimensions are preserved as `Unknown` so later stages
+                    // can decide whether they matter.
+                    let dim = if r.is_eof() { None } else { Some(r.read_u32()?) };
+                    if dim == Some(2) {
+                        return Ok(Sm4Decl::ResourceTexture2D { slot });
+                    }
+                }
+            }
+        }
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW => {
+            let slot = one_index(op.ty, &op.indices, r.base_at)?;
+            match opcode {
+                OPCODE_DCL_UAV_RAW => {
+                    return Ok(Sm4Decl::UavBuffer {
+                        slot,
+                        stride: 0,
+                        kind: BufferKind::Raw,
+                    });
+                }
+                OPCODE_DCL_UAV_STRUCTURED => {
+                    let stride = if r.is_eof() {
+                        return Ok(Sm4Decl::Unknown { opcode });
+                    } else {
+                        r.read_u32()?
+                    };
+                    return Ok(Sm4Decl::UavBuffer {
+                        slot,
+                        stride,
+                        kind: BufferKind::Structured,
+                    });
+                }
+                _ => {}
+            }
         }
         _ => {}
     }
