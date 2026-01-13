@@ -10,15 +10,24 @@ MMIO + ring protocol.
 The canonical full-system machine (`crates/aero-machine`, `aero_machine::Machine`) reserves
 `00:07.0` for the **AeroGPU** PCI identity (`VID:DID = A3A0:0001`).
 
-Today, `aero_machine::Machine` does **not** yet wire up the full AeroGPU WDDM device model. Boot
-display is provided by the separate `aero_gpu_vga` VGA/VBE implementation, plus a minimal
-Bochs/QEMU “Standard VGA”-like PCI stub at `00:0c.0` (`1234:1111`) used only to route the fixed VBE
-linear framebuffer through the PCI MMIO window.
+The canonical machine supports **two mutually-exclusive** display configurations:
+
+- `MachineConfig::enable_aerogpu=true`: expose the full AeroGPU PCI function at `00:07.0`
+  (`A3A0:0001`). In this mode, AeroGPU owns both:
+  - the WDDM/MMIO/ring protocol implied by its VID/DID, and
+  - the legacy VGA/VBE boot display compatibility path.
+
+  Firmware derives the VBE linear framebuffer base from AeroGPU BAR1:
+  `PhysBasePtr = BAR1_BASE + 0x20000`.
+- `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): provide boot display via the
+  standalone `aero_gpu_vga` VGA/VBE implementation, plus a minimal Bochs/QEMU “Standard VGA”-like
+  PCI stub at `00:0c.0` (`1234:1111`) used only to route the VBE linear framebuffer through the PCI
+  MMIO window.
 
 See also:
 
-- [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md) (future desired
-  VGA/VBE-compat behavior of AeroGPU itself)
+- [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md) (VGA/VBE-compat boot
+  display behavior when AeroGPU is enabled)
 - [`docs/pci-device-compatibility.md`](../pci-device-compatibility.md) (canonical BDF/ID table,
   including the transitional VGA stub)
 

@@ -15,10 +15,19 @@ This document specifies the emulator-side behavior required for the **AeroGPU vi
 This document describes the **desired** end state for the AeroGPU device model (A3A0:0001) to own
 both the legacy VGA/VBE boot display path and the modern WDDM/MMIO/ring protocol.
 
-Today, the canonical `aero_machine::Machine` does **not** yet expose the full AeroGPU PCI function.
-Instead it uses the standalone `aero_gpu_vga` VGA/VBE device model for boot display, and exposes a
-minimal Bochs/QEMU “Standard VGA”-like PCI stub at `00:0c.0` (`1234:1111`) solely so the fixed VBE
-linear framebuffer can be routed through the PCI MMIO router.
+The canonical `aero_machine::Machine` supports **two mutually-exclusive** display configurations:
+
+- **AeroGPU (canonical / long-term):** `MachineConfig::enable_aerogpu=true` exposes the full AeroGPU
+  PCI function at `00:07.0` (`A3A0:0001`). In this mode, AeroGPU is responsible for both:
+  - legacy VGA/VBE boot display compatibility, and
+  - the modern AeroGPU MMIO/WDDM protocol.
+- **Legacy VGA/VBE (transitional):** `MachineConfig::enable_vga=true` uses the standalone
+  `aero_gpu_vga` VGA/VBE device model for boot display, and exposes a minimal Bochs/QEMU “Standard
+  VGA”-like PCI stub at `00:0c.0` (`1234:1111`) solely so the VBE linear framebuffer can be routed
+  through the PCI MMIO router.
+
+`enable_aerogpu` and `enable_vga` are intended to be **mutually exclusive** (only one boot display
+device model active at a time).
 
 See:
 
@@ -68,11 +77,12 @@ To support both WDDM and legacy/VBE:
 | BAR | Type | Size | Purpose |
 |-----|------|------|---------|
 | BAR0 | MMIO | 64KB | AeroGPU control registers (incl. WDDM scanout regs) |
-| BAR1 | Prefetchable MMIO | e.g. 32MB–128MB | Dedicated VRAM aperture (contains legacy VGA window + VBE LFB + optional “VRAM allocations”) |
+| BAR1 | Prefetchable MMIO | implementation-defined | Dedicated VRAM aperture (contains legacy VGA window + VBE LFB + optional “VRAM allocations”) |
 
 The emulator BIOS assigns BAR addresses within the reserved below-4 GiB PCI/MMIO hole
 (`0xC000_0000..0x1_0000_0000`). The current BAR allocator places device MMIO BARs starting at
-`0xE000_0000` (so `0xE000_0000` is a typical BAR1 base in examples).
+`0xE000_0000`. Firmware and guests must treat the assigned AeroGPU BAR bases as **dynamic** (do not
+assume a fixed physical address).
 
 ### Legacy ranges to decode
 
@@ -99,7 +109,7 @@ The emulator’s memory bus must route this window to the AeroGPU legacy VGA fro
 For determinism and to avoid conflicts with guest RAM paging, legacy VGA/VBE uses a dedicated VRAM buffer owned by AeroGPU and exposed via BAR1:
 
 ```text
-BAR1 (VRAM aperture) base: VRAM_BASE (assigned by BIOS)
+BAR1 (VRAM aperture) base: BAR1_BASE (assigned by BIOS)
 
 VRAM offset    Purpose
 0x00000..0x1FFFF  Legacy VGA window backing for 0xA0000..0xBFFFF (128KB)
@@ -122,7 +132,9 @@ This ensures:
 
 ### VBE LFB base address
 
-VBE mode info must report `PhysBasePtr = VRAM_BASE + 0x20000` (aligned to 64KB).
+When AeroGPU is enabled, VBE mode info must report:
+
+`PhysBasePtr = BAR1_BASE + 0x20000` (aligned to 64KB).
 
 Windows 7 boot graphics and installer UI will draw directly into this linear framebuffer.
 
@@ -278,7 +290,7 @@ If a broader AeroGPU protocol already exists, this section defines the *minimum 
 ### When legacy VGA/VBE owns scanout
 
 - At reset/power-on: `source = LegacyText`, base points at the legacy text buffer (or can be implicit)
-- When BIOS/bootloader sets a VBE LFB mode: `source = LegacyVbeLfb`, base = `VRAM_BASE + 0x20000`, width/height/pitch filled
+- When BIOS/bootloader sets a VBE LFB mode: `source = LegacyVbeLfb`, base = `BAR1_BASE + 0x20000`, width/height/pitch filled
 
 ### When WDDM owns scanout
 
