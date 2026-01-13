@@ -66,10 +66,9 @@ pub fn dispatch_interrupt(
             let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
             if count < LOG_LIMIT {
                 let msg = format!("BIOS: unhandled interrupt {vector:02x}\n");
-                bios.tty_output.extend_from_slice(msg.as_bytes());
+                bios.push_tty_bytes(msg.as_bytes());
             } else if count == LOG_LIMIT {
-                bios.tty_output
-                    .extend_from_slice(b"BIOS: further unhandled interrupts suppressed\n");
+                bios.push_tty_bytes(b"BIOS: further unhandled interrupts suppressed\n");
             }
         }
     }
@@ -1136,10 +1135,9 @@ fn handle_int13(
             let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
             if count < LOG_LIMIT {
                 let msg = format!("BIOS: unhandled INT 13h AH={ah:02x}\n");
-                bios.tty_output.extend_from_slice(msg.as_bytes());
+                bios.push_tty_bytes(msg.as_bytes());
             } else if count == LOG_LIMIT {
-                bios.tty_output
-                    .extend_from_slice(b"BIOS: further unhandled interrupts suppressed\n");
+                bios.push_tty_bytes(b"BIOS: further unhandled interrupts suppressed\n");
             }
             set_error(bios, cpu, 0x01);
         }
@@ -1290,10 +1288,9 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
                 let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
                 if count < LOG_LIMIT {
                     let msg = format!("BIOS: unhandled INT 15h AX={ax:04x}\n");
-                    bios.tty_output.extend_from_slice(msg.as_bytes());
+                    bios.push_tty_bytes(msg.as_bytes());
                 } else if count == LOG_LIMIT {
-                    bios.tty_output
-                        .extend_from_slice(b"BIOS: further unhandled interrupts suppressed\n");
+                    bios.push_tty_bytes(b"BIOS: further unhandled interrupts suppressed\n");
                 }
                 cpu.rflags |= FLAG_CF;
                 cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x86u64 << 8);
@@ -1450,10 +1447,9 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
             let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
             if count < LOG_LIMIT {
                 let msg = format!("BIOS: unhandled INT 16h AH={ah:02x}\n");
-                bios.tty_output.extend_from_slice(msg.as_bytes());
+                bios.push_tty_bytes(msg.as_bytes());
             } else if count == LOG_LIMIT {
-                bios.tty_output
-                    .extend_from_slice(b"BIOS: further unhandled interrupts suppressed\n");
+                bios.push_tty_bytes(b"BIOS: further unhandled interrupts suppressed\n");
             }
             cpu.rflags |= FLAG_CF;
         }
