@@ -1332,6 +1332,8 @@ hard size cap to prevent unbounded growth:
   - `NetTraceConfig.max_bytes` defaults to **16 MiB** of captured payload bytes (not including PCAPNG overhead).
   - Once the cap is reached, new records are **dropped**; counters are available via `NetTracer.stats()`
     (`dropped_records` / `dropped_bytes`).
+  - For sensitive environments, configure `NetTraceConfig.redactor` to reduce payload capture (e.g.
+    `TruncateRedactor` or `HeadersOnlyRedactor` in `emulator::io::net::trace`).
 - **Web (`web/src/net/net_tracer.ts`):**
   - Defaults to **16 MiB** of captured payload bytes (`maxBytes`) per net worker.
   - When the cap is reached, new frames are **dropped**; counters are available via `NetTracer.stats()`
@@ -1365,7 +1367,12 @@ truncated depending on its capture limits.
 
 ### Privacy / Security Warning
 
-Captures may include sensitive data such as credentials, cookies, private browsing traffic, or internal network metadata. Tracing must default to off and the UI should warn users before enabling or exporting captures. A redaction hook may be provided for stripping known sensitive payloads.
+Captures may include sensitive data such as credentials, cookies, private browsing traffic, or internal
+network metadata. Tracing must default to off and the UI should warn users before enabling or
+exporting captures.
+
+Rust-side tracing supports optional redaction via `NetTraceConfig.redactor` (a `NetTraceRedactor`),
+which can drop records (`None`) or truncate payloads to reduce sensitive capture.
 
 ---
 
