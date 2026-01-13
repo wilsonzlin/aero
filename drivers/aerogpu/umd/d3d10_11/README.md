@@ -9,20 +9,39 @@ owns the submission transport and supports both the versioned (`aerogpu_pci.h` +
 (`legacy/aerogpu_protocol_legacy.h`) device ABIs, auto-detected via MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 (The in-tree Win7 driver package binds only to the versioned device by default; legacy uses `drivers/aerogpu/packaging/win7/legacy/`.)
 
-## Status / scope (initial)
+## Status / scope (current)
 
-This implementation is intentionally conservative and targets **the minimum functionality needed for a basic D3D11 triangle**:
+This implementation started as “minimum viable triangle”, but it now includes additional coverage needed by the Win7 runtime and by the current AeroGPU protocol (notably: **mip chains**, **state encoding**, and protocol support for **B5 formats** + **MRT**).
 
-- Device + immediate context
-- Buffers and 2D textures
+### Implemented
+
+- Device + immediate context (FL10_0)
+- Buffers + Texture2D resources
+  - Texture2D **mip chains + array layers** (`MipLevels = 0` → full chain), including initial-data upload + subresource layout packing for guest-backed allocations
+  - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are supported when the host ABI is new enough (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`)
 - Vertex/pixel shaders (DXBC payload passthrough)
-- Geometry shaders are currently **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test's pass-through GS that only renames varyings.
-- Input layout + vertex/index buffers
-- RTV + clear + draw/draw-indexed
-- Blend/raster/depth state objects (accepted; currently conservative/stubbed)
+- Input layout + vertex/index buffers, primitive topology
+- Render target + depth-stencil binding (currently RT0 + optional DSV), Clear, Draw/DrawIndexed
+- Viewport + scissor
+- Pipeline state **encoding** into the command stream:
+  - `AEROGPU_CMD_SET_BLEND_STATE`, `AEROGPU_CMD_SET_RASTERIZER_STATE`, `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE`
 - Windowed swapchain present (sync interval 0 vs non-zero) via `AEROGPU_CMD_PRESENT`
 
+### Still stubbed / known gaps (incl. protocol-limited)
+
+- Geometry shaders are **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
+- MRT: the protocol supports up to `AEROGPU_MAX_RENDER_TARGETS` (8), but the D3D10/11 UMD currently only forwards RT0.
+- B5 formats: the protocol/host support 16-bit `B5G6R5` / `B5G5R5A1` formats, but most Win7 D3D10/11 bring-up is still exercised with 32-bit formats (and this UMD’s caps/format mapping should be extended if a workload requires DXGI `B5*` formats).
+- Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries enable + masks; it does **not** encode stencil funcs/ops (or separate front/back face state).
+- Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors are mapped to conservative fallbacks.
+
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.
+
+Host-side unit tests that exercise Map/Unmap and the newer resource/layout behavior live in:
+
+- `drivers/aerogpu/umd/d3d10_11/tests/map_unmap_tests.cpp` (CMake target: `aerogpu_d3d10_11_map_unmap_tests`)
+- Command-stream/host validation for B5 formats, MRT, and state packets lives under `crates/aero-gpu/tests/`
+  (for example: `aerogpu_d3d9_16bit_formats.rs`, `aerogpu_d3d9_clear_scissor.rs`, `aerogpu_d3d9_cmd_stream_state.rs`).
 
 For a full “bring-up spec” (Win7 driver model overview, minimal D3D10DDI/D3D11DDI entrypoints to implement, swapchain behavior expectations, shader handling, and a test plan), see:
 
