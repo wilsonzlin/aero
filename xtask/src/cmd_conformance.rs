@@ -1,14 +1,20 @@
 use crate::error::{Result, XtaskError};
 use crate::paths;
 use crate::runner::Runner;
+use std::env;
 use std::process::Command;
 
-#[derive(Default)]
+const DEFAULT_CASES: usize = 512;
+// Keep in sync with `crates/conformance/src/lib.rs` (`AERO_CONFORMANCE_SEED` fallback).
+const DEFAULT_SEED: u64 = 0x_52c6_71d9_a4f2_31b9;
+
+#[derive(Debug)]
 struct ConformanceOpts {
-    cases: Option<String>,
-    seed: Option<String>,
+    cases: usize,
+    seed: u64,
     filter: Option<String>,
-    report: Option<String>,
+    report_path: Option<String>,
+    reference_isolate: Option<bool>,
     test_args: Vec<String>,
 }
 
@@ -17,19 +23,32 @@ pub fn print_help() {
         "\
 Run the instruction conformance / differential test harness.
 
-This is a small wrapper around `cargo test -p conformance` that configures the run via
-environment variables to keep dev/CI invocations consistent.
+This is a small wrapper around:
+  bash ./scripts/safe-run.sh cargo test -p conformance --locked
 
 Usage:
   cargo xtask conformance [options] [-- <test args>]
 
 Options:
-  --cases <n>            Number of generated test cases (sets AERO_CONFORMANCE_CASES)
-  --seed <n>             RNG seed (sets AERO_CONFORMANCE_SEED)
-  --filter <expr>        Filter corpus/templates (sets AERO_CONFORMANCE_FILTER)
-  --report <path>        Write a JSON report (sets AERO_CONFORMANCE_REPORT_PATH)
+  --cases <n>            Number of randomized instruction cases to run.
+                         (default: $AERO_CONFORMANCE_CASES or {DEFAULT_CASES})
+  --seed <u64>           RNG seed (decimal or 0x... hex).
+                         (default: $AERO_CONFORMANCE_SEED or conformance default)
+  --filter <expr>        Filter expression (sets AERO_CONFORMANCE_FILTER)
+  --report <path>        Alias for --report-path
+  --report-path <path>   Write JSON report to this path (AERO_CONFORMANCE_REPORT_PATH)
+
+  --reference-isolate    Force reference backend isolation (AERO_CONFORMANCE_REFERENCE_ISOLATE=1)
+  --no-reference-isolate Disable reference backend isolation (AERO_CONFORMANCE_REFERENCE_ISOLATE=0)
 
   -h, --help             Show this help.
+
+Environment:
+  AERO_CONFORMANCE_CASES
+  AERO_CONFORMANCE_SEED
+  AERO_CONFORMANCE_FILTER
+  AERO_CONFORMANCE_REPORT_PATH
+  AERO_CONFORMANCE_REFERENCE_ISOLATE
 
 Examples:
   cargo xtask conformance --cases 32
@@ -42,13 +61,14 @@ Examples:
 pub fn cmd(args: Vec<String>) -> Result<()> {
     let (args, test_args) = split_args(args);
 
-    // `cargo xtask conformance` should be safe to run anywhere. The conformance harness relies on
-    // native x86_64 host execution (and typically `fork()` isolation), so on unsupported platforms
-    // we print a friendly message and exit 0.
+    // Help should work on any host.
     if args.iter().any(|a| a == "-h" || a == "--help") {
         print_help();
         return Ok(());
     }
+
+    // The conformance harness compares Aero semantics against native host execution.
+    // Running on other hosts would just build and then skip at runtime.
     if !cfg!(all(unix, target_arch = "x86_64")) {
         println!(
             "\
@@ -66,22 +86,34 @@ requires a unix x86_64 host."
     let repo_root = paths::repo_root()?;
     let runner = Runner::new();
 
-    let mut cmd = Command::new("cargo");
+    let mut cmd = Command::new("bash");
     cmd.current_dir(&repo_root)
+        .arg("./scripts/safe-run.sh")
+        .arg("cargo")
         .args(["test", "-p", "conformance", "--locked"]);
 
-    if let Some(cases) = opts.cases {
-        cmd.env("AERO_CONFORMANCE_CASES", cases);
-    }
-    if let Some(seed) = opts.seed {
-        cmd.env("AERO_CONFORMANCE_SEED", seed);
-    }
-    if let Some(filter) = opts.filter {
+    // Ensure the child process gets a fully-specified set of conformance knobs.
+    cmd.env("AERO_CONFORMANCE_CASES", opts.cases.to_string())
+        .env("AERO_CONFORMANCE_SEED", opts.seed.to_string());
+
+    // Clear optional vars to avoid surprising inheritance from the parent process.
+    cmd.env_remove("AERO_CONFORMANCE_FILTER");
+    cmd.env_remove("AERO_CONFORMANCE_REPORT_PATH");
+    cmd.env_remove("AERO_CONFORMANCE_REFERENCE_ISOLATE");
+
+    if let Some(filter) = &opts.filter {
         cmd.env("AERO_CONFORMANCE_FILTER", filter);
     }
-    if let Some(report) = opts.report {
-        cmd.env("AERO_CONFORMANCE_REPORT_PATH", report);
+    if let Some(path) = &opts.report_path {
+        cmd.env("AERO_CONFORMANCE_REPORT_PATH", path);
     }
+    if let Some(isolate) = opts.reference_isolate {
+        cmd.env(
+            "AERO_CONFORMANCE_REFERENCE_ISOLATE",
+            if isolate { "1" } else { "0" },
+        );
+    }
+
     if !opts.test_args.is_empty() {
         cmd.arg("--");
         cmd.args(&opts.test_args);
@@ -92,30 +124,77 @@ requires a unix x86_64 host."
 }
 
 fn parse_args(args: Vec<String>) -> Result<ConformanceOpts> {
-    let mut opts = ConformanceOpts::default();
-    let mut iter = args.into_iter().peekable();
+    let env_cases = env::var("AERO_CONFORMANCE_CASES")
+        .ok()
+        .and_then(|v| parse_usize(&v).ok());
+    let env_seed = env::var("AERO_CONFORMANCE_SEED")
+        .ok()
+        .and_then(|v| parse_u64(&v).ok());
 
+    let mut opts = ConformanceOpts {
+        cases: env_cases.unwrap_or(DEFAULT_CASES),
+        seed: env_seed.unwrap_or(DEFAULT_SEED),
+        filter: env_var_nonempty("AERO_CONFORMANCE_FILTER"),
+        report_path: env_var_nonempty("AERO_CONFORMANCE_REPORT_PATH"),
+        reference_isolate: env::var("AERO_CONFORMANCE_REFERENCE_ISOLATE")
+            .ok()
+            .map(|v| v != "0"),
+        test_args: Vec::new(),
+    };
+
+    let mut iter = args.into_iter().peekable();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--cases" => opts.cases = Some(next_value(&mut iter, &arg)?),
+            "--cases" => {
+                let raw = next_value(&mut iter, &arg)?;
+                opts.cases = parse_usize(&raw).map_err(|_| {
+                    XtaskError::Message(format!("invalid --cases value `{raw}` (expected integer)"))
+                })?;
+            }
             val if val.starts_with("--cases=") => {
-                opts.cases = Some(val["--cases=".len()..].to_string());
+                let raw = &val["--cases=".len()..];
+                opts.cases = parse_usize(raw).map_err(|_| {
+                    XtaskError::Message(format!("invalid --cases value `{raw}` (expected integer)"))
+                })?;
             }
-            "--seed" => opts.seed = Some(next_value(&mut iter, &arg)?),
+            "--seed" => {
+                let raw = next_value(&mut iter, &arg)?;
+                opts.seed = parse_u64(&raw).map_err(|_| {
+                    XtaskError::Message(format!(
+                        "invalid --seed value `{raw}` (expected integer: decimal or 0x.. hex)"
+                    ))
+                })?;
+            }
             val if val.starts_with("--seed=") => {
-                opts.seed = Some(val["--seed=".len()..].to_string());
+                let raw = &val["--seed=".len()..];
+                opts.seed = parse_u64(raw).map_err(|_| {
+                    XtaskError::Message(format!(
+                        "invalid --seed value `{raw}` (expected integer: decimal or 0x.. hex)"
+                    ))
+                })?;
             }
-            "--filter" => opts.filter = Some(next_value(&mut iter, &arg)?),
+            "--filter" => {
+                let raw = next_value(&mut iter, &arg)?;
+                opts.filter = if raw.trim().is_empty() { None } else { Some(raw) };
+            }
             val if val.starts_with("--filter=") => {
-                opts.filter = Some(val["--filter=".len()..].to_string());
+                let raw = val["--filter=".len()..].to_string();
+                opts.filter = if raw.trim().is_empty() { None } else { Some(raw) };
             }
-            "--report" | "--report-path" => opts.report = Some(next_value(&mut iter, &arg)?),
+            "--report" | "--report-path" => {
+                let raw = next_value(&mut iter, &arg)?;
+                opts.report_path = if raw.trim().is_empty() { None } else { Some(raw) };
+            }
             val if val.starts_with("--report=") => {
-                opts.report = Some(val["--report=".len()..].to_string());
+                let raw = val["--report=".len()..].to_string();
+                opts.report_path = if raw.trim().is_empty() { None } else { Some(raw) };
             }
             val if val.starts_with("--report-path=") => {
-                opts.report = Some(val["--report-path=".len()..].to_string());
+                let raw = val["--report-path=".len()..].to_string();
+                opts.report_path = if raw.trim().is_empty() { None } else { Some(raw) };
             }
+            "--reference-isolate" => opts.reference_isolate = Some(true),
+            "--no-reference-isolate" => opts.reference_isolate = Some(false),
             other => {
                 return Err(XtaskError::Message(format!(
                     "unknown argument for `conformance`: `{other}` (run `cargo xtask conformance --help`)"
@@ -145,3 +224,28 @@ fn next_value(
         None => Err(XtaskError::Message(format!("{flag} requires a value"))),
     }
 }
+
+fn env_var_nonempty(key: &str) -> Option<String> {
+    let value = env::var(key).ok()?;
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn parse_usize(raw: &str) -> std::result::Result<usize, ()> {
+    let cleaned = raw.trim().replace('_', "");
+    cleaned.parse::<usize>().map_err(|_| ())
+}
+
+fn parse_u64(raw: &str) -> std::result::Result<u64, ()> {
+    let cleaned = raw.trim().replace('_', "");
+    let cleaned = cleaned.as_str();
+    if let Some(hex) = cleaned.strip_prefix("0x").or_else(|| cleaned.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).map_err(|_| ())
+    } else {
+        cleaned.parse::<u64>().map_err(|_| ())
+    }
+}
+
