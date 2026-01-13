@@ -30,10 +30,6 @@ export interface PresenterScreenshot {
    * Hash-based tests rely on this contract being deterministic and matching the
    * source bytes. If a "what the user sees" capture is needed, add a separate
    * API for **presented output** readback instead of changing this one.
-   *
-   * Note: some legacy implementations (e.g. `webgl2_raw`) may currently read back
-   * the default framebuffer. Treat those results as best-effort/debug-only until
-   * the backend is aligned with the source-framebuffer contract above.
    */
   pixels: ArrayBuffer;
 }

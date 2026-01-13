@@ -278,14 +278,9 @@ export class RawWebGl2Presenter implements Presenter {
     this.draw();
   }
 
-  // NOTE: Unlike the WebGPU and wgpu WebGL2 presenter backends, this currently captures
-  // the **presented output** by readback of the default framebuffer (after `draw()`).
-  // That means scaling/letterboxing and cursor rendering can affect the result.
-  // The returned `width/height` are `canvas.width/canvas.height` (physical pixels), which
-  // may differ from `srcWidth/srcHeight` when `outputWidth/outputHeight` or DPR differ.
-  //
-  // Treat this as best-effort/debug-only until the backend is aligned with the
-  // source-framebuffer screenshot contract in `PresenterScreenshot`.
+  // Screenshot reads back the source frame texture (not the presented/canvas output).
+  // This avoids scaling/color-space ambiguity and matches the deterministic hashing
+  // contract described by `PresenterScreenshot`.
   public screenshot(): PresenterScreenshot {
     const gl = this.gl;
     const canvas = this.canvas;
