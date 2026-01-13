@@ -5,11 +5,13 @@ import { StatusIndex } from "../runtime/shared_layout";
 import { normalizeCollections, type NormalizedHidCollectionInfo } from "./webhid_normalize";
 import { computeInputReportPayloadByteLengths } from "./hid_report_sizes";
 import {
+  isHidAttachResultMessage,
   isHidErrorMessage,
   isHidLogMessage,
   isHidRingDetachMessage,
   isHidSendReportMessage,
   type HidAttachMessage,
+  type HidAttachResultMessage,
   type HidDetachMessage,
   type HidInputReportMessage,
   type HidProxyMessage,
@@ -151,6 +153,16 @@ export class WebHidBroker {
   #inputReportHardCapped = 0;
   #inputReportUnknownSize = 0;
 
+  readonly #pendingAttachResults = new Map<
+    number,
+    {
+      worker: MessagePort | Worker;
+      promise: Promise<void>;
+      resolve: () => void;
+      reject: (err: Error) => void;
+    }
+  >();
+
   readonly #listeners = new Set<WebHidBrokerListener>();
 
   #inputReportEmitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -262,6 +274,11 @@ export class WebHidBroker {
 
     const onMessage: EventListener = (ev) => {
       const data = (ev as MessageEvent<unknown>).data;
+      if (isHidAttachResultMessage(data)) {
+        this.#handleAttachResultMessage(port, data);
+        return;
+      }
+
       if (isHidSendReportMessage(data)) {
         this.#handleSendReportRequest(data);
         return;
@@ -298,6 +315,12 @@ export class WebHidBroker {
     const active = this.#workerPort;
     if (!active) return;
     if (port && port !== active) return;
+
+    for (const [deviceId, pending] of this.#pendingAttachResults) {
+      if (pending.worker !== active) continue;
+      this.#pendingAttachResults.delete(deviceId);
+      pending.reject(new Error("IO worker disconnected while attaching HID device."));
+    }
 
     this.#detachRings();
 
@@ -538,17 +561,15 @@ export class WebHidBroker {
         hasInterruptOut,
       };
 
-      this.#postToWorker(worker, attachMsg);
-      sentAttachToWorker = true;
       if (this.#workerPort !== worker) {
-        // Best-effort: detach from the worker we just posted to so it doesn't retain stale state.
-        try {
-          worker.postMessage({ type: "hid.detach", deviceId } satisfies HidDetachMessage);
-        } catch {
-          // ignore
-        }
         throw new Error("IO worker disconnected while attaching HID device.");
       }
+
+      const attachResult = this.#waitForAttachResult(worker, deviceId);
+      sentAttachToWorker = true;
+      this.#postToWorker(worker, attachMsg);
+
+      await attachResult;
 
       const onInputReport = (event: HIDInputReportEvent): void => {
         const activeWorker = this.#workerPort;
@@ -689,6 +710,34 @@ export class WebHidBroker {
       await this.manager.detachDevice(device).catch(() => undefined);
 
       throw err;
+    }
+  }
+
+  #waitForAttachResult(worker: MessagePort | Worker, deviceId: number): Promise<void> {
+    const existing = this.#pendingAttachResults.get(deviceId);
+    if (existing) return existing.promise;
+
+    let resolve!: () => void;
+    let reject!: (err: Error) => void;
+    const promise = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = (err: Error) => rej(err);
+    });
+
+    const entry = { worker, promise, resolve, reject };
+    this.#pendingAttachResults.set(deviceId, entry);
+
+    return promise;
+  }
+
+  #handleAttachResultMessage(port: MessagePort | Worker, msg: HidAttachResultMessage): void {
+    const pending = this.#pendingAttachResults.get(msg.deviceId);
+    if (!pending || pending.worker !== port) return;
+    this.#pendingAttachResults.delete(msg.deviceId);
+    if (msg.ok) {
+      pending.resolve();
+    } else {
+      pending.reject(new Error(msg.error ?? `Failed to attach HID deviceId=${msg.deviceId} on IO worker.`));
     }
   }
 

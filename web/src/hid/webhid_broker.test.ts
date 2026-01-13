@@ -25,6 +25,8 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
 class FakePort {
   readonly posted: Array<{ msg: unknown; transfer?: Transferable[] }> = [];
   private readonly listeners: FakeListener[] = [];
+  autoAttachResult = true;
+  onPost: ((msg: unknown, transfer?: Transferable[]) => void) | null = null;
 
   addEventListener(type: string, listener: FakeListener): void {
     if (type !== "message") return;
@@ -43,6 +45,11 @@ class FakePort {
 
   postMessage(msg: unknown, transfer?: Transferable[]): void {
     this.posted.push({ msg, transfer });
+    this.onPost?.(msg, transfer);
+    if (this.autoAttachResult && !this.onPost && (msg as { type?: unknown }).type === "hid.attach") {
+      const deviceId = (msg as { deviceId: number }).deviceId;
+      this.emit({ type: "hid.attachResult", deviceId, ok: true });
+    }
   }
 
   emit(msg: unknown): void {
@@ -107,20 +114,34 @@ afterEach(() => {
 const originalCrossOriginIsolatedDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
 
 describe("hid/WebHidBroker", () => {
-  it("forwards inputreport events to the worker port with transferred bytes", async () => {
+  it("waits for hid.attachResult before forwarding inputreport events to the worker port", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
     const port = new FakePort();
+    port.autoAttachResult = false;
     broker.attachWorkerPort(port as unknown as MessagePort);
     // When not crossOriginIsolated, the broker must not enable any SAB fast paths.
     expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.ring.init")).toBe(false);
     expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")).toBe(false);
 
     const device = new FakeHidDevice();
-    await broker.attachDevice(device as unknown as HIDDevice);
+    const attachPromise = broker.attachDevice(device as unknown as HIDDevice);
 
-    const attach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.attach")?.msg as HidAttachMessage | undefined;
+    // Wait until the broker posts the hid.attach message (it will block on hid.attachResult).
+    let attach: HidAttachMessage | undefined;
+    for (let i = 0; i < 10 && !attach; i += 1) {
+      attach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.attach")?.msg as HidAttachMessage | undefined;
+      if (!attach) await new Promise((r) => setTimeout(r, 0));
+    }
     expect(attach).toBeTruthy();
+
+    // While attach is still pending, input reports must not be forwarded.
+    device.dispatchInputReport(5, Uint8Array.of(1, 2, 3));
+    expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.inputReport")).toBe(false);
+
+    port.emit({ type: "hid.attachResult", deviceId: attach!.deviceId, ok: true });
+    await attachPromise;
+
     expect(attach!.guestPort).toBe(0);
     // First downstream hub ports are reserved for Aero's built-in synthetic HID devices (kbd/mouse/gamepad).
     expect(attach!.guestPath).toEqual([0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT]);
@@ -143,6 +164,12 @@ describe("hid/WebHidBroker", () => {
       const manager = new WebHidPassthroughManager({ hid: null });
       const broker = new WebHidBroker({ manager });
       const port = new FakePort();
+      port.onPost = (msg) => {
+        if ((msg as { type?: unknown }).type === "hid.attach") {
+          const deviceId = (msg as { deviceId: number }).deviceId;
+          port.emit({ type: "hid.attachResult", deviceId, ok: true });
+        }
+      };
       broker.attachWorkerPort(port as unknown as MessagePort);
 
       const device = new FakeHidDevice();
@@ -190,6 +217,12 @@ describe("hid/WebHidBroker", () => {
       const manager = new WebHidPassthroughManager({ hid: null });
       const broker = new WebHidBroker({ manager });
       const port = new FakePort();
+      port.onPost = (msg) => {
+        if ((msg as { type?: unknown }).type === "hid.attach") {
+          const deviceId = (msg as { deviceId: number }).deviceId;
+          port.emit({ type: "hid.attachResult", deviceId, ok: true });
+        }
+      };
       broker.attachWorkerPort(port as unknown as MessagePort);
 
       const ringInit = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ring.init")?.msg as
@@ -233,12 +266,48 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("detaches and surfaces errors when the worker reports attach failure", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    port.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        const deviceId = (msg as { deviceId: number }).deviceId;
+        port.emit({ type: "hid.attachResult", deviceId, ok: false, error: "nope" });
+      }
+    };
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    await expect(broker.attachDevice(device as unknown as HIDDevice)).rejects.toThrow(/nope/);
+
+    expect(device.open).toHaveBeenCalledTimes(1);
+    expect(device.close).toHaveBeenCalledTimes(1);
+    expect(device.opened).toBe(false);
+    expect(manager.getState().attachedDevices).toHaveLength(0);
+    expect(broker.isAttachedToWorker(device as unknown as HIDDevice)).toBe(false);
+
+    // A failed attach should be cleaned up and must not leave an inputreport listener installed.
+    const before = port.posted.length;
+    device.dispatchInputReport(1, Uint8Array.of(1));
+    expect(port.posted.length).toBe(before);
+
+    // Best-effort detach is still sent to the worker to clear partial state.
+    expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.detach")).toBe(true);
+  });
+
   it("forwards reports via SharedArrayBuffer rings when crossOriginIsolated", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
     const port = new FakePort();
+    port.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        const deviceId = (msg as { deviceId: number }).deviceId;
+        port.emit({ type: "hid.attachResult", deviceId, ok: true });
+      }
+    };
     broker.attachWorkerPort(port as unknown as MessagePort);
 
     const ringInit = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ring.init")?.msg as
@@ -359,6 +428,12 @@ describe("hid/WebHidBroker", () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
     const port = new FakePort();
+    port.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        const deviceId = (msg as { deviceId: number }).deviceId;
+        port.emit({ type: "hid.attachResult", deviceId, ok: true });
+      }
+    };
     broker.attachWorkerPort(port as unknown as MessagePort);
 
     const outputDevice = new FakeHidDevice();
@@ -406,6 +481,12 @@ describe("hid/WebHidBroker", () => {
       const manager = new WebHidPassthroughManager({ hid: null });
       const broker = new WebHidBroker({ manager });
       const port = new FakePort();
+      port.onPost = (msg) => {
+        if ((msg as { type?: unknown }).type === "hid.attach") {
+          const deviceId = (msg as { deviceId: number }).deviceId;
+          port.emit({ type: "hid.attachResult", deviceId, ok: true });
+        }
+      };
       broker.attachWorkerPort(port as unknown as MessagePort);
 
       const kind = 1;
@@ -447,6 +528,12 @@ describe("hid/WebHidBroker", () => {
       const manager = new WebHidPassthroughManager({ hid: null });
       const broker = new WebHidBroker({ manager });
       const port = new FakePort();
+      port.onPost = (msg) => {
+        if ((msg as { type?: unknown }).type === "hid.attach") {
+          const deviceId = (msg as { deviceId: number }).deviceId;
+          port.emit({ type: "hid.attachResult", deviceId, ok: true });
+        }
+      };
       broker.attachWorkerPort(port as unknown as MessagePort);
 
       // Capacity chosen so exactly one small input report fits.
@@ -486,6 +573,12 @@ describe("hid/WebHidBroker", () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
     const port = new FakePort();
+    port.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        const deviceId = (msg as { deviceId: number }).deviceId;
+        port.emit({ type: "hid.attachResult", deviceId, ok: true });
+      }
+    };
     broker.attachWorkerPort(port as unknown as MessagePort);
 
     const device = new FakeHidDevice();
@@ -542,6 +635,12 @@ describe("hid/WebHidBroker", () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
     const port = new FakePort();
+    port.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        const deviceId = (msg as { deviceId: number }).deviceId;
+        port.emit({ type: "hid.attachResult", deviceId, ok: true });
+      }
+    };
     broker.attachWorkerPort(port as unknown as MessagePort);
 
     const device = new FakeHidDevice();
@@ -681,6 +780,12 @@ describe("hid/WebHidBroker", () => {
     const broker = new WebHidBroker({ manager });
 
     const port1 = new FakePort();
+    port1.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        const deviceId = (msg as { deviceId: number }).deviceId;
+        port1.emit({ type: "hid.attachResult", deviceId, ok: true });
+      }
+    };
     broker.attachWorkerPort(port1 as unknown as MessagePort);
 
     const device = new FakeHidDevice();
@@ -690,6 +795,12 @@ describe("hid/WebHidBroker", () => {
     expect(port1.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.inputReport")).toBe(true);
 
     const port2 = new FakePort();
+    port2.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        const deviceId = (msg as { deviceId: number }).deviceId;
+        port2.emit({ type: "hid.attachResult", deviceId, ok: true });
+      }
+    };
     broker.attachWorkerPort(port2 as unknown as MessagePort);
 
     expect(port2.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.attach")).toBe(false);

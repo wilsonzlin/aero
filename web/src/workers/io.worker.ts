@@ -103,6 +103,7 @@ import {
 } from "../usb/usb_passthrough_demo_runtime";
 import {
   isHidAttachMessage,
+  type HidAttachResultMessage,
   isHidDetachMessage,
   isHidInputReportMessage,
   isHidProxyMessage,
@@ -2515,6 +2516,8 @@ class CompositeHidGuestBridge implements HidGuestBridge {
 
 const legacyHidAdapter = new IoWorkerLegacyHidPassthroughAdapter();
 
+let hidAttachResultCapture: { deviceId: number; message: string | null } | null = null;
+
 const hidHostSink: HidHostSink = {
   sendReport: (payload) => {
     const legacyMsg = legacyHidAdapter.sendReport(payload);
@@ -2552,6 +2555,9 @@ const hidHostSink: HidHostSink = {
   },
   error: (message, deviceId) => {
     const msg: HidErrorMessage = { type: "hid.error", message, ...(deviceId !== undefined ? { deviceId } : {}) };
+    if (hidAttachResultCapture && deviceId !== undefined && hidAttachResultCapture.deviceId === deviceId) {
+      hidAttachResultCapture.message ??= message;
+    }
     ctx.postMessage(msg);
   },
 };
@@ -4402,7 +4408,36 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if (isHidAttachMessage(data)) {
       if (started) Atomics.add(status, StatusIndex.IoHidAttachCounter, 1);
-      hidGuest.attach(data);
+      const msg = data;
+      const capture = { deviceId: msg.deviceId, message: null as string | null };
+      hidAttachResultCapture = capture;
+      try {
+        hidGuest.attach(msg);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        capture.message ??= message;
+      } finally {
+        hidAttachResultCapture = null;
+      }
+
+      const ok = capture.message === null;
+      if (!ok) {
+        // Best-effort cleanup of any partial state produced by a failed attach (e.g. bridge
+        // constructed but topology attach failed after inserting it into the map).
+        try {
+          hidGuest.detach({ type: "hid.detach", deviceId: msg.deviceId });
+        } catch {
+          // ignore
+        }
+      }
+
+      const result: HidAttachResultMessage = {
+        type: "hid.attachResult",
+        deviceId: msg.deviceId,
+        ok,
+        ...(capture.message !== null ? { error: capture.message } : {}),
+      };
+      ctx.postMessage(result);
       return;
     }
 

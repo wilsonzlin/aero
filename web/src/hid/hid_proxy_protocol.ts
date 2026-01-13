@@ -41,6 +41,13 @@ export type HidDetachMessage = {
   deviceId: number;
 };
 
+export type HidAttachResultMessage = {
+  type: "hid.attachResult";
+  deviceId: number;
+  ok: boolean;
+  error?: string;
+};
+
 export type HidRingAttachMessage = {
   type: "hid.ringAttach";
   inputRing: SharedArrayBuffer;
@@ -102,6 +109,7 @@ export type HidErrorMessage = {
 
 export type HidProxyMessage =
   | HidAttachMessage
+  | HidAttachResultMessage
   | HidDetachMessage
   | HidRingAttachMessage
   | HidRingInitMessage
@@ -231,6 +239,14 @@ export function isHidDetachMessage(value: unknown): value is HidDetachMessage {
   return isUint32(value.deviceId);
 }
 
+export function isHidAttachResultMessage(value: unknown): value is HidAttachResultMessage {
+  if (!isRecord(value) || value.type !== "hid.attachResult") return false;
+  if (!isFiniteNumber(value.deviceId)) return false;
+  if (!isBoolean(value.ok)) return false;
+  if (value.error !== undefined && typeof value.error !== "string") return false;
+  return true;
+}
+
 export function isHidRingAttachMessage(value: unknown): value is HidRingAttachMessage {
   if (!isRecord(value) || value.type !== "hid.ringAttach") return false;
   if (typeof SharedArrayBuffer === "undefined") return false;
@@ -285,6 +301,7 @@ export function isHidErrorMessage(value: unknown): value is HidErrorMessage {
 export function isHidProxyMessage(value: unknown): value is HidProxyMessage {
   return (
     isHidAttachMessage(value) ||
+    isHidAttachResultMessage(value) ||
     isHidDetachMessage(value) ||
     isHidRingAttachMessage(value) ||
     isHidRingInitMessage(value) ||

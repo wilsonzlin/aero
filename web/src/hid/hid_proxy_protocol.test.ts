@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../usb/uhci_external_hub";
 import {
   isHidAttachMessage,
+  isHidAttachResultMessage,
   isHidErrorMessage,
   isHidInputReportMessage,
   isHidLogMessage,
@@ -12,6 +13,7 @@ import {
   isHidProxyMessage,
   isHidSendReportMessage,
   type HidAttachMessage,
+  type HidAttachResultMessage,
   type HidInputReportMessage,
   type HidRingAttachMessage,
   type HidRingDetachMessage,
@@ -147,6 +149,19 @@ describe("hid/hid_proxy_protocol", () => {
     }
   });
 
+  it("validates hid.attachResult", () => {
+    const ok: HidAttachResultMessage = { type: "hid.attachResult", deviceId: 1, ok: true };
+    expect(isHidAttachResultMessage(ok)).toBe(true);
+    expect(isHidProxyMessage(ok)).toBe(true);
+
+    const err: HidAttachResultMessage = { type: "hid.attachResult", deviceId: 2, ok: false, error: "boom" };
+    expect(isHidAttachResultMessage(err)).toBe(true);
+    expect(isHidProxyMessage(err)).toBe(true);
+
+    expect(isHidAttachResultMessage({ type: "hid.attachResult", deviceId: 3, ok: false, error: 123 })).toBe(false);
+    expect(isHidAttachResultMessage({ type: "hid.attachResult", ok: true })).toBe(false);
+  });
+
   it("validates hid.ringAttach", () => {
     const msg: HidRingAttachMessage = {
       type: "hid.ringAttach",
@@ -219,6 +234,9 @@ describe("hid/hid_proxy_protocol", () => {
       data: Uint8Array.of(4, 5),
     };
     expect(isHidProxyMessage(structuredClone(send) as unknown)).toBe(true);
+
+    const attachResult: HidAttachResultMessage = { type: "hid.attachResult", deviceId: 7, ok: true };
+    expect(isHidProxyMessage(structuredClone(attachResult) as unknown)).toBe(true);
 
     const rings: HidRingAttachMessage = {
       type: "hid.ringAttach",
