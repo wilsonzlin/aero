@@ -18,8 +18,6 @@
 //! - `ac97`: AC'97 controller model and DMA plumbing.
 //! - `hda`: Intel High Definition Audio (HDA) controller/codec model.
 //! - `dsp`: PCM decode/convert + channel remixing + resampling (`sinc-resampler` optional).
-//! - `input`: microphone capture helpers (single-producer/single-consumer `f32` ring buffer).
-//! - `mixer`: small conversion/resampling helpers used by the legacy stack.
 //!
 //! ## Running tests
 //!
@@ -37,5 +35,3 @@
 pub mod ac97;
 pub mod dsp;
 pub mod hda;
-pub mod input;
-pub mod mixer;
