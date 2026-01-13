@@ -1,5 +1,5 @@
 use crate::sm3::decode::{ResultShift, SrcModifier};
-use crate::sm3::ir::{Block, CompareOp, Cond, IrOp, ShaderIr, Src, Stmt};
+use crate::sm3::ir::{Block, CompareOp, Cond, IrOp, RegFile, ShaderIr, Src, Stmt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyError {
@@ -64,6 +64,19 @@ fn verify_op(op: &IrOp) -> Result<(), VerifyError> {
             src,
             modifiers,
         } => {
+            verify_src(src)?;
+            verify_modifiers(modifiers)?;
+        }
+        IrOp::Mova {
+            dst,
+            src,
+            modifiers,
+        } => {
+            if dst.reg.file != RegFile::Addr {
+                return Err(VerifyError {
+                    message: "mova destination is not an address register".to_owned(),
+                });
+            }
             verify_src(src)?;
             verify_modifiers(modifiers)?;
         }

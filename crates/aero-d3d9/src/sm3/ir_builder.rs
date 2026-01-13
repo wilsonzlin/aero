@@ -162,6 +162,22 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                     }),
                 )?;
             }
+            Opcode::Mova => {
+                let dst = extract_dst(inst, 0)?;
+                if dst.reg.file != RegFile::Addr {
+                    return Err(err(inst, "mova destination must be an address register"));
+                }
+                let src = extract_src(inst, 1)?;
+                let modifiers = build_modifiers(inst)?;
+                push_stmt(
+                    &mut stack,
+                    Stmt::Op(IrOp::Mova {
+                        dst,
+                        src,
+                        modifiers,
+                    }),
+                )?;
+            }
             Opcode::Add => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Add {
                 dst,
                 src0,
@@ -514,6 +530,11 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             src,
             modifiers,
         }
+        | IrOp::Mova {
+            dst,
+            src,
+            modifiers,
+        }
         | IrOp::Rcp {
             dst,
             src,
@@ -694,6 +715,11 @@ fn remap_input_regs_in_block(block: &mut Block, remap: &HashMap<u32, u32>) {
 fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
     match op {
         IrOp::Mov {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Mova {
             dst,
             src,
             modifiers,

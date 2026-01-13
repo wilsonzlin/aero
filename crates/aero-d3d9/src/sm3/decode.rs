@@ -51,6 +51,7 @@ pub struct DecodedInstruction {
 pub enum Opcode {
     Nop,
     Mov,
+    Mova,
     Add,
     Sub,
     Mad,
@@ -121,6 +122,7 @@ impl Opcode {
             43 => Self::EndIf,
             44 => Self::Break,
             45 => Self::Breakc,
+            46 => Self::Mova,
             65 => Self::TexKill, // 0x41
             66 => Self::Tex,     // 0x42 (texld/texldp)
             77 => Self::TexLdd,  // 0x4D
@@ -145,6 +147,7 @@ impl Opcode {
         match self {
             Self::Nop => "nop",
             Self::Mov => "mov",
+            Self::Mova => "mova",
             Self::Add => "add",
             Self::Sub => "sub",
             Self::Mad => "mad",
@@ -713,7 +716,7 @@ fn decode_operands_and_extras(
                 });
             }
         }
-        Opcode::Mov | Opcode::Rcp | Opcode::Rsq => {
+        Opcode::Mov | Opcode::Mova | Opcode::Rcp | Opcode::Rsq => {
             parse_fixed_operands(
                 opcode,
                 stage,

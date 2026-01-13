@@ -92,6 +92,17 @@ pub enum IrOp {
         src: Src,
         modifiers: InstModifiers,
     },
+    /// Move to address register (`a#`) with float-to-int conversion semantics.
+    ///
+    /// D3D9 uses a dedicated address register file for relative addressing (e.g.
+    /// `cN[a0.x]`). `mova` writes to `a#` registers and converts the source value
+    /// to an integer-like representation. The exact rounding behavior is
+    /// implementation-defined in this IR and is handled during WGSL lowering.
+    Mova {
+        dst: Dst,
+        src: Src,
+        modifiers: InstModifiers,
+    },
     Add {
         dst: Dst,
         src0: Src,
@@ -487,6 +498,15 @@ fn format_op(op: &IrOp) -> String {
         } => format!(
             "{} {}",
             format_inst("mov", modifiers),
+            format_dst_src(dst, std::slice::from_ref(src))
+        ),
+        IrOp::Mova {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("mova", modifiers),
             format_dst_src(dst, std::slice::from_ref(src))
         ),
         IrOp::Add {

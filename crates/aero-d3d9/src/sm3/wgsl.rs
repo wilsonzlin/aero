@@ -170,6 +170,7 @@ fn default_vec4(ty: ScalarTy) -> &'static str {
 
 struct RegUsage {
     temps: BTreeSet<u32>,
+    addrs: BTreeSet<u32>,
     outputs: BTreeSet<(RegFile, u32)>,
     predicates: BTreeSet<u32>,
     float_consts: BTreeSet<u32>,
@@ -181,6 +182,7 @@ impl RegUsage {
     fn new() -> Self {
         Self {
             temps: BTreeSet::new(),
+            addrs: BTreeSet::new(),
             outputs: BTreeSet::new(),
             predicates: BTreeSet::new(),
             float_consts: BTreeSet::new(),
@@ -221,6 +223,7 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
 
     match op {
         IrOp::Mov { dst, src, .. }
+        | IrOp::Mova { dst, src, .. }
         | IrOp::Rcp { dst, src, .. }
         | IrOp::Rsq { dst, src, .. }
         | IrOp::Frc { dst, src, .. } => {
@@ -306,6 +309,9 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
         RegFile::Temp => {
             usage.temps.insert(reg.index);
         }
+        RegFile::Addr => {
+            usage.addrs.insert(reg.index);
+        }
         RegFile::Predicate => {
             usage.predicates.insert(reg.index);
         }
@@ -335,6 +341,7 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
 fn op_modifiers(op: &IrOp) -> &InstModifiers {
     match op {
         IrOp::Mov { modifiers, .. }
+        | IrOp::Mova { modifiers, .. }
         | IrOp::Add { modifiers, .. }
         | IrOp::Sub { modifiers, .. }
         | IrOp::Mul { modifiers, .. }
@@ -369,7 +376,31 @@ fn format_f32(v: f32) -> String {
 
 fn src_expr(src: &Src) -> Result<(String, ScalarTy), WgslError> {
     let ty = reg_scalar_ty(src.reg.file).ok_or_else(|| err("unsupported source register file"))?;
-    let mut expr = reg_var_name(&src.reg)?;
+    let mut expr = if src.reg.file == RegFile::Const {
+        // Relative constant addressing (`cN[a0.x]`) is represented via `RegRef.relative`.
+        if let Some(rel) = &src.reg.relative {
+            let rel_reg = reg_var_name(&rel.reg)?;
+            if rel.reg.file != RegFile::Addr {
+                return Err(err("relative constant addressing requires an address register"));
+            }
+            let comp = match rel.component {
+                SwizzleComponent::X => 'x',
+                SwizzleComponent::Y => 'y',
+                SwizzleComponent::Z => 'z',
+                SwizzleComponent::W => 'w',
+            };
+            // Clamp to the D3D9 constant register range to avoid WGSL OOB access.
+            let idx = format!(
+                "u32(clamp(i32({}) + ({}.{comp}), 0, 255))",
+                src.reg.index, rel_reg
+            );
+            format!("constants.c[CONST_BASE + {idx}]")
+        } else {
+            reg_var_name(&src.reg)?
+        }
+    } else {
+        reg_var_name(&src.reg)?
+    };
     if let Some(swz) = swizzle_suffix(src.swizzle) {
         expr.push_str(&swz);
     }
@@ -524,6 +555,23 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
                 _ => src_e,
             };
             emit_assign(dst, src_e)
+        }
+        IrOp::Mova { dst, src, modifiers } => {
+            // D3D9 `mova` converts float → int and stores the result in an address register (`a#`).
+            //
+            // Exact rounding behavior is GPU-dependent; WGSL `vec4<i32>(vec4<f32>)` conversion is a
+            // deterministic truncation toward zero, which is a reasonable approximation for the
+            // common case (non-negative indices).
+            let (src_e, src_ty) = src_expr(src)?;
+            if src_ty != ScalarTy::F32 {
+                return Err(err("mova source must be float"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::I32 {
+                return Err(err("mova destination must be integer"));
+            }
+            let src_e = apply_float_result_modifiers(src_e, modifiers)?;
+            emit_assign(dst, format!("vec4<i32>({src_e})"))
         }
         IrOp::Add { dst, src0, src1, modifiers } => {
             emit_float_binop(dst, src0, src1, modifiers, "+")
@@ -836,6 +884,16 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
 
     let mut wgsl = String::new();
 
+    // Float constants: pack per-stage `c#` register files into a single uniform buffer to keep
+    // bindings stable across shader stages (VS=0..255, PS=256..511).
+    wgsl.push_str("struct Constants { c: array<vec4<f32>, 512>, };\n");
+    wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n");
+    let const_base = match ir.version.stage {
+        ShaderStage::Vertex => 0u32,
+        ShaderStage::Pixel => 256u32,
+    };
+    let _ = writeln!(wgsl, "const CONST_BASE: u32 = {}u;\n", const_base);
+
     let entry_point = match ir.version.stage {
         ShaderStage::Vertex => "vs_main",
         ShaderStage::Pixel => "fs_main",
@@ -871,7 +929,12 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
     }
 
-    // Predicate registers.
+    // Address registers (`a#`) used for relative constant indexing.
+    for a in &usage.addrs {
+        let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
+    }
+
+    // Predicate registers (`p#`).
     for p in &usage.predicates {
         let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
     }
@@ -898,15 +961,22 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
 
     // Embedded float constants (`def c#`).
     for idx in &usage.float_consts {
-        let value = f32_defs.get(idx).copied().unwrap_or([0.0; 4]);
-        let _ = writeln!(
-            wgsl,
-            "  let c{idx}: vec4<f32> = vec4<f32>({}, {}, {}, {});",
-            format_f32(value[0]),
-            format_f32(value[1]),
-            format_f32(value[2]),
-            format_f32(value[3])
-        );
+        if let Some(value) = f32_defs.get(idx).copied() {
+            let _ = writeln!(
+                wgsl,
+                "  let c{idx}: vec4<f32> = vec4<f32>({}, {}, {}, {});",
+                format_f32(value[0]),
+                format_f32(value[1]),
+                format_f32(value[2]),
+                format_f32(value[3])
+            );
+        } else {
+            // Non-embedded float constants come from the uniform constant buffer.
+            let _ = writeln!(
+                wgsl,
+                "  let c{idx}: vec4<f32> = constants.c[CONST_BASE + {idx}u];"
+            );
+        }
     }
 
     // Embedded integer constants (`defi i#`).
