@@ -36,7 +36,10 @@ use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG_READONLY};
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::binding_model::{D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
+use crate::binding_model::{
+    BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV, D3D11_MAX_CONSTANT_BUFFER_SLOTS,
+    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
+};
 use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
@@ -46,7 +49,7 @@ use crate::{
     Sm4Program,
 };
 
-use super::bindings::{BindingState, BoundConstantBuffer, BoundSampler, ShaderStage};
+use super::bindings::{BindingState, BoundBuffer, BoundConstantBuffer, BoundSampler, ShaderStage};
 use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchDescriptor};
 use super::indirect_args::DrawIndexedIndirectArgs;
 use super::pipeline_layout_cache::PipelineLayoutCache;
@@ -63,6 +66,7 @@ const DEFAULT_MAX_TEXTURE_SLOTS: usize = MAX_TEXTURE_SLOTS as usize;
 const DEFAULT_MAX_SAMPLER_SLOTS: usize = MAX_SAMPLER_SLOTS as usize;
 // D3D10/11 exposes 14 constant buffer slots (0..13) per shader stage.
 const DEFAULT_MAX_CONSTANT_BUFFER_SLOTS: usize = D3D11_MAX_CONSTANT_BUFFER_SLOTS as usize;
+const DEFAULT_MAX_UAV_SLOTS: usize = MAX_UAV_SLOTS as usize;
 const LEGACY_CONSTANTS_SIZE_BYTES: u64 = 4096 * 16;
 
 // WebGPU pipelines must declare at least one color target when a fragment shader writes a color
@@ -3091,6 +3095,7 @@ impl AerogpuD3d11Executor {
             let stage = group_index_to_stage(group_index as u32)?;
             let stage_bindings = self.bindings.stage(stage);
             for binding in group_bindings {
+                #[allow(unreachable_patterns)]
                 match &binding.kind {
                     crate::BindingKind::Texture2D { slot } => {
                         if let Some(tex) = stage_bindings.texture(*slot) {
@@ -3106,6 +3111,9 @@ impl AerogpuD3d11Executor {
                         if let Some(buf) = stage_bindings.uav_buffer(*slot) {
                             self.encoder_used_buffers.insert(buf.buffer);
                         }
+                        if let Some(tex) = stage_bindings.uav_texture(*slot) {
+                            self.encoder_used_textures.insert(tex.texture);
+                        }
                     }
                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
@@ -3113,6 +3121,32 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     crate::BindingKind::Sampler { .. } => {}
+                    _ => {
+                        let binding_num = binding.binding;
+                        if binding_num >= BINDING_BASE_UAV {
+                            let slot = binding_num.saturating_sub(BINDING_BASE_UAV);
+                            if let Some(buf) = stage_bindings.uav_buffer(slot) {
+                                self.encoder_used_buffers.insert(buf.buffer);
+                            }
+                            if let Some(tex) = stage_bindings.uav_texture(slot) {
+                                self.encoder_used_textures.insert(tex.texture);
+                            }
+                        } else if binding_num >= BINDING_BASE_TEXTURE
+                            && binding_num < BINDING_BASE_SAMPLER
+                        {
+                            let slot = binding_num.saturating_sub(BINDING_BASE_TEXTURE);
+                            if let Some(tex) = stage_bindings.texture(slot) {
+                                self.encoder_used_textures.insert(tex.texture);
+                            }
+                            if let Some(buf) = stage_bindings.srv_buffer(slot) {
+                                self.encoder_used_buffers.insert(buf.buffer);
+                            }
+                        } else if binding_num < BINDING_BASE_TEXTURE {
+                            if let Some(cb) = stage_bindings.constant_buffer(binding_num) {
+                                self.encoder_used_buffers.insert(cb.buffer);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3521,15 +3555,21 @@ impl AerogpuD3d11Executor {
         // Precompute which binding slots are actually referenced by the current shader pair so we
         // can avoid breaking the render pass for state updates that will not be read by any draw
         // in this pass.
+        // NOTE: SRV slots (`t#`) can refer to either a Texture2D SRV or a buffer SRV. These
+        // `used_*` masks track the slot indices, not the underlying resource type.
         let mut used_textures_vs = vec![false; DEFAULT_MAX_TEXTURE_SLOTS];
         let mut used_textures_ps = vec![false; DEFAULT_MAX_TEXTURE_SLOTS];
         let mut used_textures_cs = vec![false; DEFAULT_MAX_TEXTURE_SLOTS];
         let mut used_cb_vs = vec![false; DEFAULT_MAX_CONSTANT_BUFFER_SLOTS];
         let mut used_cb_ps = vec![false; DEFAULT_MAX_CONSTANT_BUFFER_SLOTS];
         let mut used_cb_cs = vec![false; DEFAULT_MAX_CONSTANT_BUFFER_SLOTS];
+        let mut used_uavs_vs = vec![false; DEFAULT_MAX_UAV_SLOTS];
+        let mut used_uavs_ps = vec![false; DEFAULT_MAX_UAV_SLOTS];
+        let mut used_uavs_cs = vec![false; DEFAULT_MAX_UAV_SLOTS];
         for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
             let stage = group_index_to_stage(group_index as u32)?;
             for binding in group_bindings {
+                #[allow(unreachable_patterns)]
                 match &binding.kind {
                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                         let slot_usize = *slot as usize;
@@ -3543,8 +3583,7 @@ impl AerogpuD3d11Executor {
                             *entry = true;
                         }
                     }
-                    crate::BindingKind::Texture2D { slot }
-                    | crate::BindingKind::SrvBuffer { slot } => {
+                    crate::BindingKind::Texture2D { slot } | crate::BindingKind::SrvBuffer { slot } => {
                         let slot_usize = *slot as usize;
                         let used = match stage {
                             ShaderStage::Vertex => used_textures_vs.get_mut(slot_usize),
@@ -3556,8 +3595,60 @@ impl AerogpuD3d11Executor {
                             *entry = true;
                         }
                     }
-                    crate::BindingKind::Sampler { .. } | crate::BindingKind::UavBuffer { .. } => {}
-                }
+                    crate::BindingKind::UavBuffer { slot } => {
+                        let slot_usize = *slot as usize;
+                        let used = match stage {
+                            ShaderStage::Vertex => used_uavs_vs.get_mut(slot_usize),
+                            ShaderStage::Pixel => used_uavs_ps.get_mut(slot_usize),
+                            ShaderStage::Compute => used_uavs_cs.get_mut(slot_usize),
+                            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => None,
+                        };
+                        if let Some(entry) = used {
+                            *entry = true;
+                        }
+                    }
+                    crate::BindingKind::Sampler { .. } => {}
+                    // Forward-compat: fall back to binding-number range classification for any new
+                    // `BindingKind` variants (e.g. future UAV textures).
+                    _ => {
+                        let binding_num = binding.binding;
+                        if binding_num >= BINDING_BASE_UAV {
+                            let slot_usize = binding_num.saturating_sub(BINDING_BASE_UAV) as usize;
+                            let used = match stage {
+                                ShaderStage::Vertex => used_uavs_vs.get_mut(slot_usize),
+                                ShaderStage::Pixel => used_uavs_ps.get_mut(slot_usize),
+                                ShaderStage::Compute => used_uavs_cs.get_mut(slot_usize),
+                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => None,
+                            };
+                            if let Some(entry) = used {
+                                *entry = true;
+                            }
+                        } else if binding_num >= BINDING_BASE_TEXTURE && binding_num < BINDING_BASE_SAMPLER {
+                            let slot_usize =
+                                binding_num.saturating_sub(BINDING_BASE_TEXTURE) as usize;
+                            let used = match stage {
+                                ShaderStage::Vertex => used_textures_vs.get_mut(slot_usize),
+                                ShaderStage::Pixel => used_textures_ps.get_mut(slot_usize),
+                                ShaderStage::Compute => used_textures_cs.get_mut(slot_usize),
+                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => None,
+                            };
+                            if let Some(entry) = used {
+                                *entry = true;
+                            }
+                        } else if binding_num < BINDING_BASE_TEXTURE {
+                            let slot_usize = binding_num as usize;
+                            let used = match stage {
+                                ShaderStage::Vertex => used_cb_vs.get_mut(slot_usize),
+                                ShaderStage::Pixel => used_cb_ps.get_mut(slot_usize),
+                                ShaderStage::Compute => used_cb_cs.get_mut(slot_usize),
+                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => None,
+                            };
+                            if let Some(entry) = used {
+                                *entry = true;
+                            }
+                        }
+                    }
+                };
             }
         }
 
@@ -3875,7 +3966,12 @@ impl AerogpuD3d11Executor {
                     }
                 }
 
-                if !needs_break && self.resources.textures.contains_key(&handle) {
+                // SRV bindings (`t#`) can point at either textures or buffers. Check the SRV slot
+                // table regardless of the underlying resource type.
+                if !needs_break
+                    && (self.resources.textures.contains_key(&handle)
+                        || self.resources.buffers.contains_key(&handle))
+                {
                     for (stage, used_slots) in [
                         (ShaderStage::Vertex, &used_textures_vs),
                         (ShaderStage::Pixel, &used_textures_ps),
@@ -3886,9 +3982,45 @@ impl AerogpuD3d11Executor {
                             if !used {
                                 continue;
                             }
+                            let slot_u32 = slot as u32;
                             if stage_bindings
-                                .texture(slot as u32)
+                                .texture(slot_u32)
                                 .is_some_and(|tex| tex.texture == handle)
+                                || stage_bindings
+                                    .srv_buffer(slot_u32)
+                                    .is_some_and(|buf| buf.buffer == handle)
+                            {
+                                needs_break = true;
+                                break;
+                            }
+                        }
+                        if needs_break {
+                            break;
+                        }
+                    }
+                }
+
+                if !needs_break
+                    && (self.resources.textures.contains_key(&handle)
+                        || self.resources.buffers.contains_key(&handle))
+                {
+                    for (stage, used_slots) in [
+                        (ShaderStage::Vertex, &used_uavs_vs),
+                        (ShaderStage::Pixel, &used_uavs_ps),
+                        (ShaderStage::Compute, &used_uavs_cs),
+                    ] {
+                        let stage_bindings = self.bindings.stage(stage);
+                        for (slot, used) in used_slots.iter().copied().enumerate() {
+                            if !used {
+                                continue;
+                            }
+                            let slot_u32 = slot as u32;
+                            if stage_bindings
+                                .uav_buffer(slot_u32)
+                                .is_some_and(|buf| buf.buffer == handle)
+                                || stage_bindings
+                                    .uav_texture(slot_u32)
+                                    .is_some_and(|tex| tex.texture == handle)
                             {
                                 needs_break = true;
                                 break;
@@ -3962,6 +4094,66 @@ impl AerogpuD3d11Executor {
                             }
                         }
                     }
+
+                    // Buffer SRVs share the `t#` slot space with textures. A buffer can therefore
+                    // be used via `SET_TEXTURE` even though it lives in the buffer resource table.
+                    if !needs_break {
+                        for (stage, used_slots) in [
+                            (ShaderStage::Vertex, &used_textures_vs),
+                            (ShaderStage::Pixel, &used_textures_ps),
+                            (ShaderStage::Compute, &used_textures_cs),
+                        ] {
+                            let stage_bindings = self.bindings.stage(stage);
+                            for (slot, used) in used_slots.iter().copied().enumerate() {
+                                if !used {
+                                    continue;
+                                }
+                                let slot_u32 = slot as u32;
+                                if stage_bindings
+                                    .texture(slot_u32)
+                                    .is_some_and(|tex| tex.texture == handle)
+                                    || stage_bindings
+                                        .srv_buffer(slot_u32)
+                                        .is_some_and(|buf| buf.buffer == handle)
+                                {
+                                    needs_break = true;
+                                    break;
+                                }
+                            }
+                            if needs_break {
+                                break;
+                            }
+                        }
+                    }
+
+                    if !needs_break {
+                        for (stage, used_slots) in [
+                            (ShaderStage::Vertex, &used_uavs_vs),
+                            (ShaderStage::Pixel, &used_uavs_ps),
+                            (ShaderStage::Compute, &used_uavs_cs),
+                        ] {
+                            let stage_bindings = self.bindings.stage(stage);
+                            for (slot, used) in used_slots.iter().copied().enumerate() {
+                                if !used {
+                                    continue;
+                                }
+                                let slot_u32 = slot as u32;
+                                if stage_bindings
+                                    .uav_buffer(slot_u32)
+                                    .is_some_and(|buf| buf.buffer == handle)
+                                    || stage_bindings
+                                        .uav_texture(slot_u32)
+                                        .is_some_and(|tex| tex.texture == handle)
+                                {
+                                    needs_break = true;
+                                    break;
+                                }
+                            }
+                            if needs_break {
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 let texture_backing = self
@@ -3996,6 +4188,35 @@ impl AerogpuD3d11Executor {
                                     break;
                                 }
                             }
+                            if needs_break {
+                                break;
+                            }
+                        }
+                    }
+
+                    if !needs_break {
+                        for (stage, used_slots) in [
+                            (ShaderStage::Vertex, &used_uavs_vs),
+                            (ShaderStage::Pixel, &used_uavs_ps),
+                            (ShaderStage::Compute, &used_uavs_cs),
+                        ] {
+                            let stage_bindings = self.bindings.stage(stage);
+                                for (slot, used) in used_slots.iter().copied().enumerate() {
+                                    if !used {
+                                        continue;
+                                    }
+                                    let slot_u32 = slot as u32;
+                                    if stage_bindings
+                                        .uav_buffer(slot_u32)
+                                        .is_some_and(|buf| buf.buffer == handle)
+                                        || stage_bindings
+                                            .uav_texture(slot_u32)
+                                            .is_some_and(|tex| tex.texture == handle)
+                                    {
+                                        needs_break = true;
+                                        break;
+                                    }
+                                }
                             if needs_break {
                                 break;
                             }
@@ -4279,6 +4500,14 @@ impl AerogpuD3d11Executor {
                                     break;
                                 }
                             }
+                            if let Some(buf) = self.resources.buffers.get(&texture) {
+                                if buf.backing.is_some()
+                                    && buf.dirty.is_some()
+                                    && self.encoder_used_buffers.contains(&texture)
+                                {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -4557,6 +4786,7 @@ impl AerogpuD3d11Executor {
                             let stage = group_index_to_stage(group_index as u32)?;
                             let stage_bindings = self.bindings.stage(stage);
                             for binding in group_bindings {
+                                #[allow(unreachable_patterns)]
                                 match &binding.kind {
                                     crate::BindingKind::Texture2D { slot } => {
                                         if let Some(tex) = stage_bindings.texture(*slot) {
@@ -4568,17 +4798,51 @@ impl AerogpuD3d11Executor {
                                             self.encoder_used_buffers.insert(buf.buffer);
                                         }
                                     }
+                                    crate::BindingKind::UavBuffer { slot } => {
+                                        if let Some(buf) = stage_bindings.uav_buffer(*slot) {
+                                            self.encoder_used_buffers.insert(buf.buffer);
+                                        }
+                                        if let Some(tex) = stage_bindings.uav_texture(*slot) {
+                                            self.encoder_used_textures.insert(tex.texture);
+                                        }
+                                    }
                                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
                                             self.encoder_used_buffers.insert(cb.buffer);
                                         }
                                     }
-                                    crate::BindingKind::UavBuffer { slot } => {
-                                        if let Some(buf) = stage_bindings.uav_buffer(*slot) {
-                                            self.encoder_used_buffers.insert(buf.buffer);
+                                    crate::BindingKind::Sampler { .. } => {}
+                                    // Forward-compat: fall back to binding-number range inspection.
+                                    _ => {
+                                        let binding_num = binding.binding;
+                                        if binding_num >= BINDING_BASE_UAV {
+                                            let slot =
+                                                binding_num.saturating_sub(BINDING_BASE_UAV);
+                                            if let Some(buf) = stage_bindings.uav_buffer(slot) {
+                                                self.encoder_used_buffers.insert(buf.buffer);
+                                            }
+                                            if let Some(tex) = stage_bindings.uav_texture(slot) {
+                                                self.encoder_used_textures.insert(tex.texture);
+                                            }
+                                        } else if binding_num >= BINDING_BASE_TEXTURE
+                                            && binding_num < BINDING_BASE_SAMPLER
+                                        {
+                                            let slot =
+                                                binding_num.saturating_sub(BINDING_BASE_TEXTURE);
+                                            if let Some(tex) = stage_bindings.texture(slot) {
+                                                self.encoder_used_textures.insert(tex.texture);
+                                            }
+                                            if let Some(buf) = stage_bindings.srv_buffer(slot) {
+                                                self.encoder_used_buffers.insert(buf.buffer);
+                                            }
+                                        } else if binding_num < BINDING_BASE_TEXTURE {
+                                            if let Some(cb) =
+                                                stage_bindings.constant_buffer(binding_num)
+                                            {
+                                                self.encoder_used_buffers.insert(cb.buffer);
+                                            }
                                         }
                                     }
-                                    crate::BindingKind::Sampler { .. } => {}
                                 }
                             }
                         }
@@ -4688,6 +4952,7 @@ impl AerogpuD3d11Executor {
                             let stage = group_index_to_stage(group_index as u32)?;
                             let stage_bindings = self.bindings.stage(stage);
                             for binding in group_bindings {
+                                #[allow(unreachable_patterns)]
                                 match &binding.kind {
                                     crate::BindingKind::Texture2D { slot } => {
                                         if let Some(tex) = stage_bindings.texture(*slot) {
@@ -4699,17 +4964,51 @@ impl AerogpuD3d11Executor {
                                             self.encoder_used_buffers.insert(buf.buffer);
                                         }
                                     }
+                                    crate::BindingKind::UavBuffer { slot } => {
+                                        if let Some(buf) = stage_bindings.uav_buffer(*slot) {
+                                            self.encoder_used_buffers.insert(buf.buffer);
+                                        }
+                                        if let Some(tex) = stage_bindings.uav_texture(*slot) {
+                                            self.encoder_used_textures.insert(tex.texture);
+                                        }
+                                    }
                                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
                                             self.encoder_used_buffers.insert(cb.buffer);
                                         }
                                     }
-                                    crate::BindingKind::UavBuffer { slot } => {
-                                        if let Some(buf) = stage_bindings.uav_buffer(*slot) {
-                                            self.encoder_used_buffers.insert(buf.buffer);
+                                    crate::BindingKind::Sampler { .. } => {}
+                                    // Forward-compat: fall back to binding-number range inspection.
+                                    _ => {
+                                        let binding_num = binding.binding;
+                                        if binding_num >= BINDING_BASE_UAV {
+                                            let slot =
+                                                binding_num.saturating_sub(BINDING_BASE_UAV);
+                                            if let Some(buf) = stage_bindings.uav_buffer(slot) {
+                                                self.encoder_used_buffers.insert(buf.buffer);
+                                            }
+                                            if let Some(tex) = stage_bindings.uav_texture(slot) {
+                                                self.encoder_used_textures.insert(tex.texture);
+                                            }
+                                        } else if binding_num >= BINDING_BASE_TEXTURE
+                                            && binding_num < BINDING_BASE_SAMPLER
+                                        {
+                                            let slot =
+                                                binding_num.saturating_sub(BINDING_BASE_TEXTURE);
+                                            if let Some(tex) = stage_bindings.texture(slot) {
+                                                self.encoder_used_textures.insert(tex.texture);
+                                            }
+                                            if let Some(buf) = stage_bindings.srv_buffer(slot) {
+                                                self.encoder_used_buffers.insert(buf.buffer);
+                                            }
+                                        } else if binding_num < BINDING_BASE_TEXTURE {
+                                            if let Some(cb) =
+                                                stage_bindings.constant_buffer(binding_num)
+                                            {
+                                                self.encoder_used_buffers.insert(cb.buffer);
+                                            }
                                         }
                                     }
-                                    crate::BindingKind::Sampler { .. } => {}
                                 }
                             }
                         }
@@ -7356,7 +7655,26 @@ impl AerogpuD3d11Executor {
                     .resolve_cmd_handle(texture, "SET_TEXTURE")?,
             )
         };
-        self.bindings.stage_mut(stage).set_texture(slot, texture);
+        // A `t#` register can be either a texture SRV or a buffer SRV. Route the binding to the
+        // appropriate slot table based on the resource handle type when known.
+        let stage_bindings = self.bindings.stage_mut(stage);
+        match texture {
+            None => stage_bindings.set_texture(slot, None),
+            Some(handle) => {
+                if self.resources.buffers.contains_key(&handle) {
+                    stage_bindings.set_srv_buffer(
+                        slot,
+                        Some(BoundBuffer {
+                            buffer: handle,
+                            offset: 0,
+                            size: None,
+                        }),
+                    );
+                } else {
+                    stage_bindings.set_texture(slot, Some(handle));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -8162,6 +8480,7 @@ impl AerogpuD3d11Executor {
         for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
             let stage = group_index_to_stage(group_index as u32)?;
             for binding in group_bindings {
+                #[allow(unreachable_patterns)]
                 match &binding.kind {
                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                         if let Some(cb) = self.bindings.stage(stage).constant_buffer(*slot) {
@@ -8184,8 +8503,40 @@ impl AerogpuD3d11Executor {
                         if let Some(buf) = self.bindings.stage(stage).uav_buffer(*slot) {
                             self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
                         }
+                        if let Some(tex) = self.bindings.stage(stage).uav_texture(*slot) {
+                            self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
+                        }
                     }
                     crate::BindingKind::Sampler { .. } => {}
+                    // Forward-compat: for new variants (e.g. future UAV textures), fall back to
+                    // binding-number range inspection and upload whatever is currently bound at the
+                    // corresponding slots.
+                    _ => {
+                        let binding_num = binding.binding;
+                        if binding_num >= BINDING_BASE_UAV {
+                            let slot = binding_num.saturating_sub(BINDING_BASE_UAV);
+                            if let Some(buf) = self.bindings.stage(stage).uav_buffer(slot) {
+                                self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
+                            }
+                            if let Some(tex) = self.bindings.stage(stage).uav_texture(slot) {
+                                self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
+                            }
+                        } else if binding_num >= BINDING_BASE_TEXTURE && binding_num < BINDING_BASE_SAMPLER {
+                            let slot = binding_num.saturating_sub(BINDING_BASE_TEXTURE);
+                            if let Some(tex) = self.bindings.stage(stage).texture(slot) {
+                                self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
+                            }
+                            if let Some(buf) = self.bindings.stage(stage).srv_buffer(slot) {
+                                self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
+                            }
+                        } else if binding_num < BINDING_BASE_TEXTURE {
+                            if let Some(cb) = self.bindings.stage(stage).constant_buffer(binding_num) {
+                                if cb.buffer != legacy_constants_buffer_id(stage) {
+                                    self.ensure_buffer_uploaded(encoder, cb.buffer, allocs, guest_mem)?;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
