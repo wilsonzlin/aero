@@ -61,6 +61,7 @@ import {
 import {
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_SOURCE_WDDM,
+  ScanoutStateIndex,
   publishScanoutState,
   snapshotScanoutState,
   type ScanoutStateSnapshot,
@@ -1605,6 +1606,19 @@ const claimPresentWithSharedState = () => {
   return prev === FRAME_DIRTY;
 };
 
+// When scanout is WDDM-owned, the main-thread frame scheduler keeps sending ticks even if the
+// legacy shared framebuffer is idle (FRAME_STATUS=PRESENTED). In that state we still need to
+// execute a present pass so the worker can poll/present the active scanout source and clear
+// any lingering legacy dirty flags (see docs/16-aerogpu-vga-vesa-compat.md §5).
+//
+// This *must not* participate in the shared-framebuffer DIRTY->PRESENTING->PRESENTED pacing
+// contract. We only use this claim as a best-effort way to suppress tick spam while an async
+// present is in flight.
+const claimPresentWhileIdleForScanout = () => {
+  if (!frameState) return;
+  Atomics.compareExchange(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED, FRAME_PRESENTING);
+};
+
 const finishPresentWithSharedState = () => {
   if (!frameState) return;
   Atomics.compareExchange(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTING, FRAME_PRESENTED);
@@ -1727,7 +1741,13 @@ const presentOnce = async (): Promise<boolean> => {
       if (didPresent) {
         lastPresentUploadKind = predictedKind;
         lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
-        aerogpuLastOutputSource = "framebuffer";
+        // In WDDM scanout mode, treat the output as non-legacy so cursor redraw fallback
+        // does not clobber the active scanout with a stale shared framebuffer upload.
+        aerogpuLastOutputSource = scanoutSnap?.source === SCANOUT_SOURCE_WDDM ? "aerogpu" : "framebuffer";
+        clearSharedFramebufferDirty();
+      } else if (scanoutSnap?.source === SCANOUT_SOURCE_WDDM) {
+        // Even if the custom present() declined to draw, WDDM ownership means the legacy
+        // shared framebuffer must not "steal" the output later.
         clearSharedFramebufferDirty();
       }
       return didPresent;
@@ -2037,18 +2057,39 @@ const handleTick = async () => {
     return;
   }
 
+  // When scanout is WDDM-owned the frame scheduler continues ticking even if the legacy shared
+  // framebuffer is idle (FRAME_STATUS=PRESENTED). Read the scanout source to decide whether we
+  // should run a present pass even when `frameState` isn't DIRTY.
+  const scanoutIsWddm = (() => {
+    const words = scanoutState;
+    if (!words) return false;
+    try {
+      return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
+    } catch {
+      return false;
+    }
+  })();
+
   if (frameState) {
-    if (!shouldPresentWithSharedState()) {
+    const shouldPresentShared = shouldPresentWithSharedState();
+    if (!shouldPresentShared && !scanoutIsWddm) {
       maybePostMetrics();
       return;
     }
 
-    if (!claimPresentWithSharedState()) {
-      maybePostMetrics();
-      return;
+    if (shouldPresentShared) {
+      if (!claimPresentWithSharedState()) {
+        maybePostMetrics();
+        return;
+      }
+      computeDroppedFromSeqForPresent();
+    } else if (scanoutIsWddm) {
+      // No shared framebuffer work is pending, but scanout is WDDM-owned. Execute a present
+      // pass anyway so the active scanout can be polled/presented and any legacy dirty flags
+      // can be cleared. Use a best-effort PRESENTED->PRESENTING transition to avoid overlapping
+      // presents / tick spam, but do not disturb DIRTY pacing if a shared frame arrives.
+      claimPresentWhileIdleForScanout();
     }
-
-    computeDroppedFromSeqForPresent();
   }
 
   presenting = true;
@@ -2070,6 +2111,10 @@ const handleTick = async () => {
     if (perfEnabled) perfGpuMs += presentGpuMs;
     if (didPresent) {
       presentsSucceeded += 1;
+      // `framesPresented/framesDropped` count successful/failed *present passes* in this worker,
+      // regardless of whether the pixels came from the legacy shared framebuffer or WDDM scanout.
+      // When scanout is WDDM-owned, the frame scheduler keeps ticking even if `framesReceived`
+      // (shared framebuffer seq) is not advancing, so these counters may diverge.
       framesPresented += 1;
 
       const now = performance.now();
