@@ -14,6 +14,7 @@
 #include <hidpi.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -89,6 +90,60 @@
 #define VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN 2
 #define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 5
 
+#ifndef IOCTL_VIOINPUT_QUERY_COUNTERS
+// Copy of the in-driver diagnostic IOCTL (see `src/log.h`). This is a regular
+// DeviceIoControl IOCTL (not IOCTL_HID_*), forwarded by HIDCLASS to the
+// underlying minidriver.
+#define IOCTL_VIOINPUT_QUERY_COUNTERS \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS)
+#endif
+
+#define VIOINPUT_COUNTERS_VERSION 1
+
+typedef struct VIOINPUT_COUNTERS {
+    ULONG Size;
+    ULONG Version;
+
+    LONG IoctlTotal;
+    LONG IoctlUnknown;
+
+    LONG IoctlHidGetDeviceDescriptor;
+    LONG IoctlHidGetReportDescriptor;
+    LONG IoctlHidGetDeviceAttributes;
+    LONG IoctlHidGetCollectionInformation;
+    LONG IoctlHidGetCollectionDescriptor;
+    LONG IoctlHidFlushQueue;
+    LONG IoctlHidGetString;
+    LONG IoctlHidGetIndexedString;
+    LONG IoctlHidGetFeature;
+    LONG IoctlHidSetFeature;
+    LONG IoctlHidGetInputReport;
+    LONG IoctlHidSetOutputReport;
+    LONG IoctlHidReadReport;
+    LONG IoctlHidWriteReport;
+
+    LONG ReadReportPended;
+    LONG ReadReportCompleted;
+    LONG ReadReportCancelled;
+
+    LONG ReadReportQueueDepth;
+    LONG ReadReportQueueMaxDepth;
+
+    LONG ReportRingDepth;
+    LONG ReportRingMaxDepth;
+    LONG ReportRingDrops;
+    LONG ReportRingOverruns;
+
+    LONG VirtioInterrupts;
+    LONG VirtioDpcs;
+    LONG VirtioEvents;
+    LONG VirtioEventDrops;
+    LONG VirtioEventOverruns;
+
+    LONG VirtioQueueDepth;
+    LONG VirtioQueueMaxDepth;
+} VIOINPUT_COUNTERS;
+
 #pragma pack(push, 1)
 typedef struct HID_DESCRIPTOR_MIN {
     BYTE bLength;
@@ -124,6 +179,7 @@ typedef struct OPTIONS {
     int ioctl_bad_get_indexed_string_out;
     int hidd_bad_set_output_report;
     int dump_desc;
+    int query_counters;
     int want_keyboard;
     int want_mouse;
     USHORT vid;
@@ -383,6 +439,127 @@ static void dump_mouse_report(const BYTE *buf, DWORD len, int assume_report_id)
     wprintf(L"\n");
 }
 
+static int dump_vioinput_counters(const SELECTED_DEVICE *dev)
+{
+    BYTE buf[4096];
+    DWORD bytes = 0;
+    BOOL ok;
+
+    ULONG size = 0;
+    ULONG version = 0;
+    DWORD avail = 0;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return 1;
+    }
+
+    ZeroMemory(buf, sizeof(buf));
+    ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_QUERY_COUNTERS, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
+    if (!ok) {
+        print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_COUNTERS)");
+        return 1;
+    }
+    if (bytes == 0) {
+        wprintf(L"IOCTL_VIOINPUT_QUERY_COUNTERS returned 0 bytes\n");
+        return 1;
+    }
+
+    avail = bytes;
+
+    if (avail >= sizeof(ULONG)) {
+        memcpy(&size, buf, sizeof(size));
+        if (size != 0 && size < avail) {
+            avail = size;
+        }
+    }
+    if (avail >= sizeof(ULONG) * 2) {
+        memcpy(&version, buf + sizeof(ULONG), sizeof(version));
+    }
+
+    wprintf(L"\nVIOINPUT counters (bytes=%lu):\n", bytes);
+    if (size != 0) {
+        wprintf(L"  Size:    %lu\n", size);
+    } else {
+        wprintf(L"  Size:    <missing>\n");
+    }
+    if (avail >= sizeof(ULONG) * 2) {
+        wprintf(L"  Version: %lu\n", version);
+    } else {
+        wprintf(L"  Version: <missing>\n");
+    }
+
+    if (size != 0 && size < sizeof(VIOINPUT_COUNTERS)) {
+        wprintf(L"  [WARN] driver returned counters Size=%lu < expected %u; dumping what is present\n", size,
+                (unsigned)sizeof(VIOINPUT_COUNTERS));
+    }
+    if (avail >= sizeof(ULONG) * 2 && version != VIOINPUT_COUNTERS_VERSION) {
+        wprintf(L"  [WARN] counters Version=%lu != expected %u; dumping what is present\n", version,
+                (unsigned)VIOINPUT_COUNTERS_VERSION);
+    }
+
+    // Helper: print a LONG field if it is present, else mark as n/a.
+#define VIOINPUT_WIDEN2(_x) L##_x
+#define VIOINPUT_WIDEN(_x) VIOINPUT_WIDEN2(_x)
+#define DUMP_LONG_FIELD(_name)                                                                  \
+    do {                                                                                        \
+        LONG v;                                                                                 \
+        size_t off = offsetof(VIOINPUT_COUNTERS, _name);                                        \
+        if (avail >= off + sizeof(v)) {                                                         \
+            memcpy(&v, buf + off, sizeof(v));                                                   \
+            wprintf(L"  %-32ls: %ld\n", VIOINPUT_WIDEN(#_name), v);                              \
+        } else {                                                                                \
+            wprintf(L"  %-32ls: <n/a>\n", VIOINPUT_WIDEN(#_name));                               \
+        }                                                                                       \
+    } while (0)
+
+    wprintf(L"\n  -- IRP / IOCTL flow --\n");
+    DUMP_LONG_FIELD(IoctlTotal);
+    DUMP_LONG_FIELD(IoctlUnknown);
+    DUMP_LONG_FIELD(IoctlHidGetDeviceDescriptor);
+    DUMP_LONG_FIELD(IoctlHidGetReportDescriptor);
+    DUMP_LONG_FIELD(IoctlHidGetDeviceAttributes);
+    DUMP_LONG_FIELD(IoctlHidGetCollectionInformation);
+    DUMP_LONG_FIELD(IoctlHidGetCollectionDescriptor);
+    DUMP_LONG_FIELD(IoctlHidFlushQueue);
+    DUMP_LONG_FIELD(IoctlHidGetString);
+    DUMP_LONG_FIELD(IoctlHidGetIndexedString);
+    DUMP_LONG_FIELD(IoctlHidGetFeature);
+    DUMP_LONG_FIELD(IoctlHidSetFeature);
+    DUMP_LONG_FIELD(IoctlHidGetInputReport);
+    DUMP_LONG_FIELD(IoctlHidSetOutputReport);
+    DUMP_LONG_FIELD(IoctlHidReadReport);
+    DUMP_LONG_FIELD(IoctlHidWriteReport);
+
+    wprintf(L"\n  -- READ_REPORT lifecycle --\n");
+    DUMP_LONG_FIELD(ReadReportPended);
+    DUMP_LONG_FIELD(ReadReportCompleted);
+    DUMP_LONG_FIELD(ReadReportCancelled);
+    DUMP_LONG_FIELD(ReadReportQueueDepth);
+    DUMP_LONG_FIELD(ReadReportQueueMaxDepth);
+
+    wprintf(L"\n  -- Report ring buffering --\n");
+    DUMP_LONG_FIELD(ReportRingDepth);
+    DUMP_LONG_FIELD(ReportRingMaxDepth);
+    DUMP_LONG_FIELD(ReportRingDrops);
+    DUMP_LONG_FIELD(ReportRingOverruns);
+
+    wprintf(L"\n  -- Virtqueue / interrupt side --\n");
+    DUMP_LONG_FIELD(VirtioInterrupts);
+    DUMP_LONG_FIELD(VirtioDpcs);
+    DUMP_LONG_FIELD(VirtioEvents);
+    DUMP_LONG_FIELD(VirtioEventDrops);
+    DUMP_LONG_FIELD(VirtioEventOverruns);
+    DUMP_LONG_FIELD(VirtioQueueDepth);
+    DUMP_LONG_FIELD(VirtioQueueMaxDepth);
+
+#undef DUMP_LONG_FIELD
+#undef VIOINPUT_WIDEN
+#undef VIOINPUT_WIDEN2
+
+    return 0;
+}
+
 static void print_usage(void)
 {
     wprintf(L"hidtest: minimal HID report/IOCTL probe tool (Win7)\n");
@@ -391,6 +568,7 @@ static void print_usage(void)
     wprintf(L"  hidtest.exe [--list]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-cycle] [--dump-desc]\n");
+    wprintf(L"             [--counters]\n");
     wprintf(L"             [--led-ioctl-set-output 0x07]\n");
     wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report]\n");
     wprintf(L"             [--ioctl-bad-set-output-xfer-packet | --ioctl-bad-set-output-report | --hidd-bad-set-output-report]\n");
@@ -413,6 +591,7 @@ static void print_usage(void)
     wprintf(L"                 Send keyboard LEDs using DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)\n");
     wprintf(L"  --led-cycle     Cycle keyboard LEDs to visually confirm write path\n");
     wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");
+    wprintf(L"  --counters      Query and print virtio-input driver diagnostic counters\n");
     wprintf(L"  --ioctl-bad-xfer-packet\n");
     wprintf(L"                 Send IOCTL_HID_WRITE_REPORT with an invalid HID_XFER_PACKET pointer\n");
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
@@ -1569,6 +1748,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--counters") == 0) {
+            opt.query_counters = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--ioctl-bad-xfer-packet") == 0) {
             opt.ioctl_bad_xfer_packet = 1;
             continue;
@@ -1843,6 +2027,15 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
 
+    if (opt.query_counters &&
+        (opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
+         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
+         opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
+         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report)) {
+        wprintf(L"--counters is mutually exclusive with LED actions, descriptor dump, and negative tests.\n");
+        return 2;
+    }
+
     if (!enumerate_hid_devices(&opt, &dev)) {
         wprintf(L"No matching HID devices found.\n");
         return 1;
@@ -1890,6 +2083,12 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.dump_desc) {
         dump_report_descriptor(dev.handle);
+    }
+
+    if (opt.query_counters) {
+        int rc = dump_vioinput_counters(&dev);
+        free_selected_device(&dev);
+        return rc;
     }
 
     if (opt.ioctl_bad_write_report) {

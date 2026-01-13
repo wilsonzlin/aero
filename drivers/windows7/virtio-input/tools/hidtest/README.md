@@ -134,3 +134,12 @@ Dump the raw HID report descriptor bytes:
 ```bat
 hidtest.exe --dump-desc
 ```
+
+Query virtio-input driver diagnostic counters (IOCTL_VIOINPUT_QUERY_COUNTERS):
+
+```bat
+hidtest.exe --counters
+```
+
+You should see non-zero counts after some HID activity (enumeration, input reports, etc). If you run a non-virtio-input HID
+device, the IOCTL will fail with an "invalid function" style error.
