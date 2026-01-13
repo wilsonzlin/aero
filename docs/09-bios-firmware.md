@@ -14,6 +14,21 @@ Aero’s canonical boot path is **legacy BIOS**, implemented in Rust as **HLE fi
 For CD-ROM boot (El Torito) and the minimal INT 13h extensions required for Windows install media,
 see [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md).
 
+### INT 13h expectations (HDD/floppy vs CD-ROM)
+
+BIOS disk I/O has two relevant sector sizes:
+
+- **HDD/floppy:** 512-byte sectors (traditional INT 13h semantics).
+- **CD-ROM:** 2048-byte logical blocks (ISO9660 / El Torito).
+
+For CD boot and CD reads, Aero’s BIOS expects **El Torito (no-emulation)** boot and requires **INT
+13h Extensions (EDD)** for CD drive numbers (recommend `DL=0xE0` for the first CD). At minimum,
+Windows-style bootloaders expect `AH=41h` (extensions check), `AH=42h` (extended read), and `AH=48h`
+(extended drive parameters) to work for CD, with `AH=48h` reporting `bytes_per_sector = 2048`.
+
+See [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md) for the exact structures and call
+contracts.
+
 UEFI is **not** the canonical path today. If you see older docs implying an external BIOS blob or a
 still-unimplemented firmware stack, treat those as outdated.
 

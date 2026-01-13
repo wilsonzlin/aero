@@ -70,18 +70,18 @@ enables the same canonical controller set in the full-system `Machine` integrati
 
 ### 1) Windows 7 install / recovery flow
 
-1. BIOS boot order is configured to boot from **CD-ROM (El Torito)** first.
+1. Host/BIOS boot configuration selects **CD-ROM (El Torito)** first by choosing a **CD boot drive
+   number** in `DL` (recommend **`DL=0xE0`** for the first CD-ROM drive).
 2. The boot ISO is presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary master**.
-3. BIOS selects the CD by using a **CD boot drive number** in `DL` (recommend **`DL=0xE0`** for the
-   first CD-ROM drive) and performs an **El Torito no-emulation** boot.
-4. If the CD is absent or unbootable (no ISO, empty tray, invalid boot catalog, etc.), the boot
-   order should fall back to the primary HDD boot path and enter the HDD boot sector with
-   **`DL=0x80`** (i.e. configure `firmware::bios::BiosConfig::boot_drive = 0x80`).
+3. BIOS performs an **El Torito no-emulation** boot from that CD drive.
+4. If the CD is absent or unbootable (no ISO, empty tray, invalid boot catalog, etc.), fall back to
+   the primary HDD boot path and enter the HDD boot sector with **`DL=0x80`** (i.e. configure
+   `firmware::bios::BiosConfig::boot_drive = 0x80`).
 5. Windows Setup enumerates the **AHCI disk** on **ICH9 AHCI port 0** and installs Windows onto it.
 
-Implementation note (Rust): in `aero_machine`, this corresponds to configuring the BIOS boot drive
-number (`firmware::bios::BiosConfig::boot_drive`) to the CD drive number (e.g. `0xE0`) so firmware
-boots the install ISO first, then switch back to `0x80` for normal HDD boots after installation.
+Implementation note (Rust): in `aero_machine`, `Machine::set_boot_drive(0xE0)` selects CD-first boot
+for install (plumbed to `firmware::bios::BiosConfig::boot_drive` during `Machine::reset()`), and
+switching back to `Machine::set_boot_drive(0x80)` selects HDD boot for post-install boots.
 
 ### 2) Normal boot (after installation)
 
