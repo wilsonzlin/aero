@@ -924,7 +924,7 @@ static void dump_tablet_report(const BYTE *buf, DWORD len, int assume_report_id)
     y = (USHORT)(buf[off + 3] | ((USHORT)buf[off + 4] << 8));
 
     if (report_id != 0) {
-        wprintf(L"tablet: id=%u ", report_id);
+    wprintf(L"tablet: id=%u ", report_id);
     } else {
         wprintf(L"tablet: ");
     }
@@ -932,11 +932,90 @@ static void dump_tablet_report(const BYTE *buf, DWORD len, int assume_report_id)
     wprintf(L"buttons=0x%02X x=%u y=%u\n", buttons, (unsigned)x, (unsigned)y);
 }
 
-static int dump_vioinput_counters(const SELECTED_DEVICE *dev)
+static int query_vioinput_counters_blob(const SELECTED_DEVICE *dev, BYTE **buf_out, DWORD *bytes_out)
 {
-    BYTE buf[4096];
+    BYTE *buf = NULL;
+    DWORD cap;
     DWORD bytes = 0;
     BOOL ok;
+    DWORD err;
+    ULONG expected_size = 0;
+
+    if (buf_out != NULL) {
+        *buf_out = NULL;
+    }
+    if (bytes_out != NULL) {
+        *bytes_out = 0;
+    }
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+
+    // Start with the size we expect for this build of the tool, then adapt if the
+    // driver reports a larger Size (e.g. newer driver version with extra fields).
+    cap = (DWORD)sizeof(VIOINPUT_COUNTERS);
+    if (cap < sizeof(VIOINPUT_COUNTERS_V1_MIN)) {
+        cap = (DWORD)sizeof(VIOINPUT_COUNTERS_V1_MIN);
+    }
+
+    buf = (BYTE *)calloc(cap, 1);
+    if (buf == NULL) {
+        SetLastError(ERROR_OUTOFMEMORY);
+        return 0;
+    }
+
+    ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_QUERY_COUNTERS, NULL, 0, buf, cap, &bytes, NULL);
+    if (ok) {
+        if (buf_out != NULL) {
+            *buf_out = buf;
+        }
+        if (bytes_out != NULL) {
+            *bytes_out = bytes;
+        }
+        return 1;
+    }
+
+    err = GetLastError();
+
+    // If the buffer was too small, the driver should still return at least Size
+    // (and ideally Size+Version). Retry with the reported Size.
+    if ((err == ERROR_INSUFFICIENT_BUFFER || err == ERROR_MORE_DATA) && cap >= sizeof(expected_size)) {
+        memcpy(&expected_size, buf, sizeof(expected_size));
+        if (expected_size != 0 && expected_size > cap && expected_size <= 64u * 1024u) {
+            BYTE *b2 = (BYTE *)realloc(buf, expected_size);
+            if (b2 == NULL) {
+                free(buf);
+                SetLastError(ERROR_OUTOFMEMORY);
+                return 0;
+            }
+            buf = b2;
+            ZeroMemory(buf, expected_size);
+            bytes = 0;
+            ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_QUERY_COUNTERS, NULL, 0, buf, expected_size, &bytes, NULL);
+            if (ok) {
+                if (buf_out != NULL) {
+                    *buf_out = buf;
+                }
+                if (bytes_out != NULL) {
+                    *bytes_out = bytes;
+                }
+                return 1;
+            }
+            err = GetLastError();
+        }
+    }
+
+    free(buf);
+    SetLastError(err);
+    return 0;
+}
+
+static int dump_vioinput_counters(const SELECTED_DEVICE *dev)
+{
+    BYTE *buf = NULL;
+    DWORD bytes = 0;
 
     ULONG size = 0;
     ULONG version = 0;
@@ -947,14 +1026,13 @@ static int dump_vioinput_counters(const SELECTED_DEVICE *dev)
         return 1;
     }
 
-    ZeroMemory(buf, sizeof(buf));
-    ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_QUERY_COUNTERS, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
-    if (!ok) {
+    if (!query_vioinput_counters_blob(dev, &buf, &bytes)) {
         print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_COUNTERS)");
         return 1;
     }
     if (bytes == 0) {
         wprintf(L"IOCTL_VIOINPUT_QUERY_COUNTERS returned 0 bytes\n");
+        free(buf);
         return 1;
     }
 
@@ -1064,14 +1142,14 @@ static int dump_vioinput_counters(const SELECTED_DEVICE *dev)
 #undef VIOINPUT_WIDEN
 #undef VIOINPUT_WIDEN2
 
+    free(buf);
     return 0;
 }
 
 static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
 {
-    BYTE buf[4096];
+    BYTE *buf = NULL;
     DWORD bytes = 0;
-    BOOL ok;
 
     ULONG size = 0;
     ULONG version = 0;
@@ -1085,14 +1163,13 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
         return 1;
     }
 
-    ZeroMemory(buf, sizeof(buf));
-    ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_QUERY_COUNTERS, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
-    if (!ok) {
+    if (!query_vioinput_counters_blob(dev, &buf, &bytes)) {
         print_last_error_file_w(stderr, L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_COUNTERS)");
         return 1;
     }
     if (bytes == 0) {
         fwprintf(stderr, L"IOCTL_VIOINPUT_QUERY_COUNTERS returned 0 bytes\n");
+        free(buf);
         return 1;
     }
 
@@ -1201,6 +1278,7 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
 #undef VIOINPUT_WIDEN
 #undef VIOINPUT_WIDEN2
 
+    free(buf);
     return 0;
 }
 
