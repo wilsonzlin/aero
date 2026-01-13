@@ -32,6 +32,12 @@ function Assert-ValidJson {
   if ($ExpectedCommand -and $obj.command -ne $ExpectedCommand) {
     throw "Unexpected command in JSON for: $DbgctlPath $($Args -join ' ') --json`nExpected: $ExpectedCommand`nActual: $($obj.command)`n$stdout"
   }
+
+  # Basic schema sanity for status payloads: ensure the perf section is present
+  # (it may be supported:false on older KMDs, but should still exist).
+  if ($ExpectedCommand -eq "status" -and -not $obj.perf) {
+    throw "Missing perf section in status JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+  }
 }
 
 Assert-ValidJson -ExpectedCommand "status" -Args @("--status")

@@ -293,6 +293,9 @@ Note: the installed KMD may disable hardware cursor support depending on the dev
 - `--json=PATH` writes JSON to `PATH` (UTF-8).
 - `--pretty` pretty-prints JSON (implies `--json`).
 
+`--status --json` is intended as a one-shot “bug report snapshot” and includes nested sections like:
+`device`, `features`, `fences`, `perf`, `ring0`, `scanout0`, `cursor`, `vblank`, `last_error`, and `createallocation_trace`.
+
 ### Schema stability
 
 All JSON outputs include:

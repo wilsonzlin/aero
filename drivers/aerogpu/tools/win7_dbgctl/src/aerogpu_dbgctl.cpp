@@ -2147,6 +2147,96 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
   }
   w.EndObject();
 
+  // Perf snapshot.
+  w.Key("perf");
+  w.BeginObject();
+  aerogpu_escape_query_perf_out qp;
+  ZeroMemory(&qp, sizeof(qp));
+  qp.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qp.hdr.op = AEROGPU_ESCAPE_OP_QUERY_PERF;
+  qp.hdr.size = sizeof(qp);
+  qp.hdr.reserved0 = 0;
+  const NTSTATUS stPerf = SendAerogpuEscape(f, hAdapter, &qp, sizeof(qp));
+  if (!NT_SUCCESS(stPerf)) {
+    w.Key("supported");
+    w.Bool(false);
+    w.Key("error");
+    JsonWriteNtStatusError(w, f, stPerf);
+  } else {
+    w.Key("supported");
+    w.Bool(true);
+
+    const uint64_t submitted = (uint64_t)qp.last_submitted_fence;
+    const uint64_t completed = (uint64_t)qp.last_completed_fence;
+    const uint64_t pendingFences = (submitted >= completed) ? (submitted - completed) : 0;
+
+    uint32_t ringPending = 0;
+    if (qp.ring0_entry_count != 0) {
+      const uint32_t head = qp.ring0_head;
+      const uint32_t tail = qp.ring0_tail;
+      if (tail >= head) {
+        ringPending = tail - head;
+      } else {
+        ringPending = tail + qp.ring0_entry_count - head;
+      }
+      if (ringPending > qp.ring0_entry_count) {
+        ringPending = qp.ring0_entry_count;
+      }
+    }
+
+    w.Key("fences");
+    w.BeginObject();
+    JsonWriteU64HexDec(w, "last_submitted_fence", submitted);
+    JsonWriteU64HexDec(w, "last_completed_fence", completed);
+    w.Key("pending");
+    w.String(DecU64(pendingFences));
+    w.EndObject();
+
+    w.Key("ring0");
+    w.BeginObject();
+    w.Key("head");
+    w.Uint32(qp.ring0_head);
+    w.Key("tail");
+    w.Uint32(qp.ring0_tail);
+    w.Key("pending");
+    w.Uint32(ringPending);
+    w.Key("entry_count");
+    w.Uint32(qp.ring0_entry_count);
+    w.Key("size_bytes");
+    w.Uint32(qp.ring0_size_bytes);
+    w.EndObject();
+
+    w.Key("submits");
+    w.BeginObject();
+    JsonWriteU64HexDec(w, "total", qp.total_submissions);
+    JsonWriteU64HexDec(w, "render", qp.total_render_submits);
+    JsonWriteU64HexDec(w, "present", qp.total_presents);
+    JsonWriteU64HexDec(w, "internal", qp.total_internal_submits);
+    w.EndObject();
+
+    w.Key("irqs");
+    w.BeginObject();
+    JsonWriteU64HexDec(w, "fence_delivered", qp.irq_fence_delivered);
+    JsonWriteU64HexDec(w, "vblank_delivered", qp.irq_vblank_delivered);
+    JsonWriteU64HexDec(w, "spurious", qp.irq_spurious);
+    w.EndObject();
+
+    w.Key("resets");
+    w.BeginObject();
+    JsonWriteU64HexDec(w, "reset_from_timeout_count", qp.reset_from_timeout_count);
+    JsonWriteU64HexDec(w, "last_reset_time_100ns", qp.last_reset_time_100ns);
+    w.EndObject();
+
+    w.Key("vblank");
+    w.BeginObject();
+    JsonWriteU64HexDec(w, "seq", qp.vblank_seq);
+    JsonWriteU64HexDec(w, "last_time_ns", qp.last_vblank_time_ns);
+    w.Key("period_ns");
+    w.Uint32(qp.vblank_period_ns);
+    w.EndObject();
+  }
+  w.EndObject();
+
   // Segment budget summary (QueryAdapterInfo probing).
   w.Key("segments");
   w.BeginObject();
