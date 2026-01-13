@@ -555,7 +555,7 @@ As D3D10/11 support comes online, grow a small suite of shader-based scenes that
 The intent is to validate the translator at the level D3D apps actually stress:
 
 - constant buffers (cbuffers) and update patterns
-- resource views (SRV/RTV/DSV, later UAV)
+- resource views (SRV/RTV/DSV + compute-stage UAV buffers; typed UAV textures still pending)
 - input layout semantics mapping
 - blend/depth/rasterizer state objects
 - instancing and `baseVertex`
