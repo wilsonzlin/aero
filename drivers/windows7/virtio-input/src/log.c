@@ -197,6 +197,7 @@ VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
     InterlockedExchange(&Counters->VirtioEventOverruns, 0);
 
     InterlockedExchange(&Counters->VirtioQueueMaxDepth, virtioDepth);
+    InterlockedExchange(&Counters->VirtioStatusDrops, 0);
 }
 
 PCSTR VioInputHidIoctlToString(_In_ ULONG IoControlCode)
