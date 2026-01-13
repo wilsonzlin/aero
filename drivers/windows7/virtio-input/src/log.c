@@ -153,22 +153,23 @@ VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
     LONG ringDepth;
     LONG virtioDepth;
     LONG pendingDepth;
-
     if (Counters == NULL) {
         return;
     }
 
     /*
+     * Counters can be updated concurrently from ISR/DPC paths.
+     *
      * Reset the monotonic counters, but preserve the "current depth" fields.
      *
      * ReadReportQueueDepth / ReportRingDepth / PendingRingDepth / VirtioQueueDepth
-     * are intended to
      * reflect instantaneous state. Zeroing them while there are pending IRPs or
      * buffered reports can cause confusing negative values after subsequent
      * decrements. Instead, keep the current depths and reset the corresponding
      * maxima to the current value.
      *
-     * This is a best-effort diagnostic reset; counters may change concurrently.
+     * Size/Version are intentionally left untouched so that user-mode tooling can
+     * always validate the returned structure layout.
      */
     readDepth = Counters->ReadReportQueueDepth;
     ringDepth = Counters->ReportRingDepth;

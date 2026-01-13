@@ -132,14 +132,14 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS)
 #endif
 
+#ifndef IOCTL_VIOINPUT_RESET_COUNTERS
+#define IOCTL_VIOINPUT_RESET_COUNTERS \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_WRITE_ACCESS)
+#endif
+
 #ifndef IOCTL_VIOINPUT_QUERY_STATE
 #define IOCTL_VIOINPUT_QUERY_STATE \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
-#endif
-
-#ifndef IOCTL_VIOINPUT_RESET_COUNTERS
-#define IOCTL_VIOINPUT_RESET_COUNTERS \
-    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #endif
 
 #ifndef IOCTL_VIOINPUT_GET_LOG_MASK
@@ -493,13 +493,18 @@ static int reset_vioinput_counters(const SELECTED_DEVICE *dev)
         return 1;
     }
 
+    if ((dev->desired_access & GENERIC_WRITE) == 0) {
+        wprintf(L"Device was not opened with GENERIC_WRITE; cannot reset counters\n");
+        return 1;
+    }
+
     ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_RESET_COUNTERS, NULL, 0, NULL, 0, &bytes, NULL);
     if (!ok) {
         print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)");
         return 1;
     }
 
-    wprintf(L"\nvirtio-input counters reset.\n");
+    wprintf(L"\nvirtio-input driver diagnostic counters reset.\n");
     return 0;
 }
 
@@ -4010,7 +4015,7 @@ int wmain(int argc, wchar_t **argv)
          opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
          opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
          opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output)) {
-        wprintf(L"--state is mutually exclusive with --selftest, --counters, and other report/IOCTL tests.\n");
+        wprintf(L"--state is mutually exclusive with --selftest, --counters/--counters-json/--reset-counters, and other report/IOCTL tests.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.led_cycle) {

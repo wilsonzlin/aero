@@ -21,7 +21,7 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   (with optional `--duration`/`--count` auto-exit + summary at end):
   - virtio-input keyboard report (`ReportID=1`)
   - virtio-input mouse report (`ReportID=2`)
-- Can query the virtio-input driver diagnostic counters (`--counters`, `--counters-json`).
+- Can query/reset the virtio-input driver diagnostic counters (`--counters`, `--counters-json`, `--reset-counters`).
 - Optionally writes a keyboard LED output report (`ReportID=1`) via:
   - `WriteFile` (exercises `IOCTL_HID_WRITE_REPORT`)
   - `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`)
@@ -301,3 +301,12 @@ hidtest.exe --counters-json
 
 You should see non-zero counts after some HID activity (enumeration, input reports, etc). If you run a non-virtio-input HID
 device, the IOCTL will fail with an "invalid function" style error.
+
+Reset virtio-input driver diagnostic counters (IOCTL_VIOINPUT_RESET_COUNTERS):
+
+```bat
+hidtest.exe --reset-counters
+```
+
+`--counters` / `--reset-counters` operate on the selected HID interface, so use `--keyboard` / `--mouse` if you want to
+inspect/reset the counters for a specific virtio-input device instance.
