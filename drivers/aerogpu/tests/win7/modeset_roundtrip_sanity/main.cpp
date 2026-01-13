@@ -543,9 +543,7 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   DEVMODEW alternate;
   std::string alt_err;
   if (!FindAlternateDesktopMode(original, &alternate, &alt_err)) {
-    aerogpu_test::PrintfStdout("INFO: %s: %s; skipping", kTestName, alt_err.c_str());
-    reporter.SetSkipped("no_alternate_mode");
-    return reporter.Pass();
+    return reporter.Fail("%s (need at least two reported modes for a roundtrip)", alt_err.c_str());
   }
   PrintModeInfo("alternate", alternate);
 
