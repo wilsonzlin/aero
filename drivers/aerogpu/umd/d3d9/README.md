@@ -365,7 +365,7 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet (they currently return `D3DERR_NOTAVAILABLE`):
 
-- `pfnProcessVertices` (wired via `AEROGPU_D3D9_DEFINE_DDI_STUB(..., D3DERR_NOTAVAILABLE)` in `src/aerogpu_d3d9_driver.cpp`)
+*(none)*
 
 ### Patch rendering (N-Patch / Bezier patches)
 
@@ -378,6 +378,17 @@ Limitations:
 
 - Only the fixed-function fallback path is supported (no user shaders).
 - Only Bezier cubic patches are supported (`Basis=BEZIER`, `Degree=CUBIC`).
+
+### ProcessVertices
+
+`pfnProcessVertices` is implemented and is **not** treated as a stub. The current implementation is a conservative CPU-side
+buffer-to-buffer copy from the active stream 0 vertex buffer into the destination buffer, with stride handling and the
+same “upload/dirty-range” notifications used by `Unlock`.
+
+Limitations:
+
+- Only buffer resources are supported (source VB and destination must both be `ResourceKind::Buffer`).
+- No fixed-function or shader vertex processing is performed (this does not run a transform pipeline).
 
 ### Bring-up no-op DDIs
 
