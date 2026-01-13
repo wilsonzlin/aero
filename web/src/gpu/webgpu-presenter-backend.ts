@@ -792,6 +792,7 @@ export class WebGpuPresenterBackend implements Presenter {
       (this.ctx as any).configure({
         device: this.device,
         format: this.canvasFormat,
+        usage: renderUsage | copySrcUsage,
         alphaMode: 'opaque',
       });
       viewFormat = this.canvasFormat;
