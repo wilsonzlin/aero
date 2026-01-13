@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "aerogpu_d3d10_11_umd.h"
+#include "aerogpu_d3d10_11_internal.h"
 #include "aerogpu_d3d10_blend_state_validate.h"
 #include "aerogpu_cmd.h"
 
@@ -42,6 +43,63 @@ bool Check(bool cond, const char* msg) {
     std::fprintf(stderr, "FAIL: %s\n", msg);
     return false;
   }
+  return true;
+}
+
+bool TestInternalDxgiFormatCompatHelpers() {
+  using aerogpu::d3d10_11::Adapter;
+  Adapter adapter{};
+  adapter.umd_private_valid = false;
+
+  uint32_t fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(&adapter, kDxgiFormatB8G8R8A8UnormSrgb);
+  if (!Check(fmt == AEROGPU_FORMAT_B8G8R8A8_UNORM, "dxgi_format_to_aerogpu_compat maps sRGB->UNORM when sRGB unsupported")) {
+    return false;
+  }
+
+  adapter.umd_private_valid = true;
+  adapter.umd_private.device_abi_version_u32 = (AEROGPU_ABI_MAJOR << 16) | 2; // ABI 1.2
+  fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(&adapter, kDxgiFormatB8G8R8A8UnormSrgb);
+  if (!Check(fmt == AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB, "dxgi_format_to_aerogpu_compat preserves sRGB when supported")) {
+    return false;
+  }
+
+  adapter.umd_private.device_features = 0;
+  adapter.umd_private.device_abi_version_u32 = (AEROGPU_ABI_MAJOR << 16) | 1; // ABI 1.1
+  if (!Check(!aerogpu::d3d10_11::SupportsTransfer(&adapter), "SupportsTransfer requires FEATURE_TRANSFER bit")) {
+    return false;
+  }
+
+  adapter.umd_private.device_features = AEROGPU_UMDPRIV_FEATURE_TRANSFER;
+  adapter.umd_private.device_abi_version_u32 = (AEROGPU_ABI_MAJOR << 16) | 0; // ABI 1.0
+  if (!Check(!aerogpu::d3d10_11::SupportsTransfer(&adapter), "SupportsTransfer requires ABI >= 1.1")) {
+    return false;
+  }
+
+  adapter.umd_private.device_abi_version_u32 = (AEROGPU_ABI_MAJOR << 16) | 1; // ABI 1.1
+  if (!Check(aerogpu::d3d10_11::SupportsTransfer(&adapter), "SupportsTransfer true with FEATURE_TRANSFER + ABI >= 1.1")) {
+    return false;
+  }
+
+  struct DummyDev {
+    Adapter* adapter;
+  };
+  DummyDev dev{&adapter};
+  if (!Check(aerogpu::d3d10_11::SupportsTransfer(&dev), "SupportsTransfer works when passed a device with ->adapter")) {
+    return false;
+  }
+
+  adapter.umd_private.device_abi_version_u32 = (AEROGPU_ABI_MAJOR << 16) | 1; // ABI 1.1
+  if (!Check(!aerogpu::d3d10_11::SupportsBcFormats(&dev), "SupportsBcFormats requires ABI >= 1.2")) {
+    return false;
+  }
+  adapter.umd_private.device_abi_version_u32 = (AEROGPU_ABI_MAJOR << 16) | 2; // ABI 1.2
+  if (!Check(aerogpu::d3d10_11::SupportsBcFormats(&dev), "SupportsBcFormats true when ABI >= 1.2")) {
+    return false;
+  }
+  if (!Check(aerogpu::d3d10_11::SupportsSrgbFormats(&dev), "SupportsSrgbFormats true when ABI >= 1.2")) {
+    return false;
+  }
+
   return true;
 }
 
@@ -8275,6 +8333,7 @@ bool TestDrawIndexedInstancedEncodesInstanceFields() {
 
 int main() {
   bool ok = true;
+  ok &= TestInternalDxgiFormatCompatHelpers();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();
   ok &= TestHostOwnedBufferUnmapUploads();
