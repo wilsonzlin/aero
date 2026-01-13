@@ -128,6 +128,7 @@ impl fmt::Display for ShaderTranslateError {
         match self {
             ShaderTranslateError::UnsupportedStage(stage) => write!(f, "unsupported shader stage {stage:?}"),
             ShaderTranslateError::MissingSignature(name) => write!(f, "DXBC missing required signature chunk {name}"),
+            ShaderTranslateError::MissingThreadGroupSize => write!(f, "compute shader is missing required thread-group size declaration"),
             ShaderTranslateError::SignatureMissingRegister { io, register } => {
                 write!(f, "{io} signature does not declare register {register}")
             }
@@ -201,9 +202,6 @@ impl fmt::Display for ShaderTranslateError {
             }
             ShaderTranslateError::PixelShaderMissingSvTarget0 => {
                 write!(f, "pixel shader output signature is missing SV_Target0")
-            }
-            ShaderTranslateError::MissingThreadGroupSize => {
-                write!(f, "compute shader is missing thread group size declaration")
             }
             ShaderTranslateError::InvalidThreadGroupSize { x, y, z } => write!(
                 f,

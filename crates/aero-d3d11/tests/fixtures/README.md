@@ -38,6 +38,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `ps_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
   * Behavior: `ld o0, l(0,0,0,0), t0`, `ret`
+* `cs_store_uav_raw.dxbc`
+  * Shader model: `cs_5_0`
+  * Chunks: `SHEX`
+  * Behavior: `[numthreads(1,1,1)]`, `dcl_uav_raw u0`, `store_raw u0.x, 0, 0x12345678`, `ret`
 
 These fixtures are **hand-authored** DXBC containers with the standard D3D10+
 signature chunk layout. The SM4 token streams are intentionally tiny:

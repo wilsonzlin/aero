@@ -71,7 +71,6 @@ pub const OPCODE_SAMPLE: u32 = 0x45;
 pub const OPCODE_SAMPLE_L: u32 = 0x46;
 /// `ld` (Resource load; used by `Texture2D.Load`).
 pub const OPCODE_LD: u32 = 0x4c;
-
 /// `ld_raw` (raw buffer load; `ByteAddressBuffer.Load*`).
 ///
 /// Upstream: `D3D11_SB_OPCODE_LD_RAW`.
