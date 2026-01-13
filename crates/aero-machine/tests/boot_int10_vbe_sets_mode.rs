@@ -77,19 +77,19 @@ fn assert_vbe_mode_set_and_lfb_visible(vbe_mode_with_flags: u16, expected_res: (
 }
 
 #[test]
-fn boot_sector_int10_vbe_sets_live_svga_mode_and_lfb_is_visible() {
+fn boot_int10_vbe_sets_mode_0x118_and_lfb_is_visible() {
     // Mode 0x118 + LFB requested.
     assert_vbe_mode_set_and_lfb_visible(0x4118, (1024, 768));
 }
 
 #[test]
-fn boot_sector_int10_vbe_sets_mode_0x115_and_lfb_is_visible() {
+fn boot_int10_vbe_sets_mode_0x115_and_lfb_is_visible() {
     // Mode 0x115 (800x600) + LFB requested.
     assert_vbe_mode_set_and_lfb_visible(0x4115, (800, 600));
 }
 
 #[test]
-fn boot_sector_int10_vbe_sets_mode_0x160_and_lfb_is_visible() {
+fn boot_int10_vbe_sets_mode_0x160_and_lfb_is_visible() {
     // Mode 0x160 (1280x720) + LFB requested.
     assert_vbe_mode_set_and_lfb_visible(0x4160, (1280, 720));
 }
