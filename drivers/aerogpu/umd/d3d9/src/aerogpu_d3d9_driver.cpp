@@ -1209,7 +1209,9 @@ AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorProperties, D3d9TraceFunc::DeviceSetCur
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorPosition, D3d9TraceFunc::DeviceSetCursorPosition, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnShowCursor, D3d9TraceFunc::DeviceShowCursor, S_OK);
 
-// Patch rendering (N-Patch/patches) and ProcessVertices are not supported yet.
+// Patch rendering (N-Patch/patches) and ProcessVertices are implemented via the
+// fixed-function / legacy vertex-processing path. Keep the entrypoints wired so
+// Win7-era runtimes and apps can exercise these code paths without crashing.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawRectPatch, D3d9TraceFunc::DeviceDrawRectPatch, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawTriPatch, D3d9TraceFunc::DeviceDrawTriPatch, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDeletePatch, D3d9TraceFunc::DeviceDeletePatch, D3DERR_NOTAVAILABLE);
@@ -2559,7 +2561,7 @@ bool clamp_rect(const RECT* in, uint32_t width, uint32_t height, RECT* out) {
 }
 
 // -----------------------------------------------------------------------------
-// Minimal fixed-function (FVF) support (bring-up)
+// Fixed-function vertex formats (FVF) support (bring-up)
 // -----------------------------------------------------------------------------
 
 constexpr uint32_t kD3dFvfXyz = 0x00000002u;
@@ -9440,9 +9442,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
   }
 
   // Some runtimes implement SetFVF by synthesizing a declaration and calling
-  // SetVertexDecl. Detect the specific `XYZRHW | DIFFUSE` layout used by the
-  // Win7 bring-up test so we can enable the fixed-function fallback path even
-  // if `pfnSetFVF` is not invoked.
+  // SetVertexDecl. Detect the fixed-function layouts we can emulate so we can
+  // enable the fixed-function fallback path even if `pfnSetFVF` is not invoked.
   bool matches_fvf_xyzrhw_diffuse = false;
   if (decl && decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 3) {
     const auto* elems = reinterpret_cast<const D3DVERTEXELEMENT9_COMPAT*>(decl->blob.data());
@@ -9518,14 +9519,14 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     return trace.ret(S_OK);
   }
 
-  // For bring-up we only use the FVF value to select the fixed-function
-  // passthrough pipeline (XYZRHW|DIFFUSE). Other FVFs are accepted and cached so
-  // GetFVF + state blocks behave deterministically, even if rendering is not yet
-  // supported for those formats.
+  // The AeroGPU fixed-function fallback supports only a small FVF subset (see
+  // `drivers/aerogpu/umd/d3d9/README.md`). Other FVFs may be accepted and cached
+  // so GetFVF + state blocks behave deterministically, but rendering is not
+  // guaranteed for unsupported formats.
   if (fvf == kSupportedFvfXyzrhwDiffuse) {
     if (!dev->fvf_vertex_decl) {
-      // Build the declaration for this FVF. For bring-up we only support the
-      // `XYZRHW | DIFFUSE` path used by the Win7 D3D9Ex bring-up tests.
+      // Build the declaration for this FVF. The fixed-function fallback path
+      // uses an internal declaration so it can bind a known input layout.
       const D3DVERTEXELEMENT9_COMPAT elems[] = {
           // stream, offset, type, method, usage, usage_index
           {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
@@ -13709,9 +13710,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     return trace.ret(S_OK);
   }
 
-  // Fixed-function emulation path: for XYZRHW vertices we upload a transformed
-  // (clip-space) copy of the referenced vertices into a scratch VB and draw
-  // using a built-in shader pair.
+  // Fixed-function emulation path: for supported FVFs we may upload a
+  // transformed (clip-space) copy of the referenced vertices into a scratch VB
+  // and draw using a built-in shader pair.
   if (dev->fvf == kSupportedFvfXyzrhwDiffuse && !dev->user_vs && !dev->user_ps) {
     DeviceStateStream saved = dev->streams[0];
     DeviceStateStream& ss = dev->streams[0];

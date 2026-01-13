@@ -256,6 +256,30 @@ The initial implementation focuses on the minimum D3D9Ex feature set needed for:
 
 Unsupported states are handled defensively; unknown state enums are accepted and forwarded as generic “set render/sampler state” commands so the emulator can decide how to interpret them.
 
+### Fixed-function vertex formats (FVF)
+
+The AeroGPU D3D9 UMD includes a small **fixed-function fallback path** used by DWM and older D3D9 apps that rely on FVFs instead of explicit shaders + vertex declarations.
+
+Supported FVF combinations (tested):
+
+- `D3DFVF_XYZRHW | D3DFVF_DIFFUSE`
+- `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE`
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
+
+Limitations (bring-up):
+
+- Only these position/color/(optional) `TEX1` FVFs are supported by the fixed-function fallback path. Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping but are not guaranteed to render correctly.
+- `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
+- Fixed-function lighting/material is not implemented (legacy `SetLight`/`SetMaterial` etc are cached for `Get*` and state blocks).
+
+### Validation
+
+This subset is validated via:
+
+- **Host-side unit tests** under `drivers/aerogpu/umd/d3d9/tests/` (command-stream and fixed-function/FVF translation coverage).
+- **Win7 guest tests** under `drivers/aerogpu/tests/win7/` (recommended smoke tests: `d3d9ex_triangle`, `d3d9ex_draw_indexed_primitive_up`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
+
 ## Call tracing (bring-up / debugging)
 
 The D3D9 UMD contains a lightweight **in-process call trace** facility that can record D3D9UMDDI entrypoints (including stubs) and dump them via `OutputDebugStringA`/stderr.
@@ -267,7 +291,7 @@ See:
 Notes:
 
 - On Windows, trace dumps are emitted via `OutputDebugStringA` by default (view with DebugView/WinDbg). If you want to capture trace output to a console/CI log, set `AEROGPU_D3D9_TRACE_STDERR=1` to also echo the output to `stderr`.
-- `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` is useful for early bring-up: it dumps once on the first stubbed DDI hit (e.g. unsupported patch rendering).
+- `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` is useful for early bring-up: it dumps once on the first stubbed DDI hit (i.e. a missing/unsupported DDI entrypoint).
 
 ## Crash-proof D3D9UMDDI vtables (Win7 runtime)
 
@@ -284,7 +308,14 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet (they currently return `D3DERR_NOTAVAILABLE`):
 
-- `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices`
+- *(none)*
+
+### Legacy patch / ProcessVertices DDIs (bring-up)
+
+The following legacy DDIs are implemented (but still “bring-up level” and not full-featured):
+
+- `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch`
+- `pfnProcessVertices`
 
 ### Bring-up no-op DDIs
 
@@ -297,7 +328,7 @@ These DDIs are treated as benign no-ops for bring-up (returning `S_OK`). They ar
 
 ### Cached legacy state (Set*/Get* round-trip)
 
-Several fixed-function/resource state paths are cached for deterministic `Get*` queries and state-block compatibility, but are not currently emitted to the AeroGPU command stream. This includes:
+Several fixed-function/resource state paths are cached for deterministic `Get*` queries and state-block compatibility. Some of these are also consumed by the UMD’s fixed-function emulation, but are not currently emitted as explicit GPU state in the AeroGPU command stream. This includes:
 
 - texture stage state (D3DTSS_*)
 - transforms / clip planes / N-patch mode
@@ -317,4 +348,4 @@ These cached values participate in D3D9 state blocks:
 
 ### Caps/feature gating
 
-The stubbed entrypoints above correspond primarily to **fixed-function** and legacy code paths. Until real implementations exist, keep the reported D3D9 caps conservative so the runtime and apps prefer the shader/VB/IB paths that the UMD does implement.
+Some bring-up entrypoints correspond primarily to **fixed-function** and legacy code paths. Keep the reported D3D9 caps conservative so the runtime and apps prefer the shader/VB/IB paths that the UMD does implement (while still enabling the fixed-function subset above for DWM/legacy apps).
