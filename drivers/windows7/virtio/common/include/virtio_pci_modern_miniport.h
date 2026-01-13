@@ -132,9 +132,33 @@ VirtioPciGetQueueNotifyAddress(_Inout_ VIRTIO_PCI_DEVICE *Dev,
                                _In_ USHORT QueueIndex,
                                _Out_ volatile UINT16 **NotifyAddrOut);
 
-VOID VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex);
+ VOID VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex);
+
+/*
+ * MSI-X helpers.
+ *
+ * These helpers program the device's virtio_pci_common_cfg MSI-X vector fields
+ * with a read-back validation step (virtio spec: devices return
+ * VIRTIO_PCI_MSI_NO_VECTOR when vector assignment fails).
+ *
+ * Read-back validation rules:
+ * - If Vector != VIRTIO_PCI_MSI_NO_VECTOR and the device reads back
+ *   VIRTIO_PCI_MSI_NO_VECTOR or any other value, the call fails with
+ *   STATUS_IO_DEVICE_ERROR.
+ * - If Vector == VIRTIO_PCI_MSI_NO_VECTOR, the helper accepts a
+ *   VIRTIO_PCI_MSI_NO_VECTOR read-back (disable).
+ *
+ * Selector safety:
+ * - VirtioPciSetQueueMsixVector serializes queue_select + queue_msix_vector
+ *   access via Dev->CommonCfgLock.
+ */
+_Must_inspect_result_
+NTSTATUS VirtioPciSetConfigMsixVector(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT Vector);
+
+_Must_inspect_result_
+NTSTATUS VirtioPciSetQueueMsixVector(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex, _In_ USHORT Vector);
 
 /*
  * Interrupt status (read-to-ack).
  */
-UCHAR VirtioPciReadIsr(_In_ const VIRTIO_PCI_DEVICE *Dev);
+ UCHAR VirtioPciReadIsr(_In_ const VIRTIO_PCI_DEVICE *Dev);

@@ -88,6 +88,12 @@ static BOOLEAN virtio_modern_mmio_read(const volatile VOID* Register, size_t Wid
                         return TRUE;
                     }
                     break;
+                case 0x10: /* msix_config */
+                    if (Width == 2) {
+                        *ValueOut = (ULONGLONG)g_sim->msix_config;
+                        return TRUE;
+                    }
+                    break;
                 case 0x12: /* num_queues */
                     if (Width == 2) {
                         *ValueOut = (ULONGLONG)g_sim->num_queues;
@@ -143,6 +149,17 @@ static BOOLEAN virtio_modern_mmio_read(const volatile VOID* Register, size_t Wid
                             qsz = g_sim->queues[g_sim->queue_select].queue_size;
                         }
                         *ValueOut = (ULONGLONG)qsz;
+                        return TRUE;
+                    }
+                    break;
+                case 0x1A: /* queue_msix_vector */
+                    if (Width == 2) {
+                        uint16_t v = 0;
+                        if (g_sim->queue_select < g_sim->num_queues &&
+                            g_sim->queue_select < (uint16_t)VIRTIO_PCI_MODERN_MMIO_SIM_MAX_QUEUES) {
+                            v = g_sim->queues[g_sim->queue_select].queue_msix_vector;
+                        }
+                        *ValueOut = (ULONGLONG)v;
                         return TRUE;
                     }
                     break;
@@ -370,6 +387,18 @@ static BOOLEAN virtio_modern_mmio_write(volatile VOID* Register, size_t Width, U
                         return TRUE;
                     }
                     break;
+                case 0x10: /* msix_config */
+                    if (Width == 2) {
+                        uint16_t v;
+                        v = (uint16_t)Value;
+                        if (g_sim->msix_config_write_override != 0 && v != VIRTIO_PCI_MSI_NO_VECTOR) {
+                            v = g_sim->msix_config_write_override_value;
+                        }
+                        g_sim->msix_config = v;
+                        mmio_store(Register, Width, (ULONGLONG)v);
+                        return TRUE;
+                    }
+                    break;
                 case 0x12: /* num_queues (RO in spec; writable in tests to configure sim) */
                     if (Width == 2) {
                         g_sim->num_queues = (uint16_t)Value;
@@ -401,11 +430,16 @@ static BOOLEAN virtio_modern_mmio_write(volatile VOID* Register, size_t Width, U
                     break;
                 case 0x1A: /* queue_msix_vector */
                     if (Width == 2) {
+                        uint16_t v;
+                        v = (uint16_t)Value;
+                        if (g_sim->queue_msix_vector_write_override != 0 && v != VIRTIO_PCI_MSI_NO_VECTOR) {
+                            v = g_sim->queue_msix_vector_write_override_value;
+                        }
                         if (g_sim->queue_select < g_sim->num_queues &&
                             g_sim->queue_select < (uint16_t)VIRTIO_PCI_MODERN_MMIO_SIM_MAX_QUEUES) {
-                            g_sim->queues[g_sim->queue_select].queue_msix_vector = (uint16_t)Value;
+                            g_sim->queues[g_sim->queue_select].queue_msix_vector = v;
                         }
-                        mmio_store(Register, Width, Value);
+                        mmio_store(Register, Width, (ULONGLONG)v);
                         return TRUE;
                     }
                     break;
@@ -574,6 +608,8 @@ void VirtioPciModernMmioSimInit(VIRTIO_PCI_MODERN_MMIO_SIM* sim,
      * pass-through reads return something deterministic.
      */
     if (sim->common_cfg != NULL) {
+        sim->msix_config = VIRTIO_PCI_MSI_NO_VECTOR;
+        mmio_store((volatile VOID*)&sim->common_cfg->msix_config, 2, (ULONGLONG)sim->msix_config);
         mmio_store((volatile VOID*)&sim->common_cfg->device_status, 1, 0);
         mmio_store((volatile VOID*)&sim->common_cfg->config_generation, 1, 0);
     }

@@ -54,6 +54,8 @@ typedef struct VIRTIO_PCI_MODERN_MMIO_SIM {
     uint32_t driver_feature_select;
     uint16_t queue_select;
 
+    uint16_t msix_config;
+
     uint8_t device_status_read_override;
     uint8_t device_status_read_override_value;
     uint32_t device_status_read_override_reads_remaining; /* 0 = infinite while override enabled */
@@ -63,6 +65,18 @@ typedef struct VIRTIO_PCI_MODERN_MMIO_SIM {
     uint32_t config_generation_step_reads_remaining; /* 0 = infinite while step_on_read != 0 */
     uint8_t reject_features_ok; /* if set, device clears FEATURES_OK on write */
     uint8_t ignore_queue_enable_write; /* if set, queue_enable writes are ignored (readback stays 0) */
+
+    /*
+     * MSI-X vector programming hooks.
+     *
+     * When the override flags are set, writes of any vector other than
+     * VIRTIO_PCI_MSI_NO_VECTOR will be forced to the corresponding override
+     * value to simulate devices that refuse MSI-X vector assignments.
+     */
+    uint8_t msix_config_write_override;
+    uint16_t msix_config_write_override_value;
+    uint8_t queue_msix_vector_write_override;
+    uint16_t queue_msix_vector_write_override_value;
 
     uint16_t num_queues;
     VIRTIO_PCI_MODERN_MMIO_SIM_QUEUE queues[VIRTIO_PCI_MODERN_MMIO_SIM_MAX_QUEUES];

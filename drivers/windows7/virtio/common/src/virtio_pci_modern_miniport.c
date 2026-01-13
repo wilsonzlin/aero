@@ -741,6 +741,85 @@ VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
     KeMemoryBarrier();
 }
 
+NTSTATUS
+VirtioPciSetConfigMsixVector(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT Vector)
+{
+    USHORT readVector;
+
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    KeMemoryBarrier();
+    WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->msix_config, Vector);
+    KeMemoryBarrier();
+    readVector = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->msix_config);
+    KeMemoryBarrier();
+
+    /*
+     * Virtio spec: devices return VIRTIO_PCI_MSI_NO_VECTOR when MSI-X vector
+     * assignment fails.
+     *
+     * When disabling vectors (Vector == VIRTIO_PCI_MSI_NO_VECTOR), accept a
+     * VIRTIO_PCI_MSI_NO_VECTOR readback.
+     */
+    if (Vector == VIRTIO_PCI_MSI_NO_VECTOR) {
+        return (readVector == VIRTIO_PCI_MSI_NO_VECTOR) ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
+    }
+
+    if (readVector == VIRTIO_PCI_MSI_NO_VECTOR || readVector != Vector) {
+        return STATUS_IO_DEVICE_ERROR;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+VirtioPciSetQueueMsixVector(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex, _In_ USHORT Vector)
+{
+    NTSTATUS status;
+    KIRQL oldIrql;
+    USHORT size;
+    USHORT readVector;
+
+    if (Dev == NULL || Dev->CommonCfg == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    status = STATUS_SUCCESS;
+
+    VirtioPciCommonCfgLock(Dev, &oldIrql);
+
+    VirtioPciSelectQueueLocked(Dev, QueueIndex);
+
+    size = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_size);
+    if (size == 0) {
+        status = STATUS_NOT_FOUND;
+        goto Exit;
+    }
+
+    WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_msix_vector, Vector);
+    KeMemoryBarrier();
+    readVector = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_msix_vector);
+    KeMemoryBarrier();
+
+    if (Vector == VIRTIO_PCI_MSI_NO_VECTOR) {
+        status = (readVector == VIRTIO_PCI_MSI_NO_VECTOR) ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
+        goto Exit;
+    }
+
+    if (readVector == VIRTIO_PCI_MSI_NO_VECTOR || readVector != Vector) {
+        status = STATUS_IO_DEVICE_ERROR;
+        goto Exit;
+    }
+
+    status = STATUS_SUCCESS;
+
+Exit:
+    VirtioPciCommonCfgUnlock(Dev, oldIrql);
+    return status;
+}
+
 UCHAR
 VirtioPciReadIsr(_In_ const VIRTIO_PCI_DEVICE *Dev)
 {
