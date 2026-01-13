@@ -237,6 +237,10 @@ Input reports are encoded as compact, versioned binary records (magic + version 
 and pushed into the ring with `tryPushWithWriter(...)`. This path is best-effort: when the ring is
 full, reports are dropped and a drop counter is incremented.
 
+If the worker fails to decode a ring record (invalid magic/version/length), the record is treated
+as dropped (incrementing the invalid/drop counters). If the ring appears persistently corrupted,
+the runtime may detach the ring and continue forwarding input reports via `postMessage`.
+
 Implementation pointers:
 
 - Ring buffer: `web/src/ipc/ring_buffer.ts` (`RingBuffer`)
@@ -263,6 +267,20 @@ The ring implementation is a bounded, single-producer/single-consumer, variable-
 buffer with an Atomics-managed control header; it is designed to avoid per-report allocations and
 reduce `postMessage` overhead on high-frequency devices.
 
+Semantics / guarantees:
+
+- **In-order execution per device (correctness):** output/feature reports are executed **in-order per
+  deviceId**. Even though WebHID `sendReport`/`sendFeatureReport` are `Promise`-based, the broker
+  serializes calls per device so later reports are not started until earlier ones have settled.
+  (Reports from different devices may interleave.)
+- **Fallback on ring overflow/corruption:** the SAB rings are an optimization, not a correctness
+  requirement. If a report cannot be enqueued (ring full, record too large) or the consumer detects
+  ring corruption, the runtime detaches/ignores the ring and falls back to `postMessage` forwarding
+  so guest→device reports are not silently lost.
+- **Size limits:** the SAB `HidReportRing` record format stores `len` as a `u16` and the default
+  ring size is 64 KiB. Feature reports larger than the maximum ring record payload (≈64 KiB) are
+  forwarded via `postMessage` even when rings are enabled.
+
 Implementation pointers:
 
 - Ring buffer: `web/src/usb/hid_report_ring.ts` (`HidReportRing`)
@@ -273,6 +291,10 @@ Implementation pointers:
 Note: `SharedArrayBuffer` requires cross-origin isolation (COOP/COEP) in modern browsers. When the
 page is not `crossOriginIsolated`, the runtime automatically falls back to the `postMessage` path.
 See [`docs/11-browser-apis.md`](./11-browser-apis.md).
+
+When rings were previously attached but later become unavailable (worker restart, explicit detach,
+or detected ring corruption), the runtime should treat this as a performance downgrade only and
+continue operating via the `postMessage` path.
 
 ## Guest-side model (UHCI + generic HID passthrough device)
 
@@ -326,7 +348,8 @@ Note: Aero models passthrough HID devices as **USB 1.1 full-speed** interfaces. 
 endpoints therefore have a maximum packet size of **64 bytes**. We currently do not support
 splitting a single HID report across multiple interrupt transactions, so oversized input/output
 reports are rejected at attach/descriptor-synthesis time. (Feature reports use control transfers and
-can be larger.)
+can be larger; very large feature reports may fall back to `postMessage` on the host boundary when
+the SAB output ring is enabled.)
 
 #### Output/feature reports (guest → device)
 
@@ -338,8 +361,20 @@ can be larger.)
 This queue boundary is also where we can implement:
 
 - backpressure / bounded memory
-- ordering guarantees (preserve report order)
+- ordering guarantees (preserve report order) — **output/feature reports are executed in-order per
+  device**
 - VM snapshot/restore (queue contents are part of device state)
+
+#### Feature report reads (`GET_REPORT` Feature) (optional)
+
+If/when the passthrough path supports reading feature reports from the host, the guest-visible USB
+HID device can proxy a HID-class `GET_REPORT` request with report type **Feature** to the physical
+device using WebHID `receiveFeatureReport(reportId)`.
+
+Because WebHID is async, the USB control transfer cannot complete immediately. The device model
+represents “waiting for the host” by returning **NAK** until the host Promise settles; once the host
+responds, the next retry completes with the returned report bytes (and errors map to a STALL/error
+completion).
 
 ## Security and UX constraints
 
