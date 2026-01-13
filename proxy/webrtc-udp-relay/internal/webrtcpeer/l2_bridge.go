@@ -83,6 +83,8 @@ type l2Bridge struct {
 	toBackend chan []byte
 
 	sendMu sync.Mutex
+
+	rateLimitedLogOnce sync.Once
 }
 
 func newL2Bridge(dc *webrtc.DataChannel, dialCfg l2BackendDialConfig, quota *relay.Session) *l2Bridge {
@@ -320,6 +322,12 @@ func (b *l2Bridge) wsReadLoop(ws *websocket.Conn) error {
 			if m := b.metrics(); m != nil {
 				m.Inc(metrics.L2BridgeDroppedRateLimitedTotal)
 			}
+			b.rateLimitedLogOnce.Do(func() {
+				slog.Warn("l2_bridge_dropped_rate_limited",
+					"session_id", b.sessionID(),
+					"msg_bytes", len(payload),
+				)
+			})
 			continue
 		}
 
