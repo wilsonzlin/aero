@@ -148,13 +148,35 @@ else
   virtio_mouse="virtio-mouse-pci,${virtio_common}"
 fi
 
+# Detect disk format to avoid QEMU's "format not specified" warning and to support
+# qcow2/vhd/etc images without requiring users to hand-edit the command line.
+#
+# Override with:
+#   QEMU_DISK_FORMAT=qcow2 ./run-win7-x64.sh ...
+disk_format=${QEMU_DISK_FORMAT:-}
+if [ -z "$disk_format" ] && command -v qemu-img >/dev/null 2>&1; then
+  disk_format=$(qemu-img info "$disk" 2>/dev/null | sed -n 's/^file format: //p' | awk 'NR==1{print $1}')
+fi
+if [ -z "$disk_format" ]; then
+  case "$disk" in
+    *.qcow2|*.QCOW2|*.qcow|*.QCOW) disk_format=qcow2 ;;
+    *.vhd|*.VHD|*.vpc|*.VPC) disk_format=vpc ;;
+    *.vhdx|*.VHDX) disk_format=vhdx ;;
+    *.vmdk|*.VMDK) disk_format=vmdk ;;
+    *.vdi|*.VDI) disk_format=vdi ;;
+    *.raw|*.RAW|*.img|*.IMG|*.bin|*.BIN|*.dd|*.DD) disk_format=raw ;;
+    *) disk_format=raw ;;
+  esac
+fi
+drive_arg="file=${disk},if=ide,format=${disk_format}"
+
 # Build argv and then exec (so we can print the exact command line).
 set -- \
   "$qemu_bin" \
   -machine "$machine" \
   -m 4096 \
   -cpu qemu64 \
-  -drive "file=${disk},if=ide" \
+  -drive "$drive_arg" \
   -device "$virtio_kbd" \
   -device "$virtio_mouse" \
   -net nic,model=e1000 \

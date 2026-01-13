@@ -60,6 +60,13 @@ Options:
 - `--i8042-off` — disable the emulated PS/2 controller (`-machine ...,i8042=off`). Only use this after the
   virtio-input driver is installed and confirmed working, otherwise you may lose input.
 
+Environment overrides:
+
+- `QEMU_BIN=...` — override the QEMU binary (defaults: `qemu-system-i386` / `qemu-system-x86_64`).
+- `QEMU_ACCEL=kvm|tcg|...` — override `-machine ...,accel=...` (defaults to `kvm` when available).
+- `QEMU_DISK_FORMAT=qcow2|vpc|raw|...` — override disk format detection (helpful if the file extension is
+  ambiguous).
+
 ### Equivalent explicit command lines
 
 The examples below are intentionally explicit and can be used as a starting point. Adjust paths, CPU accel, and disk/network options as needed.
