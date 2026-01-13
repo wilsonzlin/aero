@@ -2,9 +2,10 @@ use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::interrupts::msi::MsiMessage;
 use aero_storage::{DiskError as StorageDiskError, MemBackend, RawDisk, VirtualDisk};
 use aero_virtio::devices::blk::{
-    BlockBackend, BlockBackendError, VirtioBlk, VIRTIO_BLK_S_IOERR, VIRTIO_BLK_S_UNSUPP,
-    VIRTIO_BLK_T_DISCARD, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
-    VIRTIO_BLK_T_WRITE_ZEROES,
+    BlockBackend, BlockBackendError, VirtioBlk, VIRTIO_BLK_MAX_REQUEST_DATA_BYTES,
+    VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS, VIRTIO_BLK_SECTOR_SIZE, VIRTIO_BLK_S_IOERR,
+    VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_DISCARD, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN,
+    VIRTIO_BLK_T_OUT, VIRTIO_BLK_T_WRITE_ZEROES,
 };
 use aero_virtio::memory::{
     read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -15,6 +16,7 @@ use aero_virtio::pci::{
     VIRTIO_PCI_LEGACY_ISR_QUEUE, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
     VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
+use aero_virtio::queue::{VIRTQ_DESC_F_INDIRECT, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -304,6 +306,23 @@ fn setup() -> Setup {
     let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
 
     let (dev, caps, mem) = setup_pci_device(dev);
+
+    (dev, caps, mem, backing, flushes)
+}
+
+fn setup_with_sizes(disk_len: usize, mem_len: usize) -> Setup {
+    let backing = Rc::new(RefCell::new(vec![0u8; disk_len]));
+    let flushes = Rc::new(Cell::new(0u32));
+    let backend = SharedDisk {
+        data: backing.clone(),
+        flushes: flushes.clone(),
+    };
+
+    let blk = VirtioBlk::new(backend);
+    let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
+
+    let (dev, caps, _mem) = setup_pci_device(dev);
+    let mem = GuestRam::new(mem_len);
 
     (dev, caps, mem, backing, flushes)
 }
@@ -1532,4 +1551,187 @@ fn virtio_blk_virtual_disk_backend_maps_browser_storage_failures_to_ioerr() {
         let err = BlockBackend::flush(&mut backend).unwrap_err();
         assert_eq!(err, BlockBackendError::IoError);
     }
+}
+
+#[test]
+fn virtio_blk_rejects_excessive_descriptor_count_without_panicking() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    let header_base = 0x1000;
+    let data_base = 0x2000;
+    let status = 0x3000;
+    let indirect = 0x7000;
+
+    // OUT request at sector 0.
+    write_u32_le(&mut mem, header_base, VIRTIO_BLK_T_OUT).unwrap();
+    write_u32_le(&mut mem, header_base + 4, 0).unwrap();
+    write_u64_le(&mut mem, header_base + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    // Build an indirect chain that is otherwise valid (aligned and within capacity), but exceeds
+    // the per-request descriptor limit. Use many 1-byte data segments to emulate a hostile guest
+    // forcing worst-case per-descriptor overhead.
+    let header_descs = 16usize; // 16-byte request header split into 1-byte descriptors.
+    let status_descs = 1usize;
+    let mut data_descs = VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS
+        .saturating_add(1)
+        .saturating_sub(header_descs + status_descs);
+    let sector_size = VIRTIO_BLK_SECTOR_SIZE as usize;
+    let rem = data_descs % sector_size;
+    if rem != 0 {
+        data_descs = data_descs.saturating_add(sector_size - rem);
+    }
+    let total_descs = header_descs + data_descs + status_descs;
+    assert!(
+        total_descs > VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS,
+        "test should exceed descriptor limit"
+    );
+
+    // Non-zero payload so we'd observe a write if the request were incorrectly processed.
+    mem.get_slice_mut(data_base, data_descs).unwrap().fill(0xa5);
+
+    // Indirect table entries: header bytes.
+    for i in 0..header_descs {
+        let flags = VIRTQ_DESC_F_NEXT;
+        write_desc(
+            &mut mem,
+            indirect,
+            i as u16,
+            header_base + i as u64,
+            1,
+            flags,
+            (i + 1) as u16,
+        );
+    }
+
+    // Indirect table entries: data bytes (1-byte segments).
+    for i in 0..data_descs {
+        let idx = header_descs + i;
+        let flags = VIRTQ_DESC_F_NEXT; // OUT data is read-only.
+        write_desc(
+            &mut mem,
+            indirect,
+            idx as u16,
+            data_base + i as u64,
+            1,
+            flags,
+            (idx + 1) as u16,
+        );
+    }
+
+    // Status descriptor.
+    let status_idx = total_descs - 1;
+    write_desc(
+        &mut mem,
+        indirect,
+        status_idx as u16,
+        status,
+        1,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+
+    // Main descriptor table: single indirect descriptor at index 0.
+    let indirect_len = u32::try_from(total_descs * 16).unwrap();
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        0,
+        indirect,
+        indirect_len,
+        VIRTQ_DESC_F_INDIRECT,
+        0,
+    );
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
+    assert!(backing.borrow().iter().all(|b| *b == 0));
+}
+
+#[test]
+fn virtio_blk_rejects_excessive_total_data_bytes() {
+    let total_len = VIRTIO_BLK_MAX_REQUEST_DATA_BYTES + VIRTIO_BLK_SECTOR_SIZE;
+    let total_len_u32 = u32::try_from(total_len).unwrap();
+    let disk_len = usize::try_from(total_len).unwrap();
+    let mem_len = usize::try_from(0x10000u64 + total_len + 0x1000).unwrap();
+    let (mut dev, caps, mut mem, backing, _flushes) = setup_with_sizes(disk_len, mem_len);
+
+    let header = 0x7000;
+    let data = 0x10000;
+    let status = 0x8000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    // Non-zero payload so we'd observe a write if the request were incorrectly processed.
+    mem.write(data, &[0xa5u8; 512]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        1,
+        data,
+        total_len_u32,
+        VIRTQ_DESC_F_NEXT,
+        2,
+    );
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
+    assert!(backing.borrow()[..512].iter().all(|b| *b == 0));
+}
+
+#[test]
+fn virtio_blk_rejects_sector_offset_overflow() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    let header = 0x7000;
+    let data = 0x8000;
+    let status = 0x9000;
+
+    // Choose a sector number that overflows `sector * 512`:
+    // (u64::MAX / 512 + 1) * 512 == 2^64.
+    let sector = u64::MAX / VIRTIO_BLK_SECTOR_SIZE + 1;
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, sector).unwrap();
+
+    mem.write(data, &[0xa5u8; 512]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, data, 512, VIRTQ_DESC_F_NEXT, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
+    assert!(backing.borrow().iter().all(|b| *b == 0));
 }

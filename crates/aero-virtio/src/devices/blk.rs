@@ -26,6 +26,16 @@ pub const VIRTIO_BLK_S_OK: u8 = 0;
 pub const VIRTIO_BLK_S_IOERR: u8 = 1;
 pub const VIRTIO_BLK_S_UNSUPP: u8 = 2;
 
+/// DoS guard: maximum number of descriptors processed for a single virtio-blk request.
+///
+/// This includes the request header and status descriptors.
+pub const VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS: usize = 1024;
+
+/// DoS guard: maximum total data payload bytes for a single virtio-blk request.
+///
+/// This matches the 4MiB cap used by Aero's NVMe model (`NVME_MAX_DMA_BYTES`).
+pub const VIRTIO_BLK_MAX_REQUEST_DATA_BYTES: u64 = 4 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockBackendError {
     OutOfBounds,
@@ -413,6 +423,21 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
         let status_desc = descs[descs.len() - 1];
         let can_write_status = status_desc.is_write_only() && status_desc.len != 0;
 
+        // DoS guard: avoid unbounded per-request work/allocations on pathological descriptor chains
+        // (especially when indirect descriptors are enabled).
+        if descs.len() > VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS {
+            let status = VIRTIO_BLK_S_IOERR;
+            if can_write_status {
+                // Best-effort: if the status buffer is invalid/out-of-bounds, still advance the
+                // used ring so the guest can reclaim the descriptor chain.
+                let _ = write_u8(mem, status_desc.addr, status);
+            }
+            return queue
+                // Contract v1: virtio-blk drivers must not depend on used lengths.
+                .add_used(mem, chain.head_index(), 0)
+                .map_err(|_| VirtioDeviceError::IoError);
+        }
+
         // Read the 16-byte request header.
         let mut hdr = [0u8; 16];
         let mut hdr_written = 0usize;
@@ -453,35 +478,55 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
             }
         }
 
-        let mut status = if header_ok {
-            VIRTIO_BLK_S_OK
-        } else {
-            VIRTIO_BLK_S_IOERR
-        };
-
-        // Build data segments (everything between header cursor and status descriptor).
-        let mut data_segs = Vec::new();
-        while d_idx < descs.len().saturating_sub(1) {
-            let d = descs[d_idx];
-            let seg_len = (d.len as usize).saturating_sub(d_off);
-            if seg_len != 0 {
-                data_segs.push((d, d_off, seg_len));
+        // Build data segments (everything between header cursor and status descriptor), enforcing
+        // a per-request payload cap to avoid unbounded allocations or work.
+        let mut data_segs: Vec<(crate::queue::Descriptor, usize, usize)> = Vec::new();
+        let mut total_data_len: u64 = 0;
+        let mut data_len_ok = true;
+        let data_end_idx = descs.len().saturating_sub(1);
+        let mut seg_idx = d_idx;
+        let mut seg_off = d_off;
+        while seg_idx < data_end_idx {
+            let d = descs[seg_idx];
+            let d_len = d.len as usize;
+            if seg_off > d_len {
+                data_len_ok = false;
+                break;
             }
-            d_idx += 1;
-            d_off = 0;
+            let seg_len = d_len - seg_off;
+            if seg_len != 0 {
+                let seg_len_u64 = u64::try_from(seg_len).unwrap_or(u64::MAX);
+                total_data_len = match total_data_len.checked_add(seg_len_u64) {
+                    Some(v) => v,
+                    None => {
+                        data_len_ok = false;
+                        break;
+                    }
+                };
+                if total_data_len > VIRTIO_BLK_MAX_REQUEST_DATA_BYTES {
+                    data_len_ok = false;
+                    break;
+                }
+                data_segs.push((d, seg_off, seg_len));
+            }
+            seg_idx += 1;
+            seg_off = 0;
         }
 
-        if header_ok {
+        let mut status = VIRTIO_BLK_S_IOERR;
+        if header_ok && data_len_ok {
+            status = VIRTIO_BLK_S_OK;
+
             let typ = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
             let sector = u64::from_le_bytes(hdr[8..16].try_into().unwrap());
 
             match typ {
                 VIRTIO_BLK_T_IN => {
-                    let total_len: u64 = data_segs.iter().map(|(_, _, len)| *len as u64).sum();
-                    if data_segs.is_empty() || !total_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE) {
+                    if data_segs.is_empty() || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
+                    {
                         status = VIRTIO_BLK_S_IOERR;
                     } else if let Some(sector_off) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
-                        if let Some(end_off) = sector_off.checked_add(total_len) {
+                        if let Some(end_off) = sector_off.checked_add(total_data_len) {
                             if end_off > self.backend.len() {
                                 status = VIRTIO_BLK_S_IOERR;
                             } else {
@@ -503,7 +548,8 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         status = VIRTIO_BLK_S_IOERR;
                                         break;
                                     }
-                                    offset = match offset.checked_add(*seg_len as u64) {
+                                    let seg_len_u64 = u64::try_from(*seg_len).unwrap_or(u64::MAX);
+                                    offset = match offset.checked_add(seg_len_u64) {
                                         Some(v) => v,
                                         None => {
                                             status = VIRTIO_BLK_S_IOERR;
@@ -520,11 +566,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                     }
                 }
                 VIRTIO_BLK_T_OUT => {
-                    let total_len: u64 = data_segs.iter().map(|(_, _, len)| *len as u64).sum();
-                    if data_segs.is_empty() || !total_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE) {
+                    if data_segs.is_empty() || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
+                    {
                         status = VIRTIO_BLK_S_IOERR;
                     } else if let Some(sector_off) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
-                        if let Some(end_off) = sector_off.checked_add(total_len) {
+                        if let Some(end_off) = sector_off.checked_add(total_data_len) {
                             if end_off > self.backend.len() {
                                 status = VIRTIO_BLK_S_IOERR;
                             } else {
@@ -546,7 +592,8 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         status = VIRTIO_BLK_S_IOERR;
                                         break;
                                     }
-                                    offset = match offset.checked_add(*seg_len as u64) {
+                                    let seg_len_u64 = u64::try_from(*seg_len).unwrap_or(u64::MAX);
+                                    offset = match offset.checked_add(seg_len_u64) {
                                         Some(v) => v,
                                         None => {
                                             status = VIRTIO_BLK_S_IOERR;
@@ -570,10 +617,10 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                     }
                 }
                 VIRTIO_BLK_T_GET_ID => {
-                    // The driver supplies a single data buffer (write-only) and expects up to 20
-                    // bytes back. If the buffer is smaller, we write as much as fits; if larger, we
+                    // The driver supplies a data buffer (write-only) and expects up to 20 bytes
+                    // back. If the buffer is smaller, we write as much as fits; if larger, we
                     // truncate and still succeed.
-                    if data_segs.is_empty() || data_segs.iter().all(|(_, _, len)| *len == 0) {
+                    if data_segs.is_empty() {
                         status = VIRTIO_BLK_S_IOERR;
                     } else {
                         let id = self.backend.device_id();
@@ -621,8 +668,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                         };
 
                         if status == VIRTIO_BLK_S_OK {
-                            let blk_size =
-                                u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
+                            let blk_size = u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
                             let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
                             let disk_len = self.backend.len();
 
@@ -635,14 +681,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     break;
                                 }
 
-                                let Some(byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
-                                else {
+                                let Some(byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
-                                let Some(byte_len) =
-                                    num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
-                                else {
+                                let Some(byte_len) = num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
@@ -658,9 +701,6 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                         }
 
                         // Best-effort discard is currently a no-op once validated.
-                        //
-                        // TODO(storage): plumb an optional backend "deallocate/punch hole" hook for
-                        // sparse disks so DISCARD can reclaim space.
                     }
                 }
                 VIRTIO_BLK_T_WRITE_ZEROES => {
@@ -680,13 +720,12 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                         };
 
                         if status == VIRTIO_BLK_S_OK {
-                            let blk_size =
-                                u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
+                            let blk_size = u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
                             let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
                             let disk_len = self.backend.len();
 
-                            // Buffer used for chunked zero writes. Use a block-size-aligned chunk so
-                            // backends that care about write alignment are not penalized.
+                            // Buffer used for chunked zero writes. Use a block-size-aligned chunk
+                            // so backends that care about write alignment are not penalized.
                             let blk_usize = usize::try_from(blk_size).unwrap_or(512);
                             let max_chunk = 64 * 1024usize;
                             let mut chunk_size = if blk_usize > max_chunk {
@@ -706,15 +745,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     break;
                                 }
 
-                                let Some(mut byte_off) =
-                                    seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
-                                else {
+                                let Some(mut byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
-                                let Some(mut remaining) =
-                                    num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
-                                else {
+                                let Some(mut remaining) = num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
@@ -729,8 +764,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 
                                 while remaining != 0 {
                                     let take = remaining.min(zero_buf.len() as u64) as usize;
-                                    if self.backend.write_at(byte_off, &zero_buf[..take]).is_err()
-                                    {
+                                    if self.backend.write_at(byte_off, &zero_buf[..take]).is_err() {
                                         status = VIRTIO_BLK_S_IOERR;
                                         break 'seg_loop;
                                     }
@@ -751,8 +785,10 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
             }
         }
 
+        // Best-effort: if the status buffer is invalid/out-of-bounds, still advance the used ring
+        // so the guest can reclaim the descriptor chain.
         if can_write_status {
-            write_u8(mem, status_desc.addr, status).map_err(|_| VirtioDeviceError::IoError)?;
+            let _ = write_u8(mem, status_desc.addr, status);
         }
 
         queue
