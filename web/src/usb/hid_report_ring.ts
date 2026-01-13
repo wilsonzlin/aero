@@ -154,6 +154,12 @@ export class HidReportRing {
   }
 
   push(deviceId: number, reportType: HidReportType, reportId: number, payload: Uint8Array): boolean {
+    if (reportType !== HidReportType.Input && reportType !== HidReportType.Output && reportType !== HidReportType.Feature) {
+      // `WrapMarker` is an internal sentinel; allowing callers to inject it would corrupt the ring.
+      // Treat any unknown tag as a dropped record to keep the ring state consistent.
+      Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+      return false;
+    }
     const payloadLen = payload.byteLength >>> 0;
     if (payloadLen > 0xffff) {
       // The on-wire ring format encodes `len` as a u16; larger payloads are not representable.

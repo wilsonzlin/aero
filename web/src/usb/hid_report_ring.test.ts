@@ -64,6 +64,21 @@ describe("HidReportRing", () => {
     expect(ring.dropped()).toBe(1);
   });
 
+  it("rejects invalid reportType values in push()", () => {
+    const sab = createHidReportRingBuffer(64);
+    const ring = new HidReportRing(sab);
+
+    expect(ring.dropped()).toBe(0);
+    expect(ring.push(1, HidReportType.WrapMarker, 1, new Uint8Array([1]))).toBe(false);
+    expect(ring.dropped()).toBe(1);
+
+    expect(ring.push(1, 0x42 as HidReportType, 1, new Uint8Array([1]))).toBe(false);
+    expect(ring.dropped()).toBe(2);
+
+    expect(ring.isEmpty()).toBe(true);
+    expect(ring.pop()).toBeNull();
+  });
+
   it("rejects payloads larger than 65535 bytes (u16 length field)", () => {
     const sab = createHidReportRingBuffer(128 * 1024);
     const ring = new HidReportRing(sab);
