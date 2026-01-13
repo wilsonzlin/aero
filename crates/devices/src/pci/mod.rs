@@ -7,7 +7,6 @@ pub mod msi;
 pub mod msix;
 pub mod profile;
 
-mod acpi;
 mod bar_io_router;
 mod bar_mmio_router;
 mod bios;
@@ -19,7 +18,6 @@ mod ports;
 mod resources;
 mod snapshot;
 
-pub use acpi::{build_prt_bus0, dsdt_asl, PciPrtEntry, ACPI_PCI_ROOT_NAME};
 pub use bar_io_router::{PciIoBarHandler, PciIoBarRouter};
 pub use bar_mmio_router::{PciBarMmioHandler, PciBarMmioRouter};
 pub use bios::bios_post;
