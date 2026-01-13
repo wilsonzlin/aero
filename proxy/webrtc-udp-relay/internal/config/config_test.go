@@ -299,6 +299,19 @@ func TestUDPInboundFilterMode_Invalid(t *testing.T) {
 	}
 }
 
+func TestUDPInboundFilterMode_FlagOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:               "secret",
+		EnvUDPInboundFilterMode: "address_and_port",
+	}), []string{"--udp-inbound-filter-mode", "any"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.UDPInboundFilterMode != UDPInboundFilterModeAny {
+		t.Fatalf("UDPInboundFilterMode=%q, want %q", cfg.UDPInboundFilterMode, UDPInboundFilterModeAny)
+	}
+}
+
 func TestUDPRemoteAllowlistIdleTimeout_DefaultsToBindingIdleTimeoutWhenBindingOverriddenByFlag(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
 		EnvAPIKey: "secret",
@@ -334,6 +347,19 @@ func TestUDPRemoteAllowlistIdleTimeout_Invalid(t *testing.T) {
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
+	}
+}
+
+func TestUDPRemoteAllowlistIdleTimeout_FlagOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                        "secret",
+		EnvUDPRemoteAllowlistIdleTimeout: "30s",
+	}), []string{"--udp-remote-allowlist-idle-timeout", "10s"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.UDPRemoteAllowlistIdleTimeout != 10*time.Second {
+		t.Fatalf("UDPRemoteAllowlistIdleTimeout=%v, want %v", cfg.UDPRemoteAllowlistIdleTimeout, 10*time.Second)
 	}
 }
 
