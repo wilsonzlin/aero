@@ -51,6 +51,10 @@ pub struct PcmOutDma {
     // Current buffer progress in 16-bit words.
     cur_buf_pos_words: u16,
     cur_desc: Option<BufferDescriptor>,
+
+    // Scratch buffers reused by the DMA hot path to avoid per-tick allocations.
+    dma_scratch: Vec<u8>,
+    samples_scratch: Vec<f32>,
 }
 
 impl Default for PcmOutDma {
@@ -65,6 +69,8 @@ impl Default for PcmOutDma {
             piv: 0,
             cur_buf_pos_words: 0,
             cur_desc: None,
+            dma_scratch: Vec::new(),
+            samples_scratch: Vec::new(),
         }
     }
 }
@@ -196,15 +202,22 @@ impl PcmOutDma {
 
         let byte_off = (self.cur_buf_pos_words as u64) * 2;
         let bytes_to_copy = (words_to_copy as usize) * 2;
-        let mut raw = vec![0u8; bytes_to_copy];
-        mem.read_physical(desc.addr as u64 + byte_off, &mut raw);
+        // Limit scratch usage to the requested tick size. `bytes_to_copy` is always
+        // bounded by `max_words * 2`, and we ensure the scratch vectors never grow
+        // in length across ticks by resizing/clearing each call.
+        self.dma_scratch.resize(bytes_to_copy, 0);
+        mem.read_physical(
+            desc.addr as u64 + byte_off,
+            &mut self.dma_scratch[..bytes_to_copy],
+        );
 
-        let mut samples = Vec::with_capacity(words_to_copy as usize);
-        for chunk in raw.chunks_exact(2) {
+        self.samples_scratch.clear();
+        self.samples_scratch.reserve(words_to_copy as usize);
+        for chunk in self.dma_scratch[..bytes_to_copy].chunks_exact(2) {
             let val = i16::from_le_bytes([chunk[0], chunk[1]]);
-            samples.push(val as f32 / 32768.0);
+            self.samples_scratch.push(val as f32 / 32768.0);
         }
-        out.push_interleaved_f32(&samples);
+        out.push_interleaved_f32(&self.samples_scratch);
 
         self.cur_buf_pos_words = self.cur_buf_pos_words.saturating_add(words_to_copy);
         self.picb = self.picb.saturating_sub(words_to_copy);
@@ -277,6 +290,23 @@ mod tests {
             let start = addr as usize;
             self.data[start..start + data.len()].copy_from_slice(data);
         }
+
+        fn write_desc(
+            &mut self,
+            bdbar: u64,
+            index: u8,
+            buf_addr: u64,
+            len_words: u16,
+            ioc: bool,
+        ) {
+            let base = bdbar + (index as u64) * BDL_ENTRY_BYTES;
+            self.write_u32(base, buf_addr as u32);
+            let mut ctl = u32::from(len_words);
+            if ioc {
+                ctl |= BDL_IOC;
+            }
+            self.write_u32(base + 4, ctl);
+        }
     }
 
     impl MemoryBus for TestMemory {
@@ -299,8 +329,7 @@ mod tests {
         let buf_addr = 0x2000u64;
 
         // One descriptor, 4 words (2 stereo frames), IOC set.
-        mem.write_u32(bdl_addr, buf_addr as u32);
-        mem.write_u32(bdl_addr + 4, (4u32) | BDL_IOC);
+        mem.write_desc(bdl_addr, 0, buf_addr, 4, true);
 
         // Audio samples: 0, 32767, -32768, 16384
         let raw: [u8; 8] = [
@@ -325,5 +354,159 @@ mod tests {
         assert!((audio.samples[1] - (32767.0 / 32768.0)).abs() < 1e-6);
         assert!((audio.samples[2] - (-1.0)).abs() < 1e-6);
         assert!((audio.samples[3] - (16384.0 / 32768.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn dma_picb_decrements_across_multiple_ticks() {
+        let mut mem = TestMemory::new(0x4000);
+
+        let bdl_addr = 0x1000u64;
+        let buf_addr = 0x2000u64;
+
+        // One descriptor, 5 words; no IOC.
+        mem.write_desc(bdl_addr, 0, buf_addr, 5, false);
+
+        // 5 samples worth of data.
+        let mut raw = Vec::new();
+        for i in 0..5i16 {
+            raw.extend_from_slice(&i.to_le_bytes());
+        }
+        mem.write_bytes(buf_addr, &raw);
+
+        let mut dma = PcmOutDma::default();
+        dma.write_bdbar(bdl_addr as u32);
+        dma.write_lvi(0);
+        dma.write_cr(CR_RPBM);
+
+        let mut audio = TestAudio::default();
+
+        dma.tick(&mut mem, &mut audio, 2);
+        assert_eq!(dma.picb(), 3);
+        assert_eq!(audio.samples.len(), 2);
+
+        dma.tick(&mut mem, &mut audio, 2);
+        assert_eq!(dma.picb(), 1);
+        assert_eq!(audio.samples.len(), 4);
+
+        dma.tick(&mut mem, &mut audio, 2);
+        assert_eq!(dma.picb(), 0);
+        assert_eq!(audio.samples.len(), 5);
+
+        // Last valid buffer completion halts the engine and advances CIV.
+        assert_ne!(dma.sr() & SR_DCH, 0);
+        assert_ne!(dma.sr() & SR_LVBCI, 0);
+        assert_eq!(dma.civ(), 1);
+    }
+
+    #[test]
+    fn dma_civ_and_lvi_wrap_at_32_entries() {
+        let mut mem = TestMemory::new(0x8000);
+
+        let bdl_addr = 0x1000u64;
+        let buf_addr = 0x2000u64;
+
+        // All 32 descriptors point at the same buffer, 2 words each (one stereo frame).
+        for idx in 0u8..32 {
+            mem.write_desc(bdl_addr, idx, buf_addr, 2, false);
+        }
+        mem.write_bytes(buf_addr, &[0x00, 0x00, 0x00, 0x00]);
+
+        let mut dma = PcmOutDma::default();
+        dma.write_bdbar(bdl_addr as u32);
+        // Ensure LVI is masked to 0x1f.
+        dma.write_lvi(0x3f);
+        assert_eq!(dma.lvi(), 0x1f);
+        dma.write_cr(CR_RPBM);
+
+        let mut audio = TestAudio::default();
+
+        // Consume all 32 descriptors; CIV should wrap from 31 -> 0 and the engine should halt.
+        for _ in 0..32 {
+            dma.tick(&mut mem, &mut audio, 2);
+        }
+
+        assert_eq!(dma.civ(), 0);
+        assert_eq!(dma.piv(), 1);
+        assert_ne!(dma.sr() & SR_DCH, 0);
+        assert_ne!(dma.sr() & SR_LVBCI, 0);
+    }
+
+    #[test]
+    fn dma_halts_on_last_valid_buffer_and_resumes_when_lvi_advances() {
+        let mut mem = TestMemory::new(0x8000);
+
+        let bdl_addr = 0x1000u64;
+        let buf0_addr = 0x2000u64;
+        let buf1_addr = 0x3000u64;
+
+        mem.write_desc(bdl_addr, 0, buf0_addr, 2, false);
+        mem.write_desc(bdl_addr, 1, buf1_addr, 2, false);
+
+        // Distinct sample patterns so we can tell the buffers apart.
+        mem.write_bytes(buf0_addr, &[0x00, 0x00, 0x00, 0x40]); // 0.0, 0.5
+        mem.write_bytes(buf1_addr, &[0x00, 0x80, 0xFF, 0x7F]); // -1.0, ~1.0
+
+        let mut dma = PcmOutDma::default();
+        dma.write_bdbar(bdl_addr as u32);
+        dma.write_lvi(0);
+        dma.write_cr(CR_RPBM);
+
+        let mut audio = TestAudio::default();
+
+        dma.tick(&mut mem, &mut audio, 2);
+        assert_eq!(audio.samples.len(), 2);
+        assert_eq!(dma.sr() & (SR_DCH | SR_LVBCI), SR_DCH | SR_LVBCI);
+        assert_eq!(dma.civ(), 1);
+
+        // With no additional valid buffers, the engine should remain halted.
+        dma.tick(&mut mem, &mut audio, 2);
+        assert_eq!(audio.samples.len(), 2);
+        assert_eq!(dma.civ(), 1);
+
+        // Extend the ring and ensure the engine resumes and consumes the new buffer.
+        dma.write_lvi(1);
+        dma.tick(&mut mem, &mut audio, 2);
+        assert_eq!(audio.samples.len(), 4);
+        assert_eq!(dma.civ(), 2);
+        assert!((audio.samples[2] - (-1.0)).abs() < 1e-6);
+        assert!((audio.samples[3] - (32767.0 / 32768.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn dma_status_bits_are_write_one_to_clear() {
+        let mut mem = TestMemory::new(0x4000);
+
+        let bdl_addr = 0x1000u64;
+        let buf_addr = 0x2000u64;
+
+        mem.write_desc(bdl_addr, 0, buf_addr, 2, true);
+        mem.write_bytes(buf_addr, &[0x00, 0x00, 0x00, 0x00]);
+
+        let mut dma = PcmOutDma::default();
+        dma.write_bdbar(bdl_addr as u32);
+        dma.write_lvi(0);
+        dma.write_cr(CR_RPBM);
+
+        let mut audio = TestAudio::default();
+        dma.tick(&mut mem, &mut audio, 2);
+
+        assert_ne!(dma.sr() & SR_BCIS, 0);
+        assert_ne!(dma.sr() & SR_LVBCI, 0);
+        assert_ne!(dma.sr() & SR_DCH, 0);
+
+        // Writing 0 should not clear anything.
+        let before = dma.sr();
+        dma.write_sr(0);
+        assert_eq!(dma.sr(), before);
+
+        dma.write_sr(SR_BCIS);
+        assert_eq!(dma.sr() & SR_BCIS, 0);
+        assert_ne!(dma.sr() & SR_LVBCI, 0);
+        assert_ne!(dma.sr() & SR_DCH, 0);
+
+        dma.write_sr(SR_LVBCI);
+        assert_eq!(dma.sr() & SR_LVBCI, 0);
+        // DCH is not W1C.
+        assert_ne!(dma.sr() & SR_DCH, 0);
     }
 }
