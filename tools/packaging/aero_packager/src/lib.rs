@@ -982,7 +982,17 @@ fn should_include_driver_file(
 }
 
 fn is_private_key_extension(ext: &str) -> bool {
-    matches!(ext, "pfx" | "pvk" | "snk" | "key" | "pem")
+    matches!(
+        ext,
+        // Common Windows signing key container formats.
+        "pfx" | "p12" | "pvk" | "snk"
+        // Common PEM/DER private key encodings.
+        | "key" | "pem" | "der"
+        // PKCS#8 private key encodings.
+        | "p8" | "pk8"
+        // Certificate signing requests may include key-related material and should never ship.
+        | "csr"
+    )
 }
 
 fn is_default_excluded_driver_extension(ext: &str) -> bool {

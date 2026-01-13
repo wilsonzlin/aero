@@ -904,6 +904,7 @@ fn package_rejects_private_key_materials() -> anyhow::Result<()> {
 
     for (rel_path, ext) in [
         ("x86/testdrv/test.pfx", "pfx"),
+        ("x86/testdrv/secret.p12", "p12"),
         // Hidden file should still be rejected (even though it would normally be excluded).
         ("x86/testdrv/.hidden.key", "key"),
         // Hidden directory should still be scanned for key material.
