@@ -1,5 +1,13 @@
 use crate::{CpuState, FLAG_AF, FLAG_CF, FLAG_FIXED_1, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
 
+/// Offset into `TestCase::memory` where the instruction bytes are placed.
+///
+/// The memory layout is:
+/// - `memory[0..]`: data region (compared against the reference backend for
+///   `template.mem_compare_len` bytes)
+/// - `memory[CODE_OFF..]`: code region (instruction bytes for Tier-0 fetch)
+pub const CODE_OFF: usize = 32;
+
 pub(crate) const MAX_TEST_MEMORY_LEN: usize = 64 * 1024;
 
 pub struct XorShift64 {
@@ -571,7 +579,7 @@ impl TestCase {
             r14: rng.next_u64(),
             r15: rng.next_u64(),
             rflags: FLAG_FIXED_1,
-            rip: 0,
+            rip: mem_base.wrapping_add(CODE_OFF as u64),
         };
 
         let relevant_flags = FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF;
@@ -581,6 +589,11 @@ impl TestCase {
         if let Some(required) = template.init.required_memory_len() {
             memory_len = memory_len.max(required);
         }
+        let min_len = CODE_OFF
+            .checked_add(template.bytes.len())
+            .and_then(|v| v.checked_add(1))
+            .expect("memory length overflow");
+        memory_len = memory_len.max(min_len);
         if memory_len > MAX_TEST_MEMORY_LEN {
             panic!(
                 "testcase memory length {memory_len} exceeds MAX_TEST_MEMORY_LEN={MAX_TEST_MEMORY_LEN}"
@@ -590,6 +603,7 @@ impl TestCase {
         for byte in &mut memory {
             *byte = rng.next_u8();
         }
+        memory[CODE_OFF..CODE_OFF + template.bytes.len()].copy_from_slice(template.bytes);
 
         template.init.apply(&mut init, mem_base);
 

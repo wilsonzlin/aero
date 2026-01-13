@@ -1,7 +1,7 @@
 //! Differential/conformance testing for instruction semantics.
 //!
 //! This crate runs small, deterministic instruction corpora in two backends:
-//! - **Aero backend**: a tiny interpreter used as a stand-in for the real Aero CPU core
+//! - **Aero backend**: the real `aero_cpu_core` Tier-0 interpreter (one instruction per case)
 //! - **Reference backend**: native host execution on `x86_64` (user-mode only)
 //!
 //! The host backend is intentionally limited to "safe" user-mode instructions and does not attempt
@@ -392,6 +392,40 @@ mod tests {
         assert_eq!(parse_seed_env("0X10"), Some(16));
         assert_eq!(parse_seed_env("0x_10"), Some(16));
         assert_eq!(parse_seed_env("0x_52c6_71d9"), Some(0x52c6_71d9));
+    }
+
+    #[cfg(all(target_arch = "x86_64", unix))]
+    #[test]
+    fn tier0_single_case_matches_reference() {
+        use crate::corpus::TemplateKind;
+
+        let mut reference = ReferenceBackend::new().expect("reference backend unavailable");
+        let mut aero = aero::AeroBackend::new(libc::SIGSEGV);
+
+        let template = corpus::templates()
+            .into_iter()
+            .find(|t| matches!(t.kind, TemplateKind::MovM64Rax))
+            .expect("template missing");
+
+        let mut rng = corpus::XorShift64::new(0x_1d7a_3d0c_7f3c_2a11);
+        let case = TestCase::generate(0, &template, &mut rng, reference.memory_base());
+
+        let expected = reference.execute(&case);
+        let actual = aero.execute(&case);
+
+        assert_eq!(expected.fault, actual.fault, "fault mismatch");
+        assert!(
+            report::states_equal(&expected.state, &actual.state, template.flags_mask),
+            "state mismatch:\n{}",
+            report::format_failure(case.mem_base, &template, &case, &expected, &actual)
+        );
+        if template.mem_compare_len > 0 {
+            assert!(
+                report::memory_equal(&expected.memory, &actual.memory, template.mem_compare_len),
+                "memory mismatch:\n{}",
+                report::format_failure(case.mem_base, &template, &case, &expected, &actual)
+            );
+        }
     }
 
     #[test]
