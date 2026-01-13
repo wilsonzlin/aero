@@ -27,18 +27,25 @@ This repository already contains substantial, *implemented* graphics infrastruct
 - **Canonical browser GPU worker:**
   - [`web/src/workers/gpu-worker.ts`](../web/src/workers/gpu-worker.ts) (OffscreenCanvas presentation + AeroGPU command stream handling)
 
-### Important integration gap (do not assume AeroGPU is wired)
+### Important integration gap (do not assume AeroGPU *WDDM/MMIO* is wired)
 
-The canonical `aero_machine::Machine` is **still using a transitional VGA PCI stub** for boot graphics and does **not** yet instantiate the full AeroGPU PCI/MMIO device model:
+The canonical `aero_machine::Machine` is **still using a transitional VGA PCI stub** for boot
+graphics and does **not** yet instantiate the full AeroGPU BAR0 WDDM/MMIO/ring device model:
 
-- Boot graphics path today:
-  - `aero_gpu_vga::VgaDevice` + a Bochs/QEMU “Standard VGA”-like PCI function at **`00:0c.0`** (`VID:DID = 1234:1111`) used for VBE linear framebuffer (LFB) routing.
-- AeroGPU is reserved but not wired:
-  - **`00:07.0`** is reserved for the canonical AeroGPU PCI identity (`VID:DID = A3A0:0001`), but `aero_machine::Machine` does not yet attach the full device model.
-  - The canonical AeroGPU PCI/MMIO device model implementation currently lives under
-    [`crates/emulator/src/devices/pci/aerogpu.rs`](../crates/emulator/src/devices/pci/aerogpu.rs) (not yet wired into `aero_machine::Machine`).
+- Boot graphics path today (`enable_vga=true`, `enable_aerogpu=false`):
+  - `aero_gpu_vga::VgaDevice` + a Bochs/QEMU “Standard VGA”-like PCI function at **`00:0c.0`**
+    (`VID:DID = 1234:1111`) used for VBE linear framebuffer (LFB) routing.
+- AeroGPU wiring in the canonical machine (`enable_aerogpu=true`, `enable_vga=false`):
+  - **`00:07.0`** is reserved for the canonical AeroGPU PCI identity (`VID:DID = A3A0:0001`) and is
+    exposed when AeroGPU is enabled.
+  - In `aero_machine` today, BAR1 is backed by a dedicated VRAM buffer and the legacy VGA window
+    (`0xA0000..0xBFFFF`) is aliased into it (minimal legacy VGA decode).
+  - The full AeroGPU BAR0 WDDM/MMIO/ring protocol implementation currently lives under
+    [`crates/emulator/src/devices/pci/aerogpu.rs`](../crates/emulator/src/devices/pci/aerogpu.rs)
+    and is integrated separately (not yet wired into `aero_machine::Machine`).
 
-See [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md) for the normative statement of this status and the canonical PCI identity contract.
+See [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md) for the canonical PCI
+identity contract and a summary of the current wiring.
 
 ---
 
