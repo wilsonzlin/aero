@@ -38,13 +38,13 @@ Examples:
 }
 
 pub fn cmd(args: Vec<String>) -> Result<()> {
-    let Some(opts) = parse_args(args)? else {
+    // `cargo xtask conformance` should be safe to run anywhere. The conformance harness relies on
+    // native x86_64 host execution (and typically `fork()` isolation), so on unsupported platforms
+    // we print a friendly message and exit 0.
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        print_help();
         return Ok(());
-    };
-
-    // The conformance harness uses a native x86_64 reference backend and (by default) fork()
-    // isolation. Make it an opt-in on platforms where that's not supported, so CI/dev can still
-    // run `cargo xtask ...` without plumbing platform conditionals everywhere.
+    }
     if !cfg!(all(unix, target_arch = "x86_64")) {
         println!(
             "\
@@ -55,6 +55,8 @@ requires a unix x86_64 host."
         );
         return Ok(());
     }
+
+    let opts = parse_args(args)?;
 
     let repo_root = paths::repo_root()?;
     let runner = Runner::new();
@@ -80,16 +82,12 @@ requires a unix x86_64 host."
     Ok(())
 }
 
-fn parse_args(args: Vec<String>) -> Result<Option<ConformanceOpts>> {
+fn parse_args(args: Vec<String>) -> Result<ConformanceOpts> {
     let mut opts = ConformanceOpts::default();
     let mut iter = args.into_iter().peekable();
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "-h" | "--help" => {
-                print_help();
-                return Ok(None);
-            }
             "--cases" => opts.cases = Some(next_value(&mut iter, &arg)?),
             val if val.starts_with("--cases=") => {
                 opts.cases = Some(val["--cases=".len()..].to_string());
@@ -117,7 +115,7 @@ fn parse_args(args: Vec<String>) -> Result<Option<ConformanceOpts>> {
         }
     }
 
-    Ok(Some(opts))
+    Ok(opts)
 }
 
 fn next_value(
@@ -129,4 +127,3 @@ fn next_value(
         None => Err(XtaskError::Message(format!("{flag} requires a value"))),
     }
 }
-

@@ -67,13 +67,34 @@ pub fn run_from_env() -> Result<ConformanceReport, String> {
         .unwrap_or(512);
     let seed = std::env::var("AERO_CONFORMANCE_SEED")
         .ok()
-        .and_then(|v| v.parse::<u64>().ok())
+        .and_then(|v| parse_seed_env(&v))
         .unwrap_or(0x_52c6_71d9_a4f2_31b9);
     let report_path =
         std::env::var_os("AERO_CONFORMANCE_REPORT_PATH").map(std::path::PathBuf::from);
 
     let report = run(cases, seed, report_path.as_deref())?;
     Ok(report)
+}
+
+fn parse_seed_env(input: &str) -> Option<u64> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Allow copying the in-code constant (which uses `_` separators) and allow common `0x...`
+    // notation for seeds.
+    let cleaned: String = trimmed.chars().filter(|c| *c != '_').collect();
+    let cleaned = cleaned.as_str();
+    let (radix, digits) = match cleaned.strip_prefix("0x").or_else(|| cleaned.strip_prefix("0X")) {
+        Some(rest) => (16, rest),
+        None => (10, cleaned),
+    };
+    if digits.is_empty() {
+        return None;
+    }
+
+    u64::from_str_radix(digits, radix).ok()
 }
 
 pub fn run(
@@ -335,5 +356,15 @@ mod tests {
                 template.name
             );
         }
+    }
+
+    #[test]
+    fn seed_env_parses_hex_and_underscores() {
+        assert_eq!(parse_seed_env("123"), Some(123));
+        assert_eq!(parse_seed_env("1_000"), Some(1000));
+        assert_eq!(parse_seed_env("0x10"), Some(16));
+        assert_eq!(parse_seed_env("0X10"), Some(16));
+        assert_eq!(parse_seed_env("0x_10"), Some(16));
+        assert_eq!(parse_seed_env("0x_52c6_71d9"), Some(0x52c6_71d9));
     }
 }
