@@ -17,6 +17,7 @@ fn read_u64_le(r: &mut impl Read) -> u64 {
 struct CaptureTarget {
     ram: Vec<u8>,
     cpus: Option<Vec<snapshot::VcpuSnapshot>>,
+    mmus: Option<Vec<snapshot::VcpuMmuSnapshot>>,
 }
 
 impl snapshot::SnapshotTarget for CaptureTarget {
@@ -30,8 +31,9 @@ impl snapshot::SnapshotTarget for CaptureTarget {
     fn restore_mmu_state(&mut self, _state: snapshot::MmuState) {}
     fn restore_mmu_states(
         &mut self,
-        _states: Vec<snapshot::VcpuMmuSnapshot>,
+        states: Vec<snapshot::VcpuMmuSnapshot>,
     ) -> snapshot::Result<()> {
+        self.mmus = Some(states);
         Ok(())
     }
 
@@ -176,6 +178,7 @@ fn restore_snapshot_sorts_cpus_by_apic_id_before_passing_to_target() {
     let mut target = CaptureTarget {
         ram: vec![0u8; 16],
         cpus: None,
+        mmus: None,
     };
     snapshot::restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap();
 
@@ -183,5 +186,71 @@ fn restore_snapshot_sorts_cpus_by_apic_id_before_passing_to_target() {
         .cpus
         .expect("snapshot restore target did not receive CPUS section");
     let apic_ids: Vec<u32> = cpus.iter().map(|c| c.apic_id).collect();
+    assert_eq!(apic_ids, vec![0, 1]);
+}
+
+#[test]
+fn restore_snapshot_sorts_mmus_by_apic_id_before_passing_to_target() {
+    let mut source = MinimalSource { ram: vec![0u8; 16] };
+    let mut cursor = Cursor::new(Vec::new());
+    snapshot::save_snapshot(&mut cursor, &mut source, snapshot::SaveOptions::default()).unwrap();
+    let mut bytes = cursor.into_inner();
+
+    // Rewrite the MMUS section payload with the same entries but in reverse order.
+    let (mmus_off, mmus_len) = {
+        let mut r = Cursor::new(bytes.as_slice());
+        let index = snapshot::inspect_snapshot(&mut r).expect("snapshot should be inspectable");
+        let mmus = index
+            .sections
+            .iter()
+            .find(|s| s.id == snapshot::SectionId::MMUS)
+            .expect("snapshot should contain a MMUS section");
+        (mmus.offset, mmus.len)
+    };
+
+    let entries = {
+        let mut r = Cursor::new(bytes.as_slice());
+        r.seek(SeekFrom::Start(mmus_off))
+            .expect("seek to MMUS payload");
+
+        let mut limited = r.take(mmus_len);
+        let count = read_u32_le(&mut limited) as usize;
+        let mut entries = Vec::with_capacity(count.min(64));
+        for _ in 0..count {
+            let entry_len = read_u64_le(&mut limited) as usize;
+            let mut entry = vec![0u8; entry_len];
+            limited.read_exact(&mut entry).expect("read entry bytes");
+            entries.push(entry);
+        }
+        entries
+    };
+
+    let mut rewritten = Vec::new();
+    rewritten.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    for entry in entries.into_iter().rev() {
+        rewritten.extend_from_slice(&(entry.len() as u64).to_le_bytes());
+        rewritten.extend_from_slice(&entry);
+    }
+    assert_eq!(
+        u64::try_from(rewritten.len()).unwrap(),
+        mmus_len,
+        "rewriting MMUS section should not change the payload length"
+    );
+
+    let off = usize::try_from(mmus_off).expect("MMUS offset should fit in usize");
+    let len = usize::try_from(mmus_len).expect("MMUS len should fit in usize");
+    bytes[off..off + len].copy_from_slice(&rewritten);
+
+    let mut target = CaptureTarget {
+        ram: vec![0u8; 16],
+        cpus: None,
+        mmus: None,
+    };
+    snapshot::restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap();
+
+    let mmus = target
+        .mmus
+        .expect("snapshot restore target did not receive MMUS section");
+    let apic_ids: Vec<u32> = mmus.iter().map(|m| m.apic_id).collect();
     assert_eq!(apic_ids, vec![0, 1]);
 }
