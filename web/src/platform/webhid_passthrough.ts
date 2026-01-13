@@ -131,6 +131,7 @@ export class WebHidPassthroughManager {
   readonly #usedExternalHubPorts = new Set<number>();
   #externalHubAttached = false;
   readonly #inputReportListeners = new Map<string, (event: HIDInputReportEvent) => void>();
+  readonly #inputReportExpectedPayloadBytes = new Map<string, Map<number, number>>();
 
   readonly #deviceIds = new WeakMap<HIDDevice, string>();
   #nextDeviceOrdinal = 1;
@@ -206,6 +207,7 @@ export class WebHidPassthroughManager {
       }
     }
     this.#inputReportListeners.clear();
+    this.#inputReportExpectedPayloadBytes.clear();
     this.#outputReportQueueByDeviceId.clear();
     this.#outputReportRunnerTokenByDeviceId.clear();
     this.#listeners.clear();
@@ -447,12 +449,14 @@ export class WebHidPassthroughManager {
     if (this.#target !== NOOP_TARGET) {
       const numericDeviceId = this.#numericDeviceIdFor(deviceId);
       let normalizedCollections: ReturnType<typeof normalizeCollections>;
+      let inputReportPayloadBytes: Map<number, number>;
       try {
         const rawCollections = (device as unknown as { collections?: unknown }).collections;
         normalizedCollections = normalizeCollections(
           (rawCollections ?? []) as unknown as readonly HidCollectionInfo[],
           { validate: true },
         );
+        inputReportPayloadBytes = computeInputReportPayloadByteLengths(normalizedCollections);
       } catch (err) {
         try {
           await device.close();
@@ -483,7 +487,8 @@ export class WebHidPassthroughManager {
         throw err;
       }
 
-      const expectedInputPayloadBytes = computeInputReportPayloadByteLengths(normalizedCollections);
+      this.#inputReportExpectedPayloadBytes.set(deviceId, inputReportPayloadBytes);
+      const expectedInputPayloadBytes = inputReportPayloadBytes;
       const warned = new Set<string>();
       const warnOnce = (key: string, message: string): void => {
         if (warned.has(key)) return;
@@ -524,6 +529,8 @@ export class WebHidPassthroughManager {
             destLen = srcLen;
           }
 
+          // Only ever create a view over the clamped amount of input data so a bogus
+          // (or malicious) browser/device can't trick us into copying huge buffers.
           const copyLen = Math.min(srcLen, destLen);
           const src = new Uint8Array(view.buffer, view.byteOffset, copyLen);
           const ring = this.#inputReportRing;
@@ -583,6 +590,7 @@ export class WebHidPassthroughManager {
     if (!deviceId) return;
     this.#outputReportQueueByDeviceId.delete(deviceId);
     this.#outputReportRunnerTokenByDeviceId.delete(deviceId);
+    this.#inputReportExpectedPayloadBytes.delete(deviceId);
 
     const listener = this.#inputReportListeners.get(deviceId);
     if (listener) {

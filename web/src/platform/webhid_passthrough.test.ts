@@ -583,3 +583,61 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     expect((hid.requestDevice as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
   });
 });
+
+describe("WebHidPassthroughManager inputreport forwarding", () => {
+  it("clamps oversized inputreport payloads to the expected report size before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      let inputListener: ((event: HIDInputReportEvent) => void) | null = null;
+      const device = {
+        productName: "Oversize Device",
+        vendorId: 0x1234,
+        productId: 0xabcd,
+        collections: [
+          {
+            usagePage: 1,
+            usage: 2,
+            type: "application",
+            children: [],
+            inputReports: [
+              {
+                reportId: 1,
+                // 8*4 bits == 4 bytes.
+                items: [{ reportSize: 8, reportCount: 4 }],
+              },
+            ],
+            outputReports: [],
+            featureReports: [],
+          },
+        ] as unknown as HIDCollectionInfo[],
+        open: vi.fn(async () => {}),
+        close: vi.fn(async () => {}),
+        addEventListener: vi.fn((type: string, cb: unknown) => {
+          if (type === "inputreport") inputListener = cb as (event: HIDInputReportEvent) => void;
+        }),
+        removeEventListener: vi.fn(),
+      } as unknown as HIDDevice;
+
+      await manager.attachKnownDevice(device);
+      expect(inputListener).toBeTruthy();
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3, 4], 0);
+      const event = { reportId: 1, data: new DataView(huge.buffer), timeStamp: 123 } as unknown as HIDInputReportEvent;
+      expect(() => inputListener!(event)).not.toThrow();
+
+      const forwarded = target.messages.find((m) => m.type === "hid:inputReport") as
+        | { type: "hid:inputReport"; data: ArrayBuffer; reportId: number; deviceId: string }
+        | undefined;
+      expect(forwarded).toBeTruthy();
+      expect(forwarded!.reportId).toBe(1);
+      expect(forwarded!.data.byteLength).toBe(4);
+      expect(Array.from(new Uint8Array(forwarded!.data))).toEqual([1, 2, 3, 4]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
