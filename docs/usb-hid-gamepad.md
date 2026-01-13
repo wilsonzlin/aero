@@ -81,6 +81,23 @@ Notes:
   (`crates/aero-usb/src/hid/gamepad.rs`).
 - The browser-side pack/unpack helpers live in `web/src/input/gamepad.ts`.
 
+### Keeping report packing consistent (Rust ↔ TypeScript)
+
+There are two independent implementations of the 8-byte gamepad report packing:
+
+- Rust: `crates/aero-usb/src/hid/gamepad.rs::GamepadReport::to_bytes`
+- TypeScript: `web/src/input/gamepad.ts::packGamepadReport` + `unpackGamepadReport`
+
+To prevent drift between them, we keep a shared fixture of report field values
+and their expected packed bytes at:
+
+- `docs/fixtures/hid_gamepad_report_vectors.json`
+
+Both sides validate their packing logic against this fixture:
+
+- Rust: `crates/aero-usb/tests/hid_gamepad_report_fixture.rs`
+- TypeScript: `web/src/input/gamepad.test.ts`
+
 ### Button bitfield mapping (browser host)
 
 When capturing a controller via the browser **Gamepad API** using the **standard mapping**
