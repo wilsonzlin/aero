@@ -202,7 +202,7 @@ static void PrintUsage() {
            L"  --query-scanout\n"
            L"  --query-cursor  (alias: --dump-cursor)\n"
            L"  --dump-ring\n"
-           L"  --watch-ring\n"
+           L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
            L"      [--csv <path>]  (write CreateAllocation trace as CSV)\n"
            L"  --dump-vblank  (alias: --query-vblank)\n"

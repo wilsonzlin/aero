@@ -77,6 +77,13 @@ Minimum supported commands:
   (newest is `desc[desc_count-1]`). This is intentionally not limited to the pending `[head, tail)` region so very fast
   devices/emulators still expose the most recent submission(s) to tooling/tests.
 
+- `aerogpu_dbgctl --watch-ring --ring-id N --samples N --interval-ms M`  
+  Polls ring head/tail in a loop and prints **one line per sample** with:
+  - `head`, `tail`, and `pending` (queue depth, computed as `tail-head` / best-effort legacy wraparound), and
+  - (when available) the newest descriptor's `fence` and `flags` for quick correlation with fence progression.
+  
+  Useful for diagnosing whether the emulator/backend is draining submissions (head catches up to tail) and whether the guest is over-submitting.
+
 - `aerogpu_dbgctl --dump-createalloc` *(aliases: `--dump-createallocation`, `--dump-allocations`)*  
   Dumps a small KMD-maintained ring buffer of recent `DxgkDdiCreateAllocation` events, including:
   - the incoming `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime
@@ -133,6 +140,7 @@ aerogpu_dbgctl --watch-fence --samples 120 --interval-ms 250 --timeout-ms 30000
 aerogpu_dbgctl --query-scanout
 aerogpu_dbgctl --query-cursor
 aerogpu_dbgctl --dump-ring --ring-id 0
+aerogpu_dbgctl --watch-ring --ring-id 0 --samples 200 --interval-ms 50
 aerogpu_dbgctl --dump-createalloc
 aerogpu_dbgctl --dump-createalloc --csv C:\\createalloc.csv
 aerogpu_dbgctl --dump-vblank
@@ -200,7 +208,7 @@ Escape ops used:
 
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (fallback: `AEROGPU_ESCAPE_OP_QUERY_DEVICE`) → `--query-version` / `--query-device`
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
-- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`
+- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring` / `--watch-ring`
 - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` → `--dump-createalloc`
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
 - `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`
