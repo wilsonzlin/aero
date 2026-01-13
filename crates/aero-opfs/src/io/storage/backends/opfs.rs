@@ -1322,6 +1322,58 @@ mod wasm {
             assert_send::<OpfsSendDisk>();
         }
 
+        #[wasm_bindgen_test(async)]
+        async fn opfs_backend_open_on_main_thread_mentions_worker_only() {
+            if !opfs_platform::is_opfs_supported() {
+                return;
+            }
+            // This test is specifically for the main-thread failure mode; skip if the wasm-bindgen
+            // harness is running in a worker for some reason.
+            if opfs_platform::is_worker_scope() {
+                return;
+            }
+
+            let err = OpfsBackend::open("tests/not-a-worker.img", true, 512)
+                .await
+                .expect_err("OpfsBackend::open should fail on the main thread");
+            let DiskError::NotSupported(msg) = err else {
+                panic!("expected DiskError::NotSupported, got {err:?}");
+            };
+            assert!(
+                msg.contains("DedicatedWorker") || msg.contains("worker-only"),
+                "error message should mention DedicatedWorker/worker-only requirement, got: {msg}"
+            );
+            assert!(
+                !msg.contains("OpfsAsyncBackend"),
+                "sync backend open error should not suggest OpfsAsyncBackend; got: {msg}"
+            );
+        }
+
+        #[wasm_bindgen_test(async)]
+        async fn opfs_byte_storage_open_on_main_thread_mentions_worker_only() {
+            if !opfs_platform::is_opfs_supported() {
+                return;
+            }
+            if opfs_platform::is_worker_scope() {
+                return;
+            }
+
+            let err = OpfsByteStorage::open("tests/not-a-worker.aerospar", true)
+                .await
+                .expect_err("OpfsByteStorage::open should fail on the main thread");
+            let DiskError::NotSupported(msg) = err else {
+                panic!("expected DiskError::NotSupported, got {err:?}");
+            };
+            assert!(
+                msg.contains("DedicatedWorker") || msg.contains("worker-only"),
+                "error message should mention DedicatedWorker/worker-only requirement, got: {msg}"
+            );
+            assert!(
+                !msg.contains("OpfsAsyncBackend"),
+                "sync backend open error should not suggest OpfsAsyncBackend; got: {msg}"
+            );
+        }
+
         async fn write_sectors(storage: &mut OpfsStorage, lba: u64, buf: &[u8]) {
             match storage {
                 OpfsStorage::Sync(backend) => backend.write_sectors(lba, buf).unwrap(),
