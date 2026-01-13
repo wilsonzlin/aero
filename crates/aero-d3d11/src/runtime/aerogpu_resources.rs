@@ -345,10 +345,9 @@ impl AerogpuResourceManager {
             ShaderStage::Vertex => AerogpuShaderStage::Vertex,
             ShaderStage::Pixel => AerogpuShaderStage::Pixel,
             ShaderStage::Compute => AerogpuShaderStage::Compute,
-            // AeroGPU's shader stage ABI matches WebGPU, which has no geometry/hull/domain stage.
-            // Some Win7-era D3D11 apps still create these shaders (or buggy guests may forward them
-            // with a placeholder stage). Accept the create to keep the runtime robust, but ignore
-            // the shader since there is no way to bind it in the command stream.
+            // WebGPU has no geometry/hull/domain shader stage. Some Win7-era D3D11 apps still
+            // create these shaders; accept the create to keep the runtime robust, but ignore the
+            // shader since there is no way to execute it in the current backends.
             ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
                 return Ok(());
             }
