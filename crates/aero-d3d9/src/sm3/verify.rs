@@ -96,6 +96,12 @@ fn verify_op(op: &IrOp) -> Result<(), VerifyError> {
             src1,
             modifiers,
         }
+        | IrOp::Dp2 {
+            dst: _,
+            src0,
+            src1,
+            modifiers,
+        }
         | IrOp::Dp3 {
             dst: _,
             src0,

@@ -278,3 +278,61 @@ fn wgsl_setp_and_predication_compiles() {
     .validate(&module)
     .expect("wgsl validate");
 }
+
+#[test]
+fn wgsl_dp2_compiles_and_uses_xy() {
+    // ps_2_0:
+    //   def c0, 1, 2, 3, 4
+    //   def c1, 0.5, 1, 1.5, 2
+    //   dp2_sat_x2 r0, c0.zwxy, -c1.yxwz
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 2, 0),
+        // def c0, 1, 2, 3, 4
+        opcode_token(81, 5),
+        dst_token(2, 0, 0xF),
+        0x3F80_0000,
+        0x4000_0000,
+        0x4040_0000,
+        0x4080_0000,
+        // def c1, 0.5, 1, 1.5, 2
+        opcode_token(81, 5),
+        dst_token(2, 1, 0xF),
+        0x3F00_0000,
+        0x3F80_0000,
+        0x3FC0_0000,
+        0x4000_0000,
+        // dp2_sat_x2 r0, c0.zwxy, -c1.yxwz
+        opcode_token(90, 3) | (3u32 << 20), // modbits: saturate + mul2
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0x4E, 0), // c0.zwxy
+        src_token(2, 1, 0xB1, 1), // -c1.yxwz
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Dp2));
+
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("dot("), "{wgsl}");
+    assert!(wgsl.contains(".xy"), "{wgsl}");
+    assert!(wgsl.contains("clamp("), "{wgsl}");
+    assert!(wgsl.contains("* 2.0"), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}

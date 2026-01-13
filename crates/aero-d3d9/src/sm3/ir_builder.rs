@@ -230,6 +230,12 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                     }),
                 )?;
             }
+            Opcode::Dp2 => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Dp2 {
+                dst,
+                src0,
+                src1,
+                modifiers,
+            })?,
             Opcode::Dp3 => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Dp3 {
                 dst,
                 src0,
@@ -630,6 +636,12 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             src1,
             modifiers,
         }
+        | IrOp::Dp2 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
         | IrOp::Dp3 {
             dst,
             src0,
@@ -843,6 +855,12 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             modifiers,
         }
         | IrOp::Max {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Dp2 {
             dst,
             src0,
             src1,

@@ -59,6 +59,8 @@ pub enum Opcode {
     Mad,
     Lrp,
     Mul,
+    /// D3D9 `dp2`: 2-component dot product (`dot(src0.xy, src1.xy)`), replicated to all components.
+    Dp2,
     Dp3,
     Dp4,
     Exp,
@@ -147,6 +149,7 @@ impl Opcode {
             84 => Self::Seq, // 0x54
             85 => Self::Sne, // 0x55
             88 => Self::Cmp, // 0x58
+            90 => Self::Dp2, // 0x5A
             0xFFFE => Self::Comment,
             0xFFFF => Self::End,
             other => Self::Unknown(other),
@@ -163,6 +166,7 @@ impl Opcode {
             Self::Mad => "mad",
             Self::Lrp => "lrp",
             Self::Mul => "mul",
+            Self::Dp2 => "dp2",
             Self::Dp3 => "dp3",
             Self::Dp4 => "dp4",
             Self::Exp => "exp",
@@ -759,6 +763,7 @@ fn decode_operands_and_extras(
         | Opcode::Slt
         | Opcode::Seq
         | Opcode::Sne
+        | Opcode::Dp2
         | Opcode::Dp3
         | Opcode::Dp4
         | Opcode::Pow => {
