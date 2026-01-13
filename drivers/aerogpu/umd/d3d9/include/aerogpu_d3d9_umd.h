@@ -1433,7 +1433,7 @@ struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_DRAWPRIMITIVE2 pfnDrawPrimitive2;
   PFND3D9DDI_DRAWINDEXEDPRIMITIVE2 pfnDrawIndexedPrimitive2;
 
-  // Patch rendering / ProcessVertices (currently stubbed).
+  // Patch rendering / ProcessVertices.
   // Placed at the tail so existing portable ABI anchor offsets remain stable.
   PFND3D9DDI_DRAWRECTPATCH pfnDrawRectPatch;
   PFND3D9DDI_DRAWTRIPATCH pfnDrawTriPatch;
