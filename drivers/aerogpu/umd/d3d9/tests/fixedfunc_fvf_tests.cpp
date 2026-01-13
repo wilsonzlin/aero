@@ -21,8 +21,10 @@ constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 
 constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
+constexpr uint32_t kFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
 constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
+constexpr uint32_t kFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
 
 // D3DTSS_* texture stage state IDs (from d3d9types.h).
 constexpr uint32_t kD3dTssColorOp = 1u;
@@ -299,6 +301,15 @@ struct VertexXyzrhwDiffuseTex1 {
   float v;
 };
 
+struct VertexXyzrhwTex1 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  float u;
+  float v;
+};
+
 struct VertexXyzDiffuse {
   float x;
   float y;
@@ -314,6 +325,38 @@ struct VertexXyzDiffuseTex1 {
   float u;
   float v;
 };
+
+struct VertexXyzTex1 {
+  float x;
+  float y;
+  float z;
+  float u;
+  float v;
+};
+
+#pragma pack(push, 1)
+struct D3DVERTEXELEMENT9_COMPAT {
+  uint16_t Stream;
+  uint16_t Offset;
+  uint8_t Type;
+  uint8_t Method;
+  uint8_t Usage;
+  uint8_t UsageIndex;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9_COMPAT must be 8 bytes");
+
+constexpr uint8_t kD3dDeclTypeFloat2 = 1;
+constexpr uint8_t kD3dDeclTypeFloat3 = 2;
+constexpr uint8_t kD3dDeclTypeFloat4 = 3;
+constexpr uint8_t kD3dDeclTypeUnused = 17;
+
+constexpr uint8_t kD3dDeclMethodDefault = 0;
+
+constexpr uint8_t kD3dDeclUsagePosition = 0;
+constexpr uint8_t kD3dDeclUsageTexcoord = 5;
+constexpr uint8_t kD3dDeclUsagePositionT = 9;
 
 bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
   CleanupDevice cleanup;
@@ -827,6 +870,277 @@ bool TestFvfXyzDiffuseTex1EmitsTextureAndShaders() {
   return true;
 }
 
+bool TestFvfXyzrhwTex1EmitsTextureAndShaders() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  const D3DVERTEXELEMENT9_COMPAT expected_decl[] = {
+      // stream, offset, type, method, usage, usage_index
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  aerogpu_handle_t expected_input_layout = 0;
+  bool decl_ok = false;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (dev->fvf_vertex_decl_tex1_nodiffuse) {
+      expected_input_layout = dev->fvf_vertex_decl_tex1_nodiffuse->handle;
+      const auto& blob = dev->fvf_vertex_decl_tex1_nodiffuse->blob;
+      decl_ok = (blob.size() == sizeof(expected_decl)) &&
+                (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+    }
+  }
+  if (!Check(expected_input_layout != 0, "SetFVF XYZRHW|TEX1 created internal input layout")) {
+    return false;
+  }
+  if (!Check(decl_ok, "XYZRHW|TEX1 internal vertex decl matches expected layout")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const VertexXyzrhwTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle xyzrhw tex1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_TEXTURE) >= 1, "SET_TEXTURE emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2, "CREATE_SHADER_DXBC emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT) >= 1, "SET_INPUT_LAYOUT emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS) >= 1, "SET_VERTEX_BUFFERS emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+
+  bool saw_expected_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == expected_input_layout) {
+      saw_expected_layout = true;
+      break;
+    }
+  }
+  if (!Check(saw_expected_layout, "SET_INPUT_LAYOUT uses internal XYZRHW|TEX1 layout handle")) {
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "BIND_SHADERS packets collected")) {
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->vs != 0 && last_bind->ps != 0, "BIND_SHADERS binds non-zero VS/PS")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzTex1EmitsTransformConstantsAndDecl() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+    return false;
+  }
+
+  const D3DVERTEXELEMENT9_COMPAT expected_decl[] = {
+      // stream, offset, type, method, usage, usage_index
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  constexpr float tx = 2.0f;
+  constexpr float ty = 3.0f;
+  constexpr float tz = 0.0f;
+  const float expected_wvp_cols[16] = {
+      1.0f, 0.0f, 0.0f, tx,
+      0.0f, 1.0f, 0.0f, ty,
+      0.0f, 0.0f, 1.0f, tz,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+
+  aerogpu_handle_t expected_input_layout = 0;
+  bool decl_ok = false;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (dev->fvf_vertex_decl_xyz_tex1) {
+      expected_input_layout = dev->fvf_vertex_decl_xyz_tex1->handle;
+      const auto& blob = dev->fvf_vertex_decl_xyz_tex1->blob;
+      decl_ok = (blob.size() == sizeof(expected_decl)) &&
+                (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+    }
+
+    // Set a simple world translation; view/projection defaults are identity.
+    constexpr uint32_t kD3dTransformWorld0 = 256u;
+    float* m = dev->transform_matrices[kD3dTransformWorld0];
+    std::memset(m, 0, 16 * sizeof(float));
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+    m[12] = tx;
+    m[13] = ty;
+    m[14] = tz;
+    dev->fixedfunc_matrix_dirty = true;
+  }
+  if (!Check(expected_input_layout != 0, "SetFVF XYZ|TEX1 created internal input layout")) {
+    return false;
+  }
+  if (!Check(decl_ok, "XYZ|TEX1 internal vertex decl matches expected layout")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const VertexXyzTex1 tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle xyz tex1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|TEX1)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_TEXTURE) >= 1, "SET_TEXTURE emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F) >= 1, "SET_SHADER_CONSTANTS_F emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2, "CREATE_SHADER_DXBC emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT) >= 1, "SET_INPUT_LAYOUT emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS) >= 1, "SET_VERTEX_BUFFERS emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+
+  bool saw_expected_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == expected_input_layout) {
+      saw_expected_layout = true;
+      break;
+    }
+  }
+  if (!Check(saw_expected_layout, "SET_INPUT_LAYOUT uses internal XYZ|TEX1 layout handle")) {
+    return false;
+  }
+
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 0 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestStageStateChangeRebindsShadersIfImplemented() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -1028,6 +1342,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseTex1EmitsTextureAndShaders()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzrhwTex1EmitsTextureAndShaders()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzTex1EmitsTransformConstantsAndDecl()) {
     return 1;
   }
   if (!aerogpu::TestStageStateChangeRebindsShadersIfImplemented()) {

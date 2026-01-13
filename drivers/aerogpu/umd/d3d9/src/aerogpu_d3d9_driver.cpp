@@ -2810,8 +2810,10 @@ constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 
 constexpr uint32_t kSupportedFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
+constexpr uint32_t kSupportedFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
+constexpr uint32_t kSupportedFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
 
 bool fixedfunc_fvf_supported(uint32_t fvf) {
   // Fixed-function bring-up paths which require a known internal FVF-driven
@@ -2824,8 +2826,10 @@ constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
   switch (fvf) {
     case kSupportedFvfXyzrhwDiffuse:
     case kSupportedFvfXyzrhwDiffuseTex1:
+    case kSupportedFvfXyzrhwTex1:
     case kSupportedFvfXyzDiffuse:
     case kSupportedFvfXyzDiffuseTex1:
+    case kSupportedFvfXyzTex1:
       return true;
     default:
       return false;
@@ -2833,7 +2837,9 @@ constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
 }
 
 constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
-  return (fvf == kSupportedFvfXyzrhwDiffuse) || (fvf == kSupportedFvfXyzrhwDiffuseTex1);
+  return (fvf == kSupportedFvfXyzrhwDiffuse) ||
+         (fvf == kSupportedFvfXyzrhwDiffuseTex1) ||
+         (fvf == kSupportedFvfXyzrhwTex1);
 }
 
 #pragma pack(push, 1)
@@ -2896,10 +2902,14 @@ constexpr uint32_t fixedfunc_min_stride_bytes(uint32_t fvf) {
       return 20u;
     case kSupportedFvfXyzrhwDiffuseTex1:
       return 28u;
+    case kSupportedFvfXyzrhwTex1:
+      return 24u;
     case kSupportedFvfXyzDiffuse:
       return 16u;
     case kSupportedFvfXyzDiffuseTex1:
       return 24u;
+    case kSupportedFvfXyzTex1:
+      return 20u;
     default:
       return 0u;
   }
@@ -4557,6 +4567,13 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       vs_bytes = fixedfunc::kVsPassthroughPosColorTex1;
       vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1));
       break;
+    case kSupportedFvfXyzrhwTex1:
+      vs_slot = &dev->fixedfunc_vs_tex1_nodiffuse;
+      ps_slot = &dev->fixedfunc_ps_tex1;
+      fvf_decl = dev->fvf_vertex_decl_tex1_nodiffuse;
+      vs_bytes = fixedfunc::kVsPassthroughPosWhiteTex1;
+      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosWhiteTex1));
+      break;
     case kSupportedFvfXyzDiffuseTex1:
       // XYZ vertices require a WVP transform in the VS. When SetFVF is used, the
       // UMD synthesizes an internal declaration so it can bind a known input layout.
@@ -4565,6 +4582,14 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       fvf_decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
       vs_bytes = fixedfunc::kVsWvpPosColorTex0;
       vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorTex0));
+      needs_matrix = true;
+      break;
+    case kSupportedFvfXyzTex1:
+      vs_slot = &dev->fixedfunc_vs_xyz_tex1;
+      ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+      fvf_decl = dev->fvf_vertex_decl_xyz_tex1;
+      vs_bytes = fixedfunc::kVsTransformPosWhiteTex1;
+      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsTransformPosWhiteTex1));
       needs_matrix = true;
       break;
     default:
@@ -7825,6 +7850,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fvf_vertex_decl_tex1;
       dev->fvf_vertex_decl_tex1 = nullptr;
     }
+    if (dev->fvf_vertex_decl_tex1_nodiffuse) {
+      (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_tex1_nodiffuse->handle);
+      delete dev->fvf_vertex_decl_tex1_nodiffuse;
+      dev->fvf_vertex_decl_tex1_nodiffuse = nullptr;
+    }
     if (dev->fvf_vertex_decl_xyz_diffuse) {
       (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_diffuse->handle);
       delete dev->fvf_vertex_decl_xyz_diffuse;
@@ -7834,6 +7864,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_diffuse_tex1->handle);
       delete dev->fvf_vertex_decl_xyz_diffuse_tex1;
       dev->fvf_vertex_decl_xyz_diffuse_tex1 = nullptr;
+    }
+    if (dev->fvf_vertex_decl_xyz_tex1) {
+      (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_tex1->handle);
+      delete dev->fvf_vertex_decl_xyz_tex1;
+      dev->fvf_vertex_decl_xyz_tex1 = nullptr;
     }
     if (dev->fixedfunc_vs) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs->handle);
@@ -7845,6 +7880,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fixedfunc_vs_xyz_diffuse_tex1;
       dev->fixedfunc_vs_xyz_diffuse_tex1 = nullptr;
     }
+    if (dev->fixedfunc_vs_xyz_tex1) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_tex1->handle);
+      delete dev->fixedfunc_vs_xyz_tex1;
+      dev->fixedfunc_vs_xyz_tex1 = nullptr;
+    }
     if (dev->fixedfunc_ps) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps->handle);
       delete dev->fixedfunc_ps;
@@ -7854,6 +7894,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_tex1->handle);
       delete dev->fixedfunc_vs_tex1;
       dev->fixedfunc_vs_tex1 = nullptr;
+    }
+    if (dev->fixedfunc_vs_tex1_nodiffuse) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_tex1_nodiffuse->handle);
+      delete dev->fixedfunc_vs_tex1_nodiffuse;
+      dev->fixedfunc_vs_tex1_nodiffuse = nullptr;
     }
     if (dev->fixedfunc_ps_tex1) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_tex1->handle);
@@ -11894,6 +11939,17 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
         implied_fvf = kSupportedFvfXyzrhwDiffuse;
       }
 
+      // XYZRHW | TEX1:
+      //   POSITIONT float4 @0
+      //   TEXCOORD0 float2 @16
+      //   END
+      const bool e1_xyzw_tex_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeFloat2) &&
+                                 (e1.Method == kD3dDeclMethodDefault) &&
+                                 (e1.Usage == kD3dDeclUsageTexcoord || e1.Usage == kD3dDeclUsagePosition) && (e1.UsageIndex == 0);
+      if (e0_ok && e1_xyzw_tex_ok) {
+        implied_fvf = kSupportedFvfXyzrhwTex1;
+      }
+
       // XYZ | DIFFUSE:
       //   POSITION float3 @0
       //   COLOR0    D3DCOLOR @12
@@ -11904,6 +11960,17 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
                              (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
       if (e0_xyz_ok && e1_xyz_ok) {
         implied_fvf = kSupportedFvfXyzDiffuse;
+      }
+
+      // XYZ | TEX1:
+      //   POSITION float3 @0
+      //   TEXCOORD0 float2 @12
+      //   END
+      const bool e1_xyz_tex_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeFloat2) &&
+                                 (e1.Method == kD3dDeclMethodDefault) &&
+                                 (e1.Usage == kD3dDeclUsageTexcoord || e1.Usage == kD3dDeclUsagePosition) && (e1.UsageIndex == 0);
+      if (e0_xyz_ok && e1_xyz_tex_ok) {
+        implied_fvf = kSupportedFvfXyzTex1;
       }
     }
 
@@ -11946,7 +12013,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
     }
   }
   dev->fvf = implied_fvf;
-  if (implied_fvf == kSupportedFvfXyzDiffuseTex1) {
+  if (implied_fvf == kSupportedFvfXyzDiffuseTex1 || implied_fvf == kSupportedFvfXyzTex1) {
     // Switching to the WVP-fixed-function path must refresh the reserved VS
     // constant range, even if transforms did not change (user shaders may have
     // written overlapping registers).
@@ -12004,10 +12071,14 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     VertexDecl* decl = dev->vertex_decl;
     if (fvf == kSupportedFvfXyzrhwDiffuse) {
       decl = dev->fvf_vertex_decl;
+    } else if (fvf == kSupportedFvfXyzrhwTex1) {
+      decl = dev->fvf_vertex_decl_tex1_nodiffuse;
     } else if (fvf == kSupportedFvfXyzDiffuse) {
       decl = dev->fvf_vertex_decl_xyz_diffuse;
     } else if (fvf == kSupportedFvfXyzDiffuseTex1) {
       decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
+    } else if (fvf == kSupportedFvfXyzTex1) {
+      decl = dev->fvf_vertex_decl_xyz_tex1;
     }
     stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
     return trace.ret(S_OK);
@@ -12064,6 +12135,28 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     return trace.ret(S_OK);
   }
 
+  if (fvf == kSupportedFvfXyzrhwTex1) {
+    if (!dev->fvf_vertex_decl_tex1_nodiffuse) {
+      const D3DVERTEXELEMENT9_COMPAT elems[] = {
+          // stream, offset, type, method, usage, usage_index
+          {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+          {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+      };
+      dev->fvf_vertex_decl_tex1_nodiffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+      if (!dev->fvf_vertex_decl_tex1_nodiffuse) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+    }
+
+    if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl_tex1_nodiffuse)) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    dev->fvf = fvf;
+    stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl_tex1_nodiffuse, dev->fvf);
+    return trace.ret(S_OK);
+  }
+
   if (fvf == kSupportedFvfXyzDiffuse) {
     if (!dev->fvf_vertex_decl_xyz_diffuse) {
       const D3DVERTEXELEMENT9_COMPAT elems[] = {
@@ -12084,6 +12177,29 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     }
     dev->fvf = fvf;
     stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl_xyz_diffuse, dev->fvf);
+    return trace.ret(S_OK);
+  }
+
+  if (fvf == kSupportedFvfXyzTex1) {
+    if (!dev->fvf_vertex_decl_xyz_tex1) {
+      const D3DVERTEXELEMENT9_COMPAT elems[] = {
+          // stream, offset, type, method, usage, usage_index
+          {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*POSITION=*/0, 0},
+          {0, 12, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+      };
+      dev->fvf_vertex_decl_xyz_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+      if (!dev->fvf_vertex_decl_xyz_tex1) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+    }
+
+    if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_tex1)) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    dev->fvf = fvf;
+    dev->fixedfunc_matrix_dirty = true;
+    stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl_xyz_tex1, dev->fvf);
     return trace.ret(S_OK);
   }
 
@@ -12188,7 +12304,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
   // WVP matrix. A user vertex shader may have written overlapping registers, so
   // when the app later switches back to fixed-function (without necessarily
   // changing FVF/decl), we must re-upload the matrix constants.
-  if (stage == kD3d9ShaderStageVs && sh && dev->fvf == kSupportedFvfXyzDiffuseTex1) {
+  if (stage == kD3d9ShaderStageVs && sh &&
+      (dev->fvf == kSupportedFvfXyzDiffuseTex1 || dev->fvf == kSupportedFvfXyzTex1)) {
     dev->fixedfunc_matrix_dirty = true;
   }
 
@@ -12277,7 +12394,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
 
   // If the app writes to the fixed-function reserved matrix constant range,
   // treat it as clobbered and re-upload on the next fixed-function draw.
-  if (stage_norm == kD3d9ShaderStageVs && dev->fvf == kSupportedFvfXyzDiffuseTex1) {
+  if (stage_norm == kD3d9ShaderStageVs &&
+      (dev->fvf == kSupportedFvfXyzDiffuseTex1 || dev->fvf == kSupportedFvfXyzTex1)) {
     const uint32_t end_reg = start_reg + vec4_count;
     const uint32_t ff_start = kFixedfuncMatrixStartRegister;
     const uint32_t ff_end = kFixedfuncMatrixStartRegister + kFixedfuncMatrixVec4Count;

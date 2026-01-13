@@ -797,14 +797,18 @@ struct Device {
   uint32_t fvf = 0;
   VertexDecl* fvf_vertex_decl = nullptr;
   VertexDecl* fvf_vertex_decl_tex1 = nullptr;
+  VertexDecl* fvf_vertex_decl_tex1_nodiffuse = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_diffuse = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_diffuse_tex1 = nullptr;
+  VertexDecl* fvf_vertex_decl_xyz_tex1 = nullptr;
   Shader* fixedfunc_vs = nullptr;
   Shader* fixedfunc_ps = nullptr;
   Shader* fixedfunc_vs_tex1 = nullptr;
+  Shader* fixedfunc_vs_tex1_nodiffuse = nullptr;
   Shader* fixedfunc_ps_tex1 = nullptr;
   Shader* fixedfunc_vs_xyz_diffuse_tex1 = nullptr;
   Shader* fixedfunc_ps_xyz_diffuse_tex1 = nullptr;
+  Shader* fixedfunc_vs_xyz_tex1 = nullptr;
   // True when cached world/view/proj transforms changed and the fixed-function
   // fallback needs to re-upload the combined matrix constant registers.
   bool fixedfunc_matrix_dirty = true;
