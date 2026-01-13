@@ -1613,6 +1613,12 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
                 return;
               }
               if (msg?.type === "ready") {
+                if (typeof msg.sessionId !== "string" || msg.sessionId.length === 0) {
+                  clearTimeout(timeout);
+                  ws.removeEventListener("message", onMessage);
+                  reject(new Error("ready message missing sessionId"));
+                  return;
+                }
                 clearTimeout(timeout);
                 ws.removeEventListener("message", onMessage);
                 resolve(msg);
