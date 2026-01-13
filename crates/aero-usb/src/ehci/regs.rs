@@ -41,9 +41,15 @@ pub const USBCMD_RS: u32 = 1 << 0;
 pub const USBCMD_HCRESET: u32 = 1 << 1;
 pub const USBCMD_PSE: u32 = 1 << 4;
 pub const USBCMD_ASE: u32 = 1 << 5;
-pub const USBCMD_IAA: u32 = 1 << 6;
+/// Interrupt on Async Advance Doorbell (IAAD).
+///
+/// EHCI names this bit as "IAAD" in the command register (USBCMD) and "IAA" in the status register
+/// (USBSTS).
+pub const USBCMD_IAAD: u32 = 1 << 6;
+/// Backwards-compatible alias for [`USBCMD_IAAD`].
+pub const USBCMD_IAA: u32 = USBCMD_IAAD;
 
-pub const USBCMD_WRITE_MASK: u32 = USBCMD_RS | USBCMD_PSE | USBCMD_ASE | USBCMD_IAA;
+pub const USBCMD_WRITE_MASK: u32 = USBCMD_RS | USBCMD_PSE | USBCMD_ASE | USBCMD_IAAD;
 
 // USBSTS bits.
 pub const USBSTS_USBINT: u32 = 1 << 0;

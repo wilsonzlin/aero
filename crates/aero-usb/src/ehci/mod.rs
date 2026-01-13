@@ -148,7 +148,16 @@ impl EhciController {
             return;
         }
 
-        self.regs.usbcmd = value & USBCMD_WRITE_MASK;
+        // USBCMD.IAAD is a "doorbell" bit: software sets it and hardware clears it after the async
+        // advance interrupt has been posted. Guests may write USBCMD multiple times while waiting
+        // for completion (e.g. toggling PSE/ASE), so we treat IAAD as *set-only* from the software
+        // perspective and preserve it across writes until the controller services it.
+        let preserve_iaad = self.regs.usbcmd & USBCMD_IAAD;
+        let mut cmd = value & (USBCMD_WRITE_MASK & !USBCMD_IAAD);
+        if (value & USBCMD_IAAD) != 0 || preserve_iaad != 0 {
+            cmd |= USBCMD_IAAD;
+        }
+        self.regs.usbcmd = cmd;
         self.regs.update_halted();
     }
 
@@ -405,6 +414,17 @@ impl EhciController {
         let _ = mem;
     }
 
+    fn service_async_advance_doorbell(&mut self) {
+        if self.regs.usbcmd & USBCMD_IAAD == 0 {
+            return;
+        }
+
+        // Deterministically service the doorbell at the end of a tick after the schedule engine
+        // has had a chance to observe any async list modifications.
+        self.regs.usbcmd &= !USBCMD_IAAD;
+        self.regs.usbsts |= USBSTS_IAA;
+    }
+
     pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
         self.hub.tick_1ms();
 
@@ -416,6 +436,8 @@ impl EhciController {
             if self.regs.usbcmd & (USBCMD_PSE | USBCMD_ASE) != 0 {
                 self.process_schedules(mem);
             }
+
+            self.service_async_advance_doorbell();
         }
 
         self.update_irq();
