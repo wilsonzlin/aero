@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -109,6 +108,7 @@ describe("hid_gamepad_report_vectors fixture", () => {
     const vectors = JSON.parse(raw) as FixtureVector[];
 
     expect(vectors.length).toBeGreaterThan(0);
+    expect(vectors.length).toBeLessThanOrEqual(64);
 
     for (const [idx, v] of vectors.entries()) {
       expect(v.bytes, v.name ?? `vector ${idx}`).toHaveLength(8);

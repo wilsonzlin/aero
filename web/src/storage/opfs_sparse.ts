@@ -293,7 +293,6 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
         throw new Error(`short header read: expected=${HEADER_SIZE} actual=${n}`);
       }
       const header = decodeHeader(headerBytes);
-
       // Bound the sparse allocation table size before doing any file-size based checks, so callers
       // get a stable/meaningful error for pathological headers (including truncated/corrupted
       // images) and so we never even consider allocating a huge Float64Array for the table.
