@@ -45,6 +45,8 @@ fn package_with_inf_bytes(inf_bytes: &[u8]) -> anyhow::Result<()> {
                 "name": "testdrv",
                 "required": true,
                 "expected_hardware_ids": [r"PCI\\VEN_1234&DEV_5678"],
+                "expected_inf_files": ["testdrv.inf"],
+                "expected_add_services": ["TestSvc"],
             }
         ]
     });

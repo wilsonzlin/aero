@@ -381,6 +381,7 @@ fn aerogpu_only_spec_packages_without_virtio_drivers() -> anyhow::Result<()> {
         write_stub_pci_driver(
             &drivers_dir.join(arch).join("aerogpu"),
             "aerogpu",
+            "aerogpu",
             // Must match the canonical device contract (`AERO_GPU_HWIDS`).
             r"PCI\VEN_A3A0&DEV_0001",
         )?;

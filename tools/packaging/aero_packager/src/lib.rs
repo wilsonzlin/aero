@@ -1779,6 +1779,9 @@ mod tests {
             drivers: vec![DriverSpec {
                 name: "testdrv".to_string(),
                 required: true,
+                expected_inf_files: Vec::new(),
+                expected_add_services: Vec::new(),
+                expected_add_services_from_devices_cmd_var: None,
                 expected_hardware_ids: Vec::new(),
                 expected_hardware_ids_from_devices_cmd_var: None,
                 allow_extensions: Vec::new(),
