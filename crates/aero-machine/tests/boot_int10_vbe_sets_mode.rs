@@ -2,7 +2,7 @@ use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
-fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
+fn build_int10_vbe_set_mode_boot_sector(vbe_mode_with_flags: u16) -> [u8; 512] {
     let mut sector = [0u8; 512];
     let mut i = 0usize;
 
@@ -10,8 +10,12 @@ fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
     i += 3;
 
-    // mov bx, 0x4118 (mode 0x118 + LFB requested)
-    sector[i..i + 3].copy_from_slice(&[0xBB, 0x18, 0x41]);
+    // mov bx, imm16 (requested VBE mode + flags, e.g. LFB bit)
+    sector[i..i + 3].copy_from_slice(&[
+        0xBB,
+        (vbe_mode_with_flags & 0x00FF) as u8,
+        (vbe_mode_with_flags >> 8) as u8,
+    ]);
     i += 3;
 
     // int 0x10
@@ -37,35 +41,55 @@ fn run_until_halt(m: &mut Machine) {
     panic!("guest did not reach HLT");
 }
 
-#[test]
-fn boot_sector_int10_vbe_sets_live_svga_mode_and_lfb_is_visible() {
-    let boot = build_int10_vbe_set_mode_boot_sector();
-
+fn new_deterministic_test_machine(boot_sector: [u8; 512]) -> Machine {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
+        // Avoid extra legacy port devices that aren't needed for these tests.
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
         ..Default::default()
     })
     .unwrap();
 
-    m.set_disk_image(boot.to_vec()).unwrap();
+    m.set_disk_image(boot_sector.to_vec()).unwrap();
     m.reset();
+    m
+}
+
+fn assert_vbe_mode_set_and_lfb_visible(vbe_mode_with_flags: u16, expected_res: (u32, u32)) {
+    let boot = build_int10_vbe_set_mode_boot_sector(vbe_mode_with_flags);
+    let mut m = new_deterministic_test_machine(boot);
 
     run_until_halt(&mut m);
 
     let vga = m.vga().expect("machine should have a VGA device");
-    assert_eq!(vga.borrow().get_resolution(), (1024, 768));
+    assert_eq!(vga.borrow().get_resolution(), expected_res);
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
-    let base = u64::from(SVGA_LFB_BASE);
-    m.write_physical_u8(base, 0x00); // B
-    m.write_physical_u8(base + 1, 0x00); // G
-    m.write_physical_u8(base + 2, 0xFF); // R
-    m.write_physical_u8(base + 3, 0x00); // X
+    m.write_physical_u32(u64::from(SVGA_LFB_BASE), 0x00FF_0000);
 
     vga.borrow_mut().present();
     assert_eq!(vga.borrow().get_framebuffer()[0], 0xFF00_00FF);
+}
+
+#[test]
+fn boot_sector_int10_vbe_sets_live_svga_mode_and_lfb_is_visible() {
+    // Mode 0x118 + LFB requested.
+    assert_vbe_mode_set_and_lfb_visible(0x4118, (1024, 768));
+}
+
+#[test]
+fn boot_sector_int10_vbe_sets_mode_0x115_and_lfb_is_visible() {
+    // Mode 0x115 (800x600) + LFB requested.
+    assert_vbe_mode_set_and_lfb_visible(0x4115, (800, 600));
+}
+
+#[test]
+fn boot_sector_int10_vbe_sets_mode_0x160_and_lfb_is_visible() {
+    // Mode 0x160 (1280x720) + LFB requested.
+    assert_vbe_mode_set_and_lfb_visible(0x4160, (1280, 720));
 }
