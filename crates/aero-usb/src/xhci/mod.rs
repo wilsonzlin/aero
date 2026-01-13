@@ -23,7 +23,6 @@ pub mod trb;
 pub mod transfer;
 
 use crate::MemoryBus;
-
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
@@ -103,8 +102,8 @@ impl XhciController {
                 let prev = self.usbcmd;
                 self.usbcmd = merge(self.usbcmd);
 
-                // On the rising edge of RUN, perform a small DMA read from CRCR to validate PCI bus
-                // master gating in the emulator wrapper.
+                // On the rising edge of RUN, perform a small DMA read from CRCR to validate PCI
+                // Bus Master Enable gating in the emulator wrapper.
                 let was_running = (prev & regs::USBCMD_RUN) != 0;
                 let now_running = (self.usbcmd & regs::USBCMD_RUN) != 0;
                 if !was_running && now_running {
@@ -161,19 +160,12 @@ impl IoSnapshot for XhciController {
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
-        self.usbcmd = 0;
-        self.usbsts = 0;
-        self.crcr = 0;
 
-        if let Some(v) = r.u32(TAG_USBCMD)? {
-            self.usbcmd = v;
-        }
-        if let Some(v) = r.u32(TAG_USBSTS)? {
-            self.usbsts = v;
-        }
-        if let Some(v) = r.u64(TAG_CRCR)? {
-            self.crcr = v;
-        }
+        *self = Self::new();
+        self.usbcmd = r.u32(TAG_USBCMD)?.unwrap_or(0);
+        self.usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0);
+        self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0);
+
         Ok(())
     }
 }
