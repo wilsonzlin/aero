@@ -64,6 +64,32 @@ impl<T: ByteStorage + ?Sized> ByteStorage for &mut T {
     }
 }
 
+impl<T: ByteStorage + ?Sized> ByteStorage for Box<T> {
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
+        (**self).read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
+        (**self).write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> DiskResult<()> {
+        (**self).flush()
+    }
+
+    fn len(&mut self) -> DiskResult<u64> {
+        (**self).len()
+    }
+
+    fn is_empty(&mut self) -> DiskResult<bool> {
+        (**self).is_empty()
+    }
+
+    fn set_len(&mut self, len: u64) -> DiskResult<()> {
+        (**self).set_len(len)
+    }
+}
+
 /// Synchronous virtual block device interface.
 ///
 /// # Canonical trait note
@@ -136,6 +162,74 @@ pub trait DiskBackend {
             lba = next_lba;
         }
         Ok(())
+    }
+}
+
+impl<T: DiskBackend + ?Sized> DiskBackend for &mut T {
+    fn sector_size(&self) -> u32 {
+        (**self).sector_size()
+    }
+
+    fn total_sectors(&self) -> u64 {
+        (**self).total_sectors()
+    }
+
+    fn capacity_sectors(&self) -> u64 {
+        (**self).capacity_sectors()
+    }
+
+    fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
+        (**self).read_sectors(lba, buf)
+    }
+
+    fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
+        (**self).write_sectors(lba, buf)
+    }
+
+    fn flush(&mut self) -> DiskResult<()> {
+        (**self).flush()
+    }
+
+    fn readv_sectors(&mut self, lba: u64, bufs: &mut [&mut [u8]]) -> DiskResult<()> {
+        (**self).readv_sectors(lba, bufs)
+    }
+
+    fn writev_sectors(&mut self, lba: u64, bufs: &[&[u8]]) -> DiskResult<()> {
+        (**self).writev_sectors(lba, bufs)
+    }
+}
+
+impl<T: DiskBackend + ?Sized> DiskBackend for Box<T> {
+    fn sector_size(&self) -> u32 {
+        (**self).sector_size()
+    }
+
+    fn total_sectors(&self) -> u64 {
+        (**self).total_sectors()
+    }
+
+    fn capacity_sectors(&self) -> u64 {
+        (**self).capacity_sectors()
+    }
+
+    fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
+        (**self).read_sectors(lba, buf)
+    }
+
+    fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
+        (**self).write_sectors(lba, buf)
+    }
+
+    fn flush(&mut self) -> DiskResult<()> {
+        (**self).flush()
+    }
+
+    fn readv_sectors(&mut self, lba: u64, bufs: &mut [&mut [u8]]) -> DiskResult<()> {
+        (**self).readv_sectors(lba, bufs)
+    }
+
+    fn writev_sectors(&mut self, lba: u64, bufs: &[&[u8]]) -> DiskResult<()> {
+        (**self).writev_sectors(lba, bufs)
     }
 }
 
@@ -483,5 +577,37 @@ impl DiskBackend for MemDisk {
     fn flush(&mut self) -> DiskResult<()> {
         self.flushed = true;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::storage::adapters::VirtualDiskFromEmuDiskBackend;
+
+    #[test]
+    fn boxed_disk_backend_can_be_used_with_virtual_disk_adapter_unaligned_io() {
+        let backend: Box<dyn DiskBackend> = Box::new(MemDisk::new(4));
+        let mut disk = VirtualDiskFromEmuDiskBackend::new(backend);
+
+        let offset = 123;
+        let mut data = vec![0u8; 1000];
+        for (idx, byte) in data.iter_mut().enumerate() {
+            *byte = (idx as u8).wrapping_mul(31).wrapping_add(7);
+        }
+
+        aero_storage::VirtualDisk::write_at(&mut disk, offset, &data).unwrap();
+
+        let mut read_back = vec![0u8; data.len()];
+        aero_storage::VirtualDisk::read_at(&mut disk, offset, &mut read_back).unwrap();
+        assert_eq!(read_back, data);
+
+        let capacity = aero_storage::VirtualDisk::capacity_bytes(&disk) as usize;
+        let mut full = vec![0u8; capacity];
+        aero_storage::VirtualDisk::read_at(&mut disk, 0, &mut full).unwrap();
+
+        let mut expected = vec![0u8; capacity];
+        expected[offset as usize..offset as usize + data.len()].copy_from_slice(&data);
+        assert_eq!(full, expected);
     }
 }
