@@ -1,6 +1,5 @@
-use aero_d3d9::sm3::ir::RegFile;
 use aero_d3d9::sm3::types::ShaderStage;
-use aero_d3d9::sm3::{build_ir, decode::decode_u32_tokens};
+use aero_d3d9::sm3::{build_ir, decode::decode_u32_tokens, generate_wgsl};
 
 fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
     let prefix = match stage {
@@ -34,7 +33,7 @@ fn sm3_vertex_shader_semantic_locations_remap_to_standard_map() {
     //   dcl_positiont v0
     //   dcl_color0 v7
     //   mov oPos, v0
-    //   mov oD0, v7
+    //   mov r0, v7
     //   end
     //
     // We expect v7 (COLOR0) to be remapped to canonical @location(6) per StandardLocationMap.
@@ -50,9 +49,9 @@ fn sm3_vertex_shader_semantic_locations_remap_to_standard_map() {
         opcode_token(1, 2),
         dst_token(4, 0, 0xF),
         src_token(1, 0, 0xE4, 0),
-        // mov oD0, v7
+        // mov r0, v7
         opcode_token(1, 2),
-        dst_token(5, 0, 0xF),
+        dst_token(0, 0, 0xF),
         src_token(1, 7, 0xE4, 0),
         0x0000_FFFF,
     ];
@@ -72,24 +71,10 @@ fn sm3_vertex_shader_semantic_locations_remap_to_standard_map() {
         "expected IR to contain remapped COLOR0 input at v6, got:\n{ir_text}"
     );
 
-    // The WGSL backend uses input register indices as WGSL @location values, so this remap
-    // directly affects the generated interface.
-    let mut input_locs: Vec<u32> = ir
-        .inputs
-        .iter()
-        .filter(|d| d.reg.file == RegFile::Input)
-        .map(|d| d.reg.index)
-        .collect();
-    input_locs.sort_unstable();
-    input_locs.dedup();
-    let mut wgsl_interface = String::from("struct VsInput {\n");
-    for loc in input_locs {
-        wgsl_interface.push_str(&format!("  @location({loc}) v{loc}: vec4<f32>,\n"));
-    }
-    wgsl_interface.push_str("}\n");
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(
-        wgsl_interface.contains("@location(6)"),
-        "expected interface to use @location(6), got:\n{wgsl_interface}"
+        wgsl.contains("@location(6)"),
+        "expected WGSL to use @location(6), got:\n{wgsl}"
     );
 }
 

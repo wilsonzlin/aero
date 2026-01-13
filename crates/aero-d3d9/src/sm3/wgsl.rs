@@ -81,7 +81,9 @@ fn reg_scalar_ty(file: RegFile) -> Option<ScalarTy> {
 
 fn reg_var_name(reg: &RegRef) -> Result<String, WgslError> {
     if reg.relative.is_some() {
-        return Err(err("relative register addressing is not supported in WGSL lowering"));
+        return Err(err(
+            "relative register addressing is not supported in WGSL lowering",
+        ));
     }
     Ok(match reg.file {
         RegFile::Temp => format!("r{}", reg.index),
@@ -173,6 +175,7 @@ fn default_vec4(ty: ScalarTy) -> &'static str {
 struct RegUsage {
     temps: BTreeSet<u32>,
     addrs: BTreeSet<u32>,
+    inputs: BTreeSet<u32>,
     outputs: BTreeSet<(RegFile, u32)>,
     predicates: BTreeSet<u32>,
     float_consts: BTreeSet<u32>,
@@ -185,6 +188,7 @@ impl RegUsage {
         Self {
             temps: BTreeSet::new(),
             addrs: BTreeSet::new(),
+            inputs: BTreeSet::new(),
             outputs: BTreeSet::new(),
             predicates: BTreeSet::new(),
             float_consts: BTreeSet::new(),
@@ -331,11 +335,18 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
         RegFile::Addr => {
             usage.addrs.insert(reg.index);
         }
+        RegFile::Input => {
+            usage.inputs.insert(reg.index);
+        }
         RegFile::Predicate => {
             usage.predicates.insert(reg.index);
         }
-        RegFile::ColorOut | RegFile::DepthOut | RegFile::RastOut | RegFile::AttrOut
-        | RegFile::TexCoordOut | RegFile::Output => {
+        RegFile::ColorOut
+        | RegFile::DepthOut
+        | RegFile::RastOut
+        | RegFile::AttrOut
+        | RegFile::TexCoordOut
+        | RegFile::Output => {
             usage.outputs.insert((reg.file, reg.index));
         }
         RegFile::Const => {
@@ -528,7 +539,11 @@ fn apply_float_result_modifiers(expr: String, mods: &InstModifiers) -> Result<St
 
 fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
     match op {
-        IrOp::Mov { dst, src, modifiers } => {
+        IrOp::Mov {
+            dst,
+            src,
+            modifiers,
+        } => {
             let (src_e, src_ty) = src_expr(src)?;
             let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
             if src_ty != dst_ty {
@@ -540,7 +555,11 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             };
             emit_assign(dst, src_e)
         }
-        IrOp::Mova { dst, src, modifiers } => {
+        IrOp::Mova {
+            dst,
+            src,
+            modifiers,
+        } => {
             // D3D9 `mova` converts float → int and stores the result in an address register (`a#`).
             //
             // Exact rounding behavior is GPU-dependent; WGSL `vec4<i32>(vec4<f32>)` conversion is a
@@ -557,15 +576,24 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             let src_e = apply_float_result_modifiers(src_e, modifiers)?;
             emit_assign(dst, format!("vec4<i32>({src_e})"))
         }
-        IrOp::Add { dst, src0, src1, modifiers } => {
-            emit_float_binop(dst, src0, src1, modifiers, "+")
-        }
-        IrOp::Sub { dst, src0, src1, modifiers } => {
-            emit_float_binop(dst, src0, src1, modifiers, "-")
-        }
-        IrOp::Mul { dst, src0, src1, modifiers } => {
-            emit_float_binop(dst, src0, src1, modifiers, "*")
-        }
+        IrOp::Add {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => emit_float_binop(dst, src0, src1, modifiers, "+"),
+        IrOp::Sub {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => emit_float_binop(dst, src0, src1, modifiers, "-"),
+        IrOp::Mul {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => emit_float_binop(dst, src0, src1, modifiers, "*"),
         IrOp::Mad {
             dst,
             src0,
@@ -586,13 +614,23 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             let e = apply_float_result_modifiers(format!("(({a}) * ({b})) + ({c})"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Min { dst, src0, src1, modifiers } => {
-            emit_float_func2(dst, src0, src1, modifiers, "min")
-        }
-        IrOp::Max { dst, src0, src1, modifiers } => {
-            emit_float_func2(dst, src0, src1, modifiers, "max")
-        }
-        IrOp::Rcp { dst, src, modifiers } => {
+        IrOp::Min {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => emit_float_func2(dst, src0, src1, modifiers, "min"),
+        IrOp::Max {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => emit_float_func2(dst, src0, src1, modifiers, "max"),
+        IrOp::Rcp {
+            dst,
+            src,
+            modifiers,
+        } => {
             let (s, ty) = src_expr(src)?;
             if ty != ScalarTy::F32 {
                 return Err(err("rcp only supports float sources in WGSL lowering"));
@@ -604,7 +642,11 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             let e = apply_float_result_modifiers(format!("(vec4<f32>(1.0) / ({s}))"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Rsq { dst, src, modifiers } => {
+        IrOp::Rsq {
+            dst,
+            src,
+            modifiers,
+        } => {
             let (s, ty) = src_expr(src)?;
             if ty != ScalarTy::F32 {
                 return Err(err("rsq only supports float sources in WGSL lowering"));
@@ -616,7 +658,11 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             let e = apply_float_result_modifiers(format!("inverseSqrt({s})"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Frc { dst, src, modifiers } => {
+        IrOp::Frc {
+            dst,
+            src,
+            modifiers,
+        } => {
             let (s, ty) = src_expr(src)?;
             if ty != ScalarTy::F32 {
                 return Err(err("frc only supports float sources in WGSL lowering"));
@@ -630,7 +676,12 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
         }
         IrOp::Exp { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, "exp2"),
         IrOp::Log { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, "log2"),
-        IrOp::Dp3 { dst, src0, src1, modifiers } => {
+        IrOp::Dp3 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => {
             let (a, aty) = src_expr(src0)?;
             let (b, bty) = src_expr(src1)?;
             if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
@@ -644,7 +695,12 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             let e = apply_float_result_modifiers(format!("vec4<f32>({dot})"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Dp4 { dst, src0, src1, modifiers } => {
+        IrOp::Dp4 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => {
             let (a, aty) = src_expr(src0)?;
             let (b, bty) = src_expr(src1)?;
             if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
@@ -932,6 +988,15 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         ShaderStage::Pixel => "fs_main",
     };
 
+    if ir.version.stage == ShaderStage::Vertex && !usage.inputs.is_empty() {
+        wgsl.push_str("struct VsInput {\n");
+        for idx in &usage.inputs {
+            // Register indices are already canonicalized via semantic remapping in the IR builder.
+            let _ = writeln!(wgsl, "  @location({idx}) v{idx}: vec4<f32>,");
+        }
+        wgsl.push_str("};\n\n");
+    }
+
     // Fragment output struct (even if only one output) keeps codegen simple.
     if ir.version.stage == ShaderStage::Pixel {
         wgsl.push_str("struct FsOut {\n");
@@ -950,7 +1015,13 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
 
     match ir.version.stage {
         ShaderStage::Vertex => {
-            wgsl.push_str("@vertex\nfn vs_main() -> @builtin(position) vec4<f32> {\n");
+            if usage.inputs.is_empty() {
+                wgsl.push_str("@vertex\nfn vs_main() -> @builtin(position) vec4<f32> {\n");
+            } else {
+                wgsl.push_str(
+                    "@vertex\nfn vs_main(input: VsInput) -> @builtin(position) vec4<f32> {\n",
+                );
+            }
         }
         ShaderStage::Pixel => {
             wgsl.push_str("@fragment\nfn fs_main() -> FsOut {\n");
@@ -972,6 +1043,13 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
     }
 
+    // Bind vertex inputs to locals that match the D3D register naming (`v#`).
+    if ir.version.stage == ShaderStage::Vertex && !usage.inputs.is_empty() {
+        for idx in &usage.inputs {
+            let _ = writeln!(wgsl, "  let v{idx}: vec4<f32> = input.v{idx};");
+        }
+    }
+
     // Outputs used by the shader. These are mutable locals that get copied into the function
     // return value at the end.
     for (file, index) in &usage.outputs {
@@ -982,12 +1060,20 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         };
         let ty = reg_scalar_ty(*file).unwrap_or(ScalarTy::F32);
         let name = reg_var_name(&reg)?;
-        let _ = writeln!(wgsl, "  var {name}: {} = {};", ty.wgsl_vec4(), default_vec4(ty));
+        let _ = writeln!(
+            wgsl,
+            "  var {name}: {} = {};",
+            ty.wgsl_vec4(),
+            default_vec4(ty)
+        );
     }
 
     // Ensure at least oC0 exists for fragment shaders (common case).
     if ir.version.stage == ShaderStage::Pixel
-        && !usage.outputs.iter().any(|(f, i)| *f == RegFile::ColorOut && *i == 0)
+        && !usage
+            .outputs
+            .iter()
+            .any(|(f, i)| *f == RegFile::ColorOut && *i == 0)
     {
         wgsl.push_str("  var oC0: vec4<f32> = vec4<f32>(0.0);\n");
     }
@@ -1039,11 +1125,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
     match ir.version.stage {
         ShaderStage::Vertex => {
             // Position output: prefer oPos, otherwise just emit a zero vector.
-            if usage
-                .outputs
-                .iter()
-                .any(|(f, _)| *f == RegFile::RastOut)
-            {
+            if usage.outputs.iter().any(|(f, _)| *f == RegFile::RastOut) {
                 wgsl.push_str("  return oPos;\n");
             } else {
                 wgsl.push_str("  return vec4<f32>(0.0);\n");
