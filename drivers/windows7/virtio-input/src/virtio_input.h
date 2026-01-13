@@ -293,6 +293,30 @@ typedef enum _VIOINPUT_DEVICE_KIND {
 #define VIOINPUT_PCI_SUBSYSTEM_ID_TABLET 0x0012
 
 /*
+ * Compatibility mode (VIO-020)
+ *
+ * Aero contract v1 specifies exact virtio-input ID_NAME/ID_DEVIDS values. Some
+ * non-Aero virtio-input implementations (notably QEMU's virtio-keyboard-pci /
+ * virtio-mouse-pci / virtio-tablet-pci) use different ID_NAME strings and may
+ * report different ID_DEVIDS values.
+ *
+ * When enabled, the driver accepts additional ID_NAME strings, relaxes strict
+ * ID_DEVIDS validation, and may infer the device kind from EV_BITS.
+ *
+ * Default behaviour remains strict.
+ */
+#ifndef AERO_VIOINPUT_COMPAT_ID_NAME
+#define AERO_VIOINPUT_COMPAT_ID_NAME 0
+#endif
+
+// Registry value (REG_DWORD) under the service key:
+//   HKLM\System\CurrentControlSet\Services\<driver>\Parameters\CompatIdName
+#define VIOINPUT_REG_COMPAT_ID_NAME L"Parameters\\CompatIdName"
+
+// Global toggle read at DriverEntry.
+extern BOOLEAN g_VioInputCompatIdName;
+
+/*
  * Forward declaration for the shared virtqueue implementation (drivers/windows/virtio/common).
  */
 typedef struct _VIRTQ_SPLIT VIRTQ_SPLIT;

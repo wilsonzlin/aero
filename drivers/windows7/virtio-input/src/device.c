@@ -376,6 +376,133 @@ static NTSTATUS VioInputQueryInputConfig(
     return STATUS_SUCCESS;
 }
 
+static __forceinline PCSTR VioInputDeviceKindToString(_In_ VIOINPUT_DEVICE_KIND Kind)
+{
+    switch (Kind) {
+    case VioInputDeviceKindKeyboard:
+        return "keyboard";
+    case VioInputDeviceKindMouse:
+        return "mouse";
+    case VioInputDeviceKindTablet:
+        return "tablet";
+    default:
+        return "unknown";
+    }
+}
+
+static __forceinline ULONG VioInputPopcountU8(_In_ UCHAR Value)
+{
+    // 4-bit popcount table to avoid compiler intrinsics / headers in the WDK environment.
+    static const UCHAR kPopcount4[16] = {0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4};
+    return (ULONG)kPopcount4[Value & 0x0F] + (ULONG)kPopcount4[(Value >> 4) & 0x0F];
+}
+
+static ULONG VioInputBitmapPopcount(_In_reads_(128) const UCHAR Bits[128])
+{
+    ULONG count = 0;
+    USHORT i;
+
+    if (Bits == NULL) {
+        return 0;
+    }
+
+    for (i = 0; i < 128u; ++i) {
+        count += VioInputPopcountU8(Bits[i]);
+    }
+
+    return count;
+}
+
+static NTSTATUS VioInputInferDeviceKindFromEvBits(_Inout_ PDEVICE_CONTEXT Ctx, _Out_ VIOINPUT_DEVICE_KIND* KindOut, _Out_opt_ ULONG* KeyBitCountOut)
+{
+    NTSTATUS status;
+    UCHAR types[128];
+    UCHAR size;
+
+    BOOLEAN hasKey;
+    BOOLEAN hasLed;
+    BOOLEAN hasRel;
+    BOOLEAN hasAbs;
+
+    if (KindOut == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *KindOut = VioInputDeviceKindUnknown;
+    if (KeyBitCountOut != NULL) {
+        *KeyBitCountOut = 0;
+    }
+
+    RtlZeroMemory(types, sizeof(types));
+    size = 0;
+    status = VioInputQueryInputConfig(Ctx, VIRTIO_INPUT_CFG_EV_BITS, 0, types, sizeof(types), &size);
+    if (!NT_SUCCESS(status) || size == 0) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    hasKey = VioInputBitmapTestBit(types, VIRTIO_INPUT_EV_KEY) ? TRUE : FALSE;
+    hasLed = VioInputBitmapTestBit(types, VIRTIO_INPUT_EV_LED) ? TRUE : FALSE;
+    hasRel = VioInputBitmapTestBit(types, VIRTIO_INPUT_EV_REL) ? TRUE : FALSE;
+    hasAbs = VioInputBitmapTestBit(types, VIRTIO_INPUT_EV_ABS) ? TRUE : FALSE;
+
+    /*
+     * Heuristics (VIO-020):
+     *   - Keyboard: EV_KEY with many key codes + EV_LED present.
+     *   - Relative mouse: EV_REL with REL_X/REL_Y.
+     *   - Tablet: EV_ABS with ABS_X/ABS_Y.
+     */
+    if (hasKey && hasLed) {
+        UCHAR keyBits[128];
+        ULONG keyCount;
+
+        RtlZeroMemory(keyBits, sizeof(keyBits));
+        size = 0;
+        status = VioInputQueryInputConfig(Ctx, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_EV_KEY, keyBits, sizeof(keyBits), &size);
+        if (NT_SUCCESS(status) && size != 0) {
+            keyCount = VioInputBitmapPopcount(keyBits);
+
+            if (KeyBitCountOut != NULL) {
+                *KeyBitCountOut = keyCount;
+            }
+
+            // "Many" keys: distinguish from mice (a handful of BTN_* bits).
+            if (keyCount >= 32u && VioInputBitmapTestBit(keyBits, VIRTIO_INPUT_KEY_A) && VioInputBitmapTestBit(keyBits, VIRTIO_INPUT_KEY_Z)) {
+                *KindOut = VioInputDeviceKindKeyboard;
+                return STATUS_SUCCESS;
+            }
+        }
+    }
+
+    if (hasRel) {
+        UCHAR relBits[128];
+
+        RtlZeroMemory(relBits, sizeof(relBits));
+        size = 0;
+        status = VioInputQueryInputConfig(Ctx, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_EV_REL, relBits, sizeof(relBits), &size);
+        if (NT_SUCCESS(status) && size != 0) {
+            if (VioInputBitmapTestBit(relBits, VIRTIO_INPUT_REL_X) && VioInputBitmapTestBit(relBits, VIRTIO_INPUT_REL_Y)) {
+                *KindOut = VioInputDeviceKindMouse;
+                return STATUS_SUCCESS;
+            }
+        }
+    }
+
+    if (hasAbs) {
+        UCHAR absBits[128];
+
+        RtlZeroMemory(absBits, sizeof(absBits));
+        size = 0;
+        status = VioInputQueryInputConfig(Ctx, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_EV_ABS, absBits, sizeof(absBits), &size);
+        if (NT_SUCCESS(status) && size != 0) {
+            if (VioInputBitmapTestBit(absBits, VIRTIO_INPUT_ABS_X) && VioInputBitmapTestBit(absBits, VIRTIO_INPUT_ABS_Y)) {
+                *KindOut = VioInputDeviceKindTablet;
+                return STATUS_SUCCESS;
+            }
+        }
+    }
+
+    return STATUS_NOT_SUPPORTED;
+}
+
 static VOID VioInputEventQUninitialize(_Inout_ PDEVICE_CONTEXT Ctx)
 {
     if (Ctx == NULL) {
@@ -1442,8 +1569,10 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
     UINT64 descPa;
     UINT64 availPa;
     UINT64 usedPa;
+    BOOLEAN compatDeviceKind;
 
     deviceContext = VirtioInputGetDeviceContext(Device);
+    compatDeviceKind = g_VioInputCompatIdName ? TRUE : FALSE;
 
     deviceContext->InD0 = FALSE;
     (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
@@ -1515,6 +1644,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         VIOINPUT_DEVICE_KIND kind;
         VIOINPUT_DEVICE_KIND subsysKind;
         PCSTR kindStr;
+        BOOLEAN haveName;
 
         RtlZeroMemory(name, sizeof(name));
         size = 0;
@@ -1524,25 +1654,93 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                                           (UCHAR*)name,
                                           (ULONG)(sizeof(name) - 1),
                                           &size);
-        if (!NT_SUCCESS(status) || size == 0) {
-            VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input ID_NAME query failed: %!STATUS!\n", status);
-            VirtioPciResetDevice(&deviceContext->PciDevice);
-            return STATUS_NOT_SUPPORTED;
+        haveName = (NT_SUCCESS(status) && size != 0) ? TRUE : FALSE;
+        if (!haveName) {
+            if (!compatDeviceKind) {
+                VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input ID_NAME query failed: %!STATUS!\n", status);
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "compat: virtio-input ID_NAME query failed: %!STATUS! (falling back to EV_BITS inference)\n",
+                status);
+            name[0] = '\0';
         }
 
         kind = VioInputDeviceKindUnknown;
 
-        if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Keyboard")) {
+        // Strict-mode contract v1 exact matches.
+        if (haveName && VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Keyboard")) {
             kind = VioInputDeviceKindKeyboard;
-        } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Mouse")) {
+        } else if (haveName && VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Mouse")) {
             kind = VioInputDeviceKindMouse;
-        } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Tablet")) {
+        } else if (haveName && VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Tablet")) {
             kind = VioInputDeviceKindTablet;
-        } else {
-            VIOINPUT_LOG(
-                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-                "virtio-input unsupported ID_NAME: '%s' (expected 'Aero Virtio Keyboard', 'Aero Virtio Mouse', or 'Aero Virtio Tablet')\n",
-                name);
+        }
+
+        // Optional compat matches (QEMU virtio-input frontends, etc).
+        if (kind == VioInputDeviceKindUnknown && compatDeviceKind && haveName) {
+            if (VioInputAsciiStartsWithInsensitiveZ(name, "QEMU Virtio Keyboard")) {
+                kind = VioInputDeviceKindKeyboard;
+                VIOINPUT_LOG(VIOINPUT_LOG_VIRTQ, "compat: accepted ID_NAME '%s' as keyboard\n", name);
+            } else if (VioInputAsciiStartsWithInsensitiveZ(name, "QEMU Virtio Mouse")) {
+                kind = VioInputDeviceKindMouse;
+                VIOINPUT_LOG(VIOINPUT_LOG_VIRTQ, "compat: accepted ID_NAME '%s' as mouse\n", name);
+            } else if (VioInputAsciiStartsWithInsensitiveZ(name, "QEMU Virtio Tablet")) {
+                kind = VioInputDeviceKindTablet;
+                VIOINPUT_LOG(VIOINPUT_LOG_VIRTQ, "compat: accepted ID_NAME '%s' as tablet\n", name);
+            }
+        }
+
+        /*
+         * Compat fallback heuristic: if ID_NAME isn't recognized, attempt to infer
+         * a reasonable device kind based on advertised event types.
+         *
+         * NOTE: This is intentionally only used in compat mode; strict mode should
+         * remain deterministic per contract v1.
+         */
+        if (kind == VioInputDeviceKindUnknown && compatDeviceKind) {
+            VIOINPUT_DEVICE_KIND inferred;
+            ULONG keyBits;
+            NTSTATUS inferStatus;
+
+            inferred = VioInputDeviceKindUnknown;
+            keyBits = 0;
+            inferStatus = VioInputInferDeviceKindFromEvBits(deviceContext, &inferred, &keyBits);
+            if (NT_SUCCESS(inferStatus) && inferred != VioInputDeviceKindUnknown) {
+                kind = inferred;
+                if (inferred == VioInputDeviceKindKeyboard) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "compat: inferred device kind=keyboard via EV_BITS (EV_LED + many keys, keyBits=%lu)\n",
+                        keyBits);
+                } else if (inferred == VioInputDeviceKindMouse) {
+                    VIOINPUT_LOG(VIOINPUT_LOG_VIRTQ, "compat: inferred device kind=mouse via EV_BITS (EV_REL: REL_X/REL_Y)\n");
+                } else if (inferred == VioInputDeviceKindTablet) {
+                    VIOINPUT_LOG(VIOINPUT_LOG_VIRTQ, "compat: inferred device kind=tablet via EV_BITS (EV_ABS: ABS_X/ABS_Y)\n");
+                } else {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "compat: inferred device kind=%s via EV_BITS\n",
+                        VioInputDeviceKindToString(inferred));
+                }
+            }
+        }
+
+        if (kind == VioInputDeviceKindUnknown) {
+            if (!compatDeviceKind) {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "virtio-input unsupported ID_NAME: '%s' (expected 'Aero Virtio Keyboard', 'Aero Virtio Mouse', or 'Aero Virtio Tablet')\n",
+                    haveName ? name : "<unavailable>");
+            } else {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "compat: virtio-input unable to infer device kind from ID_NAME='%s' and EV_BITS\n",
+                    haveName ? name : "<unavailable>");
+            }
             VirtioPciResetDevice(&deviceContext->PciDevice);
             return STATUS_NOT_SUPPORTED;
         }
@@ -1567,11 +1765,10 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             VIOINPUT_LOG(
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
                 "virtio-input kind mismatch: ID_NAME='%s' implies %s but PCI subsystem device ID is 0x%04X (%s)\n",
-                name,
-                (kind == VioInputDeviceKindKeyboard) ? "keyboard"
-                : (kind == VioInputDeviceKindMouse)   ? "mouse"
-                : (kind == VioInputDeviceKindTablet)  ? "tablet"
-                                                     : "unknown",
+                haveName ? name : "<unavailable>",
+                (kind == VioInputDeviceKindKeyboard) ? "keyboard" : (kind == VioInputDeviceKindMouse) ? "mouse"
+                                                                                                      : (kind == VioInputDeviceKindTablet) ? "tablet"
+                                                                                                                                            : "unknown",
                 (ULONG)deviceContext->PciSubsystemDeviceId,
                 (subsysKind == VioInputDeviceKindKeyboard) ? "keyboard" : (subsysKind == VioInputDeviceKindMouse) ? "mouse"
                                                                                                                    : "tablet");
@@ -1599,28 +1796,41 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
 
         VIOINPUT_LOG(
             VIOINPUT_LOG_VIRTQ,
-            "virtio-input config: ID_NAME='%s' pci_subsys=0x%04X kind=%s\n",
-            name,
+            "virtio-input config: ID_NAME='%s' pci_subsys=0x%04X kind=%s compat=%u\n",
+            haveName ? name : "<unavailable>",
             (ULONG)deviceContext->PciSubsystemDeviceId,
-            kindStr);
+            kindStr,
+            compatDeviceKind ? 1u : 0u);
     }
 
     {
         VIRTIO_INPUT_DEVIDS ids;
         UCHAR size;
         USHORT expectedProduct;
+        BOOLEAN enforce;
 
         RtlZeroMemory(&ids, sizeof(ids));
         size = 0;
         status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_ID_DEVIDS, 0, (UCHAR*)&ids, sizeof(ids), &size);
 
+        enforce = compatDeviceKind ? FALSE : TRUE;
+
         if (!NT_SUCCESS(status) || size < sizeof(ids)) {
             VIOINPUT_LOG(
-                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                (enforce ? VIOINPUT_LOG_ERROR : 0) | VIOINPUT_LOG_VIRTQ,
                 "virtio-input ID_DEVIDS query failed: %!STATUS!\n",
                 status);
-            VirtioPciResetDevice(&deviceContext->PciDevice);
-            return STATUS_NOT_SUPPORTED;
+
+            if (enforce) {
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            // Best-effort in compat mode.
+            RtlZeroMemory(&ids, sizeof(ids));
+            size = 0;
+            expectedProduct = 0;
+            goto devids_log_only;
         }
 
         expectedProduct = 0;
@@ -1652,7 +1862,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         if (ids.Bustype != VIRTIO_INPUT_DEVIDS_BUSTYPE_VIRTUAL || ids.Vendor != VIRTIO_INPUT_DEVIDS_VENDOR_VIRTIO ||
             ids.Product != expectedProduct || ids.Version != VIRTIO_INPUT_DEVIDS_VERSION) {
             VIOINPUT_LOG(
-                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                (enforce ? VIOINPUT_LOG_ERROR : 0) | VIOINPUT_LOG_VIRTQ,
                 "virtio-input ID_DEVIDS mismatch: bustype=0x%04X vendor=0x%04X product=0x%04X version=0x%04X (expected bustype=0x%04X vendor=0x%04X product=0x%04X version=0x%04X)\n",
                 (ULONG)ids.Bustype,
                 (ULONG)ids.Vendor,
@@ -1662,10 +1872,14 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 (ULONG)VIRTIO_INPUT_DEVIDS_VENDOR_VIRTIO,
                 (ULONG)expectedProduct,
                 (ULONG)VIRTIO_INPUT_DEVIDS_VERSION);
-            VirtioPciResetDevice(&deviceContext->PciDevice);
-            return STATUS_NOT_SUPPORTED;
+
+            if (enforce) {
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_NOT_SUPPORTED;
+            }
         }
 
+    devids_log_only:
         if (size >= sizeof(ids)) {
             VIOINPUT_LOG(
                 VIOINPUT_LOG_VIRTQ,
@@ -1690,6 +1904,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         UCHAR bits[128];
         UCHAR size;
 
+        if (!compatDeviceKind) {
         /*
          * Contract v1: devices MUST advertise supported event types via
          * EV_BITS(subsel=0).
@@ -2093,6 +2308,292 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 (ULONG)deviceContext->DeviceKind);
             VirtioPciResetDevice(&deviceContext->PciDevice);
             return STATUS_NOT_SUPPORTED;
+        }
+        } else {
+            BOOLEAN hasSyn;
+            BOOLEAN hasKey;
+            BOOLEAN hasLed;
+            BOOLEAN hasRel;
+            BOOLEAN hasAbs;
+
+            /*
+             * Compat mode: relax the contract-v1 EV_BITS requirements.
+             *
+             * We still require EV_BITS(types) and enough information to drive our
+             * HID translation layer, but avoid rejecting devices that don't
+             * implement Aero's full minimum code sets (e.g. mice without wheel,
+             * keyboards without all LEDs, tablets without ABS_INFO, etc).
+             */
+            RtlZeroMemory(bits, sizeof(bits));
+            size = 0;
+            status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_EV_BITS, 0, bits, sizeof(bits), &size);
+            if (!NT_SUCCESS(status) || size == 0) {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "compat: virtio-input EV_BITS(types) query failed: %!STATUS!\n",
+                    status);
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            hasSyn = VioInputBitmapTestBit(bits, VIRTIO_INPUT_EV_SYN) ? TRUE : FALSE;
+            hasKey = VioInputBitmapTestBit(bits, VIRTIO_INPUT_EV_KEY) ? TRUE : FALSE;
+            hasLed = VioInputBitmapTestBit(bits, VIRTIO_INPUT_EV_LED) ? TRUE : FALSE;
+            hasRel = VioInputBitmapTestBit(bits, VIRTIO_INPUT_EV_REL) ? TRUE : FALSE;
+            hasAbs = VioInputBitmapTestBit(bits, VIRTIO_INPUT_EV_ABS) ? TRUE : FALSE;
+
+            if (!hasSyn) {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "compat: virtio-input EV_BITS(types) missing required EV_SYN\n");
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_VIRTQ,
+                "compat: relaxed EV_BITS validation kind=%s (types: key=%u led=%u rel=%u abs=%u)\n",
+                VioInputDeviceKindToString(deviceContext->DeviceKind),
+                hasKey ? 1u : 0u,
+                hasLed ? 1u : 0u,
+                hasRel ? 1u : 0u,
+                hasAbs ? 1u : 0u);
+
+            if (deviceContext->DeviceKind == VioInputDeviceKindKeyboard) {
+                ULONG keyCount;
+
+                if (!hasKey) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                        "compat: keyboard requires EV_KEY in EV_BITS(types)\n");
+                    VirtioPciResetDevice(&deviceContext->PciDevice);
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                if (!hasLed) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "compat: keyboard EV_BITS(types) does not advertise EV_LED; LED output reports may be ignored\n");
+                }
+
+                RtlZeroMemory(bits, sizeof(bits));
+                size = 0;
+                status = VioInputQueryInputConfig(deviceContext,
+                                                  VIRTIO_INPUT_CFG_EV_BITS,
+                                                  VIRTIO_INPUT_EV_KEY,
+                                                  bits,
+                                                  sizeof(bits),
+                                                  &size);
+                if (!NT_SUCCESS(status) || size == 0) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                        "compat: keyboard EV_BITS(EV_KEY) query failed: %!STATUS!\n",
+                        status);
+                    VirtioPciResetDevice(&deviceContext->PciDevice);
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                keyCount = VioInputBitmapPopcount(bits);
+                VIOINPUT_LOG(VIOINPUT_LOG_VIRTQ, "compat: keyboard EV_KEY bitcount=%lu\n", keyCount);
+                if (keyCount < 8u) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "compat: keyboard advertises unusually small EV_KEY bitmap (bitcount=%lu)\n",
+                        keyCount);
+                }
+                if (!VioInputBitmapTestBit(bits, VIRTIO_INPUT_KEY_A) || !VioInputBitmapTestBit(bits, VIRTIO_INPUT_KEY_Z)) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "compat: keyboard EV_KEY bitmap does not include KEY_A/KEY_Z; key mapping may be incomplete\n");
+                }
+
+                if (hasLed) {
+                    RtlZeroMemory(bits, sizeof(bits));
+                    size = 0;
+                    status = VioInputQueryInputConfig(deviceContext,
+                                                      VIRTIO_INPUT_CFG_EV_BITS,
+                                                      VIRTIO_INPUT_EV_LED,
+                                                      bits,
+                                                      sizeof(bits),
+                                                      &size);
+                    if (!NT_SUCCESS(status) || size == 0) {
+                        VIOINPUT_LOG(
+                            VIOINPUT_LOG_VIRTQ,
+                            "compat: keyboard EV_BITS(EV_LED) query failed: %!STATUS! (continuing)\n",
+                            status);
+                    } else {
+                        if (!VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_NUML) || !VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_CAPSL) ||
+                            !VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_SCROLLL)) {
+                            VIOINPUT_LOG(
+                                VIOINPUT_LOG_VIRTQ,
+                                "compat: keyboard EV_LED bitmap is missing one or more of Num/Caps/Scroll lock LEDs\n");
+                        }
+                    }
+                }
+            } else if (deviceContext->DeviceKind == VioInputDeviceKindMouse) {
+                if (!hasRel) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                        "compat: mouse requires EV_REL in EV_BITS(types)\n");
+                    VirtioPciResetDevice(&deviceContext->PciDevice);
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                RtlZeroMemory(bits, sizeof(bits));
+                size = 0;
+                status = VioInputQueryInputConfig(deviceContext,
+                                                  VIRTIO_INPUT_CFG_EV_BITS,
+                                                  VIRTIO_INPUT_EV_REL,
+                                                  bits,
+                                                  sizeof(bits),
+                                                  &size);
+                if (!NT_SUCCESS(status) || size == 0) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                        "compat: mouse EV_BITS(EV_REL) query failed: %!STATUS!\n",
+                        status);
+                    VirtioPciResetDevice(&deviceContext->PciDevice);
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                if (!VioInputBitmapTestBit(bits, VIRTIO_INPUT_REL_X) || !VioInputBitmapTestBit(bits, VIRTIO_INPUT_REL_Y)) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                        "compat: mouse EV_REL bitmap missing REL_X/REL_Y\n");
+                    VirtioPciResetDevice(&deviceContext->PciDevice);
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                if (!VioInputBitmapTestBit(bits, VIRTIO_INPUT_REL_WHEEL)) {
+                    VIOINPUT_LOG(VIOINPUT_LOG_VIRTQ, "compat: mouse EV_REL bitmap missing REL_WHEEL; scroll wheel disabled\n");
+                }
+                if (!VioInputBitmapTestBit(bits, VIRTIO_INPUT_REL_HWHEEL)) {
+                    VIOINPUT_LOG(VIOINPUT_LOG_VIRTQ, "compat: mouse EV_REL bitmap missing REL_HWHEEL; horizontal wheel disabled\n");
+                }
+
+                if (!hasKey) {
+                    VIOINPUT_LOG(VIOINPUT_LOG_VIRTQ, "compat: mouse EV_BITS(types) does not advertise EV_KEY; mouse will report no buttons\n");
+                } else {
+                    RtlZeroMemory(bits, sizeof(bits));
+                    size = 0;
+                    status = VioInputQueryInputConfig(deviceContext,
+                                                      VIRTIO_INPUT_CFG_EV_BITS,
+                                                      VIRTIO_INPUT_EV_KEY,
+                                                      bits,
+                                                      sizeof(bits),
+                                                      &size);
+                    if (!NT_SUCCESS(status) || size == 0) {
+                        VIOINPUT_LOG(
+                            VIOINPUT_LOG_VIRTQ,
+                            "compat: mouse EV_BITS(EV_KEY) query failed: %!STATUS! (continuing)\n",
+                            status);
+                    } else {
+                        if (!VioInputBitmapTestBit(bits, VIRTIO_INPUT_BTN_LEFT) || !VioInputBitmapTestBit(bits, VIRTIO_INPUT_BTN_RIGHT)) {
+                            VIOINPUT_LOG(
+                                VIOINPUT_LOG_VIRTQ,
+                                "compat: mouse EV_KEY bitmap missing BTN_LEFT/BTN_RIGHT; button mapping may be incomplete\n");
+                        }
+                    }
+                }
+            } else if (deviceContext->DeviceKind == VioInputDeviceKindTablet) {
+                BOOLEAN haveAbsInfo;
+                VIRTIO_INPUT_ABS_INFO absX;
+                VIRTIO_INPUT_ABS_INFO absY;
+                UCHAR absSize;
+
+                if (!hasAbs) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                        "compat: tablet requires EV_ABS in EV_BITS(types)\n");
+                    VirtioPciResetDevice(&deviceContext->PciDevice);
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                RtlZeroMemory(bits, sizeof(bits));
+                size = 0;
+                status = VioInputQueryInputConfig(deviceContext,
+                                                  VIRTIO_INPUT_CFG_EV_BITS,
+                                                  VIRTIO_INPUT_EV_ABS,
+                                                  bits,
+                                                  sizeof(bits),
+                                                  &size);
+                if (!NT_SUCCESS(status) || size == 0) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                        "compat: tablet EV_BITS(EV_ABS) query failed: %!STATUS!\n",
+                        status);
+                    VirtioPciResetDevice(&deviceContext->PciDevice);
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                if (!VioInputBitmapTestBit(bits, VIRTIO_INPUT_ABS_X) || !VioInputBitmapTestBit(bits, VIRTIO_INPUT_ABS_Y)) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                        "compat: tablet EV_ABS bitmap missing ABS_X/ABS_Y\n");
+                    VirtioPciResetDevice(&deviceContext->PciDevice);
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                /*
+                 * ABS_INFO is best-effort in compat mode. If it's unavailable,
+                 * keep the translation layer's default scaling range (0..32767).
+                 */
+                haveAbsInfo = TRUE;
+
+                RtlZeroMemory(&absX, sizeof(absX));
+                absSize = 0;
+                status = VioInputQueryInputConfig(deviceContext,
+                                                  VIRTIO_INPUT_CFG_ABS_INFO,
+                                                  VIRTIO_INPUT_ABS_X,
+                                                  (UCHAR*)&absX,
+                                                  sizeof(absX),
+                                                  &absSize);
+                if (!NT_SUCCESS(status) || absSize < 8) {
+                    haveAbsInfo = FALSE;
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "compat: tablet ABS_INFO(ABS_X) unavailable: %!STATUS! (continuing)\n",
+                        status);
+                }
+
+                RtlZeroMemory(&absY, sizeof(absY));
+                absSize = 0;
+                status = VioInputQueryInputConfig(deviceContext,
+                                                  VIRTIO_INPUT_CFG_ABS_INFO,
+                                                  VIRTIO_INPUT_ABS_Y,
+                                                  (UCHAR*)&absY,
+                                                  sizeof(absY),
+                                                  &absSize);
+                if (!NT_SUCCESS(status) || absSize < 8) {
+                    haveAbsInfo = FALSE;
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "compat: tablet ABS_INFO(ABS_Y) unavailable: %!STATUS! (continuing)\n",
+                        status);
+                }
+
+                if (haveAbsInfo) {
+                    hid_translate_set_tablet_abs_range(&deviceContext->InputDevice.translate, absX.Min, absX.Max, absY.Min, absY.Max);
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "compat: tablet ABS ranges: X=[%ld,%ld] Y=[%ld,%ld]\n",
+                        (LONG)absX.Min,
+                        (LONG)absX.Max,
+                        (LONG)absY.Min,
+                        (LONG)absY.Max);
+                } else {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "compat: tablet ABS ranges unknown; using default HID scaling range\n");
+                }
+            } else {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "compat: virtio-input EV_BITS validation: invalid device kind %u\n",
+                    (ULONG)deviceContext->DeviceKind);
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_INVALID_DEVICE_STATE;
+            }
         }
     }
 
