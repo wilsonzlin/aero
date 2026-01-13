@@ -7,8 +7,13 @@
 //!
 //! The [`executor`] module contains the ring executor responsible for doorbell processing, fence
 //! tracking, and vblank pacing.
+//!
+//! The [`pci`] module provides a BAR1-backed VRAM aperture that can also be aliased into the
+//! legacy VGA (`0xA0000..0xC0000`) and VBE linear framebuffer mappings.
+#![forbid(unsafe_code)]
 
 pub mod backend;
+pub mod pci;
 pub mod executor;
 pub mod regs;
 pub mod ring;
@@ -19,4 +24,8 @@ pub use backend::{
     AeroGpuCommandBackend, ImmediateAeroGpuBackend, NullAeroGpuBackend,
 };
 pub use memory::MemoryBus;
+pub use pci::{
+    AeroGpuBar1VramMmio, AeroGpuPciDevice, LEGACY_VGA_PADDR_BASE, LEGACY_VGA_PADDR_END,
+    LEGACY_VGA_VRAM_BYTES, VBE_LFB_OFFSET,
+};
 pub use scanout::{AeroGpuCursorConfig, AeroGpuFormat, AeroGpuScanoutConfig};
