@@ -81,6 +81,23 @@ bash drivers/windows7/virtio-snd/tests/qemu/run-virtio-snd.sh --disk win7-x64.qc
 bash drivers/windows7/virtio-snd/tests/qemu/run-virtio-snd.sh --print --arch x86
 ```
 
+## Optional bring-up: polling-only mode (no interrupts)
+
+If you are testing against an early/buggy virtio-snd device model where interrupts are not delivered or cannot be connected, the driver supports an **opt-in** polling-only mode.
+
+Set the per-device registry value:
+
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` = `1` (`REG_DWORD`)
+
+Then disable/enable the device (or reboot) so Windows re-runs `START_DEVICE`.
+
+In this mode the driver relies on periodic used-ring polling (driven by the WaveRT period timer DPC) instead of ISR/DPC delivery.
+
+Notes:
+
+- This is intended for bring-up/debugging only; the default is still interrupt-driven.
+- Most QEMU builds should not require this.
+
 ## Identify the virtio-snd device name in your QEMU build
 
 QEMU device naming can vary by version/build. Always confirm what your QEMU binary calls the device:
