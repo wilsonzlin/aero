@@ -443,6 +443,7 @@ name = "aero-mmu"
 version = "0.1.0"
 dependencies = [
  "aero-mem",
+ "criterion",
  "memory",
 ]
 

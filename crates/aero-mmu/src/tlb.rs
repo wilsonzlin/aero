@@ -114,15 +114,8 @@ impl TlbEntry {
     }
 
     #[inline]
-    fn matches(&self, vaddr: u64, pcid: u16) -> bool {
-        if !self.valid {
-            return false;
-        }
-        if !self.global && self.pcid != pcid {
-            return false;
-        }
-        let mask = self.page_size.bytes() - 1;
-        (vaddr & !mask) == self.vbase
+    fn matches_pcid(&self, pcid: u16) -> bool {
+        self.valid && (self.global || self.pcid == pcid)
     }
 }
 
@@ -159,7 +152,7 @@ impl TlbSet {
                 let entry = &self.entries[set][way];
                 if entry.page_size == page_size
                     && entry.vbase == vbase
-                    && entry.matches(vaddr, pcid)
+                    && entry.matches_pcid(pcid)
                 {
                     return Some(entry);
                 }
@@ -290,7 +283,7 @@ impl TlbSet {
                 let entry = &mut self.entries[set][way];
                 if entry.page_size == page_size
                     && entry.vbase == vbase
-                    && entry.matches(vaddr, pcid)
+                    && entry.matches_pcid(pcid)
                 {
                     entry.dirty = true;
                     return true;
