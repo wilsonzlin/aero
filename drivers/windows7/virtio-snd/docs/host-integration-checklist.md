@@ -12,6 +12,7 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 - [ ] **Vendor ID:** `VEN_1AF4` (`0x1AF4`)
 - [ ] **Device ID:** `DEV_1059` (`0x1059`)
 - [ ] **Revision ID:** `REV_01` (`0x01`)
+- [ ] **Subsystem vendor ID:** `0x1AF4` (virtio) *(required by the driver’s modern transport in strict/contract mode)*
 - [ ] *(Optional INF tightening)* **Subsystem ID:** `SUBSYS_00191AF4`
 
 ## BAR0 + virtio-pci modern capability layout
@@ -22,6 +23,7 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
   - [ ] `NOTIFY_CFG`
   - [ ] `ISR_CFG`
   - [ ] `DEVICE_CFG`
+- [ ] `NOTIFY_CFG.notify_off_multiplier == 4` (driver rejects other values).
 
 ## Virtio feature bits (negotiation)
 
@@ -45,6 +47,7 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 
 - [ ] **INTx** is implemented and functional (required).
 - [ ] MSI/MSI-X is **not used** by this driver package.
+- [ ] PCI **Interrupt Pin** register is `1` (INTA#).
 
 ## virtio-snd `DEVICE_CFG` (read-only)
 
