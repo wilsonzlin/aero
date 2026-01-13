@@ -125,6 +125,31 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   return TRUE;
 }
 
+static __forceinline virtio_bool_t AerovblkVirtqueueKickPrepareContractV1(_Inout_ virtqueue_split_t* Vq) {
+  /*
+   * Contract v1 devices do not require EVENT_IDX and some may not offer it, so
+   * the default behaviour remains "always notify" for compatibility.
+   *
+   * If EVENT_IDX is negotiated, use the standard virtio notification suppression
+   * algorithm via virtqueue_split_kick_prepare().
+   */
+  if (Vq == NULL) {
+    return VIRTIO_FALSE;
+  }
+
+  if (Vq->avail_idx == Vq->last_kick_avail) {
+    return VIRTIO_FALSE;
+  }
+
+  if (Vq->event_idx != VIRTIO_FALSE) {
+    return virtqueue_split_kick_prepare(Vq);
+  }
+
+  /* Keep virtqueue bookkeeping consistent even when always-notify is used. */
+  Vq->last_kick_avail = Vq->avail_idx;
+  return VIRTIO_TRUE;
+}
+
 static VOID AerovblkSetSense(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR senseKey, _In_ UCHAR asc,
                              _In_ UCHAR ascq) {
   SENSE_DATA sense;
@@ -446,6 +471,7 @@ static VOID AerovblkVirtioNotifyQueue0(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt
 static BOOLEAN AerovblkAllocateVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
   int vqRes;
   uint16_t indirectMaxDesc;
+  virtio_bool_t eventIdx;
 
   if (devExt == NULL) {
     return FALSE;
@@ -459,11 +485,12 @@ static BOOLEAN AerovblkAllocateVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
     return FALSE;
   }
 
+  eventIdx = (devExt->NegotiatedFeatures & AEROVBLK_FEATURE_RING_EVENT_IDX) ? VIRTIO_TRUE : VIRTIO_FALSE;
   vqRes = virtqueue_split_alloc_ring(&devExt->VirtioOps,
                                      &devExt->VirtioOpsCtx,
                                      (uint16_t)AEROVBLK_QUEUE_SIZE,
                                      16,
-                                     VIRTIO_FALSE,
+                                     eventIdx,
                                      &devExt->RingDma);
   if (vqRes != VIRTIO_OK) {
     return FALSE;
@@ -481,7 +508,7 @@ static BOOLEAN AerovblkAllocateVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
                                (uint16_t)AEROVBLK_QUEUE_SIZE,
                                16,
                                &devExt->RingDma,
-                               VIRTIO_FALSE,
+                               eventIdx,
                                VIRTIO_TRUE,
                                indirectMaxDesc);
   if (vqRes != VIRTIO_OK) {
@@ -496,6 +523,7 @@ static BOOLEAN AerovblkAllocateVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
 static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ BOOLEAN allocateResources) {
   STOR_LOCK_HANDLE lock;
   UINT64 requiredFeatures;
+  UINT64 wantedFeatures;
   UINT64 negotiated;
   VIRTIO_BLK_CONFIG cfg;
   NTSTATUS st;
@@ -534,7 +562,21 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
 
   requiredFeatures = AEROVBLK_FEATURE_RING_INDIRECT_DESC | AEROVBLK_FEATURE_BLK_SEG_MAX | AEROVBLK_FEATURE_BLK_BLK_SIZE | AEROVBLK_FEATURE_BLK_FLUSH;
 
-  st = VirtioPciNegotiateFeatures(&devExt->Vdev, requiredFeatures, /*Wanted*/ 0, &negotiated);
+  /*
+   * EVENT_IDX is an optional improvement: only request it when we can size the
+   * ring accordingly.
+   *
+   * - Initial bring-up (allocateResources=TRUE): we can allocate an EVENT_IDX
+   *   ring if the feature is negotiated.
+   * - Reset/restart (allocateResources=FALSE): only renegotiate EVENT_IDX if the
+   *   existing queue was created with it (ring layout is fixed).
+   */
+  wantedFeatures = 0;
+  if (allocateResources || devExt->Vq.event_idx != VIRTIO_FALSE) {
+    wantedFeatures |= AEROVBLK_FEATURE_RING_EVENT_IDX;
+  }
+
+  st = VirtioPciNegotiateFeatures(&devExt->Vdev, requiredFeatures, wantedFeatures, &negotiated);
   if (!NT_SUCCESS(st)) {
     return FALSE;
   }
@@ -642,6 +684,7 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
   virtio_sg_entry_t segs[AEROVBLK_MAX_SG_ELEMENTS + 2];
   int vqRes;
   virtio_bool_t useIndirect;
+  virtio_bool_t needKick;
 
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
 
@@ -724,10 +767,14 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     return TRUE;
   }
 
-  /* Contract v1 requires always-notify semantics (EVENT_IDX not negotiated). */
+  needKick = AerovblkVirtqueueKickPrepareContractV1(&devExt->Vq);
+
+  /* Contract v1 defaults to always-notify, but EVENT_IDX uses suppression logic. */
   UNREFERENCED_PARAMETER(headId);
-  KeMemoryBarrier();
-  AerovblkVirtioNotifyQueue0(devExt);
+  if (needKick != VIRTIO_FALSE) {
+    KeMemoryBarrier();
+    AerovblkVirtioNotifyQueue0(devExt);
+  }
 
   StorPortReleaseSpinLock(devExt, &lock);
   StorPortNotification(NextRequest, devExt, NULL);
@@ -1445,42 +1492,65 @@ static VOID AerovblkDrainCompletionsLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION de
     return;
   }
 
+  /*
+   * When EVENT_IDX is negotiated, the device may suppress interrupts based on
+   * the driver-written used_event field. Rearm it after draining completions.
+   *
+   * Mirror the standard virtqueue_enable_cb() pattern to avoid missing an
+   * interrupt when the device produces new used entries while we are
+   * re-enabling callbacks.
+   */
   for (;;) {
-    ctxPtr = NULL;
-    if (virtqueue_split_pop_used(&devExt->Vq, &ctxPtr, &usedLen) == VIRTIO_FALSE) {
-      break;
+    for (;;) {
+      ctxPtr = NULL;
+      if (virtqueue_split_pop_used(&devExt->Vq, &ctxPtr, &usedLen) == VIRTIO_FALSE) {
+        break;
+      }
+
+      UNREFERENCED_PARAMETER(usedLen);
+
+      ctx = (PAEROVBLK_REQUEST_CONTEXT)ctxPtr;
+      if (ctx == NULL) {
+        continue;
+      }
+
+      srb = ctx->Srb;
+      ctx->Srb = NULL;
+
+      InsertTailList(&devExt->FreeRequestList, &ctx->Link);
+      devExt->FreeRequestCount++;
+
+      if (srb == NULL) {
+        continue;
+      }
+
+      statusByte = *ctx->StatusByte;
+      if (statusByte == VIRTIO_BLK_S_OK) {
+        AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+        continue;
+      }
+
+      if (statusByte == VIRTIO_BLK_S_UNSUPP) {
+        AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x20, 0x00);
+      } else {
+        AerovblkSetSense(devExt, srb, SCSI_SENSE_MEDIUM_ERROR, ctx->IsWrite ? 0x0C : 0x11, 0x00);
+      }
+
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
     }
 
-    UNREFERENCED_PARAMETER(usedLen);
+    if (devExt->Vq.event_idx != VIRTIO_FALSE && devExt->Vq.used_event != NULL) {
+      *((volatile uint16_t*)devExt->Vq.used_event) = devExt->Vq.last_used_idx;
+      KeMemoryBarrier();
 
-    ctx = (PAEROVBLK_REQUEST_CONTEXT)ctxPtr;
-    if (ctx == NULL) {
+      if (devExt->Vq.used->idx == devExt->Vq.last_used_idx) {
+        break;
+      }
+
       continue;
     }
 
-    srb = ctx->Srb;
-    ctx->Srb = NULL;
-
-    InsertTailList(&devExt->FreeRequestList, &ctx->Link);
-    devExt->FreeRequestCount++;
-
-    if (srb == NULL) {
-      continue;
-    }
-
-    statusByte = *ctx->StatusByte;
-    if (statusByte == VIRTIO_BLK_S_OK) {
-      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
-      continue;
-    }
-
-    if (statusByte == VIRTIO_BLK_S_UNSUPP) {
-      AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x20, 0x00);
-    } else {
-      AerovblkSetSense(devExt, srb, SCSI_SENSE_MEDIUM_ERROR, ctx->IsWrite ? 0x0C : 0x11, 0x00);
-    }
-
-    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
+    break;
   }
 }
 

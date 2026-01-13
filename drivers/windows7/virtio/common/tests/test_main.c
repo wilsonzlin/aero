@@ -293,6 +293,84 @@ static void test_small_queue_align(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static void test_event_idx_ring_size_and_kick(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    const uint16_t qsz = 8;
+    const uint32_t align = 4;
+    size_t expected_ring_bytes;
+    virtio_sg_entry_t sg;
+    uint16_t head;
+    uint32_t i;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, qsz, align, VIRTIO_TRUE, &ring) == VIRTIO_OK);
+
+    /*
+     * Validate ring sizing for EVENT_IDX-enabled split rings.
+     *
+     * For queue_align=4, enabling EVENT_IDX changes both the avail and used ring
+     * sizes by +2 bytes and may shift the used ring offset due to alignment.
+     */
+    expected_ring_bytes =
+        /* desc[] */ (sizeof(vring_desc_t) * (size_t)qsz) +
+        /* avail (flags+idx + ring[] + used_event) */ ((sizeof(uint16_t) * 2u) + (sizeof(uint16_t) * (size_t)qsz) + sizeof(uint16_t)) +
+        /* used ring alignment padding */ 0;
+    expected_ring_bytes = (expected_ring_bytes + (align - 1u)) & ~(size_t)(align - 1u);
+    expected_ring_bytes =
+        /* used (flags+idx + ring[] + avail_event) */ expected_ring_bytes +
+        ((sizeof(uint16_t) * 2u) + (sizeof(vring_used_elem_t) * (size_t)qsz) + sizeof(uint16_t));
+    expected_ring_bytes = (expected_ring_bytes + (align - 1u)) & ~(size_t)(align - 1u);
+
+    assert(ring.size == expected_ring_bytes);
+
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                qsz,
+                                align,
+                                &ring,
+                                VIRTIO_TRUE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_OK);
+
+    assert(vq.event_idx != VIRTIO_FALSE);
+    assert(vq.used_event != NULL);
+    assert(vq.avail_event != NULL);
+    assert(vq.used_event == &vq.avail->ring[qsz]);
+    assert(vq.avail_event == (uint16_t *)(void *)&vq.used->ring[qsz]);
+
+    /*
+     * Kick suppression sanity check:
+     * If the device requests notifications every 4 new available entries
+     * (avail_event=3, old=0), virtqueue_split_kick_prepare should only request a
+     * kick on the 4th submission.
+     */
+    *vq.avail_event = 3;
+
+    sg.addr = 0x200000u;
+    sg.len = 512;
+    sg.device_writes = VIRTIO_FALSE;
+
+    for (i = 0; i < 3; i++) {
+        assert(virtqueue_split_add_sg(&vq, &sg, 1, (void *)(uintptr_t)(i + 1u), VIRTIO_FALSE, &head) == VIRTIO_OK);
+        assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_FALSE);
+    }
+
+    assert(virtqueue_split_add_sg(&vq, &sg, 1, (void *)(uintptr_t)0x4u, VIRTIO_FALSE, &head) == VIRTIO_OK);
+    assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+    assert(vq.last_kick_avail == vq.avail_idx);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 static void test_invalid_queue_align(void)
 {
     test_os_ctx_t os_ctx;
@@ -1120,6 +1198,7 @@ int main(void)
 {
     test_wraparound();
     test_small_queue_align();
+    test_event_idx_ring_size_and_kick();
     test_invalid_queue_align();
     test_invalid_used_id();
     test_indirect_descriptors();
