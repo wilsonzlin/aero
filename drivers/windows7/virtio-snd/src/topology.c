@@ -550,6 +550,9 @@ VirtIoSndProperty_JackDescription(_In_ PPCPROPERTY_REQUEST PropertyRequest)
     jack->ChannelMapping = KSAUDIO_SPEAKER_STEREO;
     connected = VirtIoSndTopology_IsJackConnected(VIRTIOSND_JACK_ID_SPEAKER);
     jack->IsConnected = connected ? TRUE : FALSE;
+#ifdef KSJACK_CAPABILITY_PRESENCE_DETECT
+    jack->JackCapabilities = KSJACK_CAPABILITY_PRESENCE_DETECT;
+#endif
 
     PropertyRequest->ValueSize = required;
     return STATUS_SUCCESS;
@@ -603,6 +606,9 @@ VirtIoSndProperty_JackDescriptionMono(_In_ PPCPROPERTY_REQUEST PropertyRequest)
     jack->ChannelMapping = KSAUDIO_SPEAKER_MONO;
     connected = VirtIoSndTopology_IsJackConnected(VIRTIOSND_JACK_ID_MICROPHONE);
     jack->IsConnected = connected ? TRUE : FALSE;
+#ifdef KSJACK_CAPABILITY_PRESENCE_DETECT
+    jack->JackCapabilities = KSJACK_CAPABILITY_PRESENCE_DETECT;
+#endif
 
     PropertyRequest->ValueSize = required;
     return STATUS_SUCCESS;
@@ -664,6 +670,9 @@ VirtIoSndProperty_JackDescription2Common(_In_ PPCPROPERTY_REQUEST PropertyReques
 #define KSJACK_DEVICE_STATE_CONNECTED 0x00000001u
 #endif
     jack->DeviceStateInfo = connected ? KSJACK_DEVICE_STATE_CONNECTED : 0u;
+#ifdef KSJACK_CAPABILITY_PRESENCE_DETECT
+    jack->JackCapabilities = KSJACK_CAPABILITY_PRESENCE_DETECT;
+#endif
 
     PropertyRequest->ValueSize = required;
     return STATUS_SUCCESS;
