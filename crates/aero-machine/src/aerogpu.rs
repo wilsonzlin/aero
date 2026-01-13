@@ -19,6 +19,10 @@ const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
 const RING_HEADER_SIZE_BYTES: u64 = ring::AerogpuRingHeader::SIZE_BYTES as u64;
 
+fn supported_features() -> u64 {
+    pci::AEROGPU_FEATURE_FENCE_PAGE | pci::AEROGPU_FEATURE_SCANOUT | pci::AEROGPU_FEATURE_VBLANK
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct AeroGpuScanout0State {
     pub wddm_scanout_active: bool,
@@ -344,7 +348,7 @@ pub(crate) fn composite_cursor_rgba8888_over_scanout(
 #[derive(Debug, Clone)]
 pub struct AeroGpuMmioDevice {
     abi_version: u32,
-    features: u64,
+    supported_features: u64,
 
     clock: Option<ManualClock>,
 
@@ -436,13 +440,7 @@ impl Default for AeroGpuMmioDevice {
         let scanout0_vblank_period_ns = vblank_period_ns.min(u64::from(u32::MAX)) as u32;
         Self {
             abi_version: pci::AEROGPU_ABI_VERSION_U32,
-            // Keep the advertised feature surface conservative: transfer command execution is not
-            // implemented in `aero-machine` yet, but scanout/cursor register storage (and vblank
-            // pacing) exist so the Win7 KMD can discover/configure them without crashing.
-            features: pci::AEROGPU_FEATURE_FENCE_PAGE
-                | pci::AEROGPU_FEATURE_CURSOR
-                | pci::AEROGPU_FEATURE_SCANOUT
-                | pci::AEROGPU_FEATURE_VBLANK,
+            supported_features: supported_features(),
 
             clock: None,
 
@@ -495,11 +493,11 @@ impl AeroGpuMmioDevice {
     }
 
     pub fn reset(&mut self) {
-        let features = self.features;
+        let supported_features = self.supported_features;
         let abi_version = self.abi_version;
         let clock = self.clock.clone();
         *self = Self {
-            features,
+            supported_features,
             abi_version,
             clock,
             ..Default::default()
@@ -689,6 +687,10 @@ impl AeroGpuMmioDevice {
         Some(self.scanout0_to_scanout_state_update())
     }
 
+    pub fn supported_features(&self) -> u64 {
+        self.supported_features
+    }
+
     pub fn irq_level(&self) -> bool {
         (self.irq_status & self.irq_enable) != 0
     }
@@ -708,7 +710,7 @@ impl AeroGpuMmioDevice {
     pub(crate) fn snapshot_v1(&self) -> AeroGpuMmioSnapshotV1 {
         AeroGpuMmioSnapshotV1 {
             abi_version: self.abi_version,
-            features: self.features,
+            features: self.supported_features,
 
             ring_gpa: self.ring_gpa,
             ring_size_bytes: self.ring_size_bytes,
@@ -747,7 +749,9 @@ impl AeroGpuMmioDevice {
 
     pub(crate) fn restore_snapshot_v1(&mut self, snap: &AeroGpuMmioSnapshotV1) {
         self.abi_version = snap.abi_version;
-        self.features = snap.features;
+        // `features` is a device capability bitmask and must reflect the current build's
+        // implementation rather than guest-controlled state. Keep the device's
+        // `supported_features` unchanged across snapshot restore.
 
         self.ring_gpa = snap.ring_gpa;
         self.ring_size_bytes = snap.ring_size_bytes;
@@ -881,7 +885,7 @@ impl AeroGpuMmioDevice {
 
             if dma_enabled
                 && self.fence_gpa != 0
-                && (self.features & pci::AEROGPU_FEATURE_FENCE_PAGE) != 0
+                && (self.supported_features() & pci::AEROGPU_FEATURE_FENCE_PAGE) != 0
             {
                 write_fence_page(mem, self.fence_gpa, self.abi_version, self.completed_fence);
             }
@@ -964,7 +968,7 @@ impl AeroGpuMmioDevice {
         // Publish the new head after processing submissions.
         mem.write_u32(self.ring_gpa + RING_HEAD_OFFSET, head);
 
-        if self.fence_gpa != 0 && (self.features & pci::AEROGPU_FEATURE_FENCE_PAGE) != 0 {
+        if self.fence_gpa != 0 && (self.supported_features() & pci::AEROGPU_FEATURE_FENCE_PAGE) != 0 {
             write_fence_page(mem, self.fence_gpa, self.abi_version, self.completed_fence);
         }
     }
@@ -973,8 +977,8 @@ impl AeroGpuMmioDevice {
         match offset {
             x if x == pci::AEROGPU_MMIO_REG_MAGIC as u64 => pci::AEROGPU_MMIO_MAGIC,
             x if x == pci::AEROGPU_MMIO_REG_ABI_VERSION as u64 => self.abi_version,
-            x if x == pci::AEROGPU_MMIO_REG_FEATURES_LO as u64 => self.features as u32,
-            x if x == pci::AEROGPU_MMIO_REG_FEATURES_HI as u64 => (self.features >> 32) as u32,
+            x if x == pci::AEROGPU_MMIO_REG_FEATURES_LO as u64 => self.supported_features() as u32,
+            x if x == pci::AEROGPU_MMIO_REG_FEATURES_HI as u64 => (self.supported_features() >> 32) as u32,
 
             x if x == pci::AEROGPU_MMIO_REG_RING_GPA_LO as u64 => self.ring_gpa as u32,
             x if x == pci::AEROGPU_MMIO_REG_RING_GPA_HI as u64 => (self.ring_gpa >> 32) as u32,

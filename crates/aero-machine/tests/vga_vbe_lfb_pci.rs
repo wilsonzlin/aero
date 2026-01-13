@@ -25,7 +25,7 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
     // changes (e.g. standalone VGA stub vs AeroGPU BAR1-backed legacy VBE).
     let base = m.vbe_lfb_base();
     // Write a red pixel at (0,0) in packed 32bpp BGRX via *machine memory*.
-    m.write_physical_u32(u64::from(base), 0x00FF_0000);
+    m.write_physical_u32(base, 0x00FF_0000);
 
     m.display_present();
     assert_eq!(m.display_resolution(), (64, 64));
