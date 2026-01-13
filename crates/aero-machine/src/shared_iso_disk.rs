@@ -1,9 +1,18 @@
 use std::io;
+#[cfg(target_arch = "wasm32")]
+use std::{cell::RefCell, rc::Rc};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, Mutex};
 
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::atapi::IsoBackend;
 use aero_storage::{DiskError, VirtualDisk};
+
+#[cfg(target_arch = "wasm32")]
+type SharedIsoDiskBackend = Box<dyn VirtualDisk>;
+
+#[cfg(not(target_arch = "wasm32"))]
+type SharedIsoDiskBackend = Box<dyn VirtualDisk + Send>;
 
 /// Cloneable handle to a read-only ISO (2048-byte sector) disk backend.
 ///
@@ -13,13 +22,16 @@ use aero_storage::{DiskError, VirtualDisk};
 /// can share the same underlying ISO image.
 #[derive(Clone)]
 pub struct SharedIsoDisk {
-    inner: Arc<Mutex<Box<dyn VirtualDisk + Send>>>,
+    #[cfg(target_arch = "wasm32")]
+    inner: Rc<RefCell<SharedIsoDiskBackend>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    inner: Arc<Mutex<SharedIsoDiskBackend>>,
     capacity_bytes: u64,
     sector_count: u32,
 }
 
 impl SharedIsoDisk {
-    pub fn new(disk: Box<dyn VirtualDisk + Send>) -> io::Result<Self> {
+    pub fn new(disk: SharedIsoDiskBackend) -> io::Result<Self> {
         let capacity_bytes = disk.capacity_bytes();
         if !capacity_bytes.is_multiple_of(AtapiCdrom::SECTOR_SIZE as u64) {
             return Err(io::Error::new(
@@ -36,14 +48,27 @@ impl SharedIsoDisk {
             )
         })?;
 
+        #[cfg(target_arch = "wasm32")]
+        let inner = Rc::new(RefCell::new(disk));
+        #[cfg(not(target_arch = "wasm32"))]
+        let inner = Arc::new(Mutex::new(disk));
+
         Ok(Self {
-            inner: Arc::new(Mutex::new(disk)),
+            inner,
             capacity_bytes,
             sector_count,
         })
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Box<dyn VirtualDisk + Send>> {
+    #[cfg(target_arch = "wasm32")]
+    fn inner_mut(&self) -> std::cell::RefMut<'_, SharedIsoDiskBackend> {
+        self.inner
+            .try_borrow_mut()
+            .expect("shared ISO disk refcell should not already be borrowed")
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn inner_mut(&self) -> std::sync::MutexGuard<'_, SharedIsoDiskBackend> {
         self.inner
             .lock()
             .expect("shared ISO disk mutex should not be poisoned")
@@ -56,7 +81,7 @@ impl VirtualDisk for SharedIsoDisk {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
-        self.lock().read_at(offset, buf)
+        self.inner_mut().read_at(offset, buf)
     }
 
     fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
@@ -68,7 +93,7 @@ impl VirtualDisk for SharedIsoDisk {
     fn flush(&mut self) -> aero_storage::Result<()> {
         // Even though the media is treated as read-only, forward flushes to the underlying backend
         // in case it buffers reads or maintains bookkeeping.
-        self.lock().flush()
+        self.inner_mut().flush()
     }
 }
 
@@ -89,9 +114,8 @@ impl IsoBackend for SharedIsoDisk {
             .checked_mul(AtapiCdrom::SECTOR_SIZE as u64)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "offset overflow"))?;
 
-        self.lock()
+        self.inner_mut()
             .read_at(offset, buf)
             .map_err(io::Error::other)
     }
 }
-

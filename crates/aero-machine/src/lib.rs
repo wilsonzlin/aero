@@ -4035,12 +4035,12 @@ impl Machine {
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk>,
     ) -> std::io::Result<()> {
-        use aero_devices_storage::atapi::VirtualDiskIsoBackend;
-
         if self.ide.is_none() {
             return Ok(());
         }
-        let backend: Box<dyn IsoBackend> = Box::new(VirtualDiskIsoBackend::new(disk)?);
+        let shared = SharedIsoDisk::new(disk)?;
+        self.install_media = Some(shared.clone());
+        let backend: Box<dyn IsoBackend> = Box::new(shared);
         self.attach_ide_secondary_master_atapi_backend_for_restore(backend);
         Ok(())
     }
@@ -4051,7 +4051,9 @@ impl Machine {
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk>,
     ) -> std::io::Result<()> {
-        self.attach_ide_secondary_master_atapi(AtapiCdrom::new_from_virtual_disk(disk)?);
+        let shared = SharedIsoDisk::new(disk)?;
+        self.install_media = Some(shared.clone());
+        self.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(shared))));
         Ok(())
     }
 
