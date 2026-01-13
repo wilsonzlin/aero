@@ -452,6 +452,11 @@ enum aerogpu_shader_stage_ex {
    AEROGPU_STAGE_EX_COMPUTE  = 5,
 };
 
+// Note: in the *binding commands* described here, `stage_ex = 0` is treated as the legacy/default
+// “no stage_ex” value (because old guests always write 0 into reserved fields). As a result, the
+// DXBC program-type value `0 = Pixel` is not used via this extension; VS/PS continue to bind via
+// the legacy `shader_stage` field.
+
 // Example: SET_TEXTURE
 struct aerogpu_cmd_set_texture {
    struct aerogpu_cmd_hdr hdr;       // opcode = AEROGPU_CMD_SET_TEXTURE
