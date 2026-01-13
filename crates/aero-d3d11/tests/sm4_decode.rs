@@ -646,9 +646,8 @@ fn preserves_non_comment_customdata_and_does_not_end_decl_section() {
     assert_eq!(
         module.decls,
         vec![
-            Sm4Decl::CustomData {
-                class: CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER,
-                len_dwords: 5,
+            Sm4Decl::ImmediateConstantBuffer {
+                dwords: vec![0x1111_1111, 0x2222_2222, 0x3333_3333],
             },
             Sm4Decl::Input {
                 reg: 0,

@@ -98,6 +98,7 @@ impl std::error::Error for Sm4DecodeError {}
 
 const DECLARATION_OPCODE_MIN: u32 = 0x100;
 const CUSTOMDATA_CLASS_COMMENT: u32 = 0;
+const CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER: u32 = 3;
 
 pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError> {
     let declared_len = *program.tokens.get(1).unwrap_or(&0) as usize;
@@ -157,14 +158,25 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
                 class_pos += 1;
                 extended = (ext & OPCODE_EXTENDED_BIT) != 0;
             }
-            let class = inst_toks
-                .get(class_pos)
-                .copied()
-                .unwrap_or(CUSTOMDATA_CLASS_COMMENT);
-            decls.push(Sm4Decl::CustomData {
-                class,
-                len_dwords: len as u32,
-            });
+            let Some(class) = inst_toks.get(class_pos).copied() else {
+                decls.push(Sm4Decl::CustomData {
+                    class: CUSTOMDATA_CLASS_COMMENT,
+                    len_dwords: len as u32,
+                });
+                i += len;
+                continue;
+            };
+
+            if class == CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER {
+                decls.push(Sm4Decl::ImmediateConstantBuffer {
+                    dwords: inst_toks.get(class_pos + 1..).unwrap_or(&[]).to_vec(),
+                });
+            } else {
+                decls.push(Sm4Decl::CustomData {
+                    class,
+                    len_dwords: len as u32,
+                });
+            }
             i += len;
             continue;
         }

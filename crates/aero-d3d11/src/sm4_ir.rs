@@ -112,12 +112,19 @@ pub enum Sm4Decl {
     /// Non-executable `customdata` block.
     ///
     /// This is emitted by the SM4/SM5 encoder for comments, debug data, immediate constant
-    /// buffers, etc. The decoder currently treats all custom data blocks as non-executable and
-    /// does not attempt to parse the payload.
+    /// buffers, etc. The decoder currently treats all custom data blocks as non-executable.
     CustomData {
         class: u32,
         /// Total block length in DWORDs (including opcode + class DWORDs).
         len_dwords: u32,
+    },
+    /// Embedded immediate constant buffer (`customdata` class 3).
+    ///
+    /// FXC uses this to embed `dcl_immediateConstantBuffer { ... }` data into the token stream.
+    /// The payload is stored as raw DWORDs (typically 4 DWORDs per constant register).
+    ImmediateConstantBuffer {
+        /// Payload DWORDs after the customdata class token.
+        dwords: Vec<u32>,
     },
     Unknown {
         opcode: u32,
