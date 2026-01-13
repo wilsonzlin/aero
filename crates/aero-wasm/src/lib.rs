@@ -81,6 +81,12 @@ mod uhci_controller_bridge;
 pub use uhci_controller_bridge::UhciControllerBridge;
 
 #[cfg(target_arch = "wasm32")]
+mod xhci_controller_bridge;
+
+#[cfg(target_arch = "wasm32")]
+pub use xhci_controller_bridge::XhciControllerBridge;
+
+#[cfg(target_arch = "wasm32")]
 mod e1000_bridge;
 #[cfg(target_arch = "wasm32")]
 pub use e1000_bridge::E1000Bridge;

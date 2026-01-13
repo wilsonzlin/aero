@@ -7,6 +7,7 @@ describe("runtime/wasm_loader (USB snapshot typings)", () => {
     type WebUsbBridge = InstanceType<NonNullable<WasmApi["WebUsbUhciBridge"]>>;
     type Runtime = InstanceType<NonNullable<WasmApi["UhciRuntime"]>>;
     type UhciBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
+    type XhciBridge = InstanceType<NonNullable<WasmApi["XhciControllerBridge"]>>;
 
     // Note: Vitest runs these tests at runtime without TypeScript typechecking, so we must provide
     // concrete functions to avoid `undefined is not a function` crashes. The compile-time checks are
@@ -14,6 +15,7 @@ describe("runtime/wasm_loader (USB snapshot typings)", () => {
     const webusb = { snapshot_state: () => new Uint8Array(), restore_state: (_bytes: Uint8Array) => {} } as unknown as WebUsbBridge;
     const runtime = { snapshot_state: () => new Uint8Array(), restore_state: (_bytes: Uint8Array) => {} } as unknown as Runtime;
     const uhci = { snapshot_state: () => new Uint8Array(), restore_state: (_bytes: Uint8Array) => {} } as unknown as UhciBridge;
+    const xhci = { snapshot_state: () => new Uint8Array(), restore_state: (_bytes: Uint8Array) => {} } as unknown as XhciBridge;
 
     // Optional methods should require feature detection under `strictNullChecks`.
     //
@@ -36,6 +38,11 @@ describe("runtime/wasm_loader (USB snapshot typings)", () => {
       uhci.snapshot_state();
       // @ts-expect-error restore_state may be undefined
       uhci.restore_state(new Uint8Array());
+
+      // @ts-expect-error snapshot_state may be undefined
+      xhci.snapshot_state();
+      // @ts-expect-error restore_state may be undefined
+      xhci.restore_state(new Uint8Array());
     }
     void assertStrictNullChecksEnforced;
 
@@ -50,6 +57,10 @@ describe("runtime/wasm_loader (USB snapshot typings)", () => {
     if (uhci.snapshot_state && uhci.restore_state) {
       const bytes = uhci.snapshot_state();
       uhci.restore_state(bytes);
+    }
+    if (xhci.snapshot_state && xhci.restore_state) {
+      const bytes = xhci.snapshot_state();
+      xhci.restore_state(bytes);
     }
 
     expect(true).toBe(true);

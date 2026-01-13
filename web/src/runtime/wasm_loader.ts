@@ -307,6 +307,38 @@ export type UhciControllerBridgeHandle = {
     free(): void;
 };
 
+export type XhciControllerBridgeHandle = {
+    mmio_read(offset: number, size: number): number;
+    mmio_write(offset: number, size: number, value: number): void;
+    /**
+     * Optional stepping APIs.
+     *
+     * WASM builds may expose either a batched stepping API (`step_frames`) or an older API (`tick`)
+     * that advances the device by some notion of time/frames.
+     */
+    step_frames?: (frames: number) => void;
+    step_frame?: () => void;
+    tick?: (frames?: number) => void;
+    poll?: () => void;
+    irq_asserted(): boolean;
+    /**
+     * Update the device model's PCI command register (offset 0x04, low 16 bits).
+     *
+     * Optional for older WASM builds.
+     */
+    set_pci_command?(command: number): void;
+    save_state?(): Uint8Array;
+    load_state?(bytes: Uint8Array): void;
+    /**
+     * Deterministic USB device/controller snapshot bytes.
+     *
+     * Optional for older WASM builds.
+     */
+    snapshot_state?: () => Uint8Array;
+    restore_state?: (bytes: Uint8Array) => void;
+    free(): void;
+};
+
 export type GuestCpuBenchHarnessHandle = {
     payload_info(variant: string): unknown;
     run_payload_once(variant: string, itersPerRun: number): unknown;
@@ -616,38 +648,8 @@ export interface WasmApi {
      * - `new (guestBase, guestSize)` for newer builds (guestSize=0 means "use remainder of linear memory").
      */
     XhciControllerBridge?: {
-        new (guestBase: number): {
-            mmio_read(offset: number, size: number): number;
-            mmio_write(offset: number, size: number, value: number): void;
-            tick?(nowMs?: number): void;
-            poll?(): void;
-            irq_asserted(): boolean;
-            /**
-             * Update the device model's PCI command register (offset 0x04, low 16 bits).
-             *
-             * Optional for older WASM builds.
-             */
-            set_pci_command?(command: number): void;
-            free(): void;
-        };
-        new (guestBase: number, guestSize: number): {
-            mmio_read(offset: number, size: number): number;
-            mmio_write(offset: number, size: number, value: number): void;
-            tick?(nowMs?: number): void;
-            poll?(): void;
-            irq_asserted(): boolean;
-            /**
-             * Update the device model's PCI command register (offset 0x04, low 16 bits).
-             *
-             * Optional for older WASM builds.
-             */
-            set_pci_command?(command: number): void;
-            save_state?(): Uint8Array;
-            load_state?(bytes: Uint8Array): void;
-            snapshot_state?: () => Uint8Array;
-            restore_state?: (bytes: Uint8Array) => void;
-            free(): void;
-        };
+        new (guestBase: number): XhciControllerBridgeHandle;
+        new (guestBase: number, guestSize: number): XhciControllerBridgeHandle;
     };
 
     /**
