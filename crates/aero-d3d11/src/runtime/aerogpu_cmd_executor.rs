@@ -2754,6 +2754,11 @@ impl AerogpuD3d11Executor {
                             self.encoder_used_buffers.insert(buf.buffer);
                         }
                     }
+                    crate::BindingKind::UavBuffer { slot } => {
+                        if let Some(buf) = stage_bindings.uav_buffer(*slot) {
+                            self.encoder_used_buffers.insert(buf.buffer);
+                        }
+                    }
                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
                             self.encoder_used_buffers.insert(cb.buffer);
