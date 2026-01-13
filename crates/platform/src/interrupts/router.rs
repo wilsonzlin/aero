@@ -263,7 +263,6 @@ impl PlatformInterrupts {
         // observe the reset and invalidate their cached level.
         let gen = self.irq_line_generation.clone();
         gen.fetch_add(1, Ordering::SeqCst);
-
         let cpu_count = u8::try_from(self.lapics.len()).unwrap_or(u8::MAX).max(1);
         *self = Self::new_with_cpu_count(cpu_count);
         self.irq_line_generation = gen;
@@ -413,6 +412,21 @@ impl PlatformInterrupts {
 
     pub fn lapic_mmio_write_for_apic(&self, apic_id: u8, offset: u64, data: &[u8]) {
         let Some(lapic) = self.lapics.iter().find(|lapic| lapic.apic_id() == apic_id) else {
+            return;
+        };
+        lapic.mmio_write(offset, data);
+    }
+
+    pub fn lapic_mmio_read_for_cpu(&self, cpu: usize, offset: u64, data: &mut [u8]) {
+        let Some(lapic) = self.lapics.get(cpu) else {
+            data.fill(0);
+            return;
+        };
+        lapic.mmio_read(offset, data);
+    }
+
+    pub fn lapic_mmio_write_for_cpu(&self, cpu: usize, offset: u64, data: &[u8]) {
+        let Some(lapic) = self.lapics.get(cpu) else {
             return;
         };
         lapic.mmio_write(offset, data);
