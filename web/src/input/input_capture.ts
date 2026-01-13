@@ -87,6 +87,20 @@ export interface InputCaptureOptions {
    * How often to poll the Gamepad API (max: `flushHz`).
    */
   gamepadPollHz?: number;
+  /**
+   * If enabled, installs a best-effort touch → mouse fallback for environments
+   * where Pointer Lock is unavailable or impractical (mobile, embedded browsers,
+   * restrictive policies, etc).
+   *
+   * The fallback only applies while Pointer Lock is not active.
+   */
+  enableTouchFallback?: boolean;
+  /**
+   * If enabled, treat a touch contact as the left mouse button:
+   * - touchstart → left button down
+   * - touchend/touchcancel → left button up
+   */
+  touchTapToClick?: boolean;
 }
 
 export class InputCapture {
@@ -107,6 +121,8 @@ export class InputCapture {
   private readonly releaseChord?: PointerLockReleaseChord;
   private readonly logCaptureLatency: boolean;
   private readonly recycleBuffers: boolean;
+  private readonly enableTouchFallback: boolean;
+  private readonly touchTapToClick: boolean;
   private readonly onBeforeSendBatch?: InputBatchFlushHook;
   private readonly flushOpts: { recycle?: boolean; onBeforeSend?: InputBatchFlushHook };
   private readonly flushOptsNoRecycle: { recycle?: boolean; onBeforeSend?: InputBatchFlushHook };
@@ -147,6 +163,11 @@ export class InputCapture {
   private mouseFracY = 0;
   private wheelFrac = 0;
 
+  private touchActiveId: number | null = null;
+  private touchLastX = 0;
+  private touchLastY = 0;
+  private touchPressedLeft = false;
+
   private touchPrimaryPointerId: number | null = null;
   private touchStartX = 0;
   private touchStartY = 0;
@@ -172,6 +193,7 @@ export class InputCapture {
       // spurious pixel or wheel tick.
       this.resetAccumulatedMotion();
       this.cancelTouchCapture();
+      this.clearTouchState();
     }
 
     if (locked || this.hasFocus) {
@@ -180,6 +202,7 @@ export class InputCapture {
 
     const nowUs = toTimestampUs(performance.now());
     this.suppressedKeyUps.clear();
+    this.clearTouchState();
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, nowUs);
@@ -209,6 +232,7 @@ export class InputCapture {
     this.hasFocus = false;
     this.releaseKeyboardLock();
     this.pointerLock.exit();
+    this.clearTouchState();
     this.resetAccumulatedMotion();
     this.cancelTouchCapture();
     this.suppressedKeyUps.clear();
@@ -224,6 +248,7 @@ export class InputCapture {
     this.windowFocused = false;
     this.releaseKeyboardLock();
     this.pointerLock.exit();
+    this.clearTouchState();
     this.resetAccumulatedMotion();
     this.cancelTouchCapture();
     this.suppressedKeyUps.clear();
@@ -245,6 +270,7 @@ export class InputCapture {
 
     this.releaseKeyboardLock();
     this.pointerLock.exit();
+    this.clearTouchState();
     this.resetAccumulatedMotion();
     this.cancelTouchCapture();
     this.suppressedKeyUps.clear();
@@ -464,7 +490,139 @@ export class InputCapture {
     }
   };
 
+  private readonly handleTouchStart = (event: TouchEvent): void => {
+    if (!this.enableTouchFallback) {
+      return;
+    }
+    // Touch fallback is only active when pointer lock is *not* active.
+    if (this.pointerLock.isLocked) {
+      return;
+    }
+    if (!this.windowFocused || !this.pageVisible) {
+      return;
+    }
+
+    // Prevent page scroll/zoom while interacting with the VM canvas.
+    event.preventDefault();
+    event.stopPropagation();
+
+    this.canvas.focus();
+
+    // Only track a single primary touch; ignore additional touches but still
+    // preventDefault to avoid host-side gestures (scroll/zoom/back-swipe).
+    if (this.touchActiveId !== null) {
+      return;
+    }
+
+    const touch = touchListFirst(event.changedTouches);
+    if (!touch) {
+      return;
+    }
+
+    // Touch boundaries are a natural "capture session" boundary: drop any fractional remainder so
+    // it cannot leak into a later session and cause a spurious pixel or wheel tick.
+    this.resetAccumulatedMotion();
+
+    this.touchActiveId = touch.identifier;
+    this.touchLastX = touch.clientX;
+    this.touchLastY = touch.clientY;
+
+    if (this.touchTapToClick && (this.mouseButtons & 1) === 0) {
+      this.touchPressedLeft = true;
+      this.setMouseButtons(this.mouseButtons | 1, event.timeStamp);
+    }
+  };
+
+  private readonly handleTouchMove = (event: TouchEvent): void => {
+    if (!this.enableTouchFallback) {
+      return;
+    }
+    if (this.pointerLock.isLocked) {
+      return;
+    }
+    if (!this.windowFocused || !this.pageVisible) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const id = this.touchActiveId;
+    if (id === null) {
+      return;
+    }
+
+    const touch = touchListFind(event.changedTouches, id) ?? touchListFind(event.touches, id);
+    if (!touch) {
+      return;
+    }
+
+    const x = touch.clientX;
+    const y = touch.clientY;
+    const dxRaw = x - this.touchLastX;
+    const dyRaw = y - this.touchLastY;
+    this.touchLastX = x;
+    this.touchLastY = y;
+
+    this.mouseFracX += dxRaw * this.touchSensitivity;
+    this.mouseFracY += dyRaw * this.touchSensitivity;
+
+    const dx = this.takeWholeMouseDelta("x");
+    const dy = this.takeWholeMouseDelta("y");
+    if (dx === 0 && dy === 0) {
+      return;
+    }
+
+    const tsUs = toTimestampUs(event.timeStamp);
+    // PS/2 convention: positive Y is up (DOM is typically positive down).
+    this.queue.pushMouseMove(tsUs, dx, -dy);
+  };
+
+  private readonly handleTouchEnd = (event: TouchEvent): void => {
+    if (!this.enableTouchFallback) {
+      return;
+    }
+    if (this.pointerLock.isLocked) {
+      return;
+    }
+    if (!this.windowFocused || !this.pageVisible) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const id = this.touchActiveId;
+    if (id === null) {
+      return;
+    }
+
+    const ended = touchListFind(event.changedTouches, id);
+    const stillActive = ended ? false : touchListFind(event.touches, id) !== null;
+    if (stillActive) {
+      // Another finger may have ended; keep tracking the primary one.
+      return;
+    }
+
+    this.touchActiveId = null;
+    this.touchLastX = 0;
+    this.touchLastY = 0;
+    this.resetAccumulatedMotion();
+
+    if (this.touchPressedLeft) {
+      this.touchPressedLeft = false;
+      this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
+    }
+  };
+
+  private readonly handleTouchCancel = (event: TouchEvent): void => {
+    this.handleTouchEnd(event);
+  };
+
   private readonly handlePointerDown = (event: PointerEvent): void => {
+    if (!this.enableTouchFallback) {
+      return;
+    }
     if (this.pointerLock.isLocked) {
       return;
     }
@@ -498,8 +656,20 @@ export class InputCapture {
       // Pointer/touch sessions are a natural "capture boundary". Drop any fractional remainder so
       // it cannot leak into a later session and cause a spurious pixel or wheel tick.
       this.resetAccumulatedMotion();
+
+      if (this.touchTapToClick && (this.mouseButtons & 1) === 0) {
+        this.touchPressedLeft = true;
+        this.setMouseButtons(this.mouseButtons | 1, event.timeStamp);
+      }
     } else {
       this.touchHadMultiTouch = true;
+
+      // If we started a left-drag with a single finger but the gesture became multi-touch, release
+      // the emulated button so the guest doesn't observe an unintended drag while scrolling/zooming.
+      if (this.touchPressedLeft) {
+        this.touchPressedLeft = false;
+        this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
+      }
     }
 
     this.touchPointers.set(id, { x, y });
@@ -512,6 +682,9 @@ export class InputCapture {
   };
 
   private readonly handlePointerMove = (event: PointerEvent): void => {
+    if (!this.enableTouchFallback) {
+      return;
+    }
     if (this.pointerLock.isLocked) {
       return;
     }
@@ -619,6 +792,8 @@ export class InputCapture {
       onBeforeSendBatch,
       gamepadDeadzone = 0.12,
       gamepadPollHz,
+      enableTouchFallback = false,
+      touchTapToClick = true,
     }: InputCaptureOptions = {}
   ) {
     this.mouseSensitivity = mouseSensitivity;
@@ -628,6 +803,8 @@ export class InputCapture {
     this.logCaptureLatency = logCaptureLatency;
     this.recycleBuffers = recycleBuffers;
     this.enableKeyboardLock = enableKeyboardLock;
+    this.enableTouchFallback = enableTouchFallback;
+    this.touchTapToClick = touchTapToClick;
     this.onBeforeSendBatch = onBeforeSendBatch;
     this.flushOpts = { recycle: this.recycleBuffers, onBeforeSend: this.onBeforeSendBatch };
     this.flushOptsNoRecycle = { recycle: false, onBeforeSend: this.onBeforeSendBatch };
@@ -682,12 +859,20 @@ export class InputCapture {
     this.canvas.addEventListener('wheel', this.handleWheel, { passive: false });
     this.canvas.addEventListener('contextmenu', this.handleContextMenu);
 
-    // Touch fallback via Pointer Events (when available).
-    if (typeof window !== "undefined" && typeof (window as any).PointerEvent !== "undefined") {
-      this.canvas.addEventListener("pointerdown", this.handlePointerDown as EventListener, { passive: false });
-      this.canvas.addEventListener("pointermove", this.handlePointerMove as EventListener, { passive: false });
-      this.canvas.addEventListener("pointerup", this.handlePointerUp as EventListener, { passive: false });
-      this.canvas.addEventListener("pointercancel", this.handlePointerCancel as EventListener, { passive: false });
+    if (this.enableTouchFallback) {
+      // Touch fallback. Prefer Pointer Events when available (better multi-touch semantics), but
+      // fall back to Touch Events for older/restricted environments.
+      if (typeof window !== "undefined" && typeof (window as any).PointerEvent !== "undefined") {
+        this.canvas.addEventListener("pointerdown", this.handlePointerDown as EventListener, { passive: false });
+        this.canvas.addEventListener("pointermove", this.handlePointerMove as EventListener, { passive: false });
+        this.canvas.addEventListener("pointerup", this.handlePointerUp as EventListener, { passive: false });
+        this.canvas.addEventListener("pointercancel", this.handlePointerCancel as EventListener, { passive: false });
+      } else {
+        this.canvas.addEventListener("touchstart", this.handleTouchStart as EventListener, { passive: false });
+        this.canvas.addEventListener("touchmove", this.handleTouchMove as EventListener, { passive: false });
+        this.canvas.addEventListener("touchend", this.handleTouchEnd as EventListener, { passive: false });
+        this.canvas.addEventListener("touchcancel", this.handleTouchCancel as EventListener, { passive: false });
+      }
     }
 
     const intervalMs = Math.max(1, Math.round(1000 / this.flushHz));
@@ -703,6 +888,7 @@ export class InputCapture {
     this.hasFocus = false;
     this.releaseKeyboardLock();
     this.suppressedKeyUps.clear();
+    this.clearTouchState();
     this.resetAccumulatedMotion();
     this.cancelTouchCapture();
 
@@ -738,11 +924,18 @@ export class InputCapture {
     this.canvas.removeEventListener('wheel', this.handleWheel as EventListener);
     this.canvas.removeEventListener('contextmenu', this.handleContextMenu);
 
-    if (typeof window !== "undefined" && typeof (window as any).PointerEvent !== "undefined") {
-      this.canvas.removeEventListener("pointerdown", this.handlePointerDown as EventListener);
-      this.canvas.removeEventListener("pointermove", this.handlePointerMove as EventListener);
-      this.canvas.removeEventListener("pointerup", this.handlePointerUp as EventListener);
-      this.canvas.removeEventListener("pointercancel", this.handlePointerCancel as EventListener);
+    if (this.enableTouchFallback) {
+      if (typeof window !== "undefined" && typeof (window as any).PointerEvent !== "undefined") {
+        this.canvas.removeEventListener("pointerdown", this.handlePointerDown as EventListener);
+        this.canvas.removeEventListener("pointermove", this.handlePointerMove as EventListener);
+        this.canvas.removeEventListener("pointerup", this.handlePointerUp as EventListener);
+        this.canvas.removeEventListener("pointercancel", this.handlePointerCancel as EventListener);
+      } else {
+        this.canvas.removeEventListener("touchstart", this.handleTouchStart as EventListener);
+        this.canvas.removeEventListener("touchmove", this.handleTouchMove as EventListener);
+        this.canvas.removeEventListener("touchend", this.handleTouchEnd as EventListener);
+        this.canvas.removeEventListener("touchcancel", this.handleTouchCancel as EventListener);
+      }
     }
 
     this.pointerLock.dispose();
@@ -850,6 +1043,13 @@ export class InputCapture {
     this.wheelFrac = 0;
   }
 
+  private clearTouchState(): void {
+    this.touchActiveId = null;
+    this.touchLastX = 0;
+    this.touchLastY = 0;
+    this.touchPressedLeft = false;
+  }
+
   private cancelTouchCapture(): void {
     if (this.touchPointers.size === 0) {
       return;
@@ -861,6 +1061,12 @@ export class InputCapture {
   }
 
   private handlePointerEnd(event: PointerEvent, { allowTap }: { allowTap: boolean }): void {
+    // `allowTap` is kept for compatibility with the pointerup vs pointercancel split, but
+    // the click emulation itself is controlled by `touchTapToClick`.
+    void allowTap;
+    if (!this.enableTouchFallback) {
+      return;
+    }
     if (this.pointerLock.isLocked) {
       return;
     }
@@ -877,28 +1083,11 @@ export class InputCapture {
 
     this.touchPointers.delete(event.pointerId);
 
-    // Only treat the interaction as a tap if:
-    // - it was a single-touch session (no multi-touch),
-    // - it did not move beyond a small threshold, and
-    // - it ended on the primary pointer.
-    if (
-      allowTap &&
-      this.touchPointers.size === 0 &&
-      !this.touchHadMultiTouch &&
-      event.pointerId === this.touchPrimaryPointerId
-    ) {
-      // 6px movement, 250ms duration. (Small enough to allow a little finger jitter.)
-      const moved = this.touchMaxDistSq > 6 * 6;
-      const durationMs = event.timeStamp - this.touchStartTimeStamp;
-      const longPress = durationMs > 250;
-      if (!moved && !longPress) {
-        // Tap -> click. Use down at touch-start + up at touch-end for realistic timing.
-        this.setMouseButtons(this.mouseButtons | 1, this.touchStartTimeStamp);
+    if (this.touchPointers.size === 0) {
+      if (this.touchPressedLeft) {
+        this.touchPressedLeft = false;
         this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
       }
-    }
-
-    if (this.touchPointers.size === 0) {
       this.touchPrimaryPointerId = null;
       this.touchHadMultiTouch = false;
       this.touchMaxDistSq = 0;
@@ -1212,4 +1401,25 @@ function wheelEventToDeltaSteps(event: WheelEvent): number {
   }
   // DOM: deltaY > 0 is scroll down; PS/2: positive is wheel up.
   return -delta;
+}
+
+function touchListFirst(list: TouchList | null | undefined): Touch | null {
+  if (!list || list.length === 0) {
+    return null;
+  }
+  return list[0] ?? null;
+}
+
+function touchListFind(list: TouchList | null | undefined, id: number): Touch | null {
+  if (!list) {
+    return null;
+  }
+  // Use a simple loop to avoid allocations on the hot path.
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i];
+    if (t && t.identifier === id) {
+      return t;
+    }
+  }
+  return null;
 }

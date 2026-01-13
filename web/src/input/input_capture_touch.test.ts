@@ -36,7 +36,13 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
         postMessage: (msg: unknown) => posted.push(msg),
       };
 
-      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        enableTouchFallback: true,
+        // Keep this test focused on movement (no button emulation).
+        touchTapToClick: false,
+      });
 
       (capture as any).handlePointerDown({
         pointerId: 1,
@@ -97,7 +103,12 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
         postMessage: (msg: unknown) => posted.push(msg),
       };
 
-      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        enableTouchFallback: true,
+        touchTapToClick: true,
+      });
 
       (capture as any).handlePointerDown({
         pointerId: 1,
@@ -136,4 +147,3 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
     });
   });
 });
-

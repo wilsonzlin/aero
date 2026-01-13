@@ -1,0 +1,196 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { InputEventType } from "./event_queue";
+import { InputCapture } from "./input_capture";
+
+function withStubbedDocument<T>(run: (doc: any) => T): T {
+  const original = (globalThis as any).document;
+  const doc = {
+    pointerLockElement: null,
+    visibilityState: "visible",
+    hasFocus: () => true,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    exitPointerLock: () => {},
+  };
+  (globalThis as any).document = doc;
+  try {
+    return run(doc);
+  } finally {
+    (globalThis as any).document = original;
+  }
+}
+
+function touch(identifier: number, clientX: number, clientY: number): Touch {
+  return { identifier, clientX, clientY } as unknown as Touch;
+}
+
+describe("InputCapture touch fallback", () => {
+  it("converts touchmove delta into relative MouseMove events using fractional accumulation", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: vi.fn(),
+      } as unknown as HTMLCanvasElement;
+
+      const posted: any[] = [];
+      const ioWorker = {
+        postMessage: (msg: unknown) => posted.push(msg),
+      };
+
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        enableTouchFallback: true,
+        // Use a fractional sensitivity to ensure we reuse the existing remainder logic.
+        touchSensitivity: 0.5,
+        touchTapToClick: false,
+      });
+
+      // Touch begins at (0,0).
+      (capture as any).handleTouchStart({
+        timeStamp: 0,
+        touches: [touch(1, 0, 0)],
+        changedTouches: [touch(1, 0, 0)],
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as TouchEvent);
+
+      // Move by +1px: with sensitivity 0.5 this should not emit yet.
+      (capture as any).handleTouchMove({
+        timeStamp: 1,
+        touches: [touch(1, 1, 0)],
+        changedTouches: [touch(1, 1, 0)],
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as TouchEvent);
+      expect((capture as any).queue.size).toBe(0);
+
+      // Move by another +1px: total 1px, should emit one MouseMove.
+      (capture as any).handleTouchMove({
+        timeStamp: 2,
+        touches: [touch(1, 2, 0)],
+        changedTouches: [touch(1, 2, 0)],
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as TouchEvent);
+      expect((capture as any).queue.size).toBe(1);
+
+      capture.flushNow();
+
+      expect(posted).toHaveLength(1);
+      const msg = posted[0] as { buffer: ArrayBuffer };
+      const words = new Int32Array(msg.buffer);
+
+      expect(words[0]).toBe(1); // event count
+      expect(words[2]).toBe(InputEventType.MouseMove);
+      expect(words[4]).toBe(1); // dx
+      expect(words[5]).toBe(0); // dy
+    });
+  });
+
+  it("emulates left click via touchTapToClick (touchstart→down, touchend→up)", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: vi.fn(),
+      } as unknown as HTMLCanvasElement;
+
+      const posted: any[] = [];
+      const ioWorker = {
+        postMessage: (msg: unknown) => posted.push(msg),
+      };
+
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        enableTouchFallback: true,
+        touchTapToClick: true,
+      });
+
+      (capture as any).handleTouchStart({
+        timeStamp: 0,
+        touches: [touch(1, 10, 10)],
+        changedTouches: [touch(1, 10, 10)],
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as TouchEvent);
+      expect((capture as any).queue.size).toBe(1);
+
+      (capture as any).handleTouchEnd({
+        timeStamp: 1,
+        // No remaining touches (finger lifted).
+        touches: [],
+        changedTouches: [touch(1, 10, 10)],
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as TouchEvent);
+      expect((capture as any).queue.size).toBe(2);
+
+      capture.flushNow();
+
+      expect(posted).toHaveLength(1);
+      const msg = posted[0] as { buffer: ArrayBuffer };
+      const words = new Int32Array(msg.buffer);
+
+      expect(words[0]).toBe(2); // event count
+      // First: left down.
+      expect(words[2]).toBe(InputEventType.MouseButtons);
+      expect(words[4]).toBe(1);
+      // Second: left up.
+      expect(words[6]).toBe(InputEventType.MouseButtons);
+      expect(words[8]).toBe(0);
+    });
+  });
+
+  it("releases touch-emulated buttons on blur so the guest cannot get stuck", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: vi.fn(),
+      } as unknown as HTMLCanvasElement;
+
+      const posted: any[] = [];
+      const ioWorker = {
+        postMessage: (msg: unknown) => posted.push(msg),
+      };
+
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        enableTouchFallback: true,
+        touchTapToClick: true,
+      });
+
+      (capture as any).handleTouchStart({
+        timeStamp: 0,
+        touches: [touch(1, 0, 0)],
+        changedTouches: [touch(1, 0, 0)],
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as TouchEvent);
+      expect((capture as any).mouseButtons).toBe(1);
+
+      // Blur should force a full release and flush immediately.
+      (capture as any).handleBlur();
+
+      expect((capture as any).mouseButtons).toBe(0);
+      expect(posted).toHaveLength(1);
+      const msg = posted[0] as { buffer: ArrayBuffer };
+      const words = new Int32Array(msg.buffer);
+
+      // Should contain both the original press and the forced release.
+      expect(words[0]).toBe(2);
+      expect(words[2]).toBe(InputEventType.MouseButtons);
+      expect(words[4]).toBe(1);
+      expect(words[6]).toBe(InputEventType.MouseButtons);
+      expect(words[8]).toBe(0);
+    });
+  });
+});
