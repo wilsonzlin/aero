@@ -45,6 +45,7 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 - [ ] Device does **not** require `VIRTIO_F_RING_EVENT_IDX` / packed rings.
   - The Win7 driver will **not negotiate** `EVENT_IDX` or `PACKED`.
   - Contract v1 device models should avoid offering them (they are unused here).
+  - `EVENT_IDX` is **bit 29**; `PACKED` is **bit 34**.
 
 ## Virtqueues (must exist and match exact sizes)
 
@@ -102,7 +103,9 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
 - [ ] Device writes an 8-byte `virtio_snd_pcm_status` response:
   - `u32 status`
   - `u32 latency_bytes`
-- [ ] Used length must include at least the 8-byte status (otherwise the driver treats it as `BAD_MSG`).
+- [ ] Used length (`used.len`) must include at least the 8-byte status (otherwise the driver treats it as `BAD_MSG`).
+  - For TX, `used.len` should be exactly `8` (only the status buffer is device-writable).
+  - `BAD_MSG` / `NOT_SUPP` completions are treated as **fatal** by the Win7 driver (streaming stops).
 
 ### RX (queue 3, stream 1) — mono S16_LE
 
@@ -113,7 +116,9 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
 - [ ] Device writes an 8-byte `virtio_snd_pcm_status` response:
   - `u32 status`
   - `u32 latency_bytes`
-- [ ] Used length must include at least the 8-byte status (otherwise the driver treats it as `BAD_MSG`).
+- [ ] Used length (`used.len`) must include at least the 8-byte status (otherwise the driver treats it as `BAD_MSG`).
+  - For RX, `used.len` should be `8 + <payload_bytes_written>`.
+  - `BAD_MSG` / `NOT_SUPP` completions are treated as **fatal** by the Win7 driver (capture stops).
 
 ### Status codes
 
