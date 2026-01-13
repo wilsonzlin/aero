@@ -87,7 +87,7 @@ Run this inside the guest as soon as possible after reproducing:
 aerogpu_dbgctl --dump-last-cmd --out C:\cmd.bin
 ```
 
-Then copy `C:\cmd.bin` (and `C:\cmd.bin.alloc_table.bin` if present) to the host machine (shared folder, ISO, whatever is convenient).
+Then copy `C:\cmd.bin` and any sibling outputs that dbgctl produced (for example `C:\cmd.bin.alloc_table.bin` and `C:\cmd.bin.txt`) to the host machine (shared folder, ISO, whatever is convenient).
 
 Notes:
 
