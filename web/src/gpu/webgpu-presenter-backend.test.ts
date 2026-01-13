@@ -64,5 +64,23 @@ describe("WebGpuPresenterBackend uncaptured error handler", () => {
     device.emit("uncapturederror", { error: { name: "GPUValidationError", message: "oops" } });
     expect(onError).toHaveBeenCalledTimes(0);
   });
-});
 
+  it("bounds its per-init dedupe cache size", () => {
+    const backend = new WebGpuPresenterBackend();
+    const device = new FakeGpuDevice();
+
+    const onError = vi.fn();
+    (backend as any).opts = { onError };
+    (backend as any).destroyed = false;
+    (backend as any).device = device;
+
+    (backend as any).installUncapturedErrorHandler(device);
+
+    for (let i = 0; i < 200; i += 1) {
+      device.emit("uncapturederror", { error: { name: "GPUValidationError", message: `msg-${i}` } });
+    }
+
+    expect(onError).toHaveBeenCalledTimes(200);
+    expect(((backend as any).seenUncapturedErrorKeys as Set<string>).size).toBeLessThanOrEqual(128);
+  });
+});
