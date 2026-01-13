@@ -74,6 +74,18 @@ export type AudioOutputMetrics = {
   overrunCount: number;
   sampleRate: number;
   state: AudioOutputState;
+  /**
+   * The `AudioContext.baseLatency` value (seconds) when available.
+   *
+   * This is a best-effort introspection field; some browsers do not expose it.
+   */
+  baseLatencySeconds?: number;
+  /**
+   * The `AudioContext.outputLatency` value (seconds) when available.
+   *
+   * This is a best-effort introspection field; some browsers do not expose it.
+   */
+  outputLatencySeconds?: number;
 };
 
 export type EnabledAudioOutput = {
@@ -128,6 +140,10 @@ function clampFrames(value: number, min: number, max: number): number {
   const hi = Math.floor(Number.isFinite(max) ? max : 0);
   const clampedHi = Math.max(lo, hi);
   return Math.min(Math.max(v, lo), clampedHi);
+}
+
+function finiteNonNegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 export function getDefaultRingBufferFrames(sampleRate: number): number {
@@ -629,6 +645,10 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       return getRingBufferOverrunCount(ringBuffer);
     },
     getMetrics() {
+      const baseLatencySeconds = finiteNonNegative(context.baseLatency);
+      const outputLatencySeconds = finiteNonNegative(
+        (context as AudioContext & { outputLatency?: unknown }).outputLatency,
+      );
       return {
         bufferLevelFrames: getRingBufferLevelFrames(ringBuffer),
         capacityFrames: ringBuffer.capacityFrames,
@@ -636,6 +656,8 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
         overrunCount: getRingBufferOverrunCount(ringBuffer),
         sampleRate: context.sampleRate,
         state: context.state,
+        ...(baseLatencySeconds === undefined ? {} : { baseLatencySeconds }),
+        ...(outputLatencySeconds === undefined ? {} : { outputLatencySeconds }),
       };
     },
   };
