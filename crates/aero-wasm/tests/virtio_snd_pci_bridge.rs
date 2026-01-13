@@ -1,13 +1,14 @@
 #![cfg(target_arch = "wasm32")]
 
+use aero_io_snapshot::io::audio::state::{AudioWorkletRingState, VirtioSndPciState};
+use aero_io_snapshot::io::state::IoSnapshot as _;
+use aero_platform::audio::worklet_bridge::WorkletBridge;
 use aero_virtio::devices::snd::{VIRTIO_SND_R_PCM_INFO, VIRTIO_SND_S_OK};
 use aero_virtio::pci::{
     VIRTIO_PCI_LEGACY_ISR_QUEUE, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
     VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
-use aero_io_snapshot::io::audio::state::AudioWorkletRingState;
-use aero_platform::audio::worklet_bridge::WorkletBridge;
 use aero_wasm::VirtioSndPciBridge;
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -280,4 +281,146 @@ fn virtio_snd_pci_bridge_snapshot_roundtrip_is_deterministic() {
         snap1, snap2,
         "save_state -> load_state -> save_state must be stable"
     );
+}
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_snapshot_roundtrip_restores_sample_rates_and_worklet_ring_state_when_attached()
+ {
+    let capacity_frames = 256;
+    let channel_count = 2;
+
+    let (guest_base1, guest_size1) = common::alloc_guest_region_bytes(0x4000);
+    let mut bridge1 =
+        VirtioSndPciBridge::new(guest_base1, guest_size1, None).expect("VirtioSndPciBridge::new");
+
+    bridge1
+        .set_host_sample_rate_hz(96_000)
+        .expect("set_host_sample_rate_hz");
+    bridge1
+        .set_capture_sample_rate_hz(44_100)
+        .expect("set_capture_sample_rate_hz");
+
+    let ring1 = WorkletBridge::new(capacity_frames, channel_count).expect("WorkletBridge::new");
+    let sab1 = ring1.shared_buffer();
+    bridge1
+        .attach_audio_ring(sab1.clone(), capacity_frames, channel_count)
+        .expect("attach_audio_ring");
+
+    let expected_ring_state = AudioWorkletRingState {
+        capacity_frames,
+        read_pos: 7,
+        write_pos: 42,
+    };
+    ring1.restore_state(&expected_ring_state);
+    assert_eq!(bridge1.buffer_level_frames(), 35);
+
+    let snap1 = bridge1.save_state();
+
+    // Restore into a fresh bridge with a ring already attached; ring state should be applied
+    // immediately during `load_state`.
+    let (guest_base2, guest_size2) = common::alloc_guest_region_bytes(0x4000);
+    let mut bridge2 =
+        VirtioSndPciBridge::new(guest_base2, guest_size2, None).expect("VirtioSndPciBridge::new");
+    let ring2 = WorkletBridge::new(capacity_frames, channel_count).expect("WorkletBridge::new");
+    let sab2 = ring2.shared_buffer();
+    bridge2
+        .attach_audio_ring(sab2, capacity_frames, channel_count)
+        .expect("attach_audio_ring");
+
+    bridge2.load_state(&snap1).expect("load_state");
+
+    assert_eq!(ring2.snapshot_state(), expected_ring_state);
+    assert_eq!(bridge2.buffer_level_frames(), 35);
+
+    let snap2 = bridge2.save_state();
+    let mut decoded = VirtioSndPciState::default();
+    decoded.load_state(&snap2).expect("decode snapshot");
+    assert_eq!(decoded.snd.host_sample_rate_hz, 96_000);
+    assert_eq!(decoded.snd.capture_sample_rate_hz, 44_100);
+    assert_eq!(decoded.worklet_ring, expected_ring_state);
+}
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_deferred_worklet_ring_restore_is_applied_on_attach_and_handles_capacity_mismatch()
+ {
+    let capacity_frames = 8;
+    let channel_count = 2;
+
+    // Build a snapshot with an attached worklet ring in a non-trivial state.
+    let (guest_base1, guest_size1) = common::alloc_guest_region_bytes(0x4000);
+    let mut bridge1 =
+        VirtioSndPciBridge::new(guest_base1, guest_size1, None).expect("VirtioSndPciBridge::new");
+
+    let ring = WorkletBridge::new(capacity_frames, channel_count).expect("WorkletBridge::new");
+    let sab = ring.shared_buffer();
+    bridge1
+        .attach_audio_ring(sab.clone(), capacity_frames, channel_count)
+        .expect("attach_audio_ring");
+
+    let expected = AudioWorkletRingState {
+        capacity_frames,
+        read_pos: 2,
+        write_pos: 6,
+    };
+    ring.restore_state(&expected);
+
+    let snap = bridge1.save_state();
+
+    // Restore into a bridge with *no* ring attached; ring state should be deferred until the host
+    // attaches the ring.
+    let (guest_base2, guest_size2) = common::alloc_guest_region_bytes(0x4000);
+    let mut bridge2 =
+        VirtioSndPciBridge::new(guest_base2, guest_size2, None).expect("VirtioSndPciBridge::new");
+    bridge2.load_state(&snap).expect("load_state");
+
+    // Corrupt the ring indices so we can observe them being restored on attach.
+    ring.restore_state(&AudioWorkletRingState {
+        capacity_frames,
+        read_pos: 123,
+        write_pos: 125,
+    });
+    assert_ne!(ring.snapshot_state(), expected);
+
+    bridge2
+        .attach_audio_ring(sab.clone(), capacity_frames, channel_count)
+        .expect("attach_audio_ring");
+    assert_eq!(ring.snapshot_state(), expected);
+    assert_eq!(bridge2.buffer_level_frames(), 4);
+
+    // ---- Capacity mismatch path ----
+    // Restore a snapshot whose worklet_ring.capacity_frames differs from the attached ring. The
+    // bridge should clear the snapshot's capacity field before calling `WorkletBridge::restore_state`
+    // so indices are clamped against the attached ring capacity (best-effort restore).
+    let mismatch_ring_state = AudioWorkletRingState {
+        capacity_frames: 16,
+        read_pos: 0,
+        write_pos: 20,
+    };
+
+    let mut mismatch_snapshot = VirtioSndPciState::default();
+    mismatch_snapshot
+        .load_state(&bridge2.save_state())
+        .expect("decode snapshot");
+    mismatch_snapshot.worklet_ring = mismatch_ring_state.clone();
+    let mismatch_bytes = mismatch_snapshot.save_state();
+
+    let (guest_base3, guest_size3) = common::alloc_guest_region_bytes(0x4000);
+    let mut bridge3 =
+        VirtioSndPciBridge::new(guest_base3, guest_size3, None).expect("VirtioSndPciBridge::new");
+    bridge3
+        .load_state(&mismatch_bytes)
+        .expect("load_state (mismatch)");
+
+    let larger_capacity = 32;
+    let ring3 = WorkletBridge::new(larger_capacity, channel_count).expect("WorkletBridge::new");
+    let sab3 = ring3.shared_buffer();
+    bridge3
+        .attach_audio_ring(sab3, larger_capacity, channel_count)
+        .expect("attach_audio_ring");
+
+    let got = ring3.snapshot_state();
+    assert_eq!(got.capacity_frames, larger_capacity);
+    assert_eq!(got.read_pos, 0);
+    assert_eq!(got.write_pos, 20);
+    assert_eq!(bridge3.buffer_level_frames(), 20);
 }
