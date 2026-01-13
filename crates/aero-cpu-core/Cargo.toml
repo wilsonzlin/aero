@@ -35,3 +35,7 @@ required-features = ["qemu-diff"]
 name = "emulator_critical"
 harness = false
 required-features = ["legacy-interp"]
+
+[[bench]]
+name = "paging_bus_bulk"
+harness = false
