@@ -476,6 +476,7 @@ mod tests {
     use super::*;
     use crate::io::net::L2TunnelBackend;
     use crate::io::net::L2TunnelRingBackend;
+    use crate::io::net::trace::{NetTraceConfig, NetTracer, VirtioNetDeviceTraceExt};
     use crate::io::virtio::vio_core::{VRING_AVAIL_F_NO_INTERRUPT, VRING_DESC_F_NEXT};
     use aero_ipc::ring::RingBuffer;
     use memory::DenseMemory;
@@ -2432,5 +2433,332 @@ mod tests {
         assert!(!irq);
         assert_eq!(dev.take_isr(), 0x0);
         assert_eq!(mem.read_u16_le(used + 2).unwrap(), 0);
+    }
+
+    #[test]
+    fn rx_injection_accepts_max_frame_len() {
+        let mut mem = DenseMemory::new(0x10_000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let header_addr = 0x400;
+        let payload_addr = 0x500;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: payload_addr,
+                len: 2048,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        let frame = vec![0x5au8; MAX_FRAME_LEN];
+        let irq = dev.inject_rx_frame(&mut mem, &frame).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 1);
+        assert_eq!(
+            mem.read_u32_le(used + 8).unwrap(),
+            (VirtioNetHeader::SIZE + frame.len()) as u32
+        );
+
+        let mut payload = vec![0u8; frame.len()];
+        mem.read_into(payload_addr, &mut payload).unwrap();
+        assert_eq!(payload, frame);
+    }
+
+    #[test]
+    fn rx_drops_undersized_injected_frames_without_consuming_buffers() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let header_addr = 0x400;
+        let payload_addr = 0x500;
+
+        mem.write_from(header_addr, &[0xccu8; VirtioNetHeader::SIZE])
+            .unwrap();
+        mem.write_from(payload_addr, &[0xddu8; 64]).unwrap();
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: payload_addr,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        let undersized_frame = vec![0x55u8; MIN_FRAME_LEN - 1];
+        let irq = dev.inject_rx_frame(&mut mem, &undersized_frame).unwrap();
+        assert!(!irq);
+        assert_eq!(dev.take_isr(), 0x0);
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 0);
+
+        let mut hdr_bytes = [0u8; VirtioNetHeader::SIZE];
+        mem.read_into(header_addr, &mut hdr_bytes).unwrap();
+        assert_eq!(hdr_bytes, [0xccu8; VirtioNetHeader::SIZE]);
+
+        let mut payload = vec![0u8; 64];
+        mem.read_into(payload_addr, &mut payload).unwrap();
+        assert_eq!(payload, vec![0xddu8; 64]);
+
+        let frame = vec![0x66u8; MIN_FRAME_LEN];
+        let irq = dev.inject_rx_frame(&mut mem, &frame).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 1);
+
+        let mut payload2 = vec![0u8; frame.len()];
+        mem.read_into(payload_addr, &mut payload2).unwrap();
+        assert_eq!(payload2, frame);
+    }
+
+    #[test]
+    fn pending_rx_queue_is_capped_and_drops_oldest() {
+        let rx_vq = VirtQueue::new(8, 0, 0, 0);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        let extra = 10usize;
+        for idx in 0..(MAX_PENDING_RX_FRAMES + extra) {
+            let mut frame = vec![0u8; MIN_FRAME_LEN];
+            frame[0] = (idx & 0xff) as u8;
+            frame[1] = ((idx >> 8) & 0xff) as u8;
+            dev.enqueue_rx_frame(frame);
+        }
+
+        assert_eq!(dev.pending_rx.len(), MAX_PENDING_RX_FRAMES);
+
+        let front = dev.pending_rx.front().unwrap();
+        let back = dev.pending_rx.back().unwrap();
+        let front_idx = u16::from_le_bytes([front[0], front[1]]) as usize;
+        let back_idx = u16::from_le_bytes([back[0], back[1]]) as usize;
+        assert_eq!(front_idx, extra);
+        assert_eq!(back_idx, MAX_PENDING_RX_FRAMES + extra - 1);
+
+        // Invalid frames are rejected without affecting queue size/order.
+        dev.enqueue_rx_frame(vec![0x99u8; MIN_FRAME_LEN - 1]);
+        dev.enqueue_rx_frame(vec![0x99u8; MAX_FRAME_LEN + 1]);
+        assert_eq!(dev.pending_rx.len(), MAX_PENDING_RX_FRAMES);
+        let front_idx2 = {
+            let f = dev.pending_rx.front().unwrap();
+            u16::from_le_bytes([f[0], f[1]]) as usize
+        };
+        assert_eq!(front_idx2, extra);
+    }
+
+    #[test]
+    fn tx_completes_used_ring_even_if_descriptor_marked_write() {
+        let mut mem = DenseMemory::new(0x4000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let header_addr = 0x110;
+        let payload_addr = 0x200;
+
+        mem.write_from(header_addr, &VirtioNetHeader::default().to_bytes())
+            .unwrap();
+        mem.write_from(payload_addr, &[0xaau8; MIN_FRAME_LEN])
+            .unwrap();
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: payload_addr,
+                len: MIN_FRAME_LEN as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, 0, 0, 0);
+        let tx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        let mut backend = TestBackend::default();
+        let irq = dev.process_tx(&mut mem, &mut backend).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+        assert!(backend.frames.is_empty());
+
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 1);
+        assert_eq!(mem.read_u32_le(used + 4).unwrap(), 0);
+        assert_eq!(mem.read_u32_le(used + 8).unwrap(), 0);
+    }
+
+    #[test]
+    fn traced_inject_rx_frame_does_not_panic_for_valid_and_invalid_frames() {
+        let tracer = NetTracer::new(NetTraceConfig::default());
+        tracer.enable();
+
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let header_addr = 0x400;
+        let payload_addr = 0x500;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: payload_addr,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        let invalid = vec![0x11u8; MIN_FRAME_LEN - 1];
+        let irq = dev
+            .inject_rx_frame_traced(&tracer, &mut mem, &invalid)
+            .unwrap();
+        assert!(!irq);
+        assert_eq!(dev.take_isr(), 0x0);
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 0);
+
+        let valid = vec![0x22u8; MIN_FRAME_LEN];
+        let irq = dev
+            .inject_rx_frame_traced(&tracer, &mut mem, &valid)
+            .unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 1);
+
+        // Ensure the tracer can export a pcapng even with malformed/short frames.
+        let bytes = tracer.export_pcapng();
+        let mut cursor = 0usize;
+        let mut epb_count = 0usize;
+        while cursor < bytes.len() {
+            assert!(bytes.len() - cursor >= 12, "pcapng truncated");
+            let block_type = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+            let total_len =
+                u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
+            assert!(total_len >= 12, "pcapng invalid block length");
+            assert!(cursor + total_len <= bytes.len(), "pcapng truncated block");
+            if block_type == 0x0000_0006 {
+                epb_count += 1;
+            }
+            cursor += total_len;
+        }
+        assert_eq!(cursor, bytes.len(), "pcapng trailing bytes");
+        assert_eq!(epb_count, 2);
     }
 }
