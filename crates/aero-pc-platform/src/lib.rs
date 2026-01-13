@@ -20,6 +20,7 @@ use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::usb::uhci::UhciPciDevice;
+use aero_devices::usb::xhci::XhciPciDevice;
 use aero_devices::{hpet, i8042};
 use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::ata::AtaDrive;
@@ -99,6 +100,10 @@ pub struct PcPlatformConfig {
     pub enable_e1000: bool,
     pub mac_addr: Option<[u8; 6]>,
     pub enable_uhci: bool,
+    /// Enable an xHCI (USB 3.0) controller exposed as a PCI MMIO device.
+    ///
+    /// Disabled by default to avoid changing guest expectations for the canonical platform.
+    pub enable_xhci: bool,
     pub enable_virtio_blk: bool,
     /// Expose MSI-X in virtio PCI config space and route virtio interrupts as MSI.
     ///
@@ -121,6 +126,7 @@ impl Default for PcPlatformConfig {
             // USB is a core piece of the canonical PC platform; enable UHCI by default so guests
             // can discover a basic USB 1.1 controller without opting in to extra devices.
             enable_uhci: true,
+            enable_xhci: false,
             enable_virtio_blk: false,
             enable_virtio_msix: false,
         }
@@ -401,6 +407,38 @@ impl PciDevice for UhciPciConfigDevice {
         //
         // This ensures guest writes to writable config registers (e.g. MSI, interrupt line, BAR
         // probe state) do not persist across a platform reset.
+        *self = Self::new();
+    }
+}
+
+struct XhciPciConfigDevice {
+    config: aero_devices::pci::PciConfigSpace,
+}
+
+impl XhciPciConfigDevice {
+    fn new() -> Self {
+        let mut config = aero_devices::pci::profile::USB_XHCI_QEMU.build_config_space();
+        config.set_bar_definition(
+            XhciPciDevice::MMIO_BAR_INDEX,
+            PciBarDefinition::Mmio32 {
+                size: XhciPciDevice::MMIO_BAR_SIZE,
+                prefetchable: false,
+            },
+        );
+        Self { config }
+    }
+}
+
+impl PciDevice for XhciPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.config
+    }
+
+    fn reset(&mut self) {
         *self = Self::new();
     }
 }
@@ -1001,6 +1039,7 @@ pub struct PcPlatform {
     ide_irq15_line: PlatformIrqLine,
     e1000: Option<Rc<RefCell<E1000Device>>>,
     pub uhci: Option<Rc<RefCell<UhciPciDevice>>>,
+    pub xhci: Option<Rc<RefCell<XhciPciDevice>>>,
     pub virtio_blk: Option<Rc<RefCell<VirtioPciDevice>>>,
 
     pci_intx_sources: Vec<PciIntxSource>,
@@ -1015,6 +1054,7 @@ pub struct PcPlatform {
     i8042: I8042Ports,
 
     uhci_ns_remainder: u64,
+    xhci_ns_remainder: u64,
 
     reset_events: Rc<RefCell<Vec<ResetEvent>>>,
 }
@@ -1688,6 +1728,49 @@ impl PcPlatform {
             None
         };
 
+        let xhci = if config.enable_xhci {
+            let profile = aero_devices::pci::profile::USB_XHCI_QEMU;
+            let bdf = profile.bdf;
+
+            let xhci = Rc::new(RefCell::new(XhciPciDevice::default()));
+
+            {
+                let xhci_for_intx = xhci.clone();
+                pci_intx_sources.push(PciIntxSource {
+                    bdf,
+                    pin: PciInterruptPin::IntA,
+                    query_level: Box::new(move |pc| {
+                        let command = {
+                            let mut pci_cfg = pc.pci_cfg.borrow_mut();
+                            pci_cfg
+                                .bus_mut()
+                                .device_config(bdf)
+                                .map(|cfg| cfg.command())
+                                .unwrap_or(0)
+                        };
+
+                        // Keep device-side gating consistent when the same device model is also
+                        // used outside the platform (e.g. in unit tests).
+                        let mut xhci = xhci_for_intx.borrow_mut();
+                        xhci.config_mut().set_command(command);
+
+                        xhci.irq_level()
+                    }),
+                });
+            }
+
+            let mut dev = XhciPciConfigDevice::new();
+            pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
+            pci_cfg
+                .borrow_mut()
+                .bus_mut()
+                .add_device(bdf, Box::new(dev));
+
+            Some(xhci)
+        } else {
+            None
+        };
+
         let ide = if config.enable_ide {
             let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
             // Attach a small in-memory disk by default so guests see an IDE HDD without any
@@ -2040,7 +2123,7 @@ impl PcPlatform {
             )
             .unwrap();
 
-        Self {
+        let mut pc = Self {
             chipset,
             io,
             memory,
@@ -2058,6 +2141,7 @@ impl PcPlatform {
             ide_irq15_line,
             e1000,
             uhci,
+            xhci,
             virtio_blk,
             pci_intx_sources,
             pci_allocator,
@@ -2069,8 +2153,23 @@ impl PcPlatform {
             hpet,
             i8042: i8042_ports,
             uhci_ns_remainder: 0,
+            xhci_ns_remainder: 0,
             reset_events,
+        };
+
+        if let Some(xhci) = pc.xhci.clone() {
+            let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
+            let bar = XhciPciDevice::MMIO_BAR_INDEX;
+            let handler = Rc::new(RefCell::new(PciConfigSyncedMmioBar::new(
+                pc.pci_cfg.clone(),
+                xhci,
+                bdf,
+                bar,
+            )));
+            pc.register_pci_mmio_bar_handler(bdf, bar, handler);
         }
+
+        pc
     }
 
     pub fn register_pci_intx_source<F>(&mut self, bdf: PciBdf, pin: PciInterruptPin, query_level: F)
@@ -2377,6 +2476,9 @@ impl PcPlatform {
         if let Some(uhci) = self.uhci.as_ref() {
             uhci.borrow_mut().reset();
         }
+        if let Some(xhci) = self.xhci.as_ref() {
+            xhci.borrow_mut().reset();
+        }
 
         // Reset optional PCI device models that are part of the platform and do not own external
         // state that needs to survive reset.
@@ -2404,6 +2506,7 @@ impl PcPlatform {
 
         // Reset host-side tick accumulators.
         self.uhci_ns_remainder = 0;
+        self.xhci_ns_remainder = 0;
 
         // Clear any reset requests that were pending before the reset was processed.
         self.reset_events.borrow_mut().clear();
@@ -2724,6 +2827,39 @@ impl PcPlatform {
                 ticks -= 1;
             }
         }
+
+        if let Some(xhci) = self.xhci.as_ref() {
+            const NS_PER_MS: u64 = 1_000_000;
+            let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
+            let (command, bar0_base) = {
+                let mut pci_cfg = self.pci_cfg.borrow_mut();
+                let cfg = pci_cfg.bus_mut().device_config(bdf);
+                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                let bar0_base = cfg
+                    .and_then(|cfg| cfg.bar_range(XhciPciDevice::MMIO_BAR_INDEX))
+                    .map(|range| range.base)
+                    .unwrap_or(0);
+                (command, bar0_base)
+            };
+
+            // Keep the xHCI model's view of PCI config state in sync so it can apply bus mastering
+            // / MMIO gating when used via `tick_1ms`.
+            let mut xhci = xhci.borrow_mut();
+            xhci.config_mut().set_command(command);
+            if bar0_base != 0 {
+                xhci.config_mut()
+                    .set_bar_base(XhciPciDevice::MMIO_BAR_INDEX, bar0_base);
+            }
+
+            self.xhci_ns_remainder = self.xhci_ns_remainder.saturating_add(delta_ns);
+            let mut ticks = self.xhci_ns_remainder / NS_PER_MS;
+            self.xhci_ns_remainder %= NS_PER_MS;
+
+            while ticks != 0 {
+                xhci.tick_1ms(&mut self.memory);
+                ticks -= 1;
+            }
+        }
     }
 
     pub fn take_reset_events(&mut self) -> Vec<ResetEvent> {
@@ -2779,6 +2915,7 @@ mod tests {
                 enable_e1000: false,
                 mac_addr: None,
                 enable_uhci: false,
+                enable_xhci: false,
                 enable_virtio_blk: false,
                 enable_virtio_msix: false,
             },

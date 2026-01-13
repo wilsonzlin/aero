@@ -1,8 +1,11 @@
-use aero_devices::pci::{PciBarDefinition, PciBdf, PciConfigSpace, PciDevice, PciInterruptPin};
-use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
-use aero_pc_platform::PcPlatform;
-use memory::MmioHandler;
+use aero_devices::pci::profile::USB_XHCI_QEMU;
+use aero_devices::pci::{
+    PciBarDefinition, PciBdf, PciConfigSpace, PciDevice, PciInterruptPin, PciResourceAllocatorConfig,
+    PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+};
+use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use memory::MemoryBus as _;
+use memory::MmioHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -52,6 +55,13 @@ fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: 
     pc.io
         .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
     pc.io.read(PCI_CFG_DATA_PORT, 4)
+}
+
+fn read_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u16 {
+    pc.io
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    let port = PCI_CFG_DATA_PORT + u16::from(offset & 3);
+    pc.io.read(port, 2) as u16
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
@@ -490,4 +500,56 @@ fn pc_platform_xhci_bar0_size_probe_reports_expected_mask() {
         0x10,
     );
     assert_eq!(got, 0xFFFF_C000);
+}
+
+#[test]
+fn pc_platform_exposes_xhci_as_pci_mmio_and_routes_mmio_through_bar0() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_xhci: true,
+            ..Default::default()
+        },
+    );
+
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    // PCI ID + class code should match the profile.
+    let id = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x00);
+    assert_eq!(id & 0xFFFF, u32::from(USB_XHCI_QEMU.vendor_id));
+    assert_eq!((id >> 16) & 0xFFFF, u32::from(USB_XHCI_QEMU.device_id));
+
+    let class_rev = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x08);
+    assert_eq!(class_rev >> 8, USB_XHCI_QEMU.class.as_u32());
+
+    // BIOS POST should allocate BAR0 and enable MEM decoding.
+    let command = read_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04);
+    assert_ne!(command & 0x2, 0, "COMMAND.MEM should be enabled by BIOS POST");
+
+    let bar0_raw = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
+    let bar0_base = u64::from(bar0_raw & 0xffff_fff0);
+    assert_ne!(bar0_base, 0, "BAR0 should be assigned by BIOS POST");
+
+    let alloc_cfg = PciResourceAllocatorConfig::default();
+    assert!(
+        (alloc_cfg.mmio_base..alloc_cfg.mmio_base + alloc_cfg.mmio_size).contains(&bar0_base),
+        "BAR0 base {bar0_base:#x} should land in the platform's PCI MMIO window"
+    );
+
+    // Smoke MMIO read/write through the decoded BAR.
+    let cap = pc.memory.read_u32(bar0_base);
+    assert_ne!(cap, 0xffff_ffff, "BAR0 should route to an MMIO handler");
+
+    // The xHCI capability registers encode CAPLENGTH in the low byte; the operational register
+    // block starts at BAR0 + CAPLENGTH. Read/then-write-back USBCMD as an MVP smoke test.
+    let caplength = (cap & 0xFF) as u64;
+    assert_ne!(caplength, 0, "CAPLENGTH should be non-zero");
+    let usbcmd_addr = bar0_base + caplength;
+    let before = pc.memory.read_u32(usbcmd_addr);
+    pc.memory.write_u32(usbcmd_addr, before);
+    let after = pc.memory.read_u32(usbcmd_addr);
+    assert_ne!(
+        after, 0xffff_ffff,
+        "MMIO writes should not deconfigure BAR routing"
+    );
 }

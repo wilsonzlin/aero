@@ -1,13 +1,17 @@
 //! xHCI (USB 3.x) controller exposed as a PCI function.
 //!
-//! This module currently focuses on PCI-level plumbing:
-//! - PCI config space identity
-//! - legacy INTx level signalling (`irq_level`)
-//! - MSI delivery when the guest enables the MSI capability
+//! This module is intentionally minimal: it provides a PCI wrapper plus a small BAR0 MMIO register
+//! backing store so platform integrations can expose an xHCI controller as a PCI MMIO device and
+//! validate enumeration/interrupt wiring.
 //!
-//! The actual xHCI register model is not implemented here; this wrapper provides just enough
-//! structure for platform integrations to wire up a native (host-backed) xHCI implementation and
-//! for unit/integration tests to validate interrupt delivery behaviour.
+//! Today it includes:
+//! - QEMU-compatible PCI identity (`profile::USB_XHCI_QEMU`)
+//! - BAR0 MMIO decoding via a simple read/write byte array (enough for smoke tests)
+//! - legacy INTx level signalling (`irq_level`) with COMMAND.INTX_DISABLE gating
+//! - optional single-vector MSI delivery when the guest enables MSI
+//! - snapshot/restore of PCI config + interrupt latch state
+//!
+//! A full xHCI register model is not implemented yet.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -19,10 +23,12 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 use aero_platform::interrupts::msi::MsiTrigger;
+use aero_platform::memory::MemoryBus;
+use memory::MmioHandler;
 
 use crate::irq::IrqLine;
 use crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
-use crate::pci::{profile, MsiCapability, PciConfigSpace, PciConfigSpaceState, PciDevice};
+use crate::pci::{profile, MsiCapability, PciBarKind, PciConfigSpace, PciConfigSpaceState, PciDevice};
 
 /// Minimal IRQ line implementation that can be shared with an underlying controller.
 #[derive(Clone, Default)]
@@ -46,37 +52,62 @@ impl IrqLine for AtomicIrqLine {
 ///
 /// The wrapper maintains:
 /// - PCI configuration space (including MSI capability state)
+/// - A minimal BAR0 MMIO register backing store
 /// - An internal interrupt condition that can be surfaced via:
 ///   - legacy INTx (`irq_level()`), or
 ///   - MSI (`service_interrupts()` when MSI is enabled and a target is configured).
 pub struct XhciPciDevice {
     config: PciConfigSpace,
+    mmio: Vec<u8>,
     irq: AtomicIrqLine,
     msi_target: Option<Box<dyn MsiTrigger>>,
     last_irq_level: bool,
 }
 
 impl XhciPciDevice {
-    /// Create a new xHCI PCI device wrapper with a default config-space identity.
+    /// xHCI MMIO BAR size (BAR0).
+    pub const MMIO_BAR_SIZE: u32 = 0x10000;
+    /// xHCI MMIO BAR index (BAR0).
+    pub const MMIO_BAR_INDEX: u8 = 0;
+
+    /// Create a new xHCI PCI device wrapper with a QEMU-compatible PCI identity.
     pub fn new() -> Self {
         let irq = AtomicIrqLine::default();
 
-        // Use a simple, deterministic profile for the PCI identity. The exact vendor/device ID is
-        // not critical for the interrupt-plumbing tests; platform integrations may override this
-        // as needed once a full xHCI model is wired up.
-        let mut config = PciConfigSpace::new(profile::PCI_VENDOR_ID_INTEL, 0x1e31);
-        // xHCI class code: Serial Bus / USB / xHCI (prog-if 0x30).
-        config.set_class_code(0x0c, 0x03, 0x30, 0x00);
+        // Start from the canonical QEMU-style xHCI PCI profile so BAR definitions and class code are
+        // consistent with the guest-visible config-space stub used by `PcPlatform`.
+        let mut config = profile::USB_XHCI_QEMU.build_config_space();
 
-        // Expose a single-vector MSI capability so guests can opt into message-signaled
-        // interrupts. MSI-X can be added later when a full xHCI implementation is available.
+        // Expose a single-vector MSI capability so guests can opt into message-signaled interrupts.
+        // MSI-X can be added later when a full xHCI implementation is available.
         config.add_capability(Box::new(MsiCapability::new()));
 
-        Self {
+        let mut dev = Self {
             config,
+            mmio: vec![0; Self::MMIO_BAR_SIZE as usize],
             irq,
             msi_target: None,
             last_irq_level: false,
+        };
+        dev.reset_mmio_image();
+        dev
+    }
+
+    fn reset_mmio_image(&mut self) {
+        self.mmio.fill(0);
+
+        // xHCI capability registers (spec 5.3.3).
+        //
+        // CAPLENGTH (offset 0x00, byte 0): length of the capability register block in bytes.
+        // HCIVERSION (offset 0x02, u16): xHCI version number.
+        //
+        // Initialize these to sane defaults so platform-level smoke tests can locate the
+        // operational register block at `BAR0 + CAPLENGTH`.
+        if self.mmio.len() >= 4 {
+            const CAPLENGTH: u8 = 0x40;
+            const HCIVERSION: u16 = 0x0100;
+            self.mmio[0] = CAPLENGTH;
+            self.mmio[2..4].copy_from_slice(&HCIVERSION.to_le_bytes());
         }
     }
 
@@ -87,7 +118,7 @@ impl XhciPciDevice {
     ///
     /// If no target is configured, the device falls back to legacy INTx signalling even when the
     /// guest enables MSI in PCI config space. This preserves compatibility with platforms that do
-    /// not support MSI delivery (e.g. the Web runtime).
+    /// not support MSI delivery.
     pub fn set_msi_target(&mut self, target: Option<Box<dyn MsiTrigger>>) {
         self.msi_target = target;
     }
@@ -151,6 +182,24 @@ impl XhciPciDevice {
         self.irq.set_level(false);
         self.service_interrupts();
     }
+
+    fn mmio_decode_enabled(&self) -> bool {
+        (self.config.command() & 0x2) != 0
+    }
+
+    fn bar0_range(&self) -> Option<(u64, u64)> {
+        let range = self.config.bar_range(Self::MMIO_BAR_INDEX)?;
+        if !matches!(range.kind, PciBarKind::Mmio32 | PciBarKind::Mmio64) {
+            return None;
+        }
+        Some((range.base, range.size))
+    }
+
+    /// Advance the device by 1ms. For now this is used primarily to service MSI edge delivery if
+    /// the interrupt condition is toggled by an underlying controller via the shared IRQ line.
+    pub fn tick_1ms(&mut self, _mem: &mut MemoryBus) {
+        self.service_interrupts();
+    }
 }
 
 impl Default for XhciPciDevice {
@@ -171,8 +220,79 @@ impl PciDevice for XhciPciDevice {
     fn reset(&mut self) {
         // Preserve BAR programming but disable decoding.
         self.config.set_command(0);
+
         self.irq.set_level(false);
         self.last_irq_level = false;
+        self.reset_mmio_image();
+    }
+}
+
+impl MmioHandler for XhciPciDevice {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
+        if !(1..=8).contains(&size) {
+            return all_ones(size);
+        }
+
+        // Apply COMMAND.MEM gating when the device is used standalone (outside a platform router).
+        if !self.mmio_decode_enabled() {
+            return all_ones(size);
+        }
+
+        // Treat BAR0 base == 0 as unmapped, matching PCI routing behavior.
+        if self.bar0_range().map(|(base, _)| base).unwrap_or(0) == 0 {
+            return all_ones(size);
+        }
+
+        let offset_usize = match usize::try_from(offset) {
+            Ok(v) => v,
+            Err(_) => return all_ones(size),
+        };
+        let end = match offset_usize.checked_add(size) {
+            Some(v) => v,
+            None => return all_ones(size),
+        };
+        if end > self.mmio.len() {
+            return all_ones(size);
+        }
+
+        let mut buf = [0u8; 8];
+        buf[..size].copy_from_slice(&self.mmio[offset_usize..end]);
+        u64::from_le_bytes(buf)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
+        if !(1..=8).contains(&size) {
+            return;
+        }
+
+        if !self.mmio_decode_enabled() {
+            return;
+        }
+
+        if self.bar0_range().map(|(base, _)| base).unwrap_or(0) == 0 {
+            return;
+        }
+
+        let offset_usize = match usize::try_from(offset) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let end = match offset_usize.checked_add(size) {
+            Some(v) => v,
+            None => return,
+        };
+        if end > self.mmio.len() {
+            return;
+        }
+
+        let bytes = value.to_le_bytes();
+        self.mmio[offset_usize..end].copy_from_slice(&bytes[..size]);
     }
 }
 
@@ -246,8 +366,22 @@ impl IoSnapshot for XhciPciDevice {
             self.last_irq_level = self.irq.level();
         }
 
+        // MMIO register model is currently minimal and not snapshotted; restore to a deterministic
+        // baseline.
+        self.reset_mmio_image();
+
         Ok(())
     }
+}
+
+fn all_ones(size: usize) -> u64 {
+    if size == 0 {
+        return 0;
+    }
+    if size >= 8 {
+        return u64::MAX;
+    }
+    (1u64 << (size * 8)) - 1
 }
 
 #[cfg(test)]
@@ -265,3 +399,4 @@ mod tests {
         );
     }
 }
+

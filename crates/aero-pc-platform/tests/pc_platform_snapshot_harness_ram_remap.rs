@@ -21,6 +21,7 @@ fn pc_platform_snapshot_harness_translates_dense_ram_offsets_when_remap_is_activ
             enable_e1000: false,
             mac_addr: None,
             enable_uhci: false,
+            enable_xhci: false,
             enable_virtio_blk: false,
             enable_virtio_msix: false,
         },

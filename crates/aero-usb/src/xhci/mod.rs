@@ -13,6 +13,9 @@
 //! - a DMA read on the first transition of `USBCMD.RUN` (to validate PCI BME gating in the wrapper)
 //! - a level-triggered `irq_level()` surface (to validate PCI INTx disable gating)
 //!
+//! Full xHCI semantics (doorbells, command/event rings, device contexts, interrupters, etc) remain
+//! future work.
+//!
 //! In addition, `transfer` provides a small, deterministic transfer-ring executor that can process
 //! Normal TRBs for non-control endpoints (sufficient for HID interrupt IN/OUT).
 
@@ -79,13 +82,7 @@ impl XhciController {
     }
 
     /// Write to the controller's MMIO register space.
-    pub fn mmio_write(
-        &mut self,
-        mem: &mut dyn MemoryBus,
-        offset: u64,
-        size: usize,
-        value: u32,
-    ) {
+    pub fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
         let aligned = offset & !3;
         let shift = (offset & 3) * 8;
         let (mask, value_shifted) = match size {
