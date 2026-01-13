@@ -383,7 +383,10 @@ fn format_f32(v: f32) -> String {
     s
 }
 
-fn src_expr(src: &Src) -> Result<(String, ScalarTy), WgslError> {
+fn src_expr(
+    src: &Src,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
+) -> Result<(String, ScalarTy), WgslError> {
     let ty = reg_scalar_ty(src.reg.file).ok_or_else(|| err("unsupported source register file"))?;
     let mut expr = if src.reg.file == RegFile::Const {
         // Relative constant addressing (`cN[a0.x]`) is represented via `RegRef.relative`.
@@ -399,11 +402,20 @@ fn src_expr(src: &Src) -> Result<(String, ScalarTy), WgslError> {
                 SwizzleComponent::W => 'w',
             };
             // Clamp to the D3D9 constant register range to avoid WGSL OOB access.
-            let idx = format!(
+            let idx_expr = format!(
                 "u32(clamp(i32({}) + ({}.{comp}), 0, 255))",
                 src.reg.index, rel_reg
             );
-            format!("constants.c[CONST_BASE + {idx}]")
+            let mut expr = format!("constants.c[CONST_BASE + {idx_expr}]");
+            // `def c#` defines behave like constant-register writes that occur before shader
+            // execution. They must override the uniform constant buffer even for relative indexing.
+            //
+            // Model this by selecting the embedded value when the computed constant index matches
+            // a defined register.
+            for def_idx in f32_defs.keys() {
+                expr = format!("select({expr}, c{def_idx}, ({idx_expr} == {def_idx}u))");
+            }
+            expr
         } else {
             reg_var_name(&src.reg)?
         }
@@ -471,10 +483,10 @@ fn src_expr(src: &Src) -> Result<(String, ScalarTy), WgslError> {
     Ok((expr, ty))
 }
 
-fn cond_expr(cond: &Cond) -> Result<String, WgslError> {
+fn cond_expr(cond: &Cond, f32_defs: &BTreeMap<u32, [f32; 4]>) -> Result<String, WgslError> {
     match cond {
         Cond::NonZero { src } => {
-            let (expr, ty) = src_expr(src)?;
+            let (expr, ty) = src_expr(src, f32_defs)?;
             Ok(match ty {
                 ScalarTy::F32 => format!("({expr}.x != 0.0)"),
                 ScalarTy::I32 => format!("({expr}.x != 0)"),
@@ -482,8 +494,8 @@ fn cond_expr(cond: &Cond) -> Result<String, WgslError> {
             })
         }
         Cond::Compare { op, src0, src1 } => {
-            let (a, aty) = src_expr(src0)?;
-            let (b, bty) = src_expr(src1)?;
+            let (a, aty) = src_expr(src0, f32_defs)?;
+            let (b, bty) = src_expr(src1, f32_defs)?;
             if aty != bty {
                 return Err(err("comparison between mismatched types"));
             }
@@ -537,14 +549,14 @@ fn apply_float_result_modifiers(expr: String, mods: &InstModifiers) -> Result<St
     Ok(out)
 }
 
-fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
+fn emit_op_line(op: &IrOp, f32_defs: &BTreeMap<u32, [f32; 4]>) -> Result<String, WgslError> {
     match op {
         IrOp::Mov {
             dst,
             src,
             modifiers,
         } => {
-            let (src_e, src_ty) = src_expr(src)?;
+            let (src_e, src_ty) = src_expr(src, f32_defs)?;
             let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
             if src_ty != dst_ty {
                 return Err(err("mov between mismatched types"));
@@ -565,7 +577,7 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             // Exact rounding behavior is GPU-dependent; WGSL `vec4<i32>(vec4<f32>)` conversion is a
             // deterministic truncation toward zero, which is a reasonable approximation for the
             // common case (non-negative indices).
-            let (src_e, src_ty) = src_expr(src)?;
+            let (src_e, src_ty) = src_expr(src, f32_defs)?;
             if src_ty != ScalarTy::F32 {
                 return Err(err("mova source must be float"));
             }
@@ -581,19 +593,19 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             src0,
             src1,
             modifiers,
-        } => emit_float_binop(dst, src0, src1, modifiers, "+"),
+        } => emit_float_binop(dst, src0, src1, modifiers, f32_defs, "+"),
         IrOp::Sub {
             dst,
             src0,
             src1,
             modifiers,
-        } => emit_float_binop(dst, src0, src1, modifiers, "-"),
+        } => emit_float_binop(dst, src0, src1, modifiers, f32_defs, "-"),
         IrOp::Mul {
             dst,
             src0,
             src1,
             modifiers,
-        } => emit_float_binop(dst, src0, src1, modifiers, "*"),
+        } => emit_float_binop(dst, src0, src1, modifiers, f32_defs, "*"),
         IrOp::Mad {
             dst,
             src0,
@@ -601,9 +613,9 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             src2,
             modifiers,
         } => {
-            let (a, aty) = src_expr(src0)?;
-            let (b, bty) = src_expr(src1)?;
-            let (c, cty) = src_expr(src2)?;
+            let (a, aty) = src_expr(src0, f32_defs)?;
+            let (b, bty) = src_expr(src1, f32_defs)?;
+            let (c, cty) = src_expr(src2, f32_defs)?;
             if aty != ScalarTy::F32 || bty != ScalarTy::F32 || cty != ScalarTy::F32 {
                 return Err(err("mad only supports float sources in WGSL lowering"));
             }
@@ -619,19 +631,19 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             src0,
             src1,
             modifiers,
-        } => emit_float_func2(dst, src0, src1, modifiers, "min"),
+        } => emit_float_func2(dst, src0, src1, modifiers, f32_defs, "min"),
         IrOp::Max {
             dst,
             src0,
             src1,
             modifiers,
-        } => emit_float_func2(dst, src0, src1, modifiers, "max"),
+        } => emit_float_func2(dst, src0, src1, modifiers, f32_defs, "max"),
         IrOp::Rcp {
             dst,
             src,
             modifiers,
         } => {
-            let (s, ty) = src_expr(src)?;
+            let (s, ty) = src_expr(src, f32_defs)?;
             if ty != ScalarTy::F32 {
                 return Err(err("rcp only supports float sources in WGSL lowering"));
             }
@@ -647,7 +659,7 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             src,
             modifiers,
         } => {
-            let (s, ty) = src_expr(src)?;
+            let (s, ty) = src_expr(src, f32_defs)?;
             if ty != ScalarTy::F32 {
                 return Err(err("rsq only supports float sources in WGSL lowering"));
             }
@@ -663,7 +675,7 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             src,
             modifiers,
         } => {
-            let (s, ty) = src_expr(src)?;
+            let (s, ty) = src_expr(src, f32_defs)?;
             if ty != ScalarTy::F32 {
                 return Err(err("frc only supports float sources in WGSL lowering"));
             }
@@ -674,16 +686,16 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             let e = apply_float_result_modifiers(format!("fract({s})"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Exp { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, "exp2"),
-        IrOp::Log { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, "log2"),
+        IrOp::Exp { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, f32_defs, "exp2"),
+        IrOp::Log { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, f32_defs, "log2"),
         IrOp::Dp3 {
             dst,
             src0,
             src1,
             modifiers,
         } => {
-            let (a, aty) = src_expr(src0)?;
-            let (b, bty) = src_expr(src1)?;
+            let (a, aty) = src_expr(src0, f32_defs)?;
+            let (b, bty) = src_expr(src1, f32_defs)?;
             if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
                 return Err(err("dp3 only supports float sources in WGSL lowering"));
             }
@@ -701,8 +713,8 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             src1,
             modifiers,
         } => {
-            let (a, aty) = src_expr(src0)?;
-            let (b, bty) = src_expr(src1)?;
+            let (a, aty) = src_expr(src0, f32_defs)?;
+            let (b, bty) = src_expr(src1, f32_defs)?;
             if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
                 return Err(err("dp4 only supports float sources in WGSL lowering"));
             }
@@ -721,8 +733,8 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             src1,
             modifiers,
         } => {
-            let (a, aty) = src_expr(src0)?;
-            let (b, bty) = src_expr(src1)?;
+            let (a, aty) = src_expr(src0, f32_defs)?;
+            let (b, bty) = src_expr(src1, f32_defs)?;
             if aty != bty {
                 return Err(err("comparison between mismatched types"));
             }
@@ -771,9 +783,9 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             src_lt,
             modifiers,
         } => {
-            let (cond_e, cond_ty) = src_expr(cond)?;
-            let (a, aty) = src_expr(src_ge)?;
-            let (b, bty) = src_expr(src_lt)?;
+            let (cond_e, cond_ty) = src_expr(cond, f32_defs)?;
+            let (a, aty) = src_expr(src_ge, f32_defs)?;
+            let (b, bty) = src_expr(src_lt, f32_defs)?;
             if cond_ty != ScalarTy::F32 || aty != ScalarTy::F32 || bty != ScalarTy::F32 {
                 return Err(err("select only supports float sources in WGSL lowering"));
             }
@@ -793,7 +805,7 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             src0,
             src1,
             modifiers,
-        } => emit_float_func2(dst, src0, src1, modifiers, "pow"),
+        } => emit_float_func2(dst, src0, src1, modifiers, f32_defs, "pow"),
         IrOp::TexSample { .. } => Err(err("texture sampling not supported in WGSL lowering")),
     }
 }
@@ -802,9 +814,10 @@ fn emit_float_func1(
     dst: &Dst,
     src: &Src,
     modifiers: &InstModifiers,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
     func: &str,
 ) -> Result<String, WgslError> {
-    let (s, ty) = src_expr(src)?;
+    let (s, ty) = src_expr(src, f32_defs)?;
     if ty != ScalarTy::F32 {
         return Err(err("float function uses non-float source"));
     }
@@ -821,10 +834,11 @@ fn emit_float_binop(
     src0: &Src,
     src1: &Src,
     modifiers: &InstModifiers,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
     op: &str,
 ) -> Result<String, WgslError> {
-    let (a, aty) = src_expr(src0)?;
-    let (b, bty) = src_expr(src1)?;
+    let (a, aty) = src_expr(src0, f32_defs)?;
+    let (b, bty) = src_expr(src1, f32_defs)?;
     if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
         return Err(err("float arithmetic uses non-float source"));
     }
@@ -841,10 +855,11 @@ fn emit_float_func2(
     src0: &Src,
     src1: &Src,
     modifiers: &InstModifiers,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
     func: &str,
 ) -> Result<String, WgslError> {
-    let (a, aty) = src_expr(src0)?;
-    let (b, bty) = src_expr(src1)?;
+    let (a, aty) = src_expr(src0, f32_defs)?;
+    let (b, bty) = src_expr(src1, f32_defs)?;
     if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
         return Err(err("float arithmetic uses non-float source"));
     }
@@ -870,26 +885,36 @@ fn emit_assign(dst: &Dst, value: String) -> Result<String, WgslError> {
     }
 }
 
-fn emit_block(wgsl: &mut String, block: &Block, indent: usize) -> Result<(), WgslError> {
+fn emit_block(
+    wgsl: &mut String,
+    block: &Block,
+    indent: usize,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
+) -> Result<(), WgslError> {
     for stmt in &block.stmts {
-        emit_stmt(wgsl, stmt, indent)?;
+        emit_stmt(wgsl, stmt, indent, f32_defs)?;
     }
     Ok(())
 }
 
-fn emit_stmt(wgsl: &mut String, stmt: &Stmt, indent: usize) -> Result<(), WgslError> {
+fn emit_stmt(
+    wgsl: &mut String,
+    stmt: &Stmt,
+    indent: usize,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
+) -> Result<(), WgslError> {
     let pad = "  ".repeat(indent);
     match stmt {
         Stmt::Op(op) => {
             if let Some(pred) = &op_modifiers(op).predicate {
                 let pred_cond = predicate_expr(pred)?;
                 let _ = writeln!(wgsl, "{pad}if ({pred_cond}) {{");
-                let line = emit_op_line(op)?;
+                let line = emit_op_line(op, f32_defs)?;
                 let inner_pad = "  ".repeat(indent + 1);
                 let _ = writeln!(wgsl, "{inner_pad}{line}");
                 let _ = writeln!(wgsl, "{pad}}}");
             } else {
-                let line = emit_op_line(op)?;
+                let line = emit_op_line(op, f32_defs)?;
                 let _ = writeln!(wgsl, "{pad}{line}");
             }
         }
@@ -898,25 +923,25 @@ fn emit_stmt(wgsl: &mut String, stmt: &Stmt, indent: usize) -> Result<(), WgslEr
             then_block,
             else_block,
         } => {
-            let cond = cond_expr(cond)?;
+            let cond = cond_expr(cond, f32_defs)?;
             let _ = writeln!(wgsl, "{pad}if ({cond}) {{");
-            emit_block(wgsl, then_block, indent + 1)?;
+            emit_block(wgsl, then_block, indent + 1, f32_defs)?;
             if let Some(else_block) = else_block {
                 let _ = writeln!(wgsl, "{pad}}} else {{");
-                emit_block(wgsl, else_block, indent + 1)?;
+                emit_block(wgsl, else_block, indent + 1, f32_defs)?;
             }
             let _ = writeln!(wgsl, "{pad}}}");
         }
         Stmt::Loop { body } => {
             let _ = writeln!(wgsl, "{pad}loop {{");
-            emit_block(wgsl, body, indent + 1)?;
+            emit_block(wgsl, body, indent + 1, f32_defs)?;
             let _ = writeln!(wgsl, "{pad}}}");
         }
         Stmt::Break => {
             let _ = writeln!(wgsl, "{pad}break;");
         }
         Stmt::BreakIf { cond } => {
-            let cond = cond_expr(cond)?;
+            let cond = cond_expr(cond, f32_defs)?;
             let _ = writeln!(wgsl, "{pad}if ({cond}) {{ break; }}");
         }
         Stmt::Discard { .. } => {
@@ -1078,24 +1103,28 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         wgsl.push_str("  var oC0: vec4<f32> = vec4<f32>(0.0);\n");
     }
 
-    // Embedded float constants (`def c#`).
+    // Embedded float constants (`def c#`). These behave like constant-register writes that occur
+    // before shader execution and must override the uniform constant buffer even when accessed via
+    // relative indexing (`cN[a0.x]`).
+    for (idx, value) in &f32_defs {
+        let _ = writeln!(
+            wgsl,
+            "  let c{idx}: vec4<f32> = vec4<f32>({}, {}, {}, {});",
+            format_f32(value[0]),
+            format_f32(value[1]),
+            format_f32(value[2]),
+            format_f32(value[3])
+        );
+    }
+    // Non-embedded float constants come from the uniform constant buffer.
     for idx in &usage.float_consts {
-        if let Some(value) = f32_defs.get(idx).copied() {
-            let _ = writeln!(
-                wgsl,
-                "  let c{idx}: vec4<f32> = vec4<f32>({}, {}, {}, {});",
-                format_f32(value[0]),
-                format_f32(value[1]),
-                format_f32(value[2]),
-                format_f32(value[3])
-            );
-        } else {
-            // Non-embedded float constants come from the uniform constant buffer.
-            let _ = writeln!(
-                wgsl,
-                "  let c{idx}: vec4<f32> = constants.c[CONST_BASE + {idx}u];"
-            );
+        if f32_defs.contains_key(idx) {
+            continue;
         }
+        let _ = writeln!(
+            wgsl,
+            "  let c{idx}: vec4<f32> = constants.c[CONST_BASE + {idx}u];"
+        );
     }
 
     // Embedded integer constants (`defi i#`).
@@ -1120,7 +1149,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
 
     wgsl.push('\n');
 
-    emit_block(&mut wgsl, &ir.body, 1)?;
+    emit_block(&mut wgsl, &ir.body, 1, &f32_defs)?;
 
     match ir.version.stage {
         ShaderStage::Vertex => {

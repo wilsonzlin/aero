@@ -52,10 +52,10 @@ fn wgsl_supports_mova_and_relative_constant_indexing() {
         // def c2, 0.0, 0.0, 0.0, 0.0  (target of relative indexing)
         opcode_token(81, 5),
         dst_token(2, 2, 0xF),
-        0x0000_0000,
-        0x0000_0000,
-        0x0000_0000,
-        0x0000_0000,
+        0x4000_0000, // 2.0
+        0x4040_0000, // 3.0
+        0x4080_0000, // 4.0
+        0x40A0_0000, // 5.0
         // mova a0.x, c0
         opcode_token(46, 2),
         dst_token(3, 0, 0x1), // a0.x
@@ -91,4 +91,13 @@ fn wgsl_supports_mova_and_relative_constant_indexing() {
     assert!(wgsl.wgsl.contains("var a0: vec4<i32>"));
     assert!(wgsl.wgsl.contains("a0.x"));
     assert!(wgsl.wgsl.contains("clamp(i32(1)"));
+
+    // Embedded `def c2` must override the uniform constant buffer even for relative indexing.
+    assert!(
+        wgsl.wgsl.contains("let c2: vec4<f32> = vec4<f32>(2.0, 3.0, 4.0, 5.0);"),
+        "{}",
+        wgsl.wgsl
+    );
+    assert!(wgsl.wgsl.contains("select("), "{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains(", c2,"), "{}", wgsl.wgsl);
 }
