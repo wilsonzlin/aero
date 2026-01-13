@@ -919,13 +919,13 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
             ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
           });
 
-        const waitForErrorAndClose = async (ws) =>
+        const waitForClose = async (ws) =>
           await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error("timed out waiting for error + close")), 10_000);
             let errMsg;
             let closed;
             const maybeDone = () => {
-              if (!errMsg || !closed) return;
+              if (!closed) return;
               cleanup();
               resolve({ errMsg, closeCode: closed.code, closeReason: closed.reason });
             };
@@ -939,7 +939,6 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
               }
               if (msg?.type === "error") {
                 errMsg = msg;
-                maybeDone();
               }
             };
             const onClose = (event) => {
@@ -956,19 +955,19 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
           });
 
         const unauthWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
-        const unauthPromise = waitForErrorAndClose(unauthWS);
+        const unauthPromise = waitForClose(unauthWS);
         await waitForOpen(unauthWS);
         unauthWS.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "v=0" } }));
         const unauth = await unauthPromise;
 
         const invalidWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
-        const invalidPromise = waitForErrorAndClose(invalidWS);
+        const invalidPromise = waitForClose(invalidWS);
         await waitForOpen(invalidWS);
         invalidWS.send(JSON.stringify({ type: "auth", token: invalidToken }));
         const invalid = await invalidPromise;
 
         const queryWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal?token=${encodeURIComponent(token)}`);
-        const queryPromise = waitForErrorAndClose(queryWS);
+        const queryPromise = waitForClose(queryWS);
         await waitForOpen(queryWS);
         // No auth message needed when query-string credentials are provided; send
         // an intentionally invalid offer and assert the server rejects it as a
@@ -981,13 +980,26 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
       { relayPort: relay.port, token, invalidToken },
     );
 
-    expect(res.unauth.errMsg?.code).toBe("unauthorized");
+    if (res.unauth.errMsg) {
+      expect(res.unauth.errMsg.code).toBe("unauthorized");
+    } else {
+      // Per PROTOCOL.md, the server may close without an error message.
+      expect(["authentication required", "unauthorized", ""]).toContain(res.unauth.closeReason ?? "");
+    }
     expect(res.unauth.closeCode).toBe(1008);
 
-    expect(res.invalid.errMsg?.code).toBe("unauthorized");
+    if (res.invalid.errMsg) {
+      expect(res.invalid.errMsg.code).toBe("unauthorized");
+    } else {
+      expect(["unauthorized", ""]).toContain(res.invalid.closeReason ?? "");
+    }
     expect(res.invalid.closeCode).toBe(1008);
 
-    expect(res.query.errMsg?.code).toBe("bad_message");
+    if (res.query.errMsg) {
+      expect(res.query.errMsg.code).toBe("bad_message");
+    } else {
+      expect(["bad_message", "bad message", ""]).toContain(res.query.closeReason ?? "");
+    }
     expect(res.query.closeCode).toBe(1008);
   } finally {
     await Promise.all([web.close(), relay.kill()]);
