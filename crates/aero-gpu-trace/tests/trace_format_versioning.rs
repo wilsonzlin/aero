@@ -1,4 +1,6 @@
-use aero_gpu_trace::{TraceMeta, TraceReadError, TraceReader, TraceWriter, CONTAINER_VERSION};
+use aero_gpu_trace::{
+    TraceMeta, TraceReadError, TraceReader, TraceWriter, CONTAINER_VERSION, TRACE_FOOTER_SIZE,
+};
 use std::io::Cursor;
 
 fn minimal_trace_bytes(command_abi_version: u32) -> Vec<u8> {
@@ -7,6 +9,14 @@ fn minimal_trace_bytes(command_abi_version: u32) -> Vec<u8> {
     writer.begin_frame(0).unwrap();
     writer.present(0).unwrap();
     writer.finish().unwrap()
+}
+
+fn read_u32_le(bytes: &[u8], off: usize) -> u32 {
+    u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap())
+}
+
+fn read_u64_le(bytes: &[u8], off: usize) -> u64 {
+    u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap())
 }
 
 #[test]
@@ -41,6 +51,63 @@ fn reject_trace_with_unknown_newer_container_version() {
     assert!(matches!(
         err,
         TraceReadError::UnsupportedContainerVersion(v) if v == bad_version
+    ));
+}
+
+#[test]
+fn reject_trace_with_wrong_footer_magic() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    bytes[footer_start] ^= 0xFF;
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::InvalidMagic));
+}
+
+#[test]
+fn reject_trace_with_wrong_toc_magic() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    let toc_offset = read_u64_le(&bytes, footer_start + 16) as usize;
+    let _toc_len = read_u64_le(&bytes, footer_start + 24) as usize;
+
+    // Corrupt TOC magic at `toc_offset`.
+    bytes[toc_offset] ^= 0xFF;
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::InvalidMagic));
+}
+
+#[test]
+fn reject_trace_with_header_footer_version_mismatch() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    // Patch footer `container_version` to a different *supported* version, so we validate the
+    // mismatch path (as opposed to "unsupported version" early exits).
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    let header_version = read_u32_le(&bytes, 12);
+    let mismatched_footer_version: u32 = if header_version == 1 { 2 } else { 1 };
+    bytes[footer_start + 12..footer_start + 16]
+        .copy_from_slice(&mismatched_footer_version.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        err,
+        TraceReadError::UnsupportedContainerVersion(v) if v == mismatched_footer_version
     ));
 }
 
