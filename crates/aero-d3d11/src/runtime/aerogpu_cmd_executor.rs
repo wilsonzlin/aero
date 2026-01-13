@@ -2526,24 +2526,18 @@ impl AerogpuD3d11Executor {
             .checked_mul(4)
             .ok_or_else(|| anyhow!("geometry prepass expanded index buffer size overflow"))?;
 
-        let expanded_vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("aerogpu_cmd expanded vertex buffer"),
-            size: expanded_vertex_size,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let expanded_index_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("aerogpu_cmd expanded index buffer"),
-            size: expanded_index_size,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let indirect_args_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("aerogpu_cmd indirect args buffer"),
-            size: GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
-            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
+        let expanded_vertex_alloc = self
+            .expansion_scratch
+            .alloc_vertex_output(&self.device, expanded_vertex_size)
+            .map_err(|e| anyhow!("geometry prepass: alloc expanded vertex buffer: {e}"))?;
+        let expanded_index_alloc = self
+            .expansion_scratch
+            .alloc_index_output(&self.device, expanded_index_size)
+            .map_err(|e| anyhow!("geometry prepass: alloc expanded index buffer: {e}"))?;
+        let indirect_args_alloc = self
+            .expansion_scratch
+            .alloc_indirect_draw_indexed(&self.device)
+            .map_err(|e| anyhow!("geometry prepass: alloc indirect args buffer: {e}"))?;
 
         let params_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu_cmd geometry prepass params"),
@@ -2631,24 +2625,24 @@ impl AerogpuD3d11Executor {
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &expanded_vertex_buffer,
-                        offset: 0,
+                        buffer: expanded_vertex_alloc.buffer.as_ref(),
+                        offset: expanded_vertex_alloc.offset,
                         size: wgpu::BufferSize::new(expanded_vertex_size),
                     }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &expanded_index_buffer,
-                        offset: 0,
+                        buffer: expanded_index_alloc.buffer.as_ref(),
+                        offset: expanded_index_alloc.offset,
                         size: wgpu::BufferSize::new(expanded_index_size),
                     }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &indirect_args_buffer,
-                        offset: 0,
+                        buffer: indirect_args_alloc.buffer.as_ref(),
+                        offset: indirect_args_alloc.offset,
                         size: wgpu::BufferSize::new(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES),
                     }),
                 },
@@ -2868,17 +2862,41 @@ impl AerogpuD3d11Executor {
             });
 
             pass.set_pipeline(render_pipeline);
-            pass.set_vertex_buffer(0, expanded_vertex_buffer.slice(..));
+            let vb_end = expanded_vertex_alloc
+                .offset
+                .checked_add(expanded_vertex_alloc.size)
+                .ok_or_else(|| anyhow!("geometry prepass expanded vertex slice overflows u64"))?;
+            pass.set_vertex_buffer(
+                0,
+                expanded_vertex_alloc
+                    .buffer
+                    .slice(expanded_vertex_alloc.offset..vb_end),
+            );
 
             for (group_index, bg) in render_bind_groups.iter().enumerate() {
                 pass.set_bind_group(group_index as u32, bg.as_ref(), &[]);
             }
 
             if opcode == OPCODE_DRAW_INDEXED {
-                pass.set_index_buffer(expanded_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed_indirect(&indirect_args_buffer, 0);
+                let ib_end = expanded_index_alloc
+                    .offset
+                    .checked_add(expanded_index_alloc.size)
+                    .ok_or_else(|| anyhow!("geometry prepass expanded index slice overflows u64"))?;
+                pass.set_index_buffer(
+                    expanded_index_alloc
+                        .buffer
+                        .slice(expanded_index_alloc.offset..ib_end),
+                    wgpu::IndexFormat::Uint32,
+                );
+                pass.draw_indexed_indirect(
+                    indirect_args_alloc.buffer.as_ref(),
+                    indirect_args_alloc.offset,
+                );
             } else {
-                pass.draw_indirect(&indirect_args_buffer, 0);
+                pass.draw_indirect(
+                    indirect_args_alloc.buffer.as_ref(),
+                    indirect_args_alloc.offset,
+                );
             }
         }
 
