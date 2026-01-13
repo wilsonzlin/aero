@@ -5914,6 +5914,18 @@ impl Machine {
         self.inner.aerogpu_complete_fence(value);
     }
 
+    /// Inject a batch of input events encoded in the `InputEventQueue` wire format
+    /// (`web/src/input/event_queue.ts`).
+    ///
+    /// This is a high-throughput entry point intended to reduce JS parsing overhead by letting Rust
+    /// decode and dispatch events in one call.
+    pub fn inject_input_batch(&mut self, words: &[u32]) {
+        self.inner.inject_input_batch(words);
+        // The batch may contain mouse button state events; conservatively treat our JS-facing cache
+        // as unknown so follow-up per-button injections don't assume it is synchronized.
+        self.mouse_buttons_known = false;
+    }
+
     /// Inject a browser-style keyboard event into the guest PS/2 i8042 controller.
     ///
     /// `code` must be a DOM `KeyboardEvent.code` string (e.g. `"KeyA"`, `"Enter"`, `"ArrowUp"`).

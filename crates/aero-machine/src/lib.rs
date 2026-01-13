@@ -8294,6 +8294,402 @@ impl Machine {
         consumer.consumer_event(usage, pressed);
     }
 
+    // ---------------------------------------------------------------------
+    // Input batching (InputEventQueue wire format)
+    // ---------------------------------------------------------------------
+
+    /// Inject a batch of input events encoded in the `InputEventQueue` wire format used by the
+    /// web runtime.
+    ///
+    /// ## Wire format
+    ///
+    /// The input batch is a little-endian `u32` word stream:
+    ///
+    /// - Header (2 words): `[count, batch_timestamp_us]`
+    /// - Events: `count` entries, each 4 words: `[ty, event_timestamp_us, a, b]`
+    ///
+    /// Event type values are defined by `web/src/input/event_queue.ts::InputEventType`.
+    ///
+    /// ## Defensive parsing
+    ///
+    /// - Malformed/truncated buffers are ignored without panicking.
+    /// - Unknown event types are ignored.
+    /// - Per-call work is capped to keep worst-case runtime bounded.
+    pub fn inject_input_batch(&mut self, words: &[u32]) {
+        // Keep these values in sync with `web/src/input/event_queue.ts`.
+        const TYPE_KEY_SCANCODE: u32 = 1;
+        const TYPE_MOUSE_MOVE: u32 = 2;
+        const TYPE_MOUSE_BUTTONS: u32 = 3;
+        const TYPE_MOUSE_WHEEL: u32 = 4;
+        const TYPE_GAMEPAD_REPORT: u32 = 5;
+        const TYPE_KEY_HID_USAGE: u32 = 6;
+        const TYPE_HID_USAGE16: u32 = 7;
+
+        const HEADER_WORDS: usize = 2;
+        const WORDS_PER_EVENT: usize = 4;
+
+        // Cap the amount of work performed per batch, even if the caller passes a huge buffer.
+        // This bounds CPU time for hostile/malformed input.
+        const MAX_EVENTS_PER_BATCH: usize = 4096;
+
+        if words.len() < HEADER_WORDS {
+            return;
+        }
+
+        // Word 0 is written as an `i32` by the JS runtime but represents a count. Treat it as a
+        // wrapping `u32` and clamp it to the buffer bounds below.
+        let declared_count = words[0] as usize;
+        if declared_count == 0 {
+            return;
+        }
+
+        let available_events = (words.len().saturating_sub(HEADER_WORDS)) / WORDS_PER_EVENT;
+        let count = declared_count.min(available_events).min(MAX_EVENTS_PER_BATCH);
+
+        // Routing policy mirrors the browser worker runtime at a high level:
+        // - Keyboard: virtio-input (DRIVER_OK) → synthetic USB HID keyboard (once configured) → PS/2 i8042.
+        // - Mouse: virtio-input (DRIVER_OK) → PS/2 until the synthetic USB mouse is configured → USB HID.
+        // - Gamepad: synthetic USB HID gamepad (no PS/2 fallback).
+        let ps2_available = self.i8042.is_some();
+
+        let use_virtio_keyboard = self.virtio_input_keyboard_driver_ok();
+        let use_virtio_mouse = self.virtio_input_mouse_driver_ok();
+
+        let usb_keyboard_present = self.usb_hid_keyboard.is_some();
+        let usb_keyboard_ready = self
+            .usb_hid_keyboard
+            .as_ref()
+            .is_some_and(|kbd| kbd.configured());
+        let usb_mouse_present = self.usb_hid_mouse.is_some();
+        let usb_mouse_ready = self
+            .usb_hid_mouse
+            .as_ref()
+            .is_some_and(|mouse| mouse.configured());
+
+        let use_usb_keyboard = !use_virtio_keyboard
+            && if ps2_available {
+                usb_keyboard_ready
+            } else {
+                usb_keyboard_present
+            };
+        let use_ps2_keyboard = !use_virtio_keyboard && !use_usb_keyboard && ps2_available;
+
+        let use_usb_mouse = !use_virtio_mouse
+            && if ps2_available {
+                usb_mouse_ready
+            } else {
+                usb_mouse_present
+            };
+        let use_ps2_mouse = !use_virtio_mouse && !use_usb_mouse && ps2_available;
+        let mut virtio_input_dirty = false;
+
+        fn hid_usage_to_linux_key(usage: u8) -> Option<u16> {
+            use aero_virtio::devices::input::*;
+            Some(match usage {
+                // Letters.
+                0x04 => KEY_A,
+                0x05 => KEY_B,
+                0x06 => KEY_C,
+                0x07 => KEY_D,
+                0x08 => KEY_E,
+                0x09 => KEY_F,
+                0x0A => KEY_G,
+                0x0B => KEY_H,
+                0x0C => KEY_I,
+                0x0D => KEY_J,
+                0x0E => KEY_K,
+                0x0F => KEY_L,
+                0x10 => KEY_M,
+                0x11 => KEY_N,
+                0x12 => KEY_O,
+                0x13 => KEY_P,
+                0x14 => KEY_Q,
+                0x15 => KEY_R,
+                0x16 => KEY_S,
+                0x17 => KEY_T,
+                0x18 => KEY_U,
+                0x19 => KEY_V,
+                0x1A => KEY_W,
+                0x1B => KEY_X,
+                0x1C => KEY_Y,
+                0x1D => KEY_Z,
+
+                // Digits.
+                0x1E => KEY_1,
+                0x1F => KEY_2,
+                0x20 => KEY_3,
+                0x21 => KEY_4,
+                0x22 => KEY_5,
+                0x23 => KEY_6,
+                0x24 => KEY_7,
+                0x25 => KEY_8,
+                0x26 => KEY_9,
+                0x27 => KEY_0,
+
+                // Basic.
+                0x28 => KEY_ENTER,
+                0x29 => KEY_ESC,
+                0x2A => KEY_BACKSPACE,
+                0x2B => KEY_TAB,
+                0x2C => KEY_SPACE,
+                0x2D => KEY_MINUS,
+                0x2E => KEY_EQUAL,
+                0x2F => KEY_LEFTBRACE,
+                0x30 => KEY_RIGHTBRACE,
+                0x31 => KEY_BACKSLASH,
+                0x32 => KEY_BACKSLASH, // IntlHash alias
+                0x33 => KEY_SEMICOLON,
+                0x34 => KEY_APOSTROPHE,
+                0x35 => KEY_GRAVE,
+                0x36 => KEY_COMMA,
+                0x37 => KEY_DOT,
+                0x38 => KEY_SLASH,
+
+                // Modifiers.
+                0xE0 => KEY_LEFTCTRL,
+                0xE1 => KEY_LEFTSHIFT,
+                0xE2 => KEY_LEFTALT,
+                0xE3 => KEY_LEFTMETA,
+                0xE4 => KEY_RIGHTCTRL,
+                0xE5 => KEY_RIGHTSHIFT,
+                0xE6 => KEY_RIGHTALT,
+                0xE7 => KEY_RIGHTMETA,
+
+                0x39 => KEY_CAPSLOCK,
+
+                // Function keys.
+                0x3A => KEY_F1,
+                0x3B => KEY_F2,
+                0x3C => KEY_F3,
+                0x3D => KEY_F4,
+                0x3E => KEY_F5,
+                0x3F => KEY_F6,
+                0x40 => KEY_F7,
+                0x41 => KEY_F8,
+                0x42 => KEY_F9,
+                0x43 => KEY_F10,
+                0x44 => KEY_F11,
+                0x45 => KEY_F12,
+                0x46 => KEY_SYSRQ,
+
+                // Locks.
+                0x47 => KEY_SCROLLLOCK,
+                0x48 => KEY_PAUSE,
+
+                // Navigation.
+                0x49 => KEY_INSERT,
+                0x4A => KEY_HOME,
+                0x4B => KEY_PAGEUP,
+                0x4C => KEY_DELETE,
+                0x4D => KEY_END,
+                0x4E => KEY_PAGEDOWN,
+                0x4F => KEY_RIGHT,
+                0x50 => KEY_LEFT,
+                0x51 => KEY_DOWN,
+                0x52 => KEY_UP,
+
+                // Keypad.
+                0x53 => KEY_NUMLOCK,
+                0x54 => KEY_KPSLASH,
+                0x55 => KEY_KPASTERISK,
+                0x56 => KEY_KPMINUS,
+                0x57 => KEY_KPPLUS,
+                0x58 => KEY_KPENTER,
+                0x59 => KEY_KP1,
+                0x5A => KEY_KP2,
+                0x5B => KEY_KP3,
+                0x5C => KEY_KP4,
+                0x5D => KEY_KP5,
+                0x5E => KEY_KP6,
+                0x5F => KEY_KP7,
+                0x60 => KEY_KP8,
+                0x61 => KEY_KP9,
+                0x62 => KEY_KP0,
+                0x63 => KEY_KPDOT,
+                0x64 => KEY_102ND,
+                0x65 => KEY_MENU,
+                0x67 => KEY_KPEQUAL,
+                0x85 => KEY_KPCOMMA,
+                0x87 => KEY_RO,
+                0x89 => KEY_YEN,
+
+                _ => return None,
+            })
+        }
+
+        for i in 0..count {
+            let off = HEADER_WORDS + i * WORDS_PER_EVENT;
+            let ty = words[off];
+            // `event_timestamp_us` is currently unused by the machine; keep parsing in case future
+            // runtimes want to drive guest-time heuristics from it.
+            let _event_timestamp_us = words[off + 1];
+            let a = words[off + 2];
+            let b = words[off + 3];
+
+            match ty {
+                TYPE_KEY_SCANCODE => {
+                    if !use_ps2_keyboard {
+                        continue;
+                    }
+                    // Payload:
+                    //   a = packed bytes (little-endian, b0 in bits 0..7)
+                    //   b = byte length (1..4)
+                    let len = b as usize;
+                    if len == 0 || len > 4 {
+                        continue;
+                    }
+                    let mut bytes = [0u8; 4];
+                    for (j, slot) in bytes.iter_mut().enumerate().take(len) {
+                        *slot = ((a >> (j * 8)) & 0xff) as u8;
+                    }
+                    self.inject_key_scancode_bytes(&bytes[..len]);
+                }
+                TYPE_KEY_HID_USAGE => {
+                    // Payload:
+                    //   a = (usage & 0xFF) | ((pressed ? 1 : 0) << 8)
+                    //   b = unused
+                    let usage = (a & 0xff) as u8;
+                    let pressed = ((a >> 8) & 1) != 0;
+                    if use_virtio_keyboard {
+                        let Some(code) = hid_usage_to_linux_key(usage) else {
+                            continue;
+                        };
+                        let Some(kbd) = &self.virtio_input_keyboard else {
+                            continue;
+                        };
+                        let mut dev = kbd.borrow_mut();
+                        let Some(input) = dev.device_mut::<VirtioInput>() else {
+                            continue;
+                        };
+                        input.inject_key(code, pressed);
+                        virtio_input_dirty = true;
+                    } else if use_usb_keyboard {
+                        self.inject_usb_hid_keyboard_usage(usage, pressed);
+                    }
+                }
+                TYPE_HID_USAGE16 => {
+                    // Payload:
+                    //   a = (usagePage & 0xFFFF) | ((pressed ? 1 : 0) << 16)
+                    //   b = usageId & 0xFFFF
+                    let usage_page = (a & 0xffff) as u16;
+                    let pressed = ((a >> 16) & 1) != 0;
+                    let usage_id = (b & 0xffff) as u32;
+
+                    // Only Usage Page 0x0C ("Consumer") is supported by the canonical synthetic
+                    // consumer-control device today.
+                    if usage_page == 0x000c {
+                        self.inject_usb_hid_consumer_usage(usage_id, pressed);
+                    }
+                }
+                TYPE_MOUSE_MOVE => {
+                    let dx = a as i32;
+                    let dy_ps2 = b as i32;
+                    let dy_down = dy_ps2.wrapping_neg();
+                    if use_ps2_mouse {
+                        // Payload:
+                        //   a = dx (signed 32-bit)
+                        //   b = dy (signed 32-bit), positive = up (PS/2 convention)
+                        self.inject_ps2_mouse_motion(dx, dy_ps2, 0);
+                    } else if use_virtio_mouse {
+                        // virtio-input uses Linux REL_Y where positive = down.
+                        let Some(mouse) = &self.virtio_input_mouse else {
+                            continue;
+                        };
+                        let mut dev = mouse.borrow_mut();
+                        let Some(input) = dev.device_mut::<VirtioInput>() else {
+                            continue;
+                        };
+                        input.inject_rel_move(dx, dy_down);
+                        virtio_input_dirty = true;
+                    } else if use_usb_mouse {
+                        // USB HID follows DOM/browser convention where +Y is down.
+                        self.inject_usb_hid_mouse_move(dx, dy_down);
+                    }
+                }
+                TYPE_MOUSE_BUTTONS => {
+                    let next = (a as u8) & 0x1f;
+                    if use_ps2_mouse {
+                        // Payload:
+                        //   a = buttons bitmask (low 5 bits match DOM `MouseEvent.buttons`)
+                        self.inject_ps2_mouse_buttons(next);
+                    } else if use_virtio_mouse {
+                        let prev = self.ps2_mouse_buttons & 0x1f;
+                        let changed = prev ^ next;
+                        if changed == 0 {
+                            // Clear any invalid marker (e.g. post snapshot restore).
+                            self.ps2_mouse_buttons = next;
+                            continue;
+                        }
+
+                        let Some(mouse) = &self.virtio_input_mouse else {
+                            continue;
+                        };
+                        let mut dev = mouse.borrow_mut();
+                        let Some(input) = dev.device_mut::<VirtioInput>() else {
+                            continue;
+                        };
+                        // Match DOM `MouseEvent.buttons` bit mapping.
+                        if (changed & 0x01) != 0 {
+                            input.inject_button(aero_virtio::devices::input::BTN_LEFT, next & 0x01 != 0);
+                        }
+                        if (changed & 0x02) != 0 {
+                            input.inject_button(aero_virtio::devices::input::BTN_RIGHT, next & 0x02 != 0);
+                        }
+                        if (changed & 0x04) != 0 {
+                            input.inject_button(
+                                aero_virtio::devices::input::BTN_MIDDLE,
+                                next & 0x04 != 0,
+                            );
+                        }
+                        if (changed & 0x08) != 0 {
+                            input.inject_button(aero_virtio::devices::input::BTN_SIDE, next & 0x08 != 0);
+                        }
+                        if (changed & 0x10) != 0 {
+                            input.inject_button(aero_virtio::devices::input::BTN_EXTRA, next & 0x10 != 0);
+                        }
+                        self.ps2_mouse_buttons = next;
+                        virtio_input_dirty = true;
+                    } else if use_usb_mouse {
+                        self.inject_usb_hid_mouse_buttons(next);
+                        self.ps2_mouse_buttons = next;
+                    }
+                }
+                TYPE_MOUSE_WHEEL => {
+                    let dz = a as i32;
+                    let dx = b as i32;
+                    if use_ps2_mouse {
+                        // Payload:
+                        //   a = dz (signed 32-bit), positive = wheel up
+                        let _ = dx;
+                        self.inject_ps2_mouse_motion(0, 0, dz);
+                    } else if use_virtio_mouse {
+                        let Some(mouse) = &self.virtio_input_mouse else {
+                            continue;
+                        };
+                        let mut dev = mouse.borrow_mut();
+                        let Some(input) = dev.device_mut::<VirtioInput>() else {
+                            continue;
+                        };
+                        input.inject_wheel2(dz, dx);
+                        virtio_input_dirty = true;
+                    } else if use_usb_mouse {
+                        self.inject_usb_hid_mouse_wheel2(dz, dx);
+                    }
+                }
+                TYPE_GAMEPAD_REPORT => {
+                    self.inject_usb_hid_gamepad_report(a, b);
+                }
+                _ => {
+                    // Unknown event type; ignore.
+                }
+            }
+        }
+
+        if virtio_input_dirty {
+            // Poll once to forward any newly enqueued input events into guest virtqueues.
+            self.process_virtio_input();
+        }
+    }
     pub fn take_snapshot_full(&mut self) -> snapshot::Result<Vec<u8>> {
         self.take_snapshot_with_options(snapshot::SaveOptions::default())
     }
@@ -14834,6 +15230,87 @@ mod tests {
         m.inject_mouse_motion(10, 5, 0);
         let packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
         assert_eq!(packet, vec![0x28, 10, 0xFB]);
+    }
+
+    #[test]
+    fn inject_input_batch_produces_i8042_output_bytes() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        let ctrl = m.i8042.as_ref().expect("i8042 enabled").clone();
+
+        // Enable mouse reporting so injected motion generates stream packets.
+        {
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD4);
+            dev.write_port(0x60, 0xF4);
+        }
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xFA); // ACK
+
+        // InputEventQueue wire format:
+        //   [count, batch_ts, type, event_ts, a, b, ...]
+        //
+        // Batch: KeyA make + break + mouse move (dx=10, dy=5 in PS/2 coordinates).
+        let words: [u32; 14] = [
+            3,
+            0,
+            // KeyScancode: 0x1C (make)
+            1,
+            0,
+            0x1C,
+            1,
+            // KeyScancode: 0xF0 0x1C (break)
+            1,
+            0,
+            0x0000_1CF0,
+            2,
+            // MouseMove: dx=10, dy=5 (positive=up)
+            2,
+            0,
+            10,
+            5,
+        ];
+
+        m.inject_input_batch(&words);
+
+        // Drain all bytes produced by the batch. The i8042 model can interleave keyboard and mouse
+        // bytes (the real controller has separate sources feeding a shared output buffer), so avoid
+        // asserting a strict ordering between devices. Instead, assert the expected bytes are
+        // present.
+        let mut out = Vec::new();
+        for _ in 0..16 {
+            // Status bit0: output buffer full.
+            if (ctrl.borrow_mut().read_port(0x64) & 0x01) == 0 {
+                break;
+            }
+            out.push(ctrl.borrow_mut().read_port(0x60));
+        }
+
+        let mut expected = vec![0x1e, 0x9e, 0x08, 10, 5];
+        expected.sort_unstable();
+        out.sort_unstable();
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn inject_input_batch_malformed_does_not_panic() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Truncated header.
+        m.inject_input_batch(&[]);
+        m.inject_input_batch(&[1]);
+
+        // Declared count exceeds buffer length (truncated events).
+        m.inject_input_batch(&[10, 0, 1, 0, 0x1C, 1]);
+
+        // Unknown event type should be ignored.
+        m.inject_input_batch(&[1, 0, 0xDEAD_BEEF, 0, 0, 0]);
     }
 
     #[test]
