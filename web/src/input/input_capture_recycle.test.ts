@@ -8,6 +8,7 @@ function withStubbedDocument<T>(run: (doc: any) => T): T {
     pointerLockElement: null,
     visibilityState: "visible",
     hasFocus: () => true,
+    activeElement: null,
     addEventListener: () => {},
     removeEventListener: () => {},
     exitPointerLock: () => {},
@@ -17,6 +18,22 @@ function withStubbedDocument<T>(run: (doc: any) => T): T {
     return run(doc);
   } finally {
     (globalThis as any).document = original;
+  }
+}
+
+function withStubbedWindow<T>(run: (win: any) => T): T {
+  const original = (globalThis as any).window;
+  const win = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    setInterval: () => 1,
+    clearInterval: () => {},
+  };
+  (globalThis as any).window = win;
+  try {
+    return run(win);
+  } finally {
+    (globalThis as any).window = original;
   }
 }
 
@@ -35,6 +52,69 @@ function keyDownEvent(code: string, timeStamp: number): KeyboardEvent {
 }
 
 describe("InputCapture buffer recycling", () => {
+  it("listens for worker recycle messages via start()'s message handler wiring", () => {
+    withStubbedDocument((doc) =>
+      withStubbedWindow(() => {
+        const canvas = {
+          tabIndex: 0,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          focus: () => {},
+        } as unknown as HTMLCanvasElement;
+
+        doc.activeElement = canvas;
+
+        let onMessage: ((ev: MessageEvent<unknown>) => void) | null = null;
+
+        const posted: ArrayBuffer[] = [];
+        const postedByteLengths: number[] = [];
+        let recycledFromFirstFlush: ArrayBuffer | null = null;
+        let postCount = 0;
+
+        const ioWorker = {
+          addEventListener: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => {
+            expect(type).toBe("message");
+            onMessage = listener;
+          },
+          removeEventListener: () => {},
+          postMessage: (msg: any, transfer?: any[]) => {
+            postedByteLengths.push(msg.buffer.byteLength);
+            posted.push(msg.buffer);
+            expect(msg.recycle).toBe(true);
+            expect(transfer).toContain(msg.buffer);
+            expect(onMessage).not.toBeNull();
+
+            // Mimic transfer -> worker -> transfer-back, which yields a *new* ArrayBuffer instance.
+            const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
+            const recycled = structuredClone(workerSide, { transfer: [workerSide] });
+
+            postCount++;
+            if (postCount === 1) {
+              recycledFromFirstFlush = recycled;
+            }
+
+            onMessage?.({ data: { type: "in:input-batch-recycle", buffer: recycled } } as unknown as MessageEvent<unknown>);
+          },
+        };
+
+        const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
+        capture.start();
+
+        (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+        capture.flushNow();
+
+        (capture as any).handleKeyDown(keyDownEvent("KeyB", 1));
+        capture.flushNow();
+
+        expect(posted).toHaveLength(2);
+        expect(postedByteLengths).toHaveLength(2);
+        expect(recycledFromFirstFlush).not.toBeNull();
+        expect(posted[1]).toBe(recycledFromFirstFlush);
+        expect(postedByteLengths[1]).toBe(postedByteLengths[0]);
+      }),
+    );
+  });
+
   it("reuses ArrayBuffers returned by the worker when recycleBuffers=true", () => {
     withStubbedDocument(() => {
       const canvas = {
