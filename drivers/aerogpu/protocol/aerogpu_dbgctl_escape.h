@@ -118,7 +118,7 @@ typedef struct aerogpu_escape_query_fence_out {
    * individual submission; per-submission fence IDs come from the D3D runtime
    * callbacks (for example `SubmissionFenceId` / `NewFenceValue`).
    * `last_completed_fence` is useful for polling overall GPU forward progress.
-   */
+  */
   aerogpu_escape_u64 last_submitted_fence;
   aerogpu_escape_u64 last_completed_fence;
   /*
@@ -178,6 +178,12 @@ typedef struct aerogpu_escape_query_perf_out {
   aerogpu_escape_u64 vblank_seq;
   aerogpu_escape_u64 last_vblank_time_ns;
   aerogpu_escape_u32 vblank_period_ns;
+
+  /*
+   * Packed error state (best-effort):
+   * - Bit 31: KMD device error latched (AEROGPU_IRQ_ERROR observed).
+   * - Bits 0..30: last error time in 10ms units since boot (clamped).
+   */
   aerogpu_escape_u32 reserved0;
 
   /*

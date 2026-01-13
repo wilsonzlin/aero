@@ -2951,10 +2951,27 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.irq_fence_delivered,
           (unsigned long long)q.irq_vblank_delivered,
           (unsigned long long)q.irq_spurious);
-  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, last_error_fence) + sizeof(q.last_error_fence)) {
+  const bool havePerfErrorIrq =
+      (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, last_error_fence) + sizeof(q.last_error_fence));
+  if (havePerfErrorIrq) {
     wprintf(L"  irq_error: count=%I64u last_fence=0x%I64x\n",
             (unsigned long long)q.error_irq_count,
             (unsigned long long)q.last_error_fence);
+  } else {
+    // Backward compatibility: older KMD builds may not include the appended error IRQ fields
+    // in QUERY_PERF; fall back to QUERY_FENCE if available.
+    aerogpu_escape_query_fence_out qf;
+    ZeroMemory(&qf, sizeof(qf));
+    qf.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qf.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+    qf.hdr.size = sizeof(qf);
+    qf.hdr.reserved0 = 0;
+    NTSTATUS stFence = SendAerogpuEscape(f, hAdapter, &qf, sizeof(qf));
+    if (NT_SUCCESS(stFence)) {
+      wprintf(L"  irq_error: count=%I64u last_fence=0x%I64x\n",
+              (unsigned long long)qf.error_irq_count,
+              (unsigned long long)qf.last_error_fence);
+    }
   }
   if (haveError) {
     wprintf(L"  error: code=%lu (%s) fence=0x%I64x count=%lu\n",
@@ -2966,6 +2983,13 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   wprintf(L"  resets: ResetFromTimeout=%I64u last_reset_time_100ns=%I64u\n",
           (unsigned long long)q.reset_from_timeout_count,
           (unsigned long long)q.last_reset_time_100ns);
+
+  const bool errorLatched = (q.reserved0 & 0x80000000u) != 0;
+  const uint32_t lastErrorTime10ms = (q.reserved0 & 0x7FFFFFFFu);
+  wprintf(L"  device_error: latched=%s last_time_10ms=%lu\n",
+          errorLatched ? L"true" : L"false",
+          (unsigned long)lastErrorTime10ms);
+
   wprintf(L"  vblank: seq=0x%I64x last_time_ns=0x%I64x period_ns=%lu\n",
           (unsigned long long)q.vblank_seq,
           (unsigned long long)q.last_vblank_time_ns,
@@ -2991,6 +3015,7 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   }
   wprintf(L"  reset_from_timeout_count=%I64u\n", (unsigned long long)q.reset_from_timeout_count);
   wprintf(L"  last_reset_time_100ns=%I64u\n", (unsigned long long)q.last_reset_time_100ns);
+  wprintf(L"  reserved0=0x%08lx\n", (unsigned long)q.reserved0);
   wprintf(L"  vblank_seq=%I64u\n", (unsigned long long)q.vblank_seq);
   wprintf(L"  last_vblank_time_ns=%I64u\n", (unsigned long long)q.last_vblank_time_ns);
   wprintf(L"  vblank_period_ns=%lu\n", (unsigned long)q.vblank_period_ns);
@@ -6526,6 +6551,34 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
     return 2;
   }
 
+  const bool errorLatched = (q.reserved0 & 0x80000000u) != 0;
+  const uint32_t lastErrorTime10ms = (q.reserved0 & 0x7FFFFFFFu);
+
+  bool haveErrorIrq = false;
+  uint64_t errorIrqCount = 0;
+  uint64_t lastErrorFence = 0;
+
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, last_error_fence) + sizeof(q.last_error_fence)) {
+    haveErrorIrq = true;
+    errorIrqCount = (uint64_t)q.error_irq_count;
+    lastErrorFence = (uint64_t)q.last_error_fence;
+  } else {
+    // Backward compatibility: older KMD builds may not include the appended error IRQ fields
+    // in QUERY_PERF; fall back to QUERY_FENCE if available.
+    aerogpu_escape_query_fence_out qf;
+    ZeroMemory(&qf, sizeof(qf));
+    qf.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qf.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+    qf.hdr.size = sizeof(qf);
+    qf.hdr.reserved0 = 0;
+    const NTSTATUS stFence = SendAerogpuEscape(f, hAdapter, &qf, sizeof(qf));
+    if (NT_SUCCESS(stFence)) {
+      haveErrorIrq = true;
+      errorIrqCount = (uint64_t)qf.error_irq_count;
+      lastErrorFence = (uint64_t)qf.last_error_fence;
+    }
+  }
+
   const uint64_t submitted = (uint64_t)q.last_submitted_fence;
   const uint64_t completed = (uint64_t)q.last_completed_fence;
   const uint64_t pendingFences = (submitted >= completed) ? (submitted - completed) : 0;
@@ -6559,6 +6612,10 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   JsonWriteU64HexDec(w, "last_completed_fence", completed);
   w.Key("pending");
   w.String(DecU64(pendingFences));
+  if (haveErrorIrq) {
+    JsonWriteU64HexDec(w, "error_irq_count", errorIrqCount);
+    JsonWriteU64HexDec(w, "last_error_fence", lastErrorFence);
+  }
   w.EndObject();
 
   w.Key("ring0");
@@ -6596,6 +6653,15 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   w.BeginObject();
   JsonWriteU64HexDec(w, "reset_from_timeout_count", q.reset_from_timeout_count);
   JsonWriteU64HexDec(w, "last_reset_time_100ns", q.last_reset_time_100ns);
+  w.EndObject();
+
+  w.Key("device_error");
+  w.BeginObject();
+  w.Key("latched");
+  w.Bool(errorLatched);
+  w.Key("last_time_10ms");
+  w.Uint32(lastErrorTime10ms);
+  JsonWriteU32Hex(w, "packed_u32_hex", q.reserved0);
   w.EndObject();
 
   w.Key("vblank");

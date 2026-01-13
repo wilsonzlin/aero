@@ -71,7 +71,8 @@ Minimum supported commands:
   Calls `D3DKMTQueryAdapterInfo(KMTQAITYPE_QUERYSEGMENT)` and `D3DKMTQueryAdapterInfo(KMTQAITYPE_GETSEGMENTGROUPSIZE)` to print the WDDM segment list and segment group budgets (Local/NonLocal memory sizes).
 
 - `aerogpu_dbgctl --query-fence`  
-  Prints the last submitted fence and last completed fence.
+  Prints the last submitted fence and last completed fence, plus sticky error
+  counters (`error_irq_count` / `last_error_fence`) when supported by the KMD.
 
 - `aerogpu_dbgctl --watch-fence --samples N --interval-ms M [--timeout-ms T]`  
   Polls `--query-fence` in a loop and prints **one line per sample** with:
@@ -83,6 +84,9 @@ Minimum supported commands:
 - `aerogpu_dbgctl --query-perf` *(alias: `--perf`)*  
   Dumps a KMD-provided perf/health counter snapshot (fence/ring progress, submit counts, IRQ counts,
   reset counts, vblank counters, and error IRQ / last-error diagnostics when available).
+  Also includes sticky device error state when supported:
+  - `device_error.latched` and `device_error.last_time_10ms` (approx; packed into `reserved0` for ABI stability), and
+  - error IRQ telemetry (`error_irq_count` / `last_error_fence`) when supported by the KMD (dbgctl may fall back to `--query-fence` on older builds).
   On older KMD builds this may print `(not supported)`; upgrade the driver to enable it.
 
 - `aerogpu_dbgctl --query-scanout`  

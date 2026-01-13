@@ -52,6 +52,16 @@
 #define AEROGPU_DBGCTL_RECENT_SUBMISSIONS_MAX_COUNT 8u
 #define AEROGPU_DBGCTL_RECENT_SUBMISSIONS_MAX_BYTES (4ull * 1024ull * 1024ull) /* 4 MiB */
 
+/*
+ * NTSTATUS used to surface deterministic device-lost semantics to dxgkrnl/user-mode.
+ *
+ * STATUS_GRAPHICS_DEVICE_REMOVED maps to DXGI_ERROR_DEVICE_REMOVED / D3DERR_DEVICELOST
+ * style failures in user-mode, without requiring a GPU hang/TDR path.
+ */
+#ifndef STATUS_GRAPHICS_DEVICE_REMOVED
+#define STATUS_GRAPHICS_DEVICE_REMOVED ((NTSTATUS)0xC01E0001L)
+#endif
+
 #if DBG
 /*
  * DBG-only rate limiting for logs that can be triggered by misbehaving guests.
@@ -671,6 +681,14 @@ static const char* AeroGpuErrorCodeName(_In_ ULONG Code)
             break;
     }
     return "UNKNOWN";
+}
+
+static __forceinline BOOLEAN AeroGpuIsDeviceErrorLatched(_In_ const AEROGPU_ADAPTER* Adapter)
+{
+    if (!Adapter) {
+        return FALSE;
+    }
+    return InterlockedCompareExchange((volatile LONG*)&Adapter->DeviceErrorLatched, 0, 0) != 0;
 }
 
 static VOID AeroGpuLogSubmission(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG Fence, _In_ ULONG Type, _In_ ULONG DmaSize)
@@ -2145,6 +2163,10 @@ static NTSTATUS AeroGpuWaitForAllocationIdle(_Inout_ AEROGPU_ADAPTER* Adapter,
         return STATUS_INVALID_DEVICE_STATE;
     }
 
+    if (AeroGpuIsDeviceErrorLatched(Adapter)) {
+        return STATUS_GRAPHICS_DEVICE_REMOVED;
+    }
+
     /*
      * If the adapter is not in D0, avoid touching MMIO for fence polling.
      * The call sites for this helper are CPU-mapping paths (DxgkDdiLock) which
@@ -2176,6 +2198,10 @@ static NTSTATUS AeroGpuWaitForAllocationIdle(_Inout_ AEROGPU_ADAPTER* Adapter,
          * VA while the emulator may still be writing the allocation.
          */
         while (AeroGpuReadCompletedFence(Adapter) < busyFence) {
+            if (AeroGpuIsDeviceErrorLatched(Adapter)) {
+                return STATUS_GRAPHICS_DEVICE_REMOVED;
+            }
+
             /*
              * If the adapter is leaving D0 (sleep/hibernate, PnP disable, etc),
              * the completed fence value may stop advancing. Avoid hanging a
@@ -2344,6 +2370,9 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     if (!adapter || !DxgkStartInfo || !DxgkInterface || !NumberOfVideoPresentSources || !NumberOfChildren) {
         return STATUS_INVALID_PARAMETER;
     }
+
+    /* Clear any KMD-side latched "device error" state recorded from IRQ_ERROR. */
+    InterlockedExchange(&adapter->DeviceErrorLatched, 0);
 
     adapter->StartInfo = *DxgkStartInfo;
     adapter->DxgkInterface = *DxgkInterface;
@@ -2584,8 +2613,15 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
             if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
                 KIRQL oldIrql;
                 KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
-                adapter->IrqEnableMask = 0;
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, 0);
+                /*
+                 * Fence IRQs for legacy devices are delivered via INT_STATUS/ACK,
+                 * but ERROR/VBLANK use the versioned IRQ_STATUS/ENABLE/ACK block
+                 * when present. Always enable ERROR delivery (when an ISR is
+                 * registered) so the guest surfaces deterministic device-lost
+                 * semantics instead of silently hanging.
+                 */
+                adapter->IrqEnableMask = interruptRegistered ? AEROGPU_IRQ_ERROR : 0;
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->IrqEnableMask);
                 KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
             }
@@ -6448,6 +6484,10 @@ static NTSTATUS APIENTRY AeroGpuDdiRender(_In_ const HANDLE hContext, _Inout_ DX
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (AeroGpuIsDeviceErrorLatched(adapter)) {
+        return STATUS_GRAPHICS_DEVICE_REMOVED;
+    }
+
     AEROGPU_DMA_PRIV* priv = (AEROGPU_DMA_PRIV*)pRender->pDmaBufferPrivateData;
     priv->Type = AEROGPU_SUBMIT_RENDER;
     priv->Reserved0 = ctx ? ctx->ContextId : 0;
@@ -6477,6 +6517,10 @@ static NTSTATUS APIENTRY AeroGpuDdiPresent(_In_ const HANDLE hContext, _Inout_ D
     if (!adapter || !pPresent || !pPresent->pDmaBufferPrivateData ||
         pPresent->DmaBufferPrivateDataSize < sizeof(AEROGPU_DMA_PRIV)) {
         return STATUS_INVALID_PARAMETER;
+    }
+
+    if (AeroGpuIsDeviceErrorLatched(adapter)) {
+        return STATUS_GRAPHICS_DEVICE_REMOVED;
     }
 
     AEROGPU_DMA_PRIV* priv = (AEROGPU_DMA_PRIV*)pPresent->pDmaBufferPrivateData;
@@ -6537,6 +6581,18 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         type = priv->Type;
         contextId = priv->Reserved0;
         metaHandle = priv->MetaHandle;
+    }
+
+    if (AeroGpuIsDeviceErrorLatched(adapter)) {
+        /* Best-effort: drain any per-submit meta handle so we don't leak on device-lost. */
+        if (metaHandle != 0) {
+            AEROGPU_SUBMISSION_META* metaEarly = AeroGpuMetaHandleTake(adapter, metaHandle);
+            if (!metaEarly) {
+                return STATUS_INVALID_PARAMETER;
+            }
+            AeroGpuFreeSubmissionMeta(metaEarly);
+        }
+        return STATUS_GRAPHICS_DEVICE_REMOVED;
     }
 
     /*
@@ -6760,7 +6816,9 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
      * submission is visible in PendingSubmissions.
      */
     NTSTATUS ringSt = STATUS_SUCCESS;
-    if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+    if (AeroGpuIsDeviceErrorLatched(adapter)) {
+        ringSt = STATUS_GRAPHICS_DEVICE_REMOVED;
+    } else if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
         uint32_t submitFlags = 0;
         if (type == AEROGPU_SUBMIT_PRESENT) {
             submitFlags |= AEROGPU_SUBMIT_FLAG_PRESENT;
@@ -6912,6 +6970,21 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
 
         if ((handled & AEROGPU_IRQ_ERROR) != 0) {
             InterlockedExchange(&adapter->DeviceErrorLatched, 1);
+            /*
+             * Record a guest-time anchor for post-mortem inspection. This is a monotonic
+             * timestamp in 100ns units since boot.
+             */
+            AeroGpuAtomicWriteU64(&adapter->LastErrorTime100ns, KeQueryInterruptTime());
+
+            /*
+             * Prevent interrupt storms if the device keeps asserting ERROR as a
+             * level-triggered interrupt. We cannot take IrqEnableLock at DIRQL, so
+             * update the cached mask atomically and write the new value directly.
+             */
+            if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
+                const ULONG newEnable = (ULONG)InterlockedAnd((volatile LONG*)&adapter->IrqEnableMask, ~(LONG)AEROGPU_IRQ_ERROR);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, newEnable);
+            }
             /*
              * Choose a faulted fence ID that dxgkrnl can associate with a DMA buffer.
              *
@@ -7159,6 +7232,18 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
 
                 if ((pending & AEROGPU_IRQ_ERROR) != 0) {
                     InterlockedExchange(&adapter->DeviceErrorLatched, 1);
+                    AeroGpuAtomicWriteU64(&adapter->LastErrorTime100ns, KeQueryInterruptTime());
+
+                    /*
+                     * Mask off further ERROR IRQ generation to avoid storms if the legacy
+                     * device model leaves the status bit asserted. This block uses the
+                     * versioned IRQ_STATUS/ENABLE/ACK registers.
+                     */
+                    if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
+                        const ULONG newEnable =
+                            (ULONG)InterlockedAnd((volatile LONG*)&adapter->IrqEnableMask, ~(LONG)AEROGPU_IRQ_ERROR);
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, newEnable);
+                    }
                     const ULONGLONG completedFence64 = AeroGpuReadCompletedFence(adapter);
                     ULONG completedFence32 = (ULONG)completedFence64;
                     const ULONG lastCompleted32 = (ULONG)adapter->LastCompletedFence;
@@ -7357,6 +7442,14 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
 
     const BOOLEAN poweredOn =
         ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+    /*
+     * Once the device has asserted IRQ_ERROR, keep device IRQ generation masked
+     * off to avoid storms and force the runtime down a deterministic device-lost
+     * path. Allow disable calls to succeed so dxgkrnl can tear down cleanly.
+     */
+    if (AeroGpuIsDeviceErrorLatched(adapter) && EnableInterrupt) {
+        return STATUS_GRAPHICS_DEVICE_REMOVED;
+    }
 
     /* Fence/DMA completion interrupt gating. */
     if (InterruptType == DXGK_INTERRUPT_TYPE_DMA_COMPLETED) {
@@ -7373,6 +7466,9 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                 enable |= AEROGPU_IRQ_FENCE;
             } else {
                 enable &= ~AEROGPU_IRQ_FENCE;
+            }
+            if (AeroGpuIsDeviceErrorLatched(adapter)) {
+                enable = 0;
             }
             adapter->IrqEnableMask = enable;
             if (poweredOn && haveIrqRegs) {
@@ -7445,6 +7541,9 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                 enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
             } else {
                 enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+            }
+            if (AeroGpuIsDeviceErrorLatched(adapter)) {
+                enable = 0;
             }
             adapter->IrqEnableMask = enable;
             if (poweredOn) {
@@ -8669,10 +8768,26 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->reset_from_timeout_count = (uint64_t)InterlockedCompareExchange64(&adapter->PerfResetFromTimeoutCount, 0, 0);
         out->last_reset_time_100ns = (uint64_t)InterlockedCompareExchange64(&adapter->PerfLastResetTime100ns, 0, 0);
 
+        /* See aerogpu_dbgctl_escape.h: reserved0 encodes latched + last_error_time_10ms. */
+        ULONG packed = 0;
+        if (AeroGpuIsDeviceErrorLatched(adapter)) {
+            packed |= 0x80000000u;
+        }
+        {
+            const ULONGLONG lastError100ns = AeroGpuAtomicReadU64(&adapter->LastErrorTime100ns);
+            if (lastError100ns != 0) {
+                ULONGLONG t10ms = lastError100ns / 100000ull;
+                if (t10ms > 0x7FFFFFFFull) {
+                    t10ms = 0x7FFFFFFFull;
+                }
+                packed |= (ULONG)t10ms;
+            }
+        }
+        out->reserved0 = packed;
+
         out->vblank_seq = (uint64_t)AeroGpuAtomicReadU64(&adapter->LastVblankSeq);
         out->last_vblank_time_ns = (uint64_t)AeroGpuAtomicReadU64(&adapter->LastVblankTimeNs);
         out->vblank_period_ns = (uint32_t)adapter->VblankPeriodNs;
-        out->reserved0 = 0;
 
         if (pEscape->PrivateDriverDataSize >=
             (offsetof(aerogpu_escape_query_perf_out, error_irq_count) + sizeof(aerogpu_escape_u64))) {
