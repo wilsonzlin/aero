@@ -184,15 +184,16 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     CM_PARTIAL_RESOURCE_DESCRIPTOR InterruptDesc;
     BOOLEAN InterruptDescPresent;
 
-    /*
-     * Registry: HKR\Parameters\AllowPollingOnly (REG_DWORD)
-     *
-     * When TRUE, the driver is permitted to start even if an INTx resource cannot
-     * be discovered/connected. In that case, higher layers are expected to rely
-     * on polling used rings for completion delivery.
-     *
-     * Default: 0 / FALSE (set by the INF; contract v1 remains INTx-strict).
-     */
+     /*
+      * Registry: HKR\Parameters\AllowPollingOnly (REG_DWORD)
+      *
+      * When TRUE, the driver is permitted to start even if no usable interrupt
+      * resource can be discovered/connected (neither MSI/MSI-X nor legacy INTx).
+      * In that case, higher layers are expected to rely on polling used rings for
+      * completion delivery.
+      *
+      * Default: 0 / FALSE (set by the INF; normal interrupt-driven mode).
+      */
     BOOLEAN AllowPollingOnly;
 
     /* Message-signaled (MSI/MSI-X) plumbing. */
