@@ -545,6 +545,8 @@ NTSTATUS VirtioInputHandleHidGetInputReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST
     struct virtio_input_report cached;
     BOOLEAN haveReport;
     size_t bytesWritten;
+    PHID_XFER_PACKET xfer;
+    PUCHAR reportBuf;
 
     device = WdfIoQueueGetDevice(Queue);
     devCtx = VirtioInputGetDeviceContext(device);
@@ -573,11 +575,14 @@ NTSTATUS VirtioInputHandleHidGetInputReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST
      * by placing it in the first byte of the report buffer, so check both the
      * HID_XFER_PACKET and the buffer contents.
      */
+    xfer = (PHID_XFER_PACKET)reqCtx->XferPacket.SystemAddress;
+    reportBuf = (PUCHAR)reqCtx->ReportBuffer.SystemAddress;
+
     reportId = VIRTIO_INPUT_REPORT_ID_ANY;
-    if (VirtioInputIsValidReportId(reqCtx->XferPacket->reportId)) {
-        reportId = reqCtx->XferPacket->reportId;
-    } else if (reqCtx->ReportBuffer != NULL && reqCtx->ReportBufferLen != 0 && VirtioInputIsValidReportId(reqCtx->ReportBuffer[0])) {
-        reportId = reqCtx->ReportBuffer[0];
+    if (xfer != NULL && VirtioInputIsValidReportId(xfer->reportId)) {
+        reportId = xfer->reportId;
+    } else if (reportBuf != NULL && reqCtx->ReportBufferLen != 0 && VirtioInputIsValidReportId(reportBuf[0])) {
+        reportId = reportBuf[0];
     } else {
         fileObject = WdfRequestGetFileObject(Request);
         if (fileObject != NULL) {
@@ -593,6 +598,8 @@ NTSTATUS VirtioInputHandleHidGetInputReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST
             reportId = VIRTIO_INPUT_REPORT_ID_KEYBOARD;
         } else if (devCtx->DeviceKind == VioInputDeviceKindMouse) {
             reportId = VIRTIO_INPUT_REPORT_ID_MOUSE;
+        } else if (devCtx->DeviceKind == VioInputDeviceKindTablet) {
+            reportId = VIRTIO_INPUT_REPORT_ID_TABLET;
         }
     }
 
@@ -602,12 +609,19 @@ NTSTATUS VirtioInputHandleHidGetInputReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST
         return STATUS_SUCCESS;
     }
 
-    if (devCtx->DeviceKind == VioInputDeviceKindKeyboard && reportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD) {
+    if (devCtx->DeviceKind == VioInputDeviceKindKeyboard &&
+        reportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD &&
+        reportId != VIRTIO_INPUT_REPORT_ID_CONSUMER) {
         WdfWaitLockRelease(devCtx->ReadReportWaitLock);
         WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
         return STATUS_SUCCESS;
     }
     if (devCtx->DeviceKind == VioInputDeviceKindMouse && reportId != VIRTIO_INPUT_REPORT_ID_MOUSE) {
+        WdfWaitLockRelease(devCtx->ReadReportWaitLock);
+        WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
+        return STATUS_SUCCESS;
+    }
+    if (devCtx->DeviceKind == VioInputDeviceKindTablet && reportId != VIRTIO_INPUT_REPORT_ID_TABLET) {
         WdfWaitLockRelease(devCtx->ReadReportWaitLock);
         WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
         return STATUS_SUCCESS;
@@ -653,8 +667,10 @@ NTSTATUS VirtioInputHandleHidGetInputReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST
          * report since the last poll, return STATUS_NO_DATA_DETECTED so user-mode
          * callers observe ERROR_NO_DATA rather than hanging.
          */
-        reqCtx->XferPacket->reportId = reportId;
-        reqCtx->XferPacket->reportBufferLen = 0;
+        if (xfer != NULL) {
+            xfer->reportId = reportId;
+            xfer->reportBufferLen = 0;
+        }
         WdfRequestComplete(Request, STATUS_NO_DATA_DETECTED);
         return STATUS_SUCCESS;
     }
