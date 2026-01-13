@@ -768,13 +768,18 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
       Intent.WantTcpChecksum = 1;
     }
 
-    // Do not accept unsupported checksum requests (we only advertise TCP checksum).
-    if (CsumInfo.Transmit.UdpChecksum || CsumInfo.Transmit.IpHeaderChecksum) {
+    if (CsumInfo.Transmit.UdpChecksum) {
+      Intent.WantUdpChecksum = 1;
+    }
+
+    // Do not accept unsupported checksum requests (we only advertise L4 checksum).
+    // The packet can only request one of TCP or UDP checksum offload.
+    if (CsumInfo.Transmit.IpHeaderChecksum || (CsumInfo.Transmit.TcpChecksum && CsumInfo.Transmit.UdpChecksum)) {
       return NDIS_STATUS_INVALID_PACKET;
     }
   }
 
-  if (!Intent.WantTso && !Intent.WantTcpChecksum) {
+  if (!Intent.WantTso && !Intent.WantTcpChecksum && !Intent.WantUdpChecksum) {
     // Normal packet: all zeros.
     RtlZeroMemory(TxReq->HeaderVa, sizeof(VIRTIO_NET_HDR));
     return NDIS_STATUS_SUCCESS;
@@ -1713,6 +1718,8 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   // Enable all negotiated offloads by default; NDIS can toggle them via OID_TCP_OFFLOAD_PARAMETERS.
   Adapter->TxChecksumV4Enabled = Adapter->TxChecksumSupported;
   Adapter->TxChecksumV6Enabled = Adapter->TxChecksumSupported;
+  Adapter->TxUdpChecksumV4Enabled = Adapter->TxChecksumSupported;
+  Adapter->TxUdpChecksumV6Enabled = Adapter->TxChecksumSupported;
   Adapter->TxTsoV4Enabled = Adapter->TxTsoV4Supported;
   Adapter->TxTsoV6Enabled = Adapter->TxTsoV6Supported;
   Adapter->TxTsoMaxOffloadSize = 0x00010000u; // 64KiB total packet size.
@@ -2479,6 +2486,8 @@ ReleaseAndExit:
 static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ BOOLEAN UseCurrentConfig, _Out_ NDIS_OFFLOAD* Offload) {
   BOOLEAN CsumV4;
   BOOLEAN CsumV6;
+  BOOLEAN UdpCsumV4;
+  BOOLEAN UdpCsumV6;
   BOOLEAN TsoV4;
   BOOLEAN TsoV6;
 
@@ -2490,11 +2499,15 @@ static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ 
   if (UseCurrentConfig) {
     CsumV4 = Adapter->TxChecksumV4Enabled;
     CsumV6 = Adapter->TxChecksumV6Enabled;
+    UdpCsumV4 = Adapter->TxUdpChecksumV4Enabled;
+    UdpCsumV6 = Adapter->TxUdpChecksumV6Enabled;
     TsoV4 = Adapter->TxTsoV4Enabled;
     TsoV6 = Adapter->TxTsoV6Enabled;
   } else {
     CsumV4 = Adapter->TxChecksumSupported;
     CsumV6 = Adapter->TxChecksumSupported;
+    UdpCsumV4 = Adapter->TxChecksumSupported;
+    UdpCsumV6 = Adapter->TxChecksumSupported;
     TsoV4 = Adapter->TxTsoV4Supported;
     TsoV6 = Adapter->TxTsoV6Supported;
   }
@@ -2504,7 +2517,7 @@ static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ 
   Offload->Checksum.IPv4Transmit.IpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Transmit.TcpOptionsSupported = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Transmit.TcpChecksum = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv4Transmit.UdpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.UdpChecksum = UdpCsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Transmit.IpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
 
   Offload->Checksum.IPv4Receive.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
@@ -2518,7 +2531,7 @@ static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ 
   Offload->Checksum.IPv6Transmit.IpExtensionHeadersSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv6Transmit.TcpOptionsSupported = CsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv6Transmit.TcpChecksum = CsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv6Transmit.UdpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Transmit.UdpChecksum = UdpCsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
 
   Offload->Checksum.IPv6Receive.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
   Offload->Checksum.IPv6Receive.IpExtensionHeadersSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
@@ -2948,11 +2961,15 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
       {
         BOOLEAN TxCsumV4;
         BOOLEAN TxCsumV6;
+        BOOLEAN TxUdpCsumV4;
+        BOOLEAN TxUdpCsumV6;
         BOOLEAN TxTsoV4;
         BOOLEAN TxTsoV6;
 
         TxCsumV4 = Adapter->TxChecksumV4Enabled;
         TxCsumV6 = Adapter->TxChecksumV6Enabled;
+        TxUdpCsumV4 = Adapter->TxUdpChecksumV4Enabled;
+        TxUdpCsumV6 = Adapter->TxUdpChecksumV6Enabled;
         TxTsoV4 = Adapter->TxTsoV4Enabled;
         TxTsoV6 = Adapter->TxTsoV6Enabled;
 
@@ -2979,6 +2996,32 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
               TxCsumV6 = FALSE;
             } else if (V == 2 || V == 4) {
               TxCsumV6 = TRUE;
+            } else {
+              return NDIS_STATUS_INVALID_DATA;
+            }
+          }
+        }
+
+        {
+          UCHAR V = Params->UDPIPv4Checksum;
+          if (V != 0) {
+            if (V == 1 || V == 3) {
+              TxUdpCsumV4 = FALSE;
+            } else if (V == 2 || V == 4) {
+              TxUdpCsumV4 = TRUE;
+            } else {
+              return NDIS_STATUS_INVALID_DATA;
+            }
+          }
+        }
+
+        {
+          UCHAR V = Params->UDPIPv6Checksum;
+          if (V != 0) {
+            if (V == 1 || V == 3) {
+              TxUdpCsumV6 = FALSE;
+            } else if (V == 2 || V == 4) {
+              TxUdpCsumV6 = TRUE;
             } else {
               return NDIS_STATUS_INVALID_DATA;
             }
@@ -3015,6 +3058,8 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
         if (!Adapter->TxChecksumSupported) {
           TxCsumV4 = FALSE;
           TxCsumV6 = FALSE;
+          TxUdpCsumV4 = FALSE;
+          TxUdpCsumV6 = FALSE;
         }
         if (!Adapter->TxTsoV4Supported) {
           TxTsoV4 = FALSE;
@@ -3026,6 +3071,8 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
         NdisAcquireSpinLock(&Adapter->Lock);
         Adapter->TxChecksumV4Enabled = TxCsumV4;
         Adapter->TxChecksumV6Enabled = TxCsumV6;
+        Adapter->TxUdpChecksumV4Enabled = TxUdpCsumV4;
+        Adapter->TxUdpChecksumV6Enabled = TxUdpCsumV6;
         Adapter->TxTsoV4Enabled = TxTsoV4;
         Adapter->TxTsoV6Enabled = TxTsoV6;
         NdisReleaseSpinLock(&Adapter->Lock);

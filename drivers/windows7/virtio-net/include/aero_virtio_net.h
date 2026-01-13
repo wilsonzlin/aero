@@ -209,6 +209,8 @@ typedef struct _AEROVNET_ADAPTER {
 
   BOOLEAN TxChecksumV4Enabled;
   BOOLEAN TxChecksumV6Enabled;
+  BOOLEAN TxUdpChecksumV4Enabled;
+  BOOLEAN TxUdpChecksumV6Enabled;
   BOOLEAN TxTsoV4Enabled;
   BOOLEAN TxTsoV6Enabled;
 

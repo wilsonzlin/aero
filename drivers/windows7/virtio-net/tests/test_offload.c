@@ -83,6 +83,27 @@ static void build_ipv4_tcp(uint8_t *dst, size_t payload_len)
     dst[19] = 2;
 }
 
+static void build_ipv4_udp(uint8_t *dst, size_t payload_len)
+{
+    /* IPv4 header */
+    const uint16_t total_len = (uint16_t)(20 + 8 + payload_len);
+    memset(dst, 0, 20);
+    dst[0] = (4u << 4) | 5u;
+    dst[2] = (uint8_t)(total_len >> 8);
+    dst[3] = (uint8_t)(total_len & 0xff);
+    dst[8] = 64;
+    dst[9] = 17; /* UDP */
+    /* src/dst */
+    dst[12] = 192;
+    dst[13] = 0;
+    dst[14] = 2;
+    dst[15] = 1;
+    dst[16] = 198;
+    dst[17] = 51;
+    dst[18] = 100;
+    dst[19] = 2;
+}
+
 static void build_ipv4_tcp_with_ihl(uint8_t *dst, size_t payload_len, uint8_t ihl_words, uint16_t tcp_header_bytes)
 {
     const uint16_t ip_header_bytes = (uint16_t)ihl_words * 4u;
@@ -141,6 +162,12 @@ static void build_tcp_header(uint8_t *dst)
     dst[12] = 5u << 4;
 }
 
+static void build_udp_header(uint8_t *dst)
+{
+    /* Minimal UDP header (8 bytes). */
+    memset(dst, 0, 8);
+}
+
 static void build_tcp_header_with_data_offset(uint8_t *dst, uint8_t data_offset_words)
 {
     const size_t hdr_bytes = (size_t)data_offset_words * 4u;
@@ -174,6 +201,34 @@ static void test_ipv4_tcp_checksum_only(void)
     assert(hdr.CsumOffset == 16);
     assert(info.IpVersion == 4);
     assert(info.L4Protocol == 6);
+}
+
+static void test_ipv4_udp_checksum_only(void)
+{
+    uint8_t pkt[14 + 20 + 8];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_udp(pkt + 14, 0);
+    build_udp_header(pkt + 14 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.HdrLen == 0);
+    assert(hdr.GsoSize == 0);
+    assert(hdr.CsumStart == (uint16_t)(14 + 20));
+    assert(hdr.CsumOffset == 6);
+    assert(info.IpVersion == 4);
+    assert(info.L4Protocol == 17);
 }
 
 static void test_ipv6_tcp_checksum_only(void)
@@ -453,6 +508,7 @@ static void test_unsupported_protocol(void)
 int main(void)
 {
     test_ipv4_tcp_checksum_only();
+    test_ipv4_udp_checksum_only();
     test_ipv6_tcp_checksum_only();
     test_ipv4_vlan_tcp_checksum_only();
     test_ipv4_ip_options_tcp_checksum_only();

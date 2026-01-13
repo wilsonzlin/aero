@@ -18,6 +18,7 @@
 #define AEROVNET_ETHERTYPE_VLAN_ALT 0x9100u
 
 #define AEROVNET_IPPROTO_TCP 6u
+#define AEROVNET_IPPROTO_UDP 17u
 
 static uint16_t aerovnet_read_be16(const uint8_t* p) { return (uint16_t)((uint16_t)p[0] << 8) | (uint16_t)p[1]; }
 
@@ -125,7 +126,7 @@ static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv6_l4_offset(const uint8_t* ipv6
    * and guest-provided in the miniport), so keep parsing work deterministic.
    */
   for (iter = 0; iter < 8u; iter++) {
-    if (next == AEROVNET_IPPROTO_TCP) {
+    if (next == AEROVNET_IPPROTO_TCP || next == AEROVNET_IPPROTO_UDP) {
       *l3_len_out = off;
       *proto_out = next;
       return AEROVNET_OFFLOAD_OK;
@@ -208,6 +209,19 @@ static AEROVNET_OFFLOAD_RESULT aerovnet_parse_tcp(const uint8_t* tcp, size_t tcp
   return AEROVNET_OFFLOAD_OK;
 }
 
+static AEROVNET_OFFLOAD_RESULT aerovnet_parse_udp(const uint8_t* udp, size_t udp_len, size_t* udp_header_len_out) {
+  if (!udp || !udp_header_len_out) {
+    return AEROVNET_OFFLOAD_ERR_INVAL;
+  }
+
+  if (udp_len < 8u) {
+    return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
+  }
+
+  *udp_header_len_out = 8u;
+  return AEROVNET_OFFLOAD_OK;
+}
+
 AEROVNET_OFFLOAD_RESULT AerovNetBuildTxVirtioNetHdr(const uint8_t* frame,
                                                     size_t frame_len,
                                                     const AEROVNET_TX_OFFLOAD_INTENT* intent,
@@ -218,6 +232,7 @@ AEROVNET_OFFLOAD_RESULT AerovNetBuildTxVirtioNetHdr(const uint8_t* frame,
   size_t l2_len;
   uint8_t ip_version;
   uint8_t l4_proto;
+  uint16_t csum_offset;
   size_t l3_len;
   size_t l4_off;
   size_t l4_len;
@@ -232,8 +247,13 @@ AEROVNET_OFFLOAD_RESULT AerovNetBuildTxVirtioNetHdr(const uint8_t* frame,
     memset(out_info, 0, sizeof(*out_info));
   }
 
-  if (!intent || (intent->WantTcpChecksum == 0 && intent->WantTso == 0)) {
+  if (!intent || (intent->WantTcpChecksum == 0 && intent->WantUdpChecksum == 0 && intent->WantTso == 0)) {
     return AEROVNET_OFFLOAD_OK;
+  }
+
+  /* Only one L4 checksum type may be requested for a given frame. */
+  if ((intent->WantTcpChecksum != 0 && intent->WantUdpChecksum != 0) || (intent->WantTso != 0 && intent->WantUdpChecksum != 0)) {
+    return AEROVNET_OFFLOAD_ERR_INVAL;
   }
 
   res = aerovnet_parse_ethernet(frame, frame_len, &ethertype, &l2_len);
@@ -253,9 +273,6 @@ AEROVNET_OFFLOAD_RESULT AerovNetBuildTxVirtioNetHdr(const uint8_t* frame,
     if (res != AEROVNET_OFFLOAD_OK) {
       return res;
     }
-    if (l4_proto != AEROVNET_IPPROTO_TCP) {
-      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL;
-    }
     l4_off = l2_len + l3_len;
   } else if (ethertype == AEROVNET_ETHERTYPE_IPV6) {
     ip_version = 6u;
@@ -263,17 +280,31 @@ AEROVNET_OFFLOAD_RESULT AerovNetBuildTxVirtioNetHdr(const uint8_t* frame,
     if (res != AEROVNET_OFFLOAD_OK) {
       return res;
     }
-    if (l4_proto != AEROVNET_IPPROTO_TCP) {
-      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL;
-    }
     l4_off = l2_len + l3_len;
   } else {
     return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_ETHERTYPE;
   }
 
-  res = aerovnet_parse_tcp(frame + l4_off, frame_len - l4_off, &l4_len);
-  if (res != AEROVNET_OFFLOAD_OK) {
-    return res;
+  if (intent->WantTso != 0 || intent->WantTcpChecksum != 0) {
+    if (l4_proto != AEROVNET_IPPROTO_TCP) {
+      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL;
+    }
+    res = aerovnet_parse_tcp(frame + l4_off, frame_len - l4_off, &l4_len);
+    if (res != AEROVNET_OFFLOAD_OK) {
+      return res;
+    }
+    csum_offset = 16u;
+  } else if (intent->WantUdpChecksum != 0) {
+    if (l4_proto != AEROVNET_IPPROTO_UDP) {
+      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL;
+    }
+    res = aerovnet_parse_udp(frame + l4_off, frame_len - l4_off, &l4_len);
+    if (res != AEROVNET_OFFLOAD_OK) {
+      return res;
+    }
+    csum_offset = 6u;
+  } else {
+    return AEROVNET_OFFLOAD_OK;
   }
 
   headers_len = l4_off + l4_len;
@@ -288,10 +319,10 @@ AEROVNET_OFFLOAD_RESULT AerovNetBuildTxVirtioNetHdr(const uint8_t* frame,
     out_info->HeadersLen = (uint16_t)headers_len;
   }
 
-  /* Always use TCP checksum completion when any offload is requested. */
+  /* Request checksum completion for TCP/UDP when any offload is requested. */
   out_hdr->Flags = AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM;
   out_hdr->CsumStart = (uint16_t)l4_off;
-  out_hdr->CsumOffset = 16u; /* TCP checksum field offset */
+  out_hdr->CsumOffset = csum_offset;
 
   if (intent->WantTso != 0) {
     if (intent->TsoMss == 0) {

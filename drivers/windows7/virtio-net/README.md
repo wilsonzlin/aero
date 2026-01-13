@@ -36,8 +36,8 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
   - INTx (via virtio ISR status register; read-to-ack, spurious-safe)
   - Optional MSI/MSI-X (message-signaled) when enabled via INF. The driver programs virtio MSI-X vectors for config/RX/TX and falls back to sharing vector 0 if Windows grants fewer messages. The optional control virtqueue does not get a dedicated MSI-X vector and is serviced via polling.
 - TX offloads (when offered by the host and enabled by Windows):
-  - TCP checksum offload (IPv4/IPv6) via `VIRTIO_NET_F_CSUM`
-  - TCP segmentation offload (TSO/LSO, IPv4/IPv6) via `VIRTIO_NET_F_HOST_TSO4` / `VIRTIO_NET_F_HOST_TSO6`
+  - TCP/UDP checksum offload (IPv4/IPv6) via `VIRTIO_NET_F_CSUM`
+  - TCP segmentation offload (TSO/LSO, IPv4/IPv6) via `VIRTIO_NET_F_HOST_TSO4` / `VIRTIO_NET_F_HOST_TSO6` (uses `virtio_net_hdr` GSO fields)
 
 ## MSI / MSI-X interrupts (optional)
 

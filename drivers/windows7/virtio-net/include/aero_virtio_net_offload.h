@@ -54,6 +54,9 @@ typedef struct _AEROVNET_TX_OFFLOAD_INTENT {
   /* Request TCP checksum offload (no segmentation). */
   uint8_t WantTcpChecksum;
 
+  /* Request UDP checksum offload (no segmentation). */
+  uint8_t WantUdpChecksum;
+
   /* Request TCP segmentation offload (TSO/LSO). Implies NEEDS_CSUM. */
   uint8_t WantTso;
 
@@ -63,7 +66,7 @@ typedef struct _AEROVNET_TX_OFFLOAD_INTENT {
 
 typedef struct _AEROVNET_OFFLOAD_PARSE_INFO {
   uint8_t IpVersion; /* 4 or 6 when parsed successfully. */
-  uint8_t L4Protocol; /* e.g. 6 for TCP. */
+  uint8_t L4Protocol; /* e.g. 6 for TCP, 17 for UDP. */
 
   uint16_t L2Len;
   uint16_t L3Len;
