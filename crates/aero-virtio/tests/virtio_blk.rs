@@ -5,11 +5,10 @@ use aero_storage::{
     VirtualDisk,
 };
 use aero_virtio::devices::blk::{
-    BlockBackend, BlockBackendError, VirtioBlk, VIRTIO_BLK_MAX_REQUEST_DATA_BYTES,
-    VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS, VIRTIO_BLK_SECTOR_SIZE, VIRTIO_BLK_S_IOERR,
-    VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_DISCARD, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_GET_ID,
-    VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT, VIRTIO_BLK_T_WRITE_ZEROES,
-    VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP,
+    VirtioBlk, VIRTIO_BLK_MAX_REQUEST_DATA_BYTES, VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS,
+    VIRTIO_BLK_SECTOR_SIZE, VIRTIO_BLK_S_IOERR, VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_DISCARD,
+    VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
+    VIRTIO_BLK_T_WRITE_ZEROES, VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP,
 };
 use aero_virtio::memory::{
     read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -24,100 +23,145 @@ use aero_virtio::queue::{VIRTQ_DESC_F_INDIRECT, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 struct SharedDisk {
-    data: Rc<RefCell<Vec<u8>>>,
-    flushes: Rc<Cell<u32>>,
+    data: Arc<Mutex<Vec<u8>>>,
+    flushes: Arc<AtomicU32>,
 }
 
-impl BlockBackend for SharedDisk {
-    fn len(&self) -> u64 {
-        self.data.borrow().len() as u64
+impl VirtualDisk for SharedDisk {
+    fn capacity_bytes(&self) -> u64 {
+        self.data.lock().unwrap().len() as u64
     }
 
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| BlockBackendError::OutOfBounds)?;
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        let data = self.data.lock().unwrap();
+        let capacity = data.len() as u64;
         let end = offset
-            .checked_add(dst.len())
-            .ok_or(BlockBackendError::OutOfBounds)?;
-        dst.copy_from_slice(&self.data.borrow()[offset..end]);
+            .checked_add(buf.len() as u64)
+            .ok_or(StorageDiskError::OffsetOverflow)?;
+        if end > capacity {
+            return Err(StorageDiskError::OutOfBounds {
+                offset,
+                len: buf.len(),
+                capacity,
+            });
+        }
+        let offset = offset as usize;
+        let end = offset + buf.len();
+        buf.copy_from_slice(&data[offset..end]);
         Ok(())
     }
 
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| BlockBackendError::OutOfBounds)?;
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        let mut data = self.data.lock().unwrap();
+        let capacity = data.len() as u64;
         let end = offset
-            .checked_add(src.len())
-            .ok_or(BlockBackendError::OutOfBounds)?;
-        self.data.borrow_mut()[offset..end].copy_from_slice(src);
+            .checked_add(buf.len() as u64)
+            .ok_or(StorageDiskError::OffsetOverflow)?;
+        if end > capacity {
+            return Err(StorageDiskError::OutOfBounds {
+                offset,
+                len: buf.len(),
+                capacity,
+            });
+        }
+        let offset = offset as usize;
+        let end = offset + buf.len();
+        data[offset..end].copy_from_slice(buf);
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), BlockBackendError> {
-        self.flushes.set(self.flushes.get().saturating_add(1));
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.flushes.fetch_add(1, Ordering::SeqCst);
         Ok(())
-    }
-
-    fn device_id(&self) -> [u8; 20] {
-        *b"aero-virtio-testdisk"
     }
 }
 
 #[derive(Clone)]
 struct TrackingDiscardDisk {
-    data: Rc<RefCell<Vec<u8>>>,
-    discards: Rc<Cell<u32>>,
-    writes: Rc<Cell<u32>>,
+    data: Arc<Mutex<Vec<u8>>>,
+    discards: Arc<AtomicU32>,
+    writes: Arc<AtomicU32>,
 }
 
-impl BlockBackend for TrackingDiscardDisk {
-    fn len(&self) -> u64 {
-        self.data.borrow().len() as u64
+impl VirtualDisk for TrackingDiscardDisk {
+    fn capacity_bytes(&self) -> u64 {
+        self.data.lock().unwrap().len() as u64
     }
 
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| BlockBackendError::OutOfBounds)?;
+    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> aero_storage::Result<()> {
+        let data = self.data.lock().unwrap();
+        let capacity = data.len() as u64;
         let end = offset
-            .checked_add(dst.len())
-            .ok_or(BlockBackendError::OutOfBounds)?;
-        dst.copy_from_slice(&self.data.borrow()[offset..end]);
+            .checked_add(dst.len() as u64)
+            .ok_or(StorageDiskError::OffsetOverflow)?;
+        if end > capacity {
+            return Err(StorageDiskError::OutOfBounds {
+                offset,
+                len: dst.len(),
+                capacity,
+            });
+        }
+        let offset = offset as usize;
+        let end = offset + dst.len();
+        dst.copy_from_slice(&data[offset..end]);
         Ok(())
     }
 
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        self.writes.set(self.writes.get().saturating_add(1));
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| BlockBackendError::OutOfBounds)?;
+    fn write_at(&mut self, offset: u64, src: &[u8]) -> aero_storage::Result<()> {
+        self.writes.fetch_add(1, Ordering::SeqCst);
+        let mut data = self.data.lock().unwrap();
+        let capacity = data.len() as u64;
         let end = offset
-            .checked_add(src.len())
-            .ok_or(BlockBackendError::OutOfBounds)?;
-        self.data.borrow_mut()[offset..end].copy_from_slice(src);
+            .checked_add(src.len() as u64)
+            .ok_or(StorageDiskError::OffsetOverflow)?;
+        if end > capacity {
+            return Err(StorageDiskError::OutOfBounds {
+                offset,
+                len: src.len(),
+                capacity,
+            });
+        }
+        let offset = offset as usize;
+        let end = offset + src.len();
+        data[offset..end].copy_from_slice(src);
         Ok(())
     }
 
-    fn discard_range(&mut self, offset: u64, len: u64) -> Result<(), BlockBackendError> {
-        self.discards.set(self.discards.get().saturating_add(1));
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| BlockBackendError::OutOfBounds)?;
-        let len: usize = len.try_into().map_err(|_| BlockBackendError::OutOfBounds)?;
-        let end = offset
-            .checked_add(len)
-            .ok_or(BlockBackendError::OutOfBounds)?;
-        self.data.borrow_mut()[offset..end].fill(0);
+    fn flush(&mut self) -> aero_storage::Result<()> {
         Ok(())
     }
 
-    fn device_id(&self) -> [u8; 20] {
-        *b"aero-virtio-trimdisk"
+    fn discard_range(&mut self, offset: u64, len: u64) -> aero_storage::Result<()> {
+        self.discards.fetch_add(1, Ordering::SeqCst);
+        let mut data = self.data.lock().unwrap();
+        let capacity = data.len() as u64;
+        if len == 0 {
+            if offset > capacity {
+                return Err(StorageDiskError::OutOfBounds {
+                    offset,
+                    len: 0,
+                    capacity,
+                });
+            }
+            return Ok(());
+        }
+        let end = offset.checked_add(len).ok_or(StorageDiskError::OffsetOverflow)?;
+        if end > capacity {
+            return Err(StorageDiskError::OutOfBounds {
+                offset,
+                len: usize::try_from(len).unwrap_or(usize::MAX),
+                capacity,
+            });
+        }
+        let offset = offset as usize;
+        let end = end as usize;
+        data[offset..end].fill(0);
+        Ok(())
     }
 }
 
@@ -220,17 +264,8 @@ type Setup = (
     VirtioPciDevice,
     Caps,
     GuestRam,
-    Rc<RefCell<Vec<u8>>>,
-    Rc<Cell<u32>>,
-);
-
-type SetupTrackingDiscardDisk = (
-    VirtioPciDevice,
-    Caps,
-    GuestRam,
-    Rc<RefCell<Vec<u8>>>,
-    Rc<Cell<u32>>,
-    Rc<Cell<u32>>,
+    Arc<Mutex<Vec<u8>>>,
+    Arc<AtomicU32>,
 );
 
 #[derive(Clone, Default)]
@@ -274,8 +309,8 @@ type SetupWithIrq = (
     VirtioPciDevice,
     Caps,
     GuestRam,
-    Rc<RefCell<Vec<u8>>>,
-    Rc<Cell<u32>>,
+    Arc<Mutex<Vec<u8>>>,
+    Arc<AtomicU32>,
     TestIrq,
 );
 
@@ -361,14 +396,14 @@ fn setup_pci_device(mut dev: VirtioPciDevice) -> (VirtioPciDevice, Caps, GuestRa
 }
 
 fn setup() -> Setup {
-    let backing = Rc::new(RefCell::new(vec![0u8; 4096]));
-    let flushes = Rc::new(Cell::new(0u32));
+    let backing = Arc::new(Mutex::new(vec![0u8; 4096]));
+    let flushes = Arc::new(AtomicU32::new(0));
     let backend = SharedDisk {
         data: backing.clone(),
         flushes: flushes.clone(),
     };
 
-    let blk = VirtioBlk::new(backend);
+    let blk = VirtioBlk::new(Box::new(backend));
     let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
 
     let (dev, caps, mem) = setup_pci_device(dev);
@@ -377,14 +412,14 @@ fn setup() -> Setup {
 }
 
 fn setup_with_sizes(disk_len: usize, mem_len: usize) -> Setup {
-    let backing = Rc::new(RefCell::new(vec![0u8; disk_len]));
-    let flushes = Rc::new(Cell::new(0u32));
+    let backing = Arc::new(Mutex::new(vec![0u8; disk_len]));
+    let flushes = Arc::new(AtomicU32::new(0));
     let backend = SharedDisk {
         data: backing.clone(),
         flushes: flushes.clone(),
     };
 
-    let blk = VirtioBlk::new(backend);
+    let blk = VirtioBlk::new(Box::new(backend));
     let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
 
     let (dev, caps, _mem) = setup_pci_device(dev);
@@ -393,17 +428,26 @@ fn setup_with_sizes(disk_len: usize, mem_len: usize) -> Setup {
     (dev, caps, mem, backing, flushes)
 }
 
-fn setup_tracking_discard_disk(disk_len: usize) -> SetupTrackingDiscardDisk {
-    let backing = Rc::new(RefCell::new(vec![0u8; disk_len]));
-    let discards = Rc::new(Cell::new(0u32));
-    let writes = Rc::new(Cell::new(0u32));
+fn setup_tracking_discard_disk(
+    disk_len: usize,
+) -> (
+    VirtioPciDevice,
+    Caps,
+    GuestRam,
+    Arc<Mutex<Vec<u8>>>,
+    Arc<AtomicU32>,
+    Arc<AtomicU32>,
+) {
+    let backing = Arc::new(Mutex::new(vec![0u8; disk_len]));
+    let discards = Arc::new(AtomicU32::new(0));
+    let writes = Arc::new(AtomicU32::new(0));
     let backend = TrackingDiscardDisk {
         data: backing.clone(),
         discards: discards.clone(),
         writes: writes.clone(),
     };
 
-    let blk = VirtioBlk::new(backend);
+    let blk = VirtioBlk::new(Box::new(backend));
     let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
 
     let (dev, caps, mem) = setup_pci_device(dev);
@@ -412,14 +456,14 @@ fn setup_tracking_discard_disk(disk_len: usize) -> SetupTrackingDiscardDisk {
 }
 
 fn setup_with_irq(irq: TestIrq) -> SetupWithIrq {
-    let backing = Rc::new(RefCell::new(vec![0u8; 4096]));
-    let flushes = Rc::new(Cell::new(0u32));
+    let backing = Arc::new(Mutex::new(vec![0u8; 4096]));
+    let flushes = Arc::new(AtomicU32::new(0));
     let backend = SharedDisk {
         data: backing.clone(),
         flushes: flushes.clone(),
     };
 
-    let blk = VirtioBlk::new(backend);
+    let blk = VirtioBlk::new(Box::new(backend));
     let dev = VirtioPciDevice::new(Box::new(blk), Box::new(irq.clone()));
 
     let (dev, caps, mem) = setup_pci_device(dev);
@@ -434,7 +478,7 @@ fn kick_queue0(dev: &mut VirtioPciDevice, caps: &Caps, mem: &mut GuestRam) {
 
 fn setup_aero_storage_disk() -> (VirtioPciDevice, Caps, GuestRam) {
     let disk = RawDisk::create(MemBackend::new(), 4096).unwrap();
-    let backend: Box<dyn VirtualDisk + Send> = Box::new(disk);
+    let backend: Box<dyn VirtualDisk> = Box::new(disk);
     let blk = VirtioBlk::new(backend);
     let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
     setup_pci_device(dev)
@@ -532,10 +576,13 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
 
     kick_queue0(&mut dev, &caps, &mut mem);
 
-    assert_eq!(
-        &backing.borrow()[(sector * 512) as usize..(sector * 512) as usize + payload.len()],
-        payload.as_slice()
-    );
+    {
+        let backing = backing.lock().unwrap();
+        assert_eq!(
+            &backing[(sector * 512) as usize..(sector * 512) as usize + payload.len()],
+            payload.as_slice()
+        );
+    }
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     // Contract v1: used.len MUST be 0 for all virtio-blk completions.
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
@@ -595,7 +642,7 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
 }
 
 #[test]
-fn virtio_blk_get_id_returns_backend_device_id() {
+fn virtio_blk_get_id_returns_device_id() {
     let (mut dev, caps, mut mem, _backing, _flushes) = setup();
 
     let header = 0x7000;
@@ -632,9 +679,9 @@ fn virtio_blk_get_id_returns_backend_device_id() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     let got = mem.get_slice(id_buf, id_space.len()).unwrap();
-    assert_eq!(&got[..20], b"aero-virtio-testdisk");
+    assert_eq!(&got[..20], b"aero-virtio-blk-id!!");
     // Bytes past the 20-byte ID are ignored.
-    id_space[..20].copy_from_slice(b"aero-virtio-testdisk");
+    id_space[..20].copy_from_slice(b"aero-virtio-blk-id!!");
     assert_eq!(got, id_space.as_slice());
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
@@ -647,7 +694,10 @@ fn virtio_blk_discard_returns_ok() {
     // Make part of the discarded range non-zero, but leave the first sector zero. This ensures the
     // device cannot rely on checking only the first sector when deciding whether to fall back to
     // explicit zero writes.
-    backing.borrow_mut()[1024..1536].fill(0xa5);
+    {
+        let mut backing = backing.lock().unwrap();
+        backing[1024..1536].fill(0xa5);
+    }
 
     let header = 0x7000;
     let seg = 0x8000;
@@ -677,7 +727,10 @@ fn virtio_blk_discard_returns_ok() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert!(backing.borrow()[512..1536].iter().all(|b| *b == 0));
+    {
+        let backing = backing.lock().unwrap();
+        assert!(backing[512..1536].iter().all(|b| *b == 0));
+    }
 }
 
 #[test]
@@ -685,7 +738,7 @@ fn virtio_blk_discard_multi_segment_zeroes_ranges_best_effort() {
     let (mut dev, caps, mut mem, backing, _flushes) = setup();
 
     // Fill the whole disk with non-zero bytes, then DISCARD two disjoint ranges.
-    backing.borrow_mut().fill(0xa5);
+    backing.lock().unwrap().fill(0xa5);
 
     let header = 0x7000;
     let segs = 0x8000;
@@ -722,11 +775,14 @@ fn virtio_blk_discard_multi_segment_zeroes_ranges_best_effort() {
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
 
     // Confirm only the discarded ranges were zeroed.
-    assert!(backing.borrow()[0..512].iter().all(|b| *b == 0xa5));
-    assert!(backing.borrow()[512..1024].iter().all(|b| *b == 0));
-    assert!(backing.borrow()[1024..1536].iter().all(|b| *b == 0xa5));
-    assert!(backing.borrow()[1536..2560].iter().all(|b| *b == 0));
-    assert!(backing.borrow()[2560..4096].iter().all(|b| *b == 0xa5));
+    {
+        let backing = backing.lock().unwrap();
+        assert!(backing[0..512].iter().all(|b| *b == 0xa5));
+        assert!(backing[512..1024].iter().all(|b| *b == 0));
+        assert!(backing[1024..1536].iter().all(|b| *b == 0xa5));
+        assert!(backing[1536..2560].iter().all(|b| *b == 0));
+        assert!(backing[2560..4096].iter().all(|b| *b == 0xa5));
+    }
 }
 
 #[test]
@@ -734,7 +790,7 @@ fn virtio_blk_discard_rejects_out_of_bounds_requests() {
     let (mut dev, caps, mut mem, backing, _flushes) = setup();
 
     // Mark the whole disk so we can validate the failed request doesn't modify it.
-    backing.borrow_mut().fill(0xa5);
+    backing.lock().unwrap().fill(0xa5);
 
     let header = 0x7000;
     let seg = 0x8000;
@@ -764,7 +820,7 @@ fn virtio_blk_discard_rejects_out_of_bounds_requests() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
-    assert!(backing.borrow().iter().all(|b| *b == 0xa5));
+    assert!(backing.lock().unwrap().iter().all(|b| *b == 0xa5));
 }
 
 #[test]
@@ -870,7 +926,10 @@ fn virtio_blk_write_zeroes_writes_zeroes_and_returns_ok() {
     let num_sectors = 2u32;
     let off = (sector * 512) as usize;
     let len = (u64::from(num_sectors) * 512) as usize;
-    backing.borrow_mut()[off..off + len].fill(0xa5);
+    {
+        let mut backing = backing.lock().unwrap();
+        backing[off..off + len].fill(0xa5);
+    }
 
     write_u32_le(&mut mem, header, VIRTIO_BLK_T_WRITE_ZEROES).unwrap();
     write_u32_le(&mut mem, header + 4, 0).unwrap();
@@ -896,7 +955,10 @@ fn virtio_blk_write_zeroes_writes_zeroes_and_returns_ok() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert!(backing.borrow()[off..off + len].iter().all(|b| *b == 0));
+    {
+        let backing = backing.lock().unwrap();
+        assert!(backing[off..off + len].iter().all(|b| *b == 0));
+    }
 }
 
 #[test]
@@ -904,7 +966,7 @@ fn virtio_blk_write_zeroes_unmap_prefers_discard_range_when_possible() {
     let (mut dev, caps, mut mem, backing, discards, writes) = setup_tracking_discard_disk(4096);
 
     // Pre-fill sector 1 with non-zero bytes, then request WRITE_ZEROES with the UNMAP flag.
-    backing.borrow_mut()[512..1024].fill(0xa5);
+    backing.lock().unwrap()[512..1024].fill(0xa5);
 
     let header = 0x7000;
     let seg = 0x8000;
@@ -933,13 +995,17 @@ fn virtio_blk_write_zeroes_unmap_prefers_discard_range_when_possible() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(discards.get(), 1, "UNMAP must call discard_range()");
     assert_eq!(
-        writes.get(),
+        discards.load(Ordering::SeqCst),
+        1,
+        "UNMAP must call discard_range()"
+    );
+    assert_eq!(
+        writes.load(Ordering::SeqCst),
         0,
         "discard_range() returned zeros; device should not re-write zeros"
     );
-    assert!(backing.borrow()[512..1024].iter().all(|b| *b == 0));
+    assert!(backing.lock().unwrap()[512..1024].iter().all(|b| *b == 0));
 }
 
 #[test]
@@ -948,7 +1014,7 @@ fn virtio_blk_write_zeroes_multi_segment_spans_multiple_data_descriptors() {
 
     // Fill the whole disk with non-zero bytes, then WRITE_ZEROES two disjoint sectors using a
     // segment table that crosses descriptor boundaries mid-segment.
-    backing.borrow_mut().fill(0xa5);
+    backing.lock().unwrap().fill(0xa5);
 
     let header = 0x7000;
     let seg_a = 0x8000;
@@ -992,11 +1058,14 @@ fn virtio_blk_write_zeroes_multi_segment_spans_multiple_data_descriptors() {
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
 
     // Confirm only the requested sectors were zeroed.
-    assert!(backing.borrow()[0..512].iter().all(|b| *b == 0xa5));
-    assert!(backing.borrow()[512..1024].iter().all(|b| *b == 0));
-    assert!(backing.borrow()[1024..2048].iter().all(|b| *b == 0xa5));
-    assert!(backing.borrow()[2048..2560].iter().all(|b| *b == 0));
-    assert!(backing.borrow()[2560..4096].iter().all(|b| *b == 0xa5));
+    {
+        let backing = backing.lock().unwrap();
+        assert!(backing[0..512].iter().all(|b| *b == 0xa5));
+        assert!(backing[512..1024].iter().all(|b| *b == 0));
+        assert!(backing[1024..2048].iter().all(|b| *b == 0xa5));
+        assert!(backing[2048..2560].iter().all(|b| *b == 0));
+        assert!(backing[2560..4096].iter().all(|b| *b == 0xa5));
+    }
 }
 
 #[test]
@@ -1008,7 +1077,7 @@ fn virtio_blk_write_zeroes_rejects_out_of_bounds_requests() {
     let status = 0x9000;
 
     // Mark the whole disk so we can validate the failed request doesn't modify it.
-    backing.borrow_mut().fill(0xa5);
+    backing.lock().unwrap().fill(0xa5);
 
     write_u32_le(&mut mem, header, VIRTIO_BLK_T_WRITE_ZEROES).unwrap();
     write_u32_le(&mut mem, header + 4, 0).unwrap();
@@ -1034,7 +1103,7 @@ fn virtio_blk_write_zeroes_rejects_out_of_bounds_requests() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
-    assert!(backing.borrow().iter().all(|b| *b == 0xa5));
+    assert!(backing.lock().unwrap().iter().all(|b| *b == 0xa5));
 }
 
 #[test]
@@ -1050,7 +1119,7 @@ fn virtio_blk_write_zeroes_rejects_oversize_requests() {
     let status = 0x9000;
 
     // Mark the whole disk so we can validate the failed request doesn't modify it.
-    backing.borrow_mut().fill(0xa5);
+    backing.lock().unwrap().fill(0xa5);
 
     write_u32_le(&mut mem, header, VIRTIO_BLK_T_WRITE_ZEROES).unwrap();
     write_u32_le(&mut mem, header + 4, 0).unwrap();
@@ -1077,7 +1146,7 @@ fn virtio_blk_write_zeroes_rejects_oversize_requests() {
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
     assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
-    assert!(backing.borrow().iter().all(|b| *b == 0xa5));
+    assert!(backing.lock().unwrap().iter().all(|b| *b == 0xa5));
 }
 
 #[test]
@@ -1105,7 +1174,7 @@ fn virtio_blk_flush_calls_backend_flush() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(flushes.get(), 1);
+    assert_eq!(flushes.load(Ordering::SeqCst), 1);
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
 }
 
@@ -1174,7 +1243,7 @@ fn virtio_blk_msix_queue_interrupts_use_programmed_msix_message_and_do_not_fallb
     // not fall back to legacy INTx.
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(flushes.get(), 1);
+    assert_eq!(flushes.load(Ordering::SeqCst), 1);
     assert_eq!(irq0.legacy_count(), 0);
     assert!(!irq0.legacy_level());
     assert!(irq0.take_msix_messages().is_empty());
@@ -1189,7 +1258,7 @@ fn virtio_blk_msix_queue_interrupts_use_programmed_msix_message_and_do_not_fallb
 
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(flushes.get(), 2);
+    assert_eq!(flushes.load(Ordering::SeqCst), 2);
     assert_eq!(irq0.legacy_count(), 0);
     assert!(!irq0.legacy_level());
     assert_eq!(
@@ -1279,7 +1348,7 @@ fn virtio_blk_msix_pending_bit_redelivered_on_unmask() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(flushes.get(), 1);
+    assert_eq!(flushes.load(Ordering::SeqCst), 1);
 
     // MSI-X is enabled and a vector is assigned, but it is masked. This must set the PBA pending
     // bit without falling back to INTx.
@@ -1296,7 +1365,11 @@ fn virtio_blk_msix_pending_bit_redelivered_on_unmask() {
 
     // Unmask the entry; the device should immediately re-deliver the pending message.
     bar_write_u32(&mut dev, entry + 0x0c, 0); // unmasked
-    assert_eq!(flushes.get(), 1, "unmask must not require a new completion");
+    assert_eq!(
+        flushes.load(Ordering::SeqCst),
+        1,
+        "unmask must not require a new completion"
+    );
     assert_eq!(
         irq0.take_msix_messages(),
         vec![MsiMessage {
@@ -1369,7 +1442,7 @@ fn virtio_blk_snapshot_restore_preserves_msix_table_and_interrupt_delivery() {
         data: backing.clone(),
         flushes: flushes.clone(),
     };
-    let blk = VirtioBlk::new(backend);
+    let blk = VirtioBlk::new(Box::new(backend));
     let mut restored = VirtioPciDevice::new(Box::new(blk), Box::new(irq1.clone()));
     restored.load_state(&snap_bytes).unwrap();
 
@@ -1429,7 +1502,7 @@ fn virtio_blk_snapshot_restore_preserves_msix_table_and_interrupt_delivery() {
 
     kick_queue0(&mut restored, &caps_restored, &mut mem2);
     assert_eq!(mem2.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(flushes.get(), 1);
+    assert_eq!(flushes.load(Ordering::SeqCst), 1);
 
     // Queue completion interrupt should be delivered via MSI-X with the exact programmed message,
     // not INTx.
@@ -1471,7 +1544,7 @@ fn virtio_blk_snapshot_restore_preserves_virtqueue_progress_and_does_not_duplica
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(flushes.get(), 1);
+    assert_eq!(flushes.load(Ordering::SeqCst), 1);
     assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
     assert_eq!(dev.debug_queue_progress(0), Some((1, 1, false)));
     assert_eq!(irq0.legacy_count(), 1);
@@ -1490,7 +1563,7 @@ fn virtio_blk_snapshot_restore_preserves_virtqueue_progress_and_does_not_duplica
         data: backing.clone(),
         flushes: flushes.clone(),
     };
-    let blk = VirtioBlk::new(backend);
+    let blk = VirtioBlk::new(Box::new(backend));
     let mut restored = VirtioPciDevice::new(Box::new(blk), Box::new(irq1.clone()));
     restored.load_state(&snap_bytes).unwrap();
     let mut mem2 = mem_snap.clone();
@@ -1504,7 +1577,7 @@ fn virtio_blk_snapshot_restore_preserves_virtqueue_progress_and_does_not_duplica
     let irq_before = irq1.legacy_count();
     kick_queue0(&mut restored, &caps_restored, &mut mem2);
     assert_eq!(
-        flushes.get(),
+        flushes.load(Ordering::SeqCst),
         1,
         "duplicate FLUSH should not be executed after restore"
     );
@@ -1518,7 +1591,7 @@ fn virtio_blk_snapshot_restore_preserves_virtqueue_progress_and_does_not_duplica
 
     kick_queue0(&mut restored, &caps_restored, &mut mem2);
     assert_eq!(mem2.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(flushes.get(), 2);
+    assert_eq!(flushes.load(Ordering::SeqCst), 2);
     assert_eq!(restored.debug_queue_used_idx(&mem2, 0), Some(2));
     assert_eq!(restored.debug_queue_progress(0), Some((2, 2, false)));
 }
@@ -1552,7 +1625,7 @@ fn virtio_blk_snapshot_restore_preserves_pending_avail_entries_without_renotify(
     dev.bar0_write(caps.notify, &0u16.to_le_bytes());
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0xff);
-    assert_eq!(flushes.get(), 0);
+    assert_eq!(flushes.load(Ordering::SeqCst), 0);
     assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(0));
 
     let snap_bytes = dev.save_state();
@@ -1564,7 +1637,7 @@ fn virtio_blk_snapshot_restore_preserves_pending_avail_entries_without_renotify(
         data: backing.clone(),
         flushes: flushes.clone(),
     };
-    let blk = VirtioBlk::new(backend);
+    let blk = VirtioBlk::new(Box::new(backend));
     let mut restored = VirtioPciDevice::new(Box::new(blk), Box::new(irq1));
     restored.load_state(&snap_bytes).unwrap();
 
@@ -1575,7 +1648,7 @@ fn virtio_blk_snapshot_restore_preserves_pending_avail_entries_without_renotify(
     restored.process_notified_queues(&mut mem2);
 
     assert_eq!(mem2.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(flushes.get(), 1);
+    assert_eq!(flushes.load(Ordering::SeqCst), 1);
     assert_eq!(restored.debug_queue_used_idx(&mem2, 0), Some(1));
     assert_eq!(restored.debug_queue_progress(0), Some((1, 1, false)));
 }
@@ -1855,7 +1928,7 @@ fn virtio_pci_snapshot_preserves_pending_intx_while_intx_disable_set() {
     dev.process_notified_queues(&mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(flushes.get(), 1);
+    assert_eq!(flushes.load(Ordering::SeqCst), 1);
     assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
     assert_eq!(irq0.legacy_count(), 1);
     assert!(irq0.legacy_level());
@@ -1878,7 +1951,7 @@ fn virtio_pci_snapshot_preserves_pending_intx_while_intx_disable_set() {
         data: backing.clone(),
         flushes: flushes.clone(),
     };
-    let blk = VirtioBlk::new(backend);
+    let blk = VirtioBlk::new(Box::new(backend));
     let mut restored = VirtioPciDevice::new(Box::new(blk), Box::new(irq1.clone()));
     restored.load_state(&snap_bytes).unwrap();
     let mem2 = mem_snap.clone();
@@ -1886,7 +1959,7 @@ fn virtio_pci_snapshot_preserves_pending_intx_while_intx_disable_set() {
     // INTX_DISABLE should still suppress the external line after restore, but the pending latch
     // must be preserved.
     assert_eq!(restored.debug_queue_used_idx(&mem2, 0), Some(1));
-    assert_eq!(flushes.get(), 1);
+    assert_eq!(flushes.load(Ordering::SeqCst), 1);
     assert_eq!(irq1.legacy_count(), 0);
     assert!(!irq1.legacy_level());
     assert!(!restored.irq_level());
@@ -1961,7 +2034,7 @@ fn invalid_status_descriptor_is_consumed_without_touching_disk() {
 
     assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0xff);
-    assert!(backing.borrow().iter().all(|b| *b == 0));
+    assert!(backing.lock().unwrap().iter().all(|b| *b == 0));
 }
 
 #[test]
@@ -1992,7 +2065,7 @@ fn virtio_blk_rejects_non_sector_multiple_requests() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
-    assert!(backing.borrow().iter().all(|b| *b == 0));
+    assert!(backing.lock().unwrap().iter().all(|b| *b == 0));
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
 }
 
@@ -2026,7 +2099,7 @@ fn virtio_blk_rejects_requests_beyond_capacity() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
-    assert!(backing.borrow().iter().all(|b| *b == 0));
+    assert!(backing.lock().unwrap().iter().all(|b| *b == 0));
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
 }
 
@@ -2086,54 +2159,98 @@ fn virtio_blk_accepts_aero_storage_virtual_disk_backend() {
 }
 
 #[test]
-fn virtio_blk_virtual_disk_backend_maps_errors() {
-    let disk = RawDisk::create(MemBackend::new(), 4096).unwrap();
-    let mut backend: Box<dyn VirtualDisk + Send> = Box::new(disk);
+fn virtio_blk_disk_errors_surface_as_ioerr() {
+    struct ErrorDisk {
+        read_err: fn() -> StorageDiskError,
+        write_err: fn() -> StorageDiskError,
+        flush_err: fn() -> StorageDiskError,
+    }
 
-    let mut buf = [0u8; 1];
-    let err = BlockBackend::read_at(&mut backend, 4096, &mut buf).unwrap_err();
-    assert_eq!(err, BlockBackendError::OutOfBounds);
-
-    let err = BlockBackend::read_at(&mut backend, u64::MAX, &mut buf).unwrap_err();
-    assert_eq!(err, BlockBackendError::IoError);
-
-    let err = BlockBackend::write_at(&mut backend, 4096, &[0u8; 1]).unwrap_err();
-    assert_eq!(err, BlockBackendError::OutOfBounds);
-
-    let err = BlockBackend::write_at(&mut backend, u64::MAX, &[0u8; 1]).unwrap_err();
-    assert_eq!(err, BlockBackendError::IoError);
-
-    struct UnsupportedDisk;
-
-    impl VirtualDisk for UnsupportedDisk {
+    impl VirtualDisk for ErrorDisk {
         fn capacity_bytes(&self) -> u64 {
             512
         }
 
         fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
-            Err(StorageDiskError::Unsupported("read"))
+            Err((self.read_err)())
         }
 
         fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
-            Err(StorageDiskError::Unsupported("write"))
+            Err((self.write_err)())
         }
 
         fn flush(&mut self) -> aero_storage::Result<()> {
-            Err(StorageDiskError::CorruptImage("flush"))
+            Err((self.flush_err)())
         }
     }
 
-    let mut backend: Box<dyn VirtualDisk + Send> = Box::new(UnsupportedDisk);
-    let err = BlockBackend::read_at(&mut backend, 0, &mut buf).unwrap_err();
-    assert_eq!(err, BlockBackendError::IoError);
-    let err = BlockBackend::write_at(&mut backend, 0, &[0u8; 1]).unwrap_err();
-    assert_eq!(err, BlockBackendError::IoError);
-    let err = BlockBackend::flush(&mut backend).unwrap_err();
-    assert_eq!(err, BlockBackendError::IoError);
+    fn setup_with_disk(disk: Box<dyn VirtualDisk>) -> (VirtioPciDevice, Caps, GuestRam) {
+        let blk = VirtioBlk::new(disk);
+        let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
+        setup_pci_device(dev)
+    }
+
+    let disk: Box<dyn VirtualDisk> = Box::new(ErrorDisk {
+        read_err: || StorageDiskError::Unsupported("read"),
+        write_err: || StorageDiskError::Unsupported("write"),
+        flush_err: || StorageDiskError::CorruptImage("flush"),
+    });
+
+    let (mut dev, caps, mut mem) = setup_with_disk(disk);
+
+    // Initialise rings.
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    let header = 0x7000;
+    let data = 0x8000;
+    let status = 0x9000;
+
+    // READ request should return IOERR if the disk returns an error.
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_IN).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(data, &[0u8; 512]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001 | 0x0002, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    kick_queue0(&mut dev, &caps, &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+
+    // WRITE request should return IOERR if the disk returns an error.
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(data, &[0xa5u8; 512]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+    write_u16_le(&mut mem, AVAIL_RING + 4 + 2, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 2).unwrap();
+    kick_queue0(&mut dev, &caps, &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+
+    // FLUSH request should return IOERR if the disk returns an error.
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, status, 1, 0x0002, 0);
+    write_u16_le(&mut mem, AVAIL_RING + 4 + 4, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 3).unwrap();
+    kick_queue0(&mut dev, &caps, &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
 }
 
 #[test]
-fn virtio_blk_virtual_disk_backend_maps_browser_storage_failures_to_ioerr() {
+fn virtio_blk_disk_errors_surface_as_ioerr_for_browser_storage_failures() {
     fn quota_exceeded() -> StorageDiskError {
         StorageDiskError::QuotaExceeded
     }
@@ -2202,21 +2319,38 @@ fn virtio_blk_virtual_disk_backend_maps_browser_storage_failures_to_ioerr() {
     ];
 
     for (read_err, write_err, flush_err) in disks {
-        let mut backend: Box<dyn VirtualDisk + Send> = Box::new(ErrorDisk {
+        let backend: Box<dyn VirtualDisk> = Box::new(ErrorDisk {
             read_err: *read_err,
             write_err: *write_err,
             flush_err: *flush_err,
         });
 
-        let mut buf = [0u8; 1];
-        let err = BlockBackend::read_at(&mut backend, 0, &mut buf).unwrap_err();
-        assert_eq!(err, BlockBackendError::IoError);
+        let blk = VirtioBlk::new(backend);
+        let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
+        let (mut dev, caps, mut mem) = setup_pci_device(dev);
 
-        let err = BlockBackend::write_at(&mut backend, 0, &[0u8; 1]).unwrap_err();
-        assert_eq!(err, BlockBackendError::IoError);
+        // Initialise rings.
+        write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+        write_u16_le(&mut mem, AVAIL_RING + 2, 0).unwrap();
+        write_u16_le(&mut mem, USED_RING, 0).unwrap();
+        write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
 
-        let err = BlockBackend::flush(&mut backend).unwrap_err();
-        assert_eq!(err, BlockBackendError::IoError);
+        // A FLUSH request should return IOERR for these disk failures.
+        let header = 0x7000;
+        let status = 0x9000;
+        write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+        write_u32_le(&mut mem, header + 4, 0).unwrap();
+        write_u64_le(&mut mem, header + 8, 0).unwrap();
+        mem.write(status, &[0xff]).unwrap();
+
+        write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+        write_desc(&mut mem, DESC_TABLE, 1, status, 1, 0x0002, 0);
+
+        write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+        write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+        kick_queue0(&mut dev, &caps, &mut mem);
+
+        assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
     }
 }
 
@@ -2320,7 +2454,7 @@ fn virtio_blk_rejects_excessive_descriptor_count_without_panicking() {
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
     assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
-    assert!(backing.borrow().iter().all(|b| *b == 0));
+    assert!(backing.lock().unwrap().iter().all(|b| *b == 0));
 }
 
 #[test]
@@ -2365,7 +2499,7 @@ fn virtio_blk_rejects_excessive_total_data_bytes() {
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
     assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
-    assert!(backing.borrow()[..512].iter().all(|b| *b == 0));
+    assert!(backing.lock().unwrap()[..512].iter().all(|b| *b == 0));
 }
 
 #[test]
@@ -2400,5 +2534,5 @@ fn virtio_blk_rejects_sector_offset_overflow() {
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
     assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
-    assert!(backing.borrow().iter().all(|b| *b == 0));
+    assert!(backing.lock().unwrap().iter().all(|b| *b == 0));
 }

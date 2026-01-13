@@ -4,7 +4,6 @@
 //! - [`aero_storage::VirtualDisk`] (disk image layer)
 //! - `aero_devices_nvme::DiskBackend` (NVMe controller)
 //! - `aero_devices::storage::DiskBackend` (virtio-blk and other device models)
-//! - `aero_virtio::devices::blk::BlockBackend` (virtio-blk device model in `aero-virtio`)
 //!
 //! This crate provides lightweight wrapper *types* around [`aero_storage::VirtualDisk`].
 //! The concrete `DiskBackend` implementations live in the crates that define those
@@ -20,28 +19,12 @@
 //!
 //! ## Virtio-blk (`aero-virtio`)
 //!
-//! `aero-virtio` keeps its own `BlockBackend` trait for the virtio-blk device model, but most call
-//! sites should still treat [`aero_storage::VirtualDisk`] as the wiring boundary.
+//! `aero-virtio`'s virtio-blk device model consumes a boxed [`aero_storage::VirtualDisk`] directly,
+//! so most call sites do not require any adapter wrapper types.
 //!
-//! For convenience, `aero-virtio` also provides `aero_virtio::devices::blk::VirtioBlkDisk` as the
-//! canonical “disk-backed virtio-blk device” type alias (`VirtioBlk<Box<dyn VirtualDisk>>` on wasm32,
-//! and `VirtioBlk<Box<dyn VirtualDisk + Send>>` on native).
-//!
-//! Similarly, the `aero-devices` stack provides
+//! The `aero-devices` stack still uses its own backend trait; see
 //! `aero_devices::storage::VirtualDrive::{new_from_aero_virtual_disk, try_new_from_aero_virtual_disk}`
-//! for wiring a boxed `VirtualDisk` into its device-model backend trait.
-//!
-//! `aero-virtio` provides a blanket impl so a boxed `VirtualDisk` can be used directly as a virtio
-//! backend:
-//!
-//! - `impl<T: aero_storage::VirtualDisk> aero_virtio::devices::blk::BlockBackend for Box<T>` (plus
-//!   impls for `Box<dyn VirtualDisk>` / `Box<dyn VirtualDisk + Send>`)
-//!
-//! If you need the reverse direction (reusing `aero-storage` disk wrappers on top of an existing
-//! device/backend trait object), use the reverse adapters provided by the corresponding device
-//! crate (e.g. `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk`,
-//! `aero_devices::storage::DeviceBackendAsAeroVirtualDisk`,
-//! `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`).
+//! for wiring a boxed `VirtualDisk` into that device-model boundary.
 //!
 //! ## Usage (examples)
 //!

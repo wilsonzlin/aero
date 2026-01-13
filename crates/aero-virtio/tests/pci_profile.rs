@@ -128,7 +128,7 @@ fn virtio_pci_device_ids_match_canonical_profile() {
     assert_virtio_identity_matches_profile(&mut net, VIRTIO_NET);
 
     let mut blk = VirtioPciDevice::new(
-        Box::new(VirtioBlk::new(MemDisk::new(512 * 1024))),
+        Box::new(VirtioBlk::new(Box::new(MemDisk::new(512 * 1024)))),
         Box::new(InterruptLog::default()),
     );
     assert_virtio_identity_matches_profile(&mut blk, VIRTIO_BLK);

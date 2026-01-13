@@ -232,6 +232,10 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
     assert!(!m.display_framebuffer().is_empty());
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
+    assert_eq!(snap.base_paddr(), 0);
+    assert_eq!(snap.width, 0);
+    assert_eq!(snap.height, 0);
+    assert_eq!(snap.pitch_bytes, 0);
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 }
 

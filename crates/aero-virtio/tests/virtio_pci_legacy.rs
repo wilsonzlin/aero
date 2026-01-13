@@ -74,7 +74,7 @@ fn write_desc(
 
 #[test]
 fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
-    let blk = VirtioBlk::new(MemDisk::new(4096));
+    let blk = VirtioBlk::new(Box::new(MemDisk::new(4096)));
     let irq_state = Rc::new(RefCell::new(IrqState::default()));
     let irq = SharedIrq(irq_state.clone());
 
@@ -179,7 +179,7 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
 
 #[test]
 fn virtio_pci_legacy_dma_is_gated_on_pci_bus_master_enable() {
-    let blk = VirtioBlk::new(MemDisk::new(4096));
+    let blk = VirtioBlk::new(Box::new(MemDisk::new(4096)));
     let irq_state = Rc::new(RefCell::new(IrqState::default()));
     let irq = SharedIrq(irq_state.clone());
 
@@ -266,7 +266,7 @@ fn virtio_pci_legacy_dma_is_gated_on_pci_bus_master_enable() {
 
 #[test]
 fn virtio_pci_legacy_intx_disable_suppresses_line_but_retains_pending() {
-    let blk = VirtioBlk::new(MemDisk::new(4096));
+    let blk = VirtioBlk::new(Box::new(MemDisk::new(4096)));
     let irq_state = Rc::new(RefCell::new(IrqState::default()));
     let irq = SharedIrq(irq_state.clone());
 

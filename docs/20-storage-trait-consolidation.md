@@ -48,8 +48,6 @@ See also:
   Defined in: [`crates/aero-devices-nvme/src/lib.rs`](../crates/aero-devices-nvme/src/lib.rs)
 - `aero_devices_storage::atapi::IsoBackend` (sync, read-only 2048-byte-sector CD/ISO backend for ATAPI)\
   Defined in: [`crates/aero-devices-storage/src/atapi.rs`](../crates/aero-devices-storage/src/atapi.rs)
-- `aero_virtio::devices::blk::BlockBackend` (sync, byte-addressed backend used by the `aero-virtio` virtio-blk device model)\
-  Defined in: [`crates/aero-virtio/src/devices/blk.rs`](../crates/aero-virtio/src/devices/blk.rs)
 - `aero_io_snapshot::io::storage::state::DiskBackend` (sync, byte-addressed backend used by the snapshot layer)\
   Defined in: [`crates/aero-io-snapshot/src/io/storage/state.rs`](../crates/aero-io-snapshot/src/io/storage/state.rs)
 - `aero_opfs::io::snapshot_file::OpfsSyncFileHandle` (sync, byte-addressed file-handle interface used to adapt OPFS `SyncAccessHandle` to `std::io::{Read, Write, Seek}`)\
@@ -199,10 +197,11 @@ error types, sector-size reporting, or different mutability requirements). Those
 treated as **device-internal integration traits**, and code should prefer accepting a
 `Box<dyn aero_storage::VirtualDisk>` at public boundaries unless there is a concrete reason not to.
 
-In particular, virtio-blk device models may expose crate-local backend traits
-(`aero_devices::storage::DiskBackend`, `aero_virtio::devices::blk::BlockBackend`). Treat those
-traits as *device-internal*; “platform wiring” should prefer `aero_storage::VirtualDisk` and adapt
-at the device boundary.
+In particular, some virtio-blk device models may expose crate-local backend traits (e.g.
+`aero_devices::storage::DiskBackend`). Treat those traits as *device-internal*; “platform wiring”
+should prefer `aero_storage::VirtualDisk` and adapt at the device boundary.
+
+`aero_virtio`’s virtio-blk implementation consumes `aero_storage::VirtualDisk` directly.
 
 When a device crate *must* keep its own trait, the preferred integration pattern is:
 
@@ -239,21 +238,12 @@ This pattern is already used today:
    `aero_devices_nvme::AeroStorageDiskAdapter`): in `crates/aero-devices-nvme`
  - `impl aero_devices::storage::DiskBackend for AeroVirtualDiskAsDeviceBackend` (re-exported as
    `aero_devices::storage::AeroStorageDiskAdapter`): in `crates/devices`
-  - `impl<T: aero_storage::VirtualDisk> aero_virtio::devices::blk::BlockBackend for Box<T>` (plus impls
-    for `Box<dyn VirtualDisk>` / `Box<dyn VirtualDisk + Send>`): in `crates/aero-virtio`\
-    Note: on native, `aero_storage::VirtualDisk: Send`, so `Box<dyn VirtualDisk>` is already `Send`
-    and `+ Send` is redundant; it is used in some APIs for explicitness/legacy reasons.
-  - Canonical disk-backed virtio-blk device type: `aero_virtio::devices::blk::VirtioBlkDisk` (type
-    alias for `VirtioBlk<Box<dyn VirtualDisk>>` on wasm32, and `VirtioBlk<Box<dyn VirtualDisk + Send>>`
-    on native): in `crates/aero-virtio`\
-    Note: the native `+ Send` is redundant (see note above), but it makes the wasm32-vs-native
-    intent explicit.
+ - virtio-blk (`crates/aero-virtio`) consumes `Box<dyn aero_storage::VirtualDisk>` directly\
+   Note: on native, `aero_storage::VirtualDisk: Send` (via `VirtualDiskSend`), so `Box<dyn VirtualDisk>`
+   is already `Send`; on wasm32 builds it may be `!Send`.
  - Reverse adapter: `crates/devices/src/storage/mod.rs` defines `DeviceBackendAsAeroVirtualDisk`, which
    allows reusing `aero-storage` disk wrappers (cache/sparse/COW) on top of an existing
    `aero_devices::storage::DiskBackend`.
- - Reverse adapter: `crates/aero-virtio/src/devices/blk.rs` defines
-   `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk`, which allows reusing `aero-storage`
-   disk wrappers on top of an existing `aero_virtio::devices::blk::BlockBackend`.
  - Reverse adapter: `crates/aero-devices-nvme/src/nvme_as_aero_storage.rs` defines
    `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`, which allows reusing `aero-storage` disk
    wrappers on top of an existing `aero_devices_nvme::DiskBackend`.
@@ -351,19 +341,17 @@ Goal: ensure there is exactly one place in-tree implementing raw/qcow2/vhd/spars
      as `AeroStorageDiskAdapter` (e.g. `aero_devices::storage::AeroStorageDiskAdapter`,
      `aero_devices_nvme::AeroStorageDiskAdapter`).
    - Device backend → `VirtualDisk`: reverse adapters live in the device crates (e.g.
-     `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk`,
      `aero_devices::storage::DeviceBackendAsAeroVirtualDisk`,
      `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`).
 5. virtio-blk: keep `aero_storage::VirtualDisk` as the wiring boundary and treat backend traits as
    device-internal (adapt at the edge). Concretely, prefer wiring:
-    - `aero_virtio::devices::blk::VirtioBlkDisk` (canonical disk-backed virtio-blk device type alias), or
-    - `aero_devices::storage::VirtualDrive::{new_from_aero_virtual_disk, try_new_from_aero_virtual_disk}`
-      (for the `aero-devices` stack; prefer `try_new_*` when accepting arbitrary disks)
+   - `aero_virtio::devices::blk::VirtioBlk` (consumes `Box<dyn aero_storage::VirtualDisk>`)
+   - `aero_devices::storage::VirtualDrive::{new_from_aero_virtual_disk, try_new_from_aero_virtual_disk}`
+     (for the `aero-devices` stack; prefer `try_new_*` when accepting arbitrary disks)
 
-   (Optional cleanup) Evaluate consolidating virtio-blk device models on fewer backend traits:
-    - `aero_devices::storage::DiskBackend`
-    - `aero_virtio::devices::blk::BlockBackend`
-    In both cases, keep `aero_storage::VirtualDisk` as the common “disk image” boundary and adapt.
+   (Optional cleanup) Evaluate consolidating any remaining virtio-blk device models on fewer backend
+   traits (e.g. `aero_devices::storage::DiskBackend`). In all cases, keep
+   `aero_storage::VirtualDisk` as the common “disk image” boundary and adapt.
 
 ### Phase 3: deprecate and remove legacy emulator traits
 

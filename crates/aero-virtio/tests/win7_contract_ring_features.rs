@@ -45,7 +45,7 @@ fn assert_win7_contract_features_exact(device_name: &str, features: u64, expecte
 
 #[test]
 fn win7_contract_ring_features_are_consistent_across_devices() {
-    let blk = VirtioBlk::new(MemDisk::new(4096));
+    let blk = VirtioBlk::new(Box::new(MemDisk::new(4096)));
     assert_win7_contract_ring_features("virtio-blk", blk.device_features());
     assert_win7_contract_features_exact(
         "virtio-blk",

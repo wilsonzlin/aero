@@ -15,7 +15,7 @@ use aero_platform::interrupts::{
     InterruptController, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
 };
 use aero_storage::{MemBackend, RawDisk, VirtualDisk};
-use aero_virtio::devices::blk::{BlockBackend, VirtioBlk, VIRTIO_BLK_SECTOR_SIZE};
+use aero_virtio::devices::blk::{VirtioBlk, VIRTIO_BLK_SECTOR_SIZE};
 use aero_virtio::devices::VirtioDevice;
 use memory::MemoryBus as _;
 
@@ -292,13 +292,11 @@ fn pc_platform_virtio_blk_device_cfg_reports_capacity_and_block_size() {
         let mut virtio = virtio.borrow_mut();
         let blk = virtio
             .device_as_any_mut()
-            .downcast_mut::<VirtioBlk<Box<dyn VirtualDisk + Send>>>()
+            .downcast_mut::<VirtioBlk>()
             .expect("virtio device should be VirtioBlk");
         let seg_max = u32::from(blk.queue_max_size(0).saturating_sub(2));
-        let (capacity, blk_size) = {
-            let backend = blk.backend_mut();
-            (backend.len() / VIRTIO_BLK_SECTOR_SIZE, backend.blk_size())
-        };
+        let capacity = blk.disk_mut().capacity_bytes() / VIRTIO_BLK_SECTOR_SIZE;
+        let blk_size = VIRTIO_BLK_SECTOR_SIZE as u32;
         (
             capacity, 0u32, // size_max (contract v1: unused, must be 0)
             seg_max, blk_size,
@@ -2149,10 +2147,10 @@ fn pc_platform_virtio_blk_snapshot_restore_with_injected_disk_processes_pending_
         let mut virtio = virtio.borrow_mut();
         let blk = virtio
             .device_as_any_mut()
-            .downcast_mut::<VirtioBlk<Box<dyn VirtualDisk + Send>>>()
+            .downcast_mut::<VirtioBlk>()
             .expect("virtio device should be VirtioBlk");
-        BlockBackend::read_at(
-            blk.backend_mut(),
+        blk.disk_mut()
+            .read_at(
             TEST_SECTOR * VIRTIO_BLK_SECTOR_SIZE,
             &mut on_disk,
         )

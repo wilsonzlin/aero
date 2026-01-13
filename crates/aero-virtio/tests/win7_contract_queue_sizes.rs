@@ -92,7 +92,7 @@ fn assert_queue_layout(
 
 #[test]
 fn win7_contract_common_cfg_queue_sizes_match_spec() {
-    let blk = VirtioBlk::new(MemDisk::new(4096));
+    let blk = VirtioBlk::new(Box::new(MemDisk::new(4096)));
     let mut blk_pci = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
     assert_queue_layout(&mut blk_pci, 1, &[128]);
 

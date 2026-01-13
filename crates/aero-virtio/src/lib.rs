@@ -6,18 +6,7 @@
 //! ## Storage backends (virtio-blk)
 //!
 //! The repo-wide canonical synchronous disk trait is [`aero_storage::VirtualDisk`]. The virtio-blk
-//! device model in this crate (`devices::blk`) keeps a separate [`devices::blk::BlockBackend`] trait
-//! for device ergonomics, but most platform wiring should pass a boxed `VirtualDisk` at the boundary
-//! and use:
-//!
-//! - [`devices::blk::VirtioBlkDisk`] (a `VirtioBlk<Box<dyn VirtualDisk>>` type alias on wasm32, and
-//!   `VirtioBlk<Box<dyn VirtualDisk + Send>>` on native)
-//! - `impl<T: VirtualDisk> BlockBackend for Box<T>` (plus impls for `Box<dyn VirtualDisk>` /
-//!   `Box<dyn VirtualDisk + Send>`, so `Box<dyn VirtualDisk>` is a valid backend)
-//!
-//! If you need the reverse direction (wrapping an existing `BlockBackend` so you can layer
-//! `aero-storage` disk wrappers such as caches/overlays on top), use
-//! [`devices::blk::BlockBackendAsAeroVirtualDisk`].
+//! device model in this crate (`devices::blk`) consumes a boxed `VirtualDisk` directly.
 //!
 //! See `docs/20-storage-trait-consolidation.md` for the repo-wide trait consolidation plan and
 //! adapter layering guidance.

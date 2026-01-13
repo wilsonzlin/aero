@@ -253,7 +253,7 @@ fn virtio_pci_config_space_matches_canonical_profiles() {
     // virtio-blk
     {
         let mut dev = VirtioPciDevice::new(
-            Box::new(VirtioBlk::new(MemDisk::new(512 * 1024))),
+            Box::new(VirtioBlk::new(Box::new(MemDisk::new(512 * 1024)))),
             Box::new(InterruptLog::default()),
         );
         let mut profile_cfg = VIRTIO_BLK.build_config_space();

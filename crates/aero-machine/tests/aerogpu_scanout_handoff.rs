@@ -181,11 +181,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
         // device.
         bus.write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | 0x0006));
     }
-
-    m.write_physical_u32(
-        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH),
-        width,
-    );
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH), width);
     m.write_physical_u32(
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT),
         height,

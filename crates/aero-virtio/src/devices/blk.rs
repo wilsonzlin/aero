@@ -3,9 +3,7 @@ use crate::memory::write_u8;
 use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
-use std::io;
-
-use aero_storage::{DiskError as StorageDiskError, VirtualDisk};
+use aero_storage::{DiskError, VirtualDisk};
 
 pub const VIRTIO_DEVICE_TYPE_BLK: u16 = 2;
 
@@ -46,23 +44,6 @@ pub const VIRTIO_BLK_MAX_REQUEST_SECTORS: u64 =
     VIRTIO_BLK_MAX_REQUEST_DATA_BYTES / VIRTIO_BLK_SECTOR_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlockBackendError {
-    OutOfBounds,
-    IoError,
-}
-
-impl core::fmt::Display for BlockBackendError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::OutOfBounds => write!(f, "out of bounds"),
-            Self::IoError => write!(f, "I/O error"),
-        }
-    }
-}
-
-impl std::error::Error for BlockBackendError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtioBlkConfig {
     /// Capacity in 512-byte sectors.
     pub capacity: u64,
@@ -100,8 +81,8 @@ impl VirtioBlkConfig {
         cfg[44..48].copy_from_slice(&align_sectors_u32.to_le_bytes()); // discard_sector_alignment
         cfg[48..52].copy_from_slice(&max_sectors.to_le_bytes()); // max_write_zeroes_sectors
         cfg[52..56].copy_from_slice(&self.seg_max.to_le_bytes()); // max_write_zeroes_seg
-                                                                  // write_zeroes_may_unmap: allow `WRITE_ZEROES` to deallocate underlying storage ("unmap")
-                                                                  // as long as the guest-visible read-after-write semantics remain zero.
+        // write_zeroes_may_unmap: allow `WRITE_ZEROES` to deallocate underlying storage ("unmap")
+        // as long as the guest-visible read-after-write semantics remain zero.
         cfg[56] = 1;
 
         // Avoid truncating on 32-bit targets: guest MMIO offsets are `u64` but config space is a
@@ -128,336 +109,14 @@ impl VirtioBlkConfig {
     }
 }
 
-/// Disk backend trait used by the `aero-virtio` virtio-blk device model.
-///
-/// # Canonical trait note
-///
-/// The repo-wide canonical synchronous disk trait is [`aero_storage::VirtualDisk`]. This crate
-/// keeps a separate `BlockBackend` trait primarily for virtio-blk device ergonomics, but most
-/// call sites should pass a boxed `aero-storage` disk type and use [`VirtioBlkDisk`]. An adapter
-/// is provided:
-///
-/// - `impl<T: aero_storage::VirtualDisk> BlockBackend for Box<T>`
-///
-/// Avoid introducing new backend traits in other crates; prefer adapting from
-/// `aero_storage::VirtualDisk` instead.
-///
-/// If you need the reverse direction (wrapping an existing `BlockBackend` so you can layer
-/// `aero-storage` disk wrappers on top), use [`BlockBackendAsAeroVirtualDisk`].
-///
-/// See `docs/20-storage-trait-consolidation.md`.
-pub trait BlockBackend {
-    fn len(&self) -> u64;
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError>;
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError>;
-    fn blk_size(&self) -> u32 {
-        VIRTIO_BLK_SECTOR_SIZE as u32
-    }
-    fn flush(&mut self) -> Result<(), BlockBackendError> {
-        Ok(())
-    }
-    /// Best-effort deallocation (discard/TRIM) of the given byte range.
-    ///
-    /// Backends that cannot reclaim storage may implement this as a no-op success. Callers should
-    /// generally treat failures as non-fatal (virtio-blk discard is advisory).
-    fn discard_range(&mut self, _offset: u64, _len: u64) -> Result<(), BlockBackendError> {
-        Ok(())
-    }
-    fn device_id(&self) -> [u8; 20] {
-        [0; 20]
-    }
-}
-
-/// Canonical disk-backed virtio-blk device type.
-///
-/// Most users should not implement [`BlockBackend`] directly. Instead, prefer passing an
-/// [`aero_storage::VirtualDisk`] (e.g. [`aero_storage::RawDisk`]) through wiring layers and
-/// constructing a [`VirtioBlkDisk`] at the edge (typically via
-/// `VirtioBlkDisk::new_from_virtual_disk`).
-///
-/// `VirtioBlkDisk` is `VirtioBlk<Box<dyn VirtualDisk>>` on wasm32 and `VirtioBlk<Box<dyn VirtualDisk + Send>>`
-/// on native targets.
-#[cfg(target_arch = "wasm32")]
-pub type VirtioBlkDisk = VirtioBlk<Box<dyn aero_storage::VirtualDisk>>;
-#[cfg(not(target_arch = "wasm32"))]
-pub type VirtioBlkDisk = VirtioBlk<Box<dyn aero_storage::VirtualDisk + Send>>;
-
-fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
-    match err {
-        StorageDiskError::OutOfBounds { .. } => BlockBackendError::OutOfBounds,
-        StorageDiskError::UnalignedLength { .. }
-        | StorageDiskError::OffsetOverflow
-        | StorageDiskError::CorruptImage(_)
-        | StorageDiskError::Unsupported(_)
-        | StorageDiskError::InvalidSparseHeader(_)
-        | StorageDiskError::InvalidConfig(_)
-        | StorageDiskError::CorruptSparseImage(_)
-        | StorageDiskError::NotSupported(_)
-        | StorageDiskError::QuotaExceeded
-        | StorageDiskError::InUse
-        | StorageDiskError::InvalidState(_)
-        | StorageDiskError::BackendUnavailable
-        | StorageDiskError::Io(_) => BlockBackendError::IoError,
-    }
-}
-
-/// Adapter for treating an `aero-virtio` [`BlockBackend`] as an `aero-storage`
-/// [`aero_storage::VirtualDisk`].
-///
-/// This is primarily useful for reusing `aero-storage` disk wrappers (cache/sparse/COW/etc) on
-/// top of an existing virtio-blk backend implementation.
-#[cfg(target_arch = "wasm32")]
-type DynBlockBackend = dyn BlockBackend;
-#[cfg(not(target_arch = "wasm32"))]
-type DynBlockBackend = dyn BlockBackend + Send;
-
-pub struct BlockBackendAsAeroVirtualDisk {
-    backend: Box<DynBlockBackend>,
-}
-
-impl BlockBackendAsAeroVirtualDisk {
-    pub fn new(backend: Box<DynBlockBackend>) -> Self {
-        Self { backend }
-    }
-
-    pub fn into_inner(self) -> Box<DynBlockBackend> {
-        self.backend
-    }
-
-    fn check_bounds(&self, offset: u64, len: usize, capacity: u64) -> aero_storage::Result<()> {
-        let len_u64 = u64::try_from(len).map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
-        let end = offset
-            .checked_add(len_u64)
-            .ok_or(aero_storage::DiskError::OffsetOverflow)?;
-        if end > capacity {
-            return Err(aero_storage::DiskError::OutOfBounds {
-                offset,
-                len,
-                capacity,
-            });
-        }
-        Ok(())
-    }
-
-    fn map_backend_error(
-        &self,
-        err: BlockBackendError,
-        offset: u64,
-        len: usize,
-        capacity: u64,
-    ) -> aero_storage::DiskError {
-        match err {
-            BlockBackendError::OutOfBounds => aero_storage::DiskError::OutOfBounds {
-                offset,
-                len,
-                capacity,
-            },
-            BlockBackendError::IoError => {
-                aero_storage::DiskError::Io(format!("BlockBackendError::{err:?}"))
-            }
-        }
-    }
-}
-
-impl aero_storage::VirtualDisk for BlockBackendAsAeroVirtualDisk {
-    fn capacity_bytes(&self) -> u64 {
-        self.backend.len()
-    }
-
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
-        let capacity = self.backend.len();
-        self.check_bounds(offset, buf.len(), capacity)?;
-        self.backend
-            .read_at(offset, buf)
-            .map_err(|e| self.map_backend_error(e, offset, buf.len(), capacity))
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
-        let capacity = self.backend.len();
-        self.check_bounds(offset, buf.len(), capacity)?;
-        self.backend
-            .write_at(offset, buf)
-            .map_err(|e| self.map_backend_error(e, offset, buf.len(), capacity))
-    }
-
-    fn flush(&mut self) -> aero_storage::Result<()> {
-        self.backend.flush().map_err(|e| match e {
-            BlockBackendError::IoError => {
-                aero_storage::DiskError::Io(format!("BlockBackendError::{e:?}"))
-            }
-            // `flush` is not expected to return `OutOfBounds`; map it to an I/O error.
-            BlockBackendError::OutOfBounds => aero_storage::DiskError::Io(format!(
-                "unexpected BlockBackendError::{e:?} during flush"
-            )),
-        })
-    }
-
-    fn discard_range(&mut self, offset: u64, len: u64) -> aero_storage::Result<()> {
-        if len == 0 {
-            if offset > self.backend.len() {
-                return Err(aero_storage::DiskError::OutOfBounds {
-                    offset,
-                    len: 0,
-                    capacity: self.backend.len(),
-                });
-            }
-            return Ok(());
-        }
-
-        let len_usize =
-            usize::try_from(len).map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
-        let capacity = self.backend.len();
-        self.check_bounds(offset, len_usize, capacity)?;
-        self.backend
-            .discard_range(offset, len)
-            .map_err(|e| self.map_backend_error(e, offset, len_usize, capacity))
-    }
-}
-
-fn map_device_io_error(err: io::Error) -> BlockBackendError {
-    match err.kind() {
-        io::ErrorKind::UnexpectedEof => BlockBackendError::OutOfBounds,
-        _ => BlockBackendError::IoError,
-    }
-}
-
-/// Allow `aero-storage` virtual disks to be used directly as virtio-blk backends.
-///
-/// This means platform code can do:
-///
-/// ```rust
-/// use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
-/// use aero_virtio::devices::blk::VirtioBlkDisk;
-///
-/// let disk = RawDisk::create(MemBackend::new(), (1024 * SECTOR_SIZE) as u64).unwrap();
-/// let blk = VirtioBlkDisk::new_from_virtual_disk(Box::new(disk));
-/// ```
-///
-/// The virtio-blk device logic itself still enforces sector-based requests; this adapter is
-/// byte-addressed and forwards directly to the underlying [`VirtualDisk`] `read_at`/`write_at`.
-impl<T: VirtualDisk> BlockBackend for Box<T> {
-    fn len(&self) -> u64 {
-        (**self).capacity_bytes()
-    }
-
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        (**self).read_at(offset, dst).map_err(map_storage_error)
-    }
-
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        (**self).write_at(offset, src).map_err(map_storage_error)
-    }
-
-    fn blk_size(&self) -> u32 {
-        VIRTIO_BLK_SECTOR_SIZE as u32
-    }
-
-    fn flush(&mut self) -> Result<(), BlockBackendError> {
-        (**self).flush().map_err(map_storage_error)
-    }
-
-    fn discard_range(&mut self, offset: u64, len: u64) -> Result<(), BlockBackendError> {
-        (**self)
-            .discard_range(offset, len)
-            .map_err(map_storage_error)
-    }
-}
-
-impl BlockBackend for Box<dyn VirtualDisk> {
-    fn len(&self) -> u64 {
-        (**self).capacity_bytes()
-    }
-
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        (**self).read_at(offset, dst).map_err(map_storage_error)
-    }
-
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        (**self).write_at(offset, src).map_err(map_storage_error)
-    }
-
-    fn blk_size(&self) -> u32 {
-        VIRTIO_BLK_SECTOR_SIZE as u32
-    }
-
-    fn flush(&mut self) -> Result<(), BlockBackendError> {
-        (**self).flush().map_err(map_storage_error)
-    }
-
-    fn discard_range(&mut self, offset: u64, len: u64) -> Result<(), BlockBackendError> {
-        (**self)
-            .discard_range(offset, len)
-            .map_err(map_storage_error)
-    }
-}
-
-impl BlockBackend for Box<dyn VirtualDisk + Send> {
-    fn len(&self) -> u64 {
-        (**self).capacity_bytes()
-    }
-
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        (**self).read_at(offset, dst).map_err(map_storage_error)
-    }
-
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        (**self).write_at(offset, src).map_err(map_storage_error)
-    }
-
-    fn blk_size(&self) -> u32 {
-        VIRTIO_BLK_SECTOR_SIZE as u32
-    }
-
-    fn flush(&mut self) -> Result<(), BlockBackendError> {
-        (**self).flush().map_err(map_storage_error)
-    }
-
-    fn discard_range(&mut self, offset: u64, len: u64) -> Result<(), BlockBackendError> {
-        (**self)
-            .discard_range(offset, len)
-            .map_err(map_storage_error)
-    }
-}
-
-impl BlockBackend for Box<dyn aero_devices::storage::DiskBackend> {
-    fn len(&self) -> u64 {
-        (**self).len()
-    }
-
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        (**self).read_at(offset, dst).map_err(map_device_io_error)
-    }
-
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        (**self).write_at(offset, src).map_err(map_device_io_error)
-    }
-
-    fn blk_size(&self) -> u32 {
-        VIRTIO_BLK_SECTOR_SIZE as u32
-    }
-
-    fn flush(&mut self) -> Result<(), BlockBackendError> {
-        (**self).flush().map_err(map_device_io_error)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct MemDisk {
     data: Vec<u8>,
-    id: [u8; 20],
 }
 
 impl MemDisk {
     pub fn new(size: usize) -> Self {
-        let mut id = [0u8; 20];
-        id[..19].copy_from_slice(b"aero-virtio-memdisk");
-        Self {
-            data: vec![0; size],
-            id,
-        }
+        Self { data: vec![0; size] }
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -469,55 +128,57 @@ impl MemDisk {
     }
 }
 
-impl BlockBackend for MemDisk {
-    fn len(&self) -> u64 {
+impl VirtualDisk for MemDisk {
+    fn capacity_bytes(&self) -> u64 {
         self.data.len() as u64
     }
 
-    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| BlockBackendError::OutOfBounds)?;
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        let capacity = self.capacity_bytes();
         let end = offset
-            .checked_add(dst.len())
-            .ok_or(BlockBackendError::OutOfBounds)?;
-        let src = self
-            .data
-            .get(offset..end)
-            .ok_or(BlockBackendError::OutOfBounds)?;
-        dst.copy_from_slice(src);
+            .checked_add(buf.len() as u64)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if end > capacity {
+            return Err(DiskError::OutOfBounds {
+                offset,
+                len: buf.len(),
+                capacity,
+            });
+        }
+        let offset = offset as usize;
+        let end = offset + buf.len();
+        buf.copy_from_slice(&self.data[offset..end]);
         Ok(())
     }
 
-    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| BlockBackendError::OutOfBounds)?;
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        let capacity = self.capacity_bytes();
         let end = offset
-            .checked_add(src.len())
-            .ok_or(BlockBackendError::OutOfBounds)?;
-        let dst = self
-            .data
-            .get_mut(offset..end)
-            .ok_or(BlockBackendError::OutOfBounds)?;
-        dst.copy_from_slice(src);
+            .checked_add(buf.len() as u64)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if end > capacity {
+            return Err(DiskError::OutOfBounds {
+                offset,
+                len: buf.len(),
+                capacity,
+            });
+        }
+        let offset = offset as usize;
+        let end = offset + buf.len();
+        self.data[offset..end].copy_from_slice(buf);
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), BlockBackendError> {
+    fn flush(&mut self) -> aero_storage::Result<()> {
         Ok(())
-    }
-
-    fn device_id(&self) -> [u8; 20] {
-        self.id
     }
 }
 
-/// Virtio block device model.
-///
-/// For the most common disk-backed configuration, see [`VirtioBlkDisk`].
-pub struct VirtioBlk<B: BlockBackend> {
-    backend: B,
+const DEFAULT_DEVICE_ID: [u8; 20] = *b"aero-virtio-blk-id!!";
+
+pub struct VirtioBlk {
+    disk: Box<dyn VirtualDisk>,
+    device_id: [u8; 20],
     features: u64,
     config: VirtioBlkConfig,
 }
@@ -598,51 +259,35 @@ fn parse_discard_write_zeroes_segments(
     Ok(segs)
 }
 
-impl<B: BlockBackend> VirtioBlk<B> {
-    pub fn new(backend: B) -> Self {
+impl VirtioBlk {
+    pub fn new(disk: Box<dyn VirtualDisk>) -> Self {
         let queue_max_size = 128u16;
         let config = VirtioBlkConfig {
-            capacity: backend.len() / VIRTIO_BLK_SECTOR_SIZE,
+            capacity: disk.capacity_bytes() / VIRTIO_BLK_SECTOR_SIZE,
             // Contract v1: `size_max` is unused and MUST be 0.
             size_max: 0,
             seg_max: u32::from(queue_max_size.saturating_sub(2)),
-            blk_size: backend.blk_size(),
+            // Virtio requests are still in 512-byte sectors.
+            blk_size: VIRTIO_BLK_SECTOR_SIZE as u32,
         };
         Self {
-            backend,
+            disk,
+            device_id: DEFAULT_DEVICE_ID,
             features: 0,
             config,
         }
     }
 
-    pub fn backend_mut(&mut self) -> &mut B {
-        &mut self.backend
+    pub fn disk_mut(&mut self) -> &mut dyn VirtualDisk {
+        &mut *self.disk
+    }
+
+    pub fn device_id(&self) -> [u8; 20] {
+        self.device_id
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-impl VirtioBlk<Box<dyn aero_storage::VirtualDisk>> {
-    /// Construct a virtio-blk device from a boxed [`aero_storage::VirtualDisk`].
-    ///
-    /// This is identical to [`VirtioBlk::new`] but makes the "disk-first" path explicit and
-    /// discoverable.
-    pub fn new_from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk>) -> Self {
-        Self::new(disk)
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl VirtioBlk<Box<dyn aero_storage::VirtualDisk + Send>> {
-    /// Construct a virtio-blk device from a boxed [`aero_storage::VirtualDisk`].
-    ///
-    /// This is identical to [`VirtioBlk::new`] but makes the "disk-first" path explicit and
-    /// discoverable.
-    pub fn new_from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk + Send>) -> Self {
-        Self::new(disk)
-    }
-}
-
-impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
+impl VirtioDevice for VirtioBlk {
     fn device_type(&self) -> u16 {
         VIRTIO_DEVICE_TYPE_BLK
     }
@@ -808,13 +453,12 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 
             match typ {
                 VIRTIO_BLK_T_IN => {
-                    if data_segs.is_empty()
-                        || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
+                    if data_segs.is_empty() || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
                     {
                         status = VIRTIO_BLK_S_IOERR;
                     } else if let Some(sector_off) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
                         if let Some(end_off) = sector_off.checked_add(total_data_len) {
-                            if end_off > self.backend.len() {
+                            if end_off > self.disk.capacity_bytes() {
                                 status = VIRTIO_BLK_S_IOERR;
                             } else {
                                 let mut offset = sector_off;
@@ -834,10 +478,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     let mut cur_addr = addr;
                                     while remaining != 0 {
                                         let take = remaining.min(scratch.len());
-                                        if self
-                                            .backend
-                                            .read_at(offset, &mut scratch[..take])
-                                            .is_err()
+                                        if self.disk.read_at(offset, &mut scratch[..take]).is_err()
                                             || mem.write(cur_addr, &scratch[..take]).is_err()
                                         {
                                             status = VIRTIO_BLK_S_IOERR;
@@ -872,13 +513,12 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                     }
                 }
                 VIRTIO_BLK_T_OUT => {
-                    if data_segs.is_empty()
-                        || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
+                    if data_segs.is_empty() || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
                     {
                         status = VIRTIO_BLK_S_IOERR;
                     } else if let Some(sector_off) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
                         if let Some(end_off) = sector_off.checked_add(total_data_len) {
-                            if end_off > self.backend.len() {
+                            if end_off > self.disk.capacity_bytes() {
                                 status = VIRTIO_BLK_S_IOERR;
                             } else {
                                 let mut offset = sector_off;
@@ -897,10 +537,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     while remaining != 0 {
                                         let take = remaining.min(scratch.len());
                                         if mem.read(cur_addr, &mut scratch[..take]).is_err()
-                                            || self
-                                                .backend
-                                                .write_at(offset, &scratch[..take])
-                                                .is_err()
+                                            || self.disk.write_at(offset, &scratch[..take]).is_err()
                                         {
                                             status = VIRTIO_BLK_S_IOERR;
                                             break;
@@ -936,7 +573,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                 VIRTIO_BLK_T_FLUSH => {
                     if (self.features & VIRTIO_BLK_F_FLUSH) == 0 {
                         status = VIRTIO_BLK_S_UNSUPP;
-                    } else if self.backend.flush().is_err() {
+                    } else if self.disk.flush().is_err() {
                         status = VIRTIO_BLK_S_IOERR;
                     }
                 }
@@ -947,8 +584,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                     if data_segs.is_empty() {
                         status = VIRTIO_BLK_S_IOERR;
                     } else {
-                        let id = self.backend.device_id();
-                        let mut remaining: &[u8] = &id;
+                        let mut remaining: &[u8] = &self.device_id;
                         for (d, seg_off, seg_len) in &data_segs {
                             if remaining.is_empty() {
                                 break;
@@ -990,15 +626,27 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                         };
 
                         if status == VIRTIO_BLK_S_OK {
-                            let blk_size =
-                                u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
+                            let blk_size = u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
                             let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
-                            let disk_len = self.backend.len();
-                            let mut budget = VIRTIO_BLK_MAX_REQUEST_DATA_BYTES;
-                            let mut ranges: Vec<(u64, u64)> = Vec::with_capacity(segs.len());
+                            let disk_len = self.disk.capacity_bytes();
 
+                            // Validate all segments up-front so a rejected request cannot partially
+                            // modify backend state.
+                            let mut validated: Vec<(u64, u64)> = Vec::with_capacity(segs.len());
+                            let mut total_sectors: u64 = 0;
                             for seg in &segs {
                                 let num_sectors = u64::from(seg.num_sectors);
+                                total_sectors = match total_sectors.checked_add(num_sectors) {
+                                    Some(v) => v,
+                                    None => {
+                                        status = VIRTIO_BLK_S_IOERR;
+                                        break;
+                                    }
+                                };
+                                if total_sectors > VIRTIO_BLK_MAX_REQUEST_SECTORS {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
                                 if seg.sector % align_sectors != 0
                                     || num_sectors % align_sectors != 0
                                 {
@@ -1006,22 +654,14 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     break;
                                 }
 
-                                let Some(byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
-                                else {
+                                let Some(byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
-                                let Some(byte_len) =
-                                    num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
-                                else {
+                                let Some(byte_len) = num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
-                                if byte_len > budget {
-                                    status = VIRTIO_BLK_S_IOERR;
-                                    break;
-                                }
-                                budget = budget.saturating_sub(byte_len);
                                 let Some(end_off) = byte_off.checked_add(byte_len) else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
@@ -1031,11 +671,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     break;
                                 }
 
-                                ranges.push((byte_off, byte_len));
+                                validated.push((byte_off, byte_len));
                             }
-                            // Best-effort: discard is advisory. Prefer backend hole-punching, but
-                            // emulate by writing zeros when the backend doesn't reclaim (common for
-                            // raw disks).
+                            // Best-effort: discard is advisory. Prefer disk hole-punching, but
+                            // emulate by writing zeros when the disk doesn't reclaim (common for raw
+                            // disks).
                             if status == VIRTIO_BLK_S_OK {
                                 // Buffer used for chunked zero writes. Use a block-size-aligned
                                 // chunk so backends that care about write alignment are not
@@ -1051,13 +691,12 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                 let zero_buf = vec![0u8; chunk_size];
                                 let mut read_buf = vec![0u8; chunk_size];
 
-                                for (byte_off, byte_len) in ranges {
+                                for (byte_off, byte_len) in validated {
                                     if byte_len == 0 {
                                         continue;
                                     }
 
-                                    let discard_result =
-                                        self.backend.discard_range(byte_off, byte_len);
+                                    let discard_result = self.disk.discard_range(byte_off, byte_len);
                                     let mut needs_zero_fallback = discard_result.is_err();
 
                                     if !needs_zero_fallback {
@@ -1074,14 +713,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         while scan_remaining != 0 {
                                             let take =
                                                 scan_remaining.min(read_buf.len() as u64) as usize;
-                                            match self
-                                                .backend
-                                                .read_at(scan_off, &mut read_buf[..take])
-                                            {
+                                            match self.disk.read_at(scan_off, &mut read_buf[..take]) {
                                                 Ok(()) => {
                                                     if read_buf[..take].iter().any(|b| *b != 0)
                                                         && self
-                                                            .backend
+                                                            .disk
                                                             .write_at(scan_off, &zero_buf[..take])
                                                             .is_err()
                                                     {
@@ -1112,10 +748,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         while remaining != 0 {
                                             let take =
                                                 remaining.min(zero_buf.len() as u64) as usize;
-                                            if self
-                                                .backend
-                                                .write_at(cur_off, &zero_buf[..take])
-                                                .is_err()
+                                            if self.disk.write_at(cur_off, &zero_buf[..take]).is_err()
                                             {
                                                 status = VIRTIO_BLK_S_IOERR;
                                                 break;
@@ -1156,59 +789,45 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                         };
 
                         if status == VIRTIO_BLK_S_OK {
-                            let blk_size =
-                                u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
+                            let blk_size = u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
                             let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
-                            let disk_len = self.backend.len();
-                            let mut budget = VIRTIO_BLK_MAX_REQUEST_DATA_BYTES;
+                            let disk_len = self.disk.capacity_bytes();
 
-                            // Buffer used for chunked zero writes. Use a block-size-aligned chunk
-                            // so backends that care about write alignment are not penalized.
-                            let blk_usize = usize::try_from(blk_size).unwrap_or(512);
-                            let max_chunk = 64 * 1024usize;
-                            let mut chunk_size = if blk_usize > max_chunk {
-                                blk_usize
-                            } else {
-                                (max_chunk / blk_usize).saturating_mul(blk_usize)
-                            };
-                            chunk_size = chunk_size.max(blk_usize).max(512);
-                            let zero_buf = vec![0u8; chunk_size];
-                            let mut read_buf = if segs
-                                .iter()
-                                .any(|seg| (seg.flags & VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0)
-                            {
-                                vec![0u8; chunk_size]
-                            } else {
-                                Vec::new()
-                            };
-
-                            'seg_loop: for seg in &segs {
+                            // Validate all segments up-front so a rejected request cannot partially
+                            // modify disk state.
+                            let mut validated: Vec<(u64, u64, u32)> = Vec::with_capacity(segs.len());
+                            let mut total_sectors: u64 = 0;
+                            for seg in &segs {
                                 let num_sectors = u64::from(seg.num_sectors);
+                                total_sectors = match total_sectors.checked_add(num_sectors) {
+                                    Some(v) => v,
+                                    None => {
+                                        status = VIRTIO_BLK_S_IOERR;
+                                        break;
+                                    }
+                                };
+                                if total_sectors > VIRTIO_BLK_MAX_REQUEST_SECTORS {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
                                 if seg.sector % align_sectors != 0
                                     || num_sectors % align_sectors != 0
                                 {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 }
-
-                                let Some(mut byte_off) =
-                                    seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                let Some(byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
                                 else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
-                                let Some(mut remaining) =
+                                let Some(byte_len) =
                                     num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
                                 else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
-                                if remaining > budget {
-                                    status = VIRTIO_BLK_S_IOERR;
-                                    break;
-                                }
-                                budget = budget.saturating_sub(remaining);
-                                let Some(end_off) = byte_off.checked_add(remaining) else {
+                                let Some(end_off) = byte_off.checked_add(byte_len) else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
@@ -1216,67 +835,128 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 }
+                                validated.push((byte_off, byte_len, seg.flags));
+                            }
 
-                                if remaining == 0 {
-                                    continue;
-                                }
+                            if status == VIRTIO_BLK_S_OK {
+                                // Buffer used for chunked zero writes. Use a block-size-aligned chunk
+                                // so backends that care about write alignment are not penalized.
+                                let blk_usize = usize::try_from(blk_size).unwrap_or(512);
+                                let max_chunk = 64 * 1024usize;
+                                let mut chunk_size = if blk_usize > max_chunk {
+                                    blk_usize
+                                } else {
+                                    (max_chunk / blk_usize).saturating_mul(blk_usize)
+                                };
+                                chunk_size = chunk_size.max(blk_usize).max(512);
+                                let zero_buf = vec![0u8; chunk_size];
+                                let needs_read_buf = validated.iter().any(|(_, _, flags)| {
+                                    (flags & VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0
+                                });
+                                let mut read_buf = if needs_read_buf {
+                                    vec![0u8; chunk_size]
+                                } else {
+                                    Vec::new()
+                                };
 
-                                // If the driver requests UNMAP, treat WRITE_ZEROES as a best-effort
-                                // discard (hole punch) and fall back to explicit zero writes only if
-                                // needed to enforce read-after-write semantics.
-                                if (seg.flags & VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0 {
-                                    let byte_len = remaining;
-                                    let mut needs_zero_fallback =
-                                        self.backend.discard_range(byte_off, byte_len).is_err();
-
-                                    if !needs_zero_fallback {
-                                        let mut scan_off = byte_off;
-                                        let mut scan_remaining = byte_len;
-                                        while scan_remaining != 0 {
-                                            let take =
-                                                scan_remaining.min(read_buf.len() as u64) as usize;
-                                            match self
-                                                .backend
-                                                .read_at(scan_off, &mut read_buf[..take])
-                                            {
-                                                Ok(()) => {
-                                                    if read_buf[..take].iter().any(|b| *b != 0)
-                                                        && self
-                                                            .backend
-                                                            .write_at(scan_off, &zero_buf[..take])
-                                                            .is_err()
-                                                    {
-                                                        status = VIRTIO_BLK_S_IOERR;
-                                                        break 'seg_loop;
-                                                    }
-                                                }
-                                                Err(_) => {
-                                                    needs_zero_fallback = true;
-                                                    break;
-                                                }
-                                            }
-                                            scan_off = match scan_off.checked_add(take as u64) {
-                                                Some(v) => v,
-                                                None => {
-                                                    needs_zero_fallback = true;
-                                                    break;
-                                                }
-                                            };
-                                            scan_remaining =
-                                                scan_remaining.saturating_sub(take as u64);
-                                        }
+                                'seg_loop: for (byte_off, byte_len, flags) in validated {
+                                    if byte_len == 0 {
+                                        continue;
                                     }
 
-                                    if needs_zero_fallback {
+                                    // If the driver requests UNMAP, treat WRITE_ZEROES as a best-effort
+                                    // discard (hole punch) and fall back to explicit zero writes only
+                                    // if needed to enforce read-after-write semantics.
+                                    if (flags & VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0 {
+                                        let mut needs_zero_fallback = self
+                                            .disk
+                                            .discard_range(byte_off, byte_len)
+                                            .is_err();
+
+                                        if !needs_zero_fallback {
+                                            // If `discard_range` was a no-op, ensure guest-visible
+                                            // semantics by scanning the discarded range and writing
+                                            // zeros only for chunks that still contain non-zero bytes.
+                                            //
+                                            // This preserves hole-punching on sparse backends: if a
+                                            // chunk already reads as zero (e.g. fully deallocated
+                                            // sparse block), we skip the explicit zero write and avoid
+                                            // re-allocating the block.
+                                            let mut scan_off = byte_off;
+                                            let mut scan_remaining = byte_len;
+                                            while scan_remaining != 0 {
+                                                let take = scan_remaining
+                                                    .min(read_buf.len() as u64)
+                                                    as usize;
+                                                match self
+                                                    .disk
+                                                    .read_at(scan_off, &mut read_buf[..take])
+                                                {
+                                                    Ok(()) => {
+                                                        if read_buf[..take]
+                                                            .iter()
+                                                            .any(|b| *b != 0)
+                                                        {
+                                                            if self.disk
+                                                                .write_at(
+                                                                    scan_off,
+                                                                    &zero_buf[..take],
+                                                                )
+                                                                .is_err()
+                                                            {
+                                                                status = VIRTIO_BLK_S_IOERR;
+                                                                break 'seg_loop;
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(_) => {
+                                                        needs_zero_fallback = true;
+                                                        break;
+                                                    }
+                                                }
+                                                scan_off =
+                                                    match scan_off.checked_add(take as u64) {
+                                                        Some(v) => v,
+                                                        None => {
+                                                            needs_zero_fallback = true;
+                                                            break;
+                                                        }
+                                                    };
+                                                scan_remaining =
+                                                    scan_remaining.saturating_sub(take as u64);
+                                            }
+                                        }
+
+                                        if needs_zero_fallback && status == VIRTIO_BLK_S_OK {
+                                            let mut cur_off = byte_off;
+                                            let mut remaining = byte_len;
+                                            while remaining != 0 {
+                                                let take =
+                                                    remaining.min(zero_buf.len() as u64) as usize;
+                                                if self.disk.write_at(cur_off, &zero_buf[..take]).is_err()
+                                                {
+                                                    status = VIRTIO_BLK_S_IOERR;
+                                                    break 'seg_loop;
+                                                }
+                                                cur_off =
+                                                    match cur_off.checked_add(take as u64) {
+                                                        Some(v) => v,
+                                                        None => {
+                                                            status = VIRTIO_BLK_S_IOERR;
+                                                            break 'seg_loop;
+                                                        }
+                                                    };
+                                                remaining =
+                                                    remaining.saturating_sub(take as u64);
+                                            }
+                                        }
+                                    } else {
                                         let mut cur_off = byte_off;
                                         let mut remaining = byte_len;
                                         while remaining != 0 {
                                             let take =
                                                 remaining.min(zero_buf.len() as u64) as usize;
-                                            if self
-                                                .backend
-                                                .write_at(cur_off, &zero_buf[..take])
-                                                .is_err()
+                                            if self.disk.write_at(cur_off, &zero_buf[..take]).is_err()
                                             {
                                                 status = VIRTIO_BLK_S_IOERR;
                                                 break 'seg_loop;
@@ -1288,28 +968,9 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                                     break 'seg_loop;
                                                 }
                                             };
-                                            remaining = remaining.saturating_sub(take as u64);
+                                            remaining =
+                                                remaining.saturating_sub(take as u64);
                                         }
-                                    }
-                                } else {
-                                    while remaining != 0 {
-                                        let take = remaining.min(zero_buf.len() as u64) as usize;
-                                        if self
-                                            .backend
-                                            .write_at(byte_off, &zero_buf[..take])
-                                            .is_err()
-                                        {
-                                            status = VIRTIO_BLK_S_IOERR;
-                                            break 'seg_loop;
-                                        }
-                                        byte_off = match byte_off.checked_add(take as u64) {
-                                            Some(v) => v,
-                                            None => {
-                                                status = VIRTIO_BLK_S_IOERR;
-                                                break 'seg_loop;
-                                            }
-                                        };
-                                        remaining = remaining.saturating_sub(take as u64);
                                     }
                                 }
                             }
@@ -1355,15 +1016,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        BlockBackend, BlockBackendAsAeroVirtualDisk, BlockBackendError, MemDisk, VirtioBlk,
-        VirtioBlkDisk, VIRTIO_BLK_S_OK, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT,
-    };
+    use super::{MemDisk, VirtioBlk, VIRTIO_BLK_S_OK, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT};
+    use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
     use crate::devices::VirtioDevice;
     use crate::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
     use crate::queue::{VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
-    use aero_storage::{DiskError, MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
-    use std::io;
 
     fn write_desc(
         mem: &mut GuestRam,
@@ -1382,19 +1039,22 @@ mod tests {
     }
 
     #[test]
-    fn virtio_blk_disk_alias_accepts_raw_disk() {
+    fn doc_example_open_raw_disk_as_virtio_blk_backend() {
         let disk = RawDisk::create(MemBackend::new(), (1024 * SECTOR_SIZE) as u64).unwrap();
-        let mut blk = VirtioBlkDisk::new_from_virtual_disk(Box::new(disk));
+        let mut blk = VirtioBlk::new(Box::new(disk));
 
-        // Sanity-check that the adapter exposes the underlying disk capacity.
-        assert_eq!(blk.backend_mut().len(), (1024 * SECTOR_SIZE) as u64);
+        // Sanity-check that virtio-blk sees the underlying disk capacity.
+        assert_eq!(
+            blk.disk_mut().capacity_bytes(),
+            (1024 * SECTOR_SIZE) as u64
+        );
     }
 
     #[test]
     fn virtio_blk_get_id_writes_backend_id_and_truncates() {
-        let disk = MemDisk::new(4096);
-        let expected_id = disk.device_id();
+        let disk = Box::new(MemDisk::new(4096));
         let mut blk = VirtioBlk::new(disk);
+        let expected_id = blk.device_id();
 
         let desc_table: u64 = 0x1000;
         let avail_ring: u64 = 0x2000;
@@ -1416,7 +1076,15 @@ mod tests {
         mem.write(status, &[0xaau8]).unwrap();
 
         // Descriptor chain: header (ro) -> data (wo) -> status (wo).
-        write_desc(&mut mem, desc_table, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            header,
+            16,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
         write_desc(
             &mut mem,
             desc_table,
@@ -1465,7 +1133,7 @@ mod tests {
 
     #[test]
     fn virtio_blk_get_id_rejects_readonly_data_buffer() {
-        let disk = MemDisk::new(4096);
+        let disk = Box::new(MemDisk::new(4096));
         let mut blk = VirtioBlk::new(disk);
 
         let desc_table: u64 = 0x1000;
@@ -1489,7 +1157,15 @@ mod tests {
         // Status shares the same last descriptor semantics as other request types.
         mem.write(status, &[0xaau8]).unwrap();
 
-        write_desc(&mut mem, desc_table, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            header,
+            16,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
         // Data descriptor is read-only (no VIRTQ_DESC_F_WRITE).
         write_desc(&mut mem, desc_table, 1, data, 20, VIRTQ_DESC_F_NEXT, 2);
         write_desc(&mut mem, desc_table, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);
@@ -1529,108 +1205,5 @@ mod tests {
         // Regression guard: ensure we didn't accidentally reuse the OUT opcode constant when adding
         // GET_ID support.
         assert_ne!(VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT);
-    }
-
-    #[test]
-    fn block_backend_as_virtual_disk_read_write_roundtrip() {
-        let backend = Box::new(MemDisk::new(8));
-        let mut disk = BlockBackendAsAeroVirtualDisk::new(backend);
-
-        disk.write_at(2, b"abc").unwrap();
-        let mut out = [0u8; 3];
-        disk.read_at(2, &mut out).unwrap();
-        assert_eq!(&out, b"abc");
-    }
-
-    #[test]
-    fn block_backend_as_virtual_disk_reports_out_of_bounds() {
-        let backend = Box::new(MemDisk::new(4));
-        let mut disk = BlockBackendAsAeroVirtualDisk::new(backend);
-
-        let mut out = [0u8; 1];
-        let err = disk.read_at(4, &mut out).unwrap_err();
-        assert!(matches!(err, DiskError::OutOfBounds { .. }));
-
-        let err = disk.write_at(4, &[0u8; 1]).unwrap_err();
-        assert!(matches!(err, DiskError::OutOfBounds { .. }));
-    }
-
-    #[test]
-    fn block_backend_as_virtual_disk_reports_offset_overflow() {
-        let backend = Box::new(MemDisk::new(4));
-        let mut disk = BlockBackendAsAeroVirtualDisk::new(backend);
-
-        let mut out = [0u8; 1];
-        let err = disk.read_at(u64::MAX, &mut out).unwrap_err();
-        assert!(matches!(err, DiskError::OffsetOverflow));
-
-        let err = disk.write_at(u64::MAX, &[0u8; 1]).unwrap_err();
-        assert!(matches!(err, DiskError::OffsetOverflow));
-    }
-
-    #[test]
-    fn diskbackend_trait_object_roundtrip_and_error_mapping() {
-        struct VecDisk {
-            data: Vec<u8>,
-        }
-
-        impl VecDisk {
-            fn new(size: usize) -> Self {
-                Self {
-                    data: vec![0; size],
-                }
-            }
-        }
-
-        impl aero_devices::storage::DiskBackend for VecDisk {
-            fn len(&self) -> u64 {
-                self.data.len() as u64
-            }
-
-            fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
-                let offset = usize::try_from(offset)
-                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "offset"))?;
-                let end = offset
-                    .checked_add(buf.len())
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "end"))?;
-
-                let src = self
-                    .data
-                    .get(offset..end)
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "oob"))?;
-                buf.copy_from_slice(src);
-                Ok(())
-            }
-
-            fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<()> {
-                let offset = usize::try_from(offset)
-                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "offset"))?;
-                let end = offset
-                    .checked_add(buf.len())
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "end"))?;
-
-                let dst = self
-                    .data
-                    .get_mut(offset..end)
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "oob"))?;
-                dst.copy_from_slice(buf);
-                Ok(())
-            }
-
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let mut backend: Box<dyn aero_devices::storage::DiskBackend> = Box::new(VecDisk::new(16));
-
-        BlockBackend::write_at(&mut backend, 4, b"abc").unwrap();
-        let mut out = [0u8; 3];
-        BlockBackend::read_at(&mut backend, 4, &mut out).unwrap();
-        assert_eq!(&out, b"abc");
-
-        let mut oob = [0u8; 1];
-        let err = BlockBackend::read_at(&mut backend, 16, &mut oob).unwrap_err();
-        assert_eq!(err, BlockBackendError::OutOfBounds);
     }
 }
