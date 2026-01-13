@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -177,6 +178,14 @@ inline uint32_t calc_full_mip_chain_levels_2d(uint32_t width, uint32_t height) {
   return std::max(1u, levels);
 }
 
+struct Texture2dMipLevelLayout {
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t row_pitch_bytes = 0;
+  uint32_t slice_pitch_bytes = 0;
+  uint64_t offset_bytes = 0;
+};
+
 // Computes the packed linear layout for a 2D texture mip chain (as used by the
 // AeroGPU protocol).
 //
@@ -256,6 +265,90 @@ inline bool calc_texture2d_layout(
   out->slice_pitch_bytes = slice0;
   out->total_size_bytes = total;
   return true;
+}
+
+// Computes the packed linear layout for a specific mip level of a 2D texture mip
+// chain.
+//
+// Returns false on overflow / invalid inputs.
+//
+// Notes:
+// - `offset_bytes` is the byte offset within the *first* array layer (depth slice)
+//   of the texture. For depth/array-layer counts > 1, callers can treat the
+//   packed resource as:
+//     layer_offset = layer_index * layer_size_bytes
+//     subresource_offset = layer_offset + level.offset_bytes
+inline bool calc_texture2d_mip_level_layout(
+    D3DDDIFORMAT format,
+    uint32_t width,
+    uint32_t height,
+    uint32_t mip_levels,
+    uint32_t depth,
+    uint32_t level,
+    Texture2dMipLevelLayout* out) {
+  if (!out) {
+    return false;
+  }
+
+  width = std::max(1u, width);
+  height = std::max(1u, height);
+  mip_levels = std::max(1u, mip_levels);
+  depth = std::max(1u, depth);
+
+  if (level >= mip_levels) {
+    return false;
+  }
+
+  uint32_t w = width;
+  uint32_t h = height;
+  uint64_t offset = 0;
+
+  for (uint32_t cur_level = 0; cur_level < mip_levels; ++cur_level) {
+    uint64_t row_pitch = 0;
+    uint64_t slice_pitch = 0;
+
+    if (is_block_compressed_format(format)) {
+      const uint32_t block_bytes = block_bytes_per_4x4(format);
+      if (block_bytes == 0) {
+        return false;
+      }
+
+      const uint32_t blocks_w = std::max(1u, (w + 3u) / 4u);
+      const uint32_t blocks_h = std::max(1u, (h + 3u) / 4u);
+
+      row_pitch = static_cast<uint64_t>(blocks_w) * block_bytes;
+      slice_pitch = row_pitch * blocks_h;
+    } else {
+      const uint32_t bpp = bytes_per_pixel(format);
+      row_pitch = static_cast<uint64_t>(w) * bpp;
+      slice_pitch = row_pitch * h;
+    }
+
+    if (row_pitch == 0 || slice_pitch == 0) {
+      return false;
+    }
+    if (row_pitch > 0xFFFFFFFFull || slice_pitch > 0xFFFFFFFFull) {
+      return false;
+    }
+
+    if (cur_level == level) {
+      out->width = w;
+      out->height = h;
+      out->row_pitch_bytes = static_cast<uint32_t>(row_pitch);
+      out->slice_pitch_bytes = static_cast<uint32_t>(slice_pitch);
+      out->offset_bytes = offset;
+      return true;
+    }
+
+    if (offset > std::numeric_limits<uint64_t>::max() - slice_pitch) {
+      return false;
+    }
+    offset += slice_pitch;
+    w = std::max(1u, w / 2);
+    h = std::max(1u, h / 2);
+  }
+
+  return false;
 }
 
 struct Resource {

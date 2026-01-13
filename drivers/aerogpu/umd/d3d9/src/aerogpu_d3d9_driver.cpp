@@ -7868,7 +7868,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   {
     const D3DDDIRESTYPE create_type = static_cast<D3DDDIRESTYPE>(d3d9_resource_type(*pCreateResource));
     if (create_size_bytes == 0 &&
-        (create_type == D3DDDIRESTYPE_CUBETEXTURE || create_type == D3DDDIRESTYPE_VOLUMETEXTURE || create_type == D3DDDIRESTYPE_VOLUME)) {
+        (create_type == D3DDDIRESTYPE_VOLUMETEXTURE || create_type == D3DDDIRESTYPE_VOLUME)) {
       return trace.ret(D3DERR_INVALIDCALL);
     }
   }
@@ -14173,6 +14173,79 @@ Ret device_get_auto_gen_filter_type_dispatch(Args... args) {
     return Ret{};
   }
 }
+
+HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(D3DDDI_HDEVICE hDevice, D3DDDI_HRESOURCE hTexture);
+
+template <typename T, typename = void>
+struct has_member_hResource : std::false_type {};
+template <typename T>
+struct has_member_hResource<T, std::void_t<decltype(std::declval<T>().hResource)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hTexture : std::false_type {};
+template <typename T>
+struct has_member_hTexture<T, std::void_t<decltype(std::declval<T>().hTexture)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pDrvPrivate : std::false_type {};
+template <typename T>
+struct has_member_pDrvPrivate<T, std::void_t<decltype(std::declval<T>().pDrvPrivate)>> : std::true_type {};
+
+template <typename Ret, typename HandleT>
+Ret device_generate_mip_sub_levels_dispatch_impl(D3DDDI_HDEVICE hDevice, HandleT hResource) {
+  const HRESULT hr = device_generate_mip_sub_levels(hDevice, hResource);
+  if constexpr (std::is_same_v<Ret, void>) {
+    (void)hr;
+    return;
+  } else if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return hr;
+  } else if constexpr (std::is_integral_v<Ret>) {
+    return static_cast<Ret>(hr);
+  } else {
+    return Ret{};
+  }
+}
+
+template <typename Ret, typename ArgsT>
+Ret device_generate_mip_sub_levels_dispatch_impl(D3DDDI_HDEVICE hDevice, const ArgsT* pArgs) {
+  if (!pArgs) {
+    return device_generate_mip_sub_levels_dispatch_impl<Ret>(hDevice, D3DDDI_HRESOURCE{});
+  }
+  if constexpr (has_member_pDrvPrivate<ArgsT>::value && !has_member_hResource<ArgsT>::value && !has_member_hTexture<ArgsT>::value) {
+    // Some header/runtime vintages may pass a pointer to the resource handle.
+    return device_generate_mip_sub_levels_dispatch_impl<Ret>(hDevice, *pArgs);
+  }
+  if constexpr (has_member_hResource<ArgsT>::value) {
+    return device_generate_mip_sub_levels_dispatch_impl<Ret>(hDevice, pArgs->hResource);
+  } else if constexpr (has_member_hTexture<ArgsT>::value) {
+    return device_generate_mip_sub_levels_dispatch_impl<Ret>(hDevice, pArgs->hTexture);
+  } else {
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return D3DERR_NOTAVAILABLE;
+    } else {
+      return Ret{};
+    }
+  }
+}
+
+template <typename Ret, typename A0, typename A1>
+Ret device_generate_mip_sub_levels_dispatch(A0 a0, A1 a1) {
+  return device_generate_mip_sub_levels_dispatch_impl<Ret>(a0, a1);
+}
+
+template <typename Ret, typename A0, typename A1, typename A2>
+Ret device_generate_mip_sub_levels_dispatch(A0 a0, A1 a1, A2 /*unused*/) {
+  return device_generate_mip_sub_levels_dispatch_impl<Ret>(a0, a1);
+}
+
+template <typename Ret, typename... Args>
+Ret device_generate_mip_sub_levels_dispatch(Args... /*args*/) {
+  if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return D3DERR_NOTAVAILABLE;
+  } else {
+    return Ret{};
+  }
+}
 #endif
 
 template <typename ValueT>
@@ -15564,6 +15637,21 @@ struct aerogpu_d3d9_impl_pfnGetAutoGenFilterType<Ret(*)(Args...)> {
 };
 
 template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGenerateMipSubLevels;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGenerateMipSubLevels<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGenerateMipSubLevels(Args... args) {
+    return device_generate_mip_sub_levels_dispatch<Ret>(args...);
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGenerateMipSubLevels<Ret(*)(Args...)> {
+  static Ret pfnGenerateMipSubLevels(Args... args) {
+    return device_generate_mip_sub_levels_dispatch<Ret>(args...);
+  }
+};
+
+template <typename Fn>
 struct aerogpu_d3d9_impl_pfnSetSoftwareVertexProcessing;
 template <typename Ret, typename... Args>
 struct aerogpu_d3d9_impl_pfnSetSoftwareVertexProcessing<Ret(__stdcall*)(Args...)> {
@@ -16054,6 +16142,338 @@ HRESULT AEROGPU_D3D9_CALL device_update_texture(D3DDDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   return trace.ret(update_texture_locked(dev, src, dst));
+}
+
+HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hTexture) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGenerateMipSubLevels,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(hTexture.pDrvPrivate),
+                      0,
+                      0);
+
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  auto* dev = as_device(hDevice);
+  auto* res = as_resource(hTexture);
+  if (!dev || !res) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (res->locked) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  if (res->mip_levels < 2) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (res->depth != 1) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (res->width == 0 || res->height == 0) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (res->kind != ResourceKind::Texture2D && res->kind != ResourceKind::Surface) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  enum class MipGenFormat {
+    kA8R8G8B8,
+    kX8R8G8B8,
+    kA8B8G8R8,
+  };
+
+  MipGenFormat gen_format{};
+  switch (static_cast<uint32_t>(res->format)) {
+    case 21u: // D3DFMT_A8R8G8B8
+      gen_format = MipGenFormat::kA8R8G8B8;
+      break;
+    case 22u: // D3DFMT_X8R8G8B8
+      gen_format = MipGenFormat::kX8R8G8B8;
+      break;
+    case 32u: // D3DFMT_A8B8G8R8
+      gen_format = MipGenFormat::kA8B8G8R8;
+      break;
+    default: {
+      static std::once_flag unsupported_fmt_once;
+      const uint32_t fmt_u32 = static_cast<uint32_t>(res->format);
+      std::call_once(unsupported_fmt_once, [fmt_u32] {
+        aerogpu::logf("aerogpu-d3d9: GenerateMipSubLevels unsupported format=%u\n", static_cast<unsigned>(fmt_u32));
+      });
+      return trace.ret(kD3DErrInvalidCall);
+    }
+  }
+
+  // Validate the mip-chain layout against the resource size to prevent OOB writes on malformed descriptors.
+  Texture2dLayout full_layout{};
+  if (!calc_texture2d_layout(res->format, res->width, res->height, res->mip_levels, res->depth, &full_layout)) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (full_layout.total_size_bytes == 0 || full_layout.total_size_bytes > res->size_bytes) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  uint8_t* base = nullptr;
+  bool mapped = false;
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  void* mapped_ptr = nullptr;
+  if (res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+    const HRESULT hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                           dev->wddm_device,
+                                           res->wddm_hAllocation,
+                                           /*offset=*/0,
+                                           /*size=*/res->size_bytes,
+                                           /*flags=*/0,
+                                           &mapped_ptr,
+                                           dev->wddm_context.hContext);
+    if (FAILED(hr) || !mapped_ptr) {
+      return trace.ret(FAILED(hr) ? hr : E_FAIL);
+    }
+    base = reinterpret_cast<uint8_t*>(mapped_ptr);
+    mapped = true;
+  } else
+#endif
+  {
+    if (res->storage.size() < res->size_bytes) {
+      return trace.ret(E_FAIL);
+    }
+    base = res->storage.data();
+  }
+
+  auto unlock_and_ret = [&](HRESULT hr_to_return) -> HRESULT {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    if (mapped && res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+      const HRESULT uhr =
+          wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, res->wddm_hAllocation, dev->wddm_context.hContext);
+      if (FAILED(uhr)) {
+        aerogpu::logf("aerogpu-d3d9: GenerateMipSubLevels: UnlockCb failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
+                      static_cast<unsigned long>(uhr),
+                      static_cast<unsigned>(res->backing_alloc_id),
+                      static_cast<unsigned long long>(res->wddm_hAllocation));
+        if (SUCCEEDED(hr_to_return)) {
+          hr_to_return = uhr;
+        }
+      }
+    }
+#endif
+    return trace.ret(hr_to_return);
+  };
+
+  struct Rgba8 {
+    uint8_t r = 0;
+    uint8_t g = 0;
+    uint8_t b = 0;
+    uint8_t a = 0;
+  };
+
+  auto decode = [&](const uint8_t* p) -> Rgba8 {
+    Rgba8 c{};
+    switch (gen_format) {
+      case MipGenFormat::kA8R8G8B8:
+        // Stored as BGRA in little-endian memory.
+        c.b = p[0];
+        c.g = p[1];
+        c.r = p[2];
+        c.a = p[3];
+        break;
+      case MipGenFormat::kX8R8G8B8:
+        c.b = p[0];
+        c.g = p[1];
+        c.r = p[2];
+        // XRGB alpha is treated as 1.0.
+        c.a = 0xFFu;
+        break;
+      case MipGenFormat::kA8B8G8R8:
+        // Stored as RGBA in little-endian memory.
+        c.r = p[0];
+        c.g = p[1];
+        c.b = p[2];
+        c.a = p[3];
+        break;
+    }
+    return c;
+  };
+
+  auto encode = [&](uint8_t* p, const Rgba8& c) {
+    switch (gen_format) {
+      case MipGenFormat::kA8R8G8B8:
+        p[0] = c.b;
+        p[1] = c.g;
+        p[2] = c.r;
+        p[3] = c.a;
+        break;
+      case MipGenFormat::kX8R8G8B8:
+        p[0] = c.b;
+        p[1] = c.g;
+        p[2] = c.r;
+        p[3] = 0xFFu;
+        break;
+      case MipGenFormat::kA8B8G8R8:
+        p[0] = c.r;
+        p[1] = c.g;
+        p[2] = c.b;
+        p[3] = c.a;
+        break;
+    }
+  };
+
+  auto avg4 = [](uint8_t a, uint8_t b, uint8_t c, uint8_t d) -> uint8_t {
+    const uint32_t sum = static_cast<uint32_t>(a) + static_cast<uint32_t>(b) + static_cast<uint32_t>(c) + static_cast<uint32_t>(d);
+    // Round to nearest.
+    return static_cast<uint8_t>((sum + 2u) / 4u);
+  };
+
+  for (uint32_t level = 0; level + 1 < res->mip_levels; ++level) {
+    Texture2dMipLevelLayout src{};
+    Texture2dMipLevelLayout dst{};
+    if (!calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, level, &src) ||
+        !calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, level + 1, &dst)) {
+      return unlock_and_ret(kD3DErrInvalidCall);
+    }
+
+    const uint64_t src_end = src.offset_bytes + static_cast<uint64_t>(src.slice_pitch_bytes);
+    const uint64_t dst_end = dst.offset_bytes + static_cast<uint64_t>(dst.slice_pitch_bytes);
+    if (src_end > res->size_bytes || dst_end > res->size_bytes) {
+      return unlock_and_ret(kD3DErrInvalidCall);
+    }
+
+    const uint8_t* src_base = base + static_cast<size_t>(src.offset_bytes);
+    uint8_t* dst_base = base + static_cast<size_t>(dst.offset_bytes);
+
+    const uint32_t src_w = src.width;
+    const uint32_t src_h = src.height;
+    const uint32_t dst_w = dst.width;
+    const uint32_t dst_h = dst.height;
+
+    if (src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0) {
+      return unlock_and_ret(kD3DErrInvalidCall);
+    }
+
+    for (uint32_t y = 0; y < dst_h; ++y) {
+      const uint32_t sy0 = std::min<uint32_t>(2u * y, src_h - 1u);
+      const uint32_t sy1 = std::min<uint32_t>(2u * y + 1u, src_h - 1u);
+
+      const uint8_t* row0 = src_base + static_cast<size_t>(sy0) * src.row_pitch_bytes;
+      const uint8_t* row1 = src_base + static_cast<size_t>(sy1) * src.row_pitch_bytes;
+      uint8_t* out_row = dst_base + static_cast<size_t>(y) * dst.row_pitch_bytes;
+
+      for (uint32_t x = 0; x < dst_w; ++x) {
+        const uint32_t sx0 = std::min<uint32_t>(2u * x, src_w - 1u);
+        const uint32_t sx1 = std::min<uint32_t>(2u * x + 1u, src_w - 1u);
+
+        const uint8_t* p00 = row0 + static_cast<size_t>(sx0) * 4u;
+        const uint8_t* p10 = row0 + static_cast<size_t>(sx1) * 4u;
+        const uint8_t* p01 = row1 + static_cast<size_t>(sx0) * 4u;
+        const uint8_t* p11 = row1 + static_cast<size_t>(sx1) * 4u;
+
+        const Rgba8 c00 = decode(p00);
+        const Rgba8 c10 = decode(p10);
+        const Rgba8 c01 = decode(p01);
+        const Rgba8 c11 = decode(p11);
+
+        Rgba8 out{};
+        out.r = avg4(c00.r, c10.r, c01.r, c11.r);
+        out.g = avg4(c00.g, c10.g, c01.g, c11.g);
+        out.b = avg4(c00.b, c10.b, c01.b, c11.b);
+        out.a = (gen_format == MipGenFormat::kX8R8G8B8) ? 0xFFu : avg4(c00.a, c10.a, c01.a, c11.a);
+
+        encode(out_row + static_cast<size_t>(x) * 4u, out);
+      }
+    }
+  }
+
+  // Host visibility:
+  // - Guest-backed: signal the dirty byte range so the host can re-upload from guest memory.
+  // - Host-allocated: upload the generated bytes (mips beyond level 0) directly via UPLOAD_RESOURCE.
+  if (res->handle != 0 && res->backing_alloc_id != 0) {
+    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
+      return unlock_and_ret(E_OUTOFMEMORY);
+    }
+    const HRESULT track_hr = track_resource_allocation_locked(dev, res, /*write=*/false);
+    if (FAILED(track_hr)) {
+      return unlock_and_ret(track_hr);
+    }
+    auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    if (!cmd) {
+      return unlock_and_ret(E_OUTOFMEMORY);
+    }
+    cmd->resource_handle = res->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = 0;
+    cmd->size_bytes = static_cast<uint64_t>(res->size_bytes);
+  } else if (res->handle != 0 && res->backing_alloc_id == 0) {
+    // Upload mips beyond level 0.
+    Texture2dMipLevelLayout mip1{};
+    if (!calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, /*level=*/1, &mip1)) {
+      return unlock_and_ret(kD3DErrInvalidCall);
+    }
+    if (mip1.offset_bytes > res->size_bytes) {
+      return unlock_and_ret(kD3DErrInvalidCall);
+    }
+
+    const uint64_t upload_offset = mip1.offset_bytes;
+    const uint64_t upload_size = static_cast<uint64_t>(res->size_bytes) - upload_offset;
+
+    const uint8_t* src = base + static_cast<size_t>(upload_offset);
+    uint64_t remaining = upload_size;
+    uint64_t cur_offset = upload_offset;
+
+    while (remaining) {
+      // Ensure we can fit at least a minimal upload packet (header + 1 byte).
+      const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + 1, 4);
+      if (!ensure_cmd_space(dev, min_needed)) {
+        return unlock_and_ret(E_OUTOFMEMORY);
+      }
+
+      // Uploads write into the resource. Track its backing allocation so the
+      // host can resolve the destination memory via the per-submit alloc table.
+      const HRESULT track_hr = track_resource_allocation_locked(dev, res, /*write=*/true);
+      if (FAILED(track_hr)) {
+        return unlock_and_ret(track_hr);
+      }
+
+      // Allocation tracking may have split/flushed the submission; ensure we
+      // still have room for at least a minimal upload packet before sizing the
+      // next chunk.
+      if (!ensure_cmd_space(dev, min_needed)) {
+        return unlock_and_ret(E_OUTOFMEMORY);
+      }
+
+      const size_t avail = dev->cmd.bytes_remaining();
+      size_t chunk = 0;
+      if (avail > sizeof(aerogpu_cmd_upload_resource)) {
+        chunk = std::min<size_t>(static_cast<size_t>(remaining), avail - sizeof(aerogpu_cmd_upload_resource));
+      }
+      while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
+        chunk--;
+      }
+      if (!chunk) {
+        submit(dev);
+        continue;
+      }
+
+      auto* cmd = append_with_payload_locked<aerogpu_cmd_upload_resource>(dev, AEROGPU_CMD_UPLOAD_RESOURCE, src, chunk);
+      if (!cmd) {
+        return unlock_and_ret(E_OUTOFMEMORY);
+      }
+      cmd->resource_handle = res->handle;
+      cmd->reserved0 = 0;
+      cmd->offset_bytes = cur_offset;
+      cmd->size_bytes = chunk;
+
+      src += chunk;
+      cur_offset += chunk;
+      remaining -= chunk;
+    }
+  }
+
+  return unlock_and_ret(S_OK);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
@@ -20492,7 +20912,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnGenerateMipSubLevels<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnGenerateMipSubLevels,
-        aerogpu_d3d9_noop_pfnGenerateMipSubLevels<decltype(
+        aerogpu_d3d9_impl_pfnGenerateMipSubLevels<decltype(
             pDeviceFuncs->pfnGenerateMipSubLevels)>::pfnGenerateMipSubLevels);
   }
 
@@ -20782,6 +21202,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnDrawRectPatch = device_draw_rect_patch;
   pDeviceFuncs->pfnDrawTriPatch = device_draw_tri_patch;
   pDeviceFuncs->pfnDeletePatch = device_delete_patch;
+  pDeviceFuncs->pfnGenerateMipSubLevels = device_generate_mip_sub_levels;
   pDeviceFuncs->pfnCreateSwapChain = device_create_swap_chain;
   pDeviceFuncs->pfnDestroySwapChain = device_destroy_swap_chain;
   pDeviceFuncs->pfnGetSwapChain = device_get_swap_chain;
