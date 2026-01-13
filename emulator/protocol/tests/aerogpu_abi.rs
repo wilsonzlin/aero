@@ -2380,7 +2380,7 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.size("aerogpu_escape_header"), 16);
     assert_eq!(abi.size("aerogpu_escape_query_device_out"), 24);
     assert_eq!(abi.size("aerogpu_escape_query_device_v2_out"), 48);
-    assert_eq!(abi.size("aerogpu_escape_query_fence_out"), 32);
+    assert_eq!(abi.size("aerogpu_escape_query_fence_out"), 48);
     assert_eq!(abi.size("aerogpu_escape_query_perf_out"), 144);
     assert_eq!(
         abi.size("aerogpu_escape_dump_ring_inout"),
@@ -2420,6 +2420,23 @@ fn rust_layout_matches_c_headers() {
     );
     assert_eq!(
         abi.offset("aerogpu_escape_query_device_v2_out", "reserved0"),
+        40
+    );
+
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_fence_out", "last_submitted_fence"),
+        16
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_fence_out", "last_completed_fence"),
+        24
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_fence_out", "error_irq_count"),
+        32
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_fence_out", "last_error_fence"),
         40
     );
 

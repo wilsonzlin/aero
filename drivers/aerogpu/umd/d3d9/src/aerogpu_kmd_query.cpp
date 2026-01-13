@@ -58,7 +58,7 @@ struct D3DKMT_ESCAPEFLAGS {
   };
 };
 
-static_assert(sizeof(aerogpu_escape_query_fence_out) == 32, "aerogpu_escape_query_fence_out ABI mismatch");
+static_assert(sizeof(aerogpu_escape_query_fence_out) == 48, "aerogpu_escape_query_fence_out ABI mismatch");
 
 // Minimal portable definition for the Win7 `D3DKMT_WAITFORSYNCHRONIZATIONOBJECT`
 // ABI.

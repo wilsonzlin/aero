@@ -573,7 +573,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_escape_header"), 16);
   assert.equal(size("aerogpu_escape_query_device_out"), 24);
   assert.equal(size("aerogpu_escape_query_device_v2_out"), 48);
-  assert.equal(size("aerogpu_escape_query_fence_out"), 32);
+  assert.equal(size("aerogpu_escape_query_fence_out"), 48);
   assert.equal(size("aerogpu_escape_dump_ring_inout"), 40 + 32 * 24);
   assert.equal(size("aerogpu_escape_dump_ring_v2_inout"), 52 + 32 * 40);
   assert.equal(size("aerogpu_escape_selftest_inout"), 32);
