@@ -45,7 +45,7 @@ use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
     bios_post, register_pci_config_ports, PciBarDefinition, PciBarMmioHandler, PciBarMmioRouter,
-    MsiCapability, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
+    PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
     PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
@@ -863,7 +863,6 @@ struct AhciPciConfigDevice {
 impl AhciPciConfigDevice {
     fn new() -> Self {
         let mut cfg = aero_devices::pci::profile::SATA_AHCI_ICH9.build_config_space();
-        cfg.add_capability(Box::new(MsiCapability::new()));
         cfg.set_bar_definition(
             aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
             PciBarDefinition::Mmio32 {
