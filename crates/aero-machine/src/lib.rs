@@ -4185,24 +4185,22 @@ impl Machine {
 
         // Run firmware POST (in Rust) to initialize IVT/BDA, map BIOS stubs, and load the boot
         // sector into RAM.
-        self.bios = Bios::new(BiosConfig {
-            memory_size_bytes: self.cfg.ram_size_bytes,
-            cpu_count: self.cfg.cpu_count,
-            ..Default::default()
-        });
         // The BIOS is HLE and by default keeps the VBE linear framebuffer inside guest RAM so the
         // firmware-only tests can access it without MMIO routing.
         //
-        // When VGA is enabled, force the BIOS to report the fixed Bochs/QEMU-compatible LFB base
-        // that our VGA device is mapped at (`SVGA_LFB_BASE`) so OSes and bootloaders see a stable,
-        // MMIO-safe framebuffer address.
+        // When VGA is enabled, configure the BIOS to report the fixed Bochs/QEMU-compatible LFB
+        // base that our VGA device is mapped at (`SVGA_LFB_BASE`) so OSes and bootloaders see a
+        // stable, MMIO-safe framebuffer address.
         //
         // When VGA is disabled, keep the default LFB base in conventional RAM: pointing the BIOS
         // at `SVGA_LFB_BASE` would overlap the canonical PCI MMIO window (and could cause BIOS VBE
         // helpers like `int 0x10, ax=0x4F02` to scribble over PCI device BARs).
-        if self.cfg.enable_vga {
-            self.bios.video.vbe.lfb_base = aero_gpu_vga::SVGA_LFB_BASE;
-        }
+        self.bios = Bios::new(BiosConfig {
+            memory_size_bytes: self.cfg.ram_size_bytes,
+            cpu_count: self.cfg.cpu_count,
+            vbe_lfb_base: self.cfg.enable_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE),
+            ..Default::default()
+        });
         let bus: &mut dyn BiosBus = &mut self.mem;
         if let Some(pci_cfg) = &self.pci_cfg {
             let mut pci = SharedPciConfigPortsBiosAdapter::new(pci_cfg.clone());

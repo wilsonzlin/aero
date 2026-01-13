@@ -237,6 +237,11 @@ pub struct BiosConfig {
     /// Mapping of PCI PIRQ[A-D] -> platform GSI used by both the ACPI DSDT `_PRT`
     /// and PCI Interrupt Line programming during enumeration.
     pub pirq_to_gsi: [u32; 4],
+    /// Optional override for the VBE linear framebuffer base address reported by the BIOS.
+    ///
+    /// When unset, the BIOS keeps the default RAM-backed base address
+    /// ([`crate::video::vbe::VbeDevice::LFB_BASE_DEFAULT`]).
+    pub vbe_lfb_base: Option<u32>,
 }
 
 impl Default for BiosConfig {
@@ -255,6 +260,7 @@ impl Default for BiosConfig {
             acpi_placement,
             // Match the default routing in `aero_acpi::AcpiConfig`.
             pirq_to_gsi: [10, 11, 12, 13],
+            vbe_lfb_base: None,
         }
     }
 }
@@ -322,9 +328,13 @@ impl Bios {
 
     pub fn new_with_rtc(config: BiosConfig, rtc: CmosRtc) -> Self {
         let bda_time = BdaTime::from_rtc(&rtc);
+        let mut video = VideoDevice::new();
+        if let Some(base) = config.vbe_lfb_base {
+            video.vbe.lfb_base = base;
+        }
         Self {
             rtc,
-            video: VideoDevice::new(),
+            video,
             bda_time,
             config,
             acpi_builder: Box::new(acpi::AeroAcpiBuilder),
@@ -520,6 +530,22 @@ mod tests {
         sector[510] = 0x55;
         sector[511] = 0xAA;
         sector
+    }
+
+    #[test]
+    fn bios_config_vbe_lfb_base_overrides_default() {
+        let default = Bios::new(BiosConfig::default());
+        assert_eq!(
+            default.video.vbe.lfb_base,
+            crate::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+        );
+
+        let base = 0xDEAD_BEEFu32;
+        let bios = Bios::new(BiosConfig {
+            vbe_lfb_base: Some(base),
+            ..BiosConfig::default()
+        });
+        assert_eq!(bios.video.vbe.lfb_base, base);
     }
 
     #[test]
