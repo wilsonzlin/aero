@@ -1,5 +1,10 @@
 use aero_dxbc::{parse_ctab_chunk, parse_rdef_chunk, DxbcFile, FourCC};
 
+const VS_2_0_SIMPLE_DXBC: &[u8] =
+    include_bytes!("../../aero-d3d9/tests/fixtures/dxbc/vs_2_0_simple.dxbc");
+const PS_2_0_SAMPLE_DXBC: &[u8] =
+    include_bytes!("../../aero-d3d9/tests/fixtures/dxbc/ps_2_0_sample.dxbc");
+
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
@@ -254,4 +259,40 @@ fn dxbc_get_ctab_skips_malformed_duplicate_chunks() {
     assert_eq!(ctab.target.as_deref(), Some("ps_2_0"));
     assert_eq!(ctab.constants.len(), 1);
     assert_eq!(ctab.constants[0].name, "C0");
+}
+
+#[test]
+fn rdef_from_real_dxbc_fixture_parses_creator_and_resources() {
+    let dxbc = DxbcFile::parse(PS_2_0_SAMPLE_DXBC).expect("DXBC fixture should parse");
+
+    let rdef = dxbc
+        .get_rdef()
+        .expect("fixture should contain RDEF")
+        .expect("RDEF should parse");
+
+    assert_eq!(rdef.creator.as_deref(), Some("aero-fixture"));
+    assert_eq!(rdef.resources.len(), 2);
+
+    assert_eq!(rdef.resources[0].name, "g_texture");
+    assert_eq!(rdef.resources[0].ty, 2);
+    assert_eq!(rdef.resources[0].bind_point, 0);
+    assert_eq!(rdef.resources[0].bind_count, 1);
+
+    assert_eq!(rdef.resources[1].name, "g_sampler");
+    assert_eq!(rdef.resources[1].ty, 3);
+    assert_eq!(rdef.resources[1].bind_point, 0);
+    assert_eq!(rdef.resources[1].bind_count, 1);
+}
+
+#[test]
+fn rdef_from_vertex_shader_fixture_with_no_resources_is_empty() {
+    let dxbc = DxbcFile::parse(VS_2_0_SIMPLE_DXBC).expect("DXBC fixture should parse");
+
+    let rdef = dxbc
+        .get_rdef()
+        .expect("fixture should contain RDEF")
+        .expect("RDEF should parse");
+
+    assert_eq!(rdef.creator.as_deref(), Some("aero-fixture"));
+    assert!(rdef.resources.is_empty());
 }
