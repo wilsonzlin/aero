@@ -119,14 +119,20 @@ High-level contract:
 - The BIOS also reports the reclaimable + NVS regions so the E820 map can mark them with the correct
   types (ACPI reclaimable vs ACPI NVS).
 
-### Regenerating the checked-in AML fixture
+### Regenerating the checked-in DSDT fixture
 
 The runtime uses the **Rust generator**; the repo also keeps a checked-in DSDT AML blob for
 validation/diffing:
 
 - Fixture: `crates/firmware/acpi/dsdt.aml` (used by tests and `scripts/validate-acpi.sh`)
 
-Regenerate it after changing ACPI generation logic:
+Regenerate the repo fixtures (recommended; this also refreshes `assets/bios.bin`):
+
+```bash
+cargo xtask fixtures
+```
+
+Or regenerate just the DSDT fixture directly:
 
 ```bash
 cargo run -p firmware --bin gen_dsdt --locked

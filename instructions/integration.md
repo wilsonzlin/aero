@@ -39,7 +39,7 @@ Older docs may still read like “bring your own BIOS binary” or like the mach
 | `crates/aero-timers/` / `crates/aero-time/` | PIT/HPET/RTC devices + time abstractions |
 | `crates/aero-snapshot/` | VM snapshot/restore format + helpers |
 | `crates/emulator/` | Full-system emulator entrypoints (some legacy wiring; increasingly delegates to `aero-machine`) |
-| `assets/bios.bin` | **Generated fixture**: a 64 KiB ROM image built from `firmware::bios::build_bios_rom()` (not the runtime BIOS source) |
+| `assets/bios.bin` | **Generated fixture**: a 64 KiB ROM image built from `firmware::bios::build_bios_rom()` (not the runtime BIOS source). Regenerate with `cargo xtask fixtures`. |
 
 ---
 
