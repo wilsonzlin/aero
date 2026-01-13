@@ -139,3 +139,71 @@ fn tier1_codegen_partial_write_forces_load() {
     assert_eq!(loads, BTreeSet::from([rax_off]));
     assert_eq!(stores, BTreeSet::from([rax_off]));
 }
+
+#[test]
+fn tier1_codegen_read_only_loads_without_spill() {
+    let entry = 0x1000u64;
+
+    let mut b = IrBuilder::new(entry);
+    let _ = b.read_reg(GuestReg::Gpr {
+        reg: Gpr::Rax,
+        width: Width::W64,
+        high8: false,
+    });
+    let block = b.finish(IrTerminator::Jump { target: entry + 1 });
+    block.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&block);
+    let rax_off = abi::CPU_GPR_OFF[Gpr::Rax.as_u8() as usize] as u64;
+    let (loads, stores) = collect_gpr_load_store_offsets(&wasm);
+    assert_eq!(loads, BTreeSet::from([rax_off]));
+    assert!(stores.is_empty());
+}
+
+#[test]
+fn tier1_codegen_high8_write_forces_load() {
+    let entry = 0x1000u64;
+
+    let mut b = IrBuilder::new(entry);
+    let v = b.const_int(Width::W8, 0x12);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: true,
+        },
+        v,
+    );
+    let block = b.finish(IrTerminator::Jump { target: entry + 1 });
+    block.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&block);
+    let rax_off = abi::CPU_GPR_OFF[Gpr::Rax.as_u8() as usize] as u64;
+    let (loads, stores) = collect_gpr_load_store_offsets(&wasm);
+    assert_eq!(loads, BTreeSet::from([rax_off]));
+    assert_eq!(stores, BTreeSet::from([rax_off]));
+}
+
+#[test]
+fn tier1_codegen_16bit_write_forces_load() {
+    let entry = 0x1000u64;
+
+    let mut b = IrBuilder::new(entry);
+    let v = b.const_int(Width::W16, 0x1234);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W16,
+            high8: false,
+        },
+        v,
+    );
+    let block = b.finish(IrTerminator::Jump { target: entry + 1 });
+    block.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&block);
+    let rax_off = abi::CPU_GPR_OFF[Gpr::Rax.as_u8() as usize] as u64;
+    let (loads, stores) = collect_gpr_load_store_offsets(&wasm);
+    assert_eq!(loads, BTreeSet::from([rax_off]));
+    assert_eq!(stores, BTreeSet::from([rax_off]));
+}
