@@ -114,6 +114,7 @@ const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
 const DEFAULT_E1000_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 const DEFAULT_VIRTIO_NET_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x57];
 const FOUR_GIB: u64 = 0x1_0000_0000;
+const IA32_APIC_BASE_BSP_BIT: u64 = 1 << 8;
 // Use a sparse RAM backend once memory sizes exceed this threshold to avoid accidentally
 // allocating multi-GB buffers in tests and constrained environments.
 const SPARSE_RAM_THRESHOLD_BYTES: u64 = 512 * 1024 * 1024;
@@ -122,6 +123,13 @@ const SPARSE_RAM_THRESHOLD_BYTES: u64 = 512 * 1024 * 1024;
 type NvmeDisk = Box<dyn aero_storage::VirtualDisk + Send>;
 #[cfg(target_arch = "wasm32")]
 type NvmeDisk = Box<dyn aero_storage::VirtualDisk>;
+fn set_cpu_apic_base_bsp_bit(cpu: &mut CpuCore, is_bsp: bool) {
+    if is_bsp {
+        cpu.state.msr.apic_base |= IA32_APIC_BASE_BSP_BIT;
+    } else {
+        cpu.state.msr.apic_base &= !IA32_APIC_BASE_BSP_BIT;
+    }
+}
 
 pub mod pc;
 pub use pc::{PcMachine, PcMachineConfig};
@@ -732,6 +740,7 @@ impl aero_mmu::MemoryBus for SystemMemory {
 struct PerCpuSystemMemoryBus<'a> {
     apic_id: u8,
     interrupts: Option<Rc<RefCell<PlatformInterrupts>>>,
+    ap_cpus: Rc<RefCell<Vec<CpuCore>>>,
     mem: &'a mut SystemMemory,
 }
 
@@ -739,12 +748,85 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
     fn new(
         apic_id: u8,
         interrupts: Option<Rc<RefCell<PlatformInterrupts>>>,
+        ap_cpus: Rc<RefCell<Vec<CpuCore>>>,
         mem: &'a mut SystemMemory,
     ) -> Self {
         Self {
             apic_id,
             interrupts,
+            ap_cpus,
             mem,
+        }
+    }
+
+    fn maybe_deliver_init_ipi(&mut self, icr_low: u32, icr_high: u32) {
+        // Intel SDM Vol. 3: ICR delivery mode.
+        // 0b101 = INIT.
+        let delivery_mode = (icr_low >> 8) & 0b111;
+        if delivery_mode != 0b101 {
+            return;
+        }
+        // Only model INIT "assert". INIT deassert is part of the INIT sequence but does not
+        // perform the reset.
+        let level_assert = ((icr_low >> 14) & 1) != 0;
+        if !level_assert {
+            return;
+        }
+
+        let shorthand = (icr_low >> 18) & 0b11;
+        match shorthand {
+            // No shorthand: use ICR_HIGH destination field (xAPIC physical destination).
+            0 => {
+                let dest = (icr_high >> 24) as u8;
+                self.reset_ap_by_apic_id(dest);
+            }
+            // Self. Self-INIT is undefined; ignore.
+            1 => {}
+            // All including self: reset all APs (ignore self).
+            2 => self.reset_all_aps(),
+            // All excluding self: reset all APs except the sender (if it is an AP).
+            3 => self.reset_all_aps_excluding_sender(),
+            _ => {}
+        }
+    }
+
+    fn reset_ap_by_apic_id(&mut self, apic_id: u8) {
+        if apic_id == 0 {
+            // Destination 0 = BSP (ignore).
+            return;
+        }
+        if apic_id == 0xFF {
+            // Destination 0xFF is commonly used as a broadcast.
+            self.reset_all_aps_excluding_sender();
+            return;
+        }
+
+        let idx = (apic_id as usize).saturating_sub(1);
+        let mut ap_cpus = self.ap_cpus.borrow_mut();
+        let Some(cpu) = ap_cpus.get_mut(idx) else {
+            return;
+        };
+        vcpu_init::reset_ap_vcpu_to_init_state(cpu);
+        set_cpu_apic_base_bsp_bit(cpu, false);
+    }
+
+    fn reset_all_aps(&mut self) {
+        let mut ap_cpus = self.ap_cpus.borrow_mut();
+        for cpu in ap_cpus.iter_mut() {
+            vcpu_init::reset_ap_vcpu_to_init_state(cpu);
+            set_cpu_apic_base_bsp_bit(cpu, false);
+        }
+    }
+
+    fn reset_all_aps_excluding_sender(&mut self) {
+        let sender_idx = self.apic_id.checked_sub(1).map(|v| v as usize);
+        let mut ap_cpus = self.ap_cpus.borrow_mut();
+        for (idx, cpu) in ap_cpus.iter_mut().enumerate() {
+            if Some(idx) == sender_idx {
+                continue;
+            }
+            vcpu_init::reset_ap_vcpu_to_init_state(cpu);
+            set_cpu_apic_base_bsp_bit(cpu, false);
         }
     }
 }
@@ -755,7 +837,7 @@ impl memory::MemoryBus for PerCpuSystemMemoryBus<'_> {
             return;
         }
 
-        let Some(interrupts) = &self.interrupts else {
+        let Some(interrupts) = self.interrupts.clone() else {
             // No PC platform attached: fall back to the shared bus.
             self.mem.read_physical(paddr, buf);
             return;
@@ -799,7 +881,7 @@ impl memory::MemoryBus for PerCpuSystemMemoryBus<'_> {
             return;
         }
 
-        let Some(interrupts) = &self.interrupts else {
+        let Some(interrupts) = self.interrupts.clone() else {
             // No PC platform attached: fall back to the shared bus.
             self.mem.write_physical(paddr, buf);
             return;
@@ -813,11 +895,40 @@ impl memory::MemoryBus for PerCpuSystemMemoryBus<'_> {
             let remaining = buf.len() - offset;
             if paddr >= lapic_start && paddr < lapic_end {
                 let chunk_len = ((lapic_end - paddr) as usize).min(remaining);
+                let lapic_offset = paddr - lapic_start;
                 interrupts.borrow().lapic_mmio_write_for_apic(
                     self.apic_id,
-                    paddr - lapic_start,
+                    lapic_offset,
                     &buf[offset..offset + chunk_len],
                 );
+
+                // Detect INIT IPIs issued via the LAPIC ICR. The LAPIC device model treats ICR as
+                // register state only; IPI delivery is handled by the machine integration layer.
+                const ICR_LOW_OFF: u64 = 0x300;
+                const ICR_HIGH_OFF: u64 = 0x310;
+                let end_off = lapic_offset.wrapping_add(chunk_len as u64);
+                let wrote_icr_low = lapic_offset < ICR_LOW_OFF + 4 && end_off > ICR_LOW_OFF;
+                if wrote_icr_low {
+                    let icr_low = {
+                        let mut tmp = [0u8; 4];
+                        interrupts.borrow().lapic_mmio_read_for_apic(
+                            self.apic_id,
+                            ICR_LOW_OFF,
+                            &mut tmp,
+                        );
+                        u32::from_le_bytes(tmp)
+                    };
+                    let icr_high = {
+                        let mut tmp = [0u8; 4];
+                        interrupts.borrow().lapic_mmio_read_for_apic(
+                            self.apic_id,
+                            ICR_HIGH_OFF,
+                            &mut tmp,
+                        );
+                        u32::from_le_bytes(tmp)
+                    };
+                    self.maybe_deliver_init_ipi(icr_low, icr_high);
+                }
                 paddr = paddr.wrapping_add(chunk_len as u64);
                 offset += chunk_len;
                 continue;
@@ -2370,6 +2481,7 @@ pub struct Machine {
     reset_latch: ResetLatch,
 
     cpu: CpuCore,
+    ap_cpus: Rc<RefCell<Vec<CpuCore>>>,
     assist: AssistContext,
     mmu: aero_mmu::Mmu,
     mem: SystemMemory,
@@ -2551,6 +2663,7 @@ impl Machine {
             chipset,
             reset_latch: ResetLatch::new(),
             cpu: CpuCore::new(CpuMode::Real),
+            ap_cpus: Rc::new(RefCell::new(Vec::new())),
             assist: AssistContext::default(),
             mmu: aero_mmu::Mmu::new(),
             mem,
@@ -2704,6 +2817,25 @@ impl Machine {
         // Keep the current BIOS config in sync so snapshots capture the selected boot drive and so
         // `Machine::reset()` can persist it.
         self.bios.set_boot_drive(boot_drive);
+    }
+
+    /// Returns the configured vCPU count.
+    pub fn cpu_count(&self) -> usize {
+        self.cfg.cpu_count as usize
+    }
+
+    /// Debug/testing helper: return a clone of a vCPU's architectural state.
+    ///
+    /// vCPU0 is the BSP (`Machine::cpu()`); vCPU1..N-1 are APs.
+    pub fn vcpu_state(&self, cpu_index: usize) -> Option<CpuState> {
+        if cpu_index == 0 {
+            Some(self.cpu.state.clone())
+        } else {
+            self.ap_cpus
+                .borrow()
+                .get(cpu_index - 1)
+                .map(|cpu| cpu.state.clone())
+        }
     }
 
     /// Replace the attached disk image.
@@ -2968,7 +3100,8 @@ impl Machine {
         );
         let apic_id = cpu_index as u8;
         let interrupts = self.interrupts.clone();
-        let mut bus = PerCpuSystemMemoryBus::new(apic_id, interrupts, &mut self.mem);
+        let mut bus =
+            PerCpuSystemMemoryBus::new(apic_id, interrupts, self.ap_cpus.clone(), &mut self.mem);
         aero_mmu::MemoryBus::read_u32(&mut bus, LAPIC_MMIO_BASE + offset)
     }
 
@@ -2983,7 +3116,8 @@ impl Machine {
         );
         let apic_id = cpu_index as u8;
         let interrupts = self.interrupts.clone();
-        let mut bus = PerCpuSystemMemoryBus::new(apic_id, interrupts, &mut self.mem);
+        let mut bus =
+            PerCpuSystemMemoryBus::new(apic_id, interrupts, self.ap_cpus.clone(), &mut self.mem);
         aero_mmu::MemoryBus::write_u32(&mut bus, LAPIC_MMIO_BASE + offset, value);
     }
 
@@ -5570,6 +5704,15 @@ impl Machine {
 
         self.assist = AssistContext::default();
         self.cpu = CpuCore::new(CpuMode::Real);
+        set_cpu_apic_base_bsp_bit(&mut self.cpu, true);
+        // Application processors (APs) start with the BSP bit (IA32_APIC_BASE[8]) cleared.
+        let mut ap_cpus = Vec::new();
+        for _ in 1..self.cfg.cpu_count {
+            let mut cpu = CpuCore::new(CpuMode::Real);
+            set_cpu_apic_base_bsp_bit(&mut cpu, false);
+            ap_cpus.push(cpu);
+        }
+        *self.ap_cpus.borrow_mut() = ap_cpus;
         self.guest_time = GuestTime::new_from_cpu(&self.cpu);
         self.mmu = aero_mmu::Mmu::new();
 
@@ -5977,7 +6120,12 @@ impl Machine {
             // Today `Machine` only executes vCPU0, so the APIC ID is always 0 here; multi-vCPU
             // scheduling can pass the correct APIC ID when additional `CpuCore` instances are
             // introduced.
-            let phys = PerCpuSystemMemoryBus::new(0, self.interrupts.clone(), &mut self.mem);
+            let phys = PerCpuSystemMemoryBus::new(
+                0,
+                self.interrupts.clone(),
+                self.ap_cpus.clone(),
+                &mut self.mem,
+            );
             let mut inner = aero_cpu_core::PagingBus::new_with_io(
                 phys,
                 StrictIoPortBus { io: &mut self.io },
@@ -10506,7 +10654,7 @@ mod tests {
         m.chipset.a20().set_enabled(false);
 
         let interrupts = m.interrupts.clone();
-        let phys = PerCpuSystemMemoryBus::new(0, interrupts, &mut m.mem);
+        let phys = PerCpuSystemMemoryBus::new(0, interrupts, m.ap_cpus.clone(), &mut m.mem);
         let inner = aero_cpu_core::PagingBus::new_with_io(phys, StrictIoPortBus { io: &mut m.io });
         let mut bus = MachineCpuBus {
             a20: m.chipset.a20(),
