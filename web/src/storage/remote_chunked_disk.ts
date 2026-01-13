@@ -484,6 +484,12 @@ function hasOpfsRoot(): boolean {
   return typeof navigator !== "undefined" && typeof navigator.storage?.getDirectory === "function";
 }
 
+function isQuotaExceededError(err: unknown): boolean {
+  if (err instanceof IdbRemoteChunkCacheQuotaError) return true;
+  if (!err || typeof err !== "object") return false;
+  return (err as { name?: unknown }).name === "QuotaExceededError";
+}
+
 function asSafeInt(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) {
     throw new Error(`${label} must be a safe integer`);
@@ -875,7 +881,15 @@ class RemoteChunkCache implements ChunkCache {
       throw new Error(`chunk ${chunkIndex} length mismatch: expected=${expectedLen} actual=${bytes.length}`);
     }
 
-    await this.store.write(this.chunkPath(chunkIndex), bytes);
+    const path = this.chunkPath(chunkIndex);
+    try {
+      await this.store.write(path, bytes);
+    } catch (err) {
+      // Best-effort cleanup: OPFS can leave behind partially written/truncated files
+      // after failed writes (e.g. due to quota).
+      await this.store.remove(path).catch(() => {});
+      throw err;
+    }
     this.rangeSet.insert(r.start, r.end);
     this.cachedBytes = this.rangeSet.totalLen();
     this.noteAccess(chunkIndex);
@@ -999,6 +1013,17 @@ class RemoteChunkCache implements ChunkCache {
       this.markMetaDirty();
     }
   }
+
+  close(): void {
+    if (this.metaFlushTimer !== null) {
+      clearTimeout(this.metaFlushTimer);
+      this.metaFlushTimer = null;
+    }
+    // Prevent any in-flight meta flush tasks from writing after the cache is abandoned.
+    this.metaDirty = false;
+    this.metaRevision = 0;
+    this.metaEpoch += 1;
+  }
 }
 
 export class RemoteChunkedDisk implements AsyncSectorDisk {
@@ -1023,6 +1048,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   private closed = false;
 
   private cacheGeneration = 0;
+  private cacheDisabledDueToQuota = false;
 
   private telemetry: Omit<RemoteDiskTelemetrySnapshot, "url" | "totalSize" | "blockSize" | "cacheLimitBytes" | "cachedBytes" | "inflightFetches"> & {
     lastFetchRange: ByteRange | null;
@@ -1517,14 +1543,10 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
         try {
           await this.chunkCache.putChunk(chunkIndex, bytes);
         } catch (err) {
-          if (err instanceof IdbRemoteChunkCacheQuotaError) {
-            // Cache write failures (quota) should never fail the caller's remote read. Disable
-            // caching for the remainder of the disk lifetime so we don't retry failing writes.
-            this.chunkCache.close?.();
-            this.chunkCache = new NoopChunkCache();
-          } else {
-            throw err;
-          }
+          if (!isQuotaExceededError(err)) throw err;
+          // Cache persistence failures (quota) should never fail the caller's remote read.
+          // Disable caching for the remainder of the disk lifetime so we don't retry failing writes.
+          this.disableCachingDueToQuota();
         }
         this.telemetry.lastFetchMs = performance.now() - startTime;
         this.telemetry.lastFetchAtMs = Date.now();
@@ -1564,6 +1586,17 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     const refreshAtMs = expiresAt.getTime() - this.leaseRefreshMarginMs;
     if (!Number.isFinite(refreshAtMs) || Date.now() < refreshAtMs) return;
     await this.lease.refresh();
+  }
+
+  private disableCachingDueToQuota(): void {
+    if (this.cacheDisabledDueToQuota) return;
+    this.cacheDisabledDueToQuota = true;
+    try {
+      this.chunkCache.close?.();
+    } catch {
+      // best-effort
+    }
+    this.chunkCache = new NoopChunkCache();
   }
 }
 
