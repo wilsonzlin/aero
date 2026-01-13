@@ -73,10 +73,11 @@ fn parse_rdef_resource_bindings_minimal() {
 
     let rdef = parse_rdef_chunk(&chunk).unwrap();
     assert_eq!(rdef.creator, None);
-    assert_eq!(rdef.resources.len(), 1);
-    assert_eq!(rdef.resources[0].name, "tex0");
-    assert_eq!(rdef.resources[0].bind_point, 3);
-    assert_eq!(rdef.resources[0].bind_count, 1);
+    assert!(rdef.constant_buffers.is_empty());
+    assert_eq!(rdef.bound_resources.len(), 1);
+    assert_eq!(rdef.bound_resources[0].name, "tex0");
+    assert_eq!(rdef.bound_resources[0].bind_point, 3);
+    assert_eq!(rdef.bound_resources[0].bind_count, 1);
 }
 
 #[test]
@@ -143,9 +144,9 @@ fn dxbc_get_rdef_parses_chunk() {
         .expect("missing RDEF")
         .expect("RDEF parse should succeed");
 
-    assert_eq!(rdef.resources.len(), 1);
-    assert_eq!(rdef.resources[0].name, "tex0");
-    assert_eq!(rdef.resources[0].bind_point, 3);
+    assert_eq!(rdef.bound_resources.len(), 1);
+    assert_eq!(rdef.bound_resources[0].name, "tex0");
+    assert_eq!(rdef.bound_resources[0].bind_point, 3);
 }
 
 #[test]
@@ -218,8 +219,8 @@ fn dxbc_get_rdef_skips_malformed_duplicate_chunks() {
         .get_rdef()
         .expect("expected an RDEF chunk")
         .expect("RDEF parse should succeed");
-    assert_eq!(rdef.resources.len(), 1);
-    assert_eq!(rdef.resources[0].name, "tex0");
+    assert_eq!(rdef.bound_resources.len(), 1);
+    assert_eq!(rdef.bound_resources[0].name, "tex0");
 }
 
 #[test]

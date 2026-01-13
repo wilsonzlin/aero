@@ -18,12 +18,12 @@
 mod dxbc;
 mod error;
 mod fourcc;
+/// Parser for DXBC resource definition chunks (`RDEF`).
+pub mod rdef;
 /// Parsers for DXBC signature chunks (`ISGN`, `OSGN`, `PSGN`, ...).
 pub mod signature;
 /// Parsers for SM4/SM5 shader bytecode chunks (`SHDR`/`SHEX`).
 pub mod sm4;
-/// Parsers for DXBC resource definition chunks (`RDEF`).
-pub mod rdef;
 /// Parsers for legacy Direct3D constant table chunks (`CTAB`).
 pub mod ctab;
 
@@ -45,11 +45,14 @@ pub mod robust;
 pub use crate::dxbc::{DxbcChunk, DxbcFile, DxbcHeader};
 pub use crate::error::DxbcError;
 pub use crate::fourcc::FourCC;
+pub use crate::rdef::{
+    parse_rdef_chunk, parse_rdef_chunk_for_fourcc, parse_rdef_chunk_with_fourcc, RdefChunk,
+    RdefConstantBuffer, RdefResourceBinding, RdefStructMember, RdefType, RdefVariable,
+};
 pub use crate::signature::{
     parse_signature_chunk, parse_signature_chunk_with_fourcc, SignatureChunk, SignatureEntry,
 };
 pub use crate::sm4::{
     decode_version_token, ShaderModel, ShaderStage, Sm4Error, Sm4Program, Sm5Program,
 };
-pub use crate::rdef::{parse_rdef_chunk, ResourceBinding, ResourceDefs};
 pub use crate::ctab::{parse_ctab_chunk, ConstantTable, CtabConstant};

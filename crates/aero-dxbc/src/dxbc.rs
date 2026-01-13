@@ -1,5 +1,7 @@
+use crate::ctab::{parse_ctab_chunk, ConstantTable};
 use crate::error::DxbcError;
 use crate::fourcc::FourCC;
+use crate::rdef::{parse_rdef_chunk_for_fourcc, RdefChunk};
 use crate::signature::{parse_signature_chunk_for_fourcc, SignatureChunk};
 use core::fmt;
 
@@ -288,46 +290,62 @@ impl<'a> DxbcFile<'a> {
         }
     }
 
-    /// Returns and parses the first `RDEF` chunk in file order, if any.
+    /// Returns and parses the first `RDEF`-style resource definition chunk, if any.
     ///
-    /// Behavior:
-    /// - Iterates all `RDEF` chunks in file order and returns the first one that
-    ///   parses successfully.
-    /// - If all `RDEF` chunks are malformed, returns the first parse error.
-    /// - Returns `None` if no `RDEF` chunk is present.
-    pub fn get_rdef(&self) -> Option<Result<crate::rdef::ResourceDefs, DxbcError>> {
-        let rdef = FourCC(*b"RDEF");
-        let mut first_err = None;
-        for chunk in self.get_chunks(rdef) {
-            match crate::rdef::parse_rdef_chunk(chunk.data).map_err(|e| {
-                DxbcError::invalid_chunk(format!("{} chunk: {}", chunk.fourcc, e.context()))
-            }) {
-                Ok(parsed) => return Some(Ok(parsed)),
-                Err(err) => {
-                    if first_err.is_none() {
-                        first_err = Some(err);
+    /// Most compilers emit the `RDEF` chunk ID, but some toolchains use alternate
+    /// IDs (commonly `RD11`). This helper:
+    /// - Tries `RDEF` chunks in file order, returning the first one that parses.
+    /// - If none parse successfully (or none exist), tries the `RD11` variant.
+    /// - Returns `None` only if neither `RDEF` nor `RD11` exist in the container.
+    pub fn get_rdef(&self) -> Option<Result<RdefChunk, DxbcError>> {
+        let primary = FourCC(*b"RDEF");
+        let fallback = FourCC(*b"RD11");
+
+        fn parse_first_matching<'a>(
+            dxbc: &DxbcFile<'a>,
+            kind: FourCC,
+        ) -> Option<Result<RdefChunk, DxbcError>> {
+            let mut first_err = None;
+            for chunk in dxbc.get_chunks(kind) {
+                match parse_rdef_chunk_for_fourcc(chunk.fourcc, chunk.data).map_err(|e| {
+                    DxbcError::invalid_chunk(format!(
+                        "{} chunk: {}",
+                        chunk.fourcc,
+                        e.context()
+                    ))
+                }) {
+                    Ok(rdef) => return Some(Ok(rdef)),
+                    Err(err) => {
+                        if first_err.is_none() {
+                            first_err = Some(err);
+                        }
                     }
                 }
             }
+            first_err.map(Err)
         }
-        first_err.map(Err)
+
+        let primary_res = parse_first_matching(self, primary);
+        if matches!(primary_res, Some(Ok(_))) {
+            return primary_res;
+        }
+
+        match parse_first_matching(self, fallback) {
+            ok @ Some(Ok(_)) => ok,
+            Some(Err(err)) if primary_res.is_none() => Some(Err(err)),
+            _ => primary_res,
+        }
     }
 
-    /// Returns and parses the first `CTAB` chunk in file order, if any.
-    ///
-    /// Behavior:
-    /// - Iterates all `CTAB` chunks in file order and returns the first one that
-    ///   parses successfully.
-    /// - If all `CTAB` chunks are malformed, returns the first parse error.
-    /// - Returns `None` if no `CTAB` chunk is present.
-    pub fn get_ctab(&self) -> Option<Result<crate::ctab::ConstantTable, DxbcError>> {
-        let ctab = FourCC(*b"CTAB");
+    /// Returns and parses the first `CTAB` constant table chunk, if any.
+    pub fn get_ctab(&self) -> Option<Result<ConstantTable, DxbcError>> {
+        let kind = FourCC(*b"CTAB");
         let mut first_err = None;
-        for chunk in self.get_chunks(ctab) {
-            match crate::ctab::parse_ctab_chunk(chunk.data).map_err(|e| {
+        for chunk in self.get_chunks(kind) {
+            match parse_ctab_chunk(chunk.data).map_err(|e| {
                 DxbcError::invalid_chunk(format!("{} chunk: {}", chunk.fourcc, e.context()))
             }) {
-                Ok(parsed) => return Some(Ok(parsed)),
+                Ok(ctab) => return Some(Ok(ctab)),
                 Err(err) => {
                     if first_err.is_none() {
                         first_err = Some(err);

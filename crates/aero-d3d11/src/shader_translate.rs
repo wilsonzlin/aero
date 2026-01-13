@@ -11,6 +11,7 @@ use crate::sm4_ir::{
     OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
 };
 use crate::DxbcFile;
+use aero_dxbc::RdefChunk;
 
 #[derive(Debug, Clone)]
 pub struct ShaderTranslation {
@@ -24,6 +25,8 @@ pub struct ShaderReflection {
     pub inputs: Vec<IoParam>,
     pub outputs: Vec<IoParam>,
     pub bindings: Vec<Binding>,
+    /// Parsed `RDEF` reflection, if present in the DXBC container.
+    pub rdef: Option<RdefChunk>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,12 +214,13 @@ impl std::error::Error for ShaderTranslateError {}
 /// (e.g. `RDEF`-driven sizing). The translation is driven by `module` and
 /// `signatures`.
 pub fn translate_sm4_module_to_wgsl(
-    _dxbc: &DxbcFile<'_>,
+    dxbc: &DxbcFile<'_>,
     module: &Sm4Module,
     signatures: &ShaderSignatures,
 ) -> Result<ShaderTranslation, ShaderTranslateError> {
-    match module.stage {
-        ShaderStage::Vertex => {
+    let rdef = dxbc.get_rdef().and_then(|res| res.ok());
+    match (module.stage, rdef) {
+        (ShaderStage::Vertex, rdef) => {
             let isgn = signatures
                 .isgn
                 .as_ref()
@@ -225,9 +229,9 @@ pub fn translate_sm4_module_to_wgsl(
                 .osgn
                 .as_ref()
                 .ok_or(ShaderTranslateError::MissingSignature("OSGN"))?;
-            translate_vs(module, isgn, osgn)
+            translate_vs(module, isgn, osgn, rdef)
         }
-        ShaderStage::Pixel => {
+        (ShaderStage::Pixel, rdef) => {
             let isgn = signatures
                 .isgn
                 .as_ref()
@@ -236,10 +240,10 @@ pub fn translate_sm4_module_to_wgsl(
                 .osgn
                 .as_ref()
                 .ok_or(ShaderTranslateError::MissingSignature("OSGN"))?;
-            translate_ps(module, isgn, osgn)
+            translate_ps(module, isgn, osgn, rdef)
         }
-        ShaderStage::Compute => translate_cs(module),
-        other => Err(ShaderTranslateError::UnsupportedStage(other)),
+        (ShaderStage::Compute, rdef) => translate_cs(module, rdef),
+        (other, _rdef) => Err(ShaderTranslateError::UnsupportedStage(other)),
     }
 }
 
@@ -248,12 +252,12 @@ pub fn translate_sm4_module_to_wgsl(
 ///
 /// Note: The binding model reserves `@group(2)` for compute resources.
 pub fn reflect_resource_bindings(module: &Sm4Module) -> Result<Vec<Binding>, ShaderTranslateError> {
-    Ok(scan_resources(module)?.bindings(module.stage))
+    Ok(scan_resources(module, None)?.bindings(module.stage))
 }
 
-fn translate_cs(module: &Sm4Module) -> Result<ShaderTranslation, ShaderTranslateError> {
+fn translate_cs(module: &Sm4Module, rdef: Option<RdefChunk>) -> Result<ShaderTranslation, ShaderTranslateError> {
     let io = build_cs_io_maps(module);
-    let resources = scan_resources(module)?;
+    let resources = scan_resources(module, rdef.as_ref())?;
 
     let mut thread_group_size: Option<(u32, u32, u32)> = None;
     for decl in &module.decls {
@@ -281,6 +285,7 @@ fn translate_cs(module: &Sm4Module) -> Result<ShaderTranslation, ShaderTranslate
         inputs: Vec::new(),
         outputs: Vec::new(),
         bindings: resources.bindings(ShaderStage::Compute),
+        rdef,
     };
 
     let used_sivs = scan_used_compute_sivs(module, &io);
@@ -335,14 +340,16 @@ fn translate_vs(
     module: &Sm4Module,
     isgn: &DxbcSignature,
     osgn: &DxbcSignature,
+    rdef: Option<RdefChunk>,
 ) -> Result<ShaderTranslation, ShaderTranslateError> {
     let io = build_io_maps(module, isgn, osgn)?;
-    let resources = scan_resources(module)?;
+    let resources = scan_resources(module, rdef.as_ref())?;
 
     let reflection = ShaderReflection {
         inputs: io.inputs_reflection(),
         outputs: io.outputs_reflection_vertex(),
         bindings: resources.bindings(ShaderStage::Vertex),
+        rdef,
     };
 
     let mut w = WgslWriter::new();
@@ -385,14 +392,16 @@ fn translate_ps(
     module: &Sm4Module,
     isgn: &DxbcSignature,
     osgn: &DxbcSignature,
+    rdef: Option<RdefChunk>,
 ) -> Result<ShaderTranslation, ShaderTranslateError> {
     let io = build_io_maps(module, isgn, osgn)?;
-    let resources = scan_resources(module)?;
+    let resources = scan_resources(module, rdef.as_ref())?;
 
     let reflection = ShaderReflection {
         inputs: io.inputs_reflection(),
         outputs: io.outputs_reflection_pixel(),
         bindings: resources.bindings(ShaderStage::Pixel),
+        rdef,
     };
 
     let mut w = WgslWriter::new();
@@ -1780,7 +1789,10 @@ impl ResourceUsage {
     }
 }
 
-fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateError> {
+fn scan_resources(
+    module: &Sm4Module,
+    rdef: Option<&RdefChunk>,
+) -> Result<ResourceUsage, ShaderTranslateError> {
     fn validate_slot(
         kind: &'static str,
         slot: u32,
@@ -1991,6 +2003,19 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
     for (slot, reg_count) in declared_cbuffer_sizes {
         if let Some(entry) = cbuffers.get_mut(&slot) {
             *entry = (*entry).max(reg_count);
+        }
+    }
+
+    if let Some(rdef) = rdef {
+        for cb in &rdef.constant_buffers {
+            let Some(slot) = cb.bind_point else {
+                continue;
+            };
+            let reg_count_u64 = (u64::from(cb.size) + 15) / 16;
+            let reg_count = u32::try_from(reg_count_u64).unwrap_or(u32::MAX).max(1);
+            if let Some(entry) = cbuffers.get_mut(&slot) {
+                *entry = (*entry).max(reg_count);
+            }
         }
     }
 
@@ -3002,7 +3027,7 @@ mod tests {
             sampler: crate::sm4_ir::SamplerRef { slot: 0 },
         }]);
 
-        let err = scan_resources(&module).unwrap_err();
+        let err = scan_resources(&module, None).unwrap_err();
         assert!(matches!(
             err,
             ShaderTranslateError::ResourceSlotOutOfRange {
@@ -3022,7 +3047,7 @@ mod tests {
             sampler: crate::sm4_ir::SamplerRef { slot: 16 },
         }]);
 
-        let err = scan_resources(&module).unwrap_err();
+        let err = scan_resources(&module, None).unwrap_err();
         assert!(matches!(
             err,
             ShaderTranslateError::ResourceSlotOutOfRange {
@@ -3044,7 +3069,7 @@ mod tests {
             },
         }]);
 
-        let err = scan_resources(&module).unwrap_err();
+        let err = scan_resources(&module, None).unwrap_err();
         assert!(matches!(
             err,
             ShaderTranslateError::ResourceSlotOutOfRange {

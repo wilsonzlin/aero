@@ -12,6 +12,49 @@ use aero_d3d11::{
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
+const FOURCC_RDEF: FourCC = FourCC(*b"RDEF");
+
+fn build_minimal_rdef_cbuffer(name: &str, bind_point: u32, size_bytes: u32) -> Vec<u8> {
+    // Header (8 DWORDs / 32 bytes) + constant buffer table (24 bytes) + resource binding table
+    // (32 bytes) + string table.
+    let header_len = 32u32;
+    let cb_offset = header_len;
+    let rb_offset = header_len + 24;
+    let string_offset = header_len + 24 + 32;
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // cb_count
+    bytes.extend_from_slice(&cb_offset.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // rb_count
+    bytes.extend_from_slice(&rb_offset.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // target
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // creator_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // interface_slot_count
+
+    // Constant buffer desc (24 bytes).
+    bytes.extend_from_slice(&string_offset.to_le_bytes()); // name_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // var_count
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // var_offset
+    bytes.extend_from_slice(&size_bytes.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // cb_flags
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // cb_type
+
+    // Resource binding desc (32 bytes) for the cbuffer binding slot.
+    bytes.extend_from_slice(&string_offset.to_le_bytes()); // name_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // input_type (D3D_SIT_CBUFFER)
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // return_type
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // dimension
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // sample_count
+    bytes.extend_from_slice(&bind_point.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // bind_count
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+
+    // String table.
+    bytes.extend_from_slice(name.as_bytes());
+    bytes.push(0);
+    bytes
+}
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
@@ -612,6 +655,55 @@ fn translates_movc_to_wgsl_select_with_bitcast_condition() {
         "expected movc condition to use a raw-bit test:\n{}",
         translated.wgsl
     );
+}
+
+#[test]
+fn rdef_cbuffer_size_overrides_used_registers() {
+    // Shader reads only cb0[0], but RDEF declares the cbuffer to be 128 bytes (8 registers).
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let rdef_bytes = build_minimal_rdef_cbuffer("CB0", 0, 128);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_RDEF, rdef_bytes),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_cb(0, 0),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(translated.wgsl.contains("array<vec4<u32>, 8>"));
+    assert!(translated.reflection.rdef.is_some());
+
+    let cb_binding = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::ConstantBuffer { slot: 0, .. }))
+        .expect("missing constant buffer binding");
+    match cb_binding.kind {
+        BindingKind::ConstantBuffer { reg_count, .. } => assert_eq!(reg_count, 8),
+        _ => panic!("unexpected binding kind"),
+    }
 }
 
 #[test]
