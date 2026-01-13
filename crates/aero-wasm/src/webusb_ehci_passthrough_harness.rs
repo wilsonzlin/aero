@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 
 use aero_usb::device::AttachedUsbDevice;
-use aero_usb::passthrough::UsbHostCompletion;
+use aero_usb::passthrough::{UsbHostCompletion, UsbHostCompletionIn, UsbHostCompletionOut};
 use aero_usb::{SetupPacket as BusSetupPacket, UsbWebUsbPassthroughDevice};
 
 // -------------------------------------------------------------------------------------------------
@@ -432,9 +432,42 @@ impl WebUsbEhciPassthroughHarness {
     pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
         let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        // Surface a minimal EHCI-like interrupt/status behavior:
+        //
+        // The WebUSB proxy contract models *full* control transfers (`controlTransferIn/Out`) as a
+        // single action+completion pair, so it is reasonable to latch USBINT/USBERRINT at completion
+        // time. This ensures the JS/TS runtime can observe USBSTS changes immediately when a host
+        // completion is delivered (even if no further host actions are drained on the next tick).
+        match &completion {
+            UsbHostCompletion::ControlIn { result, .. } | UsbHostCompletion::BulkIn { result, .. } => match result {
+                UsbHostCompletionIn::Success { .. } => {
+                    self.usbsts |= USBSTS_USBINT;
+                }
+                UsbHostCompletionIn::Stall => {
+                    self.usbsts |= USBSTS_USBERRINT;
+                }
+                UsbHostCompletionIn::Error { message } => {
+                    self.usbsts |= USBSTS_USBERRINT;
+                    self.last_error.get_or_insert_with(|| message.clone());
+                }
+            },
+            UsbHostCompletion::ControlOut { result, .. } | UsbHostCompletion::BulkOut { result, .. } => match result {
+                UsbHostCompletionOut::Success { .. } => {
+                    self.usbsts |= USBSTS_USBINT;
+                }
+                UsbHostCompletionOut::Stall => {
+                    self.usbsts |= USBSTS_USBERRINT;
+                }
+                UsbHostCompletionOut::Error { message } => {
+                    self.usbsts |= USBSTS_USBERRINT;
+                    self.last_error.get_or_insert_with(|| message.clone());
+                }
+            },
+        }
         if let Some(dev) = self.webusb.as_ref() {
             dev.push_completion(completion);
         }
+        self.update_irq();
         Ok(())
     }
 
@@ -458,4 +491,3 @@ impl WebUsbEhciPassthroughHarness {
         self.config_total_len as u32
     }
 }
-
