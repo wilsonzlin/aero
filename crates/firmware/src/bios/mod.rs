@@ -379,6 +379,17 @@ impl Bios {
         &self.tty_output
     }
 
+    /// Clear the BIOS "TTY output" buffer.
+    ///
+    /// This buffer is a best-effort debug aid used by the HLE BIOS to capture:
+    /// - INT 10h teletype output (AH=0Eh), and
+    /// - early-boot panic strings (e.g. when the boot sector cannot be loaded).
+    ///
+    /// It is not intended to be a stable, user-facing console API.
+    pub fn clear_tty_output(&mut self) {
+        self.tty_output.clear();
+    }
+
     pub fn rsdp_addr(&self) -> Option<u64> {
         self.rsdp_addr
     }

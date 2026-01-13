@@ -42,5 +42,10 @@ fn bios_tty_output_exposes_boot_panic_message() {
         "unexpected BIOS TTY output: {}",
         String::from_utf8_lossy(tty)
     );
-}
 
+    // Convenience APIs: cloning + clearing.
+    let tty_cloned = m.bios_tty_output_bytes();
+    assert_eq!(tty_cloned, tty);
+    m.clear_bios_tty_output();
+    assert!(m.bios_tty_output().is_empty());
+}

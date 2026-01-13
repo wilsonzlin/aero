@@ -3374,6 +3374,19 @@ impl Machine {
         self.bios.tty_output()
     }
 
+    /// Return a copy of the BIOS "TTY output" buffer accumulated so far.
+    ///
+    /// This is a cloning convenience API for callers (for example, wasm bindings) that prefer an
+    /// owned buffer rather than borrowing a slice from the machine.
+    pub fn bios_tty_output_bytes(&self) -> Vec<u8> {
+        self.bios.tty_output().to_vec()
+    }
+
+    /// Clear the BIOS "TTY output" buffer.
+    pub fn clear_bios_tty_output(&mut self) {
+        self.bios.clear_tty_output();
+    }
+
     /// Inject a browser-style keyboard code into the i8042 controller, if present.
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
         if let Some(ctrl) = &self.i8042 {
