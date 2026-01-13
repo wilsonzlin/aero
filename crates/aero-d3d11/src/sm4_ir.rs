@@ -158,6 +158,10 @@ pub enum Sm4Inst {
     },
     Else,
     EndIf,
+    /// Begin a `loop` block.
+    Loop,
+    /// `endloop` token for the innermost open `loop`.
+    EndLoop,
     Mov {
         dst: DstOperand,
         src: SrcOperand,

@@ -129,6 +129,11 @@ pub enum ShaderTranslateError {
         opcode: &'static str,
         mask: WriteMask,
     },
+    MalformedControlFlow {
+        inst_index: usize,
+        expected: String,
+        found: String,
+    },
     ResourceSlotOutOfRange {
         kind: &'static str,
         slot: u32,
@@ -189,6 +194,14 @@ impl fmt::Display for ShaderTranslateError {
             } => write!(
                 f,
                 "unsupported write mask {mask:?} for {opcode} at instruction index {inst_index}"
+            ),
+            ShaderTranslateError::MalformedControlFlow {
+                inst_index,
+                expected,
+                found,
+            } => write!(
+                f,
+                "malformed control flow at instruction index {inst_index} (expected {expected}, found {found})"
             ),
             ShaderTranslateError::ResourceSlotOutOfRange { kind, slot, max } => {
                 match *kind {
@@ -883,7 +896,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
         };
         match inst {
             Sm4Inst::If { cond, .. } => scan_src_regs(cond, &mut scan_reg),
-            Sm4Inst::Else | Sm4Inst::EndIf => {}
+            Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
             Sm4Inst::Mov { dst: _, src } | Sm4Inst::Utof { dst: _, src } => {
                 scan_src_regs(src, &mut scan_reg)
             }
@@ -1992,7 +2005,7 @@ fn scan_resources(
         };
         match inst {
             Sm4Inst::If { cond, .. } => scan_src(cond)?,
-            Sm4Inst::Else | Sm4Inst::EndIf => {}
+            Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
             Sm4Inst::Mov { dst: _, src } => scan_src(src)?,
             Sm4Inst::Utof { dst: _, src } => scan_src(src)?,
             Sm4Inst::Movc { dst: _, cond, a, b } => {
@@ -2324,7 +2337,7 @@ fn emit_temp_and_output_decls(
             Sm4Inst::If { cond, .. } => {
                 scan_src_regs(cond, &mut scan_reg);
             }
-            Sm4Inst::Else | Sm4Inst::EndIf => {}
+            Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
             Sm4Inst::Mov { dst, src } => {
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
@@ -2522,6 +2535,7 @@ fn emit_instructions(
     #[derive(Debug, Clone, Copy)]
     enum BlockKind {
         If { has_else: bool },
+        Loop,
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -2548,6 +2562,23 @@ fn emit_instructions(
     }
 
     let mut blocks: Vec<BlockKind> = Vec::new();
+    impl BlockKind {
+        fn describe(self) -> String {
+            match self {
+                BlockKind::If { has_else: false } => "if".to_owned(),
+                BlockKind::If { has_else: true } => "if (else already seen)".to_owned(),
+                BlockKind::Loop => "loop".to_owned(),
+            }
+        }
+
+        fn expected_end_token(self) -> &'static str {
+            match self {
+                BlockKind::If { .. } => "EndIf",
+                BlockKind::Loop => "EndLoop",
+            }
+        }
+    }
+
     let mut cf_stack: Vec<CfFrame> = Vec::new();
 
     let emit_src_scalar_i32 = |src: &crate::sm4_ir::SrcOperand,
@@ -2794,35 +2825,86 @@ fn emit_instructions(
             }
             Sm4Inst::Else => {
                 match blocks.last_mut() {
-                    Some(BlockKind::If { has_else }) if !*has_else => {
+                    Some(BlockKind::If { has_else }) => {
+                        if *has_else {
+                            return Err(ShaderTranslateError::MalformedControlFlow {
+                                inst_index,
+                                expected: "if (without an else)".to_owned(),
+                                found: BlockKind::If { has_else: true }.describe(),
+                            });
+                        }
                         *has_else = true;
                     }
-                    _ => {
-                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                    Some(other) => {
+                        return Err(ShaderTranslateError::MalformedControlFlow {
                             inst_index,
-                            opcode: "else".to_owned(),
-                        })
+                            expected: "if".to_owned(),
+                            found: other.describe(),
+                        });
+                    }
+                    None => {
+                        return Err(ShaderTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "if".to_owned(),
+                            found: "none".to_owned(),
+                        });
                     }
                 }
 
+                // Close the `if` block and open the `else` block.
                 w.dedent();
                 w.line("} else {");
                 w.indent();
             }
             Sm4Inst::EndIf => {
-                match blocks.pop() {
-                    Some(BlockKind::If { .. }) => {}
-                    None => {
-                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                match blocks.last() {
+                    Some(BlockKind::If { .. }) => {
+                        blocks.pop();
+                        w.dedent();
+                        w.line("}");
+                    }
+                    Some(other) => {
+                        return Err(ShaderTranslateError::MalformedControlFlow {
                             inst_index,
-                            opcode: "endif".to_owned(),
-                        })
+                            expected: "if".to_owned(),
+                            found: other.describe(),
+                        });
+                    }
+                    None => {
+                        return Err(ShaderTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "if".to_owned(),
+                            found: "none".to_owned(),
+                        });
                     }
                 }
-
-                w.dedent();
-                w.line("}");
             }
+            Sm4Inst::Loop => {
+                w.line("loop {");
+                w.indent();
+                blocks.push(BlockKind::Loop);
+            }
+            Sm4Inst::EndLoop => match blocks.last() {
+                Some(BlockKind::Loop) => {
+                    blocks.pop();
+                    w.dedent();
+                    w.line("}");
+                }
+                Some(other) => {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: other.describe(),
+                    });
+                }
+                None => {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: "none".to_owned(),
+                    });
+                }
+            },
             Sm4Inst::Mov { dst, src } => {
                 let rhs = emit_src_vec4(src, inst_index, "mov", ctx)?;
                 let rhs = maybe_saturate(dst, rhs);
@@ -3469,10 +3551,11 @@ fn emit_instructions(
         }
     }
 
-    if !blocks.is_empty() {
-        return Err(ShaderTranslateError::UnsupportedInstruction {
+    if let Some(&top) = blocks.last() {
+        return Err(ShaderTranslateError::MalformedControlFlow {
             inst_index: module.instructions.len(),
-            opcode: "unbalanced_if".to_owned(),
+            expected: top.expected_end_token().to_owned(),
+            found: "end of shader".to_owned(),
         });
     }
     if !cf_stack.is_empty() {
@@ -4595,5 +4678,36 @@ mod tests {
             .find(|o| o.semantic_index == 1)
             .expect("reflected output");
         assert_eq!(reflected.location, Some(1));
+    }
+
+    #[test]
+    fn malformed_control_flow_endif_without_if_triggers_error() {
+        let isgn = DxbcSignature { parameters: Vec::new() };
+        let osgn = DxbcSignature {
+            parameters: vec![DxbcSignatureParameter {
+                semantic_name: "SV_Target".to_owned(),
+                semantic_index: 0,
+                system_value_type: 0,
+                component_type: 0,
+                register: 0,
+                mask: 0b1111,
+                read_write_mask: 0b1111,
+                stream: 0,
+                min_precision: 0,
+            }],
+        };
+
+        let module = Sm4Module {
+            stage: ShaderStage::Pixel,
+            model: crate::sm4::ShaderModel { major: 4, minor: 0 },
+            decls: Vec::new(),
+            instructions: vec![Sm4Inst::EndIf, Sm4Inst::Ret],
+        };
+
+        let err = translate_ps(&module, &isgn, &osgn, None).unwrap_err();
+        assert!(matches!(
+            err,
+            ShaderTranslateError::MalformedControlFlow { inst_index: 0, .. }
+        ));
     }
 }
