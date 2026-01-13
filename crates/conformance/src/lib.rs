@@ -196,8 +196,11 @@ fn templates_for_run() -> Result<Vec<InstructionTemplate>, String> {
         .collect();
 
     if filtered.is_empty() {
+        let keys = coverage_keys.into_iter().collect::<Vec<_>>().join("\n  - ");
         return Err(format!(
-            "AERO_CONFORMANCE_FILTER={filter:?} matched 0 templates"
+            "AERO_CONFORMANCE_FILTER={filter:?} matched 0 templates.\n\
+known coverage_key values:\n  - {keys}\n\
+hint: terms that match a coverage_key select that coverage_key exactly; use `name:<substring>` to match template names."
         ));
     }
 
@@ -222,11 +225,35 @@ fn template_matches_filter(
     let coverage_key = template.coverage_key.to_ascii_lowercase();
     // If a filter term matches a known coverage key, interpret it as a coverage-key selector.
     // Otherwise, treat it as a substring match on the template name.
+    //
+    // Use `key:<coverage_key>` or `name:<substring>` to disambiguate explicitly.
     terms.iter().any(|term| {
-        if coverage_keys.contains(term) {
-            coverage_key == *term
+        let (mode, term) = if let Some(term) = term.strip_prefix("key:") {
+            ("key", term)
+        } else if let Some(term) = term.strip_prefix("coverage_key:") {
+            ("key", term)
+        } else if let Some(term) = term.strip_prefix("coverage:") {
+            ("key", term)
+        } else if let Some(term) = term.strip_prefix("name:") {
+            ("name", term)
         } else {
-            name.contains(term)
+            ("auto", term.as_str())
+        };
+
+        if term.is_empty() {
+            return false;
+        }
+
+        match mode {
+            "key" => coverage_key == term,
+            "name" => name.contains(term),
+            _ => {
+                if coverage_keys.contains(term) {
+                    coverage_key == term
+                } else {
+                    name.contains(term)
+                }
+            }
         }
     })
 }
@@ -333,6 +360,23 @@ mod tests {
                 template.coverage_key
             );
         }
+    }
+
+    #[test]
+    fn template_filter_can_force_name_substring() {
+        let _guard = EnvGuard::set("AERO_CONFORMANCE_FILTER", "name:add");
+        let filtered = templates_for_run().expect("name:add should match at least one template");
+
+        assert!(
+            filtered.iter().all(|t| t.name.contains("add")),
+            "expected all filtered templates to contain 'add' in name"
+        );
+        assert!(
+            filtered
+                .iter()
+                .any(|t| t.coverage_key == "add_mem" || t.coverage_key == "add32"),
+            "expected name-based filtering to include non-\"add\" coverage keys"
+        );
     }
 
     #[test]
