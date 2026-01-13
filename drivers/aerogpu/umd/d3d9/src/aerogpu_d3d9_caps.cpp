@@ -220,7 +220,14 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                            // alpha blending are exercised by DWM-style workloads
                            // and are implemented by the AeroGPU shader pipeline.
                            D3DPMISCCAPS_BLENDOP |
-                           D3DPMISCCAPS_SEPARATEALPHABLEND;
+                           D3DPMISCCAPS_SEPARATEALPHABLEND |
+                           // The host executor supports sRGB texture sampling
+                           // (SRGBTEXTURE) and sRGB write conversion
+                           // (SRGBWRITEENABLE) via sRGB texture views when
+                           // available.
+                           D3DPMISCCAPS_SRGBREAD |
+                           D3DPMISCCAPS_SRGBWRITE |
+                           D3DPMISCCAPS_POSTBLENDSRGBCONVERT;
 
   // DWM relies heavily on scissoring for window clipping. Include depth-test and
   // cull bits as they are commonly queried by apps and are expected for a HAL
@@ -300,6 +307,11 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   // fall back to alternate code paths.
   out->NumSimultaneousRTs = 4;
 
+  // Single-adapter configuration (no linked-display-adapter group).
+  out->MasterAdapterOrdinal = 0;
+  out->AdapterOrdinalInGroup = 0;
+  out->NumberOfAdaptersInGroup = 1;
+
   out->VS20Caps.Caps = 0;
   out->VS20Caps.DynamicFlowControlDepth = 0;
   out->VS20Caps.NumTemps = 32;
@@ -344,6 +356,8 @@ void log_caps_once(const D3DCAPS9& caps) {
        (unsigned long)caps.MaxTextureBlendStages,
        (unsigned long)caps.MaxStreams,
        (unsigned long)caps.MaxVolumeExtent);
+  logf("aerogpu-d3d9: caps rt: NumSimulRTs=%lu\n",
+       (unsigned long)caps.NumSimultaneousRTs);
   logf("aerogpu-d3d9: caps texfilt: TextureFilterCaps=0x%08lX StretchRectFilterCaps=0x%08lX\n",
        (unsigned long)caps.TextureFilterCaps,
        (unsigned long)caps.StretchRectFilterCaps);
