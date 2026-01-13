@@ -9,4 +9,6 @@ pub mod abi;
 #[cfg(feature = "legacy-baseline")]
 pub mod legacy;
 
+pub(crate) mod inline_tlb_codegen;
+
 pub use abi::*;

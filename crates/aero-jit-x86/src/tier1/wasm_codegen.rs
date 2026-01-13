@@ -8,6 +8,7 @@ use super::ir::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId};
 use crate::abi;
 use crate::abi::{MMU_ACCESS_READ, MMU_ACCESS_WRITE};
 use crate::jit_ctx::{self, JitContext};
+use crate::wasm::inline_tlb_codegen::{self, InlineTlbLocals};
 
 use crate::wasm::abi::{
     IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
@@ -594,6 +595,20 @@ struct Emitter<'a> {
 }
 
 impl Emitter<'_> {
+    fn inline_tlb_locals(&self) -> InlineTlbLocals {
+        InlineTlbLocals {
+            cpu_ptr: self.layout.cpu_ptr_local(),
+            jit_ctx_ptr: self.layout.jit_ctx_ptr_local(),
+            ram_base: self.layout.ram_base_local(),
+            tlb_salt: self.layout.tlb_salt_local(),
+            scratch_vaddr: self.layout.scratch_vaddr_local(),
+            scratch_vpn: self.layout.scratch_vpn_local(),
+            scratch_tlb_data: self.layout.scratch_tlb_data_local(),
+            code_version_table_ptr: Some(self.layout.code_version_table_ptr_local()),
+            code_version_table_len: Some(self.layout.code_version_table_len_local()),
+        }
+    }
+
     fn emit_inst(&mut self, inst: &IrInst) {
         match inst {
             IrInst::Const { dst, value, width } => {
@@ -1169,78 +1184,19 @@ impl Emitter<'_> {
 
     fn emit_translate_and_cache(&mut self, access_code: i32, required_flag: u64) {
         debug_assert!(self.options.inline_tlb);
-
-        // vpn = vaddr >> 12
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-        self.func
-            .instruction(&Instruction::I64Const(crate::PAGE_SHIFT as i64));
-        self.func.instruction(&Instruction::I64ShrU);
-        self.func
-            .instruction(&Instruction::LocalSet(self.layout.scratch_vpn_local()));
-
-        // Check TLB tag match.
-        self.emit_tlb_entry_addr();
-        self.func.instruction(&Instruction::I64Load(memarg(0, 3))); // tag
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.tlb_salt_local()));
-        self.func.instruction(&Instruction::I64Xor);
-        // expect_tag = (vpn ^ salt) | 1; keep 0 reserved for invalidation.
-        self.func.instruction(&Instruction::I64Const(1));
-        self.func.instruction(&Instruction::I64Or);
-        self.func.instruction(&Instruction::I64Eq);
-
-        self.func.instruction(&Instruction::If(BlockType::Empty));
-        self.depth += 1;
-        {
-            // Hit: load `data` from the entry.
-            self.emit_tlb_entry_addr();
-            self.func.instruction(&Instruction::I64Load(memarg(8, 3))); // data
-            self.func
-                .instruction(&Instruction::LocalSet(self.layout.scratch_tlb_data_local()));
-        }
-        self.func.instruction(&Instruction::Else);
-        {
-            // Miss: call the translation helper (expected to fill the entry).
-            self.emit_mmu_translate(access_code);
-        }
-        self.func.instruction(&Instruction::End);
-        self.depth -= 1;
-
-        // Permission check: if the cached entry doesn't permit this access, go slow-path.
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
-        self.func
-            .instruction(&Instruction::I64Const(required_flag as i64));
-        self.func.instruction(&Instruction::I64And);
-        self.func.instruction(&Instruction::I64Eqz);
-
-        self.func.instruction(&Instruction::If(BlockType::Empty));
-        self.depth += 1;
-        {
-            self.emit_mmu_translate(access_code);
-        }
-        self.func.instruction(&Instruction::End);
-        self.depth -= 1;
-    }
-
-    fn emit_mmu_translate(&mut self, access_code: i32) {
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.jit_ctx_ptr_local()));
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-        self.func.instruction(&Instruction::I32Const(access_code));
-        self.func.instruction(&Instruction::Call(
-            self.imported
-                .mmu_translate
-                .expect("mmu_translate import missing"),
-        ));
-        self.func
-            .instruction(&Instruction::LocalSet(self.layout.scratch_tlb_data_local()));
+        let locals = self.inline_tlb_locals();
+        let mmu_translate = self
+            .imported
+            .mmu_translate
+            .expect("mmu_translate import missing");
+        inline_tlb_codegen::emit_translate_and_cache(
+            self.func,
+            &mut self.depth,
+            locals,
+            mmu_translate,
+            access_code,
+            required_flag,
+        );
     }
 
     fn emit_mmio_exit(&mut self, size_bytes: u32, is_write: i32, value: Option<ValueId>) {
@@ -1291,59 +1247,8 @@ impl Emitter<'_> {
     /// Computes the linear-memory address for the current `{vaddr, tlb_data}` pair and leaves it
     /// on the stack as an `i32` suitable for a WASM `load/store`.
     fn emit_compute_ram_addr(&mut self) {
-        // paddr = (phys_base & !0xFFF) | (vaddr & 0xFFF)
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
-        self.func
-            .instruction(&Instruction::I64Const(crate::PAGE_BASE_MASK as i64));
-        self.func.instruction(&Instruction::I64And);
-
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-        self.func
-            .instruction(&Instruction::I64Const(crate::PAGE_OFFSET_MASK as i64));
-        self.func.instruction(&Instruction::I64And);
-        self.func.instruction(&Instruction::I64Or);
-
-        // Q35 high-memory remap: when guest RAM is larger than the PCIe ECAM base
-        // (`aero_pc_constants::PCIE_ECAM_BASE`), the
-        // physical address space has a hole at [0xB000_0000..4GiB) and the remainder of RAM is
-        // remapped to start at 4GiB. The wasm runtime stores RAM contiguously as `[0..ram_bytes)`, so
-        // translate physical addresses in the high-RAM region back into that contiguous RAM offset.
-        //
-        // If paddr >= 4GiB:
-        //   paddr = LOW_RAM_END + (paddr - 4GiB)
-        //
-        // Note: this helper is only reached for translations that are already marked as RAM
-        // (`TLB_FLAG_IS_RAM`), so we don't need to handle the hole here.
-        const HIGH_RAM_BASE: i64 = 0x1_0000_0000;
-        const LOW_RAM_END: i64 = aero_pc_constants::PCIE_ECAM_BASE as i64;
-        self.func
-            .instruction(&Instruction::LocalTee(self.layout.scratch_vpn_local()));
-        self.func.instruction(&Instruction::I64Const(HIGH_RAM_BASE));
-        self.func.instruction(&Instruction::I64GeU);
-        self.func
-            .instruction(&Instruction::If(BlockType::Result(ValType::I64)));
-        {
-            self.func
-                .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
-            self.func.instruction(&Instruction::I64Const(HIGH_RAM_BASE));
-            self.func.instruction(&Instruction::I64Sub);
-            self.func.instruction(&Instruction::I64Const(LOW_RAM_END));
-            self.func.instruction(&Instruction::I64Add);
-        }
-        self.func.instruction(&Instruction::Else);
-        {
-            self.func
-                .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
-        }
-        self.func.instruction(&Instruction::End);
-
-        // wasm_addr = ram_base + paddr
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.ram_base_local()));
-        self.func.instruction(&Instruction::I64Add);
-        self.func.instruction(&Instruction::I32WrapI64);
+        let locals = self.inline_tlb_locals();
+        inline_tlb_codegen::emit_compute_ram_addr(self.func, locals);
     }
 
     /// Bumps the page-version entry for the current RAM write (inline fast-path stores only).
@@ -1351,103 +1256,12 @@ impl Emitter<'_> {
     /// The runtime may choose to only bump for pages marked as executable/code, but for initial
     /// correctness we bump for all writes that hit RAM.
     fn emit_bump_code_version_fastpath(&mut self) {
-        // If the runtime hasn't configured a version table, skip.
-        self.func.instruction(&Instruction::LocalGet(
-            self.layout.code_version_table_len_local(),
-        ));
-        self.func.instruction(&Instruction::I64Eqz);
-        self.func.instruction(&Instruction::If(BlockType::Empty));
-        self.func.instruction(&Instruction::Else);
-        {
-            // Compute the physical page number for this store.
-            self.func
-                .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
-            self.func
-                .instruction(&Instruction::I64Const(crate::PAGE_BASE_MASK as i64));
-            self.func.instruction(&Instruction::I64And);
-            self.func
-                .instruction(&Instruction::I64Const(crate::PAGE_SHIFT as i64));
-            self.func.instruction(&Instruction::I64ShrU); // -> page (i64)
-            self.func
-                .instruction(&Instruction::LocalTee(self.layout.scratch_vpn_local()));
-
-            // Bounds check: page < table_len.
-            self.func.instruction(&Instruction::LocalGet(
-                self.layout.code_version_table_len_local(),
-            ));
-            self.func.instruction(&Instruction::I64LtU);
-
-            self.func.instruction(&Instruction::If(BlockType::Empty));
-            {
-                // addr = table_ptr + page * 4
-                self.func.instruction(&Instruction::LocalGet(
-                    self.layout.code_version_table_ptr_local(),
-                ));
-                self.func
-                    .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
-
-                self.func.instruction(&Instruction::I64Const(4));
-                self.func.instruction(&Instruction::I64Mul);
-                self.func.instruction(&Instruction::I64Add);
-                self.func
-                    .instruction(&Instruction::LocalSet(self.layout.scratch_vpn_local()));
-
-                // table[page] += 1
-                //
-                // Note: when the module imports a shared memory, we must use atomic operations for
-                // correctness under concurrency. Non-atomic `i32.load`/`i32.store` sequences can
-                // lose increments when multiple agents bump the same entry concurrently.
-                self.func
-                    .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
-                self.func.instruction(&Instruction::I32WrapI64);
-                if self.options.memory_shared {
-                    self.func.instruction(&Instruction::I32Const(1));
-                    self.func
-                        .instruction(&Instruction::I32AtomicRmwAdd(memarg(0, 2)));
-                    // `i32.atomic.rmw.add` returns the old value; we only care that the increment
-                    // happens.
-                    self.func.instruction(&Instruction::Drop);
-                } else {
-                    self.func.instruction(&Instruction::I32Load(memarg(0, 2)));
-                    self.func.instruction(&Instruction::I32Const(1));
-                    self.func.instruction(&Instruction::I32Add);
-                    self.func.instruction(&Instruction::I64ExtendI32U);
-                    self.func
-                        .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
-
-                    self.func
-                        .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
-                    self.func.instruction(&Instruction::I32WrapI64);
-                    self.func
-                        .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-                    self.func.instruction(&Instruction::I32WrapI64);
-                    self.func.instruction(&Instruction::I32Store(memarg(0, 2)));
-                }
-            }
-            self.func.instruction(&Instruction::End);
-        }
-        self.func.instruction(&Instruction::End);
-    }
-
-    fn emit_tlb_entry_addr(&mut self) {
-        // base = jit_ctx_ptr + JitContext::TLB_OFFSET + ((vpn & mask) * ENTRY_SIZE)
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.jit_ctx_ptr_local()));
-        self.func.instruction(&Instruction::I64ExtendI32U);
-        self.func
-            .instruction(&Instruction::I64Const(JitContext::TLB_OFFSET as i64));
-        self.func.instruction(&Instruction::I64Add);
-
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
-        self.func
-            .instruction(&Instruction::I64Const(crate::JIT_TLB_INDEX_MASK as i64));
-        self.func.instruction(&Instruction::I64And);
-        self.func
-            .instruction(&Instruction::I64Const(crate::JIT_TLB_ENTRY_SIZE as i64));
-        self.func.instruction(&Instruction::I64Mul);
-        self.func.instruction(&Instruction::I64Add);
-        self.func.instruction(&Instruction::I32WrapI64);
+        let locals = self.inline_tlb_locals();
+        inline_tlb_codegen::emit_bump_code_version_fastpath(
+            self.func,
+            locals,
+            self.options.memory_shared,
+        );
     }
 
     fn emit_trunc(&mut self, width: Width) {
