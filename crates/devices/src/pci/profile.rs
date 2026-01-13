@@ -327,9 +327,9 @@ pub const AEROGPU_BAR0_SIZE: u64 = 64 * 1024;
 /// Size in bytes of the AeroGPU VRAM aperture exposed via BAR1.
 ///
 /// This window backs the legacy VGA 0xA0000..0xBFFFF alias plus the VBE linear framebuffer and
-/// provides headroom for future WDDM-visible VRAM allocations. 64MiB is large enough for a 32bpp
-/// 4K scanout (~32MiB) while staying within the recommended 32–128MiB range described in
-/// `docs/16-aerogpu-vga-vesa-compat.md`.
+/// provides headroom for future WDDM-visible VRAM allocations. The canonical PCI profile uses
+/// 64MiB, which is large enough for a 32bpp 4K scanout (~32MiB). See
+/// `docs/16-aerogpu-vga-vesa-compat.md` for the intended BAR1 layout and the VBE LFB offset rules.
 pub const AEROGPU_VRAM_SIZE: u64 = 64 * 1024 * 1024;
 
 pub const AEROGPU_BARS: [PciBarProfile; 2] = [
