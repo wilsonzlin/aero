@@ -956,9 +956,11 @@ impl AerogpuD3d11Executor {
         // Conservative default: without the adapter's downlevel caps, assume compute is not
         // available (e.g. wgpu's WebGL2 backend).
         caps.supports_compute = false;
-        // We don't currently have a downlevel signal for indirect execution here; assume it is
-        // available.
-        Self::new_with_caps(device, queue, backend, caps, true)
+        // We don't currently have the adapter's downlevel signal for indirect execution here.
+        // Assume it is available except on wasm32, where `wgpu::Backend::Gl` corresponds to WebGL2
+        // and indirect draws are unavailable.
+        let supports_indirect = !(cfg!(target_arch = "wasm32") && backend == wgpu::Backend::Gl);
+        Self::new_with_caps(device, queue, backend, caps, supports_indirect)
     }
 
     /// Construct an executor with an explicit compute capability override.
