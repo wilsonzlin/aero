@@ -540,6 +540,7 @@ pub enum MachineError {
     VirtioInputRequiresPcPlatform,
     UhciRequiresPcPlatform,
     EhciRequiresPcPlatform,
+    AeroGpuRequiresPcPlatform,
     AeroGpuConflictsWithVga,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
@@ -587,6 +588,9 @@ impl fmt::Display for MachineError {
             }
             MachineError::EhciRequiresPcPlatform => {
                 write!(f, "enable_ehci requires enable_pc_platform=true")
+            }
+            MachineError::AeroGpuRequiresPcPlatform => {
+                write!(f, "enable_aerogpu requires enable_pc_platform=true")
             }
             MachineError::AeroGpuConflictsWithVga => {
                 write!(
@@ -1923,10 +1927,10 @@ const LEGACY_VGA_WINDOW_SIZE: usize =
 
 /// Offset within VRAM where the VBE linear framebuffer (LFB) begins.
 ///
-/// This keeps the LFB aligned to 64KiB and leaves the first 128KiB reserved for legacy VGA
-/// mappings.
+/// This keeps the LFB aligned to 64KiB and leaves the first 256KiB reserved for legacy VGA planar
+/// storage (4 × 64KiB planes), matching `aero_gpu_vga`'s VRAM layout.
 #[allow(dead_code)]
-pub const VBE_LFB_OFFSET: usize = LEGACY_VGA_WINDOW_SIZE;
+pub const VBE_LFB_OFFSET: usize = aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
 
 /// Total VRAM size exposed via AeroGPU BAR1.
 const AEROGPU_VRAM_SIZE: usize = aero_devices::pci::profile::AEROGPU_VRAM_SIZE as usize;

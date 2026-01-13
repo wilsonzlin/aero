@@ -32,7 +32,7 @@ The canonical machine supports **two mutually-exclusive** display configurations
   still lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
 
   When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
-  framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x20000` (see
+  framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000` (see
   `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`).
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): provide boot display via the
   standalone `aero_gpu_vga` VGA/VBE implementation, plus a minimal Bochs/QEMU “Standard VGA”-like
