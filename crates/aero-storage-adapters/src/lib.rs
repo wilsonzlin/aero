@@ -26,7 +26,8 @@
 //!
 //! If you need the reverse direction (reusing `aero-storage` disk wrappers on top of an existing
 //! device/backend trait object), use the reverse adapters provided by the corresponding device
-//! crate (e.g. `aero_devices::storage::DeviceBackendAsAeroVirtualDisk`,
+//! crate (e.g. `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk`,
+//! `aero_devices::storage::DeviceBackendAsAeroVirtualDisk`,
 //! `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`).
 //!
 //! ## Usage (examples)
