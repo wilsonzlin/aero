@@ -143,6 +143,7 @@ Each entrypoint is marked as one of:
 The D3D11 UMD DDI has two error-reporting styles:
 
 * **`HRESULT`-returning DDIs**: return `E_NOTIMPL` / `E_INVALIDARG` / `E_OUTOFMEMORY` as appropriate.
+  * AeroGPU note: if you see `E_OUTOFMEMORY` “too early” (while the guest still has free RAM), you may be hitting Win7’s WDDM segment budget rather than true exhaustion. AeroGPU is system-memory-backed, but dxgkrnl still enforces the KMD-reported non-local segment size; tune `HKR\Parameters\NonLocalMemorySizeMB` (see `docs/graphics/win7-aerogpu-validation.md` appendix and `drivers/aerogpu/kmd/README.md`).
 * **`void` DDIs**: report failure through the runtime callback (commonly `pfnSetErrorCb(...)`) and return.
 
 Practical rule:

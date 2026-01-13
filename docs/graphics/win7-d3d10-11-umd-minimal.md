@@ -102,6 +102,7 @@ For DDI functions that *do* return `HRESULT`, return:
 
 * `S_OK` on success
 * `E_OUTOFMEMORY`, `E_INVALIDARG`, or `E_NOTIMPL` as appropriate for unsupported features
+  * AeroGPU note: if you see `E_OUTOFMEMORY` “too early” (while the guest still has free RAM), you may be hitting Win7’s WDDM segment budget rather than true exhaustion. AeroGPU is system-memory-backed, but dxgkrnl still enforces the KMD-reported non-local segment size; tune `HKR\Parameters\NonLocalMemorySizeMB` (see `docs/graphics/win7-aerogpu-validation.md` appendix and `drivers/aerogpu/kmd/README.md`).
 
 ### 1.5 AeroGPU-specific implementation layering (UMD → KMD → emulator)
 
