@@ -7641,7 +7641,22 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   const bool wants_shared = (pCreateResource->pSharedHandle != nullptr);
   const bool open_existing_shared = wants_shared && (*pCreateResource->pSharedHandle != nullptr);
   const uint32_t requested_mip_levels = d3d9_resource_mip_levels(*pCreateResource);
-  const uint32_t mip_levels = std::max(1u, requested_mip_levels);
+
+  const uint32_t create_size_bytes = d3d9_resource_size(*pCreateResource);
+  const uint32_t create_width = d3d9_resource_width(*pCreateResource);
+  const uint32_t create_height = d3d9_resource_height(*pCreateResource);
+  const uint32_t create_depth = std::max(1u, d3d9_resource_depth(*pCreateResource));
+
+  uint32_t mip_levels = std::max(1u, requested_mip_levels);
+  if (!wants_shared &&
+      requested_mip_levels == 0 &&
+      create_size_bytes == 0 &&
+      create_width != 0 &&
+      create_height != 0 &&
+      create_depth == 1) {
+    // D3D9 CreateTexture semantics: MipLevels=0 means "create the full mip chain".
+    mip_levels = calc_full_mip_chain_levels_2d(create_width, create_height);
+  }
   if (wants_shared && requested_mip_levels != 1) {
     // MVP: shared surfaces must be single-allocation (no mip chains/arrays).
     return trace.ret(D3DERR_INVALIDCALL);
@@ -7650,8 +7665,6 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   // AeroGPU only supports 2D textures/surfaces (CREATE_TEXTURE2D) plus buffers.
   // Reject volume / 3D resources up front so we never silently mis-create them as
   // 2D textures.
-  const uint32_t create_size_bytes = d3d9_resource_size(*pCreateResource);
-  const uint32_t create_depth = std::max(1u, d3d9_resource_depth(*pCreateResource));
   if (create_size_bytes == 0 && create_depth > 1) {
     return trace.ret(D3DERR_INVALIDCALL);
   }
@@ -7672,8 +7685,8 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->handle = allocate_global_handle(dev->adapter);
   res->type = d3d9_resource_type(*pCreateResource);
   res->format = d3d9_resource_format(*pCreateResource);
-  res->width = d3d9_resource_width(*pCreateResource);
-  res->height = d3d9_resource_height(*pCreateResource);
+  res->width = create_width;
+  res->height = create_height;
   res->depth = create_depth;
   res->mip_levels = mip_levels;
   res->usage = d3d9_resource_usage(*pCreateResource);
@@ -7696,7 +7709,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     consume_wddm_alloc_priv(res.get(),
                             pCreateResource->pPrivateDriverData,
                             pCreateResource->PrivateDriverDataSize,
-                            /*is_shared_resource=*/true);
+                             /*is_shared_resource=*/true);
   }
 
   // Heuristic: if size is provided, treat as buffer; otherwise treat as a 2D image.

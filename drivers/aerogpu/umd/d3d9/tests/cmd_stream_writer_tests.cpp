@@ -1642,6 +1642,138 @@ bool TestCreateResourceMipmappedTextureEmitsMipLevels() {
   return true;
 }
 
+bool TestCreateResourceMipLevelsZeroAllocatesFullMipChainForNonShared() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
+  constexpr uint32_t kD3dRTypeTexture = 3u;
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = kD3dRTypeTexture;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 128;
+  create_res.height = 128;
+  create_res.depth = 1;
+  create_res.mip_levels = 0; // D3D9: allocate full mip chain
+  create_res.usage = 0;
+  create_res.pool = 0; // default pool (GPU resource)
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr; // non-shared
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(MipLevels=0)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+
+  constexpr uint32_t kExpectedMipLevels = 8; // log2(128) + 1
+  if (!Check(res->mip_levels == kExpectedMipLevels, "resource mip_levels == 8 for 128x128 with MipLevels=0")) {
+    return false;
+  }
+
+  // X8R8G8B8: 4 bytes per pixel. Sum sizes for each level down to 1x1.
+  uint32_t w = 128;
+  uint32_t h = 128;
+  uint64_t expected_size = 0;
+  for (uint32_t level = 0; level < kExpectedMipLevels; ++level) {
+    expected_size += static_cast<uint64_t>(w) * static_cast<uint64_t>(h) * 4ull;
+    w = std::max(1u, w / 2);
+    h = std::max(1u, h / 2);
+  }
+  if (!Check(res->size_bytes == expected_size, "resource size_bytes matches full mip chain sum")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+    return false;
+  }
+
+  const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
+  if (!Check(cmd->mip_levels == kExpectedMipLevels, "CREATE_TEXTURE2D mip_levels uses computed full chain")) {
+    return false;
+  }
+
+  // Make cleanup safe: switch back to vector mode so subsequent destroy calls
+  // can't fail due to span-buffer capacity constraints.
+  dev->cmd.set_vector();
+  return true;
+}
+
 bool TestCreateResourceArrayTextureEmitsArrayLayers() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -11502,6 +11634,7 @@ int main() {
   failures += !aerogpu::TestCreateResourceRejectsNon2dDepth();
   failures += !aerogpu::TestCreateResourceComputesBcTexturePitchAndSize();
   failures += !aerogpu::TestCreateResourceMipmappedTextureEmitsMipLevels();
+  failures += !aerogpu::TestCreateResourceMipLevelsZeroAllocatesFullMipChainForNonShared();
   failures += !aerogpu::TestCreateResourceArrayTextureEmitsArrayLayers();
   failures += !aerogpu::TestRgb16FormatMappingAndLayout();
   failures += !aerogpu::TestCreateResourceComputes16BitTexturePitchAndFormat();

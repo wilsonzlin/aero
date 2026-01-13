@@ -162,6 +162,21 @@ struct Texture2dLayout {
   uint64_t total_size_bytes = 0;
 };
 
+// D3D9 CreateTexture semantics: MipLevels=0 means "allocate the full mip chain".
+// For 2D textures that is:
+//   floor(log2(max(width, height))) + 1
+// Clamped to at least 1.
+inline uint32_t calc_full_mip_chain_levels_2d(uint32_t width, uint32_t height) {
+  const uint32_t max_dim = std::max(width, height);
+  uint32_t levels = 0;
+  uint32_t v = max_dim;
+  while (v) {
+    ++levels;
+    v >>= 1;
+  }
+  return std::max(1u, levels);
+}
+
 // Computes the packed linear layout for a 2D texture mip chain (as used by the
 // AeroGPU protocol).
 //
@@ -224,11 +239,17 @@ inline bool calc_texture2d_layout(
       slice0 = static_cast<uint32_t>(slice_pitch);
     }
 
+    if (total > UINT64_MAX - slice_pitch) {
+      return false;
+    }
     total += slice_pitch;
     w = std::max(1u, w / 2);
     h = std::max(1u, h / 2);
   }
 
+  if (depth != 0 && total > UINT64_MAX / static_cast<uint64_t>(depth)) {
+    return false;
+  }
   total *= static_cast<uint64_t>(depth);
 
   out->row_pitch_bytes = row0;
