@@ -454,7 +454,7 @@ If you want a concrete implementation to compare against:
 - Browser client (TypeScript):
   - `web/src/net/tcpMuxProxy.ts`
 - Dev relays (Node):
-  - `net-proxy/` (local development relay; `/tcp-mux` endpoint)
+  - `net-proxy/` (local development relay; `/tcp-mux` endpoint + DoH `/dns-query` + `/dns-json`)
   - `tools/net-proxy-server/` (standalone dev relay; `/tcp-mux` with `?token=` auth)
 
 ## 4) `/dns-query` DNS-over-HTTPS (DoH)

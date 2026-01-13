@@ -749,6 +749,13 @@ Health check:
 curl http://127.0.0.1:8081/healthz
 ```
 
+DoH endpoints (DNS-over-HTTPS):
+
+- `GET|POST /dns-query` (RFC 8484; `application/dns-message`)
+- `GET /dns-json` (`application/dns-json`, Cloudflare-DNS-JSON compatible)
+
+See [`net-proxy/README.md`](../net-proxy/README.md) for browser configuration, CORS notes, and curl examples.
+
 UDP relay modes:
 
 - `WS /udp` (no `host`/`port`/`target` query params): multiplexed UDP relay framing (v1/v2 datagrams) per [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
