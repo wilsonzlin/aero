@@ -27,8 +27,8 @@ pub use signature::{
 };
 pub use sm4::{ShaderModel, ShaderStage, Sm4DecodeError, Sm4Error, Sm4Program};
 pub use sm4_ir::{
-    DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Decl, Sm4Inst, Sm4Module,
-    SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+    BufferKind, BufferRef, DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Decl,
+    Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 pub use wgsl::{translate_sm4_to_wgsl, WgslError, WgslTranslation};
 pub use wgsl_bootstrap::{

@@ -1268,6 +1268,34 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
                 validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
                 textures.insert(texture.slot);
             }
+            Sm4Inst::LdRaw { dst: _, addr, .. } => {
+                scan_src(addr)?;
+            }
+            Sm4Inst::StoreRaw {
+                addr, value, ..
+            } => {
+                scan_src(addr)?;
+                scan_src(value)?;
+            }
+            Sm4Inst::LdStructured {
+                dst: _,
+                index,
+                offset,
+                ..
+            } => {
+                scan_src(index)?;
+                scan_src(offset)?;
+            }
+            Sm4Inst::StoreStructured {
+                index,
+                offset,
+                value,
+                ..
+            } => {
+                scan_src(index)?;
+                scan_src(offset)?;
+                scan_src(value)?;
+            }
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Ret => {}
         }
@@ -1349,6 +1377,34 @@ fn emit_temp_and_output_decls(
                 scan_reg(dst.reg);
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);
+            }
+            Sm4Inst::LdRaw { dst, addr, .. } => {
+                scan_reg(dst.reg);
+                scan_src_regs(addr, &mut scan_reg);
+            }
+            Sm4Inst::StoreRaw { addr, value, .. } => {
+                scan_src_regs(addr, &mut scan_reg);
+                scan_src_regs(value, &mut scan_reg);
+            }
+            Sm4Inst::LdStructured {
+                dst,
+                index,
+                offset,
+                ..
+            } => {
+                scan_reg(dst.reg);
+                scan_src_regs(index, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+            }
+            Sm4Inst::StoreStructured {
+                index,
+                offset,
+                value,
+                ..
+            } => {
+                scan_src_regs(index, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+                scan_src_regs(value, &mut scan_reg);
             }
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Ret => {}
@@ -1555,6 +1611,30 @@ fn emit_instructions(
                 );
                 let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld", ctx)?;
+            }
+            Sm4Inst::LdRaw { .. } => {
+                return Err(ShaderTranslateError::UnsupportedInstruction {
+                    inst_index,
+                    opcode: "ld_raw".to_owned(),
+                });
+            }
+            Sm4Inst::StoreRaw { .. } => {
+                return Err(ShaderTranslateError::UnsupportedInstruction {
+                    inst_index,
+                    opcode: "store_raw".to_owned(),
+                });
+            }
+            Sm4Inst::LdStructured { .. } => {
+                return Err(ShaderTranslateError::UnsupportedInstruction {
+                    inst_index,
+                    opcode: "ld_structured".to_owned(),
+                });
+            }
+            Sm4Inst::StoreStructured { .. } => {
+                return Err(ShaderTranslateError::UnsupportedInstruction {
+                    inst_index,
+                    opcode: "store_structured".to_owned(),
+                });
             }
             Sm4Inst::Unknown { opcode } => {
                 return Err(ShaderTranslateError::UnsupportedInstruction {

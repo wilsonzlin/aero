@@ -55,6 +55,30 @@ pub enum Sm4Decl {
     ResourceTexture2D {
         slot: u32,
     },
+    /// `t#` buffer SRV declaration (raw or structured).
+    ///
+    /// `stride` is in bytes and is meaningful for [`BufferKind::Structured`]. For
+    /// raw buffers it is typically 0.
+    ResourceBuffer {
+        slot: u32,
+        stride: u32,
+        kind: BufferKind,
+    },
+    /// `u#` buffer UAV declaration (raw or structured).
+    ///
+    /// `stride` is in bytes and is meaningful for [`BufferKind::Structured`]. For
+    /// raw buffers it is typically 0.
+    UavBuffer {
+        slot: u32,
+        stride: u32,
+        kind: BufferKind,
+    },
+    /// Compute shader thread group size declared via `dcl_thread_group`.
+    ThreadGroupSize {
+        x: u32,
+        y: u32,
+        z: u32,
+    },
     /// Non-executable `customdata` block.
     ///
     /// This is emitted by the SM4/SM5 encoder for comments, debug data, immediate constant
@@ -68,6 +92,12 @@ pub enum Sm4Decl {
     Unknown {
         opcode: u32,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BufferKind {
+    Raw,
+    Structured,
 }
 
 /// A single SM4/SM5 instruction.
@@ -157,6 +187,40 @@ pub enum Sm4Inst {
         /// Mip level. For common `Texture2D.Load(int3(x,y,mip))` forms this is derived
         /// from the third component of `coord`.
         lod: SrcOperand,
+    },
+    /// `ld_raw dst, addr, t#`
+    LdRaw {
+        dst: DstOperand,
+        addr: SrcOperand,
+        buffer: BufferRef,
+    },
+    /// `store_raw u#, addr, value` (mask comes from the `u#` operand write mask).
+    StoreRaw {
+        uav: UavRef,
+        addr: SrcOperand,
+        value: SrcOperand,
+        mask: WriteMask,
+    },
+    /// `ld_structured dst, index, offset, t#`
+    ///
+    /// `index` is the structured element index and `offset` is the byte offset
+    /// within the element. Stride comes from the corresponding declaration.
+    LdStructured {
+        dst: DstOperand,
+        index: SrcOperand,
+        offset: SrcOperand,
+        buffer: BufferRef,
+    },
+    /// `store_structured u#, index, offset, value`
+    ///
+    /// `index` is the structured element index and `offset` is the byte offset
+    /// within the element. Stride comes from the corresponding declaration.
+    StoreStructured {
+        uav: UavRef,
+        index: SrcOperand,
+        offset: SrcOperand,
+        value: SrcOperand,
+        mask: WriteMask,
     },
     /// A decoded instruction that the IR producer does not model yet.
     ///
@@ -255,5 +319,15 @@ pub struct TextureRef {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SamplerRef {
+    pub slot: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BufferRef {
+    pub slot: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UavRef {
     pub slot: u32,
 }
