@@ -332,6 +332,17 @@ VOID VirtioInputEvtIoDeviceControl(
         break;
     }
 #endif
+#if !VIOINPUT_DIAGNOSTICS
+    /*
+     * In non-diagnostics builds these IOCTLs are not supported, but keep an
+     * explicit STATUS_NOT_SUPPORTED response for callers that probe for them.
+     */
+    case CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_READ_ACCESS):
+    case CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_WRITE_ACCESS):
+        status = STATUS_NOT_SUPPORTED;
+        info = 0;
+        break;
+#endif
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
         info = 0;
