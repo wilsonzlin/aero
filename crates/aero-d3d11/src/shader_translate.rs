@@ -863,8 +863,9 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
         match inst {
             Sm4Inst::If { cond, .. } => scan_src_regs(cond, &mut scan_reg),
             Sm4Inst::Else | Sm4Inst::EndIf => {}
-            Sm4Inst::Mov { dst: _, src } => scan_src_regs(src, &mut scan_reg),
-            Sm4Inst::Utof { dst: _, src } => scan_src_regs(src, &mut scan_reg),
+            Sm4Inst::Mov { dst: _, src } | Sm4Inst::Utof { dst: _, src } => {
+                scan_src_regs(src, &mut scan_reg)
+            }
             Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src_regs(cond, &mut scan_reg);
                 scan_src_regs(a, &mut scan_reg);
@@ -932,6 +933,11 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             Sm4Inst::Rcp { dst: _, src }
             | Sm4Inst::Rsq { dst: _, src }
             | Sm4Inst::IAbs { dst: _, src }
+            | Sm4Inst::Bfrev { dst: _, src }
+            | Sm4Inst::CountBits { dst: _, src }
+            | Sm4Inst::FirstbitHi { dst: _, src }
+            | Sm4Inst::FirstbitLo { dst: _, src }
+            | Sm4Inst::FirstbitShi { dst: _, src }
             | Sm4Inst::INeg { dst: _, src } => {
                 scan_src_regs(src, &mut scan_reg)
             }
@@ -1962,6 +1968,11 @@ fn scan_resources(
             Sm4Inst::Rcp { dst: _, src }
             | Sm4Inst::Rsq { dst: _, src }
             | Sm4Inst::IAbs { dst: _, src }
+            | Sm4Inst::Bfrev { dst: _, src }
+            | Sm4Inst::CountBits { dst: _, src }
+            | Sm4Inst::FirstbitHi { dst: _, src }
+            | Sm4Inst::FirstbitLo { dst: _, src }
+            | Sm4Inst::FirstbitShi { dst: _, src }
             | Sm4Inst::INeg { dst: _, src } => scan_src(src)?,
             Sm4Inst::Bfi {
                 dst: _,
@@ -2279,6 +2290,11 @@ fn emit_temp_and_output_decls(
             Sm4Inst::Rcp { dst, src }
             | Sm4Inst::Rsq { dst, src }
             | Sm4Inst::IAbs { dst, src }
+            | Sm4Inst::Bfrev { dst, src }
+            | Sm4Inst::CountBits { dst, src }
+            | Sm4Inst::FirstbitHi { dst, src }
+            | Sm4Inst::FirstbitLo { dst, src }
+            | Sm4Inst::FirstbitShi { dst, src }
             | Sm4Inst::INeg { dst, src } => {
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
@@ -3027,6 +3043,31 @@ fn emit_instructions(
                     out[0], out[1], out[2], out[3]
                 );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ibfe", ctx)?;
+            }
+            Sm4Inst::Bfrev { dst, src } => {
+                let src_u = emit_src_vec4_u32(src, inst_index, "bfrev", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(reverseBits({src_u}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bfrev", ctx)?;
+            }
+            Sm4Inst::CountBits { dst, src } => {
+                let src_u = emit_src_vec4_u32(src, inst_index, "countbits", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(countOneBits({src_u}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "countbits", ctx)?;
+            }
+            Sm4Inst::FirstbitHi { dst, src } => {
+                let src_u = emit_src_vec4_u32(src, inst_index, "firstbit_hi", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(firstLeadingBit({src_u}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "firstbit_hi", ctx)?;
+            }
+            Sm4Inst::FirstbitLo { dst, src } => {
+                let src_u = emit_src_vec4_u32(src, inst_index, "firstbit_lo", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(firstTrailingBit({src_u}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "firstbit_lo", ctx)?;
+            }
+            Sm4Inst::FirstbitShi { dst, src } => {
+                let src_i = emit_src_vec4_i32(src, inst_index, "firstbit_shi", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(firstLeadingBit({src_i}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "firstbit_shi", ctx)?;
             }
             Sm4Inst::Sample {
                 dst,

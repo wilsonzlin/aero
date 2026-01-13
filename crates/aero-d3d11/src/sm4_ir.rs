@@ -312,6 +312,31 @@ pub enum Sm4Inst {
         offset: SrcOperand,
         src: SrcOperand,
     },
+    /// `bfrev dest, src` (bit reverse).
+    Bfrev {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    /// `countbits dest, src` (population count).
+    CountBits {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    /// `firstbit_hi dest, src` (find MSB set, unsigned).
+    FirstbitHi {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    /// `firstbit_lo dest, src` (find LSB set, unsigned).
+    FirstbitLo {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    /// `firstbit_shi dest, src` (find MSB differing from sign bit, signed).
+    FirstbitShi {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
     /// `sample dest, coord, t#, s#`
     Sample {
         dst: DstOperand,

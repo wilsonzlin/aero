@@ -109,6 +109,27 @@ pub const OPCODE_STORE_RAW: u32 = 0x56;
 /// Upstream: `D3D11_SB_OPCODE_STORE_STRUCTURED`.
 pub const OPCODE_STORE_STRUCTURED: u32 = 0x57;
 
+/// `bfrev` (bit reverse).
+///
+/// Upstream: `D3D11_SB_OPCODE_BFREV`.
+pub const OPCODE_BFREV: u32 = 0x58;
+/// `countbits` (population count).
+///
+/// Upstream: `D3D11_SB_OPCODE_COUNTBITS`.
+pub const OPCODE_COUNTBITS: u32 = 0x59;
+/// `firstbit_hi` (find MSB set, unsigned).
+///
+/// Upstream: `D3D11_SB_OPCODE_FIRSTBIT_HI`.
+pub const OPCODE_FIRSTBIT_HI: u32 = 0x5a;
+/// `firstbit_lo` (find LSB set, unsigned).
+///
+/// Upstream: `D3D11_SB_OPCODE_FIRSTBIT_LO`.
+pub const OPCODE_FIRSTBIT_LO: u32 = 0x5b;
+/// `firstbit_shi` (find MSB differing from sign bit, signed).
+///
+/// Upstream: `D3D11_SB_OPCODE_FIRSTBIT_SHI`.
+pub const OPCODE_FIRSTBIT_SHI: u32 = 0x5c;
+
 // ---- Declaration opcodes (subset) ----
 //
 // Values are sourced from the D3D10/11 tokenized shader format opcode table in the

@@ -805,6 +805,41 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Break)
         }
+        OPCODE_BFREV => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Bfrev { dst, src })
+        }
+        OPCODE_COUNTBITS => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::CountBits { dst, src })
+        }
+        OPCODE_FIRSTBIT_HI => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::FirstbitHi { dst, src })
+        }
+        OPCODE_FIRSTBIT_LO => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::FirstbitLo { dst, src })
+        }
+        OPCODE_FIRSTBIT_SHI => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::FirstbitShi { dst, src })
+        }
         OPCODE_RET => {
             r.expect_eof()?;
             Ok(Sm4Inst::Ret)
