@@ -71,8 +71,11 @@ This is the **coordination hub**. You wire together the work from all other work
 | BI-007 | INT 15h (system) | P0 | None | Medium |
 | BI-008 | INT 16h (keyboard) | P0 | None | Low |
 | BI-009 | Boot device selection | P0 | BI-006 | Low |
+| BI-012 | BIOS boot order: CD-first for Win7 install (see [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md)) | P0 | BI-009 | Low |
+| BI-013 | INT 13h CD-ROM / EDD extensions for 2048-byte sectors (ATAPI CD-ROM on PIIX3 IDE `00:01.1` secondary channel master; see [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md)) | P0 | BI-006 | Medium |
+| BI-014 | El Torito CD-ROM boot support (no-emulation) | P0 | BI-012, BI-013 | Medium |
 | BI-010 | MBR/boot sector loading | P0 | BI-009 | Low |
-| BI-011 | BIOS test suite | P0 | BI-001..BI-010 | Medium |
+| BI-011 | BIOS test suite | P0 | BI-001..BI-010, BI-012..BI-014 | Medium |
 
 ### ACPI Tasks
 
@@ -140,10 +143,16 @@ BIOS Data Area Setup                ← BI-004
 Boot Device Selection               ← BI-009
     │
     ▼
-Load MBR / Boot Sector              ← BI-010
+Boot order policy (CD-first for Win7 install)  ← BI-012
     │
     ▼
-Jump to Boot Sector (0x7C00)
+Load boot code:
+  - El Torito CD-ROM boot image (no-emulation) ← BI-013, BI-014
+    (ATAPI CD-ROM on PIIX3 IDE `00:01.1` secondary master; see `docs/05-storage-topology-win7.md`)
+  - MBR / boot sector (HDD; normal boot after install) ← BI-010
+    │
+    ▼
+Jump to loaded boot code
 ```
 
 ### Phase 2: Boot Loader (Windows)
