@@ -535,7 +535,13 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   // AudioContext construction or ring buffer sizing.
   const requestedSampleRate = options.sampleRate ?? 48_000;
   const sampleRate = Number.isFinite(requestedSampleRate) && requestedSampleRate > 0 ? requestedSampleRate : 48_000;
-  const latencyHint = options.latencyHint ?? "interactive";
+  const requestedLatencyHint: unknown = options.latencyHint;
+  const latencyHint: AudioContextLatencyCategory | number =
+    requestedLatencyHint === "interactive" || requestedLatencyHint === "balanced" || requestedLatencyHint === "playback"
+      ? requestedLatencyHint
+      : typeof requestedLatencyHint === "number" && Number.isFinite(requestedLatencyHint) && requestedLatencyHint >= 0
+        ? requestedLatencyHint
+        : "interactive";
   const requestedChannelCount = options.channelCount ?? 2;
   const channelCount =
     Number.isFinite(requestedChannelCount) && requestedChannelCount > 0
@@ -543,15 +549,45 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       : 2;
   const discardOnResume = typeof options.discardOnResume === "boolean" ? options.discardOnResume : true;
 
-  let context: AudioContext;
-  try {
-    context = new AudioContextCtor({ sampleRate, latencyHint });
-  } catch (err) {
+  type AudioContextCtorArgs = [] | [AudioContextOptions];
+  const contextAttempts: ReadonlyArray<Readonly<{ label: string; args: AudioContextCtorArgs }>> = [
+    {
+      label: "new AudioContext({ sampleRate, latencyHint })",
+      args: [{ sampleRate, latencyHint }],
+    },
+    {
+      label: "new AudioContext({ latencyHint })",
+      args: [{ latencyHint }],
+    },
+    {
+      label: "new AudioContext({ sampleRate })",
+      args: [{ sampleRate }],
+    },
+    {
+      label: "new AudioContext()",
+      args: [],
+    },
+  ];
+
+  let context: AudioContext | null = null;
+  let lastContextError: unknown = null;
+  let lastContextAttemptLabel = contextAttempts[0]?.label ?? "new AudioContext()";
+  for (const attempt of contextAttempts) {
+    try {
+      context = new AudioContextCtor(...attempt.args);
+      break;
+    } catch (err) {
+      lastContextError = err;
+      lastContextAttemptLabel = attempt.label;
+    }
+  }
+
+  if (!context) {
     return createDisabledAudioOutput({
       message:
-        err instanceof Error
-          ? `Failed to create AudioContext: ${err.message}`
-          : "Failed to create AudioContext.",
+        lastContextError instanceof Error
+          ? `Failed to create AudioContext (${lastContextAttemptLabel}): ${lastContextError.message}`
+          : `Failed to create AudioContext (${lastContextAttemptLabel}).`,
       sampleRate,
     });
   }
@@ -605,23 +641,40 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     });
   }
 
-  let node: AudioWorkletNode;
+  let node: AudioWorkletNode | null = null;
+  const processorOptions = {
+    ringBuffer: ringBuffer.buffer,
+    channelCount,
+    capacityFrames: ringBufferFrames,
+  };
+  const nodeOptionsFull = {
+    processorOptions,
+    outputChannelCount: [channelCount],
+  };
+  const nodeOptionsReduced = {
+    processorOptions,
+  };
   try {
-    node = new AudioWorkletNode(context, "aero-audio-processor", {
-      processorOptions: {
-        ringBuffer: ringBuffer.buffer,
-        channelCount,
-        capacityFrames: ringBufferFrames,
-      },
-      outputChannelCount: [channelCount],
-    });
+    node = new AudioWorkletNode(context, "aero-audio-processor", nodeOptionsFull);
   } catch (err) {
+    try {
+      node = new AudioWorkletNode(context, "aero-audio-processor", nodeOptionsReduced);
+    } catch (retryErr) {
+      await context.close();
+      return createDisabledAudioOutput({
+        message:
+          retryErr instanceof Error
+            ? `Failed to create AudioWorkletNode (without outputChannelCount): ${retryErr.message}`
+            : "Failed to create AudioWorkletNode (without outputChannelCount).",
+        ringBuffer,
+        sampleRate: actualSampleRate,
+      });
+    }
+  }
+  if (!node) {
     await context.close();
     return createDisabledAudioOutput({
-      message:
-        err instanceof Error
-          ? `Failed to create AudioWorkletNode: ${err.message}`
-          : "Failed to create AudioWorkletNode.",
+      message: "Failed to create AudioWorkletNode.",
       ringBuffer,
       sampleRate: actualSampleRate,
     });

@@ -293,6 +293,15 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
         throw new Error(`short header read: expected=${HEADER_SIZE} actual=${n}`);
       }
       const header = decodeHeader(headerBytes);
+
+      const tableBytesLenBig = BigInt(header.tableEntries) * 8n;
+      if (tableBytesLenBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error("sparse table size overflow");
+      }
+      if (tableBytesLenBig > BigInt(MAX_TABLE_BYTES)) {
+        throw new Error(`sparse table too large: ${tableBytesLenBig} bytes (max ${MAX_TABLE_BYTES})`);
+      }
+
       const fileSize = sync.getSize();
       if (!Number.isSafeInteger(fileSize) || fileSize < 0) {
         throw new Error(`invalid file size: ${fileSize}`);
@@ -307,13 +316,6 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
         throw new Error("allocated blocks extend beyond end of image");
       }
 
-      const tableBytesLenBig = BigInt(header.tableEntries) * 8n;
-      if (tableBytesLenBig > BigInt(Number.MAX_SAFE_INTEGER)) {
-        throw new Error("sparse table size overflow");
-      }
-      if (tableBytesLenBig > BigInt(MAX_TABLE_BYTES)) {
-        throw new Error(`sparse table too large: ${tableBytesLenBig} bytes (max ${MAX_TABLE_BYTES})`);
-      }
       const table = new Float64Array(header.tableEntries);
       let actualAllocatedBlocks = 0;
       // Track which physical blocks (0..allocatedBlocks) are referenced by the table to detect
