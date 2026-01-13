@@ -283,6 +283,8 @@ Related diagnostics knobs (not latency controls, but useful when tuning):
   “requested” settings (like `sampleRate`/`latencyHint`) do not hard-fail audio output initialization.
 - Some browsers also differ in which `AudioWorkletNode` constructor options they accept; `createAudioOutput` retries node creation
   without `outputChannelCount` when needed for compatibility.
+- Autoplay policies vary by browser: `createAudioOutput` makes a best-effort early `AudioContext.resume()`, but callers should
+  still expect to call/await `audioOutput.resume()` from a user gesture handler (and may need to retry after a rejected resume).
 - Always treat `audioOutput.context.sampleRate` as authoritative (Safari/iOS may ignore the requested sample rate).
 
 #### Quick tuning summary
