@@ -25,7 +25,8 @@ l2Proxy:
       cpu: "1"
       memory: 512Mi
   # The chart will automatically set ALLOWED_ORIGINS to the derived ingress origin
-  # (https://<ingress.host> when TLS is enabled) and route `/l2` to the proxy.
+  # (https://<ingress.host> when TLS is enabled) and route `/l2` (and legacy alias `/eth`)
+  # to the proxy.
   #
   # Recommended: use session-cookie auth for same-origin browser clients.
   # This requires the proxy to share the gateway `SESSION_SECRET`; the chart mounts it as both

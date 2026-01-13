@@ -3,8 +3,8 @@
 This chart deploys the Aero backend gateway (`aero-gateway`) to Kubernetes.
 
 Optionally (recommended for production networking), it can also deploy the L2 tunnel proxy
-(`aero-l2-proxy`, ADR 0005 / “Option C”) and route `/l2` to it behind the same Ingress and
-security headers.
+(`aero-l2-proxy`, ADR 0005 / “Option C”) and route `/l2` (and legacy alias `/eth`) to it behind
+the same Ingress and security headers.
 
 For the complete walkthrough (TLS + COOP/COEP + WebSocket verification), see:
 
@@ -30,7 +30,7 @@ helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \
 - `secrets.create` / `secrets.existingSecret`
 - `redis.enabled`
 
-## Option C (`aero-l2-proxy`) / `/l2` routing
+## Option C (`aero-l2-proxy`) / `/l2` routing (legacy alias `/eth`)
 
 Enable the L2 proxy:
 
@@ -45,6 +45,7 @@ l2Proxy:
 When `l2Proxy.enabled=true` and `ingress.enabled=true`, the chart's Ingress will include:
 
 - `/l2` → `aero-l2-proxy` Service (port 8090)
+- `/eth` → `aero-l2-proxy` Service (port 8090) (legacy alias)
 - `/<everything-else>` → `aero-gateway` Service
 
 Because the same Ingress resource is used, the existing COOP/COEP/CSP (or Traefik Middleware)

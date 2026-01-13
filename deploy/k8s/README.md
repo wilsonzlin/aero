@@ -10,13 +10,14 @@ The chart includes:
 - `Ingress` example (defaults to `ingress-nginx`) that:
   - terminates TLS (optional in dev; recommended in prod)
   - supports WebSocket upgrades (Aero uses `wss://<host>/tcp?v=1&host=<dst>&port=<dstPort>`)
-  - for the Option C L2 tunnel (`wss://<host>/l2`, subprotocol `aero-l2-tunnel-v1`), enable the
-    optional `aero-l2-proxy` deployment (`l2Proxy.enabled=true`) so `/l2` is routed to it
+  - for the Option C L2 tunnel (`wss://<host>/l2`, subprotocol `aero-l2-tunnel-v1`; legacy alias:
+    `wss://<host>/eth`), enable the optional `aero-l2-proxy` deployment (`l2Proxy.enabled=true`) so
+    `/l2` and `/eth` are routed to it
   - can inject security headers (COOP/COEP/CORP/OAC + CSP) required for `SharedArrayBuffer` / `crossOriginIsolated`
 - Optional in-cluster Redis (useful when running multiple gateway replicas)
 - Optional `NetworkPolicy` template to help restrict ingress/egress
 
-## L2 tunnel proxy (`/l2`)
+## L2 tunnel proxy (`/l2`, legacy alias `/eth`)
 
 If you are using the recommended Option C networking path (tunneling raw Ethernet frames over WebSocket),
 you should deploy the L2 tunnel proxy:
@@ -36,6 +37,7 @@ l2Proxy:
 When enabled, the chart's Ingress routes:
 
 - `/l2` → `aero-l2-proxy` Service (port 8090)
+- `/eth` → `aero-l2-proxy` Service (port 8090) (legacy alias)
 - everything else → `aero-gateway` Service
 
 If you override the L2 tunnel payload limits (`AERO_L2_MAX_FRAME_PAYLOAD` / `AERO_L2_MAX_CONTROL_PAYLOAD`),
@@ -47,6 +49,13 @@ If you manage your Ingress separately, the equivalent nginx Ingress path additio
 ```yaml
 paths:
   - path: /l2
+    pathType: Prefix
+    backend:
+      service:
+        name: aero-l2-proxy
+        port:
+          number: 8090
+  - path: /eth
     pathType: Prefix
     backend:
       service:

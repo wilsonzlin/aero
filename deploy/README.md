@@ -7,7 +7,7 @@ This directory contains **production** and **local-dev** deployment artifacts th
    - `SharedArrayBuffer` + WASM threads
    - some high-performance browser execution patterns
 3) Set additional hardening headers (CSP, Referrer-Policy, Permissions-Policy, etc.)
-4) Reverse-proxy backend HTTP APIs and WebSocket upgrades (e.g. `/tcp`, `/tcp-mux`, `/l2`) to backend services
+4) Reverse-proxy backend HTTP APIs and WebSocket upgrades (e.g. `/tcp`, `/tcp-mux`, `/l2` (legacy alias: `/eth`)) to backend services
 5) Reverse-proxy WebRTC signaling + ICE discovery endpoints (e.g. `/webrtc/ice`) to the UDP relay
 
 The recommended topology is **single-origin**:
@@ -467,7 +467,7 @@ gateway may be rejecting the query parameters or target.
 
 > Note: `/tcp` is a privileged endpoint; the gateway rejects upgrades without an `aero_session` cookie.
 
-## L2 tunnel proxy (/l2)
+## L2 tunnel proxy (/l2; legacy alias /eth)
 
 The **L2 tunnel proxy** (`aero-l2-proxy`) provides an Ethernet (L2) tunnel over
 WebSocket:

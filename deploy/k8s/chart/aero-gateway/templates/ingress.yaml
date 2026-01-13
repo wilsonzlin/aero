@@ -70,6 +70,14 @@ spec:
                 name: {{ include "aero-gateway.l2ProxyFullname" . }}
                 port:
                   number: {{ .Values.l2Proxy.service.port }}
+          # Legacy L2 tunnel alias for backwards compatibility (see docs/l2-tunnel-protocol.md).
+          - path: /eth
+            pathType: {{ .Values.l2Proxy.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "aero-gateway.l2ProxyFullname" . }}
+                port:
+                  number: {{ .Values.l2Proxy.service.port }}
           {{- end }}
           - path: {{ .Values.ingress.path }}
             pathType: {{ .Values.ingress.pathType }}

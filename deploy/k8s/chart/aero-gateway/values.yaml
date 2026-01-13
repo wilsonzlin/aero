@@ -94,6 +94,7 @@ l2Tunnel:
 ##
 ## The chart's Ingress will add a path rule so:
 ##   - `/l2` → `aero-l2-proxy`
+##   - `/eth` → `aero-l2-proxy` (legacy alias for backwards compatibility)
 ##   - everything else (e.g. `/tcp`, `/dns-query`) → `aero-gateway`
 ##
 l2Proxy:
