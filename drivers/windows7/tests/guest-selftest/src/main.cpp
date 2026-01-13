@@ -925,10 +925,10 @@ static IrqQueryResult QueryDevInstIrqModeOnce(DEVINST devinst) {
   // Enumerate the translated (allocated) resource descriptors and look for interrupt descriptors.
   RES_DES res_des = 0;
   RESOURCEID res_id = 0;
-  cr = CM_Get_Next_Res_Des(&res_des, log_conf, ResType_All, &res_id, 0);
+  cr = CM_Get_First_Res_Des(&res_des, log_conf, ResType_All, &res_id, 0);
   if (cr != CR_SUCCESS) {
     CM_Free_Log_Conf_Handle(log_conf);
-    out.reason = "cm_get_next_res_des_failed";
+    out.reason = "cm_get_first_res_des_failed";
     out.cr = cr;
     return out;
   }
@@ -1043,7 +1043,7 @@ static IrqQueryResult QueryDevInstIrqModeWithParentFallback(DEVINST devinst) {
     last = QueryDevInstIrqModeOnce(dn);
     if (last.ok) return last;
     if (last.reason != "no_interrupt_resources" && last.reason != "cm_get_first_log_conf_failed" &&
-        last.reason != "cm_get_next_res_des_failed") {
+        last.reason != "cm_get_first_res_des_failed" && last.reason != "cm_get_next_res_des_failed") {
       // For other failures (e.g. invalid handles), don't keep walking indefinitely.
       break;
     }
