@@ -131,6 +131,16 @@ pub const OPCODE_DISCARD: u32 = 0x3a;
 /// `clip` (discard pixel if any component of operand is < 0).
 pub const OPCODE_CLIP: u32 = 0x3b;
 
+// Numeric conversions.
+//
+// These instructions operate on the raw bits stored in the untyped DXBC register file.
+// The translator models temporaries as `vec4<f32>` and uses `bitcast` to reinterpret
+// integer lane bits as needed.
+pub const OPCODE_FTOI: u32 = 0x18;
+pub const OPCODE_FTOU: u32 = 0x19;
+pub const OPCODE_ITOF: u32 = 0x1a;
+pub const OPCODE_UTOF: u32 = 0x1b;
+
 pub const OPCODE_RET: u32 = 0x3e;
 
 // Geometry shader stream emission / cutting.

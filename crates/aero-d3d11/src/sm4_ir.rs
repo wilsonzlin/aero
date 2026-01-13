@@ -430,6 +430,18 @@ pub enum Sm4Inst {
         dst: DstOperand,
         src: SrcOperand,
     },
+    Itof {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    Ftoi {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    Ftou {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
     /// `bfi dst, width, offset, insert, base`
     ///
     /// Inserts `width` bits from `insert` into `base` starting at bit `offset`.

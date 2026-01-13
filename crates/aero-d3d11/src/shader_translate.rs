@@ -1227,9 +1227,11 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             Sm4Inst::Discard { cond, .. } => scan_src_regs(cond, &mut scan_reg),
             Sm4Inst::Clip { src } => scan_src_regs(src, &mut scan_reg),
             Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
-            Sm4Inst::Mov { dst: _, src } | Sm4Inst::Utof { dst: _, src } => {
-                scan_src_regs(src, &mut scan_reg)
-            }
+            Sm4Inst::Mov { dst: _, src }
+            | Sm4Inst::Itof { dst: _, src }
+            | Sm4Inst::Utof { dst: _, src }
+            | Sm4Inst::Ftoi { dst: _, src }
+            | Sm4Inst::Ftou { dst: _, src } => scan_src_regs(src, &mut scan_reg),
             Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src_regs(cond, &mut scan_reg);
                 scan_src_regs(a, &mut scan_reg);
@@ -1293,11 +1295,11 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(b, &mut scan_reg);
             }
             Sm4Inst::Bfi {
+                dst: _,
                 width,
                 offset,
                 insert,
                 base,
-                ..
             } => {
                 scan_src_regs(width, &mut scan_reg);
                 scan_src_regs(offset, &mut scan_reg);
@@ -2482,7 +2484,6 @@ fn scan_resources(
             Sm4Inst::Clip { src } => scan_src(src)?,
             Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
             Sm4Inst::Mov { dst: _, src } => scan_src(src)?,
-            Sm4Inst::Utof { dst: _, src } => scan_src(src)?,
             Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src(cond)?;
                 scan_src(a)?;
@@ -2541,6 +2542,10 @@ fn scan_resources(
             | Sm4Inst::FirstbitLo { dst: _, src }
             | Sm4Inst::FirstbitShi { dst: _, src }
             | Sm4Inst::INeg { dst: _, src }
+            | Sm4Inst::Itof { dst: _, src }
+            | Sm4Inst::Utof { dst: _, src }
+            | Sm4Inst::Ftoi { dst: _, src }
+            | Sm4Inst::Ftou { dst: _, src }
             | Sm4Inst::Not { dst: _, src } => scan_src(src)?,
             Sm4Inst::Bfi {
                 dst: _,
@@ -2893,10 +2898,6 @@ fn emit_temp_and_output_decls(
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
             }
-            Sm4Inst::Utof { dst, src } => {
-                scan_reg(dst.reg);
-                scan_src_regs(src, &mut scan_reg);
-            }
             Sm4Inst::Movc { dst, cond, a, b } => {
                 scan_reg(dst.reg);
                 scan_src_regs(cond, &mut scan_reg);
@@ -2993,6 +2994,10 @@ fn emit_temp_and_output_decls(
             | Sm4Inst::FirstbitLo { dst, src }
             | Sm4Inst::FirstbitShi { dst, src }
             | Sm4Inst::INeg { dst, src }
+            | Sm4Inst::Itof { dst, src }
+            | Sm4Inst::Utof { dst, src }
+            | Sm4Inst::Ftoi { dst, src }
+            | Sm4Inst::Ftou { dst, src }
             | Sm4Inst::Not { dst, src } => {
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
@@ -3524,16 +3529,6 @@ fn emit_instructions(
                     maybe_saturate(dst, format!("select(({b_vec}), ({a_vec}), {cond_bool})"));
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "movc", ctx)?;
             }
-            Sm4Inst::Utof { dst, src } => {
-                // Unsigned int -> float conversion.
-                //
-                // The source operand is carried in our untyped `vec4<f32>` register model; we
-                // reinterpret each lane as `u32`, then apply a numeric conversion to `f32`.
-                let src_bits = emit_src_vec4(src, inst_index, "utof", ctx)?;
-                let rhs = format!("vec4<f32>(bitcast<vec4<u32>>({src_bits}))");
-                let rhs = maybe_saturate(dst, rhs);
-                emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "utof", ctx)?;
-            }
             Sm4Inst::And { dst, a, b } => {
                 let a = emit_src_vec4_u32(a, inst_index, "and", ctx)?;
                 let b = emit_src_vec4_u32(b, inst_index, "and", ctx)?;
@@ -3811,6 +3806,26 @@ fn emit_instructions(
                 let src = emit_src_vec4(src, inst_index, "rsq", ctx)?;
                 let expr = maybe_saturate(dst, format!("inverseSqrt({src})"));
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "rsq", ctx)?;
+            }
+            Sm4Inst::Itof { dst, src } => {
+                let src_i = emit_src_vec4_i32(src, inst_index, "itof", ctx)?;
+                let expr = maybe_saturate(dst, format!("vec4<f32>({src_i})"));
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "itof", ctx)?;
+            }
+            Sm4Inst::Utof { dst, src } => {
+                let src_u = emit_src_vec4_u32(src, inst_index, "utof", ctx)?;
+                let expr = maybe_saturate(dst, format!("vec4<f32>({src_u})"));
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "utof", ctx)?;
+            }
+            Sm4Inst::Ftoi { dst, src } => {
+                let src_f = emit_src_vec4(src, inst_index, "ftoi", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(vec4<i32>({src_f}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ftoi", ctx)?;
+            }
+            Sm4Inst::Ftou { dst, src } => {
+                let src_f = emit_src_vec4(src, inst_index, "ftou", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(vec4<u32>({src_f}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ftou", ctx)?;
             }
             Sm4Inst::Bfi {
                 dst,

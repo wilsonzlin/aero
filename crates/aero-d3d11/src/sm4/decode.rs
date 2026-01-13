@@ -942,6 +942,36 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Rsq { dst, src })
         }
+        OPCODE_ITOF => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Itof { dst, src })
+        }
+        OPCODE_UTOF => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Utof { dst, src })
+        }
+        OPCODE_FTOI => {
+            // `ftoi` results are integer bit patterns stored in the untyped register file.
+            // Saturate modifiers are only meaningful for float results, so ignore them here.
+            let dst = decode_dst(&mut r)?;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Ftoi { dst, src })
+        }
+        OPCODE_FTOU => {
+            // `ftou` results are integer bit patterns stored in the untyped register file.
+            // Saturate modifiers are only meaningful for float results, so ignore them here.
+            let dst = decode_dst(&mut r)?;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Ftou { dst, src })
+        }
         OPCODE_BFI => {
             let mut dst = decode_dst(&mut r)?;
             dst.saturate = saturate;
