@@ -455,6 +455,69 @@ fn runtime_stats_counts_invalidate_calls() {
 }
 
 #[test]
+fn runtime_reset_clears_cache_hotness_and_page_versions() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1_000,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+
+    let compile = RecordingCompileSink::default();
+    let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile);
+
+    jit.install_block(0, 0, 0x1000, 8);
+    assert_eq!(jit.cache_len(), 1);
+    assert!(jit.is_compiled(0));
+
+    for _ in 0..5 {
+        assert!(jit.prepare_block(0).is_some());
+    }
+    assert_eq!(jit.hotness(0), 5);
+
+    // Mutate code to ensure the page-version tracker has non-zero state.
+    jit.on_guest_write(0x1004, 1);
+    let before = jit.snapshot_meta(0x1000, 8);
+    assert_eq!(before.page_versions.len(), 1);
+    assert_ne!(before.page_versions[0].version, 0);
+
+    jit.reset();
+
+    assert_eq!(jit.cache_len(), 0);
+    assert!(!jit.is_compiled(0));
+    assert_eq!(jit.hotness(0), 0);
+
+    let after = jit.snapshot_meta(0x1000, 8);
+    assert_eq!(after.page_versions.len(), 1);
+    assert_eq!(after.page_versions[0].version, 0);
+}
+
+#[test]
+fn runtime_reset_allows_retriggering_compile_requests() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 3,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+
+    let compile = RecordingCompileSink::default();
+    let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile.clone());
+
+    for _ in 0..3 {
+        assert!(jit.prepare_block(0x42).is_none());
+    }
+    assert_eq!(compile.snapshot(), vec![0x42]);
+
+    jit.reset();
+
+    for _ in 0..3 {
+        assert!(jit.prepare_block(0x42).is_none());
+    }
+    assert_eq!(compile.snapshot(), vec![0x42, 0x42]);
+}
+
+#[test]
 fn mixed_mode_exit_to_interpreter_forces_one_interpreter_block() {
     let config = JitConfig {
         enabled: true,
