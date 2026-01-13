@@ -182,8 +182,10 @@ fn build_app(state: AppState) -> Router {
         .route("/version", get(version))
         .route("/metrics", get(metrics))
         .route("/l2", get(l2_ws_handler))
+        .route("/l2/", get(l2_ws_handler))
         // Legacy alias (see `docs/l2-tunnel-protocol.md`).
         .route("/eth", get(l2_ws_handler))
+        .route("/eth/", get(l2_ws_handler))
         .with_state(state)
 }
 

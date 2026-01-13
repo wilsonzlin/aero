@@ -222,7 +222,7 @@ async fn subprotocol_required_rejects_missing_protocol() {
     let proxy = start_server(cfg).await.unwrap();
     let addr = proxy.local_addr();
 
-    for path in ["/l2", "/eth"] {
+    for path in ["/l2", "/l2/", "/eth", "/eth/"] {
         let ws_url = format!("ws://{addr}{path}");
         let req = ws_url.into_client_request().unwrap();
         let err = tokio_tungstenite::connect_async(req)

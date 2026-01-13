@@ -111,7 +111,7 @@ test("l2 proxy requires Sec-WebSocket-Protocol: aero-l2-tunnel-v1 (for /l2 and /
   });
 
   try {
-    for (const path of ["/l2", "/eth"]) {
+    for (const path of ["/l2", "/l2/", "/eth", "/eth/"]) {
       const res = await connectOrReject(`ws://127.0.0.1:${proxy.port}${path}`, { protocols: [] });
       assert.equal(res.ok, false);
       assert.equal(res.status, 400);

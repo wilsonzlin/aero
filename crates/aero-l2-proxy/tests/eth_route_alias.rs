@@ -41,75 +41,77 @@ async fn eth_route_is_alias_for_l2() {
     let proxy = start_server(cfg).await.unwrap();
     let proxy_addr = proxy.local_addr();
 
-    let ws_url = format!("ws://{proxy_addr}/eth");
-    let mut req = ws_url.into_client_request().unwrap();
-    req.headers_mut().insert(
-        "Sec-WebSocket-Protocol",
-        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
-    );
-    let (ws, _resp) = tokio_tungstenite::connect_async(req).await.unwrap();
-    let (mut ws_tx, mut ws_rx) = ws.split();
-
     let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
     let guest_ip = Ipv4Addr::new(10, 0, 2, 15);
     let gateway_ip = Ipv4Addr::new(10, 0, 2, 2);
 
-    // Send an ARP request for the gateway; the proxy should respond with an ARP reply if the tunnel
-    // is functioning correctly.
-    let arp_req = ArpPacketBuilder {
-        opcode: ARP_OP_REQUEST,
-        sender_mac: guest_mac,
-        sender_ip: guest_ip,
-        target_mac: MacAddr([0, 0, 0, 0, 0, 0]),
-        target_ip: gateway_ip,
-    }
-    .build_vec()
-    .expect("build ARP request");
-    let arp_frame = EthernetFrameBuilder {
-        dest_mac: MacAddr::BROADCAST,
-        src_mac: guest_mac,
-        ethertype: EtherType::ARP,
-        payload: &arp_req,
-    }
-    .build_vec()
-    .expect("build ARP Ethernet frame");
-    ws_tx
-        .send(Message::Binary(
-            aero_l2_protocol::encode_frame(&arp_frame).unwrap().into(),
-        ))
-        .await
-        .unwrap();
+    for path in ["/eth", "/eth/"] {
+        let ws_url = format!("ws://{proxy_addr}{path}");
+        let mut req = ws_url.into_client_request().unwrap();
+        req.headers_mut().insert(
+            "Sec-WebSocket-Protocol",
+            HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+        );
+        let (ws, _resp) = tokio_tungstenite::connect_async(req).await.unwrap();
+        let (mut ws_tx, mut ws_rx) = ws.split();
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let msg = ws_rx.next().await.expect("ws closed").unwrap();
-            let Message::Binary(data) = msg else {
-                continue;
-            };
-            let Ok(decoded) = aero_l2_protocol::decode_message(&data) else {
-                continue;
-            };
-            if decoded.msg_type != aero_l2_protocol::L2_TUNNEL_TYPE_FRAME {
-                continue;
-            }
-
-            let Ok(eth) = EthernetFrame::parse(decoded.payload) else {
-                continue;
-            };
-            if eth.ethertype() != EtherType::ARP {
-                continue;
-            }
-            let Ok(arp) = ArpPacket::parse(eth.payload()) else {
-                continue;
-            };
-            if arp.opcode() == ARP_OP_REPLY && arp.sender_ip() == Some(gateway_ip) {
-                break;
-            }
+        // Send an ARP request for the gateway; the proxy should respond with an ARP reply if the
+        // tunnel is functioning correctly.
+        let arp_req = ArpPacketBuilder {
+            opcode: ARP_OP_REQUEST,
+            sender_mac: guest_mac,
+            sender_ip: guest_ip,
+            target_mac: MacAddr([0, 0, 0, 0, 0, 0]),
+            target_ip: gateway_ip,
         }
-    })
-    .await
-    .expect("timed out waiting for ARP reply");
+        .build_vec()
+        .expect("build ARP request");
+        let arp_frame = EthernetFrameBuilder {
+            dest_mac: MacAddr::BROADCAST,
+            src_mac: guest_mac,
+            ethertype: EtherType::ARP,
+            payload: &arp_req,
+        }
+        .build_vec()
+        .expect("build ARP Ethernet frame");
+        ws_tx
+            .send(Message::Binary(
+                aero_l2_protocol::encode_frame(&arp_frame).unwrap().into(),
+            ))
+            .await
+            .unwrap();
 
-    ws_tx.send(Message::Close(None)).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let msg = ws_rx.next().await.expect("ws closed").unwrap();
+                let Message::Binary(data) = msg else {
+                    continue;
+                };
+                let Ok(decoded) = aero_l2_protocol::decode_message(&data) else {
+                    continue;
+                };
+                if decoded.msg_type != aero_l2_protocol::L2_TUNNEL_TYPE_FRAME {
+                    continue;
+                }
+
+                let Ok(eth) = EthernetFrame::parse(decoded.payload) else {
+                    continue;
+                };
+                if eth.ethertype() != EtherType::ARP {
+                    continue;
+                }
+                let Ok(arp) = ArpPacket::parse(eth.payload()) else {
+                    continue;
+                };
+                if arp.opcode() == ARP_OP_REPLY && arp.sender_ip() == Some(gateway_ip) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for ARP reply");
+
+        ws_tx.send(Message::Close(None)).await.unwrap();
+    }
     proxy.shutdown().await;
 }
