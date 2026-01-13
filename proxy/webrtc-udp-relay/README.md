@@ -436,6 +436,7 @@ Per-session quotas and rate limits are enforced on the **data plane** (WebRTC Da
 - `MAX_UDP_PPS_PER_SESSION` / `--max-udp-pps-per-session` (default `0` = unlimited) — outbound UDP packets/sec per session
 - `MAX_UDP_BPS_PER_SESSION` / `--max-udp-bps-per-session` (default `0` = unlimited) — outbound UDP bytes/sec per session
 - `MAX_UDP_PPS_PER_DEST` / `--max-udp-pps-per-dest` (default `0` = unlimited) — outbound UDP packets/sec per destination per session
+- `MAX_UDP_DEST_BUCKETS_PER_SESSION` / `--max-udp-dest-buckets-per-session` (default `1024`; defaults to `MAX_UNIQUE_DESTINATIONS_PER_SESSION` when that is set) — bounds per-destination rate limiter state per session (prevents unbounded memory growth on destination spray when per-dest PPS limiting is enabled)
 - `MAX_UNIQUE_DESTINATIONS_PER_SESSION` / `--max-unique-destinations-per-session` (default `0` = unlimited)
 - `MAX_DC_BPS_PER_SESSION` / `--max-dc-bps-per-session` (default `0` = unlimited) — relay→client DataChannel bytes/sec per session
 - `HARD_CLOSE_AFTER_VIOLATIONS` / `--hard-close-after-violations` (default `0` = disabled) — close the session after N rate/quota violations
