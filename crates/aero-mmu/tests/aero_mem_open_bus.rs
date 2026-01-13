@@ -8,11 +8,17 @@ fn assert_open_bus_reads<B: aero_mmu::MemoryBus>(bus: &mut B, addr: u64) {
     assert_eq!(bus.read_u32(addr), 0xFFFF_FFFF);
     assert_eq!(bus.read_u64(addr), 0xFFFF_FFFF_FFFF_FFFF);
 
+    let mut buf = [0u8; 32];
+    bus.read_bytes(addr, &mut buf);
+    assert!(buf.iter().all(|&b| b == 0xFF));
+
     // Unmapped writes must not panic and are ignored.
     bus.write_u8(addr, 0x12);
     bus.write_u16(addr, 0x1234);
     bus.write_u32(addr, 0x1234_5678);
     bus.write_u64(addr, 0x1122_3344_5566_7788);
+
+    bus.write_bytes(addr, &[0x12, 0x34, 0x56, 0x78]);
 }
 
 #[test]
