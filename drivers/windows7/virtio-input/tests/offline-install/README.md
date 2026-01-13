@@ -33,7 +33,7 @@ Point DISM at the directory (or `.inf`) produced by your build/sign pipeline.
 - A Windows host with `dism.exe` available:
   - Windows 7 (built-in DISM), or
   - Windows 10/11 (built-in DISM; generally works fine for servicing Win7 WIMs).
-- An **elevated** Command Prompt (`Run as administrator`).
+- An **elevated** PowerShell / Command Prompt (`Run as administrator`).
 - Writable working directory with enough free space (mounting a WIM expands it).
 - Windows 7 install media contents available on disk (USB folder or extracted ISO).
 
@@ -41,6 +41,35 @@ Notes:
 
 - If your install media is mounted as a read-only ISO, **copy `install.wim` to a writable folder** before servicing.
 - These steps are for `install.wim` (the installed OS). If you also need the driver available inside Windows Setup/WinPE, see the note in [Optional: boot.wim (WinPE) injection](#optional-bootwim-winpe-injection).
+
+---
+
+## Quick start (recommended): use the helper script
+
+This directory includes [`Inject-VirtioInputDriver.ps1`](./Inject-VirtioInputDriver.ps1), which automates the mount → `Add-Driver` → optional verification → unmount steps and provides clearer error messages when DISM fails.
+
+From an **elevated PowerShell** prompt:
+
+```powershell
+# Example: inject into install.wim index 1
+.\Inject-VirtioInputDriver.ps1 `
+  -WimPath C:\win7\sources\install.wim `
+  -Index 1 `
+  -DriverPackageDir C:\src\aero\out\packages\windows7\virtio-input\x64
+```
+
+If you need `/ForceUnsigned` (test-only), add `-ForceUnsigned`.
+
+To inject into Windows Setup / WinPE (boot.wim index 2):
+
+```powershell
+.\Inject-VirtioInputDriver.ps1 `
+  -WimPath C:\win7\sources\boot.wim `
+  -Index 2 `
+  -DriverPackageDir C:\src\aero\out\packages\windows7\virtio-input\x64
+```
+
+By default the script **commits** changes on unmount. To discard (for debugging), run with `-Commit:$false`.
 
 ---
 
