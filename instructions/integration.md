@@ -49,9 +49,11 @@ This is the **coordination hub**. You wire together the work from all other work
 
 ### Known major gaps / limitations (please don’t rediscover these)
 
-- **No SMP yet (cpu_count is forced to 1)**:
+- **No SMP yet (single-vCPU only)**:
   `aero_machine::Machine` rejects `cpu_count != 1` (`crates/aero-machine/src/lib.rs::Machine::new`),
   and `aero_machine::pc::PcMachine` does the same (`crates/aero-machine/src/pc.rs`).
+  The underlying PC platform wiring (`aero_pc_platform::PcPlatform`) is also implicitly single-vCPU
+  today (no AP bring-up/scheduling), so “enable SMP” is more than removing a guard.
 - **Virtio MSI-X is implemented but not wired in the canonical machine/platform**:
   `aero-virtio` implements MSI-X in the virtio-pci transport (`crates/aero-virtio/src/pci.rs`), but
   the canonical integration layers currently use a `NoopVirtioInterruptSink` and only support

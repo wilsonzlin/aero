@@ -132,6 +132,10 @@
 
 #### Multi-vCPU execution
 
+> **Current status:** the canonical in-tree machine/platform integrations are still **single-vCPU
+> only** (no SMP bring-up yet). The multi-vCPU notes below are forward-looking; for the up-to-date
+> gap list see [`instructions/integration.md`](../instructions/integration.md).
+
 To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
 
 - Each vCPU has its own `aero_cpu_core::CpuCore` (owns `CpuState`, `interrupts::PendingEventState`, and `time::TimeSource`).
