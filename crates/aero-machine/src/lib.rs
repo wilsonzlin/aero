@@ -195,8 +195,9 @@ pub struct MachineConfig {
     /// `00:0c.0`) so the fixed VBE LFB can be routed through the PCI MMIO window. This PCI stub is
     /// not present when [`MachineConfig::enable_aerogpu`] is enabled.
     ///
-    /// Note: when [`MachineConfig::enable_aerogpu`] is enabled, the legacy VGA/VBE device model is
-    /// not wired even if `enable_vga=true` to avoid conflicting ownership of the VGA legacy ranges.
+    /// Note: [`MachineConfig::enable_vga`] and [`MachineConfig::enable_aerogpu`] are mutually
+    /// exclusive; [`Machine::new`] rejects configurations that enable both to avoid conflicting
+    /// ownership of the VGA legacy ranges.
     ///
     /// Port mappings:
     ///
@@ -215,8 +216,9 @@ pub struct MachineConfig {
     /// This is the storage foundation required by `docs/16-aerogpu-vga-vesa-compat.md` for
     /// firmware/bootloader compatibility.
     ///
-    /// Note: The full AeroGPU MMIO/WDDM device model is not implemented yet; this flag currently
-    /// provides only the legacy VGA/VBE compatibility foundation.
+    /// Note: The full AeroGPU BAR0 WDDM/MMIO/ring protocol (and VBE/scanout) is not implemented by
+    /// `aero_machine` yet; this flag currently provides only the BAR1-backed VRAM + legacy VGA
+    /// decode foundation.
     ///
     /// Requires [`MachineConfig::enable_pc_platform`] and is mutually exclusive with
     /// [`MachineConfig::enable_vga`].

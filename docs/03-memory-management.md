@@ -552,9 +552,14 @@ This is used by the canonical PC physical memory buses when `ram_size > PCIE_ECA
 `crates/aero-machine/src/lib.rs::SystemMemory::new`).
 
 Even though `0x000A_0000–0x000B_FFFF` sits in the “conventional memory” area, it must be treated as
-device memory: the emulator should register an `MmioRegion` for the **legacy VGA VRAM window** (today
-implemented by `aero_gpu_vga`; long-term owned by AeroGPU), so BIOS/bootloader/Windows writes to
-`0xB8000` (text mode) are visible on the canvas.
+device memory: the emulator registers an `MmioRegion` for the **legacy VGA VRAM window** so
+BIOS/bootloader/Windows writes to `0xB8000` (text mode) are visible on the canvas.
+
+In the canonical machine, this is implemented by:
+
+- `aero_gpu_vga` when `MachineConfig::enable_vga=true` (transitional boot display path), or
+- the AeroGPU BAR1-backed VRAM alias when `MachineConfig::enable_aerogpu=true` (legacy decode
+  foundation).
 
 Separately, VBE graphics modes use a linear framebuffer (LFB) at a different physical address:
 
