@@ -17,7 +17,8 @@ use aero_gpu::wgpu_bc_texture_dimensions_compatible;
 use aero_gpu::GpuCapabilities;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
-    decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
+    decode_cmd_bind_shaders_payload_le, decode_cmd_create_input_layout_blob_le,
+    decode_cmd_create_shader_dxbc_payload_le,
     decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
     AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR,
     AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
@@ -3329,16 +3330,28 @@ impl AerogpuD3d11Executor {
             // pipeline. If the update would change the pipeline, we must end the pass so the outer
             // loop can rebuild it.
             if opcode == OPCODE_BIND_SHADERS {
-                // `struct aerogpu_cmd_bind_shaders` (24 bytes)
-                if cmd_bytes.len() >= 20 {
-                    let vs = read_u32_le(cmd_bytes, 8)?;
-                    let ps = read_u32_le(cmd_bytes, 12)?;
-                    let next_vs = if vs == 0 { None } else { Some(vs) };
-                    let next_ps = if ps == 0 { None } else { Some(ps) };
-                    if next_vs != self.state.vs || next_ps != self.state.ps {
-                        break;
-                    }
-                } else {
+                // `struct aerogpu_cmd_bind_shaders` (24 bytes) with optional append-only extension
+                // `{gs,hs,ds}`.
+                let (cmd, ex) = match decode_cmd_bind_shaders_payload_le(cmd_bytes) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let next_vs = if cmd.vs == 0 { None } else { Some(cmd.vs) };
+                let next_ps = if cmd.ps == 0 { None } else { Some(cmd.ps) };
+                let (gs, hs, ds) = match ex {
+                    Some(ex) => (ex.gs, ex.hs, ex.ds),
+                    // Legacy format: treat the old `reserved0` field as `gs`.
+                    None => (cmd.reserved0, 0, 0),
+                };
+                let next_gs = if gs == 0 { None } else { Some(gs) };
+                let next_hs = if hs == 0 { None } else { Some(hs) };
+                let next_ds = if ds == 0 { None } else { Some(ds) };
+                if next_vs != self.state.vs
+                    || next_ps != self.state.ps
+                    || next_gs != self.state.gs
+                    || next_hs != self.state.hs
+                    || next_ds != self.state.ds
+                {
                     break;
                 }
             }
@@ -6760,27 +6773,21 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_bind_shaders(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_bind_shaders (24 bytes) + optional GS/HS/DS extension fields.
-        if cmd_bytes.len() < 24 {
-            bail!(
-                "BIND_SHADERS: expected at least 24 bytes, got {}",
+        let (cmd, ex) = decode_cmd_bind_shaders_payload_le(cmd_bytes).map_err(|err| {
+            anyhow!(
+                "BIND_SHADERS: failed to decode packet (size_bytes={}, err={err:?})",
                 cmd_bytes.len()
-            );
-        }
-        let vs = read_u32_le(cmd_bytes, 8)?;
-        let ps = read_u32_le(cmd_bytes, 12)?;
-        let cs = read_u32_le(cmd_bytes, 16)?;
-        // Forward-compat: treat the legacy `reserved0` field as `gs`, and allow HS/DS to follow.
-        let gs = read_u32_le(cmd_bytes, 20)?;
-        let hs = if cmd_bytes.len() >= 28 {
-            read_u32_le(cmd_bytes, 24)?
-        } else {
-            0
-        };
-        let ds = if cmd_bytes.len() >= 32 {
-            read_u32_le(cmd_bytes, 28)?
-        } else {
-            0
+            )
+        })?;
+
+        let vs = cmd.vs;
+        let ps = cmd.ps;
+        let cs = cmd.cs;
+        let (gs, hs, ds) = match ex {
+            Some(ex) => (ex.gs, ex.hs, ex.ds),
+            // Legacy format: treat the old `reserved0` field as `gs` so existing streams/tests
+            // can force the compute-prepass path without appending new fields.
+            None => (cmd.reserved0, 0, 0),
         };
 
         self.state.vs = if vs == 0 { None } else { Some(vs) };
