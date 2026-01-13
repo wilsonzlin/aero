@@ -191,6 +191,8 @@ let presenterUserOnError: ((error: PresenterError) => void) | undefined = undefi
 let presenterFallback: GpuRuntimeFallbackInfo | undefined = undefined;
 let presenterInitPromise: Promise<void> | null = null;
 let presenterErrorGeneration = 0;
+let presenterErrorEventGeneration = -1;
+const presenterErrorEventKeys = new Set<string>();
 let presenterSrcWidth = 0;
 let presenterSrcHeight = 0;
 let presenterNeedsFullUpload = true;
@@ -897,6 +899,100 @@ function emitGpuEvent(event: GpuRuntimeErrorEvent): void {
   postGpuEvents([event]);
 }
 
+function presenterErrorCodeToCategory(code: string): string {
+  const normalized = code.toLowerCase();
+
+  // Init / backend selection failures.
+  if (
+    normalized.includes("init") ||
+    normalized.includes("unavailable") ||
+    normalized.includes("disabled") ||
+    normalized.includes("no_adapter") ||
+    normalized.includes("no_device") ||
+    normalized.includes("no_backend") ||
+    normalized.includes("backend_incompatible") ||
+    normalized.includes("unknown_backend") ||
+    normalized.includes("missing_wasm_memory")
+  ) {
+    return "Init";
+  }
+
+  // Surface / context / present problems.
+  if (
+    normalized.includes("context") ||
+    normalized.includes("surface") ||
+    normalized === "webgl_error" ||
+    normalized.includes("present") ||
+    normalized.includes("resize")
+  ) {
+    return "Surface";
+  }
+
+  // Shader compilation / linking.
+  if (normalized.includes("shader") || normalized.includes("program") || normalized.includes("wgsl")) {
+    return "ShaderCompile";
+  }
+
+  if (normalized.includes("pipeline")) {
+    return "PipelineCreate";
+  }
+
+  if (normalized.includes("screenshot")) {
+    return "Screenshot";
+  }
+
+  if (normalized.includes("out_of_memory") || normalized.includes("outofmemory") || normalized.includes("oom")) {
+    return "OutOfMemory";
+  }
+
+  if (
+    normalized.includes("invalid") ||
+    normalized.includes("oob") ||
+    normalized.includes("too_small") ||
+    normalized.includes("validation")
+  ) {
+    return "Validation";
+  }
+
+  return "Unknown";
+}
+
+function presenterErrorToSeverity(
+  code: string | null,
+  category: string,
+  opts: { isInitFailure: boolean },
+): GpuRuntimeErrorEvent["severity"] {
+  const normalized = (code ?? "").toLowerCase();
+
+  if (category === "OutOfMemory") return "fatal";
+
+  if (category === "Init" && opts.isInitFailure) return "fatal";
+
+  // Future-proofing: when backends start emitting surface timeout/outdated events we want
+  // those to be non-fatal so rendering can continue.
+  if (
+    category === "Surface" &&
+    (normalized.includes("timeout") ||
+      normalized.includes("timed_out") ||
+      normalized.includes("outdated") ||
+      normalized.includes("out_of_date"))
+  ) {
+    return "warn";
+  }
+
+  return "error";
+}
+
+function shouldEmitPresenterErrorEvent(key: string): boolean {
+  if (presenterErrorEventGeneration !== presenterErrorGeneration) {
+    presenterErrorEventGeneration = presenterErrorGeneration;
+    presenterErrorEventKeys.clear();
+  }
+  if (presenterErrorEventKeys.has(key)) return false;
+  presenterErrorEventKeys.add(key);
+  return true;
+}
+
 function normalizeSeverity(value: unknown): GpuRuntimeErrorEvent["severity"] {
   switch (typeof value === "string" ? value.toLowerCase() : "") {
     case "info":
@@ -1391,7 +1487,9 @@ const sendError = (err: unknown) => {
     );
     return;
   }
-  postFatalError(err);
+  // Route through the presenter error handler so non-device-lost backend failures emit structured
+  // events (and are still forwarded through the legacy `type:"error"` message path).
+  postPresenterError(err, presenter?.backend);
 };
 
 async function loadPresentFnFromModuleUrl(wasmModuleUrl: string): Promise<void> {
@@ -1917,13 +2015,56 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
     return;
   }
 
+  const backend_kind = backend ?? presenter?.backend ?? backendKindForEvent();
+  const isInitFailure = !presenter && !!runtimeCanvas;
+
+  let message = err instanceof Error ? err.message : String(err);
+  let code: string | null = null;
+  let category = isInitFailure ? "Init" : "Unknown";
+  let details: unknown | undefined = undefined;
+
+  if (err instanceof PresenterError) {
+    message = err.message;
+    code = err.code;
+    category = presenterErrorCodeToCategory(err.code);
+    details = { code: err.code, message: err.message, stack: err.stack, cause: err.cause };
+  } else if (err instanceof Error) {
+    const anyErr = err as Error & { cause?: unknown };
+    details = {
+      name: anyErr.name,
+      message: anyErr.message,
+      stack: anyErr.stack,
+      ...(anyErr.cause !== undefined ? { cause: anyErr.cause } : {}),
+    };
+  } else {
+    details = err;
+  }
+
+  const severity = presenterErrorToSeverity(code, category, { isInitFailure });
+  const dedupeKey =
+    err instanceof PresenterError
+      ? `${backend_kind}:${err.code}`
+      : err instanceof Error
+        ? `${backend_kind}:${err.name}:${err.message}`
+        : `${backend_kind}:${message}`;
+
+  if (shouldEmitPresenterErrorEvent(dedupeKey)) {
+    emitGpuEvent({
+      time_ms: performance.now(),
+      backend_kind,
+      severity,
+      category,
+      message,
+      ...(details === undefined ? {} : { details }),
+    });
+  }
+
   if (err instanceof PresenterError) {
     postToMain({ type: "error", message: err.message, code: err.code, backend: backend ?? presenter?.backend });
     postRuntimeError(err.message);
     return;
   }
 
-  const message = err instanceof Error ? err.message : String(err);
   postToMain({ type: "error", message, backend: backend ?? presenter?.backend });
   postRuntimeError(message);
 }
@@ -2054,6 +2195,14 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
           reason,
           originalErrorMessage: reason,
         };
+        emitGpuEvent({
+          time_ms: performance.now(),
+          backend_kind: backend,
+          severity: "warn",
+          category: "Init",
+          message: `GPU backend init fell back from ${firstBackend} to ${backend}`,
+          details: { from: firstBackend, to: backend, reason },
+        });
       }
 
       // Warm up the wasm-backed AeroGPU D3D9 executor when we have a wgpu-based presenter so the
