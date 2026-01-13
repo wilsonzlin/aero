@@ -733,7 +733,10 @@ fn assert_auth_token_vectors_match(
 
     let mut proto_session_by_name: BTreeMap<&str, &ProtocolSessionTokenVector> = BTreeMap::new();
     for v in &proto.session_tokens.vectors {
-        proto_session_by_name.insert(v.name.as_str(), v);
+        let name = v.name.as_str();
+        if proto_session_by_name.insert(name, v).is_some() {
+            panic!("duplicate protocol session token vector name: {name}");
+        }
     }
 
     let session_cases = [
@@ -785,7 +788,10 @@ fn assert_auth_token_vectors_match(
 
     let mut proto_jwt_by_name: BTreeMap<&str, &ProtocolJwtTokenVector> = BTreeMap::new();
     for v in &proto.jwt_tokens.vectors {
-        proto_jwt_by_name.insert(v.name.as_str(), v);
+        let name = v.name.as_str();
+        if proto_jwt_by_name.insert(name, v).is_some() {
+            panic!("duplicate protocol jwt token vector name: {name}");
+        }
     }
 
     let jwt_cases = [
@@ -938,7 +944,10 @@ fn tcp_mux_vectors_do_not_drift() {
 
     let mut proto_frames: BTreeMap<&str, &ProtocolTcpMuxFrameVector> = BTreeMap::new();
     for v in &proto.frames {
-        proto_frames.insert(v.name.as_str(), v);
+        let name = v.name.as_str();
+        if proto_frames.insert(name, v).is_some() {
+            panic!("duplicate protocol tcp-mux frame vector name: {name}");
+        }
     }
 
     for v in &conf.aero_tcp_mux_v1.frames {
@@ -961,7 +970,10 @@ fn tcp_mux_vectors_do_not_drift() {
 
     let mut proto_open: BTreeMap<&str, &ProtocolTcpMuxOpenPayloadVector> = BTreeMap::new();
     for v in &proto.open_payloads {
-        proto_open.insert(v.name.as_str(), v);
+        let name = v.name.as_str();
+        if proto_open.insert(name, v).is_some() {
+            panic!("duplicate protocol tcp-mux open payload vector name: {name}");
+        }
     }
     for v in &conf.aero_tcp_mux_v1.open_payloads {
         let ctx = format!("tcp-mux open payload {:?} (protocol-vectors vs conformance)", v.name);
@@ -978,7 +990,10 @@ fn tcp_mux_vectors_do_not_drift() {
 
     let mut proto_close: BTreeMap<&str, &ProtocolTcpMuxClosePayloadVector> = BTreeMap::new();
     for v in &proto.close_payloads {
-        proto_close.insert(v.name.as_str(), v);
+        let name = v.name.as_str();
+        if proto_close.insert(name, v).is_some() {
+            panic!("duplicate protocol tcp-mux close payload vector name: {name}");
+        }
     }
     for v in &conf.aero_tcp_mux_v1.close_payloads {
         let ctx = format!("tcp-mux close payload {:?} (protocol-vectors vs conformance)", v.name);
@@ -993,7 +1008,10 @@ fn tcp_mux_vectors_do_not_drift() {
 
     let mut proto_error: BTreeMap<&str, &ProtocolTcpMuxErrorPayloadVector> = BTreeMap::new();
     for v in &proto.error_payloads {
-        proto_error.insert(v.name.as_str(), v);
+        let name = v.name.as_str();
+        if proto_error.insert(name, v).is_some() {
+            panic!("duplicate protocol tcp-mux error payload vector name: {name}");
+        }
     }
     for v in &conf.aero_tcp_mux_v1.error_payloads {
         let ctx = format!("tcp-mux error payload {:?} (protocol-vectors vs conformance)", v.name);
@@ -1020,7 +1038,10 @@ fn tcp_mux_vectors_do_not_drift() {
 
     let mut proto_streams: BTreeMap<&str, &ProtocolTcpMuxParserStreamVector> = BTreeMap::new();
     for v in &proto.parser_streams {
-        proto_streams.insert(v.name.as_str(), v);
+        let name = v.name.as_str();
+        if proto_streams.insert(name, v).is_some() {
+            panic!("duplicate protocol tcp-mux parser stream vector name: {name}");
+        }
     }
     for v in &conf.aero_tcp_mux_v1.parser_streams {
         let ctx = format!("tcp-mux parser stream {:?} (protocol-vectors vs conformance)", v.name);
@@ -1097,7 +1118,10 @@ fn udp_relay_vectors_do_not_drift() {
 
     let mut proto_vectors: BTreeMap<&str, &ProtocolUdpRelayVector> = BTreeMap::new();
     for v in &proto.vectors {
-        proto_vectors.insert(v.name.as_str(), v);
+        let name = v.name.as_str();
+        if proto_vectors.insert(name, v).is_some() {
+            panic!("duplicate protocol udp-relay vector name: {name}");
+        }
     }
 
     for v in &conf.aero_udp_relay_v1v2.vectors {
