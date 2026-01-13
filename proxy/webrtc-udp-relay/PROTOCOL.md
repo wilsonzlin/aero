@@ -498,6 +498,8 @@ Relay → client:
 
 The server waits up to a small timeout (configurable; default ~2s) for ICE gathering to complete so that candidates are embedded in the returned SDP. If gathering does not complete in time, the server returns an answer anyway; the returned SDP may be missing candidates and connectivity may fail.
 
+Because this endpoint does not support trickle ICE, clients should also wait for ICE gathering to complete before sending the offer, otherwise the offer may not contain usable candidates.
+
 When `AUTH_MODE=jwt`, the relay enforces at most one active session per JWT `sid`. If another session is already active for the same `sid`, this endpoint returns **409 Conflict** with a JSON error body like:
 
 ```json
