@@ -663,6 +663,15 @@ name = "aero-types"
 version = "0.1.0"
 
 [[package]]
+name = "aero-udp-relay-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aero-usb"
 version = "0.1.0"
 dependencies = [
