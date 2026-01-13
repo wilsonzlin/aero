@@ -488,6 +488,12 @@ Relay → client:
 
 The server waits up to a small timeout (configurable; default ~2s) for ICE gathering to complete so that candidates are embedded in the returned SDP. If gathering does not complete in time, the server returns an answer anyway; the returned SDP may be missing candidates and connectivity may fail.
 
+When `AUTH_MODE=jwt`, the relay enforces at most one active session per JWT `sid`. If another session is already active for the same `sid`, this endpoint returns **409 Conflict** with a JSON error body like:
+
+```json
+{"code":"session_already_active","message":"session already active"}
+```
+
 ### POST /session (session pre-allocation)
 
 This endpoint reserves a server-side session ID ahead of time (primarily for
@@ -633,7 +639,7 @@ Error `code` values are currently best-effort and intended for debugging:
 - `unexpected_message` (invalid ordering such as candidate-before-offer)
 - `unauthorized` (authentication required / invalid credentials)
 - `too_many_sessions`
-- `session_already_active` (an active session already exists for this JWT `sid` when `AUTH_MODE=jwt`)
+- `session_already_active` (when `AUTH_MODE=jwt`: an active session already exists for this JWT `sid`)
 - `rate_limited`
 - `internal_error`
 
@@ -674,6 +680,12 @@ Response body:
 ```
 
 The server waits up to a small timeout (configurable; default ~2s) for ICE gathering to complete before returning the answer SDP. If gathering does not complete in time, the returned SDP may be missing candidates and connectivity may fail.
+
+When `AUTH_MODE=jwt`, the relay enforces at most one active session per JWT `sid`. If another session is already active for the same `sid`, this endpoint returns **409 Conflict** with a JSON error body like:
+
+```json
+{"code":"session_already_active","message":"session already active"}
+```
 
 Limitations:
 
