@@ -333,7 +333,6 @@ impl SnapshotTarget for Machine {
                 .cpu_index_by_apic_id(apic_id)
                 .ok_or(SnapshotError::Corrupt("unknown APIC ID"))?;
         }
-
         Ok(())
     }
 

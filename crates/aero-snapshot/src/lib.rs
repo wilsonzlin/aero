@@ -38,6 +38,7 @@ const DUPLICATE_DEVICE_ENTRY: &str = "duplicate device entry (id/version/flags m
 const DUPLICATE_DISK_ENTRY: &str = "duplicate disk entry (disk_id must be unique)";
 const DUPLICATE_APIC_ID: &str = "duplicate APIC ID in CPU list (apic_id must be unique)";
 const DUPLICATE_APIC_ID_MMU: &str = "duplicate APIC ID in MMU list (apic_id must be unique)";
+const MMUS_CPUS_MISMATCH: &str = "MMUS entries do not match CPUS apic_id list";
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SaveOptions {
@@ -226,7 +227,10 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     if cpus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
         return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID));
     }
-    if cpus.len() == 1 && cpus[0].apic_id == 0 && cpus[0].internal_state.is_empty() {
+    let use_legacy_cpu_section =
+        cpus.len() == 1 && cpus[0].apic_id == 0 && cpus[0].internal_state.is_empty();
+
+    if use_legacy_cpu_section {
         write_section(w, SectionId::CPU, 2, 0, |w| cpus[0].cpu.encode_v2(w))?;
     } else {
         write_section(w, SectionId::CPUS, 2, 0, |w| {
@@ -256,6 +260,7 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
         })?;
     }
 
+    // MMU/MMUS section.
     let mut mmus = source.mmu_states();
     if mmus.is_empty() {
         return Err(SnapshotError::Corrupt("missing MMU entry"));
@@ -266,6 +271,15 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     mmus.sort_by_key(|m| m.apic_id);
     if mmus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
         return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID_MMU));
+    }
+
+    if mmus.len() != cpus.len()
+        || mmus
+            .iter()
+            .zip(cpus.iter())
+            .any(|(mmu, cpu)| mmu.apic_id != cpu.apic_id)
+    {
+        return Err(SnapshotError::Corrupt(MMUS_CPUS_MISMATCH));
     }
 
     // Preserve the legacy single-CPU MMU section encoding when representable.
@@ -280,7 +294,7 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
             w.write_u32_le(count)?;
 
             for mmu in &mmus {
-                // Match the CPUS section entry encoding strategy: prefix each entry with a length
+                // Match the `CPUS` section entry encoding strategy: prefix each entry with a length
                 // so we can skip forward-compatible additions without buffering the entire list.
                 let len_pos = w.stream_position()?;
                 w.write_u64_le(0)?; // placeholder entry_len
