@@ -591,6 +591,10 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
     aerogpu_test::PrintfStdout(
         "Switches the desktop display mode to an alternate supported resolution and back, validating AeroGPU scanout "
         "state (cached/MMIO) tracks the desktop resolution after each switch.");
+    aerogpu_test::PrintfStdout("Notes:");
+    aerogpu_test::PrintfStdout("  - Requires a 32bpp desktop mode (dmBitsPerPel=32).");
+    aerogpu_test::PrintfStdout("  - Requires at least two modes reported by EnumDisplaySettingsW.");
+    aerogpu_test::PrintfStdout("  - Temporarily changes the desktop resolution; will best-effort restore on exit/crash.");
     return 0;
   }
 
