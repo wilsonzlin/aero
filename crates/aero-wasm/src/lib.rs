@@ -2661,6 +2661,33 @@ impl Machine {
             .map_err(js_error)
     }
 
+    /// Open (or create) an OPFS-backed disk image, attach it as the machine's canonical disk, and
+    /// set the snapshot overlay reference (`DISKS` entry) for `disk_id=0`.
+    ///
+    /// When using OPFS-based disks, recording the overlay ref is important so that snapshot/restore
+    /// flows can re-open and re-attach the disk based solely on the snapshot contents.
+    ///
+    /// This helper sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// (i.e. a single-file raw/aerospar image; no separate overlay file).
+    ///
+    /// This method is intentionally separate from [`Machine::set_disk_opfs`] so callers do not
+    /// silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_opfs_and_set_overlay_ref(
+        &mut self,
+        path: String,
+        create: bool,
+        size_bytes: u64,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.set_disk_opfs(path, create, size_bytes).await?;
+        self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
+        Ok(())
+    }
+
     /// Open an existing OPFS-backed disk image (using the file's current size) and attach it as the
     /// machine's canonical disk.
     ///
@@ -2724,6 +2751,26 @@ impl Machine {
             .map_err(js_error)
     }
 
+    /// Open an existing OPFS-backed disk image, attach it as the machine's canonical disk, and set
+    /// the snapshot overlay reference (`DISKS` entry) for `disk_id=0`.
+    ///
+    /// This sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// This method is intentionally separate from [`Machine::set_disk_opfs_existing`] so callers do
+    /// not silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_opfs_existing_and_set_overlay_ref(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.set_disk_opfs_existing(path).await?;
+        self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
+        Ok(())
+    }
+
     /// Create a new OPFS-backed Aero sparse disk (`.aerospar`) and attach it as the machine's
     /// canonical disk.
     ///
@@ -2756,6 +2803,29 @@ impl Machine {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Create a new OPFS-backed Aero sparse disk (`.aerospar`), attach it as the machine's
+    /// canonical disk, and set the snapshot overlay reference (`DISKS` entry) for `disk_id=0`.
+    ///
+    /// This sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// This method is intentionally separate from [`Machine::set_disk_aerospar_opfs_create`] so
+    /// callers do not silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_aerospar_opfs_create_and_set_overlay_ref(
+        &mut self,
+        path: String,
+        disk_size_bytes: u64,
+        block_size_bytes: u32,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.set_disk_aerospar_opfs_create(path, disk_size_bytes, block_size_bytes)
+            .await?;
+        self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
+        Ok(())
+    }
+
     /// Open an existing OPFS-backed Aero sparse disk (`.aerospar`) and attach it as the machine's
     /// canonical disk.
     #[cfg(target_arch = "wasm32")]
@@ -2763,11 +2833,31 @@ impl Machine {
         let storage = aero_opfs::OpfsByteStorage::open(&path, false)
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let disk =
-            aero_storage::AeroSparseDisk::open(storage).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let disk = aero_storage::AeroSparseDisk::open(storage)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.inner
             .set_disk_backend(Box::new(disk))
             .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Open an existing OPFS-backed Aero sparse disk (`.aerospar`), attach it as the machine's
+    /// canonical disk, and set the snapshot overlay reference (`DISKS` entry) for `disk_id=0`.
+    ///
+    /// This sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// This method is intentionally separate from [`Machine::set_disk_aerospar_opfs_open`] so
+    /// callers do not silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_aerospar_opfs_open_and_set_overlay_ref(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.set_disk_aerospar_opfs_open(path).await?;
+        self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
+        Ok(())
     }
 
     /// Create an OPFS-backed copy-on-write disk: `base_path` (read-only, any supported format) +
@@ -2785,19 +2875,47 @@ impl Machine {
         let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let base_disk =
-            aero_storage::DiskImage::open_auto(base_storage).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let base_disk = aero_storage::DiskImage::open_auto(base_storage)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_path, true)
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        let disk = aero_storage::AeroCowDisk::create(base_disk, overlay_backend, overlay_block_size_bytes)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let disk = aero_storage::AeroCowDisk::create(
+            base_disk,
+            overlay_backend,
+            overlay_block_size_bytes,
+        )
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         self.inner
             .set_disk_backend(Box::new(disk))
             .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Create an OPFS-backed copy-on-write disk, attach it as the machine's canonical disk, and
+    /// set the snapshot overlay reference (`DISKS` entry) for `disk_id=0`.
+    ///
+    /// This sets:
+    /// - `base_image = base_path`
+    /// - `overlay_image = overlay_path`
+    ///
+    /// This method is intentionally separate from [`Machine::set_disk_cow_opfs_create`] so callers
+    /// do not silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_cow_opfs_create_and_set_overlay_ref(
+        &mut self,
+        base_path: String,
+        overlay_path: String,
+        overlay_block_size_bytes: u32,
+    ) -> Result<(), JsValue> {
+        let base_ref = base_path.clone();
+        let overlay_ref = overlay_path.clone();
+        self.set_disk_cow_opfs_create(base_path, overlay_path, overlay_block_size_bytes)
+            .await?;
+        self.set_ahci_port0_disk_overlay_ref(&base_ref, &overlay_ref);
+        Ok(())
     }
 
     /// Open an existing OPFS-backed copy-on-write disk: `base_path` (read-only) + `overlay_path`
@@ -2811,8 +2929,8 @@ impl Machine {
         let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let base_disk =
-            aero_storage::DiskImage::open_auto(base_storage).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let base_disk = aero_storage::DiskImage::open_auto(base_storage)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_path, false)
             .await
@@ -2824,6 +2942,28 @@ impl Machine {
         self.inner
             .set_disk_backend(Box::new(disk))
             .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Open an OPFS-backed copy-on-write disk, attach it as the machine's canonical disk, and set
+    /// the snapshot overlay reference (`DISKS` entry) for `disk_id=0`.
+    ///
+    /// This sets:
+    /// - `base_image = base_path`
+    /// - `overlay_image = overlay_path`
+    ///
+    /// This method is intentionally separate from [`Machine::set_disk_cow_opfs_open`] so callers do
+    /// not silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_cow_opfs_open_and_set_overlay_ref(
+        &mut self,
+        base_path: String,
+        overlay_path: String,
+    ) -> Result<(), JsValue> {
+        let base_ref = base_path.clone();
+        let overlay_ref = overlay_path.clone();
+        self.set_disk_cow_opfs_open(base_path, overlay_path).await?;
+        self.set_ahci_port0_disk_overlay_ref(&base_ref, &overlay_ref);
+        Ok(())
     }
 
     pub fn run_slice(&mut self, max_insts: u32) -> RunExit {
