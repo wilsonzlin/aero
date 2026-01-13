@@ -7,6 +7,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     cmake_minimum_required(VERSION 3.15)
     project(virtiosnd_host_tests C)
     enable_testing()
+
+    message(STATUS "Note: configuring drivers/windows7/virtio-snd/tests/host standalone builds a subset of virtio-snd host tests (does not include virtiosnd_proto_tests). For the full host-buildable suite, configure drivers/windows7/virtio-snd/tests instead.")
 endif()
 
 set(CMAKE_C_STANDARD 99)
