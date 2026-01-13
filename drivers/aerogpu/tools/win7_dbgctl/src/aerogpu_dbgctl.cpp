@@ -18,6 +18,7 @@
 
 #include "aerogpu_pci.h"
 #include "aerogpu_dbgctl_escape.h"
+#include "aerogpu_cmd.h"
 #include "aerogpu_feature_decode.h"
 #include "aerogpu_umd_private.h"
 #include "aerogpu_fence_watch_math.h"
@@ -200,7 +201,7 @@ static volatile LONG g_skip_close_adapter = 0;
 #ifndef AEROGPU_ESCAPE_OP_READ_GPA
 // Expected to be provided by the KMD companion change. Keep a local fallback so this tool
 // continues to build against older protocol headers.
-#define AEROGPU_ESCAPE_OP_READ_GPA 11u
+#define AEROGPU_ESCAPE_OP_READ_GPA 13u
 #endif
 
 #pragma pack(push, 1)
@@ -255,6 +256,9 @@ static bool AddU64(uint64_t a, uint64_t b, uint64_t *out) {
   return true;
 }
 
+static const uint64_t kDumpLastCmdDefaultMaxBytes = 1024ull * 1024ull;      // 1 MiB
+static const uint64_t kDumpLastCmdHardMaxBytes = 64ull * 1024ull * 1024ull; // 64 MiB
+
 static void PrintUsage() {
   fwprintf(stderr,
            L"Usage:\n"
@@ -275,6 +279,7 @@ static void PrintUsage() {
            L"  --dump-scanout-bmp PATH\n"
            L"  --query-cursor  (alias: --dump-cursor)\n"
            L"  --dump-ring\n"
+           L"  --dump-last-cmd [--index-from-tail K] --out <path> [--force]\n"
            L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
            L"      [--csv <path>]  (write CreateAllocation trace as CSV)\n"
@@ -2384,6 +2389,380 @@ static int DoWatchRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t r
   return 0;
 }
 
+static bool AddU64NoOverflow(uint64_t a, uint64_t b, uint64_t *out) {
+  if (b > UINT64_MAX - a) {
+    return false;
+  }
+  if (out) {
+    *out = a + b;
+  }
+  return true;
+}
+
+static wchar_t *HeapWcsCatSuffix(const wchar_t *base, const wchar_t *suffix) {
+  if (!base || !suffix) {
+    return NULL;
+  }
+
+  const size_t baseLen = wcslen(base);
+  const size_t suffixLen = wcslen(suffix);
+  const size_t totalLen = baseLen + suffixLen + 1;
+  const size_t kMax = (size_t)-1;
+  if (totalLen == 0 || totalLen > (kMax / sizeof(wchar_t))) {
+    return NULL;
+  }
+
+  wchar_t *out = (wchar_t *)HeapAlloc(GetProcessHeap(), 0, totalLen * sizeof(wchar_t));
+  if (!out) {
+    return NULL;
+  }
+  memcpy(out, base, baseLen * sizeof(wchar_t));
+  memcpy(out + baseLen, suffix, (suffixLen + 1) * sizeof(wchar_t));
+  return out;
+}
+
+static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_t gpa, uint64_t sizeBytes,
+                              const wchar_t *outPath, uint32_t *outFirstDword) {
+  if (!f || !outPath) {
+    return 1;
+  }
+
+  FILE *fp = NULL;
+  errno_t ferr = _wfopen_s(&fp, outPath, L"wb");
+  if (ferr != 0 || !fp) {
+    fwprintf(stderr, L"Failed to open output file: %s (errno=%d)\n", outPath, (int)ferr);
+    return 2;
+  }
+
+  uint64_t remaining = sizeBytes;
+  uint64_t curGpa = gpa;
+
+  bool gotFirst = false;
+  uint32_t firstDword = 0;
+
+  while (remaining != 0) {
+    uint32_t chunk = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+    if (remaining < (uint64_t)chunk) {
+      chunk = (uint32_t)remaining;
+    }
+
+    aerogpu_escape_read_gpa_inout q;
+    ZeroMemory(&q, sizeof(q));
+    q.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.hdr.op = AEROGPU_ESCAPE_OP_READ_GPA;
+    q.hdr.size = sizeof(q);
+    q.hdr.reserved0 = 0;
+    q.gpa = (aerogpu_escape_u64)curGpa;
+    q.size_bytes = chunk;
+    q.reserved0 = 0;
+
+    const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+    if (!NT_SUCCESS(st)) {
+      PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, st);
+      fclose(fp);
+      return 2;
+    }
+
+    const NTSTATUS op = (NTSTATUS)q.status;
+    uint32_t bytesRead = q.bytes_copied;
+    if (bytesRead > chunk) {
+      bytesRead = chunk;
+    }
+    if (bytesRead > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+      bytesRead = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+    }
+
+    if (!NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY) {
+      PrintNtStatus(L"read-gpa operation failed", f, op);
+      fclose(fp);
+      return 2;
+    }
+    if (bytesRead == 0) {
+      fwprintf(stderr, L"read-gpa returned 0 bytes at gpa=0x%I64x (status=0x%08lx)\n",
+               (unsigned long long)curGpa, (unsigned long)op);
+      fclose(fp);
+      return 2;
+    }
+
+    if (!gotFirst && outFirstDword && bytesRead >= 4) {
+      memcpy(&firstDword, q.data, 4);
+      gotFirst = true;
+    }
+
+    const size_t wrote = fwrite(q.data, 1, bytesRead, fp);
+    if (wrote != (size_t)bytesRead) {
+      fwprintf(stderr, L"Failed to write to output file: %s\n", outPath);
+      fclose(fp);
+      return 2;
+    }
+
+    curGpa += (uint64_t)bytesRead;
+    remaining -= (uint64_t)bytesRead;
+
+    if (op == STATUS_PARTIAL_COPY) {
+      // We made some progress but did not satisfy the request; treat as failure so callers
+      // don't mistakenly interpret the output as complete.
+      PrintNtStatus(L"read-gpa partial copy", f, op);
+      fclose(fp);
+      return 2;
+    }
+  }
+
+  fclose(fp);
+  if (outFirstDword && gotFirst) {
+    *outFirstDword = firstDword;
+  }
+  return 0;
+}
+
+static const wchar_t *RingFormatToString(uint32_t fmt) {
+  switch (fmt) {
+  case AEROGPU_DBGCTL_RING_FORMAT_LEGACY:
+    return L"legacy";
+  case AEROGPU_DBGCTL_RING_FORMAT_AGPU:
+    return L"agpu";
+  default:
+    return L"unknown";
+  }
+}
+
+static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ringId, uint32_t indexFromTail,
+                         const wchar_t *outPath, bool force) {
+  if (!outPath || !outPath[0]) {
+    fwprintf(stderr, L"--dump-last-cmd requires --out <path>\n");
+    return 1;
+  }
+
+  // Prefer the v2 dump-ring packet (AGPU tail window + alloc_table fields).
+  aerogpu_escape_dump_ring_v2_inout q2;
+  ZeroMemory(&q2, sizeof(q2));
+  q2.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q2.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING_V2;
+  q2.hdr.size = sizeof(q2);
+  q2.hdr.reserved0 = 0;
+  q2.ring_id = ringId;
+  q2.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q2, sizeof(q2));
+
+  aerogpu_dbgctl_ring_desc_v2 d;
+  ZeroMemory(&d, sizeof(d));
+  uint32_t selectedRingIndex = 0;
+  uint32_t ringFormat = AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN;
+  uint32_t head = 0;
+  uint32_t tail = 0;
+  uint32_t ringSizeBytes = 0;
+  uint32_t descCount = 0;
+
+  if (NT_SUCCESS(st)) {
+    ringFormat = q2.ring_format;
+    head = q2.head;
+    tail = q2.tail;
+    ringSizeBytes = q2.ring_size_bytes;
+    descCount = q2.desc_count;
+    if (descCount > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+      descCount = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+    }
+    if (descCount == 0) {
+      wprintf(L"Ring %lu (%s): no descriptors available\n", (unsigned long)ringId, RingFormatToString(ringFormat));
+      return 0;
+    }
+    if (indexFromTail >= descCount) {
+      fwprintf(stderr, L"--index-from-tail %lu out of range (ring returned %lu descriptors)\n",
+               (unsigned long)indexFromTail, (unsigned long)descCount);
+      return 1;
+    }
+
+    const uint32_t idx = (descCount - 1u) - indexFromTail;
+    d = q2.desc[idx];
+    if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU && tail >= descCount) {
+      selectedRingIndex = (tail - descCount) + idx;
+    } else {
+      selectedRingIndex = idx;
+    }
+  } else if (st == STATUS_NOT_SUPPORTED) {
+    // Fallback to legacy dump-ring for older KMDs.
+    aerogpu_escape_dump_ring_inout q1;
+    ZeroMemory(&q1, sizeof(q1));
+    q1.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q1.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING;
+    q1.hdr.size = sizeof(q1);
+    q1.hdr.reserved0 = 0;
+    q1.ring_id = ringId;
+    q1.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+
+    st = SendAerogpuEscape(f, hAdapter, &q1, sizeof(q1));
+    if (!NT_SUCCESS(st)) {
+      PrintNtStatus(L"D3DKMTEscape(dump-ring) failed", f, st);
+      return 2;
+    }
+
+    ringFormat = AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN;
+    head = q1.head;
+    tail = q1.tail;
+    ringSizeBytes = q1.ring_size_bytes;
+    descCount = q1.desc_count;
+    if (descCount > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+      descCount = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+    }
+    if (descCount == 0) {
+      wprintf(L"Ring %lu: no descriptors available\n", (unsigned long)ringId);
+      return 0;
+    }
+    if (indexFromTail >= descCount) {
+      fwprintf(stderr, L"--index-from-tail %lu out of range (ring returned %lu descriptors)\n",
+               (unsigned long)indexFromTail, (unsigned long)descCount);
+      return 1;
+    }
+
+    const uint32_t idx = (descCount - 1u) - indexFromTail;
+    const aerogpu_dbgctl_ring_desc &d1 = q1.desc[idx];
+
+    d.fence = d1.signal_fence;
+    d.cmd_gpa = d1.cmd_gpa;
+    d.cmd_size_bytes = d1.cmd_size_bytes;
+    d.flags = d1.flags;
+    d.alloc_table_gpa = 0;
+    d.alloc_table_size_bytes = 0;
+    d.reserved0 = 0;
+    selectedRingIndex = idx;
+  } else {
+    PrintNtStatus(L"D3DKMTEscape(dump-ring-v2) failed", f, st);
+    return 2;
+  }
+
+  wprintf(L"Ring %lu (%s)\n", (unsigned long)ringId, RingFormatToString(ringFormat));
+  wprintf(L"  size: %lu bytes\n", (unsigned long)ringSizeBytes);
+  wprintf(L"  head: 0x%08lx\n", (unsigned long)head);
+  wprintf(L"  tail: 0x%08lx\n", (unsigned long)tail);
+  wprintf(L"  selected: index_from_tail=%lu -> ringIndex=%lu fence=0x%I64x cmdGpa=0x%I64x cmdBytes=%lu flags=0x%08lx\n",
+          (unsigned long)indexFromTail, (unsigned long)selectedRingIndex, (unsigned long long)d.fence,
+          (unsigned long long)d.cmd_gpa, (unsigned long)d.cmd_size_bytes, (unsigned long)d.flags);
+  if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+    wprintf(L"            allocTableGpa=0x%I64x allocTableBytes=%lu\n", (unsigned long long)d.alloc_table_gpa,
+            (unsigned long)d.alloc_table_size_bytes);
+  }
+
+  const uint64_t cmdGpa = (uint64_t)d.cmd_gpa;
+  const uint64_t cmdSizeBytes = (uint64_t)d.cmd_size_bytes;
+  if (cmdGpa == 0 && cmdSizeBytes == 0) {
+    wprintf(L"  cmd: empty (cmd_gpa=0)\n");
+    FILE *fp = NULL;
+    errno_t ferr = _wfopen_s(&fp, outPath, L"wb");
+    if (ferr != 0 || !fp) {
+      fwprintf(stderr, L"Failed to create output file: %s (errno=%d)\n", outPath, (int)ferr);
+      return 2;
+    }
+    fclose(fp);
+    wprintf(L"  cmd dumped: %s (empty)\n", outPath);
+  } else {
+    if (cmdGpa == 0 || cmdSizeBytes == 0) {
+      fwprintf(stderr, L"Invalid cmd_gpa/cmd_size_bytes pair: cmd_gpa=0x%I64x cmd_size_bytes=%I64u\n",
+               (unsigned long long)cmdGpa, (unsigned long long)cmdSizeBytes);
+      return 2;
+    }
+    if (cmdSizeBytes > kDumpLastCmdHardMaxBytes) {
+      fwprintf(stderr, L"Refusing to dump %I64u bytes (hard cap %I64u bytes)\n", (unsigned long long)cmdSizeBytes,
+               (unsigned long long)kDumpLastCmdHardMaxBytes);
+      return 2;
+    }
+    if (cmdSizeBytes > kDumpLastCmdDefaultMaxBytes && !force) {
+      fwprintf(stderr, L"Refusing to dump %I64u bytes (default cap %I64u bytes). Use --force to override.\n",
+               (unsigned long long)cmdSizeBytes, (unsigned long long)kDumpLastCmdDefaultMaxBytes);
+      return 2;
+    }
+    if (!AddU64NoOverflow(cmdGpa, cmdSizeBytes, NULL)) {
+      fwprintf(stderr, L"Invalid cmd_gpa/cmd_size_bytes range (overflow): gpa=0x%I64x size=%I64u\n",
+               (unsigned long long)cmdGpa, (unsigned long long)cmdSizeBytes);
+      return 2;
+    }
+
+    uint32_t firstDword = 0;
+    const int dumpRc = DumpGpaRangeToFile(f, hAdapter, cmdGpa, cmdSizeBytes, outPath, &firstDword);
+    if (dumpRc != 0) {
+      return dumpRc;
+    }
+    wprintf(L"  cmd dumped: %s (%I64u bytes)\n", outPath, (unsigned long long)cmdSizeBytes);
+
+    if (cmdSizeBytes >= 4) {
+      if (firstDword == AEROGPU_CMD_STREAM_MAGIC) {
+        wprintf(L"  cmd stream: magic=0x%08lx (ACMD)\n", (unsigned long)firstDword);
+      } else {
+        wprintf(L"  cmd stream: magic=0x%08lx (expected 0x%08lx)\n", (unsigned long)firstDword,
+                (unsigned long)AEROGPU_CMD_STREAM_MAGIC);
+      }
+    }
+  }
+
+  wchar_t *summaryPath = HeapWcsCatSuffix(outPath, L".txt");
+  if (summaryPath) {
+    FILE *sf = NULL;
+    errno_t serr = _wfopen_s(&sf, summaryPath, L"wt");
+    if (serr == 0 && sf) {
+      fwprintf(sf, L"ring_id=%lu\n", (unsigned long)ringId);
+      fwprintf(sf, L"ring_format=%s\n", RingFormatToString(ringFormat));
+      fwprintf(sf, L"head=0x%08lx\n", (unsigned long)head);
+      fwprintf(sf, L"tail=0x%08lx\n", (unsigned long)tail);
+      fwprintf(sf, L"selected_index_from_tail=%lu\n", (unsigned long)indexFromTail);
+      fwprintf(sf, L"selected_ring_index=%lu\n", (unsigned long)selectedRingIndex);
+      fwprintf(sf, L"fence=0x%I64x\n", (unsigned long long)d.fence);
+      fwprintf(sf, L"flags=0x%08lx\n", (unsigned long)d.flags);
+      fwprintf(sf, L"cmd_gpa=0x%I64x\n", (unsigned long long)d.cmd_gpa);
+      fwprintf(sf, L"cmd_size_bytes=%lu\n", (unsigned long)d.cmd_size_bytes);
+      if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+        fwprintf(sf, L"alloc_table_gpa=0x%I64x\n", (unsigned long long)d.alloc_table_gpa);
+        fwprintf(sf, L"alloc_table_size_bytes=%lu\n", (unsigned long)d.alloc_table_size_bytes);
+      }
+      fclose(sf);
+    }
+    HeapFree(GetProcessHeap(), 0, summaryPath);
+  }
+
+  // Optional alloc table dump (AGPU only).
+  if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+    const uint64_t allocGpa = (uint64_t)d.alloc_table_gpa;
+    const uint64_t allocSizeBytes = (uint64_t)d.alloc_table_size_bytes;
+    if (allocGpa == 0 && allocSizeBytes == 0) {
+      return 0;
+    }
+    if (allocGpa == 0 || allocSizeBytes == 0) {
+      fwprintf(stderr, L"Invalid alloc_table_gpa/alloc_table_size_bytes pair: gpa=0x%I64x size=%I64u\n",
+               (unsigned long long)allocGpa, (unsigned long long)allocSizeBytes);
+      return 2;
+    }
+    if (allocSizeBytes > kDumpLastCmdHardMaxBytes) {
+      fwprintf(stderr, L"Refusing to dump alloc table %I64u bytes (hard cap %I64u bytes)\n",
+               (unsigned long long)allocSizeBytes, (unsigned long long)kDumpLastCmdHardMaxBytes);
+      return 2;
+    }
+    if (allocSizeBytes > kDumpLastCmdDefaultMaxBytes && !force) {
+      fwprintf(stderr,
+               L"Refusing to dump alloc table %I64u bytes (default cap %I64u bytes). Use --force to override.\n",
+               (unsigned long long)allocSizeBytes, (unsigned long long)kDumpLastCmdDefaultMaxBytes);
+      return 2;
+    }
+    if (!AddU64NoOverflow(allocGpa, allocSizeBytes, NULL)) {
+      fwprintf(stderr, L"Invalid alloc table range (overflow): gpa=0x%I64x size=%I64u\n",
+               (unsigned long long)allocGpa, (unsigned long long)allocSizeBytes);
+      return 2;
+    }
+
+    wchar_t *allocPath = HeapWcsCatSuffix(outPath, L".alloc_table.bin");
+    if (!allocPath) {
+      fwprintf(stderr, L"Out of memory building alloc table output path\n");
+      return 2;
+    }
+    const int dumpAllocRc = DumpGpaRangeToFile(f, hAdapter, allocGpa, allocSizeBytes, allocPath, NULL);
+    if (dumpAllocRc == 0) {
+      wprintf(L"  alloc table dumped: %s\n", allocPath);
+    }
+    HeapFree(GetProcessHeap(), 0, allocPath);
+    return dumpAllocRc;
+  }
+
+  return 0;
+}
+
 static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId,
                         aerogpu_escape_query_vblank_out *out, bool *supportedOut) {
   ZeroMemory(out, sizeof(*out));
@@ -3000,6 +3379,9 @@ int wmain(int argc, wchar_t **argv) {
   uint32_t readGpaSizeBytes = 0;
   const wchar_t *readGpaOutFile = NULL;
   bool readGpaForce = false;
+  const wchar_t *dumpLastCmdOutPath = NULL;
+  uint32_t dumpLastCmdIndexFromTail = 0;
+  bool dumpLastCmdForce = false;
   enum {
     CMD_NONE = 0,
     CMD_LIST_DISPLAYS,
@@ -3013,6 +3395,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_CURSOR,
     CMD_DUMP_RING,
     CMD_WATCH_RING,
+    CMD_DUMP_LAST_CMD,
     CMD_DUMP_CREATEALLOCATION,
     CMD_DUMP_VBLANK,
     CMD_WAIT_VBLANK,
@@ -3093,12 +3476,15 @@ int wmain(int argc, wchar_t **argv) {
         PrintUsage();
         return 1;
       }
-      readGpaOutFile = argv[++i];
+      const wchar_t *out = argv[++i];
+      readGpaOutFile = out;
+      dumpLastCmdOutPath = out;
       continue;
     }
 
     if (wcscmp(a, L"--force") == 0) {
       readGpaForce = true;
+      dumpLastCmdForce = true;
       continue;
     }
 
@@ -3209,6 +3595,23 @@ int wmain(int argc, wchar_t **argv) {
         return 1;
       }
       createAllocJsonPath = argv[++i];
+
+      continue;
+    }
+
+    if (wcscmp(a, L"--index-from-tail") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--index-from-tail requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      dumpLastCmdIndexFromTail = (uint32_t)wcstoul(arg, &end, 0);
+      if (!end || end == arg || *end != 0) {
+        fwprintf(stderr, L"Invalid --index-from-tail value: %s\n", arg);
+        return 1;
+      }
       continue;
     }
 
@@ -3280,6 +3683,12 @@ int wmain(int argc, wchar_t **argv) {
     }
     if (wcscmp(a, L"--watch-ring") == 0) {
       if (!SetCommand(CMD_WATCH_RING)) {
+        return 1;
+      }
+      continue;
+    }
+    if (wcscmp(a, L"--dump-last-cmd") == 0) {
+      if (!SetCommand(CMD_DUMP_LAST_CMD)) {
         return 1;
       }
       continue;
@@ -3356,6 +3765,25 @@ int wmain(int argc, wchar_t **argv) {
     }
     if (!watchIntervalSet) {
       fwprintf(stderr, L"--watch-fence requires --interval-ms M\n");
+      PrintUsage();
+      return 1;
+    }
+  }
+  if (cmd == CMD_WATCH_RING) {
+    if (!watchSamplesSet) {
+      fwprintf(stderr, L"--watch-ring requires --samples N\n");
+      PrintUsage();
+      return 1;
+    }
+    if (!watchIntervalSet) {
+      fwprintf(stderr, L"--watch-ring requires --interval-ms M\n");
+      PrintUsage();
+      return 1;
+    }
+  }
+  if (cmd == CMD_DUMP_LAST_CMD) {
+    if (!dumpLastCmdOutPath || !dumpLastCmdOutPath[0]) {
+      fwprintf(stderr, L"--dump-last-cmd requires --out <path>\n");
       PrintUsage();
       return 1;
     }
@@ -3449,6 +3877,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_WATCH_RING:
     rc = DoWatchRing(&f, open.hAdapter, ringId, watchSamples, watchIntervalMs);
+    break;
+  case CMD_DUMP_LAST_CMD:
+    rc = DoDumpLastCmd(&f, open.hAdapter, ringId, dumpLastCmdIndexFromTail, dumpLastCmdOutPath, dumpLastCmdForce);
     break;
   case CMD_DUMP_CREATEALLOCATION:
     rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath, createAllocJsonPath);

@@ -36,6 +36,7 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_QUERY_CURSOR 11u
 /* Query performance/health counters snapshot. */
 #define AEROGPU_ESCAPE_OP_QUERY_PERF 12u
+/* Debug-only: read guest physical memory. */
 #define AEROGPU_ESCAPE_OP_READ_GPA 13u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u

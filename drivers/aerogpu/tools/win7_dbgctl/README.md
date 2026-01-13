@@ -94,9 +94,17 @@ Minimum supported commands:
   - `flags`
   - (AGPU only) `alloc_table_gpa` / `alloc_table_size_bytes`
   
-   Note: for the AGPU (versioned) ring format, the v2 dump returns a **recent tail window** of descriptors ending at `tail-1`
-   (newest is `desc[desc_count-1]`). This is intentionally not limited to the pending `[head, tail)` region so very fast
-   devices/emulators still expose the most recent submission(s) to tooling/tests.
+  Note: for the AGPU (versioned) ring format, the v2 dump returns a **recent tail window** of descriptors ending at `tail-1`
+  (newest is `desc[desc_count-1]`). This is intentionally not limited to the pending `[head, tail)` region so very fast
+  devices/emulators still expose the most recent submission(s) to tooling/tests.
+
+- `aerogpu_dbgctl --dump-last-cmd --out <path>`
+  Dumps the raw bytes of the most recent command stream buffer (`cmd_gpa .. cmd_gpa+cmd_size_bytes`) from the ring
+  into `<path>` (binary). Use `--index-from-tail K` to select older submissions (0 = newest).
+  On AGPU rings, if the submission has an allocation table (`alloc_table_gpa/alloc_table_size_bytes`), it is also dumped
+  to `<path>.alloc_table.bin`.
+
+  Safety: by default dbgctl refuses to dump buffers larger than 1 MiB; use `--force` to override.
 
 - `aerogpu_dbgctl --watch-ring --samples N --interval-ms M [--ring-id N]`  
   Polls ring head/tail in a loop and prints **one line per sample** with:
@@ -171,6 +179,8 @@ aerogpu_dbgctl --read-gpa 0x12340000 --size 4096 --force --out dump.bin
 aerogpu_dbgctl --query-cursor
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --watch-ring --ring-id 0 --samples 200 --interval-ms 50
+aerogpu_dbgctl --dump-last-cmd --out last_cmd.bin
+aerogpu_dbgctl --dump-last-cmd --index-from-tail 1 --out prev_cmd.bin
 aerogpu_dbgctl --dump-createalloc
 aerogpu_dbgctl --dump-createalloc --csv C:\createalloc.csv
 aerogpu_dbgctl --dump-createalloc --json C:\createalloc.json
@@ -259,8 +269,8 @@ Escape ops used:
 - `AEROGPU_ESCAPE_OP_QUERY_PERF` → `--query-perf`
 - `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` → `--query-scanout`, `--dump-scanout-bmp`
 - `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`
-- `AEROGPU_ESCAPE_OP_READ_GPA` → `--read-gpa`, `--dump-scanout-bmp`
-- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring` / `--watch-ring`
+- `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`, `--watch-ring`, `--dump-last-cmd`
+- `AEROGPU_ESCAPE_OP_READ_GPA` → `--read-gpa`, `--dump-scanout-bmp`, `--dump-last-cmd`
 - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` → `--dump-createalloc`
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
 - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` → `--map-shared-handle`
