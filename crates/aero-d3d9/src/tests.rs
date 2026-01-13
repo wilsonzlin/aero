@@ -964,9 +964,9 @@ fn parses_rdef_resource_bindings() {
     chunk.extend_from_slice(b"tex0\0");
 
     let rdef = parse_rdef_chunk(&chunk).unwrap();
-    assert_eq!(rdef.resources.len(), 1);
-    assert_eq!(rdef.resources[0].name, "tex0");
-    assert_eq!(rdef.resources[0].bind_point, 3);
+    assert_eq!(rdef.bound_resources.len(), 1);
+    assert_eq!(rdef.bound_resources[0].name, "tex0");
+    assert_eq!(rdef.bound_resources[0].bind_point, 3);
 }
 
 #[test]
