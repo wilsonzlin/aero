@@ -89,6 +89,14 @@ aerogpu_dbgctl --dump-last-cmd --out C:\cmd.bin
 
 Then copy `C:\cmd.bin` (and `C:\cmd.bin.alloc_table.bin` if present) to the host machine (shared folder, ISO, whatever is convenient).
 
+Notes:
+
+- If dbgctl refuses to dump due to the default size cap (1 MiB), re-run with `--force`:
+  - `aerogpu_dbgctl --dump-last-cmd --out C:\cmd.bin --force`
+- To capture an older submission (for example if the newest submit is a tiny no-op), use `--index-from-tail`:
+  - `aerogpu_dbgctl --dump-last-cmd --index-from-tail 1 --out C:\prev_cmd.bin`
+- If your build uses multiple rings, select the ring with `--ring-id N` (default is 0).
+
 ### 2) Host: decode the submission
 
 From the repo root on the host:
@@ -98,6 +106,8 @@ If `cmd.bin.alloc_table.bin` exists, decode the full submission:
 ```bash
 cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc cmd.bin.alloc_table.bin
 ```
+
+If there is no alloc table dump (common on legacy ring formats), skip `decode-submit` and use `decode-cmd-stream` below.
 
 ### 3) Optional: list opcodes directly (`decode-cmd-stream`)
 
