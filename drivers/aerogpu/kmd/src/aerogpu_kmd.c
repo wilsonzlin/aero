@@ -3899,6 +3899,15 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryVidPnHardwareCapability(_In_ const HANDL
     }
 
     /*
+     * Single-head MVP: only VidPn source 0 is valid.
+     *
+     * Win7 dxgkrnl should only query this once, but validate defensively.
+     */
+    if (pCapability->VidPnSourceId != AEROGPU_VIDPN_SOURCE_ID) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /*
      * MVP: report minimal capabilities consistent with our current modesetting
      * path (no scaling, no rotation, no overlays).
      *
