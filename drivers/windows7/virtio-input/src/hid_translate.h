@@ -360,7 +360,7 @@ struct hid_translate {
   bool consumer_dirty;
 
   /* Mouse state. */
-  uint8_t mouse_buttons; /* HID button bits. */
+  uint8_t mouse_buttons; /* HID button bits (buttons 1..8 -> bits 0..7). */
   int32_t mouse_rel_x;
   int32_t mouse_rel_y;
   int32_t mouse_wheel;

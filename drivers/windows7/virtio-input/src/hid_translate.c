@@ -471,6 +471,15 @@ static bool hid_translate_handle_consumer_key(struct hid_translate *t, uint16_t 
 /* Mouse handling                                                             */
 /* -------------------------------------------------------------------------- */
 
+/*
+ * Mouse button bits in the HID report (ReportID 2, Byte 1).
+ *
+ * This must match the driver's HID report descriptor (see descriptor.c):
+ * it declares 8 buttons (Usage Button 1..8), packed into a single byte.
+ *
+ * Linux virtio-input provides mouse buttons as EV_KEY codes in the BTN_MOUSE
+ * range (BTN_LEFT..BTN_TASK). We map them to HID buttons 1..8 in order.
+ */
 enum {
   HID_TRANSLATE_MOUSE_BUTTON_LEFT = 1u << 0,
   HID_TRANSLATE_MOUSE_BUTTON_RIGHT = 1u << 1,
