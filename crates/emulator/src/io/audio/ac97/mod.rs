@@ -132,6 +132,27 @@ impl Ac97Controller {
     /// Read from NAM (mixer) register space.
     pub fn nam_read(&self, offset: u64, size: usize) -> u32 {
         match size {
+            4 => {
+                // Some guests probe the codec using 32-bit I/O accesses. Treat this as two
+                // consecutive 16-bit register reads, packed little-endian.
+                //
+                // Only accept 2-byte aligned accesses that stay within the NAM window; anything
+                // else returns 0 (conservative, matches previous unsupported-size behavior).
+                if (offset & 1) != 0 {
+                    return 0;
+                }
+                let end = match offset.checked_add(4) {
+                    Some(end) => end,
+                    None => return 0,
+                };
+                if end > u64::from(NAM_SIZE) {
+                    return 0;
+                }
+
+                let low = self.mixer.read_u16(offset);
+                let high = self.mixer.read_u16(offset + 2);
+                u32::from(low) | (u32::from(high) << 16)
+            }
             2 => self.mixer.read_u16(offset & !1) as u32,
             1 => {
                 let word = self.mixer.read_u16(offset & !1);
@@ -151,6 +172,32 @@ impl Ac97Controller {
             (NAM_RESET, 2) => {
                 let _ = value;
                 self.mixer.reset();
+            }
+            (_, 4) => {
+                // Treat 32-bit accesses as two 16-bit register writes, packed little-endian.
+                // This matches how some guests access the AC'97 NAM register file.
+                if (offset & 1) != 0 {
+                    return;
+                }
+                let end = match offset.checked_add(4) {
+                    Some(end) => end,
+                    None => return,
+                };
+                if end > u64::from(NAM_SIZE) {
+                    return;
+                }
+
+                let low = value as u16;
+                let high = (value >> 16) as u16;
+
+                // Preserve the special reset behaviour when the low half targets NAM_RESET.
+                if offset == NAM_RESET {
+                    let _ = low;
+                    self.mixer.reset();
+                } else {
+                    self.mixer.write_u16(offset, low);
+                }
+                self.mixer.write_u16(offset + 2, high);
             }
             (_, 2) => self.mixer.write_u16(offset & !1, value as u16),
             (_, 1) => {
@@ -411,6 +458,22 @@ mod tests {
 
         dev.nam_write(NAM_RESET, 2, 0);
         assert_eq!(dev.nam_read(NAM_MASTER_VOL, 2) as u16, 0x0000);
+    }
+
+    #[test]
+    fn mixer_supports_32bit_register_accesses() {
+        let mut dev = Ac97Controller::new();
+
+        dev.nam_write(NAM_MASTER_VOL, 4, 0x7654_3210);
+        assert_eq!(dev.nam_read(NAM_MASTER_VOL, 4), 0x7654_3210);
+        assert_eq!(dev.nam_read(NAM_MASTER_VOL, 2) as u16, 0x3210);
+        assert_eq!(dev.nam_read(NAM_MASTER_VOL + 2, 2) as u16, 0x7654);
+    }
+
+    #[test]
+    fn mixer_vendor_ids_can_be_read_as_packed_dword() {
+        let dev = Ac97Controller::new();
+        assert_eq!(dev.nam_read(NAM_VENDOR_ID1, 4), 0x7600_8384);
     }
 
     #[test]
