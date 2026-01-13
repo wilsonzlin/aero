@@ -430,6 +430,8 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
 
         let srgb_encode = surface_format_requires_manual_srgb_encoding(surface_view_format);
 
+        let uniform_min_binding_size =
+            wgpu::BufferSize::new(std::mem::size_of::<PresentUniforms>() as u64);
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("aero framebuffer presenter bind group layout"),
             entries: &[
@@ -439,7 +441,7 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: None,
+                        min_binding_size: uniform_min_binding_size,
                     },
                     count: None,
                 },
@@ -1105,6 +1107,8 @@ mod tests {
             let device = ctx.device();
             let queue = ctx.queue();
 
+            let uniform_min_binding_size =
+                wgpu::BufferSize::new(std::mem::size_of::<PresentUniforms>() as u64);
             let bind_group_layout =
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("present shader test bgl"),
@@ -1115,7 +1119,7 @@ mod tests {
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,
-                                min_binding_size: None,
+                                min_binding_size: uniform_min_binding_size,
                             },
                             count: None,
                         },
