@@ -97,3 +97,22 @@ func TestSessionManager_CreateSessionWithKey_RejectsWhenKeyAlreadyActive(t *test
 	}
 	s2.Close()
 }
+
+func TestSessionManager_CreateSessionWithKey_DoesNotTrimKey(t *testing.T) {
+	m := metrics.New()
+	sm := NewSessionManager(config.Config{}, m, nil)
+
+	// Whitespace keys should still be treated as stable keys. This protects
+	// against bypasses if an upstream auth layer accepts a whitespace-only JWT
+	// `sid` value.
+	s1, err := sm.CreateSessionWithKey(" ")
+	if err != nil {
+		t.Fatalf("CreateSessionWithKey: %v", err)
+	}
+	t.Cleanup(s1.Close)
+
+	_, err = sm.CreateSessionWithKey(" ")
+	if err != ErrSessionAlreadyActive {
+		t.Fatalf("CreateSessionWithKey err=%v, want %v", err, ErrSessionAlreadyActive)
+	}
+}
