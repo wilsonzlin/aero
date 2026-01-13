@@ -9,6 +9,7 @@ struct ConformanceOpts {
     seed: Option<String>,
     filter: Option<String>,
     report: Option<String>,
+    test_args: Vec<String>,
 }
 
 pub fn print_help() {
@@ -20,7 +21,7 @@ This is a small wrapper around `cargo test -p conformance` that configures the r
 environment variables to keep dev/CI invocations consistent.
 
 Usage:
-  cargo xtask conformance [options]
+  cargo xtask conformance [options] [-- <test args>]
 
 Options:
   --cases <n>            Number of generated test cases (sets AERO_CONFORMANCE_CASES)
@@ -33,11 +34,14 @@ Options:
 Examples:
   cargo xtask conformance --cases 32
   cargo xtask conformance --cases 5000 --seed 0x52c671d9a4f231b9 --filter add --report target/conformance.json
+  cargo xtask conformance --cases 32 -- --nocapture
 "
     );
 }
 
 pub fn cmd(args: Vec<String>) -> Result<()> {
+    let (args, test_args) = split_args(args);
+
     // `cargo xtask conformance` should be safe to run anywhere. The conformance harness relies on
     // native x86_64 host execution (and typically `fork()` isolation), so on unsupported platforms
     // we print a friendly message and exit 0.
@@ -56,7 +60,8 @@ requires a unix x86_64 host."
         return Ok(());
     }
 
-    let opts = parse_args(args)?;
+    let mut opts = parse_args(args)?;
+    opts.test_args = test_args;
 
     let repo_root = paths::repo_root()?;
     let runner = Runner::new();
@@ -76,6 +81,10 @@ requires a unix x86_64 host."
     }
     if let Some(report) = opts.report {
         cmd.env("AERO_CONFORMANCE_REPORT_PATH", report);
+    }
+    if !opts.test_args.is_empty() {
+        cmd.arg("--");
+        cmd.args(&opts.test_args);
     }
 
     runner.run_step("Conformance: cargo test -p conformance --locked", &mut cmd)?;
@@ -116,6 +125,15 @@ fn parse_args(args: Vec<String>) -> Result<ConformanceOpts> {
     }
 
     Ok(opts)
+}
+
+fn split_args(args: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let Some(pos) = args.iter().position(|a| a == "--") else {
+        return (args, Vec::new());
+    };
+    let test_args = args[pos + 1..].to_vec();
+    let args = args[..pos].to_vec();
+    (args, test_args)
 }
 
 fn next_value(
