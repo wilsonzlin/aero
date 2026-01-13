@@ -173,6 +173,13 @@ impl VirtioInputEvent {
         out[4..8].copy_from_slice(&self.value.to_le_bytes());
         out
     }
+
+    fn from_le_bytes(bytes: [u8; 8]) -> Self {
+        let type_ = u16::from_le_bytes([bytes[0], bytes[1]]);
+        let code = u16::from_le_bytes([bytes[2], bytes[3]]);
+        let value = i32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        Self { type_, code, value }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -375,6 +382,14 @@ pub struct VirtioInput {
 
     pending: VecDeque<VirtioInputEvent>,
     buffers: VecDeque<DescriptorChain>,
+
+    /// Keyboard LED state as last reported by the guest driver via `statusq` (queue 1).
+    ///
+    /// Bit mapping:
+    /// - bit0: Num Lock (`LED_NUML`)
+    /// - bit1: Caps Lock (`LED_CAPSL`)
+    /// - bit2: Scroll Lock (`LED_SCROLLL`)
+    leds_mask: u8,
 }
 
 impl VirtioInput {
@@ -412,6 +427,7 @@ impl VirtioInput {
             bitmaps,
             pending: VecDeque::new(),
             buffers: VecDeque::new(),
+            leds_mask: 0,
         }
     }
 
@@ -486,6 +502,16 @@ impl VirtioInput {
     pub fn kind(&self) -> VirtioInputDeviceKind {
         self.kind
     }
+
+    /// Return the current guest-reported keyboard LED state bitmask.
+    ///
+    /// Bit mapping:
+    /// - bit0: Num Lock (`LED_NUML`)
+    /// - bit1: Caps Lock (`LED_CAPSL`)
+    /// - bit2: Scroll Lock (`LED_SCROLLL`)
+    pub fn leds_mask(&self) -> u8 {
+        self.leds_mask
+    }
 }
 
 impl Default for VirtioInput {
@@ -556,9 +582,15 @@ impl VirtioDevice for VirtioInput {
             }
             // statusq
             1 => {
-                // Contract v1: the guest may post LED/output events. We don't model LEDs
-                // yet, but we must consume and complete the chain so the guest driver
-                // can reclaim the descriptors.
+                {
+                    // Virtio-input statusq: the guest may post LED/output events.
+                    //
+                    // Contract v1 only requires us to consume and complete the chain, but we still
+                    // parse and track the common keyboard LEDs for host diagnostics and parity with
+                    // real virtio-input behaviour.
+                    let mem_ro: &dyn GuestMemory = &*mem;
+                    self.process_statusq_chain(&chain, mem_ro);
+                }
                 queue
                     .add_used(mem, chain.head_index(), 0)
                     .map_err(|_| VirtioDeviceError::IoError)
@@ -602,6 +634,7 @@ impl VirtioDevice for VirtioInput {
         self.buffers.clear();
         self.config_select = VIRTIO_INPUT_CFG_UNSET;
         self.config_subsel = 0;
+        self.leds_mask = 0;
     }
 
     fn as_any(&self) -> &dyn core::any::Any {
@@ -707,6 +740,79 @@ impl VirtioInput {
                 }
             }
             _ => (0, payload),
+        }
+    }
+
+    fn process_statusq_chain(&mut self, chain: &DescriptorChain, mem: &dyn GuestMemory) {
+        // Only the keyboard variant advertises EV_LED support. Still consume buffers for other
+        // variants, but ignore any payload.
+        if self.kind != VirtioInputDeviceKind::Keyboard {
+            return;
+        }
+
+        let mut staged_mask = self.leds_mask;
+
+        let mut pending = [0u8; 8];
+        let mut pending_len = 0usize;
+
+        for desc in chain.descriptors() {
+            // Statusq buffers are guest→device, but some guests might accidentally set the WRITE
+            // flag. We treat the descriptor flags as advisory and always attempt to parse the
+            // payload.
+            let Ok(mut slice) = mem.get_slice(desc.addr, desc.len as usize) else {
+                break;
+            };
+
+            if pending_len != 0 {
+                let take = (8 - pending_len).min(slice.len());
+                pending[pending_len..pending_len + take].copy_from_slice(&slice[..take]);
+                pending_len += take;
+                slice = &slice[take..];
+
+                if pending_len == 8 {
+                    let event = VirtioInputEvent::from_le_bytes(pending);
+                    self.process_statusq_event(event, &mut staged_mask);
+                    pending_len = 0;
+                }
+            }
+
+            while slice.len() >= 8 {
+                let (evt, rest) = slice.split_at(8);
+                let event = VirtioInputEvent::from_le_bytes(evt.try_into().unwrap());
+                self.process_statusq_event(event, &mut staged_mask);
+                slice = rest;
+            }
+
+            if !slice.is_empty() {
+                pending[..slice.len()].copy_from_slice(slice);
+                pending_len = slice.len();
+            }
+        }
+
+        // If the guest didn't send a terminating SYN_REPORT, still apply any LED updates.
+        self.leds_mask = staged_mask;
+    }
+
+    fn process_statusq_event(&mut self, event: VirtioInputEvent, staged_mask: &mut u8) {
+        match event.type_ {
+            EV_LED => {
+                let bit = match event.code {
+                    LED_NUML => 0,
+                    LED_CAPSL => 1,
+                    LED_SCROLLL => 2,
+                    _ => return,
+                };
+                let flag = 1u8 << bit;
+                if event.value != 0 {
+                    *staged_mask |= flag;
+                } else {
+                    *staged_mask &= !flag;
+                }
+            }
+            EV_SYN if event.code == SYN_REPORT => {
+                self.leds_mask = *staged_mask;
+            }
+            _ => {}
         }
     }
 }
