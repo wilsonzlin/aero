@@ -78,6 +78,15 @@ fn int10_vbe_controller_and_mode_info() {
         assert_eq!(read_u16(&info, 20), height); // YResolution
         assert_eq!(read_u16(&info, 16), width * 4); // BytesPerScanLine
         assert_eq!(info[25], 32); // BitsPerPixel
+        assert_eq!(info[27], 0x06); // MemoryModel (direct color)
+        assert_eq!(info[31], 8); // RedMaskSize
+        assert_eq!(info[32], 16); // RedFieldPosition
+        assert_eq!(info[33], 8); // GreenMaskSize
+        assert_eq!(info[34], 8); // GreenFieldPosition
+        assert_eq!(info[35], 8); // BlueMaskSize
+        assert_eq!(info[36], 0); // BlueFieldPosition
+        assert_eq!(info[37], 8); // ReservedMaskSize
+        assert_eq!(info[38], 24); // ReservedFieldPosition
         assert_eq!(read_u32(&info, 40), VbeDevice::LFB_BASE_DEFAULT); // PhysBasePtr
     };
 
