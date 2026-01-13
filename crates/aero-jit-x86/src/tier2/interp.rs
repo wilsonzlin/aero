@@ -228,8 +228,12 @@ pub fn run_function_from_block(
                 match exit {
                     RunExit::SideExit { next_rip } => {
                         if let Some(id) = func.find_block_by_rip(next_rip) {
-                            cur = id;
-                            continue 'outer;
+                            // Avoid spinning if a block side-exits to itself (e.g. deopt-at-entry
+                            // blocks created for unsupported operations).
+                            if id != cur {
+                                cur = id;
+                                continue 'outer;
+                            }
                         }
                         return exit;
                     }
@@ -252,8 +256,11 @@ pub fn run_function_from_block(
             Terminator::SideExit { exit_rip } => {
                 state.cpu.rip = *exit_rip;
                 if let Some(id) = func.find_block_by_rip(*exit_rip) {
-                    cur = id;
-                    continue 'outer;
+                    // Avoid infinite loops for blocks that side-exit to their own start RIP.
+                    if id != cur {
+                        cur = id;
+                        continue 'outer;
+                    }
                 }
                 return RunExit::SideExit {
                     next_rip: *exit_rip,

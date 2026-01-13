@@ -549,6 +549,16 @@ impl BlockLowerer<'_> {
             map_flagset(flags)
         };
 
+        // Tier-2 does not currently model x86 shift/rotate flag semantics (CF/OF depend on the
+        // shifted-out bit, and the "count==0 => flags unchanged" rule).
+        //
+        // Until Tier-2 grows correct support, conservatively deopt at the entry RIP when Tier-1
+        // requests flag updates for shift instructions.
+        if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar) && !flags.is_empty() {
+            self.unsupported = true;
+            return;
+        }
+
         if width == Width::W64 {
             self.instrs.push(Instr::BinOp {
                 dst,
