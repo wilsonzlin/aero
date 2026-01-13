@@ -341,9 +341,12 @@ def parse_inf_hardware_ids(path: Path) -> set[str]:
         parts = [p.strip() for p in line.split(",")]
         if not parts:
             continue
-        candidate = parts[-1]
-        if candidate.upper().startswith("PCI\\VEN_"):
-            out.add(candidate)
+        # Model lines can optionally include compatible IDs after the HWID. Scan for
+        # the last comma-separated field that looks like a PCI HWID.
+        for part in reversed(parts):
+            if part.upper().startswith("PCI\\VEN_"):
+                out.add(part)
+                break
     return out
 
 
@@ -386,17 +389,17 @@ def parse_inf_model_entries(path: Path) -> list[InfModelEntry]:
         if current_section is None:
             continue
         # We only care about "models" style entries that reference a PCI HWID.
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 2:
+        if "=" not in line:
             continue
-        hwid = parts[-1]
-        if not hwid.upper().startswith("PCI\\VEN_"):
+        device_desc, rhs = (s.strip() for s in line.split("=", 1))
+        if not device_desc or not rhs:
             continue
-        left = parts[0]
-        if "=" not in left:
+        rhs_parts = [p.strip() for p in rhs.split(",") if p.strip()]
+        if not rhs_parts:
             continue
-        device_desc, install = (s.strip() for s in left.split("=", 1))
-        if not device_desc or not install:
+        install = rhs_parts[0]
+        hwid = next((p for p in rhs_parts[1:] if p.upper().startswith("PCI\\VEN_")), None)
+        if not hwid:
             continue
         entries.append(
             InfModelEntry(
