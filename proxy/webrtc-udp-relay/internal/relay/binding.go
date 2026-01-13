@@ -278,6 +278,15 @@ func (b *UdpPortBinding) readLoopConn(conn *net.UDPConn) {
 		}
 
 		if !b.remoteAllowed(remote, now) {
+			// Record drops due to inbound filtering (i.e. the remote endpoint is not
+			// currently on the allowlist).
+			//
+			// This metric is intentionally transport-agnostic (used by both WebRTC and
+			// /udp WebSocket relays); it is not included in the WebRTC/UDPWS dropped
+			// counters.
+			if b.metrics != nil {
+				b.metrics.Inc(metrics.UDPRemoteAllowlistOverflowDropsTotal)
+			}
 			continue
 		}
 

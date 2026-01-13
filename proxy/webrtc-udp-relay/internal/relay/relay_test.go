@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
@@ -114,6 +115,7 @@ func TestSessionRelay_IdleTimeoutCleanup(t *testing.T) {
 func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
 	p := policy.NewDevDestinationPolicy()
+	m := metrics.New()
 	cfg := DefaultConfig()
 	cfg.InboundFilterMode = InboundFilterAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = time.Minute
@@ -121,7 +123,7 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 	cfg.UDPReadBufferBytes = 2048
 	cfg.DataChannelSendQueueBytes = 1 << 20
 
-	r := NewSessionRelay(dc, cfg, p, nil, nil)
+	r := NewSessionRelay(dc, cfg, p, nil, m)
 	t.Cleanup(r.Close)
 
 	remote1, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
@@ -205,6 +207,17 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 		t.Fatalf("unexpected packet forwarded from disallowed remote")
 	case <-time.After(150 * time.Millisecond):
 		// ok
+	}
+
+	deadline = time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal) >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal); got != 1 {
+		t.Fatalf("expected %s=1, got %d", metrics.UDPRemoteAllowlistOverflowDropsTotal, got)
 	}
 }
 
