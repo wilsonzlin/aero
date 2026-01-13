@@ -71,7 +71,7 @@ The canonical source of truth is the `aero-acpi` Rust generator. To regenerate t
 fixture after AML changes:
 
 ```bash
-cargo run -p firmware --bin gen_dsdt --locked
+cargo xtask fixtures
 ```
 
 The `dsdt.aml` fixture is validated in CI in two ways:
@@ -79,3 +79,9 @@ The `dsdt.aml` fixture is validated in CI in two ways:
 - `scripts/validate-acpi.sh` decompiles and recompiles the checked-in AML tables using ACPICA `iasl`.
 - `crates/firmware/tests/acpi_tables.rs` asserts that `crates/firmware/acpi/dsdt.aml` matches the
   bytes produced by the `aero-acpi` Rust generator.
+
+For convenience, you can also regenerate just the DSDT fixture via:
+
+```bash
+cargo run -p firmware --bin gen_dsdt --locked
+```
