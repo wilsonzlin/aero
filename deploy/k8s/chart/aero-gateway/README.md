@@ -147,6 +147,8 @@ Enable capture by setting a writable directory inside the container:
 ```yaml
 l2Proxy:
   capture:
+    # Note: the container runs as non-root; prefer a path under /tmp (or mount a writable volume).
+    # Capture files are written into the pod filesystem unless you mount something at this path.
     dir: /tmp/aero-l2-captures
     maxBytes: 67108864 # 64 MiB per capture file (0 disables the cap)
     flushIntervalMs: 1000 # 0 disables periodic flushing (capture is flushed on close)

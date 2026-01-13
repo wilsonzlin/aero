@@ -207,9 +207,13 @@ cp deploy/.env.example deploy/.env
   - Ignored when `AERO_L2_AUTH_MODE` is set to `session` (legacy alias: `cookie`), `jwt`, `cookie_or_jwt`, or `none`.
 - `AERO_L2_CAPTURE_DIR` (default: empty / unset)
   - When set, `aero-l2-proxy` writes per-tunnel PCAPNG capture files into this directory (debugging only).
+  - The directory must be writable by the container user (the `aero-l2-proxy` image runs as non-root). `/tmp/...` is
+    a safe default in most environments.
   - **Privacy warning:** captures contain raw network traffic and may include sensitive user data (DNS queries,
     plaintext protocols, credentials, etc.). Treat capture files as secrets and avoid enabling capture on
     internet-exposed production deployments unless you have an explicit retention/privacy plan.
+  - Note: capture files are written inside the container filesystem. To persist captures across container restarts,
+    bind-mount a host directory (or use a named volume) and set `AERO_L2_CAPTURE_DIR` to the mounted path.
 - `AERO_L2_CAPTURE_MAX_BYTES` (default in compose: `67108864` / 64 MiB)
   - Max bytes per capture file (`0` disables the cap).
 - `AERO_L2_CAPTURE_FLUSH_INTERVAL_MS` (default in compose: `1000`)
