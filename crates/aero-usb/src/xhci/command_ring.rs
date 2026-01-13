@@ -27,6 +27,10 @@ const ICC_ADD_FLAGS_OFFSET: u64 = 4;
 const ICC_CTX_FLAG_SLOT: u32 = 1 << 0;
 const ICC_CTX_FLAG_EP0: u32 = 1 << 1;
 
+const EP_STATE_MASK: u32 = 0x7;
+const EP_STATE_RUNNING: u32 = 1;
+const EP_STATE_STOPPED: u32 = 3;
+
 /// Command ring state (dequeue pointer + cycle state).
 #[derive(Clone, Copy, Debug)]
 pub struct CommandRing {
@@ -157,6 +161,33 @@ impl CommandRingProcessor {
                         return;
                     }
                 }
+                TrbType::StopEndpointCommand => {
+                    let slot_id = trb.slot_id();
+                    let code = self.handle_stop_endpoint(mem, trb);
+                    self.emit_command_completion(mem, trb_addr, code, slot_id);
+                    if !self.advance_cmd_dequeue() {
+                        self.host_controller_error = true;
+                        return;
+                    }
+                }
+                TrbType::ResetEndpointCommand => {
+                    let slot_id = trb.slot_id();
+                    let code = self.handle_reset_endpoint(mem, trb);
+                    self.emit_command_completion(mem, trb_addr, code, slot_id);
+                    if !self.advance_cmd_dequeue() {
+                        self.host_controller_error = true;
+                        return;
+                    }
+                }
+                TrbType::SetTrDequeuePointerCommand => {
+                    let slot_id = trb.slot_id();
+                    let code = self.handle_set_tr_dequeue_pointer(mem, trb);
+                    self.emit_command_completion(mem, trb_addr, code, slot_id);
+                    if !self.advance_cmd_dequeue() {
+                        self.host_controller_error = true;
+                        return;
+                    }
+                }
                 _ => {
                     // Unsupported command. Spec would typically return TRB Error.
                     let slot_id = trb.slot_id();
@@ -194,6 +225,134 @@ impl CommandRingProcessor {
             self.command_ring.cycle_state = !self.command_ring.cycle_state;
         }
         true
+    }
+
+    fn read_device_context_ptr(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        slot_id: u8,
+    ) -> Result<u64, CompletionCode> {
+        if slot_id == 0 || slot_id > self.max_slots {
+            return Err(CompletionCode::SlotNotEnabledError);
+        }
+
+        if (self.dcbaa_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+            return Err(CompletionCode::ParameterError);
+        }
+
+        let dcbaa_entry_addr = self
+            .dcbaa_ptr
+            .checked_add(u64::from(slot_id) * 8)
+            .ok_or(CompletionCode::ParameterError)?;
+        if !self.check_range(dcbaa_entry_addr, 8) {
+            return Err(CompletionCode::ParameterError);
+        }
+
+        let dev_ctx_ptr = self
+            .read_u64(mem, dcbaa_entry_addr)
+            .map_err(|_| CompletionCode::ParameterError)?;
+        if dev_ctx_ptr == 0 {
+            return Err(CompletionCode::SlotNotEnabledError);
+        }
+        if (dev_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+            return Err(CompletionCode::ParameterError);
+        }
+
+        Ok(dev_ctx_ptr)
+    }
+
+    fn endpoint_context_addr(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        slot_id: u8,
+        endpoint_id: u8,
+    ) -> Result<u64, CompletionCode> {
+        if endpoint_id == 0 || endpoint_id > 31 {
+            return Err(CompletionCode::ParameterError);
+        }
+        let dev_ctx_ptr = self.read_device_context_ptr(mem, slot_id)?;
+        let addr = dev_ctx_ptr
+            .checked_add(u64::from(endpoint_id) * CONTEXT_SIZE)
+            .ok_or(CompletionCode::ParameterError)?;
+        if !self.check_range(addr, CONTEXT_SIZE) {
+            return Err(CompletionCode::ParameterError);
+        }
+        Ok(addr)
+    }
+
+    fn handle_stop_endpoint(&mut self, mem: &mut dyn MemoryBus, cmd: Trb) -> CompletionCode {
+        let slot_id = cmd.slot_id();
+        let endpoint_id = cmd.endpoint_id();
+        let ep_ctx = match self.endpoint_context_addr(mem, slot_id, endpoint_id) {
+            Ok(addr) => addr,
+            Err(code) => return code,
+        };
+
+        let mut dw0 = match self.read_u32(mem, ep_ctx) {
+            Ok(v) => v,
+            Err(_) => return CompletionCode::ParameterError,
+        };
+        dw0 = (dw0 & !EP_STATE_MASK) | EP_STATE_STOPPED;
+        if self.write_u32(mem, ep_ctx, dw0).is_err() {
+            return CompletionCode::ParameterError;
+        }
+        CompletionCode::Success
+    }
+
+    fn handle_reset_endpoint(&mut self, mem: &mut dyn MemoryBus, cmd: Trb) -> CompletionCode {
+        let slot_id = cmd.slot_id();
+        let endpoint_id = cmd.endpoint_id();
+        let ep_ctx = match self.endpoint_context_addr(mem, slot_id, endpoint_id) {
+            Ok(addr) => addr,
+            Err(code) => return code,
+        };
+
+        let mut dw0 = match self.read_u32(mem, ep_ctx) {
+            Ok(v) => v,
+            Err(_) => return CompletionCode::ParameterError,
+        };
+        // MVP: clear halted/stopped and allow transfers again.
+        dw0 = (dw0 & !EP_STATE_MASK) | EP_STATE_RUNNING;
+        if self.write_u32(mem, ep_ctx, dw0).is_err() {
+            return CompletionCode::ParameterError;
+        }
+        CompletionCode::Success
+    }
+
+    fn handle_set_tr_dequeue_pointer(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        cmd: Trb,
+    ) -> CompletionCode {
+        let slot_id = cmd.slot_id();
+        let endpoint_id = cmd.endpoint_id();
+        let ep_ctx = match self.endpoint_context_addr(mem, slot_id, endpoint_id) {
+            Ok(addr) => addr,
+            Err(code) => return code,
+        };
+
+        let ptr = cmd.parameter & !0x0f;
+        let dcs = cmd.parameter & 0x01;
+        if ptr == 0 {
+            return CompletionCode::ParameterError;
+        }
+        if !self.check_range(ptr, TRB_LEN as u64) {
+            return CompletionCode::ParameterError;
+        }
+        let raw = ptr | dcs;
+
+        let dw2 = raw as u32;
+        let dw3 = (raw >> 32) as u32;
+        if self.write_u32(mem, ep_ctx + 8, dw2).is_err() {
+            return CompletionCode::ParameterError;
+        }
+        if self.write_u32(mem, ep_ctx + 12, dw3).is_err() {
+            return CompletionCode::ParameterError;
+        }
+
+        // MVP: preserve existing endpoint state (typically Stopped) and only update the dequeue
+        // pointer + DCS.
+        CompletionCode::Success
     }
 
     fn handle_evaluate_context(&mut self, mem: &mut dyn MemoryBus, cmd: Trb) -> CompletionCode {

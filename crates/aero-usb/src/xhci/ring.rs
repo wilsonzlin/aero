@@ -77,7 +77,7 @@ impl RingCursor {
     /// `step_budget` bounds the number of TRBs read while trying to find a returnable TRB. This
     /// prevents an infinite loop on malformed rings, such as a chain of Link TRBs that never
     /// reaches a non-Link TRB.
-    pub fn poll(&mut self, mem: &mut impl MemoryBus, step_budget: usize) -> RingPoll {
+    pub fn poll<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, step_budget: usize) -> RingPoll {
         for _ in 0..step_budget {
             let trb = Trb::read_from(mem, self.paddr);
 

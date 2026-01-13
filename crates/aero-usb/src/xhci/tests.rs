@@ -63,6 +63,12 @@ fn event_completion_code(ev: Trb) -> u8 {
     (ev.status >> 24) as u8
 }
 
+fn read_u32(mem: &mut TestMem, addr: u64) -> u32 {
+    let mut buf = [0u8; 4];
+    mem.read_physical(addr, &mut buf);
+    u32::from_le_bytes(buf)
+}
+
 #[test]
 fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
     let mut mem = TestMem::new(0x20_000);
@@ -233,4 +239,108 @@ fn evaluate_context_rejects_unsupported_context_flags() {
     mem.read_physical(dev_ctx + 0x20 + 4, &mut buf);
     let out_dw1 = u32::from_le_bytes(buf);
     assert_eq!((out_dw1 >> 16) & 0xffff, 8);
+}
+
+#[test]
+fn endpoint_commands_emit_completion_events_and_update_context() {
+    let mut mem = TestMem::new(0x20_000);
+    let mem_size = mem.len() as u64;
+
+    let dcbaa = 0x1000u64;
+    let dev_ctx = 0x2000u64;
+    let cmd_ring = 0x4000u64;
+    let event_ring = 0x5000u64;
+
+    let max_slots = 8;
+    let slot_id = 1u8;
+    let endpoint_id = 2u8; // EP1 OUT context (Device Context index 2).
+    let ep_ctx = dev_ctx + u64::from(endpoint_id) * 32;
+
+    // DCBAA[1] -> dev_ctx.
+    mem.write_u64(dcbaa + 8, dev_ctx);
+
+    // Seed endpoint context state + dequeue pointer.
+    mem.write_u32(ep_ctx + 0, 1); // Running
+    mem.write_u32(ep_ctx + 8, 0x1110 | 1); // TR Dequeue Pointer low (DCS=1)
+    mem.write_u32(ep_ctx + 12, 0);
+
+    // Command ring TRBs:
+    //  - Stop Endpoint (slot 1, ep_id 2)
+    //  - Set TR Dequeue Pointer (slot 1, ep_id 2, ptr=0x6000, dcs=0)
+    //  - Reset Endpoint (slot 1, ep_id 2)
+    {
+        let mut stop = Trb::new(0, 0, 0);
+        stop.set_trb_type(TrbType::StopEndpointCommand);
+        stop.set_slot_id(slot_id);
+        stop.set_endpoint_id(endpoint_id);
+        stop.set_cycle(true);
+        mem.write_trb(cmd_ring + 0 * 16, stop);
+    }
+    let new_trdp = 0x6000u64;
+    {
+        let mut set = Trb::new(new_trdp, 0, 0);
+        set.set_trb_type(TrbType::SetTrDequeuePointerCommand);
+        set.set_slot_id(slot_id);
+        set.set_endpoint_id(endpoint_id);
+        set.set_cycle(true);
+        mem.write_trb(cmd_ring + 1 * 16, set);
+    }
+    {
+        let mut reset = Trb::new(0, 0, 0);
+        reset.set_trb_type(TrbType::ResetEndpointCommand);
+        reset.set_slot_id(slot_id);
+        reset.set_endpoint_id(endpoint_id);
+        reset.set_cycle(true);
+        mem.write_trb(cmd_ring + 2 * 16, reset);
+    }
+
+    let mut processor = CommandRingProcessor::new(
+        mem_size,
+        max_slots,
+        dcbaa,
+        CommandRing {
+            dequeue_ptr: cmd_ring,
+            cycle_state: true,
+        },
+        EventRing::new(event_ring, 16),
+    );
+
+    // Process Stop Endpoint + Set TR Dequeue Pointer first.
+    processor.process(&mut mem, 2);
+    assert!(!processor.host_controller_error);
+
+    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    let ev1 = mem.read_trb(event_ring + 1 * 16);
+
+    assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
+    assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
+    assert_eq!(ev0.pointer(), cmd_ring + 0 * 16);
+    assert_eq!(ev1.pointer(), cmd_ring + 1 * 16);
+
+    // Stop Endpoint should transition the endpoint state to Stopped (3).
+    assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 3);
+
+    // Set TR Dequeue Pointer should update dwords 2-3.
+    let dw2 = read_u32(&mut mem, ep_ctx + 8);
+    let dw3 = read_u32(&mut mem, ep_ctx + 12);
+    let raw = (u64::from(dw3) << 32) | u64::from(dw2);
+    assert_eq!(raw & !0x0f, new_trdp);
+    assert_eq!(raw & 0x01, 0);
+
+    // Simulate a transfer error halting the endpoint, then process Reset Endpoint.
+    let halted_dw0 = (read_u32(&mut mem, ep_ctx + 0) & !0x7) | 2;
+    mem.write_u32(ep_ctx + 0, halted_dw0);
+
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+
+    let ev2 = mem.read_trb(event_ring + 2 * 16);
+    assert_eq!(ev2.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev2), CompletionCode::Success.as_u8());
+    assert_eq!(ev2.pointer(), cmd_ring + 2 * 16);
+
+    // Reset Endpoint should clear the halted condition (Running = 1).
+    assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 1);
 }

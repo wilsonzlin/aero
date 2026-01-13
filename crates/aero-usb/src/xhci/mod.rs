@@ -17,12 +17,18 @@
 //! Full xHCI semantics (doorbells, command/event rings, device contexts, interrupters, etc) remain
 //! future work.
 //!
-//! In addition, `transfer` provides a small, deterministic transfer-ring executor that can process
-//! Normal TRBs for non-control endpoints (sufficient for HID interrupt IN/OUT).
+//! In addition:
+//! - `command_ring` provides a minimal command ring + event ring processor used by unit tests and
+//!   early enumeration harnesses.
+//! - `command` provides an MVP endpoint-management state machine (Stop/Reset Endpoint + Set TR
+//!   Dequeue Pointer) with doorbell gating semantics.
+//! - `transfer` provides a small, deterministic transfer-ring executor that can process Normal TRBs
+//!   for non-control endpoints (sufficient for HID interrupt IN/OUT).
 //!
 //! Finally, this module models a tiny root hub (USB2 ports only) and generates Port Status Change
 //! Event TRBs when devices connect/disconnect or a port reset completes.
 
+pub mod command;
 pub mod command_ring;
 pub mod context;
 pub mod regs;
@@ -605,7 +611,6 @@ fn make_port_status_change_event_trb(port_id: u8) -> Trb {
     trb.set_trb_type(TrbType::PortStatusChangeEvent);
     trb
 }
-
 impl IoSnapshot for XhciController {
     const DEVICE_ID: [u8; 4] = *b"XHCI";
     const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 2);
