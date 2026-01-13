@@ -93,11 +93,10 @@ def main() -> int:
         alias_lines,
         fromfile=str(canonical),
         tofile=str(alias),
-        lineterm="",
+        lineterm="\n",
     )
     for line in diff:
         sys.stderr.write(line)
-    sys.stderr.write("\n")
 
     return 1
 
