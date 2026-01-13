@@ -169,6 +169,7 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
                 next_value: &mut self.next_value,
                 instrs: Vec::new(),
                 unsupported: false,
+                const_values: HashMap::new(),
             };
             lower.lower_block(&ir);
             (lower.instrs, lower.unsupported)
@@ -279,6 +280,8 @@ struct BlockLowerer<'a> {
     next_value: &'a mut u32,
     instrs: Vec<Instr>,
     unsupported: bool,
+    /// Per-block Tier-1 `Const` values keyed by the Tier-1 `ValueId`.
+    const_values: HashMap<T1ValueId, u64>,
 }
 
 impl BlockLowerer<'_> {
@@ -319,6 +322,7 @@ impl BlockLowerer<'_> {
                     dst: self.map_value(dst),
                     value,
                 });
+                self.const_values.insert(dst, value);
             }
             IrInst::ReadReg { dst, reg } => self.lower_read_reg(dst, reg),
             IrInst::WriteReg { reg, src } => self.lower_write_reg(reg, src),
@@ -540,14 +544,15 @@ impl BlockLowerer<'_> {
             return;
         };
         let dst = self.map_value(dst);
-        // Tier-2 does not currently model x86 shift flag semantics (Tier-2 `eval_binop` treats
-        // shifts as flagless operations). Keep lowering shift instructions for their result value,
-        // but ignore any requested flag updates to avoid miscompilation and unnecessary deopts.
-        let flags = if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar) {
-            FlagSet::EMPTY
-        } else {
-            map_flagset(flags)
-        };
+        let flags = map_flagset(flags);
+
+        // Tier-2 `eval_binop` does not model x86 shift flag semantics. If Tier-1 requests flag
+        // updates for a shift, lower it explicitly via a sequence of Tier-2 ops that compute the
+        // correct flags.
+        if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar) && !flags.is_empty() {
+            self.lower_shift_with_flags(dst, op, lhs, rhs, width, flags);
+            return;
+        }
 
         // Tier-2 does not currently model x86 shift/rotate flag semantics (CF/OF depend on the
         // shifted-out bit, and the "count==0 => flags unchanged" rule).
@@ -626,6 +631,11 @@ impl BlockLowerer<'_> {
                 });
             }
             BinOp::Shl | BinOp::Shr => {
+                debug_assert!(
+                    flags.is_empty(),
+                    "shift ops with flags should be handled by lower_shift_with_flags"
+                );
+
                 let mask = width.mask();
                 let lhs_masked = self.fresh_temp();
                 self.instrs.push(Instr::BinOp {
@@ -665,6 +675,11 @@ impl BlockLowerer<'_> {
                 });
             }
             BinOp::Sar => {
+                debug_assert!(
+                    flags.is_empty(),
+                    "shift ops with flags should be handled by lower_shift_with_flags"
+                );
+
                 let mask = width.mask();
 
                 // 1) Mask to the operand width.
@@ -729,6 +744,289 @@ impl BlockLowerer<'_> {
             _ => {
                 self.unsupported = true;
             }
+        }
+    }
+
+    fn lower_shift_with_flags(
+        &mut self,
+        dst: ValueId,
+        op: BinOp,
+        lhs: T1ValueId,
+        rhs: T1ValueId,
+        width: Width,
+        mut flags: FlagSet,
+    ) {
+        debug_assert!(matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar));
+
+        // Tier-1 IR uses a constant rhs for shifts (the Tier-1 front-end only decodes the
+        // immediate-count shift forms). If that ever changes, conservatively deopt.
+        let Some(shift_imm) = self.const_values.get(&rhs).copied() else {
+            self.unsupported = true;
+            return;
+        };
+
+        // x86 shift counts are masked to 5 bits for 8/16/32-bit shifts and 6 bits for 64-bit shifts.
+        let shift_mask: u32 = if width == Width::W64 { 63 } else { 31 };
+        let shift_amt: u32 = (shift_imm as u32) & shift_mask;
+
+        // x86 shifts do not update any flags when the shift count is 0.
+        if shift_amt == 0 {
+            flags = FlagSet::EMPTY;
+        } else {
+            // CF is undefined for counts > operand width; leave unchanged.
+            if shift_amt > width.bits() {
+                flags = flags.without(FlagSet::CF);
+            }
+            // OF is only defined for count == 1; leave unchanged otherwise.
+            if shift_amt != 1 {
+                flags = flags.without(FlagSet::OF);
+            }
+        }
+
+        // Mask the input to the operand width (no-op for 64-bit).
+        let lhs_masked = if width == Width::W64 {
+            self.map_value(lhs)
+        } else {
+            let tmp = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: tmp,
+                op: BinOp::And,
+                lhs: self.value(lhs),
+                rhs: Operand::Const(width.mask()),
+                flags: FlagSet::EMPTY,
+            });
+            tmp
+        };
+
+        // Compute the shift result (masked to operand width) into `dst`.
+        if op == BinOp::Sar && width != Width::W64 {
+            // For SAR on narrow operands, sign-extend to 64 bits first.
+            let mask = width.mask();
+            let sext_shift = 64 - width.bits();
+
+            let lhs_shl = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: lhs_shl,
+                op: BinOp::Shl,
+                lhs: Operand::Value(lhs_masked),
+                rhs: Operand::Const(sext_shift as u64),
+                flags: FlagSet::EMPTY,
+            });
+            let lhs_sext = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: lhs_sext,
+                op: BinOp::Sar,
+                lhs: Operand::Value(lhs_shl),
+                rhs: Operand::Const(sext_shift as u64),
+                flags: FlagSet::EMPTY,
+            });
+
+            let shifted = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: shifted,
+                op: BinOp::Sar,
+                lhs: Operand::Value(lhs_sext),
+                rhs: Operand::Const(shift_amt as u64),
+                flags: FlagSet::EMPTY,
+            });
+            self.instrs.push(Instr::BinOp {
+                dst,
+                op: BinOp::And,
+                lhs: Operand::Value(shifted),
+                rhs: Operand::Const(mask),
+                flags: FlagSet::EMPTY,
+            });
+        } else if width == Width::W64 {
+            self.instrs.push(Instr::BinOp {
+                dst,
+                op,
+                lhs: Operand::Value(lhs_masked),
+                rhs: Operand::Const(shift_amt as u64),
+                flags: FlagSet::EMPTY,
+            });
+        } else {
+            let mask = width.mask();
+            let shifted = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: shifted,
+                op,
+                lhs: Operand::Value(lhs_masked),
+                rhs: Operand::Const(shift_amt as u64),
+                flags: FlagSet::EMPTY,
+            });
+            self.instrs.push(Instr::BinOp {
+                dst,
+                op: BinOp::And,
+                lhs: Operand::Value(shifted),
+                rhs: Operand::Const(mask),
+                flags: FlagSet::EMPTY,
+            });
+        }
+
+        // If x86 defines no flag updates (or the caller requested none), stop.
+        if flags.is_empty() {
+            return;
+        }
+
+        // ZF/SF/PF are computed from the result. For narrow operands, sign-extend to 64 bits so SF
+        // reads the operand-width sign bit.
+        let res_for_pzs = if width == Width::W64 {
+            dst
+        } else {
+            let sext_shift = 64 - width.bits();
+            let res_shl = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: res_shl,
+                op: BinOp::Shl,
+                lhs: Operand::Value(dst),
+                rhs: Operand::Const(sext_shift as u64),
+                flags: FlagSet::EMPTY,
+            });
+            let res_sext = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: res_sext,
+                op: BinOp::Sar,
+                lhs: Operand::Value(res_shl),
+                rhs: Operand::Const(sext_shift as u64),
+                flags: FlagSet::EMPTY,
+            });
+            res_sext
+        };
+
+        let mut pzs = FlagSet::EMPTY;
+        if flags.contains(FlagSet::PF) {
+            pzs = pzs.union(FlagSet::PF);
+        }
+        if flags.contains(FlagSet::ZF) {
+            pzs = pzs.union(FlagSet::ZF);
+        }
+        if flags.contains(FlagSet::SF) {
+            pzs = pzs.union(FlagSet::SF);
+        }
+        if !pzs.is_empty() {
+            // Use AND as a "test result" op to compute PF/ZF/SF from the result without affecting
+            // other flags.
+            let tmp = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: tmp,
+                op: BinOp::And,
+                lhs: Operand::Value(res_for_pzs),
+                rhs: Operand::Value(res_for_pzs),
+                flags: pzs,
+            });
+        }
+
+        // CF is defined for shift counts in the range [1, width.bits()]. For larger counts it is
+        // undefined and we leave it unchanged (handled above by removing CF from `flags`).
+        if flags.contains(FlagSet::CF) {
+            let bit_shift: u32 = match op {
+                BinOp::Shl => width.bits() - shift_amt,
+                BinOp::Shr | BinOp::Sar => shift_amt - 1,
+                _ => unreachable!(),
+            };
+            let tmp_shift = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: tmp_shift,
+                op: BinOp::Shr,
+                lhs: Operand::Value(lhs_masked),
+                rhs: Operand::Const(bit_shift as u64),
+                flags: FlagSet::EMPTY,
+            });
+            let cf_val = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: cf_val,
+                op: BinOp::And,
+                lhs: Operand::Value(tmp_shift),
+                rhs: Operand::Const(1),
+                flags: FlagSet::EMPTY,
+            });
+            // Update CF using a subtract that borrows iff cf_val != 0.
+            let tmp_cf = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: tmp_cf,
+                op: BinOp::Sub,
+                lhs: Operand::Const(0),
+                rhs: Operand::Value(cf_val),
+                flags: FlagSet::CF,
+            });
+        }
+
+        // OF is only defined for shift_amt == 1 (enforced above by masking flags).
+        if flags.contains(FlagSet::OF) {
+            debug_assert_eq!(shift_amt, 1);
+            let sign_bit = 1u64 << (width.bits() - 1);
+
+            // Compute of_val as 0/1.
+            let of_val = match op {
+                BinOp::Sar => Operand::Const(0),
+                BinOp::Shr => {
+                    let tmp_and = self.fresh_temp();
+                    self.instrs.push(Instr::BinOp {
+                        dst: tmp_and,
+                        op: BinOp::And,
+                        lhs: Operand::Value(lhs_masked),
+                        rhs: Operand::Const(sign_bit),
+                        flags: FlagSet::EMPTY,
+                    });
+                    let tmp = self.fresh_temp();
+                    self.instrs.push(Instr::BinOp {
+                        dst: tmp,
+                        op: BinOp::Shr,
+                        lhs: Operand::Value(tmp_and),
+                        rhs: Operand::Const((width.bits() - 1) as u64),
+                        flags: FlagSet::EMPTY,
+                    });
+                    Operand::Value(tmp)
+                }
+                BinOp::Shl => {
+                    let tmp_xor = self.fresh_temp();
+                    self.instrs.push(Instr::BinOp {
+                        dst: tmp_xor,
+                        op: BinOp::Xor,
+                        lhs: Operand::Value(lhs_masked),
+                        rhs: Operand::Value(dst),
+                        flags: FlagSet::EMPTY,
+                    });
+                    let tmp_and = self.fresh_temp();
+                    self.instrs.push(Instr::BinOp {
+                        dst: tmp_and,
+                        op: BinOp::And,
+                        lhs: Operand::Value(tmp_xor),
+                        rhs: Operand::Const(sign_bit),
+                        flags: FlagSet::EMPTY,
+                    });
+                    let tmp = self.fresh_temp();
+                    self.instrs.push(Instr::BinOp {
+                        dst: tmp,
+                        op: BinOp::Shr,
+                        lhs: Operand::Value(tmp_and),
+                        rhs: Operand::Const((width.bits() - 1) as u64),
+                        flags: FlagSet::EMPTY,
+                    });
+                    Operand::Value(tmp)
+                }
+                _ => unreachable!(),
+            };
+
+            // Set OF to `of_val` by constructing an add that overflows iff of_val != 0:
+            //   x = of_val << 63
+            //   add x, x updates OF=1 when x is the sign bit.
+            let x = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: x,
+                op: BinOp::Shl,
+                lhs: of_val,
+                rhs: Operand::Const(63),
+                flags: FlagSet::EMPTY,
+            });
+            let tmp_of = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: tmp_of,
+                op: BinOp::Add,
+                lhs: Operand::Value(x),
+                rhs: Operand::Value(x),
+                flags: FlagSet::OF,
+            });
         }
     }
 

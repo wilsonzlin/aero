@@ -93,11 +93,12 @@ fn update_shift_flags(
 ) {
     debug_assert!(matches!(op, ShiftOp::Shl | ShiftOp::Shr | ShiftOp::Sar));
 
-    // x86 shifts do not update any flags when the shift count is 0.
+    // x86 shifts do not update any flags when the (masked) shift count is 0.
     if shift_amt == 0 {
         return;
     }
 
+    let lhs = width.truncate(lhs);
     let result = width.truncate(result);
     let sign_bit = 1u64 << (width.bits() - 1);
 
@@ -113,6 +114,8 @@ fn update_shift_flags(
 
     // CF is defined for shift counts in the range [1, width.bits()]. For counts above the operand
     // width, CF is architecturally undefined; we conservatively leave it unchanged.
+    // width, CF is architecturally undefined; we conservatively leave it unchanged (matching the
+    // Tier-1 IR interpreter semantics).
     if flags.contains(FlagSet::CF) && shift_amt <= width.bits() {
         let cf = match op {
             ShiftOp::Shl => ((lhs >> (width.bits() - shift_amt)) & 1) != 0,
@@ -975,7 +978,7 @@ fn shift_count_1_sets_cf_and_of() {
     assert!(out.rflags & aero_cpu_core::state::RFLAGS_ZF == 0);
     assert!(out.rflags & aero_cpu_core::state::RFLAGS_SF == 0);
     assert!(out.rflags & aero_cpu_core::state::RFLAGS_PF == 0);
-    // AF is not modified by shifts.
+    // x86 defines AF as undefined after shifts; we conservatively leave it unchanged.
     assert!(out.rflags & aero_cpu_core::state::RFLAGS_AF != 0);
 }
 
@@ -1094,4 +1097,52 @@ fn shift_count_mask_uses_6_bits_for_64bit_operands() {
     assert!(out.rflags & aero_cpu_core::state::RFLAGS_PF != 0);
     // CF defined for count<=64 => updated (=0 for this input).
     assert!(out.rflags & aero_cpu_core::state::RFLAGS_CF == 0);
+}
+
+#[test]
+fn shl_sets_cf_for_jc() {
+    // mov al, 0x80
+    // cmp eax, eax
+    // shl al, 1
+    // jc taken
+    //
+    // This is a focused regression test for Tier-1 shift flag semantics: if the translation does
+    // not request shift flag updates, the carry flag stays cleared from the CMP and the branch is
+    // not taken.
+    let code = [
+        0xb0, 0x80, // mov al, 0x80
+        0x39, 0xc0, // cmp eax, eax
+        0xd0, 0xe0, // shl al, 1
+        0x72, 0x04, // jc +4 (to 0x6b0c)
+        0xb3, 0x00, // mov bl, 0
+        0xeb, 0x02, // jmp +2
+        0xb3, 0x01, // mov bl, 1
+        0xc3, // ret
+    ];
+
+    let entry = 0x6b00u64;
+
+    let cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+
+    let bus = SimpleBus::new(0x10000);
+
+    let expected = "\
+block 0x6b00:
+  v0 = const.i8 0x80
+  write.al v0
+  v1 = read.eax
+  v2 = read.eax
+  cmpflags.i32 v1, v2 ; flags=CF|PF|AF|ZF|SF|OF
+  v3 = read.al
+  v4 = const.i8 0x1
+  v5 = shl.i8 v3, v4 ; flags=CF|PF|ZF|SF|OF
+  write.al v5
+  v6 = evalcond.b
+  term jcc v6, 0x6b0c, 0x6b08
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
 }
