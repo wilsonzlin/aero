@@ -1,0 +1,110 @@
+//! TRB ring walking helpers.
+//!
+//! xHCI rings live in guest memory. The host controller consumes TRBs from a dequeue pointer while
+//! tracking a "cycle state" bit to distinguish new entries from old ones. Rings are segmented using
+//! Link TRBs, which can optionally toggle the cycle state when wrapping.
+
+use crate::MemoryBus;
+
+use super::trb::{Trb, TrbType, TRB_LEN};
+
+/// A TRB fetched from a ring along with its guest address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RingItem {
+    pub paddr: u64,
+    pub trb: Trb,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RingError {
+    /// The ring could not be advanced within the provided step budget.
+    ///
+    /// This is used as a safety measure against malformed rings (e.g. a loop of Link TRBs that
+    /// never reaches a non-Link TRB or a cycle mismatch).
+    StepBudgetExceeded,
+
+    /// Dequeue pointer arithmetic overflowed `u64`.
+    AddressOverflow,
+}
+
+/// Result of polling a ring cursor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RingPoll {
+    /// A TRB was available and returned. The cursor has been advanced past the TRB.
+    Ready(RingItem),
+    /// The next TRB is not yet available (cycle bit mismatch). The cursor is unchanged.
+    NotReady,
+    /// The ring was malformed or otherwise could not be advanced safely.
+    Err(RingError),
+}
+
+/// Walks a TRB ring in guest memory.
+///
+/// The cursor tracks a dequeue pointer (`paddr`) and expected cycle state. It will transparently
+/// follow Link TRBs and perform cycle toggling when `TC=1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RingCursor {
+    paddr: u64,
+    cycle: bool,
+}
+
+impl RingCursor {
+    /// Create a new cursor from a dequeue pointer and cycle state.
+    ///
+    /// The pointer is masked to 16-byte alignment (xHCI ring pointers store flags in low bits).
+    pub const fn new(dequeue_ptr: u64, cycle: bool) -> Self {
+        Self {
+            paddr: dequeue_ptr & !0x0f,
+            cycle,
+        }
+    }
+
+    /// Current dequeue pointer (16-byte aligned).
+    pub const fn dequeue_ptr(&self) -> u64 {
+        self.paddr
+    }
+
+    /// Current expected cycle state.
+    pub const fn cycle_state(&self) -> bool {
+        self.cycle
+    }
+
+    /// Poll the ring and return the next available TRB (if any).
+    ///
+    /// `step_budget` bounds the number of TRBs read while trying to find a returnable TRB. This
+    /// prevents an infinite loop on malformed rings, such as a chain of Link TRBs that never
+    /// reaches a non-Link TRB.
+    pub fn poll(&mut self, mem: &mut impl MemoryBus, step_budget: usize) -> RingPoll {
+        for _ in 0..step_budget {
+            let trb = Trb::read_from(mem, self.paddr);
+
+            if trb.cycle() != self.cycle {
+                return RingPoll::NotReady;
+            }
+
+            if matches!(trb.trb_type(), TrbType::Link) {
+                // Link TRB parameter contains the next segment pointer; low bits are reserved.
+                self.paddr = trb.link_segment_ptr();
+                if trb.link_toggle_cycle() {
+                    self.cycle = !self.cycle;
+                }
+                continue;
+            }
+
+            let item = RingItem {
+                paddr: self.paddr,
+                trb,
+            };
+
+            self.paddr = match self.paddr.checked_add(TRB_LEN as u64) {
+                Some(next) => next,
+                None => return RingPoll::Err(RingError::AddressOverflow),
+            };
+
+            return RingPoll::Ready(item);
+        }
+
+        RingPoll::Err(RingError::StepBudgetExceeded)
+    }
+}
+

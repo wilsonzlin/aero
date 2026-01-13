@@ -1,11 +1,12 @@
-//! USB subsystem building blocks: a minimal UHCI host controller model and basic USB HID devices.
+//! USB subsystem building blocks: a minimal UHCI host controller model, early xHCI scaffolding,
+//! and basic USB HID devices.
 //!
 //! This crate is the canonical USB/UHCI implementation for Aero's browser/WASM runtime
 //! (see `docs/adr/0015-canonical-usb-stack.md`).
 //!
 //! The main consumer is the browser-based emulator, which exposes an emulated UHCI (USB 1.1)
-//! controller and USB HID devices (keyboard/mouse/gamepad + passthrough). The goal is to provide
-//! enough fidelity for Windows 7 to bind its in-box UHCI + HID drivers.
+//! controller and USB HID devices (keyboard/mouse/gamepad + passthrough). There is also an
+//! in-progress xHCI (USB 3.0) controller model; currently only core data types are implemented.
 //!
 //! ## Snapshot/restore
 //!
@@ -16,6 +17,7 @@
 //! |------|------------------------|
 //! | `device::AttachedUsbDevice` | `b"ADEV"` |
 //! | `uhci::UhciController` | `b"UHCI"` |
+//! | `xhci::XhciController` | `b"XHCI"` |
 //! | `hub::UsbHubDevice` | `b"UHUB"` |
 //! | `hid::UsbHidKeyboard` / `hid::UsbHidKeyboardHandle` | `b"UKBD"` |
 //! | `hid::UsbHidMouse` / `hid::UsbHidMouseHandle` | `b"UMSE"` |
@@ -42,6 +44,7 @@ pub mod memory;
 pub mod passthrough;
 pub mod passthrough_device;
 pub mod uhci;
+pub mod xhci;
 pub mod web;
 
 extern crate alloc;
