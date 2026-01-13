@@ -15,8 +15,17 @@ regressions in:
 From the repo root:
 
 ```sh
-cmake -S drivers/windows7/virtio-snd/tests/host -B out/virtiosnd-host-tests
-cmake --build out/virtiosnd-host-tests
-ctest --test-dir out/virtiosnd-host-tests
+./drivers/windows7/virtio-snd/scripts/run-host-tests.sh
 ```
 
+To force a clean rebuild:
+
+```sh
+./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --clean
+```
+
+The default build directory is `out/virtiosnd-host-tests`. Override with:
+
+```sh
+./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --build-dir out/my-virtiosnd-tests
+```
