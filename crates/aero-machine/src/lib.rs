@@ -1656,6 +1656,14 @@ struct AeroGpuDevice {
     /// Dedicated VRAM backing store exposed via AeroGPU BAR1.
     vram: Vec<u8>,
 
+    /// Whether a VBE mode is currently active.
+    ///
+    /// When set, the `0xA0000..0xAFFFF` banked window is mapped to the VBE framebuffer region
+    /// starting at `VBE_LFB_OFFSET`, rather than the legacy VGA planar/text backing region.
+    vbe_mode_active: bool,
+    /// Current VBE bank index (units of 64KiB windows).
+    vbe_bank: u16,
+
     // ---------------------------------------------------------------------
     // Minimal VGA port state (permissive)
     // ---------------------------------------------------------------------
@@ -1679,6 +1687,8 @@ impl AeroGpuDevice {
     fn new() -> Self {
         Self {
             vram: vec![0u8; AEROGPU_VRAM_SIZE],
+            vbe_mode_active: false,
+            vbe_bank: 0,
             misc_output: 0,
             seq_index: 0,
             seq_regs: [0; 256],
@@ -1694,6 +1704,8 @@ impl AeroGpuDevice {
 
     fn reset(&mut self) {
         self.vram.fill(0);
+        self.vbe_mode_active = false;
+        self.vbe_bank = 0;
         self.misc_output = 0;
         self.seq_index = 0;
         self.seq_regs.fill(0);
@@ -1757,13 +1769,81 @@ impl AeroGpuDevice {
     }
 
     fn legacy_vga_read(&self, offset: u64, size: usize) -> u64 {
-        let end = LEGACY_VGA_WINDOW_SIZE.min(self.vram.len());
-        Self::read_linear(&self.vram[..end], offset, size)
+        if size == 0 {
+            return 0;
+        }
+        let size = match size {
+            1 | 2 | 4 | 8 => size,
+            _ => size.clamp(1, 8),
+        };
+
+        let mut out = 0u64;
+        for i in 0..size {
+            let off = offset.wrapping_add(i as u64);
+            let byte = self.legacy_vga_read_u8(off);
+            out |= (byte as u64) << (i * 8);
+        }
+        out
     }
 
     fn legacy_vga_write(&mut self, offset: u64, size: usize, value: u64) {
-        let end = LEGACY_VGA_WINDOW_SIZE.min(self.vram.len());
-        Self::write_linear(&mut self.vram[..end], offset, size, value);
+        if size == 0 {
+            return;
+        }
+        let size = match size {
+            1 | 2 | 4 | 8 => size,
+            _ => size.clamp(1, 8),
+        };
+
+        for i in 0..size {
+            let off = offset.wrapping_add(i as u64);
+            let byte = ((value >> (i * 8)) & 0xFF) as u8;
+            self.legacy_vga_write_u8(off, byte);
+        }
+    }
+
+    fn legacy_vga_read_u8(&self, window_off: u64) -> u8 {
+        let off = usize::try_from(window_off).unwrap_or(usize::MAX);
+
+        // VBE banked window at 0xA0000 (64KiB). When VBE is active, map it into the VBE framebuffer
+        // region, not the legacy VGA alias region.
+        if self.vbe_mode_active && off < 64 * 1024 {
+            let bank_base = usize::from(self.vbe_bank) * 64 * 1024;
+            let vbe_off = VBE_LFB_OFFSET
+                .checked_add(bank_base)
+                .and_then(|base| base.checked_add(off))
+                .unwrap_or(usize::MAX);
+            return self.vram.get(vbe_off).copied().unwrap_or(0);
+        }
+
+        // Default legacy VGA alias: `0xA0000..0xC0000` <-> `VRAM[0..LEGACY_VGA_WINDOW_SIZE]`.
+        if off < LEGACY_VGA_WINDOW_SIZE {
+            return self.vram.get(off).copied().unwrap_or(0);
+        }
+
+        0
+    }
+
+    fn legacy_vga_write_u8(&mut self, window_off: u64, value: u8) {
+        let off = usize::try_from(window_off).unwrap_or(usize::MAX);
+
+        if self.vbe_mode_active && off < 64 * 1024 {
+            let bank_base = usize::from(self.vbe_bank) * 64 * 1024;
+            let vbe_off = VBE_LFB_OFFSET
+                .checked_add(bank_base)
+                .and_then(|base| base.checked_add(off))
+                .unwrap_or(usize::MAX);
+            if let Some(slot) = self.vram.get_mut(vbe_off) {
+                *slot = value;
+            }
+            return;
+        }
+
+        if off < LEGACY_VGA_WINDOW_SIZE {
+            if let Some(slot) = self.vram.get_mut(off) {
+                *slot = value;
+            }
+        }
     }
 
     fn vga_port_read_u8(&mut self, port: u16) -> u8 {
@@ -5949,22 +6029,24 @@ impl Machine {
         // - AeroGPU: BAR1_BASE + VBE_LFB_OFFSET (within the VRAM aperture).
         // - Headless: default RAM-backed base (safe, avoids overlap with PCI MMIO window).
         let use_legacy_vga = self.cfg.enable_vga && !self.cfg.enable_aerogpu;
-        if use_legacy_vga {
-            self.bios.video.vbe.lfb_base = aero_gpu_vga::SVGA_LFB_BASE;
-            return;
-        }
+        let lfb_base = if use_legacy_vga {
+            aero_gpu_vga::SVGA_LFB_BASE
+        } else if self.cfg.enable_aerogpu {
+            self.aerogpu_bar1_base()
+                .and_then(|base| u32::try_from(base.saturating_add(VBE_LFB_OFFSET as u64)).ok())
+                .unwrap_or(firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT)
+        } else {
+            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+        };
 
-        if self.cfg.enable_aerogpu {
-            if let Some(base) = self.aerogpu_bar1_base() {
-                let lfb = base.saturating_add(VBE_LFB_OFFSET as u64);
-                if let Ok(lfb) = u32::try_from(lfb) {
-                    self.bios.video.vbe.lfb_base = lfb;
-                    return;
-                }
-            }
-        }
+        self.bios.video.vbe.lfb_base = lfb_base;
 
-        self.bios.video.vbe.lfb_base = firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT;
+        // Keep the AeroGPU legacy window mapping coherent with BIOS VBE state for banked access.
+        if let Some(aerogpu) = &self.aerogpu {
+            let mut dev = aerogpu.borrow_mut();
+            dev.vbe_mode_active = self.bios.video.vbe.current_mode.is_some();
+            dev.vbe_bank = self.bios.video.vbe.bank;
+        }
     }
 
     fn handle_bios_interrupt(&mut self, vector: u8) {
@@ -6065,128 +6147,137 @@ impl Machine {
         // state + writes to guest memory; it does not program VGA/VBE ports. Mirror relevant VBE
         // state into the emulated VGA device so mode sets immediately affect the visible output.
         if vector == 0x10 {
-            let Some(vga) = &self.vga else {
-                self.cpu.state.a20_enabled = self.chipset.a20().enabled();
-                return;
-            };
+            if let Some(vga) = &self.vga {
+                match self.bios.video.vbe.current_mode {
+                    Some(mode) => {
+                        if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
+                            let width = mode_info.width;
+                            let height = mode_info.height;
+                            let bpp = mode_info.bpp as u16;
 
-            match self.bios.video.vbe.current_mode {
-                Some(mode) => {
-                    if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
-                        let width = mode_info.width;
-                        let height = mode_info.height;
-                        let bpp = mode_info.bpp as u16;
+                            let bank = self.bios.video.vbe.bank;
+                            let virt_width = self.bios.video.vbe.logical_width_pixels.max(width);
+                            let x_off = self.bios.video.vbe.display_start_x;
+                            let y_off = self.bios.video.vbe.display_start_y;
 
-                        let bank = self.bios.video.vbe.bank;
-                        let virt_width = self.bios.video.vbe.logical_width_pixels.max(width);
-                        let x_off = self.bios.video.vbe.display_start_x;
-                        let y_off = self.bios.video.vbe.display_start_y;
+                            let mut vga = vga.borrow_mut();
+                            vga.set_svga_mode(width, height, bpp, /* lfb */ true);
 
-                        let mut vga = vga.borrow_mut();
-                        vga.set_svga_mode(width, height, bpp, /* lfb */ true);
+                            // Mirror BIOS VBE state into Bochs VBE_DISPI regs via the port I/O path so
+                            // the VGA device marks the output dirty when panning/stride changes.
+                            vga.port_write(0x01CE, 2, 0x0005);
+                            vga.port_write(0x01CF, 2, u32::from(bank));
+                            vga.port_write(0x01CE, 2, 0x0006);
+                            vga.port_write(0x01CF, 2, u32::from(virt_width));
+                            vga.port_write(0x01CE, 2, 0x0008);
+                            vga.port_write(0x01CF, 2, u32::from(x_off));
+                            vga.port_write(0x01CE, 2, 0x0009);
+                            vga.port_write(0x01CF, 2, u32::from(y_off));
 
-                        // Mirror BIOS VBE state into Bochs VBE_DISPI regs via the port I/O path so
-                        // the VGA device marks the output dirty when panning/stride changes.
-                        vga.port_write(0x01CE, 2, 0x0005);
-                        vga.port_write(0x01CF, 2, u32::from(bank));
-                        vga.port_write(0x01CE, 2, 0x0006);
-                        vga.port_write(0x01CF, 2, u32::from(virt_width));
-                        vga.port_write(0x01CE, 2, 0x0008);
-                        vga.port_write(0x01CF, 2, u32::from(x_off));
-                        vga.port_write(0x01CE, 2, 0x0009);
-                        vga.port_write(0x01CF, 2, u32::from(y_off));
+                            // Palette updates: INT 10h AX=4F09 "Set Palette Data".
+                            //
+                            // The HLE BIOS stores VBE palette data internally but does not program the
+                            // VGA DAC ports. For 8bpp VBE modes, mirror the updated palette into the
+                            // device's DAC so rendered output matches BIOS state.
+                            //
+                            // Note: The VGA model's DAC programming path accepts 6-bit components; when
+                            // the BIOS is configured for an 8-bit DAC, we downscale (>>2).
+                            let bl = (bx_before & 0x00FF) as u8;
+                            if bpp == 8
+                                && ax_before == 0x4F09
+                                && ax_after == 0x004F
+                                && (bl & 0x7F) == 0
+                            {
+                                let start = (dx_before as usize).min(255);
+                                let count = (cx_before as usize).min(256 - start);
+                                if count != 0 {
+                                    // Set DAC write index to `start`.
+                                    vga.port_write(0x3C8, 1, start as u32);
 
-                        // Palette updates: INT 10h AX=4F09 "Set Palette Data".
-                        //
-                        // The HLE BIOS stores VBE palette data internally but does not program the
-                        // VGA DAC ports. For 8bpp VBE modes, mirror the updated palette into the
-                        // device's DAC so rendered output matches BIOS state.
-                        //
-                        // Note: The VGA model's DAC programming path accepts 6-bit components; when
-                        // the BIOS is configured for an 8-bit DAC, we downscale (>>2).
-                        let bl = (bx_before & 0x00FF) as u8;
-                        if bpp == 8 && ax_before == 0x4F09 && ax_after == 0x004F && (bl & 0x7F) == 0
-                        {
-                            let start = (dx_before as usize).min(255);
-                            let count = (cx_before as usize).min(256 - start);
-                            if count != 0 {
-                                // Set DAC write index to `start`.
-                                vga.port_write(0x3C8, 1, start as u32);
+                                    let bits = self.bios.video.vbe.dac_width_bits;
+                                    for idx in start..start + count {
+                                        let base = idx * 4;
+                                        let b = self.bios.video.vbe.palette[base];
+                                        let g = self.bios.video.vbe.palette[base + 1];
+                                        let r = self.bios.video.vbe.palette[base + 2];
 
-                                let bits = self.bios.video.vbe.dac_width_bits;
-                                for idx in start..start + count {
-                                    let base = idx * 4;
-                                    let b = self.bios.video.vbe.palette[base];
-                                    let g = self.bios.video.vbe.palette[base + 1];
-                                    let r = self.bios.video.vbe.palette[base + 2];
+                                        let (r, g, b) = if bits >= 8 {
+                                            (r >> 2, g >> 2, b >> 2)
+                                        } else {
+                                            (r & 0x3F, g & 0x3F, b & 0x3F)
+                                        };
 
-                                    let (r, g, b) = if bits >= 8 {
-                                        (r >> 2, g >> 2, b >> 2)
-                                    } else {
-                                        (r & 0x3F, g & 0x3F, b & 0x3F)
-                                    };
+                                        // VGA DAC write order is R, G, B.
+                                        vga.port_write(0x3C9, 1, r as u32);
+                                        vga.port_write(0x3C9, 1, g as u32);
+                                        vga.port_write(0x3C9, 1, b as u32);
+                                    }
+                                }
+                            }
 
-                                    // VGA DAC write order is R, G, B.
-                                    vga.port_write(0x3C9, 1, r as u32);
-                                    vga.port_write(0x3C9, 1, g as u32);
-                                    vga.port_write(0x3C9, 1, b as u32);
+                            // If the guest requested a clear (BX bit15 clear), perform an efficient
+                            // host-side clear after enabling the mode.
+                            //
+                            // Note: The machine forces the BIOS to skip its byte-at-a-time clear loop
+                            // by temporarily setting the VBE no-clear flag before dispatching the
+                            // interrupt (see `force_vbe_no_clear` above).
+                            if ax_before == 0x4F02 && ax_after == 0x004F && (bx_before & 0x8000) == 0 {
+                                let bytes_per_pixel = (bpp as usize).div_ceil(8);
+                                let clear_len = (width as usize)
+                                    .saturating_mul(height as usize)
+                                    .saturating_mul(bytes_per_pixel.max(1));
+                                let fb_base = aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
+                                let vram_len = vga.vram().len();
+                                if fb_base < vram_len {
+                                    let vbe_len = vram_len - fb_base;
+                                    let clear_len = clear_len.min(vbe_len);
+                                    let end = fb_base + clear_len;
+                                    vga.vram_mut()[fb_base..end].fill(0);
                                 }
                             }
                         }
-
-                        // If the guest requested a clear (BX bit15 clear), perform an efficient
-                        // host-side clear after enabling the mode.
+                    }
+                    None => {
+                        // Only reset the VGA register file when the BIOS actually performed a mode
+                        // set (e.g. INT 10h AH=00 AL=03h / 13h), or when transitioning from a VBE mode
+                        // back to BIOS text mode.
                         //
-                        // Note: The machine forces the BIOS to skip its byte-at-a-time clear loop
-                        // by temporarily setting the VBE no-clear flag before dispatching the
-                        // interrupt (see `force_vbe_no_clear` above).
-                        if ax_before == 0x4F02 && ax_after == 0x004F && (bx_before & 0x8000) == 0 {
-                            let bytes_per_pixel = (bpp as usize).div_ceil(8);
-                            let clear_len = (width as usize)
-                                .saturating_mul(height as usize)
-                                .saturating_mul(bytes_per_pixel.max(1));
-                            let fb_base = aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
-                            let vram_len = vga.vram().len();
-                            if fb_base < vram_len {
-                                let vbe_len = vram_len - fb_base;
-                                let clear_len = clear_len.min(vbe_len);
-                                let end = fb_base + clear_len;
-                                vga.vram_mut()[fb_base..end].fill(0);
-                            }
+                        // This avoids clobbering guest-programmed text registers (like the CRTC start
+                        // address used for paging) on unrelated INT 10h text services (cursor moves,
+                        // teletype output, etc.).
+                        if is_set_mode_13h {
+                            vga.borrow_mut().set_mode_13h();
+                        } else if is_set_mode_03h || vbe_mode_before.is_some() {
+                            vga.borrow_mut().set_text_mode_80x25();
+                        }
+
+                        // INT 10h AH=05 "Select Active Display Page" updates the BDA but does not
+                        // program VGA ports in our HLE BIOS. Mirror the active-page start address into
+                        // the CRTC start address regs so the visible text window matches BIOS state.
+                        let is_set_active_page = (ax_before & 0xFF00) == 0x0500;
+                        if is_set_active_page {
+                            let page = BiosDataArea::read_active_page(&mut self.mem);
+                            let page_size_bytes = BiosDataArea::read_page_size(&mut self.mem);
+                            let cells_per_page = page_size_bytes / 2;
+                            let start_addr =
+                                u16::from(page).saturating_mul(cells_per_page) & 0x3FFF;
+
+                            let mut vga = vga.borrow_mut();
+                            vga.port_write(0x3D4, 1, 0x0C);
+                            vga.port_write(0x3D5, 1, u32::from((start_addr >> 8) as u8));
+                            vga.port_write(0x3D4, 1, 0x0D);
+                            vga.port_write(0x3D5, 1, u32::from((start_addr & 0x00FF) as u8));
                         }
                     }
                 }
-                None => {
-                    // Only reset the VGA register file when the BIOS actually performed a mode
-                    // set (e.g. INT 10h AH=00 AL=03h / 13h), or when transitioning from a VBE mode
-                    // back to BIOS text mode.
-                    //
-                    // This avoids clobbering guest-programmed text registers (like the CRTC start
-                    // address used for paging) on unrelated INT 10h text services (cursor moves,
-                    // teletype output, etc.).
-                    if is_set_mode_13h {
-                        vga.borrow_mut().set_mode_13h();
-                    } else if is_set_mode_03h || vbe_mode_before.is_some() {
-                        vga.borrow_mut().set_text_mode_80x25();
-                    }
+            }
 
-                    // INT 10h AH=05 "Select Active Display Page" updates the BDA but does not
-                    // program VGA ports in our HLE BIOS. Mirror the active-page start address into
-                    // the CRTC start address regs so the visible text window matches BIOS state.
-                    let is_set_active_page = (ax_before & 0xFF00) == 0x0500;
-                    if is_set_active_page {
-                        let page = BiosDataArea::read_active_page(&mut self.mem);
-                        let page_size_bytes = BiosDataArea::read_page_size(&mut self.mem);
-                        let cells_per_page = page_size_bytes / 2;
-                        let start_addr = u16::from(page).saturating_mul(cells_per_page) & 0x3FFF;
-
-                        let mut vga = vga.borrow_mut();
-                        vga.port_write(0x3D4, 1, 0x0C);
-                        vga.port_write(0x3D5, 1, u32::from((start_addr >> 8) as u8));
-                        vga.port_write(0x3D4, 1, 0x0D);
-                        vga.port_write(0x3D5, 1, u32::from((start_addr & 0x00FF) as u8));
-                    }
-                }
+            // Keep the AeroGPU legacy window coherent with BIOS VBE state so the A0000 banked window
+            // behaves like the VBE window advertised by `VbeDevice::write_mode_info`.
+            if let Some(aerogpu) = &self.aerogpu {
+                let mut dev = aerogpu.borrow_mut();
+                dev.vbe_mode_active = self.bios.video.vbe.current_mode.is_some();
+                dev.vbe_bank = self.bios.video.vbe.bank;
             }
         }
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
