@@ -9,7 +9,9 @@ owns the submission transport and supports both the versioned (`aerogpu_pci.h` +
 (`legacy/aerogpu_protocol_legacy.h`) device ABIs, auto-detected via MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 (The in-tree Win7 driver package binds only to the versioned device by default; legacy uses `drivers/aerogpu/packaging/win7/legacy/`.)
 
-## Status / scope (current)
+## Status / scope (initial)
+
+This section started as the initial milestone scope; it is kept updated as feature coverage expands.
 
 This implementation started as “minimum viable triangle”, but it now includes additional coverage needed by the Win7 runtime and by the current AeroGPU protocol (notably: **mip chains**, **state encoding**, and protocol support for **B5 formats** + **MRT**).
 
