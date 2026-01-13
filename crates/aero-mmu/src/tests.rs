@@ -1704,3 +1704,53 @@ fn translate_probe_does_not_populate_tlb_on_miss_long4() {
         "expected a page walk after probe miss, but translate did no reads"
     );
 }
+
+#[cfg(feature = "stats")]
+#[test]
+fn stats_counts_tlb_miss_then_hit_and_page_walk() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page_base = 0x8000u64;
+
+    mem.write_u64_raw(pml4_base, pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pt_base, page_base | PTE_P64 | PTE_RW64 | PTE_US64);
+
+    mmu.set_cr3(pml4_base);
+    mmu.set_cr4(CR4_PAE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    mmu.reset_stats();
+
+    let vaddr = 0x234u64;
+
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
+    let s1 = mmu.stats().expect("stats feature enabled");
+    assert_eq!(s1.dtlb_lookups, 1);
+    assert_eq!(s1.dtlb_hits, 0);
+    assert_eq!(s1.dtlb_misses, 1);
+    assert_eq!(s1.page_walks, 1);
+    assert_eq!(s1.itlb_lookups, 0);
+    assert_eq!(s1.itlb_hits, 0);
+    assert_eq!(s1.itlb_misses, 0);
+
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
+    let s2 = mmu.stats().expect("stats feature enabled");
+    assert_eq!(s2.dtlb_lookups, 2);
+    assert_eq!(s2.dtlb_hits, 1);
+    assert_eq!(s2.dtlb_misses, 1);
+    assert_eq!(s2.page_walks, 1);
+}

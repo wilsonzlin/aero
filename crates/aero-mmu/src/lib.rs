@@ -372,6 +372,37 @@ enum PagingMode {
     Long4,
 }
 
+/// Optional MMU/TLB statistics.
+///
+/// When the `stats` feature is disabled, this type contains no fields and
+/// [`Mmu::stats`] will always return `None`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct MmuStats {
+    /// Instruction TLB lookups.
+    #[cfg(feature = "stats")]
+    pub itlb_lookups: u64,
+    /// Instruction TLB hits.
+    #[cfg(feature = "stats")]
+    pub itlb_hits: u64,
+    /// Instruction TLB misses.
+    #[cfg(feature = "stats")]
+    pub itlb_misses: u64,
+
+    /// Data TLB lookups.
+    #[cfg(feature = "stats")]
+    pub dtlb_lookups: u64,
+    /// Data TLB hits.
+    #[cfg(feature = "stats")]
+    pub dtlb_hits: u64,
+    /// Data TLB misses.
+    #[cfg(feature = "stats")]
+    pub dtlb_misses: u64,
+
+    /// Page-table walks performed due to TLB misses.
+    #[cfg(feature = "stats")]
+    pub page_walks: u64,
+}
+
 /// x86 MMU with a software TLB.
 #[derive(Debug, Clone)]
 pub struct Mmu {
@@ -382,6 +413,8 @@ pub struct Mmu {
     efer: u64,
     max_phys_bits: u8,
     tlb: Tlb,
+    #[cfg(feature = "stats")]
+    stats: MmuStats,
 }
 
 impl Default for Mmu {
@@ -400,6 +433,31 @@ impl Mmu {
             efer: 0,
             max_phys_bits: 52,
             tlb: Tlb::new(),
+            #[cfg(feature = "stats")]
+            stats: MmuStats::default(),
+        }
+    }
+
+    /// Returns current MMU/TLB statistics when the `stats` feature is enabled.
+    #[inline]
+    pub fn stats(&self) -> Option<MmuStats> {
+        #[cfg(feature = "stats")]
+        {
+            Some(self.stats)
+        }
+
+        #[cfg(not(feature = "stats"))]
+        {
+            None
+        }
+    }
+
+    /// Resets statistics counters back to 0 when the `stats` feature is enabled.
+    #[inline]
+    pub fn reset_stats(&mut self) {
+        #[cfg(feature = "stats")]
+        {
+            self.stats = MmuStats::default();
         }
     }
 
@@ -525,10 +583,28 @@ impl Mmu {
             return Err(TranslateFault::NonCanonical(vaddr));
         }
 
-        if let Some(entry) = self
-            .tlb
-            .lookup(vaddr, access.is_execute(), self.current_pcid())
+        let is_exec = access.is_execute();
+        let pcid = self.current_pcid();
+
+        #[cfg(feature = "stats")]
         {
+            if is_exec {
+                self.stats.itlb_lookups = self.stats.itlb_lookups.wrapping_add(1);
+            } else {
+                self.stats.dtlb_lookups = self.stats.dtlb_lookups.wrapping_add(1);
+            }
+        }
+
+        if let Some(entry) = self.tlb.lookup(vaddr, is_exec, pcid) {
+            #[cfg(feature = "stats")]
+            {
+                if is_exec {
+                    self.stats.itlb_hits = self.stats.itlb_hits.wrapping_add(1);
+                } else {
+                    self.stats.dtlb_hits = self.stats.dtlb_hits.wrapping_add(1);
+                }
+            }
+
             match self.check_perms_from_tlb(vaddr, entry, access, is_user) {
                 Ok(()) => {
                     let paddr = entry.translate(vaddr);
@@ -544,8 +620,7 @@ impl Mmu {
                             let val = bus.read_u32(leaf_addr);
                             bus.write_u32(leaf_addr, val | (PTE_D as u32));
                         }
-                        self.tlb
-                            .set_dirty(vaddr, access.is_execute(), self.current_pcid());
+                        self.tlb.set_dirty(vaddr, is_exec, pcid);
                     }
 
                     return Ok(paddr);
@@ -557,6 +632,16 @@ impl Mmu {
             }
         }
 
+        #[cfg(feature = "stats")]
+        {
+            if is_exec {
+                self.stats.itlb_misses = self.stats.itlb_misses.wrapping_add(1);
+            } else {
+                self.stats.dtlb_misses = self.stats.dtlb_misses.wrapping_add(1);
+            }
+            self.stats.page_walks = self.stats.page_walks.wrapping_add(1);
+        }
+
         let walk_res = match mode {
             PagingMode::Disabled => unreachable!(),
             PagingMode::Legacy32 => self.walk_legacy32(bus, vaddr, access, is_user),
@@ -566,7 +651,7 @@ impl Mmu {
 
         match walk_res {
             Ok((entry, paddr)) => {
-                self.tlb.insert(access.is_execute(), entry);
+                self.tlb.insert(is_exec, entry);
                 Ok(paddr)
             }
             Err(pf) => {
@@ -613,16 +698,44 @@ impl Mmu {
             return Err(TranslateFault::NonCanonical(vaddr));
         }
 
+        let is_exec = access.is_execute();
+        let pcid = self.current_pcid();
+
+        #[cfg(feature = "stats")]
+        {
+            if is_exec {
+                self.stats.itlb_lookups = self.stats.itlb_lookups.wrapping_add(1);
+            } else {
+                self.stats.dtlb_lookups = self.stats.dtlb_lookups.wrapping_add(1);
+            }
+        }
+
         // Probe mode may consult the internal TLB, but must not update guest
         // page tables (and thus must not lazily set dirty bits on hits).
-        if let Some(entry) = self
-            .tlb
-            .lookup(vaddr, access.is_execute(), self.current_pcid())
-        {
+        if let Some(entry) = self.tlb.lookup(vaddr, is_exec, pcid) {
+            #[cfg(feature = "stats")]
+            {
+                if is_exec {
+                    self.stats.itlb_hits = self.stats.itlb_hits.wrapping_add(1);
+                } else {
+                    self.stats.dtlb_hits = self.stats.dtlb_hits.wrapping_add(1);
+                }
+            }
+
             match self.check_perms_from_tlb(vaddr, entry, access, is_user) {
                 Ok(()) => return Ok(entry.translate(vaddr)),
                 Err(pf) => return Err(TranslateFault::PageFault(pf)),
             }
+        }
+
+        #[cfg(feature = "stats")]
+        {
+            if is_exec {
+                self.stats.itlb_misses = self.stats.itlb_misses.wrapping_add(1);
+            } else {
+                self.stats.dtlb_misses = self.stats.dtlb_misses.wrapping_add(1);
+            }
+            self.stats.page_walks = self.stats.page_walks.wrapping_add(1);
         }
 
         // Perform a page walk without setting accessed/dirty bits in guest

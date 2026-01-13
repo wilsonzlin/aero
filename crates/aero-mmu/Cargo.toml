@@ -15,6 +15,7 @@ criterion = "0.5"
 
 [features]
 default = []
+stats = []
 memory-bus = ["dep:memory"]
 aero-mem-bus = ["dep:aero-mem"]
 
