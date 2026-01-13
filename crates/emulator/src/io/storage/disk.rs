@@ -307,6 +307,13 @@ impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
 }
 
 /// Convenience helper to wrap an [`aero_storage::VirtualDisk`] as an emulator [`DiskBackend`].
+#[cfg(target_arch = "wasm32")]
+pub fn from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk>) -> Box<dyn DiskBackend> {
+    Box::new(AeroVirtualDiskAsNvmeBackend::new(disk))
+}
+
+/// Convenience helper to wrap an [`aero_storage::VirtualDisk`] as an emulator [`DiskBackend`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk + Send>) -> Box<dyn DiskBackend> {
     Box::new(AeroVirtualDiskAsNvmeBackend::new(disk))
 }
