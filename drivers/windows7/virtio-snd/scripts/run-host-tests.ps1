@@ -35,19 +35,19 @@
   Ninja Multi-Config). Defaults to Release.
 
 .EXAMPLE
-  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers\windows7\virtio-snd\scripts\run-host-tests.ps1
 
 .EXAMPLE
-  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -BuildDir out/my-virtiosnd-tests
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -BuildDir out\my-virtiosnd-tests
 
 .EXAMPLE
-  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Clean
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Clean
 
 .EXAMPLE
-  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -HostOnly
 
 .EXAMPLE
-  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Configuration Debug
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Configuration Debug
 #>
 
 [CmdletBinding()]

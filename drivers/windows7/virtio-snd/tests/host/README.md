@@ -38,7 +38,7 @@ From the repo root:
 On Windows:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1
 ```
 
 Replace `pwsh` with `powershell` if you are using Windows PowerShell.
@@ -50,7 +50,7 @@ To force a clean rebuild:
 ```
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Clean
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Clean
 ```
 
 The default build directory is `out/virtiosnd-tests`. Override with:
@@ -60,14 +60,14 @@ The default build directory is `out/virtiosnd-tests`. Override with:
 ```
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -BuildDir out/my-virtiosnd-tests
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -BuildDir out\my-virtiosnd-tests
 ```
 
 Multi-config generators (Visual Studio, Ninja Multi-Config) require a build/test configuration.
 `run-host-tests.ps1` auto-detects this and uses `-Configuration` (default: `Release`):
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Configuration Debug
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Configuration Debug
 ```
 
 Or run directly:
@@ -91,7 +91,7 @@ run:
 ```
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -HostOnly
 ```
 
 The default build directory for `--host-only` is `out/virtiosnd-host-tests`. Override with:
@@ -101,7 +101,7 @@ The default build directory for `--host-only` is `out/virtiosnd-host-tests`. Ove
 ```
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly -BuildDir out/my-virtiosnd-host-tests
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -HostOnly -BuildDir out\my-virtiosnd-host-tests
 ```
 
 Or run directly:
