@@ -276,6 +276,9 @@ func TestStartupSecurityWarnings_L2AuthForwardModeQuery(t *testing.T) {
 		}
 		if r.attrs["warning_code"] == "l2_backend_auth_forward_mode_query" {
 			found = true
+			if r.attrs["l2_backend_ws_url_set"] != true {
+				t.Fatalf("l2_backend_ws_url_set=%#v, want true", r.attrs["l2_backend_ws_url_set"])
+			}
 			if r.attrs["l2_backend_ws_host"] != "example.com" {
 				t.Fatalf("l2_backend_ws_host=%#v, want %q", r.attrs["l2_backend_ws_host"], "example.com")
 			}
@@ -287,7 +290,7 @@ func TestStartupSecurityWarnings_L2AuthForwardModeQuery(t *testing.T) {
 	}
 }
 
-func TestStartupSecurityWarnings_L2AuthForwardModeQuery_NoWarningWhenL2Disabled(t *testing.T) {
+func TestStartupSecurityWarnings_L2AuthForwardModeQuery_WarnsWhenL2Disabled(t *testing.T) {
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
@@ -302,13 +305,24 @@ func TestStartupSecurityWarnings_L2AuthForwardModeQuery_NoWarningWhenL2Disabled(
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
+	var found bool
 	for _, r := range records() {
 		if r.level != slog.LevelWarn {
 			continue
 		}
 		if r.attrs["warning_code"] == "l2_backend_auth_forward_mode_query" {
-			t.Fatalf("did not expect l2_backend_auth_forward_mode_query warning when L2 is disabled; got %#v", records())
+			found = true
+			if r.attrs["l2_backend_ws_url_set"] != false {
+				t.Fatalf("l2_backend_ws_url_set=%#v, want false", r.attrs["l2_backend_ws_url_set"])
+			}
+			if r.attrs["l2_backend_ws_host"] != "" {
+				t.Fatalf("l2_backend_ws_host=%#v, want empty string", r.attrs["l2_backend_ws_host"])
+			}
+			break
 		}
+	}
+	if !found {
+		t.Fatalf("expected warning_code=l2_backend_auth_forward_mode_query, got %#v", records())
 	}
 }
 
