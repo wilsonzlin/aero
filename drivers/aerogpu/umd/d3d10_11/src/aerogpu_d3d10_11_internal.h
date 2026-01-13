@@ -732,6 +732,8 @@ struct DepthStencilState {
   uint32_t depth_write_mask = 0;
   uint32_t depth_func = 0;
   uint32_t stencil_enable = 0;
+  uint8_t stencil_read_mask = 0xFF;
+  uint8_t stencil_write_mask = 0xFF;
 };
 
 struct Device {
@@ -928,6 +930,74 @@ inline bool EmitSetRenderTargetsCmdFromStateLocked(Device* dev) {
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);
+}
+
+// Converts D3D11_COMPARISON_FUNC numeric values (as stored in the D3D11 DDI) to
+// `aerogpu_compare_func` values used by the AeroGPU protocol.
+//
+// D3D11 values are 1..8 (NEVER..ALWAYS). The AeroGPU protocol uses 0..7.
+inline uint32_t D3D11CompareFuncToAerogpu(uint32_t func) {
+  switch (func) {
+    case 1: // D3D11_COMPARISON_NEVER
+      return AEROGPU_COMPARE_NEVER;
+    case 2: // D3D11_COMPARISON_LESS
+      return AEROGPU_COMPARE_LESS;
+    case 3: // D3D11_COMPARISON_EQUAL
+      return AEROGPU_COMPARE_EQUAL;
+    case 4: // D3D11_COMPARISON_LESS_EQUAL
+      return AEROGPU_COMPARE_LESS_EQUAL;
+    case 5: // D3D11_COMPARISON_GREATER
+      return AEROGPU_COMPARE_GREATER;
+    case 6: // D3D11_COMPARISON_NOT_EQUAL
+      return AEROGPU_COMPARE_NOT_EQUAL;
+    case 7: // D3D11_COMPARISON_GREATER_EQUAL
+      return AEROGPU_COMPARE_GREATER_EQUAL;
+    case 8: // D3D11_COMPARISON_ALWAYS
+      return AEROGPU_COMPARE_ALWAYS;
+    default:
+      break;
+  }
+  return AEROGPU_COMPARE_ALWAYS;
+}
+
+// Emits `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE` using state tracked in `dss`.
+//
+// Returns false if command stream emission failed (e.g. OOM).
+inline bool EmitDepthStencilStateCmdLocked(Device* dev, const DepthStencilState* dss) {
+  if (!dev) {
+    return false;
+  }
+
+  // Defaults matching the D3D11 default depth-stencil state.
+  uint32_t depth_enable = 1u;
+  uint32_t depth_write_mask = 1u; // D3D11_DEPTH_WRITE_MASK_ALL
+  uint32_t depth_func = 2u; // D3D11_COMPARISON_LESS
+  uint32_t stencil_enable = 0u;
+  uint8_t stencil_read_mask = 0xFF;
+  uint8_t stencil_write_mask = 0xFF;
+  if (dss) {
+    depth_enable = dss->depth_enable;
+    depth_write_mask = dss->depth_write_mask;
+    depth_func = dss->depth_func;
+    stencil_enable = dss->stencil_enable;
+    stencil_read_mask = dss->stencil_read_mask;
+    stencil_write_mask = dss->stencil_write_mask;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
+  if (!cmd) {
+    return false;
+  }
+
+  cmd->state.depth_enable = depth_enable ? 1u : 0u;
+  cmd->state.depth_write_enable = depth_write_mask ? 1u : 0u;
+  cmd->state.depth_func = D3D11CompareFuncToAerogpu(depth_func);
+  cmd->state.stencil_enable = stencil_enable ? 1u : 0u;
+  cmd->state.stencil_read_mask = stencil_read_mask;
+  cmd->state.stencil_write_mask = stencil_write_mask;
+  cmd->state.reserved0[0] = 0;
+  cmd->state.reserved0[1] = 0;
+  return true;
 }
 
 inline void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {

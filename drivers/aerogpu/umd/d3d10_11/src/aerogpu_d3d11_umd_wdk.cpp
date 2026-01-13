@@ -3984,6 +3984,8 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState11(D3D11DDI_HDEVICE hDevice,
   state->depth_write_mask = static_cast<uint32_t>(D3D11_DEPTH_WRITE_MASK_ALL);
   state->depth_func = static_cast<uint32_t>(D3D11_COMPARISON_LESS);
   state->stencil_enable = 0u;
+  state->stencil_read_mask = 0xFF;
+  state->stencil_write_mask = 0xFF;
 
   if (!pDesc) {
     return S_OK;
@@ -3995,6 +3997,12 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState11(D3D11DDI_HDEVICE hDevice,
     state->depth_write_mask = static_cast<uint32_t>(pDesc->DepthWriteMask);
     state->depth_func = static_cast<uint32_t>(pDesc->DepthFunc);
     state->stencil_enable = pDesc->StencilEnable ? 1u : 0u;
+    __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILSTATE::StencilReadMask) {
+      state->stencil_read_mask = static_cast<uint8_t>(pDesc->StencilReadMask);
+    }
+    __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILSTATE::StencilWriteMask) {
+      state->stencil_write_mask = static_cast<uint8_t>(pDesc->StencilWriteMask);
+    }
     filled = true;
   }
   if (!filled) {
@@ -4004,6 +4012,12 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState11(D3D11DDI_HDEVICE hDevice,
       state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
       state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
       state->stencil_enable = desc.StencilEnable ? 1u : 0u;
+      __if_exists(decltype(desc)::StencilReadMask) {
+        state->stencil_read_mask = static_cast<uint8_t>(desc.StencilReadMask);
+      }
+      __if_exists(decltype(desc)::StencilWriteMask) {
+        state->stencil_write_mask = static_cast<uint8_t>(desc.StencilWriteMask);
+      }
       filled = true;
     }
   }
@@ -4014,6 +4028,12 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState11(D3D11DDI_HDEVICE hDevice,
       state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
       state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
       state->stencil_enable = desc.StencilEnable ? 1u : 0u;
+      __if_exists(decltype(desc)::StencilReadMask) {
+        state->stencil_read_mask = static_cast<uint8_t>(desc.StencilReadMask);
+      }
+      __if_exists(decltype(desc)::StencilWriteMask) {
+        state->stencil_write_mask = static_cast<uint8_t>(desc.StencilWriteMask);
+      }
       filled = true;
     }
   }
@@ -4025,6 +4045,12 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState11(D3D11DDI_HDEVICE hDevice,
         state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
         state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
         state->stencil_enable = desc.StencilEnable ? 1u : 0u;
+        __if_exists(decltype(desc)::StencilReadMask) {
+          state->stencil_read_mask = static_cast<uint8_t>(desc.StencilReadMask);
+        }
+        __if_exists(decltype(desc)::StencilWriteMask) {
+          state->stencil_write_mask = static_cast<uint8_t>(desc.StencilWriteMask);
+        }
         filled = true;
       }
     }
@@ -4808,30 +4834,6 @@ static uint32_t D3D11BlendOpToAerogpu(uint32_t blend_op) {
   return AEROGPU_BLEND_OP_ADD;
 }
 
-static uint32_t D3D11CompareFuncToAerogpu(uint32_t func) {
-  switch (static_cast<D3D11_COMPARISON_FUNC>(func)) {
-    case D3D11_COMPARISON_NEVER:
-      return AEROGPU_COMPARE_NEVER;
-    case D3D11_COMPARISON_LESS:
-      return AEROGPU_COMPARE_LESS;
-    case D3D11_COMPARISON_EQUAL:
-      return AEROGPU_COMPARE_EQUAL;
-    case D3D11_COMPARISON_LESS_EQUAL:
-      return AEROGPU_COMPARE_LESS_EQUAL;
-    case D3D11_COMPARISON_GREATER:
-      return AEROGPU_COMPARE_GREATER;
-    case D3D11_COMPARISON_NOT_EQUAL:
-      return AEROGPU_COMPARE_NOT_EQUAL;
-    case D3D11_COMPARISON_GREATER_EQUAL:
-      return AEROGPU_COMPARE_GREATER_EQUAL;
-    case D3D11_COMPARISON_ALWAYS:
-      return AEROGPU_COMPARE_ALWAYS;
-    default:
-      break;
-  }
-  return AEROGPU_COMPARE_ALWAYS;
-}
-
 static void EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
   if (!dev) {
     return;
@@ -4938,32 +4940,9 @@ static void EmitDepthStencilStateLocked(Device* dev, const DepthStencilState* ds
   if (!dev) {
     return;
   }
-
-  uint32_t depth_enable = 1u;
-  uint32_t depth_write_mask = static_cast<uint32_t>(D3D11_DEPTH_WRITE_MASK_ALL);
-  uint32_t depth_func = static_cast<uint32_t>(D3D11_COMPARISON_LESS);
-  uint32_t stencil_enable = 0u;
-  if (dss) {
-    depth_enable = dss->depth_enable;
-    depth_write_mask = dss->depth_write_mask;
-    depth_func = dss->depth_func;
-    stencil_enable = dss->stencil_enable;
-  }
-
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
-  if (!cmd) {
+  if (!EmitDepthStencilStateCmdLocked(dev, dss)) {
     SetError(dev, E_OUTOFMEMORY);
-    return;
   }
-
-  cmd->state.depth_enable = depth_enable ? 1u : 0u;
-  cmd->state.depth_write_enable = depth_write_mask ? 1u : 0u;
-  cmd->state.depth_func = D3D11CompareFuncToAerogpu(depth_func);
-  cmd->state.stencil_enable = stencil_enable ? 1u : 0u;
-  cmd->state.stencil_read_mask = 0xFF;
-  cmd->state.stencil_write_mask = 0xFF;
-  cmd->state.reserved0[0] = 0;
-  cmd->state.reserved0[1] = 0;
 }
 
 void AEROGPU_APIENTRY SetRasterizerState11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRASTERIZERSTATE hState) {
