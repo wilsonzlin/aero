@@ -225,11 +225,18 @@ jobs:
 
       - name: Prepare net traces dir
         run: mkdir -p target/net-traces
-      - name: Generate test fixtures
-        run: cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p xtask -- fixtures
+      - name: Check deterministic fixtures are up-to-date
+        run: cargo xtask fixtures --check
 
-      - name: Ensure fixtures are checked in (determinism)
-        run: git diff --exit-code
+      - name: Check BIOS ROM is up-to-date (if supported)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo xtask help | grep -q 'bios-rom'; then
+            cargo xtask bios-rom --check
+          else
+            echo "cargo xtask bios-rom is not implemented; skipping."
+          fi
 
       - name: cargo fmt
         run: cargo fmt --all -- --check

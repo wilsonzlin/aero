@@ -22,7 +22,8 @@ Run:
 cargo xtask fixtures
 ```
 
-CI re-runs this command and fails if it produces any diff (determinism check).
+CI runs `cargo xtask fixtures --check` and fails if any committed fixture output is
+missing or out-of-date.
 
 Note: `cargo xtask fixtures` also regenerates other tiny, deterministic firmware
 fixtures outside this directory (e.g. `assets/bios.bin`, `crates/firmware/acpi/dsdt.aml`).
