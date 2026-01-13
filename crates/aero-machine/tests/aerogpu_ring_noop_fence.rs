@@ -46,11 +46,6 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     let bar0 = u64::from(cfg_read(&mut m, bdf, 0x10, 4) & !0xFu32);
     assert_ne!(bar0, 0, "expected AeroGPU BAR0 to be assigned");
 
-    // Enable PCI Bus Mastering so the device is allowed to DMA into guest memory.
-    let mut command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
-    command |= 1 << 2; // COMMAND.BME
-    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command));
-
     // Guest allocations.
     let ring_gpa = 0x10000u64;
     let fence_gpa = 0x20000u64;
@@ -118,8 +113,30 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
         pci::AEROGPU_IRQ_FENCE,
     );
 
-    // Doorbell.
+    // With PCI Bus Master Enable clear (default after BIOS POST), the device must not DMA or
+    // advance the ring.
     m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
+    m.process_aerogpu();
+    m.poll_pci_intx_lines();
+
+    assert_eq!(
+        m.read_physical_u32(ring_gpa + 24),
+        0,
+        "ring head should not advance while COMMAND.BME=0"
+    );
+
+    assert_eq!(
+        m.read_physical_u32(fence_gpa + 0),
+        0,
+        "fence page should not be written while COMMAND.BME=0"
+    );
+
+    // Enable PCI Bus Mastering so the device is allowed to DMA into guest memory.
+    let mut command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    command |= 1 << 2; // COMMAND.BME
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command));
+
+    // The earlier doorbell should now be processed.
     m.process_aerogpu();
     m.poll_pci_intx_lines();
 
@@ -171,4 +188,3 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
         "expected AeroGPU INTx to deassert after IRQ_ACK"
     );
 }
-
