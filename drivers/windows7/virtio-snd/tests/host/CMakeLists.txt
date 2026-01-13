@@ -22,6 +22,7 @@ set(VIRTIOSND_INCLUDE ${VIRTIOSND_ROOT}/include)
 set(VIRTIO_COMMON_INCLUDE ${VIRTIOSND_ROOT}/../virtio/common/include)
 
 add_library(virtiosnd_host_shim STATIC
+    shim/ntddk_shim_globals.c
     shim/virtiosnd_dma_stub.c
     shim/virtiosnd_host_queue.c
 )
