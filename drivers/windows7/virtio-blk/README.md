@@ -29,7 +29,7 @@ On Windows 7, message-signaled interrupts are opt-in via INF. The shipped `inf/a
 
 The MSI opt-in keys live under:
 
-`Interrupt Management\\MessageSignaledInterruptProperties`
+`Interrupt Management\MessageSignaledInterruptProperties`
 
 As shipped in `inf/aero_virtio_blk.inf`:
 
@@ -39,8 +39,8 @@ AddReg = AeroVirtioBlk_Inst_HW_AddReg
 
 [AeroVirtioBlk_Inst_HW_AddReg]
 HKR, "Interrupt Management",,0x00000010
-HKR, "Interrupt Management\\MessageSignaledInterruptProperties", "MSISupported", 0x00010001, 1
-HKR, "Interrupt Management\\MessageSignaledInterruptProperties", "MessageNumberLimit", 0x00010001, 4
+HKR, "Interrupt Management\MessageSignaledInterruptProperties", "MSISupported", 0x00010001, 1
+HKR, "Interrupt Management\MessageSignaledInterruptProperties", "MessageNumberLimit", 0x00010001, 4
 ```
 
 Notes:
