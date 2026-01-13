@@ -30,7 +30,7 @@ It:
     - 1 MiB body of bytes 0..255 repeating
     - correct Content-Length
     - also accepts a deterministic 1 MiB upload via HTTP POST to the same `...-large` path (validates SHA-256)
-- launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd) and COM1 redirected to a log file
+- launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd and/or virtio-tablet) and COM1 redirected to a log file
   - in transitional mode virtio-input is skipped (with a warning) if QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci
 - captures QEMU stderr to `<serial-base>.qemu.stderr.log` (next to the serial log) for debugging early exits
 - optionally enables a QMP monitor to:
@@ -83,6 +83,7 @@ import sys
 import time
 from array import array
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from threading import Thread
 from typing import Optional
@@ -1077,6 +1078,15 @@ def _qemu_quote_keyval_value(value: str) -> str:
     return '"' + escaped + '"'
 
 
+def _qemu_virtio_tablet_pci_device_arg(*, disable_legacy: bool, pci_revision: Optional[str]) -> str:
+    parts = ["virtio-tablet-pci", f"id={_VIRTIO_INPUT_QMP_TABLET_ID}"]
+    if disable_legacy:
+        parts.append("disable-legacy=on")
+    if pci_revision is not None:
+        parts.append(f"x-pci-revision={pci_revision}")
+    return ",".join(parts)
+
+
 def _qemu_device_arg_add_vectors(device_arg: str, vectors: Optional[int]) -> str:
     """
     Optionally append `,vectors=<N>` to a QEMU `-device` argument string.
@@ -1100,6 +1110,40 @@ def _qemu_device_arg_add_vectors(device_arg: str, vectors: Optional[int]) -> str
         return arg
 
     return f"{arg},vectors={int(vectors)}"
+
+
+def _qemu_device_arg_maybe_add_vectors(
+    qemu_system: str,
+    device_name: str,
+    device_arg: str,
+    vectors: Optional[int],
+    *,
+    flag_name: str,
+) -> str:
+    """
+    Append `,vectors=<N>` to a `-device` arg only when the QEMU device supports it.
+
+    If unsupported, emit a warning and return the original arg unchanged. This keeps
+    the harness compatible with older QEMU builds that do not expose a `vectors`
+    property for a given device.
+    """
+
+    if vectors is None:
+        return device_arg
+    if not _qemu_device_supports_property(qemu_system, device_name, "vectors"):
+        print(
+            f"WARNING: QEMU device '{device_name}' does not advertise a 'vectors' property; ignoring {flag_name}={vectors}",
+            file=sys.stderr,
+        )
+        return device_arg
+    try:
+        return _qemu_device_arg_add_vectors(device_arg, vectors)
+    except Exception as e:
+        print(
+            f"WARNING: failed to apply {flag_name}={vectors} to QEMU device '{device_name}': {e}",
+            file=sys.stderr,
+        )
+        return device_arg
 
 
 def _virtio_snd_skip_failure_message(tail: bytes) -> str:
@@ -1188,6 +1232,7 @@ def _virtio_snd_duplex_skip_failure_message(tail: bytes) -> str:
     return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped but --with-virtio-snd was enabled"
 
 
+@lru_cache(maxsize=None)
 def _qemu_device_help_text(qemu_system: str, device_name: str) -> str:
     try:
         proc = subprocess.run(
@@ -1208,6 +1253,57 @@ def _qemu_device_help_text(qemu_system: str, device_name: str) -> str:
             f"failed to query QEMU device help for '{device_name}' (exit={proc.returncode}). Output:\n{out}"
         )
 
+    return proc.stdout or ""
+
+
+@lru_cache(maxsize=None)
+def _qemu_device_property_names(qemu_system: str, device_name: str) -> frozenset[str]:
+    """
+    Return the set of property names exposed by `-device <name>,help`.
+
+    QEMU prints per-property help lines like:
+      <prop>=<type> ...
+
+    We parse those lines and cache the result so callers can probe feature support
+    (e.g. `vectors=`) once per device per harness invocation.
+    """
+
+    help_text = _qemu_device_help_text(qemu_system, device_name)
+    props: set[str] = set()
+    for line in help_text.splitlines():
+        m = re.match(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)\s*=", line)
+        if m:
+            props.add(m.group(1))
+    return frozenset(props)
+
+
+def _qemu_device_supports_property(qemu_system: str, device_name: str, prop: str) -> bool:
+    try:
+        return prop in _qemu_device_property_names(qemu_system, device_name)
+    except RuntimeError:
+        return False
+
+
+@lru_cache(maxsize=None)
+def _qemu_device_list_help_text(qemu_system: str) -> str:
+    """
+    Return the output of `qemu-system-* -device help`.
+
+    This is primarily used for cheap feature probing (e.g. device name aliases).
+    The output is cached so we only spawn QEMU once per harness invocation.
+    """
+    try:
+        proc = subprocess.run(
+            [qemu_system, "-device", "help"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(f"qemu-system binary not found: {qemu_system}") from e
+    except OSError as e:
+        raise RuntimeError(f"failed to run '{qemu_system} -device help': {e}") from e
     return proc.stdout or ""
 
 
@@ -1271,19 +1367,7 @@ def _assert_qemu_supports_aero_w7_virtio_contract_v1(
 def _detect_virtio_snd_device(qemu_system: str) -> str:
     # QEMU device naming has changed over time. Prefer the modern name but fall back
     # if a distro build exposes a legacy alias.
-    try:
-        proc = subprocess.run(
-            [qemu_system, "-device", "help"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-    except FileNotFoundError as e:
-        raise RuntimeError(f"qemu-system binary not found: {qemu_system}") from e
-    except OSError as e:
-        raise RuntimeError(f"failed to run '{qemu_system} -device help': {e}") from e
-
-    help_text = proc.stdout.decode("utf-8", errors="replace")
+    help_text = _qemu_device_list_help_text(qemu_system)
     if "virtio-sound-pci" in help_text:
         return "virtio-sound-pci"
     if "virtio-snd-pci" in help_text:
@@ -1336,6 +1420,12 @@ def main() -> int:
         "so Win7 drivers can bind to the Aero contract v1 IDs. In transitional mode the harness attempts to attach "
         "virtio-keyboard-pci/virtio-mouse-pci when QEMU "
         "advertises those devices; otherwise it warns that the guest virtio-input selftest will likely FAIL.",
+    )
+    parser.add_argument(
+        "--with-virtio-tablet",
+        dest="with_virtio_tablet",
+        action="store_true",
+        help="Attach a virtio-tablet-pci device (in addition to virtio keyboard/mouse).",
     )
     parser.add_argument(
         "--with-input-events",
@@ -1458,18 +1548,67 @@ def main() -> int:
             "Disabled by default."
         ),
     )
+    parser.add_argument(
+        "--virtio-net-vectors",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Override virtio-net MSI-X vectors via `-device virtio-net-pci,...,vectors=N` when supported.",
+    )
+    parser.add_argument(
+        "--virtio-blk-vectors",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Override virtio-blk MSI-X vectors via `-device virtio-blk-pci,...,vectors=N` when supported.",
+    )
+    parser.add_argument(
+        "--virtio-snd-vectors",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Override virtio-snd MSI-X vectors via `-device virtio-snd-pci,...,vectors=N` when supported (requires --with-virtio-snd).",
+    )
+    parser.add_argument(
+        "--virtio-input-vectors",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Override virtio-input MSI-X vectors via `-device virtio-*-pci,...,vectors=N` when supported.",
+    )
 
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
     need_input_wheel = bool(getattr(args, "with_input_wheel", False))
     need_input_events = bool(args.with_input_events) or need_input_wheel
     need_input_tablet_events = bool(getattr(args, "with_input_tablet_events", False))
+    attach_virtio_tablet = bool(args.with_virtio_tablet or need_input_tablet_events)
     need_msix_check = bool(
         args.require_virtio_net_msix or args.require_virtio_blk_msix or args.require_virtio_snd_msix
     )
 
+    def resolve_vectors(per_device: Optional[int]) -> Optional[int]:
+        return per_device if per_device is not None else args.virtio_msix_vectors
+
+    virtio_net_vectors = resolve_vectors(args.virtio_net_vectors)
+    virtio_blk_vectors = resolve_vectors(args.virtio_blk_vectors)
+    virtio_snd_vectors = resolve_vectors(args.virtio_snd_vectors)
+    virtio_input_vectors = resolve_vectors(args.virtio_input_vectors)
+    virtio_net_vectors_flag = "--virtio-net-vectors" if args.virtio_net_vectors is not None else "--virtio-msix-vectors"
+    virtio_blk_vectors_flag = "--virtio-blk-vectors" if args.virtio_blk_vectors is not None else "--virtio-msix-vectors"
+    virtio_snd_vectors_flag = "--virtio-snd-vectors" if args.virtio_snd_vectors is not None else "--virtio-msix-vectors"
+    virtio_input_vectors_flag = "--virtio-input-vectors" if args.virtio_input_vectors is not None else "--virtio-msix-vectors"
+
     if args.virtio_msix_vectors is not None and args.virtio_msix_vectors <= 0:
         parser.error("--virtio-msix-vectors must be a positive integer")
+    if args.virtio_net_vectors is not None and args.virtio_net_vectors <= 0:
+        parser.error("--virtio-net-vectors must be a positive integer")
+    if args.virtio_blk_vectors is not None and args.virtio_blk_vectors <= 0:
+        parser.error("--virtio-blk-vectors must be a positive integer")
+    if args.virtio_snd_vectors is not None and args.virtio_snd_vectors <= 0:
+        parser.error("--virtio-snd-vectors must be a positive integer")
+    if args.virtio_input_vectors is not None and args.virtio_input_vectors <= 0:
+        parser.error("--virtio-input-vectors must be a positive integer")
 
     if args.require_virtio_snd_msix and not args.enable_virtio_snd:
         parser.error("--require-virtio-snd-msix requires --with-virtio-snd/--enable-virtio-snd")
@@ -1492,6 +1631,9 @@ def main() -> int:
             "(virtio-snd testing requires modern-only virtio-pci + contract revision overrides)"
         )
 
+    if args.virtio_snd_vectors is not None and not args.enable_virtio_snd:
+        parser.error("--virtio-snd-vectors requires --with-virtio-snd/--enable-virtio-snd")
+
     if need_input_events:
         # In default (contract-v1) mode we already validate virtio-keyboard-pci/virtio-mouse-pci via
         # `_assert_qemu_supports_aero_w7_virtio_contract_v1`. In transitional mode virtio-input is
@@ -1504,18 +1646,23 @@ def main() -> int:
                 "Upgrade QEMU or omit virtio-input event injection."
             )
 
-    if need_input_tablet_events and not _qemu_has_device(args.qemu_system, "virtio-tablet-pci"):
-        parser.error(
-            "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events requires QEMU virtio-tablet-pci support. "
-            "Upgrade QEMU or omit tablet event injection."
-        )
+    if attach_virtio_tablet:
+        try:
+            help_text = _qemu_device_list_help_text(args.qemu_system)
+        except RuntimeError as e:
+            parser.error(str(e))
+        if "virtio-tablet-pci" not in help_text:
+            parser.error(
+                "--with-virtio-tablet/--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events requires "
+                "QEMU virtio-tablet-pci support. Upgrade QEMU or omit tablet support."
+            )
 
     if not args.virtio_transitional:
         try:
             _assert_qemu_supports_aero_w7_virtio_contract_v1(
                 args.qemu_system,
                 with_virtio_snd=args.enable_virtio_snd,
-                with_virtio_tablet=need_input_tablet_events,
+                with_virtio_tablet=attach_virtio_tablet,
             )
         except RuntimeError as e:
             print(f"ERROR: {e}", file=sys.stderr)
@@ -1654,21 +1801,46 @@ def main() -> int:
 
         wav_path: Optional[Path] = None
         if args.virtio_transitional:
-            drive = f"file={_qemu_quote_keyval_value(str(disk_image))},if=virtio,cache=writeback"
-            if args.snapshot:
-                drive += ",snapshot=on"
+            # Transitional mode: by default use `-drive if=virtio` so we stay close to QEMU defaults.
+            # When vectors overrides are requested, switch to an explicit virtio-blk-pci device so we
+            # can pass `vectors=<N>` (when supported by this QEMU build).
+            virtio_blk_args: list[str] = []
+            if virtio_blk_vectors is None:
+                drive = f"file={_qemu_quote_keyval_value(str(disk_image))},if=virtio,cache=writeback"
+                if args.snapshot:
+                    drive += ",snapshot=on"
+                virtio_blk_args = ["-drive", drive]
+            else:
+                drive_id = "drive0"
+                drive = f"file={_qemu_quote_keyval_value(str(disk_image))},if=none,id={drive_id},cache=writeback"
+                if args.snapshot:
+                    drive += ",snapshot=on"
+                virtio_blk = _qemu_device_arg_maybe_add_vectors(
+                    args.qemu_system,
+                    "virtio-blk-pci",
+                    f"virtio-blk-pci,drive={drive_id}",
+                    virtio_blk_vectors,
+                    flag_name=virtio_blk_vectors_flag,
+                )
+                virtio_blk_args = ["-drive", drive, "-device", virtio_blk]
 
             virtio_input_args: list[str] = []
             if _qemu_has_device(args.qemu_system, "virtio-keyboard-pci") and _qemu_has_device(
                 args.qemu_system, "virtio-mouse-pci"
             ):
-                kbd = _qemu_device_arg_add_vectors(
+                kbd = _qemu_device_arg_maybe_add_vectors(
+                    args.qemu_system,
+                    "virtio-keyboard-pci",
                     f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID}",
-                    args.virtio_msix_vectors,
+                    virtio_input_vectors,
+                    flag_name=virtio_input_vectors_flag,
                 )
-                mouse = _qemu_device_arg_add_vectors(
+                mouse = _qemu_device_arg_maybe_add_vectors(
+                    args.qemu_system,
+                    "virtio-mouse-pci",
                     f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID}",
-                    args.virtio_msix_vectors,
+                    virtio_input_vectors,
+                    flag_name=virtio_input_vectors_flag,
                 )
                 virtio_input_args = [
                     "-device",
@@ -1676,20 +1848,21 @@ def main() -> int:
                     "-device",
                     mouse,
                 ]
-                if need_input_tablet_events:
-                    virtio_input_args += [
-                        "-device",
-                        _qemu_device_arg_add_vectors(
-                            f"virtio-tablet-pci,id={_VIRTIO_INPUT_QMP_TABLET_ID}",
-                            args.virtio_msix_vectors,
-                        ),
-                    ]
             else:
                 print(
                     "WARNING: QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. "
                     "The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations.",
                     file=sys.stderr,
                 )
+            if attach_virtio_tablet:
+                tablet = _qemu_device_arg_maybe_add_vectors(
+                    args.qemu_system,
+                    "virtio-tablet-pci",
+                    _qemu_virtio_tablet_pci_device_arg(disable_legacy=False, pci_revision=None),
+                    virtio_input_vectors,
+                    flag_name=virtio_input_vectors_flag,
+                )
+                virtio_input_args += ["-device", tablet]
 
             virtio_snd_args: list[str] = []
             if args.enable_virtio_snd:
@@ -1738,11 +1911,14 @@ def main() -> int:
                 "-netdev",
                 "user,id=net0",
                 "-device",
-                _qemu_device_arg_add_vectors("virtio-net-pci,netdev=net0", args.virtio_msix_vectors),
-            ] + virtio_input_args + [
-                "-drive",
-                drive,
-            ] + virtio_snd_args + qemu_extra
+                _qemu_device_arg_maybe_add_vectors(
+                    args.qemu_system,
+                    "virtio-net-pci",
+                    "virtio-net-pci,netdev=net0",
+                    virtio_net_vectors,
+                    flag_name=virtio_net_vectors_flag,
+                ),
+            ] + virtio_input_args + virtio_blk_args + virtio_snd_args + qemu_extra
         else:
             # Aero contract v1 encodes the major version in the PCI Revision ID (= 0x01).
             #
@@ -1757,27 +1933,45 @@ def main() -> int:
             if args.snapshot:
                 drive += ",snapshot=on"
 
-            virtio_net = _qemu_device_arg_add_vectors(
+            virtio_net = _qemu_device_arg_maybe_add_vectors(
+                args.qemu_system,
+                "virtio-net-pci",
                 f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}",
-                args.virtio_msix_vectors,
+                virtio_net_vectors,
+                flag_name=virtio_net_vectors_flag,
             )
-            virtio_blk = _qemu_device_arg_add_vectors(
+            virtio_blk = _qemu_device_arg_maybe_add_vectors(
+                args.qemu_system,
+                "virtio-blk-pci",
                 f"virtio-blk-pci,drive={drive_id},disable-legacy=on,x-pci-revision={aero_pci_rev}",
-                args.virtio_msix_vectors,
+                virtio_blk_vectors,
+                flag_name=virtio_blk_vectors_flag,
             )
-            virtio_kbd = _qemu_device_arg_add_vectors(
+            virtio_kbd = _qemu_device_arg_maybe_add_vectors(
+                args.qemu_system,
+                "virtio-keyboard-pci",
                 f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
-                args.virtio_msix_vectors,
+                virtio_input_vectors,
+                flag_name=virtio_input_vectors_flag,
             )
-            virtio_mouse = _qemu_device_arg_add_vectors(
+            virtio_mouse = _qemu_device_arg_maybe_add_vectors(
+                args.qemu_system,
+                "virtio-mouse-pci",
                 f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
-                args.virtio_msix_vectors,
+                virtio_input_vectors,
+                flag_name=virtio_input_vectors_flag,
             )
             virtio_tablet = None
-            if need_input_tablet_events:
-                virtio_tablet = _qemu_device_arg_add_vectors(
-                    f"virtio-tablet-pci,id={_VIRTIO_INPUT_QMP_TABLET_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
-                    args.virtio_msix_vectors,
+            if attach_virtio_tablet:
+                virtio_tablet = _qemu_device_arg_maybe_add_vectors(
+                    args.qemu_system,
+                    "virtio-tablet-pci",
+                    _qemu_virtio_tablet_pci_device_arg(
+                        disable_legacy=True,
+                        pci_revision=aero_pci_rev,
+                    ),
+                    virtio_input_vectors,
+                    flag_name=virtio_input_vectors_flag,
                 )
 
             virtio_snd_args: list[str] = []
@@ -1786,7 +1980,14 @@ def main() -> int:
                     device_arg = _get_qemu_virtio_sound_device_arg(
                         args.qemu_system, disable_legacy=True, pci_revision=aero_pci_rev
                     )
-                    device_arg = _qemu_device_arg_add_vectors(device_arg, args.virtio_msix_vectors)
+                    snd_device = _detect_virtio_snd_device(args.qemu_system)
+                    device_arg = _qemu_device_arg_maybe_add_vectors(
+                        args.qemu_system,
+                        snd_device,
+                        device_arg,
+                        virtio_snd_vectors,
+                        flag_name=virtio_snd_vectors_flag,
+                    )
                 except RuntimeError as e:
                     print(f"ERROR: {e}", file=sys.stderr)
                     return 2
