@@ -39,13 +39,25 @@ fn patch_first_bind_shaders_set_dummy_gs(bytes: &mut [u8], gs_handle: u32) {
 #[test]
 fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
     pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke"
+        );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
+        if !exec.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+        if !exec.capabilities().supports_indirect_execution {
+            common::skip_or_panic(test_name, "indirect unsupported");
+            return;
+        }
 
         let mut stream = CMD_TRIANGLE_SM4.to_vec();
         patch_first_bind_shaders_set_dummy_gs(&mut stream, 0xCAFE_BABE);
@@ -54,7 +66,7 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
         let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
             Ok(report) => report,
             Err(err) => {
-                if common::skip_if_compute_or_indirect_unsupported(module_path!(), &err) {
+                if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
                     return;
                 }
                 panic!("execute_cmd_stream failed: {err:#}");

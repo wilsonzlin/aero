@@ -27,67 +27,18 @@ fn compute_store_raw_writes_u32_word() {
     pollster::block_on(async {
         let test_name = concat!(module_path!(), "::compute_store_raw_writes_u32_word");
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-            backends: if cfg!(target_os = "linux") {
-                wgpu::Backends::GL
-            } else {
-                wgpu::Backends::PRIMARY
-            },
-            ..Default::default()
-        });
-
-        let adapter = match instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                compatible_surface: None,
-                force_fallback_adapter: true,
-            })
-            .await
-        {
-            Some(adapter) => Some(adapter),
-            None => {
-                instance
-                    .request_adapter(&wgpu::RequestAdapterOptions {
-                        power_preference: wgpu::PowerPreference::LowPower,
-                        compatible_surface: None,
-                        force_fallback_adapter: false,
-                    })
-                    .await
-            }
-        };
-
-        let Some(adapter) = adapter else {
-            common::skip_or_panic(test_name, "wgpu: no suitable adapter found");
-            return;
-        };
-
-        let downlevel = adapter.get_downlevel_capabilities();
-        if !downlevel
-            .flags
-            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
-        {
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("compute_store_raw test device").await {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+        if !supports_compute {
             common::skip_or_panic(test_name, "compute unsupported");
             return;
         }
-
-        let (device, queue) = match adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("compute_store_raw test device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_defaults(),
-                },
-                None,
-            )
-            .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:?})"));
-                return;
-            }
-        };
 
         let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");

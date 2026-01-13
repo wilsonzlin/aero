@@ -15,76 +15,8 @@ fn pack_u16_indices_to_words(indices: &[u16]) -> Vec<u32> {
     words
 }
 
-async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(|v| v.is_empty())
-            .unwrap_or(true);
-
-        if needs_runtime_dir {
-            let dir =
-                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-            std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        }
-    }
-
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
-        } else {
-            wgpu::Backends::PRIMARY
-        },
-        ..Default::default()
-    });
-
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }
-    .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
-
-    let downlevel = adapter.get_downlevel_capabilities();
-    if !downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS) {
-        return Err(anyhow!(
-            "wgpu: adapter does not support compute shaders (DownlevelFlags::COMPUTE_SHADERS missing)"
-        ));
-    }
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-d3d11 index_pulling test device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-
-    Ok((device, queue))
+async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, bool)> {
+    common::wgpu::create_device_queue("aero-d3d11 index_pulling test device").await
 }
 
 async fn run_index_pulling_case(
@@ -275,13 +207,21 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 #[test]
 fn index_pulling_reads_u16_and_u32_and_applies_first_index_and_base_vertex() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
+        let test_name = concat!(
+            module_path!(),
+            "::index_pulling_reads_u16_and_u32_and_applies_first_index_and_base_vertex"
+        );
+        let (device, queue, supports_compute) = match create_device_queue().await {
             Ok(v) => v,
             Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                common::skip_or_panic(test_name, &format!("{err:#}"));
                 return;
             }
         };
+        if !supports_compute {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
 
         // --- u16 indices (with instancing) ---
         let indices_u16: Vec<u16> = vec![0, 1, 2, 3, 4, 5];

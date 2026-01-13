@@ -1511,6 +1511,10 @@ impl AerogpuD3d11Executor {
         &self.caps
     }
 
+    pub fn supports_compute(&self) -> bool {
+        self.caps.supports_compute
+    }
+
     #[doc(hidden)]
     pub fn bound_shader_handles(&self) -> BoundShaderHandles {
         BoundShaderHandles {
@@ -14601,6 +14605,10 @@ mod tests {
                     return;
                 }
             };
+            if !exec.supports_compute() {
+                skip_or_panic(module_path!(), "compute unsupported");
+                return;
+            }
 
             const VB: u32 = 1;
             const IB: u32 = 2;
