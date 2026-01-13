@@ -252,7 +252,8 @@ Windows 7 does not ship a virtio-snd driver. Expected options:
     - Query stream capabilities (`PCM_INFO`)
     - Negotiate fixed params (`PCM_SET_PARAMS`)
     - Start/stop streams and submit PCM buffers via the TX queue (playback) and RX queue (capture).
-  - Works with PCI **INTx** (contract v1 requires INTx; ISR status is read-to-ack to deassert the line).
+  - Works with PCI **INTx** (contract v1 baseline requires INTx; ISR status is read-to-ack to deassert the line).
+  - May also use **MSI/MSI-X** (message-signaled interrupts) when Windows allocates message interrupts (Windows 7 requires INF opt-in). When MSI/MSI-X is active, the driver programs virtio MSI-X routing (`msix_config`, `queue_msix_vector`) and falls back to INTx if message interrupts cannot be connected or vector programming fails.
 - Distribute as **test-signed**:
   - Enable test mode in the guest (`bcdedit /set testsigning on`).
   - Install the test certificate into the guest's trusted store.
@@ -266,7 +267,7 @@ In this repo, the in-tree implementation of this approach is:
 See also:
 
 - [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) (definitive device/driver contract; transport + required features)
-- [`docs/windows/virtio-pci-modern-wdm.md`](./windows/virtio-pci-modern-wdm.md) (WDM modern transport + INTx bring-up guide)
+- [`docs/windows/virtio-pci-modern-wdm.md`](./windows/virtio-pci-modern-wdm.md) (WDM modern transport + interrupts bring-up guide)
 
 ### Option B: Reuse open-source virtio-win (if license-compatible)
 
