@@ -228,6 +228,29 @@ impl IdeChannel {
         self.status
     }
 
+    fn read_drive_address(&self) -> u8 {
+        // ATA Drive Address (DADR) register, available at Control Block base + 1
+        // (e.g. 0x3F7/0x377). This register is primarily for legacy compatibility.
+        //
+        // When the selected device is absent, the data bus is undriven and reads float high.
+        if self.drives[self.selected].is_none() {
+            return 0xFF;
+        }
+        // ATA/ATAPI defines the DADR register as:
+        //   bits 7..6: 1
+        //   bit 5: nDS1 (active low drive-select 1)
+        //   bit 4: nDS0 (active low drive-select 0)
+        //   bits 3..0: nHS3..nHS0 (active low head-select)
+        //
+        // The legacy drive/head select lines are active-low versions of the Device/Head register
+        // fields. We derive them from the current selection.
+        let head = self.drive_head & 0x0F;
+        let dev = self.selected as u8; // 0=master, 1=slave
+        let n_ds0 = dev;
+        let n_ds1 = dev ^ 1;
+        0xC0 | (n_ds1 << 5) | (n_ds0 << 4) | ((!head) & 0x0F)
+    }
+
     fn write_device_control(&mut self, val: u8, irq: &dyn IrqLine) {
         let prev = self.dev_ctl;
         self.dev_ctl = val;
@@ -574,7 +597,7 @@ impl IdeController {
 
         match offset {
             0 => channel.read_alt_status(),
-            1 => 0, // drive address, not implemented
+            1 => channel.read_drive_address(),
             _ => 0,
         }
     }
@@ -1163,5 +1186,48 @@ mod tests {
         // Reading status clears the IRQ.
         let _ = restored.read_u8(PRIMARY_BASE + 7);
         assert!(!irq14_2.level());
+    }
+
+    #[test]
+    fn drive_address_read_is_stable_when_master_present() {
+        let (mut ctl, _irq14, _irq15) = setup_controller();
+
+        // Select LBA mode + master.
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0);
+
+        let v0 = ctl.read_u8(PRIMARY_CTRL + 1);
+        let v1 = ctl.read_u8(PRIMARY_CTRL + 1);
+        assert_ne!(v0, 0, "drive address should not read as 0 when a drive is present");
+        assert_ne!(v0, 0xFF, "drive address should not float high when a drive is present");
+        assert_eq!(v0, v1, "drive address reads should be stable");
+    }
+
+    #[test]
+    fn drive_address_slave_absent_floats_bus_high() {
+        let (mut ctl, _irq14, _irq15) = setup_controller();
+
+        // Select slave (no device attached).
+        ctl.write_u8(PRIMARY_BASE + 6, 0xF0);
+        assert_eq!(ctl.read_u8(PRIMARY_CTRL + 1), 0xFF);
+    }
+
+    #[test]
+    fn drive_address_read_does_not_clear_irq() {
+        let (mut ctl, irq14, _irq15) = setup_controller();
+
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0);
+        ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_IDENTIFY);
+        assert!(irq14.level(), "sanity check failed: IDENTIFY should assert IRQ");
+
+        // Drive Address reads must not clear the IRQ latch.
+        let _ = ctl.read_u8(PRIMARY_CTRL + 1);
+        assert!(
+            irq14.level(),
+            "Drive Address reads must not clear the pending interrupt"
+        );
+
+        // STATUS reads still clear it.
+        let _ = ctl.read_u8(PRIMARY_BASE + 7);
+        assert!(!irq14.level());
     }
 }

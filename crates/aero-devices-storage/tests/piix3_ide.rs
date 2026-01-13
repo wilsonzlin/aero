@@ -385,6 +385,81 @@ fn ata_slave_absent_floats_bus_high_and_does_not_raise_irq() {
 }
 
 #[test]
+fn drive_address_master_present_is_stable_and_nonzero() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Select master.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+
+    let v0 = io.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8;
+    let v1 = io.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8;
+
+    assert_ne!(v0, 0);
+    assert_ne!(v0, 0xFF, "DADR should not float high when a device is present");
+    assert_eq!(v0, v1, "DADR reads should be stable");
+}
+
+#[test]
+fn drive_address_slave_absent_floats_bus_high() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Select slave (no device attached).
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xF0);
+    assert_eq!(io.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8, 0xFF);
+}
+
+#[test]
+fn drive_address_reads_do_not_clear_irq_latch() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Issue IDENTIFY to assert IRQ.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    // Drive Address reads must not clear the IRQ latch.
+    let _ = io.read(PRIMARY_PORTS.ctrl_base + 1, 1);
+    assert!(
+        ide.borrow().controller.primary_irq_pending(),
+        "DADR read cleared IRQ latch"
+    );
+
+    // STATUS reads still clear it.
+    let _ = io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn reset_clears_channel_and_bus_master_state_but_preserves_attached_media() {
     // ATA disk with a recognizable boot sector.
     let dropped_ata = Arc::new(AtomicBool::new(false));

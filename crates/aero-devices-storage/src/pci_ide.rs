@@ -341,6 +341,24 @@ impl Channel {
         DriveSelect::from_device_reg(self.tf.device)
     }
 
+    fn drive_address(&self) -> u8 {
+        // ATA Drive Address (DADR) register at Control Block base + 1.
+        //
+        // This is primarily used for legacy compatibility (it reports the active-low drive/head
+        // select lines). Reads must not have side effects (e.g. clearing IRQs).
+        //
+        // DADR bits (ATA/ATAPI):
+        //   bits 7..6: 1
+        //   bit 5: nDS1 (active low drive-select 1)
+        //   bit 4: nDS0 (active low drive-select 0)
+        //   bits 3..0: nHS3..nHS0 (active low head-select)
+        let head = self.tf.device & 0x0F;
+        let dev = self.selected_drive() as u8; // 0=master, 1=slave
+        let n_ds0 = dev;
+        let n_ds1 = dev ^ 1;
+        0xC0 | (n_ds1 << 5) | (n_ds0 << 4) | ((!head) & 0x0F)
+    }
+
     fn set_irq(&mut self) {
         // `nIEN` (bit 1 of the Device Control register) masks the interrupt *output*, but the
         // interrupt condition itself is still latched until the guest acknowledges it (typically
@@ -857,7 +875,7 @@ impl IdeController {
         }
         match reg {
             ATA_CTRL_ALT_STATUS_DEVICE_CTRL => chan.status as u32,
-            ATA_CTRL_DRIVE_ADDRESS => 0,
+            ATA_CTRL_DRIVE_ADDRESS => chan.drive_address() as u32,
             _ => 0,
         }
     }
