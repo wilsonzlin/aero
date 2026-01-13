@@ -30,7 +30,7 @@ pub enum ShaderPayloadFormat {
 
 impl ShaderPayloadFormat {
     pub fn detect(bytes: &[u8]) -> Self {
-        if bytes.len() >= 4 && &bytes[0..4] == b"DXBC" {
+        if bytes.starts_with(b"DXBC") {
             Self::Dxbc
         } else {
             Self::D3d9TokenStream
