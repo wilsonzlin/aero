@@ -94,97 +94,70 @@ pub fn write_bytes_wrapped<B: CpuBus>(
     if let Some(start) = contiguous_masked_start(state, addr, src.len()) {
         return bus.write_bytes(start, src);
     }
-
-    #[derive(Clone, Copy)]
-    struct Segment {
-        start: u64,
-        offset: usize,
-        len: usize,
-    }
-
-    // Upper bound on how many segments we will record on the heap. In pathological
-    // wrap patterns (e.g. A20 aliasing every 1MiB for very large buffers), the
-    // number of segments can become very large and we want to avoid allocating a
-    // Vec proportional to the write length.
-    const MAX_STORED_SEGMENTS: usize = 4096;
-
-    // Split the access into maximal contiguous runs in masked linear address space,
-    // then preflight *all* runs before committing any writes. This keeps multi-byte
+    // Split the access into contiguous runs in masked linear address space, then
+    // preflight *all* runs before committing any writes. This keeps multi-byte
     // stores atomic w.r.t page faults even when the architectural address space
     // wraps (32-bit linear wrap, A20 alias wrap).
     //
-    // We store segments only up to MAX_STORED_SEGMENTS; if the write fragments
-    // further, we fall back to a second pass for the tail without allocating.
-    let mut segments: Vec<Segment> = Vec::new();
-    let mut segment_count = 0usize;
+    // Important: the number of discontinuities is tiny under x86's linear masking
+    // rules (32-bit wrap + optional A20 wrap), so compute segment boundaries with
+    // arithmetic rather than scanning byte-by-byte. We also avoid allocating a
+    // temporary `Vec` by running two passes: preflight, then commit.
 
-    let mut seg_start_offset = 0usize;
-    let mut seg_start_addr = state.apply_a20(addr);
-    let mut prev = seg_start_addr;
+    #[inline]
+    fn segment_len(state: &CpuState, raw_addr: u64, remaining: usize) -> usize {
+        debug_assert!(remaining > 0);
 
-    // Preflight pass (no writes).
-    for i in 1..src.len() {
-        let masked = state.apply_a20(addr.wrapping_add(i as u64));
-        if prev.checked_add(1) != Some(masked) {
-            let seg_len = i - seg_start_offset;
-            bus.preflight_write_bytes(seg_start_addr, seg_len)?;
-            segment_count += 1;
-            if segment_count <= MAX_STORED_SEGMENTS {
-                segments.push(Segment {
-                    start: seg_start_addr,
-                    offset: seg_start_offset,
-                    len: seg_len,
-                });
+        // Long mode: no architectural masking. The only discontinuity comes from
+        // overflowing the u64 address space.
+        if state.mode == CpuMode::Long {
+            let rem_u64 = u64::try_from(remaining).unwrap_or(u64::MAX);
+            if raw_addr.checked_add(rem_u64.saturating_sub(1)).is_some() {
+                return remaining;
             }
-            seg_start_offset = i;
-            seg_start_addr = masked;
+
+            // Safe: overflow implies `raw_addr != 0`, so `u64::MAX - raw_addr + 1` fits in u64.
+            let until_wrap = (u64::MAX - raw_addr) + 1;
+            let until_wrap_usize = usize::try_from(until_wrap).unwrap_or(usize::MAX);
+            return remaining.min(until_wrap_usize);
         }
-        prev = masked;
-    }
 
-    let seg_len = src.len() - seg_start_offset;
-    bus.preflight_write_bytes(seg_start_addr, seg_len)?;
-    segment_count += 1;
-    if segment_count <= MAX_STORED_SEGMENTS {
-        segments.push(Segment {
-            start: seg_start_addr,
-            offset: seg_start_offset,
-            len: seg_len,
-        });
-    }
+        // Non-long modes: linear addresses are 32-bit.
+        let addr32 = raw_addr & 0xFFFF_FFFF;
+        let mut max = 0x1_0000_0000u64 - addr32; // bytes until 32-bit wrap (inclusive)
 
-    // Commit pass: if the segmentation is small, use the stored descriptors;
-    // otherwise, write the stored prefix and redo segmentation for the tail
-    // without allocation.
-    for seg in &segments {
-        bus.write_bytes(seg.start, &src[seg.offset..seg.offset + seg.len])?;
-    }
-
-    if segment_count <= MAX_STORED_SEGMENTS {
-        return Ok(());
-    }
-
-    // Too many segments to store: recompute segmentation for the remaining
-    // portion (after the prefix we already wrote), without building a large Vec.
-    let offset = segments.iter().map(|s| s.len).sum::<usize>();
-    debug_assert!(offset < src.len());
-
-    let mut seg_start_offset = offset;
-    let mut seg_start_addr = state.apply_a20(addr.wrapping_add(offset as u64));
-    let mut prev = seg_start_addr;
-
-    for i in (offset + 1)..src.len() {
-        let masked = state.apply_a20(addr.wrapping_add(i as u64));
-        if prev.checked_add(1) != Some(masked) {
-            let seg_len = i - seg_start_offset;
-            bus.write_bytes(seg_start_addr, &src[seg_start_offset..seg_start_offset + seg_len])?;
-            seg_start_offset = i;
-            seg_start_addr = masked;
+        // With A20 disabled (real/v8086): bit 20 is forced low. Contiguity in masked
+        // address space requires staying within a single 1MiB window (no bit-20
+        // boundary crossing).
+        if !state.a20_enabled && matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
+            let low20 = addr32 & 0x000F_FFFF;
+            let until_a20 = 0x1_00000u64 - low20;
+            max = max.min(until_a20);
         }
-        prev = masked;
+
+        let max_usize = usize::try_from(max).unwrap_or(usize::MAX);
+        remaining.min(max_usize)
     }
-    let seg_len = src.len() - seg_start_offset;
-    bus.write_bytes(seg_start_addr, &src[seg_start_offset..seg_start_offset + seg_len])?;
+
+    // Pass 1: preflight all segments.
+    let mut offset = 0usize;
+    while offset < src.len() {
+        let raw = addr.wrapping_add(offset as u64);
+        let start = state.apply_a20(raw);
+        let len = segment_len(state, raw, src.len() - offset);
+        bus.preflight_write_bytes(start, len)?;
+        offset += len;
+    }
+
+    // Pass 2: commit writes.
+    let mut offset = 0usize;
+    while offset < src.len() {
+        let raw = addr.wrapping_add(offset as u64);
+        let start = state.apply_a20(raw);
+        let len = segment_len(state, raw, src.len() - offset);
+        bus.write_bytes(start, &src[offset..offset + len])?;
+        offset += len;
+    }
     Ok(())
 }
 
