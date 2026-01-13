@@ -575,4 +575,32 @@ mod tests {
 
         assert!(matches!(err, ManifestError::InvalidLastModified { .. }));
     }
+
+    #[test]
+    fn rejects_invalid_chunked_version() {
+        let err = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "bad", "file": "bad.img", "name": "Bad", "chunked_version": "../x", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ManifestError::InvalidChunkedVersion { .. }));
+    }
+
+    #[test]
+    fn trims_chunked_version_whitespace() {
+        let manifest = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "disk", "file": "disk.img", "name": "Disk", "chunked_version": "  v1  ", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.images[0].chunked_version.as_deref(), Some("v1"));
+    }
 }
