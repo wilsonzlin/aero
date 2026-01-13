@@ -24,6 +24,38 @@ use crate::binding_model::{
 /// [`build_pipeline_bindings_info_with_max_group`].
 const DEFAULT_MAX_BIND_GROUP_INDEX: u32 = 3;
 pub(super) const UNIFORM_BINDING_SIZE_ALIGN: u64 = 16;
+const STORAGE_BINDING_SIZE_ALIGN: u64 = 4;
+
+fn clamp_storage_buffer_slice(
+    offset: u64,
+    size: Option<u64>,
+    total_size: u64,
+    min_offset_alignment: u64,
+    max_binding_size: u64,
+) -> Option<(u64, u64)> {
+    if offset >= total_size {
+        return None;
+    }
+    if offset != 0 && min_offset_alignment != 0 && !offset.is_multiple_of(min_offset_alignment) {
+        return None;
+    }
+
+    let remaining = total_size - offset;
+    let mut bind_size = size.unwrap_or(remaining).min(remaining);
+    bind_size = bind_size.min(max_binding_size);
+    bind_size -= bind_size % STORAGE_BINDING_SIZE_ALIGN;
+    if bind_size == 0 {
+        return None;
+    }
+
+    Some((offset, bind_size))
+}
+
+fn dummy_storage_buffer_slice_size(max_binding_size: u64) -> Option<u64> {
+    let mut size = STORAGE_BINDING_SIZE_ALIGN.min(max_binding_size);
+    size -= size % STORAGE_BINDING_SIZE_ALIGN;
+    (size != 0).then_some(size)
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct PipelineBindingsInfo {
@@ -264,10 +296,14 @@ pub(super) trait BindGroupResourceProvider {
     fn constant_buffer_scratch(&self, slot: u32) -> Option<(BufferId, &wgpu::Buffer)>;
     fn storage_buffer(&self, slot: u32) -> Option<BufferBinding<'_>>;
     fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)>;
+    fn sampler(&self, slot: u32) -> Option<&CachedSampler>;
+
+    /// Optional `t#` SRV buffer binding.
     fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
         None
     }
-    fn sampler(&self, slot: u32) -> Option<&CachedSampler>;
+
+    /// Optional `u#` UAV buffer binding.
     fn uav_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
         None
     }
@@ -381,24 +417,19 @@ pub(super) fn build_bind_group(
                     },
                 });
             }
-            crate::BindingKind::Texture2D { slot } => {
-                let (id, view) = provider
-                    .texture2d(*slot)
-                    .unwrap_or((TextureViewId(0), provider.dummy_texture_view()));
-
-                entries.push(BindGroupCacheEntry {
-                    binding: binding.binding,
-                    resource: BindGroupCacheResource::TextureView { id, view },
-                });
-            }
-            crate::BindingKind::SrvBuffer { slot } => {
+            crate::BindingKind::SrvBuffer { .. } | crate::BindingKind::UavBuffer { .. } => {
                 let mut id = BufferId(0);
                 let mut buffer = provider.dummy_storage();
                 let mut offset = 0;
                 let mut size: Option<u64> = None;
                 let mut total_size = 0u64;
 
-                if let Some(bound) = provider.srv_buffer(*slot) {
+                let bound = match &binding.kind {
+                    crate::BindingKind::SrvBuffer { slot } => provider.srv_buffer(*slot),
+                    crate::BindingKind::UavBuffer { slot } => provider.uav_buffer(*slot),
+                    _ => None,
+                };
+                if let Some(bound) = bound {
                     id = bound.id;
                     buffer = bound.buffer;
                     offset = bound.offset;
@@ -407,37 +438,29 @@ pub(super) fn build_bind_group(
                 }
 
                 if id != BufferId(0) {
-                    if offset >= total_size || (offset != 0 && !offset.is_multiple_of(storage_align))
-                    {
+                    if let Some((validated_offset, bind_size)) = clamp_storage_buffer_slice(
+                        offset,
+                        size,
+                        total_size,
+                        storage_align,
+                        max_storage_binding_size,
+                    ) {
+                        offset = validated_offset;
+                        size = Some(bind_size);
+                    } else {
+                        // When the view's offset/size violates WebGPU's storage buffer constraints
+                        // (alignment, max binding size, etc.), fall back to a small dummy storage
+                        // buffer slice. This avoids wgpu validation errors; the shader will observe
+                        // zeroes instead of crashing the device.
                         id = BufferId(0);
                         buffer = provider.dummy_storage();
                         offset = 0;
                         size = None;
-                    } else {
-                        let remaining = total_size - offset;
-                        let mut bind_size = size.unwrap_or(remaining).min(remaining);
-                        if bind_size > max_storage_binding_size {
-                            bind_size = max_storage_binding_size;
-                        }
-                        // WebGPU requires storage buffer binding sizes to be 4-byte aligned.
-                        bind_size -= bind_size % 4;
-                        if bind_size == 0 {
-                            id = BufferId(0);
-                            buffer = provider.dummy_storage();
-                            offset = 0;
-                            size = None;
-                        } else {
-                            size = Some(bind_size);
-                        }
                     }
                 }
 
-                if id == BufferId(0) {
-                    // Bind a small slice of the dummy storage buffer. This mirrors the uniform
-                    // fallback path (which binds only the needed range) and keeps the bind group
-                    // key stable.
-                    let slice_size = 4u64;
-                    size = Some(slice_size);
+                if id == BufferId(0) && size.is_none() {
+                    size = dummy_storage_buffer_slice_size(max_storage_binding_size);
                 }
 
                 entries.push(BindGroupCacheEntry {
@@ -448,6 +471,16 @@ pub(super) fn build_bind_group(
                         offset,
                         size: size.and_then(wgpu::BufferSize::new),
                     },
+                });
+            }
+            crate::BindingKind::Texture2D { slot } => {
+                let (id, view) = provider
+                    .texture2d(*slot)
+                    .unwrap_or((TextureViewId(0), provider.dummy_texture_view()));
+
+                entries.push(BindGroupCacheEntry {
+                    binding: binding.binding,
+                    resource: BindGroupCacheResource::TextureView { id, view },
                 });
             }
             crate::BindingKind::Sampler { slot } => {
@@ -460,63 +493,6 @@ pub(super) fn build_bind_group(
                     resource: BindGroupCacheResource::Sampler {
                         id: sampler.id,
                         sampler: sampler.sampler.as_ref(),
-                    },
-                });
-            }
-            crate::BindingKind::UavBuffer { slot } => {
-                let mut id = BufferId(0);
-                let mut buffer = provider.dummy_storage();
-                let mut offset = 0;
-                let mut size: Option<u64> = None;
-                let mut total_size = 0u64;
-
-                if let Some(bound) = provider.uav_buffer(*slot) {
-                    id = bound.id;
-                    buffer = bound.buffer;
-                    offset = bound.offset;
-                    size = bound.size;
-                    total_size = bound.total_size;
-                }
-
-                if id != BufferId(0) {
-                    if offset >= total_size || (offset != 0 && !offset.is_multiple_of(storage_align))
-                    {
-                        id = BufferId(0);
-                        buffer = provider.dummy_storage();
-                        offset = 0;
-                        size = None;
-                    } else {
-                        let remaining = total_size - offset;
-                        let mut bind_size = size.unwrap_or(remaining).min(remaining);
-                        if bind_size > max_storage_binding_size {
-                            bind_size = max_storage_binding_size;
-                        }
-                        // WebGPU requires storage buffer binding sizes to be 4-byte aligned.
-                        bind_size -= bind_size % 4;
-                        if bind_size == 0 {
-                            id = BufferId(0);
-                            buffer = provider.dummy_storage();
-                            offset = 0;
-                            size = None;
-                        } else {
-                            size = Some(bind_size);
-                        }
-                    }
-                }
-
-                if id == BufferId(0) {
-                    // Bind a small slice of the dummy storage buffer (see SRV buffer path above).
-                    let slice_size = 4u64;
-                    size = Some(slice_size);
-                }
-
-                entries.push(BindGroupCacheEntry {
-                    binding: binding.binding,
-                    resource: BindGroupCacheResource::Buffer {
-                        id,
-                        buffer,
-                        offset,
-                        size: size.and_then(wgpu::BufferSize::new),
                     },
                 });
             }
@@ -1723,15 +1699,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
-                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
-                    None
-                }
-
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
-                    None
-                }
-
-                fn uav_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 
@@ -1955,12 +1923,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("reflection_bindings test dummy storage"),
-                size: 256,
-                usage: wgpu::BufferUsages::STORAGE,
-                mapped_at_creation: false,
-            });
             let real_uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test real uniform"),
                 size: 256,
@@ -1971,6 +1933,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 label: Some("reflection_bindings test scratch uniform"),
                 size: 64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test dummy storage"),
+                size: 4,
+                usage: wgpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
 
@@ -2051,15 +2019,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
-                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
-                    None
-                }
-
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
-                    None
-                }
-
-                fn uav_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 
@@ -2120,6 +2080,213 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 "expected scratch-backed and dummy-backed bind groups to differ"
             );
         });
+    }
+
+    #[test]
+    fn build_bind_group_falls_back_to_dummy_for_unaligned_storage_offsets() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+
+            let device = rt.device();
+            let storage_align = device.limits().min_storage_buffer_offset_alignment as u64;
+            let offset = 4u64;
+            if storage_align <= 1 || offset.is_multiple_of(storage_align) {
+                skip_or_panic(
+                    module_path!(),
+                    &format!("cannot pick unaligned offset for storage alignment {storage_align}"),
+                );
+                return;
+            }
+
+            let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test dummy uniform"),
+                size: 256,
+                usage: wgpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
+            let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test dummy storage"),
+                size: 4,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            let real_storage = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test real storage"),
+                size: 256,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+
+            let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("reflection_bindings test dummy texture"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let dummy_texture_view =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let mut sampler_cache = SamplerCache::new();
+            let default_sampler =
+                sampler_cache.get_or_create(device, &wgpu::SamplerDescriptor::default());
+
+            let binding = crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::SrvBuffer { slot: 0 },
+            };
+            let layout_entry = binding_to_layout_entry(&binding).unwrap();
+            let mut layout_cache = BindGroupLayoutCache::new();
+            let layout = layout_cache.get_or_create(device, &[layout_entry]);
+
+            struct TestProvider<'a> {
+                buffer_id: BufferId,
+                buffer: Option<&'a wgpu::Buffer>,
+                offset: u64,
+                size: Option<u64>,
+                total_size: u64,
+                dummy_uniform: &'a wgpu::Buffer,
+                dummy_storage: &'a wgpu::Buffer,
+                dummy_texture_view: &'a wgpu::TextureView,
+                default_sampler: &'a CachedSampler,
+            }
+
+            impl BindGroupResourceProvider for TestProvider<'_> {
+                fn constant_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                    None
+                }
+
+                fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
+                    None
+                }
+
+                fn storage_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                    None
+                }
+
+                fn srv_buffer(&self, slot: u32) -> Option<BufferBinding<'_>> {
+                    if slot != 0 {
+                        return None;
+                    }
+                    let buffer = self.buffer?;
+                    Some(BufferBinding {
+                        id: self.buffer_id,
+                        buffer,
+                        offset: self.offset,
+                        size: self.size,
+                        total_size: self.total_size,
+                    })
+                }
+
+                fn uav_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                    None
+                }
+
+                fn texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
+                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                    None
+                }
+
+                fn dummy_uniform(&self) -> &wgpu::Buffer {
+                    self.dummy_uniform
+                }
+
+                fn dummy_storage(&self) -> &wgpu::Buffer {
+                    self.dummy_storage
+                }
+
+                fn dummy_texture_view(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view
+                }
+
+                fn default_sampler(&self) -> &CachedSampler {
+                    self.default_sampler
+                }
+            }
+
+            let provider_misaligned = TestProvider {
+                buffer_id: BufferId(1),
+                buffer: Some(&real_storage),
+                offset,
+                size: Some(64),
+                total_size: 256,
+                dummy_uniform: &dummy_uniform,
+                dummy_storage: &dummy_storage,
+                dummy_texture_view: &dummy_texture_view,
+                default_sampler: &default_sampler,
+            };
+            let provider_dummy = TestProvider {
+                buffer_id: BufferId(1),
+                buffer: None,
+                offset: 0,
+                size: None,
+                total_size: 0,
+                dummy_uniform: &dummy_uniform,
+                dummy_storage: &dummy_storage,
+                dummy_texture_view: &dummy_texture_view,
+                default_sampler: &default_sampler,
+            };
+
+            let mut bind_group_cache = BindGroupCache::new(32);
+            let bg_fallback = build_bind_group(
+                device,
+                &mut bind_group_cache,
+                &layout,
+                std::slice::from_ref(&binding),
+                &provider_misaligned,
+            )
+            .unwrap();
+            let bg_dummy = build_bind_group(
+                device,
+                &mut bind_group_cache,
+                &layout,
+                std::slice::from_ref(&binding),
+                &provider_dummy,
+            )
+            .unwrap();
+
+            assert!(
+                Arc::ptr_eq(&bg_fallback, &bg_dummy),
+                "expected unaligned storage buffer binding to fall back to the dummy binding"
+            );
+        });
+    }
+
+    #[test]
+    fn clamp_storage_buffer_slice_clamps_to_max_storage_binding_size() {
+        let mut limits = wgpu::Limits::downlevel_defaults();
+        limits.max_storage_buffer_binding_size = 64;
+        limits.min_storage_buffer_offset_alignment = 256;
+
+        let (_offset, size) = clamp_storage_buffer_slice(
+            0,
+            Some(1024),
+            2048,
+            limits.min_storage_buffer_offset_alignment as u64,
+            limits.max_storage_buffer_binding_size as u64,
+        )
+        .expect("expected oversized slice to be clamped, not rejected");
+
+        assert_eq!(size, 64);
     }
 
     #[test]
@@ -2617,15 +2784,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
-                fn srv_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
-                    None
-                }
-
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
-                    None
-                }
-
-                fn uav_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 
