@@ -73,7 +73,10 @@ pub enum Sm4Decl {
         stride: u32,
         kind: BufferKind,
     },
-    /// Compute shader thread group size declared via `dcl_thread_group`.
+    /// Compute shader thread group size (`dcl_thread_group x, y, z`).
+    ///
+    /// WGSL requires this information to emit `@workgroup_size(x, y, z)` on the
+    /// compute entry point.
     ThreadGroupSize {
         x: u32,
         y: u32,

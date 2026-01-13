@@ -714,6 +714,27 @@ fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl, Sm4
         return Ok(Sm4Decl::Unknown { opcode });
     }
 
+    // `dcl_thread_group x, y, z` is a compute-stage declaration that encodes the thread-group
+    // dimensions as three immediate DWORDs (no operand token). Most other declarations begin with an
+    // operand token, which has index-dimension bits set at bit 20 and therefore tends to be a large
+    // value (>= 1<<20). Use this to distinguish thread-group-size declarations from
+    // resource/sampler/etc declarations that can also be 4 DWORDs long.
+    //
+    // Note: This is intentionally heuristic (we don't currently key off the declaration opcode),
+    // but it is sufficient for real-world DXBC where the dimensions are small constants.
+    if r.toks.len().saturating_sub(r.pos) == 3 {
+        let x = r.toks[r.pos];
+        let y = r.toks[r.pos + 1];
+        let z = r.toks[r.pos + 2];
+        if x < (1 << 20) && y < (1 << 20) && z < (1 << 20) {
+            let x = r.read_u32()?;
+            let y = r.read_u32()?;
+            let z = r.read_u32()?;
+            r.expect_eof()?;
+            return Ok(Sm4Decl::ThreadGroupSize { x, y, z });
+        }
+    }
+
     let op = decode_raw_operand(&mut r)?;
     if op.imm32.is_some() {
         return Ok(Sm4Decl::Unknown { opcode });

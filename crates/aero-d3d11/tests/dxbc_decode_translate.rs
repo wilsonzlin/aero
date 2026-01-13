@@ -532,8 +532,19 @@ fn decodes_and_translates_ld_shader_from_dxbc() {
 
 #[test]
 fn decodes_and_translates_minimal_compute_shader_without_signatures() {
-    // Minimal compute shader token stream: just `ret`.
-    let body = vec![opcode_token(OPCODE_RET, 1)];
+    // Minimal compute shader token stream: `dcl_thread_group` + `ret`.
+    //
+    // Our SM4/5 decoder models `dcl_thread_group` as three immediate DWORDs. The exact declaration
+    // opcode varies across real-world DXBC, so we use a dummy declaration opcode value (>= 0x100)
+    // and rely on the decoder's structural parsing.
+    const DCL_THREAD_GROUP: u32 = 0x100;
+    let body = vec![
+        opcode_token(DCL_THREAD_GROUP, 4),
+        8,
+        4,
+        1,
+        opcode_token(OPCODE_RET, 1),
+    ];
 
     // Stage type 5 = compute shader.
     let tokens = make_sm5_program_tokens(5, &body);
@@ -547,6 +558,10 @@ fn decodes_and_translates_minimal_compute_shader_without_signatures() {
     let module = decode_program(&program).expect("SM4 decode");
     assert_eq!(module.stage, ShaderStage::Compute);
     assert_eq!(module.instructions, vec![Sm4Inst::Ret]);
+    assert!(module
+        .decls
+        .iter()
+        .any(|d| matches!(d, Sm4Decl::ThreadGroupSize { x: 8, y: 4, z: 1 })));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     assert!(signatures.isgn.is_none());
@@ -554,5 +569,6 @@ fn decodes_and_translates_minimal_compute_shader_without_signatures() {
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert!(translated.wgsl.contains("@compute"));
+    assert!(translated.wgsl.contains("@workgroup_size(8, 4, 1)"));
     assert_wgsl_validates(&translated.wgsl);
 }

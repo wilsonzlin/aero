@@ -103,6 +103,8 @@ pub enum ShaderTranslateError {
         max: u32,
     },
     PixelShaderMissingSvTarget0,
+    MissingThreadGroupSize,
+    InvalidThreadGroupSize { x: u32, y: u32, z: u32 },
 }
 
 impl fmt::Display for ShaderTranslateError {
@@ -172,6 +174,13 @@ impl fmt::Display for ShaderTranslateError {
             ShaderTranslateError::PixelShaderMissingSvTarget0 => {
                 write!(f, "pixel shader output signature is missing SV_Target0")
             }
+            ShaderTranslateError::MissingThreadGroupSize => {
+                write!(f, "compute shader is missing thread group size declaration")
+            }
+            ShaderTranslateError::InvalidThreadGroupSize { x, y, z } => write!(
+                f,
+                "compute shader has invalid thread group size ({x}, {y}, {z})"
+            ),
         }
     }
 }
@@ -219,8 +228,7 @@ pub fn translate_sm4_module_to_wgsl(
 /// Scans a decoded SM4/SM5 module and produces bind group layout entries for the
 /// module's declared shader stage.
 ///
-/// Note: Compute-stage WGSL translation is still minimal (it does not model thread
-/// builtins / UAVs yet), but we still reflect resource bindings for compute.
+/// Note: The binding model reserves `@group(2)` for compute resources.
 pub fn reflect_resource_bindings(module: &Sm4Module) -> Result<Vec<Binding>, ShaderTranslateError> {
     Ok(scan_resources(module)?.bindings(module.stage))
 }
@@ -228,6 +236,28 @@ pub fn reflect_resource_bindings(module: &Sm4Module) -> Result<Vec<Binding>, Sha
 fn translate_cs(module: &Sm4Module) -> Result<ShaderTranslation, ShaderTranslateError> {
     let io = build_cs_io_maps(module);
     let resources = scan_resources(module)?;
+
+    let mut thread_group_size: Option<(u32, u32, u32)> = None;
+    for decl in &module.decls {
+        if let Sm4Decl::ThreadGroupSize { x, y, z } = decl {
+            let next = (*x, *y, *z);
+            if let Some(prev) = thread_group_size {
+                if prev != next {
+                    return Err(ShaderTranslateError::InvalidThreadGroupSize {
+                        x: next.0,
+                        y: next.1,
+                        z: next.2,
+                    });
+                }
+            } else {
+                thread_group_size = Some(next);
+            }
+        }
+    }
+    let (x, y, z) = thread_group_size.ok_or(ShaderTranslateError::MissingThreadGroupSize)?;
+    if x == 0 || y == 0 || z == 0 {
+        return Err(ShaderTranslateError::InvalidThreadGroupSize { x, y, z });
+    }
 
     let reflection = ShaderReflection {
         inputs: Vec::new(),
@@ -256,7 +286,7 @@ fn translate_cs(module: &Sm4Module) -> Result<ShaderTranslation, ShaderTranslate
         w.line("");
     }
 
-    w.line("@compute @workgroup_size(1, 1, 1)");
+    w.line(&format!("@compute @workgroup_size({x}, {y}, {z})"));
     if used_sivs.is_empty() {
         w.line("fn cs_main() {");
     } else {
@@ -855,7 +885,7 @@ impl VsInputField {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct IoMaps {
     inputs: BTreeMap<u32, ParamInfo>,
     outputs: BTreeMap<u32, ParamInfo>,
@@ -1861,12 +1891,13 @@ fn emit_instructions(
                 sampler,
             } => {
                 let coord = emit_src_vec4(coord, inst_index, "sample", ctx)?;
-                // WGSL forbids implicit-derivative sampling in non-fragment stages, so map D3D-style
-                // `sample` to `textureSampleLevel(..., 0.0)` when translating vertex/compute stages.
+                // WGSL forbids implicit-derivative sampling (`textureSample`) outside the fragment
+                // stage, so map D3D-style `sample` to `textureSampleLevel(..., 0.0)` when
+                // translating vertex/compute shaders.
                 //
-                // Note: On real D3D hardware, vertex-stage texture sampling uses an implementation-
-                // defined LOD selection (typically base LOD). Using LOD 0 is a reasonable
-                // approximation and keeps the generated WGSL valid.
+                // Note: On real D3D hardware, non-fragment `sample` uses an implementation-defined
+                // LOD selection (typically base LOD). Using LOD 0 is a reasonable approximation and
+                // keeps the generated WGSL valid.
                 let expr = match ctx.stage {
                     ShaderStage::Vertex | ShaderStage::Compute => format!(
                         "textureSampleLevel(t{}, s{}, ({coord}).xy, 0.0)",
@@ -2252,11 +2283,14 @@ mod tests {
         let module = Sm4Module {
             stage: ShaderStage::Compute,
             model: crate::sm4::ShaderModel { major: 5, minor: 0 },
-            decls: vec![Sm4Decl::InputSiv {
-                reg: 0,
-                mask: WriteMask::XYZW,
-                sys_value: D3D_NAME_DISPATCH_THREAD_ID,
-            }],
+            decls: vec![
+                Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+                Sm4Decl::InputSiv {
+                    reg: 0,
+                    mask: WriteMask::XYZW,
+                    sys_value: D3D_NAME_DISPATCH_THREAD_ID,
+                },
+            ],
             instructions: vec![
                 Sm4Inst::Mov {
                     dst: crate::sm4_ir::DstOperand {

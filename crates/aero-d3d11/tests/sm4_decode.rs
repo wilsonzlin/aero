@@ -1041,6 +1041,7 @@ fn decodes_sm5_compute_thread_group_and_raw_uav_ops() {
         .decls
         .iter()
         .any(|d| matches!(d, Sm4Decl::ThreadGroupSize { x: 8, y: 8, z: 1 })));
+
     assert!(module
         .instructions
         .iter()
