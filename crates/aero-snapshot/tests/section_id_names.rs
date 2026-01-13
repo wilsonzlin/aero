@@ -10,6 +10,7 @@ fn section_ids_have_stable_names_and_numbers() {
         (SectionId::DISKS, 5u32, "DISKS"),
         (SectionId::RAM, 6u32, "RAM"),
         (SectionId::CPUS, 7u32, "CPUS"),
+        (SectionId::MMUS, 8u32, "MMUS"),
     ];
 
     for (id, expected_num, expected_name) in cases {

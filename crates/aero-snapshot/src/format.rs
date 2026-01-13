@@ -14,6 +14,8 @@ impl SectionId {
     pub const RAM: SectionId = SectionId(6);
     /// Multi-vCPU CPU state. Newer snapshots may use this instead of `CPU`.
     pub const CPUS: SectionId = SectionId(7);
+    /// Multi-vCPU MMU state. Newer snapshots may use this instead of `MMU`.
+    pub const MMUS: SectionId = SectionId(8);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -24,6 +26,7 @@ impl SectionId {
             SectionId::DISKS => Some("DISKS"),
             SectionId::RAM => Some("RAM"),
             SectionId::CPUS => Some("CPUS"),
+            SectionId::MMUS => Some("MMUS"),
             _ => None,
         }
     }

@@ -418,6 +418,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
 
     let mut seen_meta_section = false;
     let mut seen_mmu_section = false;
+    let mut seen_mmus_section = false;
     let mut seen_devices_section = false;
     let mut seen_disks_section = false;
 
@@ -565,6 +566,11 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     if seen_mmu_section {
                         return Err(SnapshotError::Corrupt("duplicate MMU section"));
                     }
+                    if seen_mmus_section {
+                        return Err(SnapshotError::Corrupt(
+                            "snapshot contains both MMU and MMUS",
+                        ));
+                    }
                     seen_mmu_section = true;
                     let mmu = MmuState::decode_v1(&mut section_reader)?;
                     target.restore_mmu_state(mmu);
@@ -572,10 +578,24 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     if seen_mmu_section {
                         return Err(SnapshotError::Corrupt("duplicate MMU section"));
                     }
+                    if seen_mmus_section {
+                        return Err(SnapshotError::Corrupt(
+                            "snapshot contains both MMU and MMUS",
+                        ));
+                    }
                     seen_mmu_section = true;
                     let mmu = MmuState::decode_v2(&mut section_reader)?;
                     target.restore_mmu_state(mmu);
                 }
+            }
+            id if id == SectionId::MMUS => {
+                if seen_mmu_section {
+                    return Err(SnapshotError::Corrupt("snapshot contains both MMU and MMUS"));
+                }
+                if seen_mmus_section {
+                    return Err(SnapshotError::Corrupt("duplicate MMUS section"));
+                }
+                seen_mmus_section = true;
             }
             id if id == SectionId::DEVICES => {
                 if header.version == 1 {
