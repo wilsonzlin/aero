@@ -1981,6 +1981,37 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
   const backend_kind = backend ?? presenter?.backend ?? backendKindForEvent();
   const isInitFailure = !presenter && !!runtimeCanvas;
 
+  // WebGPU validation errors can surface asynchronously as `GPUUncapturedErrorEvent`s.
+  // Surface these as structured diagnostics events instead of treating them as fatal worker errors.
+  if (err instanceof PresenterError && err.code === "webgpu_uncaptured_error") {
+    const cause = err.cause as unknown as { name?: unknown; message?: unknown } | null;
+    const causeNameRaw = typeof cause?.name === "string" ? cause.name : "";
+    const causeMessageRaw = typeof cause?.message === "string" ? cause.message : "";
+    const haystack = `${causeNameRaw} ${causeMessageRaw} ${err.message}`.toLowerCase();
+
+    let category = "Unknown";
+    if (haystack.includes("outofmemory") || haystack.includes("out of memory")) {
+      category = "OutOfMemory";
+    } else if (haystack.includes("validation")) {
+      category = "Validation";
+    }
+
+    const severity = presenterErrorToSeverity(err.code, category, { isInitFailure });
+    // Dedupe by the error message so distinct uncaptured errors are still surfaced.
+    const dedupeKey = `${backend_kind}:${err.code}:${causeNameRaw}:${err.message}`;
+    if (shouldEmitPresenterErrorEvent(dedupeKey)) {
+      emitGpuEvent({
+        time_ms: performance.now(),
+        backend_kind,
+        severity,
+        category,
+        message: err.message,
+        details: { code: err.code, message: err.message, stack: err.stack, cause: err.cause },
+      });
+    }
+    return;
+  }
+
   let message = err instanceof Error ? err.message : String(err);
   let code: string | null = null;
   let category = isInitFailure ? "Init" : "Unknown";
@@ -2023,40 +2054,6 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
   }
 
   if (err instanceof PresenterError) {
-    // WebGPU validation errors can surface asynchronously as `GPUUncapturedErrorEvent`s.
-    // Surface these as structured diagnostics events instead of treating them as fatal worker errors.
-    if (err.code === "webgpu_uncaptured_error") {
-      const msgLower = err.message.toLowerCase();
-      const cause = err.cause as unknown as { name?: unknown; message?: unknown } | null;
-      const causeName = typeof cause?.name === "string" ? cause.name.toLowerCase() : "";
-      const causeMessage = typeof cause?.message === "string" ? cause.message.toLowerCase() : "";
-      const haystack = `${causeName} ${causeMessage} ${msgLower}`;
-
-      let severity: GpuRuntimeErrorEvent["severity"] = "error";
-      let category = "Unknown";
-      if (haystack.includes("outofmemory") || haystack.includes("out of memory")) {
-        severity = "fatal";
-        category = "OutOfMemory";
-      } else if (haystack.includes("validation")) {
-        category = "Validation";
-      } else if (haystack.includes("device lost") || haystack.includes("devicelost")) {
-        category = "DeviceLost";
-      }
-
-      emitGpuEvent({
-        time_ms: performance.now(),
-        backend_kind: backend ?? backendKindForEvent(),
-        severity,
-        category,
-        message: err.message,
-        details: {
-          code: err.code,
-          cause: err.cause,
-        },
-      });
-      return;
-    }
-
     postToMain({ type: "error", message: err.message, code: err.code, backend: backend ?? presenter?.backend });
     postRuntimeError(err.message);
     return;
