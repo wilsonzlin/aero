@@ -61,7 +61,11 @@ const STATUS_AUX_OBF: u8 = 0x20; // Mouse output buffer full.
 const OUTPUT_PORT_RESET: u8 = 0x01; // CPU reset line (active-low).
 const OUTPUT_PORT_A20: u8 = 0x02; // A20 gate.
 
-const MAX_PENDING_OUTPUT: usize = 4096;
+/// Maximum number of bytes buffered in the controller's pending-output queue.
+///
+/// This queue holds bytes that have been produced by the PS/2 devices or the controller itself,
+/// but have not yet been loaded into the guest-visible output buffer.
+pub const MAX_PENDING_OUTPUT: usize = 4096;
 
 #[derive(Debug, Clone, Copy)]
 enum PendingWrite {
@@ -274,6 +278,14 @@ impl I8042Controller {
             sys_ctrl: None,
             prefer_mouse: false,
         }
+    }
+
+    /// Returns the current length of the controller's pending-output queue.
+    ///
+    /// This is primarily intended for tests/fuzzing to assert that internal buffering remains
+    /// bounded even with adversarial guest I/O streams.
+    pub fn pending_output_len(&self) -> usize {
+        self.pending_output.len()
     }
 
     pub fn set_irq_sink(&mut self, sink: Box<dyn IrqSink>) {

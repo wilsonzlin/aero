@@ -1325,6 +1325,7 @@ dependencies = [
  "aero-d3d11",
  "aero-d3d9",
  "aero-devices",
+ "aero-devices-input",
  "aero-devices-storage",
  "aero-dxbc",
  "aero-gpu",

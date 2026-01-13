@@ -24,6 +24,9 @@ path = "../crates/aero-io-snapshot"
 [dependencies.aero-devices-storage]
 path = "../crates/aero-devices-storage"
 
+[dependencies.aero-devices-input]
+path = "../crates/aero-devices-input"
+
 [dependencies.aero-devices]
 path = "../crates/devices"
 
@@ -155,6 +158,24 @@ doc = false
 [[bin]]
 name = "fuzz_disk_image_open_auto_rw"
 path = "fuzz_targets/fuzz_disk_image_open_auto_rw.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_i8042_port_io"
+path = "fuzz_targets/fuzz_i8042_port_io.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_ps2_keyboard_commands"
+path = "fuzz_targets/fuzz_ps2_keyboard_commands.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_ps2_mouse_commands"
+path = "fuzz_targets/fuzz_ps2_mouse_commands.rs"
 test = false
 doc = false
 

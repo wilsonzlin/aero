@@ -183,6 +183,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# `cargo-fuzz` requires a nightly toolchain (`-Zsanitizer=...`). The repository root is pinned to
+# stable via `rust-toolchain.toml`, but `fuzz/` has its own `rust-toolchain.toml` (nightly). When
+# invoking `cargo fuzz ...` from the repo root, rustup will otherwise select the stable toolchain
+# and the command will fail with "the option `Z` is only accepted on the nightly compiler".
+#
+# Make `bash ./scripts/safe-run.sh cargo fuzz ...` Just Work by auto-selecting the fuzz toolchain
+# when the caller has not explicitly forced a toolchain already.
+# In some CI/agent environments `RUSTUP_TOOLCHAIN` is globally forced to `stable-...`, which would
+# break `cargo-fuzz`. If the caller hasn't explicitly opted into a nightly toolchain, override to
+# the toolchain pinned in `fuzz/rust-toolchain.toml`.
+if [[ "${1:-}" == "cargo" && "${2:-}" == "fuzz" ]] \
+    && { [[ -z "${RUSTUP_TOOLCHAIN:-}" ]] || [[ "${RUSTUP_TOOLCHAIN}" != nightly* ]]; }
+then
+    fuzz_toolchain_toml="$REPO_ROOT/fuzz/rust-toolchain.toml"
+    if [[ -f "${fuzz_toolchain_toml}" ]]; then
+        # Parse: channel = "nightly-YYYY-MM-DD"
+        toolchain="$(sed -n 's/^channel = \"\(.*\)\"/\1/p' "${fuzz_toolchain_toml}" | head -n 1)"
+        if [[ -n "${toolchain}" ]]; then
+            export RUSTUP_TOOLCHAIN="${toolchain}"
+        fi
+        unset toolchain
+    fi
+    unset fuzz_toolchain_toml
+fi
+
 # Defaults - can be overridden via environment
 TIMEOUT="${AERO_TIMEOUT:-600}"
 MEM_LIMIT="${AERO_MEM_LIMIT:-12G}"
