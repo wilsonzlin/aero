@@ -160,6 +160,7 @@ void virtio_input_process_event_le(struct virtio_input_device *dev, const struct
   PDEVICE_CONTEXT ctx = virtio_input_get_device_context(dev);
   if (ctx != NULL) {
     VioInputCounterInc(&ctx->Counters.VirtioEvents);
+#if VIOINPUT_DIAGNOSTICS
     if (VioInputLogEnabled(VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ)) {
       VIOINPUT_LOG(
           VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
@@ -169,6 +170,7 @@ void virtio_input_process_event_le(struct virtio_input_device *dev, const struct
           (unsigned)ev_le->value,
           ctx->Counters.VirtioEvents);
     }
+#endif
   }
 #endif
   hid_translate_handle_event_le(&dev->translate, ev_le);
