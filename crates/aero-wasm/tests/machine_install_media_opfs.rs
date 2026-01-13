@@ -36,28 +36,19 @@ async fn attach_install_media_iso_opfs_works_or_is_not_supported() {
     let path = unique_path("install-media");
     let size_bytes = 2 * 2048u64;
 
-    // Try to create a tiny ISO-sized file in OPFS so we can exercise the happy path when possible.
-    // If OPFS sync access handles aren't available in the test runtime, fall back to validating
-    // that the API returns a NotSupported-style error.
-    let opfs_available = match aero_opfs::OpfsBackend::open(&path, true, size_bytes).await {
-        Ok(mut backend) => {
-            // Ensure the file exists and has the desired size.
-            backend.flush().unwrap();
-            true
-        }
-        Err(aero_opfs::DiskError::NotSupported(_))
-        | Err(aero_opfs::DiskError::BackendUnavailable)
-        | Err(aero_opfs::DiskError::QuotaExceeded) => false,
-        Err(e) => panic!("unexpected OPFS open error: {e:?}"),
-    };
-
     let mut machine = Machine::new(64 * 1024 * 1024).expect("Machine::new");
 
-    if !opfs_available {
+    let opfs_supported = aero_opfs::platform::storage::opfs::is_opfs_supported();
+    let opfs_sync_supported = aero_opfs::platform::storage::opfs::opfs_sync_access_supported();
+    if !opfs_supported || !opfs_sync_supported {
         let err = machine
             .attach_install_media_iso_opfs(path.clone())
             .await
             .expect_err("expected NotSupported-style error when OPFS sync handles are unavailable");
+        assert!(
+            err.is_instance_of::<js_sys::Error>(),
+            "expected a JS Error; got {err:?}"
+        );
         let msg = js_error_message(&err).to_lowercase();
         assert!(
             msg.contains("opfs") || msg.contains("not supported") || msg.contains("unavailable"),
@@ -69,6 +60,20 @@ async fn attach_install_media_iso_opfs_works_or_is_not_supported() {
             .await
             .expect_err("expected NotSupported-style error for restore variant too");
         return;
+    }
+
+    // OPFS sync access handles appear to be available. Try to create a tiny ISO-sized file in OPFS
+    // so we can exercise the happy path.
+    match aero_opfs::OpfsBackend::open(&path, true, size_bytes).await {
+        Ok(mut backend) => {
+            // Ensure the file exists and has the desired size.
+            backend.flush().unwrap();
+        }
+        Err(aero_opfs::DiskError::QuotaExceeded) | Err(aero_opfs::DiskError::BackendUnavailable) => {
+            return;
+        }
+        Err(aero_opfs::DiskError::NotSupported(_)) => return,
+        Err(e) => panic!("unexpected OPFS open error: {e:?}"),
     }
 
     machine
