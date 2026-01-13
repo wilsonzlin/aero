@@ -20,6 +20,8 @@ The output filename is:
 
 `aero-virtio-input-win7-<arch>-<version>.zip`
 
+`<arch>` is `x86` or `amd64` (you can pass `x64` as an alias for `amd64`). The zip name and `manifest.json` always use the normalized `amd64` spelling.
+
 The `<version>` value is derived from the `DriverVer=...,<version>` line in the packaged INF.
 
 ## Usage
@@ -35,7 +37,7 @@ powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/p
 
 # Package a single architecture
 powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/package-release.ps1 `
-  -Arch amd64 `
+  -Arch x64 `
   -InputDir <path-to-built-binaries> `
   -OutDir drivers/windows7/virtio-input/release/out
 ```

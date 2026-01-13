@@ -18,7 +18,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('x86', 'amd64')]
+  [ValidateSet('x86', 'amd64', 'x64')]
   [string]$Arch,
 
   [ValidateNotNullOrEmpty()]
@@ -89,7 +89,8 @@ function Is-UnderDirectory([string]$Path, [string]$Dir) {
 $inputDirResolved = Resolve-ExistingDirectory -Path $InputDir -ArgName '-InputDir'
 $infDirResolved = Resolve-ExistingDirectory -Path $InfDir -ArgName '-InfDir'
 
-$expectedMachine = Get-ExpectedPeMachine -ArchValue $Arch
+$archNormalized = if ($Arch -eq 'x64') { 'amd64' } else { $Arch }
+$expectedMachine = Get-ExpectedPeMachine -ArchValue $archNormalized
 
 $sysName = 'aero_virtio_input.sys'
 $candidates = @(

@@ -165,14 +165,14 @@ drivers/windows7/virtio-input/inf/aero_virtio_input.sys
 Instead of copying manually, you can use:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64
+powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch x64
 ```
 
 If you built via the CI/MSBuild pipeline (which places outputs under `out/drivers/...`), run from the repo root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/stage-built-sys.ps1 `
-  -Arch amd64 `
+  -Arch x64 `
   -InputDir out/drivers/windows7/virtio-input
 ```
 

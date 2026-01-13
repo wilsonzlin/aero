@@ -15,7 +15,7 @@ The zip always includes a manifest.json listing file hashes and metadata.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('x86', 'amd64', 'both')]
+    [ValidateSet('x86', 'amd64', 'x64', 'both')]
     [string]$Arch,
 
     [Parameter(Mandatory = $true)]
@@ -36,6 +36,11 @@ $script:TargetOs = 'win7'
 $script:FixedZipTimestamp = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:FallbackSysName = (($script:DriverId -replace '-', '_') + '.sys')
+
+function Normalize-Arch([string]$ArchValue) {
+    if ($ArchValue -eq 'x64') { return 'amd64' }
+    return $ArchValue
+}
 
 function Format-PathList([string[]]$Paths) {
     return ($Paths | ForEach-Object { "  - $_" }) -join "`r`n"
@@ -432,7 +437,7 @@ if (-not (Test-Path -LiteralPath $infDirResolved -PathType Container)) {
     throw "INF directory not found: $infDirResolved"
 }
 
-$archList = if ($Arch -eq 'both') { @('x86', 'amd64') } else { @($Arch) }
+$archList = if ($Arch -eq 'both') { @('x86', 'amd64') } else { @(Normalize-Arch $Arch) }
 $sharedVersion = $null
 
 foreach ($a in $archList) {

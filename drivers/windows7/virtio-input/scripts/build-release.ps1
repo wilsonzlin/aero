@@ -22,7 +22,7 @@
 
 [CmdletBinding()]
 param(
-  [ValidateSet('x86', 'amd64', 'both')]
+  [ValidateSet('x86', 'amd64', 'x64', 'both')]
   [string]$Arch = 'both',
 
   [ValidateNotNullOrEmpty()]
@@ -49,6 +49,10 @@ $signDriver = Join-Path $PSScriptRoot 'sign-driver.cmd'
 $packageRelease = Join-Path $PSScriptRoot 'package-release.ps1'
 
 $pfxPath = Join-Path $driverRoot 'cert\\aero-virtio-input-test.pfx'
+
+if ($Arch -eq 'x64') {
+  $Arch = 'amd64'
+}
 
 function Invoke-CheckedCommand([string]$Name, [scriptblock]$Action) {
   Write-Host ""
