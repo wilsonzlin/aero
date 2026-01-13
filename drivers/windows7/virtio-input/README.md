@@ -383,6 +383,10 @@ All values are `REG_DWORD`.
 
 Changes take effect the next time the driver is started (reboot or disable/enable the device).
 
+Some options are **per-device-instance** rather than per-service. For example, to use non-Aero virtio-input
+frontends (stock QEMU), you may need to enable the per-device `CompatDeviceKind` flag under the device’s
+`HKR\Device Parameters` key. See `docs/virtio-input-notes.md` for details.
+
 ### Debugging `StatusQDropOnFull`
 
 To enable drop-on-full (elevated cmd):
