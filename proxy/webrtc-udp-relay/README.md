@@ -572,7 +572,7 @@ The container + client integration uses the following environment variables and 
   - DoS/misbehaving-client hardening knob: prevents clients from holding server resources indefinitely. Setting this too low can break slow networks / delayed ICE or TURN negotiation.
 - WebRTC DataChannel hardening (pion/SCTP caps; mitigate oversized message DoS):
   - `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (default: derived from `MAX_DATAGRAM_PAYLOAD_BYTES` and `L2_MAX_MESSAGE_BYTES`)
-  - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (default: `1048576`; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`)
+  - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (default: derived; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`)
 - `AERO_ICE_SERVERS_JSON`: JSON string describing ICE servers that the relay advertises to clients.
   - Flag: `--ice-servers-json`
   - For the `with-turn` profile, `docker-compose.yml` sets this automatically to point at the
@@ -613,6 +613,7 @@ To mitigate this, the relay configures hard caps in pion's `SettingEngine`:
   `max(MAX_DATAGRAM_PAYLOAD_BYTES + 24, L2_MAX_MESSAGE_BYTES) + 256`.
 - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` / `--webrtc-sctp-max-receive-buffer-bytes` (0 = auto):
   SCTP receive buffer cap (hard receive-side buffering bound; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`).
+  When set to `0` (auto), the default is `max(1048576, 2*WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES)`.
 
 Oversized messages that exceed the SCTP receive buffer cap cannot be fully reassembled and are not delivered to
 application-level `DataChannel.OnMessage` handlers. If the SCTP/DataChannel stack reports an error, the relay closes
