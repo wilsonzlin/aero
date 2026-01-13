@@ -1853,6 +1853,7 @@ dependencies = [
  "aero-gpu-vga",
  "aero-io-snapshot",
  "aero-ipc",
+ "aero-machine",
  "aero-net-backend",
  "aero-net-e1000",
  "aero-net-pump",
