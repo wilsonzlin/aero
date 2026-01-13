@@ -29,7 +29,8 @@ type SessionConfig struct {
 	MaxUDPDestBuckets int
 
 	// OnUDPDestBucketEvicted is invoked once per evicted per-destination bucket.
-	// It must be safe to call while holding SessionLimiter's mutex.
+	//
+	// It is invoked outside of SessionLimiter's mutex.
 	OnUDPDestBucketEvicted func()
 }
 
