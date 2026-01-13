@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::io::{Read, Write};
 
 use crate::bda::BiosDataArea;
@@ -449,7 +448,10 @@ impl Bios {
         self.rtc.restore_snapshot(snapshot.rtc);
         self.bda_time.restore_snapshot(snapshot.bda_time);
         self.e820_map = snapshot.e820_map;
-        self.keyboard_queue = VecDeque::from(snapshot.keyboard_queue);
+        self.keyboard_queue.clear();
+        for key in snapshot.keyboard_queue {
+            self.push_key(key);
+        }
         BiosDataArea::write_video_mode(memory, snapshot.video_mode);
         self.video_mode = snapshot.video_mode;
         self.tty_output = snapshot.tty_output;

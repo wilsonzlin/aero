@@ -65,6 +65,16 @@ pub const RESET_VECTOR_ALIAS_PHYS: u64 = BIOS_ALIAS_BASE + RESET_VECTOR_OFFSET;
 pub const IVT_BASE: u64 = 0x0000_0000;
 pub const BDA_BASE: u64 = 0x0000_0400;
 
+// Keyboard buffer layout within the BIOS Data Area (segment 0x40).
+//
+// The BDA models a ring buffer of 16-bit "keystroke words" (scan code in AH, ASCII in AL). The
+// legacy convention uses `head == tail` to indicate an empty buffer, so one slot is intentionally
+// left unused to avoid ambiguity between "empty" and "full".
+const BDA_KEYBOARD_BUF_START: u16 = 0x001E; // 0x40:0x1E -> 0x41E absolute
+const BDA_KEYBOARD_BUF_END: u16 = 0x003E; // 0x40:0x3E -> 0x43E absolute (exclusive)
+const KEYBOARD_QUEUE_CAPACITY: usize =
+    ((BDA_KEYBOARD_BUF_END - BDA_KEYBOARD_BUF_START) / 2).saturating_sub(1) as usize;
+
 pub const EBDA_BASE: u64 = 0x0009_F000;
 pub const EBDA_SIZE: usize = 0x1000;
 
@@ -382,6 +392,24 @@ impl Bios {
     }
 
     pub fn push_key(&mut self, key: u16) {
+        // Keep the queue bounded to the amount we can mirror into the BIOS Data Area keyboard
+        // buffer (see `sync_keyboard_bda`). When full, drop the oldest entry to preserve the most
+        // recent input.
+        if KEYBOARD_QUEUE_CAPACITY == 0 {
+            return;
+        }
+        if self.keyboard_queue.len() >= KEYBOARD_QUEUE_CAPACITY {
+            // Drop enough entries to make space for the new key even if callers somehow exceeded
+            // the cap (e.g. restored from an older snapshot format).
+            let overflow = self
+                .keyboard_queue
+                .len()
+                .saturating_add(1)
+                .saturating_sub(KEYBOARD_QUEUE_CAPACITY);
+            for _ in 0..overflow {
+                self.keyboard_queue.pop_front();
+            }
+        }
         self.keyboard_queue.push_back(key);
     }
 
@@ -722,6 +750,23 @@ mod tests {
             mem.read_bytes(RESET_VECTOR_ALIAS_PHYS, 5),
             vec![0xEA, 0x00, 0xE0, 0x00, 0xF0]
         );
+    }
+
+    #[test]
+    fn push_key_is_bounded_to_bda_keyboard_buffer_capacity() {
+        let mut bios = Bios::new(BiosConfig::default());
+
+        let extra = 5usize;
+        for i in 0..(KEYBOARD_QUEUE_CAPACITY + extra) {
+            bios.push_key(i as u16);
+        }
+
+        assert_eq!(bios.keyboard_queue.len(), KEYBOARD_QUEUE_CAPACITY);
+        let retained: Vec<u16> = bios.keyboard_queue.iter().copied().collect();
+        let expected: Vec<u16> = (extra..(KEYBOARD_QUEUE_CAPACITY + extra))
+            .map(|i| i as u16)
+            .collect();
+        assert_eq!(retained, expected);
     }
 
     #[test]

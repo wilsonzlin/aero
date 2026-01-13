@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
-    BDA_BASE, BIOS_SEGMENT, DISKETTE_PARAM_TABLE_OFFSET, EBDA_BASE, EBDA_SIZE,
-    FIXED_DISK_PARAM_TABLE_OFFSET,
+    BDA_BASE, BDA_KEYBOARD_BUF_START, BIOS_SEGMENT, DISKETTE_PARAM_TABLE_OFFSET, EBDA_BASE,
+    EBDA_SIZE, FIXED_DISK_PARAM_TABLE_OFFSET, KEYBOARD_QUEUE_CAPACITY,
 };
 use crate::cpu::CpuState as FirmwareCpuState;
 
@@ -91,29 +91,26 @@ pub(super) fn sync_keyboard_bda(bios: &Bios, bus: &mut dyn BiosBus) {
     //
     // The canonical source of truth remains `bios.keyboard_queue`; we treat the BDA as a
     // best-effort compatibility mirror.
-    const BUF_START: u16 = 0x001E;
-    const BUF_END: u16 = 0x003E;
     const HEAD_OFF: u64 = 0x1A;
     const TAIL_OFF: u64 = 0x1C;
 
     // The classic ring buffer uses head==tail to indicate empty, so we leave one entry unused to
     // avoid ambiguity.
-    let buf_bytes = BUF_END - BUF_START;
-    let max_words = (buf_bytes / 2).saturating_sub(1) as usize;
+    let max_words = KEYBOARD_QUEUE_CAPACITY;
     let used = bios.keyboard_queue.len().min(max_words);
 
     for (i, key) in bios.keyboard_queue.iter().take(used).enumerate() {
-        let addr = BDA_BASE + u64::from(BUF_START) + (i as u64) * 2;
+        let addr = BDA_BASE + u64::from(BDA_KEYBOARD_BUF_START) + (i as u64) * 2;
         bus.write_u16(addr, *key);
     }
     // Clear unused slots so stale data is less likely to confuse direct BDA readers.
     for i in used..max_words {
-        let addr = BDA_BASE + u64::from(BUF_START) + (i as u64) * 2;
+        let addr = BDA_BASE + u64::from(BDA_KEYBOARD_BUF_START) + (i as u64) * 2;
         bus.write_u16(addr, 0);
     }
 
-    bus.write_u16(BDA_BASE + HEAD_OFF, BUF_START);
-    let tail = BUF_START.wrapping_add((used as u16) * 2);
+    bus.write_u16(BDA_BASE + HEAD_OFF, BDA_KEYBOARD_BUF_START);
+    let tail = BDA_KEYBOARD_BUF_START.wrapping_add((used as u16) * 2);
     bus.write_u16(BDA_BASE + TAIL_OFF, tail);
 }
 
@@ -1182,11 +1179,12 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
             // Store keystroke in buffer (CH=scan code, CL=ASCII).
             //
             // This is used by some BIOS extensions and DOS programs to inject keyboard input.
-            // Our BIOS models the keyboard buffer as an unbounded FIFO queue, so this always
-            // succeeds (real hardware returns CF=1 when the 32-byte BIOS data area ring buffer is
+            // Our BIOS models the keyboard buffer as a bounded FIFO queue (matching the BIOS Data
+            // Area ring buffer capacity), so this always succeeds by dropping the oldest entry
+            // when full (real hardware returns CF=1 when the 32-byte BIOS data area ring buffer is
             // full).
             let key = (cpu.gpr[gpr::RCX] & 0xFFFF) as u16;
-            bios.keyboard_queue.push_back(key);
+            bios.push_key(key);
             cpu.rflags &= !FLAG_CF;
         }
         0x0C => {
