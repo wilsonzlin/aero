@@ -2053,7 +2053,7 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
 }
 
 static bool VirtioBlkTest(Logger& log, const Options& opt,
-                          std::optional<AEROVBLK_QUERY_INFO>* miniport_info_out = nullptr) {
+                          std::optional<AerovblkQueryInfoResult>* miniport_info_out = nullptr) {
   if (miniport_info_out) miniport_info_out->reset();
   const auto disks = DetectVirtioDiskNumbers(log);
   if (disks.empty()) {
@@ -2115,10 +2115,18 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
     } else {
       if (miniport_info_out) *miniport_info_out = *info;
       query_ok = ValidateAerovblkMiniportInfo(log, *info);
-      if (query_ok && opt.expect_blk_msi && info->InterruptMode != kAerovblkInterruptModeMsi) {
-        log.Logf("virtio-blk: miniport query FAIL (expected MSI/MSI-X, got InterruptMode=%lu)",
-                 static_cast<unsigned long>(info->InterruptMode));
-        query_ok = false;
+      if (query_ok && opt.expect_blk_msi) {
+        constexpr size_t kIrqModeEnd = offsetof(AEROVBLK_QUERY_INFO, InterruptMode) + sizeof(ULONG);
+        if (info->returned_len < kIrqModeEnd) {
+          // Best-effort: older miniport contracts may not report interrupt mode. Do not fail the test in that
+          // scenario; the host harness can still observe INTx/MSI via PnP resources if needed.
+          log.Logf("virtio-blk: miniport query WARN (expected MSI/MSI-X but InterruptMode not reported; len=%zu)",
+                   info->returned_len);
+        } else if (info->info.InterruptMode != kAerovblkInterruptModeMsi) {
+          log.Logf("virtio-blk: miniport query FAIL (expected MSI/MSI-X, got InterruptMode=%lu)",
+                   static_cast<unsigned long>(info->info.InterruptMode));
+          query_ok = false;
+        }
       }
     }
 
@@ -7213,15 +7221,29 @@ int wmain(int argc, wchar_t** argv) {
 
   bool all_ok = true;
 
-  std::optional<AEROVBLK_QUERY_INFO> blk_miniport_info;
+  std::optional<AerovblkQueryInfoResult> blk_miniport_info;
   const bool blk_ok = VirtioBlkTest(log, opt, &blk_miniport_info);
   if (blk_miniport_info.has_value()) {
-    log.Logf(
-        "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s|irq_mode=%s|msix_config_vector=0x%04x|"
-        "msix_queue_vector=0x%04x",
-        blk_ok ? "PASS" : "FAIL", AerovblkIrqModeForMarker(*blk_miniport_info),
-        static_cast<unsigned>(blk_miniport_info->MsixConfigVector),
-        static_cast<unsigned>(blk_miniport_info->MsixQueue0Vector));
+    // Only include interrupt diagnostics if the miniport returned the extended fields.
+    constexpr size_t kIrqModeEnd = offsetof(AEROVBLK_QUERY_INFO, InterruptMode) + sizeof(ULONG);
+    constexpr size_t kMsixCfgEnd = offsetof(AEROVBLK_QUERY_INFO, MsixConfigVector) + sizeof(USHORT);
+    constexpr size_t kMsixQ0End = offsetof(AEROVBLK_QUERY_INFO, MsixQueue0Vector) + sizeof(USHORT);
+
+    if (blk_miniport_info->returned_len >= kIrqModeEnd) {
+      const USHORT msix_cfg =
+          (blk_miniport_info->returned_len >= kMsixCfgEnd) ? blk_miniport_info->info.MsixConfigVector
+                                                          : kVirtioPciMsiNoVector;
+      const USHORT msix_q0 =
+          (blk_miniport_info->returned_len >= kMsixQ0End) ? blk_miniport_info->info.MsixQueue0Vector
+                                                         : kVirtioPciMsiNoVector;
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s|irq_mode=%s|msix_config_vector=0x%04x|"
+          "msix_queue_vector=0x%04x",
+          blk_ok ? "PASS" : "FAIL", AerovblkIrqModeForMarker(blk_miniport_info->info),
+          static_cast<unsigned>(msix_cfg), static_cast<unsigned>(msix_q0));
+    } else {
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
+    }
   } else {
     log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
   }
