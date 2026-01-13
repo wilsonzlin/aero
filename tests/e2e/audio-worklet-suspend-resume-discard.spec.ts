@@ -52,6 +52,32 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     test.skip(true, `Audio output unavailable: ${initResult.reason}`);
   }
 
+  // Sanity check: ensure the AudioWorklet consumer is actually running (read index advances)
+  // before we start the suspend/resume cycle.
+  const initialRead = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out = (globalThis as any).__aeroAudioOutput;
+    if (!out?.enabled) return null;
+    const ring = out.ringBuffer as { readIndex?: Uint32Array } | undefined;
+    if (!ring?.readIndex) return null;
+    return Atomics.load(ring.readIndex, 0) >>> 0;
+  });
+  expect(initialRead).not.toBeNull();
+
+  await page.waitForFunction(
+    (baselineRead) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutput;
+      if (!out?.enabled) return false;
+      const ring = out.ringBuffer as { readIndex?: Uint32Array } | undefined;
+      if (!ring?.readIndex) return false;
+      const read = Atomics.load(ring.readIndex, 0) >>> 0;
+      return ((read - (baselineRead as number)) >>> 0) > 0;
+    },
+    initialRead,
+    { timeout: 20_000 },
+  );
+
   const CAPACITY_FRAMES = 48_000;
   const BACKLOG_TARGET_FRAMES = 40_000;
   const BACKLOG_DISCARDED_THRESHOLD_FRAMES = 512;
