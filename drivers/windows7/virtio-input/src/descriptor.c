@@ -77,8 +77,10 @@ const UCHAR VirtioInputKeyboardReportDescriptor[] = {
 
 /*
  * Keep in sync with tools/hidtest (VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN).
+ *
+ * Total: 104 bytes (65 bytes for keyboard+LEDs, plus 39 bytes for Consumer Control).
  */
-C_ASSERT(sizeof(VirtioInputKeyboardReportDescriptor) == 65);
+C_ASSERT(sizeof(VirtioInputKeyboardReportDescriptor) == 104);
 
 const USHORT VirtioInputKeyboardReportDescriptorLength = (USHORT)sizeof(VirtioInputKeyboardReportDescriptor);
 
@@ -128,6 +130,8 @@ const UCHAR VirtioInputMouseReportDescriptor[] = {
 
 /*
  * Keep in sync with tools/hidtest (VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN).
+ *
+ * Total: 48 bytes (8 buttons + X/Y/Wheel).
  */
 C_ASSERT(sizeof(VirtioInputMouseReportDescriptor) == 48);
 
