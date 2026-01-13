@@ -1,25 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkType {
-    Ethernet,
-    User0,
-    User1,
-}
-
-impl LinkType {
-    fn to_pcapng(self) -> u16 {
-        match self {
-            LinkType::Ethernet => 1,
-            LinkType::User0 => 147,
-            LinkType::User1 => 148,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PacketDirection {
-    Inbound,
-    Outbound,
-}
+pub use aero_pcapng::{LinkType, PacketDirection};
 
 pub struct PcapngWriter {
     buf: Vec<u8>,
@@ -28,18 +7,17 @@ pub struct PcapngWriter {
 
 impl PcapngWriter {
     pub fn new(user_appl: &str) -> Self {
-        let mut this = Self {
-            buf: Vec::new(),
+        Self {
+            buf: aero_pcapng::section_header_block(user_appl),
             next_interface_id: 0,
-        };
-        this.write_section_header_block(user_appl);
-        this
+        }
     }
 
     pub fn add_interface(&mut self, link_type: LinkType, name: &str) -> u32 {
         let id = self.next_interface_id;
         self.next_interface_id += 1;
-        self.write_interface_description_block(link_type, name);
+        self.buf
+            .extend_from_slice(&aero_pcapng::interface_description_block(link_type, name));
         id
     }
 
@@ -50,126 +28,18 @@ impl PcapngWriter {
         payload: &[u8],
         direction: Option<PacketDirection>,
     ) {
-        self.write_enhanced_packet_block(interface_id, timestamp_ns, payload, direction);
+        self.buf
+            .extend_from_slice(&aero_pcapng::enhanced_packet_block(
+                interface_id,
+                timestamp_ns,
+                payload,
+                direction,
+            ));
     }
 
     pub fn into_bytes(self) -> Vec<u8> {
         self.buf
     }
-
-    fn write_section_header_block(&mut self, user_appl: &str) {
-        const BLOCK_TYPE: u32 = 0x0A0D0D0A;
-
-        let mut body = Vec::new();
-        body.extend_from_slice(&0x1A2B3C4Du32.to_le_bytes()); // byte-order magic
-        body.extend_from_slice(&1u16.to_le_bytes()); // major
-        body.extend_from_slice(&0u16.to_le_bytes()); // minor
-        body.extend_from_slice(&0xFFFF_FFFF_FFFF_FFFFu64.to_le_bytes()); // section length: unspecified
-
-        let mut opts = Vec::new();
-        write_opt_str(&mut opts, 4, user_appl); // shb_userappl
-        write_opt_end(&mut opts);
-
-        write_block(&mut self.buf, BLOCK_TYPE, &body, &opts);
-    }
-
-    fn write_interface_description_block(&mut self, link_type: LinkType, name: &str) {
-        const BLOCK_TYPE: u32 = 0x0000_0001;
-
-        let mut body = Vec::new();
-        body.extend_from_slice(&link_type.to_pcapng().to_le_bytes());
-        body.extend_from_slice(&0u16.to_le_bytes()); // reserved
-        body.extend_from_slice(&65535u32.to_le_bytes()); // snaplen
-
-        let mut opts = Vec::new();
-        write_opt_str(&mut opts, 2, name); // if_name
-        write_opt_u8(&mut opts, 9, 9); // if_tsresol (10^-9)
-        write_opt_end(&mut opts);
-
-        write_block(&mut self.buf, BLOCK_TYPE, &body, &opts);
-    }
-
-    fn write_enhanced_packet_block(
-        &mut self,
-        interface_id: u32,
-        timestamp_ns: u64,
-        payload: &[u8],
-        direction: Option<PacketDirection>,
-    ) {
-        const BLOCK_TYPE: u32 = 0x0000_0006;
-
-        let mut body = Vec::new();
-        body.extend_from_slice(&interface_id.to_le_bytes());
-
-        let ts_high = (timestamp_ns >> 32) as u32;
-        let ts_low = (timestamp_ns & 0xFFFF_FFFF) as u32;
-        body.extend_from_slice(&ts_high.to_le_bytes());
-        body.extend_from_slice(&ts_low.to_le_bytes());
-
-        let cap_len = u32::try_from(payload.len()).unwrap_or(u32::MAX);
-        body.extend_from_slice(&cap_len.to_le_bytes());
-        body.extend_from_slice(&cap_len.to_le_bytes());
-
-        body.extend_from_slice(payload);
-        pad_to_32(&mut body);
-
-        let mut opts = Vec::new();
-        if let Some(direction) = direction {
-            let dir_bits = match direction {
-                PacketDirection::Inbound => 1u32,
-                PacketDirection::Outbound => 2u32,
-            };
-            write_opt_u32(&mut opts, 2, dir_bits); // epb_flags
-        }
-        write_opt_end(&mut opts);
-
-        write_block(&mut self.buf, BLOCK_TYPE, &body, &opts);
-    }
-}
-
-fn pad_to_32(buf: &mut Vec<u8>) {
-    let pad_len = (4 - (buf.len() % 4)) % 4;
-    buf.extend(std::iter::repeat_n(0u8, pad_len));
-}
-
-fn write_block(out: &mut Vec<u8>, block_type: u32, body: &[u8], opts: &[u8]) {
-    let total_len = 12 + body.len() + opts.len();
-    let total_len_u32 = u32::try_from(total_len).expect("pcapng block too large");
-
-    out.extend_from_slice(&block_type.to_le_bytes());
-    out.extend_from_slice(&total_len_u32.to_le_bytes());
-    out.extend_from_slice(body);
-    out.extend_from_slice(opts);
-    out.extend_from_slice(&total_len_u32.to_le_bytes());
-}
-
-fn write_opt_end(out: &mut Vec<u8>) {
-    out.extend_from_slice(&0u16.to_le_bytes());
-    out.extend_from_slice(&0u16.to_le_bytes());
-}
-
-fn write_opt_str(out: &mut Vec<u8>, code: u16, val: &str) {
-    let bytes = val.as_bytes();
-    write_opt(out, code, bytes);
-}
-
-fn write_opt_u32(out: &mut Vec<u8>, code: u16, val: u32) {
-    write_opt(out, code, &val.to_le_bytes());
-}
-
-fn write_opt_u8(out: &mut Vec<u8>, code: u16, val: u8) {
-    write_opt(out, code, &[val]);
-}
-
-fn write_opt(out: &mut Vec<u8>, code: u16, val: &[u8]) {
-    out.extend_from_slice(&code.to_le_bytes());
-    out.extend_from_slice(
-        &u16::try_from(val.len())
-            .expect("pcapng option too large")
-            .to_le_bytes(),
-    );
-    out.extend_from_slice(val);
-    pad_to_32(out);
 }
 
 #[cfg(test)]

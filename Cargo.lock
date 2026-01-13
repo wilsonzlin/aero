@@ -379,6 +379,7 @@ version = "0.1.0"
 dependencies = [
  "aero-l2-protocol",
  "aero-net-stack",
+ "aero-pcapng",
  "anyhow",
  "axum",
  "base64 0.22.1",
@@ -532,6 +533,10 @@ dependencies = [
  "firmware",
  "memory",
 ]
+
+[[package]]
+name = "aero-pcapng"
+version = "0.1.0"
 
 [[package]]
 name = "aero-perf"
@@ -1775,6 +1780,7 @@ dependencies = [
  "aero-net-e1000",
  "aero-net-pump",
  "aero-net-stack",
+ "aero-pcapng",
  "aero-platform",
  "aero-protocol",
  "aero-snapshot",
