@@ -15,6 +15,7 @@ mod shared_disk;
 mod shared_iso_disk;
 pub mod virtual_time;
 mod vcpu_init;
+mod aerogpu;
 
 pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
 pub use shared_disk::SharedDisk;
@@ -96,6 +97,8 @@ use memory::{
     DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, MapError, MemoryBus as _,
     MmioHandler, SparseMemory,
 };
+
+use crate::aerogpu::AeroGpuMmioDevice;
 
 mod pci_firmware;
 use pci_firmware::SharedPciConfigPortsBiosAdapter;
@@ -221,9 +224,11 @@ pub struct MachineConfig {
     /// This is the storage foundation required by `docs/16-aerogpu-vga-vesa-compat.md` for
     /// firmware/bootloader compatibility.
     ///
-    /// Note: The full AeroGPU BAR0 WDDM/MMIO/ring protocol (and VBE/scanout) is not implemented by
-    /// `aero_machine` yet; this flag currently provides only the BAR1-backed VRAM + legacy VGA
-    /// decode foundation.
+    /// Note: The full AeroGPU MMIO/WDDM device model is not implemented yet; this flag currently
+    /// provides only:
+    /// - BAR1-backed VRAM plus minimal legacy VGA decode, and
+    /// - minimal BAR0 ring/fence transport (no-op command execution) so the in-tree Win7 KMD can
+    ///   initialize without stalling.
     ///
     /// Requires [`MachineConfig::enable_pc_platform`] and is mutually exclusive with
     /// [`MachineConfig::enable_vga`].
@@ -2206,9 +2211,9 @@ pub struct Machine {
     // Temporary legacy text-mode scanout renderer used when VGA is disabled but the canonical
     // AeroGPU PCI identity is enabled.
     //
-    // AeroGPU exposes a dedicated VRAM backing store, but for host-side scanout we currently reuse
-    // the existing VGA text renderer by scanning the legacy text buffer at `0xB8000` and converting
-    // it into pixels.
+    // AeroGPU exposes a dedicated VRAM backing store and minimal BAR0 ring/fence transport, but
+    // for host-side scanout we currently reuse the existing VGA text renderer by scanning the
+    // legacy text buffer at `0xB8000` and converting it into pixels.
     aerogpu_text_renderer: Option<VgaDevice>,
 
     // ---------------------------------------------------------------------
@@ -2244,6 +2249,7 @@ pub struct Machine {
     virtio_net: Option<Rc<RefCell<VirtioPciDevice>>>,
     vga: Option<Rc<RefCell<VgaDevice>>>,
     aerogpu: Option<Rc<RefCell<AeroGpuDevice>>>,
+    aerogpu_mmio: Option<Rc<RefCell<AeroGpuMmioDevice>>>,
     ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     nvme: Option<Rc<RefCell<NvmePciDevice>>>,
     ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
@@ -2388,6 +2394,7 @@ impl Machine {
             virtio_net: None,
             vga: None,
             aerogpu: None,
+            aerogpu_mmio: None,
             ahci: None,
             nvme: None,
             ide: None,
@@ -3947,6 +3954,33 @@ impl Machine {
                 pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
             }
 
+            // AeroGPU legacy INTx (level-triggered).
+            if let Some(aerogpu) = &self.aerogpu_mmio {
+                let bdf: PciBdf = aero_devices::pci::profile::AEROGPU.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let command = self
+                    .pci_cfg
+                    .as_ref()
+                    .and_then(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                    })
+                    .unwrap_or(0);
+
+                let mut level = aerogpu.borrow().irq_level();
+
+                // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
             // PIIX3 UHCI legacy INTx (level-triggered).
             if let Some(uhci) = &self.uhci {
                 let bdf: PciBdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
@@ -4532,6 +4566,14 @@ impl Machine {
                         dev
                     }
                 };
+                match &self.aerogpu_mmio {
+                    Some(dev) => {
+                        dev.borrow_mut().reset();
+                    }
+                    None => {
+                        self.aerogpu_mmio = Some(Rc::new(RefCell::new(AeroGpuMmioDevice::default())));
+                    }
+                }
 
                 // Minimal legacy VGA port decode (`0x3B0..0x3DF`).
                 self.io.register_range(
@@ -4555,6 +4597,7 @@ impl Machine {
                     });
             } else {
                 self.aerogpu = None;
+                self.aerogpu_mmio = None;
             }
             // PCI config ports (config mechanism #1).
             let pci_cfg: SharedPciConfigPorts = match &self.pci_cfg {
@@ -4949,6 +4992,7 @@ impl Machine {
 
             let vga = self.vga.clone();
             let aerogpu = self.aerogpu.clone();
+            let aerogpu_mmio = self.aerogpu_mmio.clone();
 
             // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
             // immediately without needing dynamic MMIO unmap/remap support in the physical memory
@@ -5021,6 +5065,13 @@ impl Machine {
                                 virtio_blk,
                                 aero_devices::pci::profile::VIRTIO_BLK.bdf,
                             ),
+                        );
+                    }
+                    if let Some(aerogpu_mmio) = aerogpu_mmio.clone() {
+                        router.register_shared_handler(
+                            aero_devices::pci::profile::AEROGPU.bdf,
+                            aero_devices::pci::profile::AEROGPU_BAR0_INDEX,
+                            aerogpu_mmio,
                         );
                     }
                     Box::new(router)
@@ -5160,6 +5211,7 @@ impl Machine {
             self.hpet = None;
             self.e1000 = None;
             self.aerogpu = None;
+            self.aerogpu_mmio = None;
             if !use_legacy_vga {
                 self.vga = None;
             }
@@ -5384,6 +5436,33 @@ impl Machine {
         dev.process(&mut self.mem);
     }
 
+    /// Allow the AeroGPU device (if present) to process doorbells and complete fences.
+    ///
+    /// The in-tree Win7 AeroGPU KMD relies on the ring transport (doorbell -> consume submit desc
+    /// -> advance head -> update completed fence + fence page) to make forward progress during
+    /// `StartDevice` and early submission.
+    pub fn process_aerogpu(&mut self) {
+        let (Some(aerogpu), Some(pci_cfg)) = (&self.aerogpu_mmio, &self.pci_cfg) else {
+            return;
+        };
+
+        let command = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(aero_devices::pci::profile::AEROGPU.bdf)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
+        };
+
+        // Ring DMA (reading guest memory, updating ring head, updating fence page) is gated by PCI
+        // COMMAND.BME (bit 2).
+        let bus_master_enabled = (command & (1 << 2)) != 0;
+        aerogpu
+            .borrow_mut()
+            .process(&mut self.mem, bus_master_enabled);
+    }
+
     /// Allow the virtio-blk controller (if present) to make forward progress (DMA).
     pub fn process_virtio_blk(&mut self) {
         let (Some(virtio_blk), Some(pci_cfg)) = (&self.virtio_blk, &self.pci_cfg) else {
@@ -5535,11 +5614,13 @@ impl Machine {
             self.process_ahci();
             self.process_nvme();
             self.process_virtio_blk();
+            self.process_aerogpu();
 
             self.poll_network();
             self.process_ahci();
             self.process_nvme();
             self.process_virtio_blk();
+            self.process_aerogpu();
             self.process_ide();
 
             // Poll the platform interrupt controller (PIC/IOAPIC+LAPIC) and enqueue at most one

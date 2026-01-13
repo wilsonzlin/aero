@@ -29,6 +29,7 @@ aero-net-e1000 = { path = "../aero-net-e1000", features = ["io-snapshot"] }
 aero-virtio = { path = "../aero-virtio", default-features = false }
 firmware = { path = "../firmware" }
 memory = { path = "../memory" }
+aero-protocol = { path = "../../emulator/protocol" }
 
 [dev-dependencies]
 pretty_assertions = "1"
