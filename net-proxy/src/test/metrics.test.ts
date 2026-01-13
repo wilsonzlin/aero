@@ -433,6 +433,39 @@ test("proxy /metrics counts denied connection attempts", async () => {
   }
 });
 
+test("proxy /metrics counts connection failures (tcp)", async () => {
+  const temp = await startTcpEchoServer();
+  const unusedPort = temp.port;
+  await temp.close();
+
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true, connectTimeoutMs: 250 });
+  const addr = proxy.server.address();
+  assert.ok(addr && typeof addr !== "string");
+
+  try {
+    const origin = `http://127.0.0.1:${addr.port}`;
+    const { body: metrics0Body } = await fetchText(`${origin}/metrics`);
+    const err0 = parseMetric(metrics0Body, "net_proxy_connection_errors_total", { kind: "error" });
+    assert.notEqual(err0, null, "missing error counter");
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/tcp?v=1&host=127.0.0.1&port=${unusedPort}`);
+    const closed = await waitForClose(ws);
+    assert.equal(closed.code, 1011);
+
+    const deadline = Date.now() + 2_000;
+    let err: bigint | null = null;
+    while (Date.now() < deadline) {
+      const { body } = await fetchText(`${origin}/metrics`);
+      err = parseMetric(body, "net_proxy_connection_errors_total", { kind: "error" });
+      if (err !== null && err0 !== null && err >= err0 + 1n) break;
+      await sleep(25);
+    }
+    assert.ok(err0 !== null && err !== null && err >= err0 + 1n, "error counter did not increment");
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("proxy /metrics counts tcp-mux streams and bytes", async () => {
   const echoServer = await startTcpEchoServer();
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
