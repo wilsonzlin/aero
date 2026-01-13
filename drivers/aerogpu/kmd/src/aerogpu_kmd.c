@@ -8486,12 +8486,17 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     seqNow = AeroGpuReadRegU64HiLoHi(adapter,
                                                      AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
                                                      AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
-                    if (seqNow != seq0) {
+                    if (seqNow > seq0) {
                         break;
+                    }
+                    if (seqNow < seq0) {
+                        /* Vblank sequence must be monotonic. Treat regressions as failure. */
+                        io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK;
+                        return STATUS_SUCCESS;
                     }
                 }
 
-                if (seqNow == seq0) {
+                if (seqNow <= seq0) {
                     io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK;
                     return STATUS_SUCCESS;
                 }
