@@ -12,8 +12,8 @@ note() {
   echo "lint-inf: $*" >&2
 }
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-BASE_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
+BASE_DIR=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)
 
 INF_CONTRACT="$BASE_DIR/inf/aero_virtio_snd.inf"
 INF_DISABLED="$BASE_DIR/inf/virtio-snd.inf.disabled"
@@ -34,16 +34,33 @@ require_file() {
   fi
 }
 
-normalize() {
+normalize_all() {
   # Lowercase, strip CRLF + whitespace to make matching robust to INF formatting.
+  #
+  # Used for invariants that must hold even if the string is mentioned in a
+  # comment (e.g. "must not contain DEV_1018").
   tr -d '\r\t ' < "$1" | tr 'A-Z' 'a-z'
+}
+
+normalize_nocomment() {
+  # Lowercase + strip CRLF + whitespace, but ignore comment-only lines.
+  #
+  # This avoids false positives where a directive is present but commented out
+  # (e.g. `; Include = ks.inf, wdmaudio.inf`).
+  awk '
+    {
+      sub(/\r$/, "")
+      if ($0 ~ /^[[:space:]]*;/) next
+      print
+    }
+  ' "$1" | tr -d '\t ' | tr 'A-Z' 'a-z'
 }
 
 require_contains_norm() {
   file="$1"
   needle="$2"
   msg="$3"
-  if ! normalize "$file" | grep -Fq "$needle"; then
+  if ! normalize_nocomment "$file" | grep -Fq "$needle"; then
     fail "$msg"
   fi
 }
@@ -52,7 +69,58 @@ require_not_contains_norm() {
   file="$1"
   needle="$2"
   msg="$3"
-  if normalize "$file" | grep -Fq "$needle"; then
+  if normalize_nocomment "$file" | grep -Fq "$needle"; then
+    fail "$msg"
+  fi
+}
+
+require_not_contains_norm_all() {
+  file="$1"
+  needle="$2"
+  msg="$3"
+  if normalize_all "$file" | grep -Fq "$needle"; then
+    fail "$msg"
+  fi
+}
+
+section_contains_norm() {
+  file="$1"
+  section="$2"
+  needle="$3"
+  msg="$4"
+
+  # POSIX awk: avoid non-standard capture groups; do manual bracket stripping.
+  section_lc=$(printf '%s' "$section" | tr 'A-Z' 'a-z')
+
+  if ! awk -v section="$section_lc" -v needle="$needle" '
+    BEGIN {
+      in_section = 0
+      found = 0
+    }
+    {
+      sub(/\r$/, "")
+      if ($0 ~ /^[[:space:]]*;/) next
+
+      line = $0
+      if (line ~ /^[[:space:]]*\[[^]]+\][[:space:]]*$/) {
+        sub(/^[[:space:]]*\[/, "", line)
+        sub(/\][[:space:]]*$/, "", line)
+        line = tolower(line)
+        in_section = (line == section)
+        next
+      }
+
+      if (in_section) {
+        gsub(/[[:space:]]+/, "", line)
+        line = tolower(line)
+        if (index(line, needle) != 0) {
+          found = 1
+          exit 0
+        }
+      }
+    }
+    END { if (!found) exit 1 }
+  ' "$file"; then
     fail "$msg"
   fi
 }
@@ -85,35 +153,65 @@ require_contains_norm \
   'pci\ven_1af4&dev_1059&rev_01' \
   "inf/aero_virtio_snd.inf must contain HWID PCI\\VEN_1AF4&DEV_1059&REV_01"
 
-require_not_contains_norm \
+require_not_contains_norm_all \
   "$INF_CONTRACT" \
   'dev_1018' \
   "inf/aero_virtio_snd.inf must not contain DEV_1018 (transitional virtio-snd)"
 
-require_contains_norm \
+section_contains_norm \
   "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT' \
   'include=ks.inf,wdmaudio.inf' \
   "inf/aero_virtio_snd.inf must declare: Include = ks.inf, wdmaudio.inf"
 
-require_contains_norm \
+section_contains_norm \
   "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT' \
   'needs=ks.registration,wdmaudio.registration' \
   "inf/aero_virtio_snd.inf must declare: Needs = KS.Registration, WDMAUDIO.Registration"
 
-require_contains_norm \
+section_contains_norm \
   "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT.Interfaces' \
   'addinterface=%kscategory_render%' \
   "inf/aero_virtio_snd.inf must AddInterface for KSCATEGORY_RENDER"
 
-require_contains_norm \
+section_contains_norm \
   "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT.Interfaces' \
   'addinterface=%kscategory_capture%' \
   "inf/aero_virtio_snd.inf must AddInterface for KSCATEGORY_CAPTURE"
 
-require_contains_norm \
+section_contains_norm \
   "$INF_CONTRACT" \
+  'Version' \
   'catalogfile=aero_virtio_snd.cat' \
   "inf/aero_virtio_snd.inf must declare: CatalogFile = aero_virtio_snd.cat"
+
+note "checking SYS/CAT name consistency..."
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'ntmpdriver,,aero_virtio_snd.sys' \
+  "inf/aero_virtio_snd.inf must reference aero_virtio_snd.sys via NTMPDriver"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_Service_Inst' \
+  'servicebinary=%12%\\aero_virtio_snd.sys' \
+  "inf/aero_virtio_snd.inf must reference aero_virtio_snd.sys via ServiceBinary"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.CopyFiles' \
+  'aero_virtio_snd.sys' \
+  "inf/aero_virtio_snd.inf must copy aero_virtio_snd.sys (AeroVirtioSnd.CopyFiles)"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'SourceDisksFiles' \
+  'aero_virtio_snd.sys=1' \
+  "inf/aero_virtio_snd.inf must list aero_virtio_snd.sys under [SourceDisksFiles]"
 
 if [ -f "$INF_DISABLED" ]; then
   note "checking inf/virtio-snd.inf.disabled stays in sync..."
