@@ -352,6 +352,26 @@ pub struct WebGpuFramebufferPresenter<'a> {
     uploader: Rgba8TextureUploader,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SurfaceAcquireErrorAction {
+    /// Drop the frame and continue rendering.
+    DropFrame,
+    /// Reconfigure the surface and retry once.
+    ReconfigureAndRetry,
+    /// Treat the error as fatal.
+    Fatal,
+}
+
+fn surface_acquire_error_action(err: &wgpu::SurfaceError) -> SurfaceAcquireErrorAction {
+    match err {
+        wgpu::SurfaceError::Timeout => SurfaceAcquireErrorAction::DropFrame,
+        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+            SurfaceAcquireErrorAction::ReconfigureAndRetry
+        }
+        wgpu::SurfaceError::OutOfMemory => SurfaceAcquireErrorAction::Fatal,
+    }
+}
+
 impl<'a> WebGpuFramebufferPresenter<'a> {
     pub async fn new(
         instance: wgpu::Instance,
@@ -624,24 +644,32 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
 
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Timeout) => {
-                // Present timeout: treat as transient and drop the frame.
-                tracing::warn!("wgpu surface timeout during present; dropping frame");
-                return Ok(());
-            }
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                // Window resize / swap chain invalidation; reconfigure and retry once.
-                self.surface.configure(device, &self.config);
-                match self.surface.get_current_texture() {
-                    Ok(frame) => frame,
-                    Err(wgpu::SurfaceError::Timeout) => {
-                        tracing::warn!("wgpu surface timeout during present retry; dropping frame");
-                        return Ok(());
-                    }
-                    Err(e) => return Err(e.into()),
+            Err(err) => match surface_acquire_error_action(&err) {
+                SurfaceAcquireErrorAction::DropFrame => {
+                    tracing::warn!("wgpu surface timeout during present; dropping frame");
+                    return Ok(());
                 }
-            }
-            Err(e) => return Err(e.into()),
+                SurfaceAcquireErrorAction::ReconfigureAndRetry => {
+                    // Window resize / swap chain invalidation; reconfigure and retry once.
+                    self.surface.configure(device, &self.config);
+                    match self.surface.get_current_texture() {
+                        Ok(frame) => frame,
+                        Err(err) => match surface_acquire_error_action(&err) {
+                            SurfaceAcquireErrorAction::DropFrame => {
+                                tracing::warn!(
+                                    "wgpu surface timeout during present retry; dropping frame"
+                                );
+                                return Ok(());
+                            }
+                            SurfaceAcquireErrorAction::Fatal
+                            | SurfaceAcquireErrorAction::ReconfigureAndRetry => {
+                                return Err(err.into())
+                            }
+                        },
+                    }
+                }
+                SurfaceAcquireErrorAction::Fatal => return Err(err.into()),
+            },
         };
         let view_desc = wgpu::TextureViewDescriptor {
             format: if self.surface_view_format == self.config.format {
@@ -1009,5 +1037,25 @@ mod tests {
         assert_eq!(view_format, wgpu::TextureFormat::Bgra8UnormSrgb);
         assert_eq!(view_formats, vec![wgpu::TextureFormat::Bgra8UnormSrgb]);
         assert!(!surface_format_requires_manual_srgb_encoding(view_format));
+    }
+
+    #[test]
+    fn surface_error_policy_matches_docs() {
+        assert_eq!(
+            surface_acquire_error_action(&wgpu::SurfaceError::Timeout),
+            SurfaceAcquireErrorAction::DropFrame
+        );
+        assert_eq!(
+            surface_acquire_error_action(&wgpu::SurfaceError::Lost),
+            SurfaceAcquireErrorAction::ReconfigureAndRetry
+        );
+        assert_eq!(
+            surface_acquire_error_action(&wgpu::SurfaceError::Outdated),
+            SurfaceAcquireErrorAction::ReconfigureAndRetry
+        );
+        assert_eq!(
+            surface_acquire_error_action(&wgpu::SurfaceError::OutOfMemory),
+            SurfaceAcquireErrorAction::Fatal
+        );
     }
 }
