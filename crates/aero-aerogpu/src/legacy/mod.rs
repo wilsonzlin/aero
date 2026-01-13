@@ -6,6 +6,7 @@
 //!
 //! The legacy model uses a deprecated PCI identity (legacy vendor bytes 0x1A,0xED; device ID
 //! 0x0001).
+//! Keep the literal tokens confined to `docs/abi/aerogpu-pci-identity.md` and legacy driver trees.
 
 use memory::MemoryBus;
 use std::time::{Duration, Instant};

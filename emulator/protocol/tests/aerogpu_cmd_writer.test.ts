@@ -5,8 +5,9 @@ import {
   AEROGPU_CMD_HDR_OFF_OPCODE,
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_HDR_SIZE,
-  AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE,
   AEROGPU_CMD_BIND_SHADERS_SIZE,
+  AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE,
+  AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE,
   AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
   AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE,
@@ -331,6 +332,78 @@ test("AerogpuCmdWriter.bindShadersWithGs writes gs handle at the reserved offset
   assert.equal(view.getUint32(pkt0 + 12, true), 12);
   assert.equal(view.getUint32(pkt0 + 16, true), 13);
   assert.equal(view.getUint32(pkt0 + 20, true), 11);
+});
+
+test("AerogpuCmdWriter emits CREATE_SHADER_DXBC stage_ex encoding + padding", () => {
+  const w = new AerogpuCmdWriter();
+
+  // 5 bytes -> requires 3 bytes of 4-byte padding.
+  const dxbc = new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+  w.createShaderDxbcEx(7, AerogpuShaderStageEx.Geometry, dxbc);
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.CreateShaderDxbc);
+  const sizeBytes = view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true);
+  assert.equal(sizeBytes, alignUp(AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + dxbc.byteLength, 4));
+
+  // `aerogpu_cmd_create_shader_dxbc`:
+  // - stage @ 12
+  // - dxbc_size_bytes @ 16
+  // - reserved0 @ 20 (used for stage_ex)
+  assert.equal(view.getUint32(pkt0 + 12, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(pkt0 + 16, true), dxbc.byteLength);
+  assert.equal(view.getUint32(pkt0 + 20, true), AerogpuShaderStageEx.Geometry);
+
+  const payloadStart = pkt0 + AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE;
+  assert.deepEqual(Array.from(bytes.slice(payloadStart, payloadStart + dxbc.byteLength)), Array.from(dxbc));
+
+  const paddedStart = payloadStart + dxbc.byteLength;
+  const paddedEnd = pkt0 + sizeBytes;
+  assert.equal(paddedEnd - paddedStart, 3);
+  assert.ok(bytes.slice(paddedStart, paddedEnd).every((b) => b === 0));
+});
+
+test("AerogpuCmdWriter emits BIND_SHADERS extended packet with trailing gs/hs/ds", () => {
+  const w = new AerogpuCmdWriter();
+  w.bindShadersEx(1, 2, 3, 4, 5, 6);
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.BindShaders);
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_BIND_SHADERS_SIZE + 12);
+
+  // `aerogpu_cmd_bind_shaders`: vs/ps/cs + reserved0
+  assert.equal(view.getUint32(pkt0 + 8, true), 1);
+  assert.equal(view.getUint32(pkt0 + 12, true), 2);
+  assert.equal(view.getUint32(pkt0 + 16, true), 3);
+
+  // Trailing handles: gs/hs/ds.
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_BIND_SHADERS_SIZE + 0, true), 4);
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_BIND_SHADERS_SIZE + 4, true), 5);
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_BIND_SHADERS_SIZE + 8, true), 6);
+});
+
+test("AerogpuCmdWriter emits stage_ex binding packets (SET_CONSTANT_BUFFERS)", () => {
+  const w = new AerogpuCmdWriter();
+  w.setConstantBuffersEx(AerogpuShaderStageEx.Geometry, 0, [{ buffer: 99, offsetBytes: 16, sizeBytes: 64 }]);
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetConstantBuffers);
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 16);
+
+  // `aerogpu_cmd_set_constant_buffers`:
+  // - shader_stage @ 8
+  // - reserved0 @ 20 (used for stage_ex)
+  assert.equal(view.getUint32(pkt0 + 8, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(pkt0 + 20, true), AerogpuShaderStageEx.Geometry);
 });
 
 test("alignUp handles values > 2^31 without signed 32-bit wrap", () => {

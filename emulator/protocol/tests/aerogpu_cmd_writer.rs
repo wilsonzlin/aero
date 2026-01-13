@@ -1281,3 +1281,123 @@ fn cmd_writer_emits_stage_ex_binding_packets() {
 
     assert_eq!(cursor, buf.len());
 }
+
+#[test]
+fn cmd_writer_emits_create_shader_dxbc_ex_with_stage_ex_and_padding() {
+    use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdCreateShaderDxbc, AerogpuShaderStageEx};
+
+    // 5 bytes -> requires 3 bytes of 4-byte padding after the payload.
+    let dxbc = [0xAAu8, 0xBB, 0xCC, 0xDD, 0xEE];
+
+    let mut w = AerogpuCmdWriter::new();
+    w.create_shader_dxbc_ex(7, AerogpuShaderStageEx::Geometry, &dxbc);
+    let buf = w.finish();
+
+    let pkt_base = AerogpuCmdStreamHeader::SIZE_BYTES;
+    let hdr = decode_cmd_hdr_le(&buf[pkt_base..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::CreateShaderDxbc as u32);
+
+    let expected_size = align_up(size_of::<AerogpuCmdCreateShaderDxbc>() + dxbc.len(), 4);
+    assert_eq!(size_bytes as usize, expected_size);
+
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdCreateShaderDxbc, stage)
+                ..pkt_base + offset_of!(AerogpuCmdCreateShaderDxbc, stage) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStage::Compute as u32,
+        "stage is encoded as COMPUTE when using stage_ex"
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdCreateShaderDxbc, reserved0)
+                ..pkt_base + offset_of!(AerogpuCmdCreateShaderDxbc, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStageEx::Geometry as u32,
+        "reserved0 carries stage_ex"
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdCreateShaderDxbc, dxbc_size_bytes)
+                ..pkt_base + offset_of!(AerogpuCmdCreateShaderDxbc, dxbc_size_bytes) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        dxbc.len() as u32
+    );
+
+    let payload_base = pkt_base + size_of::<AerogpuCmdCreateShaderDxbc>();
+    assert_eq!(&buf[payload_base..payload_base + dxbc.len()], &dxbc);
+
+    // Validate 4-byte padding is present and zeroed.
+    let unpadded_end = payload_base + dxbc.len();
+    let padded_end = pkt_base + expected_size;
+    assert_eq!(padded_end - unpadded_end, 3);
+    assert!(buf[unpadded_end..padded_end].iter().all(|&b| b == 0));
+}
+
+#[test]
+fn cmd_writer_emits_bind_shaders_ex_with_trailing_gs_hs_ds_handles() {
+    use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdBindShaders;
+
+    let mut w = AerogpuCmdWriter::new();
+    w.bind_shaders_ex(1, 2, 3, 4, 5, 6);
+    let buf = w.finish();
+
+    let pkt_base = AerogpuCmdStreamHeader::SIZE_BYTES;
+    let hdr = decode_cmd_hdr_le(&buf[pkt_base..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::BindShaders as u32);
+
+    let expected_size = size_of::<AerogpuCmdBindShaders>() + 3 * size_of::<u32>();
+    assert_eq!(size_bytes as usize, expected_size);
+
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdBindShaders, vs)
+                ..pkt_base + offset_of!(AerogpuCmdBindShaders, vs) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        1
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdBindShaders, ps)
+                ..pkt_base + offset_of!(AerogpuCmdBindShaders, ps) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdBindShaders, cs)
+                ..pkt_base + offset_of!(AerogpuCmdBindShaders, cs) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        3
+    );
+
+    let ext_base = pkt_base + size_of::<AerogpuCmdBindShaders>();
+    assert_eq!(
+        u32::from_le_bytes(buf[ext_base..ext_base + 4].try_into().unwrap()),
+        4
+    );
+    assert_eq!(
+        u32::from_le_bytes(buf[ext_base + 4..ext_base + 8].try_into().unwrap()),
+        5
+    );
+    assert_eq!(
+        u32::from_le_bytes(buf[ext_base + 8..ext_base + 12].try_into().unwrap()),
+        6
+    );
+}

@@ -1472,6 +1472,11 @@ export class AerogpuCmdWriter {
     new Uint8Array(this.buf, base + AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE, dxbcBytes.byteLength).set(dxbcBytes);
   }
 
+  /**
+   * Stage-ex aware variant of {@link createShaderDxbc}.
+   *
+   * Encodes `stageEx` into `reserved0` and sets the legacy `stage` field to `COMPUTE`.
+   */
   createShaderDxbcEx(shaderHandle: AerogpuHandle, stageEx: AerogpuShaderStageEx, dxbcBytes: Uint8Array): void {
     if ((stageEx >>> 0) === AerogpuShaderStageEx.Pixel) {
       throw new Error(
@@ -1481,12 +1486,10 @@ export class AerogpuCmdWriter {
     const unpadded = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + dxbcBytes.byteLength;
     const base = this.appendRaw(AerogpuCmdOpcode.CreateShaderDxbc, unpadded);
     this.view.setUint32(base + 8, shaderHandle, true);
-    // ABI extension encoding:
-    // - stage = Compute (sentinel for "use stage_ex")
-    // - reserved0 = stageEx
-    this.view.setUint32(base + 12, AerogpuShaderStage.Compute, true);
+    const [stage, reserved0] = encodeStageEx(stageEx);
+    this.view.setUint32(base + 12, stage, true);
     this.view.setUint32(base + 16, dxbcBytes.byteLength, true);
-    this.view.setUint32(base + 20, stageEx, true);
+    this.view.setUint32(base + 20, reserved0, true);
     new Uint8Array(this.buf, base + AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE, dxbcBytes.byteLength).set(dxbcBytes);
   }
 
@@ -1513,6 +1516,10 @@ export class AerogpuCmdWriter {
     this.bindShadersWithGs(vs, 0, ps, cs);
   }
 
+  /**
+   * Forward-compatible extension of `BIND_SHADERS` that appends GS/HS/DS handles after the
+   * base `struct aerogpu_cmd_bind_shaders`.
+   */
   bindShadersEx(
     vs: AerogpuHandle,
     ps: AerogpuHandle,
@@ -1521,11 +1528,11 @@ export class AerogpuCmdWriter {
     hs: AerogpuHandle,
     ds: AerogpuHandle,
   ): void {
-    const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE + 3 * 4);
+    const unpadded = AEROGPU_CMD_BIND_SHADERS_SIZE + 3 * 4;
+    const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, unpadded);
     this.view.setUint32(base + 8, vs, true);
     this.view.setUint32(base + 12, ps, true);
     this.view.setUint32(base + 16, cs, true);
-    // Trailing extended-stage shader handles (forward-compatible extension).
     this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 0, gs, true);
     this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 4, hs, true);
     this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 8, ds, true);
@@ -1917,7 +1924,6 @@ export class AerogpuCmdWriter {
       this.view.setUint32(off + 12, b.initialCount, true);
     }
   }
-
   setRenderState(state: number, value: number): void {
     const base = this.appendRaw(AerogpuCmdOpcode.SetRenderState, AEROGPU_CMD_SET_RENDER_STATE_SIZE);
     this.view.setUint32(base + 8, state, true);

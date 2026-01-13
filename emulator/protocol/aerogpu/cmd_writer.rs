@@ -463,6 +463,9 @@ impl AerogpuCmdWriter {
             .copy_from_slice(dxbc_bytes);
     }
 
+    /// Stage-ex aware variant of [`Self::create_shader_dxbc`].
+    ///
+    /// Encodes `stage_ex` into `reserved0` and sets the legacy `stage` field to `COMPUTE`.
     pub fn create_shader_dxbc_ex(
         &mut self,
         shader_handle: AerogpuHandle,
@@ -482,20 +485,15 @@ impl AerogpuCmdWriter {
             base + offset_of!(AerogpuCmdCreateShaderDxbc, shader_handle),
             shader_handle,
         );
-        // ABI extension encoding:
-        // - stage = Compute (sentinel for "use stage_ex")
-        // - reserved0 = stage_ex
-        self.write_u32_at(
-            base + offset_of!(AerogpuCmdCreateShaderDxbc, stage),
-            AerogpuShaderStage::Compute as u32,
-        );
+        let (stage, reserved0) = encode_stage_ex(stage_ex);
+        self.write_u32_at(base + offset_of!(AerogpuCmdCreateShaderDxbc, stage), stage);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateShaderDxbc, dxbc_size_bytes),
             dxbc_bytes.len() as u32,
         );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateShaderDxbc, reserved0),
-            stage_ex as u32,
+            reserved0,
         );
         self.buf[base + size_of::<AerogpuCmdCreateShaderDxbc>()
             ..base + size_of::<AerogpuCmdCreateShaderDxbc>() + dxbc_bytes.len()]
@@ -540,6 +538,8 @@ impl AerogpuCmdWriter {
         self.bind_shaders_with_gs(vs, 0, ps, cs);
     }
 
+    /// Forward-compatible extension of `BIND_SHADERS` that appends GS/HS/DS handles after the
+    /// base `struct aerogpu_cmd_bind_shaders`.
     pub fn bind_shaders_ex(
         &mut self,
         vs: AerogpuHandle,
@@ -551,16 +551,17 @@ impl AerogpuCmdWriter {
     ) {
         use super::aerogpu_cmd::AerogpuCmdBindShaders;
 
-        let size = size_of::<AerogpuCmdBindShaders>() + 3 * size_of::<AerogpuHandle>();
-        let base = self.append_raw(AerogpuCmdOpcode::BindShaders, size);
+        let unpadded_size =
+            size_of::<AerogpuCmdBindShaders>() + 3 * size_of::<AerogpuHandle>();
+        let base = self.append_raw(AerogpuCmdOpcode::BindShaders, unpadded_size);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, vs), vs);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, ps), ps);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, cs), cs);
 
-        let trailing_base = base + size_of::<AerogpuCmdBindShaders>();
-        self.write_u32_at(trailing_base, gs);
-        self.write_u32_at(trailing_base + 4, hs);
-        self.write_u32_at(trailing_base + 8, ds);
+        let ext_base = base + size_of::<AerogpuCmdBindShaders>();
+        self.write_u32_at(ext_base + 0 * size_of::<AerogpuHandle>(), gs);
+        self.write_u32_at(ext_base + 1 * size_of::<AerogpuHandle>(), hs);
+        self.write_u32_at(ext_base + 2 * size_of::<AerogpuHandle>(), ds);
     }
 
     pub fn create_input_layout(&mut self, input_layout_handle: AerogpuHandle, blob: &[u8]) {
@@ -1203,7 +1204,6 @@ impl AerogpuCmdWriter {
             );
         }
     }
-
     pub fn set_constant_buffer(
         &mut self,
         shader_stage: AerogpuShaderStage,
