@@ -10639,7 +10639,11 @@ bool TestPartialShaderStageBindingVsOnlyBindsFixedfuncPsAndDraws() {
     return false;
   }
 
-  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  // Draw-time interop may temporarily bind an internal fixed-function shader and
+  // restore the original (NULL) stage after the draw. Ensure the bind used for
+  // the draw occurs before the draw packet, rather than relying on the last bind
+  // in the stream.
+  const CmdLoc bind = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_BIND_SHADERS);
   if (!Check(bind.hdr != nullptr, "BIND_SHADERS emitted")) {
     return false;
   }
@@ -10664,11 +10668,16 @@ bool TestPartialShaderStageBindingPsOnlyBindsFixedfuncVsAndDraws() {
     D3DDDI_HADAPTER hAdapter{};
     D3DDDI_HDEVICE hDevice{};
     D3D9DDI_HSHADER hPs{};
+    D3DDDI_HRESOURCE hVb{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_ps = false;
+    bool has_vb = false;
 
     ~Cleanup() {
+      if (has_vb && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hVb);
+      }
       if (has_ps && device_funcs.pfnDestroyShader) {
         device_funcs.pfnDestroyShader(hDevice, hPs);
       }
@@ -10753,6 +10762,73 @@ bool TestPartialShaderStageBindingPsOnlyBindsFixedfuncVsAndDraws() {
     return false;
   }
 
+  // Provide a small vertex stream so the fixed-function XYZRHW emulation path
+  // can read and convert vertices for the fallback VS.
+  struct VertexXyzrhwDiffuse {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+  };
+  const VertexXyzrhwDiffuse verts[3] = {
+      {0.0f, 0.0f, 0.5f, 1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.5f, 1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.5f, 1.0f, 0xFFFFFFFFu},
+  };
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = 0;
+  create_res.width = 0;
+  create_res.height = 0;
+  create_res.depth = 0;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = sizeof(verts);
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pKmdAllocPrivateData = nullptr;
+  create_res.KmdAllocPrivateDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(vertex buffer)")) {
+    return false;
+  }
+  cleanup.hVb = create_res.hResource;
+  cleanup.has_vb = true;
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_res.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(vertex buffer)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, verts, sizeof(verts));
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_res.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(vertex buffer)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, create_res.hResource, 0, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "SetStreamSource")) {
+    return false;
+  }
+
   hr = cleanup.device_funcs.pfnDrawPrimitive(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 0, 1);
   if (!Check(hr == S_OK, "DrawPrimitive(PS-only)")) {
     return false;
@@ -10768,7 +10844,10 @@ bool TestPartialShaderStageBindingPsOnlyBindsFixedfuncVsAndDraws() {
     return false;
   }
 
-  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  // Draw-time interop may restore the original (NULL) stage after drawing, so
+  // the final BIND_SHADERS packet might occur after DRAW. Find the most recent
+  // bind before the draw packet.
+  const CmdLoc bind = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_BIND_SHADERS);
   if (!Check(bind.hdr != nullptr, "BIND_SHADERS emitted")) {
     return false;
   }

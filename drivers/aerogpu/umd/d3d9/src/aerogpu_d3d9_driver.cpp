@@ -4849,6 +4849,191 @@ HRESULT ensure_draw_pipeline_locked(Device* dev) {
   return S_OK;
 }
 
+// -----------------------------------------------------------------------------
+// Draw-time shader binding (D3D9 fixed-function interop)
+// -----------------------------------------------------------------------------
+//
+// D3D9 allows an application to bind only VS or only PS. The missing stage then
+// falls back to the fixed-function pipeline. The AeroGPU protocol requires both
+// shader stages to be non-null at draw time, so we inject internal fixed-function
+// shaders when exactly one stage is missing.
+//
+// Callers must hold `Device::mutex` and must invoke this *before* emitting any
+// draw packets (AEROGPU_CMD_DRAW / AEROGPU_CMD_DRAW_INDEXED). If a fixed-function
+// fallback cannot be applied (unsupported FVF/decl for VS fallback), this returns
+// D3DERR_INVALIDCALL and must not emit draw packets.
+struct DrawShaderOverride {
+  Shader* saved_vs = nullptr;
+  Shader* saved_ps = nullptr;
+  bool active = false;
+};
+
+static HRESULT ensure_fixedfunc_vs_fallback_locked(Device* dev, Shader** out_vs) {
+  if (!dev || !out_vs) {
+    return E_INVALIDARG;
+  }
+  // Fixed-function vertex processing requires a supported FVF/decl.
+  if (!fixedfunc_supported_fvf(dev->fvf)) {
+    return kD3DErrInvalidCall;
+  }
+
+  // Reuse the fixed-function pipeline helper to lazily create the internal VS
+  // (and bind the internal input layout when SetFVF was used).
+  HRESULT hr = ensure_fixedfunc_pipeline_locked(dev);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  if (!dev->vertex_decl) {
+    return kD3DErrInvalidCall;
+  }
+
+  Shader* vs = nullptr;
+  switch (dev->fvf) {
+    case kSupportedFvfXyzrhwDiffuse:
+      vs = dev->fixedfunc_vs;
+      break;
+    case kSupportedFvfXyzrhwDiffuseTex1:
+      vs = dev->fixedfunc_vs_tex1;
+      break;
+    case kSupportedFvfXyzDiffuse:
+      // XYZ+DIFFUSE uses the same passthrough VS slot as the XYZRHW variant.
+      vs = dev->fixedfunc_vs;
+      break;
+    case kSupportedFvfXyzDiffuseTex1:
+      vs = dev->fixedfunc_vs_xyz_diffuse_tex1;
+      break;
+    default:
+      return kD3DErrInvalidCall;
+  }
+
+  if (!vs) {
+    return E_FAIL;
+  }
+  *out_vs = vs;
+  return S_OK;
+}
+
+static HRESULT ensure_fixedfunc_ps_fallback_locked(Device* dev, Shader** out_ps) {
+  if (!dev || !out_ps) {
+    return E_INVALIDARG;
+  }
+
+  // Prefer an FVF-specific cache slot when possible so fixed-function stage0
+  // state changes don't force redundant shader creation.
+  Shader** ps_slot = &dev->fixedfunc_ps;
+  switch (dev->fvf) {
+    case kSupportedFvfXyzrhwDiffuse:
+      ps_slot = &dev->fixedfunc_ps;
+      break;
+    case kSupportedFvfXyzrhwDiffuseTex1:
+      ps_slot = &dev->fixedfunc_ps_tex1;
+      break;
+    case kSupportedFvfXyzDiffuse:
+      // XYZ+DIFFUSE uses the same fixed-function PS slot as the XYZRHW variant.
+      ps_slot = &dev->fixedfunc_ps;
+      break;
+    case kSupportedFvfXyzDiffuseTex1:
+      ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+      break;
+    default:
+      ps_slot = &dev->fixedfunc_ps;
+      break;
+  }
+
+  // This helper selects/creates the fixed-function PS variant based on stage0
+  // state. It also hot-rebinds if the PS being replaced is currently bound.
+  HRESULT hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  if (!*ps_slot) {
+    return E_FAIL;
+  }
+  *out_ps = *ps_slot;
+  return S_OK;
+}
+
+static HRESULT bind_draw_shaders_locked(Device* dev, DrawShaderOverride* out_override) {
+  if (!dev || !out_override) {
+    return E_INVALIDARG;
+  }
+
+  out_override->saved_vs = dev->vs;
+  out_override->saved_ps = dev->ps;
+  out_override->active = false;
+
+  // Fixed-function path: neither stage is set.
+  if (!dev->user_vs && !dev->user_ps) {
+    return ensure_fixedfunc_pipeline_locked(dev);
+  }
+
+  Shader* desired_vs = dev->user_vs;
+  Shader* desired_ps = dev->user_ps;
+  bool injected = false;
+
+  // Interop: PS set but VS missing (VS falls back to fixed-function).
+  if (!dev->user_vs && dev->user_ps) {
+    HRESULT hr = ensure_fixedfunc_vs_fallback_locked(dev, &desired_vs);
+    if (FAILED(hr)) {
+      return hr;
+    }
+    desired_ps = dev->user_ps;
+    injected = true;
+  }
+
+  // Interop: VS set but PS missing (PS falls back to fixed-function).
+  if (dev->user_vs && !dev->user_ps) {
+    HRESULT hr = ensure_fixedfunc_ps_fallback_locked(dev, &desired_ps);
+    if (FAILED(hr)) {
+      return hr;
+    }
+    desired_vs = dev->user_vs;
+    injected = true;
+  }
+
+  if (!desired_vs || !desired_ps) {
+    return kD3DErrInvalidCall;
+  }
+
+  if (dev->vs != desired_vs || dev->ps != desired_ps) {
+    Shader* prev_vs = dev->vs;
+    Shader* prev_ps = dev->ps;
+    dev->vs = desired_vs;
+    dev->ps = desired_ps;
+    if (!emit_bind_shaders_locked(dev)) {
+      dev->vs = prev_vs;
+      dev->ps = prev_ps;
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+  }
+
+  out_override->active = injected;
+  return S_OK;
+}
+
+static HRESULT restore_draw_shaders_locked(Device* dev, DrawShaderOverride* override) {
+  if (!dev || !override) {
+    return E_INVALIDARG;
+  }
+  if (!override->active) {
+    return S_OK;
+  }
+
+  if (dev->vs != override->saved_vs || dev->ps != override->saved_ps) {
+    Shader* prev_vs = dev->vs;
+    Shader* prev_ps = dev->ps;
+    dev->vs = override->saved_vs;
+    dev->ps = override->saved_ps;
+    if (!emit_bind_shaders_locked(dev)) {
+      dev->vs = prev_vs;
+      dev->ps = prev_ps;
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+  }
+  override->active = false;
+  return S_OK;
+}
+
 HRESULT ensure_up_vertex_buffer_locked(Device* dev, uint32_t required_size) {
   if (!dev || !dev->adapter) {
     return E_FAIL;
@@ -18349,17 +18534,26 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     return trace.ret(S_OK);
   }
 
-  // Reject draws that would execute with no bound shaders (unsupported
-  // fixed-function path or missing user shaders).
-  HRESULT pipeline_hr = ensure_draw_pipeline_locked(dev);
-  if (FAILED(pipeline_hr)) {
-    return trace.ret(pipeline_hr);
+  DrawShaderOverride shader_override{};
+  HRESULT hr = bind_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
   }
+  struct AutoRestoreShaders {
+    Device* dev = nullptr;
+    DrawShaderOverride* state = nullptr;
+    ~AutoRestoreShaders() {
+      if (dev && state) {
+        (void)restore_draw_shaders_locked(dev, state);
+      }
+    }
+  };
+  [[maybe_unused]] AutoRestoreShaders shader_restore_guard{dev, &shader_override};
 
-  const bool fixedfunc_active = fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps;
-  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+  const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
+  const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
-  if (fixedfunc_active) {
+  if (fixedfunc_vertex_active) {
     const DeviceStateStream& ss0 = dev->streams[0];
     if (!ss0.vb) {
       return trace.ret(kD3DErrInvalidCall);
@@ -18502,14 +18696,11 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
       return device_lost_override(dev, E_OUTOFMEMORY);
     }
-    return S_OK;
-  }
-
-  if (fixedfunc_active) {
-    const HRESULT ff_hr = ensure_fixedfunc_pipeline_locked(dev);
-    if (FAILED(ff_hr)) {
-      return trace.ret(ff_hr);
+    hr = restore_draw_shaders_locked(dev, &shader_override);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
     }
+    return trace.ret(S_OK);
   }
 
   const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
@@ -18530,7 +18721,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
-  HRESULT hr = track_draw_state_locked(dev);
+  hr = track_draw_state_locked(dev);
   if (hr < 0) {
     return hr;
   }
@@ -18543,6 +18734,10 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
   cmd->instance_count = 1;
   cmd->first_vertex = start_vertex;
   cmd->first_instance = 0;
+  hr = restore_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
   return trace.ret(S_OK);
 }
 
@@ -18585,20 +18780,28 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     return trace.ret(E_INVALIDARG);
   }
 
-  // Validate the effective shader pipeline before performing any UP uploads or
-  // state mutations. Unsupported fixed-function draws must fail without
-  // emitting any draw packets.
-  HRESULT pipeline_hr = ensure_draw_pipeline_locked(dev);
-  if (FAILED(pipeline_hr)) {
-    return trace.ret(pipeline_hr);
+  DrawShaderOverride shader_override{};
+  HRESULT hr = bind_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
   }
+  struct AutoRestoreShaders {
+    Device* dev = nullptr;
+    DrawShaderOverride* state = nullptr;
+    ~AutoRestoreShaders() {
+      if (dev && state) {
+        (void)restore_draw_shaders_locked(dev, state);
+      }
+    }
+  };
+  [[maybe_unused]] AutoRestoreShaders shader_restore_guard{dev, &shader_override};
 
-  const bool fixedfunc_active = fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps;
-  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+  const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
+  const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   DeviceStateStream saved = dev->streams[0];
 
-  if (fixedfunc_active) {
+  if (fixedfunc_vertex_active) {
     const HRESULT stride_hr = validate_fixedfunc_vertex_stride(dev->fvf, stride_bytes);
     if (FAILED(stride_hr)) {
       return trace.ret(stride_hr);
@@ -18618,7 +18821,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     upload_size = static_cast<uint32_t>(converted.size());
   }
 
-  HRESULT hr = ensure_up_vertex_buffer_locked(dev, upload_size);
+  hr = ensure_up_vertex_buffer_locked(dev, upload_size);
   if (FAILED(hr)) {
     return trace.ret(hr);
   }
@@ -18629,14 +18832,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
 
   if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, stride_bytes)) {
     return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
-  }
-
-  if (fixedfunc_active) {
-    hr = ensure_fixedfunc_pipeline_locked(dev);
-    if (FAILED(hr)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-      return trace.ret(hr);
-    }
   }
 
   const uint32_t topology = d3d9_prim_to_topology(type);
@@ -18670,6 +18865,10 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
 
   if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
     return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
+  }
+  hr = restore_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
   }
   return trace.ret(S_OK);
 }
@@ -18758,19 +18957,28 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     return E_INVALIDARG;
   }
 
-  // Validate the effective shader pipeline before performing any UP uploads or
-  // emitting draw packets.
-  HRESULT pipeline_hr = ensure_draw_pipeline_locked(dev);
-  if (FAILED(pipeline_hr)) {
-    return pipeline_hr;
+  DrawShaderOverride shader_override{};
+  HRESULT hr = bind_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return hr;
   }
+  struct AutoRestoreShaders {
+    Device* dev = nullptr;
+    DrawShaderOverride* state = nullptr;
+    ~AutoRestoreShaders() {
+      if (dev && state) {
+        (void)restore_draw_shaders_locked(dev, state);
+      }
+    }
+  };
+  [[maybe_unused]] AutoRestoreShaders shader_restore_guard{dev, &shader_override};
 
-  const bool fixedfunc_active = fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps;
-  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+  const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
+  const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   DeviceStateStream saved = dev->streams[0];
 
-  if (fixedfunc_active) {
+  if (fixedfunc_vertex_active) {
     const HRESULT stride_hr = validate_fixedfunc_vertex_stride(dev->fvf, pDraw->VertexStreamZeroStride);
     if (FAILED(stride_hr)) {
       return stride_hr;
@@ -18791,7 +18999,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     upload_size = static_cast<uint32_t>(converted.size());
   }
 
-  HRESULT hr = ensure_up_vertex_buffer_locked(dev, upload_size);
+  hr = ensure_up_vertex_buffer_locked(dev, upload_size);
   if (FAILED(hr)) {
     return hr;
   }
@@ -18802,14 +19010,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
 
   if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, pDraw->VertexStreamZeroStride)) {
     return device_lost_override(dev, E_OUTOFMEMORY);
-  }
-
-  if (fixedfunc_active) {
-    hr = ensure_fixedfunc_pipeline_locked(dev);
-    if (FAILED(hr)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-      return hr;
-    }
   }
 
   const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
@@ -18844,6 +19044,10 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
 
   if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
     return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+  hr = restore_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return hr;
   }
   return S_OK;
 }
@@ -18899,22 +19103,31 @@ static HRESULT device_draw_indexed_primitive2_locked(
     return E_INVALIDARG;
   }
 
-  // Validate the effective shader pipeline before performing any UP uploads or
-  // mutating the index buffer binding.
-  HRESULT pipeline_hr = ensure_draw_pipeline_locked(dev);
-  if (FAILED(pipeline_hr)) {
-    return pipeline_hr;
+  DrawShaderOverride shader_override{};
+  HRESULT hr = bind_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return hr;
   }
+  struct AutoRestoreShaders {
+    Device* dev = nullptr;
+    DrawShaderOverride* state = nullptr;
+    ~AutoRestoreShaders() {
+      if (dev && state) {
+        (void)restore_draw_shaders_locked(dev, state);
+      }
+    }
+  };
+  [[maybe_unused]] AutoRestoreShaders shader_restore_guard{dev, &shader_override};
 
-  const bool fixedfunc_active = fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps;
-  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+  const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
+  const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   DeviceStateStream saved_stream = dev->streams[0];
   Resource* saved_ib = dev->index_buffer;
   const D3DDDIFORMAT saved_fmt = dev->index_format;
   const uint32_t saved_offset = dev->index_offset_bytes;
 
-  if (fixedfunc_active) {
+  if (fixedfunc_vertex_active) {
     const HRESULT stride_hr = validate_fixedfunc_vertex_stride(dev->fvf, pDraw->VertexStreamZeroStride);
     if (FAILED(stride_hr)) {
       return stride_hr;
@@ -18939,7 +19152,7 @@ static HRESULT device_draw_indexed_primitive2_locked(
     vb_upload_size = static_cast<uint32_t>(converted.size());
   }
 
-  HRESULT hr = ensure_up_vertex_buffer_locked(dev, vb_upload_size);
+  hr = ensure_up_vertex_buffer_locked(dev, vb_upload_size);
   if (FAILED(hr)) {
     return hr;
   }
@@ -18977,25 +19190,6 @@ static HRESULT device_draw_indexed_primitive2_locked(
   ib_cmd->format = d3d9_index_format_to_aerogpu(pDraw->IndexDataFormat);
   ib_cmd->offset_bytes = 0;
   ib_cmd->reserved0 = 0;
-
-  if (fixedfunc_active) {
-    hr = ensure_fixedfunc_pipeline_locked(dev);
-    if (FAILED(hr)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      // Restore IB state.
-      dev->index_buffer = saved_ib;
-      dev->index_format = saved_fmt;
-      dev->index_offset_bytes = saved_offset;
-      auto* restore = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
-      if (restore) {
-        restore->buffer = saved_ib ? saved_ib->handle : 0;
-        restore->format = d3d9_index_format_to_aerogpu(saved_fmt);
-        restore->offset_bytes = saved_offset;
-        restore->reserved0 = 0;
-      }
-      return hr;
-    }
-  }
 
   const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
   if (!emit_set_topology_locked(dev, topology)) {
@@ -19090,6 +19284,10 @@ static HRESULT device_draw_indexed_primitive2_locked(
   restore_cmd->offset_bytes = saved_offset;
   restore_cmd->reserved0 = 0;
 
+  hr = restore_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return hr;
+  }
   return S_OK;
 }
 
@@ -19120,19 +19318,29 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     return trace.ret(S_OK);
   }
 
-  // Reject draws that would execute with no bound shaders (unsupported
-  // fixed-function path or missing user shaders).
-  HRESULT pipeline_hr = ensure_draw_pipeline_locked(dev);
-  if (FAILED(pipeline_hr)) {
-    return trace.ret(pipeline_hr);
+  DrawShaderOverride shader_override{};
+  HRESULT hr = bind_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
   }
-  const bool fixedfunc_active = fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps;
-  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+  struct AutoRestoreShaders {
+    Device* dev = nullptr;
+    DrawShaderOverride* state = nullptr;
+    ~AutoRestoreShaders() {
+      if (dev && state) {
+        (void)restore_draw_shaders_locked(dev, state);
+      }
+    }
+  };
+  [[maybe_unused]] AutoRestoreShaders shader_restore_guard{dev, &shader_override};
+
+  const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
+  const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   // Fixed-function emulation for indexed draws: expand indices into a temporary
   // vertex stream and issue a non-indexed draw. This is intentionally
   // conservative but is sufficient for bring-up.
-  if (fixedfunc_active) {
+  if (fixedfunc_vertex_active) {
     const DeviceStateStream& ss0 = dev->streams[0];
     if (!ss0.vb) {
       return trace.ret(kD3DErrInvalidCall);
@@ -19368,7 +19576,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
       }
     }
 
-    HRESULT hr = ensure_up_vertex_buffer_locked(dev, static_cast<uint32_t>(expanded.size()));
+    hr = ensure_up_vertex_buffer_locked(dev, static_cast<uint32_t>(expanded.size()));
     if (FAILED(hr)) {
       return hr;
     }
@@ -19379,12 +19587,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
 
     if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, ss.stride_bytes)) {
       return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-
-    hr = ensure_fixedfunc_pipeline_locked(dev);
-    if (FAILED(hr)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      return hr;
     }
 
     const uint32_t topology = d3d9_prim_to_topology(type);
@@ -19419,14 +19621,11 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     if (!emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes)) {
       return device_lost_override(dev, E_OUTOFMEMORY);
     }
-    return S_OK;
-  }
-
-  if (fixedfunc_active) {
-    const HRESULT ff_hr = ensure_fixedfunc_pipeline_locked(dev);
-    if (FAILED(ff_hr)) {
-      return trace.ret(ff_hr);
+    hr = restore_draw_shaders_locked(dev, &shader_override);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
     }
+    return trace.ret(S_OK);
   }
 
   const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
@@ -19447,7 +19646,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
-  HRESULT hr = track_draw_state_locked(dev);
+  hr = track_draw_state_locked(dev);
   if (hr < 0) {
     return hr;
   }
@@ -19461,6 +19660,10 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   cmd->first_index = start_index;
   cmd->base_vertex = base_vertex;
   cmd->first_instance = 0;
+  hr = restore_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
   return trace.ret(S_OK);
 }
 
