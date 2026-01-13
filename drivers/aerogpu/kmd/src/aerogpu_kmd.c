@@ -577,7 +577,7 @@ static VOID AeroGpuFreeSharedHandleTokens(_Inout_ AEROGPU_ADAPTER* Adapter)
 static ULONGLONG AeroGpuReadRegU64HiLoHi(_In_ const AEROGPU_ADAPTER* Adapter, _In_ ULONG LoOffset, _In_ ULONG HiOffset)
 {
     ULONG hi = AeroGpuReadRegU32(Adapter, HiOffset);
-    for (;;) {
+    for (ULONG i = 0; i < 16; ++i) {
         const ULONG lo = AeroGpuReadRegU32(Adapter, LoOffset);
         const ULONG hi2 = AeroGpuReadRegU32(Adapter, HiOffset);
         if (hi == hi2) {
@@ -585,12 +585,15 @@ static ULONGLONG AeroGpuReadRegU64HiLoHi(_In_ const AEROGPU_ADAPTER* Adapter, _I
         }
         hi = hi2;
     }
+
+    /* Best-effort: avoid an infinite loop if the device is misbehaving. */
+    return ((ULONGLONG)hi << 32) | (ULONGLONG)AeroGpuReadRegU32(Adapter, LoOffset);
 }
 
 static ULONGLONG AeroGpuReadVolatileU64HiLoHi(_In_ const volatile ULONG* LoAddr)
 {
     ULONG hi = LoAddr[1];
-    for (;;) {
+    for (ULONG i = 0; i < 16; ++i) {
         const ULONG lo = LoAddr[0];
         const ULONG hi2 = LoAddr[1];
         if (hi == hi2) {
@@ -598,6 +601,9 @@ static ULONGLONG AeroGpuReadVolatileU64HiLoHi(_In_ const volatile ULONG* LoAddr)
         }
         hi = hi2;
     }
+
+    /* Best-effort: avoid an infinite loop if the device is misbehaving. */
+    return ((ULONGLONG)hi << 32) | (ULONGLONG)LoAddr[0];
 }
 
 static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
@@ -5944,6 +5950,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                  * still ACK it to avoid interrupt storms from a stuck level-triggered line.
                  */
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, status);
+                InterlockedIncrement(&adapter->IrqIsrCount);
                 static LONG g_UnexpectedIrqWarned = 0;
                 if (InterlockedExchange(&g_UnexpectedIrqWarned, 1) == 0) {
                     DbgPrintEx(DPFLTR_IHVVIDEO_ID,
@@ -6080,6 +6087,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
 
         if ((handled & AEROGPU_IRQ_FENCE) != 0) {
             InterlockedIncrement64(&adapter->PerfIrqFenceDelivered);
+            InterlockedIncrement(&adapter->IrqIsrFenceCount);
             any = TRUE;
             queueDpc = TRUE;
 
@@ -6100,6 +6108,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
 
         if ((handled & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
             InterlockedIncrement64(&adapter->PerfIrqVblankDelivered);
+            InterlockedIncrement(&adapter->IrqIsrVblankCount);
             /*
              * Keep a guest-time anchor of the most recent vblank so GetScanLine callers don't
              * need to poll the vblank sequence counter at high frequency.
@@ -6151,6 +6160,10 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 }
             }
         }
+
+        if (any) {
+            InterlockedIncrement(&adapter->IrqIsrCount);
+        }
     } else {
         const ULONG legacyStatus = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_INT_STATUS);
         const ULONG legacyKnown = AEROGPU_LEGACY_INT_FENCE;
@@ -6172,6 +6185,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 InterlockedIncrement64(&adapter->PerfIrqSpurious);
             }
             InterlockedIncrement64(&adapter->PerfIrqFenceDelivered);
+            InterlockedIncrement(&adapter->IrqIsrFenceCount);
             const ULONGLONG completedFence64 =
                 (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, legacyStatus);
@@ -6297,6 +6311,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
 
                 if ((pending & AEROGPU_IRQ_SCANOUT_VBLANK) != 0 && adapter->SupportsVblank) {
                     InterlockedIncrement64(&adapter->PerfIrqVblankDelivered);
+                    InterlockedIncrement(&adapter->IrqIsrVblankCount);
                     const BOOLEAN haveVblankRegs =
                         adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
                     if (!haveVblankRegs) {
@@ -6358,6 +6373,10 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 }
             }
         }
+
+        if (any) {
+            InterlockedIncrement(&adapter->IrqIsrCount);
+        }
     }
 
     if (queueDpc && adapter->DxgkInterface.DxgkCbQueueDpcForIsr) {
@@ -6373,6 +6392,8 @@ static VOID APIENTRY AeroGpuDdiDpcRoutine(_In_ const PVOID MiniportDeviceContext
     if (!adapter) {
         return;
     }
+
+    InterlockedIncrement(&adapter->IrqDpcCount);
 
     if (adapter->DxgkInterface.DxgkCbNotifyDpc) {
         adapter->DxgkInterface.DxgkCbNotifyDpc(adapter->StartInfo.hDxgkHandle);
@@ -8248,6 +8269,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 }
 
                 const LONGLONG delivered0 = InterlockedCompareExchange64(&adapter->PerfIrqVblankDelivered, 0, 0);
+                const LONG dpc0 = InterlockedCompareExchange(&adapter->IrqDpcCount, 0, 0);
                 BOOLEAN origVblankEnabled = FALSE;
                 {
                     KIRQL oldIrql;
@@ -8277,7 +8299,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 BOOLEAN delivered = FALSE;
                 while (KeQueryInterruptTime() < deliveryDeadline) {
                     const LONGLONG deliveredNow = InterlockedCompareExchange64(&adapter->PerfIrqVblankDelivered, 0, 0);
-                    if (deliveredNow != delivered0) {
+                    const LONG dpcNow = InterlockedCompareExchange(&adapter->IrqDpcCount, 0, 0);
+                    if (deliveredNow != delivered0 && dpcNow != dpc0) {
                         delivered = TRUE;
                         break;
                     }

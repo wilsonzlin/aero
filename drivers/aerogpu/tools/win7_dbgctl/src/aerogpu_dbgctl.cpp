@@ -4686,6 +4686,27 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
 }
 
 static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t timeoutMs) {
+  // Best-effort: query device feature bits so we can print which selftest sub-checks are applicable.
+  uint64_t features = 0;
+  bool haveFeatures = false;
+  {
+    aerogpu_escape_query_device_v2_out dev;
+    ZeroMemory(&dev, sizeof(dev));
+    dev.hdr.version = AEROGPU_ESCAPE_VERSION;
+    dev.hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2;
+    dev.hdr.size = sizeof(dev);
+    dev.hdr.reserved0 = 0;
+
+    NTSTATUS stDev = SendAerogpuEscape(f, hAdapter, &dev, sizeof(dev));
+    if (NT_SUCCESS(stDev)) {
+      features = dev.features_lo;
+      haveFeatures = true;
+    }
+  }
+
+  const bool featureVblank = haveFeatures && ((features & AEROGPU_FEATURE_VBLANK) != 0);
+  const bool featureCursor = haveFeatures && ((features & AEROGPU_FEATURE_CURSOR) != 0);
+
   aerogpu_escape_selftest_inout q;
   ZeroMemory(&q, sizeof(q));
   q.hdr.version = AEROGPU_ESCAPE_VERSION;
@@ -4700,6 +4721,91 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
     // Use an out-of-band nonzero value to distinguish transport failures from
     // KMD-reported selftest failures (whose exit codes match error_code).
     return 254;
+  }
+
+  enum SelftestStage {
+    STAGE_RING = 0,
+    STAGE_VBLANK = 1,
+    STAGE_IRQ = 2,
+    STAGE_CURSOR = 3,
+    STAGE_DONE = 4,
+  };
+
+  SelftestStage failedStage = STAGE_DONE;
+  if (!q.passed) {
+    switch (q.error_code) {
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_REGS_OUT_OF_RANGE:
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK:
+      failedStage = STAGE_VBLANK;
+      break;
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_REGS_OUT_OF_RANGE:
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_LATCHED:
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_CLEARED:
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED:
+      failedStage = STAGE_IRQ;
+      break;
+    case AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE:
+    case AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH:
+      failedStage = STAGE_CURSOR;
+      break;
+    default:
+      failedStage = STAGE_RING;
+      break;
+    }
+  }
+
+  const auto PrintStep = [&](const wchar_t *name, const wchar_t *status, const wchar_t *detail) {
+    if (detail && detail[0]) {
+      wprintf(L"  %-8s: %s (%s)\n", name, status, detail);
+    } else {
+      wprintf(L"  %-8s: %s\n", name, status);
+    }
+  };
+
+  // Ring is always the first check.
+  if (q.passed || failedStage > STAGE_RING) {
+    PrintStep(L"ring", L"PASS", L"ring head advances");
+  } else {
+    PrintStep(L"ring", L"FAIL", SelftestErrorToString(q.error_code));
+  }
+
+  // VBlank (optional, feature-gated).
+  if (!haveFeatures) {
+    PrintStep(L"vblank", L"?", L"(features unknown)");
+  } else if (!featureVblank) {
+    PrintStep(L"vblank", L"SKIP", L"(AEROGPU_FEATURE_VBLANK not set)");
+  } else if (q.passed || failedStage > STAGE_VBLANK) {
+    PrintStep(L"vblank", L"PASS", L"SCANOUT0_VBLANK_SEQ changes");
+  } else if (failedStage == STAGE_VBLANK) {
+    PrintStep(L"vblank", L"FAIL", SelftestErrorToString(q.error_code));
+  } else {
+    PrintStep(L"vblank", L"SKIP", L"(not reached)");
+  }
+
+  // IRQ sanity (currently uses vblank IRQ as a safe trigger).
+  if (!haveFeatures) {
+    PrintStep(L"irq", L"?", L"(features unknown)");
+  } else if (!featureVblank) {
+    PrintStep(L"irq", L"SKIP", L"(requires vblank feature)");
+  } else if (q.passed || failedStage > STAGE_IRQ) {
+    PrintStep(L"irq", L"PASS", L"IRQ_STATUS latch/ACK + ISR + DPC");
+  } else if (failedStage == STAGE_IRQ) {
+    PrintStep(L"irq", L"FAIL", SelftestErrorToString(q.error_code));
+  } else {
+    PrintStep(L"irq", L"SKIP", L"(not reached)");
+  }
+
+  // Cursor (optional, feature-gated).
+  if (!haveFeatures) {
+    PrintStep(L"cursor", L"?", L"(features unknown)");
+  } else if (!featureCursor) {
+    PrintStep(L"cursor", L"SKIP", L"(AEROGPU_FEATURE_CURSOR not set)");
+  } else if (q.passed || failedStage > STAGE_CURSOR) {
+    PrintStep(L"cursor", L"PASS", L"cursor reg RW");
+  } else if (failedStage == STAGE_CURSOR) {
+    PrintStep(L"cursor", L"FAIL", SelftestErrorToString(q.error_code));
+  } else {
+    PrintStep(L"cursor", L"SKIP", L"(not reached)");
   }
 
   wprintf(L"Selftest: %s\n", q.passed ? L"PASS" : L"FAIL");

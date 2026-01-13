@@ -217,6 +217,18 @@ typedef struct _AEROGPU_ADAPTER {
     ULONG IrqEnableMask; /* Cached AEROGPU_MMIO_REG_IRQ_ENABLE value (when present). */
     volatile LONG DeviceErrorLatched; /* Set when the device signals AEROGPU_IRQ_ERROR. Cleared on TDR restart. */
 
+    /*
+     * Interrupt observability counters (debug/selftest).
+     *
+     * These are intentionally simple monotonically increasing counters (no wrap
+     * handling) used by dbgctl selftest to sanity-check IRQ delivery without a
+     * kernel debugger.
+     */
+    volatile LONG IrqIsrCount;
+    volatile LONG IrqDpcCount;
+    volatile LONG IrqIsrFenceCount;
+    volatile LONG IrqIsrVblankCount;
+
     LIST_ENTRY PendingSubmissions;
     KSPIN_LOCK PendingLock;
     LIST_ENTRY PendingInternalSubmissions;
