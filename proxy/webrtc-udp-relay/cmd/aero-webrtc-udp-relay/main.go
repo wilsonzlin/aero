@@ -89,6 +89,7 @@ func main() {
 		UDPReadBufferBytes:          cfg.UDPReadBufferBytes,
 		DataChannelSendQueueBytes:   cfg.DataChannelSendQueueBytes,
 		MaxDatagramPayloadBytes:     cfg.MaxDatagramPayloadBytes,
+		MaxAllowedRemotesPerBinding: cfg.MaxAllowedRemotesPerBinding,
 		L2BackendWSURL:              cfg.L2BackendWSURL,
 		L2BackendWSOrigin:           cfg.L2BackendWSOrigin,
 		L2BackendWSToken:            cfg.L2BackendWSToken,

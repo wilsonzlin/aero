@@ -51,6 +51,9 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.MaxDatagramPayloadBytes != DefaultMaxDatagramPayloadBytes {
 		t.Fatalf("MaxDatagramPayloadBytes=%d, want %d", cfg.MaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
 	}
+	if cfg.MaxAllowedRemotesPerBinding != DefaultMaxAllowedRemotesPerBinding {
+		t.Fatalf("MaxAllowedRemotesPerBinding=%d, want %d", cfg.MaxAllowedRemotesPerBinding, DefaultMaxAllowedRemotesPerBinding)
+	}
 	if cfg.PreferV2 {
 		t.Fatalf("PreferV2=true, want false")
 	}

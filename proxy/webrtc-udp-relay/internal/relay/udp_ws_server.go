@@ -305,7 +305,7 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// HTTP handler so we can increment WebSocket-specific metrics. The
 	// SessionRelay itself still enforces protocol decoding, binding management,
 	// and outbound framing/negotiation.
-	relay := NewSessionRelay(sender, s.relayCfg, s.policy, nil)
+	relay := NewSessionRelay(sender, s.relayCfg, s.policy, nil, metricsSink)
 	if metricsSink != nil && relay.queue != nil {
 		relay.queue.SetOnDrop(func() {
 			metricsSink.Inc(metrics.UDPWSDropped)

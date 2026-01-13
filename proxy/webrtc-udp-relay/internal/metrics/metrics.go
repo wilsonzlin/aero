@@ -60,6 +60,12 @@ const (
 	L2BridgeDroppedRateLimitedTotal = "l2_bridge_dropped_rate_limited_total"
 )
 
+// UDP binding allowlist counters.
+const (
+	UDPRemoteAllowlistEvictionsTotal     = "udp_remote_allowlist_evictions_total"
+	UDPRemoteAllowlistOverflowDropsTotal = "udp_remote_allowlist_overflow_drops_total"
+)
+
 // Metrics is a minimal, concurrency-safe counter registry.
 //
 // The production relay is expected to plug into a real metrics backend; this

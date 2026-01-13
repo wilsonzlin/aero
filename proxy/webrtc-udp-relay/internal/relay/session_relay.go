@@ -39,6 +39,7 @@ type SessionRelay struct {
 	policy  DestinationPolicy
 	codec   udpproto.Codec
 	session *Session
+	metrics *metrics.Metrics
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -56,7 +57,7 @@ type SessionRelay struct {
 	clientSupportsV2 atomic.Bool
 }
 
-func NewSessionRelay(dc DataChannelSender, cfg Config, policy DestinationPolicy, session *Session) *SessionRelay {
+func NewSessionRelay(dc DataChannelSender, cfg Config, policy DestinationPolicy, session *Session, m *metrics.Metrics) *SessionRelay {
 	cfg = cfg.withDefaults()
 	codec, err := udpproto.NewCodec(cfg.MaxDatagramPayloadBytes)
 	if err != nil {
@@ -64,12 +65,17 @@ func NewSessionRelay(dc DataChannelSender, cfg Config, policy DestinationPolicy,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+
+	if m == nil && session != nil {
+		m = session.metrics
+	}
 	s := &SessionRelay{
 		dc:       dc,
 		cfg:      cfg,
 		policy:   policy,
 		codec:    codec,
 		session:  session,
+		metrics:  m,
 		ctx:      ctx,
 		cancel:   cancel,
 		queue:    newSendQueue(cfg.DataChannelSendQueueBytes),
@@ -203,7 +209,7 @@ func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*UdpPortBinding, er
 		return nil, ErrTooManyBindings
 	}
 
-	b, err := newUdpPortBinding(guestPort, s.cfg, s.codec, s.queue, &s.clientSupportsV2, s.session)
+	b, err := newUdpPortBinding(guestPort, s.cfg, s.codec, s.queue, &s.clientSupportsV2, s.session, s.metrics)
 	if err != nil {
 		s.mu.Unlock()
 		if evicted != nil {

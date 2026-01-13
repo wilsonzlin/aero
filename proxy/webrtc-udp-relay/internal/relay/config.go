@@ -80,6 +80,13 @@ type Config struct {
 	// RemoteAllowlistIdleTimeout expires allowlist entries. If zero, defaults to
 	// UDPBindingIdleTimeout.
 	RemoteAllowlistIdleTimeout time.Duration
+
+	// MaxAllowedRemotesPerBinding caps the size of the per-binding remote allowlist
+	// used by inbound filtering (InboundFilterAddressAndPort).
+	//
+	// This is defense-in-depth against a guest spraying UDP packets to many
+	// destinations on the same guest port.
+	MaxAllowedRemotesPerBinding int
 }
 
 func DefaultConfig() Config {
@@ -94,6 +101,7 @@ func DefaultConfig() Config {
 		L2BackendAuthForwardMode:  config.L2BackendAuthForwardModeQuery,
 		L2MaxMessageBytes:         4096,
 		InboundFilterMode:         InboundFilterAddressAndPort,
+		MaxAllowedRemotesPerBinding: 1024,
 	}
 }
 
@@ -125,6 +133,9 @@ func (c Config) withDefaults() Config {
 	if c.RemoteAllowlistIdleTimeout <= 0 {
 		c.RemoteAllowlistIdleTimeout = c.UDPBindingIdleTimeout
 	}
+	if c.MaxAllowedRemotesPerBinding <= 0 {
+		c.MaxAllowedRemotesPerBinding = d.MaxAllowedRemotesPerBinding
+	}
 	return c
 }
 
@@ -144,6 +155,7 @@ func (c Config) WithDefaults() Config {
 //   - UDP_BINDING_IDLE_TIMEOUT (duration, e.g. 60s)
 //   - UDP_READ_BUFFER_BYTES (int)
 //   - DATACHANNEL_SEND_QUEUE_BYTES (int)
+//   - MAX_ALLOWED_REMOTES_PER_BINDING (int)
 //   - L2_BACKEND_WS_URL (string)
 //   - L2_BACKEND_FORWARD_ORIGIN (bool; defaults true when L2_BACKEND_WS_URL is set)
 //   - L2_BACKEND_AUTH_FORWARD_MODE (string: none|query|subprotocol; default query)
@@ -222,6 +234,11 @@ func ConfigFromEnv() Config {
 	if v := os.Getenv("DATACHANNEL_SEND_QUEUE_BYTES"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
 			c.DataChannelSendQueueBytes = i
+		}
+	}
+	if v := os.Getenv("MAX_ALLOWED_REMOTES_PER_BINDING"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil && i > 0 {
+			c.MaxAllowedRemotesPerBinding = i
 		}
 	}
 	// When UDP_READ_BUFFER_BYTES is unset, default it relative to the (possibly

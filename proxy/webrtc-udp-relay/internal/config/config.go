@@ -33,6 +33,7 @@ const (
 	EnvUDPReadBufferBytes        = "UDP_READ_BUFFER_BYTES"
 	EnvDataChannelSendQueueBytes = "DATACHANNEL_SEND_QUEUE_BYTES"
 	EnvMaxDatagramPayloadBytes   = "MAX_DATAGRAM_PAYLOAD_BYTES"
+	EnvMaxAllowedRemotesPerBinding = "MAX_ALLOWED_REMOTES_PER_BINDING"
 	EnvPreferV2                  = "PREFER_V2"
 
 	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
@@ -96,6 +97,7 @@ const (
 	// relay can detect and drop oversized UDP datagrams instead of forwarding a
 	// silently truncated payload.
 	DefaultUDPReadBufferBytes        = DefaultMaxDatagramPayloadBytes + 1
+	DefaultMaxAllowedRemotesPerBinding = 1024
 	DefaultL2MaxMessageBytes         = 4096
 
 	DefaultAuthMode AuthMode = AuthModeAPIKey
@@ -223,6 +225,7 @@ type Config struct {
 	UDPReadBufferBytes        int
 	DataChannelSendQueueBytes int
 	MaxDatagramPayloadBytes   int
+	MaxAllowedRemotesPerBinding int
 	PreferV2                  bool
 
 	// L2 tunnel bridging.
@@ -378,6 +381,10 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, err
 	}
 	dataChannelSendQueueBytes, err := envIntOrDefault(lookup, EnvDataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
+	if err != nil {
+		return Config{}, err
+	}
+	maxAllowedRemotesPerBinding, err := envIntOrDefault(lookup, EnvMaxAllowedRemotesPerBinding, DefaultMaxAllowedRemotesPerBinding)
 	if err != nil {
 		return Config{}, err
 	}
@@ -626,6 +633,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&udpReadBufferBytes, "udp-read-buffer-bytes", udpReadBufferBytes, "UDP socket read buffer size in bytes (env "+EnvUDPReadBufferBytes+")")
 	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
 	fs.IntVar(&maxDatagramPayloadBytes, "max-datagram-payload-bytes", maxDatagramPayloadBytes, "Max UDP datagram payload bytes for relay frames (env "+EnvMaxDatagramPayloadBytes+")")
+	fs.IntVar(&maxAllowedRemotesPerBinding, "max-allowed-remotes-per-binding", maxAllowedRemotesPerBinding, "Maximum remote endpoints tracked per UDP binding allowlist (env "+EnvMaxAllowedRemotesPerBinding+")")
 	fs.StringVar(&l2BackendWSURL, "l2-backend-ws-url", l2BackendWSURL, "Backend WebSocket URL for L2 tunnel bridging (env "+EnvL2BackendWSURL+")")
 	fs.StringVar(&l2BackendWSOrigin, "l2-backend-ws-origin", l2BackendWSOrigin, "Origin header value to send when dialing the L2 backend WebSocket (env "+EnvL2BackendWSOrigin+")")
 	fs.StringVar(&l2BackendWSToken, "l2-backend-token", l2BackendWSToken, "Optional token to present to the L2 backend via WebSocket subprotocol (sent as "+l2tunnel.TokenSubprotocolPrefix+"<token>; env "+EnvL2BackendToken+")")
@@ -727,6 +735,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 			minReadBuf,
 			udpReadBufferBytes,
 		)
+	}
+	if maxAllowedRemotesPerBinding <= 0 {
+		return Config{}, fmt.Errorf("%s/--max-allowed-remotes-per-binding must be > 0", EnvMaxAllowedRemotesPerBinding)
 	}
 	if l2MaxMessageBytes <= 0 {
 		return Config{}, fmt.Errorf("%s/--l2-max-message-bytes must be > 0", EnvL2MaxMessageBytes)
@@ -914,6 +925,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		UDPReadBufferBytes:        udpReadBufferBytes,
 		DataChannelSendQueueBytes: dataChannelSendQueueBytes,
 		MaxDatagramPayloadBytes:   maxDatagramPayloadBytes,
+		MaxAllowedRemotesPerBinding: maxAllowedRemotesPerBinding,
 		PreferV2:                  preferV2,
 
 		L2BackendWSURL:              l2BackendWSURL,

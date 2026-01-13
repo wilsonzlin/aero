@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"net/netip"
@@ -33,6 +34,7 @@ type UdpPortBinding struct {
 	codec     udpproto.Codec
 	queue     *sendQueue
 	session   *Session
+	metrics   *metrics.Metrics
 
 	lastUsed atomic.Int64
 
@@ -46,7 +48,7 @@ type UdpPortBinding struct {
 	once   sync.Once
 }
 
-func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue *sendQueue, clientSupportsV2 *atomic.Bool, session *Session) (*UdpPortBinding, error) {
+func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue *sendQueue, clientSupportsV2 *atomic.Bool, session *Session, m *metrics.Metrics) (*UdpPortBinding, error) {
 	conn4, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return nil, err
@@ -67,6 +69,7 @@ func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue
 		codec:            codec,
 		queue:            queue,
 		session:          session,
+		metrics:          m,
 		allowed:          make(map[remoteKey]time.Time),
 		clientSupportsV2: clientSupportsV2,
 	}
@@ -101,22 +104,81 @@ func (b *UdpPortBinding) AllowRemote(remote *net.UDPAddr, now time.Time) {
 		return
 	}
 	b.allowedMu.Lock()
+	if _, exists := b.allowed[k]; exists {
+		b.allowed[k] = now
+		maxAllowed := b.cfg.MaxAllowedRemotesPerBinding
+		if maxAllowed > 0 && len(b.allowed) > maxAllowed {
+			evicted := b.evictOldestAllowedLocked(len(b.allowed) - maxAllowed)
+			if evicted > 0 && b.metrics != nil {
+				b.metrics.Add(metrics.UDPRemoteAllowlistEvictionsTotal, uint64(evicted))
+			}
+		}
+		b.pruneAllowedLocked(now)
+		b.allowedMu.Unlock()
+		return
+	}
+
+	maxAllowed := b.cfg.MaxAllowedRemotesPerBinding
+	if maxAllowed > 0 {
+		desiredSize := len(b.allowed) + 1
+		if desiredSize > maxAllowed {
+			evicted := b.evictOldestAllowedLocked(desiredSize - maxAllowed)
+			if evicted > 0 && b.metrics != nil {
+				b.metrics.Add(metrics.UDPRemoteAllowlistEvictionsTotal, uint64(evicted))
+			}
+		}
+	}
+
+	// Add after eviction so the allowlist never temporarily exceeds the cap.
 	b.allowed[k] = now
 	b.pruneAllowedLocked(now)
 	b.allowedMu.Unlock()
 }
 
-const maxAllowedRemotesBeforePrune = 1024
+func remoteKeyLess(a, b remoteKey) bool {
+	apa := netip.AddrPort(a)
+	apb := netip.AddrPort(b)
+	aa := apa.Addr().As16()
+	ab := apb.Addr().As16()
+	if c := bytes.Compare(aa[:], ab[:]); c != 0 {
+		return c < 0
+	}
+	return apa.Port() < apb.Port()
+}
+
+func (b *UdpPortBinding) evictOldestAllowedLocked(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	evicted := 0
+	for evicted < n && len(b.allowed) > 0 {
+		var oldestKey remoteKey
+		var oldestTS time.Time
+		oldestSet := false
+
+		for k, ts := range b.allowed {
+			if !oldestSet || ts.Before(oldestTS) || (ts.Equal(oldestTS) && remoteKeyLess(k, oldestKey)) {
+				oldestKey = k
+				oldestTS = ts
+				oldestSet = true
+			}
+		}
+		if !oldestSet {
+			break
+		}
+		delete(b.allowed, oldestKey)
+		evicted++
+	}
+	return evicted
+}
 
 func (b *UdpPortBinding) pruneAllowedLocked(now time.Time) {
 	if b.cfg.RemoteAllowlistIdleTimeout <= 0 {
 		return
 	}
 	// Prune at most once per RemoteAllowlistIdleTimeout to avoid turning every
-	// outbound packet into an O(n) scan. Also trigger pruning when the allowlist
-	// grows large to avoid unbounded memory growth when the guest sprays packets
-	// at many destinations on the same guest port.
-	if len(b.allowed) <= maxAllowedRemotesBeforePrune && !b.lastPrune.IsZero() && now.Sub(b.lastPrune) <= b.cfg.RemoteAllowlistIdleTimeout {
+	// outbound packet into an O(n) scan.
+	if !b.lastPrune.IsZero() && now.Sub(b.lastPrune) <= b.cfg.RemoteAllowlistIdleTimeout {
 		return
 	}
 
