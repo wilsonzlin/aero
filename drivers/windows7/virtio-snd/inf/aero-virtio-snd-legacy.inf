@@ -79,6 +79,7 @@ HKR,,CLSID,,%KSProxy.CLSID%
 HKR,,FriendlyName,,%AeroVirtioSndLegacy.DeviceDesc%
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,virtiosnd_legacy.sys
+HKR,Parameters,ForceNullBackend,0x00010001,0
 HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
 ; WDMAudio expects a list of audio subdevices exposed by the adapter.
 HKR,Drivers,SubClasses,,"wave,topology"
