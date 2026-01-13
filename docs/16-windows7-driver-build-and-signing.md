@@ -137,6 +137,9 @@ To add a new driver to CI packaging:
    - If the driver directory contains multiple INFs, an explicit `infFiles` allowlist is recommended to avoid packaging unrelated variants together.
 4. Optionally set `wow64Files` if the x64 package needs specific 32-bit user-mode payload DLLs copied in from the x86 build output (WOW64 components).
    - Ensure WOW64 DLL names do not collide with 64-bit build output names, since WOW64 payloads are copied into the x64 package root.
+5. Optionally include extra packaging assets/tools:
+   - `additionalFiles` for non-binary files (README/license text, install scripts, extra `.inf` under subdirectories, etc).
+   - `toolFiles` for user-mode helper tool binaries (`.exe`) checked into the driver source tree (explicit opt-in; `.exe` is intentionally disallowed in `additionalFiles`).
 
 See also the examples under `drivers/_template/`:
 
