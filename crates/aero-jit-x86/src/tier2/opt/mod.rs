@@ -35,6 +35,7 @@ pub fn optimize_trace(trace: &mut TraceIr, cfg: &OptConfig) -> OptResult {
         changed |= passes::addr_simplify::run(trace);
         changed |= passes::licm::run(trace);
         changed |= passes::flag_elim::run(trace);
+        changed |= passes::boolean_simplify::run(trace);
         changed |= passes::const_fold::run(trace);
         changed |= passes::strength_reduction::run(trace);
         changed |= passes::cse::run(trace);

@@ -285,6 +285,126 @@ fn cse_removes_duplicate_expressions() {
 }
 
 #[test]
+fn boolean_simplify_removes_nested_eq_and_simplifies_guards() {
+    // This pattern is produced by Tier-2 lowering for booleanization:
+    //   is_zero    = (x == 0)
+    //   is_nonzero = (is_zero == 0)
+    // and then guarded on.
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rax,
+            },
+            // is_zero = (rax == 0)
+            Instr::BinOp {
+                dst: v(1),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            // is_nonzero = (is_zero == 0)   ==   (rax != 0)
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(1)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::Guard {
+                cond: Operand::Value(v(2)),
+                expected: true,
+                exit_rip: 0x1000,
+            },
+            Instr::Const {
+                dst: v(3),
+                value: 42,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(v(3)),
+            },
+            // Also exercise `not(flag)` canonicalization: `Eq(flag, 0)` => `Xor(flag, 1)`.
+            Instr::LoadFlag {
+                dst: v(4),
+                flag: Flag::Zf,
+            },
+            Instr::BinOp {
+                dst: v(5),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(4)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rcx,
+                src: Operand::Value(v(5)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let binops_before = trace
+        .iter_instrs()
+        .filter(|i| matches!(i, Instr::BinOp { .. }))
+        .count();
+
+    let mut optimized = trace.clone();
+    optimize_trace(&mut optimized, &OptConfig::default());
+
+    let binops_after = optimized
+        .iter_instrs()
+        .filter(|i| matches!(i, Instr::BinOp { .. }))
+        .count();
+
+    assert!(
+        binops_after < binops_before,
+        "expected fewer BinOps after optimization (before={binops_before}, after={binops_after})"
+    );
+
+    // `Eq(flag, 0)` should canonicalize into an XOR-based NOT.
+    assert!(optimized.iter_instrs().any(|i| match i {
+        Instr::BinOp {
+            op: BinOp::Xor,
+            lhs,
+            rhs,
+            ..
+        } => matches!((lhs, rhs), (Operand::Const(1), _) | (_, Operand::Const(1))),
+        _ => false,
+    }));
+
+    let env = RuntimeEnv::default();
+    for (rax, zf) in [(0u64, false), (5u64, false), (5u64, true)] {
+        let mut base_state = T2State::default();
+        base_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = rax;
+        if zf {
+            base_state.cpu.rflags |= 1u64 << Flag::Zf.rflags_bit();
+        }
+        let mut opt_state = base_state.clone();
+
+        let baseline = run_trace(
+            &trace,
+            &env,
+            &mut SimpleBus::new(256),
+            &mut base_state,
+            1,
+        );
+        let optimized_run = run_trace(
+            &optimized,
+            &env,
+            &mut SimpleBus::new(256),
+            &mut opt_state,
+            1,
+        );
+
+        assert_eq!(baseline.exit, optimized_run.exit);
+        assert_eq!(base_state, opt_state);
+    }
+}
+
+#[test]
 fn addr_simplify_folds_nested_displacements() {
     let mut trace = TraceIr {
         prologue: vec![],

@@ -1,0 +1,199 @@
+use std::collections::{HashMap, HashSet};
+
+use aero_types::FlagSet;
+
+use crate::tier2::ir::{BinOp, Instr, Operand, TraceIr, ValueId};
+
+fn is_bool_operand(op: Operand, bool_values: &HashSet<ValueId>) -> bool {
+    match op {
+        Operand::Const(c) => c == 0 || c == 1,
+        Operand::Value(v) => bool_values.contains(&v),
+    }
+}
+
+fn eq_const(lhs: Operand, rhs: Operand) -> Option<(Operand, u64)> {
+    match (lhs, rhs) {
+        (Operand::Const(c), other) => Some((other, c)),
+        (other, Operand::Const(c)) => Some((other, c)),
+        _ => None,
+    }
+}
+
+fn eq_zero_other(lhs: Operand, rhs: Operand) -> Option<Operand> {
+    match eq_const(lhs, rhs) {
+        Some((other, 0)) => Some(other),
+        _ => None,
+    }
+}
+
+pub fn run(trace: &mut TraceIr) -> bool {
+    let mut changed = false;
+
+    // Track simple facts while scanning top-to-bottom.
+    let mut consts: HashMap<ValueId, u64> = HashMap::new();
+    let mut bool_values: HashSet<ValueId> = HashSet::new();
+
+    // For values produced by `Eq(x, 0)` (either operand order), record `x`.
+    let mut eq_zero: HashMap<ValueId, Operand> = HashMap::new();
+    // For values produced by `LtU(0, x)`, record `x` (i.e. value is `x != 0`).
+    let mut ltu_zero: HashMap<ValueId, Operand> = HashMap::new();
+
+    for inst in trace.iter_instrs_mut() {
+        let old = *inst;
+        let mut new = old;
+
+        match old {
+            Instr::Guard {
+                cond,
+                expected,
+                exit_rip,
+            } => {
+                // Simplify `Guard` based on already-discovered facts about `cond`.
+                let mut cond2 = cond;
+                let mut expected2 = expected;
+
+                // Resolve trivial constants.
+                if let Operand::Value(v) = cond2 {
+                    if let Some(c) = consts.get(&v).copied() {
+                        cond2 = Operand::Const(c);
+                    }
+                }
+
+                // Canonicalize guards on comparisons-to-zero:
+                //   guard( (x == 0), expected )  => guard(x, !expected)
+                //   guard( (x != 0), expected )  => guard(x, expected)
+                if let Operand::Value(v) = cond2 {
+                    if let Some(x) = eq_zero.get(&v).copied() {
+                        cond2 = x;
+                        expected2 = !expected2;
+                    } else if let Some(x) = ltu_zero.get(&v).copied() {
+                        cond2 = x;
+                    }
+                }
+
+                // Re-resolve constants after rewriting.
+                if let Operand::Value(v) = cond2 {
+                    if let Some(c) = consts.get(&v).copied() {
+                        cond2 = Operand::Const(c);
+                    }
+                }
+
+                match cond2 {
+                    Operand::Const(c) => {
+                        // Fold constant guards.
+                        let cond_bool = c != 0;
+                        if cond_bool == expected2 {
+                            new = Instr::Nop;
+                        } else {
+                            new = Instr::SideExit { exit_rip };
+                        }
+                    }
+                    _ => {
+                        if cond2 != cond || expected2 != expected {
+                            new = Instr::Guard {
+                                cond: cond2,
+                                expected: expected2,
+                                exit_rip,
+                            };
+                        }
+                    }
+                }
+            }
+
+            Instr::BinOp {
+                dst,
+                op,
+                lhs,
+                rhs,
+                flags,
+            } if flags.is_empty() => {
+                // Simplify boolean patterns for pure binops.
+                match op {
+                    BinOp::Eq => {
+                        // 1) Canonicalize `Eq(Eq(x,0),0)` into `x != 0` (`LtU(0,x)`).
+                        if let Some(other) = eq_zero_other(lhs, rhs) {
+                            if let Operand::Value(inner) = other {
+                                if let Some(x) = eq_zero.get(&inner).copied() {
+                                    new = Instr::BinOp {
+                                        dst,
+                                        op: BinOp::LtU,
+                                        lhs: Operand::Const(0),
+                                        rhs: x,
+                                        flags: FlagSet::EMPTY,
+                                    };
+                                }
+                            }
+                        }
+
+                        // 2) Rewrite boolean NOT: `Eq(b, 0)` => `Xor(b, 1)` when `b` is boolean.
+                        if new == old {
+                            if let Some(other) = eq_zero_other(lhs, rhs) {
+                                if is_bool_operand(other, &bool_values) {
+                                    new = Instr::BinOp {
+                                        dst,
+                                        op: BinOp::Xor,
+                                        lhs: other,
+                                        rhs: Operand::Const(1),
+                                        flags: FlagSet::EMPTY,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+
+        if new != old {
+            *inst = new;
+            changed = true;
+        }
+
+        // Update fact database based on the (possibly rewritten) instruction.
+        match *inst {
+            Instr::Const { dst, value } => {
+                consts.insert(dst, value);
+                if value == 0 || value == 1 {
+                    bool_values.insert(dst);
+                }
+            }
+            Instr::LoadFlag { dst, .. } => {
+                bool_values.insert(dst);
+            }
+            Instr::BinOp {
+                dst,
+                op,
+                lhs,
+                rhs,
+                flags,
+            } => {
+                if op == BinOp::Eq || op == BinOp::LtU {
+                    bool_values.insert(dst);
+                } else if matches!(op, BinOp::And | BinOp::Or | BinOp::Xor)
+                    && is_bool_operand(lhs, &bool_values)
+                    && is_bool_operand(rhs, &bool_values)
+                {
+                    bool_values.insert(dst);
+                }
+
+                if flags.is_empty() {
+                    if op == BinOp::Eq {
+                        if let Some(other) = eq_zero_other(lhs, rhs) {
+                            eq_zero.insert(dst, other);
+                        }
+                    } else if op == BinOp::LtU {
+                        if lhs == Operand::Const(0) {
+                            ltu_zero.insert(dst, rhs);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    changed
+}
+

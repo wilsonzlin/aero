@@ -1,4 +1,5 @@
 pub mod addr_simplify;
+pub mod boolean_simplify;
 pub mod const_fold;
 pub mod cse;
 pub mod dce;
