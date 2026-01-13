@@ -72,6 +72,7 @@ impl PipelineCacheConfig {
 
 impl Default for PipelineCacheConfig {
     fn default() -> Self {
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut config = Self {
             max_shader_modules: Some(
                 NonZeroUsize::new(Self::DEFAULT_MAX_SHADER_MODULES)
