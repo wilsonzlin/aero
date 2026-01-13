@@ -173,47 +173,6 @@ pub fn extract_shader_bytecode(bytes: &[u8]) -> Result<&[u8], DxbcError> {
     }
 }
 
-/// Build a minimal DXBC container from chunks.
-///
-/// This is primarily useful for tests and golden vectors.
-pub fn build_container(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
-    // Header:
-    // DXBC (4) + checksum (16) + 1 (4) + total_size (4) + chunk_count (4)
-    // + offsets (4 * count) then chunks.
-    let header_size = 4 + 16 + 4 + 4 + 4 + (4 * chunks.len());
-    let mut out =
-        Vec::with_capacity(header_size + chunks.iter().map(|c| 8 + c.1.len()).sum::<usize>());
-    out.extend_from_slice(b"DXBC");
-    out.extend_from_slice(&[0u8; 16]); // checksum - unused for now
-    out.extend_from_slice(&1u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // total size placeholder
-    out.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
-
-    let offsets_pos = out.len();
-    out.resize(out.len() + 4 * chunks.len(), 0);
-
-    let mut offsets = Vec::with_capacity(chunks.len());
-    for (fourcc, data) in chunks {
-        let offset = out.len();
-        offsets.push(offset as u32);
-        out.extend_from_slice(&fourcc.0.to_le_bytes());
-        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        out.extend_from_slice(data);
-    }
-
-    // Fill offsets
-    for (i, offset) in offsets.iter().enumerate() {
-        let pos = offsets_pos + i * 4;
-        out[pos..pos + 4].copy_from_slice(&offset.to_le_bytes());
-    }
-
-    // Fill total size
-    let total_size = out.len() as u32;
-    let total_size_pos = 4 + 16 + 4;
-    out[total_size_pos..total_size_pos + 4].copy_from_slice(&total_size.to_le_bytes());
-    out
-}
-
 /// A single element of an input/output signature chunk (`ISGN`/`OSGN`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignatureElement {

@@ -1,6 +1,7 @@
 use aero_d3d9::dxbc;
 use aero_d3d9::sm3::types::ShaderStage;
 use aero_d3d9::sm3::{build_ir, decode_u8_le_bytes, verify_ir};
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
 
 fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
     let prefix = match stage {
@@ -89,7 +90,7 @@ fn ir_snapshot_ps3_tex_ifc() {
     ];
 
     let token_bytes = to_bytes(&tokens);
-    let container = dxbc::build_container(&[(dxbc::FourCC::SHDR, &token_bytes)]);
+    let container = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &token_bytes)]);
     let shdr = dxbc::extract_shader_bytecode(&container).unwrap();
     let decoded = decode_u8_le_bytes(shdr).unwrap();
     let ir = build_ir(&decoded).unwrap();

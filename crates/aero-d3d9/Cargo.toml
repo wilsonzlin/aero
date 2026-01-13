@@ -25,6 +25,7 @@ wgpu = "0.20"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
+aero-dxbc = { path = "../aero-dxbc", features = ["test-utils"] }
 futures = "0.3"
 insta = "1.39.0"
 naga = { version = "24.0.0", default-features = false, features = ["wgsl-in"] }

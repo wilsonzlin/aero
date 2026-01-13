@@ -2,6 +2,7 @@ use pretty_assertions::assert_eq;
 
 use std::collections::HashMap;
 
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
 use crate::shader_limits::MAX_D3D9_SHADER_BYTECODE_BYTES;
 use crate::{dxbc, shader, software, state};
 
@@ -221,7 +222,7 @@ fn to_bytes(words: &[u32]) -> Vec<u8> {
 #[test]
 fn dxbc_container_roundtrip_extracts_shdr() {
     let vs = to_bytes(&assemble_vs_passthrough());
-    let container = dxbc::build_container(&[(dxbc::FourCC::SHDR, &vs)]);
+    let container = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &vs)]);
     let extracted = dxbc::extract_shader_bytecode(&container).unwrap();
     assert_eq!(extracted, vs);
 }
@@ -232,7 +233,7 @@ fn dxbc_container_missing_shdr_is_an_error() {
     // missing those chunks, the caller likely passed the wrong blob (or the guest sent corrupted
     // data).
     let dummy_rdef = [0u8; 4];
-    let container = dxbc::build_container(&[(dxbc::FourCC::RDEF, &dummy_rdef)]);
+    let container = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"RDEF"), &dummy_rdef)]);
 
     let err = dxbc::extract_shader_bytecode(&container).unwrap_err();
     assert!(
@@ -244,7 +245,7 @@ fn dxbc_container_missing_shdr_is_an_error() {
 #[test]
 fn translates_simple_vs_to_wgsl() {
     let vs_bytes = to_bytes(&assemble_vs_passthrough());
-    let dxbc = dxbc::build_container(&[(dxbc::FourCC::SHDR, &vs_bytes)]);
+    let dxbc = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &vs_bytes)]);
     let program = shader::parse(&dxbc).unwrap();
     let ir = shader::to_ir(&program);
     let wgsl = shader::generate_wgsl(&ir);
@@ -266,7 +267,7 @@ fn translates_simple_vs_to_wgsl() {
 #[test]
 fn shader_cache_dedupes_by_hash() {
     let vs_bytes = to_bytes(&assemble_vs_passthrough());
-    let dxbc = dxbc::build_container(&[(dxbc::FourCC::SHDR, &vs_bytes)]);
+    let dxbc = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &vs_bytes)]);
 
     let mut cache = shader::ShaderCache::default();
     let a = cache.get_or_translate(&dxbc).unwrap().hash;
@@ -289,7 +290,7 @@ fn state_defaults_are_stable() {
 #[test]
 fn translates_simple_ps_to_wgsl() {
     let ps_bytes = to_bytes(&assemble_ps_texture_modulate());
-    let dxbc = dxbc::build_container(&[(dxbc::FourCC::SHDR, &ps_bytes)]);
+    let dxbc = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &ps_bytes)]);
     let program = shader::parse(&dxbc).unwrap();
     let ir = shader::to_ir(&program);
     let wgsl = shader::generate_wgsl(&ir);

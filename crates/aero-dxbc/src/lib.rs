@@ -18,6 +18,14 @@ pub mod signature;
 /// Parsers for SM4/SM5 shader bytecode chunks (`SHDR`/`SHEX`).
 pub mod sm4;
 
+/// Helpers for building synthetic DXBC blobs in tests.
+///
+/// This module is only available when compiling this crate's own tests, or when
+/// the `test-utils` feature is enabled. It is **not** considered part of the
+/// stable parsing API.
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 pub use crate::dxbc::{DxbcChunk, DxbcFile, DxbcHeader};
 pub use crate::error::DxbcError;
 pub use crate::fourcc::FourCC;

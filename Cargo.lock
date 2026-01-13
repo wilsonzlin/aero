@@ -117,6 +117,7 @@ dependencies = [
 name = "aero-d3d9"
 version = "0.1.0"
 dependencies = [
+ "aero-dxbc",
  "anyhow",
  "bitflags 2.10.0",
  "blake3",
@@ -224,6 +225,7 @@ name = "aero-gpu"
 version = "0.1.0"
 dependencies = [
  "aero-d3d9",
+ "aero-dxbc",
  "aero-protocol",
  "aero-shared",
  "bcdec_rs",

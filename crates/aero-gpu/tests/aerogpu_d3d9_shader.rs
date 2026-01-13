@@ -1,6 +1,6 @@
 mod common;
 
-use aero_d3d9::dxbc;
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
 use aero_d3d9::shader::ShaderStage;
 use aero_gpu::aerogpu_d3d9::{D3d9ShaderCache, ShaderPayloadFormat};
 use aero_gpu::{readback_rgba8, TextureRegion};
@@ -426,7 +426,7 @@ fn dxbc_prefixed_payload_is_detected_and_translated() {
     };
 
     let ps_token_stream = assemble_ps_tex_mad();
-    let dxbc_blob = dxbc::build_container(&[(dxbc::FourCC::SHDR, &ps_token_stream)]);
+    let dxbc_blob = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &ps_token_stream)]);
 
     assert_eq!(
         ShaderPayloadFormat::detect(&dxbc_blob),
