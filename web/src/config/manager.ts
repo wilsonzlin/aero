@@ -32,6 +32,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+/**
+ * Remove secrets that must never be persisted in localStorage.
+ *
+ * Note: `parseAeroConfigOverrides` intentionally ignores these keys, but if they
+ * end up in storage (via a bug or manual insertion), we must not re-save them.
+ */
+function sanitizeStoredConfig(obj: Record<string, unknown>): boolean {
+  let changed = false;
+  if ("l2TunnelToken" in obj) {
+    delete obj.l2TunnelToken;
+    changed = true;
+  }
+  if ("l2TunnelTokenTransport" in obj) {
+    delete obj.l2TunnelTokenTransport;
+    changed = true;
+  }
+  return changed;
+}
+
 export class AeroConfigManager {
   private readonly capabilities: AeroBrowserCapabilities;
   private readonly storage: Storage | undefined;
@@ -52,6 +71,12 @@ export class AeroConfigManager {
     const rawStored = loadStoredAeroConfig(this.storage);
     if (isRecord(rawStored)) {
       this.storedConfig = { ...rawStored };
+      const scrubbed = sanitizeStoredConfig(this.storedConfig);
+      // If secrets were present in persistent storage, re-save immediately so
+      // they are removed from localStorage without waiting for a later update.
+      if (scrubbed) {
+        saveStoredAeroConfig(this.storedConfig, this.storage);
+      }
     }
 
     this.state = resolveAeroConfigFromSources({
@@ -112,6 +137,7 @@ export class AeroConfigManager {
     const parsed = parseAeroConfigOverrides(nextPatch);
     // Only apply keys that are valid after parsing; invalid inputs should be handled by the UI.
     Object.assign(this.storedConfig, parsed.overrides as Record<string, unknown>);
+    sanitizeStoredConfig(this.storedConfig);
     saveStoredAeroConfig(this.storedConfig, this.storage);
 
     this.recompute();
