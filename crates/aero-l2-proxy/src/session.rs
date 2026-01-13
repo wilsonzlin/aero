@@ -13,7 +13,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpStream, UdpSocket},
-    sync::mpsc,
+    sync::{mpsc, watch},
     task::JoinHandle,
     time::timeout,
 };
@@ -97,6 +97,14 @@ impl QuotaExceeded {
             QuotaExceeded::Backpressure => "outbound websocket backpressure",
         }
     }
+
+    fn record_metrics(self, metrics: &crate::metrics::Metrics) {
+        match self {
+            QuotaExceeded::Bytes => metrics.session_closed_quota_bytes(),
+            QuotaExceeded::FramesPerSecond => metrics.session_closed_quota_fps(),
+            QuotaExceeded::Backpressure => metrics.session_closed_backpressure(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -158,6 +166,13 @@ enum SessionControl {
     Close,
 }
 
+#[derive(Debug, Clone)]
+struct WsCloseSignal {
+    error_wire: Option<Vec<u8>>,
+    close_code: u16,
+    close_reason: String,
+}
+
 fn ws_message_len(msg: &Message) -> u64 {
     match msg {
         Message::Binary(data) => data.len() as u64,
@@ -170,26 +185,26 @@ fn ws_message_len(msg: &Message) -> u64 {
     }
 }
 
-async fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'static str) {
-    const CLOSE_CODE_POLICY_VIOLATION: u16 = 1008;
+fn truncate_close_reason(reason: &str) -> String {
     const MAX_REASON_BYTES: usize = 123;
-    let reason = if reason.len() <= MAX_REASON_BYTES {
-        Cow::Borrowed(reason)
+    if reason.len() <= MAX_REASON_BYTES {
+        reason.to_string()
     } else {
-        Cow::Owned(truncate_utf8(reason, MAX_REASON_BYTES))
-    };
+        truncate_utf8(reason, MAX_REASON_BYTES)
+    }
+}
 
-    // Sending on `ws_out_tx` can block if the writer task is backpressured and the bounded channel
-    // is full. Close paths should not hang indefinitely, so apply a short timeout.
-    let send_timeout = Duration::from_millis(100);
-    let _ = timeout(
-        send_timeout,
-        ws_out_tx.send(Message::Close(Some(CloseFrame {
-            code: CLOSE_CODE_POLICY_VIOLATION,
-            reason,
-        }))),
-    )
-    .await;
+fn request_close_policy_violation(
+    close_tx: &watch::Sender<Option<WsCloseSignal>>,
+    reason: &'static str,
+) {
+    const CLOSE_CODE_POLICY_VIOLATION: u16 = 1008;
+    let close_reason = truncate_close_reason(reason);
+    let _ = close_tx.send(Some(WsCloseSignal {
+        error_wire: None,
+        close_code: CLOSE_CODE_POLICY_VIOLATION,
+        close_reason,
+    }));
 }
 
 fn error_wire(l2_limits: &aero_l2_protocol::Limits, code: u16, message: &str) -> Option<Vec<u8>> {
@@ -203,57 +218,30 @@ fn error_wire(l2_limits: &aero_l2_protocol::Limits, code: u16, message: &str) ->
     .ok()
 }
 
-async fn close_with_error(
-    ws_out_tx: &mpsc::Sender<Message>,
+fn request_close_with_error(
+    close_tx: &watch::Sender<Option<WsCloseSignal>>,
     l2_limits: &aero_l2_protocol::Limits,
     code: u16,
     message: &str,
 ) {
-    // Sending on `ws_out_tx` can block if the writer task is backpressured and the bounded channel
-    // is full. Close paths should not hang indefinitely, so apply a short timeout.
-    let send_timeout = Duration::from_millis(100);
-    if let Some(wire) = error_wire(l2_limits, code, message) {
-        let _ = timeout(send_timeout, ws_out_tx.send(Message::Binary(wire))).await;
-    }
-
     const CLOSE_CODE_POLICY_VIOLATION: u16 = 1008;
-    const MAX_REASON_BYTES: usize = 123;
-    let reason = if message.len() <= MAX_REASON_BYTES {
-        message.to_string()
-    } else {
-        truncate_utf8(message, MAX_REASON_BYTES)
-    };
-    let _ = timeout(
-        send_timeout,
-        ws_out_tx.send(Message::Close(Some(CloseFrame {
-            code: CLOSE_CODE_POLICY_VIOLATION,
-            reason: Cow::Owned(reason),
-        }))),
-    )
-    .await;
+    let close_reason = truncate_close_reason(message);
+    let _ = close_tx.send(Some(WsCloseSignal {
+        error_wire: error_wire(l2_limits, code, message),
+        close_code: CLOSE_CODE_POLICY_VIOLATION,
+        close_reason,
+    }));
 }
 
-async fn close_shutting_down(ws_out_tx: &mpsc::Sender<Message>) {
+fn request_close_shutting_down(close_tx: &watch::Sender<Option<WsCloseSignal>>) {
     const CLOSE_CODE_GOING_AWAY: u16 = 1001;
-    const MAX_REASON_BYTES: usize = 123;
     let reason = "shutting down";
-    let reason = if reason.len() <= MAX_REASON_BYTES {
-        Cow::Borrowed(reason)
-    } else {
-        Cow::Owned(truncate_utf8(reason, MAX_REASON_BYTES))
-    };
-
-    // Sending on `ws_out_tx` can block if the writer task is backpressured and the bounded channel
-    // is full. Close paths should not hang indefinitely, so apply a short timeout.
-    let send_timeout = Duration::from_millis(100);
-    let _ = timeout(
-        send_timeout,
-        ws_out_tx.send(Message::Close(Some(CloseFrame {
-            code: CLOSE_CODE_GOING_AWAY,
-            reason,
-        }))),
-    )
-    .await;
+    let close_reason = truncate_close_reason(reason);
+    let _ = close_tx.send(Some(WsCloseSignal {
+        error_wire: None,
+        close_code: CLOSE_CODE_GOING_AWAY,
+        close_reason,
+    }));
 }
 
 fn truncate_utf8(input: &str, max_bytes: usize) -> String {
@@ -323,11 +311,50 @@ async fn run_session_inner(
     let (ws_sender, mut ws_receiver) = socket.split();
 
     let (ws_out_tx, mut ws_out_rx) = mpsc::channel::<Message>(state.cfg.ws_send_buffer);
+    let (ws_close_tx, mut ws_close_rx) = watch::channel::<Option<WsCloseSignal>>(None);
     let ws_writer = tokio::spawn(async move {
         let mut ws_sender = ws_sender;
-        while let Some(msg) = ws_out_rx.recv().await {
-            if ws_sender.send(msg).await.is_err() {
+        let mut close_open = true;
+        loop {
+            // NOTE: `watch::Receiver::borrow()` returns a guard that must not be held across
+            // `.await` points. Clone the value into an owned `Option` first so the guard is
+            // dropped before any sends.
+            let close = ws_close_rx.borrow().clone();
+            if let Some(close) = close {
+                let WsCloseSignal {
+                    error_wire,
+                    close_code,
+                    close_reason,
+                } = close;
+                if let Some(wire) = error_wire {
+                    let _ = ws_sender.send(Message::Binary(wire)).await;
+                }
+                let _ = ws_sender
+                    .send(Message::Close(Some(CloseFrame {
+                        code: close_code,
+                        reason: Cow::Owned(close_reason),
+                    })))
+                    .await;
                 break;
+            }
+
+            tokio::select! {
+                res = ws_close_rx.changed(), if close_open => {
+                    if res.is_err() {
+                        // Sender dropped without ever requesting a close; keep draining the
+                        // outbound message queue without spinning on `changed()`.
+                        close_open = false;
+                    }
+                    continue;
+                }
+                msg = ws_out_rx.recv() => {
+                    let Some(msg) = msg else {
+                        break;
+                    };
+                    if ws_sender.send(msg).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -389,14 +416,14 @@ async fn run_session_inner(
 
     loop {
         if *shutdown_rx.borrow() {
-            close_shutting_down(&ws_out_tx).await;
+            request_close_shutting_down(&ws_close_tx);
             break;
         }
 
         tokio::select! {
             biased;
             _ = shutdown_rx.changed() => {
-                close_shutting_down(&ws_out_tx).await;
+                request_close_shutting_down(&ws_close_tx);
                 break;
             }
             msg = ws_receiver.next() => {
@@ -408,14 +435,14 @@ async fn run_session_inner(
                 };
 
                 if let Some(exceeded) = quotas.on_inbound_message(&msg) {
+                    exceeded.record_metrics(&state.metrics);
                     close_handshake = true;
-                    close_with_error(
-                        &ws_out_tx,
+                    request_close_with_error(
+                        &ws_close_tx,
                         &state.l2_limits,
                         exceeded.code(),
                         exceeded.reason(),
-                    )
-                    .await;
+                    );
                     break;
                 }
 
@@ -442,6 +469,7 @@ async fn run_session_inner(
                                             actions,
                                             now_ms,
                                             &ws_out_tx,
+                                            &ws_close_tx,
                                             &event_tx,
                                             &mut tcp_conns,
                                             &mut udp_flows,
@@ -472,14 +500,14 @@ async fn run_session_inner(
                                             if let Err(exceeded) =
                                                 send_ws_message(&ws_out_tx, Message::Binary(pong), &mut quotas).await
                                             {
+                                                exceeded.record_metrics(&state.metrics);
                                                 close_handshake = true;
-                                                close_with_error(
-                                                    &ws_out_tx,
+                                                request_close_with_error(
+                                                    &ws_close_tx,
                                                     &state.l2_limits,
                                                     exceeded.code(),
                                                     exceeded.reason(),
-                                                )
-                                                .await;
+                                                );
                                                 break;
                                             }
                                         }
@@ -514,13 +542,12 @@ async fn run_session_inner(
                                 tracing::debug!("dropping invalid l2 message: {err}");
                                 let msg = err.to_string();
                                 close_handshake = true;
-                                close_with_error(
-                                    &ws_out_tx,
+                                request_close_with_error(
+                                    &ws_close_tx,
                                     &state.l2_limits,
                                     protocol::ERROR_CODE_PROTOCOL_ERROR,
                                     &msg,
-                                )
-                                .await;
+                                );
                                 break;
                             }
                         }
@@ -529,14 +556,14 @@ async fn run_session_inner(
                         if let Err(exceeded) =
                             send_ws_message(&ws_out_tx, Message::Pong(payload), &mut quotas).await
                         {
+                            exceeded.record_metrics(&state.metrics);
                             close_handshake = true;
-                            close_with_error(
-                                &ws_out_tx,
+                            request_close_with_error(
+                                &ws_close_tx,
                                 &state.l2_limits,
                                 exceeded.code(),
                                 exceeded.reason(),
-                            )
-                            .await;
+                            );
                             break;
                         }
                     }
@@ -547,7 +574,7 @@ async fn run_session_inner(
             _ = tokio::time::sleep_until(last_inbound_activity + idle_timeout_duration), if idle_timeout_enabled => {
                 state.metrics.idle_timeout_closed();
                 tracing::warn!(reason = "idle_timeout", "closing idle session");
-                close_policy_violation(&ws_out_tx, "idle timeout").await;
+                request_close_policy_violation(&ws_close_tx, "idle timeout");
                 break;
             }
             _ = ping_interval.tick(), if ping_enabled => {
@@ -571,14 +598,14 @@ async fn run_session_inner(
                         if let Err(exceeded) =
                             send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
                         {
+                            exceeded.record_metrics(&state.metrics);
                             close_handshake = true;
-                            close_with_error(
-                                &ws_out_tx,
+                            request_close_with_error(
+                                &ws_close_tx,
                                 &state.l2_limits,
                                 exceeded.code(),
                                 exceeded.reason(),
-                            )
-                            .await;
+                            );
                             break;
                         }
                         ping_outstanding = Some((ping_id, tokio::time::Instant::now()));
@@ -620,6 +647,7 @@ async fn run_session_inner(
                     actions,
                     now_ms,
                     &ws_out_tx,
+                    &ws_close_tx,
                     &event_tx,
                     &mut tcp_conns,
                     &mut udp_flows,
@@ -730,6 +758,7 @@ async fn process_actions(
     actions: Vec<Action>,
     now_ms: Millis,
     ws_out_tx: &mpsc::Sender<Message>,
+    ws_close_tx: &watch::Sender<Option<WsCloseSignal>>,
     event_tx: &mpsc::Sender<SessionEvent>,
     tcp_conns: &mut HashMap<u32, TcpConnHandle>,
     udp_flows: &mut HashMap<UdpKey, UdpFlowHandle>,
@@ -758,13 +787,13 @@ async fn process_actions(
                 if let Err(exceeded) =
                     send_ws_message(ws_out_tx, Message::Binary(wire), quotas).await
                 {
-                    close_with_error(
-                        ws_out_tx,
+                    exceeded.record_metrics(&state.metrics);
+                    request_close_with_error(
+                        ws_close_tx,
                         &state.l2_limits,
                         exceeded.code(),
                         exceeded.reason(),
-                    )
-                    .await;
+                    );
                     return Ok(SessionControl::Close);
                 }
                 state.metrics.frame_tx(frame.len());
@@ -1178,17 +1207,23 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            close_with_error(
-                &ws_out_tx,
-                &l2_limits,
-                protocol::ERROR_CODE_PROTOCOL_ERROR,
-                "test error",
-            ),
-        )
-        .await
-        .expect("close_with_error should not hang when the outbound channel is backpressured");
+        let (close_tx, close_rx) = watch::channel::<Option<WsCloseSignal>>(None);
+        request_close_with_error(
+            &close_tx,
+            &l2_limits,
+            protocol::ERROR_CODE_PROTOCOL_ERROR,
+            "test error",
+        );
+        let close = close_rx.borrow().clone().expect("expected close signal");
+        assert_eq!(close.close_code, 1008);
+        assert_eq!(close.close_reason, "test error");
+        let wire = close.error_wire.expect("expected error wire");
+        let decoded = aero_l2_protocol::decode_with_limits(&wire, &l2_limits).unwrap();
+        assert_eq!(decoded.msg_type, aero_l2_protocol::L2_TUNNEL_TYPE_ERROR);
+        let (code, msg) =
+            protocol::decode_error_payload(decoded.payload).expect("structured error payload");
+        assert_eq!(code, protocol::ERROR_CODE_PROTOCOL_ERROR);
+        assert!(!msg.is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1199,11 +1234,12 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(1), close_shutting_down(&ws_out_tx))
-            .await
-            .expect(
-                "close_shutting_down should not hang when the outbound channel is backpressured",
-            );
+        let (close_tx, close_rx) = watch::channel::<Option<WsCloseSignal>>(None);
+        request_close_shutting_down(&close_tx);
+        let close = close_rx.borrow().clone().expect("expected close signal");
+        assert_eq!(close.close_code, 1001);
+        assert_eq!(close.close_reason, "shutting down");
+        assert!(close.error_wire.is_none());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1214,14 +1250,12 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            close_policy_violation(&ws_out_tx, "idle timeout"),
-        )
-        .await
-        .expect(
-            "close_policy_violation should not hang when the outbound channel is backpressured",
-        );
+        let (close_tx, close_rx) = watch::channel::<Option<WsCloseSignal>>(None);
+        request_close_policy_violation(&close_tx, "idle timeout");
+        let close = close_rx.borrow().clone().expect("expected close signal");
+        assert_eq!(close.close_code, 1008);
+        assert_eq!(close.close_reason, "idle timeout");
+        assert!(close.error_wire.is_none());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

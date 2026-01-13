@@ -61,6 +61,9 @@ struct MetricsInner {
     sessions_active: AtomicU64,
     sessions_total: AtomicU64,
     idle_timeouts_total: AtomicU64,
+    sessions_closed_quota_bytes_total: AtomicU64,
+    sessions_closed_quota_fps_total: AtomicU64,
+    sessions_closed_backpressure_total: AtomicU64,
 
     // Upgrade rejections
     upgrade_reject_origin_missing_total: AtomicU64,
@@ -126,6 +129,9 @@ impl Metrics {
                 sessions_active: AtomicU64::new(0),
                 sessions_total: AtomicU64::new(0),
                 idle_timeouts_total: AtomicU64::new(0),
+                sessions_closed_quota_bytes_total: AtomicU64::new(0),
+                sessions_closed_quota_fps_total: AtomicU64::new(0),
+                sessions_closed_backpressure_total: AtomicU64::new(0),
                 upgrade_reject_origin_missing_total: AtomicU64::new(0),
                 upgrade_reject_origin_not_allowed_total: AtomicU64::new(0),
                 upgrade_reject_host_missing_total: AtomicU64::new(0),
@@ -274,6 +280,24 @@ impl Metrics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    pub(crate) fn session_closed_quota_bytes(&self) {
+        self.inner
+            .sessions_closed_quota_bytes_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn session_closed_quota_fps(&self) {
+        self.inner
+            .sessions_closed_quota_fps_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn session_closed_backpressure(&self) {
+        self.inner
+            .sessions_closed_backpressure_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn auth_failed(&self) {
         self.inner
             .auth_failures_total
@@ -410,6 +434,18 @@ impl Metrics {
         let sessions_active = self.inner.sessions_active.load(Ordering::Relaxed);
         let sessions_total = self.inner.sessions_total.load(Ordering::Relaxed);
         let idle_timeouts_total = self.inner.idle_timeouts_total.load(Ordering::Relaxed);
+        let sessions_closed_quota_bytes_total = self
+            .inner
+            .sessions_closed_quota_bytes_total
+            .load(Ordering::Relaxed);
+        let sessions_closed_quota_fps_total = self
+            .inner
+            .sessions_closed_quota_fps_total
+            .load(Ordering::Relaxed);
+        let sessions_closed_backpressure_total = self
+            .inner
+            .sessions_closed_backpressure_total
+            .load(Ordering::Relaxed);
         let upgrade_reject_origin_missing_total = self
             .inner
             .upgrade_reject_origin_missing_total
@@ -496,6 +532,21 @@ impl Metrics {
         push_gauge(&mut out, "l2_sessions_active", sessions_active);
         push_counter(&mut out, "l2_sessions_total", sessions_total);
         push_counter(&mut out, "aero_l2_idle_timeouts_total", idle_timeouts_total);
+        push_counter(
+            &mut out,
+            "l2_sessions_closed_quota_bytes_total",
+            sessions_closed_quota_bytes_total,
+        );
+        push_counter(
+            &mut out,
+            "l2_sessions_closed_quota_fps_total",
+            sessions_closed_quota_fps_total,
+        );
+        push_counter(
+            &mut out,
+            "l2_sessions_closed_backpressure_total",
+            sessions_closed_backpressure_total,
+        );
 
         push_counter(
             &mut out,
