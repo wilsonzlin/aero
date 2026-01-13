@@ -3524,6 +3524,20 @@ mod tests {
 
         // Release and restart.
         control_simple(&mut snd, VIRTIO_SND_R_PCM_RELEASE, PLAYBACK_STREAM_ID);
+        assert_eq!(snd.playback.state, StreamState::Idle);
+        assert!(
+            snd.playback.params.is_none(),
+            "PCM_RELEASE should clear playback params"
+        );
+        assert_eq!(
+            snd.resampler.queued_source_frames(),
+            0,
+            "PCM_RELEASE should clear queued playback resampler frames"
+        );
+        assert!(
+            snd.decoded_frames_scratch.is_empty() && snd.resampled_scratch.is_empty(),
+            "PCM_RELEASE should clear playback scratch buffers"
+        );
         control_set_params(&mut snd, PLAYBACK_STREAM_ID);
         control_simple(&mut snd, VIRTIO_SND_R_PCM_PREPARE, PLAYBACK_STREAM_ID);
         control_simple(&mut snd, VIRTIO_SND_R_PCM_START, PLAYBACK_STREAM_ID);
@@ -3657,6 +3671,22 @@ mod tests {
         // Release and restart. With an empty capture source, the next RX response must be pure
         // silence.
         control_simple(&mut snd, VIRTIO_SND_R_PCM_RELEASE, CAPTURE_STREAM_ID);
+        assert_eq!(snd.capture.state, StreamState::Idle);
+        assert!(
+            snd.capture.params.is_none(),
+            "PCM_RELEASE should clear capture params"
+        );
+        assert_eq!(
+            snd.capture_resampler.queued_source_frames(),
+            0,
+            "PCM_RELEASE should clear queued capture resampler frames"
+        );
+        assert!(
+            snd.capture_frames_scratch.is_empty()
+                && snd.capture_interleaved_scratch.is_empty()
+                && snd.capture_samples_scratch.is_empty(),
+            "PCM_RELEASE should clear capture scratch buffers"
+        );
         control_set_params(&mut snd, CAPTURE_STREAM_ID);
         control_simple(&mut snd, VIRTIO_SND_R_PCM_PREPARE, CAPTURE_STREAM_ID);
         control_simple(&mut snd, VIRTIO_SND_R_PCM_START, CAPTURE_STREAM_ID);
