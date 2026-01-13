@@ -6722,6 +6722,16 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
         return STATUS_INVALID_PARAMETER;
     }
 
+    /*
+     * Block new submissions while we are tearing down/resetting ring state. WDDM is expected to
+     * quiesce scheduling around the TDR path, but be defensive against concurrent SubmitCommand
+     * calls that could race with our pending-list cleanup.
+     *
+     * We re-enable submissions in DxgkDdiRestartFromTimeout once the device is back in a known
+     * good state.
+     */
+    InterlockedExchange(&adapter->AcceptingSubmissions, 0);
+
     /* dbgctl perf counters: record resets (TDR recovery path). */
     InterlockedIncrement64(&adapter->PerfResetFromTimeoutCount);
     InterlockedExchange64(&adapter->PerfLastResetTime100ns, (LONGLONG)KeQueryInterruptTime());
@@ -6882,15 +6892,22 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
      * Disable IRQ generation while we repair ring/programming state so ISR/DPC paths never see a
      * partially-restored configuration.
      */
-    if (haveIrqRegs) {
+    if (haveIrqEnable) {
         KIRQL irqIrql;
         KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, 0);
         KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
-
+    }
+    if (haveIrqRegs) {
         /* Clear any stale pending status, including AEROGPU_IRQ_ERROR. */
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
     }
+
+    /* Drop any stale vblank anchor state so GetScanLine recalibrates after recovery. */
+    InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankSeq, 0);
+    InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankTimeNs, 0);
+    InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankInterruptTime100ns, 0);
+    adapter->VblankPeriodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
 
     if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
         const BOOLEAN haveRingRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_RING_CONTROL + sizeof(ULONG));
