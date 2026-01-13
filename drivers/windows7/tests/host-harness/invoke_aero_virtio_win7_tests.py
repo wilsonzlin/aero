@@ -406,6 +406,7 @@ def _try_qmp_quit(endpoint: _QmpEndpoint, *, timeout_seconds: float = 2.0) -> bo
 # relying on whatever default input routing the QEMU machine config uses, which may hit PS/2).
 _VIRTIO_INPUT_QMP_KEYBOARD_ID = "aero_virtio_kbd0"
 _VIRTIO_INPUT_QMP_MOUSE_ID = "aero_virtio_mouse0"
+_VIRTIO_INPUT_QMP_TABLET_ID = "aero_virtio_tablet0"
 
 
 def _qmp_read_response(sock: socket.socket, *, timeout_seconds: float = 2.0) -> dict[str, object]:
@@ -482,6 +483,10 @@ def _qmp_rel_event(axis: str, value: int) -> dict[str, object]:
     return {"type": "rel", "data": {"axis": axis, "value": value}}
 
 
+def _qmp_abs_event(axis: str, value: int) -> dict[str, object]:
+    return {"type": "abs", "data": {"axis": axis, "value": value}}
+
+
 def _qmp_input_send_event_cmd(
     events: list[dict[str, object]], *, device: Optional[str] = None
 ) -> dict[str, object]:
@@ -515,6 +520,26 @@ def _qmp_deterministic_mouse_events() -> list[dict[str, object]]:
     return [
         _qmp_rel_event("x", 10),
         _qmp_rel_event("y", 5),
+        _qmp_btn_event("left", down=True),
+        _qmp_btn_event("left", down=False),
+    ]
+
+
+def _qmp_deterministic_tablet_events(*, x: int = 10000, y: int = 20000) -> list[dict[str, object]]:
+    """
+    Deterministic absolute pointer (tablet) motion + click sequence.
+
+    The sequence includes a reset-to-origin move before the target coordinate so repeated injections
+    still generate movement reports even if the previous attempt already moved to (x, y).
+    """
+    return [
+        # Reset move (0,0) to avoid "no-op" repeats.
+        _qmp_abs_event("x", 0),
+        _qmp_abs_event("y", 0),
+        # Target move.
+        _qmp_abs_event("x", int(x)),
+        _qmp_abs_event("y", int(y)),
+        # Left click.
         _qmp_btn_event("left", down=True),
         _qmp_btn_event("left", down=False),
     ]
@@ -583,6 +608,58 @@ def _try_qmp_input_inject_virtio_input_events(endpoint: _QmpEndpoint) -> _Virtio
         mouse_device = send(s, [mouse_events[3]], device=mouse_device)
 
         return _VirtioInputQmpInjectInfo(keyboard_device=kbd_device, mouse_device=mouse_device)
+
+
+@dataclass(frozen=True)
+class _VirtioInputTabletQmpInjectInfo:
+    tablet_device: Optional[str]
+
+
+def _try_qmp_input_inject_virtio_input_tablet_events(endpoint: _QmpEndpoint) -> _VirtioInputTabletQmpInjectInfo:
+    """
+    Inject a deterministic absolute-pointer (tablet) move + click sequence via QMP.
+
+    Guest-side verification lives in `aero-virtio-selftest.exe` under the marker:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|...
+    """
+
+    def send(sock: socket.socket, events: list[dict[str, object]], *, device: Optional[str]) -> Optional[str]:
+        if device is None:
+            _qmp_send_command(sock, _qmp_input_send_event_cmd(events, device=None))
+            return None
+        try:
+            _qmp_send_command(sock, _qmp_input_send_event_cmd(events, device=device))
+            return device
+        except Exception as e_with_device:
+            try:
+                _qmp_send_command(sock, _qmp_input_send_event_cmd(events, device=None))
+            except Exception as e_without_device:
+                raise RuntimeError(
+                    f"QMP input-send-event failed with device={device} ({e_with_device}) and without device ({e_without_device})"
+                ) from e_without_device
+            print(
+                f"WARNING: QMP input-send-event rejected device={device}; falling back to broadcast: {e_with_device}",
+                file=sys.stderr,
+            )
+            return None
+
+    with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
+        tablet_device: Optional[str] = _VIRTIO_INPUT_QMP_TABLET_ID
+        ev = _qmp_deterministic_tablet_events()
+
+        # Reset move (0,0).
+        tablet_device = send(s, ev[0:2], device=tablet_device)
+        time.sleep(0.05)
+        # Target move.
+        tablet_device = send(s, ev[2:4], device=tablet_device)
+        time.sleep(0.05)
+        # Click down.
+        tablet_device = send(s, [ev[4]], device=tablet_device)
+        time.sleep(0.05)
+        # Click up.
+        tablet_device = send(s, [ev[5]], device=tablet_device)
+
+        return _VirtioInputTabletQmpInjectInfo(tablet_device=tablet_device)
 
 
 def _find_free_tcp_port() -> Optional[int]:
@@ -750,7 +827,9 @@ def _qemu_has_device(qemu_system: str, device_name: str) -> bool:
         return False
 
 
-def _assert_qemu_supports_aero_w7_virtio_contract_v1(qemu_system: str, *, with_virtio_snd: bool = False) -> None:
+def _assert_qemu_supports_aero_w7_virtio_contract_v1(
+    qemu_system: str, *, with_virtio_snd: bool = False, with_virtio_tablet: bool = False
+) -> None:
     """
     Fail fast with a clear error if the user's QEMU binary can't run the harness in
     a strict AERO-W7-VIRTIO v1 environment.
@@ -762,6 +841,9 @@ def _assert_qemu_supports_aero_w7_virtio_contract_v1(qemu_system: str, *, with_v
         ("virtio-keyboard-pci", True),
         ("virtio-mouse-pci", True),
     ]
+
+    if with_virtio_tablet:
+        required.append(("virtio-tablet-pci", True))
 
     if with_virtio_snd:
         required.append((_detect_virtio_snd_device(qemu_system), True))
@@ -879,6 +961,22 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--with-input-tablet-events",
+        "--with-virtio-input-tablet-events",
+        "--require-virtio-input-tablet-events",
+        "--enable-virtio-input-tablet-events",
+        dest="with_input_tablet_events",
+        action="store_true",
+        help=(
+            "Attach a virtio-tablet-pci device and inject deterministic absolute-pointer (tablet) events via "
+            "QMP (input-send-event). Require the guest virtio-input-tablet-events selftest marker to PASS. "
+            "Also emits a host marker: "
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS/FAIL|attempt=<n>|tablet_mode=device/broadcast "
+            "(may appear multiple times due to retries). "
+            "This requires a guest image provisioned with --test-input-tablet-events (or env var)."
+        ),
+    )
+    parser.add_argument(
         "--with-virtio-snd",
         "--enable-virtio-snd",
         dest="enable_virtio_snd",
@@ -941,6 +1039,8 @@ def main() -> int:
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
     need_input_events = bool(args.with_input_events)
+    need_input_tablet_events = bool(args.with_input_tablet_events)
+
     if args.virtio_msix_vectors is not None and args.virtio_msix_vectors <= 0:
         parser.error("--virtio-msix-vectors must be a positive integer")
 
@@ -974,11 +1074,18 @@ def main() -> int:
                 "Upgrade QEMU or omit input event injection."
             )
 
+    if need_input_tablet_events and not _qemu_has_device(args.qemu_system, "virtio-tablet-pci"):
+        parser.error(
+            "--with-input-tablet-events/--with-virtio-input-tablet-events requires QEMU virtio-tablet-pci support. "
+            "Upgrade QEMU or omit tablet event injection."
+        )
+
     if not args.virtio_transitional:
         try:
             _assert_qemu_supports_aero_w7_virtio_contract_v1(
                 args.qemu_system,
                 with_virtio_snd=args.enable_virtio_snd,
+                with_virtio_tablet=need_input_tablet_events,
             )
         except RuntimeError as e:
             print(f"ERROR: {e}", file=sys.stderr)
@@ -1007,7 +1114,7 @@ def main() -> int:
     # Historically we enabled QMP only when we needed a graceful exit for `-audiodev wav` output, so we
     # wouldn't introduce extra host port/socket dependencies in non-audio harness runs. Input injection
     # also requires QMP, but remains opt-in via --with-input-events/--with-virtio-input-events.
-    use_qmp = (args.enable_virtio_snd and args.virtio_snd_audio_backend == "wav") or need_input_events
+    use_qmp = (args.enable_virtio_snd and args.virtio_snd_audio_backend == "wav") or need_input_events or need_input_tablet_events
     qmp_endpoint: Optional[_QmpEndpoint] = None
     qmp_socket: Optional[Path] = None
     if use_qmp:
@@ -1030,9 +1137,9 @@ def main() -> int:
         if qmp_endpoint is None:
             port = _find_free_tcp_port()
             if port is None:
-                if need_input_events:
+                if need_input_events or need_input_tablet_events:
                     print(
-                        "ERROR: --with-input-events/--with-virtio-input-events requires QMP, but a free TCP port could not be allocated",
+                        "ERROR: --with-input-events/--with-virtio-input-events/--with-input-tablet-events requires QMP, but a free TCP port could not be allocated",
                         file=sys.stderr,
                     )
                     return 2
@@ -1042,9 +1149,9 @@ def main() -> int:
                 )
             else:
                 qmp_endpoint = _QmpEndpoint(tcp_host="127.0.0.1", tcp_port=port)
-    if need_input_events and qmp_endpoint is None:
+    if (need_input_events or need_input_tablet_events) and qmp_endpoint is None:
         print(
-            "ERROR: --with-input-events/--with-virtio-input-events requires QMP, but a QMP endpoint could not be allocated",
+            "ERROR: --with-input-events/--with-virtio-input-events/--with-input-tablet-events requires QMP, but a QMP endpoint could not be allocated",
             file=sys.stderr,
         )
         return 2
@@ -1115,6 +1222,11 @@ def main() -> int:
                     "-device",
                     mouse,
                 ]
+                if need_input_tablet_events:
+                    virtio_input_args += [
+                        "-device",
+                        f"virtio-tablet-pci,id={_VIRTIO_INPUT_QMP_TABLET_ID}",
+                    ]
             else:
                 print(
                     "WARNING: QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. "
@@ -1204,6 +1316,11 @@ def main() -> int:
                 f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
                 args.virtio_msix_vectors,
             )
+            virtio_tablet = None
+            if need_input_tablet_events:
+                virtio_tablet = (
+                    f"virtio-tablet-pci,id={_VIRTIO_INPUT_QMP_TABLET_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}"
+                )
 
             virtio_snd_args: list[str] = []
             if args.enable_virtio_snd:
@@ -1258,6 +1375,10 @@ def main() -> int:
                 virtio_kbd,
                 "-device",
                 virtio_mouse,
+            ]
+            if virtio_tablet is not None:
+                qemu_args += ["-device", virtio_tablet]
+            qemu_args += [
                 "-drive",
                 drive,
                 "-device",
@@ -1283,6 +1404,12 @@ def main() -> int:
             saw_virtio_input_events_skip = False
             input_events_inject_attempts = 0
             next_input_events_inject = 0.0
+            saw_virtio_input_tablet_events_ready = False
+            saw_virtio_input_tablet_events_pass = False
+            saw_virtio_input_tablet_events_fail = False
+            saw_virtio_input_tablet_events_skip = False
+            input_tablet_events_inject_attempts = 0
+            next_input_tablet_events_inject = 0.0
             saw_virtio_snd_pass = False
             saw_virtio_snd_skip = False
             saw_virtio_snd_fail = False
@@ -1341,6 +1468,27 @@ def main() -> int:
                     ):
                         saw_virtio_input_events_skip = True
 
+                    if (
+                        not saw_virtio_input_tablet_events_ready
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY" in tail
+                    ):
+                        saw_virtio_input_tablet_events_ready = True
+                    if (
+                        not saw_virtio_input_tablet_events_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS" in tail
+                    ):
+                        saw_virtio_input_tablet_events_pass = True
+                    if (
+                        not saw_virtio_input_tablet_events_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|FAIL" in tail
+                    ):
+                        saw_virtio_input_tablet_events_fail = True
+                    if (
+                        not saw_virtio_input_tablet_events_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP" in tail
+                    ):
+                        saw_virtio_input_tablet_events_skip = True
+
                     # If input events are required, fail fast when the guest reports SKIP/FAIL for
                     # virtio-input-events. This saves CI time when the guest image was provisioned
                     # without `--test-input-events`, or when the end-to-end input path is broken.
@@ -1357,6 +1505,25 @@ def main() -> int:
                         if saw_virtio_input_events_fail:
                             print(
                                 "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while --with-input-events was enabled",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+
+                    if need_input_tablet_events:
+                        if saw_virtio_input_tablet_events_skip:
+                            print(
+                                "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
+                                "--with-input-tablet-events was enabled (provision the guest with --test-input-tablet-events)",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+                        if saw_virtio_input_tablet_events_fail:
+                            print(
+                                "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while --with-input-tablet-events was enabled",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -1698,6 +1865,24 @@ def main() -> int:
                     break
 
                 if (
+                    need_input_tablet_events
+                    and virtio_input_marker_time is not None
+                    and not saw_virtio_input_tablet_events_ready
+                    and not saw_virtio_input_tablet_events_pass
+                    and not saw_virtio_input_tablet_events_fail
+                    and not saw_virtio_input_tablet_events_skip
+                    and time.monotonic() - virtio_input_marker_time > 20.0
+                ):
+                    print(
+                        "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events marker after virtio-input completed while "
+                        "--with-input-tablet-events was enabled (guest selftest too old or missing --test-input-tablet-events)",
+                        file=sys.stderr,
+                    )
+                    _print_tail(serial_log)
+                    result_code = 1
+                    break
+
+                if (
                     need_input_events
                     and saw_virtio_input_events_ready
                     and not saw_virtio_input_events_pass
@@ -1725,6 +1910,39 @@ def main() -> int:
                         )
                         print(
                             f"FAIL: QMP_INPUT_INJECT_FAILED: failed to inject virtio-input events via QMP: {e}",
+                            file=sys.stderr,
+                        )
+                        _print_tail(serial_log)
+                        result_code = 1
+                        break
+
+                if (
+                    need_input_tablet_events
+                    and saw_virtio_input_tablet_events_ready
+                    and not saw_virtio_input_tablet_events_pass
+                    and not saw_virtio_input_tablet_events_fail
+                    and not saw_virtio_input_tablet_events_skip
+                    and qmp_endpoint is not None
+                    and input_tablet_events_inject_attempts < 20
+                    and time.monotonic() >= next_input_tablet_events_inject
+                ):
+                    input_tablet_events_inject_attempts += 1
+                    next_input_tablet_events_inject = time.monotonic() + 0.5
+                    try:
+                        info = _try_qmp_input_inject_virtio_input_tablet_events(qmp_endpoint)
+                        tablet_mode = "broadcast" if info.tablet_device is None else "device"
+                        print(
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt={input_tablet_events_inject_attempts}|"
+                            f"tablet_mode={tablet_mode}"
+                        )
+                    except Exception as e:
+                        reason = _sanitize_marker_value(str(e) or type(e).__name__)
+                        print(
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt={input_tablet_events_inject_attempts}|reason={reason}",
+                            file=sys.stderr,
+                        )
+                        print(
+                            f"FAIL: QMP_INPUT_TABLET_INJECT_FAILED: failed to inject virtio-input tablet events via QMP: {e}",
                             file=sys.stderr,
                         )
                         _print_tail(serial_log)
@@ -1764,6 +1982,26 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP" in tail
                         ):
                             saw_virtio_input_events_skip = True
+                        if (
+                            not saw_virtio_input_tablet_events_ready
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY" in tail
+                        ):
+                            saw_virtio_input_tablet_events_ready = True
+                        if (
+                            not saw_virtio_input_tablet_events_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS" in tail
+                        ):
+                            saw_virtio_input_tablet_events_pass = True
+                        if (
+                            not saw_virtio_input_tablet_events_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|FAIL" in tail
+                        ):
+                            saw_virtio_input_tablet_events_fail = True
+                        if (
+                            not saw_virtio_input_tablet_events_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP" in tail
+                        ):
+                            saw_virtio_input_tablet_events_skip = True
                         if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
                             saw_virtio_snd_pass = True
                         if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
@@ -2024,6 +2262,31 @@ def main() -> int:
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events PASS marker while --with-input-events was enabled",
+                                            file=sys.stderr,
+                                        )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if need_input_tablet_events:
+                                if saw_virtio_input_tablet_events_fail:
+                                    print(
+                                        "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while --with-input-tablet-events was enabled",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_input_tablet_events_pass:
+                                    if saw_virtio_input_tablet_events_skip:
+                                        print(
+                                            "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
+                                            "--with-input-tablet-events was enabled (provision the guest with --test-input-tablet-events)",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events PASS marker while "
+                                            "--with-input-tablet-events was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)

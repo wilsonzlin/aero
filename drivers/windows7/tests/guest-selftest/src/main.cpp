@@ -75,6 +75,9 @@ struct Options {
   // If set, run an end-to-end virtio-input event delivery test that reads actual HID input reports.
   // This is intended to be paired with host-side QMP `input-send-event` injection.
   bool test_input_events = false;
+  // If set, run an end-to-end virtio-input tablet (absolute pointer) event delivery test.
+  // This is intended to be paired with host-side QMP `input-send-event` injection of `abs` events.
+  bool test_input_tablet_events = false;
 
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
@@ -2282,8 +2285,10 @@ static bool IsVirtioInputHardwareId(const std::vector<std::wstring>& hwids) {
     // The in-tree Aero virtio-input HID minidriver uses:
     //   - Keyboard: VID_1AF4&PID_0001
     //   - Mouse:    VID_1AF4&PID_0002
+    //   - Tablet:   VID_1AF4&PID_0003
     if (ContainsInsensitive(id, L"VID_1AF4&PID_0001")) return true;
     if (ContainsInsensitive(id, L"VID_1AF4&PID_0002")) return true;
+    if (ContainsInsensitive(id, L"VID_1AF4&PID_0003")) return true;
     if (ContainsInsensitive(id, L"VID_1AF4&PID_1052")) return true;
     if (ContainsInsensitive(id, L"VID_1AF4&PID_1011")) return true;
   }
@@ -2295,6 +2300,7 @@ static bool LooksLikeVirtioInputInterfacePath(const std::wstring& device_path) {
          ContainsInsensitive(device_path, L"VEN_1AF4&DEV_1011") ||
          ContainsInsensitive(device_path, L"VID_1AF4&PID_0001") ||
          ContainsInsensitive(device_path, L"VID_1AF4&PID_0002") ||
+         ContainsInsensitive(device_path, L"VID_1AF4&PID_0003") ||
          ContainsInsensitive(device_path, L"VID_1AF4&PID_1052") ||
          ContainsInsensitive(device_path, L"VID_1AF4&PID_1011");
 }
@@ -3136,6 +3142,432 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const Virt
   if (out.reason.empty()) {
     out.reason = "timeout";
   }
+  return out;
+}
+
+struct VirtioInputTabletEventsTestResult {
+  bool ok = false;
+  bool saw_move_target = false;
+  bool saw_left_down = false;
+  bool saw_left_up = false;
+  int tablet_reports = 0;
+  std::string reason;
+  DWORD win32_error = 0;
+  int32_t last_x = 0;
+  int32_t last_y = 0;
+  int32_t last_left = 0;
+};
+
+struct HidFieldInfo {
+  uint8_t report_id = 0; // 0 means no report ID prefix
+  uint32_t usage_page = 0;
+  uint32_t usage = 0;
+  uint32_t bit_offset = 0;
+  uint32_t bit_size = 0;
+  int32_t logical_min = 0;
+  int32_t logical_max = 0;
+  bool relative = false;
+};
+
+struct TabletHidReportLayout {
+  uint8_t report_id = 0;
+  bool have_x = false;
+  bool have_y = false;
+  bool have_left = false;
+  HidFieldInfo x{};
+  HidFieldInfo y{};
+  HidFieldInfo left{};
+};
+
+static uint32_t ExtractHidBits(const uint8_t* buf, DWORD len, uint32_t bit_offset, uint32_t bit_size) {
+  if (!buf || len == 0 || bit_size == 0) return 0;
+  uint32_t out = 0;
+  for (uint32_t i = 0; i < bit_size && i < 32; i++) {
+    const uint32_t bit = bit_offset + i;
+    const uint32_t byte_idx = bit / 8;
+    const uint32_t bit_idx = bit % 8;
+    if (byte_idx >= len) break;
+    if ((buf[byte_idx] >> bit_idx) & 1u) {
+      out |= 1u << i;
+    }
+  }
+  return out;
+}
+
+static int32_t SignExtendHid(uint32_t v, uint32_t bit_size) {
+  if (bit_size == 0 || bit_size >= 32) return static_cast<int32_t>(v);
+  const uint32_t sign_bit = 1u << (bit_size - 1);
+  if ((v & sign_bit) == 0) return static_cast<int32_t>(v);
+  const uint32_t mask = (1u << bit_size) - 1u;
+  const int32_t signed_v = static_cast<int32_t>(v | ~mask);
+  return signed_v;
+}
+
+static std::optional<int32_t> ExtractHidFieldValue(const HidFieldInfo& f, const uint8_t* buf, DWORD len) {
+  if (!buf || len == 0 || f.bit_size == 0) return std::nullopt;
+  const uint32_t raw = ExtractHidBits(buf, len, f.bit_offset, f.bit_size);
+  if (f.logical_min < 0) {
+    return SignExtendHid(raw, f.bit_size);
+  }
+  return static_cast<int32_t>(raw);
+}
+
+static std::optional<TabletHidReportLayout> ParseTabletHidReportLayout(const std::vector<uint8_t>& desc) {
+  // Minimal HID report descriptor parser sufficient to locate:
+  // - Button 1 (left)
+  // - Absolute X (Usage Page=Generic Desktop, Usage=X)
+  // - Absolute Y (Usage Page=Generic Desktop, Usage=Y)
+
+  struct GlobalState {
+    uint32_t usage_page = 0;
+    uint32_t report_size = 0;
+    uint32_t report_count = 0;
+    int32_t logical_min = 0;
+    int32_t logical_max = 0;
+    uint8_t report_id = 0;
+  };
+
+  GlobalState g{};
+  std::vector<GlobalState> g_stack;
+
+  std::vector<uint32_t> local_usages;
+  std::optional<uint32_t> local_usage_min;
+  std::optional<uint32_t> local_usage_max;
+  auto clear_locals = [&]() {
+    local_usages.clear();
+    local_usage_min.reset();
+    local_usage_max.reset();
+  };
+
+  bool uses_report_ids = false;
+  // Per-report current bit offset (includes the implicit 8-bit report ID prefix when used).
+  uint32_t bit_off[256];
+  for (auto& v : bit_off) v = 0xFFFFFFFFu;
+
+  struct PerReportFields {
+    bool have_x = false;
+    bool have_y = false;
+    bool have_left = false;
+    HidFieldInfo x{};
+    HidFieldInfo y{};
+    HidFieldInfo left{};
+  };
+  PerReportFields fields[256]{};
+
+  auto ensure_bit_off = [&](uint8_t rid) -> uint32_t& {
+    if (bit_off[rid] == 0xFFFFFFFFu) {
+      if (uses_report_ids && rid != 0) {
+        bit_off[rid] = 8; // report ID byte
+      } else {
+        bit_off[rid] = 0;
+      }
+    }
+    return bit_off[rid];
+  };
+
+  auto sign_extend_value = [&](uint32_t v, uint32_t bits) -> int32_t {
+    if (bits == 0) return 0;
+    if (bits >= 32) return static_cast<int32_t>(v);
+    return SignExtendHid(v, bits);
+  };
+
+  auto parse_u32 = [&](uint32_t v, uint32_t bits) -> uint32_t {
+    if (bits == 0) return 0;
+    if (bits >= 32) return v;
+    return v & ((1u << bits) - 1u);
+  };
+
+  size_t i = 0;
+  while (i < desc.size()) {
+    const uint8_t prefix = desc[i++];
+    if (prefix == 0xFE) {
+      if (i + 2 > desc.size()) break;
+      const uint8_t size = desc[i++];
+      i++; // long item tag
+      if (i + size > desc.size()) break;
+      i += size;
+      continue;
+    }
+
+    const uint8_t size_code = prefix & 0x3;
+    const uint8_t type = (prefix >> 2) & 0x3;
+    const uint8_t tag = (prefix >> 4) & 0xF;
+    const size_t data_size = (size_code == 3) ? 4 : size_code;
+    if (i + data_size > desc.size()) break;
+
+    uint32_t value_u = 0;
+    for (size_t j = 0; j < data_size; j++) {
+      value_u |= static_cast<uint32_t>(desc[i + j]) << (8u * j);
+    }
+    i += data_size;
+
+    switch (type) {
+      case 0: { // Main
+        if (tag == 0x8) { // Input
+          const uint8_t rid = g.report_id;
+          uint32_t& off_bits = ensure_bit_off(rid);
+
+          // Expand the local usage list if only a range is specified.
+          std::vector<uint32_t> usages = local_usages;
+          if (usages.empty() && local_usage_min.has_value() && local_usage_max.has_value() &&
+              *local_usage_max >= *local_usage_min) {
+            const uint32_t count = *local_usage_max - *local_usage_min + 1;
+            usages.reserve(count);
+            for (uint32_t u = *local_usage_min; u <= *local_usage_max; u++) usages.push_back(u);
+          }
+
+          const uint32_t rs = g.report_size;
+          const uint32_t rc = std::max<uint32_t>(1, g.report_count);
+          const bool is_rel = (value_u & 0x04u) != 0;
+
+          for (uint32_t idx = 0; idx < rc; idx++) {
+            uint32_t usage = 0;
+            if (!usages.empty()) {
+              usage = usages[std::min<size_t>(idx, usages.size() - 1)];
+            } else if (local_usage_min.has_value()) {
+              usage = *local_usage_min;
+            }
+
+            HidFieldInfo field{};
+            field.report_id = rid;
+            field.usage_page = g.usage_page;
+            field.usage = usage;
+            field.bit_offset = off_bits + idx * rs;
+            field.bit_size = rs;
+            field.logical_min = g.logical_min;
+            field.logical_max = g.logical_max;
+            field.relative = is_rel;
+
+            // Button 1: left.
+            if (field.usage_page == 0x09 && field.usage == 0x01 && rs > 0) {
+              fields[rid].left = field;
+              fields[rid].have_left = true;
+            }
+            // Generic Desktop X/Y axes.
+            if (field.usage_page == 0x01 && field.usage == 0x30 && rs > 0) {
+              fields[rid].x = field;
+              fields[rid].have_x = true;
+            }
+            if (field.usage_page == 0x01 && field.usage == 0x31 && rs > 0) {
+              fields[rid].y = field;
+              fields[rid].have_y = true;
+            }
+          }
+
+          off_bits += rs * rc;
+        }
+        // Local items are cleared after each main item per HID spec.
+        clear_locals();
+        break;
+      }
+      case 1: { // Global
+        const uint32_t bits = static_cast<uint32_t>(data_size * 8);
+        if (tag == 0x0) { // Usage Page
+          g.usage_page = value_u;
+        } else if (tag == 0x1) { // Logical Minimum
+          g.logical_min = sign_extend_value(value_u, bits);
+        } else if (tag == 0x2) { // Logical Maximum
+          g.logical_max = sign_extend_value(value_u, bits);
+        } else if (tag == 0x7) { // Report Size
+          g.report_size = parse_u32(value_u, bits);
+        } else if (tag == 0x8) { // Report ID
+          g.report_id = static_cast<uint8_t>(value_u & 0xFF);
+          uses_report_ids = true;
+          // Ensure the bit offset for this report accounts for the implicit report ID byte.
+          (void)ensure_bit_off(g.report_id);
+        } else if (tag == 0x9) { // Report Count
+          g.report_count = parse_u32(value_u, bits);
+        } else if (tag == 0xA) { // Push
+          g_stack.push_back(g);
+        } else if (tag == 0xB) { // Pop
+          if (!g_stack.empty()) {
+            g = g_stack.back();
+            g_stack.pop_back();
+          }
+        }
+        break;
+      }
+      case 2: { // Local
+        if (tag == 0x0) { // Usage
+          local_usages.push_back(value_u);
+        } else if (tag == 0x1) { // Usage Minimum
+          local_usage_min = value_u;
+        } else if (tag == 0x2) { // Usage Maximum
+          local_usage_max = value_u;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // Pick the report ID that contains absolute X/Y. Prefer the one that also has Button 1.
+  std::optional<TabletHidReportLayout> fallback;
+  for (int rid = 0; rid < 256; rid++) {
+    if (!fields[rid].have_x || !fields[rid].have_y) continue;
+    if (fields[rid].x.relative || fields[rid].y.relative) continue; // must be absolute
+    TabletHidReportLayout candidate{};
+    candidate.report_id = static_cast<uint8_t>(rid);
+    candidate.have_x = true;
+    candidate.have_y = true;
+    candidate.x = fields[rid].x;
+    candidate.y = fields[rid].y;
+    if (fields[rid].have_left) {
+      candidate.have_left = true;
+      candidate.left = fields[rid].left;
+      return candidate;
+    }
+    if (!fallback.has_value()) {
+      fallback = candidate;
+    }
+  }
+  return fallback;
+}
+
+static bool MatchesTabletCoord(int32_t observed, int32_t host_value, int32_t logical_max) {
+  // Host harness injects in QMP's conventional absolute range [0, 32767].
+  static const int32_t kQmpAbsMax = 32767;
+  const int32_t tol = 2;
+
+  const auto close = [&](int32_t a, int32_t b) { return std::abs(a - b) <= tol; };
+
+  // Candidate 1: raw value (device already uses 0..32767 scale).
+  if (close(observed, host_value)) return true;
+
+  if (logical_max > 0) {
+    // Candidate 2: clamp (device max smaller than QMP value).
+    if (close(observed, std::min(host_value, logical_max))) return true;
+    // Candidate 3: scale (device max differs; treat host_value as normalized).
+    const int64_t scaled =
+        (static_cast<int64_t>(host_value) * static_cast<int64_t>(logical_max) + (kQmpAbsMax / 2)) / kQmpAbsMax;
+    if (close(observed, static_cast<int32_t>(scaled))) return true;
+  }
+  return false;
+}
+
+static void ProcessTabletReport(VirtioInputTabletEventsTestResult& out, const TabletHidReportLayout& layout,
+                                const uint8_t* buf, DWORD len) {
+  if (!buf || len == 0) return;
+
+  if (layout.report_id != 0) {
+    if (len < 1 || buf[0] != layout.report_id) return;
+  }
+
+  const auto x_opt = layout.have_x ? ExtractHidFieldValue(layout.x, buf, len) : std::nullopt;
+  const auto y_opt = layout.have_y ? ExtractHidFieldValue(layout.y, buf, len) : std::nullopt;
+  const auto left_opt = layout.have_left ? ExtractHidFieldValue(layout.left, buf, len) : std::nullopt;
+  if (!x_opt.has_value() || !y_opt.has_value() || !left_opt.has_value()) return;
+
+  const int32_t x = *x_opt;
+  const int32_t y = *y_opt;
+  const int32_t left = *left_opt;
+
+  out.last_x = x;
+  out.last_y = y;
+  out.last_left = left;
+
+  // Must match the host harness constants (see invoke_aero_virtio_win7_tests.py).
+  static const int32_t kHostTargetX = 10000;
+  static const int32_t kHostTargetY = 20000;
+
+  if (MatchesTabletCoord(x, kHostTargetX, layout.x.logical_max) &&
+      MatchesTabletCoord(y, kHostTargetY, layout.y.logical_max)) {
+    out.saw_move_target = true;
+  }
+
+  if (left != 0) out.saw_left_down = true;
+  if (out.saw_left_down && left == 0) out.saw_left_up = true;
+}
+
+static VirtioInputTabletEventsTestResult VirtioInputTabletEventsTest(Logger& log, const VirtioInputTestResult& input) {
+  VirtioInputTabletEventsTestResult out{};
+
+  const std::wstring tablet_path = input.tablet_device_path;
+  if (tablet_path.empty()) {
+    out.reason = "missing_tablet_device";
+    return out;
+  }
+
+  // Parse the report descriptor so we can decode X/Y and button fields robustly.
+  HANDLE h_ioctl = OpenHidDeviceForIoctl(tablet_path.c_str());
+  if (h_ioctl == INVALID_HANDLE_VALUE) {
+    out.reason = "open_tablet_failed";
+    out.win32_error = GetLastError();
+    return out;
+  }
+  const auto report_desc = ReadHidReportDescriptor(log, h_ioctl);
+  CloseHandle(h_ioctl);
+  if (!report_desc.has_value()) {
+    out.reason = "get_report_descriptor_failed";
+    out.win32_error = GetLastError();
+    return out;
+  }
+
+  const auto layout_opt = ParseTabletHidReportLayout(*report_desc);
+  if (!layout_opt.has_value() || !layout_opt->have_left) {
+    out.reason = "unsupported_report_descriptor";
+    return out;
+  }
+  const TabletHidReportLayout layout = *layout_opt;
+
+  HidOverlappedReader tablet{};
+  tablet.buf.resize(64);
+  tablet.h = OpenHidDeviceForRead(tablet_path.c_str());
+  if (tablet.h == INVALID_HANDLE_VALUE) {
+    out.reason = "open_tablet_failed";
+    out.win32_error = GetLastError();
+    return out;
+  }
+
+  if (!tablet.StartRead()) {
+    out.reason = "read_tablet_failed";
+    out.win32_error = tablet.last_error;
+    tablet.CancelAndClose();
+    return out;
+  }
+
+  log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY");
+
+  const DWORD deadline_ms = GetTickCount() + 10000;
+  while (static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+    if (out.saw_move_target && out.saw_left_down && out.saw_left_up) {
+      out.ok = true;
+      break;
+    }
+
+    const DWORD now = GetTickCount();
+    const int32_t diff = static_cast<int32_t>(deadline_ms - now);
+    const DWORD timeout = diff > 0 ? static_cast<DWORD>(diff) : 0;
+    const DWORD wait = WaitForSingleObject(tablet.ev, timeout);
+    if (wait == WAIT_TIMEOUT) break;
+    if (wait == WAIT_FAILED) {
+      out.reason = "wait_failed";
+      out.win32_error = GetLastError();
+      break;
+    }
+
+    DWORD n = 0;
+    if (!tablet.FinishRead(n)) {
+      out.reason = "read_tablet_failed";
+      out.win32_error = tablet.last_error;
+      break;
+    }
+
+    out.tablet_reports++;
+    ProcessTabletReport(out, layout, tablet.buf.data(), n);
+
+    if (!tablet.StartRead()) {
+      out.reason = "read_tablet_failed";
+      out.win32_error = tablet.last_error;
+      break;
+    }
+  }
+
+  tablet.CancelAndClose();
+
+  if (out.ok) return out;
+  if (out.reason.empty()) out.reason = "timeout";
   return out;
 }
 
@@ -6589,6 +7021,8 @@ static void PrintUsage() {
       "  --test-snd                Alias for --require-snd\n"
       "  --test-input-events       Run virtio-input end-to-end HID input report test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1)\n"
+      "  --test-input-tablet-events Run virtio-input tablet (absolute pointer) HID input report test (optional)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1)\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
       "  --test-snd-buffer-limits  Run virtio-snd large WASAPI buffer/period stress test (optional)\n"
@@ -6674,6 +7108,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.require_snd = true;
     } else if (arg == L"--test-input-events") {
       opt.test_input_events = true;
+    } else if (arg == L"--test-input-tablet-events") {
+      opt.test_input_tablet_events = true;
     } else if (arg == L"--require-snd-capture") {
       opt.require_snd_capture = true;
     } else if (arg == L"--test-snd-capture") {
@@ -6722,6 +7158,10 @@ int wmain(int argc, wchar_t** argv) {
 
   if (!opt.test_input_events && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS")) {
     opt.test_input_events = true;
+  }
+
+  if (!opt.test_input_tablet_events && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS")) {
+    opt.test_input_tablet_events = true;
   }
 
   if (!opt.expect_blk_msi && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI")) {
@@ -6801,6 +7241,27 @@ int wmain(int argc, wchar_t** argv) {
           input_events.saw_mouse_left_up ? 1 : 0);
     }
     all_ok = all_ok && input_events.ok;
+  }
+
+  if (!opt.test_input_tablet_events) {
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set");
+  } else {
+    const auto tablet_events = VirtioInputTabletEventsTest(log, input);
+    if (tablet_events.ok) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|tablet_reports=%d|move_target=%d|left_down=%d|left_up=%d|last_x=%d|last_y=%d|last_left=%d",
+          tablet_events.tablet_reports, tablet_events.saw_move_target ? 1 : 0,
+          tablet_events.saw_left_down ? 1 : 0, tablet_events.saw_left_up ? 1 : 0, tablet_events.last_x,
+          tablet_events.last_y, tablet_events.last_left);
+    } else {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|FAIL|reason=%s|err=%lu|tablet_reports=%d|move_target=%d|left_down=%d|left_up=%d|last_x=%d|last_y=%d|last_left=%d",
+          tablet_events.reason.empty() ? "unknown" : tablet_events.reason.c_str(),
+          static_cast<unsigned long>(tablet_events.win32_error), tablet_events.tablet_reports,
+          tablet_events.saw_move_target ? 1 : 0, tablet_events.saw_left_down ? 1 : 0,
+          tablet_events.saw_left_up ? 1 : 0, tablet_events.last_x, tablet_events.last_y, tablet_events.last_left);
+    }
+    all_ok = all_ok && tablet_events.ok;
   }
 
   // virtio-snd:

@@ -41,7 +41,11 @@ function Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 {
 
     # If set, also validate virtio-input device availability/properties (keyboard + mouse).
     [Parameter(Mandatory = $false)]
-    [switch]$WithVirtioInput
+    [switch]$WithVirtioInput,
+
+    # If set, also validate virtio-tablet-pci availability/properties (absolute pointer device).
+    [Parameter(Mandatory = $false)]
+    [switch]$WithVirtioTablet
   )
 
   $devices = @(
@@ -53,6 +57,11 @@ function Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 {
     $devices += @(
       @{ Name = "virtio-keyboard-pci"; RequireDisableLegacy = $true },
       @{ Name = "virtio-mouse-pci"; RequireDisableLegacy = $true }
+    )
+  }
+  if ($WithVirtioTablet) {
+    $devices += @(
+      @{ Name = "virtio-tablet-pci"; RequireDisableLegacy = $true }
     )
   }
 
@@ -173,4 +182,11 @@ function New-AeroWin7VirtioMouseDeviceArg {
     $arg += ",vectors=$MsixVectors"
   }
   return $arg
+}
+
+function New-AeroWin7VirtioTabletDeviceArg {
+  [CmdletBinding()]
+  param()
+
+  return "virtio-tablet-pci,disable-legacy=on,x-pci-revision=0x01"
 }

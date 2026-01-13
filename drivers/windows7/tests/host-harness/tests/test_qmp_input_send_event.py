@@ -68,7 +68,18 @@ class QmpInputSendEventTests(unittest.TestCase):
         self.assertIn("x", rel_axes)
         self.assertIn("y", rel_axes)
 
+    def test_tablet_events_include_abs_and_click(self) -> None:
+        h = self.harness
+
+        ev = h._qmp_deterministic_tablet_events()
+        types = [e["type"] for e in ev]
+        self.assertIn("abs", types)
+        self.assertIn("btn", types)
+
+        abs_axes = {e["data"]["axis"] for e in ev if e["type"] == "abs"}
+        self.assertIn("x", abs_axes)
+        self.assertIn("y", abs_axes)
+
 
 if __name__ == "__main__":
     unittest.main()
-

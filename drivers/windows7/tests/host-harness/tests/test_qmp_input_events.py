@@ -50,6 +50,13 @@ class QmpInputEventFormattingTests(unittest.TestCase):
             {"type": "rel", "data": {"axis": "x", "value": 10}},
         )
 
+    def test_abs_event(self) -> None:
+        f = self.harness._qmp_abs_event
+        self.assertEqual(
+            f("y", 123),
+            {"type": "abs", "data": {"axis": "y", "value": 123}},
+        )
+
     def test_input_send_event_cmd_with_device(self) -> None:
         f = self.harness._qmp_input_send_event_cmd
         evt = self.harness._qmp_key_event("a", down=True)
@@ -69,4 +76,3 @@ class QmpInputEventFormattingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

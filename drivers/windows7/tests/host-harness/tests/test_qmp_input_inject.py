@@ -131,7 +131,78 @@ class QmpInputInjectionTests(unittest.TestCase):
             h._qmp_send_command = old_send
             h.time.sleep = old_sleep
 
+    def test_injects_tablet_events_targeted_by_device_id_when_supported(self) -> None:
+        h = self.harness
+
+        sent: list[dict[str, object]] = []
+
+        def fake_connect(endpoint, *, timeout_seconds: float = 5.0):
+            return _DummySock()
+
+        def fake_send_command(sock, cmd):
+            sent.append(cmd)
+            return {"return": {}}
+
+        old_connect = h._qmp_connect
+        old_send = h._qmp_send_command
+        old_sleep = h.time.sleep
+        try:
+            h._qmp_connect = fake_connect
+            h._qmp_send_command = fake_send_command
+            h.time.sleep = lambda _: None
+
+            info = h._try_qmp_input_inject_virtio_input_tablet_events(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=4444)
+            )
+
+            self.assertEqual(info.tablet_device, h._VIRTIO_INPUT_QMP_TABLET_ID)
+            self.assertEqual(len(sent), 4)
+            for cmd in sent:
+                self.assertEqual(cmd["execute"], "input-send-event")
+                self.assertEqual(cmd["arguments"]["device"], h._VIRTIO_INPUT_QMP_TABLET_ID)
+        finally:
+            h._qmp_connect = old_connect
+            h._qmp_send_command = old_send
+            h.time.sleep = old_sleep
+
+    def test_injects_tablet_events_falls_back_to_broadcast_when_device_routing_rejected(self) -> None:
+        h = self.harness
+
+        sent: list[dict[str, object]] = []
+
+        def fake_connect(endpoint, *, timeout_seconds: float = 5.0):
+            return _DummySock()
+
+        def fake_send_command(sock, cmd):
+            sent.append(cmd)
+            if "device" in cmd.get("arguments", {}):
+                raise RuntimeError("device routing unsupported")
+            return {"return": {}}
+
+        old_connect = h._qmp_connect
+        old_send = h._qmp_send_command
+        old_sleep = h.time.sleep
+        try:
+            h._qmp_connect = fake_connect
+            h._qmp_send_command = fake_send_command
+            h.time.sleep = lambda _: None
+
+            with contextlib.redirect_stderr(io.StringIO()):
+                info = h._try_qmp_input_inject_virtio_input_tablet_events(
+                    h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=4444)
+                )
+
+            self.assertIsNone(info.tablet_device)
+            # First send should attempt device + broadcast, remaining sends should be broadcast-only.
+            self.assertEqual(len(sent), 5)
+            device_attempts = [cmd for cmd in sent if "device" in cmd.get("arguments", {})]
+            self.assertEqual(len(device_attempts), 1)
+            self.assertEqual(device_attempts[0]["arguments"]["device"], h._VIRTIO_INPUT_QMP_TABLET_ID)
+        finally:
+            h._qmp_connect = old_connect
+            h._qmp_send_command = old_send
+            h.time.sleep = old_sleep
+
 
 if __name__ == "__main__":
     unittest.main()
-
