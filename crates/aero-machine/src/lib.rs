@@ -3231,6 +3231,19 @@ impl Machine {
         u64::try_from(self.serial_log.len()).unwrap_or(u64::MAX)
     }
 
+    /// Returns the BIOS "TTY output" buffer accumulated so far.
+    ///
+    /// The legacy HLE BIOS records:
+    /// - bytes written via INT 10h teletype output (AH=0Eh), and
+    /// - certain early boot/panic strings (for example when the boot sector is missing/invalid).
+    ///
+    /// This is primarily intended for **early-boot debugging and tests**. Output is best-effort:
+    /// it is not a stable, user-facing console API and may change as the firmware implementation
+    /// evolves.
+    pub fn bios_tty_output(&self) -> &[u8] {
+        self.bios.tty_output()
+    }
+
     /// Inject a browser-style keyboard code into the i8042 controller, if present.
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
         if let Some(ctrl) = &self.i8042 {
