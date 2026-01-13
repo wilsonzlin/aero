@@ -873,6 +873,8 @@ static VOID AerovblkHandleRequestSense(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt
 static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Inout_ PSCSI_REQUEST_BLOCK srb) {
   PSRB_IO_CONTROL ctrl;
   PAEROVBLK_QUERY_INFO info;
+  USHORT msixConfig;
+  USHORT msixQueue0;
 
   if (srb->DataBuffer == NULL || srb->DataTransferLength < sizeof(SRB_IO_CONTROL)) {
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST);
@@ -909,6 +911,39 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     info->NumFree = 0;
     info->AvailIdx = 0;
     info->UsedIdx = 0;
+  }
+
+  /*
+   * Interrupt observability.
+   *
+   * Report the currently programmed virtio MSI-X vectors. Per Aero contract v1
+   * semantics, unassigned vectors (0xFFFF) imply the device uses INTx + ISR.
+   */
+  info->InterruptMode = AEROVBLK_INTERRUPT_MODE_INTX;
+  info->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  info->MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
+
+  msixConfig = VIRTIO_PCI_MSI_NO_VECTOR;
+  msixQueue0 = VIRTIO_PCI_MSI_NO_VECTOR;
+
+  if (devExt->Vdev.CommonCfg != NULL) {
+    KIRQL irql;
+
+    msixConfig = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config);
+
+    KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
+    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
+    KeMemoryBarrier();
+    msixQueue0 = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector);
+    KeMemoryBarrier();
+    KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
+
+    info->MsixConfigVector = msixConfig;
+    info->MsixQueue0Vector = msixQueue0;
+
+    if (msixConfig != VIRTIO_PCI_MSI_NO_VECTOR || msixQueue0 != VIRTIO_PCI_MSI_NO_VECTOR) {
+      info->InterruptMode = AEROVBLK_INTERRUPT_MODE_MSI;
+    }
   }
 
   ctrl->ReturnCode = 0;

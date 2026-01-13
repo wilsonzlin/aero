@@ -79,6 +79,10 @@ struct Options {
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
   DWORD io_chunk_kib = 1024;
+
+  // Soft assertion: if set, fail the virtio-blk test when the miniport reports it is
+  // still operating in INTx mode (expected MSI/MSI-X).
+  bool expect_blk_msi = false;
 };
 
 static std::wstring ToLower(std::wstring s) {
@@ -404,6 +408,9 @@ struct StorageIdStrings {
 // Userspace mirror of `drivers/windows7/virtio-blk/include/aero_virtio_blk.h` IOCTL contract.
 static constexpr const char kAerovblkSrbIoSig[8] = {'A', 'E', 'R', 'O', 'V', 'B', 'L', 'K'};
 static constexpr ULONG kAerovblkIoctlQuery = 0x8000A001u;
+static constexpr ULONG kAerovblkInterruptModeIntx = 0u;
+static constexpr ULONG kAerovblkInterruptModeMsi = 1u;
+static constexpr USHORT kVirtioPciMsiNoVector = 0xFFFFu;
 
 struct AEROVBLK_QUERY_INFO {
   ULONGLONG NegotiatedFeatures;
@@ -411,7 +418,13 @@ struct AEROVBLK_QUERY_INFO {
   USHORT NumFree;
   USHORT AvailIdx;
   USHORT UsedIdx;
+
+  ULONG InterruptMode;
+  USHORT MsixConfigVector;
+  USHORT MsixQueue0Vector;
 };
+
+static_assert(sizeof(AEROVBLK_QUERY_INFO) == 24, "AEROVBLK_QUERY_INFO size mismatch");
 
 static std::string VirtioFeaturesToString(ULONGLONG f) {
   char buf[64];
@@ -544,9 +557,23 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AEROVBLK_QUERY_INFO&
     return false;
   }
 
-  log.Logf("virtio-blk: miniport query PASS queue_size=%u num_free=%u avail_idx=%u used_idx=%u features=%s",
-           info.QueueSize, info.NumFree, info.AvailIdx, info.UsedIdx,
-           VirtioFeaturesToString(info.NegotiatedFeatures).c_str());
+  const char* mode_str = "unknown";
+  if (info.InterruptMode == kAerovblkInterruptModeIntx) {
+    mode_str = "INTx";
+  } else if (info.InterruptMode == kAerovblkInterruptModeMsi) {
+    mode_str = "MSI/MSI-X";
+  }
+
+  const int msix_cfg_assigned = (info.MsixConfigVector != kVirtioPciMsiNoVector) ? 1 : 0;
+  const int msix_q0_assigned = (info.MsixQueue0Vector != kVirtioPciMsiNoVector) ? 1 : 0;
+
+  log.Logf(
+      "virtio-blk: miniport query PASS queue_size=%u num_free=%u avail_idx=%u used_idx=%u features=%s "
+      "interrupt_mode=%s msix_config=0x%04x msix_queue0=0x%04x msix_config_assigned=%d msix_queue0_assigned=%d",
+      info.QueueSize, info.NumFree, info.AvailIdx, info.UsedIdx,
+      VirtioFeaturesToString(info.NegotiatedFeatures).c_str(), mode_str,
+      static_cast<unsigned>(info.MsixConfigVector), static_cast<unsigned>(info.MsixQueue0Vector),
+      msix_cfg_assigned, msix_q0_assigned);
   return true;
 }
 
@@ -1706,6 +1733,11 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
       log.LogLine("virtio-blk: miniport query FAIL (IOCTL_SCSI_MINIPORT query failed)");
     } else {
       query_ok = ValidateAerovblkMiniportInfo(log, *info);
+      if (query_ok && opt.expect_blk_msi && info->InterruptMode != kAerovblkInterruptModeMsi) {
+        log.Logf("virtio-blk: miniport query FAIL (expected MSI/MSI-X, got InterruptMode=%lu)",
+                 static_cast<unsigned long>(info->InterruptMode));
+        query_ok = false;
+      }
     }
 
     // Optional: cover flush path explicitly, but don't fail overall test if the flush ioctl is blocked.
@@ -5940,6 +5972,7 @@ static void PrintUsage() {
       "\n"
       "Options:\n"
       "  --blk-root <path>         Directory to use for virtio-blk file I/O test\n"
+      "  --expect-blk-msi          Fail virtio-blk test if still using INTx (expected MSI/MSI-X)\n"
       "  --http-url <url>          HTTP URL for TCP connectivity test (also expects <url>-large)\n"
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
@@ -6010,6 +6043,8 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
       }
       opt.blk_root = v;
+    } else if (arg == L"--expect-blk-msi") {
+      opt.expect_blk_msi = true;
     } else if (arg == L"--dns-host") {
       const wchar_t* v = next();
       if (!v) {
@@ -6082,6 +6117,10 @@ int wmain(int argc, wchar_t** argv) {
     opt.test_input_events = true;
   }
 
+  if (!opt.expect_blk_msi && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI")) {
+    opt.expect_blk_msi = true;
+  }
+
   if (opt.disable_snd &&
       (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture || opt.test_snd_buffer_limits ||
        opt.require_non_silence)) {
@@ -6101,10 +6140,10 @@ int wmain(int argc, wchar_t** argv) {
   Logger log(opt.log_file);
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
-  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|dns_host=%s|blk_root=%s",
+  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|dns_host=%s|blk_root=%s|expect_blk_msi=%d",
            WideToUtf8(opt.http_url).c_str(),
            WideToUtf8(UrlAppendSuffix(opt.http_url, L"-large")).c_str(),
-           WideToUtf8(opt.dns_host).c_str(), WideToUtf8(opt.blk_root).c_str());
+           WideToUtf8(opt.dns_host).c_str(), WideToUtf8(opt.blk_root).c_str(), opt.expect_blk_msi ? 1 : 0);
 
   bool all_ok = true;
 

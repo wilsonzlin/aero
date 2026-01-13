@@ -129,13 +129,37 @@ C_ASSERT(AEROVBLK_QUEUE_SIZE == 128);
 #define AEROVBLK_SRBIO_SIG "AEROVBLK"
 #define AEROVBLK_IOCTL_QUERY 0x8000A001u
 
+/*
+ * AEROVBLK_QUERY_INFO.InterruptMode values.
+ *
+ * For contract v1 the driver primarily uses legacy INTx + ISR, but MSI/MSI-X
+ * may be enabled as an optional enhancement. Expose the effective mode to the
+ * guest selftest for debugging/validation.
+ */
+#define AEROVBLK_INTERRUPT_MODE_INTX 0u
+#define AEROVBLK_INTERRUPT_MODE_MSI 1u
+
 typedef struct _AEROVBLK_QUERY_INFO {
     ULONGLONG NegotiatedFeatures;
     USHORT QueueSize;
     USHORT NumFree;
     USHORT AvailIdx;
     USHORT UsedIdx;
+
+    /*
+     * Interrupt observability (virtio-pci modern).
+     *
+     * - InterruptMode reports whether the driver is currently operating in
+     *   legacy INTx mode or using message-signaled interrupts (MSI/MSI-X).
+     * - Msix*Vector report the currently programmed virtio MSI-X vectors.
+     *   A value of 0xFFFF means "no vector assigned" per the virtio spec.
+     */
+    ULONG InterruptMode;
+    USHORT MsixConfigVector;
+    USHORT MsixQueue0Vector;
 } AEROVBLK_QUERY_INFO, *PAEROVBLK_QUERY_INFO;
+
+C_ASSERT(sizeof(AEROVBLK_QUERY_INFO) == 24);
 
 ULONG AerovblkHwFindAdapter(
     _In_ PVOID deviceExtension,
