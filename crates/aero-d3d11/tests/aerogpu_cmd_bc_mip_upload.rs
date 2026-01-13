@@ -85,6 +85,10 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d11Executor> {
     }
 
     let backend = adapter.get_info().backend;
+    let supports_compute = adapter
+        .get_downlevel_capabilities()
+        .flags
+        .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
@@ -97,7 +101,12 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d11Executor> {
         .await
         .ok()?;
 
-    Some(AerogpuD3d11Executor::new(device, queue, backend))
+    Some(AerogpuD3d11Executor::new_with_supports_compute(
+        device,
+        queue,
+        backend,
+        supports_compute,
+    ))
 }
 
 #[test]

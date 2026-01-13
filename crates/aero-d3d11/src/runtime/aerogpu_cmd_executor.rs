@@ -711,6 +711,21 @@ pub struct AerogpuD3d11Executor {
 
 impl AerogpuD3d11Executor {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, backend: wgpu::Backend) -> Self {
+        Self::new_with_supports_compute(device, queue, backend, true)
+    }
+
+    /// Construct an executor with an explicit compute capability override.
+    ///
+    /// `wgpu::Device` does not currently expose whether compute pipelines are supported (notably
+    /// wgpu's GL/WebGL2 backends lack compute), so callers that have an `wgpu::Adapter` should pass
+    /// `adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)`
+    /// here to ensure compute pipelines are deterministically disabled.
+    pub fn new_with_supports_compute(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        backend: wgpu::Backend,
+        supports_compute: bool,
+    ) -> Self {
         let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aerogpu_cmd dummy texture"),
             size: wgpu::Extent3d {
@@ -771,7 +786,8 @@ impl AerogpuD3d11Executor {
         }
         dummy_storage.unmap();
 
-        let caps = GpuCapabilities::from_device(&device);
+        let mut caps = GpuCapabilities::from_device(&device);
+        caps.supports_compute = supports_compute;
         let pipeline_cache = PipelineCache::new(PipelineCacheConfig::default(), caps);
 
         let mut sampler_cache = SamplerCache::new();
@@ -907,6 +923,10 @@ impl AerogpuD3d11Executor {
         .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
         let backend = adapter.get_info().backend;
+        let supports_compute = adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
         let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
             .request_device(
@@ -919,7 +939,12 @@ impl AerogpuD3d11Executor {
             )
             .await
             .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-        Ok(Self::new(device, queue, backend))
+        Ok(Self::new_with_supports_compute(
+            device,
+            queue,
+            backend,
+            supports_compute,
+        ))
     }
 
     pub fn device(&self) -> &wgpu::Device {
