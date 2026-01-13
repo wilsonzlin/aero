@@ -931,9 +931,9 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   elseif ($line -match "\|PASS(\||$)") { $status = "PASS" }
 
   $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|$status"
-  if ($mode) { $out += "|mode=$(Sanitize-AeroMarkerValue $mode)" }
-  if ($messages) { $out += "|messages=$(Sanitize-AeroMarkerValue $messages)" }
-  if ($vectors) { $out += "|vectors=$(Sanitize-AeroMarkerValue $vectors)" }
+  if ($mode) { $out += "|irq_mode=$(Sanitize-AeroMarkerValue $mode)" }
+  if ($messages) { $out += "|irq_message_count=$(Sanitize-AeroMarkerValue $messages)" }
+  if ($vectors) { $out += "|irq_vectors=$(Sanitize-AeroMarkerValue $vectors)" }
   if ($msiVector) { $out += "|msi_vector=$(Sanitize-AeroMarkerValue $msiVector)" }
   if ($msixConfigVector) { $out += "|msix_config_vector=$(Sanitize-AeroMarkerValue $msixConfigVector)" }
   if ($msixQueueVector) { $out += "|msix_queue_vector=$(Sanitize-AeroMarkerValue $msixQueueVector)" }
