@@ -77,7 +77,7 @@ use aero_net_pump::{tick_e1000, tick_virtio_net, VirtioNetBackendAdapter};
 use aero_pc_platform::{PciIoBarHandler, PciIoBarRouter};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
-use aero_platform::interrupts::msi::MsiMessage;
+use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, InterruptInput, PlatformInterrupts,
 };
@@ -1164,6 +1164,37 @@ impl VirtioInterruptSink for NoopVirtioInterruptSink {
     fn lower_legacy_irq(&mut self) {}
 
     fn signal_msix(&mut self, _message: MsiMessage) {}
+}
+
+/// Virtio interrupt sink that delivers MSI(-X) messages into the machine's platform interrupt
+/// controller.
+///
+/// Note: legacy INTx is *not* driven through this sink in `Machine`; INTx is polled and routed via
+/// [`Machine::sync_pci_intx_sources_to_interrupts`]. This keeps INTx level tracking centralized and
+/// deterministic while still allowing modern MSI-X delivery.
+#[derive(Debug, Clone)]
+struct VirtioMsixInterruptSink {
+    interrupts: Rc<RefCell<PlatformInterrupts>>,
+}
+
+impl VirtioMsixInterruptSink {
+    fn new(interrupts: Rc<RefCell<PlatformInterrupts>>) -> Self {
+        Self { interrupts }
+    }
+}
+
+impl VirtioInterruptSink for VirtioMsixInterruptSink {
+    fn raise_legacy_irq(&mut self) {
+        // Legacy INTx delivery is handled via `Machine::sync_pci_intx_sources_to_interrupts` polling.
+    }
+
+    fn lower_legacy_irq(&mut self) {
+        // Legacy INTx delivery is handled via `Machine::sync_pci_intx_sources_to_interrupts` polling.
+    }
+
+    fn signal_msix(&mut self, message: MsiMessage) {
+        self.interrupts.borrow_mut().trigger_msi(message);
+    }
 }
 
 struct VirtioPciBar0Mmio {
@@ -3191,9 +3222,13 @@ impl Machine {
 
         // Preserve the device model's in-flight state while swapping the disk backend.
         let state = virtio_blk.borrow().save_state();
+        let interrupt_sink: Box<dyn VirtioInterruptSink> = match &self.interrupts {
+            Some(ints) => Box::new(VirtioMsixInterruptSink::new(ints.clone())),
+            None => Box::new(NoopVirtioInterruptSink),
+        };
         let mut new_dev = VirtioPciDevice::new(
             Box::new(VirtioBlk::new(disk)),
-            Box::new(NoopVirtioInterruptSink),
+            interrupt_sink,
         );
         new_dev.load_state(&state).map_err(|e| {
             MachineError::DiskBackend(format!(
@@ -4794,13 +4829,13 @@ impl Machine {
                         // mappings.
                         *dev.borrow_mut() = VirtioPciDevice::new(
                             Box::new(VirtioNet::new(VirtioNetBackendAdapter::new(backend), mac)),
-                            Box::new(NoopVirtioInterruptSink),
+                            Box::new(VirtioMsixInterruptSink::new(interrupts.clone())),
                         );
                         Some(dev.clone())
                     }
                     None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
                         Box::new(VirtioNet::new(VirtioNetBackendAdapter::new(None), mac)),
-                        Box::new(NoopVirtioInterruptSink),
+                        Box::new(VirtioMsixInterruptSink::new(interrupts.clone())),
                     )))),
                 }
             } else {
@@ -4822,7 +4857,7 @@ impl Machine {
                     }
                     None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
                         Box::new(VirtioBlk::new(Box::new(self.disk.clone()))),
-                        Box::new(NoopVirtioInterruptSink),
+                        Box::new(VirtioMsixInterruptSink::new(interrupts.clone())),
                     )))),
                 }
             } else {
