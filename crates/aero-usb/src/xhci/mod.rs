@@ -55,8 +55,10 @@ impl Default for XhciController {
 impl XhciController {
     /// Size of the MMIO BAR exposed by the emulator integration.
     ///
-    /// The real xHCI register set is larger; the current model only implements a small subset.
-    pub const MMIO_SIZE: u32 = 0x1000;
+    /// Real xHCI controllers expose a 64KiB MMIO window. The current model only implements a small
+    /// subset of the architectural register set, but we still reserve the full window so PCI BAR
+    /// probing/alignment matches the canonical PCI profile and the Web runtime device wrapper.
+    pub const MMIO_SIZE: u32 = 0x10000;
 
     pub fn new() -> Self {
         Self::default()

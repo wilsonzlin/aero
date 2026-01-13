@@ -61,6 +61,10 @@ impl XhciPciDevice {
     pub fn new(controller: XhciController, mmio_base: u32) -> Self {
         let mut config = PciConfigSpace::new();
 
+        // Ensure the BAR base is aligned to the window size so subsequent BAR probing/relocation
+        // logic behaves consistently.
+        let mmio_base = mmio_base & !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0;
+
         // Vendor/device: QEMU-style xHCI (stable but not architecturally important for most guests
         // that bind based on class code).
         config.set_u16(0x00, 0x1b36);
@@ -72,7 +76,7 @@ impl XhciPciDevice {
         config.write(0x0b, 1, 0x0c); // class (serial bus)
 
         // BAR0 (MMIO) at 0x10.
-        config.set_u32(0x10, mmio_base & 0xffff_fff0);
+        config.set_u32(0x10, mmio_base);
 
         // Interrupt pin/line: mirror the UHCI pattern (INTA on a conventional routed line).
         let pin = PciInterruptPin::IntA;
@@ -183,4 +187,3 @@ impl MmioDevice for XhciPciDevice {
         self.controller.mmio_write(&mut adapter, offset, size, value);
     }
 }
-

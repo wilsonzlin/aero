@@ -118,3 +118,20 @@ fn pci_command_intx_disable_bit_masks_irq_level() {
     assert!(dev.irq_level());
 }
 
+#[test]
+fn pci_bar0_probe_reports_xhci_mmio_window_size() {
+    // Use a deliberately misaligned base to ensure the wrapper applies BAR-size alignment.
+    let mut dev = XhciPciDevice::new(XhciController::new(), 0xfebf_1234);
+    assert_eq!(dev.config_read(0x10, 4), 0xfebf_0000);
+
+    // Standard PCI BAR size probing: write all 1s and read back the size mask.
+    dev.config_write(0x10, 4, 0xffff_ffff);
+    assert_eq!(
+        dev.config_read(0x10, 4),
+        !(XhciController::MMIO_SIZE - 1) & 0xffff_fff0
+    );
+
+    // BAR programming should be masked to the window size.
+    dev.config_write(0x10, 4, 0xfec0_1234);
+    assert_eq!(dev.config_read(0x10, 4), 0xfec0_0000);
+}
