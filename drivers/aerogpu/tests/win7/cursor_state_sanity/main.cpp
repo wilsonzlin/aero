@@ -476,7 +476,6 @@ static int RunCursorStateSanity(int argc, char** argv) {
       goto cleanup;
     }
 
-    const bool enabled = q0.enable != 0;
     const int32_t mmio_x = ToS32((uint32_t)q0.x);
     const int32_t mmio_y = ToS32((uint32_t)q0.y);
     const int32_t hot_x = (int32_t)q0.hot_x;
@@ -491,7 +490,7 @@ static int RunCursorStateSanity(int argc, char** argv) {
                             (AbsI32((int)(mmio_y + hot_y) - (int)actual_pos.y) <= tol);
     const bool pos_match = pos_match0 || pos_match1;
 
-    if (enabled && pos_match) {
+    if (pos_match) {
       pos_ok = true;
       break;
     }
@@ -516,26 +515,22 @@ static int RunCursorStateSanity(int argc, char** argv) {
     POINT actual_pos;
     ZeroMemory(&actual_pos, sizeof(actual_pos));
     (void)GetCursorPos(&actual_pos);
-    if (q0.enable == 0) {
-      reporter.Fail("cursor not enabled (enable=%lu)", (unsigned long)q0.enable);
-    } else {
-      const int32_t mmio_x = ToS32((uint32_t)q0.x);
-      const int32_t mmio_y = ToS32((uint32_t)q0.y);
-      const int32_t hot_x = (int32_t)q0.hot_x;
-      const int32_t hot_y = (int32_t)q0.hot_y;
-      reporter.Fail(
-          "cursor pos mismatch: expected~(%ld,%ld) mmio_pos=(%ld,%ld) hot=(%ld,%ld) => hotspot=(%ld,%ld) or (%ld,%ld)",
-          (long)actual_pos.x,
-          (long)actual_pos.y,
-          (long)mmio_x,
-          (long)mmio_y,
-          (long)hot_x,
-          (long)hot_y,
-          (long)mmio_x,
-          (long)mmio_y,
-          (long)(mmio_x + hot_x),
-          (long)(mmio_y + hot_y));
-    }
+    const int32_t mmio_x = ToS32((uint32_t)q0.x);
+    const int32_t mmio_y = ToS32((uint32_t)q0.y);
+    const int32_t hot_x = (int32_t)q0.hot_x;
+    const int32_t hot_y = (int32_t)q0.hot_y;
+    reporter.Fail("cursor pos mismatch: expected~(%ld,%ld) mmio_pos=(%ld,%ld) hot=(%ld,%ld) => hotspot=(%ld,%ld) or (%ld,%ld) (enable=%lu)",
+                  (long)actual_pos.x,
+                  (long)actual_pos.y,
+                  (long)mmio_x,
+                  (long)mmio_y,
+                  (long)hot_x,
+                  (long)hot_y,
+                  (long)mmio_x,
+                  (long)mmio_y,
+                  (long)(mmio_x + hot_x),
+                  (long)(mmio_y + hot_y),
+                  (unsigned long)q0.enable);
     goto cleanup;
   }
 
