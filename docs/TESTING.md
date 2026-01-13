@@ -97,6 +97,16 @@ cargo xtask test-all --pw-project chromium --pw-project firefox
 cargo xtask test-all --pw-project chromium -- --grep smoke
 ```
 
+### Focused test runners
+
+If you're working on a specific subsystem, `xtask` also provides smaller suites:
+
+```bash
+# USB + input (Rust + focused web unit tests; optional Playwright subset)
+cargo xtask input
+cargo xtask input --e2e
+```
+
 If your repo layout differs from the defaults, override directories:
 
 - `AERO_NODE_DIR` / `--node-dir`: the directory containing `package.json`
