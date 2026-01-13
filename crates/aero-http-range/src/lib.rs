@@ -475,6 +475,16 @@ mod tests {
     }
 
     #[test]
+    fn dos_guard_accepts_header_at_max_len() {
+        let mut header = "bytes=0-0".to_string();
+        header.extend(std::iter::repeat(' ').take(MAX_RANGE_HEADER_LEN - header.len()));
+        assert_eq!(header.len(), MAX_RANGE_HEADER_LEN);
+
+        let specs = parse_range_header(&header).unwrap();
+        assert_eq!(specs, vec![ByteRangeSpec::FromTo { start: 0, end: 0 }]);
+    }
+
+    #[test]
     fn dos_guard_rejects_very_long_integers_and_non_zero_prefix_overflow() {
         // parse_u64_decimal should reject numbers longer than its own scan cap.
         let too_long = "9".repeat(65);
@@ -495,6 +505,25 @@ mod tests {
     }
 
     #[test]
+    fn dos_guard_accepts_max_decimal_digits_when_zero_padded() {
+        // parse_u64_decimal permits numbers longer than 20 digits if the extra prefix
+        // digits are all zeros, up to MAX_DECIMAL_DIGITS (64).
+        let max = u64::MAX.to_string(); // 20 digits
+        let n = format!("{}{}", "0".repeat(44), max); // 64 digits total
+        assert_eq!(n.len(), 64);
+
+        let header = format!("bytes={n}-{n}");
+        let specs = parse_range_header(&header).unwrap();
+        assert_eq!(
+            specs,
+            vec![ByteRangeSpec::FromTo {
+                start: u64::MAX,
+                end: u64::MAX
+            }]
+        );
+    }
+
+    #[test]
     fn dos_guard_rejects_too_many_ranges() {
         // 1001 ranges of length 1 each (should exceed MAX_RANGE_SPECS==1000).
         let header = {
@@ -512,6 +541,23 @@ mod tests {
             parse_range_header(&header).unwrap_err(),
             RangeParseError::TooManyRanges { .. }
         ));
+    }
+
+    #[test]
+    fn dos_guard_accepts_exactly_max_range_specs() {
+        // Exactly MAX_RANGE_SPECS should be accepted (guard is strictly "more than").
+        let header = {
+            let mut s = String::from("bytes=");
+            for i in 0..(MAX_RANGE_SPECS as u64) {
+                if i > 0 {
+                    s.push(',');
+                }
+                s.push_str(&format!("{i}-{i}"));
+            }
+            s
+        };
+        let specs = parse_range_header(&header).unwrap();
+        assert_eq!(specs.len(), MAX_RANGE_SPECS);
     }
 
     #[test]
