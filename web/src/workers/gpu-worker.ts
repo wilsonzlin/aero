@@ -83,7 +83,15 @@ import {
   estimateTextureUploadBytes,
 } from "../gpu/dirty-rect-policy";
 import type { AeroConfig } from '../config/aero_config';
-import { createSharedMemoryViews, ringRegionsForWorker, setReadyFlag, StatusIndex, type WorkerRole } from '../runtime/shared_layout';
+import {
+  createSharedMemoryViews,
+  guestPaddrToRamOffset,
+  ringRegionsForWorker,
+  setReadyFlag,
+  StatusIndex,
+  type GuestRamLayout,
+  type WorkerRole,
+} from '../runtime/shared_layout';
 import { RingBuffer } from '../ipc/ring_buffer';
 import { decodeCommand, encodeEvent, type Command, type Event } from '../ipc/protocol';
 import {
@@ -137,6 +145,7 @@ const postRuntimeError = (message: string) => {
 let role: WorkerRole = "gpu";
 let status: Int32Array | null = null;
 let guestU8: Uint8Array | null = null;
+let guestLayout: GuestRamLayout | null = null;
 
 let frameState: Int32Array | null = null;
 
@@ -2363,6 +2372,7 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   // ECAM/PCI holes + high-RAM remap, GPAs in AeroGPU submissions are guest *physical* addresses
   // (which may be >=4GiB); executors must translate them back into this view before slicing.
   guestU8 = views.guestU8;
+  guestLayout = views.guestLayout;
   if (aerogpuWasm) {
     try {
       // If aero-gpu-wasm is already loaded (e.g. via the webgl2_wgpu presenter), plumb the
@@ -2715,6 +2725,145 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           }
 
           const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+
+          const tryPostWddmScanoutScreenshot = (): boolean => {
+            const words = scanoutState;
+            if (!words) return false;
+
+            let snap: ScanoutStateSnapshot;
+            try {
+              snap = snapshotScanoutState(words);
+            } catch {
+              return false;
+            }
+
+            if (snap.source !== SCANOUT_SOURCE_WDDM) return false;
+            if ((snap.basePaddrLo | snap.basePaddrHi) === 0) return false;
+
+            const layout = guestLayout;
+            const guest = guestU8;
+            if (!layout || !guest) {
+              postStub(typeof seq === "number" ? seq : undefined);
+              return true;
+            }
+
+            try {
+              const width = snap.width >>> 0;
+              const height = snap.height >>> 0;
+              const pitchBytes = snap.pitchBytes >>> 0;
+
+              if (width === 0 || height === 0) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+
+              // Only format supported by the shared scanout descriptor today.
+              if ((snap.format >>> 0) !== SCANOUT_FORMAT_B8G8R8X8) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+
+              const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
+              if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+              if (pitchBytes < rowBytes || pitchBytes % BYTES_PER_PIXEL_RGBA8 !== 0) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+
+              const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
+              if (basePaddr === 0n) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+              if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+              const basePaddrNum = Number(basePaddr);
+
+              const ramOffset = guestPaddrToRamOffset(layout, basePaddrNum);
+              if (ramOffset === null) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+
+              const srcBytes = pitchBytes * height;
+              const outBytes = rowBytes * height;
+              if (!Number.isSafeInteger(srcBytes) || !Number.isSafeInteger(outBytes) || srcBytes <= 0 || outBytes <= 0) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+              // Avoid attempting absurd allocations if the descriptor is corrupt.
+              const MAX_SCREENSHOT_BYTES = 256 * 1024 * 1024;
+              if (srcBytes > MAX_SCREENSHOT_BYTES || outBytes > MAX_SCREENSHOT_BYTES) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+              const end = ramOffset + srcBytes;
+              if (!Number.isSafeInteger(end) || end > guest.byteLength) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+
+              const out = new Uint8Array(outBytes);
+              // Convert little-endian B8G8R8X8 -> RGBA8 (alpha forced to 255).
+              for (let y = 0; y < height; y += 1) {
+                const srcRow = ramOffset + y * pitchBytes;
+                const dstRow = y * rowBytes;
+                for (let x = 0; x < width; x += 1) {
+                  const srcPx = srcRow + x * BYTES_PER_PIXEL_RGBA8;
+                  const dstPx = dstRow + x * BYTES_PER_PIXEL_RGBA8;
+                  out[dstPx + 0] = guest[srcPx + 2]; // R
+                  out[dstPx + 1] = guest[srcPx + 1]; // G
+                  out[dstPx + 2] = guest[srcPx + 0]; // B
+                  out[dstPx + 3] = 255;
+                }
+              }
+
+              if (includeCursor) {
+                try {
+                  compositeCursorOverRgba8(
+                    out,
+                    width,
+                    height,
+                    cursorEnabled,
+                    cursorImage,
+                    cursorWidth,
+                    cursorHeight,
+                    cursorX,
+                    cursorY,
+                    cursorHotX,
+                    cursorHotY,
+                  );
+                } catch {
+                  // Ignore; screenshot cursor compositing is best-effort.
+                }
+              }
+
+              postToMain(
+                {
+                  type: "screenshot",
+                  requestId: req.requestId,
+                  width,
+                  height,
+                  rgba8: out.buffer,
+                  origin: "top-left",
+                  ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+                },
+                [out.buffer],
+              );
+              return true;
+            } catch {
+              // If scanout was WDDM-owned but we couldn't read/convert the buffer, do not throw.
+              postStub(typeof seq === "number" ? seq : undefined);
+              return true;
+            }
+          };
+
+          if (tryPostWddmScanoutScreenshot()) return;
 
           // Screenshot contract note:
           // The worker-level screenshot API is used for deterministic hashing in tests, so it is
