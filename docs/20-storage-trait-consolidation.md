@@ -288,7 +288,15 @@ Goal: ensure there is exactly one place in-tree implementing raw/qcow2/vhd/spars
 1. Prefer passing `Box<dyn aero_storage::VirtualDisk>` through “platform wiring” layers.
 2. Limit crate-specific `DiskBackend` traits to truly internal needs.
 3. Keep `crates/aero-storage-adapters` as the shared home for adapter wrapper *types*.
-4. virtio-blk: keep `aero_storage::VirtualDisk` as the wiring boundary and treat backend traits as
+4. Standardize on consistent adapter naming and provide adapters in both directions:
+   - `VirtualDisk` → device backend: device crates typically re-export the canonical wrapper types
+     as `AeroStorageDiskAdapter` (e.g. `aero_devices::storage::AeroStorageDiskAdapter`,
+     `aero_devices_nvme::AeroStorageDiskAdapter`).
+   - Device backend → `VirtualDisk`: reverse adapters live in the device crates (e.g.
+     `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk`,
+     `aero_devices::storage::DeviceBackendAsAeroVirtualDisk`,
+     `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`).
+5. virtio-blk: keep `aero_storage::VirtualDisk` as the wiring boundary and treat backend traits as
    device-internal (adapt at the edge). (Optional cleanup) Evaluate consolidating virtio-blk device
    models on fewer backend traits:
     - `aero_devices::storage::DiskBackend`

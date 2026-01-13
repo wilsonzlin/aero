@@ -11,6 +11,10 @@
 //! traits (Rust orphan rules), but using a shared wrapper type avoids duplicating the
 //! underlying disk abstraction.
 //!
+//! Device crates often re-export these wrapper types as `AeroStorageDiskAdapter` so platform wiring
+//! code can use a consistent name across controllers (e.g. `aero_devices::storage::AeroStorageDiskAdapter`,
+//! `aero_devices_nvme::AeroStorageDiskAdapter`).
+//!
 //! See `docs/20-storage-trait-consolidation.md` for the repo-wide storage trait consolidation plan
 //! and guidance on where adapter types vs trait impls should live.
 //!
