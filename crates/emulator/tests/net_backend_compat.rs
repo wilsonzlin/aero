@@ -79,10 +79,15 @@ fn ring_backend_paths_work() {
         backend.stats(),
         L2TunnelRingBackendStats {
             tx_pushed_frames: 1,
+            tx_pushed_bytes: 1,
             tx_dropped_oversize: 0,
+            tx_dropped_oversize_bytes: 0,
             tx_dropped_full: 1,
+            tx_dropped_full_bytes: 1,
             rx_popped_frames: 1,
+            rx_popped_bytes: 2,
             rx_dropped_oversize: 0,
+            rx_dropped_oversize_bytes: 0,
             rx_corrupt: 0,
         }
     );

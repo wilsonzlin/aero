@@ -190,11 +190,16 @@ impl FrameRing for aero_ipc::wasm::SharedRingBuffer {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct L2TunnelRingBackendStats {
     pub tx_pushed_frames: u64,
+    pub tx_pushed_bytes: u64,
     pub tx_dropped_oversize: u64,
+    pub tx_dropped_oversize_bytes: u64,
     pub tx_dropped_full: u64,
+    pub tx_dropped_full_bytes: u64,
 
     pub rx_popped_frames: u64,
+    pub rx_popped_bytes: u64,
     pub rx_dropped_oversize: u64,
+    pub rx_dropped_oversize_bytes: u64,
     pub rx_corrupt: u64,
 }
 
@@ -260,15 +265,26 @@ impl<TX: FrameRing, RX: FrameRing> L2TunnelRingBackend<TX, RX> {
 
 impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX> {
     fn transmit(&mut self, frame: Vec<u8>) {
+        let frame_len = frame.len() as u64;
         if frame.len() > self.max_frame_bytes {
             self.stats.tx_dropped_oversize += 1;
+            self.stats.tx_dropped_oversize_bytes += frame_len;
             return;
         }
 
         match self.tx.try_push(&frame) {
-            Ok(()) => self.stats.tx_pushed_frames += 1,
-            Err(PushError::Full) => self.stats.tx_dropped_full += 1,
-            Err(PushError::TooLarge) => self.stats.tx_dropped_oversize += 1,
+            Ok(()) => {
+                self.stats.tx_pushed_frames += 1;
+                self.stats.tx_pushed_bytes += frame_len;
+            }
+            Err(PushError::Full) => {
+                self.stats.tx_dropped_full += 1;
+                self.stats.tx_dropped_full_bytes += frame_len;
+            }
+            Err(PushError::TooLarge) => {
+                self.stats.tx_dropped_oversize += 1;
+                self.stats.tx_dropped_oversize_bytes += frame_len;
+            }
         }
     }
 
@@ -284,12 +300,15 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
         for _ in 0..MAX_RX_POPS_PER_POLL {
             match self.rx.try_pop_vec() {
                 Ok(frame) => {
+                    let frame_len = frame.len() as u64;
                     if frame.len() > self.max_frame_bytes {
                         self.stats.rx_dropped_oversize += 1;
+                        self.stats.rx_dropped_oversize_bytes += frame_len;
                         continue;
                     }
 
                     self.stats.rx_popped_frames += 1;
+                    self.stats.rx_popped_bytes += frame_len;
                     return Some(frame);
                 }
                 Err(PopError::Empty) => return None,
@@ -374,10 +393,15 @@ mod tests {
             backend.stats(),
             L2TunnelRingBackendStats {
                 tx_pushed_frames: 0,
+                tx_pushed_bytes: 0,
                 tx_dropped_oversize: 1,
+                tx_dropped_oversize_bytes: 3,
                 tx_dropped_full: 0,
+                tx_dropped_full_bytes: 0,
                 rx_popped_frames: 0,
+                rx_popped_bytes: 0,
                 rx_dropped_oversize: 0,
+                rx_dropped_oversize_bytes: 0,
                 rx_corrupt: 0,
             }
         );
@@ -399,10 +423,15 @@ mod tests {
             backend.stats(),
             L2TunnelRingBackendStats {
                 tx_pushed_frames: 1,
+                tx_pushed_bytes: 1,
                 tx_dropped_oversize: 0,
+                tx_dropped_oversize_bytes: 0,
                 tx_dropped_full: 1,
+                tx_dropped_full_bytes: 1,
                 rx_popped_frames: 0,
+                rx_popped_bytes: 0,
                 rx_dropped_oversize: 0,
+                rx_dropped_oversize_bytes: 0,
                 rx_corrupt: 0,
             }
         );
@@ -426,10 +455,15 @@ mod tests {
             backend.stats(),
             L2TunnelRingBackendStats {
                 tx_pushed_frames: 0,
+                tx_pushed_bytes: 0,
                 tx_dropped_oversize: 1,
+                tx_dropped_oversize_bytes: 9,
                 tx_dropped_full: 0,
+                tx_dropped_full_bytes: 0,
                 rx_popped_frames: 0,
+                rx_popped_bytes: 0,
                 rx_dropped_oversize: 0,
+                rx_dropped_oversize_bytes: 0,
                 rx_corrupt: 0,
             }
         );
@@ -452,10 +486,15 @@ mod tests {
             backend.stats(),
             L2TunnelRingBackendStats {
                 tx_pushed_frames: 0,
+                tx_pushed_bytes: 0,
                 tx_dropped_oversize: 0,
+                tx_dropped_oversize_bytes: 0,
                 tx_dropped_full: 0,
+                tx_dropped_full_bytes: 0,
                 rx_popped_frames: 1,
+                rx_popped_bytes: 1,
                 rx_dropped_oversize: 1,
+                rx_dropped_oversize_bytes: 3,
                 rx_corrupt: 0,
             }
         );
@@ -514,10 +553,15 @@ mod tests {
             backend.stats(),
             L2TunnelRingBackendStats {
                 tx_pushed_frames: 0,
+                tx_pushed_bytes: 0,
                 tx_dropped_oversize: 0,
+                tx_dropped_oversize_bytes: 0,
                 tx_dropped_full: 0,
+                tx_dropped_full_bytes: 0,
                 rx_popped_frames: 0,
+                rx_popped_bytes: 0,
                 rx_dropped_oversize: MAX_RX_POPS_PER_POLL as u64,
+                rx_dropped_oversize_bytes: (MAX_RX_POPS_PER_POLL as u64) * 3,
                 rx_corrupt: 0,
             }
         );
@@ -574,10 +618,15 @@ mod tests {
             backend.stats(),
             L2TunnelRingBackendStats {
                 tx_pushed_frames: 0,
+                tx_pushed_bytes: 0,
                 tx_dropped_oversize: 0,
+                tx_dropped_oversize_bytes: 0,
                 tx_dropped_full: 0,
+                tx_dropped_full_bytes: 0,
                 rx_popped_frames: 0,
+                rx_popped_bytes: 0,
                 rx_dropped_oversize: 0,
+                rx_dropped_oversize_bytes: 0,
                 rx_corrupt: 1,
             }
         );

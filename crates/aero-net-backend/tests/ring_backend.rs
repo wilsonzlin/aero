@@ -98,10 +98,15 @@ fn ring_backend_transmit_counts_push_and_drop_reasons() {
         backend.stats(),
         L2TunnelRingBackendStats {
             tx_pushed_frames: 1,
+            tx_pushed_bytes: 3,
             tx_dropped_oversize: 2, // one TooLarge from ring, one pre-filtered oversize frame
+            tx_dropped_oversize_bytes: 9,
             tx_dropped_full: 1,
+            tx_dropped_full_bytes: 3,
             rx_popped_frames: 0,
+            rx_popped_bytes: 0,
             rx_dropped_oversize: 0,
+            rx_dropped_oversize_bytes: 0,
             rx_corrupt: 0,
         }
     );
@@ -136,10 +141,16 @@ fn ring_backend_poll_receive_drops_oversize_frames_with_bounded_work() {
         backend.stats(),
         L2TunnelRingBackendStats {
             tx_pushed_frames: 0,
+            tx_pushed_bytes: 0,
             tx_dropped_oversize: 0,
+            tx_dropped_oversize_bytes: 0,
             tx_dropped_full: 0,
+            tx_dropped_full_bytes: 0,
             rx_popped_frames: 0,
+            rx_popped_bytes: 0,
             rx_dropped_oversize: aero_net_backend::ring_backend::MAX_RX_POPS_PER_POLL as u64,
+            rx_dropped_oversize_bytes: (aero_net_backend::ring_backend::MAX_RX_POPS_PER_POLL as u64)
+                * 10,
             rx_corrupt: 0,
         }
     );

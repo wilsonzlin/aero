@@ -105,10 +105,15 @@ fn pc_machine_net_stats_smoke() {
     // Stats should start at zero.
     for key in [
         "tx_pushed_frames",
+        "tx_pushed_bytes",
         "tx_dropped_oversize",
+        "tx_dropped_oversize_bytes",
         "tx_dropped_full",
+        "tx_dropped_full_bytes",
         "rx_popped_frames",
+        "rx_popped_bytes",
         "rx_dropped_oversize",
+        "rx_dropped_oversize_bytes",
         "rx_corrupt",
     ] {
         let got = get_bigint(&stats, key);
