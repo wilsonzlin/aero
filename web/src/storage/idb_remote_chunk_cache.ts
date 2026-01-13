@@ -215,6 +215,9 @@ export class IdbRemoteChunkCache {
     } catch (err) {
       // If initialization fails, ensure we don't leak the DB connection.
       db.close();
+      if (isQuotaExceededError(err)) {
+        throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
+      }
       throw err;
     }
   }
@@ -226,15 +229,16 @@ export class IdbRemoteChunkCache {
   }
 
   async clear(): Promise<void> {
-    const tx = this.db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
-    const chunksStore = tx.objectStore("remote_chunks");
-    const metaStore = tx.objectStore("remote_chunk_meta");
-    await deleteAllChunksForCacheKey(chunksStore, this.cacheKey);
-    metaStore.delete(this.cacheKey);
+    let tx: IDBTransaction | null = null;
     try {
+      tx = this.db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
+      const chunksStore = tx.objectStore("remote_chunks");
+      const metaStore = tx.objectStore("remote_chunk_meta");
+      await deleteAllChunksForCacheKey(chunksStore, this.cacheKey);
+      metaStore.delete(this.cacheKey);
       await idbTxDone(tx);
     } catch (err) {
-      if (isQuotaExceededError(err) || isQuotaExceededError(tx.error)) {
+      if (isQuotaExceededError(err) || isQuotaExceededError(tx?.error)) {
         throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
       }
       throw err;
