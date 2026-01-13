@@ -74,8 +74,13 @@ impl XhciPciDevice {
     pub fn new() -> Self {
         let irq = AtomicIrqLine::default();
 
-        // Start from the canonical QEMU-style xHCI PCI profile so BAR definitions and class code are
-        // consistent with the guest-visible config-space stub used by `PcPlatform`.
+        // Start from the canonical QEMU-style xHCI PCI profile so BAR definitions and class code
+        // stay consistent across runtimes.
+        //
+        // Keep this in sync with:
+        // - `crates/devices/src/pci/profile.rs` (`USB_XHCI_QEMU`),
+        // - `web/src/io/devices/xhci.ts` (web runtime wrapper), and
+        // - `docs/usb-xhci.md` (guest-facing contract).
         let mut config = profile::USB_XHCI_QEMU.build_config_space();
 
         // Expose a single-vector MSI capability so guests can opt into message-signaled interrupts.
@@ -388,6 +393,7 @@ fn all_ones(size: usize) -> u64 {
 mod tests {
     use super::XhciPciDevice;
     use crate::pci::msi::PCI_CAP_ID_MSI;
+    use crate::pci::{profile, PciBarDefinition};
     use crate::pci::PciDevice;
 
     #[test]
@@ -398,5 +404,27 @@ mod tests {
             "xHCI device should expose an MSI capability"
         );
     }
-}
 
+    #[test]
+    fn uses_canonical_qemu_pci_profile() {
+        let dev = XhciPciDevice::default();
+
+        let ids = dev.config().vendor_device_id();
+        assert_eq!(ids.vendor_id, profile::USB_XHCI_QEMU.vendor_id);
+        assert_eq!(ids.device_id, profile::USB_XHCI_QEMU.device_id);
+
+        let class = dev.config().class_code();
+        assert_eq!(class.class, profile::USB_XHCI_QEMU.class.base_class);
+        assert_eq!(class.subclass, profile::USB_XHCI_QEMU.class.sub_class);
+        assert_eq!(class.prog_if, profile::USB_XHCI_QEMU.class.prog_if);
+
+        assert_eq!(
+            dev.config().bar_definition(0),
+            Some(PciBarDefinition::Mmio32 {
+                size: u32::try_from(profile::XHCI_MMIO_BAR_SIZE)
+                    .expect("xHCI BAR size should fit in u32"),
+                prefetchable: false,
+            })
+        );
+    }
+}
