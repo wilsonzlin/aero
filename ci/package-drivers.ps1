@@ -336,6 +336,37 @@ function Get-RelativePathForZipEntry {
     return $pathFull.Substring($prefix.Length) -replace "\\", "/"
 }
 
+function Test-IsExcludedArtifactRelPath {
+    param(
+        [Parameter(Mandatory = $true)][string] $RelPath,
+        [switch] $IsDirectory
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RelPath)) {
+        return $true
+    }
+
+    $parts = @($RelPath -split "/+")
+    foreach ($p in $parts) {
+        if ([string]::IsNullOrEmpty($p)) { continue }
+
+        # Hidden files/dirs and macOS metadata directories are not meaningful payload and can cause
+        # host-specific nondeterminism in local builds (Finder/Explorer may create these).
+        if ($p.StartsWith(".")) { return $true }
+        if ($p.Equals("__MACOSX", [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+
+    if (-not $IsDirectory) {
+        $leaf = $parts[$parts.Count - 1]
+        $leafLower = $leaf.ToLowerInvariant()
+        if ($leafLower -in @("thumbs.db", "ehthumbs.db", "desktop.ini")) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Get-DeterministicZipEntriesFromFolder {
     param([Parameter(Mandatory = $true)][string] $Folder)
 
@@ -345,6 +376,9 @@ function Get-DeterministicZipEntriesFromFolder {
     $dirs = @(Get-ChildItem -LiteralPath $folderFull -Recurse -Directory -Force -ErrorAction SilentlyContinue)
     foreach ($d in $dirs) {
         $rel = Get-RelativePathForZipEntry -Root $folderFull -Path $d.FullName
+        if (Test-IsExcludedArtifactRelPath -RelPath $rel -IsDirectory) {
+            continue
+        }
         if ([string]::IsNullOrWhiteSpace($rel)) {
             continue
         }
@@ -358,6 +392,9 @@ function Get-DeterministicZipEntriesFromFolder {
     $files = @(Get-ChildItem -LiteralPath $folderFull -Recurse -File -Force -ErrorAction SilentlyContinue)
     foreach ($f in $files) {
         $rel = Get-RelativePathForZipEntry -Root $folderFull -Path $f.FullName
+        if (Test-IsExcludedArtifactRelPath -RelPath $rel) {
+            continue
+        }
         if ([string]::IsNullOrWhiteSpace($rel)) {
             continue
         }
