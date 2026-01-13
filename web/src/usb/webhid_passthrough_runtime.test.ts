@@ -145,6 +145,146 @@ describe("WebHidPassthroughRuntime", () => {
     expect(Array.from(push.mock.calls[0][1] as Uint8Array)).toEqual([1, 2, 3]);
   });
 
+  it("clamps oversized inputreport payloads before forwarding to push_input_report", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice({
+        collections: [
+          {
+            usagePage: 1,
+            usage: 2,
+            type: "application",
+            children: [],
+            inputReports: [
+              {
+                reportId: 1,
+                items: [{ reportSize: 8, reportCount: 4 }],
+              },
+            ],
+            outputReports: [],
+            featureReports: [],
+          },
+        ] as unknown as HIDCollectionInfo[],
+      });
+
+      const push = vi.fn();
+      const bridge: WebHidPassthroughBridgeLike = {
+        push_input_report: push,
+        drain_next_output_report: vi.fn(() => null),
+        configured: vi.fn(() => true),
+        free: vi.fn(),
+      };
+
+      const runtime = new WebHidPassthroughRuntime({
+        createBridge: () => bridge,
+        pollIntervalMs: 0,
+      });
+      await runtime.attachDevice(device as unknown as HIDDevice);
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3, 4], 0);
+      device.dispatchInputReport(1, huge);
+
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(push.mock.calls[0][0]).toBe(1);
+      const payload = push.mock.calls[0][1] as Uint8Array;
+      expect(payload.byteLength).toBe(4);
+      expect(Array.from(payload)).toEqual([1, 2, 3, 4]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("zero-pads short inputreport payloads before forwarding to push_input_report", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice({
+        collections: [
+          {
+            usagePage: 1,
+            usage: 2,
+            type: "application",
+            children: [],
+            inputReports: [
+              {
+                reportId: 1,
+                items: [{ reportSize: 8, reportCount: 4 }],
+              },
+            ],
+            outputReports: [],
+            featureReports: [],
+          },
+        ] as unknown as HIDCollectionInfo[],
+      });
+
+      const push = vi.fn();
+      const bridge: WebHidPassthroughBridgeLike = {
+        push_input_report: push,
+        drain_next_output_report: vi.fn(() => null),
+        configured: vi.fn(() => true),
+        free: vi.fn(),
+      };
+
+      const runtime = new WebHidPassthroughRuntime({
+        createBridge: () => bridge,
+        pollIntervalMs: 0,
+      });
+      await runtime.attachDevice(device as unknown as HIDDevice);
+
+      device.dispatchInputReport(1, new Uint8Array([9, 8]));
+
+      expect(push).toHaveBeenCalledTimes(1);
+      const payload = push.mock.calls[0][1] as Uint8Array;
+      expect(Array.from(payload)).toEqual([9, 8, 0, 0]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("hard-caps unknown inputreport sizes before forwarding to push_input_report", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice({
+        collections: [
+          {
+            usagePage: 1,
+            usage: 2,
+            type: "application",
+            children: [],
+            inputReports: [],
+            outputReports: [],
+            featureReports: [],
+          },
+        ] as unknown as HIDCollectionInfo[],
+      });
+
+      const push = vi.fn();
+      const bridge: WebHidPassthroughBridgeLike = {
+        push_input_report: push,
+        drain_next_output_report: vi.fn(() => null),
+        configured: vi.fn(() => true),
+        free: vi.fn(),
+      };
+
+      const runtime = new WebHidPassthroughRuntime({
+        createBridge: () => bridge,
+        pollIntervalMs: 0,
+      });
+      await runtime.attachDevice(device as unknown as HIDDevice);
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3], 0);
+      device.dispatchInputReport(99, huge);
+
+      expect(push).toHaveBeenCalledTimes(1);
+      const payload = push.mock.calls[0][1] as Uint8Array;
+      expect(payload.byteLength).toBe(64);
+      expect(Array.from(payload.slice(0, 3))).toEqual([1, 2, 3]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("drains output reports and calls the correct WebHID send method", async () => {
     const device = new FakeHidDevice();
 

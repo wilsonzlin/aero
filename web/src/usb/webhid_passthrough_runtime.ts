@@ -1,4 +1,5 @@
 import { normalizeCollections, type HidCollectionInfo, type NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
+import { computeInputReportPayloadByteLengths } from "../hid/hid_report_sizes";
 import type { WebHidPassthroughManager, WebHidPassthroughState } from "../platform/webhid_passthrough";
 
 export type WebHidPassthroughOutputReport = {
@@ -97,12 +98,7 @@ function defaultLogger(level: "debug" | "info" | "warn" | "error", message: stri
   }
 }
 
-function copyDataView(view: DataView): Uint8Array {
-  const src = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-  const out = new Uint8Array(src.byteLength);
-  out.set(src);
-  return out;
-}
+const UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES = 64;
 
 function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   // WebHID expects `BufferSource`. Some TS libdefs model `BufferSource` as
@@ -178,11 +174,56 @@ export class WebHidPassthroughRuntime {
       const normalizedCollections = normalizeCollections(device.collections as unknown as readonly HidCollectionInfo[], {
         validate: true,
       });
+      const expectedInputPayloadBytes = computeInputReportPayloadByteLengths(normalizedCollections);
+      const warned = new Set<string>();
+      const warnOnce = (key: string, message: string): void => {
+        if (warned.has(key)) return;
+        warned.add(key);
+        this.#log("warn", message);
+      };
       bridge = this.#createBridge({ device, normalizedCollections });
 
       const onInputReport = (event: HIDInputReportEvent): void => {
         try {
-          bridge?.push_input_report(event.reportId, copyDataView(event.data));
+          const view = event.data;
+          if (!(view instanceof DataView)) return;
+
+          const reportId = (typeof event.reportId === "number" ? event.reportId : 0) >>> 0;
+          const srcLen = view.byteLength;
+          const expected = expectedInputPayloadBytes.get(reportId);
+          let destLen: number;
+          if (expected !== undefined) {
+            destLen = expected;
+            if (srcLen > expected) {
+              warnOnce(
+                `${reportId}:truncated`,
+                `[webhid] inputreport length mismatch (reportId=${reportId} expected=${expected} got=${srcLen}); truncating`,
+              );
+            } else if (srcLen < expected) {
+              warnOnce(
+                `${reportId}:padded`,
+                `[webhid] inputreport length mismatch (reportId=${reportId} expected=${expected} got=${srcLen}); zero-padding`,
+              );
+            }
+          } else if (srcLen > UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES) {
+            destLen = UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES;
+            warnOnce(
+              `${reportId}:hardCap`,
+              `[webhid] inputreport reportId=${reportId} has unknown expected size; capping ${srcLen} bytes to ${UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES}`,
+            );
+          } else {
+            destLen = srcLen;
+          }
+
+          const copyLen = Math.min(srcLen, destLen);
+          const src = new Uint8Array(view.buffer, view.byteOffset, copyLen);
+          if (copyLen === destLen) {
+            bridge?.push_input_report(reportId, src);
+          } else {
+            const out = new Uint8Array(destLen);
+            out.set(src);
+            bridge?.push_input_report(reportId, out);
+          }
         } catch (err) {
           this.#log("warn", "WebHID inputreport forwarding failed", err);
         }
