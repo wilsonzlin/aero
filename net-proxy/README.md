@@ -63,7 +63,10 @@ If you're using the browser networking clients in `web/src/net`:
     absolute DoH URL.
 
 ```ts
-import { WebSocketTcpProxyClient, WebSocketUdpProxyClient, resolveAOverDoh } from "./net";
+// Browser-side networking helpers.
+// In this repo they live under `web/src/net` (e.g. `src/main.ts` imports from `../web/src/...`).
+// Adjust the import path for your setup.
+import { WebSocketTcpProxyClient, WebSocketUdpProxyClient, resolveAOverDoh } from "../web/src/net";
 
 const proxyUrl = "http://127.0.0.1:8081";
 
