@@ -25,6 +25,7 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   - virtio-input keyboard report (`ReportID=1`)
   - virtio-input mouse report (`ReportID=2`)
 - Can query/reset the virtio-input driver diagnostic counters (`--counters`, `--counters-json`, `--reset-counters`).
+- Can get/set the virtio-input driver's diagnostics log mask at runtime (`--get-log-mask`, `--set-log-mask`) when using a DBG/diagnostics build of the driver.
 - Optionally writes a keyboard LED output report (`ReportID=1`) via:
   - `WriteFile` (exercises `IOCTL_HID_WRITE_REPORT`)
   - `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`)
@@ -175,6 +176,25 @@ Reset virtio-input driver diagnostic counters:
 ```bat
 hidtest.exe --reset-counters
 ```
+
+Toggle the virtio-input driver diagnostics log mask at runtime (**DBG/diagnostics driver builds only**):
+
+```bat
+hidtest.exe --get-log-mask
+hidtest.exe --set-log-mask 0x8000000F
+```
+
+This updates the same `DiagnosticsMask` that is normally read from the registry at `DriverEntry`:
+
+`HKLM\\System\\CurrentControlSet\\Services\\aero_virtio_input\\Parameters\\DiagnosticsMask`
+
+Mask bits (see `drivers/windows7/virtio-input/src/log.h`):
+
+- `0x00000001` `VIOINPUT_LOG_ERROR`
+- `0x00000002` `VIOINPUT_LOG_IOCTL`
+- `0x00000004` `VIOINPUT_LOG_QUEUE`
+- `0x00000008` `VIOINPUT_LOG_VIRTQ`
+- `0x80000000` `VIOINPUT_LOG_VERBOSE`
 
 ### Counters interpretation
 
