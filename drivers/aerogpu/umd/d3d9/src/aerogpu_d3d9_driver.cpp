@@ -5196,7 +5196,6 @@ HRESULT ensure_draw_pipeline_locked(Device* dev) {
   if (!dev) {
     return E_INVALIDARG;
   }
-
   const HRESULT hr = ensure_shader_bindings_locked(dev, /*strict_draw_validation=*/true);
   if (FAILED(hr)) {
     return hr;
@@ -5259,7 +5258,7 @@ static HRESULT ensure_fixedfunc_vs_fallback_locked(Device* dev, Shader** out_vs)
       vs = dev->fixedfunc_vs_tex1_nodiffuse;
       break;
     case kSupportedFvfXyzDiffuse:
-      // XYZ vertices require a WVP transform in the VS.
+      // XYZ vertices require world/view/projection transforms in the VS.
       vs = dev->fixedfunc_vs_xyz_diffuse;
       break;
     case kSupportedFvfXyzDiffuseTex1:
@@ -6273,6 +6272,10 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
     for (uint32_t i = 0; i < vertex_count; ++i) {
       const uint8_t* src = src_vertices + static_cast<size_t>(i) * src_stride;
       uint8_t* dst = dst_vertices + static_cast<size_t>(i) * dst_stride;
+      // Deterministic output: clear any destination elements that are not written
+      // by the source FVF/decl mapping (e.g. dst has TEX0 but src does not).
+      // Honor D3DPV_DONOTCOPYDATA by preserving the existing destination vertex
+      // data where we are not explicitly writing.
       if (!do_not_copy_data) {
         std::memset(dst, 0, dst_stride);
       }
@@ -8577,6 +8580,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fixedfunc_ps;
       dev->fixedfunc_ps = nullptr;
     }
+    if (dev->fixedfunc_ps_xyz) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_xyz->handle);
+      delete dev->fixedfunc_ps_xyz;
+      dev->fixedfunc_ps_xyz = nullptr;
+    }
     if (dev->fixedfunc_vs_tex1) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_tex1->handle);
       delete dev->fixedfunc_vs_tex1;
@@ -8891,8 +8899,14 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   }
 
   // AeroGPU only supports 2D textures/surfaces (CREATE_TEXTURE2D) plus buffers.
+  //
+  // Compatibility: some D3D9 runtimes/headers appear to use Type=0 for surface
+  // resources. Accept this encoding (treat as a non-array surface) rather than
+  // rejecting it as an unknown type.
   if (create_size_bytes == 0 &&
-      !d3d9_validate_nonbuffer_type(create_type_u32, create_depth, D3d9NonBufferTypeValidation::RejectUnknown)) {
+      !d3d9_validate_nonbuffer_type(create_type_u32,
+                                    create_depth,
+                                    D3d9NonBufferTypeValidation::AllowUnknownAsSurface)) {
     return trace.ret(D3DERR_INVALIDCALL);
   }
 
@@ -12605,6 +12619,65 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
   return trace.ret(S_OK);
 }
 
+HRESULT AEROGPU_D3D9_CALL device_set_transform(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t state,
+    const float* pMatrix) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetTransform,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(state),
+                      d3d9_trace_arg_ptr(pMatrix),
+                      0);
+  if (!hDevice.pDrvPrivate || !pMatrix) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (state >= Device::kTransformCacheCount) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memcpy(dev->transform_matrices[state], pMatrix, 16 * sizeof(float));
+
+  if (state == 2u || state == 3u || state == 256u) {
+    dev->fixedfunc_matrix_dirty = true;
+  }
+  stateblock_record_transform_locked(dev, state, dev->transform_matrices[state]);
+
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_multiply_transform(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t state,
+    const float* pMatrix) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceMultiplyTransform,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(state),
+                      d3d9_trace_arg_ptr(pMatrix),
+                      0);
+  if (!hDevice.pDrvPrivate || !pMatrix) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (state >= Device::kTransformCacheCount) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  float tmp[16];
+  d3d9_mul_mat4_row_major(dev->transform_matrices[state], pMatrix, tmp);
+  std::memcpy(dev->transform_matrices[state], tmp, sizeof(tmp));
+
+  if (state == 2u || state == 3u || state == 256u) {
+    dev->fixedfunc_matrix_dirty = true;
+  }
+  stateblock_record_transform_locked(dev, state, dev->transform_matrices[state]);
+
+  return trace.ret(S_OK);
+}
+
 HRESULT AEROGPU_D3D9_CALL device_create_vertex_decl(
     D3DDDI_HDEVICE hDevice,
     const void* pDecl,
@@ -12735,34 +12808,32 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
       //   COLOR0    D3DCOLOR @16
       //   TEXCOORD0 float2 @20
       //   END
-      if (is_end(e3)) {
-        const bool e0_xyzw_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
-                                (e0.Method == kD3dDeclMethodDefault) &&
-                                (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
-        const bool e1_xyzw_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
-                                (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
-        const bool e2_xyzw_ok = (e2.Stream == 0) && (e2.Offset == 20) && (e2.Type == kD3dDeclTypeFloat2) &&
-                                (e2.Method == kD3dDeclMethodDefault) &&
-                                (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
-        if (e0_xyzw_ok && e1_xyzw_ok && e2_xyzw_ok) {
-          implied_fvf = kSupportedFvfXyzrhwDiffuseTex1;
-        }
+      const bool e0_xyzw_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
+                              (e0.Method == kD3dDeclMethodDefault) &&
+                              (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
+      const bool e1_xyzw_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                              (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
+      const bool e2_xyzw_ok = (e2.Stream == 0) && (e2.Offset == 20) && (e2.Type == kD3dDeclTypeFloat2) &&
+                              (e2.Method == kD3dDeclMethodDefault) &&
+                              (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
+      if (e0_xyzw_ok && e1_xyzw_ok && e2_xyzw_ok && is_end(e3)) {
+        implied_fvf = kSupportedFvfXyzrhwDiffuseTex1;
+      }
 
-        // XYZ | DIFFUSE | TEX1:
-        //   POSITION float3 @0
-        //   COLOR0    D3DCOLOR @12
-        //   TEXCOORD0 float2 @16
-        //   END
-        const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
-                               (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
-        const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
-                               (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
-        const bool e2_xyz_ok = (e2.Stream == 0) && (e2.Offset == 16) && (e2.Type == kD3dDeclTypeFloat2) &&
-                               (e2.Method == kD3dDeclMethodDefault) &&
-                               (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
-        if (e0_xyz_ok && e1_xyz_ok && e2_xyz_ok) {
-          implied_fvf = kSupportedFvfXyzDiffuseTex1;
-        }
+      // XYZ | DIFFUSE | TEX1:
+      //   POSITION float3 @0
+      //   COLOR0    D3DCOLOR @12
+      //   TEXCOORD0 float2 @16
+      //   END
+      const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
+                             (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
+      const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                             (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
+      const bool e2_xyz_ok = (e2.Stream == 0) && (e2.Offset == 16) && (e2.Type == kD3dDeclTypeFloat2) &&
+                             (e2.Method == kD3dDeclMethodDefault) &&
+                             (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
+      if (e0_xyz_ok && e1_xyz_ok && e2_xyz_ok && is_end(e3)) {
+        implied_fvf = kSupportedFvfXyzDiffuseTex1;
       }
     }
   }
@@ -19830,7 +19901,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, stride_bytes)) {
     return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
-
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
@@ -20008,7 +20078,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, pDraw->VertexStreamZeroStride)) {
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
-
   const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
@@ -20187,7 +20256,6 @@ static HRESULT device_draw_indexed_primitive2_locked(
   ib_cmd->format = d3d9_index_format_to_aerogpu(pDraw->IndexDataFormat);
   ib_cmd->offset_bytes = 0;
   ib_cmd->reserved0 = 0;
-
   const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
