@@ -107,6 +107,16 @@ It does **not** match:
 
 See also: `docs/pci-hwids.md` (QEMU behavior + spec mapping).
 
+### Static INF validation (`verify-inf.ps1`)
+
+To catch accidental INF edits that would break Aero’s Windows 7 virtio-input packaging/contract expectations, run:
+
+```powershell
+.\scripts\verify-inf.ps1
+```
+
+This performs a lightweight static check (string/regex based) over `inf/aero_virtio_input.inf` and exits non-zero with an actionable error list if anything required is missing.
+
 If your emulator/QEMU build uses a different PCI device ID, update:
 
 - `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` → `[Aero.NTx86]` / `[Aero.NTamd64]`
