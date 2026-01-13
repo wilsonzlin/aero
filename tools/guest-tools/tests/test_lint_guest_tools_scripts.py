@@ -23,6 +23,70 @@ def _load_linter_module():
 
 lint_guest_tools_scripts = _load_linter_module()
 
+def _synthetic_setup_text(
+    *,
+    include_cdd_base_path: bool = True,
+    include_skipstorage_flag: bool = True,
+    include_storage_skip_marker: bool = True,
+    include_cert_policy_gating: bool = True,
+) -> str:
+    lines: list[str] = []
+    if include_cdd_base_path:
+        lines.append(r"HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase")
+
+    lines.extend(
+        [
+            "rem CriticalDeviceDatabase reference (not necessarily full path)",
+            "CriticalDeviceDatabase",
+            "AERO_VIRTIO_BLK_SERVICE",
+            "AERO_VIRTIO_BLK_HWIDS",
+            'reg.exe add "%SVC_KEY%" /v Start /t REG_DWORD /d 0 /f',
+            'if /i "%SIGNING_POLICY%"=="test" echo ok',
+            'if /i "%SIGNING_POLICY%"=="production" echo ok',
+            'if /i "%SIGNING_POLICY%"=="none" echo ok',
+            "/testsigning",
+            "/nointegritychecks",
+            "/forcesigningpolicy:none /forcesigningpolicy:test /forcesigningpolicy:production",
+        ]
+    )
+
+    if include_skipstorage_flag:
+        lines.append("/skipstorage")
+
+    if include_storage_skip_marker:
+        lines.extend(
+            [
+                r'set "STATE_STORAGE_SKIPPED=C:\AeroGuestTools\storage-preseed.skipped.txt"',
+                r'> "%STATE_STORAGE_SKIPPED%" echo marker',
+            ]
+        )
+
+    if include_cert_policy_gating:
+        lines.append('if /i "%SIGNING_POLICY%"=="test" set "CERTS_REQUIRED=1"')
+
+    return "\n".join(lines) + "\n"
+
+
+def _synthetic_uninstall_text() -> str:
+    return "\n".join(
+        [
+            "testsigning.enabled-by-aero.txt",
+            "nointegritychecks.enabled-by-aero.txt",
+        ]
+    )
+
+
+def _synthetic_verify_text() -> str:
+    return "\n".join(
+        [
+            "# CriticalDeviceDatabase section exists",
+            "CriticalDeviceDatabase",
+            "virtio_blk_boot_critical",
+            "manifest.json",
+            "signing_policy",
+        ]
+    )
+
 
 class LintGuestToolsScriptsTests(unittest.TestCase):
     def test_linter_passes_on_repo_scripts(self) -> None:
@@ -50,43 +114,9 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             uninstall_cmd = tmp_path / "uninstall.cmd"
             verify_ps1 = tmp_path / "verify.ps1"
 
-            setup_cmd.write_text(
-                "\n".join(
-                    [
-                        "rem CriticalDeviceDatabase (but missing full HKLM\\\\SYSTEM... path)",
-                        "CriticalDeviceDatabase",
-                        "AERO_VIRTIO_BLK_SERVICE",
-                        "AERO_VIRTIO_BLK_HWIDS",
-                        "reg.exe add \"%SVC_KEY%\" /v Start /t REG_DWORD /d 0 /f",
-                        "signing_policy=test signing_policy=production signing_policy=none",
-                        "/testsigning",
-                        "/nointegritychecks",
-                        "/forcesigningpolicy:none /forcesigningpolicy:test /forcesigningpolicy:production",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            uninstall_cmd.write_text(
-                "\n".join(
-                    [
-                        "testsigning.enabled-by-aero.txt",
-                        "nointegritychecks.enabled-by-aero.txt",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            verify_ps1.write_text(
-                "\n".join(
-                    [
-                        "# CriticalDeviceDatabase section exists",
-                        "CriticalDeviceDatabase",
-                        "virtio_blk_boot_critical",
-                        "manifest.json",
-                        "signing_policy",
-                    ]
-                ),
-                encoding="utf-8",
-            )
+            setup_cmd.write_text(_synthetic_setup_text(include_cdd_base_path=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
 
             errs = lint_guest_tools_scripts.lint_files(
                 setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
@@ -112,7 +142,66 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
                 )
             self.assertNotEqual(rc, 0, msg=f"expected failure. stdout:\n{stdout.getvalue()}\nstderr:\n{stderr.getvalue()}")
 
+    def test_linter_fails_when_setup_missing_skipstorage_flag(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_skipstorage_flag=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("/skipstorage" in e for e in errs),
+                msg="expected missing /skipstorage error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_storage_skip_marker(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_storage_skip_marker=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("storage preseed skip marker" in e for e in errs),
+                msg="expected missing storage-preseed marker error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_cert_policy_gating(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_cert_policy_gating=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Certificate install requirement" in e for e in errs),
+                msg="expected missing cert-policy gating error. Errors:\n" + "\n".join(errs),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -47,6 +47,10 @@ def _all_contains(substrings: Sequence[str]) -> Callable[[str], bool]:
     return lambda text: all(s in text for s in substrings)
 
 
+def _any_contains(substrings: Sequence[str]) -> Callable[[str], bool]:
+    return lambda text: any(s in text for s in substrings)
+
+
 def _regex(pattern: str, *, flags: int = re.IGNORECASE | re.MULTILINE) -> Callable[[str], bool]:
     rx = re.compile(pattern, flags)
     return lambda text: rx.search(text) is not None
@@ -55,6 +59,11 @@ def _regex(pattern: str, *, flags: int = re.IGNORECASE | re.MULTILINE) -> Callab
 def _all_regex(patterns: Sequence[str], *, flags: int = re.IGNORECASE | re.MULTILINE) -> Callable[[str], bool]:
     compiled = [re.compile(p, flags) for p in patterns]
     return lambda text: all(rx.search(text) is not None for rx in compiled)
+
+
+def _any_regex(patterns: Sequence[str], *, flags: int = re.IGNORECASE | re.MULTILINE) -> Callable[[str], bool]:
+    compiled = [re.compile(p, flags) for p in patterns]
+    return lambda text: any(rx.search(text) is not None for rx in compiled)
 
 
 def _read_text(path: Path) -> str:
@@ -141,6 +150,33 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             expected_hint="/forcesigningpolicy:none, /forcesigningpolicy:test, /forcesigningpolicy:production",
             predicate=_all_contains(
                 ["/forcesigningpolicy:none", "/forcesigningpolicy:test", "/forcesigningpolicy:production"]
+            ),
+        ),
+        Invariant(
+            description="Supports /skipstorage flag (allows intentionally skipping boot-critical storage preseed)",
+            expected_hint="/skipstorage",
+            predicate=_regex(r"/skipstorage\b"),
+        ),
+        Invariant(
+            description="Writes storage preseed skip marker file when /skipstorage is used",
+            expected_hint='storage-preseed.skipped.txt (written via > "%STATE_STORAGE_SKIPPED%" ...)',
+            predicate=lambda text: (
+                re.search(r"storage-preseed\.skipped\.txt", text, re.IGNORECASE) is not None
+                and _any_regex(
+                    [
+                        # Common implementation: write via marker variable.
+                        r'(?im)[>]{1,2}\s*"?([%!])STATE_STORAGE_SKIPPED\1"?',
+                        # Alternate: write directly to a path containing the marker filename.
+                        r"(?im)[>]{1,2}[^\r\n]*storage-preseed\.skipped\.txt",
+                    ]
+                )(text)
+            ),
+        ),
+        Invariant(
+            description="Certificate install requirement is gated by signing_policy (certs required only for test)",
+            expected_hint='if /i "%SIGNING_POLICY%"=="test" set "CERTS_REQUIRED=1"',
+            predicate=_regex(
+                r'\bif\b\s+(?:/i\s+)?"?%SIGNING_POLICY%"?\s*==\s*"test"\s+set\s+"?CERTS_REQUIRED=1"?'
             ),
         ),
     ]
