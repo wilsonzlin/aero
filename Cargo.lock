@@ -441,6 +441,7 @@ dependencies = [
  "aero-net-backend",
  "aero-net-e1000",
  "aero-net-pump",
+ "aero-pc-constants",
  "aero-pc-platform",
  "aero-pci-firmware-adapter",
  "aero-platform",

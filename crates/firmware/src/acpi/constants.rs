@@ -6,7 +6,7 @@
 /// The firmware places ACPI reclaimable and NVS windows below the first reserved MMIO region. On
 /// the PC platform that means clamping below both this address and the PCIe ECAM window
 /// (`aero_pc_constants::PCIE_ECAM_BASE`).
-pub const DEFAULT_PCI_MMIO_START: u64 = 0xC000_0000;
+pub const DEFAULT_PCI_MMIO_START: u64 = aero_pc_constants::PCI_MMIO_BASE;
 
 /// LAPIC MMIO base as expected by Windows on PC-compatible platforms.
 pub const LOCAL_APIC_BASE: u32 = 0xFEE0_0000;

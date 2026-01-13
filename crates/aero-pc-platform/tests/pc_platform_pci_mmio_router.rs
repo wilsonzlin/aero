@@ -1,5 +1,6 @@
 use aero_devices::pci::profile::{HDA_ICH6, NIC_E1000_82540EM};
 use aero_devices::pci::{PciResourceAllocatorConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_pc_constants::PCI_MMIO_BASE;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use memory::MemoryBus as _;
 
@@ -70,10 +71,13 @@ fn pci_mmio_window_routes_multiple_devices_and_tracks_bar_reprogramming() {
     pc.memory.write_u32(e1000_base, 0x1111_2222);
     assert_eq!(pc.memory.read_u32(e1000_base), 0x1111_2222);
 
-    // Move both BARs to non-overlapping addresses within the PCI MMIO window.
+    // Move both BARs to non-overlapping addresses within the ACPI-reported PCI MMIO window, but
+    // *below* the default allocator window (so this test catches ACPI-vs-runtime mapping drift).
     let alloc_cfg = PciResourceAllocatorConfig::default();
-    let new_hda_base = alloc_cfg.mmio_base + 0x0030_0000;
-    let new_e1000_base = alloc_cfg.mmio_base + 0x0040_0000;
+    let new_hda_base = PCI_MMIO_BASE + 0x0030_0000;
+    let new_e1000_base = PCI_MMIO_BASE + 0x0040_0000;
+    assert!(new_hda_base < alloc_cfg.mmio_base);
+    assert!(new_e1000_base < alloc_cfg.mmio_base);
     assert_eq!(new_hda_base % 0x4000, 0);
     assert_eq!(new_e1000_base % 0x20_000, 0);
 
@@ -101,4 +105,17 @@ fn pci_mmio_window_routes_multiple_devices_and_tracks_bar_reprogramming() {
     // New bases should decode and preserve state independently.
     assert_ne!(pc.memory.read_u32(new_hda_base + 0x08) & 1, 0);
     assert_eq!(pc.memory.read_u32(new_e1000_base), 0x1111_2222);
+
+    // (Optional sanity check): relocating a BAR outside the ACPI window should not decode.
+    let outside_base = 0xA000_0000u64;
+    assert!(outside_base < PCI_MMIO_BASE);
+    write_cfg_u32(
+        &mut pc,
+        e1000_bdf.bus,
+        e1000_bdf.device,
+        e1000_bdf.function,
+        0x10,
+        outside_base as u32,
+    );
+    assert_eq!(pc.memory.read_u32(outside_base), 0xFFFF_FFFF);
 }

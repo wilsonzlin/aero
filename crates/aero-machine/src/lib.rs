@@ -74,6 +74,7 @@ use aero_io_snapshot::io::storage::dskc::DiskControllersSnapshot;
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
 use aero_net_pump::{tick_e1000, tick_virtio_net, VirtioNetBackendAdapter};
+use aero_pc_constants::{PCI_MMIO_BASE, PCI_MMIO_SIZE};
 use aero_pc_platform::{PciIoBarHandler, PciIoBarRouter};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
@@ -4740,7 +4741,7 @@ impl Machine {
 
             if use_legacy_vga {
                 // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
-                // MMIO router at `PciResourceAllocatorConfig::mmio_base` (0xE000_0000).
+                // MMIO router (within the ACPI-reported PCI MMIO window).
                 pci_cfg
                     .borrow_mut()
                     .bus_mut()
@@ -5111,15 +5112,14 @@ impl Machine {
             let aerogpu = self.aerogpu.clone();
             let aerogpu_mmio = self.aerogpu_mmio.clone();
 
-            // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
-            // immediately without needing dynamic MMIO unmap/remap support in the physical memory
-            // bus.
+            // Map the full ACPI-reported PCI MMIO window so BAR relocation is reflected
+            // immediately even when the guest OS programs a BAR outside the allocator's default
+            // sub-window.
             self.mem.map_mmio_once(
-                pci_allocator_cfg.mmio_base,
-                pci_allocator_cfg.mmio_size,
+                PCI_MMIO_BASE,
+                PCI_MMIO_SIZE,
                 || {
-                    let mut router =
-                        PciBarMmioRouter::new(pci_allocator_cfg.mmio_base, pci_cfg.clone());
+                    let mut router = PciBarMmioRouter::new(PCI_MMIO_BASE, pci_cfg.clone());
                     if let Some(ahci) = ahci.clone() {
                         let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
                         router.register_handler(

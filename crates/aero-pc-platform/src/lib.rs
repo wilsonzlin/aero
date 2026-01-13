@@ -2018,10 +2018,16 @@ impl PcPlatform {
             );
         }
 
-        // Map the PCI MMIO window used by `PciResourceAllocator` so BAR reprogramming is reflected
-        // immediately without needing MMIO unmap/remap support in `MemoryBus`.
+        // Map the full PCI MMIO window reported by ACPI (`PCI0._CRS`) so BAR reprogramming is
+        // reflected immediately even when the guest OS relocates a BAR outside the allocator's
+        // default sub-window.
+        //
+        // This window intentionally starts above ECAM (`PCIE_ECAM_BASE..`) and ends right below
+        // the IOAPIC base to avoid overlaps with fixed chipset MMIO.
+        let pci_mmio_base = aero_pc_constants::PCI_MMIO_BASE;
+        let pci_mmio_size = aero_pc_constants::PCI_MMIO_SIZE;
         let pci_mmio_router: SharedPciBarMmioRouter = Rc::new(RefCell::new(PciBarMmioRouter::new(
-            pci_allocator_config.mmio_base,
+            pci_mmio_base,
             pci_cfg.clone(),
         )));
         {
@@ -2070,8 +2076,8 @@ impl PcPlatform {
         }
         memory
             .map_mmio(
-                pci_allocator_config.mmio_base,
-                pci_allocator_config.mmio_size,
+                pci_mmio_base,
+                pci_mmio_size,
                 Box::new(SharedPciBarMmioRouterMmio {
                     router: pci_mmio_router.clone(),
                 }),
