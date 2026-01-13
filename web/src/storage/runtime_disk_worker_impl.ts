@@ -46,6 +46,7 @@ import {
   type RuntimeDiskSnapshotEntry,
 } from "./runtime_disk_snapshot";
 import { createDiskAccessLeaseFromLeaseEndpoint } from "./disk_access_lease";
+import { RUNTIME_DISK_MAX_IO_BYTES } from "./runtime_disk_limits";
 
 export type DiskEntry = {
   disk: AsyncSectorDisk;
@@ -1226,6 +1227,12 @@ export class RuntimeDiskWorker {
       case "read": {
         const { handle, lba, byteLength } = msg.payload;
         const entry = await this.requireDisk(handle);
+        if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+          throw new Error(`invalid read byteLength=${String(byteLength)}`);
+        }
+        if (byteLength > RUNTIME_DISK_MAX_IO_BYTES) {
+          throw new Error(`read too large: ${byteLength} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
+        }
         const buf = new Uint8Array(byteLength);
         const start = performance.now();
         entry.io.reads++;
@@ -1276,6 +1283,12 @@ export class RuntimeDiskWorker {
         const { handle, lba, data } = msg.payload;
         const entry = await this.requireDisk(handle);
         if (entry.readOnly) throw new Error("disk is read-only");
+        if (!(data instanceof Uint8Array)) {
+          throw new Error("invalid write payload (expected Uint8Array)");
+        }
+        if (data.byteLength > RUNTIME_DISK_MAX_IO_BYTES) {
+          throw new Error(`write too large: ${data.byteLength} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
+        }
         const start = performance.now();
         entry.io.writes++;
         entry.io.bytesWritten += data.byteLength;

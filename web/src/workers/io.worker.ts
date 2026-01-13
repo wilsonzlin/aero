@@ -79,6 +79,7 @@ import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget
 import { defaultReadValue } from "../io/ipc/io_protocol";
 import type { MountConfig } from "../storage/metadata";
 import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
+import { computeAlignedDiskIoRange, diskReadIntoGuest, diskWriteFromGuest } from "./io_disk_dma";
 import {
   isUsbRingAttachMessage,
   isUsbRingDetachMessage,
@@ -4909,26 +4910,6 @@ function guestRangeView(guestOffset: bigint, len: number): Uint8Array | null {
   return guestU8.subarray(start, end);
 }
 
-function computeAlignedDiskIoRange(
-  diskOffset: bigint,
-  lenU32: number,
-  sectorSize: number,
-): { lba: number; byteLength: number; offset: number } | null {
-  if (sectorSize <= 0) return null;
-  const sectorSizeBig = BigInt(sectorSize);
-  const startLbaBig = diskOffset / sectorSizeBig;
-  const offsetBig = diskOffset % sectorSizeBig;
-  if (startLbaBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-
-  const endByte = diskOffset + BigInt(lenU32);
-  const endLbaBig = lenU32 === 0 ? startLbaBig : (endByte + sectorSizeBig - 1n) / sectorSizeBig;
-  const sectorsBig = endLbaBig - startLbaBig;
-  const byteLengthBig = sectorsBig * sectorSizeBig;
-  if (byteLengthBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-
-  return { lba: Number(startLbaBig), byteLength: Number(byteLengthBig), offset: Number(offsetBig) };
-}
-
 function diskRead(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult> {
   const length = len >>> 0;
 
@@ -4952,25 +4933,19 @@ function diskRead(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpc
     return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE };
   }
 
-  const aligned = range.offset === 0 && length % disk.sectorSize === 0;
   return queueDiskIoResult(async () => {
     const perfActive = isPerfActive();
     const t0 = perfActive ? performance.now() : 0;
     try {
       if (range.byteLength > 0) {
-        const guestBuf = view.buffer as unknown as ArrayBufferLike;
-        const hasSab = typeof SharedArrayBuffer !== "undefined";
-        if (aligned && hasSab && guestBuf instanceof SharedArrayBuffer) {
-          await client.readInto(disk.handle, range.lba, range.byteLength, {
-            sab: guestBuf,
-            offsetBytes: view.byteOffset,
-          });
-          perfIoReadBytes += range.byteLength;
-        } else {
-          const data = await client.read(disk.handle, range.lba, range.byteLength);
-          view.set(data.subarray(range.offset, range.offset + length));
-          perfIoReadBytes += data.byteLength;
-        }
+        const { readBytes } = await diskReadIntoGuest({
+          client,
+          handle: disk.handle,
+          range,
+          sectorSize: disk.sectorSize,
+          guestView: view,
+        });
+        perfIoReadBytes += readBytes;
       }
       return { ok: true, bytes: length };
     } catch {
@@ -5008,35 +4983,20 @@ function diskWrite(diskOffset: bigint, len: number, guestOffset: bigint): AeroIp
     return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE };
   }
 
-  const aligned = range.offset === 0 && length % disk.sectorSize === 0;
   return queueDiskIoResult(async () => {
     const perfActive = isPerfActive();
     const t0 = perfActive ? performance.now() : 0;
     try {
       if (range.byteLength > 0) {
-        if (aligned) {
-          const guestBuf = view.buffer as unknown as ArrayBufferLike;
-          const hasSab = typeof SharedArrayBuffer !== "undefined";
-          if (hasSab && guestBuf instanceof SharedArrayBuffer) {
-            await client.writeFrom(disk.handle, range.lba, {
-              sab: guestBuf,
-              offsetBytes: view.byteOffset,
-              byteLength: view.byteLength,
-            });
-          } else {
-            await client.write(disk.handle, range.lba, view);
-          }
-          perfIoWriteBytes += length;
-        } else {
-          const buf = await client.read(disk.handle, range.lba, range.byteLength);
-          buf.set(view, range.offset);
-          const ioBytes = buf.byteLength;
-          perfIoReadBytes += ioBytes;
-          await client.write(disk.handle, range.lba, buf);
-          // `RuntimeDiskClient.write` may transfer/detach `buf` when it is backed by a standalone
-          // ArrayBuffer. Capture size before calling write() so perf counters remain correct.
-          perfIoWriteBytes += ioBytes;
-        }
+        const { readBytes, writtenBytes } = await diskWriteFromGuest({
+          client,
+          handle: disk.handle,
+          range,
+          sectorSize: disk.sectorSize,
+          guestView: view,
+        });
+        perfIoReadBytes += readBytes;
+        perfIoWriteBytes += writtenBytes;
       }
       return { ok: true, bytes: length };
     } catch {
