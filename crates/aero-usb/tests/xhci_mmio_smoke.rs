@@ -101,7 +101,7 @@ fn xhci_reset_clears_operational_state() {
     ctrl.mmio_write(&mut mem, config, 4, 5);
 
     ctrl.mmio_write(&mut mem, usbcmd, 4, regs::op::USBCMD_RUN_STOP);
-    ctrl.tick_1ms();
+    ctrl.tick_1ms_no_dma();
     assert_ne!(
         ctrl.mmio_read(&mut mem, mfindex, 4) & regs::runtime::MFINDEX_MASK,
         0,

@@ -1628,12 +1628,16 @@ impl XhciController {
     ///
     /// This is intentionally bounded to avoid guest-induced hangs (e.g. malformed transfer rings).
     pub fn tick(&mut self, mem: &mut dyn MemoryBus) {
-        let mut trb_budget = MAX_TRBS_PER_TICK;
+        // Bound work even when endpoints return NAK/NotReady (which consume 0 TRBs but still require
+        // host-side polling). Charge at least 1 unit per endpoint attempt so a large active endpoint
+        // list cannot stall the host.
+        let mut budget = MAX_TRBS_PER_TICK;
         let mut i = 0;
-        while i < self.active_endpoints.len() && trb_budget > 0 {
+        while i < self.active_endpoints.len() && budget > 0 {
             let ep = self.active_endpoints[i];
-            let outcome = self.process_endpoint(mem, ep.slot_id, ep.endpoint_id, trb_budget);
-            trb_budget = trb_budget.saturating_sub(outcome.trbs_consumed);
+            let outcome = self.process_endpoint(mem, ep.slot_id, ep.endpoint_id, budget);
+            let charged = outcome.trbs_consumed.max(1);
+            budget = budget.saturating_sub(charged);
 
             if outcome.keep_active {
                 i += 1;
@@ -1715,8 +1719,7 @@ impl XhciController {
         }
     }
 
-    /// Advances controller internal time by 1ms.
-    pub fn tick_1ms(&mut self) {
+    fn tick_ports_1ms(&mut self) {
         self.mfindex = self.mfindex.wrapping_add(8) & 0x3fff;
 
         let mut ports_with_events = Vec::new();
@@ -1728,6 +1731,28 @@ impl XhciController {
         for port in ports_with_events {
             self.queue_port_status_change_event(port);
         }
+    }
+
+    /// Advances controller internal time by 1ms without performing any DMA.
+    ///
+    /// This is useful for integrations that want port timers/MFINDEX to advance even when PCI Bus
+    /// Master Enable is disabled.
+    pub fn tick_1ms_no_dma(&mut self) {
+        self.tick_ports_1ms();
+    }
+
+    /// Advances controller internal time by 1ms and performs a bounded amount of controller work.
+    ///
+    /// This method performs DMA into guest memory (transfer buffers + event ring). Callers should
+    /// gate this on PCI Bus Master Enable.
+    pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
+        self.tick_ports_1ms();
+        self.tick(mem);
+        // Command completion events flow through the guest event ring as well. Command ring
+        // processing is kicked via doorbell 0 and is otherwise controller-local state, so make sure
+        // it continues to make forward progress even if the guest does not perform additional MMIO.
+        self.maybe_process_command_ring(mem);
+        self.service_event_ring(mem);
     }
 
     /// Advances controller internal time by 1ms and drains any queued event TRBs into the
@@ -1742,13 +1767,7 @@ impl XhciController {
     /// Note that both transfer execution and event ring delivery perform DMA into guest memory and
     /// should therefore be gated on PCI Bus Master Enable by the caller.
     pub fn tick_1ms_and_service_event_ring(&mut self, mem: &mut dyn MemoryBus) {
-        self.tick_1ms();
-        self.tick(mem);
-        // Command completion events flow through the guest event ring as well. Command ring
-        // processing is kicked via doorbell 0 and is otherwise controller-local state, so make sure
-        // it continues to make forward progress even if the guest does not perform additional MMIO.
-        self.maybe_process_command_ring(mem);
-        self.service_event_ring(mem);
+        self.tick_1ms(mem);
     }
 
     /// Attach a device model to a root hub port (0-based).
@@ -2663,10 +2682,25 @@ impl XhciController {
         endpoint_id: u8,
         ep_addr: u8,
     ) {
-        let Some((dequeue_ptr, cycle)) =
-            self.read_endpoint_dequeue_from_context(mem, slot_id, endpoint_id)
-        else {
-            return;
+        let (dequeue_ptr, cycle) = match self.read_endpoint_dequeue_from_context(mem, slot_id, endpoint_id) {
+            Some(v) => v,
+            None => {
+                // Test/harness helpers like `set_endpoint_ring()` configure controller-local ring
+                // cursors without populating full Endpoint Context state in guest memory. Fall back
+                // to those cursors so deterministic `tick_1ms` polling can still make progress.
+                let slot_idx = usize::from(slot_id);
+                let ring_idx = usize::from(endpoint_id.saturating_sub(1));
+                let Some(ring) = self
+                    .slots
+                    .get(slot_idx)
+                    .and_then(|slot| slot.transfer_rings.get(ring_idx))
+                    .copied()
+                    .flatten()
+                else {
+                    return;
+                };
+                (ring.dequeue_ptr(), ring.cycle_state())
+            }
         };
 
         if let Some(st) = exec.endpoint_state_mut(ep_addr) {

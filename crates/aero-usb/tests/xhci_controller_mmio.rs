@@ -135,12 +135,12 @@ fn xhci_mfindex_advances_on_tick_1ms_and_wraps() {
 
     assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 0);
 
-    ctrl.tick_1ms();
+    ctrl.tick_1ms_no_dma();
     assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 8);
 
     // MFINDEX is 14 bits and counts microframes; 2048ms == 16384 microframes wraps to 0.
     for _ in 0..2047 {
-        ctrl.tick_1ms();
+        ctrl.tick_1ms_no_dma();
     }
     assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 0);
 }
@@ -317,7 +317,7 @@ fn xhci_controller_mfindex_advances() {
     let mut mem = PanicMem;
 
     let before = ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff;
-    ctrl.tick_1ms();
+    ctrl.tick_1ms_no_dma();
     let after = ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff;
     assert_eq!(after, (before + 8) & 0x3fff);
 }

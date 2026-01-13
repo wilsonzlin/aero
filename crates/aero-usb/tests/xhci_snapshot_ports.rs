@@ -37,7 +37,7 @@ fn xhci_snapshot_roundtrip_preserves_ports_and_device_state() {
     // Reset the port so it becomes enabled (PED=1) before snapshotting.
     ctrl.mmio_write(&mut mem, portsc_off, 4, PORTSC_PR);
     for _ in 0..50 {
-        ctrl.tick_1ms();
+        ctrl.tick_1ms_no_dma();
     }
 
     // Minimal enumeration/configuration so we can observe device state roundtrip.
@@ -113,7 +113,7 @@ fn xhci_snapshot_loads_legacy_tag_mapping_for_ports_and_hce() {
     // Reset the port so it becomes enabled (PED=1) before snapshotting.
     ctrl.mmio_write(&mut mem, portsc_off, 4, PORTSC_PR);
     for _ in 0..50 {
-        ctrl.tick_1ms();
+        ctrl.tick_1ms_no_dma();
     }
 
     // Minimal enumeration/configuration so we can observe device state roundtrip.
