@@ -339,12 +339,15 @@ hidtest.exe --counters
 
 This prints a snapshot including:
 
-- `txRing`: translation-layer ring (`virtio_input_device.report_ring`) + its `drops/overruns`
-- `pendingRing`: READ_REPORT backlog (`DEVICE_CONTEXT.PendingReportRing[]`) + its `drops`
-- `readQ`: current/max pending `IOCTL_HID_READ_REPORT` IRPs
+- Translation-layer buffering (`virtio_input_device.report_ring`):
+  - `ReportRingDepth`, `ReportRingDrops`, `ReportRingOverruns`
+- Pending backlog while HIDCLASS isn't issuing enough `IOCTL_HID_READ_REPORT`s (`DEVICE_CONTEXT.PendingReportRing[]`):
+  - `PendingRingDepth`, `PendingRingDrops`
+- Pending READ_REPORT IRPs:
+  - `ReadReportQueueDepth`, `ReadReportQueueMaxDepth`
 
-When you generate input with no pending reads, `pendingRing` should grow. If you flood input faster than you read it,
-`pendingRing drops` should increase.
+When you generate input with no pending reads, `PendingRingDepth` should grow. If you flood input faster than you read it,
+`PendingRingDrops` should increase.
 
 Query virtio-input driver diagnostic counters in JSON form:
 
