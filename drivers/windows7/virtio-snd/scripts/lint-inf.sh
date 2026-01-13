@@ -18,7 +18,8 @@ BASE_DIR=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)
 INF_CONTRACT="$BASE_DIR/inf/aero_virtio_snd.inf"
 INF_TRANSITIONAL="$BASE_DIR/inf/aero-virtio-snd-legacy.inf"
 INF_IOPORT="$BASE_DIR/inf/aero-virtio-snd-ioport.inf"
-INF_DISABLED="$BASE_DIR/inf/virtio-snd.inf.disabled"
+INF_ALIAS_ENABLED="$BASE_DIR/inf/virtio-snd.inf"
+INF_ALIAS_DISABLED="$BASE_DIR/inf/virtio-snd.inf.disabled"
 
 tmp1=''
 tmp2=''
@@ -308,20 +309,28 @@ section_contains_norm \
   'aero_virtio_snd.sys=1' \
   "inf/aero_virtio_snd.inf must list aero_virtio_snd.sys under [SourceDisksFiles]"
 
-if [ -f "$INF_DISABLED" ]; then
-  note "checking inf/virtio-snd.inf.disabled stays in sync..."
+INF_ALIAS=""
+if [ -f "$INF_ALIAS_ENABLED" ]; then
+  INF_ALIAS="$INF_ALIAS_ENABLED"
+elif [ -f "$INF_ALIAS_DISABLED" ]; then
+  INF_ALIAS="$INF_ALIAS_DISABLED"
+fi
+
+if [ -n "$INF_ALIAS" ]; then
+  alias_basename=$(basename "$INF_ALIAS")
+  note "checking inf/$alias_basename stays in sync..."
   tmp1=$(mktemp "${TMPDIR:-/tmp}/aero_virtio_snd.inf.XXXXXX") || fail "mktemp failed"
-  tmp2=$(mktemp "${TMPDIR:-/tmp}/virtio-snd.inf.disabled.XXXXXX") || fail "mktemp failed"
+  tmp2=$(mktemp "${TMPDIR:-/tmp}/virtio-snd.inf.alias.XXXXXX") || fail "mktemp failed"
 
   strip_leading_comment_header "$INF_CONTRACT" > "$tmp1"
-  strip_leading_comment_header "$INF_DISABLED" > "$tmp2"
+  strip_leading_comment_header "$INF_ALIAS" > "$tmp2"
 
   if ! diff -u "$tmp1" "$tmp2" >/dev/null; then
     # Show a unified diff, but label it with the real file paths to make CI logs
     # actionable (instead of referencing mktemp paths).
     diff -u "$tmp1" "$tmp2" \
-      | sed "1s|^--- .*|--- $INF_CONTRACT|;2s|^+++ .*|+++ $INF_DISABLED|" >&2 || true
-    fail "inf/virtio-snd.inf.disabled is out of sync with inf/aero_virtio_snd.inf (ignoring leading comment headers)"
+      | sed "1s|^--- .*|--- $INF_CONTRACT|;2s|^+++ .*|+++ $INF_ALIAS|" >&2 || true
+    fail "inf/$alias_basename is out of sync with inf/aero_virtio_snd.inf (ignoring leading comment headers)"
   fi
 fi
 
