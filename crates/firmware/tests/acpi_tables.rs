@@ -66,6 +66,28 @@ fn parse_integer(bytes: &[u8], offset: usize) -> Option<(u64, usize)> {
     }
 }
 
+fn find_device_body<'a>(aml: &'a [u8], name: &[u8; 4]) -> Option<&'a [u8]> {
+    let mut i = 0;
+    while i + 2 < aml.len() {
+        // DeviceOp: ExtOpPrefix(0x5B) + DeviceOp(0x82)
+        if aml[i] == 0x5B && aml[i + 1] == 0x82 {
+            let pkg_off = i + 2;
+            if let Some((pkg_len, pkg_len_bytes)) = parse_pkg_length(aml, pkg_off) {
+                let payload_start = pkg_off + pkg_len_bytes;
+                let payload_end = payload_start.checked_add(pkg_len)?;
+                if payload_end <= aml.len() && payload_start + 4 <= payload_end {
+                    if &aml[payload_start..payload_start + 4] == name {
+                        // The payload is: NameSeg (4) + TermList.
+                        return Some(&aml[payload_start + 4..payload_end]);
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Parse the static `_PRT` package emitted by the DSDT AML.
 ///
 /// Returns entries of the form: (PCI address, pin, GSI).
@@ -437,6 +459,58 @@ fn dsdt_contains_pci_routing_and_resources() {
             aml.windows(name.len()).any(|w| w == name),
             "DSDT AML missing {:?}",
             core::str::from_utf8(name).unwrap()
+        );
+    }
+
+    // --- PCI0 identity (PCIe vs legacy) ---
+    //
+    // When MCFG/MMCONFIG is enabled for the platform, PCI0 must present itself as a PCIe root
+    // bridge (PNP0A08) and expose `_CBA` so Windows (and others) can use the ECAM window.
+    let pci0_body = find_device_body(aml, b"PCI0").expect("DSDT AML missing Device(PCI0)");
+    let pnp0a03 = 0x030A_D041u32.to_le_bytes();
+    let pnp0a08 = 0x080A_D041u32.to_le_bytes();
+    let hid_pnp0a03 = [&[0x08][..], &b"_HID"[..], &[0x0C][..], &pnp0a03[..]].concat();
+    let hid_pnp0a08 = [&[0x08][..], &b"_HID"[..], &[0x0C][..], &pnp0a08[..]].concat();
+    let cid_pnp0a03 = [&[0x08][..], &b"_CID"[..], &[0x0C][..], &pnp0a03[..]].concat();
+    let cba_nameop = [&[0x08][..], &b"_CBA"[..]].concat();
+
+    // Backwards-compatible behavior: if `_CBA` is present, we should be in the "ECAM enabled"
+    // mode and must advertise PNP0A08. Otherwise, we should be in the legacy PNP0A03-only mode.
+    let ecam_enabled = find_subslice(pci0_body, &cba_nameop).is_some();
+    if ecam_enabled {
+        assert!(
+            find_subslice(pci0_body, &hid_pnp0a08).is_some(),
+            "PCI0._HID should be PNP0A08 when ECAM/MMCONFIG is enabled"
+        );
+        assert!(
+            find_subslice(pci0_body, &cid_pnp0a03).is_some(),
+            "PCI0._CID should include PNP0A03 for compatibility when ECAM/MMCONFIG is enabled"
+        );
+        assert!(
+            find_subslice(pci0_body, &hid_pnp0a03).is_none(),
+            "PCI0._HID should not be PNP0A03 when ECAM/MMCONFIG is enabled"
+        );
+
+        let off =
+            find_subslice(pci0_body, &cba_nameop).expect("PCI0 should contain _CBA when ECAM is enabled");
+        let (val, _) = parse_integer(pci0_body, off + cba_nameop.len())
+            .expect("PCI0._CBA should be followed by an Integer");
+        assert_eq!(
+            val, PCIE_ECAM_BASE,
+            "PCI0._CBA must match aero_pc_constants::PCIE_ECAM_BASE"
+        );
+    } else {
+        assert!(
+            find_subslice(pci0_body, &hid_pnp0a03).is_some(),
+            "PCI0._HID should be PNP0A03 when ECAM/MMCONFIG is disabled"
+        );
+        assert!(
+            find_subslice(pci0_body, &hid_pnp0a08).is_none(),
+            "PCI0._HID should not be PNP0A08 when ECAM/MMCONFIG is disabled"
+        );
+        assert!(
+            find_subslice(pci0_body, &cid_pnp0a03).is_none(),
+            "did not expect PCI0._CID when ECAM/MMCONFIG is disabled"
         );
     }
 
