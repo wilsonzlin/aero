@@ -348,7 +348,7 @@ You can find the correct VID/DID in the Win7 guest via:
 In a Win7 VM with AeroGPU installed and working correctly:
 
 * `device_state_sanity` queries AeroGPU device state via the `QUERY_DEVICE(_V2)` escape and validates the returned MMIO magic and ABI version (useful for diagnosing “not actually on AeroGPU” scenarios early)
-* `segment_budget_sanity` queries WDDM segment budgets via `D3DKMTQueryAdapterInfo` (`GETSEGMENTGROUPSIZE`, best-effort `QUERYSEGMENT`) and validates that the non-local segment size is sane (AeroGPU budget is controlled by `HKR\Parameters\NonLocalMemorySizeMB`; warns if below the default 512 MiB)
+* `segment_budget_sanity` queries WDDM segment budgets via `D3DKMTQueryAdapterInfo` (`GETSEGMENTGROUPSIZE`, best-effort `QUERYSEGMENT`) and validates that the non-local segment size is sane. When possible, it also reads `HKR\Parameters\NonLocalMemorySizeMB` and verifies the KMD-reported budget matches the (clamped) registry override (warns if below the default 512 MiB).
 * `d3d9ex_dwm_probe` reports composition enabled (or successfully enables it)
 * `d3d9ex_event_query` validates that `GetData(D3DGETDATA_DONOTFLUSH)` is non-blocking (initial poll before `Flush`), that `D3DQUERYTYPE_EVENT` eventually signals, and stresses interleaved submissions + `PresentEx(D3DPRESENT_DONOTWAIT)` throttling (default: 2 threads; pass `--process-stress` to run the stress phase across 2 processes). Window is hidden by default; pass `--show` to display it.
 * `d3d9ex_dwm_ddi_sanity` sanity-checks D3D9Ex/DDI calls used by DWM and common apps (`CheckDeviceState`, `WaitForVBlank`, GPU thread priority, resource residency) to ensure they are non-blocking and return expected values

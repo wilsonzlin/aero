@@ -563,7 +563,8 @@ static int RunSegmentBudgetSanity(int argc, char** argv) {
         "segment size is sane. Also logs best-effort QUERYSEGMENT details (segment descriptor + paging buffer fields) "
         "when available.\n"
         "For AeroGPU, this budget is controlled by the registry value HKR\\Parameters\\NonLocalMemorySizeMB "
-        "(default 512; clamped 128..1024 on x86, 128..2048 on x64).");
+        "(default 512; clamped 128..1024 on x86, 128..2048 on x64). When the AeroGPU device registry key can be "
+        "located, the test also reads NonLocalMemorySizeMB and verifies the KMD-reported budget matches it.");
     return 0;
   }
 
