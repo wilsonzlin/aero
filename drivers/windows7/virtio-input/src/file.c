@@ -151,6 +151,8 @@ static VOID VirtioInputEvtDeviceFileCreate(_In_ WDFDEVICE Device, _In_ WDFREQUES
     PDEVICE_CONTEXT devCtx = VirtioInputGetDeviceContext(Device);
     PVIRTIO_INPUT_FILE_CONTEXT fileCtx = VirtioInputGetFileContext(FileObject);
 
+    RtlZeroMemory(fileCtx->LastGetInputReportSeq, sizeof(fileCtx->LastGetInputReportSeq));
+
     PIRP irp = WdfRequestWdmGetIrp(Request);
     PIO_STACK_LOCATION irpSp = (irp == NULL) ? NULL : IoGetCurrentIrpStackLocation(irp);
     fileCtx->HasCollectionEa = (irpSp != NULL && irpSp->Parameters.Create.EaBuffer != NULL && irpSp->Parameters.Create.EaLength != 0);

@@ -293,6 +293,13 @@ typedef struct _VIRTIO_INPUT_FILE_CONTEXT {
     ULONG CollectionNumber;
     UCHAR DefaultReportId;
     BOOLEAN HasCollectionEa;
+    /*
+     * IOCTL_HID_GET_INPUT_REPORT support:
+     * Track the last per-report sequence number returned to this handle so we can
+     * return STATUS_NO_DATA_DETECTED when the caller polls and no new report has
+     * arrived since the previous call.
+     */
+    ULONG LastGetInputReportSeq[VIRTIO_INPUT_MAX_REPORT_ID + 1];
 } VIRTIO_INPUT_FILE_CONTEXT, *PVIRTIO_INPUT_FILE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_INPUT_FILE_CONTEXT, VirtioInputGetFileContext);
@@ -309,6 +316,19 @@ typedef struct _DEVICE_CONTEXT {
     WDFWAITLOCK ReadReportWaitLock;
     BOOLEAN ReadReportsEnabled;
     struct virtio_input_report_ring PendingReportRing[VIRTIO_INPUT_MAX_REPORT_ID + 1];
+    /*
+     * Most recently received report per ReportID (and its monotonically increasing
+     * sequence number). Updated in VirtioInputReportArrived under ReadReportLock.
+     *
+     * Used by IOCTL_HID_GET_INPUT_REPORT to implement a non-blocking "poll" API:
+     * - If a newer report exists since the caller's last poll, return it.
+     * - Otherwise return STATUS_NO_DATA_DETECTED (mapped to ERROR_NO_DATA in user mode).
+     */
+    UCHAR LastInputReport[VIRTIO_INPUT_MAX_REPORT_ID + 1][VIRTIO_INPUT_REPORT_MAX_SIZE];
+    UCHAR LastInputReportLen[VIRTIO_INPUT_MAX_REPORT_ID + 1];
+    BOOLEAN LastInputReportValid[VIRTIO_INPUT_MAX_REPORT_ID + 1];
+    ULONG InputReportSeq[VIRTIO_INPUT_MAX_REPORT_ID + 1];
+    ULONG LastGetInputReportSeqNoFile[VIRTIO_INPUT_MAX_REPORT_ID + 1];
 
     PVIRTIO_STATUSQ StatusQ;
     VIRTQ_SPLIT* EventVq;
@@ -378,6 +398,7 @@ NTSTATUS VirtioInputHandleHidIoctl(
     _In_ ULONG IoControlCode);
 
 NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t OutputBufferLength);
+NTSTATUS VirtioInputHandleHidGetInputReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t OutputBufferLength);
 NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t InputBufferLength);
 NTSTATUS VirtioInputReportArrived(
     _In_ WDFDEVICE Device,

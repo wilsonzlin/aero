@@ -82,6 +82,11 @@
 #define IOCTL_HID_SET_OUTPUT_REPORT HID_CTL_CODE(9)
 #endif
 
+#ifndef IOCTL_HID_GET_INPUT_REPORT
+// WDK `hidclass.h` defines IOCTL_HID_GET_INPUT_REPORT as a HID_CTL_CODE (function code 10).
+#define IOCTL_HID_GET_INPUT_REPORT HID_CTL_CODE(10)
+#endif
+
 // Historical/alternate function code seen in some header sets. If our primary
 // definition fails at runtime, we try this as a fallback.
 #ifndef IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT
@@ -234,6 +239,7 @@ typedef struct OPTIONS {
     int ioctl_bad_get_string_out;
     int ioctl_bad_get_indexed_string_out;
     int ioctl_query_counters_short;
+    int ioctl_get_input_report;
     int hidd_bad_set_output_report;
     int dump_desc;
     int dump_collection_desc;
@@ -914,6 +920,7 @@ static void print_usage(void)
     wprintf(L"             [--ioctl-bad-get-report-descriptor | --ioctl-bad-get-device-descriptor |\n");
     wprintf(L"              --ioctl-bad-get-string | --ioctl-bad-get-indexed-string |\n");
     wprintf(L"              --ioctl-bad-get-string-out | --ioctl-bad-get-indexed-string-out]\n");
+    wprintf(L"             [--ioctl-get-input-report]\n");
     wprintf(L"\n");
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
@@ -971,6 +978,8 @@ static void print_usage(void)
     wprintf(L"  --ioctl-query-counters-short\n");
     wprintf(L"                 Call IOCTL_VIOINPUT_QUERY_COUNTERS with a short output buffer and verify that\n");
     wprintf(L"                 the driver returns STATUS_BUFFER_TOO_SMALL while still returning Size/Version\n");
+    wprintf(L"  --ioctl-get-input-report\n");
+    wprintf(L"                 Call DeviceIoControl(IOCTL_HID_GET_INPUT_REPORT) and validate behavior\n");
     wprintf(L"  --hidd-bad-set-output-report\n");
     wprintf(L"                 Call HidD_SetOutputReport with an invalid buffer pointer\n");
     wprintf(L"                 (negative test for IOCTL_HID_SET_OUTPUT_REPORT path; should fail, no crash)\n");
@@ -2174,6 +2183,141 @@ static int ioctl_query_counters_short(const SELECTED_DEVICE *dev)
     return 0;
 }
 
+static int ioctl_get_input_report(const SELECTED_DEVICE *dev)
+{
+    typedef struct HID_XFER_PACKET_MIN {
+        PUCHAR reportBuffer;
+        ULONG reportBufferLen;
+        UCHAR reportId;
+    } HID_XFER_PACKET_MIN;
+
+    BYTE report_id = 0;
+    DWORD expected_len = 0;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return 1;
+    }
+
+    if (dev->caps_valid) {
+        if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06) {
+            report_id = 1;
+            expected_len = VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN;
+        } else if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02) {
+            report_id = 2;
+            expected_len = VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN;
+        }
+    }
+
+    if (report_id == 0 && dev->attr_valid) {
+        if (dev->attr.ProductID == VIRTIO_INPUT_PID_KEYBOARD) {
+            report_id = 1;
+            expected_len = VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN;
+        } else if (dev->attr.ProductID == VIRTIO_INPUT_PID_MOUSE) {
+            report_id = 2;
+            expected_len = VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN;
+        }
+    }
+
+    if (report_id == 0 || expected_len == 0) {
+        wprintf(L"Cannot infer expected report ID/length for this device.\n");
+        wprintf(L"Hint: select a keyboard/mouse interface explicitly.\n");
+        return 1;
+    }
+
+    BYTE report[64];
+    HID_XFER_PACKET_MIN pkt;
+    DWORD bytes = 0;
+    BOOL ok;
+
+    ZeroMemory(report, sizeof(report));
+    report[0] = report_id;
+
+    ZeroMemory(&pkt, sizeof(pkt));
+    pkt.reportId = report_id;
+    pkt.reportBufferLen = expected_len;
+    pkt.reportBuffer = report;
+
+    wprintf(L"\nIssuing IOCTL_HID_GET_INPUT_REPORT (reportId=%u)...\n", (unsigned)report_id);
+    ok = DeviceIoControl(dev->handle,
+                         IOCTL_HID_GET_INPUT_REPORT,
+                         &pkt,
+                         (DWORD)sizeof(pkt),
+                         &pkt,
+                         (DWORD)sizeof(pkt),
+                         &bytes,
+                         NULL);
+    if (!ok) {
+        print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_INPUT_REPORT)");
+        return 1;
+    }
+
+    wprintf(L"Success: %lu bytes: ", bytes);
+    dump_hex(report, bytes);
+    wprintf(L"\n");
+
+    if (bytes != expected_len) {
+        wprintf(L"[FAIL] Unexpected report length (expected %lu)\n", expected_len);
+        return 1;
+    }
+    if (bytes > 0 && report[0] != report_id) {
+        wprintf(L"[FAIL] Unexpected ReportID in payload (expected %u, got %u)\n",
+                (unsigned)report_id,
+                (unsigned)report[0]);
+        return 1;
+    }
+
+    if (report_id == 1) {
+        dump_keyboard_report(report, bytes);
+    } else if (report_id == 2) {
+        dump_mouse_report(report, bytes, 1);
+    }
+
+    /*
+     * Issue the IOCTL again and expect a "no data" style error once there are no
+     * new reports available.
+     */
+    {
+        DWORD tries;
+        const DWORD max_tries = 50;
+        for (tries = 0; tries < max_tries; ++tries) {
+            ZeroMemory(report, sizeof(report));
+            report[0] = report_id;
+            pkt.reportId = report_id;
+            pkt.reportBufferLen = expected_len;
+            pkt.reportBuffer = report;
+            bytes = 0;
+
+            ok = DeviceIoControl(dev->handle,
+                                 IOCTL_HID_GET_INPUT_REPORT,
+                                 &pkt,
+                                 (DWORD)sizeof(pkt),
+                                 &pkt,
+                                 (DWORD)sizeof(pkt),
+                                 &bytes,
+                                 NULL);
+            if (!ok) {
+                DWORD err = GetLastError();
+                if (err == ERROR_NO_DATA || err == ERROR_NOT_READY) {
+                    wprintf(L"No-data case observed (expected): error %lu\n", err);
+                    return 0;
+                }
+                print_win32_error_w(L"DeviceIoControl(IOCTL_HID_GET_INPUT_REPORT) (unexpected error)", err);
+                return 1;
+            }
+
+            if (tries == 0) {
+                wprintf(L"Another report was available; polling for a no-data response...\n");
+            }
+            Sleep(10);
+        }
+    }
+
+    wprintf(L"[FAIL] Did not observe a no-data error after repeated polling.\n");
+    wprintf(L"Hint: keep the device still (no mouse movement / key repeats) and retry.\n");
+    return 1;
+}
+
 static int ioctl_bad_write_report(const SELECTED_DEVICE *dev)
 {
     typedef struct HID_XFER_PACKET_MIN {
@@ -2594,6 +2738,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--ioctl-get-input-report") == 0) {
+            opt.ioctl_get_input_report = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--hidd-bad-set-output-report") == 0) {
             opt.hidd_bad_set_output_report = 1;
             continue;
@@ -2861,16 +3010,27 @@ int wmain(int argc, wchar_t **argv)
 
     if (opt.query_counters &&
         (opt.query_state || opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.dump_collection_desc ||
+         opt.ioctl_get_input_report ||
          opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
          opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor ||
          opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
          opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report)) {
-        wprintf(L"--counters is mutually exclusive with --state, LED actions, descriptor dumps, and negative tests.\n");
+        wprintf(L"--counters is mutually exclusive with --state, --ioctl-get-input-report, LED actions, descriptor dumps, and negative tests.\n");
         return 2;
     }
 
     if (opt.selftest) {
         return run_selftest(&opt);
+    }
+
+    if (opt.ioctl_get_input_report &&
+        (opt.query_counters || opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.dump_collection_desc ||
+         opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
+         opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor ||
+         opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
+         opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report)) {
+        wprintf(L"--ioctl-get-input-report is mutually exclusive with other action/negative-test modes.\n");
+        return 2;
     }
 
     if (!enumerate_hid_devices(&opt, &dev)) {
@@ -3011,6 +3171,12 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.ioctl_bad_get_indexed_string_out) {
         int rc = ioctl_bad_get_indexed_string_out(&dev);
+        free_selected_device(&dev);
+        return rc;
+    }
+
+    if (opt.ioctl_get_input_report) {
+        int rc = ioctl_get_input_report(&dev);
         free_selected_device(&dev);
         return rc;
     }

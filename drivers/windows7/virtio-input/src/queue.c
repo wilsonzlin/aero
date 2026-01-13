@@ -115,6 +115,12 @@ VOID VirtioInputEvtIoInternalDeviceControl(
         VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> (read report handler)\n", name);
         (VOID)VirtioInputHandleHidReadReport(Queue, Request, OutputBufferLength);
         return;
+#ifdef IOCTL_HID_GET_INPUT_REPORT
+    case IOCTL_HID_GET_INPUT_REPORT:
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> (get input report handler)\n", name);
+        (VOID)VirtioInputHandleHidGetInputReport(Queue, Request, OutputBufferLength);
+        return;
+#endif
     case IOCTL_HID_WRITE_REPORT:
     case IOCTL_HID_SET_OUTPUT_REPORT:
         VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> (write report handler)\n", name);

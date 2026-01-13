@@ -321,6 +321,11 @@ NTSTATUS VirtioInputReadReportQueuesInitialize(_In_ WDFDEVICE Device)
     devCtx = VirtioInputGetDeviceContext(Device);
 
     RtlZeroMemory(devCtx->ReadReportQueue, sizeof(devCtx->ReadReportQueue));
+    RtlZeroMemory(devCtx->LastInputReportValid, sizeof(devCtx->LastInputReportValid));
+    RtlZeroMemory(devCtx->LastInputReportLen, sizeof(devCtx->LastInputReportLen));
+    RtlZeroMemory(devCtx->LastInputReport, sizeof(devCtx->LastInputReport));
+    RtlZeroMemory(devCtx->InputReportSeq, sizeof(devCtx->InputReportSeq));
+    RtlZeroMemory(devCtx->LastGetInputReportSeqNoFile, sizeof(devCtx->LastGetInputReportSeqNoFile));
 
     WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
     lockAttributes.ParentObject = Device;
@@ -339,6 +344,10 @@ NTSTATUS VirtioInputReadReportQueuesInitialize(_In_ WDFDEVICE Device)
 
     for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
         VirtioInputPendingRingInit(&devCtx->PendingReportRing[i]);
+        devCtx->LastInputReportValid[i] = FALSE;
+        devCtx->LastInputReportLen[i] = 0;
+        devCtx->InputReportSeq[i] = 0;
+        devCtx->LastGetInputReportSeqNoFile[i] = 0;
     }
 
     WDF_OBJECT_ATTRIBUTES_INIT(&queueAttributes);
@@ -373,6 +382,10 @@ VOID VirtioInputReadReportQueuesStart(_In_ WDFDEVICE Device)
     devCtx->ReadReportsEnabled = TRUE;
     for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
         VirtioInputPendingRingInit(&devCtx->PendingReportRing[i]);
+        devCtx->LastInputReportValid[i] = FALSE;
+        devCtx->LastInputReportLen[i] = 0;
+        devCtx->InputReportSeq[i] = 0;
+        devCtx->LastGetInputReportSeqNoFile[i] = 0;
     }
     WdfSpinLockRelease(devCtx->ReadReportLock);
 
@@ -392,6 +405,10 @@ VOID VirtioInputReadReportQueuesStopAndFlush(_In_ WDFDEVICE Device, _In_ NTSTATU
     devCtx->ReadReportsEnabled = FALSE;
     for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
         VirtioInputPendingRingInit(&devCtx->PendingReportRing[i]);
+        devCtx->LastInputReportValid[i] = FALSE;
+        devCtx->LastInputReportLen[i] = 0;
+        devCtx->InputReportSeq[i] = 0;
+        devCtx->LastGetInputReportSeqNoFile[i] = 0;
     }
     WdfSpinLockRelease(devCtx->ReadReportLock);
 
@@ -449,11 +466,155 @@ NTSTATUS VirtioInputReportArrived(
         return STATUS_DEVICE_NOT_READY;
     }
 
+    /*
+     * Cache the most recent report for IOCTL_HID_GET_INPUT_REPORT polling.
+     * Protected by ReadReportLock so we can safely copy the report + sequence
+     * together.
+     */
+    devCtx->InputReportSeq[ReportId]++;
+    devCtx->LastInputReportLen[ReportId] = (UCHAR)ReportSize;
+    devCtx->LastInputReportValid[ReportId] = TRUE;
+    RtlCopyMemory(devCtx->LastInputReport[ReportId], Report, ReportSize);
+
     VirtioInputPendingRingPush(&devCtx->PendingReportRing[ReportId], Report, ReportSize);
     WdfSpinLockRelease(devCtx->ReadReportLock);
 
     VirtioInputDrainReadRequestsForReportId(Device, ReportId);
 
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS VirtioInputHandleHidGetInputReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t OutputBufferLength)
+{
+    WDFDEVICE device;
+    PDEVICE_CONTEXT devCtx;
+    PVIRTIO_INPUT_READ_REQUEST_CONTEXT reqCtx;
+    NTSTATUS status;
+    UCHAR reportId;
+    WDFFILEOBJECT fileObject;
+    PVIRTIO_INPUT_FILE_CONTEXT fileCtx;
+    ULONG lastSeq;
+    ULONG currentSeq;
+    struct virtio_input_report cached;
+    BOOLEAN haveReport;
+    size_t bytesWritten;
+
+    device = WdfIoQueueGetDevice(Queue);
+    devCtx = VirtioInputGetDeviceContext(device);
+
+    WdfWaitLockAcquire(devCtx->ReadReportWaitLock, NULL);
+
+    if (!devCtx->ReadReportsEnabled || !VirtioInputIsHidActive(devCtx)) {
+        WdfWaitLockRelease(devCtx->ReadReportWaitLock);
+        WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
+        return STATUS_SUCCESS;
+    }
+
+    status = VirtioInputPrepareReadRequest(Request, OutputBufferLength);
+    if (!NT_SUCCESS(status)) {
+        WdfWaitLockRelease(devCtx->ReadReportWaitLock);
+        WdfRequestComplete(Request, status);
+        return STATUS_SUCCESS;
+    }
+
+    reqCtx = VirtioInputGetReadRequestContext(Request);
+
+    /*
+     * Determine the requested report ID.
+     *
+     * In practice some callers (e.g. HidD_GetInputReport) specify the report ID
+     * by placing it in the first byte of the report buffer, so check both the
+     * HID_XFER_PACKET and the buffer contents.
+     */
+    reportId = VIRTIO_INPUT_REPORT_ID_ANY;
+    if (VirtioInputIsValidReportId(reqCtx->XferPacket->reportId)) {
+        reportId = reqCtx->XferPacket->reportId;
+    } else if (reqCtx->ReportBuffer != NULL && reqCtx->ReportBufferLen != 0 && VirtioInputIsValidReportId(reqCtx->ReportBuffer[0])) {
+        reportId = reqCtx->ReportBuffer[0];
+    } else {
+        fileObject = WdfRequestGetFileObject(Request);
+        if (fileObject != NULL) {
+            fileCtx = VirtioInputGetFileContext(fileObject);
+            if (VirtioInputIsValidReportId(fileCtx->DefaultReportId)) {
+                reportId = fileCtx->DefaultReportId;
+            }
+        }
+    }
+
+    if (!VirtioInputIsValidReportId(reportId)) {
+        if (devCtx->DeviceKind == VioInputDeviceKindKeyboard) {
+            reportId = VIRTIO_INPUT_REPORT_ID_KEYBOARD;
+        } else if (devCtx->DeviceKind == VioInputDeviceKindMouse) {
+            reportId = VIRTIO_INPUT_REPORT_ID_MOUSE;
+        }
+    }
+
+    if (!VirtioInputIsValidReportId(reportId)) {
+        WdfWaitLockRelease(devCtx->ReadReportWaitLock);
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return STATUS_SUCCESS;
+    }
+
+    if (devCtx->DeviceKind == VioInputDeviceKindKeyboard && reportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD) {
+        WdfWaitLockRelease(devCtx->ReadReportWaitLock);
+        WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
+        return STATUS_SUCCESS;
+    }
+    if (devCtx->DeviceKind == VioInputDeviceKindMouse && reportId != VIRTIO_INPUT_REPORT_ID_MOUSE) {
+        WdfWaitLockRelease(devCtx->ReadReportWaitLock);
+        WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
+        return STATUS_SUCCESS;
+    }
+
+    fileObject = WdfRequestGetFileObject(Request);
+    fileCtx = (fileObject != NULL) ? VirtioInputGetFileContext(fileObject) : NULL;
+
+    haveReport = FALSE;
+    RtlZeroMemory(&cached, sizeof(cached));
+
+    lastSeq = (fileCtx != NULL) ? fileCtx->LastGetInputReportSeq[reportId] : devCtx->LastGetInputReportSeqNoFile[reportId];
+
+    WdfSpinLockAcquire(devCtx->ReadReportLock);
+    currentSeq = devCtx->InputReportSeq[reportId];
+
+    if (devCtx->LastInputReportValid[reportId] && currentSeq != lastSeq) {
+        cached.len = devCtx->LastInputReportLen[reportId];
+        if (cached.len > 0 && cached.len <= VIRTIO_INPUT_REPORT_MAX_SIZE) {
+            RtlCopyMemory(cached.data, devCtx->LastInputReport[reportId], cached.len);
+            haveReport = TRUE;
+
+            if (fileCtx == NULL) {
+                devCtx->LastGetInputReportSeqNoFile[reportId] = currentSeq;
+            }
+        }
+    }
+    WdfSpinLockRelease(devCtx->ReadReportLock);
+
+    WdfWaitLockRelease(devCtx->ReadReportWaitLock);
+
+    if (haveReport && fileCtx != NULL) {
+        /*
+         * Update per-handle cursor outside of ReadReportLock so we don't touch
+         * file-object context memory at elevated IRQL.
+         */
+        fileCtx->LastGetInputReportSeq[reportId] = currentSeq;
+    }
+
+    if (!haveReport) {
+        /*
+         * Do not pend IOCTL_HID_GET_INPUT_REPORT. If there has been no new input
+         * report since the last poll, return STATUS_NO_DATA_DETECTED so user-mode
+         * callers observe ERROR_NO_DATA rather than hanging.
+         */
+        reqCtx->XferPacket->reportId = reportId;
+        reqCtx->XferPacket->reportBufferLen = 0;
+        WdfRequestComplete(Request, STATUS_NO_DATA_DETECTED);
+        return STATUS_SUCCESS;
+    }
+
+    bytesWritten = 0;
+    status = VirtioInputFillPreparedReadRequest(Request, reportId, cached.data, cached.len, &bytesWritten);
+    WdfRequestCompleteWithInformation(Request, status, bytesWritten);
     return STATUS_SUCCESS;
 }
 
