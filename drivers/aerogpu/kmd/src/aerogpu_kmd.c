@@ -2867,8 +2867,29 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
         return STATUS_SUCCESS;
     }
 
-    /* Stop scanout DMA while powered down; restore via AeroGpuProgramScanout on resume. */
-    AeroGpuSetScanoutEnable(adapter, 0);
+    /*
+     * Stop scanout DMA while powered down.
+     *
+     * NOTE: AeroGpuSetScanoutEnable() is gated on DevicePowerState==D0, but this
+     * callback updates DevicePowerState at entry. Disable scanout directly so we
+     * still stop DMA on D0->DxgkDevicePowerStateD3 transitions.
+     *
+     * Scanout state will be restored in the D0 branch via AeroGpuProgramScanout
+     * (using adapter->CurrentScanoutFbPa + cached mode state).
+     */
+    if (adapter->UsingNewAbi || adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE, 0);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO, 0);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI, 0);
+    } else {
+        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE, 0);
+        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_LO, 0);
+        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_HI, 0);
+    }
+    if (adapter->SupportsVblank && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+        /* Be robust against stale vblank IRQ state on scanout disable. */
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+    }
 
     if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0 &&
         adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
