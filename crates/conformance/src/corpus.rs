@@ -256,7 +256,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
         InstructionTemplate {
             name: "shl rax, 1",
             coverage_key: "shl",
-            bytes: &[0x48, 0xD1, 0xE0],
+            bytes: &[0x48, 0xC1, 0xE0, 0x01],
             kind: TemplateKind::ShlRax1,
             flags_mask: shift_flags_imm1,
             mem_compare_len: 0,
@@ -265,7 +265,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
         InstructionTemplate {
             name: "shr rax, 1",
             coverage_key: "shr",
-            bytes: &[0x48, 0xD1, 0xE8],
+            bytes: &[0x48, 0xC1, 0xE8, 0x01],
             kind: TemplateKind::ShrRax1,
             flags_mask: shift_flags_imm1,
             mem_compare_len: 0,
@@ -274,7 +274,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
         InstructionTemplate {
             name: "sar rax, 1",
             coverage_key: "sar",
-            bytes: &[0x48, 0xD1, 0xF8],
+            bytes: &[0x48, 0xC1, 0xF8, 0x01],
             kind: TemplateKind::SarRax1,
             flags_mask: shift_flags_imm1,
             mem_compare_len: 0,
@@ -310,7 +310,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
         InstructionTemplate {
             name: "rol rax, 1",
             coverage_key: "rol",
-            bytes: &[0x48, 0xD1, 0xC0],
+            bytes: &[0x48, 0xC1, 0xC0, 0x01],
             kind: TemplateKind::RolRax1,
             flags_mask: all_flags,
             mem_compare_len: 0,
@@ -319,7 +319,7 @@ pub fn templates() -> Vec<InstructionTemplate> {
         InstructionTemplate {
             name: "ror rax, 1",
             coverage_key: "ror",
-            bytes: &[0x48, 0xD1, 0xC8],
+            bytes: &[0x48, 0xC1, 0xC8, 0x01],
             kind: TemplateKind::RorRax1,
             flags_mask: all_flags,
             mem_compare_len: 0,
