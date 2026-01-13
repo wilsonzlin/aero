@@ -35,7 +35,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - Enumerate HID devices (SetupAPI via `GUID_DEVINTERFACE_HID`).
   - Detect virtio-input devices by matching virtio-input PCI/HID IDs:
     - `VEN_1AF4&DEV_1052` (modern) and `VEN_1AF4&DEV_1011` (transitional)
-    - or HID-style `VID_1AF4&PID_0001` (keyboard) / `VID_1AF4&PID_0002` (mouse)
+    - or HID-style `VID_1AF4&PID_0001` (keyboard) / `VID_1AF4&PID_0002` (mouse) / `VID_1AF4&PID_0003` (tablet)
       (older/alternate builds may use PCI-style PIDs like `PID_1052` / `PID_1011`)
   - Aero contract note:
     - `AERO-W7-VIRTIO` v1 expects the modern virtio-input PCI ID (`DEV_1052`) with `REV_01`.
@@ -55,6 +55,15 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - When enabled, the test emits a readiness marker (`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY`), then waits
       (with a hard timeout) for host-injected events (intended to be paired with QMP `input-send-event` injection) and emits
       `...|PASS|...` or `...|FAIL|reason=...|...`.
+  - Optional end-to-end **tablet / absolute pointer** event delivery smoke test (`virtio-input-tablet-events`):
+    - Disabled by default.
+    - Enable with `--test-input-tablet-events` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1`).
+    - The selftest opens the virtio tablet HID interface and reads input reports via `ReadFile` (no window focus required).
+    - Expected injected sequence (used by the host harness via QMP `input-send-event`):
+      - absolute move to (10000,20000)
+      - left click down + up
+    - When enabled, the test emits a readiness marker (`AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY`), then waits
+      (with a hard timeout) for host-injected events and emits `...|PASS|...` or `...|FAIL|reason=...|...`.
 - **virtio-snd** (optional; playback runs automatically when a supported virtio-snd device is detected)
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
     - `PCI\VEN_1AF4&DEV_1059` (modern; strict INF matches `PCI\VEN_1AF4&DEV_1059&REV_01`)
@@ -137,11 +146,15 @@ The host harness parses these markers from COM1 serial:
  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001
  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
-
+ AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
+ 
  # Optional: end-to-end virtio-input event delivery (requires host-side QMP injection):
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
-
+ # Optional: end-to-end virtio-input tablet (absolute pointer) event delivery (requires host-side QMP injection):
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
+ 
  # virtio-snd may be SKIP/PASS/FAIL depending on flags and device presence.
  # Capture is reported separately as "virtio-snd-capture".
 #
@@ -172,12 +185,18 @@ Notes:
   The host harness mirrors these as `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping.
 - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
-- The optional virtio-input event delivery marker is always emitted:
-  - Default (not enabled): `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set`
-  - When `--test-input-events` (or `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`) is enabled:
-    - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY` once the read loop is armed
-    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...` or `...|FAIL|reason=...|...`
-  - The overall selftest `RESULT` is only affected by `virtio-input-events` when the flag/env var is enabled.
+- The optional virtio-input end-to-end event delivery markers are always emitted:
+  - Keyboard + relative mouse (`virtio-input-events`):
+    - Default (not enabled): `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set`
+    - When `--test-input-events` (or `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`) is enabled:
+      - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY` once the read loop is armed
+      - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...` or `...|FAIL|reason=...|...`
+  - Tablet / absolute pointer (`virtio-input-tablet-events`):
+    - Default (not enabled): `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set`
+    - When `--test-input-tablet-events` (or `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1`) is enabled:
+      - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY` once the read loop is armed
+      - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...` or `...|FAIL|reason=...|...`
+  - The overall selftest `RESULT` is only affected by these tests when the corresponding flag/env var is enabled.
 - If `--require-snd` / `--test-snd` is set and the PCI device is missing, the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`.
   (In this case, the capture marker uses `...|device_missing` and is `SKIP` by default unless `--require-snd-capture` is set.)

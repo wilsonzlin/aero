@@ -40,6 +40,11 @@ drivers/windows7/tests/
   - This path reads HID input reports directly from the virtio-input HID interface so it does not depend on UI focus.
   - By default the guest selftest reports `virtio-input-events|SKIP|flag_not_set`; provision the guest to run the
     selftest with `--test-input-events` to enable it.
+- Emits a `virtio-input-tablet-events` marker that can be used to validate **end-to-end absolute pointer (tablet)**
+  input report delivery when the host harness attaches a `virtio-tablet-pci` device and injects deterministic QMP
+  `abs` + click events (`input-send-event`).
+  - By default the guest selftest reports `virtio-input-tablet-events|SKIP|flag_not_set`; provision the guest to run the
+    selftest with `--test-input-tablet-events` to enable it.
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
   - Detects the virtio-snd PCI function by hardware ID:
@@ -58,12 +63,17 @@ drivers/windows7/tests/
  ```
  # virtio-blk includes interrupt diagnostics (from the miniport IOCTL query) as key/value fields:
  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001
-  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-  AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+   AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
+   AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+   AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
 
  # Optional: end-to-end virtio-input event delivery (requires `--test-input-events` in the guest and host-side QMP injection):
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
+
+ # Optional: end-to-end virtio-input tablet (absolute pointer) event delivery (requires `--test-input-tablet-events` in the guest and host-side QMP injection):
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
  # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
@@ -111,13 +121,15 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
   - virtio-blk disk (**modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
   - virtio-net NIC (user-mode networking / slirp; **modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
   - virtio-input keyboard + mouse devices (`virtio-keyboard-pci`, `virtio-mouse-pci`; **modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
+  - (optional) virtio-input tablet device (`virtio-tablet-pci`) when enabled via `-WithInputTabletEvents` / `--with-input-tablet-events`
+    (**modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
   - (optional) virtio-snd device (when enabled via `-WithVirtioSnd` / `--with-virtio-snd`; **modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
 - COM1 redirected to a host log file
-- Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
-  virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net when RESULT=PASS is seen.
-  - When `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events` (alias: `--with-virtio-input-events`)
-    is enabled, the harness also injects a small keyboard + mouse sequence via QMP (`input-send-event`) and requires
-    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
+  - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
+    virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net when RESULT=PASS is seen.
+    - When `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events` (alias: `--with-virtio-input-events`)
+      is enabled, the harness also injects a small keyboard + mouse sequence via QMP (`input-send-event`) and requires
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
     - Note: this requires a guest image provisioned with `--test-input-events` so the guest selftest enables the
       `virtio-input-events` read loop (otherwise the guest reports `...|SKIP|flag_not_set`).
       When `-WithInputEvents` / `--with-input-events` is enabled, that SKIP causes the harness to fail
@@ -134,7 +146,16 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
       - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
       - Note: The harness may retry injection a few times after `virtio-input-events|READY` to reduce timing flakiness.
         In that case you may see multiple `VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>`).
-- Exits with `0` on PASS, non-zero on FAIL/timeout.
+    - When `-WithInputTabletEvents` (alias: `-WithVirtioInputTabletEvents`) / `--with-input-tablet-events`
+      (alias: `--with-virtio-input-tablet-events`) is enabled, the harness attaches `virtio-tablet-pci`, injects a
+      deterministic absolute-pointer move + click sequence via QMP (`input-send-event`), and requires
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS`.
+      - Note: this requires a guest image provisioned with `--test-input-tablet-events` so the guest selftest enables the
+        `virtio-input-tablet-events` read loop (otherwise the guest reports `...|SKIP|flag_not_set` and the harness fails).
+      - The harness also emits a host marker for the injection step itself:
+        - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=<n>|tablet_mode=device/broadcast`
+        - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
+  - Exits with `0` on PASS, non-zero on FAIL/timeout.
 
 The harness also sets the PCI **Revision ID** (`x-pci-revision=0x01`) to match the
 [`AERO-W7-VIRTIO` v1 contract](../../../docs/windows7-virtio-driver-contract.md). Newer Aero drivers may refuse to bind

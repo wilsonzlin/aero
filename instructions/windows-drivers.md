@@ -436,6 +436,32 @@ When `--with-input-events` is set:
   completing `virtio-input`, the harness will fail early
   (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: `FAIL: MISSING_VIRTIO_INPUT_EVENTS: ...`).
 
+Example: require end-to-end virtio-input **tablet (absolute pointer)** event delivery (host QMP injects a deterministic abs-move + click sequence):
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --snapshot \
+  --with-input-tablet-events \
+  --timeout-seconds 600
+```
+
+Note: `--with-input-tablet-events` requires a guest image provisioned with tablet event testing enabled
+(so the guest selftest runs with `--test-input-tablet-events` / env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1`).
+
+When `--with-input-tablet-events` is set:
+
+- If the guest emits `virtio-input-tablet-events|SKIP|flag_not_set`, the harness will fail
+  (PowerShell: `VIRTIO_INPUT_TABLET_EVENTS_SKIPPED`; Python: `FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: ...`).
+- If the end-to-end path is broken and the guest reports `virtio-input-tablet-events|FAIL|...`, the harness will fail
+  (PowerShell: `VIRTIO_INPUT_TABLET_EVENTS_FAILED`; Python: `FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: ...`).
+- If QMP tablet injection fails, the harness will fail
+  (PowerShell: `QMP_INPUT_TABLET_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_TABLET_INJECT_FAILED: ...`).
+- If the guest selftest is too old/misconfigured and does not emit any `virtio-input-tablet-events` marker at all after
+  completing `virtio-input`, the harness will fail early
+  (PowerShell: `MISSING_VIRTIO_INPUT_TABLET_EVENTS`; Python: `FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: ...`).
+
 See: [`drivers/windows7/tests/host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md).
 
 Example: attach virtio-snd and capture deterministic wav output + verify non-silence:
