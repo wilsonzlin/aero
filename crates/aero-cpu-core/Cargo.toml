@@ -47,3 +47,7 @@ harness = false
 [[bench]]
 name = "tier0_rep_movsb"
 harness = false
+
+[[bench]]
+name = "jit_cache_bookkeeping"
+harness = false

@@ -90,9 +90,13 @@ impl HotnessProfile {
             return false;
         }
 
-        if counter >= self.threshold && !self.requested.contains(&entry_rip) {
-            self.requested.insert(entry_rip);
-            return true;
+        if counter >= self.threshold {
+            // `HashSet::insert` returns true only when the RIP wasn't already present.
+            // This avoids doing a separate `contains()` probe on the cold edge when a block
+            // crosses the hot threshold for the first time.
+            if self.requested.insert(entry_rip) {
+                return true;
+            }
         }
 
         false
