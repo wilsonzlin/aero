@@ -235,6 +235,22 @@ On first boot of the installed OS, Windows will enumerate the virtio-input hardw
 
 This is useful if you already have a Windows 7 VM disk image and want the driver present on next boot without reinstalling.
 
+### Quick start (offline OS dir)
+
+This directory also includes [`Inject-VirtioInputDriverOffline.ps1`](./Inject-VirtioInputDriverOffline.ps1), which automates the DISM `/Add-Driver` step for an **already-installed** offline Windows directory and then runs [`Verify-VirtioInputStaged.ps1`](./Verify-VirtioInputStaged.ps1).
+
+From an **elevated PowerShell** prompt:
+
+```powershell
+.\Inject-VirtioInputDriverOffline.ps1 `
+  -ImagePath W:\ `
+  -DriverPackageDir C:\src\aero\out\packages\windows7\virtio-input\x64
+```
+
+If you need `/ForceUnsigned` (test-only), add `-ForceUnsigned`.
+
+### Manual DISM steps (for reference)
+
 1) Mount the VM’s system disk so it shows up as a drive letter (example uses DiskPart; you can also use Disk Management GUI).
 
 For VHD/VHDX on Windows 10/11:
