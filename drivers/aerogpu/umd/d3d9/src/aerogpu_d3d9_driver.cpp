@@ -14857,7 +14857,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_rect_patch(
 
   const D3DRECTPATCH_INFO* info = pDrawRectPatch->pRectPatchInfo;
   if (!info || info->Basis != D3DBASIS_BEZIER || info->Degree != D3DDEGREE_CUBIC || info->NumVertices != 16) {
-    return trace.ret(D3DERR_NOTAVAILABLE);
+    return trace.ret(D3DERR_INVALIDCALL);
   }
 
   const uint32_t seg_bits[4] = {
@@ -15121,7 +15121,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_tri_patch(
 
   const D3DTRIPATCH_INFO* info = pDrawTriPatch->pTriPatchInfo;
   if (!info || info->Basis != D3DBASIS_BEZIER || info->Degree != D3DDEGREE_CUBIC || info->NumVertices != 10) {
-    return trace.ret(D3DERR_NOTAVAILABLE);
+    return trace.ret(D3DERR_INVALIDCALL);
   }
 
   const uint32_t seg_bits[3] = {
