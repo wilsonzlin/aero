@@ -37,6 +37,11 @@ pub fn run(trace: &mut TraceIr) -> bool {
     let mut eq_zero: HashMap<ValueId, Operand> = HashMap::new();
     // For values produced by `LtU(0, x)`, record `x` (i.e. value is `x != 0`).
     let mut ltu_zero: HashMap<ValueId, Operand> = HashMap::new();
+    // For boolean values produced by NOT-like ops (`!b`), record `b`.
+    //
+    // This is used to eliminate redundant boolean negations and to simplify guards that
+    // accidentally materialize a negation as a standalone value.
+    let mut not_bool: HashMap<ValueId, Operand> = HashMap::new();
 
     for inst in trace.iter_instrs_mut() {
         let old = *inst;
@@ -68,6 +73,9 @@ pub fn run(trace: &mut TraceIr) -> bool {
                         expected2 = !expected2;
                     } else if let Some(x) = ltu_zero.get(&v).copied() {
                         cond2 = x;
+                    } else if let Some(x) = not_bool.get(&v).copied() {
+                        cond2 = x;
+                        expected2 = !expected2;
                     }
                 }
 
@@ -110,15 +118,45 @@ pub fn run(trace: &mut TraceIr) -> bool {
                 // Simplify boolean patterns for pure binops.
                 match op {
                     BinOp::Eq => {
-                        // 1) Canonicalize `Eq(Eq(x,0),0)` into `x != 0` (`LtU(0,x)`).
+                        // If this is an `Eq(x, 0)` form (either operand order), it's either:
+                        // - a boolean NOT if `x` is already known boolean, or
+                        // - a numeric `x == 0` test for non-boolean values.
+                        //
+                        // We only apply boolean rewrites when `x` is known boolean.
+
+                        // 1) Canonicalize `Eq(Eq(x,0),0)` into `x != 0` (`LtU(0,x)`),
+                        // and further into `x` if `x` is already boolean.
                         if let Some(other) = eq_zero_other(lhs, rhs) {
                             if let Operand::Value(inner) = other {
                                 if let Some(x) = eq_zero.get(&inner).copied() {
+                                    if is_bool_operand(x, &bool_values) {
+                                        // `x != 0` is just `x` when `x` is boolean.
+                                        //
+                                        // Emit an algebraically simplifiable op so `const_fold`
+                                        // can turn this into a pure replacement.
+                                        new = Instr::BinOp {
+                                            dst,
+                                            op: BinOp::Xor,
+                                            lhs: x,
+                                            rhs: Operand::Const(0),
+                                            flags: FlagSet::EMPTY,
+                                        };
+                                    } else {
+                                        new = Instr::BinOp {
+                                            dst,
+                                            op: BinOp::LtU,
+                                            lhs: Operand::Const(0),
+                                            rhs: x,
+                                            flags: FlagSet::EMPTY,
+                                        };
+                                    }
+                                } else if let Some(x) = not_bool.get(&inner).copied() {
+                                    // `Eq(!b, 0)` == `b` (double negation) for boolean `b`.
                                     new = Instr::BinOp {
                                         dst,
-                                        op: BinOp::LtU,
-                                        lhs: Operand::Const(0),
-                                        rhs: x,
+                                        op: BinOp::Xor,
+                                        lhs: x,
+                                        rhs: Operand::Const(0),
                                         flags: FlagSet::EMPTY,
                                     };
                                 }
@@ -182,10 +220,19 @@ pub fn run(trace: &mut TraceIr) -> bool {
                     if op == BinOp::Eq {
                         if let Some(other) = eq_zero_other(lhs, rhs) {
                             eq_zero.insert(dst, other);
+                            if is_bool_operand(other, &bool_values) {
+                                not_bool.insert(dst, other);
+                            }
                         }
                     } else if op == BinOp::LtU {
                         if lhs == Operand::Const(0) {
                             ltu_zero.insert(dst, rhs);
+                        }
+                    } else if op == BinOp::Xor {
+                        if let Some((other, 1)) = eq_const(lhs, rhs) {
+                            if is_bool_operand(other, &bool_values) {
+                                not_bool.insert(dst, other);
+                            }
                         }
                     }
                 }
@@ -196,4 +243,3 @@ pub fn run(trace: &mut TraceIr) -> bool {
 
     changed
 }
-

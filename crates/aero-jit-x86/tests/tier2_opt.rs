@@ -405,6 +405,84 @@ fn boolean_simplify_removes_nested_eq_and_simplifies_guards() {
 }
 
 #[test]
+fn boolean_simplify_eliminates_double_negation_on_boolean_values() {
+    // When `cond` is already boolean, lowering for `Select` can produce:
+    //   not_cond = (cond == 0)
+    //   cond2    = (not_cond == 0)
+    // which is just `cond` again.
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::LoadFlag {
+                dst: v(0),
+                flag: Flag::Zf,
+            },
+            Instr::BinOp {
+                dst: v(1),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(1)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(2)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut optimized = trace.clone();
+    optimize_trace(&mut optimized, &OptConfig::default());
+
+    // The two NOTs should cancel out, leaving no BinOp needed to compute the stored value.
+    let binops_after = optimized
+        .iter_instrs()
+        .filter(|i| matches!(i, Instr::BinOp { .. }))
+        .count();
+    assert_eq!(binops_after, 0);
+
+    let env = RuntimeEnv::default();
+    for zf in [false, true] {
+        let mut base_state = T2State::default();
+        base_state.cpu.rflags = aero_jit_x86::abi::RFLAGS_RESERVED1;
+        if zf {
+            base_state.cpu.rflags |= 1u64 << Flag::Zf.rflags_bit();
+        }
+        let mut opt_state = base_state.clone();
+
+        let baseline = run_trace(
+            &trace,
+            &env,
+            &mut SimpleBus::new(256),
+            &mut base_state,
+            1,
+        );
+        let optimized_run = run_trace(
+            &optimized,
+            &env,
+            &mut SimpleBus::new(256),
+            &mut opt_state,
+            1,
+        );
+
+        assert_eq!(baseline.exit, optimized_run.exit);
+        assert_eq!(base_state, opt_state);
+        assert_eq!(
+            opt_state.cpu.gpr[Gpr::Rax.as_u8() as usize],
+            zf as u64
+        );
+    }
+}
+
+#[test]
 fn addr_simplify_folds_nested_displacements() {
     let mut trace = TraceIr {
         prologue: vec![],
