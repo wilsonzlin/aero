@@ -6687,7 +6687,15 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
     }
 
     if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_FENCE) {
-        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_query_fence_out)) {
+        /*
+         * Backward-compatible: older bring-up tools may send the original 32-byte
+         * `aerogpu_escape_query_fence_out` (hdr + last_submitted + last_completed).
+         *
+         * The current struct is 48 bytes; only write fields that fit in the
+         * caller-provided buffer.
+         */
+        if (pEscape->PrivateDriverDataSize <
+            (offsetof(aerogpu_escape_query_fence_out, last_completed_fence) + sizeof(aerogpu_escape_u64))) {
             return STATUS_BUFFER_TOO_SMALL;
         }
 
@@ -6699,12 +6707,19 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         aerogpu_escape_query_fence_out* out = (aerogpu_escape_query_fence_out*)pEscape->pPrivateDriverData;
         out->hdr.version = AEROGPU_ESCAPE_VERSION;
         out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
-        out->hdr.size = sizeof(*out);
+        out->hdr.size = (aerogpu_escape_u32)min((SIZE_T)sizeof(*out), (SIZE_T)pEscape->PrivateDriverDataSize);
         out->hdr.reserved0 = 0;
         out->last_submitted_fence = (uint64_t)adapter->LastSubmittedFence;
         out->last_completed_fence = (uint64_t)completedFence;
-        out->error_irq_count = (uint64_t)AeroGpuAtomicReadU64(&adapter->ErrorIrqCount);
-        out->last_error_fence = (uint64_t)AeroGpuAtomicReadU64(&adapter->LastErrorFence);
+
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_fence_out, error_irq_count) + sizeof(aerogpu_escape_u64))) {
+            out->error_irq_count = (uint64_t)AeroGpuAtomicReadU64(&adapter->ErrorIrqCount);
+        }
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_fence_out, last_error_fence) + sizeof(aerogpu_escape_u64))) {
+            out->last_error_fence = (uint64_t)AeroGpuAtomicReadU64(&adapter->LastErrorFence);
+        }
         return STATUS_SUCCESS;
     }
 
