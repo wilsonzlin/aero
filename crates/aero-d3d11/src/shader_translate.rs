@@ -92,6 +92,39 @@ pub enum BindingKind {
     UavBuffer {
         slot: u32,
     },
+    UavTexture2DWriteOnly {
+        slot: u32,
+        format: StorageTextureFormat,
+    },
+}
+
+/// Supported typed UAV storage texture formats.
+///
+/// This is intentionally small for now: we only map a handful of DXGI formats that can be
+/// expressed as WGSL/WGPU storage textures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StorageTextureFormat {
+    Rgba8Unorm,
+    Rgba16Float,
+    Rgba32Float,
+}
+
+impl StorageTextureFormat {
+    pub fn wgsl_format(self) -> &'static str {
+        match self {
+            StorageTextureFormat::Rgba8Unorm => "rgba8unorm",
+            StorageTextureFormat::Rgba16Float => "rgba16float",
+            StorageTextureFormat::Rgba32Float => "rgba32float",
+        }
+    }
+
+    pub fn wgpu_format(self) -> wgpu::TextureFormat {
+        match self {
+            StorageTextureFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
+            StorageTextureFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
+            StorageTextureFormat::Rgba32Float => wgpu::TextureFormat::Rgba32Float,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -143,6 +176,13 @@ pub enum ShaderTranslateError {
         stage: ShaderStage,
         semantic: String,
         reason: &'static str,
+    },
+    MissingUavTypedDeclaration {
+        slot: u32,
+    },
+    UnsupportedUavTextureFormat {
+        slot: u32,
+        format: u32,
     },
     PixelShaderMissingColorOutputs,
     UavMixedAtomicAndNonAtomicAccess {
@@ -248,6 +288,14 @@ impl fmt::Display for ShaderTranslateError {
             } => write!(
                 f,
                 "unsupported system-value input {semantic} in {stage:?} shader: {reason}"
+            ),
+            ShaderTranslateError::MissingUavTypedDeclaration { slot } => write!(
+                f,
+                "shader uses typed UAV u{slot} but is missing a corresponding dcl_uav_typed declaration"
+            ),
+            ShaderTranslateError::UnsupportedUavTextureFormat { slot, format } => write!(
+                f,
+                "typed UAV u{slot} uses unsupported DXGI format {format}; only rgba8unorm (28), rgba16float (10), and rgba32float (2) are supported"
             ),
             ShaderTranslateError::PixelShaderMissingColorOutputs => {
                 write!(
@@ -1389,6 +1437,10 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
             }
+            Sm4Inst::StoreUavTyped { coord, value, .. } => {
+                scan_src_regs(coord, &mut scan_reg);
+                scan_src_regs(value, &mut scan_reg);
+            }
             Sm4Inst::WorkgroupBarrier => {}
             Sm4Inst::AtomicAdd { addr, value, .. } => {
                 scan_src_regs(addr, &mut scan_reg);
@@ -1589,6 +1641,10 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
             Sm4Inst::LdUavRaw { addr, .. } => scan_src(addr),
             Sm4Inst::StoreRaw { addr, value, .. } => {
                 scan_src(addr);
+                scan_src(value);
+            }
+            Sm4Inst::StoreUavTyped { coord, value, .. } => {
+                scan_src(coord);
                 scan_src(value);
             }
             Sm4Inst::LdStructured { index, offset, .. } => {
@@ -2500,6 +2556,7 @@ struct ResourceUsage {
     srv_buffers: BTreeSet<u32>,
     samplers: BTreeSet<u32>,
     uav_buffers: BTreeSet<u32>,
+    uav_textures: BTreeMap<u32, StorageTextureFormat>,
     uavs_atomic: BTreeSet<u32>,
 }
 
@@ -2571,6 +2628,14 @@ impl ResourceUsage {
                 binding: BINDING_BASE_UAV + slot,
                 visibility,
                 kind: BindingKind::UavBuffer { slot },
+            });
+        }
+        for (&slot, &format) in &self.uav_textures {
+            out.push(Binding {
+                group,
+                binding: BINDING_BASE_UAV + slot,
+                visibility,
+                kind: BindingKind::UavTexture2DWriteOnly { slot, format },
             });
         }
         out
@@ -2651,7 +2716,14 @@ impl ResourceUsage {
                 ));
             }
         }
-        if !self.uav_buffers.is_empty() {
+        for (&slot, &format) in &self.uav_textures {
+            w.line(&format!(
+                "@group({group}) @binding({}) var u{slot}: texture_storage_2d<{}, write>;",
+                BINDING_BASE_UAV + slot,
+                format.wgsl_format()
+            ));
+        }
+        if !self.uav_buffers.is_empty() || !self.uav_textures.is_empty() {
             w.line("");
         }
         Ok(())
@@ -2683,7 +2755,9 @@ fn scan_resources(
     let mut uav_buffers = BTreeSet::new();
     let mut uavs_atomic = BTreeSet::new();
     let mut uavs_non_atomic_used = BTreeSet::new();
+    let mut used_uav_texture_slots = BTreeSet::new();
     let mut declared_cbuffer_sizes: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut declared_uav_formats: BTreeMap<u32, u32> = BTreeMap::new();
 
     for decl in &module.decls {
         match decl {
@@ -2698,6 +2772,10 @@ fn scan_resources(
             Sm4Decl::UavBuffer { slot, .. } => {
                 validate_slot("uav_buffer", *slot, MAX_UAV_SLOTS)?;
                 uav_buffers.insert(*slot);
+            }
+            Sm4Decl::UavTyped2D { slot, format } => {
+                validate_slot("uav", *slot, MAX_UAV_SLOTS)?;
+                declared_uav_formats.insert(*slot, *format);
             }
             _ => {}
         }
@@ -2947,6 +3025,17 @@ fn scan_resources(
                 }
                 uavs_atomic.insert(uav.slot);
             }
+            Sm4Inst::StoreUavTyped {
+                uav,
+                coord,
+                value,
+                mask: _,
+            } => {
+                scan_src(coord)?;
+                scan_src(value)?;
+                validate_slot("uav", uav.slot, MAX_UAV_SLOTS)?;
+                used_uav_texture_slots.insert(uav.slot);
+            }
             Sm4Inst::WorkgroupBarrier => {}
             Sm4Inst::Switch { selector } => {
                 scan_src(selector)?;
@@ -3091,12 +3180,35 @@ fn scan_resources(
         }
     }
 
+    let mut uav_textures = BTreeMap::new();
+    for slot in used_uav_texture_slots {
+        let Some(&dxgi_format) = declared_uav_formats.get(&slot) else {
+            return Err(ShaderTranslateError::MissingUavTypedDeclaration { slot });
+        };
+        let format = match dxgi_format {
+            // DXGI_FORMAT_R8G8B8A8_UNORM
+            28 => StorageTextureFormat::Rgba8Unorm,
+            // DXGI_FORMAT_R16G16B16A16_FLOAT
+            10 => StorageTextureFormat::Rgba16Float,
+            // DXGI_FORMAT_R32G32B32A32_FLOAT
+            2 => StorageTextureFormat::Rgba32Float,
+            other => {
+                return Err(ShaderTranslateError::UnsupportedUavTextureFormat {
+                    slot,
+                    format: other,
+                });
+            }
+        };
+        uav_textures.insert(slot, format);
+    }
+
     Ok(ResourceUsage {
         cbuffers,
         textures,
         srv_buffers,
         samplers,
         uav_buffers,
+        uav_textures,
         uavs_atomic,
     })
 }
@@ -3375,6 +3487,10 @@ fn emit_temp_and_output_decls(
             | Sm4Inst::BufInfoRawUav { dst, .. }
             | Sm4Inst::BufInfoStructuredUav { dst, .. } => {
                 scan_reg(dst.reg);
+            }
+            Sm4Inst::StoreUavTyped { coord, value, .. } => {
+                scan_src_regs(coord, &mut scan_reg);
+                scan_src_regs(value, &mut scan_reg);
             }
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } | Sm4Inst::EmitThenCut { .. } => {}
@@ -4838,6 +4954,37 @@ fn emit_instructions(
                     }
                 }
             }
+            Sm4Inst::StoreUavTyped {
+                uav,
+                coord,
+                value,
+                mask,
+            } => {
+                let mask_bits = mask.0 & 0xF;
+                if mask_bits != 0xF {
+                    return Err(ShaderTranslateError::UnsupportedWriteMask {
+                        inst_index,
+                        opcode: "store_uav_typed",
+                        mask: *mask,
+                    });
+                }
+
+                // Typed UAV stores use integer texel coordinates, similar to `ld`.
+                let coord_f = emit_src_vec4(coord, inst_index, "store_uav_typed", ctx)?;
+                let coord_i = emit_src_vec4_i32(coord, inst_index, "store_uav_typed", ctx)?;
+                let x = format!(
+                    "select(({coord_i}).x, i32(({coord_f}).x), ({coord_f}).x == floor(({coord_f}).x))"
+                );
+                let y = format!(
+                    "select(({coord_i}).y, i32(({coord_f}).y), ({coord_f}).y == floor(({coord_f}).y))"
+                );
+
+                let value = emit_src_vec4(value, inst_index, "store_uav_typed", ctx)?;
+                w.line(&format!(
+                    "textureStore(u{}, vec2<i32>({x}, {y}), {value});",
+                    uav.slot
+                ));
+            }
             Sm4Inst::Unknown { opcode } => {
                 let opcode = opcode_name(*opcode)
                     .map(str::to_owned)
@@ -5521,6 +5668,7 @@ mod tests {
             srv_buffers: BTreeSet::new(),
             samplers: BTreeSet::new(),
             uav_buffers,
+            uav_textures: BTreeMap::new(),
             uavs_atomic: BTreeSet::new(),
         };
 
@@ -6076,6 +6224,7 @@ mod tests {
             srv_buffers: BTreeSet::new(),
             samplers: BTreeSet::new(),
             uav_buffers: BTreeSet::new(),
+            uav_textures: BTreeMap::new(),
             uavs_atomic: BTreeSet::new(),
         };
         let ctx = EmitCtx {
@@ -6257,5 +6406,37 @@ mod tests {
             err,
             ShaderTranslateError::MalformedControlFlow { inst_index: 0, .. }
         ));
+    }
+
+    #[test]
+    fn uav_unsupported_format_triggers_error() {
+        let module = Sm4Module {
+            stage: ShaderStage::Pixel,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![Sm4Decl::UavTyped2D {
+                slot: 0,
+                format: 9999,
+            }],
+            instructions: vec![Sm4Inst::StoreUavTyped {
+                uav: crate::sm4_ir::UavRef { slot: 0 },
+                coord: dummy_coord(),
+                value: dummy_coord(),
+                mask: WriteMask::XYZW,
+            }],
+        };
+
+        let err = scan_resources(&module, None).unwrap_err();
+        assert!(matches!(
+            err,
+            ShaderTranslateError::UnsupportedUavTextureFormat {
+                slot: 0,
+                format: 9999
+            }
+        ));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unsupported") && msg.contains("DXGI format"),
+            "expected actionable unsupported format message, got: {msg}"
+        );
     }
 }

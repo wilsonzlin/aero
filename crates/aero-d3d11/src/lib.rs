@@ -21,7 +21,7 @@ mod wgsl_bootstrap;
 pub use aero_dxbc::{DxbcChunk, DxbcError, DxbcFile, FourCC};
 pub use shader_translate::{
     translate_sm4_module_to_wgsl, Binding, BindingKind, Builtin, IoParam, ShaderReflection,
-    ShaderTranslateError, ShaderTranslation,
+    ShaderTranslateError, ShaderTranslation, StorageTextureFormat,
 };
 pub use signature::{
     parse_signature_chunk, parse_signatures, DxbcSignature, DxbcSignatureParameter,

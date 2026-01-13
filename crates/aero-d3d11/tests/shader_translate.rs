@@ -1620,6 +1620,65 @@ fn translates_texture_load_ld_uses_raw_integer_bits_not_float_heuristics() {
 }
 
 #[test]
+fn translates_store_uav_typed_as_storage_texture_write() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Coords are integer-typed in SM5; use raw integer bits for (1, 2).
+    let coord = SrcOperand {
+        kind: SrcKind::ImmediateF32([1, 2, 0, 0]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::UavTyped2D {
+            slot: 0,
+            // DXGI_FORMAT_R8G8B8A8_UNORM
+            format: 28,
+        }],
+        instructions: vec![
+            Sm4Inst::StoreUavTyped {
+                uav: UavRef { slot: 0 },
+                coord,
+                value: src_imm([0.25, 0.5, 0.75, 1.0]),
+                mask: WriteMask::XYZW,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_imm([0.0, 0.0, 0.0, 1.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(translated.wgsl.contains(&format!(
+        "@group(1) @binding({BINDING_BASE_UAV}) var u0: texture_storage_2d<rgba8unorm, write>;"
+    )));
+    assert!(translated.wgsl.contains("textureStore(u0, vec2<i32>("));
+
+    let uav_binding = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::UavTexture2DWriteOnly { slot: 0, .. }))
+        .expect("missing uav binding");
+    assert_eq!(uav_binding.group, 1);
+    assert_eq!(uav_binding.binding, BINDING_BASE_UAV);
+}
+
+#[test]
 fn translates_texture_load_with_nonzero_lod() {
     let isgn_params = vec![
         sig_param("SV_Position", 0, 0, 0b1111),

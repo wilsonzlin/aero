@@ -89,7 +89,7 @@ pub const MAX_TEXTURE_SLOTS: u32 = BINDING_BASE_SAMPLER - BINDING_BASE_TEXTURE;
 /// D3D11 exposes 16 sampler slots per shader stage (`s0..s15`).
 pub const MAX_SAMPLER_SLOTS: u32 = 16;
 
-/// D3D11 exposes 8 UAV slots to SM5 shaders (`u0..u7`) in the compute stage.
+/// D3D11 exposes 8 UAV slots to SM5 shaders (`u0..u7`) in the pixel/compute stages.
 ///
 /// This matches `D3D11_PS_CS_UAV_REGISTER_COUNT` (8). We reserve exactly this many bindings so
 /// future SM5 translation/execution can map `u#` registers without colliding with other resource

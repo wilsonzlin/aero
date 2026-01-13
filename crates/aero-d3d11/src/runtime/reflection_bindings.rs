@@ -308,6 +308,26 @@ pub(super) fn binding_to_layout_entry(
                 min_binding_size: None,
             }
         }
+        crate::BindingKind::UavTexture2DWriteOnly { slot, format } => {
+            if *slot >= MAX_UAV_SLOTS {
+                bail!(
+                    "uav slot {slot} is out of range for binding model (max {})",
+                    MAX_UAV_SLOTS - 1
+                );
+            }
+            let expected = BINDING_BASE_UAV + slot;
+            if binding.binding != expected {
+                bail!(
+                    "uav slot {slot} expected @binding({expected}), got {}",
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: format.wgpu_format(),
+                view_dimension: wgpu::TextureViewDimension::D2,
+            }
+        }
     };
 
     Ok(wgpu::BindGroupLayoutEntry {
@@ -511,7 +531,12 @@ pub(super) fn build_bind_group(
                     },
                 });
             }
-            crate::BindingKind::Texture2D { slot } => {
+            crate::BindingKind::Texture2D { slot }
+            | crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
+                // Aero's stage binding state currently does not track UAV textures separately.
+                // For now, reuse the stage's texture bindings as a best-effort mapping; callers
+                // that need typed UAV writes should provide textures created with
+                // `STORAGE_BINDING` usage and the correct view format.
                 let (id, view) = provider
                     .texture2d(*slot)
                     .unwrap_or((TextureViewId(0), provider.dummy_texture_view()));
@@ -2661,6 +2686,51 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
         assert!(
             err.contains("out of range"),
             "unexpected error for out-of-range uav buffer: {err}"
+        );
+    }
+
+    #[test]
+    fn binding_to_layout_entry_storage_texture_mapping() {
+        let binding = crate::Binding {
+            group: 2,
+            binding: BINDING_BASE_UAV,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            kind: crate::BindingKind::UavTexture2DWriteOnly {
+                slot: 0,
+                format: crate::StorageTextureFormat::Rgba8Unorm,
+            },
+        };
+
+        let entry = binding_to_layout_entry(&binding).expect("storage texture entry");
+        match entry.ty {
+            wgpu::BindingType::StorageTexture {
+                access,
+                format,
+                view_dimension,
+            } => {
+                assert_eq!(access, wgpu::StorageTextureAccess::WriteOnly);
+                assert_eq!(format, wgpu::TextureFormat::Rgba8Unorm);
+                assert_eq!(view_dimension, wgpu::TextureViewDimension::D2);
+            }
+            other => panic!("expected storage texture binding type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn binding_to_layout_entry_rejects_out_of_range_uav_texture() {
+        let uav = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_UAV + MAX_UAV_SLOTS,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            kind: crate::BindingKind::UavTexture2DWriteOnly {
+                slot: MAX_UAV_SLOTS,
+                format: crate::StorageTextureFormat::Rgba8Unorm,
+            },
+        };
+        let err = binding_to_layout_entry(&uav).unwrap_err().to_string();
+        assert!(
+            err.contains("out of range"),
+            "unexpected error for out-of-range uav texture: {err}"
         );
     }
 

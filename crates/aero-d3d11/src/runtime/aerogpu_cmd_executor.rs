@@ -4226,6 +4226,14 @@ impl AerogpuD3d11Executor {
                             self.encoder_used_textures.insert(tex.texture);
                         }
                     }
+                    crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
+                        // Aero's binding state does not track UAVs separately yet. For now, treat
+                        // typed UAV textures as best-effort aliases of the stage's texture
+                        // bindings so ordering heuristics still see the resource as used.
+                        if let Some(tex) = stage_bindings.texture(*slot) {
+                            self.encoder_used_textures.insert(tex.texture);
+                        }
+                    }
                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
                             self.encoder_used_buffers.insert(cb.buffer);
@@ -4782,7 +4790,8 @@ impl AerogpuD3d11Executor {
                             *entry = true;
                         }
                     }
-                    crate::BindingKind::UavBuffer { slot } => {
+                    crate::BindingKind::UavBuffer { slot }
+                    | crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
                         let slot_usize = *slot as usize;
                         let used = match stage {
                             ShaderStage::Vertex => used_uavs_vs.get_mut(slot_usize),
@@ -6155,6 +6164,11 @@ impl AerogpuD3d11Executor {
                                             self.encoder_used_textures.insert(tex.texture);
                                         }
                                     }
+                                    crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
+                                        if let Some(tex) = stage_bindings.uav_texture(*slot) {
+                                            self.encoder_used_textures.insert(tex.texture);
+                                        }
+                                    }
                                     crate::BindingKind::ConstantBuffer { slot, .. } => {
                                         if let Some(cb) = stage_bindings.constant_buffer(*slot) {
                                             self.encoder_used_buffers.insert(cb.buffer);
@@ -6395,6 +6409,11 @@ impl AerogpuD3d11Executor {
                                         if let Some(buf) = stage_bindings.uav_buffer(*slot) {
                                             self.encoder_used_buffers.insert(buf.buffer);
                                         }
+                                        if let Some(tex) = stage_bindings.uav_texture(*slot) {
+                                            self.encoder_used_textures.insert(tex.texture);
+                                        }
+                                    }
+                                    crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
                                         if let Some(tex) = stage_bindings.uav_texture(*slot) {
                                             self.encoder_used_textures.insert(tex.texture);
                                         }
@@ -10886,6 +10905,11 @@ impl AerogpuD3d11Executor {
                             self.encoder_used_textures.insert(tex.texture);
                         }
                     }
+                    crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
+                        if let Some(tex) = stage_bindings.uav_texture(*slot) {
+                            self.encoder_used_textures.insert(tex.texture);
+                        }
+                    }
                     crate::BindingKind::Sampler { .. } => {}
                     // Forward-compat: fall back to binding-number range inspection for any new
                     // `BindingKind` variants (e.g. future UAV textures).
@@ -11039,6 +11063,11 @@ impl AerogpuD3d11Executor {
                             self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
                         }
                         if let Some(tex) = self.bindings.stage(stage).uav_texture(*slot) {
+                            self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
+                        }
+                    }
+                    crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
+                        if let Some(tex) = self.bindings.stage(stage).texture(*slot) {
                             self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
                         }
                     }
@@ -14668,6 +14697,60 @@ mod tests {
             panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
         }
         eprintln!("skipping {test_name}: {reason}");
+    }
+
+    fn gs_passthrough_position_location(locations: &BTreeSet<u32>) -> u32 {
+        // Choose the lowest location not used by varyings. We store the clip-space position as a
+        // vertex attribute in the generated vertex buffer and then forward it to
+        // `@builtin(position)`. This avoids colliding with user varyings (which use `@location(N)`
+        // based on D3D output registers).
+        //
+        // The generated buffer layout is host-controlled (compute writes it, passthrough VS reads it),
+        // so any deterministic scheme works as long as both sides agree.
+        let mut loc = 0u32;
+        while locations.contains(&loc) {
+            loc = loc.saturating_add(1);
+        }
+        loc
+    }
+
+    fn wgsl_gs_passthrough_vertex_shader(locations: &BTreeSet<u32>) -> Result<String> {
+        // The GS emulation passthrough shader expects its vertex buffer to contain:
+        // - clip-space position at a dedicated `@location(P)` chosen to not collide with varyings.
+        // - one `vec4<f32>` attribute for each varying required by the pixel shader, at the same
+        //   `@location(N)` as the pixel shader input.
+        let pos_location = gs_passthrough_position_location(locations);
+
+        // A conservative capacity estimate; the shader is tiny.
+        let mut wgsl = String::with_capacity(512 + locations.len() * 64);
+
+        wgsl.push_str("struct VsIn {\n");
+        wgsl.push_str(&format!(
+            "  @location({pos_location}) pos: vec4<f32>,\n"
+        ));
+        for &loc in locations {
+            wgsl.push_str(&format!("  @location({loc}) v{loc}: vec4<f32>,\n"));
+        }
+        wgsl.push_str("};\n\n");
+
+        wgsl.push_str("struct VsOut {\n");
+        wgsl.push_str("  @builtin(position) pos: vec4<f32>,\n");
+        for &loc in locations {
+            wgsl.push_str(&format!("  @location({loc}) v{loc}: vec4<f32>,\n"));
+        }
+        wgsl.push_str("};\n\n");
+
+        wgsl.push_str("@vertex\n");
+        wgsl.push_str("fn vs_main(input: VsIn) -> VsOut {\n");
+        wgsl.push_str("  var out: VsOut;\n");
+        wgsl.push_str("  out.pos = input.pos;\n");
+        for &loc in locations {
+            wgsl.push_str(&format!("  out.v{loc} = input.v{loc};\n"));
+        }
+        wgsl.push_str("  return out;\n");
+        wgsl.push_str("}\n");
+
+        Ok(wgsl)
     }
 
     #[test]

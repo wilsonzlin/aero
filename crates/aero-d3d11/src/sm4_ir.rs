@@ -82,6 +82,15 @@ pub enum Sm4Decl {
         stride: u32,
         kind: BufferKind,
     },
+    /// `dcl_uav_typed u#, <dxgi_format>`
+    ///
+    /// Only a subset of DXGI formats are currently supported by the WGSL backend; the raw DXGI
+    /// format value is preserved here so the translator can report actionable errors.
+    UavTyped2D {
+        slot: u32,
+        /// DXGI_FORMAT value.
+        format: u32,
+    },
     /// Geometry shader input primitive type (e.g. point/line/triangle).
     ///
     /// Encoded by `dcl_inputprimitive` in SM4/SM5 token streams.
@@ -659,6 +668,13 @@ pub enum Sm4Inst {
         offset: SrcOperand,
         value: SrcOperand,
         /// Write mask from the `u#` operand (x/y/z/w).
+        mask: WriteMask,
+    },
+    /// `store_uav_typed u#, coord, value`
+    StoreUavTyped {
+        uav: UavRef,
+        coord: SrcOperand,
+        value: SrcOperand,
         mask: WriteMask,
     },
     /// Workgroup barrier + thread-group synchronization (`sync_*_t` in SM5).

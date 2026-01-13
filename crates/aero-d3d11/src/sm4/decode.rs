@@ -1277,6 +1277,17 @@ pub fn decode_instruction(
             // Structural fallback for atomic add on UAV buffers (`InterlockedAdd`).
             } else if let Some(atomic) = try_decode_atomic_add_like(saturate, inst_toks, at)? {
                 Ok(atomic)
+            // Structural fallback for typed UAV stores.
+            //
+            // Note: some SM5 UAV store opcodes (e.g. `store_raw` / `store_structured`) have a
+            // similar operand prefix (uav, addr/coord, value). We intentionally *do not* decode
+            // those here to avoid misclassifying buffer stores as typed texture stores.
+            } else if other != OPCODE_STORE_RAW && other != OPCODE_STORE_STRUCTURED {
+                if let Some(store) = try_decode_store_uav_typed_like(inst_toks, at)? {
+                    Ok(store)
+                } else {
+                    Ok(Sm4Inst::Unknown { opcode: other })
+                }
             } else {
                 Ok(Sm4Inst::Unknown { opcode: other })
             }
@@ -1724,7 +1735,17 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
                         kind: BufferKind::Structured,
                     });
                 }
-                _ => {}
+                _ => {
+                    // Typed UAV declarations encode their dimensionality in an extra token, similar
+                    // to typed resources. We only model `RWTexture2D` today.
+                    let dim = if r.is_eof() { None } else { Some(r.read_u32()?) };
+                    if dim == Some(2) && inst_toks.len() >= 3 {
+                        // Preserve the raw DXGI_FORMAT so later stages can report actionable
+                        // errors for unsupported formats.
+                        let format = *inst_toks.last().expect("len>=3");
+                        return Ok(Sm4Decl::UavTyped2D { slot, format });
+                    }
+                }
             }
         }
         _ => {}
@@ -1956,6 +1977,7 @@ fn try_decode_atomic_add_like(
         Ok(v) => v,
         Err(_) => return Ok(None),
     };
+
     if r.is_eof() {
         return Ok(Some(Sm4Inst::AtomicAdd {
             dst,
@@ -1966,6 +1988,55 @@ fn try_decode_atomic_add_like(
     }
 
     Ok(None)
+}
+
+fn try_decode_store_uav_typed_like(
+    inst_toks: &[u32],
+    at: usize,
+) -> Result<Option<Sm4Inst>, Sm4DecodeError> {
+    let mut r = InstrReader::new(inst_toks, at);
+    let opcode_token = r.read_u32()?;
+    let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
+
+    let uav_op = match decode_raw_operand(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    if uav_op.imm32.is_some() {
+        return Ok(None);
+    }
+    if uav_op.ty != OPERAND_TYPE_UNORDERED_ACCESS_VIEW {
+        return Ok(None);
+    }
+    let slot = match one_index(uav_op.ty, &uav_op.indices, r.base_at) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    let mask = match uav_op.selection_mode {
+        OPERAND_SEL_MASK => WriteMask((uav_op.component_sel & 0xF) as u8),
+        _ => WriteMask::XYZW,
+    };
+
+    let coord = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let value = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    if !r.is_eof() {
+        return Ok(None);
+    }
+
+    Ok(Some(Sm4Inst::StoreUavTyped {
+        uav: UavRef { slot },
+        coord,
+        value,
+        mask,
+    }))
 }
 
 // ---- Operand decoding ----
