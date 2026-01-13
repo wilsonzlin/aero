@@ -1537,7 +1537,8 @@ fn emit_stmt(
                         let e =
                             apply_float_result_modifiers(format!("dpdx({s})"), modifiers)?;
                         let dst_name = reg_var_name(&dst.reg)?;
-                        let line = emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
+                        let line =
+                            emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
                         let _ = writeln!(wgsl, "{pad}{line}");
                     }
                     IrOp::Ddy {
@@ -1558,7 +1559,8 @@ fn emit_stmt(
                         let e =
                             apply_float_result_modifiers(format!("dpdy({s})"), modifiers)?;
                         let dst_name = reg_var_name(&dst.reg)?;
-                        let line = emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
+                        let line =
+                            emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
                         let _ = writeln!(wgsl, "{pad}{line}");
                     }
                     IrOp::TexSample {

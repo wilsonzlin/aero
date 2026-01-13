@@ -954,6 +954,61 @@ fn wgsl_dsx_dsy_derivatives_compile() {
 }
 
 #[test]
+fn wgsl_dsx_dsy_can_feed_texldd_gradients() {
+    // ps_3_0:
+    //   dsx r1, t0
+    //   dsy r2, t0
+    //   texldd r0, t0, r1, r2, s0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dsx r1, t0
+        opcode_token(86, 2),
+        dst_token(0, 1, 0xF),
+        src_token(3, 0, 0xE4, 0), // t0
+        // dsy r2, t0
+        opcode_token(87, 2),
+        dst_token(0, 2, 0xF),
+        src_token(3, 0, 0xE4, 0), // t0
+        // texldd r0, t0, r1, r2, s0
+        opcode_token(77, 5),
+        dst_token(0, 0, 0xF),
+        src_token(3, 0, 0xE4, 0),  // t0
+        src_token(0, 1, 0xE4, 0),  // r1
+        src_token(0, 2, 0xE4, 0),  // r2
+        src_token(10, 0, 0xE4, 0), // s0
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Dsx));
+    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Dsy));
+    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::TexLdd));
+
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("dpdx("), "{wgsl}");
+    assert!(wgsl.contains("dpdy("), "{wgsl}");
+    assert!(wgsl.contains("textureSampleGrad("), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_predicated_derivative_avoids_non_uniform_control_flow() {
     // ps_3_0:
     //   dcl_texcoord0 v0
