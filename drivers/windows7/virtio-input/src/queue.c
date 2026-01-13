@@ -72,7 +72,6 @@ NTSTATUS VirtioInputQueueInitialize(_In_ WDFDEVICE Device)
 {
     WDF_IO_QUEUE_CONFIG queueConfig;
     WDFQUEUE queue;
-    PDEVICE_CONTEXT deviceContext;
     NTSTATUS status;
 
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchParallel);
@@ -83,9 +82,6 @@ NTSTATUS VirtioInputQueueInitialize(_In_ WDFDEVICE Device)
     if (!NT_SUCCESS(status)) {
         return status;
     }
-
-    deviceContext = VirtioInputGetDeviceContext(Device);
-    deviceContext->DefaultQueue = queue;
 
     return STATUS_SUCCESS;
 }
@@ -159,7 +155,7 @@ VOID VirtioInputEvtIoInternalDeviceControl(
         ULONG numBuffers;
 
         if (InputBufferLength >= sizeof(ULONG) && NT_SUCCESS(VioInputReadRequestInputUlong(Request, &numBuffers))) {
-            devCtx->NumDeviceInputBuffers = numBuffers;
+            UNREFERENCED_PARAMETER(numBuffers);
         }
 
         VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, STATUS_SUCCESS);

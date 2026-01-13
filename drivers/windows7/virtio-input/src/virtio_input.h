@@ -300,7 +300,6 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_INPUT_FILE_CONTEXT, VirtioInputGetFile
 enum { VIRTIO_INPUT_QUEUE_COUNT = 2 };
 
 typedef struct _DEVICE_CONTEXT {
-    WDFQUEUE DefaultQueue;
     WDFSPINLOCK InputLock;
     struct virtio_input_device InputDevice;
     // Manual read queues indexed by ReportID. Index 0 is a special "any report"
@@ -323,16 +322,13 @@ typedef struct _DEVICE_CONTEXT {
     VIRTIO_PCI_MODERN_DEVICE PciDevice;
     volatile UINT16* QueueNotifyAddrCache[VIRTIO_INPUT_QUEUE_COUNT];
     WDFDMAENABLER DmaEnabler;
-    UINT64 NegotiatedFeatures;
 
     BOOLEAN HardwareReady;
     BOOLEAN InD0;
     BOOLEAN HidActivated;
     volatile LONG VirtioStarted;
-    ULONG NumDeviceInputBuffers;
     VIOINPUT_DEVICE_KIND DeviceKind;
     USHORT PciSubsystemDeviceId;
-    UCHAR PciRevisionId;
 
     VIRTIO_PCI_INTERRUPTS Interrupts;
 
