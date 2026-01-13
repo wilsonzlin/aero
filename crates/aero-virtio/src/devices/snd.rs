@@ -2385,6 +2385,53 @@ mod tests {
     }
 
     #[test]
+    fn tx_parses_pcm_samples_split_across_descriptor_boundary() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        drive_playback_to_running(&mut snd);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let hdr_and_one_payload_byte_addr = 0x4000;
+        let payload_rest_addr = 0x5000;
+        let resp_addr = 0x6000;
+
+        // Descriptor 0: full 8-byte header + one payload byte (low byte of left sample).
+        let mut first = [0u8; 9];
+        first[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        // reserved [4..8] = 0
+        first[8] = 0x00; // left sample lo byte for 0x4000 (0.5)
+        write_bytes(&mut mem, hdr_and_one_payload_byte_addr, &first);
+
+        // Descriptor 1: remaining payload bytes: left hi, right lo, right hi.
+        // Left = 0.5 (0x4000), Right = -0.25 (0xE000).
+        let rest: [u8; 3] = [0x40, 0x00, 0xE0];
+        write_bytes(&mut mem, payload_rest_addr, &rest);
+
+        let chain = build_chain(
+            &mut mem,
+            desc_table,
+            avail,
+            used,
+            &[
+                (hdr_and_one_payload_byte_addr, first.len() as u32, false),
+                (payload_rest_addr, rest.len() as u32, false),
+                (resp_addr, 8, true),
+            ],
+        );
+
+        let status = snd.handle_tx_chain(&mut mem, &chain);
+        assert_eq!(status, VIRTIO_SND_S_OK);
+
+        let frames = snd.output_mut().available_frames();
+        assert_eq!(frames, 1);
+        let samples = snd.output_mut().pop_interleaved_stereo(frames);
+        assert_eq!(samples, vec![0.5, -0.25]);
+    }
+
+    #[test]
     fn rx_returns_io_err_when_capture_stream_not_running_and_zeros_payload() {
         let mut snd = VirtioSnd::new_with_capture(
             aero_audio::ring::AudioRingBuffer::new_stereo(8),
