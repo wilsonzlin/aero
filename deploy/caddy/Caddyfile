@@ -51,7 +51,7 @@
 	# When using session-cookie auth (`AERO_L2_AUTH_MODE=session`; legacy alias: `cookie`), browser clients must first create a
 	# gateway session (and receive an `aero_session` cookie) via `POST /session` before opening
 	# the WebSocket.
-	@aero_l2 path /l2*
+	@aero_l2 path /l2* /eth*
 	handle @aero_l2 {
 		import aero_headers
 		reverse_proxy {$AERO_L2_PROXY_UPSTREAM:aero-l2-proxy:8090}
