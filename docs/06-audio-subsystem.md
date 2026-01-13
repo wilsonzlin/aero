@@ -70,12 +70,13 @@ This section describes the *canonical* browser runtime integration.
 ### Playback ring attachment (AudioWorklet output)
 
 1. UI calls `createAudioOutput` (`web/src/platform/audio.ts`), which:
-   - allocates a playback `SharedArrayBuffer` ring,
-   - loads `web/src/platform/audio-worklet-processor.js`,
-   - constructs an `AudioWorkletNode` with `processorOptions.ringBuffer = sab`.
+    - allocates a playback `SharedArrayBuffer` ring,
+    - loads `web/src/platform/audio-worklet-processor.js`,
+    - constructs an `AudioContext` (`AudioContext`/`webkitAudioContext` fallback) and applies a few startup/latency-smoothing policies (see `createAudioOutput` options below),
+    - constructs an `AudioWorkletNode` with `processorOptions.ringBuffer = sab`.
 2. The coordinator forwards the ring to the worker that will act as the **single producer** via `SetAudioRingBufferMessage`
-   (`web/src/runtime/protocol.ts`, policy + dispatch in `web/src/runtime/coordinator.ts`).
-   - The coordinator owns the attachment policy (`RingBufferOwner`) because the playback ring is SPSC (exactly one producer).
+    (`web/src/runtime/protocol.ts`, policy + dispatch in `web/src/runtime/coordinator.ts`).
+    - The coordinator owns the attachment policy (`RingBufferOwner`) because the playback ring is SPSC (exactly one producer).
    - Default policy: CPU worker in demo mode (no disk), IO worker when running a real VM (disk present).
      - See `WorkerCoordinator.defaultAudioRingBufferOwner()` + `syncAudioRingBufferAttachments()`.
    - Optional override (use with care): `WorkerCoordinator.setAudioRingBufferOwner("cpu" | "io" | "none" | null)`.
@@ -234,6 +235,40 @@ frames at `AudioContext.sampleRate`, so the device models must be configured to 
 
 - HDA (`aero_audio::hda::HdaController`): set `output_rate_hz` to the output `AudioContext.sampleRate`.
 - virtio-snd (`aero_virtio::devices::snd::VirtioSnd`): set `host_sample_rate_hz` to the output `AudioContext.sampleRate`.
+
+### `createAudioOutput` options (latency vs robustness)
+
+`createAudioOutput` (`web/src/platform/audio.ts`) is the canonical Web Audio output entrypoint. In addition to basic setup
+(`sampleRate`, `latencyHint`, `ringBufferFrames`, etc.), it exposes a few tuning knobs to trade off:
+
+- **Robustness** (tolerating IO worker stalls, slow startup, or browser suspensions), vs
+- **Latency** (time from guest audio generation to speakers).
+
+Key options (in addition to the existing `sampleRate`/`latencyHint`/`ringBufferFrames`/`ringBuffer`):
+
+- `startupPrefillFrames?: number`
+  - **What it does:** if the playback ring is empty at graph startup, pre-fills it with *silence* up to this many frames.
+    (Default: `512` frames.)
+  - **Why it exists:** avoids an initial “startup underrun” window between `AudioWorkletNode` start and the first producer write,
+    and gives slow-starting producers a small grace period.
+  - **Trade-off:** increases time-to-first-audible-sample by roughly `startupPrefillFrames / AudioContext.sampleRate` seconds.
+- `discardOnResume?: boolean`
+  - **What it does:** when the `AudioContext` resumes after being suspended (tab backgrounding, iOS/Safari interruptions, etc.),
+    discards any buffered playback frames by advancing the consumer `readFrameIndex` to the current `writeFrameIndex`
+    (i.e. “flush the ring”).
+    (Default: `true`.)
+  - **Why it exists:** prevents *stale latency* where the VM kept producing while the browser was suspended; without discarding,
+    the AudioWorklet would play back old buffered audio first, making the user hear audio seconds late after resume.
+  - **Trade-off:** drops buffered frames across the suspension boundary (you get an audio discontinuity, but latency stays bounded).
+
+#### AudioContext construction fallbacks (Safari/WebKit)
+
+`createAudioOutput` must treat Web Audio as a runtime capability:
+
+- It probes `globalThis.AudioContext`, and falls back to `globalThis.webkitAudioContext` when needed (Safari).
+- Some WebKit/Safari variants are stricter about `AudioContext` constructor options; the implementation includes fallbacks so that
+  “requested” settings (like `sampleRate`/`latencyHint`) do not hard-fail audio output initialization.
+- Always treat `audioOutput.context.sampleRate` as authoritative (Safari/iOS may ignore the requested sample rate).
 
 ---
 
@@ -404,6 +439,19 @@ Implementation references:
   - `web/src/platform/audio.ts`: `getDefaultRingBufferFrames()` defaults to ~200ms of capacity.
 - Producers should generally target a smaller steady-state fill level (tens of ms) and adapt if underruns occur:
   - `web/src/platform/audio.ts`: `createAdaptiveRingBufferTarget()`.
+
+### Recommended defaults (demo mode vs VM mode)
+
+Audio tuning is inherently workload-dependent, but the following presets are good starting points:
+
+- **Demo mode** (repo harness / interactive demos; producer is typically the CPU worker):
+  - keep `startupPrefillFrames` small (or disabled) to minimize “click → sound” delay.
+  - prefer `latencyHint: "interactive"` and a smaller steady-state buffer target.
+  - `discardOnResume: true` is still recommended if you care about interactive latency after tab/background resumes.
+- **VM mode** (real guest VM; producer is typically the IO worker and may stall on host IO/GC):
+  - use a larger `startupPrefillFrames` so initial device init / IO-worker stalls don’t immediately underrun.
+  - consider a less aggressive `latencyHint` (e.g. `"balanced"`/`"playback"`) if you see frequent underruns.
+  - enable `discardOnResume` to avoid resuming with a large backlog of buffered guest audio (stale latency).
 
 ---
 

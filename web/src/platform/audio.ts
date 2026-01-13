@@ -32,12 +32,26 @@ export type CreateAudioOutputOptions = {
    */
   underrunMessageIntervalMs?: number;
   /**
+   * Prefill this many frames of silence into the playback ring buffer at startup
+   * if the ring is empty.
+   *
+   * This avoids counting an initial underrun while the producer starts writing
+   * into the ring buffer (and can mask slow-starting producers), at the cost of
+   * delaying the first audible sample by roughly `startupPrefillFrames /
+   * AudioContext.sampleRate` seconds.
+   *
+   * Defaults to `512` frames.
+   */
+  startupPrefillFrames?: number;
+  /**
    * When an AudioContext is resumed after being suspended/interrupted, the shared ring buffer may
    * contain a backlog of buffered audio. Discarding the backlog keeps playback "live" instead of
    * playing stale buffered audio with high latency.
    *
    * This is enabled by default, but it is intentionally *not* applied to the first-ever transition
    * to `"running"` so that the initial silence prefill can still prevent startup underrun spam.
+   *
+   * Defaults to `true`.
    */
   discardOnResume?: boolean;
   /**
@@ -560,6 +574,11 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     Number.isFinite(requestedChannelCount) && requestedChannelCount > 0
       ? Math.max(1, Math.min(2, Math.floor(requestedChannelCount)))
       : 2;
+  const startupPrefillFrames = clampFrames(
+    finiteNonNegative(options.startupPrefillFrames) ?? 512,
+    0,
+    Number.MAX_SAFE_INTEGER,
+  );
   const discardOnResume = typeof options.discardOnResume === "boolean" ? options.discardOnResume : true;
   const sendUnderrunMessages = options.sendUnderrunMessages === true;
   const underrunMessageIntervalMs = finiteNonNegative(options.underrunMessageIntervalMs);
@@ -726,7 +745,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
 
   // Prefill a small amount of silence to avoid counting an initial underrun
   // between node start and the producer beginning to write samples.
-  prefillSilenceIfEmpty(ringBuffer, 512);
+  prefillSilenceIfEmpty(ringBuffer, clampFrames(startupPrefillFrames, 0, ringBuffer.capacityFrames));
 
   node.connect(context.destination);
 
