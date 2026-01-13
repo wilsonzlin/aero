@@ -87,6 +87,23 @@ export type WebHidInputReportRingStats = Readonly<{
   fallback: number;
 }>;
 
+export type WebHidOutputSendStats = Readonly<{
+  maxPendingSendsPerDevice: number;
+  /**
+   * Optional global cap across all devices. When unset, this is `null`.
+   */
+  maxPendingSendsTotal: number | null;
+  pendingTotal: number;
+  droppedTotal: number;
+  devices: ReadonlyArray<
+    Readonly<{
+      deviceId: number;
+      pending: number;
+      dropped: number;
+    }>
+  >;
+}>;
+
 type HidDeviceSendTask = () => Promise<void>;
 
 function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boolean {
@@ -118,6 +135,16 @@ function toU32OrZero(value: number | undefined): number {
   return Math.max(0, Math.floor(value)) >>> 0;
 }
 
+function assertPositiveSafeInteger(name: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`invalid ${name}: ${value}`);
+  }
+  return value;
+}
+
+const DEFAULT_MAX_PENDING_SENDS_PER_DEVICE = 256;
+const OUTPUT_SEND_DROP_WARN_INTERVAL_MS = 5000;
+
 export class WebHidBroker {
   readonly manager: WebHidPassthroughManager;
 
@@ -140,6 +167,12 @@ export class WebHidBroker {
   // be serialized per device, so maintain an explicit FIFO per `deviceId` so reports are executed
   // in guest order without stalling other devices.
   readonly #pendingDeviceSends = new Map<number, HidDeviceSendTask[]>();
+  #pendingDeviceSendTotal = 0;
+  readonly #maxPendingSendsPerDevice: number;
+  readonly #maxPendingSendsTotal: number;
+  #outputSendDropped = 0;
+  readonly #outputSendDroppedByDevice = new Map<number, number>();
+  readonly #outputSendDropWarnedAtByDevice = new Map<number, number>();
   // Track the currently-running queue runner per device using a monotonically increasing token so
   // a runner from a previous device session (e.g. after detach/reattach) cannot clear the running
   // flag for a newer runner.
@@ -184,6 +217,8 @@ export class WebHidBroker {
       manager?: WebHidPassthroughManager;
       inputReportRingCapacityBytes?: number;
       outputRingCapacityBytes?: number;
+      maxPendingSendsPerDevice?: number;
+      maxPendingSendsTotal?: number;
     } = {},
   ) {
     this.manager = options.manager ?? new WebHidPassthroughManager();
@@ -192,6 +227,14 @@ export class WebHidBroker {
       options.outputRingCapacityBytes === undefined
         ? DEFAULT_HID_OUTPUT_RING_CAPACITY_BYTES
         : assertValidHidRingCapacityBytes("outputRingCapacityBytes", options.outputRingCapacityBytes);
+    this.#maxPendingSendsPerDevice =
+      options.maxPendingSendsPerDevice === undefined
+        ? DEFAULT_MAX_PENDING_SENDS_PER_DEVICE
+        : assertPositiveSafeInteger("maxPendingSendsPerDevice", options.maxPendingSendsPerDevice);
+    this.#maxPendingSendsTotal =
+      options.maxPendingSendsTotal === undefined
+        ? Number.POSITIVE_INFINITY
+        : assertPositiveSafeInteger("maxPendingSendsTotal", options.maxPendingSendsTotal);
 
     // Ensure we clean up bridged state when the underlying manager closes a device
     // (e.g., after a physical disconnect).
@@ -261,6 +304,28 @@ export class WebHidBroker {
     const deviceId = this.#deviceIdByDevice.get(device);
     if (deviceId === undefined) return null;
     return this.#lastInputReportInfo.get(deviceId) ?? null;
+  }
+
+  getOutputSendStats(): WebHidOutputSendStats {
+    const deviceIds = new Set<number>();
+    for (const deviceId of this.#pendingDeviceSends.keys()) deviceIds.add(deviceId);
+    for (const deviceId of this.#outputSendDroppedByDevice.keys()) deviceIds.add(deviceId);
+
+    const devices = Array.from(deviceIds)
+      .sort((a, b) => a - b)
+      .map((deviceId) => ({
+        deviceId,
+        pending: this.#pendingDeviceSends.get(deviceId)?.length ?? 0,
+        dropped: this.#outputSendDroppedByDevice.get(deviceId) ?? 0,
+      }));
+
+    return {
+      maxPendingSendsPerDevice: this.#maxPendingSendsPerDevice,
+      maxPendingSendsTotal: Number.isFinite(this.#maxPendingSendsTotal) ? this.#maxPendingSendsTotal : null,
+      pendingTotal: this.#pendingDeviceSendTotal,
+      droppedTotal: this.#outputSendDropped,
+      devices,
+    };
   }
 
   attachWorkerPort(port: MessagePort | Worker): void {
@@ -413,23 +478,53 @@ export class WebHidBroker {
     this.#outputRing = null;
   }
 
-  #enqueueDeviceSend(deviceId: number, task: HidDeviceSendTask): void {
+  #warnOutputSendDrop(deviceId: number): void {
+    const now = performance.now();
+    const lastWarn = this.#outputSendDropWarnedAtByDevice.get(deviceId) ?? 0;
+    if (now - lastWarn < OUTPUT_SEND_DROP_WARN_INTERVAL_MS) return;
+    this.#outputSendDropWarnedAtByDevice.set(deviceId, now);
+
+    const dropped = this.#outputSendDroppedByDevice.get(deviceId) ?? 0;
+    const pending = this.#pendingDeviceSends.get(deviceId)?.length ?? 0;
+    console.warn(
+      `[webhid] Dropping HID output/feature sends for deviceId=${deviceId} (pending=${pending} maxPendingSendsPerDevice=${this.#maxPendingSendsPerDevice} dropped=${dropped})`,
+    );
+  }
+
+  #recordOutputSendDrop(deviceId: number): void {
+    this.#outputSendDropped += 1;
+    this.#outputSendDroppedByDevice.set(deviceId, (this.#outputSendDroppedByDevice.get(deviceId) ?? 0) + 1);
+    this.#warnOutputSendDrop(deviceId);
+  }
+
+  #enqueueDeviceSend(deviceId: number, task: HidDeviceSendTask): boolean {
+    const queueLen = this.#pendingDeviceSends.get(deviceId)?.length ?? 0;
+    // Drop policy: drop newest when at/over the cap. This preserves FIFO ordering for already-queued
+    // reports and keeps memory bounded when the guest spams reports or `sendReport()` hangs.
+    if (queueLen >= this.#maxPendingSendsPerDevice || this.#pendingDeviceSendTotal >= this.#maxPendingSendsTotal) {
+      this.#recordOutputSendDrop(deviceId);
+      return false;
+    }
+
     let queue = this.#pendingDeviceSends.get(deviceId);
     if (!queue) {
       queue = [];
       this.#pendingDeviceSends.set(deviceId, queue);
     }
     queue.push(task);
-    if (this.#deviceSendTokenById.has(deviceId)) return;
+    this.#pendingDeviceSendTotal += 1;
+    if (this.#deviceSendTokenById.has(deviceId)) return true;
     const token = this.#nextDeviceSendToken++;
     this.#deviceSendTokenById.set(deviceId, token);
     void this.#runDeviceSendQueue(deviceId, token);
+    return true;
   }
 
   #dequeueDeviceSend(deviceId: number): HidDeviceSendTask | null {
     const queue = this.#pendingDeviceSends.get(deviceId);
     if (!queue || queue.length === 0) return null;
     const task = queue.shift()!;
+    this.#pendingDeviceSendTotal -= 1;
     if (queue.length === 0) {
       // Avoid leaking per-device arrays once all work is drained.
       this.#pendingDeviceSends.delete(deviceId);
@@ -800,8 +895,15 @@ export class WebHidBroker {
         this.#inputReportSizeWarned.delete(key);
       }
     }
-    this.#pendingDeviceSends.delete(deviceId);
+
+    const pending = this.#pendingDeviceSends.get(deviceId);
+    if (pending) {
+      this.#pendingDeviceSendTotal -= pending.length;
+      this.#pendingDeviceSends.delete(deviceId);
+    }
     this.#deviceSendTokenById.delete(deviceId);
+    this.#outputSendDroppedByDevice.delete(deviceId);
+    this.#outputSendDropWarnedAtByDevice.delete(deviceId);
 
     if (options.sendDetach && this.#workerPort) {
       const detachMsg: HidDetachMessage = { type: "hid.detach", deviceId };
@@ -867,16 +969,15 @@ export class WebHidBroker {
   #handleGetFeatureReportRequest(msg: HidGetFeatureReportMessage, worker: MessagePort | Worker): void {
     const deviceId = msg.deviceId >>> 0;
     const reportId = msg.reportId >>> 0;
+    const base = {
+      type: "hid.featureReportResult" as const,
+      requestId: msg.requestId,
+      deviceId,
+      reportId,
+    };
     // Use the same per-device FIFO as output/feature report sends so receiveFeatureReport
     // requests are serialized relative to any queued report I/O for that device.
-    this.#enqueueDeviceSend(deviceId, async () => {
-      const base = {
-        type: "hid.featureReportResult" as const,
-        requestId: msg.requestId,
-        deviceId,
-        reportId,
-      };
-
+    const ok = this.#enqueueDeviceSend(deviceId, async () => {
       if (!this.#attachedToWorker.has(deviceId)) {
         const res: HidFeatureReportResultMessage = { ...base, ok: false, error: `DeviceId=${deviceId} is not attached.` };
         this.#postToWorker(worker, res);
@@ -908,6 +1009,10 @@ export class WebHidBroker {
         this.#postToWorker(worker, res);
       }
     });
+    if (!ok) {
+      const res: HidFeatureReportResultMessage = { ...base, ok: false, error: "Too many pending HID sends for this device." };
+      this.#postToWorker(worker, res);
+    }
   }
 
   #postToWorker(worker: MessagePort | Worker, msg: HidProxyMessage, transfer?: Transferable[]): void {

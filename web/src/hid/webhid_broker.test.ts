@@ -963,6 +963,49 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("caps pending per-device sends and counts drops when sendReport never resolves", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager, maxPendingSendsPerDevice: 4 });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      device.sendReport.mockImplementationOnce(() => new Promise<void>(() => {}));
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      // Start one in-flight send that never resolves so the queue cannot drain.
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+      // Flood the broker with sends; only `maxPendingSendsPerDevice` should be buffered.
+      const flood = 20;
+      for (let i = 0; i < flood; i += 1) {
+        port.emit({
+          type: "hid.sendReport",
+          deviceId: id,
+          reportType: "output",
+          reportId: 2 + i,
+          data: Uint8Array.of(i),
+        });
+      }
+
+      const stats = broker.getOutputSendStats();
+      const perDevice = stats.devices.find((d) => d.deviceId === id);
+      expect(perDevice).toBeTruthy();
+      expect(perDevice!.pending).toBe(4);
+      expect(perDevice!.dropped).toBe(flood - 4);
+      expect(stats.pendingTotal).toBe(4);
+      expect(stats.droppedTotal).toBe(flood - 4);
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("drops pending per-device sends on detach (does not run queued reports after detach)", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
