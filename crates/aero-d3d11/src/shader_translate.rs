@@ -184,13 +184,13 @@ impl fmt::Display for ShaderTranslateError {
                         f,
                         "uav slot {slot} is out of range (max {max}); u# slots map to @binding({BINDING_BASE_UAV} + slot)"
                     ),
-                    "sampler" => write!(
-                        f,
-                        "sampler slot {slot} is out of range (max {max}); s# slots map to @binding({BINDING_BASE_SAMPLER} + slot)"
-                    ),
                     "uav_buffer" => write!(
                         f,
                         "u# UAV buffer slot {slot} is out of range (max {max}); u# slots map to @binding({BINDING_BASE_UAV} + slot)"
+                    ),
+                    "sampler" => write!(
+                        f,
+                        "sampler slot {slot} is out of range (max {max}); s# slots map to @binding({BINDING_BASE_SAMPLER} + slot)"
                     ),
                     _ => write!(f, "{kind} slot {slot} is out of range (max {max})"),
                 }
