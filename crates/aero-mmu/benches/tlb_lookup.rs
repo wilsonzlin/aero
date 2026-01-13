@@ -2,11 +2,31 @@
 fn main() {}
 
 #[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
+
+#[cfg(not(target_arch = "wasm32"))]
 use aero_mmu::{AccessType, MemoryBus, Mmu};
 #[cfg(not(target_arch = "wasm32"))]
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 #[cfg(not(target_arch = "wasm32"))]
 use std::convert::TryInto;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn criterion_config() -> Criterion {
+    match std::env::var("AERO_BENCH_PROFILE").as_deref() {
+        Ok("ci") => Criterion::default()
+            // Keep PR runtime low.
+            .warm_up_time(Duration::from_millis(200))
+            .measurement_time(Duration::from_secs(1))
+            .sample_size(10)
+            .noise_threshold(0.05),
+        _ => Criterion::default()
+            .warm_up_time(Duration::from_secs(1))
+            .measurement_time(Duration::from_secs(2))
+            .sample_size(30)
+            .noise_threshold(0.03),
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
@@ -115,7 +135,9 @@ fn bench_tlb_lookup_hit_long4_4k(c: &mut Criterion) {
     let warm = mmu.translate(&mut mem, vaddr, AccessType::Read, 0).unwrap();
     black_box(warm);
 
-    c.bench_function("tlb_lookup_hit_long4_4k", |b| {
+    let mut group = c.benchmark_group("tlb_lookup");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("hit_long4_4k", |b| {
         b.iter(|| {
             let paddr = mmu
                 .translate(&mut mem, black_box(vaddr), AccessType::Read, 0)
@@ -123,9 +145,14 @@ fn bench_tlb_lookup_hit_long4_4k(c: &mut Criterion) {
             black_box(paddr)
         })
     });
+    group.finish();
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-criterion_group!(benches, bench_tlb_lookup_hit_long4_4k);
+criterion_group! {
+    name = benches;
+    config = criterion_config();
+    targets = bench_tlb_lookup_hit_long4_4k
+}
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
