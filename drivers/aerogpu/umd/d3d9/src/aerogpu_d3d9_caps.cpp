@@ -186,6 +186,9 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->DeviceType = D3DDEVTYPE_HAL;
   out->AdapterOrdinal = 0;
 
+  // Scanline/VBlank status is supported via DeviceGetRasterStatus.
+  out->Caps = D3DCAPS_READ_SCANLINE;
+
   // Keep caps conservative: only advertise features that are actually wired up
   // end-to-end in the AeroGPU D3D9 UMD so the runtime doesn't route into
   // unimplemented DDIs (notably patch rendering and MSAA).
@@ -229,6 +232,16 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                       D3DPBLENDCAPS_BLENDFACTOR | D3DPBLENDCAPS_INVBLENDFACTOR;
   out->DestBlendCaps = out->SrcBlendCaps;
 
+  out->StencilCaps = D3DSTENCILCAPS_KEEP |
+                     D3DSTENCILCAPS_ZERO |
+                     D3DSTENCILCAPS_REPLACE |
+                     D3DSTENCILCAPS_INCRSAT |
+                     D3DSTENCILCAPS_DECRSAT |
+                     D3DSTENCILCAPS_INVERT |
+                     D3DSTENCILCAPS_INCR |
+                     D3DSTENCILCAPS_DECR |
+                     D3DSTENCILCAPS_TWOSIDED;
+
   out->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
 
   // Mipmapped textures (multi-subresource layouts) are not supported yet on the
@@ -240,7 +253,10 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->StretchRectFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
                                D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
 
-  out->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP;
+  // These address modes are supported by the host pipeline. Border address mode
+  // is mapped to clamp-to-edge when the backend lacks clamp-to-border support.
+  out->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP |
+                            D3DPTADDRESSCAPS_MIRROR | D3DPTADDRESSCAPS_BORDER;
 
   // NPOT textures are required for DWM (arbitrary window sizes). Do NOT set
   // D3DPTEXTURECAPS_POW2. Also avoid cubemap/volume caps until implemented.
@@ -270,7 +286,10 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                    D3DDTCAPS_UBYTE4 | D3DDTCAPS_UBYTE4N | D3DDTCAPS_SHORT2 | D3DDTCAPS_SHORT4 | D3DDTCAPS_SHORT2N |
                    D3DDTCAPS_SHORT4N | D3DDTCAPS_USHORT2N | D3DDTCAPS_USHORT4N;
 
-  out->NumSimultaneousRTs = 1;
+  // D3D9 supports up to 4 MRTs, and the AeroGPU command stream can bind up to 4
+  // (clamped to a contiguous prefix). Advertise 4 so apps don't unnecessarily
+  // fall back to alternate code paths.
+  out->NumSimultaneousRTs = 4;
 
   out->VS20Caps.Caps = 0;
   out->VS20Caps.DynamicFlowControlDepth = 0;
@@ -293,11 +312,12 @@ void log_caps_once(const D3DCAPS9& caps) {
     return;
   }
 
-  logf("aerogpu-d3d9: caps summary: VS=0x%08lX PS=0x%08lX MaxTex=%lux%lu Caps2=0x%08lX DevCaps=0x%08lX\n",
+  logf("aerogpu-d3d9: caps summary: VS=0x%08lX PS=0x%08lX MaxTex=%lux%lu Caps=0x%08lX Caps2=0x%08lX DevCaps=0x%08lX\n",
        (unsigned long)caps.VertexShaderVersion,
        (unsigned long)caps.PixelShaderVersion,
        (unsigned long)caps.MaxTextureWidth,
        (unsigned long)caps.MaxTextureHeight,
+       (unsigned long)caps.Caps,
        (unsigned long)caps.Caps2,
        (unsigned long)caps.DevCaps);
   logf("aerogpu-d3d9: caps bits: PrimitiveMiscCaps=0x%08lX RasterCaps=0x%08lX ZCmpCaps=0x%08lX AlphaCmpCaps=0x%08lX\n",
@@ -308,6 +328,8 @@ void log_caps_once(const D3DCAPS9& caps) {
   logf("aerogpu-d3d9: caps tex: TextureCaps=0x%08lX TextureAddressCaps=0x%08lX\n",
        (unsigned long)caps.TextureCaps,
        (unsigned long)caps.TextureAddressCaps);
+  logf("aerogpu-d3d9: caps ds: StencilCaps=0x%08lX\n",
+       (unsigned long)caps.StencilCaps);
   logf("aerogpu-d3d9: caps limits: MaxSimulTex=%lu MaxTexStages=%lu MaxStreams=%lu MaxVol=%lu\n",
        (unsigned long)caps.MaxSimultaneousTextures,
        (unsigned long)caps.MaxTextureBlendStages,
@@ -397,7 +419,7 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
       caps->PixelShaderVersion = D3DPS_VERSION(2, 0);
       caps->MaxVertexShaderConst = 256;
       caps->PresentationIntervals = D3DPRESENT_INTERVAL_ONE | D3DPRESENT_INTERVAL_IMMEDIATE;
-      caps->NumSimultaneousRTs = 1;
+      caps->NumSimultaneousRTs = 4;
       caps->VS20Caps.NumTemps = 32;
       caps->VS20Caps.NumInstructionSlots = 256;
       caps->PS20Caps.NumTemps = 32;
