@@ -379,6 +379,38 @@ describe("hid/WebHidBroker", () => {
     expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.detach")).toBe(true);
   });
 
+  it("times out when the worker never responds with hid.attachResult", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager, attachResultTimeoutMs: 10 });
+      const port = new FakePort();
+      port.autoAttachResult = false;
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      const attachPromise = broker.attachDevice(device as unknown as HIDDevice);
+      const attachRejected = expect(attachPromise).rejects.toThrow(/timed out/i);
+
+      // Allow the attach message to be posted before advancing timers.
+      for (let i = 0; i < 10; i += 1) {
+        if (port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.attach")) break;
+        await Promise.resolve();
+      }
+      expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.attach")).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(20);
+
+      await attachRejected;
+      expect(device.opened).toBe(false);
+      expect(device.close).toHaveBeenCalledTimes(1);
+      expect(manager.getState().attachedDevices).toHaveLength(0);
+      expect(broker.isAttachedToWorker(device as unknown as HIDDevice)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("forwards reports via SharedArrayBuffer rings when crossOriginIsolated", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 

@@ -54,6 +54,13 @@ const DEFAULT_HID_OUTPUT_RING_CAPACITY_BYTES = 1024 * 1024;
  */
 const MAX_HID_OUTPUT_RING_CAPACITY_BYTES = 16 * 1024 * 1024;
 
+/**
+ * Fail attaches that never produce a worker-side acknowledgement. This guards
+ * against version skew (old worker) and worker-side failures that drop the
+ * message loop without emitting `hid.attachResult`.
+ */
+const DEFAULT_HID_ATTACH_RESULT_TIMEOUT_MS = 10_000;
+
 function assertValidHidRingCapacityBytes(name: string, capacityBytes: number): number {
   if (!Number.isSafeInteger(capacityBytes) || capacityBytes <= 0) {
     throw new Error(`invalid ${name}: ${capacityBytes}`);
@@ -196,6 +203,7 @@ export class WebHidBroker {
       promise: Promise<void>;
       resolve: () => void;
       reject: (err: Error) => void;
+      timeout: ReturnType<typeof setTimeout> | null;
     }
   >();
 
@@ -207,6 +215,7 @@ export class WebHidBroker {
   #outputRing: HidReportRing | null = null;
   #outputRingDrainTimer: ReturnType<typeof setInterval> | null = null;
   readonly #outputRingCapacityBytes: number;
+  readonly #attachResultTimeoutMs: number;
   #ringDetachSent = false;
 
   #managerUnsubscribe: (() => void) | null = null;
@@ -219,6 +228,7 @@ export class WebHidBroker {
       outputRingCapacityBytes?: number;
       maxPendingSendsPerDevice?: number;
       maxPendingSendsTotal?: number;
+      attachResultTimeoutMs?: number;
     } = {},
   ) {
     this.manager = options.manager ?? new WebHidPassthroughManager();
@@ -227,6 +237,16 @@ export class WebHidBroker {
       options.outputRingCapacityBytes === undefined
         ? DEFAULT_HID_OUTPUT_RING_CAPACITY_BYTES
         : assertValidHidRingCapacityBytes("outputRingCapacityBytes", options.outputRingCapacityBytes);
+    this.#attachResultTimeoutMs = (() => {
+      const requested = options.attachResultTimeoutMs;
+      if (requested === undefined) return DEFAULT_HID_ATTACH_RESULT_TIMEOUT_MS;
+      if (!Number.isFinite(requested) || requested <= 0) {
+        throw new Error(`invalid attachResultTimeoutMs: ${requested}`);
+      }
+      // Clamp to a sane upper bound; this is a UI-facing await and should never
+      // hang indefinitely.
+      return Math.min(5 * 60_000, Math.floor(requested)) >>> 0;
+    })();
     this.#maxPendingSendsPerDevice =
       options.maxPendingSendsPerDevice === undefined
         ? DEFAULT_MAX_PENDING_SENDS_PER_DEVICE
@@ -392,6 +412,9 @@ export class WebHidBroker {
     for (const [deviceId, pending] of this.#pendingAttachResults) {
       if (pending.worker !== active) continue;
       this.#pendingAttachResults.delete(deviceId);
+      if (pending.timeout) {
+        clearTimeout(pending.timeout);
+      }
       pending.reject(new Error("IO worker disconnected while attaching HID device."));
     }
 
@@ -831,8 +854,19 @@ export class WebHidBroker {
       reject = (err: Error) => rej(err);
     });
 
-    const entry = { worker, promise, resolve, reject };
+    const entry = { worker, promise, resolve, reject, timeout: null as ReturnType<typeof setTimeout> | null };
     this.#pendingAttachResults.set(deviceId, entry);
+
+    const timeoutMs = this.#attachResultTimeoutMs;
+    entry.timeout = setTimeout(() => {
+      const pending = this.#pendingAttachResults.get(deviceId);
+      if (!pending || pending.promise !== promise) return;
+      this.#pendingAttachResults.delete(deviceId);
+      pending.reject(new Error(`[webhid] Timed out waiting for hid.attachResult deviceId=${deviceId}`));
+    }, timeoutMs);
+    // In Node (Vitest), `unref()` the timer so it doesn't keep the test runner alive if
+    // the broker is not explicitly destroyed.
+    (entry.timeout as unknown as { unref?: () => void }).unref?.();
 
     return promise;
   }
@@ -841,6 +875,9 @@ export class WebHidBroker {
     const pending = this.#pendingAttachResults.get(msg.deviceId);
     if (!pending || pending.worker !== port) return;
     this.#pendingAttachResults.delete(msg.deviceId);
+    if (pending.timeout) {
+      clearTimeout(pending.timeout);
+    }
     if (msg.ok) {
       pending.resolve();
     } else {
