@@ -2,7 +2,7 @@ use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::device::AttachedUsbDevice;
 use aero_usb::ehci::regs::{
     PORTSC_CCS, PORTSC_PED, PORTSC_PP, PORTSC_PR, REG_ASYNCLISTADDR, REG_CONFIGFLAG, REG_FRINDEX,
-    REG_PERIODICLISTBASE, REG_PORTSC_BASE, REG_USBCMD, REG_USBLEGCTLSTS, REG_USBLEGSUP,
+    PORTSC_PO, REG_PERIODICLISTBASE, REG_PORTSC_BASE, REG_USBCMD, REG_USBLEGCTLSTS, REG_USBLEGSUP,
     USBLEGSUP_OS_SEM, USBCMD_RS,
 };
 use aero_usb::ehci::EhciController;
@@ -159,4 +159,54 @@ fn ehci_snapshot_roundtrip_preserves_regs_port_timer_and_topology() {
     );
     assert_eq!(desc[0], 18, "device descriptor length must be 18");
     assert_eq!(desc[1], 0x01, "descriptor type must be DEVICE");
+}
+
+#[test]
+fn ehci_snapshot_roundtrip_preserves_port_owner_unreachability() {
+    let mut ctrl = EhciController::new();
+    ctrl.hub_mut()
+        .attach(0, Box::new(UsbHidKeyboardHandle::new()));
+
+    let mut mem = TestMemory::new(0x2000);
+
+    // Claim ports for EHCI so the port starts owned by EHCI, then explicitly hand the first port to
+    // a companion controller via PORTSC.PORT_OWNER. The device should remain physically connected
+    // but unreachable from the EHCI controller.
+    ctrl.mmio_write(REG_CONFIGFLAG, 4, 1);
+    ctrl.mmio_write(REG_PORTSC_BASE, 4, PORTSC_PP | PORTSC_PO);
+    let portsc = ctrl.mmio_read(REG_PORTSC_BASE, 4);
+    assert_ne!(portsc & PORTSC_PO, 0, "expected PORT_OWNER to be set");
+
+    let snapshot = ctrl.save_state();
+
+    let mut restored = EhciController::new();
+    restored
+        .load_state(&snapshot)
+        .expect("ehci snapshot restore should succeed");
+
+    let portsc = restored.mmio_read(REG_PORTSC_BASE, 4);
+    assert_ne!(
+        portsc & PORTSC_PO,
+        0,
+        "PORT_OWNER must be preserved across snapshot/restore"
+    );
+    assert!(
+        restored.hub().port_device(0).is_some(),
+        "device instance should be restored even when port is owned by companion"
+    );
+    assert!(
+        restored.hub_mut().device_mut_for_address(0).is_none(),
+        "device must be unreachable from EHCI when PORT_OWNER is set"
+    );
+
+    // Clear PORT_OWNER, perform a port reset, and ensure the device becomes reachable again.
+    restored.mmio_write(REG_PORTSC_BASE, 4, PORTSC_PP);
+    restored.mmio_write(REG_PORTSC_BASE, 4, PORTSC_PP | PORTSC_PR);
+    for _ in 0..50 {
+        restored.tick_1ms(&mut mem);
+    }
+    assert!(
+        restored.hub_mut().device_mut_for_address(0).is_some(),
+        "device should be reachable once PORT_OWNER is cleared and port reset completes"
+    );
 }
