@@ -277,22 +277,24 @@ Semantics / guarantees:
   (Reports from different devices may interleave.)
 - **Unified FIFO across transports:** both the SAB output ring (`hid.ringAttach`) and the fallback
   `postMessage` path (`hid.sendReport`) enqueue into the same per-device FIFO, so reports do not run
-  concurrently and order is preserved across transport mechanisms.
+  concurrently even if the runtime temporarily mixes forwarding mechanisms.
 - **Fallback on ring overflow/corruption:** the SAB rings are an optimization, not a correctness
   requirement. If a report cannot be enqueued (ring full, record too large), the I/O worker falls
   back to `postMessage` (`hid.sendReport`) for that report so guest→device reports are not silently
-  lost. If the output ring becomes corrupted such that the main thread can no longer drain it, there
-  is no explicit `hid.ringDetach` protocol today; any reports already queued in the ring may be
-  abandoned. In that case the ring fast path may stop making progress and, once the ring fills up,
-  subsequent reports will fall back to the `postMessage` path.
+  lost.
+  If either side detects ring corruption (e.g. the consumer cannot decode/drain records), it sends
+  `{ type: "hid.ringDetach", reason? }` to disable the SAB rings and both sides must fall back to
+  `postMessage` (`hid.inputReport` / `hid.sendReport`). Any reports already queued in the ring at the
+  time of detach may be dropped/abandoned.
 - **Size limits:** the SAB `HidReportRing` record format stores `len` as a `u16` and the default
-  ring size is 64 KiB. Feature reports larger than the maximum ring record payload (≈64 KiB) are
-  forwarded via `postMessage` even when rings are enabled.
+  output ring capacity is 1 MiB (configurable via `WebHidBroker({ outputRingCapacityBytes })`).
+  Feature reports larger than the maximum ring record payload (≈64 KiB, due to the `u16` length
+  field) are forwarded via `postMessage` even when rings are enabled.
 
 Implementation pointers:
 
 - Ring buffer: `web/src/usb/hid_report_ring.ts` (`HidReportRing`)
-- Message schema: `web/src/hid/hid_proxy_protocol.ts` (`hid.ringAttach`)
+- Message schema: `web/src/hid/hid_proxy_protocol.ts` (`hid.ringAttach`, `hid.ringDetach`)
 - Main thread setup + drain: `web/src/hid/webhid_broker.ts` (`#attachRings`, `#drainOutputRing`)
 - Worker-side attach: `web/src/workers/io.worker.ts` (`attachHidRings`, `hidHostSink.sendReport`)
 
