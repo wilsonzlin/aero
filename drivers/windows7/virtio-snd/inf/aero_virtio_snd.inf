@@ -117,8 +117,8 @@ HKR,,FriendlyName,,%AeroVirtioSnd.TopologyDesc%
 ;  - 1: force the silent null backend and allow START_DEVICE to succeed even when virtio transport bring-up fails
  HKR,Parameters,ForceNullBackend,0x00010001,0
 ; Optional bring-up flag (debug/dev only):
-;  - 0 (default): require INTx (strict contract v1 behavior)
-;  - 1: allow START_DEVICE to succeed even when INTx cannot be discovered/connected,
+;  - 0 (default): interrupt-driven (prefer MSI/MSI-X, fall back to INTx). Fail START_DEVICE if no usable interrupt can be discovered/connected.
+;  - 1: allow START_DEVICE to succeed even when no usable interrupt can be discovered/connected (neither MSI/MSI-X nor INTx),
 ;       relying on periodic used-ring polling in the WaveRT timer DPC.
 HKR,Parameters,AllowPollingOnly,0x00010001,0
  HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
