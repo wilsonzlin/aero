@@ -109,6 +109,8 @@ func main() {
 		ICEGatheringTimeout: cfg.ICEGatheringTimeout,
 
 		SignalingAuthTimeout:          cfg.SignalingAuthTimeout,
+		SignalingWSIdleTimeout:        cfg.SignalingWSIdleTimeout,
+		SignalingWSPingInterval:       cfg.SignalingWSPingInterval,
 		MaxSignalingMessageBytes:      cfg.MaxSignalingMessageBytes,
 		MaxSignalingMessagesPerSecond: cfg.MaxSignalingMessagesPerSecond,
 	})

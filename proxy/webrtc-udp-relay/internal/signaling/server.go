@@ -58,6 +58,10 @@ type Config struct {
 	// WebSocket auth timeout for AUTH_MODE!=none.
 	SignalingAuthTimeout time.Duration
 
+	// WebSocket keepalive + idle management (after auth completes).
+	SignalingWSIdleTimeout  time.Duration
+	SignalingWSPingInterval time.Duration
+
 	// WebSocket inbound signaling hardening.
 	MaxSignalingMessageBytes      int64
 	MaxSignalingMessagesPerSecond int
@@ -93,6 +97,9 @@ type Server struct {
 
 	SignalingAuthTimeout time.Duration
 
+	SignalingWSIdleTimeout  time.Duration
+	SignalingWSPingInterval time.Duration
+
 	MaxSignalingMessageBytes      int64
 	MaxSignalingMessagesPerSecond int
 
@@ -112,6 +119,8 @@ func NewServer(cfg Config) *Server {
 		Authorizer:           cfg.Authorizer,
 		ICEGatheringTimeout:  cfg.ICEGatheringTimeout,
 		SignalingAuthTimeout: cfg.SignalingAuthTimeout,
+		SignalingWSIdleTimeout:  cfg.SignalingWSIdleTimeout,
+		SignalingWSPingInterval: cfg.SignalingWSPingInterval,
 
 		MaxSignalingMessageBytes:      cfg.MaxSignalingMessageBytes,
 		MaxSignalingMessagesPerSecond: cfg.MaxSignalingMessagesPerSecond,
@@ -214,6 +223,20 @@ func (s *Server) signalingAuthTimeout() time.Duration {
 		return 2 * time.Second
 	}
 	return s.SignalingAuthTimeout
+}
+
+func (s *Server) signalingWSIdleTimeout() time.Duration {
+	if s.SignalingWSIdleTimeout <= 0 {
+		return 60 * time.Second
+	}
+	return s.SignalingWSIdleTimeout
+}
+
+func (s *Server) signalingWSPingInterval() time.Duration {
+	if s.SignalingWSPingInterval <= 0 {
+		return 20 * time.Second
+	}
+	return s.SignalingWSPingInterval
 }
 
 func (s *Server) maxSignalingMessageBytes() int64 {
@@ -576,7 +599,9 @@ func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 		req:        r,
 		authorizer: s.authorizer(),
 
-		authTimeout: s.signalingAuthTimeout(),
+		authTimeout:  s.signalingAuthTimeout(),
+		idleTimeout:  s.signalingWSIdleTimeout(),
+		pingInterval: s.signalingWSPingInterval(),
 		limiter: ratelimit.NewTokenBucket(
 			ratelimit.RealClock{},
 			int64(s.maxSignalingMessagesPerSecond()),
@@ -708,6 +733,8 @@ type wsSession struct {
 	authorizer Authorizer
 
 	authTimeout     time.Duration
+	idleTimeout     time.Duration
+	pingInterval    time.Duration
 	maxMessageBytes int64
 	limiter         *ratelimit.TokenBucket
 
@@ -723,6 +750,9 @@ type wsSession struct {
 	candBuf    []Candidate
 
 	closeOnce sync.Once
+
+	keepaliveOnce sync.Once
+	keepaliveDone chan struct{}
 }
 
 func (wss *wsSession) installPeerHandlers() {
@@ -752,6 +782,51 @@ func (wss *wsSession) installPeerHandlers() {
 
 const wsWriteWait = 1 * time.Second
 
+func (wss *wsSession) startKeepalive() {
+	// Defensive defaults: a zero/negative idle timeout disables the read deadline,
+	// which can lead to leaked connections. The config loader validates these
+	// values, but tests may construct a Server directly.
+	if wss.idleTimeout <= 0 {
+		wss.idleTimeout = 60 * time.Second
+	}
+	if wss.pingInterval <= 0 {
+		wss.pingInterval = 20 * time.Second
+	}
+
+	_ = wss.conn.SetReadDeadline(time.Now().Add(wss.idleTimeout))
+	wss.conn.SetPongHandler(func(string) error {
+		return wss.conn.SetReadDeadline(time.Now().Add(wss.idleTimeout))
+	})
+
+	wss.keepaliveOnce.Do(func() {
+		wss.keepaliveDone = make(chan struct{})
+		go wss.keepaliveLoop()
+	})
+}
+
+func (wss *wsSession) keepaliveLoop() {
+	ticker := time.NewTicker(wss.pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			wss.writeMu.Lock()
+			err := wss.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsWriteWait))
+			wss.writeMu.Unlock()
+			if err != nil {
+				// Best-effort close: if the ping failed, the peer is likely gone
+				// already, but attempting a clean close helps clients surface a
+				// deterministic code in logs.
+				wss.closeWith(websocket.CloseGoingAway, "ping failed")
+				_ = wss.conn.Close()
+				return
+			}
+		case <-wss.keepaliveDone:
+			return
+		}
+	}
+}
+
 func (wss *wsSession) run() {
 	defer wss.Close()
 
@@ -776,6 +851,7 @@ func (wss *wsSession) run() {
 	} else {
 		authorized = true
 		wss.credential = authRes.Credential
+		wss.startKeepalive()
 	}
 
 	for {
@@ -784,8 +860,15 @@ func (wss *wsSession) run() {
 			if !authorized && isTimeout(err) {
 				wss.srv.incMetric(metrics.AuthFailure)
 				wss.closeWith(websocket.ClosePolicyViolation, "authentication timeout")
+			} else if authorized && isTimeout(err) {
+				wss.closeWith(websocket.CloseNormalClosure, "idle timeout")
 			}
 			return
+		}
+		if authorized {
+			// Any successfully read frame counts as activity; extend the idle deadline
+			// in addition to handling pong frames via the PongHandler.
+			_ = wss.conn.SetReadDeadline(time.Now().Add(wss.idleTimeout))
 		}
 		// Apply the per-session signaling message rate limit *after* reading the
 		// message so we consume any bytes already in the TCP receive buffer.
@@ -833,7 +916,7 @@ func (wss *wsSession) run() {
 
 			authorized = true
 			wss.credential = authRes.Credential
-			_ = wss.conn.SetReadDeadline(time.Time{})
+			wss.startKeepalive()
 			continue
 		}
 
@@ -1018,6 +1101,9 @@ func (wss *wsSession) closeWith(code int, reason string) {
 
 func (wss *wsSession) Close() {
 	wss.closeOnce.Do(func() {
+		if wss.keepaliveDone != nil {
+			close(wss.keepaliveDone)
+		}
 		if wss.session != nil {
 			_ = wss.session.Close()
 		}

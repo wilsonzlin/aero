@@ -90,6 +90,88 @@ func readWSBinary(t *testing.T, c *websocket.Conn, timeout time.Duration) []byte
 	}
 }
 
+func TestUDPWebSocketServer_IdleTimeoutClosesWithoutPong(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+		UDPWSIdleTimeout:         200 * time.Millisecond,
+		UDPWSPingInterval:        50 * time.Millisecond,
+	}
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+	_ = readWSJSON(t, c, 2*time.Second) // ready
+
+	// Read, but do not reply to pings.
+	c.SetPingHandler(func(string) error { return nil })
+
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = c.ReadMessage()
+	if err == nil {
+		t.Fatalf("expected server to close the websocket")
+	}
+	if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+		t.Fatalf("expected close normal closure, got %v", err)
+	}
+}
+
+func TestUDPWebSocketServer_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.T) {
+	idleTimeout := 200 * time.Millisecond
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+		UDPWSIdleTimeout:         idleTimeout,
+		UDPWSPingInterval:        50 * time.Millisecond,
+	}
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+	_ = readWSJSON(t, c, 2*time.Second) // ready
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := c.ReadMessage()
+		errCh <- err
+	}()
+
+	time.Sleep(3 * idleTimeout)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("unexpected close before idle timeout elapsed: %v", err)
+	default:
+	}
+
+	_ = c.Close()
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for read goroutine to exit")
+	}
+}
+
 func TestUDPWebSocketServer_ReadyIncludesSessionIDWithoutSessionManager(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:                 config.AuthModeNone,

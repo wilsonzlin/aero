@@ -4,6 +4,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 func lookupMap(m map[string]string) func(string) (string, bool) {
@@ -77,6 +78,18 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.MaxUDPBindingsPerSession != DefaultMaxUDPBindingsPerSession {
 		t.Fatalf("MaxUDPBindingsPerSession=%d, want %d", cfg.MaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
 	}
+	if cfg.SignalingWSIdleTimeout != DefaultSignalingWSIdleTimeout {
+		t.Fatalf("SignalingWSIdleTimeout=%v, want %v", cfg.SignalingWSIdleTimeout, DefaultSignalingWSIdleTimeout)
+	}
+	if cfg.SignalingWSPingInterval != DefaultSignalingWSPingInterval {
+		t.Fatalf("SignalingWSPingInterval=%v, want %v", cfg.SignalingWSPingInterval, DefaultSignalingWSPingInterval)
+	}
+	if cfg.UDPWSIdleTimeout != DefaultUDPWSIdleTimeout {
+		t.Fatalf("UDPWSIdleTimeout=%v, want %v", cfg.UDPWSIdleTimeout, DefaultUDPWSIdleTimeout)
+	}
+	if cfg.UDPWSPingInterval != DefaultUDPWSPingInterval {
+		t.Fatalf("UDPWSPingInterval=%v, want %v", cfg.UDPWSPingInterval, DefaultUDPWSPingInterval)
+	}
 }
 
 func TestMaxDatagramPayloadBytes_EnvOverride(t *testing.T) {
@@ -106,6 +119,31 @@ func TestUDPReadBufferBytes_RequiresMaxDatagramPayloadBytesPlusOne(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), EnvUDPReadBufferBytes) {
 		t.Fatalf("err=%v, expected mention of %s", err, EnvUDPReadBufferBytes)
+	}
+}
+
+func TestWebSocketTimeouts_EnvOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                  "secret",
+		EnvSignalingWSIdleTimeout:  "10s",
+		EnvSignalingWSPingInterval: "3s",
+		EnvUDPWSIdleTimeout:        "11s",
+		EnvUDPWSPingInterval:       "4s",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.SignalingWSIdleTimeout != 10*time.Second {
+		t.Fatalf("SignalingWSIdleTimeout=%v, want %v", cfg.SignalingWSIdleTimeout, 10*time.Second)
+	}
+	if cfg.SignalingWSPingInterval != 3*time.Second {
+		t.Fatalf("SignalingWSPingInterval=%v, want %v", cfg.SignalingWSPingInterval, 3*time.Second)
+	}
+	if cfg.UDPWSIdleTimeout != 11*time.Second {
+		t.Fatalf("UDPWSIdleTimeout=%v, want %v", cfg.UDPWSIdleTimeout, 11*time.Second)
+	}
+	if cfg.UDPWSPingInterval != 4*time.Second {
+		t.Fatalf("UDPWSPingInterval=%v, want %v", cfg.UDPWSPingInterval, 4*time.Second)
 	}
 }
 

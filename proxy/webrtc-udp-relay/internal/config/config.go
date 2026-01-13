@@ -64,8 +64,14 @@ const (
 	EnvAPIKey                        = "API_KEY"
 	EnvJWTSecret                     = "JWT_SECRET"
 	EnvSignalingAuthTimeout          = "SIGNALING_AUTH_TIMEOUT"
+	EnvSignalingWSIdleTimeout        = "SIGNALING_WS_IDLE_TIMEOUT"
+	EnvSignalingWSPingInterval       = "SIGNALING_WS_PING_INTERVAL"
 	EnvMaxSignalingMessageBytes      = "MAX_SIGNALING_MESSAGE_BYTES"
 	EnvMaxSignalingMessagesPerSecond = "MAX_SIGNALING_MESSAGES_PER_SECOND"
+
+	// WebSocket UDP relay fallback (/udp) keepalive + idle management.
+	EnvUDPWSIdleTimeout  = "UDP_WS_IDLE_TIMEOUT"
+	EnvUDPWSPingInterval = "UDP_WS_PING_INTERVAL"
 
 	// coturn TURN REST (ephemeral) credentials.
 	EnvTURNRESTSharedSecret   = "TURN_REST_SHARED_SECRET"
@@ -95,8 +101,13 @@ const (
 	DefaultAuthMode AuthMode = AuthModeAPIKey
 
 	DefaultSignalingAuthTimeout          = 2 * time.Second
+	DefaultSignalingWSIdleTimeout        = 60 * time.Second
+	DefaultSignalingWSPingInterval       = 20 * time.Second
 	DefaultMaxSignalingMessageBytes      = int64(64 * 1024)
 	DefaultMaxSignalingMessagesPerSecond = 50
+
+	DefaultUDPWSIdleTimeout  = 60 * time.Second
+	DefaultUDPWSPingInterval = 20 * time.Second
 
 	DefaultTURNRESTTTLSeconds     int64  = 3600
 	DefaultTURNRESTUsernamePrefix string = "aero"
@@ -198,9 +209,14 @@ type Config struct {
 	JWTSecret string
 
 	SignalingAuthTimeout time.Duration
+	SignalingWSIdleTimeout  time.Duration
+	SignalingWSPingInterval time.Duration
 
 	MaxSignalingMessageBytes      int64
 	MaxSignalingMessagesPerSecond int
+
+	UDPWSIdleTimeout  time.Duration
+	UDPWSPingInterval time.Duration
 
 	// Relay engine limits.
 	UDPBindingIdleTimeout     time.Duration
@@ -480,6 +496,24 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		signalingAuthTimeout = d
 	}
 
+	signalingWSIdleTimeout := DefaultSignalingWSIdleTimeout
+	if raw, ok := lookup(EnvSignalingWSIdleTimeout); ok && strings.TrimSpace(raw) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvSignalingWSIdleTimeout, raw, err)
+		}
+		signalingWSIdleTimeout = d
+	}
+
+	signalingWSPingInterval := DefaultSignalingWSPingInterval
+	if raw, ok := lookup(EnvSignalingWSPingInterval); ok && strings.TrimSpace(raw) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvSignalingWSPingInterval, raw, err)
+		}
+		signalingWSPingInterval = d
+	}
+
 	maxSignalingMessageBytes := DefaultMaxSignalingMessageBytes
 	if raw, ok := lookup(EnvMaxSignalingMessageBytes); ok && strings.TrimSpace(raw) != "" {
 		n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
@@ -496,6 +530,24 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvMaxSignalingMessagesPerSecond, raw, err)
 		}
 		maxSignalingMessagesPerSecond = n
+	}
+
+	udpWSIdleTimeout := DefaultUDPWSIdleTimeout
+	if raw, ok := lookup(EnvUDPWSIdleTimeout); ok && strings.TrimSpace(raw) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvUDPWSIdleTimeout, raw, err)
+		}
+		udpWSIdleTimeout = d
+	}
+
+	udpWSPingInterval := DefaultUDPWSPingInterval
+	if raw, ok := lookup(EnvUDPWSPingInterval); ok && strings.TrimSpace(raw) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvUDPWSPingInterval, raw, err)
+		}
+		udpWSPingInterval = d
 	}
 
 	// WebRTC network defaults (env values become flag defaults).
@@ -592,8 +644,12 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 
 	fs.StringVar(&authModeStr, "auth-mode", authModeDefault, "Signaling auth mode: none, api_key, or jwt (env "+EnvAuthMode+")")
 	fs.DurationVar(&signalingAuthTimeout, "signaling-auth-timeout", signalingAuthTimeout, "Signaling WS auth timeout (env "+EnvSignalingAuthTimeout+")")
+	fs.DurationVar(&signalingWSIdleTimeout, "signaling-ws-idle-timeout", signalingWSIdleTimeout, "Close idle signaling WebSocket connections after this duration (env "+EnvSignalingWSIdleTimeout+")")
+	fs.DurationVar(&signalingWSPingInterval, "signaling-ws-ping-interval", signalingWSPingInterval, "Send ping frames on signaling WebSocket connections at this interval (env "+EnvSignalingWSPingInterval+")")
 	fs.Int64Var(&maxSignalingMessageBytes, "max-signaling-message-bytes", maxSignalingMessageBytes, "Max inbound signaling WS message size in bytes (env "+EnvMaxSignalingMessageBytes+")")
 	fs.IntVar(&maxSignalingMessagesPerSecond, "max-signaling-messages-per-second", maxSignalingMessagesPerSecond, "Max inbound signaling WS messages per second (env "+EnvMaxSignalingMessagesPerSecond+")")
+	fs.DurationVar(&udpWSIdleTimeout, "udp-ws-idle-timeout", udpWSIdleTimeout, "Close idle /udp WebSocket connections after this duration (env "+EnvUDPWSIdleTimeout+")")
+	fs.DurationVar(&udpWSPingInterval, "udp-ws-ping-interval", udpWSPingInterval, "Send ping frames on /udp WebSocket connections at this interval (env "+EnvUDPWSPingInterval+")")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -687,11 +743,23 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if signalingAuthTimeout <= 0 {
 		return Config{}, fmt.Errorf("%s/--signaling-auth-timeout must be > 0", EnvSignalingAuthTimeout)
 	}
+	if signalingWSIdleTimeout <= 0 {
+		return Config{}, fmt.Errorf("%s/--signaling-ws-idle-timeout must be > 0", EnvSignalingWSIdleTimeout)
+	}
+	if signalingWSPingInterval <= 0 {
+		return Config{}, fmt.Errorf("%s/--signaling-ws-ping-interval must be > 0", EnvSignalingWSPingInterval)
+	}
 	if maxSignalingMessageBytes <= 0 {
 		return Config{}, fmt.Errorf("%s/--max-signaling-message-bytes must be > 0", EnvMaxSignalingMessageBytes)
 	}
 	if maxSignalingMessagesPerSecond <= 0 {
 		return Config{}, fmt.Errorf("%s/--max-signaling-messages-per-second must be > 0", EnvMaxSignalingMessagesPerSecond)
+	}
+	if udpWSIdleTimeout <= 0 {
+		return Config{}, fmt.Errorf("%s/--udp-ws-idle-timeout must be > 0", EnvUDPWSIdleTimeout)
+	}
+	if udpWSPingInterval <= 0 {
+		return Config{}, fmt.Errorf("%s/--udp-ws-ping-interval must be > 0", EnvUDPWSPingInterval)
 	}
 
 	if strings.TrimSpace(turnRESTSharedSecret) != "" {
@@ -835,8 +903,12 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		APIKey:                        apiKey,
 		JWTSecret:                     jwtSecret,
 		SignalingAuthTimeout:          signalingAuthTimeout,
+		SignalingWSIdleTimeout:        signalingWSIdleTimeout,
+		SignalingWSPingInterval:       signalingWSPingInterval,
 		MaxSignalingMessageBytes:      maxSignalingMessageBytes,
 		MaxSignalingMessagesPerSecond: maxSignalingMessagesPerSecond,
+		UDPWSIdleTimeout:              udpWSIdleTimeout,
+		UDPWSPingInterval:             udpWSPingInterval,
 
 		UDPBindingIdleTimeout:     udpBindingIdleTimeout,
 		UDPReadBufferBytes:        udpReadBufferBytes,

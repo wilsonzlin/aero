@@ -100,6 +100,8 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	var writeMu sync.Mutex
+	done := make(chan struct{})
+	defer close(done)
 	closeConn := func(code int, reason string) {
 		writeMu.Lock()
 		defer writeMu.Unlock()
@@ -207,8 +209,40 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		authenticated = true
-		_ = conn.SetReadDeadline(time.Time{})
 	}
+
+	// Keepalive / idle detection for long-lived /udp connections (after auth).
+	idleTimeout := s.cfg.UDPWSIdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = config.DefaultUDPWSIdleTimeout
+	}
+	pingInterval := s.cfg.UDPWSPingInterval
+	if pingInterval <= 0 {
+		pingInterval = config.DefaultUDPWSPingInterval
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(idleTimeout))
+	})
+	go func() {
+		ticker := time.NewTicker(pingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				writeMu.Lock()
+				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsUDPWriteWait))
+				writeMu.Unlock()
+				if err != nil {
+					// Best-effort close; the connection may already be gone.
+					closeConn(websocket.CloseGoingAway, "ping failed")
+					return
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
 
 	var sess *Session
 	sessionID := ""
@@ -290,12 +324,18 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		msgType, msg, err := conn.ReadMessage()
 		if err != nil {
+			if isTimeout(err) {
+				closeConn(websocket.CloseNormalClosure, "idle timeout")
+			}
 			if metricsSink != nil && errors.Is(err, websocket.ErrReadLimit) {
 				metricsSink.Inc(metrics.UDPWSDropped)
 				metricsSink.Inc(metrics.UDPWSDroppedOversized)
 			}
 			return
 		}
+		// Any successfully read frame counts as activity. Extend the idle deadline
+		// in addition to handling pong frames via the PongHandler.
+		_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
 		if msgType != websocket.BinaryMessage {
 			// Be tolerant: some clients may send an auth message even when already
 			// authenticated (e.g. query-string auth with a first-message auth

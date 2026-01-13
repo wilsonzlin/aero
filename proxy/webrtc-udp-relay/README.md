@@ -468,6 +468,9 @@ For HTTP endpoints (`GET /webrtc/ice`, `POST /offer`, `POST /webrtc/offer`, `POS
 To prevent resource exhaustion:
 
 - Unauthenticated WebSocket connections must authenticate within `SIGNALING_AUTH_TIMEOUT` (default: `2s`).
+- After authentication, WebSocket connections are kept alive with ping/pong and closed if they go idle:
+  - `SIGNALING_WS_IDLE_TIMEOUT` / `SIGNALING_WS_PING_INTERVAL` apply to `GET /webrtc/signal`.
+  - `UDP_WS_IDLE_TIMEOUT` / `UDP_WS_PING_INTERVAL` apply to `GET /udp`.
 - Incoming WebSocket control messages (e.g. signaling, `/udp` auth) are limited by:
   - `MAX_SIGNALING_MESSAGE_BYTES` (default: `65536`)
   - `MAX_SIGNALING_MESSAGES_PER_SECOND` (default: `50`)
@@ -480,8 +483,12 @@ Violations close the WebSocket connection with an error.
 - `API_KEY` (used when `AUTH_MODE=api_key`)
 - `JWT_SECRET` (used when `AUTH_MODE=jwt`, HS256)
 - `SIGNALING_AUTH_TIMEOUT` (Go duration, e.g. `2s`)
+- `SIGNALING_WS_IDLE_TIMEOUT` (Go duration, default: `60s`) — close idle `/webrtc/signal` WebSocket connections
+- `SIGNALING_WS_PING_INTERVAL` (Go duration, default: `20s`) — send ping frames on `/webrtc/signal` WebSocket connections
 - `MAX_SIGNALING_MESSAGE_BYTES`
 - `MAX_SIGNALING_MESSAGES_PER_SECOND`
+- `UDP_WS_IDLE_TIMEOUT` (Go duration, default: `60s`) — close idle `/udp` WebSocket connections
+- `UDP_WS_PING_INTERVAL` (Go duration, default: `20s`) — send ping frames on `/udp` WebSocket connections
 
 ### WebRTC / ICE config
 
