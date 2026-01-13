@@ -208,13 +208,15 @@ canvas.addEventListener('click', () => {
 ## Testing
 
 ```bash
-# Run input tests
-bash ./scripts/safe-run.sh cargo test -p aero-devices-input --locked
-bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
+# Run the full USB/input-focused test suite (Rust + web unit tests).
+# (Assumes Node deps are installed; run `npm ci` from repo root if needed.)
+cargo xtask input
 
-# Run USB bridge tests
-cd web
-npm test -- --grep usb
+# Optional: also run a small input-focused Playwright subset.
+cargo xtask input --e2e
+
+# If you're running in a constrained sandbox, consider using safe-run:
+bash ./scripts/safe-run.sh cargo xtask input
 ```
 
 ---
