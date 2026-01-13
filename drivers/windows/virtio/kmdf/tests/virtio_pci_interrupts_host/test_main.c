@@ -403,15 +403,17 @@ static void TestMsixLimitedVectorRouting(void)
     WDFDEVICE dev;
     TEST_CALLBACKS cb;
     BOOLEAN handled;
+    ULONG q;
 
     ResetRegisterReadInstrumentation();
-    PrepareMsix(&interrupts, &dev, &cb, 2, 2 /* only config + 1 queue vector */, NULL);
+    PrepareMsix(&interrupts, &dev, &cb, 4, 2 /* only config + 1 queue vector */, NULL);
 
     assert(interrupts.u.Msix.UsedVectorCount == 2);
     assert(interrupts.u.Msix.ConfigVector == 0);
     assert(interrupts.u.Msix.QueueVectors != NULL);
-    assert(interrupts.u.Msix.QueueVectors[0] == 1);
-    assert(interrupts.u.Msix.QueueVectors[1] == 1);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(interrupts.u.Msix.QueueVectors[q] == 1);
+    }
 
     /* MSI-X ISR must not read ISR status. */
     assert(WdfTestReadRegisterUcharCount == 0);
@@ -432,12 +434,86 @@ static void TestMsixLimitedVectorRouting(void)
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[1]);
     assert(cb.ConfigCalls == 0);
-    assert(cb.QueueCallsTotal == 2);
-    assert(cb.QueueCallsPerIndex[0] == 1);
-    assert(cb.QueueCallsPerIndex[1] == 1);
+    assert(cb.QueueCallsTotal == 4);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(cb.QueueCallsPerIndex[q] == 1);
+    }
 
     /* Still no ISR status reads in MSI-X mode. */
     assert(WdfTestReadRegisterUcharCount == 0);
+
+    Cleanup(&interrupts, dev);
+}
+
+static void TestMsixVectorUtilizationPartialQueueVectors(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    BOOLEAN handled;
+
+    ResetRegisterReadInstrumentation();
+    PrepareMsix(&interrupts, &dev, &cb, 4 /* queues */, 3 /* config + 2 queue vectors */, NULL);
+
+    assert(interrupts.u.Msix.UsedVectorCount == 3);
+    assert(interrupts.u.Msix.ConfigVector == 0);
+    assert(interrupts.u.Msix.QueueVectors != NULL);
+
+    /* Queues should be spread across vectors 1..2 (round-robin). */
+    assert(interrupts.u.Msix.QueueVectors[0] == 1);
+    assert(interrupts.u.Msix.QueueVectors[1] == 2);
+    assert(interrupts.u.Msix.QueueVectors[2] == 1);
+    assert(interrupts.u.Msix.QueueVectors[3] == 2);
+
+    /* MSI-X ISR must not read ISR status. */
+    assert(WdfTestReadRegisterUcharCount == 0);
+
+    /* Vector 1: queues 0 + 2. */
+    ResetCallbacks(&cb);
+    cb.ExpectedDevice = dev;
+    handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
+    assert(handled == TRUE);
+    WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[1]);
+    assert(cb.ConfigCalls == 0);
+    assert(cb.QueueCallsTotal == 2);
+    assert(cb.QueueCallsPerIndex[0] == 1);
+    assert(cb.QueueCallsPerIndex[1] == 0);
+    assert(cb.QueueCallsPerIndex[2] == 1);
+    assert(cb.QueueCallsPerIndex[3] == 0);
+
+    /* Vector 2: queues 1 + 3. */
+    ResetCallbacks(&cb);
+    cb.ExpectedDevice = dev;
+    handled = interrupts.u.Msix.Interrupts[2]->Isr(interrupts.u.Msix.Interrupts[2], 0);
+    assert(handled == TRUE);
+    WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[2]);
+    assert(cb.ConfigCalls == 0);
+    assert(cb.QueueCallsTotal == 2);
+    assert(cb.QueueCallsPerIndex[0] == 0);
+    assert(cb.QueueCallsPerIndex[1] == 1);
+    assert(cb.QueueCallsPerIndex[2] == 0);
+    assert(cb.QueueCallsPerIndex[3] == 1);
+
+    /* Still no ISR status reads in MSI-X mode. */
+    assert(WdfTestReadRegisterUcharCount == 0);
+
+    Cleanup(&interrupts, dev);
+}
+
+static void TestMsixVectorUtilizationOnePerQueueWhenPossible(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+
+    PrepareMsix(&interrupts, &dev, &cb, 3 /* queues */, 6 /* message count >= 1 + queues */, NULL);
+
+    assert(interrupts.u.Msix.UsedVectorCount == 4);
+    assert(interrupts.u.Msix.ConfigVector == 0);
+    assert(interrupts.u.Msix.QueueVectors != NULL);
+    assert(interrupts.u.Msix.QueueVectors[0] == 1);
+    assert(interrupts.u.Msix.QueueVectors[1] == 2);
+    assert(interrupts.u.Msix.QueueVectors[2] == 3);
 
     Cleanup(&interrupts, dev);
 }
@@ -746,6 +822,8 @@ int main(void)
     TestIntxRealInterruptDispatch();
     TestMsixDispatchAndRouting();
     TestMsixLimitedVectorRouting();
+    TestMsixVectorUtilizationPartialQueueVectors();
+    TestMsixVectorUtilizationOnePerQueueWhenPossible();
     TestResetInProgressGating();
     TestMsixQuiesceResumeVectors();
     TestIntxQuiesceResume();

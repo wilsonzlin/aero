@@ -269,6 +269,7 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
         WDF_OBJECT_ATTRIBUTES memoryAttributes;
         WDF_OBJECT_ATTRIBUTES interruptAttributes;
         ULONG vector;
+        ULONGLONG vectorQueueMasks[1 + 64];
 
         Interrupts->Mode = VirtioPciInterruptModeMsix;
 
@@ -299,6 +300,18 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
 
         Interrupts->u.Msix.UsedVectorCount = usedVectorCount;
         Interrupts->u.Msix.ConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+
+        RtlZeroMemory(vectorQueueMasks, sizeof(vectorQueueMasks));
+        if (QueueCount != 0) {
+            if (queueVectorCount == 0) {
+                vectorQueueMasks[0] = VirtioPciQueueMaskAll(QueueCount);
+            } else {
+                for (q = 0; q < QueueCount; q++) {
+                    ULONG queueVectorIndex = 1 + (q % queueVectorCount);
+                    vectorQueueMasks[queueVectorIndex] |= (1ULL << q);
+                }
+            }
+        }
 
         if (QueueCount != 0) {
             WDF_OBJECT_ATTRIBUTES_INIT(&memoryAttributes);
@@ -349,27 +362,7 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
                 return status;
             }
 
-            queueMask = 0;
-            if (usedVectorCount == 1) {
-                queueMask = VirtioPciQueueMaskAll(QueueCount);
-            } else if (vector != 0) {
-                //
-                // Distribute queues across the available queue vectors in a
-                // simple round-robin scheme:
-                //
-                //   assigned_vector(q) = 1 + (q % queueVectorCount)
-                //
-                // Each vector's DPC drains all queues assigned to it.
-                //
-                ULONG q;
-                ULONG queueVectorIndex = vector - 1;
-
-                for (q = 0; q < QueueCount; q++) {
-                    if ((q % queueVectorCount) == queueVectorIndex) {
-                        queueMask |= (1ULL << q);
-                    }
-                }
-            }
+            queueMask = vectorQueueMasks[vector];
 
             interruptContext = VirtioPciInterruptGetContext(Interrupts->u.Msix.Interrupts[vector]);
             interruptContext->Interrupts = Interrupts;
@@ -386,29 +379,29 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
         {
             WDF_INTERRUPT_INFO info;
             ULONG messageNumber;
+            USHORT vectorMessageNumbers[1 + 64];
 
-            WDF_INTERRUPT_INFO_INIT(&info);
-            WdfInterruptGetInfo(Interrupts->u.Msix.Interrupts[0], &info);
-            messageNumber = info.MessageNumber;
-            Interrupts->u.Msix.ConfigVector = (messageNumber >= VIRTIO_PCI_MSI_NO_VECTOR) ?
-                VIRTIO_PCI_MSI_NO_VECTOR :
-                (USHORT)messageNumber;
+            RtlZeroMemory(vectorMessageNumbers, sizeof(vectorMessageNumbers));
+            for (vector = 0; vector < usedVectorCount; vector++) {
+                WDF_INTERRUPT_INFO_INIT(&info);
+                WdfInterruptGetInfo(Interrupts->u.Msix.Interrupts[vector], &info);
+                messageNumber = info.MessageNumber;
+                vectorMessageNumbers[vector] = (messageNumber >= VIRTIO_PCI_MSI_NO_VECTOR) ?
+                    VIRTIO_PCI_MSI_NO_VECTOR :
+                    (USHORT)messageNumber;
+            }
+
+            Interrupts->u.Msix.ConfigVector = vectorMessageNumbers[0];
 
             if (Interrupts->u.Msix.QueueVectors != NULL) {
-                if (usedVectorCount == 1) {
+                if (queueVectorCount == 0) {
                     for (q = 0; q < QueueCount; q++) {
-                        Interrupts->u.Msix.QueueVectors[q] = Interrupts->u.Msix.ConfigVector;
+                        Interrupts->u.Msix.QueueVectors[q] = vectorMessageNumbers[0];
                     }
                 } else {
                     for (q = 0; q < QueueCount; q++) {
-                        ULONG vectorIndex = 1 + (q % queueVectorCount);
-
-                        WDF_INTERRUPT_INFO_INIT(&info);
-                        WdfInterruptGetInfo(Interrupts->u.Msix.Interrupts[vectorIndex], &info);
-                        messageNumber = info.MessageNumber;
-                        Interrupts->u.Msix.QueueVectors[q] = (messageNumber >= VIRTIO_PCI_MSI_NO_VECTOR) ?
-                            VIRTIO_PCI_MSI_NO_VECTOR :
-                            (USHORT)messageNumber;
+                        ULONG queueVectorIndex = 1 + (q % queueVectorCount);
+                        Interrupts->u.Msix.QueueVectors[q] = vectorMessageNumbers[queueVectorIndex];
                     }
                 }
             }
