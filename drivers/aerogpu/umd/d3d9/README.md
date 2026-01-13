@@ -281,10 +281,21 @@ Unsupported states are handled defensively; unknown state enums are accepted and
 
 The AeroGPU D3D9 UMD includes a small **fixed-function fallback path** used by DWM and older D3D9 apps that rely on FVFs instead of explicit shaders + vertex declarations.
 
-Supported FVF combinations (tested):
+Supported FVF combinations (currently implemented):
 
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE`
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
+
+Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
+
+- `fixedfunc_fvf_supported()` + `kSupportedFvfXyzrhwDiffuse` / `kSupportedFvfXyzrhwDiffuseTex1`
+- `ensure_fixedfunc_pipeline_locked()`
+- FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
+
+Not yet implemented (not rendered by the fixed-function fallback path):
+
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE`
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
 
 Implementation notes (bring-up):
 
@@ -298,11 +309,17 @@ Implementation notes (bring-up):
 
 Limitations (bring-up):
 
-- Only the `XYZRHW` (pre-transformed) + `DIFFUSE` (+ optional `TEX1`) subset is supported by the fixed-function fallback path. Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping but are not guaranteed to render correctly.
+- Only `D3DFVF_XYZRHW | D3DFVF_DIFFUSE` and `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1` are supported by the fixed-function fallback path (see `ensure_fixedfunc_pipeline_locked()` in `src/aerogpu_d3d9_driver.cpp`). Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping, but fixed-function draws will fail with `D3DERR_INVALIDCALL` if the active FVF is unsupported.
 - Untransformed `D3DFVF_XYZ*` fixed-function rendering (world/view/projection transforms) is not implemented yet.
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
 - The `TEX1` fixed-function path uses a fixed shader: sample `Texture(0)` and multiply by the per-vertex diffuse color (classic “modulate”). `D3DTSS_*` texture stage state is cached for `Get*`/state blocks but is not interpreted by the fixed-function shader path.
 - Fixed-function lighting/material is not implemented (legacy `SetLight`/`SetMaterial` etc are cached for `Get*` and state blocks).
+
+### Known limitations / next steps
+
+- **Fixed-function pipeline is minimal:** `ensure_fixedfunc_pipeline_locked()` selects between a small set of built-in shader pairs (e.g. `fixedfunc::kVsPassthroughPosColor` / `fixedfunc::kPsPassthroughColor` and `fixedfunc::kVsPassthroughPosColorTex1` / `fixedfunc::kPsTexturedModulateVertexColor`) rather than generating shaders from texture stage state (D3DTSS_*) / other fixed-function state.
+- **Shader int/bool constants are cached only:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks, but do not currently emit constant updates into the AeroGPU command stream.
+- **Bring-up no-ops:** `pfnGenerateMipSubLevels` and cursor DDIs (`pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`) are wired as `S_OK` no-ops via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
 
 ### Validation
 
@@ -342,7 +359,7 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet (they currently return `D3DERR_NOTAVAILABLE`):
 
-- `pfnProcessVertices`
+- `pfnProcessVertices` (wired via `AEROGPU_D3D9_DEFINE_DDI_STUB(..., D3DERR_NOTAVAILABLE)` in `src/aerogpu_d3d9_driver.cpp`)
 
 ### Patch rendering (N-Patch / Bezier patches)
 
