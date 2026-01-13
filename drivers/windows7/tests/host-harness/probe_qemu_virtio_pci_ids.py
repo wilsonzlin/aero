@@ -72,6 +72,22 @@ def _detect_virtio_snd_device(qemu_system: str) -> str | None:
     return None
 
 
+def _qemu_device_help_text(qemu_system: str) -> str | None:
+    try:
+        proc = subprocess.run(
+            [qemu_system, "-device", "help"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    return proc.stdout or ""
+
+
 def _read_qmp_obj(stdout: "subprocess._TextIOWrapper") -> dict:
     while True:
         line = stdout.readline()
@@ -164,6 +180,14 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--with-virtio-tablet",
+        action="store_true",
+        help=(
+            "Also attach a virtio-tablet-pci device (absolute pointer). If your QEMU build does not support "
+            "virtio-tablet-pci, the probe runs unchanged without it."
+        ),
+    )
+    parser.add_argument(
         "--mode",
         choices=["default", "contract-v1"],
         default="default",
@@ -187,6 +211,10 @@ def main() -> int:
     rev_arg = ""
     if args.mode == "contract-v1":
         rev_arg = ",x-pci-revision=0x01"
+
+    device_help_text: str = ""
+    if args.with_virtio_snd or args.with_virtio_tablet:
+        device_help_text = _qemu_device_help_text(args.qemu_system) or ""
 
     with tempfile.TemporaryDirectory(prefix="aero-qemu-pci-probe-") as td:
         disk_path = Path(td) / "disk.img"
@@ -218,8 +246,21 @@ def main() -> int:
             "-device",
             f"virtio-mouse-pci,disable-legacy=on{rev_arg}",
         ]
+        if args.with_virtio_tablet and "virtio-tablet-pci" in device_help_text:
+            qemu_args += [
+                "-device",
+                f"virtio-tablet-pci,disable-legacy=on{rev_arg}",
+            ]
         if args.with_virtio_snd:
-            device_name = _detect_virtio_snd_device(args.qemu_system)
+            # Reuse `-device help` output from the virtio-tablet probe when available.
+            device_name: str | None = None
+            if device_help_text:
+                if "virtio-sound-pci" in device_help_text:
+                    device_name = "virtio-sound-pci"
+                elif "virtio-snd-pci" in device_help_text:
+                    device_name = "virtio-snd-pci"
+            if not device_name:
+                device_name = _detect_virtio_snd_device(args.qemu_system)
             if not device_name:
                 raise SystemExit(
                     "ERROR: QEMU does not advertise a virtio-snd PCI device (expected virtio-sound-pci or virtio-snd-pci)."
