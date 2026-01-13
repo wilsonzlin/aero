@@ -34,20 +34,30 @@
   Build/test configuration to use for multi-config generators (Visual Studio,
   Ninja Multi-Config). Defaults to Release.
 
-.EXAMPLE
-  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers\windows7\virtio-snd\scripts\run-host-tests.ps1
+  Note: this is only used when the selected CMake generator is multi-config. For single-config
+  generators (Ninja/Makefiles), this script configures `CMAKE_BUILD_TYPE=Release`. To do a Debug
+  build with a single-config generator, configure/build manually with
+  `-DCMAKE_BUILD_TYPE=Debug`.
 
 .EXAMPLE
-  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -BuildDir out\my-virtiosnd-tests
+  # From the repo root:
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1
 
 .EXAMPLE
-  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Clean
+  # Custom build output directory:
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -BuildDir out\my-virtiosnd-tests
 
 .EXAMPLE
-  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -HostOnly
+  # Clean rebuild:
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Clean
 
 .EXAMPLE
-  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Configuration Debug
+  # Subset only (tests/host):
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -HostOnly
+
+.EXAMPLE
+  # Multi-config generators (Visual Studio):
+  pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Configuration Debug
 #>
 
 [CmdletBinding()]

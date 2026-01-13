@@ -70,6 +70,11 @@ Multi-config generators (Visual Studio, Ninja Multi-Config) require a build/test
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -Configuration Debug
 ```
 
+Note: `-Configuration` is only used when the selected CMake generator is multi-config (for example
+Visual Studio). For single-config generators (Ninja/Makefiles), the script configures
+`CMAKE_BUILD_TYPE=Release`; to do a Debug build in that mode, configure/build manually with
+`-DCMAKE_BUILD_TYPE=Debug`.
+
 Or run directly:
 
 ```sh
