@@ -39,59 +39,77 @@ Native (`aero_machine` / `crates/devices`) uses a stable PCI identity so guests 
 | Device ID | `0x000d` |
 | Class code | `0x0c/0x03/0x30` (Serial bus / USB / xHCI) |
 | Interrupt | PCI INTx (INTA#) |
-| BARs | BAR0 = MMIO (xHCI register space) |
+| BARs | BAR0 = MMIO32 (`0x10000` bytes) |
 
 Notes:
 
-- We currently target **legacy INTx** (level-triggered) instead of MSI/MSI-X (see [Unsupported features / known gaps](#unsupported-features--known-gaps)).
+- The canonical PCI identity is defined in `crates/devices/src/pci/profile.rs` as `USB_XHCI_QEMU`.
+- We currently target **legacy INTx** (level-triggered) by default instead of MSI/MSI-X (see [Unsupported features / known gaps](#unsupported-features--known-gaps)).
 - The IRQ line observed by the guest depends on platform routing (PIRQ swizzle); see [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) and [`docs/irq-semantics.md`](./irq-semantics.md).
 
 ### PCI identity (web runtime)
 
-The browser/WASM runtime exposes the same guest-facing PCI identity unless explicitly noted otherwise.
+The browser/WASM runtime currently uses a different (Intel-ish) identity and BDF than the native profile. This keeps the web runtime’s PCI layout stable for its own integration tests and allows xHCI to be enabled independently of the native canonical PCI profiles.
 
 | Field | Value |
 |---|---|
-| BDF | `00:0d.0` |
-| Vendor ID | `0x1b36` |
-| Device ID | `0x000d` |
+| BDF | `00:02.0` |
+| Vendor ID | `0x8086` (Intel) |
+| Device ID | `0x1e31` |
 | Class code | `0x0c/0x03/0x30` |
 | Interrupt | PCI INTx (level-triggered) |
-| BARs | BAR0 = MMIO (xHCI register space) |
+| BARs | BAR0 = MMIO32 (`0x10000` bytes) |
+
+Notes:
+
+- Web implementation: `web/src/io/devices/xhci.ts` (`XhciPciDevice`).
+- Web init wiring: `web/src/workers/io_xhci_init.ts` (attempts to initialize `XhciControllerBridge` if present in the WASM build).
+- The web runtime currently does **not** expose MSI/MSI-X capabilities for xHCI.
 
 ---
 
 ## Supported feature set (MVP)
 
-The current xHCI effort is intentionally an **MVP** aimed at USB input and basic enumeration rather than full USB 3.x fidelity.
+The current xHCI effort is intentionally an **MVP** aimed at USB input bring-up and USB passthrough enablement, not full USB 3.x fidelity.
 
 At a high level, the MVP supports:
 
-### Root hub + ports
+### Minimal controller MMIO surface
 
-- A virtual root hub with **hot-plug capable ports** (connect/disconnect, reset, port status change events).
-- Attaching Aero’s built-in USB device models (HID keyboard/mouse/gamepad, hubs) behind xHCI.
+`aero_usb::xhci::XhciController` is a deliberately small xHCI MMIO/register model. Today it provides:
 
-### Command + event plumbing (rings)
+- A minimal MMIO register file (CAPLENGTH/HCIVERSION, USBCMD, USBSTS, CRCR) with basic unaligned access handling.
+- A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
+- A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT), used to validate **INTx disable gating**.
 
-- Command ring bring-up sufficient for basic enumeration flows, including the core “make a device usable” commands:
-  - Enable Slot
-  - Address Device
-  - Configure Endpoint
-- Event ring + interrupter 0, with interrupts raised when events are pending (INTx). Event delivery is expected to include:
-  - command completion events
-  - transfer events
-  - port status change events
+This is **not** yet a full xHCI command/transfer engine (no doorbells, no slot contexts, no event ring, no port model).
 
-### Transfer types
+### TRB + ring building blocks
 
-- **Control transfers** via endpoint 0 (SETUP/DATA/STATUS stages).
-  - Standard requests needed for enumeration (GET_DESCRIPTOR, SET_ADDRESS, SET_CONFIGURATION, etc.).
-- **Interrupt endpoints** (primarily interrupt IN for HID input reports).
+`crates/aero-usb/src/xhci/` also provides:
+
+- TRB encoding helpers (`trb`)
+- TRB ring cursor/polling helpers (`ring`)
+- Context parsing helpers (`context`)
+
+These are used by tests and by higher-level “transfer engine” harnesses.
+
+### Transfer execution for non-control endpoints (Normal TRBs)
+
+`aero_usb::xhci::transfer::XhciTransferExecutor` can execute **Normal TRBs** for non-control endpoints:
+
+- Interrupt IN/OUT (HID input/output reports)
+- Bulk IN/OUT (primarily for passthrough/WebUSB-style flows)
+
+Key semantics:
+
+- `UsbInResult::Nak` / `UsbOutResult::Nak` leaves a TD pending so it can be retried on a later tick.
+- Short packets generate a `ShortPacket` completion code and report *residual bytes* (xHCI semantics).
+- `Stall` halts the endpoint and produces a `StallError` completion.
 
 ### Device model layer
 
-- Reuses the same high-level USB device model abstractions as UHCI (`crates/aero-usb`), so device work (HID descriptors, report formats, passthrough normalization) does not need to be duplicated per controller type.
+xHCI shares the same USB device model abstractions as UHCI (`crate::UsbDeviceModel` / `device::AttachedUsbDevice`), so device work (HID descriptors, report formats, passthrough normalization) does not need to be duplicated per controller type.
 
 ---
 
@@ -99,11 +117,13 @@ At a high level, the MVP supports:
 
 xHCI is a large spec. The MVP intentionally leaves out many features that guests and/or real hardware may use:
 
+- **Root hub / port model** (connect/disconnect/reset/change events) at the xHCI level.
+- **Command ring** and xHCI slot/endpoint context state machines (`Enable Slot`, `Address Device`, `Configure Endpoint`, etc).
+- **Setup TRBs / full endpoint 0 control transfer engine** (control requests are handled at the USB device-model layer, but not yet via xHCI-style TRBs).
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
-- **Bulk endpoints** (mass storage, many USB bridges) and advanced bulk scheduling semantics.
-- **MSI/MSI-X** interrupt delivery (currently INTx only).
-- **Bandwidth scheduling** / periodic scheduling details beyond “enough for HID interrupt polling”.
+- **MSI-X** interrupt delivery. (MSI support is platform-dependent; the web runtime uses INTx only today.)
+- **Bandwidth scheduling** / periodic scheduling details beyond “enough to exercise basic interrupt polling”.
 - **Streams** (bulk streams), TRB chaining corner cases, and advanced endpoint state transitions.
 - **Multiple interrupters**, interrupt moderation, and more complex event-ring configurations.
 - **Power management** features (D3hot/D3cold, runtime PM, USB link power management) beyond the minimal bits required for driver bring-up.
@@ -116,12 +136,10 @@ If you are debugging a device/guest issue and you see the guest attempting to us
 
 Snapshotting follows the repo’s general device snapshot conventions (see [`docs/16-snapshots.md`](./16-snapshots.md)):
 
-- **Guest RAM** holds most of the xHCI “data plane” structures:
-  - command ring, transfer rings, event ring segments / ERST,
-  - DCBAA + device contexts, input contexts, scratchpad buffers, etc.
-  These are captured by the VM memory snapshot, not duplicated inside the xHCI device snapshot.
-- The xHCI device snapshot captures **guest-visible register state** and **controller bookkeeping** that is *not* stored in guest RAM (plus the attached USB topology, same as UHCI).
-- **Host resources are not snapshotted.** In particular, any host-side asynchronous USB work (e.g. WebUSB/WebHID requests in flight) must be treated as **reset** across restore; the host integration should re-establish device handles and resume forwarding after restore.
+- **Guest RAM** holds most of the xHCI “data plane” structures (rings, contexts, transfer buffers). These are captured by the VM memory snapshot, not duplicated inside the xHCI device snapshot.
+- The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
+  - Today, `aero_usb::xhci::XhciController` snapshots only a small subset of state (`USBCMD`, `USBSTS`, `CRCR`) under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.1`.
+- **Host resources are not snapshotted.** Any host-side asynchronous USB work (e.g. in-flight WebUSB/WebHID requests) must be treated as **reset** across restore; the host integration is responsible for resuming forwarding after restore.
 
 Practical implication: restores are deterministic for pure-emulated devices, but passthrough devices may need re-authorization/re-attachment and may observe a transient disconnect.
 
@@ -145,5 +163,14 @@ USB-related unit tests commonly live under:
 
 - `web/src/usb/*.test.ts`
 - `web/src/io/devices/xhci.ts` + `web/src/io/devices/xhci.test.ts` (xHCI PCI wrapper + INTx semantics)
+- `web/src/workers/io_xhci_init.test.ts` (xHCI WASM bridge init + device registration)
+- `web/src/hid/xhci_hid_topology.test.ts` (xHCI guest USB topology manager)
+
+Rust xHCI-focused tests commonly live under:
+
+- `crates/aero-usb/tests/xhci_trb_ring.rs`
+- `crates/aero-usb/tests/xhci_context_parse.rs`
+- `crates/aero-usb/tests/xhci_interrupt_in.rs`
+- `crates/aero-usb/tests/xhci_webusb_passthrough.rs`
 
 When adding or extending xHCI functionality, prefer adding focused Rust tests (for controller semantics) and/or web unit tests (for host integration and PCI wrapper behavior) alongside the implementation.
