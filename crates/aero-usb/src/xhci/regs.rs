@@ -52,6 +52,9 @@ pub mod op {
     // USBCMD bits (subset).
     pub const USBCMD_RUN_STOP: u32 = 1 << 0;
     pub const USBCMD_HCRST: u32 = 1 << 1;
+
+    // USBSTS bits (subset).
+    pub const USBSTS_EINT: u32 = 1 << 3;
 }
 
 /// Runtime registers (base at `RTSOFF`).

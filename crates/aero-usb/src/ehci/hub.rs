@@ -1,10 +1,15 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotResult};
+
 use crate::device::AttachedUsbDevice;
 use crate::{UsbDeviceModel, UsbHubAttachError};
 
 use super::regs::*;
+
+const MAX_USB_DEVICE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 struct Port {
     device: Option<AttachedUsbDevice>,
@@ -60,6 +65,12 @@ impl Port {
         self.suspended = suspended;
         if let Some(dev) = self.device.as_mut() {
             dev.model_mut().set_suspended(suspended);
+        }
+    }
+
+    fn propagate_suspended_state(&mut self) {
+        if let Some(dev) = self.device.as_mut() {
+            dev.model_mut().set_suspended(self.suspended);
         }
     }
 
@@ -468,6 +479,93 @@ impl RootHub {
             }
         }
         None
+    }
+
+    pub(crate) fn save_snapshot_ports(&self) -> Vec<u8> {
+        let mut port_records = Vec::with_capacity(self.ports.len());
+        for port in &self.ports {
+            let mut rec = Encoder::new()
+                .bool(port.connected)
+                .bool(port.connect_change)
+                .bool(port.enabled)
+                .bool(port.enable_change)
+                .bool(port.over_current)
+                .bool(port.over_current_change)
+                .bool(port.reset)
+                .u8(port.reset_countdown_ms)
+                .bool(port.suspended)
+                .bool(port.resuming)
+                .u8(port.resume_countdown_ms)
+                .bool(port.powered)
+                .bool(port.port_owner)
+                .bool(port.device.is_some());
+
+            if let Some(dev) = port.device.as_ref() {
+                let dev_state = dev.save_state();
+                rec = rec.u32(dev_state.len() as u32).bytes(&dev_state);
+            }
+
+            port_records.push(rec.finish());
+        }
+
+        Encoder::new().vec_bytes(&port_records).finish()
+    }
+
+    pub(crate) fn load_snapshot_ports(&mut self, buf: &[u8]) -> SnapshotResult<()> {
+        let mut d = Decoder::new(buf);
+        let port_records = d.vec_bytes()?;
+        d.finish()?;
+
+        if port_records.len() != self.ports.len() {
+            return Err(SnapshotError::InvalidFieldEncoding("root hub ports"));
+        }
+
+        for (port, rec) in self.ports.iter_mut().zip(port_records.into_iter()) {
+            let mut pd = Decoder::new(&rec);
+            port.connected = pd.bool()?;
+            port.connect_change = pd.bool()?;
+            port.enabled = pd.bool()?;
+            port.enable_change = pd.bool()?;
+            port.over_current = pd.bool()?;
+            port.over_current_change = pd.bool()?;
+            port.reset = pd.bool()?;
+            port.reset_countdown_ms = pd.u8()?;
+            port.suspended = pd.bool()?;
+            port.resuming = pd.bool()?;
+            port.resume_countdown_ms = pd.u8()?;
+            port.powered = pd.bool()?;
+            port.port_owner = pd.bool()?;
+
+            let has_device_state = pd.bool()?;
+            let device_state = if has_device_state {
+                let len = pd.u32()? as usize;
+                if len > MAX_USB_DEVICE_SNAPSHOT_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "usb device snapshot too large",
+                    ));
+                }
+                Some(pd.bytes(len)?.to_vec())
+            } else {
+                None
+            };
+            pd.finish()?;
+
+            if let Some(state) = device_state {
+                if port.device.is_none() {
+                    if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(&state)? {
+                        port.device = Some(dev);
+                    }
+                }
+                if let Some(dev) = port.device.as_mut() {
+                    dev.load_state(&state)?;
+                }
+            }
+
+            // Ensure the device model observes the restored port suspended state.
+            port.propagate_suspended_state();
+        }
+
+        Ok(())
     }
 }
 

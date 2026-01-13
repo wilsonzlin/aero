@@ -17,6 +17,7 @@
 //! |------|------------------------|
 //! | `device::AttachedUsbDevice` | `b"ADEV"` |
 //! | `uhci::UhciController` | `b"UHCI"` |
+//! | `ehci::EhciController` | `b"EHCI"` |
 //! | `xhci::XhciController` | `b"XHCI"` |
 //! | `hub::UsbHubDevice` | `b"UHUB"` |
 //! | `hid::UsbHidKeyboard` / `hid::UsbHidKeyboardHandle` | `b"UKBD"` |

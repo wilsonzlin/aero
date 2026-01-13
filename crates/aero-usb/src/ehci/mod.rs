@@ -27,6 +27,10 @@ mod schedule_periodic;
 
 pub mod regs;
 
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
 use crate::memory::MemoryBus;
 
 use regs::*;
@@ -507,5 +511,87 @@ impl EhciController {
 impl Default for EhciController {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl IoSnapshot for EhciController {
+    const DEVICE_ID: [u8; 4] = *b"EHCI";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_USBCMD: u16 = 1;
+        const TAG_USBSTS: u16 = 2;
+        const TAG_USBINTR: u16 = 3;
+        const TAG_FRINDEX: u16 = 4;
+        const TAG_PERIODICLISTBASE: u16 = 5;
+        const TAG_ASYNCLISTADDR: u16 = 6;
+        const TAG_CONFIGFLAG: u16 = 7;
+        const TAG_ROOT_HUB_PORTS: u16 = 8;
+        const TAG_CTRLDSSEGMENT: u16 = 9;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u32(TAG_USBCMD, self.regs.usbcmd);
+        w.field_u32(TAG_USBSTS, self.regs.usbsts);
+        w.field_u32(TAG_USBINTR, self.regs.usbintr);
+        w.field_u32(TAG_FRINDEX, self.regs.frindex);
+        w.field_u32(TAG_PERIODICLISTBASE, self.regs.periodiclistbase);
+        w.field_u32(TAG_ASYNCLISTADDR, self.regs.asynclistaddr);
+        w.field_u32(TAG_CONFIGFLAG, self.regs.configflag);
+        w.field_bytes(TAG_ROOT_HUB_PORTS, self.hub.save_snapshot_ports());
+        w.field_u32(TAG_CTRLDSSEGMENT, self.regs.ctrldssegment);
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_USBCMD: u16 = 1;
+        const TAG_USBSTS: u16 = 2;
+        const TAG_USBINTR: u16 = 3;
+        const TAG_FRINDEX: u16 = 4;
+        const TAG_PERIODICLISTBASE: u16 = 5;
+        const TAG_ASYNCLISTADDR: u16 = 6;
+        const TAG_CONFIGFLAG: u16 = 7;
+        const TAG_ROOT_HUB_PORTS: u16 = 8;
+        const TAG_CTRLDSSEGMENT: u16 = 9;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Reset controller-local derived state without disturbing attached device instances.
+        self.regs = EhciRegs::new();
+        self.irq_level = false;
+
+        if let Some(usbcmd) = r.u32(TAG_USBCMD)? {
+            self.regs.usbcmd = usbcmd & USBCMD_WRITE_MASK;
+        }
+        if let Some(usbsts) = r.u32(TAG_USBSTS)? {
+            self.regs.usbsts = usbsts & USBSTS_READ_MASK;
+        }
+        if let Some(usbintr) = r.u32(TAG_USBINTR)? {
+            self.regs.usbintr = usbintr & USBINTR_MASK;
+        }
+        if let Some(frindex) = r.u32(TAG_FRINDEX)? {
+            self.regs.frindex = frindex & FRINDEX_MASK;
+        }
+        if let Some(periodic) = r.u32(TAG_PERIODICLISTBASE)? {
+            self.regs.periodiclistbase = periodic & PERIODICLISTBASE_MASK;
+        }
+        if let Some(async_addr) = r.u32(TAG_ASYNCLISTADDR)? {
+            self.regs.asynclistaddr = async_addr & ASYNCLISTADDR_MASK;
+        }
+        if let Some(cf) = r.u32(TAG_CONFIGFLAG)? {
+            self.regs.configflag = cf & CONFIGFLAG_CF;
+        }
+        // We currently model a 32-bit addressing controller; CTRLDSSEGMENT is unused.
+        if r.u32(TAG_CTRLDSSEGMENT)?.is_some() {
+            self.regs.ctrldssegment = 0;
+        }
+
+        if let Some(buf) = r.bytes(TAG_ROOT_HUB_PORTS) {
+            self.hub.load_snapshot_ports(buf)?;
+        }
+
+        self.update_irq();
+
+        Ok(())
     }
 }
