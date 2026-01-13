@@ -2,7 +2,9 @@ mod common;
 
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
-use aero_d3d11::runtime::bindings::{BoundConstantBuffer, BoundSampler, BoundTexture, ShaderStage};
+use aero_d3d11::runtime::bindings::{
+    BoundBuffer, BoundConstantBuffer, BoundSampler, BoundTexture, ShaderStage,
+};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
@@ -155,6 +157,34 @@ fn push_set_constant_buffer(
     stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
     stream.extend_from_slice(&16u32.to_le_bytes()); // size_bytes
     stream.extend_from_slice(&0u32.to_le_bytes()); // binding reserved0
+    end_cmd(stream, start);
+}
+
+fn push_set_srv_buffer(stream: &mut Vec<u8>, stage: u32, slot: u32, buffer: u32, stage_ex: u32) {
+    let start = begin_cmd(stream, AerogpuCmdOpcode::SetShaderResourceBuffers as u32);
+    stream.extend_from_slice(&stage.to_le_bytes());
+    stream.extend_from_slice(&slot.to_le_bytes()); // start_slot
+    stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
+    stream.extend_from_slice(&stage_ex.to_le_bytes());
+    // struct aerogpu_shader_resource_buffer_binding
+    stream.extend_from_slice(&buffer.to_le_bytes());
+    stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+    stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (0 = whole buffer)
+    stream.extend_from_slice(&0u32.to_le_bytes()); // binding reserved0
+    end_cmd(stream, start);
+}
+
+fn push_set_uav_buffer(stream: &mut Vec<u8>, stage: u32, slot: u32, buffer: u32, stage_ex: u32) {
+    let start = begin_cmd(stream, AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32);
+    stream.extend_from_slice(&stage.to_le_bytes());
+    stream.extend_from_slice(&slot.to_le_bytes()); // start_slot
+    stream.extend_from_slice(&1u32.to_le_bytes()); // uav_count
+    stream.extend_from_slice(&stage_ex.to_le_bytes());
+    // struct aerogpu_unordered_access_buffer_binding
+    stream.extend_from_slice(&buffer.to_le_bytes());
+    stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+    stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (0 = whole buffer)
+    stream.extend_from_slice(&0u32.to_le_bytes()); // initial_count (reserved)
     end_cmd(stream, start);
 }
 
@@ -544,6 +574,145 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
         assert_eq!(
             bindings.stage(ShaderStage::Compute).texture(1),
             Some(BoundTexture { texture: 303 })
+        );
+    });
+}
+
+#[test]
+fn aerogpu_cmd_buffer_bindings_update_stage_state_and_unbind_t_slot_conflicts() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = vec![0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
+        stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+
+        // `t0` can be bound as either a texture or an SRV buffer; binding one kind must unbind the
+        // other.
+        push_set_texture(
+            &mut stream,
+            AerogpuShaderStage::Vertex as u32,
+            0,
+            111,
+            0,
+        );
+        push_set_srv_buffer(
+            &mut stream,
+            AerogpuShaderStage::Vertex as u32,
+            0,
+            222,
+            0,
+        );
+
+        push_set_srv_buffer(
+            &mut stream,
+            AerogpuShaderStage::Pixel as u32,
+            1,
+            333,
+            0,
+        );
+        push_set_texture(
+            &mut stream,
+            AerogpuShaderStage::Pixel as u32,
+            1,
+            444,
+            0,
+        );
+
+        // Compute-stage buffer bindings.
+        push_set_srv_buffer(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            2,
+            555,
+            0,
+        );
+        push_set_uav_buffer(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            0,
+            666,
+            0,
+        );
+
+        // GS bindings use shader_stage==COMPUTE + stage_ex reserved0 to select the GS bucket.
+        push_set_srv_buffer(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            2,
+            777,
+            STAGE_EX_GEOMETRY,
+        );
+        push_set_uav_buffer(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            0,
+            888,
+            STAGE_EX_GEOMETRY,
+        );
+
+        let stream = finish_stream(stream);
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("command stream should execute");
+
+        let bindings = exec.binding_state();
+
+        assert_eq!(
+            bindings.stage(ShaderStage::Vertex).srv_buffer(0),
+            Some(BoundBuffer {
+                buffer: 222,
+                offset: 0,
+                size: None,
+            })
+        );
+        assert_eq!(bindings.stage(ShaderStage::Vertex).texture(0), None);
+
+        assert_eq!(
+            bindings.stage(ShaderStage::Pixel).texture(1),
+            Some(BoundTexture { texture: 444 })
+        );
+        assert_eq!(bindings.stage(ShaderStage::Pixel).srv_buffer(1), None);
+
+        assert_eq!(
+            bindings.stage(ShaderStage::Compute).srv_buffer(2),
+            Some(BoundBuffer {
+                buffer: 555,
+                offset: 0,
+                size: None,
+            })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Compute).uav_buffer(0),
+            Some(BoundBuffer {
+                buffer: 666,
+                offset: 0,
+                size: None,
+            })
+        );
+
+        assert_eq!(
+            bindings.stage(ShaderStage::Geometry).srv_buffer(2),
+            Some(BoundBuffer {
+                buffer: 777,
+                offset: 0,
+                size: None,
+            })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Geometry).uav_buffer(0),
+            Some(BoundBuffer {
+                buffer: 888,
+                offset: 0,
+                size: None,
+            })
         );
     });
 }
