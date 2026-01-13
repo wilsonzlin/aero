@@ -58,6 +58,13 @@ Compared to WebHID, WebUSB passthrough has a larger surface area and is more sen
 quirks (interface claiming, protected interface classes, full-speed UHCI constraints). WebHID remains the
 recommended path for HID peripherals.
 
+Note: the current production passthrough controller path is **UHCI** (full-speed). For devices that are
+high-speed-only (or that behave poorly when forced into a UHCI/full-speed view), Aero plans to support
+high-speed passthrough via **EHCI/xHCI**; see:
+
+- [`docs/webusb-passthrough.md`](./webusb-passthrough.md#speed-and-descriptor-handling-uhci-vs-ehcixhci)
+- [`docs/usb-ehci.md`](./usb-ehci.md) / [`docs/usb-xhci.md`](./usb-xhci.md)
+
 The repo also includes a small end-to-end demo driver (`UsbPassthroughDemo` + `usb.demoResult`) that queues
 GET_DESCRIPTOR requests via the broker to validate the action↔completion wiring (rerun via `usb.demo.run`
 in the Web UI) (`crates/aero-wasm/src/lib.rs`, `web/src/usb/usb_passthrough_demo_runtime.ts`, `web/src/main.ts`).
