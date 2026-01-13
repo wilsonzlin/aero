@@ -3,11 +3,15 @@ import { PresenterError } from './presenter';
 
 import initAeroGpuWasm, {
   destroy_gpu,
+  has_present_rgba8888_dirty_rects,
   init_gpu,
   present_rgba8888,
+  present_rgba8888_dirty_rects,
   request_screenshot,
   resize as resize_gpu,
 } from '../wasm/aero-gpu';
+
+import type { DirtyRect } from '../ipc/shared-layout';
 
 export class WgpuWebGl2Presenter implements Presenter {
   public readonly backend = 'webgl2_wgpu' as const;
@@ -17,6 +21,8 @@ export class WgpuWebGl2Presenter implements Presenter {
   private srcHeight = 0;
   private dpr = 1;
   private initialized = false;
+  private dirtyRectScratch: Uint32Array | null = null;
+  private hasDirtyRectPresent = false;
 
   public async init(canvas: OffscreenCanvas, width: number, height: number, dpr: number, opts?: PresenterInitOptions): Promise<void> {
     this.opts = opts ?? {};
@@ -25,6 +31,7 @@ export class WgpuWebGl2Presenter implements Presenter {
     this.dpr = dpr || 1;
 
     await initAeroGpuWasm();
+    this.hasDirtyRectPresent = has_present_rgba8888_dirty_rects();
 
     // Ensure stale state from a previous init is cleared before creating the new surface.
     try {
@@ -90,6 +97,55 @@ export class WgpuWebGl2Presenter implements Presenter {
       present_rgba8888(data, stride);
     } catch (err) {
       throw new PresenterError('wgpu_present_failed', 'Failed to present frame via wgpu WebGL2 presenter', err);
+    }
+  }
+
+  public presentDirtyRects(frame: number | ArrayBuffer | ArrayBufferView, stride: number, dirtyRects: DirtyRect[]): void {
+    if (!this.initialized) {
+      throw new PresenterError('not_initialized', 'WgpuWebGl2Presenter.presentDirtyRects() called before init()');
+    }
+
+    if (!this.hasDirtyRectPresent) {
+      this.present(frame, stride);
+      return;
+    }
+
+    if (stride <= 0) {
+      throw new PresenterError('invalid_stride', `presentDirtyRects() stride must be > 0; got ${stride}`);
+    }
+
+    const tightRowBytes = this.srcWidth * 4;
+    if (stride < tightRowBytes) {
+      throw new PresenterError('invalid_stride', `presentDirtyRects() stride (${stride}) smaller than width*4 (${tightRowBytes})`);
+    }
+
+    if (!dirtyRects || dirtyRects.length === 0) {
+      this.present(frame, stride);
+      return;
+    }
+
+    const expectedBytes = stride * this.srcHeight;
+    const data = this.resolveFrameData(frame, expectedBytes);
+
+    const words = dirtyRects.length * 4;
+    if (!this.dirtyRectScratch || this.dirtyRectScratch.length < words) {
+      this.dirtyRectScratch = new Uint32Array(words);
+    }
+    const rectWords = this.dirtyRectScratch.subarray(0, words);
+    for (let i = 0; i < dirtyRects.length; i += 1) {
+      const rect = dirtyRects[i];
+      const base = i * 4;
+      // Clamp to non-negative integers; wasm side clamps to framebuffer bounds.
+      rectWords[base + 0] = Math.max(0, rect.x | 0) >>> 0;
+      rectWords[base + 1] = Math.max(0, rect.y | 0) >>> 0;
+      rectWords[base + 2] = Math.max(0, rect.w | 0) >>> 0;
+      rectWords[base + 3] = Math.max(0, rect.h | 0) >>> 0;
+    }
+
+    try {
+      present_rgba8888_dirty_rects(data, stride, rectWords);
+    } catch (err) {
+      throw new PresenterError('wgpu_present_failed', 'Failed to present dirty rects via wgpu WebGL2 presenter', err);
     }
   }
 

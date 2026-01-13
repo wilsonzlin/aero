@@ -1509,6 +1509,156 @@ mod wasm {
             Ok(())
         }
 
+        fn upload_rgba8_strided_dirty_rects(
+            &mut self,
+            rgba8: &[u8],
+            stride_bytes: u32,
+            rects: &[u32],
+        ) -> Result<(), JsValue> {
+            let (width, height) = self.src_size;
+            if width == 0 || height == 0 {
+                return Ok(());
+            }
+
+            let tight_row_bytes = width
+                .checked_mul(4)
+                .ok_or_else(|| JsValue::from_str("Framebuffer width overflow"))?;
+
+            if stride_bytes < tight_row_bytes {
+                return Err(JsValue::from_str(&format!(
+                    "Invalid stride_bytes: got {stride_bytes}, expected at least {tight_row_bytes}",
+                )));
+            }
+
+            let expected_len = stride_bytes as usize * height as usize;
+            if rgba8.len() < expected_len {
+                return Err(JsValue::from_str(&format!(
+                    "Frame data too small: got {}, expected at least {}",
+                    rgba8.len(),
+                    expected_len
+                )));
+            }
+
+            // Defensive: if the caller supplies no rects, fall back to full upload.
+            if rects.is_empty() {
+                return self.upload_rgba8_strided(rgba8, stride_bytes);
+            }
+
+            let stride_aligned = stride_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0;
+            let mut any_uploaded = false;
+
+            for chunk in rects.chunks_exact(4) {
+                let x = chunk[0];
+                let y = chunk[1];
+                let w = chunk[2];
+                let h = chunk[3];
+
+                if w == 0 || h == 0 {
+                    continue;
+                }
+
+                // Clamp to framebuffer bounds.
+                let x0 = x.min(width);
+                let y0 = y.min(height);
+                let x1 = x.saturating_add(w).min(width);
+                let y1 = y.saturating_add(h).min(height);
+                let w = x1.saturating_sub(x0);
+                let h = y1.saturating_sub(y0);
+
+                if w == 0 || h == 0 {
+                    continue;
+                }
+
+                if stride_aligned {
+                    // Fast path: point directly into the source buffer. WebGPU will only read
+                    // `w*4` bytes per row, even though `bytes_per_row` is the full stride.
+                    let base_off = y0 as usize * stride_bytes as usize + x0 as usize * 4;
+                    let data = &rgba8[base_off..expected_len];
+
+                    self.queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture: &self.framebuffer_texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d {
+                                x: x0,
+                                y: y0,
+                                z: 0,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        data,
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(stride_bytes),
+                            rows_per_image: Some(h),
+                        },
+                        wgpu::Extent3d {
+                            width: w,
+                            height: h,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                } else {
+                    // Slow path: pack the rect into an aligned staging buffer.
+                    let tight_row_bytes = w
+                        .checked_mul(4)
+                        .ok_or_else(|| JsValue::from_str("Dirty rect width overflow"))?;
+                    let upload_bpr = padded_bytes_per_row(tight_row_bytes);
+                    let total = upload_bpr as usize * h as usize;
+
+                    if self.upload_scratch_bytes_per_row != upload_bpr {
+                        self.upload_scratch_bytes_per_row = upload_bpr;
+                        self.upload_scratch = vec![0u8; total];
+                    } else {
+                        self.upload_scratch.resize(total, 0);
+                    }
+
+                    for row in 0..h as usize {
+                        let src_off = (y0 as usize + row) * stride_bytes as usize + x0 as usize * 4;
+                        let dst_off = row * upload_bpr as usize;
+                        let dst_row = &mut self.upload_scratch[dst_off..dst_off + upload_bpr as usize];
+                        dst_row[..tight_row_bytes as usize]
+                            .copy_from_slice(&rgba8[src_off..src_off + tight_row_bytes as usize]);
+                        dst_row[tight_row_bytes as usize..].fill(0);
+                    }
+
+                    self.queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture: &self.framebuffer_texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d {
+                                x: x0,
+                                y: y0,
+                                z: 0,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &self.upload_scratch,
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(upload_bpr),
+                            rows_per_image: Some(h),
+                        },
+                        wgpu::Extent3d {
+                            width: w,
+                            height: h,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
+
+                any_uploaded = true;
+            }
+
+            if !any_uploaded {
+                // Defensive fallback: if all rects were empty/invalid after clamping, do a full
+                // upload so consumers don't keep presenting a stale frame.
+                return self.upload_rgba8_strided(rgba8, stride_bytes);
+            }
+
+            Ok(())
+        }
+
         fn present(&mut self) -> Result<(), JsValue> {
             gpu_stats().inc_presents_attempted();
             self.ensure_surface_matches_canvas();
@@ -1618,7 +1768,9 @@ mod wasm {
                 sender.send(res).ok();
             });
 
-            self.device.poll(wgpu::Maintain::Poll);
+            // `map_async` completion is driven by `Device::poll`. `Maintain::Wait` avoids hangs on
+            // some backends where a single `Poll` is insufficient to make progress.
+            self.device.poll(wgpu::Maintain::Wait);
 
             match receiver.receive().await {
                 Some(Ok(())) => {}
@@ -3168,6 +3320,41 @@ mod wasm {
         with_state_mut(|state| {
             state.presenter.upload_rgba8_strided(frame, stride_bytes)?;
             state.presenter.present()
+        })
+    }
+
+    /// Upload an RGBA8888 frame into the internal framebuffer texture without presenting it.
+    ///
+    /// This is primarily useful for tests/benchmarks that validate upload behavior independent
+    /// of surface presentation.
+    #[wasm_bindgen]
+    pub fn upload_rgba8888(frame: &[u8], stride_bytes: u32) -> Result<(), JsValue> {
+        with_state_mut(|state| state.presenter.upload_rgba8_strided(frame, stride_bytes))
+    }
+
+    #[wasm_bindgen]
+    pub fn present_rgba8888_dirty_rects(
+        frame: &[u8],
+        stride_bytes: u32,
+        rects: &[u32],
+    ) -> Result<(), JsValue> {
+        with_state_mut(|state| {
+            state.presenter
+                .upload_rgba8_strided_dirty_rects(frame, stride_bytes, rects)?;
+            state.presenter.present()
+        })
+    }
+
+    /// Upload dirty rects from an RGBA8888 frame into the internal framebuffer texture without presenting.
+    #[wasm_bindgen]
+    pub fn upload_rgba8888_dirty_rects(
+        frame: &[u8],
+        stride_bytes: u32,
+        rects: &[u32],
+    ) -> Result<(), JsValue> {
+        with_state_mut(|state| {
+            state.presenter
+                .upload_rgba8_strided_dirty_rects(frame, stride_bytes, rects)
         })
     }
 

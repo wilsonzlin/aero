@@ -167,6 +167,35 @@ export function present_rgba8888(frame: Uint8Array, strideBytes: number): void {
   mod.present_rgba8888(frame, strideBytes);
 }
 
+export function upload_rgba8888(frame: Uint8Array, strideBytes: number): void {
+  const mod = requireLoaded();
+  if (typeof mod.upload_rgba8888 !== "function") {
+    throw new Error("aero-gpu wasm export upload_rgba8888 is missing (outdated bundle?)");
+  }
+  mod.upload_rgba8888(frame, strideBytes);
+}
+
+export function has_present_rgba8888_dirty_rects(): boolean {
+  const mod = requireLoaded();
+  return typeof mod.present_rgba8888_dirty_rects === "function";
+}
+
+export function present_rgba8888_dirty_rects(frame: Uint8Array, strideBytes: number, rects: Uint32Array): void {
+  const mod = requireLoaded();
+  if (typeof mod.present_rgba8888_dirty_rects !== "function") {
+    throw new Error("aero-gpu wasm export present_rgba8888_dirty_rects is missing (outdated bundle?)");
+  }
+  mod.present_rgba8888_dirty_rects(frame, strideBytes, rects);
+}
+
+export function upload_rgba8888_dirty_rects(frame: Uint8Array, strideBytes: number, rects: Uint32Array): void {
+  const mod = requireLoaded();
+  if (typeof mod.upload_rgba8888_dirty_rects !== "function") {
+    throw new Error("aero-gpu wasm export upload_rgba8888_dirty_rects is missing (outdated bundle?)");
+  }
+  mod.upload_rgba8888_dirty_rects(frame, strideBytes, rects);
+}
+
 /**
  * Request a screenshot from the wasm presenter backend.
  *
