@@ -452,18 +452,9 @@ mod tests {
         assert_eq!(
             backend.stats(),
             L2TunnelRingBackendStats {
-                tx_pushed_frames: 0,
-                tx_pushed_bytes: 0,
                 tx_dropped_oversize: 1,
                 tx_dropped_oversize_bytes: 3,
-                tx_dropped_full: 0,
-                tx_dropped_full_bytes: 0,
-                rx_popped_frames: 0,
-                rx_popped_bytes: 0,
-                rx_dropped_oversize: 0,
-                rx_dropped_oversize_bytes: 0,
-                rx_corrupt: 0,
-                rx_broken: false,
+                ..Default::default()
             }
         );
         assert_eq!(tx.try_pop(), Err(PopError::Empty));
@@ -485,16 +476,9 @@ mod tests {
             L2TunnelRingBackendStats {
                 tx_pushed_frames: 1,
                 tx_pushed_bytes: 1,
-                tx_dropped_oversize: 0,
-                tx_dropped_oversize_bytes: 0,
                 tx_dropped_full: 1,
                 tx_dropped_full_bytes: 1,
-                rx_popped_frames: 0,
-                rx_popped_bytes: 0,
-                rx_dropped_oversize: 0,
-                rx_dropped_oversize_bytes: 0,
-                rx_corrupt: 0,
-                rx_broken: false,
+                ..Default::default()
             }
         );
 
@@ -516,18 +500,9 @@ mod tests {
         assert_eq!(
             backend.stats(),
             L2TunnelRingBackendStats {
-                tx_pushed_frames: 0,
-                tx_pushed_bytes: 0,
                 tx_dropped_oversize: 1,
                 tx_dropped_oversize_bytes: 9,
-                tx_dropped_full: 0,
-                tx_dropped_full_bytes: 0,
-                rx_popped_frames: 0,
-                rx_popped_bytes: 0,
-                rx_dropped_oversize: 0,
-                rx_dropped_oversize_bytes: 0,
-                rx_corrupt: 0,
-                rx_broken: false,
+                ..Default::default()
             }
         );
         assert_eq!(tx.try_pop(), Err(PopError::Empty));
@@ -548,18 +523,11 @@ mod tests {
         assert_eq!(
             backend.stats(),
             L2TunnelRingBackendStats {
-                tx_pushed_frames: 0,
-                tx_pushed_bytes: 0,
-                tx_dropped_oversize: 0,
-                tx_dropped_oversize_bytes: 0,
-                tx_dropped_full: 0,
-                tx_dropped_full_bytes: 0,
                 rx_popped_frames: 1,
                 rx_popped_bytes: 1,
                 rx_dropped_oversize: 1,
                 rx_dropped_oversize_bytes: 3,
-                rx_corrupt: 0,
-                rx_broken: false,
+                ..Default::default()
             }
         );
     }
@@ -616,18 +584,9 @@ mod tests {
         assert_eq!(
             backend.stats(),
             L2TunnelRingBackendStats {
-                tx_pushed_frames: 0,
-                tx_pushed_bytes: 0,
-                tx_dropped_oversize: 0,
-                tx_dropped_oversize_bytes: 0,
-                tx_dropped_full: 0,
-                tx_dropped_full_bytes: 0,
-                rx_popped_frames: 0,
-                rx_popped_bytes: 0,
                 rx_dropped_oversize: MAX_RX_POPS_PER_POLL as u64,
                 rx_dropped_oversize_bytes: (MAX_RX_POPS_PER_POLL as u64) * 3,
-                rx_corrupt: 0,
-                rx_broken: false,
+                ..Default::default()
             }
         );
     }
@@ -682,18 +641,9 @@ mod tests {
         assert_eq!(
             backend.stats(),
             L2TunnelRingBackendStats {
-                tx_pushed_frames: 0,
-                tx_pushed_bytes: 0,
-                tx_dropped_oversize: 0,
-                tx_dropped_oversize_bytes: 0,
-                tx_dropped_full: 0,
-                tx_dropped_full_bytes: 0,
-                rx_popped_frames: 0,
-                rx_popped_bytes: 0,
-                rx_dropped_oversize: 0,
-                rx_dropped_oversize_bytes: 0,
                 rx_corrupt: 1,
                 rx_broken: true,
+                ..Default::default()
             }
         );
 

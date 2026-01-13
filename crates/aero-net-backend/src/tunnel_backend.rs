@@ -171,18 +171,11 @@ mod tests {
         assert_eq!(
             backend.stats(),
             L2TunnelBackendStats {
-                tx_enqueued_frames: 0,
-                tx_enqueued_bytes: 0,
                 tx_dropped_oversize: 1,
                 tx_dropped_oversize_bytes: 3,
-                tx_dropped_full: 0,
-                tx_dropped_full_bytes: 0,
-                rx_enqueued_frames: 0,
-                rx_enqueued_bytes: 0,
                 rx_dropped_oversize: 1,
                 rx_dropped_oversize_bytes: 3,
-                rx_dropped_full: 0,
-                rx_dropped_full_bytes: 0,
+                ..Default::default()
             }
         );
 
@@ -205,16 +198,13 @@ mod tests {
             L2TunnelBackendStats {
                 tx_enqueued_frames: 1,
                 tx_enqueued_bytes: 1,
-                tx_dropped_oversize: 0,
-                tx_dropped_oversize_bytes: 0,
                 tx_dropped_full: 1,
                 tx_dropped_full_bytes: 1,
                 rx_enqueued_frames: 1,
                 rx_enqueued_bytes: 1,
-                rx_dropped_oversize: 0,
-                rx_dropped_oversize_bytes: 0,
                 rx_dropped_full: 1,
                 rx_dropped_full_bytes: 1,
+                ..Default::default()
             }
         );
 
