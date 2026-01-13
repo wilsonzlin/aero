@@ -1,0 +1,82 @@
+use aero_usb::xhci::regs::*;
+use aero_usb::xhci::XhciController;
+
+mod util;
+
+use util::TestMemory;
+
+#[test]
+fn hccparams1_xecp_points_to_extended_capabilities() {
+    let mut xhci = XhciController::with_port_count(4);
+    let mut mem = TestMemory::new(XhciController::MMIO_SIZE as usize);
+
+    let hccparams1 = xhci.mmio_read_u32(&mut mem, cap::HCCPARAMS1 as u64);
+    let xecp_dwords = (hccparams1 >> 16) & 0xffff;
+    assert_ne!(xecp_dwords, 0, "HCCPARAMS1.xECP must be non-zero");
+
+    let xecp_bytes = (xecp_dwords as u64) * 4;
+    assert!(
+        xecp_bytes < XhciController::MMIO_SIZE as u64,
+        "xECP must point within the MMIO BAR"
+    );
+}
+
+#[test]
+fn supported_protocol_capability_usb2_matches_port_count() {
+    let port_count = 4u8;
+    let mut xhci = XhciController::with_port_count(port_count);
+    let mut mem = TestMemory::new(XhciController::MMIO_SIZE as usize);
+
+    let hccparams1 = xhci.mmio_read_u32(&mut mem, cap::HCCPARAMS1 as u64);
+    let xecp = (((hccparams1 >> 16) & 0xffff) as u64) * 4;
+
+    // Extended capability header (DWORD0).
+    let cap0 = xhci.mmio_read_u32(&mut mem, xecp);
+    assert_eq!(
+        (cap0 & 0xff) as u8,
+        EXT_CAP_ID_SUPPORTED_PROTOCOL,
+        "first xECP must be a Supported Protocol capability"
+    );
+    assert_eq!(
+        ((cap0 >> 8) & 0xff) as u8,
+        0,
+        "Supported Protocol capability should terminate the list (next=0)"
+    );
+    assert_eq!(((cap0 >> 16) & 0xff) as u8, USB_REVISION_2_0_MAJOR);
+    assert_eq!(((cap0 >> 24) & 0xff) as u8, USB_REVISION_2_0_MINOR);
+
+    // DWORD1: protocol name string.
+    let name = xhci.mmio_read_u32(&mut mem, xecp + 4);
+    assert_eq!(name, PROTOCOL_NAME_USB2);
+
+    // DWORD2: port offset + count.
+    let ports = xhci.mmio_read_u32(&mut mem, xecp + 8);
+    let port_offset = (ports & 0xff) as u8;
+    let port_count_cap = ((ports >> 8) & 0xff) as u8;
+    assert_eq!(port_offset, 1, "port offset is 1-based");
+    assert_eq!(port_count_cap, port_count);
+
+    // DWORD3: speed ID count.
+    let dword3 = xhci.mmio_read_u32(&mut mem, xecp + 12);
+    let psic = (dword3 & 0xf) as u8;
+    assert!(
+        psic >= 2,
+        "USB2 Supported Protocol should expose at least LS+FS PSI descriptors"
+    );
+
+    // Ensure we included low-speed and full-speed entries (drivers use PSIT to map PORTSC.PS).
+    let mut has_low = false;
+    let mut has_full = false;
+    for i in 0..psic {
+        let psi = xhci.mmio_read_u32(&mut mem, xecp + 16 + (i as u64) * 4);
+        let psit = ((psi >> 4) & 0x3) as u8;
+        if psit == PSI_TYPE_LOW {
+            has_low = true;
+        }
+        if psit == PSI_TYPE_FULL {
+            has_full = true;
+        }
+    }
+    assert!(has_low, "missing low-speed PSI descriptor");
+    assert!(has_full, "missing full-speed PSI descriptor");
+}

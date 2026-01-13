@@ -30,15 +30,25 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
+const DEFAULT_PORT_COUNT: u8 = 2;
+
 /// Minimal xHCI controller model.
 ///
 /// This is *not* a full xHCI implementation. It is sufficient to wire into a PCI/MMIO wrapper and
 /// to host unit tests that need a stable controller surface.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 pub struct XhciController {
+    port_count: u8,
+    ext_caps: Vec<u32>,
     usbcmd: u32,
     usbsts: u32,
     crcr: u64,
+}
+
+impl Default for XhciController {
+    fn default() -> Self {
+        Self::with_port_count(DEFAULT_PORT_COUNT)
+    }
 }
 
 impl XhciController {
@@ -52,8 +62,69 @@ impl XhciController {
         Self::default()
     }
 
+    pub fn with_port_count(port_count: u8) -> Self {
+        assert!(port_count > 0, "xHCI controller must expose at least one port");
+        let mut ctrl = Self {
+            port_count,
+            ext_caps: Vec::new(),
+            usbcmd: 0,
+            usbsts: 0,
+            crcr: 0,
+        };
+        ctrl.rebuild_ext_caps();
+        ctrl
+    }
+
+    pub fn mmio_read_u32(&mut self, mem: &mut dyn MemoryBus, offset: u64) -> u32 {
+        self.mmio_read(mem, offset, 4)
+    }
+
     pub fn irq_level(&self) -> bool {
         (self.usbsts & regs::USBSTS_EINT) != 0
+    }
+
+    fn rebuild_ext_caps(&mut self) {
+        self.ext_caps = self.build_ext_caps();
+    }
+
+    fn build_ext_caps(&self) -> Vec<u32> {
+        // Supported Protocol Capability for USB 2.0.
+        //
+        // The roothub port range is 1-based, so we expose all ports as a single USB 2.0 range.
+        let mut caps = Vec::new();
+
+        let psic = 3u8; // low/full/high-speed entries.
+        let header0 = (regs::EXT_CAP_ID_SUPPORTED_PROTOCOL as u32)
+            | (0u32 << 8) // next pointer (0 => end of list)
+            | ((regs::USB_REVISION_2_0_MAJOR as u32) << 16)
+            | ((regs::USB_REVISION_2_0_MINOR as u32) << 24);
+        caps.push(header0);
+        caps.push(regs::PROTOCOL_NAME_USB2);
+        caps.push((1u32) | ((self.port_count as u32) << 8));
+        caps.push((psic as u32) | ((regs::USB2_PROTOCOL_SLOT_TYPE as u32) << 8));
+
+        // Protocol Speed ID descriptors.
+        // These values are consumed by guest xHCI drivers to interpret PORTSC.PS values.
+        caps.push(regs::encode_psi(
+            regs::PSIV_LOW_SPEED,
+            regs::PSI_TYPE_LOW,
+            0,
+            0,
+        ));
+        caps.push(regs::encode_psi(
+            regs::PSIV_FULL_SPEED,
+            regs::PSI_TYPE_FULL,
+            12,
+            0,
+        ));
+        caps.push(regs::encode_psi(
+            regs::PSIV_HIGH_SPEED,
+            regs::PSI_TYPE_HIGH,
+            48,
+            1,
+        ));
+
+        caps
     }
 
     /// Read from the controller's MMIO register space.
@@ -62,9 +133,24 @@ impl XhciController {
         let shift = (offset & 3) * 8;
 
         let value32 = match aligned {
-            regs::REG_CAPLENGTH_HCIVERSION => {
-                // CAPLENGTH=0x40 (operational registers start at 0x40), HCIVERSION=0x0100.
-                (0x0100u32 << 16) | 0x40
+            regs::REG_CAPLENGTH_HCIVERSION => regs::CAPLENGTH_HCIVERSION,
+            regs::REG_HCSPARAMS1 => {
+                // HCSPARAMS1: MaxSlots (7:0), MaxIntrs (18:8), MaxPorts (31:24).
+                let max_slots = 32u32;
+                let max_intrs = 1u32;
+                let max_ports = self.port_count as u32;
+                (max_slots & 0xff) | ((max_intrs & 0x7ff) << 8) | ((max_ports & 0xff) << 24)
+            }
+            regs::REG_HCCPARAMS1 => {
+                // HCCPARAMS1.xECP: offset (in DWORDs) to the xHCI Extended Capabilities list.
+                let xecp_dwords = (regs::EXT_CAPS_OFFSET_BYTES / 4) & 0xffff;
+                xecp_dwords << 16
+            }
+            off if off >= regs::EXT_CAPS_OFFSET_BYTES as u64
+                && off < regs::CAPLENGTH_BYTES as u64 =>
+            {
+                let idx = (off - regs::EXT_CAPS_OFFSET_BYTES as u64) / 4;
+                self.ext_caps.get(idx as usize).copied().unwrap_or(0)
             }
             regs::REG_USBCMD => self.usbcmd,
             regs::REG_USBSTS => self.usbsts,
@@ -135,17 +221,19 @@ impl XhciController {
 }
 impl IoSnapshot for XhciController {
     const DEVICE_ID: [u8; 4] = *b"XHCI";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 1);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 2);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
         const TAG_CRCR: u16 = 3;
+        const TAG_PORT_COUNT: u16 = 4;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.usbcmd);
         w.field_u32(TAG_USBSTS, self.usbsts);
         w.field_u64(TAG_CRCR, self.crcr);
+        w.field_u8(TAG_PORT_COUNT, self.port_count);
         w.finish()
     }
 
@@ -153,15 +241,19 @@ impl IoSnapshot for XhciController {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
         const TAG_CRCR: u16 = 3;
+        const TAG_PORT_COUNT: u16 = 4;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
-
         *self = Self::new();
         self.usbcmd = r.u32(TAG_USBCMD)?.unwrap_or(0);
         self.usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0);
         self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0);
-
+        if let Some(v) = r.u8(TAG_PORT_COUNT)? {
+            // Clamp invalid snapshots to a sane value rather than panicking.
+            self.port_count = v.max(1);
+            self.rebuild_ext_caps();
+        }
         Ok(())
     }
 }
