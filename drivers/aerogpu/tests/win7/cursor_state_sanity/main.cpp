@@ -375,6 +375,16 @@ static int RunCursorStateSanity(int argc, char** argv) {
     return reporter.Fail("CreateBasicWindow failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
   }
 
+  // Avoid showing up in the taskbar when we briefly show the window to apply WM_SETCURSOR.
+  {
+    SetLastError(0);
+    LONG ex = GetWindowLong(hwnd, GWL_EXSTYLE);
+    DWORD e = GetLastError();
+    if (ex != 0 || e == 0) {
+      (void)SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_TOOLWINDOW);
+    }
+  }
+
   std::string cursor_err;
   TestCursorSpec cursor_spec;
   cursor_spec.width = GetSystemMetrics(SM_CXCURSOR);
@@ -436,6 +446,20 @@ static int RunCursorStateSanity(int argc, char** argv) {
   int result = 1;
   LONG_PTR prev_class_cursor = 0;
   bool have_prev_class_cursor = false;
+  int win_w = 160;
+  int win_h = 120;
+  {
+    RECT wr;
+    ZeroMemory(&wr, sizeof(wr));
+    if (GetWindowRect(hwnd, &wr)) {
+      const int w = (int)(wr.right - wr.left);
+      const int h = (int)(wr.bottom - wr.top);
+      if (w > 0 && h > 0 && w < 4096 && h < 4096) {
+        win_w = w;
+        win_h = h;
+      }
+    }
+  }
 
   // ----- Move cursor to a deterministic location -----
   const int screen_w = GetSystemMetrics(SM_CXSCREEN);
@@ -563,17 +587,19 @@ static int RunCursorStateSanity(int argc, char** argv) {
   const int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
   const int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
   const int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-  int win_x = target_x - 80;
-  int win_y = target_y - 60;
+  int win_x = target_x - (win_w / 2);
+  int win_y = target_y - (win_h / 2);
   if (vw > 0) {
     if (win_x < vx) win_x = vx;
-    if (win_x > vx + vw - 1) win_x = vx + vw - 1;
+    const int max_x = vx + vw - win_w;
+    if (max_x >= vx && win_x > max_x) win_x = max_x;
   }
   if (vh > 0) {
     if (win_y < vy) win_y = vy;
-    if (win_y > vy + vh - 1) win_y = vy + vh - 1;
+    const int max_y = vy + vh - win_h;
+    if (max_y >= vy && win_y > max_y) win_y = max_y;
   }
-  (void)SetWindowPos(hwnd, HWND_TOPMOST, win_x, win_y, 160, 120, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  (void)SetWindowPos(hwnd, HWND_TOPMOST, win_x, win_y, 0, 0, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOSIZE);
   ShowWindow(hwnd, SW_SHOWNOACTIVATE);
   UpdateWindow(hwnd);
 
