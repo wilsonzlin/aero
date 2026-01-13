@@ -777,7 +777,7 @@ cargo test --locked -p conformance --test conformance -- --nocapture
 Tuning / reproducing failures:
 
 - `AERO_CONFORMANCE_CASES=<n>` to increase/decrease the corpus size (default `512`).
-- `AERO_CONFORMANCE_SEED=<n>` to reproduce a specific random corpus.
+- `AERO_CONFORMANCE_SEED=<n>` to reproduce a specific random corpus (decimal or `0x...` hex; `_` separators allowed).
 - `AERO_CONFORMANCE_FILTER=<expr>` to select a subset of the corpus/templates (e.g. `add`).
 - `AERO_CONFORMANCE_REPORT_PATH=<path>` to write a JSON report (written on failure; also written on success when set).
 - `AERO_CONFORMANCE_REFERENCE_ISOLATE=0` to disable `fork()` isolation in the native reference backend (can help in sandboxed environments).
@@ -790,6 +790,9 @@ cargo xtask conformance \
   --seed 0x52c671d9a4f231b9 \
   --filter add \
   --report target/conformance.json
+
+# Forward extra args to `cargo test` after `--`, e.g. to show test output:
+cargo xtask conformance --cases 32 -- --nocapture
 ```
 
 CI runs a fast subset on PRs and a larger corpus on a schedule via

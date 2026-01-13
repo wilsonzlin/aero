@@ -2744,16 +2744,6 @@ impl SnapshotTarget for DeepValidateTarget {
         Ok(())
     }
 
-    fn restore_mmu_states(
-        &mut self,
-        states: Vec<aero_snapshot::VcpuMmuSnapshot>,
-    ) -> aero_snapshot::Result<()> {
-        if states.is_empty() {
-            return Err(SnapshotError::Corrupt("missing MMU entry"));
-        }
-        Ok(())
-    }
-
     fn restore_device_states(&mut self, _states: Vec<aero_snapshot::DeviceState>) {}
 
     fn restore_disk_overlays(&mut self, _overlays: aero_snapshot::DiskOverlayRefs) {}
