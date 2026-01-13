@@ -134,10 +134,9 @@ impl AudioRingBuffer {
             write_frame -= self.capacity_frames;
         }
         self.write_frame = write_frame;
-        self.len_frames = self
-            .len_frames
-            .saturating_add(frames_to_write)
-            .min(self.capacity_frames);
+        // `frames_to_write` is already clamped to the available free space, so
+        // this cannot exceed `capacity_frames`.
+        self.len_frames += frames_to_write;
     }
 
     /// Pop `frames` frames as interleaved stereo.
@@ -218,7 +217,9 @@ impl AudioRingBuffer {
             out[available_samples..].fill(0.0);
         }
 
-        self.len_frames = self.len_frames.saturating_sub(available);
+        // `available <= len_frames` by construction (`available` is clamped to
+        // the current buffered level).
+        self.len_frames -= available;
         if available < frames {
             self.underrun_frames = self
                 .underrun_frames
