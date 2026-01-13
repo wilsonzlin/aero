@@ -74,7 +74,12 @@ const (
 
 // UDP binding allowlist counters.
 const (
-	UDPRemoteAllowlistEvictionsTotal     = "udp_remote_allowlist_evictions_total"
+	// UDPRemoteAllowlistEvictionsTotal counts allowlist entries evicted due to the
+	// MAX_ALLOWED_REMOTES_PER_BINDING cap.
+	UDPRemoteAllowlistEvictionsTotal = "udp_remote_allowlist_evictions_total"
+	// UDPRemoteAllowlistOverflowDropsTotal counts inbound UDP packets dropped due
+	// to inbound filtering (i.e. the sender was not currently on the allowlist,
+	// typically because it was evicted or expired).
 	UDPRemoteAllowlistOverflowDropsTotal = "udp_remote_allowlist_overflow_drops_total"
 )
 
