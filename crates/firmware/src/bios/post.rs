@@ -143,29 +143,28 @@ impl Bios {
         disk.read_sector(0, &mut sector)
             .map_err(|_| "Disk read error")?;
 
-        if sector[510] != 0x55 || sector[511] != 0xAA {
-            return Err("Invalid boot signature");
+        if sector[510] == 0x55 && sector[511] == 0xAA {
+            bus.write_physical(0x7C00, &sector);
+
+            // Register setup per BIOS conventions.
+            cpu.gpr[gpr::RAX] = 0;
+            cpu.gpr[gpr::RBX] = 0;
+            cpu.gpr[gpr::RCX] = 0;
+            cpu.gpr[gpr::RDX] = self.config.boot_drive as u64; // DL
+            cpu.gpr[gpr::RSI] = 0;
+            cpu.gpr[gpr::RDI] = 0;
+            cpu.gpr[gpr::RBP] = 0;
+            cpu.gpr[gpr::RSP] = 0x7C00;
+
+            set_real_mode_seg(&mut cpu.segments.cs, 0x0000);
+            set_real_mode_seg(&mut cpu.segments.ds, 0x0000);
+            set_real_mode_seg(&mut cpu.segments.es, 0x0000);
+            set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
+            cpu.set_rip(0x7C00);
+            return Ok(());
         }
 
-        bus.write_physical(0x7C00, &sector);
-
-        // Register setup per BIOS conventions.
-        cpu.gpr[gpr::RAX] = 0;
-        cpu.gpr[gpr::RBX] = 0;
-        cpu.gpr[gpr::RCX] = 0;
-        cpu.gpr[gpr::RDX] = self.config.boot_drive as u64; // DL
-        cpu.gpr[gpr::RSI] = 0;
-        cpu.gpr[gpr::RDI] = 0;
-        cpu.gpr[gpr::RBP] = 0;
-        cpu.gpr[gpr::RSP] = 0x7C00;
-
-        set_real_mode_seg(&mut cpu.segments.cs, 0x0000);
-        set_real_mode_seg(&mut cpu.segments.ds, 0x0000);
-        set_real_mode_seg(&mut cpu.segments.es, 0x0000);
-        set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
-        cpu.set_rip(0x7C00);
-
-        Ok(())
+        Err("Invalid boot signature")
     }
 
     fn boot_eltorito(
