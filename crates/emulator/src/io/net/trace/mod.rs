@@ -195,6 +195,8 @@ fn ethernet_l2_l3_l4_header_len(frame: &[u8]) -> Option<usize> {
     match ethertype {
         // IPv4
         0x0800 => ipv4_l3_l4_header_len(frame, l3_off),
+        // IPv6
+        0x86dd => ipv6_l3_l4_header_len(frame, l3_off),
         // ARP (no L4, but still a "headers only" view)
         0x0806 => arp_header_len(frame, l3_off),
         _ => None,
@@ -249,6 +251,94 @@ fn ipv4_l3_l4_header_len(frame: &[u8], ip_off: usize) -> Option<usize> {
         }
         _ => None,
     }
+}
+
+fn ipv6_l3_l4_header_len(frame: &[u8], ip_off: usize) -> Option<usize> {
+    const IPV6_BASE_HDR_LEN: usize = 40;
+
+    let base_end = ip_off.checked_add(IPV6_BASE_HDR_LEN)?;
+    if frame.len() < base_end {
+        return None;
+    }
+
+    let version = frame[ip_off] >> 4;
+    if version != 6 {
+        return None;
+    }
+
+    let mut next = frame[ip_off + 6];
+    let mut off = base_end;
+
+    // Walk extension headers to find the L4 header. We cap the number of iterations to avoid
+    // pathological packets causing unbounded work.
+    for _ in 0..8 {
+        match next {
+            // TCP
+            6 => return tcp_header_len(frame, off),
+            // UDP
+            17 => {
+                let end = off.checked_add(8)?;
+                if frame.len() < end {
+                    return None;
+                }
+                return Some(end);
+            }
+            // ICMPv6 (minimum 8 bytes for common message types)
+            58 => {
+                let end = off.checked_add(8)?;
+                if frame.len() < end {
+                    return None;
+                }
+                return Some(end);
+            }
+            // No Next Header
+            59 => return Some(off),
+            // Fragment header (fixed 8 bytes)
+            44 => {
+                let end = off.checked_add(8)?;
+                if frame.len() < end {
+                    return None;
+                }
+
+                let next_after = frame[off];
+                let flags_fragment = u16::from_be_bytes([frame[off + 2], frame[off + 3]]);
+                let fragment_offset = (flags_fragment & 0xfff8) >> 3;
+
+                off = end;
+                if fragment_offset != 0 {
+                    // Non-initial fragment: don't attempt to parse L4 headers.
+                    return Some(off);
+                }
+
+                next = next_after;
+                continue;
+            }
+            // Hop-by-Hop Options, Routing, Destination Options.
+            0 | 43 | 60 => {
+                let min_end = off.checked_add(2)?;
+                if frame.len() < min_end {
+                    return None;
+                }
+
+                let next_after = frame[off];
+                let hdr_ext_len = frame[off + 1] as usize;
+                let ext_len = hdr_ext_len
+                    .checked_add(1)?
+                    .checked_mul(8)?;
+                let end = off.checked_add(ext_len)?;
+                if frame.len() < end {
+                    return None;
+                }
+
+                off = end;
+                next = next_after;
+                continue;
+            }
+            _ => return None,
+        }
+    }
+
+    None
 }
 
 fn tcp_header_len(frame: &[u8], tcp_off: usize) -> Option<usize> {
@@ -1146,6 +1236,103 @@ mod tests {
         buf
     }
 
+    fn make_tcp_segment(payload: &[u8]) -> Vec<u8> {
+        let tcp_header_len = 20usize;
+        let mut buf = Vec::with_capacity(tcp_header_len + payload.len());
+
+        buf.extend_from_slice(&12345u16.to_be_bytes()); // src port
+        buf.extend_from_slice(&80u16.to_be_bytes()); // dst port
+        buf.extend_from_slice(&0u32.to_be_bytes()); // seq
+        buf.extend_from_slice(&0u32.to_be_bytes()); // ack
+        buf.push((tcp_header_len as u8 / 4) << 4); // data offset
+        buf.push(0x18); // PSH+ACK
+        buf.extend_from_slice(&0u16.to_be_bytes()); // window
+        buf.extend_from_slice(&0u16.to_be_bytes()); // checksum (ignored)
+        buf.extend_from_slice(&0u16.to_be_bytes()); // urgent
+
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    fn make_ipv6_tcp_frame(payload: &[u8]) -> Vec<u8> {
+        let tcp = make_tcp_segment(payload);
+        let payload_len = tcp.len();
+
+        let mut buf = Vec::with_capacity(14 + 40 + payload_len);
+
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst mac
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src mac
+        buf.extend_from_slice(&0x86ddu16.to_be_bytes()); // ethertype: IPv6
+
+        buf.push(0x60); // version + traffic class (top bits)
+        buf.extend_from_slice(&[0, 0, 0]); // traffic class (low bits) + flow label
+        buf.extend_from_slice(&(payload_len as u16).to_be_bytes());
+        buf.push(6); // next header: TCP
+        buf.push(64); // hop limit
+        buf.extend_from_slice(&[0u8; 16]); // src ip
+        buf.extend_from_slice(&[0u8; 16]); // dst ip
+
+        buf.extend_from_slice(&tcp);
+        buf
+    }
+
+    fn make_ipv6_hop_by_hop_tcp_frame(payload: &[u8]) -> Vec<u8> {
+        let tcp = make_tcp_segment(payload);
+        let ext_len = 8usize;
+        let payload_len = ext_len + tcp.len();
+
+        let mut buf = Vec::with_capacity(14 + 40 + payload_len);
+
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst mac
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src mac
+        buf.extend_from_slice(&0x86ddu16.to_be_bytes()); // ethertype: IPv6
+
+        buf.push(0x60);
+        buf.extend_from_slice(&[0, 0, 0]);
+        buf.extend_from_slice(&(payload_len as u16).to_be_bytes());
+        buf.push(0); // next header: Hop-by-Hop Options
+        buf.push(64);
+        buf.extend_from_slice(&[0u8; 16]); // src ip
+        buf.extend_from_slice(&[0u8; 16]); // dst ip
+
+        // Hop-by-Hop header (8 bytes): next header + hdr ext len + 6 bytes options/pad.
+        buf.push(6); // next header: TCP
+        buf.push(0); // hdr ext len = 0 => 8 bytes total
+        buf.extend_from_slice(&[0u8; 6]);
+
+        buf.extend_from_slice(&tcp);
+        buf
+    }
+
+    fn make_ipv6_fragment_tcp_frame(payload: &[u8], fragment_offset_units: u16) -> Vec<u8> {
+        let tcp = make_tcp_segment(payload);
+        let payload_len = 8usize + tcp.len();
+
+        let mut buf = Vec::with_capacity(14 + 40 + payload_len);
+
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst mac
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src mac
+        buf.extend_from_slice(&0x86ddu16.to_be_bytes()); // ethertype: IPv6
+
+        buf.push(0x60);
+        buf.extend_from_slice(&[0, 0, 0]);
+        buf.extend_from_slice(&(payload_len as u16).to_be_bytes());
+        buf.push(44); // next header: Fragment
+        buf.push(64);
+        buf.extend_from_slice(&[0u8; 16]); // src ip
+        buf.extend_from_slice(&[0u8; 16]); // dst ip
+
+        // Fragment header (8 bytes).
+        buf.push(6); // next header: TCP
+        buf.push(0); // reserved
+        let flags_fragment: u16 = fragment_offset_units << 3;
+        buf.extend_from_slice(&flags_fragment.to_be_bytes());
+        buf.extend_from_slice(&0u32.to_be_bytes()); // identification
+
+        buf.extend_from_slice(&tcp);
+        buf
+    }
+
     #[test]
     fn truncate_redactor_truncates_each_record_type() {
         let tracer = NetTracer::new(NetTraceConfig {
@@ -1294,6 +1481,66 @@ mod tests {
             .expect("expected parseable ARP frame");
 
         assert_eq!(out.len(), 14 + 28);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_l3_l4_headers_for_tcp_ipv6() {
+        let frame = make_ipv6_tcp_frame(b"hello ipv6");
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestTx, &frame)
+            .expect("expected parseable IPv6/TCP frame");
+
+        assert_eq!(out.len(), 14 + 40 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_l3_l4_headers_for_tcp_ipv6_with_hop_by_hop() {
+        let frame = make_ipv6_hop_by_hop_tcp_frame(b"hello ipv6 ext");
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestTx, &frame)
+            .expect("expected parseable IPv6 Hop-by-Hop/TCP frame");
+
+        assert_eq!(out.len(), 14 + 40 + 8 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_does_not_capture_payload_for_non_initial_ipv6_fragments() {
+        let frame = make_ipv6_fragment_tcp_frame(b"sensitive payload", 1);
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestRx, &frame)
+            .expect("expected parseable IPv6 fragment header");
+
+        assert_eq!(out.len(), 14 + 40 + 8);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l4_for_initial_ipv6_fragments() {
+        let frame = make_ipv6_fragment_tcp_frame(b"payload", 0);
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestRx, &frame)
+            .expect("expected parseable IPv6 fragment + TCP frame");
+
+        assert_eq!(out.len(), 14 + 40 + 8 + 20);
         assert_eq!(out.as_slice(), &frame[..out.len()]);
     }
 
