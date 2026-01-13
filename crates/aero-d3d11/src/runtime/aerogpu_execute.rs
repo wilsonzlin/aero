@@ -712,7 +712,6 @@ impl AerogpuCmdRuntime {
         let vs_output_locations = super::wgsl_link::locations_in_struct(&vs.wgsl, "VsOut")?;
 
         let mut ps_link_locations = ps_declared_inputs.clone();
-        let mut linked_ps_hash = ps.hash;
         let ps_missing_locations: BTreeSet<u32> = ps_declared_inputs
             .difference(&vs_output_locations)
             .copied()
@@ -731,18 +730,50 @@ impl AerogpuCmdRuntime {
                 .intersection(&vs_output_locations)
                 .copied()
                 .collect();
-            if ps_link_locations != ps_declared_inputs {
-                let linked_ps_wgsl =
-                    super::wgsl_link::trim_ps_inputs_to_locations(&ps.wgsl, &ps_link_locations);
-                let (hash, _module) = self.pipelines.get_or_create_shader_module(
-                    &self.device,
-                    ShaderStage::Fragment,
-                    &linked_ps_wgsl,
-                    Some("aero-d3d11 aerogpu linked fragment shader"),
-                );
-                linked_ps_hash = hash;
+        }
+
+        let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl.as_str());
+        if ps_link_locations != ps_declared_inputs {
+            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+                linked_ps_wgsl.as_ref(),
+                &ps_link_locations,
+            ));
+        }
+
+        // WebGPU requires that the fragment shader's `@location(N)` outputs line up with the render
+        // pipeline's `ColorTargetState` array. D3D discards writes to unbound RTVs instead.
+        //
+        // To emulate D3D, trim fragment outputs to the set of currently bound render target slots.
+        let mut keep_output_locations = BTreeSet::new();
+        for (slot, handle) in self.state.render_targets.colors.iter().enumerate() {
+            if handle.is_some() {
+                keep_output_locations.insert(slot as u32);
             }
         }
+
+        let declared_outputs = super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
+        let missing_outputs: BTreeSet<u32> = declared_outputs
+            .difference(&keep_output_locations)
+            .copied()
+            .collect();
+        if !missing_outputs.is_empty() {
+            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
+                linked_ps_wgsl.as_ref(),
+                &keep_output_locations,
+            ));
+        }
+
+        let linked_ps_hash = if linked_ps_wgsl.as_ref() == ps.wgsl.as_str() {
+            ps.hash
+        } else {
+            let (hash, _module) = self.pipelines.get_or_create_shader_module(
+                &self.device,
+                ShaderStage::Fragment,
+                linked_ps_wgsl.as_ref(),
+                Some("aero-d3d11 aerogpu linked fragment shader"),
+            );
+            hash
+        };
 
         let linked_vs_hash = if vs_output_locations == ps_link_locations {
             vs.hash
@@ -758,11 +789,15 @@ impl AerogpuCmdRuntime {
             hash
         };
 
-        let (color_attachments, color_target_keys, target_size) =
+        let (color_attachments, color_target_keys, color_size) =
             build_color_attachments(&self.resources, &self.state)?;
 
-        let (depth_attachment, depth_target_key, depth_state) =
+        let (depth_attachment, depth_target_key, depth_state, depth_size) =
             build_depth_attachment(&self.resources, &self.state)?;
+
+        let target_size = color_size
+            .or(depth_size)
+            .ok_or_else(|| anyhow!("draw without bound render targets"))?;
 
         let primitive_topology = map_topology(self.state.primitive_topology)?;
         let cull_mode = self.state.rasterizer_state.cull_mode;
@@ -1297,7 +1332,7 @@ fn build_vertex_state(
 type ColorAttachments<'a> = (
     Vec<Option<wgpu::RenderPassColorAttachment<'a>>>,
     Vec<ColorTargetKey>,
-    (u32, u32),
+    Option<(u32, u32)>,
 );
 
 fn build_color_attachments<'a>(
@@ -1357,11 +1392,7 @@ fn build_color_attachments<'a>(
         });
     }
 
-    if keys.is_empty() {
-        bail!("draw without bound render targets");
-    }
-
-    Ok((attachments, keys, size.unwrap_or((1, 1))))
+    Ok((attachments, keys, size))
 }
 
 fn build_depth_attachment<'a>(
@@ -1371,9 +1402,10 @@ fn build_depth_attachment<'a>(
     Option<wgpu::RenderPassDepthStencilAttachment<'a>>,
     Option<aero_gpu::pipeline_key::DepthStencilKey>,
     Option<wgpu::DepthStencilState>,
+    Option<(u32, u32)>,
 )> {
     let Some(depth_handle) = state.render_targets.depth_stencil else {
-        return Ok((None, None, None));
+        return Ok((None, None, None, None));
     };
 
     let tex = resources
@@ -1435,6 +1467,7 @@ fn build_depth_attachment<'a>(
         Some(attachment),
         Some(depth_stencil_state.clone().into()),
         Some(depth_stencil_state),
+        Some((tex.desc.width, tex.desc.height)),
     ))
 }
 
@@ -1540,4 +1573,265 @@ fn build_fallback_vs_signature(layout: &InputLayoutDesc) -> Vec<VsInputSignature
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn require_webgpu() -> bool {
+        let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
+            return false;
+        };
+        let v = raw.trim();
+        v == "1"
+            || v.eq_ignore_ascii_case("true")
+            || v.eq_ignore_ascii_case("yes")
+            || v.eq_ignore_ascii_case("on")
+    }
+
+    fn skip_or_panic(test_name: &str, reason: &str) {
+        if require_webgpu() {
+            panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
+        }
+        eprintln!("skipping {test_name}: {reason}");
+    }
+
+    #[test]
+    fn trims_fragment_outputs_when_mrt_is_partially_bound() {
+        // Regression test for D3D-style MRT behavior:
+        // - Fragment shader can declare multiple `@location(N)` outputs.
+        // - The app can bind fewer render targets than the shader declares.
+        // - Writes to unbound targets are discarded (shader outputs must be trimmed for WebGPU).
+        pollster::block_on(async {
+            let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+                Ok(rt) => rt,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const W: u32 = 4;
+            const H: u32 = 4;
+            const RT0: AerogpuHandle = 1;
+            const RT2: AerogpuHandle = 2;
+
+            let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
+            rt.create_texture2d(RT0, W, H, wgpu::TextureFormat::Rgba8Unorm, usage);
+            rt.create_texture2d(RT2, W, H, wgpu::TextureFormat::Rgba8Unorm, usage);
+
+            let vs_wgsl = r#"
+                @vertex
+                fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+                    var pos = array<vec2<f32>, 3>(
+                        vec2<f32>(-1.0, -1.0),
+                        vec2<f32>( 3.0, -1.0),
+                        vec2<f32>(-1.0,  3.0),
+                    );
+                    let p = pos[index];
+                    return vec4<f32>(p, 0.0, 1.0);
+                }
+            "#;
+
+            // Fragment shader writes to `@location(0)` and `@location(2)`.
+            let fs_wgsl = r#"
+                struct PsOut {
+                    @location(0) o0: vec4<f32>,
+                    @location(2) o2: vec4<f32>,
+                };
+
+                @fragment
+                fn fs_main() -> PsOut {
+                    var out: PsOut;
+                    out.o0 = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+                    out.o2 = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+                    return out;
+                }
+            "#;
+
+            let vs_module = rt.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("wgsl_link mrt trim vs"),
+                source: wgpu::ShaderSource::Wgsl(vs_wgsl.into()),
+            });
+            let fs_module = rt.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("wgsl_link mrt trim fs"),
+                source: wgpu::ShaderSource::Wgsl(fs_wgsl.into()),
+            });
+
+            let layout = rt
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("wgsl_link mrt trim layout"),
+                    bind_group_layouts: &[],
+                    push_constant_ranges: &[],
+                });
+
+            let ct = wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            };
+
+            // (1) Only RT0 bound: untrimmed shader should fail pipeline creation, trimmed should succeed.
+            let targets_rt0 = [Some(ct.clone())];
+            rt.device
+                .push_error_scope(wgpu::ErrorFilter::Validation);
+            let _ = rt.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("wgsl_link mrt untrimmed rt0-only"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &vs_module,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &fs_module,
+                    entry_point: "fs_main",
+                    targets: &targets_rt0,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
+            rt.device.poll(wgpu::Maintain::Wait);
+            let err = rt.device.pop_error_scope().await;
+            assert!(
+                err.is_some(),
+                "expected pipeline creation to fail when RT2 is unbound but shader writes @location(2)"
+            );
+
+            // Now go through the AeroGPU runtime path: the runtime should trim `@location(2)` at
+            // pipeline-creation time and the draw should succeed with only RT0 bound.
+            const VS: AerogpuHandle = 10;
+            const PS: AerogpuHandle = 11;
+            let (vs_hash, _vs_module_cached) = rt.pipelines.get_or_create_shader_module(
+                &rt.device,
+                ShaderStage::Vertex,
+                vs_wgsl,
+                Some("wgsl_link mrt trim runtime vs"),
+            );
+            let (ps_hash, _ps_module_cached) = rt.pipelines.get_or_create_shader_module(
+                &rt.device,
+                ShaderStage::Fragment,
+                fs_wgsl,
+                Some("wgsl_link mrt trim runtime fs"),
+            );
+            rt.resources.shaders.insert(
+                VS,
+                ShaderResource {
+                    stage: ShaderStage::Vertex,
+                    wgsl: vs_wgsl.to_owned(),
+                    hash: vs_hash,
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                },
+            );
+            rt.resources.shaders.insert(
+                PS,
+                ShaderResource {
+                    stage: ShaderStage::Fragment,
+                    wgsl: fs_wgsl.to_owned(),
+                    hash: ps_hash,
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                },
+            );
+            rt.bind_shaders(Some(VS), Some(PS));
+
+            let mut colors = [None; 8];
+            colors[0] = Some(RT0);
+            rt.set_render_targets(&colors, None);
+            rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+            rt.draw(3, 1, 0, 0).expect("runtime draw");
+
+            let bytes = rt.read_texture_rgba8(RT0).await.expect("read RT0");
+            assert_eq!(&bytes[..4], &[255, 0, 0, 255], "RT0 must be red");
+
+            // (2) RT0 + RT2 bound with a gap at RT1: pipeline creation succeeds and output2 preserved.
+            let targets_gap = [Some(ct.clone()), None, Some(ct)];
+            rt.device
+                .push_error_scope(wgpu::ErrorFilter::Validation);
+            let pipeline_gap = rt.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("wgsl_link mrt untrimmed rt0+rt2"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &vs_module,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &fs_module,
+                    entry_point: "fs_main",
+                    targets: &targets_gap,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
+            rt.device.poll(wgpu::Maintain::Wait);
+            let err = rt.device.pop_error_scope().await;
+            assert!(err.is_none(), "untrimmed pipeline must succeed when RT2 is bound");
+
+            let view0 = &rt
+                .resources
+                .textures
+                .get(&RT0)
+                .expect("RT0 created")
+                .view;
+            let view2 = &rt
+                .resources
+                .textures
+                .get(&RT2)
+                .expect("RT2 created")
+                .view;
+
+            let mut encoder =
+                rt.device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("wgsl_link mrt trim encoder rt0+rt2"),
+                    });
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("wgsl_link mrt trim pass rt0+rt2"),
+                    color_attachments: &[
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: view0,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                        None,
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: view2,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                    ],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&pipeline_gap);
+                pass.draw(0..3, 0..1);
+            }
+            rt.queue.submit([encoder.finish()]);
+
+            let bytes0 = rt.read_texture_rgba8(RT0).await.expect("read RT0");
+            let bytes2 = rt.read_texture_rgba8(RT2).await.expect("read RT2");
+            assert_eq!(&bytes0[..4], &[255, 0, 0, 255], "RT0 must be red");
+            assert_eq!(&bytes2[..4], &[0, 255, 0, 255], "RT2 must be green");
+        });
+    }
 }

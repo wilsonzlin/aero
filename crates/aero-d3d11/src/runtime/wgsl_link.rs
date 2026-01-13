@@ -9,6 +9,11 @@ fn parse_location_attr(line: &str) -> Option<u32> {
     rest[..end].trim().parse().ok()
 }
 
+fn parse_struct_member_name(line: &str) -> Option<&str> {
+    let before_colon = line.split(':').next()?;
+    before_colon.split_whitespace().last()
+}
+
 pub(crate) fn locations_in_struct(wgsl: &str, struct_name: &str) -> Result<BTreeSet<u32>> {
     let start_pat = format!("struct {struct_name} {{");
     let mut in_struct = false;
@@ -40,6 +45,26 @@ pub(crate) fn locations_in_struct(wgsl: &str, struct_name: &str) -> Result<BTree
         // consume any varyings (the entry point becomes `fn fs_main() -> ...`), so treat a missing
         // struct as "no @location values".
         return Ok(BTreeSet::new());
+    }
+    Ok(out)
+}
+
+fn location_in_fs_main_return(wgsl: &str) -> Option<u32> {
+    for line in wgsl.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("fn fs_main(") {
+            continue;
+        }
+        let arrow_idx = line.find("->")?;
+        return parse_location_attr(&line[arrow_idx..]);
+    }
+    None
+}
+
+pub(crate) fn declared_ps_output_locations(wgsl: &str) -> Result<BTreeSet<u32>> {
+    let mut out = locations_in_struct(wgsl, "PsOut")?;
+    if let Some(loc) = location_in_fs_main_return(wgsl) {
+        out.insert(loc);
     }
     Ok(out)
 }
@@ -221,6 +246,238 @@ pub(crate) fn trim_ps_inputs_to_locations(ps_wgsl: &str, keep_locations: &BTreeS
     out
 }
 
+pub(crate) fn trim_ps_outputs_to_locations(
+    ps_wgsl: &str,
+    keep_locations: &BTreeSet<u32>,
+) -> String {
+    // First pass: collect all `@location` members and which should be trimmed.
+    let mut in_ps_out = false;
+    let mut ps_out_found = false;
+    let mut removed_member_names = std::collections::HashSet::<String>::new();
+    let mut kept_member_count = 0usize;
+
+    for line in ps_wgsl.lines() {
+        let trimmed = line.trim();
+        if !in_ps_out {
+            if trimmed == "struct PsOut {" {
+                in_ps_out = true;
+                ps_out_found = true;
+            }
+            continue;
+        }
+
+        if trimmed == "};" {
+            in_ps_out = false;
+            continue;
+        }
+
+        if let Some(loc) = parse_location_attr(line) {
+            let Some(name) = parse_struct_member_name(line) else {
+                continue;
+            };
+            if !keep_locations.contains(&loc) {
+                removed_member_names.insert(name.to_owned());
+            } else {
+                kept_member_count += 1;
+            }
+            continue;
+        }
+
+        // Count non-location members (e.g. `@builtin(frag_depth)` outputs) so we can decide whether
+        // trimming leaves an empty struct.
+        if parse_struct_member_name(line).is_some() {
+            kept_member_count += 1;
+        }
+    }
+
+    let mut drop_ps_out_struct = false;
+    if ps_out_found && kept_member_count == 0 {
+        // WGSL forbids empty structs; if trimming would remove every member (including builtins),
+        // rewrite the shader to drop `PsOut` entirely and switch `fs_main` to return `()`.
+        drop_ps_out_struct = true;
+    }
+
+    // Direct-return pixel shaders (`-> @location(0) vec4<f32>`) don't have a `PsOut` struct. If the
+    // declared return location isn't bound, rewrite `fs_main` to return `()`.
+    let mut drop_fs_return_location = false;
+    if !ps_out_found {
+        if let Some(loc) = location_in_fs_main_return(ps_wgsl) {
+            if !keep_locations.contains(&loc) {
+                drop_fs_return_location = true;
+            }
+        }
+    }
+
+    if !ps_out_found && !drop_fs_return_location {
+        // Nothing to do.
+        return ps_wgsl.to_owned();
+    }
+
+    let mut out = String::with_capacity(ps_wgsl.len());
+    let mut in_ps_out = false;
+    let mut trim_tmp_counter = 0usize;
+
+    for line in ps_wgsl.lines() {
+        let trimmed = line.trim();
+
+        if drop_ps_out_struct {
+            // Drop the entire `PsOut` declaration.
+            if !in_ps_out && trimmed == "struct PsOut {" {
+                in_ps_out = true;
+                continue;
+            }
+            if in_ps_out {
+                if trimmed == "};" {
+                    in_ps_out = false;
+                }
+                continue;
+            }
+
+            // Rewrite `fs_main` to return `()`.
+            if trimmed.starts_with("fn fs_main(") && trimmed.contains("->") {
+                if let Some(arrow_idx) = line.find("->") {
+                    let brace = line.find('{').unwrap_or(line.len());
+                    let before = &line[..arrow_idx];
+                    let after = &line[brace..];
+                    out.push_str(before.trim_end());
+                    out.push(' ');
+                    out.push_str(after.trim_start());
+                    out.push('\n');
+                    continue;
+                }
+            }
+
+            // Remove `var out: PsOut;` and `return out;`.
+            if trimmed == "var out: PsOut;" || trimmed == "return out;" {
+                continue;
+            }
+
+            // Strip `out.<field> = <expr>;` lines, but preserve RHS evaluation in case it has side
+            // effects.
+            let line_trimmed_start = line.trim_start();
+            if let Some(rest) = line_trimmed_start.strip_prefix("out.") {
+                if let Some((_, rhs)) = rest.split_once('=') {
+                    let rhs = rhs.trim().trim_end_matches(';').trim();
+                    let indent_len = line.len().saturating_sub(line_trimmed_start.len());
+                    let indent = &line[..indent_len];
+                    let tmp_name = format!("_aero_trim_tmp{trim_tmp_counter}");
+                    trim_tmp_counter += 1;
+                    out.push_str(indent);
+                    out.push_str("let ");
+                    out.push_str(&tmp_name);
+                    out.push_str(" = ");
+                    out.push_str(rhs);
+                    out.push_str(";\n");
+                    continue;
+                }
+                // If we can't parse the assignment, just drop it (best-effort).
+                continue;
+            }
+
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        // Trim members of `struct PsOut`.
+        if ps_out_found {
+            if !in_ps_out && trimmed == "struct PsOut {" {
+                in_ps_out = true;
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+
+            if in_ps_out {
+                if trimmed == "};" {
+                    in_ps_out = false;
+                    out.push_str(line);
+                    out.push('\n');
+                    continue;
+                }
+
+                if let Some(loc) = parse_location_attr(line) {
+                    if !keep_locations.contains(&loc) {
+                        continue;
+                    }
+                }
+
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+
+            // Drop return-struct assignments to trimmed outputs, but preserve RHS evaluation.
+            let line_trimmed_start = line.trim_start();
+            if let Some(rest) = line_trimmed_start.strip_prefix("out.") {
+                let ident: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if !ident.is_empty() && removed_member_names.contains(&ident) {
+                    if let Some((_, rhs)) = rest.split_once('=') {
+                        let rhs = rhs.trim().trim_end_matches(';').trim();
+                        let indent_len = line.len().saturating_sub(line_trimmed_start.len());
+                        let indent = &line[..indent_len];
+                        let tmp_name = format!("_aero_trim_tmp{trim_tmp_counter}");
+                        trim_tmp_counter += 1;
+                        out.push_str(indent);
+                        out.push_str("let ");
+                        out.push_str(&tmp_name);
+                        out.push_str(" = ");
+                        out.push_str(rhs);
+                        out.push_str(";\n");
+                    }
+                    continue;
+                }
+            }
+
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        // Direct return: drop `-> @location(...) ...` and rewrite `return expr;`.
+        if drop_fs_return_location {
+            if trimmed.starts_with("fn fs_main(") && trimmed.contains("->") {
+                if let Some(arrow_idx) = line.find("->") {
+                    let brace = line.find('{').unwrap_or(line.len());
+                    let before = &line[..arrow_idx];
+                    let after = &line[brace..];
+                    out.push_str(before.trim_end());
+                    out.push(' ');
+                    out.push_str(after.trim_start());
+                    out.push('\n');
+                    continue;
+                }
+            }
+
+            let line_trimmed_start = line.trim_start();
+            if let Some(rest) = line_trimmed_start.strip_prefix("return ") {
+                let expr = rest.trim().trim_end_matches(';').trim();
+                let indent_len = line.len().saturating_sub(line_trimmed_start.len());
+                let indent = &line[..indent_len];
+                let tmp_name = format!("_aero_trim_tmp{trim_tmp_counter}");
+                trim_tmp_counter += 1;
+                out.push_str(indent);
+                out.push_str("let ");
+                out.push_str(&tmp_name);
+                out.push_str(" = ");
+                out.push_str(expr);
+                out.push_str(";\n");
+                out.push_str(indent);
+                out.push_str("return;\n");
+                continue;
+            }
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +577,71 @@ mod tests {
         let trimmed = trim_ps_inputs_to_locations(wgsl, &keep);
         assert!(!trimmed.contains("struct PsIn"));
         assert!(trimmed.contains("fn fs_main()"));
+    }
+
+    #[test]
+    fn finds_ps_output_locations_from_struct_or_return() {
+        let wgsl_struct = r#"
+            struct PsOut {
+                @location(0) t0: vec4<f32>,
+                @location(2) t2: vec4<f32>,
+            };
+        "#;
+        let locs = declared_ps_output_locations(wgsl_struct).unwrap();
+        assert_eq!(locs.iter().copied().collect::<Vec<_>>(), vec![0, 2]);
+
+        let wgsl_return = r#"
+            @fragment
+            fn fs_main() -> @location(0) vec4<f32> { return vec4<f32>(0.0); }
+        "#;
+        let locs = declared_ps_output_locations(wgsl_return).unwrap();
+        assert_eq!(locs.iter().copied().collect::<Vec<_>>(), vec![0]);
+    }
+
+    #[test]
+    fn trims_ps_outputs_struct_and_out_assignments() {
+        let wgsl = r#"
+            struct PsOut {
+                @location(0) t0: vec4<f32>,
+                @location(2) t2: vec4<f32>,
+            };
+
+            @fragment
+            fn fs_main() -> PsOut {
+                var out: PsOut;
+                out.t0 = vec4<f32>(1.0);
+                out.t2 = vec4<f32>(2.0);
+                return out;
+            }
+        "#;
+        let keep = BTreeSet::from([0u32]);
+        let trimmed = trim_ps_outputs_to_locations(wgsl, &keep);
+        assert!(trimmed.contains("@location(0)"));
+        assert!(!trimmed.contains("@location(2)"));
+        assert!(trimmed.contains("out.t0 ="));
+        assert!(!trimmed.contains("out.t2 ="));
+        assert!(trimmed.contains("let _aero_trim_tmp"));
+    }
+
+    #[test]
+    fn trims_ps_outputs_to_empty_rewrites_entrypoint_to_void() {
+        let wgsl = r#"
+            struct PsOut {
+                @location(2) t2: vec4<f32>,
+            };
+
+            @fragment
+            fn fs_main() -> PsOut {
+                var out: PsOut;
+                out.t2 = vec4<f32>(2.0);
+                return out;
+            }
+        "#;
+        let keep = BTreeSet::new();
+        let trimmed = trim_ps_outputs_to_locations(wgsl, &keep);
+        assert!(!trimmed.contains("struct PsOut"));
+        assert!(trimmed.contains("fn fs_main() {"));
+        assert!(!trimmed.contains("var out: PsOut;"));
+        assert!(!trimmed.contains("return out;"));
     }
 }
