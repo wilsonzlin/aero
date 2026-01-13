@@ -167,7 +167,10 @@ fn wgsl_defb_if_compiles() {
     .validate(&module)
     .expect("wgsl validate");
 
-    assert!(wgsl.contains("let b0"));
+    assert!(
+        wgsl.contains("let b0: vec4<bool> = vec4<bool>(true, true, true, true);"),
+        "{wgsl}"
+    );
     assert!(wgsl.contains("if ("));
 }
 
@@ -222,8 +225,14 @@ fn wgsl_defi_loop_breakc_compiles() {
     .validate(&module)
     .expect("wgsl validate");
 
-    assert!(wgsl.contains("let i0"));
-    assert!(wgsl.contains("loop {"));
+    assert!(
+        wgsl.contains("let i0: vec4<i32> = vec4<i32>(1, 0, 0, 0);"),
+        "{wgsl}"
+    );
+    assert!(wgsl.contains("loop {"), "{wgsl}");
+    // Safety cap makes the loop structurally bounded in WGSL.
+    assert!(wgsl.contains(">= 1024u"), "{wgsl}");
+    assert!(wgsl.contains("if (_aero_loop_step == 0)"), "{wgsl}");
 }
 
 #[test]

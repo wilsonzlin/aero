@@ -489,6 +489,18 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
         ],
     ));
 
+    // defi i0, 0, 3, 1, 0 (loop start/end/step)
+    out.extend(enc_inst_sm3(
+        0x0052,
+        &[
+            enc_dst(7, 0, 0xF), // i0
+            0,
+            3,
+            1,
+            0,
+        ],
+    ));
+
     // mov r0, c0
     out.extend(enc_inst_sm3(
         0x0001,
@@ -500,7 +512,7 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
         &[enc_dst(0, 1, 0x1), enc_src(2, 0, 0x00)],
     ));
 
-    // loop aL, i0 (operands ignored by IR builder for now)
+    // loop aL, i0
     out.extend(enc_inst_sm3(
         0x001B,
         &[

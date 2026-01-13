@@ -34,7 +34,19 @@ fn verify_block(block: &Block, stage: ShaderStage) -> Result<(), VerifyError> {
                     verify_block(else_block, stage)?;
                 }
             }
-            Stmt::Loop { body } => verify_block(body, stage)?,
+            Stmt::Loop { init, body } => {
+                if init.loop_reg.file != RegFile::Loop {
+                    return Err(VerifyError {
+                        message: "loop init refers to a non-loop register".to_owned(),
+                    });
+                }
+                if init.ctrl_reg.file != RegFile::ConstInt {
+                    return Err(VerifyError {
+                        message: "loop init refers to a non-integer-constant register".to_owned(),
+                    });
+                }
+                verify_block(body, stage)?;
+            }
             Stmt::Break => {}
             Stmt::BreakIf { cond } => verify_cond(cond)?,
             Stmt::Discard { src } => verify_src(src)?,

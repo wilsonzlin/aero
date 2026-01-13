@@ -4,8 +4,8 @@ use crate::sm3::decode::{
 };
 use crate::sm3::ir::{
     Block, CompareOp, Cond, ConstDefBool, ConstDefF32, ConstDefI32, Dst, InstModifiers, IoDecl,
-    IrOp, PredicateRef, RegFile, RegRef, RelativeRef, SamplerDecl, Semantic, ShaderIr, Src, Stmt,
-    TexSampleKind,
+    IrOp, LoopInit, PredicateRef, RegFile, RegRef, RelativeRef, SamplerDecl, Semantic, ShaderIr,
+    Src, Stmt, TexSampleKind,
 };
 use crate::sm3::types::ShaderStage;
 use crate::vertex::{DeclUsage, StandardLocationMap, VertexLocationMap};
@@ -126,18 +126,19 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                     },
                 )?;
             }
-            Opcode::Loop => {
-                stack.push(Frame::Loop { body: Block::new() });
-            }
+            Opcode::Loop => stack.push(Frame::Loop {
+                init: build_loop_init(inst)?,
+                body: Block::new(),
+            }),
             Opcode::EndLoop => {
                 let frame = stack
                     .pop()
                     .ok_or_else(|| err(inst, "endloop without matching loop"))?;
-                let body = match frame {
-                    Frame::Loop { body } => body,
+                let (init, body) = match frame {
+                    Frame::Loop { init, body } => (init, body),
                     _ => return Err(err(inst, "endloop without matching loop")),
                 };
-                push_stmt(&mut stack, Stmt::Loop { body })?;
+                push_stmt(&mut stack, Stmt::Loop { init, body })?;
             }
             Opcode::Break => push_stmt(&mut stack, Stmt::Break)?,
             Opcode::Breakc => {
@@ -539,6 +540,38 @@ fn handle_def_bool(
     Ok(())
 }
 
+fn build_loop_init(inst: &DecodedInstruction) -> Result<LoopInit, BuildError> {
+    let loop_reg = match inst.operands.get(0) {
+        Some(Operand::Src(src)) => src,
+        _ => return Err(err(inst, "loop missing loop register operand")),
+    };
+    if loop_reg.reg.file != RegisterFile::Loop {
+        return Err(err(inst, "loop first operand must be a loop register"));
+    }
+    if !matches!(loop_reg.modifier, SrcModifier::None) {
+        return Err(err(inst, "loop register operand cannot have a source modifier"));
+    }
+
+    let ctrl_reg = match inst.operands.get(1) {
+        Some(Operand::Src(src)) => src,
+        _ => return Err(err(inst, "loop missing integer constant operand")),
+    };
+    if ctrl_reg.reg.file != RegisterFile::ConstInt {
+        return Err(err(inst, "loop second operand must be an integer constant register"));
+    }
+    if !matches!(ctrl_reg.modifier, SrcModifier::None) {
+        return Err(err(
+            inst,
+            "loop integer constant operand cannot have a source modifier",
+        ));
+    }
+
+    Ok(LoopInit {
+        loop_reg: to_ir_reg(inst, &loop_reg.reg)?,
+        ctrl_reg: to_ir_reg(inst, &ctrl_reg.reg)?,
+    })
+}
+
 fn map_semantic(usage: &DclUsage, index: u8) -> Semantic {
     match usage {
         DclUsage::Position => Semantic::Position(index),
@@ -599,7 +632,7 @@ fn collect_used_input_regs_block(block: &Block, out: &mut BTreeSet<u32>) {
                     collect_used_input_regs_block(else_block, out);
                 }
             }
-            Stmt::Loop { body } => collect_used_input_regs_block(body, out),
+            Stmt::Loop { init: _, body } => collect_used_input_regs_block(body, out),
             Stmt::Break => {}
             Stmt::BreakIf { cond } => collect_used_input_regs_cond(cond, out),
             Stmt::Discard { src } => collect_used_input_regs_src(src, out),
@@ -833,7 +866,7 @@ fn remap_input_regs_in_block(block: &mut Block, remap: &HashMap<u32, u32>) {
                     remap_input_regs_in_block(else_block, remap);
                 }
             }
-            Stmt::Loop { body } => remap_input_regs_in_block(body, remap),
+        Stmt::Loop { init: _, body } => remap_input_regs_in_block(body, remap),
             Stmt::Break => {}
             Stmt::BreakIf { cond } => remap_input_regs_in_cond(cond, remap),
             Stmt::Discard { src } => remap_input_regs_in_src(src, remap),
@@ -1419,7 +1452,7 @@ fn push_texldd(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), Bui
 fn push_stmt(stack: &mut [Frame], stmt: Stmt) -> Result<(), BuildError> {
     match stack.last_mut() {
         Some(Frame::Root(block)) => block.stmts.push(stmt),
-        Some(Frame::Loop { body }) => body.stmts.push(stmt),
+        Some(Frame::Loop { body, .. }) => body.stmts.push(stmt),
         Some(Frame::If {
             then_block,
             else_block,
@@ -1525,6 +1558,7 @@ enum Frame {
         in_else: bool,
     },
     Loop {
+        init: LoopInit,
         body: Block,
     },
 }

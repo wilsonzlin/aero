@@ -74,6 +74,7 @@ pub enum Stmt {
         else_block: Option<Block>,
     },
     Loop {
+        init: LoopInit,
         body: Block,
     },
     Break,
@@ -83,6 +84,12 @@ pub enum Stmt {
     Discard {
         src: Src,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopInit {
+    pub loop_reg: RegRef,
+    pub ctrl_reg: RegRef,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -526,8 +533,14 @@ fn fmt_stmt(f: &mut fmt::Formatter<'_>, stmt: &Stmt, indent: usize) -> fmt::Resu
                 writeln!(f, "{}}}", pad)
             }
         }
-        Stmt::Loop { body } => {
-            writeln!(f, "{}loop {{", pad)?;
+        Stmt::Loop { init, body } => {
+            writeln!(
+                f,
+                "{}loop {}, {} {{",
+                pad,
+                format_reg(&init.loop_reg),
+                format_reg(&init.ctrl_reg)
+            )?;
             fmt_block(f, body, indent + 1)?;
             writeln!(f, "{}}}", pad)
         }

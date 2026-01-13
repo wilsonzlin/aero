@@ -216,6 +216,7 @@ fn varying_location(
 struct RegUsage {
     temps: BTreeSet<u32>,
     addrs: BTreeSet<u32>,
+    loop_regs: BTreeSet<u32>,
     inputs: BTreeSet<(RegFile, u32)>,
     outputs: BTreeSet<(RegFile, u32)>,
     predicates: BTreeSet<u32>,
@@ -229,6 +230,7 @@ impl RegUsage {
         Self {
             temps: BTreeSet::new(),
             addrs: BTreeSet::new(),
+            loop_regs: BTreeSet::new(),
             inputs: BTreeSet::new(),
             outputs: BTreeSet::new(),
             predicates: BTreeSet::new(),
@@ -254,7 +256,11 @@ fn collect_reg_usage(block: &Block, usage: &mut RegUsage) {
                     collect_reg_usage(else_block, usage);
                 }
             }
-            Stmt::Loop { body } => collect_reg_usage(body, usage),
+            Stmt::Loop { init, body } => {
+                collect_reg_ref_usage(&init.loop_reg, usage);
+                collect_reg_ref_usage(&init.ctrl_reg, usage);
+                collect_reg_usage(body, usage);
+            }
             Stmt::Break => {}
             Stmt::BreakIf { cond } => collect_cond_usage(cond, usage),
             Stmt::Discard { src } => collect_src_usage(src, usage),
@@ -392,6 +398,9 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
         RegFile::Addr => {
             usage.addrs.insert(reg.index);
         }
+        RegFile::Loop => {
+            usage.loop_regs.insert(reg.index);
+        }
         RegFile::Input | RegFile::Texture => {
             usage.inputs.insert((reg.file, reg.index));
         }
@@ -449,8 +458,13 @@ fn src_expr(
         // Relative constant addressing (`cN[a0.x]`) is represented via `RegRef.relative`.
         if let Some(rel) = &src.reg.relative {
             let rel_reg = reg_var_name(&rel.reg)?;
-            if rel.reg.file != RegFile::Addr {
-                return Err(err("relative constant addressing requires an address register"));
+            match rel.reg.file {
+                RegFile::Addr | RegFile::Loop => {}
+                _ => {
+                    return Err(err(
+                        "relative constant addressing requires an address or loop register",
+                    ))
+                }
             }
             let comp = match rel.component {
                 SwizzleComponent::X => 'x',
@@ -1089,9 +1103,52 @@ fn emit_stmt(
             }
             let _ = writeln!(wgsl, "{pad}}}");
         }
-        Stmt::Loop { body } => {
-            let _ = writeln!(wgsl, "{pad}loop {{");
-            emit_block(wgsl, body, indent + 1, f32_defs)?;
+        Stmt::Loop { init, body } => {
+            // D3D9 SM2/3 `loop aL, i#` has a finite trip count derived from the integer constant
+            // register (i#.x=start, i#.y=end, i#.z=step). We must not emit an unbounded WGSL `loop {}`
+            // because it can hang the GPU on malformed shaders.
+            //
+            // Emit a conservative bounded loop:
+            // - Break if step==0.
+            // - Break if the loop counter moves past the end bound.
+            // - Break if a safety cap is exceeded.
+            const MAX_ITERS: u32 = 1024;
+
+            if init.loop_reg.file != RegFile::Loop {
+                return Err(err("loop init uses a non-loop register"));
+            }
+            if init.ctrl_reg.file != RegFile::ConstInt {
+                return Err(err("loop init uses a non-integer-constant register"));
+            }
+            if init.loop_reg.relative.is_some() || init.ctrl_reg.relative.is_some() {
+                return Err(err("relative addressing is not supported in loop operands"));
+            }
+
+            let loop_reg = reg_var_name(&init.loop_reg)?;
+            let ctrl = reg_var_name(&init.ctrl_reg)?;
+
+            let pad1 = "  ".repeat(indent + 1);
+            let pad2 = "  ".repeat(indent + 2);
+
+            let _ = writeln!(wgsl, "{pad}{{");
+            let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
+            let _ = writeln!(wgsl, "{pad1}let _aero_loop_end: i32 = ({ctrl}).y;");
+            let _ = writeln!(wgsl, "{pad1}let _aero_loop_step: i32 = ({ctrl}).z;");
+            let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = ({ctrl}).x;");
+            let _ = writeln!(wgsl, "{pad1}loop {{");
+
+            let _ = writeln!(wgsl, "{pad2}if (_aero_loop_iter >= {MAX_ITERS}u) {{ break; }}");
+            let _ = writeln!(wgsl, "{pad2}if (_aero_loop_step == 0) {{ break; }}");
+            let _ = writeln!(
+                wgsl,
+                "{pad2}if ((_aero_loop_step > 0 && {loop_reg}.x > _aero_loop_end) || (_aero_loop_step < 0 && {loop_reg}.x < _aero_loop_end)) {{ break; }}"
+            );
+
+            emit_block(wgsl, body, indent + 2, f32_defs)?;
+
+            let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + _aero_loop_step;");
+            let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
+            let _ = writeln!(wgsl, "{pad1}}}");
             let _ = writeln!(wgsl, "{pad}}}");
         }
         Stmt::Break => {
@@ -1340,6 +1397,17 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                 let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
             }
 
+            // Loop registers (`aL#`) used for SM2/3 loop constructs and relative constant indexing.
+            for l in &usage.loop_regs {
+                let reg = RegRef {
+                    file: RegFile::Loop,
+                    index: *l,
+                    relative: None,
+                };
+                let name = reg_var_name(&reg)?;
+                let _ = writeln!(wgsl, "  var {name}: vec4<i32> = vec4<i32>(0);");
+            }
+
             // Predicate registers (`p#`).
             for p in &usage.predicates {
                 let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
@@ -1460,6 +1528,17 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             // Address registers (`a#`) used for relative constant indexing.
             for a in &usage.addrs {
                 let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
+            }
+
+            // Loop registers (`aL#`) used for SM2/3 loop constructs and relative constant indexing.
+            for l in &usage.loop_regs {
+                let reg = RegRef {
+                    file: RegFile::Loop,
+                    index: *l,
+                    relative: None,
+                };
+                let name = reg_var_name(&reg)?;
+                let _ = writeln!(wgsl, "  var {name}: vec4<i32> = vec4<i32>(0);");
             }
 
             // Predicate registers (`p#`).

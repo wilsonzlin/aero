@@ -397,9 +397,53 @@ fn exec_block(
                 };
                 flow
             }
-            Stmt::Loop { body } => {
+            Stmt::Loop { init, body } => {
+                // D3D9 SM2/3 `loop aL, i#` has a finite trip count derived from the integer constant
+                // register (i#.x=start, i#.y=end, i#.z=step). A malformed shader could specify a
+                // zero step, so we keep a hard cap here for safety and determinism.
+                let ctrl = exec_src(
+                    &Src {
+                        reg: init.ctrl_reg.clone(),
+                        swizzle: Swizzle::identity(),
+                        modifier: SrcModifier::None,
+                    },
+                    temps,
+                    addrs,
+                    loops,
+                    preds,
+                    inputs_v,
+                    inputs_t,
+                    constants,
+                );
+                let start = ctrl.x as i32;
+                let end = ctrl.y as i32;
+                let step = ctrl.z as i32;
+
+                let Some(loop_idx) =
+                    resolve_reg_index(&init.loop_reg, temps, addrs, loops, preds).map(|v| v as usize)
+                else {
+                    return Flow::Continue;
+                };
+                if loop_idx >= loops.len() {
+                    return Flow::Continue;
+                }
+
+                // Save/restore the full loop register value to emulate D3D's loop stack semantics
+                // for nested loops.
+                let saved_loop_reg = loops[loop_idx];
+                loops[loop_idx].x = start as f32;
+
                 let mut discarded = false;
                 for _ in 0..MAX_LOOP_ITERS {
+                    if step == 0 {
+                        break;
+                    }
+
+                    let counter = loops[loop_idx].x as i32;
+                    if (step > 0 && counter > end) || (step < 0 && counter < end) {
+                        break;
+                    }
+
                     match exec_block(
                         body,
                         depth + 1,
@@ -424,7 +468,13 @@ fn exec_block(
                             break;
                         }
                     }
+
+                    loops[loop_idx].x = counter.wrapping_add(step) as f32;
                 }
+
+                // Restore the loop register to the pre-loop value.
+                loops[loop_idx] = saved_loop_reg;
+
                 if discarded {
                     Flow::Discard
                 } else {
