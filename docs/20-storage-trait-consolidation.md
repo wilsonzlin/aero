@@ -172,10 +172,12 @@ This pattern is already used today:
  - Reverse adapter: `crates/devices/src/storage/mod.rs` defines `DeviceBackendAsAeroVirtualDisk`, which
    allows reusing `aero-storage` disk wrappers (cache/sparse/COW) on top of an existing
    `aero_devices::storage::DiskBackend`.
- - Reverse adapter: `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk` allows reusing
-   `aero-storage` disk wrappers on top of an existing `aero_virtio::devices::blk::BlockBackend`.
- - Reverse adapter (optional, if/when implemented): `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`
-   allows reusing `aero-storage` disk wrappers on top of an existing `aero_devices_nvme::DiskBackend`.
+ - Reverse adapter (if/when implemented): `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk`
+   would allow reusing `aero-storage` disk wrappers on top of an existing
+   `aero_virtio::devices::blk::BlockBackend`.
+ - Reverse adapter: `crates/aero-devices-nvme/src/nvme_as_aero_storage.rs` defines
+   `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`, which allows reusing `aero-storage` disk
+   wrappers on top of an existing `aero_devices_nvme::DiskBackend`.
  - BIOS/firmware bridge: `crates/aero-machine/src/shared_disk.rs` defines `SharedDisk`, a wrapper type
    that implements both `firmware::bios::BlockDevice` and `aero_storage::VirtualDisk` so a single
    disk image can be used consistently across the “boot firmware” and “PCI storage controller”

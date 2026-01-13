@@ -25,7 +25,9 @@
 //! - `impl<T: aero_storage::VirtualDisk + ?Sized> aero_virtio::devices::blk::BlockBackend for Box<T>`
 //!
 //! If you need the reverse direction (reusing `aero-storage` disk wrappers on top of an existing
-//! virtio backend), use `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk`.
+//! device/backend trait object), use the reverse adapters provided by the corresponding device
+//! crate (e.g. `aero_devices::storage::DeviceBackendAsAeroVirtualDisk`,
+//! `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`).
 //!
 //! ## Usage (examples)
 //!
