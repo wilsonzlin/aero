@@ -27,6 +27,100 @@ const REG_CURRENT_COUNT: u64 = 0x390;
 const REG_DIVIDE_CONFIG: u64 = 0x3E0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryMode {
+    Fixed,
+    LowestPriority,
+    Smi,
+    RemoteRead,
+    Nmi,
+    Init,
+    Startup,
+    ExtInt,
+    Reserved(u8),
+}
+
+impl DeliveryMode {
+    pub fn from_bits(bits: u8) -> Self {
+        match bits & 0x7 {
+            0 => Self::Fixed,
+            1 => Self::LowestPriority,
+            2 => Self::Smi,
+            3 => Self::RemoteRead,
+            4 => Self::Nmi,
+            5 => Self::Init,
+            6 => Self::Startup,
+            7 => Self::ExtInt,
+            other => Self::Reserved(other),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestinationShorthand {
+    None,
+    SelfOnly,
+    AllIncludingSelf,
+    AllExcludingSelf,
+}
+
+impl DestinationShorthand {
+    pub fn from_bits(bits: u8) -> Self {
+        match bits & 0x3 {
+            0 => Self::None,
+            1 => Self::SelfOnly,
+            2 => Self::AllIncludingSelf,
+            3 => Self::AllExcludingSelf,
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    Assert,
+    Deassert,
+}
+
+impl Level {
+    pub fn from_bit(bit: bool) -> Self {
+        if bit {
+            Self::Assert
+        } else {
+            Self::Deassert
+        }
+    }
+}
+
+/// Decoded Interrupt Command Register (ICR) send request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Icr {
+    pub vector: u8,
+    pub delivery_mode: DeliveryMode,
+    pub level: Level,
+    pub destination_shorthand: DestinationShorthand,
+    /// xAPIC physical destination field (APIC ID).
+    pub destination: u8,
+}
+
+impl Icr {
+    pub fn decode(icr_low: u32, icr_high: u32) -> Self {
+        let vector = (icr_low & 0xFF) as u8;
+        let delivery_mode = DeliveryMode::from_bits(((icr_low >> 8) & 0x7) as u8);
+        let level = Level::from_bit(((icr_low >> 14) & 1) != 0);
+        let destination_shorthand = DestinationShorthand::from_bits(((icr_low >> 18) & 0x3) as u8);
+        let destination = ((icr_high >> 24) & 0xFF) as u8;
+
+        Self {
+            vector,
+            delivery_mode,
+            level,
+            destination_shorthand,
+            destination,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TimerMode {
     OneShot,
     Periodic,
@@ -39,6 +133,7 @@ struct LapicState {
     svr: u32,
     icr_low: u32,
     icr_high: u32,
+    icr_low_write_mask: u8,
     irr: [u32; 8],
     isr: [u32; 8],
     lvt_timer: u32,
@@ -58,6 +153,7 @@ impl LapicState {
             svr: 0xFF,
             icr_low: 0,
             icr_high: 0,
+            icr_low_write_mask: 0,
             irr: [0; 8],
             isr: [0; 8],
             // Mask timer by default.
@@ -290,12 +386,14 @@ pub trait LapicInterruptSink: Send + Sync {
 }
 
 pub type EoiNotifier = Arc<dyn Fn(u8) + Send + Sync>;
+pub type IcrNotifier = Arc<dyn Fn(Icr) + Send + Sync>;
 
 /// Local APIC (LAPIC) model with a MMIO register page and an APIC timer.
 pub struct LocalApic {
     clock: Arc<dyn Clock + Send + Sync>,
     state: Mutex<LapicState>,
     eoi_notifiers: Mutex<Vec<EoiNotifier>>,
+    icr_notifiers: Mutex<Vec<IcrNotifier>>,
 }
 
 impl LocalApic {
@@ -308,6 +406,7 @@ impl LocalApic {
             clock,
             state: Mutex::new(LapicState::new(apic_id)),
             eoi_notifiers: Mutex::new(Vec::new()),
+            icr_notifiers: Mutex::new(Vec::new()),
         }
     }
 
@@ -391,10 +490,22 @@ impl LocalApic {
         self.eoi_notifiers.lock().unwrap().push(notifier);
     }
 
+    /// Register a callback that is invoked when the guest writes the ICR low register.
+    pub fn register_icr_notifier(&self, notifier: IcrNotifier) {
+        self.icr_notifiers.lock().unwrap().push(notifier);
+    }
+
     fn notify_eoi(&self, vector: u8) {
         let notifiers = self.eoi_notifiers.lock().unwrap().clone();
         for notifier in notifiers {
             notifier(vector);
+        }
+    }
+
+    fn notify_icr(&self, icr: Icr) {
+        let notifiers = self.icr_notifiers.lock().unwrap().clone();
+        for notifier in notifiers {
+            notifier(icr);
         }
     }
 
@@ -428,6 +539,7 @@ impl LocalApic {
 
         let now = self.clock.now_ns();
         let mut eoi_vectors = Vec::new();
+        let mut icr_events = Vec::new();
         {
             let mut state = self.state.lock().unwrap();
             state.poll_timer(now);
@@ -443,6 +555,7 @@ impl LocalApic {
                 let word_offset = off & !3;
                 let start_in_word = (off & 3) as usize;
                 let mut word = state.read_u32(now, word_offset);
+                let mut write_mask = 0u8;
 
                 for byte_idx in start_in_word..4 {
                     if idx >= data.len() {
@@ -462,17 +575,31 @@ impl LocalApic {
                     let shift = (byte_idx * 8) as u32;
                     word &= !(0xFF_u32 << shift);
                     word |= (data[idx] as u32) << shift;
+                    write_mask |= 1u8 << byte_idx;
                     idx += 1;
                 }
 
                 if let Some(vector) = state.write_u32(now, word_offset, word) {
                     eoi_vectors.push(vector);
                 }
+
+                if word_offset == REG_ICR_LOW {
+                    state.icr_low_write_mask |= write_mask;
+                    // Only fire once per completed 32-bit update of ICR_LOW.
+                    if state.icr_low_write_mask == 0xF {
+                        state.icr_low_write_mask = 0;
+                        icr_events.push(Icr::decode(word, state.icr_high));
+                    }
+                }
             }
         }
 
         for vector in eoi_vectors {
             self.notify_eoi(vector);
+        }
+
+        for icr in icr_events {
+            self.notify_icr(icr);
         }
     }
 }
@@ -521,6 +648,7 @@ impl LocalApic {
         if let Some(icr_high) = r.u32(TAG_ICR_HIGH)? {
             state.icr_high = icr_high;
         }
+        state.icr_low_write_mask = 0;
 
         if let Some(buf) = r.bytes(TAG_IRR) {
             let mut d = Decoder::new(buf);
@@ -822,5 +950,96 @@ mod tests {
         clock.advance(10);
         apic.poll();
         assert_eq!(apic.get_pending_vector(), None);
+    }
+
+    #[test]
+    fn icr_notifier_decodes_ipis() {
+        let apic = LocalApic::new(0);
+
+        let seen: Arc<Mutex<Vec<Icr>>> = Arc::new(Mutex::new(Vec::new()));
+        {
+            let seen = seen.clone();
+            apic.register_icr_notifier(Arc::new(move |icr| {
+                seen.lock().unwrap().push(icr);
+            }));
+        }
+
+        // Fixed IPI: vector 0x40 -> destination 2.
+        write_u32(&apic, REG_ICR_HIGH, 2u32 << 24);
+        write_u32(&apic, REG_ICR_LOW, 0x40 | (1 << 14));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![Icr {
+                vector: 0x40,
+                delivery_mode: DeliveryMode::Fixed,
+                level: Level::Assert,
+                destination_shorthand: DestinationShorthand::None,
+                destination: 2,
+            }]
+        );
+
+        // INIT assert.
+        seen.lock().unwrap().clear();
+        write_u32(&apic, REG_ICR_HIGH, 1u32 << 24);
+        write_u32(&apic, REG_ICR_LOW, (5u32 << 8) | (1 << 14));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![Icr {
+                vector: 0x00,
+                delivery_mode: DeliveryMode::Init,
+                level: Level::Assert,
+                destination_shorthand: DestinationShorthand::None,
+                destination: 1,
+            }]
+        );
+
+        // STARTUP (SIPI).
+        seen.lock().unwrap().clear();
+        write_u32(&apic, REG_ICR_HIGH, 3u32 << 24);
+        write_u32(&apic, REG_ICR_LOW, 0x08 | (6u32 << 8) | (1 << 14));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![Icr {
+                vector: 0x08,
+                delivery_mode: DeliveryMode::Startup,
+                level: Level::Assert,
+                destination_shorthand: DestinationShorthand::None,
+                destination: 3,
+            }]
+        );
+    }
+
+    #[test]
+    fn icr_notifier_fires_once_per_complete_low_write() {
+        let apic = LocalApic::new(0);
+
+        let seen: Arc<Mutex<Vec<Icr>>> = Arc::new(Mutex::new(Vec::new()));
+        {
+            let seen = seen.clone();
+            apic.register_icr_notifier(Arc::new(move |icr| {
+                seen.lock().unwrap().push(icr);
+            }));
+        }
+
+        write_u32(&apic, REG_ICR_HIGH, 2u32 << 24);
+
+        // Fixed IPI with a non-zero destination shorthand to ensure the upper 16 bits matter.
+        let icr_low = 0x40u32 | (1 << 14) | (3u32 << 18);
+        let bytes = icr_low.to_le_bytes();
+
+        apic.mmio_write(REG_ICR_LOW, &bytes[0..2]);
+        assert!(seen.lock().unwrap().is_empty());
+
+        apic.mmio_write(REG_ICR_LOW + 2, &bytes[2..4]);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![Icr {
+                vector: 0x40,
+                delivery_mode: DeliveryMode::Fixed,
+                level: Level::Assert,
+                destination_shorthand: DestinationShorthand::AllExcludingSelf,
+                destination: 2,
+            }]
+        );
     }
 }
