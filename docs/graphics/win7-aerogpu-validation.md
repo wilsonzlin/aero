@@ -472,7 +472,7 @@ For the canonical, up-to-date command list and global options, see:
 |---|---|---|
 | `--status` / `--query-version` (alias: `--query-device`) | combined snapshot: device/ABI + UMDRIVERPRIVATE summary + fences + ring0 + scanout0 + cursor (when supported) + vblank + CreateAllocation trace summary | first command in any bug report |
 | `--query-umd-private` | KMD-provided `UMDRIVERPRIVATE` blob (ABI + feature discovery used by UMDs) | diagnosing ABI/feature mismatches |
-| `--query-fence` | last submitted + last completed fence | “fence stuck” diagnosis |
+| `--query-fence` | last submitted + last completed fence, plus sticky error counters (`error_irq_count` / `last_error_fence`) | “fence stuck” / device-hung diagnosis |
 | `--watch-fence --samples N --interval-ms M [--timeout-ms T]` | polls `--query-fence` in a loop and prints one line per sample (deltas + estimated rate + stall warnings) | quickly confirm whether fences are progressing |
 | `--query-perf` (alias: `--perf`) | KMD-provided perf/health counter snapshot (fence/ring progress, submit/IRQ/reset counts, vblank counters) | baseline collection and regression triage |
 | `--dump-ring --ring-id N` | ring head/tail + recent submission descriptors (newest-at-tail window on AGPU) | hangs/TDR triage |
@@ -510,6 +510,16 @@ For lightweight, snapshot-style counters, use `aerogpu_dbgctl --query-perf`.
 | BSOD during/after TDR | **0x116 VIDEO_TDR_FAILURE** | `ResetFromTimeout` failed or returned inconsistent state | instrument reset path; ensure worker threads stop; avoid touching freed allocations |
 | Aero turns off (Basic theme) without a BSOD | “The color scheme has been changed…” notification | DWM device removed/reset, vblank pacing broken, present failures | verify `dwm.exe` still running; check 4101; check `--dump-vblank` cadence (seq/time monotonic) |
 | Desktop freezes with no recovery | no logs after a point; hard hang | TdrLevel disabled, deadlock at DISPATCH_LEVEL, interrupt storm, spinlock inversion | re-enable TDR; add watchdog logs; check vblank generator independence from render thread |
+
+### 5.4 Backend/submission failure (AEROGPU_IRQ_ERROR) expectations
+
+If the host backend/emulator detects a submission failure and raises `AEROGPU_IRQ_ERROR`, the Win7 KMD should surface this as a **DMA fault** to dxgkrnl. In a manual repro on a Win7 guest, this typically shows up as:
+
+- Application/device failures such as:
+  - `DXGI_ERROR_DEVICE_HUNG` (`0x887A0006`) / `DXGI_ERROR_DEVICE_REMOVED` (`0x887A0005`)
+  - `D3DERR_DEVICELOST` (D3D9)
+- System log entries consistent with a graphics fault/TDR (often **Display** Event ID **4101** near the time of the error).
+- `aerogpu_dbgctl --query-fence` reporting a non-zero `error_irq_count` and a `last_error_fence` near the failing submission.
 
 ---
 

@@ -235,6 +235,19 @@ typedef struct _AEROGPU_ADAPTER {
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfResetFromTimeoutCount;
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfLastResetTime100ns;
 
+    /*
+     * Sticky error IRQ tracking.
+     *
+     * `AEROGPU_IRQ_ERROR` indicates the device/backend rejected or failed a submission. We
+     * surface this to dxgkrnl as a DMA fault and also keep lightweight counters so repeated
+     * failures are visible via dbgctl escapes without requiring kernel debugging.
+     *
+     * Counters are best-effort and monotonic for the lifetime of the adapter.
+     */
+    DECLSPEC_ALIGN(8) volatile ULONGLONG ErrorIrqCount;
+    DECLSPEC_ALIGN(8) volatile ULONGLONG LastErrorFence;
+    DECLSPEC_ALIGN(8) volatile ULONGLONG LastNotifiedErrorFence;
+
     LIST_ENTRY PendingMetaHandles;
     KSPIN_LOCK MetaHandleLock;
     ULONGLONG NextMetaHandle;

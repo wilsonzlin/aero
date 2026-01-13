@@ -102,10 +102,24 @@ typedef struct aerogpu_escape_query_fence_out {
    */
   aerogpu_escape_u64 last_submitted_fence;
   aerogpu_escape_u64 last_completed_fence;
+
+  /*
+   * Sticky error diagnostics.
+   *
+   * When the device/emulator signals a submission failure (AEROGPU_IRQ_ERROR),
+   * the KMD increments `error_irq_count` and records the most recent fence value
+   * observed at the time of the error in `last_error_fence`.
+   */
+  aerogpu_escape_u64 error_irq_count;
+  aerogpu_escape_u64 last_error_fence;
 } aerogpu_escape_query_fence_out;
 
 /* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_fence_out) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_fence_out) == 48);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_fence_out, last_submitted_fence) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_fence_out, last_completed_fence) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_fence_out, error_irq_count) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_fence_out, last_error_fence) == 40);
 
 /*
  * Query performance/health counters snapshot.

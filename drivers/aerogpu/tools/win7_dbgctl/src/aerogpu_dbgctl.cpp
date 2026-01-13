@@ -657,6 +657,12 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     wprintf(L"Last completed fence: 0x%I64x (%I64u)\n",
             (unsigned long long)qf.last_completed_fence,
             (unsigned long long)qf.last_completed_fence);
+    wprintf(L"Error IRQ count:      0x%I64x (%I64u)\n",
+            (unsigned long long)qf.error_irq_count,
+            (unsigned long long)qf.error_irq_count);
+    wprintf(L"Last error fence:     0x%I64x (%I64u)\n",
+            (unsigned long long)qf.last_error_fence,
+            (unsigned long long)qf.last_error_fence);
   };
 
   const auto DumpUmdPrivateSummary = [&]() {
@@ -1041,6 +1047,10 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.last_submitted_fence);
   wprintf(L"Last completed fence: 0x%I64x (%I64u)\n", (unsigned long long)q.last_completed_fence,
           (unsigned long long)q.last_completed_fence);
+  wprintf(L"Error IRQ count:      0x%I64x (%I64u)\n", (unsigned long long)q.error_irq_count,
+          (unsigned long long)q.error_irq_count);
+  wprintf(L"Last error fence:     0x%I64x (%I64u)\n", (unsigned long long)q.last_error_fence,
+          (unsigned long long)q.last_error_fence);
   return 0;
 }
 

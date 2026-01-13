@@ -5144,20 +5144,9 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         /* Ack in the ISR to deassert the (level-triggered) interrupt line. */
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, status);
 
-        if ((handled & AEROGPU_IRQ_ERROR) != 0) {
-            static LONG g_IrqErrorLogged = 0;
-            if (InterlockedExchange(&g_IrqErrorLogged, 1) == 0) {
-                DbgPrintEx(DPFLTR_IHVVIDEO_ID,
-                           DPFLTR_ERROR_LEVEL,
-                           "aerogpu-kmd: device IRQ error (IRQ_STATUS=0x%08lx)\n",
-                           status);
-            }
-            any = TRUE;
-            queueDpc = TRUE;
-        }
-
-        if ((handled & AEROGPU_IRQ_FENCE) != 0) {
-            InterlockedIncrement64(&adapter->PerfIrqFenceDelivered);
+        ULONG completedFence32 = 0;
+        BOOLEAN haveCompletedFence = FALSE;
+        if ((handled & (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_ERROR)) != 0) {
             const ULONGLONG completedFence64 = AeroGpuReadCompletedFence(adapter);
 
             /*
@@ -5165,7 +5154,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
              * to go backwards (e.g. if MMIO tears or the device reports a bogus
              * value).
              */
-            ULONG completedFence32 = (ULONG)completedFence64;
+            completedFence32 = (ULONG)completedFence64;
             const ULONG lastCompleted32 = (ULONG)adapter->LastCompletedFence;
             const ULONG lastSubmitted32 = (ULONG)adapter->LastSubmittedFence;
             if (completedFence32 < lastCompleted32) {
@@ -5176,10 +5165,72 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             }
 
             adapter->LastCompletedFence = (ULONGLONG)completedFence32;
+            haveCompletedFence = TRUE;
+        }
+
+        BOOLEAN sentDxgkFault = FALSE;
+
+        if ((handled & AEROGPU_IRQ_ERROR) != 0) {
+            const ULONGLONG errorFence = haveCompletedFence ? (ULONGLONG)completedFence32 : adapter->LastCompletedFence;
+            AeroGpuAtomicWriteU64(&adapter->LastErrorFence, errorFence);
+
+            const ULONGLONG n = (ULONGLONG)InterlockedIncrement64((volatile LONGLONG*)&adapter->ErrorIrqCount);
+
+            /*
+             * Surface a meaningful WDDM fault to dxgkrnl so user mode sees device-hung semantics
+             * (instead of a silent success with only a one-time kernel log).
+             *
+             * Do not spam dxgkrnl: notify the first few times and then only at exponentially
+             * increasing intervals.
+             */
+            BOOLEAN shouldNotify = FALSE;
+            if (adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
+                if (n <= 4 || ((n & (n - 1)) == 0)) {
+                    const ULONGLONG prevNotified =
+                        (ULONGLONG)InterlockedExchange64((volatile LONGLONG*)&adapter->LastNotifiedErrorFence, (LONGLONG)errorFence);
+                    if (prevNotified != errorFence) {
+                        shouldNotify = TRUE;
+                    }
+                }
+            }
+
+            if (shouldNotify && adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
+                DXGKARGCB_NOTIFY_INTERRUPT notify;
+                RtlZeroMemory(&notify, sizeof(notify));
+                notify.InterruptType = DXGK_INTERRUPT_TYPE_DMA_FAULTED;
+                notify.DmaFaulted.FaultedFenceId = (ULONG)errorFence;
+                notify.DmaFaulted.NodeOrdinal = AEROGPU_NODE_ORDINAL;
+                notify.DmaFaulted.EngineOrdinal = AEROGPU_ENGINE_ORDINAL;
+                adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                sentDxgkFault = TRUE;
+            }
+
+#if DBG
+            /* Keep a breadcrumb trail without spamming the kernel debugger. */
+            if (n <= 4 || ((n & (n - 1)) == 0)) {
+                DbgPrintEx(DPFLTR_IHVVIDEO_ID,
+                           DPFLTR_ERROR_LEVEL,
+                           "aerogpu-kmd: device IRQ error (IRQ_STATUS=0x%08lx fence=%lu count=%I64u)\n",
+                           status,
+                           (ULONG)errorFence,
+                           (unsigned long long)n);
+            }
+#endif
+
+            any = TRUE;
+            queueDpc = TRUE;
+        }
+
+        if ((handled & AEROGPU_IRQ_FENCE) != 0) {
+            InterlockedIncrement64(&adapter->PerfIrqFenceDelivered);
             any = TRUE;
             queueDpc = TRUE;
 
-            if (adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
+            /*
+             * If we notified dxgkrnl of a DMA fault for this interrupt, do not also report DMA_COMPLETED
+             * for the same fence value.
+             */
+            if (!sentDxgkFault && adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
                 DXGKARGCB_NOTIFY_INTERRUPT notify;
                 RtlZeroMemory(&notify, sizeof(notify));
                 notify.InterruptType = DXGK_INTERRUPT_TYPE_DMA_COMPLETED;
@@ -5324,13 +5375,56 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 any = TRUE;
 
                 if ((pending & AEROGPU_IRQ_ERROR) != 0) {
-                    static LONG g_IrqErrorLoggedLegacy = 0;
-                    if (InterlockedExchange(&g_IrqErrorLoggedLegacy, 1) == 0) {
+                    const ULONGLONG completedFence64 = AeroGpuReadCompletedFence(adapter);
+                    ULONG completedFence32 = (ULONG)completedFence64;
+                    const ULONG lastCompleted32 = (ULONG)adapter->LastCompletedFence;
+                    const ULONG lastSubmitted32 = (ULONG)adapter->LastSubmittedFence;
+                    if (completedFence32 < lastCompleted32) {
+                        completedFence32 = lastCompleted32;
+                    }
+                    if (completedFence32 > lastSubmitted32) {
+                        completedFence32 = lastSubmitted32;
+                    }
+                    adapter->LastCompletedFence = (ULONGLONG)completedFence32;
+
+                    const ULONGLONG errorFence = (ULONGLONG)completedFence32;
+                    AeroGpuAtomicWriteU64(&adapter->LastErrorFence, errorFence);
+                    const ULONGLONG n =
+                        (ULONGLONG)InterlockedIncrement64((volatile LONGLONG*)&adapter->ErrorIrqCount);
+
+                    BOOLEAN shouldNotify = FALSE;
+                    if (adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
+                        if (n <= 4 || ((n & (n - 1)) == 0)) {
+                            const ULONGLONG prevNotified =
+                                (ULONGLONG)InterlockedExchange64((volatile LONGLONG*)&adapter->LastNotifiedErrorFence,
+                                                                (LONGLONG)errorFence);
+                            if (prevNotified != errorFence) {
+                                shouldNotify = TRUE;
+                            }
+                        }
+                    }
+
+                    if (shouldNotify && adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
+                        DXGKARGCB_NOTIFY_INTERRUPT notify;
+                        RtlZeroMemory(&notify, sizeof(notify));
+                        notify.InterruptType = DXGK_INTERRUPT_TYPE_DMA_FAULTED;
+                        notify.DmaFaulted.FaultedFenceId = (ULONG)errorFence;
+                        notify.DmaFaulted.NodeOrdinal = AEROGPU_NODE_ORDINAL;
+                        notify.DmaFaulted.EngineOrdinal = AEROGPU_ENGINE_ORDINAL;
+                        adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                    }
+
+#if DBG
+                    if (n <= 4 || ((n & (n - 1)) == 0)) {
                         DbgPrintEx(DPFLTR_IHVVIDEO_ID,
                                    DPFLTR_ERROR_LEVEL,
-                                   "aerogpu-kmd: legacy device IRQ error (IRQ_STATUS=0x%08lx)\n",
-                                   irqStatus);
+                                   "aerogpu-kmd: legacy device IRQ error (IRQ_STATUS=0x%08lx fence=%lu count=%I64u)\n",
+                                   irqStatus,
+                                   (ULONG)errorFence,
+                                   (unsigned long long)n);
                     }
+#endif
+
                     queueDpc = TRUE;
                 }
 
@@ -6131,6 +6225,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.reserved0 = 0;
         out->last_submitted_fence = (uint64_t)adapter->LastSubmittedFence;
         out->last_completed_fence = (uint64_t)completedFence;
+        out->error_irq_count = (uint64_t)AeroGpuAtomicReadU64(&adapter->ErrorIrqCount);
+        out->last_error_fence = (uint64_t)AeroGpuAtomicReadU64(&adapter->LastErrorFence);
         return STATUS_SUCCESS;
     }
 
