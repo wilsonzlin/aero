@@ -1,0 +1,435 @@
+# EHCI (USB 2.0) host controller emulation (Aero)
+
+This document is a **design + implementation contract** for Aero’s EHCI (Enhanced Host Controller
+Interface) model: what we emulate, what we intentionally omit in the first version, and how the
+controller integrates with Aero’s runtime (IRQs, timers, snapshots, and host passthrough).
+
+It is written to be “spec-adjacent”: it calls out the EHCI concepts and register fields the guest
+driver depends on, but it does **not** attempt to restate the entire EHCI specification.
+
+> Source of truth for USB stack ownership: [ADR 0015](./adr/0015-canonical-usb-stack.md) (canonical
+> USB stack is `crates/aero-usb` + `crates/aero-wasm` + `web/` host integration).
+
+Related docs:
+
+- USB HID devices/report formats: [`docs/usb-hid.md`](./usb-hid.md)
+- IRQ line-level semantics in the browser runtime: [`docs/irq-semantics.md`](./irq-semantics.md)
+- WebUSB passthrough architecture (currently UHCI-focused, but the async “pending → NAK” pattern
+  applies to EHCI too): [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
+
+---
+
+## Goals and scope (MVP)
+
+EHCI is the USB 2.0 host controller interface used by Windows 7’s in-box `usbehci.sys` driver. In a
+PC, EHCI typically co-exists with USB 1.1 companion controllers (UHCI/OHCI) that service full-speed
+and low-speed traffic for the same physical ports (see [Companion controllers](#companion-controllers-configflag--port_owner)).
+
+**MVP goal:** enough EHCI behavior for Windows to enumerate high-speed devices and poll interrupt
+endpoints reliably, with deterministic snapshot/restore.
+
+### Implemented in Aero’s EHCI MVP
+
+The EHCI model implements:
+
+1. **Capability and operational registers**
+   - Standard EHCI capability regs (`CAPLENGTH`, `HCIVERSION`, `HCSPARAMS`, `HCCPARAMS`) and the full
+     operational register block (`USBCMD`, `USBSTS`, `USBINTR`, `FRINDEX`, `CTRLDSSEGMENT`,
+     `PERIODICLISTBASE`, `ASYNCLISTADDR`, `CONFIGFLAG`, `PORTSC[n]`).
+   - Read/modify/write masking, W1C status behavior, and “reserved reads as 0” rules where relevant.
+2. **Root hub ports + timers**
+   - Root hub ports are exposed via `PORTSC[n]` with realistic connect/enable/reset/suspend state.
+   - Port reset/resume behaviors use **real timers** (ms-scale) so OS drivers that wait/poll observe
+     plausible transitions.
+3. **Asynchronous schedule** (QH/qTD) for **control + bulk**
+   - Walking the async schedule (`ASYNCLISTADDR`) with QH and qTD parsing, and performing USB
+     transactions against attached device models.
+4. **Periodic schedule** for **interrupt polling**
+   - Walking the periodic frame list (`PERIODICLISTBASE`) and QH/qTD chains sufficient to poll
+     interrupt IN endpoints (e.g. HID input).
+5. **Interrupt/IRQ semantics** (Aero runtime contract)
+   - EHCI uses **PCI INTx level-triggered interrupts** in Aero (no MSI initially).
+   - `irq_level()` is derived from `USBSTS` + `USBINTR` gating; runtime translates this into
+     `raiseIrq`/`lowerIrq` transitions (see [`docs/irq-semantics.md`](./irq-semantics.md)).
+6. **Snapshot/restore**
+   - Deterministic save/load of EHCI register state, root hub port state/timers, and any internal
+     scheduler bookkeeping required for forward progress.
+
+### Intentionally not implemented (initially)
+
+The initial EHCI implementation intentionally omits:
+
+- **Isochronous transfers** (`iTD` / `siTD`)
+  - Audio/video-class workloads are not targeted in the first bring-up; the schedule walker should
+    treat non-QH periodic entries as “not supported / skipped” rather than crashing.
+- **Split transactions / Transaction Translators (TT)**
+  - EHCI can service full-/low-speed devices behind a high-speed hub using split transactions. That
+    requires TT + companion routing behavior that we defer until we have a stable companion
+    controller story.
+- **MSI/MSI-X**
+  - Aero’s EHCI uses PCI INTx only; `MSI` capability exposure and message-signaled interrupt
+    routing are out of scope for MVP.
+
+---
+
+## Register model (contracts that matter to guests)
+
+EHCI exposes a **memory-mapped register block** (typically 4 KiB). The first part is the
+capability registers; the operational registers start at offset `CAPLENGTH`.
+
+The following contract is what Aero’s implementation targets; consult the EHCI spec for full bit
+definitions.
+
+### Capability registers (read-only)
+
+The EHCI capability registers primarily allow the guest driver to discover:
+
+- where the operational regs live (`CAPLENGTH`)
+- number of root hub ports (`HCSPARAMS.N_PORTS`)
+- whether 64-bit addresses are supported (`HCCPARAMS.64-bit`)
+- the optional “extended capabilities pointer” (`HCCPARAMS.EECP`)
+
+**Aero contract:**
+
+- Capability registers are **read-only**; writes are ignored.
+- `CAPLENGTH` points to the start of the operational register block (commonly `0x20`).
+- `HCSPARAMS.N_PORTS` matches the number of implemented `PORTSC[n]` registers.
+- If 64-bit schedule pointers are not supported in the MVP, `HCCPARAMS.64-bit` must be `0` and
+  `CTRLDSSEGMENT` is effectively ignored/forced to 0.
+
+### Operational registers (read/write)
+
+The EHCI operational register block includes:
+
+- `USBCMD`: run/stop, reset, schedule enables, doorbells.
+- `USBSTS`: interrupt and schedule status (W1C for most status bits).
+- `USBINTR`: interrupt enable mask.
+- `FRINDEX`: current frame/microframe index.
+- `CTRLDSSEGMENT`: upper 32 bits for 64-bit pointers (optional).
+- `PERIODICLISTBASE`: base of periodic frame list.
+- `ASYNCLISTADDR`: head of async QH list.
+- `CONFIGFLAG`: port routing indicator (EHCI vs companions).
+- `PORTSC[n]`: per-port status/control.
+
+**Aero contract (read/write behavior):**
+
+- Status bits that are defined as **W1C** are W1C in Aero. Writes that attempt to set read-only
+  bits are masked out.
+- `USBSTS.HCHALTED` is derived from `USBCMD.RunStop` and reset state; it is not directly writable.
+- The “schedule status” bits (`USBSTS.ASS` / `USBSTS.PSS`) reflect whether the corresponding schedule
+  is enabled and the controller is running (useful for drivers that wait for schedules to stop).
+- `USBCMD.HCRESET` resets controller-local state (registers and scheduler bookkeeping) but should
+  not implicitly detach devices from the root hub; device topology is modeled separately.
+
+---
+
+## Root hub ports (PORTSC) and timers
+
+EHCI exposes a “root hub” via `PORTSC[n]` registers. These are **not** a USB hub device model; they
+are a set of register-backed ports with connect/reset/enable state.
+
+### Port state modeled per port
+
+Each port tracks:
+
+- **Connected** + **Connect Status Change** (CSC)
+- **Enabled** + **Port Enable/Disable Change** (PEDC)
+- **Reset** (PR) and a **reset timer** (real-time delay before reset completes)
+- **Suspend/Resume** (SUSP/FPR) and a **resume timer** (if modeled)
+- **Port owner** (`PORT_OWNER`) when companion routing is enabled
+
+### Timing model
+
+The guest driver typically performs sequences like:
+
+1. detect connection (CCS/CSC)
+2. set `PORTSC.PR` (reset)
+3. wait for reset to complete
+4. observe port enabled and begin enumeration
+
+**Aero contract:**
+
+- Port reset is modeled with a **~50 ms** countdown (USB-reset-scale), not “instant”.
+- Timer advancement is driven by the VM/device tick (`tick_*`), not wall clock inside the device.
+- When the reset timer expires:
+  - `PORTSC.PR` clears.
+  - The port becomes enabled (PED=1) if the device is still connected and the port is owned by EHCI.
+  - Change bits are latched appropriately so the guest driver can observe the transition.
+
+### Port change interrupts
+
+EHCI has an interrupt cause for port changes. Aero models:
+
+- Any event that sets a port change bit (CSC/PEDC/…) also latches `USBSTS.PORT_CHANGE`.
+- If `USBINTR.PORT_CHANGE` is enabled, `USBSTS.PORT_CHANGE` contributes to `irq_level()`.
+
+---
+
+## Scheduler and time base
+
+EHCI has two independent schedules:
+
+- **Asynchronous schedule**: primarily control + bulk.
+- **Periodic schedule**: interrupt and isochronous (we implement only the interrupt subset).
+
+EHCI is defined in terms of **frames (1 ms)** subdivided into **microframes (125 µs)**.
+`FRINDEX` carries both:
+
+- low 3 bits: microframe (0–7)
+- higher bits: frame index
+
+**Aero contract (time stepping):**
+
+- The controller advances `FRINDEX` in fixed increments from the emulator tick (e.g. an internal
+  “step microframes” loop, or a “step 1ms” that performs 8 microframes).
+- Work per tick is capped (like UHCI’s “max frames per tick” clamp) so background tab pauses do not
+  cause multi-second catch-up stalls.
+- Schedule processing is gated by:
+  - PCI Bus Master Enable (DMA allowed) at the platform/device integration layer, and
+  - `USBCMD.RunStop` + schedule enable bits (`USBCMD.ASEN` / `USBCMD.PSEN`) inside the controller.
+
+---
+
+## Asynchronous schedule (QH / qTD) — control + bulk
+
+### Structures (guest memory)
+
+The async schedule is a linked list of **Queue Heads (QH)** starting at `ASYNCLISTADDR`. Each QH
+contains an “overlay” region that behaves like the currently executing qTD.
+
+Transfers are described by chained **queue element transfer descriptors (qTD)**.
+
+**MVP:**
+
+- QH + qTD parsing sufficient for:
+  - control transfer stages (SETUP / DATA / STATUS)
+  - bulk IN/OUT
+- qTD buffer pointer handling sufficient for typical short, contiguous buffers used during
+  enumeration and HID polling.
+
+### Progress rules (how the guest observes completion)
+
+In EHCI, “NAK” is not represented as an explicit completion code written back to guest memory; the
+controller simply leaves the qTD **Active** and retries on later microframes.
+
+**Aero contract:**
+
+- When a transaction completes successfully:
+  - qTD `Active` is cleared.
+  - qTD `Total Bytes` is updated to reflect bytes remaining (or bytes transferred, depending on the
+    chosen interpretation; the implementation must match what Windows’ EHCI driver expects).
+  - The QH overlay is advanced to the next qTD.
+- When a transaction is “pending” because it requires async host work (e.g. WebUSB/WebHID
+  passthrough completion that hasn’t arrived yet), the qTD is left **Active** with no error bits set.
+  This is the EHCI analogue of UHCI “return NAK while pending”.
+- When a qTD has `IOC` set and completes, the controller latches `USBSTS.USBINT`.
+
+### Error semantics (minimal but predictable)
+
+For MVP, error modeling focuses on being deterministic and unblocking the guest:
+
+- A device stall maps to qTD **Halted** + `USBSTS.USBERRINT` (if enabled).
+- Other unexpected failures can map to a transfer error condition (and clear Active) rather than
+  leaving the qTD permanently active.
+
+---
+
+## Periodic schedule — interrupt polling
+
+The periodic schedule is driven by:
+
+- `PERIODICLISTBASE`: base address of the periodic frame list.
+- `FRINDEX`: selects the current frame list entry.
+
+Real EHCI supports periodic entries for:
+
+- iTD (isochronous)
+- siTD (split isochronous / split interrupt)
+- QH (interrupt)
+- FSTN
+
+**MVP:**
+
+- Only periodic **QH** entries are executed.
+- This is sufficient for interrupt IN polling used by:
+  - USB HID keyboards/mice (when modeled as high-speed or behind a high-speed hub)
+  - other “interrupt-style” devices that produce small periodic reports
+
+### Microframe masks
+
+High-speed interrupt endpoints use the QH **S-mask** to indicate which microframes the endpoint is
+eligible to execute in.
+
+**Aero contract:**
+
+- The periodic walker honors `S-mask` at least at the coarse “eligible/not eligible” level so the
+  guest driver doesn’t observe polling in every microframe.
+- The walker does not implement split transaction `C-mask` behavior in MVP.
+
+---
+
+## Interrupt / IRQ semantics (Aero runtime)
+
+### PCI interrupt type
+
+EHCI is exposed as a PCI device that signals interrupts using **INTx** (level-triggered).
+
+> Aero runtime contract for INTx and shared lines: [`docs/irq-semantics.md`](./irq-semantics.md)
+
+**Aero contract:**
+
+- The EHCI device model exposes `irq_level()` (or equivalent) which reflects *current* interrupt
+  line assertion state.
+- The platform integration translates transitions into `raiseIrq`/`lowerIrq` calls, and also gates
+  assertion on PCI Command `Interrupt Disable`.
+
+### What causes `irq_level()` to assert
+
+`irq_level()` is asserted when:
+
+1. A `USBSTS` interrupt cause bit is set **and**
+2. The corresponding `USBINTR` enable bit is set.
+
+Minimum set of causes implemented:
+
+- `USBINT` (transaction completion; typically IOC-driven)
+- `USBERRINT` (transaction error)
+- `PORT_CHANGE` (root hub port change bits)
+- `IAA` (interrupt on async advance; if the doorbell is implemented)
+
+Deassertion occurs once the guest clears the relevant `USBSTS` bits (W1C) and no other enabled
+causes remain pending.
+
+---
+
+## Snapshot/restore requirements
+
+EHCI state must be restorable deterministically across:
+
+- native runs (`crates/emulator` / `aero_machine`)
+- browser/WASM runs (`crates/aero-wasm` + `web/`)
+
+### What must be snapshotted (minimum)
+
+The EHCI snapshot must include:
+
+- Capability values that are not purely compile-time constants (if any).
+- Operational registers:
+  - `USBCMD`, `USBSTS`, `USBINTR`
+  - `FRINDEX`
+  - `CTRLDSSEGMENT` (if supported)
+  - `PERIODICLISTBASE`, `ASYNCLISTADDR`
+  - `CONFIGFLAG`
+- Root hub port state for each `PORTSC[n]`, including:
+  - connect/enable/change bits
+  - reset/suspend state
+  - countdown timers (reset/resume)
+- Any internal bookkeeping that is *not* represented in guest RAM (e.g. cached “previous port
+  change” values used to latch global status bits).
+
+### What must NOT be snapshotted
+
+- The PCI INTx “wire level” itself should not be persisted; it is derived from the above registers.
+- Guest schedule structures (QHs/qTDs) are in guest RAM and are captured by the VM memory snapshot
+  layer, not by the device snapshot blob.
+
+### Passthrough host-state after restore (important)
+
+If EHCI drives passthrough devices (WebUSB/WebHID), **host in-flight work cannot be resumed** after
+restore (Promises cannot be rewound). The restore path must:
+
+- drop queued/in-flight host actions/completions, and
+- leave guest-visible schedule descriptors in a state where the guest will retry and re-issue work.
+
+This is the same rule described for UHCI passthrough in
+[`docs/webusb-passthrough.md#snapshotrestore-save-state`](./webusb-passthrough.md#snapshotrestore-save-state).
+
+---
+
+## Companion controllers (CONFIGFLAG / PORT_OWNER)
+
+### Why companions exist
+
+EHCI is fundamentally a **high-speed** controller. On real PCs, full-speed/low-speed traffic on
+root ports is often serviced by **companion controllers** (UHCI on Intel, OHCI on some other
+chipsets). EHCI participates in *routing* rather than directly handling FS/LS on root ports.
+
+Two key pieces of guest-visible behavior:
+
+- `CONFIGFLAG` (in EHCI operational regs)
+  - When set to 1 by the OS, it indicates the OS is taking ownership and routing ports to EHCI.
+- `PORTSC[n].PORT_OWNER`
+  - When set, the port is owned by a companion controller; EHCI should treat the port as not under
+    its control for scheduling.
+
+### Aero’s planned integration with UHCI companions
+
+The intended platform topology is:
+
+```
+PCI: EHCI function (USB 2.0, high-speed)
+PCI: UHCI companions (USB 1.1, full/low-speed)
+Shared physical root ports
+```
+
+**Contract for ownership/routing (planned):**
+
+- Each physical root port has a single “device attached” slot, but two logical controllers can
+  potentially observe it depending on ownership.
+- When `CONFIGFLAG=0` (or `PORT_OWNER=1`):
+  - The port is routed to the companion controller.
+  - EHCI reports the port as owned by companion and does not attempt to enumerate/schedule it.
+- When `CONFIGFLAG=1` and `PORT_OWNER=0`:
+  - The port is routed to EHCI and can enumerate high-speed devices.
+
+**Important deferred part:** correct handling of **FS/LS devices behind EHCI** requires split
+transactions + TT behavior, which we intentionally defer. Until then, “routing” is primarily about
+selecting which controller owns a root port, not about TT.
+
+---
+
+## Testing strategy
+
+EHCI touches guest memory scheduling, timing, interrupts, and snapshotting. The test plan is
+layered:
+
+### 1) Rust unit tests (synthetic schedules, memory-bus)
+
+In `crates/aero-usb`, write unit tests that:
+
+- build synthetic QH/qTD chains in a fake `MemoryBus`
+- tick the controller through frames/microframes
+- assert on:
+  - qTD token updates (Active cleared, bytes updated, Halted on stall)
+  - QH overlay advancement
+  - `USBSTS` W1C behavior
+  - interrupt causes → `irq_level()` transitions
+  - port reset timing and change-bit latching
+
+This is the EHCI analogue of the existing UHCI “schedule walker” tests.
+
+### 2) `aero-pc-platform` integration tests
+
+Add platform-level integration tests that instantiate a PCI topology with:
+
+- EHCI controller
+- UHCI companions (even if companions are initially inert)
+- a small set of attached synthetic USB devices
+
+Then validate:
+
+- Windows enumerates the EHCI function (class `0x0C0320`) and binds the in-box EHCI driver.
+- Root hub ports behave sensibly (reset/enumeration works).
+- Interrupt polling (periodic schedule) delivers HID input reports.
+
+### 3) Browser runtime harness (dev panel)
+
+In the web runtime, include a dev-facing panel (similar to existing WebUSB panels) that can:
+
+- display key EHCI registers live (`USBCMD/USBSTS/FRINDEX/PORTSC`)
+- attach/detach synthetic devices to ports
+- run a minimal enumeration/polling harness and print progress (QH/qTD state, interrupt causes)
+
+This is invaluable for debugging timing and schedule traversal issues that are hard to see from
+inside the guest OS alone.
+

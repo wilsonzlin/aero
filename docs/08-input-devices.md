@@ -761,6 +761,10 @@ pub fn key_event_bytes(code: &str, pressed: bool) -> Option<Vec<u8>> {
 For browser input → USB HID usage mapping and report format details, see
 [`docs/usb-hid.md`](./usb-hid.md).
 
+For EHCI (USB 2.0) host controller emulation design notes and emulator/runtime contracts (regs,
+root hub ports, async/periodic schedules, IRQ and snapshot requirements), see
+[`docs/usb-ehci.md`](./usb-ehci.md).
+
 ### Browser runtime wiring (current implementation)
 
 In the web runtime, browser keyboard/mouse/gamepad events can be exposed to the guest as
