@@ -3,7 +3,8 @@ use std::fmt::Write;
 
 use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, WriteMask};
 use crate::sm3::ir::{
-    Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Src, Stmt,
+    Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
+    Stmt,
 };
 use crate::sm3::types::ShaderStage;
 
@@ -172,10 +173,71 @@ fn default_vec4(ty: ScalarTy) -> &'static str {
     }
 }
 
+/// WebGPU guarantees support for at least 16 user-defined inter-stage locations (0..15).
+///
+/// We keep our D3D9 varying mapping within this bound so that shaders validate on all WebGPU
+/// implementations.
+const WEBGPU_MIN_INTER_STAGE_LOCATIONS: u32 = 16;
+
+/// Base location used for non-color / non-texcoord varyings when we can't derive a legacy mapping.
+///
+/// Locations are reserved as:
+/// - 0..=3  : COLOR0..COLOR3
+/// - 4..=11 : TEXCOORD0..TEXCOORD7
+/// - 12..=15: other varyings (fallback, derived from register index)
+const OTHER_VARYING_LOCATION_BASE: u32 = 12;
+
+/// Determine the WGSL `@location(n)` to use for an inter-stage varying.
+///
+/// This is intentionally shared between the vertex and pixel shader stages so that separately
+/// compiled shaders use matching locations.
+fn varying_location(
+    file: RegFile,
+    index: u32,
+    semantic: Option<&Semantic>,
+) -> Result<u32, WgslError> {
+    let loc = match file {
+        // Legacy D3D9 VS outputs.
+        RegFile::AttrOut => index,
+        RegFile::TexCoordOut => 4 + index,
+
+        // Legacy D3D9 PS inputs.
+        RegFile::Texture => 4 + index,
+
+        // SM3 generic VS outputs.
+        RegFile::Output => match semantic {
+            Some(Semantic::Color(i)) => u32::from(*i),
+            Some(Semantic::TexCoord(i)) => 4 + u32::from(*i),
+            _ => OTHER_VARYING_LOCATION_BASE + index,
+        },
+
+        // SM3 flexible PS inputs (a `v#` register can declare TEXCOORD semantics).
+        RegFile::Input => match semantic {
+            Some(Semantic::Color(i)) => u32::from(*i),
+            Some(Semantic::TexCoord(i)) => 4 + u32::from(*i),
+            _ => index,
+        },
+
+        _ => {
+            return Err(err(format!(
+                "register file {file:?} cannot be used as an inter-stage varying"
+            )))
+        }
+    };
+
+    if loc >= WEBGPU_MIN_INTER_STAGE_LOCATIONS {
+        return Err(err(format!(
+            "varying location {loc} exceeds the WebGPU minimum inter-stage location limit ({WEBGPU_MIN_INTER_STAGE_LOCATIONS})"
+        )));
+    }
+
+    Ok(loc)
+}
+
 struct RegUsage {
     temps: BTreeSet<u32>,
     addrs: BTreeSet<u32>,
-    inputs: BTreeSet<u32>,
+    inputs: BTreeSet<(RegFile, u32)>,
     outputs: BTreeSet<(RegFile, u32)>,
     predicates: BTreeSet<u32>,
     float_consts: BTreeSet<u32>,
@@ -349,8 +411,8 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
         RegFile::Addr => {
             usage.addrs.insert(reg.index);
         }
-        RegFile::Input => {
-            usage.inputs.insert(reg.index);
+        RegFile::Input | RegFile::Texture => {
+            usage.inputs.insert((reg.file, reg.index));
         }
         RegFile::Predicate => {
             usage.predicates.insert(reg.index);
@@ -1047,6 +1109,28 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         bool_defs.insert(def.index, def.value);
     }
 
+    let entry_point = match ir.version.stage {
+        ShaderStage::Vertex => "vs_main",
+        ShaderStage::Pixel => "fs_main",
+    };
+
+    // Semantic lookup tables, keyed by (RegFile, index).
+    let mut input_semantics: BTreeMap<(RegFile, u32), Semantic> = BTreeMap::new();
+    for decl in &ir.inputs {
+        if decl.reg.relative.is_some() {
+            continue;
+        }
+        input_semantics.insert((decl.reg.file, decl.reg.index), decl.semantic.clone());
+    }
+
+    let mut output_semantics: BTreeMap<(RegFile, u32), Semantic> = BTreeMap::new();
+    for decl in &ir.outputs {
+        if decl.reg.relative.is_some() {
+            continue;
+        }
+        output_semantics.insert((decl.reg.file, decl.reg.index), decl.semantic.clone());
+    }
+
     let mut wgsl = String::new();
 
     // Float constants: pack per-stage `c#` register files into a single uniform buffer to keep
@@ -1059,170 +1143,302 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
     };
     let _ = writeln!(wgsl, "const CONST_BASE: u32 = {}u;\n", const_base);
 
-    let entry_point = match ir.version.stage {
-        ShaderStage::Vertex => "vs_main",
-        ShaderStage::Pixel => "fs_main",
+    let emit_const_decls = |wgsl: &mut String| {
+        // Embedded float constants (`def c#`). These behave like constant-register writes that occur
+        // before shader execution and must override the uniform constant buffer even when accessed
+        // via relative indexing (`cN[a0.x]`).
+        for (idx, value) in &f32_defs {
+            let _ = writeln!(
+                wgsl,
+                "  let c{idx}: vec4<f32> = vec4<f32>({}, {}, {}, {});",
+                format_f32(value[0]),
+                format_f32(value[1]),
+                format_f32(value[2]),
+                format_f32(value[3])
+            );
+        }
+        // Non-embedded float constants come from the uniform constant buffer.
+        for idx in &usage.float_consts {
+            if f32_defs.contains_key(idx) {
+                continue;
+            }
+            let _ = writeln!(
+                wgsl,
+                "  let c{idx}: vec4<f32> = constants.c[CONST_BASE + {idx}u];"
+            );
+        }
+
+        // Embedded integer constants (`defi i#`).
+        for idx in &usage.int_consts {
+            let value = i32_defs.get(idx).copied().unwrap_or([0; 4]);
+            let _ = writeln!(
+                wgsl,
+                "  let i{idx}: vec4<i32> = vec4<i32>({}, {}, {}, {});",
+                value[0], value[1], value[2], value[3]
+            );
+        }
+
+        // Embedded boolean constants (`defb b#`). D3D bool regs are scalar; we splat across vec4 for
+        // register-like access with swizzles.
+        for idx in &usage.bool_consts {
+            let v = bool_defs.get(idx).copied().unwrap_or(false);
+            let _ = writeln!(
+                wgsl,
+                "  let b{idx}: vec4<bool> = vec4<bool>({v}, {v}, {v}, {v});"
+            );
+        }
     };
 
-    if ir.version.stage == ShaderStage::Vertex && !usage.inputs.is_empty() {
-        wgsl.push_str("struct VsInput {\n");
-        for idx in &usage.inputs {
-            // Register indices are already canonicalized via semantic remapping in the IR builder.
-            let _ = writeln!(wgsl, "  @location({idx}) v{idx}: vec4<f32>,");
-        }
-        wgsl.push_str("};\n\n");
-    }
+    match ir.version.stage {
+        ShaderStage::Vertex => {
+            // Vertex attributes (`v#`).
+            let mut vs_inputs = BTreeSet::<u32>::new();
+            for (file, index) in &usage.inputs {
+                if *file == RegFile::Input {
+                    vs_inputs.insert(*index);
+                }
+            }
+            let has_inputs = !vs_inputs.is_empty();
 
-    // Fragment output struct (even if only one output) keeps codegen simple.
-    if ir.version.stage == ShaderStage::Pixel {
-        wgsl.push_str("struct FsOut {\n");
-        if usage.outputs.iter().any(|(f, _)| *f == RegFile::ColorOut) {
-            for (file, index) in &usage.outputs {
-                if *file != RegFile::ColorOut {
+            // Inter-stage varyings written by the vertex shader.
+            let mut vs_varyings = BTreeSet::<(RegFile, u32)>::new();
+            for decl in &ir.outputs {
+                if decl.reg.relative.is_some() {
                     continue;
                 }
-                let _ = writeln!(wgsl, "  @location({}) oC{}: vec4<f32>,", index, index);
+                if matches!(
+                    decl.reg.file,
+                    RegFile::AttrOut | RegFile::TexCoordOut | RegFile::Output
+                ) {
+                    vs_varyings.insert((decl.reg.file, decl.reg.index));
+                }
             }
-        } else {
-            wgsl.push_str("  @location(0) oC0: vec4<f32>,\n");
-        }
-        wgsl.push_str("};\n\n");
-    }
+            for (file, index) in &usage.outputs {
+                if matches!(*file, RegFile::AttrOut | RegFile::TexCoordOut | RegFile::Output) {
+                    vs_varyings.insert((*file, *index));
+                }
+            }
 
-    match ir.version.stage {
-        ShaderStage::Vertex => {
-            if usage.inputs.is_empty() {
-                wgsl.push_str("@vertex\nfn vs_main() -> @builtin(position) vec4<f32> {\n");
+            // Assign `@location` values and check for collisions.
+            let mut vs_varying_locations: BTreeMap<(RegFile, u32), u32> = BTreeMap::new();
+            let mut loc_to_reg: BTreeMap<u32, (RegFile, u32)> = BTreeMap::new();
+            for (file, index) in &vs_varyings {
+                let semantic = output_semantics.get(&(*file, *index));
+                let loc = varying_location(*file, *index, semantic)?;
+                if let Some((prev_file, prev_index)) = loc_to_reg.insert(loc, (*file, *index)) {
+                    return Err(err(format!(
+                        "multiple vertex outputs map to @location({loc}): {prev_file:?}{prev_index} and {file:?}{index}"
+                    )));
+                }
+                vs_varying_locations.insert((*file, *index), loc);
+            }
+
+            if has_inputs {
+                wgsl.push_str("struct VsInput {\n");
+                for idx in &vs_inputs {
+                    // Register indices are already canonicalized via semantic remapping in the IR builder.
+                    let _ = writeln!(wgsl, "  @location({idx}) v{idx}: vec4<f32>,");
+                }
+                wgsl.push_str("};\n\n");
+            }
+
+            wgsl.push_str("struct VsOutput {\n  @builtin(position) pos: vec4<f32>,\n");
+            for ((file, index), loc) in &vs_varying_locations {
+                let reg = RegRef {
+                    file: *file,
+                    index: *index,
+                    relative: None,
+                };
+                let name = reg_var_name(&reg)?;
+                let _ = writeln!(wgsl, "  @location({loc}) {name}: vec4<f32>,");
+            }
+            wgsl.push_str("};\n\n");
+
+            if has_inputs {
+                wgsl.push_str("@vertex\nfn vs_main(input: VsInput) -> VsOutput {\n");
             } else {
-                wgsl.push_str(
-                    "@vertex\nfn vs_main(input: VsInput) -> @builtin(position) vec4<f32> {\n",
+                wgsl.push_str("@vertex\nfn vs_main() -> VsOutput {\n");
+            }
+
+            // Local temp registers.
+            for r in &usage.temps {
+                let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
+            }
+
+            // Address registers (`a#`) used for relative constant indexing.
+            for a in &usage.addrs {
+                let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
+            }
+
+            // Predicate registers (`p#`).
+            for p in &usage.predicates {
+                let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
+            }
+
+            // Bind vertex inputs to locals that match the D3D register naming (`v#`).
+            if has_inputs {
+                for idx in &vs_inputs {
+                    let _ = writeln!(wgsl, "  let v{idx}: vec4<f32> = input.v{idx};");
+                }
+            }
+
+            // Outputs used by the shader. These are mutable locals that get copied into the return
+            // value at the end.
+            let mut required_outputs = usage.outputs.clone();
+            // Always provide `oPos` so we can emit a stable return struct.
+            required_outputs.insert((RegFile::RastOut, 0));
+            // Ensure all varyings in the interface are declared, even if never written.
+            required_outputs.extend(vs_varyings.iter().copied());
+
+            for (file, index) in &required_outputs {
+                let reg = RegRef {
+                    file: *file,
+                    index: *index,
+                    relative: None,
+                };
+                let ty = reg_scalar_ty(*file).unwrap_or(ScalarTy::F32);
+                let name = reg_var_name(&reg)?;
+                let _ = writeln!(
+                    wgsl,
+                    "  var {name}: {} = {};",
+                    ty.wgsl_vec4(),
+                    default_vec4(ty)
                 );
             }
-        }
-        ShaderStage::Pixel => {
-            wgsl.push_str("@fragment\nfn fs_main() -> FsOut {\n");
-        }
-    }
 
-    // Local temp registers.
-    for r in &usage.temps {
-        let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
-    }
+            emit_const_decls(&mut wgsl);
 
-    // Address registers (`a#`) used for relative constant indexing.
-    for a in &usage.addrs {
-        let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
-    }
+            wgsl.push('\n');
+            emit_block(&mut wgsl, &ir.body, 1, &f32_defs)?;
 
-    // Predicate registers (`p#`).
-    for p in &usage.predicates {
-        let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
-    }
-
-    // Bind vertex inputs to locals that match the D3D register naming (`v#`).
-    if ir.version.stage == ShaderStage::Vertex && !usage.inputs.is_empty() {
-        for idx in &usage.inputs {
-            let _ = writeln!(wgsl, "  let v{idx}: vec4<f32> = input.v{idx};");
-        }
-    }
-
-    // Outputs used by the shader. These are mutable locals that get copied into the function
-    // return value at the end.
-    for (file, index) in &usage.outputs {
-        let reg = RegRef {
-            file: *file,
-            index: *index,
-            relative: None,
-        };
-        let ty = reg_scalar_ty(*file).unwrap_or(ScalarTy::F32);
-        let name = reg_var_name(&reg)?;
-        let _ = writeln!(
-            wgsl,
-            "  var {name}: {} = {};",
-            ty.wgsl_vec4(),
-            default_vec4(ty)
-        );
-    }
-
-    // Ensure at least oC0 exists for fragment shaders (common case).
-    if ir.version.stage == ShaderStage::Pixel
-        && !usage
-            .outputs
-            .iter()
-            .any(|(f, i)| *f == RegFile::ColorOut && *i == 0)
-    {
-        wgsl.push_str("  var oC0: vec4<f32> = vec4<f32>(0.0);\n");
-    }
-
-    // Embedded float constants (`def c#`). These behave like constant-register writes that occur
-    // before shader execution and must override the uniform constant buffer even when accessed via
-    // relative indexing (`cN[a0.x]`).
-    for (idx, value) in &f32_defs {
-        let _ = writeln!(
-            wgsl,
-            "  let c{idx}: vec4<f32> = vec4<f32>({}, {}, {}, {});",
-            format_f32(value[0]),
-            format_f32(value[1]),
-            format_f32(value[2]),
-            format_f32(value[3])
-        );
-    }
-    // Non-embedded float constants come from the uniform constant buffer.
-    for idx in &usage.float_consts {
-        if f32_defs.contains_key(idx) {
-            continue;
-        }
-        let _ = writeln!(
-            wgsl,
-            "  let c{idx}: vec4<f32> = constants.c[CONST_BASE + {idx}u];"
-        );
-    }
-
-    // Embedded integer constants (`defi i#`).
-    for idx in &usage.int_consts {
-        let value = i32_defs.get(idx).copied().unwrap_or([0; 4]);
-        let _ = writeln!(
-            wgsl,
-            "  let i{idx}: vec4<i32> = vec4<i32>({}, {}, {}, {});",
-            value[0], value[1], value[2], value[3]
-        );
-    }
-
-    // Embedded boolean constants (`defb b#`). D3D bool regs are scalar; we splat across vec4 for
-    // register-like access with swizzles.
-    for idx in &usage.bool_consts {
-        let v = bool_defs.get(idx).copied().unwrap_or(false);
-        let _ = writeln!(
-            wgsl,
-            "  let b{idx}: vec4<bool> = vec4<bool>({v}, {v}, {v}, {v});"
-        );
-    }
-
-    wgsl.push('\n');
-
-    emit_block(&mut wgsl, &ir.body, 1, &f32_defs)?;
-
-    match ir.version.stage {
-        ShaderStage::Vertex => {
-            // Position output: prefer oPos, otherwise just emit a zero vector.
-            if usage.outputs.iter().any(|(f, _)| *f == RegFile::RastOut) {
-                wgsl.push_str("  return oPos;\n");
-            } else {
-                wgsl.push_str("  return vec4<f32>(0.0);\n");
+            wgsl.push_str("  var out: VsOutput;\n");
+            wgsl.push_str("  out.pos = oPos;\n");
+            for ((file, index), _) in &vs_varying_locations {
+                let reg = RegRef {
+                    file: *file,
+                    index: *index,
+                    relative: None,
+                };
+                let name = reg_var_name(&reg)?;
+                let _ = writeln!(wgsl, "  out.{name} = {name};");
             }
-            wgsl.push_str("}\n");
+            wgsl.push_str("  return out;\n}\n");
         }
         ShaderStage::Pixel => {
-            wgsl.push_str("  var out: FsOut;\n");
-            if usage.outputs.iter().any(|(f, _)| *f == RegFile::ColorOut) {
-                for (file, index) in &usage.outputs {
-                    if *file != RegFile::ColorOut {
-                        continue;
-                    }
-                    let _ = writeln!(wgsl, "  out.oC{} = oC{};", index, index);
+            // Inter-stage varyings read by the pixel shader.
+            let mut ps_inputs = BTreeSet::<(RegFile, u32)>::new();
+            for (file, index) in &usage.inputs {
+                if matches!(*file, RegFile::Input | RegFile::Texture) {
+                    ps_inputs.insert((*file, *index));
                 }
+            }
+            let has_inputs = !ps_inputs.is_empty();
+
+            let mut ps_input_locations: BTreeMap<(RegFile, u32), u32> = BTreeMap::new();
+            let mut loc_to_reg: BTreeMap<u32, (RegFile, u32)> = BTreeMap::new();
+            for (file, index) in &ps_inputs {
+                let semantic = input_semantics.get(&(*file, *index));
+                let loc = varying_location(*file, *index, semantic)?;
+                if let Some((prev_file, prev_index)) = loc_to_reg.insert(loc, (*file, *index)) {
+                    return Err(err(format!(
+                        "multiple pixel shader inputs map to @location({loc}): {prev_file:?}{prev_index} and {file:?}{index}"
+                    )));
+                }
+                ps_input_locations.insert((*file, *index), loc);
+            }
+
+            // D3D9 pixel shaders conceptually write at least oC0. Keep the generated WGSL stable by
+            // always emitting location(0), even if the shader bytecode never assigns it.
+            let mut color_outputs = BTreeSet::<u32>::new();
+            for (file, index) in &usage.outputs {
+                if *file == RegFile::ColorOut {
+                    color_outputs.insert(*index);
+                }
+            }
+            color_outputs.insert(0);
+
+            wgsl.push_str("struct FsOut {\n");
+            for idx in &color_outputs {
+                let _ = writeln!(wgsl, "  @location({idx}) oC{idx}: vec4<f32>,");
+            }
+            wgsl.push_str("};\n\n");
+
+            if has_inputs {
+                wgsl.push_str("struct PsInput {\n");
+                for ((file, index), loc) in &ps_input_locations {
+                    let reg = RegRef {
+                        file: *file,
+                        index: *index,
+                        relative: None,
+                    };
+                    let name = reg_var_name(&reg)?;
+                    let _ = writeln!(wgsl, "  @location({loc}) {name}: vec4<f32>,");
+                }
+                wgsl.push_str("};\n\n");
+                wgsl.push_str("@fragment\nfn fs_main(input: PsInput) -> FsOut {\n");
             } else {
-                wgsl.push_str("  out.oC0 = oC0;\n");
+                // WGSL does not permit empty structs, so if the shader uses no varyings we omit the
+                // input parameter entirely.
+                wgsl.push_str("@fragment\nfn fs_main() -> FsOut {\n");
+            }
+
+            // Local temp registers.
+            for r in &usage.temps {
+                let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
+            }
+
+            // Address registers (`a#`) used for relative constant indexing.
+            for a in &usage.addrs {
+                let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
+            }
+
+            // Predicate registers (`p#`).
+            for p in &usage.predicates {
+                let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
+            }
+
+            // Bind pixel inputs to locals that match the D3D register naming (`v#` / `t#`).
+            if has_inputs {
+                for (file, index) in &ps_inputs {
+                    let reg = RegRef {
+                        file: *file,
+                        index: *index,
+                        relative: None,
+                    };
+                    let name = reg_var_name(&reg)?;
+                    let _ = writeln!(wgsl, "  let {name}: vec4<f32> = input.{name};");
+                }
+            }
+
+            // Outputs used by the shader. These are mutable locals that get copied into the return
+            // value at the end.
+            let mut required_outputs = usage.outputs.clone();
+            required_outputs.extend(color_outputs.iter().map(|&idx| (RegFile::ColorOut, idx)));
+
+            for (file, index) in &required_outputs {
+                let reg = RegRef {
+                    file: *file,
+                    index: *index,
+                    relative: None,
+                };
+                let ty = reg_scalar_ty(*file).unwrap_or(ScalarTy::F32);
+                let name = reg_var_name(&reg)?;
+                let _ = writeln!(
+                    wgsl,
+                    "  var {name}: {} = {};",
+                    ty.wgsl_vec4(),
+                    default_vec4(ty)
+                );
+            }
+
+            emit_const_decls(&mut wgsl);
+
+            wgsl.push('\n');
+            emit_block(&mut wgsl, &ir.body, 1, &f32_defs)?;
+
+            wgsl.push_str("  var out: FsOut;\n");
+            for idx in &color_outputs {
+                let _ = writeln!(wgsl, "  out.oC{idx} = oC{idx};");
             }
             wgsl.push_str("  return out;\n}\n");
         }
