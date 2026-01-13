@@ -380,6 +380,21 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         self.pending_events.clear();
     }
 
+    fn reset_playback_audio_state(&mut self) {
+        self.resampler
+            .reset_rates(PCM_SAMPLE_RATE_HZ, self.host_sample_rate_hz);
+        self.decoded_frames_scratch.clear();
+        self.resampled_scratch.clear();
+    }
+
+    fn reset_capture_audio_state(&mut self) {
+        self.capture_resampler
+            .reset_rates(self.capture_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
+        self.capture_frames_scratch.clear();
+        self.capture_interleaved_scratch.clear();
+        self.capture_samples_scratch.clear();
+    }
+
     fn process_control(
         &mut self,
         chain: DescriptorChain,
@@ -536,41 +551,89 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         }
 
         let stream_id = u32::from_le_bytes(request[4..8].try_into().unwrap());
-        let stream = match stream_id {
-            PLAYBACK_STREAM_ID => &mut self.playback,
-            CAPTURE_STREAM_ID => &mut self.capture,
-            _ => return virtio_snd_hdr(VIRTIO_SND_S_BAD_MSG),
+        let mut reset_playback = false;
+        let mut reset_capture = false;
+
+        let status = match stream_id {
+            PLAYBACK_STREAM_ID => {
+                let stream = &mut self.playback;
+                match cmd {
+                    StreamSimpleCmd::Prepare => match stream.state {
+                        StreamState::ParamsSet | StreamState::Prepared => {
+                            stream.state = StreamState::Prepared;
+                            VIRTIO_SND_S_OK
+                        }
+                        StreamState::Running | StreamState::Idle => VIRTIO_SND_S_IO_ERR,
+                    },
+                    StreamSimpleCmd::Release => {
+                        stream.params = None;
+                        stream.state = StreamState::Idle;
+                        reset_playback = true;
+                        VIRTIO_SND_S_OK
+                    }
+                    StreamSimpleCmd::Start => match stream.state {
+                        StreamState::Prepared => {
+                            stream.state = StreamState::Running;
+                            VIRTIO_SND_S_OK
+                        }
+                        StreamState::Running => VIRTIO_SND_S_OK,
+                        StreamState::Idle | StreamState::ParamsSet => VIRTIO_SND_S_IO_ERR,
+                    },
+                    StreamSimpleCmd::Stop => match stream.state {
+                        StreamState::Running => {
+                            stream.state = StreamState::Prepared;
+                            reset_playback = true;
+                            VIRTIO_SND_S_OK
+                        }
+                        _ => VIRTIO_SND_S_IO_ERR,
+                    },
+                }
+            }
+            CAPTURE_STREAM_ID => {
+                let stream = &mut self.capture;
+                match cmd {
+                    StreamSimpleCmd::Prepare => match stream.state {
+                        StreamState::ParamsSet | StreamState::Prepared => {
+                            stream.state = StreamState::Prepared;
+                            VIRTIO_SND_S_OK
+                        }
+                        StreamState::Running | StreamState::Idle => VIRTIO_SND_S_IO_ERR,
+                    },
+                    StreamSimpleCmd::Release => {
+                        stream.params = None;
+                        stream.state = StreamState::Idle;
+                        reset_capture = true;
+                        // Note: keep `capture_telemetry` across stream lifecycles so host-level mic
+                        // underrun/drop debugging survives guest stop/restart flows.
+                        VIRTIO_SND_S_OK
+                    }
+                    StreamSimpleCmd::Start => match stream.state {
+                        StreamState::Prepared => {
+                            stream.state = StreamState::Running;
+                            VIRTIO_SND_S_OK
+                        }
+                        StreamState::Running => VIRTIO_SND_S_OK,
+                        StreamState::Idle | StreamState::ParamsSet => VIRTIO_SND_S_IO_ERR,
+                    },
+                    StreamSimpleCmd::Stop => match stream.state {
+                        StreamState::Running => {
+                            stream.state = StreamState::Prepared;
+                            reset_capture = true;
+                            VIRTIO_SND_S_OK
+                        }
+                        _ => VIRTIO_SND_S_IO_ERR,
+                    },
+                }
+            }
+            _ => VIRTIO_SND_S_BAD_MSG,
         };
 
-        let status = match cmd {
-            StreamSimpleCmd::Prepare => match stream.state {
-                StreamState::ParamsSet | StreamState::Prepared => {
-                    stream.state = StreamState::Prepared;
-                    VIRTIO_SND_S_OK
-                }
-                StreamState::Running | StreamState::Idle => VIRTIO_SND_S_IO_ERR,
-            },
-            StreamSimpleCmd::Release => {
-                stream.params = None;
-                stream.state = StreamState::Idle;
-                VIRTIO_SND_S_OK
-            }
-            StreamSimpleCmd::Start => match stream.state {
-                StreamState::Prepared => {
-                    stream.state = StreamState::Running;
-                    VIRTIO_SND_S_OK
-                }
-                StreamState::Running => VIRTIO_SND_S_OK,
-                StreamState::Idle | StreamState::ParamsSet => VIRTIO_SND_S_IO_ERR,
-            },
-            StreamSimpleCmd::Stop => match stream.state {
-                StreamState::Running => {
-                    stream.state = StreamState::Prepared;
-                    VIRTIO_SND_S_OK
-                }
-                _ => VIRTIO_SND_S_IO_ERR,
-            },
-        };
+        if reset_playback {
+            self.reset_playback_audio_state();
+        }
+        if reset_capture {
+            self.reset_capture_audio_state();
+        }
 
         virtio_snd_hdr(status)
     }
@@ -1373,6 +1436,37 @@ mod tests {
                 panic!("unexpected descriptor chain parse error: {error:?}")
             }
         }
+    }
+
+    fn control_set_params<O: AudioSink, I: AudioCaptureSource>(snd: &mut VirtioSnd<O, I>, stream_id: u32) {
+        let channels = if stream_id == PLAYBACK_STREAM_ID {
+            PLAYBACK_CHANNELS
+        } else {
+            CAPTURE_CHANNELS
+        };
+        let mut req = [0u8; 24];
+        req[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_SET_PARAMS.to_le_bytes());
+        req[4..8].copy_from_slice(&stream_id.to_le_bytes());
+        req[8..12].copy_from_slice(&4096u32.to_le_bytes());
+        req[12..16].copy_from_slice(&1024u32.to_le_bytes());
+        req[20] = channels;
+        req[21] = VIRTIO_SND_PCM_FMT_S16;
+        req[22] = VIRTIO_SND_PCM_RATE_48000;
+
+        let resp = snd.handle_control_request(&req);
+        assert_eq!(status(&resp), VIRTIO_SND_S_OK);
+    }
+
+    fn control_simple<O: AudioSink, I: AudioCaptureSource>(
+        snd: &mut VirtioSnd<O, I>,
+        code: u32,
+        stream_id: u32,
+    ) {
+        let mut req = Vec::new();
+        req.extend_from_slice(&code.to_le_bytes());
+        req.extend_from_slice(&stream_id.to_le_bytes());
+        let resp = snd.handle_control_request(&req);
+        assert_eq!(status(&resp), VIRTIO_SND_S_OK);
     }
 
     #[test]
@@ -2688,6 +2782,269 @@ mod tests {
                 underrun_samples: 3,
                 underrun_responses: 1,
             }
+        );
+    }
+
+    #[test]
+    fn playback_stop_clears_resampler_state_to_avoid_stale_audio() {
+        // Use an upsampling host sample rate so the linear resampler keeps a queued source frame
+        // (needed for interpolation across TX chunks). That queued frame must be dropped on STOP so
+        // the next START begins from fresh input.
+        let mut snd = VirtioSnd::new_with_host_sample_rate(
+            aero_audio::ring::AudioRingBuffer::new_stereo(32),
+            96_000,
+        );
+
+        control_set_params(&mut snd, PLAYBACK_STREAM_ID);
+        control_simple(&mut snd, VIRTIO_SND_R_PCM_PREPARE, PLAYBACK_STREAM_ID);
+        control_simple(&mut snd, VIRTIO_SND_R_PCM_START, PLAYBACK_STREAM_ID);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let req1_addr = 0x4000;
+        let resp1_addr = 0x5000;
+        let req2_addr = 0x6000;
+        let resp2_addr = 0x7000;
+
+        // First TX: one non-zero stereo frame.
+        let sample = i16::MAX;
+        let mut tx1 = Vec::new();
+        tx1.extend_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        tx1.extend_from_slice(&0u32.to_le_bytes());
+        tx1.extend_from_slice(&sample.to_le_bytes());
+        tx1.extend_from_slice(&sample.to_le_bytes());
+        mem.write(req1_addr, &tx1).unwrap();
+
+        // Second TX: one silent stereo frame. If the resampler still has a queued non-zero frame
+        // from before STOP, the first output frame after restart will be non-zero due to
+        // interpolation.
+        let mut tx2 = Vec::new();
+        tx2.extend_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        tx2.extend_from_slice(&0u32.to_le_bytes());
+        tx2.extend_from_slice(&0i16.to_le_bytes());
+        tx2.extend_from_slice(&0i16.to_le_bytes());
+        mem.write(req2_addr, &tx2).unwrap();
+
+        // Two descriptor chains: [0,1] then [2,3].
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            req1_addr,
+            tx1.len() as u32,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            resp1_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            2,
+            req2_addr,
+            tx2.len() as u32,
+            VIRTQ_DESC_F_NEXT,
+            3,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            3,
+            resp2_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 2).unwrap(); // two available chains
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, avail + 6, 2).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        // Process the first TX.
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_TX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        let frames = snd.output_mut().available_frames();
+        let first_out = snd.output_mut().pop_interleaved_stereo(frames);
+        assert!(
+            first_out.iter().any(|&s| s.abs() > 1e-6),
+            "first TX should produce non-zero audio"
+        );
+
+        // Stop and restart the playback stream without providing any new non-zero audio.
+        control_simple(&mut snd, VIRTIO_SND_R_PCM_STOP, PLAYBACK_STREAM_ID);
+        control_simple(&mut snd, VIRTIO_SND_R_PCM_START, PLAYBACK_STREAM_ID);
+
+        // Process the second TX and ensure the queued frame from the first TX was not replayed.
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_TX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        let frames = snd.output_mut().available_frames();
+        assert!(frames > 0, "second TX should produce at least one frame");
+        let out = snd.output_mut().pop_interleaved_stereo(frames);
+        assert!(
+            out.iter().all(|&s| s.abs() <= 1e-6),
+            "audio after STOP/START should not contain stale queued samples"
+        );
+    }
+
+    #[test]
+    fn capture_stop_clears_resampler_state_to_avoid_stale_samples() {
+        let mut snd = VirtioSnd::new_with_capture(
+            aero_audio::ring::AudioRingBuffer::new_stereo(32),
+            TestCaptureSource::default(),
+        );
+        // Force the capture path to exercise the streaming resampler (host 44.1kHz -> guest 48kHz).
+        snd.set_capture_sample_rate_hz(44_100);
+
+        control_set_params(&mut snd, CAPTURE_STREAM_ID);
+        control_simple(&mut snd, VIRTIO_SND_R_PCM_PREPARE, CAPTURE_STREAM_ID);
+        control_simple(&mut snd, VIRTIO_SND_R_PCM_START, CAPTURE_STREAM_ID);
+
+        let samples_needed = 10usize;
+        let required_src = snd.capture_resampler.required_source_frames(samples_needed);
+        let src_samples = vec![1.0f32; required_src];
+        snd.capture_source.push_samples(&src_samples);
+
+        let payload_bytes = samples_needed * 2;
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let hdr1_addr = 0x4000;
+        let payload1_addr = 0x5000;
+        let resp1_addr = 0x5800;
+        let hdr2_addr = 0x6000;
+        let payload2_addr = 0x7000;
+        let resp2_addr = 0x7800;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&CAPTURE_STREAM_ID.to_le_bytes());
+        mem.get_slice_mut(hdr1_addr, 8).unwrap().copy_from_slice(&hdr);
+        mem.get_slice_mut(hdr2_addr, 8).unwrap().copy_from_slice(&hdr);
+
+        // Two RX descriptor chains: [0,1,2] then [3,4,5].
+        write_desc(&mut mem, desc_table, 0, hdr1_addr, 8, VIRTQ_DESC_F_NEXT, 1);
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            payload1_addr,
+            payload_bytes as u32,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            2,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            2,
+            resp1_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        write_desc(&mut mem, desc_table, 3, hdr2_addr, 8, VIRTQ_DESC_F_NEXT, 4);
+        write_desc(
+            &mut mem,
+            desc_table,
+            4,
+            payload2_addr,
+            payload_bytes as u32,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            5,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            5,
+            resp2_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        // Poison payload buffers so we can ensure the device writes deterministic output.
+        mem.get_slice_mut(payload1_addr, payload_bytes)
+            .unwrap()
+            .fill(0xAA);
+        mem.get_slice_mut(payload2_addr, payload_bytes)
+            .unwrap()
+            .fill(0xAA);
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 2).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, avail + 6, 3).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        // First RX consumes all queued non-zero mic samples.
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_RX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        assert_eq!(
+            snd.capture_source.remaining_samples(),
+            0,
+            "capture source should be drained after first RX"
+        );
+
+        // Stop and restart capture, then issue another RX request. With an empty capture source,
+        // the response should be pure silence; any non-zero samples indicate stale resampler state
+        // leaking across STOP/START.
+        control_simple(&mut snd, VIRTIO_SND_R_PCM_STOP, CAPTURE_STREAM_ID);
+        control_simple(&mut snd, VIRTIO_SND_R_PCM_START, CAPTURE_STREAM_ID);
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_RX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        let payload2 = mem.get_slice(payload2_addr, payload_bytes).unwrap();
+        assert!(
+            payload2.iter().all(|&b| b == 0),
+            "capture samples after STOP/START should not include stale queued audio"
         );
     }
 }
