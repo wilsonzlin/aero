@@ -67,10 +67,13 @@ enum { LED_TRANSLATE_EVENT_COUNT = 6 };
  *   - 1x EV_SYN/SYN_REPORT event
  *
  * Caller must provide an output array of at least LED_TRANSLATE_EVENT_COUNT.
+ *
+ * Note: The output struct type is `virtio_input_event_le`. This function writes
+ * the fields in little-endian encoding (CPU->LE) so the resulting buffer can be
+ * sent directly over the virtio statusq as-is.
  */
 size_t led_translate_build_virtio_events(uint8_t hid_led_bitfield, struct virtio_input_event_le *events);
 
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-
