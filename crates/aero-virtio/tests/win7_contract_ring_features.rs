@@ -1,5 +1,6 @@
 use aero_virtio::devices::blk::{
-    MemDisk, VirtioBlk, VIRTIO_BLK_F_BLK_SIZE, VIRTIO_BLK_F_FLUSH, VIRTIO_BLK_F_SEG_MAX,
+    MemDisk, VirtioBlk, VIRTIO_BLK_F_BLK_SIZE, VIRTIO_BLK_F_DISCARD, VIRTIO_BLK_F_FLUSH,
+    VIRTIO_BLK_F_SEG_MAX, VIRTIO_BLK_F_WRITE_ZEROES,
 };
 use aero_virtio::devices::gpu::{NullScanoutSink, VirtioGpu2d};
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
@@ -51,7 +52,9 @@ fn win7_contract_ring_features_are_consistent_across_devices() {
             | VIRTIO_F_RING_INDIRECT_DESC
             | VIRTIO_BLK_F_SEG_MAX
             | VIRTIO_BLK_F_BLK_SIZE
-            | VIRTIO_BLK_F_FLUSH,
+            | VIRTIO_BLK_F_FLUSH
+            | VIRTIO_BLK_F_DISCARD
+            | VIRTIO_BLK_F_WRITE_ZEROES,
     );
 
     let net = VirtioNet::new(LoopbackNet::default(), [0; 6]);

@@ -12,11 +12,15 @@ pub const VIRTIO_BLK_SECTOR_SIZE: u64 = 512;
 pub const VIRTIO_BLK_F_SEG_MAX: u64 = 1 << 2;
 pub const VIRTIO_BLK_F_BLK_SIZE: u64 = 1 << 6;
 pub const VIRTIO_BLK_F_FLUSH: u64 = 1 << 9;
+pub const VIRTIO_BLK_F_DISCARD: u64 = 1 << 13;
+pub const VIRTIO_BLK_F_WRITE_ZEROES: u64 = 1 << 14;
 
 pub const VIRTIO_BLK_T_IN: u32 = 0;
 pub const VIRTIO_BLK_T_OUT: u32 = 1;
 pub const VIRTIO_BLK_T_FLUSH: u32 = 4;
 pub const VIRTIO_BLK_T_GET_ID: u32 = 8;
+pub const VIRTIO_BLK_T_DISCARD: u32 = 11;
+pub const VIRTIO_BLK_T_WRITE_ZEROES: u32 = 13;
 
 pub const VIRTIO_BLK_S_OK: u8 = 0;
 pub const VIRTIO_BLK_S_IOERR: u8 = 1;
@@ -49,8 +53,13 @@ pub struct VirtioBlkConfig {
 }
 
 impl VirtioBlkConfig {
-    // capacity (8) + size_max (4) + seg_max (4) + geometry (4) + blk_size (4)
-    pub const SIZE: usize = 24;
+    // Linux `struct virtio_blk_config` layout (virtio spec):
+    // capacity (8) + size_max (4) + seg_max (4) + geometry (4) + blk_size (4) +
+    // topology (8) + writeback (1) + unused0 (3) +
+    // max_discard_sectors (4) + max_discard_seg (4) + discard_sector_alignment (4) +
+    // max_write_zeroes_sectors (4) + max_write_zeroes_seg (4) + write_zeroes_may_unmap (1) +
+    // unused1 (3)
+    pub const SIZE: usize = 60;
 
     pub fn read(&self, offset: u64, data: &mut [u8]) {
         let mut cfg = [0u8; Self::SIZE];
@@ -59,6 +68,19 @@ impl VirtioBlkConfig {
         cfg[12..16].copy_from_slice(&self.seg_max.to_le_bytes());
         // geometry is zeroed.
         cfg[20..24].copy_from_slice(&self.blk_size.to_le_bytes());
+        // topology + writeback are left as zero.
+
+        // Discard / write zeroes limits. These are safe upper bounds for our current best-effort
+        // implementation; they mainly exist so in-guest drivers can enable the operations when the
+        // corresponding feature bits are negotiated.
+        cfg[36..40].copy_from_slice(&u32::MAX.to_le_bytes()); // max_discard_sectors
+        cfg[40..44].copy_from_slice(&self.seg_max.to_le_bytes()); // max_discard_seg
+        let align_sectors = (u64::from(self.blk_size) / VIRTIO_BLK_SECTOR_SIZE).max(1);
+        let align_sectors_u32 = u32::try_from(align_sectors).unwrap_or(1);
+        cfg[44..48].copy_from_slice(&align_sectors_u32.to_le_bytes()); // discard_sector_alignment
+        cfg[48..52].copy_from_slice(&u32::MAX.to_le_bytes()); // max_write_zeroes_sectors
+        cfg[52..56].copy_from_slice(&self.seg_max.to_le_bytes()); // max_write_zeroes_seg
+        // write_zeroes_may_unmap: 0 (false); unused1 is zeroed.
 
         // Avoid truncating on 32-bit targets: guest MMIO offsets are `u64` but config space is a
         // small fixed-size array.
@@ -246,6 +268,83 @@ pub struct VirtioBlk<B: BlockBackend> {
     config: VirtioBlkConfig,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DiscardWriteZeroesSegment {
+    sector: u64,
+    num_sectors: u32,
+    flags: u32,
+}
+
+fn parse_discard_write_zeroes_segments(
+    mem: &dyn GuestMemory,
+    data_segs: &[(crate::queue::Descriptor, usize, usize)],
+    max_segs: u32,
+) -> Result<Vec<DiscardWriteZeroesSegment>, ()> {
+    for (d, _off, _len) in data_segs.iter() {
+        if d.is_write_only() {
+            return Err(());
+        }
+    }
+
+    let total_len: u64 = data_segs.iter().map(|(_, _, len)| *len as u64).sum();
+    if total_len == 0 || !total_len.is_multiple_of(16) {
+        return Err(());
+    }
+    let seg_count_u64 = total_len / 16;
+    let seg_count_u32 = u32::try_from(seg_count_u64).map_err(|_| ())?;
+    if seg_count_u32 > max_segs {
+        return Err(());
+    }
+    let seg_count = seg_count_u32 as usize;
+
+    // Stream the segment table across the descriptor list. We intentionally avoid allocating a
+    // contiguous `Vec<u8>` based on guest-provided lengths.
+    let mut segs = Vec::with_capacity(seg_count);
+    let mut d_idx = 0usize;
+    let mut d_off = 0usize;
+    for _ in 0..seg_count {
+        let mut buf = [0u8; 16];
+        let mut written = 0usize;
+        while written < buf.len() {
+            if d_idx >= data_segs.len() {
+                return Err(());
+            }
+            let (d, seg_off, seg_len) = data_segs[d_idx];
+            let avail = seg_len.saturating_sub(d_off);
+            if avail == 0 {
+                d_idx += 1;
+                d_off = 0;
+                continue;
+            }
+            let take = avail.min(buf.len() - written);
+            let Some(addr) = d.addr.checked_add((seg_off + d_off) as u64) else {
+                return Err(());
+            };
+            let Ok(src) = mem.get_slice(addr, take) else {
+                return Err(());
+            };
+            buf[written..written + take].copy_from_slice(src);
+            written += take;
+            d_off += take;
+            if d_off == seg_len {
+                d_idx += 1;
+                d_off = 0;
+            }
+        }
+
+        let sector = u64::from_le_bytes(buf[0..8].try_into().unwrap());
+        let num_sectors = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+        let flags = u32::from_le_bytes(buf[12..16].try_into().unwrap());
+        segs.push(DiscardWriteZeroesSegment {
+            sector,
+            num_sectors,
+            flags,
+        });
+    }
+
+    Ok(segs)
+}
+
 impl<B: BlockBackend> VirtioBlk<B> {
     pub fn new(backend: B) -> Self {
         let queue_max_size = 128u16;
@@ -279,6 +378,8 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
             | VIRTIO_BLK_F_SEG_MAX
             | VIRTIO_BLK_F_BLK_SIZE
             | VIRTIO_BLK_F_FLUSH
+            | VIRTIO_BLK_F_DISCARD
+            | VIRTIO_BLK_F_WRITE_ZEROES
     }
 
     fn set_features(&mut self, features: u64) {
@@ -500,6 +601,149 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                             };
                             dst.copy_from_slice(&remaining[..write_len]);
                             remaining = &remaining[write_len..];
+                        }
+                    }
+                }
+                VIRTIO_BLK_T_DISCARD => {
+                    if (self.features & VIRTIO_BLK_F_DISCARD) == 0 {
+                        status = VIRTIO_BLK_S_UNSUPP;
+                    } else {
+                        let segs = match parse_discard_write_zeroes_segments(
+                            mem,
+                            &data_segs,
+                            self.config.seg_max,
+                        ) {
+                            Ok(v) => v,
+                            Err(_) => {
+                                status = VIRTIO_BLK_S_IOERR;
+                                Vec::new()
+                            }
+                        };
+
+                        if status == VIRTIO_BLK_S_OK {
+                            let blk_size =
+                                u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
+                            let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
+                            let disk_len = self.backend.len();
+
+                            for seg in &segs {
+                                let num_sectors = u64::from(seg.num_sectors);
+                                if seg.sector % align_sectors != 0
+                                    || num_sectors % align_sectors != 0
+                                {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
+
+                                let Some(byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                else {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                };
+                                let Some(byte_len) =
+                                    num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                else {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                };
+                                let Some(end_off) = byte_off.checked_add(byte_len) else {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                };
+                                if end_off > disk_len {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Best-effort discard is currently a no-op once validated.
+                        //
+                        // TODO(storage): plumb an optional backend "deallocate/punch hole" hook for
+                        // sparse disks so DISCARD can reclaim space.
+                    }
+                }
+                VIRTIO_BLK_T_WRITE_ZEROES => {
+                    if (self.features & VIRTIO_BLK_F_WRITE_ZEROES) == 0 {
+                        status = VIRTIO_BLK_S_UNSUPP;
+                    } else {
+                        let segs = match parse_discard_write_zeroes_segments(
+                            mem,
+                            &data_segs,
+                            self.config.seg_max,
+                        ) {
+                            Ok(v) => v,
+                            Err(_) => {
+                                status = VIRTIO_BLK_S_IOERR;
+                                Vec::new()
+                            }
+                        };
+
+                        if status == VIRTIO_BLK_S_OK {
+                            let blk_size =
+                                u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
+                            let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
+                            let disk_len = self.backend.len();
+
+                            // Buffer used for chunked zero writes. Use a block-size-aligned chunk so
+                            // backends that care about write alignment are not penalized.
+                            let blk_usize = usize::try_from(blk_size).unwrap_or(512);
+                            let max_chunk = 64 * 1024usize;
+                            let mut chunk_size = if blk_usize > max_chunk {
+                                blk_usize
+                            } else {
+                                (max_chunk / blk_usize).saturating_mul(blk_usize)
+                            };
+                            chunk_size = chunk_size.max(blk_usize).max(512);
+                            let zero_buf = vec![0u8; chunk_size];
+
+                            'seg_loop: for seg in &segs {
+                                let num_sectors = u64::from(seg.num_sectors);
+                                if seg.sector % align_sectors != 0
+                                    || num_sectors % align_sectors != 0
+                                {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
+
+                                let Some(mut byte_off) =
+                                    seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                else {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                };
+                                let Some(mut remaining) =
+                                    num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                else {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                };
+                                let Some(end_off) = byte_off.checked_add(remaining) else {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                };
+                                if end_off > disk_len {
+                                    status = VIRTIO_BLK_S_IOERR;
+                                    break;
+                                }
+
+                                while remaining != 0 {
+                                    let take = remaining.min(zero_buf.len() as u64) as usize;
+                                    if self.backend.write_at(byte_off, &zero_buf[..take]).is_err()
+                                    {
+                                        status = VIRTIO_BLK_S_IOERR;
+                                        break 'seg_loop;
+                                    }
+                                    byte_off = match byte_off.checked_add(take as u64) {
+                                        Some(v) => v,
+                                        None => {
+                                            status = VIRTIO_BLK_S_IOERR;
+                                            break 'seg_loop;
+                                        }
+                                    };
+                                    remaining = remaining.saturating_sub(take as u64);
+                                }
+                            }
                         }
                     }
                 }

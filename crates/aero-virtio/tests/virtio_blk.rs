@@ -3,7 +3,8 @@ use aero_platform::interrupts::msi::MsiMessage;
 use aero_storage::{DiskError as StorageDiskError, MemBackend, RawDisk, VirtualDisk};
 use aero_virtio::devices::blk::{
     BlockBackend, BlockBackendError, VirtioBlk, VIRTIO_BLK_S_IOERR, VIRTIO_BLK_S_UNSUPP,
-    VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
+    VIRTIO_BLK_T_DISCARD, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
+    VIRTIO_BLK_T_WRITE_ZEROES,
 };
 use aero_virtio::memory::{
     read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -480,6 +481,123 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_UNSUPP);
     assert_eq!(read_u32_le(&mem, USED_RING + 4 + 3 * 8 + 4).unwrap(), 0);
+}
+
+#[test]
+fn virtio_blk_discard_returns_ok() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    // Make the backing non-zero so the test also checks that DISCARD does not crash or scribble.
+    backing.borrow_mut()[512..1024].fill(0xa5);
+
+    let header = 0x7000;
+    let seg = 0x8000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_DISCARD).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    // One discard segment: sector 1, length 1 sector, flags 0.
+    write_u64_le(&mut mem, seg, 1).unwrap();
+    write_u32_le(&mut mem, seg + 8, 1).unwrap();
+    write_u32_le(&mut mem, seg + 12, 0).unwrap();
+
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, seg, 16, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+}
+
+#[test]
+fn virtio_blk_write_zeroes_writes_zeroes_and_returns_ok() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    let header = 0x7000;
+    let seg = 0x8000;
+    let status = 0x9000;
+
+    // Fill sectors 2..4 with non-zero data, then request WRITE_ZEROES for the same range.
+    let sector = 2u64;
+    let num_sectors = 2u32;
+    let off = (sector * 512) as usize;
+    let len = (u64::from(num_sectors) * 512) as usize;
+    backing.borrow_mut()[off..off + len].fill(0xa5);
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_WRITE_ZEROES).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    // One write-zeroes segment.
+    write_u64_le(&mut mem, seg, sector).unwrap();
+    write_u32_le(&mut mem, seg + 8, num_sectors).unwrap();
+    write_u32_le(&mut mem, seg + 12, 0).unwrap();
+
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, seg, 16, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert!(backing.borrow()[off..off + len].iter().all(|b| *b == 0));
+}
+
+#[test]
+fn virtio_blk_write_zeroes_rejects_out_of_bounds_requests() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    let header = 0x7000;
+    let seg = 0x8000;
+    let status = 0x9000;
+
+    // Mark the whole disk so we can validate the failed request doesn't modify it.
+    backing.borrow_mut().fill(0xa5);
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_WRITE_ZEROES).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    // `setup()` uses a 4096-byte backing store -> 8 sectors. Sector 7 + 2 sectors overflows.
+    write_u64_le(&mut mem, seg, 7).unwrap();
+    write_u32_le(&mut mem, seg + 8, 2).unwrap();
+    write_u32_le(&mut mem, seg + 12, 0).unwrap();
+
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, seg, 16, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+    assert!(backing.borrow().iter().all(|b| *b == 0xa5));
 }
 
 #[test]
