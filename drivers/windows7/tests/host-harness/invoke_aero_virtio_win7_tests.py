@@ -938,6 +938,33 @@ _QMP_TEST_MOUSE_HSCROLL_AXIS = "hscroll"  # QMP InputAxis enum (horizontal scrol
 _QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK = "hwheel"  # Older/alternate name (best-effort)
 
 
+def _qmp_deterministic_keyboard_modifier_events() -> list[dict[str, object]]:
+    """
+    A deterministic keyboard sequence that exercises:
+    - modifiers (Shift/Ctrl/Alt)
+    - a function key (F1)
+
+    Guest-side validation lives under:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|...
+    """
+    return [
+        # Shift + b.
+        _qmp_key_event("shift", down=True),
+        _qmp_key_event("b", down=True),
+        _qmp_key_event("b", down=False),
+        _qmp_key_event("shift", down=False),
+        # Ctrl.
+        _qmp_key_event("ctrl", down=True),
+        _qmp_key_event("ctrl", down=False),
+        # Alt.
+        _qmp_key_event("alt", down=True),
+        _qmp_key_event("alt", down=False),
+        # Function key.
+        _qmp_key_event("f1", down=True),
+        _qmp_key_event("f1", down=False),
+    ]
+
+
 def _qmp_deterministic_mouse_events(*, with_wheel: bool = False) -> list[dict[str, object]]:
     # Small relative motion + (optional) scroll + a left click.
     events: list[dict[str, object]] = [
@@ -981,6 +1008,16 @@ def _qmp_deterministic_tablet_events(*, x: int = 10000, y: int = 20000) -> list[
     ]
 
 
+def _qmp_deterministic_mouse_extra_button_events() -> list[dict[str, object]]:
+    """A deterministic mouse button sequence that exercises side/extra buttons."""
+    return [
+        _qmp_btn_event("side", down=True),
+        _qmp_btn_event("side", down=False),
+        _qmp_btn_event("extra", down=True),
+        _qmp_btn_event("extra", down=False),
+    ]
+
+
 @dataclass(frozen=True)
 class _VirtioInputQmpInjectInfo:
     keyboard_device: Optional[str]
@@ -988,7 +1025,7 @@ class _VirtioInputQmpInjectInfo:
 
 
 def _try_qmp_input_inject_virtio_input_events(
-    endpoint: _QmpEndpoint, *, with_wheel: bool = False
+    endpoint: _QmpEndpoint, *, with_wheel: bool = False, extended: bool = False
 ) -> _VirtioInputQmpInjectInfo:
     """
     Inject a small, deterministic keyboard + mouse sequence via QMP.
@@ -997,6 +1034,11 @@ def _try_qmp_input_inject_virtio_input_events(
       AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|...
     and optionally:
       AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|...
+
+    When `extended` is true, also inject additional events to exercise:
+      - virtio-input-events-modifiers (Shift/Ctrl/Alt/F1)
+      - virtio-input-events-buttons (side/extra)
+      - virtio-input-events-wheel (wheel)
     """
     def send(
         sock: socket.socket, events: list[dict[str, object]], *, device: Optional[str]
@@ -1031,8 +1073,9 @@ def _try_qmp_input_inject_virtio_input_events(
         kbd_device: Optional[str] = _VIRTIO_INPUT_QMP_KEYBOARD_ID
         mouse_device: Optional[str] = _VIRTIO_INPUT_QMP_MOUSE_ID
 
+        want_wheel = bool(with_wheel or extended)
         kbd_events = _qmp_deterministic_keyboard_events(qcode="a")
-        mouse_events = _qmp_deterministic_mouse_events(with_wheel=with_wheel)
+        mouse_events = _qmp_deterministic_mouse_events(with_wheel=want_wheel)
 
         # Split mouse events into one batch of rel axis events, followed by individual button events.
         rel_end = 0
@@ -1051,7 +1094,7 @@ def _try_qmp_input_inject_virtio_input_events(
         try:
             mouse_device = send(s, mouse_rel_events, device=mouse_device)
         except Exception as e:
-            if not with_wheel:
+            if not want_wheel:
                 raise
 
             # Some QEMU versions support horizontal scroll under a different axis name.
@@ -1073,16 +1116,30 @@ def _try_qmp_input_inject_virtio_input_events(
                 mouse_device = send(s, alt_events, device=mouse_device)
             except Exception as e2:
                 raise RuntimeError(
-                    "QMP input-send-event failed while injecting horizontal scroll for --with-input-wheel "
+                    "QMP input-send-event failed while injecting horizontal scroll for "
+                    "--with-input-wheel/--with-input-events-extended "
                     f"(tried axis='{_QMP_TEST_MOUSE_HSCROLL_AXIS}' then axis='{_QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK}'). "
                     "This likely means the running QEMU build does not support horizontal scroll injection; "
-                    "upgrade QEMU or omit --with-input-wheel. "
+                    "upgrade QEMU or omit those flags. "
                     f"hscroll_error={e!s}; hwheel_error={e2!s}"
                 ) from e2
         time.sleep(0.05)
         mouse_device = send(s, [mouse_btn_events[0]], device=mouse_device)
         time.sleep(0.05)
         mouse_device = send(s, [mouse_btn_events[1]], device=mouse_device)
+
+        if extended:
+            # Keyboard: modifiers + function key.
+            time.sleep(0.05)
+            for evt in _qmp_deterministic_keyboard_modifier_events():
+                kbd_device = send(s, [evt], device=kbd_device)
+                time.sleep(0.05)
+
+            # Mouse: side/extra + wheel.
+            time.sleep(0.05)
+            for evt in _qmp_deterministic_mouse_extra_button_events():
+                mouse_device = send(s, [evt], device=mouse_device)
+                time.sleep(0.05)
 
         return _VirtioInputQmpInjectInfo(keyboard_device=kbd_device, mouse_device=mouse_device)
 
@@ -1539,6 +1596,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--with-input-events-extended",
+        "--with-input-events-extra",
+        dest="with_input_events_extended",
+        action="store_true",
+        help=(
+            "Also inject and require additional virtio-input end-to-end markers:\n"
+            "  - virtio-input-events-modifiers (Shift/Ctrl/Alt + F1)\n"
+            "  - virtio-input-events-buttons   (side/extra mouse buttons)\n"
+            "  - virtio-input-events-wheel     (mouse wheel)\n"
+            "This implies --with-input-events, and requires the guest selftest to be configured with "
+            "--test-input-events-extended (or the corresponding env vars)."
+        ),
+    )
+    parser.add_argument(
         "--with-input-tablet-events",
         "--with-tablet-events",
         "--with-virtio-input-tablet-events",
@@ -1690,7 +1761,8 @@ def main() -> int:
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
     need_input_wheel = bool(getattr(args, "with_input_wheel", False))
-    need_input_events = bool(args.with_input_events) or need_input_wheel
+    need_input_events_extended = bool(getattr(args, "with_input_events_extended", False))
+    need_input_events = bool(args.with_input_events) or need_input_wheel or need_input_events_extended
     need_input_tablet_events = bool(getattr(args, "with_input_tablet_events", False))
     attach_virtio_tablet = bool(args.with_virtio_tablet or need_input_tablet_events)
     need_msix_check = bool(
@@ -1752,8 +1824,8 @@ def main() -> int:
             args.qemu_system, "virtio-mouse-pci"
         ):
             parser.error(
-                "--with-input-events/--with-virtio-input-events/--with-input-wheel requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
-                "Upgrade QEMU or omit virtio-input event injection."
+                "--with-input-events/--with-virtio-input-events/--with-input-wheel/--with-input-events-extended requires "
+                "QEMU virtio-keyboard-pci and virtio-mouse-pci support. Upgrade QEMU or omit input event injection."
             )
 
     if attach_virtio_tablet:
@@ -1801,7 +1873,12 @@ def main() -> int:
     #
     # Historically we enabled QMP only when we needed a graceful exit for `-audiodev wav` output, so we
     # wouldn't introduce extra host port/socket dependencies in non-audio harness runs. Input injection
-    # also requires QMP, but remains opt-in via --with-input-events/--with-virtio-input-events.
+    # also requires QMP, but remains opt-in via:
+    # - --with-input-events / --with-virtio-input-events
+    # - --with-input-wheel
+    # - --with-input-events-extended / --with-input-events-extra
+    # - --with-input-tablet-events / --with-tablet-events
+    # - --require-virtio-*-msix
     use_qmp = (
         (args.enable_virtio_snd and args.virtio_snd_audio_backend == "wav")
         or need_input_events
@@ -1836,6 +1913,8 @@ def main() -> int:
                         req_flags.append("--with-input-events/--with-virtio-input-events")
                     if need_input_wheel:
                         req_flags.append("--with-input-wheel")
+                    if need_input_events_extended:
+                        req_flags.append("--with-input-events-extended/--with-input-events-extra")
                     if need_input_tablet_events:
                         req_flags.append("--with-input-tablet-events/--with-tablet-events")
                     if need_msix_check:
@@ -1858,6 +1937,8 @@ def main() -> int:
             req_flags.append("--with-input-events/--with-virtio-input-events")
         if need_input_wheel:
             req_flags.append("--with-input-wheel")
+        if need_input_events_extended:
+            req_flags.append("--with-input-events-extended/--with-input-events-extra")
         if need_input_tablet_events:
             req_flags.append("--with-input-tablet-events/--with-tablet-events")
         if need_msix_check:
@@ -2180,7 +2261,17 @@ def main() -> int:
             saw_virtio_input_wheel_pass = False
             saw_virtio_input_wheel_fail = False
             saw_virtio_input_wheel_skip = False
+            saw_virtio_input_events_modifiers_pass = False
+            saw_virtio_input_events_modifiers_fail = False
+            saw_virtio_input_events_modifiers_skip = False
+            saw_virtio_input_events_buttons_pass = False
+            saw_virtio_input_events_buttons_fail = False
+            saw_virtio_input_events_buttons_skip = False
+            saw_virtio_input_events_wheel_pass = False
+            saw_virtio_input_events_wheel_fail = False
+            saw_virtio_input_events_wheel_skip = False
             input_events_inject_attempts = 0
+            max_input_events_inject_attempts = 30 if need_input_events_extended else 20
             next_input_events_inject = 0.0
             saw_virtio_input_tablet_events_ready = False
             saw_virtio_input_tablet_events_pass = False
@@ -2278,6 +2369,52 @@ def main() -> int:
                         saw_virtio_input_wheel_skip = True
 
                     if (
+                        not saw_virtio_input_events_modifiers_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|PASS" in tail
+                    ):
+                        saw_virtio_input_events_modifiers_pass = True
+                    if (
+                        not saw_virtio_input_events_modifiers_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|FAIL" in tail
+                    ):
+                        saw_virtio_input_events_modifiers_fail = True
+                    if (
+                        not saw_virtio_input_events_modifiers_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|SKIP" in tail
+                    ):
+                        saw_virtio_input_events_modifiers_skip = True
+                    if (
+                        not saw_virtio_input_events_buttons_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|PASS" in tail
+                    ):
+                        saw_virtio_input_events_buttons_pass = True
+                    if (
+                        not saw_virtio_input_events_buttons_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|FAIL" in tail
+                    ):
+                        saw_virtio_input_events_buttons_fail = True
+                    if (
+                        not saw_virtio_input_events_buttons_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|SKIP" in tail
+                    ):
+                        saw_virtio_input_events_buttons_skip = True
+                    if (
+                        not saw_virtio_input_events_wheel_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS" in tail
+                    ):
+                        saw_virtio_input_events_wheel_pass = True
+                    if (
+                        not saw_virtio_input_events_wheel_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|FAIL" in tail
+                    ):
+                        saw_virtio_input_events_wheel_fail = True
+                    if (
+                        not saw_virtio_input_events_wheel_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|SKIP" in tail
+                    ):
+                        saw_virtio_input_events_wheel_skip = True
+
+                    if (
                         not saw_virtio_input_tablet_events_ready
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY" in tail
                     ):
@@ -2319,6 +2456,35 @@ def main() -> int:
                             _print_tail(serial_log)
                             result_code = 1
                             break
+
+                    if need_input_events_extended:
+                        if (
+                            saw_virtio_input_events_modifiers_skip
+                            or saw_virtio_input_events_buttons_skip
+                            or saw_virtio_input_events_wheel_skip
+                        ):
+                            print(
+                                "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: virtio-input-events-extended markers were skipped but "
+                                "--with-input-events-extended was enabled (provision the guest with --test-input-events-extended)",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+                        if (
+                            saw_virtio_input_events_modifiers_fail
+                            or saw_virtio_input_events_buttons_fail
+                            or saw_virtio_input_events_wheel_fail
+                        ):
+                            print(
+                                "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: one or more virtio-input-events-* markers reported FAIL "
+                                "while --with-input-events-extended was enabled",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+
                     if need_input_wheel:
                         if saw_virtio_input_wheel_skip:
                             print(
@@ -2490,6 +2656,59 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                            if need_input_events_extended:
+                                if (
+                                    saw_virtio_input_events_modifiers_fail
+                                    or saw_virtio_input_events_buttons_fail
+                                    or saw_virtio_input_events_wheel_fail
+                                ):
+                                    print(
+                                        "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: selftest RESULT=PASS but a virtio-input-events-* marker reported FAIL "
+                                        "while --with-input-events-extended was enabled",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                                # Each sub-marker must PASS (not SKIP/missing).
+                                for name, saw_pass, saw_skip in (
+                                    (
+                                        "virtio-input-events-modifiers",
+                                        saw_virtio_input_events_modifiers_pass,
+                                        saw_virtio_input_events_modifiers_skip,
+                                    ),
+                                    (
+                                        "virtio-input-events-buttons",
+                                        saw_virtio_input_events_buttons_pass,
+                                        saw_virtio_input_events_buttons_skip,
+                                    ),
+                                    (
+                                        "virtio-input-events-wheel",
+                                        saw_virtio_input_events_wheel_pass,
+                                        saw_virtio_input_events_wheel_skip,
+                                    ),
+                                ):
+                                    if saw_pass:
+                                        continue
+                                    if saw_skip:
+                                        print(
+                                            f"FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: {name} was skipped (flag_not_set) but "
+                                            "--with-input-events-extended was enabled (provision the guest with --test-input-events-extended)",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(
+                                            f"FAIL: MISSING_VIRTIO_INPUT_EVENTS_EXTENDED: did not observe {name} PASS marker while "
+                                            "--with-input-events-extended was enabled",
+                                            file=sys.stderr,
+                                        )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if result_code is not None:
+                                    break
+
                             if need_input_wheel:
                                 if saw_virtio_input_wheel_fail:
                                     print(
@@ -2511,6 +2730,33 @@ def main() -> int:
                                         print(
                                             "FAIL: MISSING_VIRTIO_INPUT_WHEEL: selftest RESULT=PASS but did not emit virtio-input-wheel test marker "
                                             "while --with-input-wheel was enabled",
+                                            file=sys.stderr,
+                                        )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                            if need_input_tablet_events:
+                                if saw_virtio_input_tablet_events_fail:
+                                    print(
+                                        "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: selftest RESULT=PASS but virtio-input-tablet-events test reported FAIL "
+                                        "while --with-input-tablet-events/--with-tablet-events was enabled",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_input_tablet_events_pass:
+                                    if saw_virtio_input_tablet_events_skip:
+                                        print(
+                                            "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
+                                            "--with-input-tablet-events/--with-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: selftest RESULT=PASS but did not emit virtio-input-tablet-events test marker "
+                                            "while --with-input-tablet-events/--with-tablet-events was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
@@ -2713,6 +2959,82 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                        if need_input_events_extended:
+                            if (
+                                saw_virtio_input_events_modifiers_fail
+                                or saw_virtio_input_events_buttons_fail
+                                or saw_virtio_input_events_wheel_fail
+                            ):
+                                print(
+                                    "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: a virtio-input-events-* marker reported FAIL while "
+                                    "--with-input-events-extended was enabled",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            # Each sub-marker must PASS (not SKIP/missing).
+                            for name, saw_pass, saw_skip in (
+                                (
+                                    "virtio-input-events-modifiers",
+                                    saw_virtio_input_events_modifiers_pass,
+                                    saw_virtio_input_events_modifiers_skip,
+                                ),
+                                (
+                                    "virtio-input-events-buttons",
+                                    saw_virtio_input_events_buttons_pass,
+                                    saw_virtio_input_events_buttons_skip,
+                                ),
+                                (
+                                    "virtio-input-events-wheel",
+                                    saw_virtio_input_events_wheel_pass,
+                                    saw_virtio_input_events_wheel_skip,
+                                ),
+                            ):
+                                if saw_pass:
+                                    continue
+                                if saw_skip:
+                                    print(
+                                        f"FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: {name} was skipped (flag_not_set) but "
+                                        "--with-input-events-extended was enabled (provision the guest with --test-input-events-extended)",
+                                        file=sys.stderr,
+                                    )
+                                else:
+                                    print(
+                                        f"FAIL: MISSING_VIRTIO_INPUT_EVENTS_EXTENDED: did not observe {name} PASS marker while "
+                                        "--with-input-events-extended was enabled",
+                                        file=sys.stderr,
+                                    )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if result_code is not None:
+                                break
+
+                        if need_input_wheel:
+                            if saw_virtio_input_wheel_fail:
+                                print(
+                                    "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while --with-input-wheel was enabled",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if not saw_virtio_input_wheel_pass:
+                                if saw_virtio_input_wheel_skip:
+                                    print(
+                                        "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but --with-input-wheel was enabled",
+                                        file=sys.stderr,
+                                    )
+                                else:
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_INPUT_WHEEL: did not observe virtio-input-wheel PASS marker while --with-input-wheel was enabled",
+                                        file=sys.stderr,
+                                    )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+
                         if need_input_tablet_events:
                             if saw_virtio_input_tablet_events_fail:
                                 print(
@@ -2841,14 +3163,16 @@ def main() -> int:
                     and not saw_virtio_input_events_fail
                     and not saw_virtio_input_events_skip
                     and qmp_endpoint is not None
-                    and input_events_inject_attempts < 20
+                    and input_events_inject_attempts < max_input_events_inject_attempts
                     and time.monotonic() >= next_input_events_inject
                 ):
                     input_events_inject_attempts += 1
                     next_input_events_inject = time.monotonic() + 0.5
                     try:
                         info = _try_qmp_input_inject_virtio_input_events(
-                            qmp_endpoint, with_wheel=need_input_wheel
+                            qmp_endpoint,
+                            with_wheel=need_input_wheel or need_input_events_extended,
+                            extended=need_input_events_extended,
                         )
                         kbd_mode = "broadcast" if info.keyboard_device is None else "device"
                         mouse_mode = "broadcast" if info.mouse_device is None else "device"
@@ -2952,6 +3276,68 @@ def main() -> int:
                         ):
                             saw_virtio_input_events_skip = True
                         if (
+                            not saw_virtio_input_wheel_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS" in tail
+                        ):
+                            saw_virtio_input_wheel_pass = True
+                        if (
+                            not saw_virtio_input_wheel_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL" in tail
+                        ):
+                            saw_virtio_input_wheel_fail = True
+                        if (
+                            not saw_virtio_input_wheel_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP" in tail
+                        ):
+                            saw_virtio_input_wheel_skip = True
+
+                        if (
+                            not saw_virtio_input_events_modifiers_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|PASS" in tail
+                        ):
+                            saw_virtio_input_events_modifiers_pass = True
+                        if (
+                            not saw_virtio_input_events_modifiers_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|FAIL" in tail
+                        ):
+                            saw_virtio_input_events_modifiers_fail = True
+                        if (
+                            not saw_virtio_input_events_modifiers_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|SKIP" in tail
+                        ):
+                            saw_virtio_input_events_modifiers_skip = True
+                        if (
+                            not saw_virtio_input_events_buttons_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|PASS" in tail
+                        ):
+                            saw_virtio_input_events_buttons_pass = True
+                        if (
+                            not saw_virtio_input_events_buttons_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|FAIL" in tail
+                        ):
+                            saw_virtio_input_events_buttons_fail = True
+                        if (
+                            not saw_virtio_input_events_buttons_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|SKIP" in tail
+                        ):
+                            saw_virtio_input_events_buttons_skip = True
+                        if (
+                            not saw_virtio_input_events_wheel_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS" in tail
+                        ):
+                            saw_virtio_input_events_wheel_pass = True
+                        if (
+                            not saw_virtio_input_events_wheel_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|FAIL" in tail
+                        ):
+                            saw_virtio_input_events_wheel_fail = True
+                        if (
+                            not saw_virtio_input_events_wheel_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|SKIP" in tail
+                        ):
+                            saw_virtio_input_events_wheel_skip = True
+
+                        if (
                             not saw_virtio_input_tablet_events_ready
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY" in tail
                         ):
@@ -2971,21 +3357,6 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP" in tail
                         ):
                             saw_virtio_input_tablet_events_skip = True
-                        if (
-                            not saw_virtio_input_wheel_pass
-                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS" in tail
-                        ):
-                            saw_virtio_input_wheel_pass = True
-                        if (
-                            not saw_virtio_input_wheel_fail
-                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL" in tail
-                        ):
-                            saw_virtio_input_wheel_fail = True
-                        if (
-                            not saw_virtio_input_wheel_skip
-                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP" in tail
-                        ):
-                            saw_virtio_input_wheel_skip = True
                         if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
                             saw_virtio_snd_pass = True
                         if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
@@ -3251,6 +3622,57 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                            if need_input_events_extended:
+                                if (
+                                    saw_virtio_input_events_modifiers_fail
+                                    or saw_virtio_input_events_buttons_fail
+                                    or saw_virtio_input_events_wheel_fail
+                                ):
+                                    print(
+                                        "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: a virtio-input-events-* marker reported FAIL while "
+                                        "--with-input-events-extended was enabled",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                for name, saw_pass, saw_skip in (
+                                    (
+                                        "virtio-input-events-modifiers",
+                                        saw_virtio_input_events_modifiers_pass,
+                                        saw_virtio_input_events_modifiers_skip,
+                                    ),
+                                    (
+                                        "virtio-input-events-buttons",
+                                        saw_virtio_input_events_buttons_pass,
+                                        saw_virtio_input_events_buttons_skip,
+                                    ),
+                                    (
+                                        "virtio-input-events-wheel",
+                                        saw_virtio_input_events_wheel_pass,
+                                        saw_virtio_input_events_wheel_skip,
+                                    ),
+                                ):
+                                    if saw_pass:
+                                        continue
+                                    if saw_skip:
+                                        print(
+                                            f"FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: {name} was skipped (flag_not_set) but "
+                                            "--with-input-events-extended was enabled (provision the guest with --test-input-events-extended)",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(
+                                            f"FAIL: MISSING_VIRTIO_INPUT_EVENTS_EXTENDED: did not observe {name} PASS marker while "
+                                            "--with-input-events-extended was enabled",
+                                            file=sys.stderr,
+                                        )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if result_code is not None:
+                                    break
+
                             if need_input_tablet_events:
                                 if saw_virtio_input_tablet_events_fail:
                                     print(
@@ -3273,9 +3695,9 @@ def main() -> int:
                                             "--with-input-tablet-events/--with-tablet-events was enabled",
                                             file=sys.stderr,
                                         )
-                                        _print_tail(serial_log)
-                                        result_code = 1
-                                        break
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             if need_input_wheel:
                                 if saw_virtio_input_wheel_fail:
                                     print(

@@ -95,6 +95,14 @@ struct Options {
   // If set, run an end-to-end virtio-input tablet (absolute pointer) event delivery test.
   // This is intended to be paired with host-side QMP `input-send-event` injection of `abs` events.
   bool test_input_tablet_events = false;
+  // Optional: expand the virtio-input end-to-end report test to cover additional HID usages:
+  // - keyboard modifiers + function keys
+  // - mouse side buttons
+  // - mouse wheel
+  // These are intentionally separate so the default `--test-input-events` path remains stable.
+  bool test_input_events_modifiers = false;
+  bool test_input_events_buttons = false;
+  bool test_input_events_wheel = false;
 
   // If set, require the virtio-input driver to be using MSI-X (message-signaled interrupts).
   // Without this flag the selftest still emits an informational virtio-input-msix marker.
@@ -3371,11 +3379,30 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
 
 struct VirtioInputEventsTestResult {
   bool ok = false;
+  bool modifiers_ok = false;
+  bool buttons_ok = false;
+  bool wheel_ok = false;
+
   bool saw_key_a_down = false;
   bool saw_key_a_up = false;
   bool saw_mouse_move = false;
   bool saw_mouse_left_down = false;
   bool saw_mouse_left_up = false;
+
+  // Modifier / extra keyboard coverage.
+  bool saw_shift_b = false;
+  bool saw_ctrl_down = false;
+  bool saw_ctrl_up = false;
+  bool saw_alt_down = false;
+  bool saw_alt_up = false;
+  bool saw_f1_down = false;
+  bool saw_f1_up = false;
+
+  // Extra mouse buttons / wheel.
+  bool saw_mouse_side_down = false;
+  bool saw_mouse_side_up = false;
+  bool saw_mouse_extra_down = false;
+  bool saw_mouse_extra_up = false;
   bool saw_mouse_wheel = false;
   bool saw_mouse_hwheel = false;
   bool saw_mouse_wheel_expected = false;
@@ -3389,7 +3416,9 @@ struct VirtioInputEventsTestResult {
   int mouse_wheel_total = 0;
   int mouse_hwheel_total = 0;
   int keyboard_reports = 0;
+  int keyboard_bad_reports = 0;
   int mouse_reports = 0;
+  int mouse_bad_reports = 0;
   std::string reason;
   DWORD win32_error = 0;
 };
@@ -3640,31 +3669,82 @@ struct HidOverlappedReader {
   }
 };
 
+static bool ContainsKeyUsage(const uint8_t* keys, size_t len, uint8_t usage) {
+  if (!keys) return false;
+  for (size_t i = 0; i < len; i++) {
+    if (keys[i] == usage) return true;
+  }
+  return false;
+}
+
+static bool VirtioInputEventsBaseOk(const VirtioInputEventsTestResult& out) {
+  return out.saw_key_a_down && out.saw_key_a_up && out.saw_mouse_move && out.saw_mouse_left_down &&
+         out.saw_mouse_left_up;
+}
+
+static bool VirtioInputEventsModifiersOk(const VirtioInputEventsTestResult& out) {
+  return out.saw_shift_b && out.saw_ctrl_down && out.saw_ctrl_up && out.saw_alt_down && out.saw_alt_up &&
+         out.saw_f1_down && out.saw_f1_up;
+}
+
+static bool VirtioInputEventsButtonsOk(const VirtioInputEventsTestResult& out) {
+  return out.saw_mouse_side_down && out.saw_mouse_side_up && out.saw_mouse_extra_down &&
+         out.saw_mouse_extra_up;
+}
+
+static bool VirtioInputEventsWheelOk(const VirtioInputEventsTestResult& out) {
+  constexpr int kExpectedWheelDelta = 1;
+  constexpr int kExpectedHWheelDelta = -2;
+  return out.saw_mouse_wheel && out.saw_mouse_hwheel && out.mouse_wheel_total == kExpectedWheelDelta &&
+         out.mouse_hwheel_total == kExpectedHWheelDelta;
+}
+
 static void ProcessKeyboardReport(VirtioInputEventsTestResult& out, const uint8_t* buf, DWORD len) {
   if (!buf || len == 0) return;
 
-  size_t off = 0;
   // virtio-input keyboard input report is typically 9 bytes with ReportID=1:
   //   [1][mod][res][k1..k6]
-  if (len >= 9 && buf[0] == 1) off = 1;
-  if (len < off + 2) return;
-
-  const uint8_t modifiers = buf[off];
-  const uint8_t* keys = buf + off + 2;
-  // Boot keyboard layout exposes up to 6 simultaneous key usages.
-  const size_t key_count = std::min<size_t>(6, static_cast<size_t>(len) - (off + 2));
-
-  bool saw_a = false;
-  bool all_zero = true;
-  for (size_t i = 0; i < key_count; i++) {
-    if (keys[i] == 0x04) saw_a = true; // HID Usage ID for 'A'
-    if (keys[i] != 0) all_zero = false;
+  if (len < 9 || buf[0] != 1) {
+    out.keyboard_bad_reports++;
+    return;
   }
 
-  if (saw_a) out.saw_key_a_down = true;
-  if (out.saw_key_a_down && modifiers == 0 && all_zero) {
-    out.saw_key_a_up = true;
+  const uint8_t modifiers = buf[1];
+  const uint8_t* keys = buf + 3;
+  const size_t key_count = 6;
+
+  constexpr uint8_t kUsageA = 0x04;
+  constexpr uint8_t kUsageB = 0x05;
+  constexpr uint8_t kUsageF1 = 0x3A;
+
+  constexpr uint8_t kModCtrl = 0x01 | 0x10;
+  constexpr uint8_t kModShift = 0x02 | 0x20;
+  constexpr uint8_t kModAlt = 0x04 | 0x40;
+
+  const bool has_a = ContainsKeyUsage(keys, key_count, kUsageA);
+  const bool has_b = ContainsKeyUsage(keys, key_count, kUsageB);
+  const bool has_f1 = ContainsKeyUsage(keys, key_count, kUsageF1);
+
+  // Base: 'a' down/up.
+  if (has_a) out.saw_key_a_down = true;
+  if (out.saw_key_a_down && !has_a) out.saw_key_a_up = true;
+
+  // Extended: Shift + 'b'.
+  if ((modifiers & kModShift) != 0 && has_b) {
+    out.saw_shift_b = true;
   }
+
+  // Extended: Ctrl down/up.
+  if ((modifiers & kModCtrl) != 0) out.saw_ctrl_down = true;
+  if (out.saw_ctrl_down && (modifiers & kModCtrl) == 0) out.saw_ctrl_up = true;
+
+  // Extended: Alt down/up.
+  if ((modifiers & kModAlt) != 0) out.saw_alt_down = true;
+  if (out.saw_alt_down && (modifiers & kModAlt) == 0) out.saw_alt_up = true;
+
+  // Extended: F1 down/up.
+  if (has_f1) out.saw_f1_down = true;
+  if (out.saw_f1_down && !has_f1) out.saw_f1_up = true;
 }
 
 static void ProcessMouseReport(VirtioInputEventsTestResult& out, const uint8_t* buf, DWORD len) {
@@ -3673,17 +3753,25 @@ static void ProcessMouseReport(VirtioInputEventsTestResult& out, const uint8_t* 
   size_t off = 0;
   // virtio-input mouse input report is typically 6 bytes with ReportID=2:
   //   [2][buttons][dx][dy][wheel][pan]
+  //
+  // Some variants omit the report ID prefix (so the report begins with [buttons]).
+  // Avoid mis-detecting a report ID when the first byte is simply a button bitmask by
+  // requiring the longer expected size when checking buf[0]==2.
   if (len >= 6 && buf[0] == 2) off = 1;
-  if (len < off + 3) return;
+  if (len < off + 3) {
+    out.mouse_bad_reports++;
+    return;
+  }
 
   const uint8_t buttons = buf[off + 0];
   const int8_t dx = static_cast<int8_t>(buf[off + 1]);
   const int8_t dy = static_cast<int8_t>(buf[off + 2]);
 
-  if (dx != 0 || dy != 0) out.saw_mouse_move = true;
-
   const int8_t wheel = (len >= off + 4) ? static_cast<int8_t>(buf[off + 3]) : 0;
   const int8_t pan = (len >= off + 5) ? static_cast<int8_t>(buf[off + 4]) : 0;
+
+  if (dx != 0 || dy != 0) out.saw_mouse_move = true;
+
   if (wheel != 0) {
     out.saw_mouse_wheel = true;
     out.mouse_wheel_total += wheel;
@@ -3710,9 +3798,20 @@ static void ProcessMouseReport(VirtioInputEventsTestResult& out, const uint8_t* 
   const bool left = (buttons & 0x01) != 0;
   if (left) out.saw_mouse_left_down = true;
   if (out.saw_mouse_left_down && !left) out.saw_mouse_left_up = true;
+
+  // Boot mouse: buttons are bit-indexed (Button 1..N). QEMU maps "side"/"extra" to
+  // button4/button5 on most backends.
+  const bool side = (buttons & 0x08) != 0;
+  if (side) out.saw_mouse_side_down = true;
+  if (out.saw_mouse_side_down && !side) out.saw_mouse_side_up = true;
+
+  const bool extra = (buttons & 0x10) != 0;
+  if (extra) out.saw_mouse_extra_down = true;
+  if (out.saw_mouse_extra_down && !extra) out.saw_mouse_extra_up = true;
 }
 
-static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const VirtioInputTestResult& input) {
+static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const VirtioInputTestResult& input,
+                                                         bool want_modifiers, bool want_buttons, bool want_wheel) {
   VirtioInputEventsTestResult out{};
 
   std::wstring keyboard_path = input.keyboard_device_path;
@@ -3810,15 +3909,14 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const Virt
 
   log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY");
 
-  const DWORD deadline_ms = GetTickCount() + 10000;
+  const DWORD timeout_ms = (want_modifiers || want_buttons || want_wheel) ? 15000 : 10000;
+  const DWORD deadline_ms = GetTickCount() + timeout_ms;
   bool base_ok = false;
   DWORD wheel_grace_deadline_ms = 0;
+  const bool want_any_extra = want_modifiers || want_buttons || want_wheel;
   while (static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
-    const bool have_base = out.saw_key_a_down && out.saw_key_a_up && out.saw_mouse_move &&
-                           out.saw_mouse_left_down && out.saw_mouse_left_up;
+    const bool have_base = VirtioInputEventsBaseOk(out);
     if (have_base && !base_ok) {
-      // Base test succeeded. Keep reading for a short grace window so optional wheel/hwheel
-      // events injected by the host harness can be observed without delaying the common case.
       base_ok = true;
       wheel_grace_deadline_ms = GetTickCount() + 250;
       if (static_cast<int32_t>(wheel_grace_deadline_ms - deadline_ms) > 0) {
@@ -3826,17 +3924,27 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const Virt
       }
     }
 
-    if (base_ok) {
-      // Stop early once we've either seen both wheel axes or the grace window expires.
+    if (want_any_extra) {
+      const bool mods_ok = VirtioInputEventsModifiersOk(out);
+      const bool btn_ok = VirtioInputEventsButtonsOk(out);
+      const bool wheel_ok = VirtioInputEventsWheelOk(out);
+      if (have_base && (!want_modifiers || mods_ok) && (!want_buttons || btn_ok) && (!want_wheel || wheel_ok)) {
+        break;
+      }
+    } else if (base_ok) {
+      // Base test succeeded. Keep reading for a short grace window so optional wheel/hwheel
+      // events injected by the host harness can be observed without delaying the common case.
       if ((out.saw_mouse_wheel && out.saw_mouse_hwheel) ||
           static_cast<int32_t>(GetTickCount() - wheel_grace_deadline_ms) >= 0) {
-        out.ok = true;
         break;
       }
     }
 
     const DWORD now = GetTickCount();
-    const DWORD effective_deadline_ms = base_ok ? wheel_grace_deadline_ms : deadline_ms;
+    DWORD effective_deadline_ms = deadline_ms;
+    if (!want_any_extra && base_ok) {
+      effective_deadline_ms = wheel_grace_deadline_ms;
+    }
     const int32_t diff = static_cast<int32_t>(effective_deadline_ms - now);
     const DWORD timeout = diff > 0 ? static_cast<DWORD>(diff) : 0;
 
@@ -3877,7 +3985,15 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const Virt
   kbd.CancelAndClose();
   mouse.CancelAndClose();
 
-  if (out.ok) return out;
+  const bool base = VirtioInputEventsBaseOk(out);
+  out.ok = out.reason.empty() && base;
+  out.modifiers_ok = out.ok && VirtioInputEventsModifiersOk(out);
+  out.buttons_ok = out.ok && VirtioInputEventsButtonsOk(out);
+  out.wheel_ok = out.ok && VirtioInputEventsWheelOk(out);
+
+  const bool all_requested_ok = out.ok && (!want_modifiers || out.modifiers_ok) && (!want_buttons || out.buttons_ok) &&
+                                (!want_wheel || out.wheel_ok);
+  if (all_requested_ok) return out;
 
   if (out.reason.empty()) {
     out.reason = "timeout";
@@ -7954,6 +8070,15 @@ static void PrintUsage() {
       "  --test-input-events       Run virtio-input end-to-end HID input report test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1)\n"
       "  --require-input-msix      Fail if virtio-input is not using MSI-X interrupts\n"
+      "  --test-input-events-extended  Also test modifiers/buttons/wheel via additional markers:\n"
+      "                           virtio-input-events-modifiers/buttons/wheel\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1)\n"
+      "  --test-input-events-modifiers  Enable virtio-input-events-modifiers subtest\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_MODIFIERS=1)\n"
+      "  --test-input-events-buttons    Enable virtio-input-events-buttons subtest\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_BUTTONS=1)\n"
+      "  --test-input-events-wheel      Enable virtio-input-events-wheel subtest\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_WHEEL=1)\n"
       "  --test-input-tablet-events Run virtio-input tablet (absolute pointer) HID input report test (optional)\n"
       "                           (alias: --test-tablet-events)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1)\n"
@@ -8044,6 +8169,20 @@ int wmain(int argc, wchar_t** argv) {
       opt.require_snd = true;
     } else if (arg == L"--test-input-events") {
       opt.test_input_events = true;
+    } else if (arg == L"--test-input-events-extended") {
+      opt.test_input_events = true;
+      opt.test_input_events_modifiers = true;
+      opt.test_input_events_buttons = true;
+      opt.test_input_events_wheel = true;
+    } else if (arg == L"--test-input-events-modifiers") {
+      opt.test_input_events = true;
+      opt.test_input_events_modifiers = true;
+    } else if (arg == L"--test-input-events-buttons") {
+      opt.test_input_events = true;
+      opt.test_input_events_buttons = true;
+    } else if (arg == L"--test-input-events-wheel") {
+      opt.test_input_events = true;
+      opt.test_input_events_wheel = true;
     } else if (arg == L"--test-input-tablet-events" || arg == L"--test-tablet-events") {
       opt.test_input_tablet_events = true;
     } else if (arg == L"--require-input-msix") {
@@ -8096,6 +8235,24 @@ int wmain(int argc, wchar_t** argv) {
 
   if (!opt.test_input_events && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS")) {
     opt.test_input_events = true;
+  }
+  if (EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED")) {
+    opt.test_input_events = true;
+    opt.test_input_events_modifiers = true;
+    opt.test_input_events_buttons = true;
+    opt.test_input_events_wheel = true;
+  }
+  if (EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_MODIFIERS")) {
+    opt.test_input_events = true;
+    opt.test_input_events_modifiers = true;
+  }
+  if (EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_BUTTONS")) {
+    opt.test_input_events = true;
+    opt.test_input_events_buttons = true;
+  }
+  if (EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_WHEEL")) {
+    opt.test_input_events = true;
+    opt.test_input_events_wheel = true;
   }
 
   if (!opt.test_input_tablet_events &&
@@ -8361,26 +8518,35 @@ int wmain(int argc, wchar_t** argv) {
       }
     }
   }
+  const bool want_input_modifiers = opt.test_input_events_modifiers;
+  const bool want_input_buttons = opt.test_input_events_buttons;
+  const bool want_input_wheel = opt.test_input_events_wheel;
 
   if (!opt.test_input_events) {
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|SKIP|flag_not_set");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|SKIP|flag_not_set");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|SKIP|flag_not_set");
   } else {
-    const auto input_events = VirtioInputEventsTest(log, input);
+    const auto input_events = VirtioInputEventsTest(log, input, want_input_modifiers, want_input_buttons,
+                                                    want_input_wheel);
+
     if (input_events.ok) {
       log.Logf(
-          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|kbd_reports=%d|mouse_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
-          input_events.keyboard_reports, input_events.mouse_reports, input_events.saw_key_a_down ? 1 : 0,
-          input_events.saw_key_a_up ? 1 : 0, input_events.saw_mouse_move ? 1 : 0,
-          input_events.saw_mouse_left_down ? 1 : 0, input_events.saw_mouse_left_up ? 1 : 0);
-    } else {
-      log.Logf(
-          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|reason=%s|err=%lu|kbd_reports=%d|mouse_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
-          input_events.reason.empty() ? "unknown" : input_events.reason.c_str(),
-          static_cast<unsigned long>(input_events.win32_error), input_events.keyboard_reports,
-          input_events.mouse_reports, input_events.saw_key_a_down ? 1 : 0, input_events.saw_key_a_up ? 1 : 0,
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|kbd_reports=%d|mouse_reports=%d|kbd_bad_reports=%d|mouse_bad_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
+          input_events.keyboard_reports, input_events.mouse_reports, input_events.keyboard_bad_reports,
+          input_events.mouse_bad_reports, input_events.saw_key_a_down ? 1 : 0, input_events.saw_key_a_up ? 1 : 0,
           input_events.saw_mouse_move ? 1 : 0, input_events.saw_mouse_left_down ? 1 : 0,
           input_events.saw_mouse_left_up ? 1 : 0);
+    } else {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|reason=%s|err=%lu|kbd_reports=%d|mouse_reports=%d|kbd_bad_reports=%d|mouse_bad_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
+          input_events.reason.empty() ? "unknown" : input_events.reason.c_str(),
+          static_cast<unsigned long>(input_events.win32_error), input_events.keyboard_reports,
+          input_events.mouse_reports, input_events.keyboard_bad_reports, input_events.mouse_bad_reports,
+          input_events.saw_key_a_down ? 1 : 0, input_events.saw_key_a_up ? 1 : 0, input_events.saw_mouse_move ? 1 : 0,
+          input_events.saw_mouse_left_down ? 1 : 0, input_events.saw_mouse_left_up ? 1 : 0);
     }
     all_ok = all_ok && input_events.ok;
 
@@ -8419,6 +8585,63 @@ int wmain(int argc, wchar_t** argv) {
           kExpectedMouseHWheelDelta, input_events.mouse_wheel_events, input_events.mouse_hwheel_events,
           input_events.saw_mouse_wheel_expected ? 1 : 0, input_events.saw_mouse_hwheel_expected ? 1 : 0);
     }
+
+    if (!want_input_modifiers) {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|SKIP|flag_not_set");
+    } else if (input_events.modifiers_ok) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|PASS|kbd_reports=%d|kbd_bad_reports=%d|shift_b=%d|ctrl=%d|alt=%d|f1=%d",
+          input_events.keyboard_reports, input_events.keyboard_bad_reports, input_events.saw_shift_b ? 1 : 0,
+          (input_events.saw_ctrl_down && input_events.saw_ctrl_up) ? 1 : 0,
+          (input_events.saw_alt_down && input_events.saw_alt_up) ? 1 : 0,
+          (input_events.saw_f1_down && input_events.saw_f1_up) ? 1 : 0);
+    } else {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|FAIL|reason=%s|err=%lu|kbd_reports=%d|kbd_bad_reports=%d|shift_b=%d|ctrl_down=%d|ctrl_up=%d|alt_down=%d|alt_up=%d|f1_down=%d|f1_up=%d",
+          input_events.reason.empty() ? "unknown" : input_events.reason.c_str(),
+          static_cast<unsigned long>(input_events.win32_error), input_events.keyboard_reports,
+          input_events.keyboard_bad_reports, input_events.saw_shift_b ? 1 : 0, input_events.saw_ctrl_down ? 1 : 0,
+          input_events.saw_ctrl_up ? 1 : 0, input_events.saw_alt_down ? 1 : 0, input_events.saw_alt_up ? 1 : 0,
+          input_events.saw_f1_down ? 1 : 0, input_events.saw_f1_up ? 1 : 0);
+    }
+    if (want_input_modifiers) all_ok = all_ok && input_events.modifiers_ok;
+
+    if (!want_input_buttons) {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|SKIP|flag_not_set");
+    } else if (input_events.buttons_ok) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|PASS|mouse_reports=%d|mouse_bad_reports=%d|side_down=%d|side_up=%d|extra_down=%d|extra_up=%d",
+          input_events.mouse_reports, input_events.mouse_bad_reports, input_events.saw_mouse_side_down ? 1 : 0,
+          input_events.saw_mouse_side_up ? 1 : 0, input_events.saw_mouse_extra_down ? 1 : 0,
+          input_events.saw_mouse_extra_up ? 1 : 0);
+    } else {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|FAIL|reason=%s|err=%lu|mouse_reports=%d|mouse_bad_reports=%d|side_down=%d|side_up=%d|extra_down=%d|extra_up=%d",
+          input_events.reason.empty() ? "unknown" : input_events.reason.c_str(),
+          static_cast<unsigned long>(input_events.win32_error), input_events.mouse_reports, input_events.mouse_bad_reports,
+          input_events.saw_mouse_side_down ? 1 : 0, input_events.saw_mouse_side_up ? 1 : 0,
+          input_events.saw_mouse_extra_down ? 1 : 0, input_events.saw_mouse_extra_up ? 1 : 0);
+    }
+    if (want_input_buttons) all_ok = all_ok && input_events.buttons_ok;
+
+    if (!want_input_wheel) {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|SKIP|flag_not_set");
+    } else if (input_events.wheel_ok) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS|mouse_reports=%d|mouse_bad_reports=%d|wheel_total=%d|hwheel_total=%d|expected_wheel=%d|expected_hwheel=%d|saw_wheel=%d|saw_hwheel=%d",
+          input_events.mouse_reports, input_events.mouse_bad_reports, input_events.mouse_wheel_total,
+          input_events.mouse_hwheel_total, kExpectedWheelDelta, kExpectedHWheelDelta,
+          input_events.saw_mouse_wheel ? 1 : 0, input_events.saw_mouse_hwheel ? 1 : 0);
+    } else {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|FAIL|reason=%s|err=%lu|mouse_reports=%d|mouse_bad_reports=%d|wheel_total=%d|hwheel_total=%d|expected_wheel=%d|expected_hwheel=%d|saw_wheel=%d|saw_hwheel=%d",
+          input_events.reason.empty() ? "unknown" : input_events.reason.c_str(),
+          static_cast<unsigned long>(input_events.win32_error), input_events.mouse_reports,
+          input_events.mouse_bad_reports, input_events.mouse_wheel_total, input_events.mouse_hwheel_total,
+          kExpectedWheelDelta, kExpectedHWheelDelta, input_events.saw_mouse_wheel ? 1 : 0,
+          input_events.saw_mouse_hwheel ? 1 : 0);
+    }
+    if (want_input_wheel) all_ok = all_ok && input_events.wheel_ok;
   }
 
   if (!opt.test_input_tablet_events) {

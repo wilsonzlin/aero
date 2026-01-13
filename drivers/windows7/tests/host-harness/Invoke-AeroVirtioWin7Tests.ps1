@@ -93,6 +93,17 @@ param(
   [Alias("WithVirtioInputWheel", "EnableVirtioInputWheel")]
   [switch]$WithInputWheel,
 
+  # If set, also inject and require additional virtio-input end-to-end markers:
+  #   - virtio-input-events-modifiers (Shift/Ctrl/Alt + F1)
+  #   - virtio-input-events-buttons   (side/extra mouse buttons)
+  #   - virtio-input-events-wheel     (mouse wheel)
+  #
+  # This implies -WithInputEvents, and requires the guest image provisioned with the corresponding
+  # guest selftest flags/env vars (e.g. --test-input-events-extended).
+  [Parameter(Mandatory = $false)]
+  [Alias("WithInputEventsExtra")]
+  [switch]$WithInputEventsExtended,
+
   # If set, attach a virtio-tablet-pci device, inject deterministic absolute-pointer events via QMP (`input-send-event`),
   # and require the guest virtio-input-tablet-events marker to PASS.
   #
@@ -564,6 +575,10 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputWheel")]
     [bool]$RequireVirtioInputWheelPass = $false,
+    # If true, require additional virtio-input-events-* markers (modifiers/buttons/wheel) to PASS.
+    [Parameter(Mandatory = $false)]
+    [Alias("EnableVirtioInputEventsExtended")]
+    [bool]$RequireVirtioInputEventsExtendedPass = $false,
 
     # If true, require the virtio-input-msix marker to report mode=msix.
     [Parameter(Mandatory = $false)]
@@ -588,7 +603,17 @@ function Wait-AeroSelftestResult {
   $sawVirtioInputWheelPass = $false
   $sawVirtioInputWheelFail = $false
   $sawVirtioInputWheelSkip = $false
+  $sawVirtioInputEventsModifiersPass = $false
+  $sawVirtioInputEventsModifiersFail = $false
+  $sawVirtioInputEventsModifiersSkip = $false
+  $sawVirtioInputEventsButtonsPass = $false
+  $sawVirtioInputEventsButtonsFail = $false
+  $sawVirtioInputEventsButtonsSkip = $false
+  $sawVirtioInputEventsWheelPass = $false
+  $sawVirtioInputEventsWheelFail = $false
+  $sawVirtioInputEventsWheelSkip = $false
   $inputEventsInjectAttempts = 0
+  $maxInputEventsInjectAttempts = if ($RequireVirtioInputEventsExtendedPass) { 30 } else { 20 }
   $nextInputEventsInject = [DateTime]::UtcNow
   $sawVirtioInputTabletEventsReady = $false
   $sawVirtioInputTabletEventsPass = $false
@@ -683,6 +708,33 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioInputWheelSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-wheel\|SKIP") {
         $sawVirtioInputWheelSkip = $true
       }
+      if (-not $sawVirtioInputEventsModifiersPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events-modifiers\|PASS") {
+        $sawVirtioInputEventsModifiersPass = $true
+      }
+      if (-not $sawVirtioInputEventsModifiersFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events-modifiers\|FAIL") {
+        $sawVirtioInputEventsModifiersFail = $true
+      }
+      if (-not $sawVirtioInputEventsModifiersSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events-modifiers\|SKIP") {
+        $sawVirtioInputEventsModifiersSkip = $true
+      }
+      if (-not $sawVirtioInputEventsButtonsPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events-buttons\|PASS") {
+        $sawVirtioInputEventsButtonsPass = $true
+      }
+      if (-not $sawVirtioInputEventsButtonsFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events-buttons\|FAIL") {
+        $sawVirtioInputEventsButtonsFail = $true
+      }
+      if (-not $sawVirtioInputEventsButtonsSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events-buttons\|SKIP") {
+        $sawVirtioInputEventsButtonsSkip = $true
+      }
+      if (-not $sawVirtioInputEventsWheelPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events-wheel\|PASS") {
+        $sawVirtioInputEventsWheelPass = $true
+      }
+      if (-not $sawVirtioInputEventsWheelFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events-wheel\|FAIL") {
+        $sawVirtioInputEventsWheelFail = $true
+      }
+      if (-not $sawVirtioInputEventsWheelSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events-wheel\|SKIP") {
+        $sawVirtioInputEventsWheelSkip = $true
+      }
 
       # If input events are required, fail fast when the guest reports SKIP/FAIL for virtio-input-events.
       # This saves time when the guest image was provisioned without `--test-input-events`, or when the
@@ -690,6 +742,14 @@ function Wait-AeroSelftestResult {
       if ($RequireVirtioInputEventsPass) {
         if ($sawVirtioInputEventsSkip) { return @{ Result = "VIRTIO_INPUT_EVENTS_SKIPPED"; Tail = $tail } }
         if ($sawVirtioInputEventsFail) { return @{ Result = "VIRTIO_INPUT_EVENTS_FAILED"; Tail = $tail } }
+        if ($RequireVirtioInputEventsExtendedPass) {
+          if ($sawVirtioInputEventsModifiersSkip -or $sawVirtioInputEventsButtonsSkip -or $sawVirtioInputEventsWheelSkip) {
+            return @{ Result = "VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED"; Tail = $tail }
+          }
+          if ($sawVirtioInputEventsModifiersFail -or $sawVirtioInputEventsButtonsFail -or $sawVirtioInputEventsWheelFail) {
+            return @{ Result = "VIRTIO_INPUT_EVENTS_EXTENDED_FAILED"; Tail = $tail }
+          }
+        }
       }
       if ($RequireVirtioInputWheelPass) {
         if ($sawVirtioInputWheelSkip) { return @{ Result = "VIRTIO_INPUT_WHEEL_SKIPPED"; Tail = $tail } }
@@ -813,6 +873,17 @@ function Wait-AeroSelftestResult {
               }
               return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail }
             }
+            if ($RequireVirtioInputEventsExtendedPass) {
+              if ($sawVirtioInputEventsModifiersFail -or $sawVirtioInputEventsButtonsFail -or $sawVirtioInputEventsWheelFail) {
+                return @{ Result = "VIRTIO_INPUT_EVENTS_EXTENDED_FAILED"; Tail = $tail }
+              }
+              if ($sawVirtioInputEventsModifiersSkip -or $sawVirtioInputEventsButtonsSkip -or $sawVirtioInputEventsWheelSkip) {
+                return @{ Result = "VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED"; Tail = $tail }
+              }
+              if (-not ($sawVirtioInputEventsModifiersPass -and $sawVirtioInputEventsButtonsPass -and $sawVirtioInputEventsWheelPass)) {
+                return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS_EXTENDED"; Tail = $tail }
+              }
+            }
           }
           if ($RequireVirtioInputTabletEventsPass) {
             if ($sawVirtioInputTabletEventsFail) {
@@ -852,6 +923,17 @@ function Wait-AeroSelftestResult {
                   if (-not $sawVirtioInputEventsPass) {
                     if ($sawVirtioInputEventsSkip) { return @{ Result = "VIRTIO_INPUT_EVENTS_SKIPPED"; Tail = $tail } }
                     return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail }
+                  }
+                  if ($RequireVirtioInputEventsExtendedPass) {
+                    if ($sawVirtioInputEventsModifiersFail -or $sawVirtioInputEventsButtonsFail -or $sawVirtioInputEventsWheelFail) {
+                      return @{ Result = "VIRTIO_INPUT_EVENTS_EXTENDED_FAILED"; Tail = $tail }
+                    }
+                    if ($sawVirtioInputEventsModifiersSkip -or $sawVirtioInputEventsButtonsSkip -or $sawVirtioInputEventsWheelSkip) {
+                      return @{ Result = "VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED"; Tail = $tail }
+                    }
+                    if (-not ($sawVirtioInputEventsModifiersPass -and $sawVirtioInputEventsButtonsPass -and $sawVirtioInputEventsWheelPass)) {
+                      return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS_EXTENDED"; Tail = $tail }
+                    }
                   }
                 }
                 if ($RequireVirtioInputTabletEventsPass) {
@@ -893,6 +975,17 @@ function Wait-AeroSelftestResult {
           if (-not $sawVirtioInputEventsPass) {
             if ($sawVirtioInputEventsSkip) { return @{ Result = "VIRTIO_INPUT_EVENTS_SKIPPED"; Tail = $tail } }
             return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail }
+          }
+          if ($RequireVirtioInputEventsExtendedPass) {
+            if ($sawVirtioInputEventsModifiersFail -or $sawVirtioInputEventsButtonsFail -or $sawVirtioInputEventsWheelFail) {
+              return @{ Result = "VIRTIO_INPUT_EVENTS_EXTENDED_FAILED"; Tail = $tail }
+            }
+            if ($sawVirtioInputEventsModifiersSkip -or $sawVirtioInputEventsButtonsSkip -or $sawVirtioInputEventsWheelSkip) {
+              return @{ Result = "VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED"; Tail = $tail }
+            }
+            if (-not ($sawVirtioInputEventsModifiersPass -and $sawVirtioInputEventsButtonsPass -and $sawVirtioInputEventsWheelPass)) {
+              return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS_EXTENDED"; Tail = $tail }
+            }
           }
         }
         if ($RequireVirtioInputTabletEventsPass) {
@@ -937,10 +1030,10 @@ function Wait-AeroSelftestResult {
       if (($null -eq $QmpPort) -or ($QmpPort -le 0)) {
         return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
       }
-      if ($inputEventsInjectAttempts -lt 20 -and [DateTime]::UtcNow -ge $nextInputEventsInject) {
+      if ($inputEventsInjectAttempts -lt $maxInputEventsInjectAttempts -and [DateTime]::UtcNow -ge $nextInputEventsInject) {
         $inputEventsInjectAttempts++
         $nextInputEventsInject = [DateTime]::UtcNow.AddMilliseconds(500)
-        $ok = Try-AeroQmpInjectVirtioInputEvents -Host $QmpHost -Port ([int]$QmpPort) -Attempt $inputEventsInjectAttempts -WithWheel:$RequireVirtioInputWheelPass
+        $ok = Try-AeroQmpInjectVirtioInputEvents -Host $QmpHost -Port ([int]$QmpPort) -Attempt $inputEventsInjectAttempts -WithWheel:($RequireVirtioInputWheelPass -or $RequireVirtioInputEventsExtendedPass) -Extended:$RequireVirtioInputEventsExtendedPass
         if (-not $ok) {
           return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
         }
@@ -1768,7 +1861,9 @@ function Try-AeroQmpInjectVirtioInputEvents {
     # correlate guest READY/PASS timing with host injection attempts.
     [Parameter(Mandatory = $true)] [int]$Attempt,
     # If set, inject wheel + horizontal wheel (AC Pan) events in addition to motion/click.
-    [Parameter(Mandatory = $false)] [switch]$WithWheel
+    [Parameter(Mandatory = $false)] [switch]$WithWheel,
+    # If set, also inject extended virtio-input events (modifiers/buttons/wheel).
+    [Parameter(Mandatory = $false)] [bool]$Extended = $false
   )
 
   $deadline = [DateTime]::UtcNow.AddSeconds(5)
@@ -1808,11 +1903,12 @@ function Try-AeroQmpInjectVirtioInputEvents {
       Start-Sleep -Milliseconds 50
 
       # Mouse: move + left click.
+      $wantWheel = ([bool]$WithWheel) -or $Extended
       $mouseRelEvents = @(
         @{ type = "rel"; data = @{ axis = "x"; value = 10 } },
         @{ type = "rel"; data = @{ axis = "y"; value = 5 } }
       )
-      if ($WithWheel) {
+      if ($wantWheel) {
         $mouseRelEvents += @(
           @{ type = "rel"; data = @{ axis = "wheel"; value = 1 } },
           @{ type = "rel"; data = @{ axis = "hscroll"; value = -2 } }
@@ -1821,7 +1917,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
       try {
         $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events $mouseRelEvents
       } catch {
-        if (-not $WithWheel) { throw }
+        if (-not $wantWheel) { throw }
         $errHscroll = ""
         try { $errHscroll = [string]$_.Exception.Message } catch { }
 
@@ -1840,7 +1936,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
         } catch {
           $errHwheel = ""
           try { $errHwheel = [string]$_.Exception.Message } catch { }
-          throw "QMP input-send-event failed while injecting horizontal scroll for -WithInputWheel (tried axis='hscroll' then axis='hwheel'). This likely means the running QEMU build does not support horizontal scroll injection; upgrade QEMU or omit -WithInputWheel. hscroll_error=$errHscroll; hwheel_error=$errHwheel"
+          throw "QMP input-send-event failed while injecting horizontal scroll for -WithInputWheel/-WithInputEventsExtended (tried axis='hscroll' then axis='hwheel'). This likely means the running QEMU build does not support horizontal scroll injection; upgrade QEMU or omit those flags. hscroll_error=$errHscroll; hwheel_error=$errHwheel"
         }
       }
 
@@ -1855,6 +1951,44 @@ function Try-AeroQmpInjectVirtioInputEvents {
       $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events @(
         @{ type = "btn"; data = @{ down = $false; button = "left" } }
       )
+
+      if ($Extended) {
+        Start-Sleep -Milliseconds 50
+
+        # Keyboard: modifiers + function key.
+        $kbdExtra = @(
+          # Shift + b.
+          @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = "shift" } } },
+          @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = "b" } } },
+          @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = "b" } } },
+          @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = "shift" } } },
+          # Ctrl.
+          @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = "ctrl" } } },
+          @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = "ctrl" } } },
+          # Alt.
+          @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = "alt" } } },
+          @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = "alt" } } },
+          # Function key.
+          @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = "f1" } } },
+          @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = "f1" } } }
+        )
+        foreach ($evt in $kbdExtra) {
+          $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @($evt)
+          Start-Sleep -Milliseconds 50
+        }
+
+        # Mouse: side/extra buttons.
+        $mouseExtra = @(
+          @{ type = "btn"; data = @{ down = $true; button = "side" } },
+          @{ type = "btn"; data = @{ down = $false; button = "side" } },
+          @{ type = "btn"; data = @{ down = $true; button = "extra" } },
+          @{ type = "btn"; data = @{ down = $false; button = "extra" } }
+        )
+        foreach ($evt in $mouseExtra) {
+          $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events @($evt)
+          Start-Sleep -Milliseconds 50
+        }
+      }
 
       $kbdMode = if ([string]::IsNullOrEmpty($kbdDevice)) { "broadcast" } else { "device" }
       $mouseMode = if ([string]::IsNullOrEmpty($mouseDevice)) { "broadcast" } else { "device" }
@@ -2244,7 +2378,8 @@ try {
   $qmpPort = $null
   $qmpArgs = @()
   $needInputWheel = [bool]$WithInputWheel
-  $needInputEvents = [bool]$WithInputEvents -or $needInputWheel
+  $needInputEventsExtended = [bool]$WithInputEventsExtended
+  $needInputEvents = ([bool]$WithInputEvents) -or $needInputWheel -or $needInputEventsExtended
   $needInputTabletEvents = [bool]$WithInputTabletEvents
   $needVirtioTablet = [bool]$WithVirtioTablet -or $needInputTabletEvents
   $requestedVirtioNetVectors = $(if ($VirtioNetVectors -gt 0) { $VirtioNetVectors } else { $VirtioMsixVectors })
@@ -2508,7 +2643,22 @@ try {
   $scriptExitCode = 0
 
   try {
-    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequirePerTestMarkers (-not $VirtioTransitional) -RequireVirtioSndPass ([bool]$WithVirtioSnd) -RequireVirtioInputEventsPass ([bool]$needInputEvents) -RequireVirtioInputWheelPass ([bool]$needInputWheel) -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) -RequireVirtioInputMsixPass ([bool]$RequireVirtioInputMsix) -QmpHost "127.0.0.1" -QmpPort $qmpPort
+    $result = Wait-AeroSelftestResult `
+      -SerialLogPath $SerialLogPath `
+      -QemuProcess $proc `
+      -TimeoutSeconds $TimeoutSeconds `
+      -HttpListener $httpListener `
+      -HttpPath $HttpPath `
+      -FollowSerial ([bool]$FollowSerial) `
+      -RequirePerTestMarkers (-not $VirtioTransitional) `
+      -RequireVirtioSndPass ([bool]$WithVirtioSnd) `
+      -RequireVirtioInputEventsPass ([bool]$needInputEvents) `
+      -RequireVirtioInputWheelPass ([bool]$needInputWheel) `
+      -RequireVirtioInputEventsExtendedPass ([bool]$needInputEventsExtended) `
+      -RequireVirtioInputMsixPass ([bool]$RequireVirtioInputMsix) `
+      -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) `
+      -QmpHost "127.0.0.1" `
+      -QmpPort $qmpPort
     if ($needMsixCheck -and $result.Result -eq "PASS") {
       if (($null -eq $qmpPort) -or ($qmpPort -le 0)) {
         $result = @{
@@ -2641,8 +2791,24 @@ try {
       }
       $scriptExitCode = 1
     }
+    "MISSING_VIRTIO_INPUT_EVENTS_EXTENDED" {
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_EVENTS_EXTENDED: did not observe virtio-input-events-modifiers/buttons/wheel markers while -WithInputEventsExtended was enabled (guest selftest too old or missing --test-input-events-extended)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
     "VIRTIO_INPUT_EVENTS_SKIPPED" {
       Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but -WithInputEvents was enabled (provision the guest with --test-input-events)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED" {
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: virtio-input-events-* extended tests were skipped (flag_not_set) but -WithInputEventsExtended was enabled (provision the guest with --test-input-events-extended)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -2675,6 +2841,14 @@ try {
     }
     "VIRTIO_INPUT_WHEEL_FAILED" {
       Write-Host "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while -WithInputWheel was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_EVENTS_EXTENDED_FAILED" {
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: one or more virtio-input-events-* extended tests reported FAIL while -WithInputEventsExtended was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

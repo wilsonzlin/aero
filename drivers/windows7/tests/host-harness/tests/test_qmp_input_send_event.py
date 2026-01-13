@@ -120,6 +120,39 @@ class QmpInputSendEventTests(unittest.TestCase):
         self.assertEqual(ev[3]["type"], "abs")
         self.assertEqual(ev[3]["data"]["axis"], "y")
         self.assertEqual(ev[3]["data"]["value"], 5678)
+    def test_keyboard_modifier_events_cover_shift_ctrl_alt_f1(self) -> None:
+        h = self.harness
+
+        ev = h._qmp_deterministic_keyboard_modifier_events()
+        self.assertGreaterEqual(len(ev), 10)
+        # Ensure all are key events using qcode.
+        for e in ev:
+            self.assertEqual(e["type"], "key")
+            self.assertEqual(e["data"]["key"]["type"], "qcode")
+
+        self.assertEqual(ev[0]["data"]["key"]["data"], "shift")
+        self.assertTrue(ev[0]["data"]["down"])
+        self.assertEqual(ev[1]["data"]["key"]["data"], "b")
+        self.assertTrue(ev[1]["data"]["down"])
+        self.assertEqual(ev[2]["data"]["key"]["data"], "b")
+        self.assertFalse(ev[2]["data"]["down"])
+        self.assertEqual(ev[3]["data"]["key"]["data"], "shift")
+        self.assertFalse(ev[3]["data"]["down"])
+
+        # Ctrl, Alt, F1 should appear later in the sequence.
+        qcodes = [e["data"]["key"]["data"] for e in ev]
+        self.assertIn("ctrl", qcodes)
+        self.assertIn("alt", qcodes)
+        self.assertIn("f1", qcodes)
+
+    def test_mouse_extra_button_events_include_side_and_extra(self) -> None:
+        h = self.harness
+        ev = h._qmp_deterministic_mouse_extra_button_events()
+        self.assertEqual(len(ev), 4)
+        self.assertEqual(ev[0], {"type": "btn", "data": {"down": True, "button": "side"}})
+        self.assertEqual(ev[1], {"type": "btn", "data": {"down": False, "button": "side"}})
+        self.assertEqual(ev[2], {"type": "btn", "data": {"down": True, "button": "extra"}})
+        self.assertEqual(ev[3], {"type": "btn", "data": {"down": False, "button": "extra"}})
 
 
 if __name__ == "__main__":

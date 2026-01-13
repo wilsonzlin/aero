@@ -229,6 +229,57 @@ class QmpInputInjectionTests(unittest.TestCase):
             h._qmp_send_command = old_send
             h.time.sleep = old_sleep
 
+    def test_injects_extended_events_when_requested(self) -> None:
+        h = self.harness
+
+        sent: list[dict[str, object]] = []
+
+        def fake_connect(endpoint, *, timeout_seconds: float = 5.0):
+            return _DummySock()
+
+        def fake_send_command(sock, cmd):
+            sent.append(cmd)
+            return {"return": {}}
+
+        old_connect = h._qmp_connect
+        old_send = h._qmp_send_command
+        old_sleep = h.time.sleep
+        try:
+            h._qmp_connect = fake_connect
+            h._qmp_send_command = fake_send_command
+            h.time.sleep = lambda _: None
+
+            info = h._try_qmp_input_inject_virtio_input_events(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=4444),
+                extended=True,
+            )
+
+            self.assertEqual(info.keyboard_device, h._VIRTIO_INPUT_QMP_KEYBOARD_ID)
+            self.assertEqual(info.mouse_device, h._VIRTIO_INPUT_QMP_MOUSE_ID)
+
+            expected = (
+                5
+                + len(h._qmp_deterministic_keyboard_modifier_events())
+                + len(h._qmp_deterministic_mouse_extra_button_events())
+            )
+            self.assertEqual(len(sent), expected)
+
+            # Extended injection should also include wheel/hscroll rel axes.
+            rel_events = sent[2]["arguments"]["events"]
+            axes = {e["data"]["axis"] for e in rel_events if e["type"] == "rel"}
+            self.assertIn("wheel", axes)
+            self.assertIn("hscroll", axes)
+
+            # Ensure at least one side/extra button event was included.
+            all_events = [e for cmd in sent for e in cmd["arguments"]["events"]]
+            buttons = [e["data"]["button"] for e in all_events if e["type"] == "btn"]
+            self.assertIn("side", buttons)
+            self.assertIn("extra", buttons)
+        finally:
+            h._qmp_connect = old_connect
+            h._qmp_send_command = old_send
+            h.time.sleep = old_sleep
+
     def test_injects_tablet_events_targeted_by_device_id_when_supported(self) -> None:
         h = self.harness
 
