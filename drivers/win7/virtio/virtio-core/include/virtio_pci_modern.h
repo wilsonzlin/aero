@@ -53,7 +53,7 @@
  * __noop is supported by MSVC and clang-cl; it discards its arguments without
  * evaluating them or emitting code.
  */
-#if defined(_MSC_VER) || defined(__clang__)
+#if defined(_MSC_VER)
 #define VIRTIO_CORE_PRINT(...) __noop(__VA_ARGS__)
 #else
 #define VIRTIO_CORE_PRINT(...) ((void)0)

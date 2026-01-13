@@ -239,7 +239,7 @@ __forceinline BOOLEAN VioInputLogEnabled(_In_ ULONG Mask)
  * __noop is supported by MSVC and clang-cl; it discards its arguments without
  * evaluating them or emitting code.
  */
-#if defined(_MSC_VER) || defined(__clang__)
+#if defined(_MSC_VER)
 #define VIOINPUT_LOG(_mask, ...) __noop((_mask), __VA_ARGS__)
 #else
 #define VIOINPUT_LOG(_mask, ...) (void)(_mask)
