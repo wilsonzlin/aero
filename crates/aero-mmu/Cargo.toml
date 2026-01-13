@@ -22,3 +22,7 @@ aero-mem-bus = ["dep:aero-mem"]
 [[bench]]
 name = "tlb_lookup"
 harness = false
+
+[[bench]]
+name = "translate"
+harness = false
