@@ -120,9 +120,8 @@ typedef struct aerogpu_escape_query_fence_out {
   /*
    * Error IRQ telemetry (best-effort; 0 if not supported by this KMD build).
    *
-   * `error_irq_count` is the number of times the KMD observed `AEROGPU_IRQ_ERROR`.
-   * `last_error_fence` is the most recent fence value the KMD associated with an
-   * error IRQ.
+   * These fields are appended to the original struct (hdr + last_submitted + last_completed)
+   * to keep the layout backwards compatible with older bring-up tooling.
    */
   aerogpu_escape_u64 error_irq_count;
   aerogpu_escape_u64 last_error_fence;
