@@ -366,6 +366,7 @@ pub struct XhciController {
     usbsts: u32,
     /// Sticky host controller error latch surfaced via USBSTS.HCE.
     host_controller_error: bool,
+    dnctrl: u32,
     crcr: u64,
     dcbaap: u64,
     config: u32,
@@ -419,6 +420,7 @@ impl fmt::Debug for XhciController {
             .field("usbcmd", &self.usbcmd)
             .field("usbsts", &self.usbsts)
             .field("host_controller_error", &self.host_controller_error)
+            .field("dnctrl", &self.dnctrl)
             .field("crcr", &self.crcr)
             .field("dcbaap", &self.dcbaap)
             .field("config", &self.config)
@@ -467,6 +469,7 @@ impl XhciController {
             usbcmd: 0,
             usbsts: 0,
             host_controller_error: false,
+            dnctrl: 0,
             crcr: 0,
             dcbaap: 0,
             config: 0,
@@ -1917,6 +1920,8 @@ impl XhciController {
                 let max_ports = self.port_count as u32;
                 (max_slots & 0xff) | ((max_intrs & 0x7ff) << 8) | ((max_ports & 0xff) << 24)
             }
+            regs::REG_HCSPARAMS2 => 0,
+            regs::REG_HCSPARAMS3 => 0,
             regs::REG_HCCPARAMS1 => {
                 // HCCPARAMS1.xECP: offset (in DWORDs) to the xHCI Extended Capabilities list.
                 let xecp_dwords = (regs::EXT_CAPS_OFFSET_BYTES / 4) & 0xffff;
@@ -1925,6 +1930,7 @@ impl XhciController {
             }
             regs::REG_DBOFF => regs::DBOFF_VALUE,
             regs::REG_RTSOFF => regs::RTSOFF_VALUE,
+            regs::REG_HCCPARAMS2 => 0,
             off
                 if off >= regs::EXT_CAPS_OFFSET_BYTES as u64
                     && off
@@ -1938,6 +1944,7 @@ impl XhciController {
             regs::REG_USBCMD => self.usbcmd,
             regs::REG_USBSTS => self.usbsts_read(),
             regs::REG_PAGESIZE => regs::PAGESIZE_4K,
+            regs::REG_DNCTRL => self.dnctrl,
             regs::REG_CRCR_LO => (self.crcr & 0xffff_ffff) as u32,
             regs::REG_CRCR_HI => (self.crcr >> 32) as u32,
             regs::REG_DCBAAP_LO => (self.dcbaap & 0xffff_ffff) as u32,
@@ -2100,6 +2107,9 @@ impl XhciController {
                 }
                 self.usbsts &= !write_val;
             }
+            regs::REG_DNCTRL => {
+                self.dnctrl = merge(self.dnctrl);
+            }
             regs::REG_CRCR_LO => {
                 let lo = merge(self.crcr as u32) as u64;
                 self.crcr = (self.crcr & 0xffff_ffff_0000_0000) | lo;
@@ -2172,6 +2182,7 @@ impl XhciController {
         self.usbcmd = 0;
         self.usbsts = 0;
         self.host_controller_error = false;
+        self.dnctrl = 0;
         self.crcr = 0;
         self.dcbaap = 0;
         self.config = 0;

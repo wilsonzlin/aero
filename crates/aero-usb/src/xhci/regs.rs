@@ -9,12 +9,16 @@
 /// thin PCI/MMIO wrapper (`emulator::io::usb::xhci`).
 pub const REG_CAPLENGTH_HCIVERSION: u64 = 0x00;
 pub const REG_HCSPARAMS1: u64 = 0x04;
+pub const REG_HCSPARAMS2: u64 = 0x08;
+pub const REG_HCSPARAMS3: u64 = 0x0c;
 pub const REG_HCCPARAMS1: u64 = 0x10;
 pub const REG_DBOFF: u64 = 0x14;
 pub const REG_RTSOFF: u64 = 0x18;
+pub const REG_HCCPARAMS2: u64 = 0x1c;
 pub const REG_USBCMD: u64 = (CAPLENGTH_BYTES as u64) + (op::USBCMD as u64);
 pub const REG_USBSTS: u64 = (CAPLENGTH_BYTES as u64) + (op::USBSTS as u64);
 pub const REG_PAGESIZE: u64 = (CAPLENGTH_BYTES as u64) + (op::PAGESIZE as u64);
+pub const REG_DNCTRL: u64 = (CAPLENGTH_BYTES as u64) + (op::DNCTRL as u64);
 /// Command Ring Control Register (CRCR), 64-bit (low/high dwords).
 pub const REG_CRCR_LO: u64 = (CAPLENGTH_BYTES as u64) + (op::CRCR as u64);
 pub const REG_CRCR_HI: u64 = REG_CRCR_LO + 4;
@@ -112,6 +116,9 @@ pub mod runtime {
 
     /// Interrupter register block stride in bytes.
     pub const INTERRUPTER_STRIDE: u32 = 0x20;
+
+    /// MFINDEX is a 14-bit microframe counter.
+    pub const MFINDEX_MASK: u32 = 0x3fff;
 }
 
 /// Doorbell register array (base at `DBOFF`).
@@ -127,6 +134,9 @@ pub mod doorbell {
 /// Real xHCI controllers typically expose a 0x40-byte capability register block (spec 5.3.1). Keep
 /// the canonical size and place Extended Capabilities elsewhere in the MMIO window (via xECP).
 pub const CAPLENGTH_BYTES: u8 = 0x40;
+
+/// Alias retained for tests/docs that refer to CAPLENGTH's field name in the specification.
+pub const CAPLENGTH_VALUE: u8 = CAPLENGTH_BYTES;
 
 /// Maximum number of device slots exposed by this controller model.
 ///
