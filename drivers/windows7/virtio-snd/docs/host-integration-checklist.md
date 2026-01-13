@@ -102,6 +102,19 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
   - [ ] formats include **S16** (`VIRTIO_SND_PCM_FMT_S16`)
   - [ ] rates include **48,000 Hz** (`VIRTIO_SND_PCM_RATE_48000`)
 
+## Controlq commands used by the Win7 driver (required subset)
+
+- [ ] Device supports these request codes for **both** streams 0 and 1:
+  - `VIRTIO_SND_R_PCM_INFO` (`0x0100`)
+  - `VIRTIO_SND_R_PCM_SET_PARAMS` (`0x0101`)
+  - `VIRTIO_SND_R_PCM_PREPARE` (`0x0102`)
+  - `VIRTIO_SND_R_PCM_RELEASE` (`0x0103`)
+  - `VIRTIO_SND_R_PCM_START` (`0x0104`)
+  - `VIRTIO_SND_R_PCM_STOP` (`0x0105`)
+- [ ] `PCM_SET_PARAMS` parameters expected by the driver:
+  - Stream 0 (output): `channels=2`, `format=S16`, `rate=48000`, `features=0`
+  - Stream 1 (input): `channels=1`, `format=S16`, `rate=48000`, `features=0`
+
 ## TX/RX buffer framing (PCM xfer + status)
 
 ### TX (queue 2, stream 0) — stereo S16_LE
