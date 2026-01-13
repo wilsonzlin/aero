@@ -6,6 +6,8 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
+use aero_io_snapshot::io::audio::state::AudioWorkletRingState;
+use aero_platform::audio::worklet_bridge::WorkletBridge;
 use aero_wasm::VirtioSndPciBridge;
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -203,5 +205,79 @@ fn virtio_snd_pci_bridge_is_gated_on_pci_bus_master_enable() {
     assert!(
         !bridge.irq_asserted(),
         "irq should deassert after ISR read-to-clear"
+    );
+}
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_snapshot_roundtrip_is_deterministic() {
+    // BAR0 layout is fixed by `aero_virtio::pci::VirtioPciDevice`.
+    const COMMON: u32 = 0x0000;
+
+    let (guest_base1, guest_size1) = common::alloc_guest_region_bytes(0x4000);
+    let mut bridge1 =
+        VirtioSndPciBridge::new(guest_base1, guest_size1, None).expect("VirtioSndPciBridge::new");
+    bridge1.set_pci_command(0x0002); // enable MMIO decode
+
+    // Mutate virtio-pci transport state: negotiate features and set DRIVER_OK.
+    bridge1.mmio_write(COMMON + 0x14, 1, u32::from(VIRTIO_STATUS_ACKNOWLEDGE));
+    bridge1.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER),
+    );
+
+    bridge1.mmio_write(COMMON + 0x00, 4, 0); // device_feature_select
+    let f0 = bridge1.mmio_read(COMMON + 0x04, 4);
+    bridge1.mmio_write(COMMON + 0x08, 4, 0); // driver_feature_select
+    bridge1.mmio_write(COMMON + 0x0c, 4, f0); // driver_features
+
+    bridge1.mmio_write(COMMON + 0x00, 4, 1);
+    let f1 = bridge1.mmio_read(COMMON + 0x04, 4);
+    bridge1.mmio_write(COMMON + 0x08, 4, 1);
+    bridge1.mmio_write(COMMON + 0x0c, 4, f1);
+
+    bridge1.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK),
+    );
+    bridge1.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(
+            VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_FEATURES_OK
+                | VIRTIO_STATUS_DRIVER_OK,
+        ),
+    );
+
+    // Mutate virtio-snd state.
+    bridge1.set_host_sample_rate_hz(44_100).unwrap();
+    bridge1.set_capture_sample_rate_hz(48_000).unwrap();
+
+    // Attach an AudioWorklet ring so snapshot includes non-trivial ring indices.
+    let ring = WorkletBridge::new(8, 2).unwrap();
+    let sab = ring.shared_buffer();
+    bridge1.attach_audio_ring(sab.clone(), 8, 2).unwrap();
+    ring.restore_state(&AudioWorkletRingState {
+        capacity_frames: 8,
+        read_pos: 2,
+        write_pos: 6,
+    });
+
+    let snap1 = bridge1.save_state();
+
+    // Restore into a fresh bridge (no ring attached). The ring state should be retained as pending
+    // state and re-serialized identically.
+    let (guest_base2, guest_size2) = common::alloc_guest_region_bytes(0x4000);
+    let mut bridge2 =
+        VirtioSndPciBridge::new(guest_base2, guest_size2, None).expect("VirtioSndPciBridge::new");
+    bridge2.load_state(&snap1).unwrap();
+    let snap2 = bridge2.save_state();
+
+    assert_eq!(
+        snap1, snap2,
+        "save_state -> load_state -> save_state must be stable"
     );
 }
