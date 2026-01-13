@@ -1393,6 +1393,21 @@ static void InitLockForWrite(D3DDDICB_LOCK* lock) {
 
 static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res);
 
+static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_pitch) {
+  if (!res || res->kind != ResourceKind::Texture2D) {
+    return true;
+  }
+  // Some WDK/runtime combinations omit Pitch or return 0 for non-surface allocations.
+  // Only validate when the runtime provides a non-zero pitch.
+  if (wddm_pitch == 0) {
+    return true;
+  }
+  if (res->row_pitch_bytes == 0) {
+    return false;
+  }
+  return wddm_pitch == res->row_pitch_bytes;
+}
+
 static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
                              AeroGpuDevice* dev,
                              AeroGpuResource* res,
@@ -1458,43 +1473,126 @@ static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
+  uint32_t wddm_pitch = 0;
+  __if_exists(D3DDDICB_LOCK::Pitch) {
+    wddm_pitch = lock_args.Pitch;
+  }
+  if (res->kind == ResourceKind::Texture2D && !ValidateWddmTexturePitch(res, wddm_pitch)) {
+    // Our subresource packing (and the host's interpretation of guest memory) assumes the
+    // allocation pitch matches `res->row_pitch_bytes`. If the runtime reports a different
+    // pitch, we cannot safely treat the locked pointer as a packed linear buffer.
+    //
+    // Fail cleanly rather than silently corrupting the allocation.
+    HRESULT unlock_hr = E_FAIL;
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+    unlock_hr = CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
+    if (FAILED(unlock_hr)) {
+      SetError(hDevice, unlock_hr);
+    } else {
+      SetError(hDevice, E_FAIL);
+    }
+    return;
+  }
+
   HRESULT copy_hr = S_OK;
-  if (res->kind == ResourceKind::Texture2D &&
-      upload_offset == 0 &&
-      upload_size == res->storage.size() &&
-      res->mip_levels == 1 &&
-      res->array_size == 1) {
+  if (res->kind == ResourceKind::Texture2D) {
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-    const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
-    const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
-    if (row_bytes == 0 || rows == 0) {
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      copy_hr = E_INVALIDARG;
+      goto Unlock;
+    }
+    if (aerogpu_format_is_block_compressed(aer_fmt) && !SupportsBcFormats(dev)) {
       copy_hr = E_INVALIDARG;
       goto Unlock;
     }
 
-    uint32_t dst_pitch = res->row_pitch_bytes;
-    __if_exists(D3DDDICB_LOCK::Pitch) {
-      if (lock_args.Pitch) {
-        dst_pitch = lock_args.Pitch;
-      }
-    }
-    if (dst_pitch < row_bytes) {
+    const uint64_t end = upload_offset + upload_size;
+    if (end < upload_offset) {
       copy_hr = E_INVALIDARG;
       goto Unlock;
     }
 
-    uint8_t* dst_base = static_cast<uint8_t*>(lock_args.pData);
-    const uint8_t* src_base = res->storage.data();
-    for (uint32_t y = 0; y < rows; ++y) {
-      const size_t src_off_row = static_cast<size_t>(y) * res->row_pitch_bytes;
-      const size_t dst_off_row = static_cast<size_t>(y) * dst_pitch;
-      if (src_off_row + row_bytes > res->storage.size()) {
-        copy_hr = E_FAIL;
+    // If the upload range exactly matches a subresource layout, perform a row-by-row copy.
+    // Otherwise, fall back to a conservative whole-subresource upload when the region
+    // intersects a subresource but is not exactly representable as a packed linear range.
+    const Texture2DSubresourceLayout* exact_sub = nullptr;
+    for (const auto& sub : res->tex2d_subresources) {
+      if (sub.offset_bytes == upload_offset && sub.size_bytes == upload_size) {
+        exact_sub = &sub;
         break;
       }
-      std::memcpy(dst_base + dst_off_row, src_base + src_off_row, row_bytes);
-      if (dst_pitch > row_bytes) {
-        std::memset(dst_base + dst_off_row + row_bytes, 0, dst_pitch - row_bytes);
+    }
+
+    auto copy_subresource_rows = [&](const Texture2DSubresourceLayout& sub) -> HRESULT {
+      const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, sub.width);
+      const uint32_t rows = sub.rows_in_layout;
+      if (row_bytes == 0 || rows == 0) {
+        return E_INVALIDARG;
+      }
+      if (sub.row_pitch_bytes < row_bytes) {
+        return E_INVALIDARG;
+      }
+
+      uint32_t dst_pitch = sub.row_pitch_bytes;
+      if (sub.mip_level == 0 && wddm_pitch) {
+        dst_pitch = wddm_pitch;
+      }
+      if (dst_pitch < row_bytes) {
+        return E_INVALIDARG;
+      }
+
+      if (sub.offset_bytes > static_cast<uint64_t>(res->storage.size()) ||
+          sub.size_bytes > static_cast<uint64_t>(res->storage.size()) - sub.offset_bytes) {
+        return E_INVALIDARG;
+      }
+
+      uint8_t* dst_base = static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(sub.offset_bytes);
+      const uint8_t* src_base = res->storage.data() + static_cast<size_t>(sub.offset_bytes);
+      for (uint32_t y = 0; y < rows; ++y) {
+        const size_t src_off_row = static_cast<size_t>(y) * static_cast<size_t>(sub.row_pitch_bytes);
+        const size_t dst_off_row = static_cast<size_t>(y) * static_cast<size_t>(dst_pitch);
+        if (src_off_row + row_bytes > static_cast<size_t>(sub.size_bytes)) {
+          return E_FAIL;
+        }
+        std::memcpy(dst_base + dst_off_row, src_base + src_off_row, row_bytes);
+        if (dst_pitch > row_bytes) {
+          std::memset(dst_base + dst_off_row + row_bytes, 0, dst_pitch - row_bytes);
+        }
+      }
+      return S_OK;
+    };
+
+    if (exact_sub) {
+      copy_hr = copy_subresource_rows(*exact_sub);
+    } else {
+      // The caller provided a byte range that does not match a subresource. This is unusual for
+      // D3D10 map/unmap paths (which map full subresources), but can happen for partial updates.
+      //
+      // Avoid assuming the byte range is "packed" across a pitched allocation; instead upload
+      // the full subresource(s) that intersect the range.
+      bool copied_any = false;
+      for (const auto& sub : res->tex2d_subresources) {
+        const uint64_t sub_start = sub.offset_bytes;
+        const uint64_t sub_end = sub.offset_bytes + sub.size_bytes;
+        if (sub_end < sub_start) {
+          copy_hr = E_FAIL;
+          goto Unlock;
+        }
+        if (end <= sub_start || upload_offset >= sub_end) {
+          continue;
+        }
+        const HRESULT sub_hr = copy_subresource_rows(sub);
+        if (FAILED(sub_hr)) {
+          copy_hr = sub_hr;
+          goto Unlock;
+        }
+        copied_any = true;
+      }
+      if (!copied_any) {
+        copy_hr = E_INVALIDARG;
       }
     }
   } else {
@@ -1518,15 +1616,52 @@ Unlock:
 
   TrackWddmAllocForSubmitLocked(dev, res);
 
-  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-  if (!dirty) {
-    SetError(hDevice, E_OUTOFMEMORY);
-    return;
+  if (res->kind == ResourceKind::Texture2D && !res->tex2d_subresources.empty()) {
+    const uint64_t end = upload_offset + upload_size;
+    if (end < upload_offset) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+
+    bool emitted_any = false;
+    for (const auto& sub : res->tex2d_subresources) {
+      const uint64_t sub_start = sub.offset_bytes;
+      const uint64_t sub_end = sub.offset_bytes + sub.size_bytes;
+      if (sub_end < sub_start) {
+        SetError(hDevice, E_FAIL);
+        return;
+      }
+      if (end <= sub_start || upload_offset >= sub_end) {
+        continue;
+      }
+      // Conservatively dirty the full intersecting subresource so the host uploads coherent bytes.
+      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      if (!dirty) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+      dirty->resource_handle = res->handle;
+      dirty->reserved0 = 0;
+      dirty->offset_bytes = sub.offset_bytes;
+      dirty->size_bytes = sub.size_bytes;
+      emitted_any = true;
+    }
+    if (!emitted_any) {
+      // Should not happen (range validated against storage size earlier).
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+  } else {
+    auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    if (!dirty) {
+      SetError(hDevice, E_OUTOFMEMORY);
+      return;
+    }
+    dirty->resource_handle = res->handle;
+    dirty->reserved0 = 0;
+    dirty->offset_bytes = upload_offset;
+    dirty->size_bytes = upload_size;
   }
-  dirty->resource_handle = res->handle;
-  dirty->reserved0 = 0;
-  dirty->offset_bytes = upload_offset;
-  dirty->size_bytes = upload_size;
 }
 
 // -----------------------------------------------------------------------------
@@ -3495,6 +3630,24 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     return E_FAIL;
   }
 
+  uint32_t wddm_pitch = 0;
+  __if_exists(D3DDDICB_LOCK::Pitch) {
+    wddm_pitch = lock_cb.Pitch;
+  }
+  if (res->kind == ResourceKind::Texture2D && !ValidateWddmTexturePitch(res, wddm_pitch)) {
+    // The runtime reports a pitch that doesn't match our subresource layout. Returning a pointer
+    // into the allocation would expose an inconsistent RowPitch to the app (and later copies
+    // between storage and the allocation would corrupt).
+    D3DDDICB_UNLOCK unlock_cb = {};
+    unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
+    InitUnlockArgsForMap(&unlock_cb, lock_subresource);
+    (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+    if (allow_storage_map && !want_read) {
+      return map_storage();
+    }
+    return E_FAIL;
+  }
+
   res->mapped_wddm_ptr = lock_cb.pData;
   res->mapped_wddm_allocation = alloc_handle;
   __if_exists(D3DDDICB_LOCK::Pitch) {
@@ -3560,8 +3713,13 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
     return;
   }
 
+  const bool pitch_mismatch =
+      (res->kind == ResourceKind::Texture2D &&
+       res->mapped_wddm_pitch != 0 &&
+       !ValidateWddmTexturePitch(res, res->mapped_wddm_pitch));
+
   if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
-    if (res->mapped_write && !res->storage.empty() && res->mapped_size) {
+    if (!pitch_mismatch && res->mapped_write && !res->storage.empty() && res->mapped_size) {
       const uint8_t* src = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
       const uint64_t off_u64 = res->mapped_offset;
       const uint64_t size_u64 = res->mapped_size;
@@ -3588,6 +3746,22 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
         SetError(hDevice, unlock_hr);
       }
     }
+  }
+
+  if (pitch_mismatch) {
+    // Fail cleanly: do not attempt to interpret offsets within the allocation when the
+    // runtime-reported pitch differs from our expected layout.
+    SetError(hDevice, E_FAIL);
+    res->mapped = false;
+    res->mapped_write = false;
+    res->mapped_subresource = 0;
+    res->mapped_offset = 0;
+    res->mapped_size = 0;
+    res->mapped_wddm_ptr = nullptr;
+    res->mapped_wddm_allocation = 0;
+    res->mapped_wddm_pitch = 0;
+    res->mapped_wddm_slice_pitch = 0;
+    return;
   }
 
   if (res->mapped_write && res->mapped_size != 0) {
