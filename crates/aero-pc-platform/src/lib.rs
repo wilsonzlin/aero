@@ -47,13 +47,11 @@ use std::rc::Rc;
 
 mod cpu_core;
 pub use aero_devices::pci::{PciBarMmioHandler, PciBarMmioRouter, PciConfigSyncedMmioBar};
+pub use aero_devices::pci::{PciIoBarHandler, PciIoBarRouter};
 pub use cpu_core::{PcCpuBus, PcInterruptController};
 
 mod firmware_pci;
 pub use firmware_pci::{PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapter};
-
-mod pci_io_router;
-pub use pci_io_router::{PciIoBarHandler, PciIoBarRouter};
 
 mod windows7_storage;
 pub use windows7_storage::Windows7StorageTopologyConfig;
