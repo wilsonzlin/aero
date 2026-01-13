@@ -88,6 +88,7 @@ use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
 use aero_virtio::devices::blk::VirtioBlk;
+use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::VirtioNet;
 use aero_virtio::memory::{
     GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
@@ -200,6 +201,14 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_virtio_blk: bool,
+    /// Whether to attach virtio-input keyboard + mouse devices (virtio-pci modern transport).
+    ///
+    /// This exposes a multi-function PCI device with two functions at stable BDFs:
+    /// - Keyboard: `aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf` (`00:0a.0`)
+    /// - Mouse: `aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf` (`00:0a.1`)
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`].
+    pub enable_virtio_input: bool,
     /// Whether to attach an Intel PIIX3 UHCI (USB 1.1) controller at the canonical BDF
     /// (`aero_devices::pci::profile::USB_UHCI_PIIX3.bdf`, `00:01.2`).
     ///
@@ -295,6 +304,7 @@ impl Default for MachineConfig {
             enable_nvme: false,
             enable_ide: false,
             enable_virtio_blk: false,
+            enable_virtio_input: false,
             enable_uhci: false,
             enable_aerogpu: false,
             enable_vga: true,
@@ -342,6 +352,7 @@ impl MachineConfig {
             enable_nvme: false,
             enable_ide: true,
             enable_virtio_blk: false,
+            enable_virtio_input: false,
             enable_uhci: false,
             enable_aerogpu: false,
             enable_vga: true,
@@ -474,6 +485,7 @@ pub enum MachineError {
     NvmeRequiresPcPlatform,
     IdeRequiresPcPlatform,
     VirtioBlkRequiresPcPlatform,
+    VirtioInputRequiresPcPlatform,
     UhciRequiresPcPlatform,
     AeroGpuRequiresPcPlatform,
     E1000RequiresPcPlatform,
@@ -509,6 +521,9 @@ impl fmt::Display for MachineError {
             }
             MachineError::VirtioBlkRequiresPcPlatform => {
                 write!(f, "enable_virtio_blk requires enable_pc_platform=true")
+            }
+            MachineError::VirtioInputRequiresPcPlatform => {
+                write!(f, "enable_virtio_input requires enable_pc_platform=true")
             }
             MachineError::UhciRequiresPcPlatform => {
                 write!(f, "enable_uhci requires enable_pc_platform=true")
@@ -1316,6 +1331,50 @@ impl VirtioBlkPciConfigDevice {
 }
 
 impl PciDevice for VirtioBlkPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+struct VirtioInputKeyboardPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl VirtioInputKeyboardPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for VirtioInputKeyboardPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+struct VirtioInputMousePciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl VirtioInputMousePciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for VirtioInputMousePciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.cfg
     }
@@ -2545,6 +2604,8 @@ pub struct Machine {
     hpet: Option<Rc<RefCell<hpet::Hpet<ManualClock>>>>,
     e1000: Option<Rc<RefCell<E1000Device>>>,
     virtio_net: Option<Rc<RefCell<VirtioPciDevice>>>,
+    virtio_input_keyboard: Option<Rc<RefCell<VirtioPciDevice>>>,
+    virtio_input_mouse: Option<Rc<RefCell<VirtioPciDevice>>>,
     vga: Option<Rc<RefCell<VgaDevice>>>,
     aerogpu: Option<Rc<RefCell<AeroGpuDevice>>>,
     aerogpu_mmio: Option<Rc<RefCell<AeroGpuMmioDevice>>>,
@@ -2650,6 +2711,9 @@ impl Machine {
             }
             return Err(MachineError::VirtioBlkRequiresPcPlatform);
         }
+        if cfg.enable_virtio_input && !cfg.enable_pc_platform {
+            return Err(MachineError::VirtioInputRequiresPcPlatform);
+        }
         if cfg.enable_uhci && !cfg.enable_pc_platform {
             return Err(MachineError::UhciRequiresPcPlatform);
         }
@@ -2696,6 +2760,8 @@ impl Machine {
             hpet: None,
             e1000: None,
             virtio_net: None,
+            virtio_input_keyboard: None,
+            virtio_input_mouse: None,
             vga: None,
             aerogpu: None,
             aerogpu_mmio: None,
@@ -3507,6 +3573,16 @@ impl Machine {
     /// Returns the virtio-net (virtio-pci) device, if present.
     pub fn virtio_net(&self) -> Option<Rc<RefCell<VirtioPciDevice>>> {
         self.virtio_net.clone()
+    }
+
+    /// Returns the virtio-input keyboard (virtio-pci) device, if present.
+    pub fn virtio_input_keyboard(&self) -> Option<Rc<RefCell<VirtioPciDevice>>> {
+        self.virtio_input_keyboard.clone()
+    }
+
+    /// Returns the virtio-input mouse (virtio-pci) device, if present.
+    pub fn virtio_input_mouse(&self) -> Option<Rc<RefCell<VirtioPciDevice>>> {
+        self.virtio_input_mouse.clone()
     }
 
     /// Returns the VGA/SVGA device, if present.
@@ -4359,6 +4435,66 @@ impl Machine {
                 pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
             }
 
+            // virtio-input keyboard legacy INTx (level-triggered).
+            if let Some(virtio_kbd) = &self.virtio_input_keyboard {
+                let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let command = self
+                    .pci_cfg
+                    .as_ref()
+                    .and_then(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                    })
+                    .unwrap_or(0);
+
+                let mut level = {
+                    let mut dev = virtio_kbd.borrow_mut();
+                    dev.set_pci_command(command);
+                    dev.irq_level()
+                };
+
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
+            // virtio-input mouse legacy INTx (level-triggered).
+            if let Some(virtio_mouse) = &self.virtio_input_mouse {
+                let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let command = self
+                    .pci_cfg
+                    .as_ref()
+                    .and_then(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                    })
+                    .unwrap_or(0);
+
+                let mut level = {
+                    let mut dev = virtio_mouse.borrow_mut();
+                    dev.set_pci_command(command);
+                    dev.irq_level()
+                };
+
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
             // virtio-blk legacy INTx (level-triggered).
             if let Some(virtio_blk) = &self.virtio_blk {
                 let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
@@ -4690,6 +4826,145 @@ impl Machine {
         }
 
         self.ps2_mouse_buttons = buttons;
+    }
+
+    // ---------------------------------------------------------------------
+    // virtio-input (paravirtualized keyboard/mouse)
+    // ---------------------------------------------------------------------
+
+    /// Whether the guest driver for the virtio-input keyboard has reached `DRIVER_OK`.
+    ///
+    /// Returns `false` if virtio-input is disabled or the keyboard function is absent.
+    pub fn virtio_input_keyboard_driver_ok(&self) -> bool {
+        self.virtio_input_keyboard
+            .as_ref()
+            .is_some_and(|dev| dev.borrow().driver_ok())
+    }
+
+    /// Whether the guest driver for the virtio-input mouse has reached `DRIVER_OK`.
+    ///
+    /// Returns `false` if virtio-input is disabled or the mouse function is absent.
+    pub fn virtio_input_mouse_driver_ok(&self) -> bool {
+        self.virtio_input_mouse
+            .as_ref()
+            .is_some_and(|dev| dev.borrow().driver_ok())
+    }
+
+    fn poll_virtio_input(&mut self) {
+        let Some(pci_cfg) = &self.pci_cfg else {
+            return;
+        };
+
+        // Polling is safe even when the guest has not enabled bus mastering; `VirtioPciDevice`
+        // gates all guest-memory DMA on COMMAND.BME.
+        let mut dma = VirtioDmaMemory::new(&mut self.mem);
+
+        const MAX_CHAINS_PER_QUEUE_PER_POLL: usize = 64;
+
+        if let Some(kbd) = &self.virtio_input_keyboard {
+            let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
+            let command = {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                pci_cfg
+                    .bus_mut()
+                    .device_config(bdf)
+                    .map(|cfg| cfg.command())
+                    .unwrap_or(0)
+            };
+            let mut dev = kbd.borrow_mut();
+            dev.set_pci_command(command);
+            dev.poll_bounded(&mut dma, MAX_CHAINS_PER_QUEUE_PER_POLL);
+        }
+
+        if let Some(mouse) = &self.virtio_input_mouse {
+            let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
+            let command = {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                pci_cfg
+                    .bus_mut()
+                    .device_config(bdf)
+                    .map(|cfg| cfg.command())
+                    .unwrap_or(0)
+            };
+            let mut dev = mouse.borrow_mut();
+            dev.set_pci_command(command);
+            dev.poll_bounded(&mut dma, MAX_CHAINS_PER_QUEUE_PER_POLL);
+        }
+    }
+
+    /// Inject a Linux input key event (`EV_KEY` + `KEY_*`) into the virtio-input keyboard device.
+    ///
+    /// This is a no-op when virtio-input is disabled.
+    pub fn inject_virtio_key(&mut self, linux_key: u32, pressed: bool) {
+        let Some(kbd) = &self.virtio_input_keyboard else {
+            return;
+        };
+        let Ok(code) = u16::try_from(linux_key) else {
+            return;
+        };
+        {
+            let mut dev = kbd.borrow_mut();
+            let Some(input) = dev.device_mut::<VirtioInput>() else {
+                return;
+            };
+            input.inject_key(code, pressed);
+        }
+        self.poll_virtio_input();
+    }
+
+    /// Inject a Linux input relative motion event (`EV_REL` + `REL_X/REL_Y`) into the virtio-input
+    /// mouse device.
+    ///
+    /// This is a no-op when virtio-input is disabled.
+    pub fn inject_virtio_rel(&mut self, dx: i32, dy: i32) {
+        let Some(mouse) = &self.virtio_input_mouse else {
+            return;
+        };
+        {
+            let mut dev = mouse.borrow_mut();
+            let Some(input) = dev.device_mut::<VirtioInput>() else {
+                return;
+            };
+            input.inject_rel_move(dx, dy);
+        }
+        self.poll_virtio_input();
+    }
+
+    /// Inject a Linux input button event (`EV_KEY` + `BTN_*`) into the virtio-input mouse device.
+    ///
+    /// This is a no-op when virtio-input is disabled.
+    pub fn inject_virtio_button(&mut self, btn: u32, pressed: bool) {
+        let Some(mouse) = &self.virtio_input_mouse else {
+            return;
+        };
+        let Ok(code) = u16::try_from(btn) else {
+            return;
+        };
+        {
+            let mut dev = mouse.borrow_mut();
+            let Some(input) = dev.device_mut::<VirtioInput>() else {
+                return;
+            };
+            input.inject_button(code, pressed);
+        }
+        self.poll_virtio_input();
+    }
+
+    /// Inject a Linux mouse wheel event (`EV_REL` + `REL_WHEEL`) into the virtio-input mouse device.
+    ///
+    /// This is a no-op when virtio-input is disabled.
+    pub fn inject_virtio_wheel(&mut self, delta: i32) {
+        let Some(mouse) = &self.virtio_input_mouse else {
+            return;
+        };
+        {
+            let mut dev = mouse.borrow_mut();
+            let Some(input) = dev.device_mut::<VirtioInput>() else {
+                return;
+            };
+            input.inject_wheel(delta);
+        }
+        self.poll_virtio_input();
     }
 
     pub fn take_snapshot_full(&mut self) -> snapshot::Result<Vec<u8>> {
@@ -5284,6 +5559,44 @@ impl Machine {
                 None
             };
 
+            let virtio_input_keyboard = if self.cfg.enable_virtio_input {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf,
+                    Box::new(VirtioInputKeyboardPciConfigDevice::new()),
+                );
+                match &self.virtio_input_keyboard {
+                    Some(dev) => {
+                        dev.borrow_mut().reset();
+                        Some(dev.clone())
+                    }
+                    None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
+                        Box::new(VirtioInput::new(VirtioInputDeviceKind::Keyboard)),
+                        Box::new(NoopVirtioInterruptSink),
+                    )))),
+                }
+            } else {
+                None
+            };
+
+            let virtio_input_mouse = if self.cfg.enable_virtio_input {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf,
+                    Box::new(VirtioInputMousePciConfigDevice::new()),
+                );
+                match &self.virtio_input_mouse {
+                    Some(dev) => {
+                        dev.borrow_mut().reset();
+                        Some(dev.clone())
+                    }
+                    None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
+                        Box::new(VirtioInput::new(VirtioInputDeviceKind::Mouse)),
+                        Box::new(NoopVirtioInterruptSink),
+                    )))),
+                }
+            } else {
+                None
+            };
+
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -5363,6 +5676,44 @@ impl Machine {
                         .unwrap_or(0)
                 };
                 virtio_net.borrow_mut().set_pci_command(command);
+            }
+
+            if let Some(virtio_input_keyboard) = virtio_input_keyboard.as_ref() {
+                let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
+                let (command, bar0_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(0))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base)
+                };
+                let mut dev = virtio_input_keyboard.borrow_mut();
+                dev.set_pci_command(command);
+                if bar0_base != 0 {
+                    dev.config_mut().set_bar_base(0, bar0_base);
+                }
+            }
+
+            if let Some(virtio_input_mouse) = virtio_input_mouse.as_ref() {
+                let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
+                let (command, bar0_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(0))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base)
+                };
+                let mut dev = virtio_input_mouse.borrow_mut();
+                dev.set_pci_command(command);
+                if bar0_base != 0 {
+                    dev.config_mut().set_bar_base(0, bar0_base);
+                }
             }
 
             // Keep storage controller device models' internal PCI config state coherent with the
@@ -5525,6 +5876,22 @@ impl Machine {
                             ),
                         );
                     }
+                    if let Some(virtio_input_keyboard) = virtio_input_keyboard.clone() {
+                        let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
+                        router.register_handler(
+                            bdf,
+                            0,
+                            VirtioPciBar0Mmio::new(pci_cfg.clone(), virtio_input_keyboard, bdf),
+                        );
+                    }
+                    if let Some(virtio_input_mouse) = virtio_input_mouse.clone() {
+                        let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
+                        router.register_handler(
+                            bdf,
+                            0,
+                            VirtioPciBar0Mmio::new(pci_cfg.clone(), virtio_input_mouse, bdf),
+                        );
+                    }
                     if let Some(aerogpu_mmio) = aerogpu_mmio.clone() {
                         router.register_shared_handler(
                             aero_devices::pci::profile::AEROGPU.bdf,
@@ -5650,6 +6017,8 @@ impl Machine {
             self.hpet = Some(hpet);
             self.e1000 = e1000;
             self.virtio_net = virtio_net;
+            self.virtio_input_keyboard = virtio_input_keyboard;
+            self.virtio_input_mouse = virtio_input_mouse;
             self.ahci = ahci;
             self.nvme = nvme;
             self.ide = ide;
@@ -5676,6 +6045,8 @@ impl Machine {
             self.ahci = None;
             self.nvme = None;
             self.virtio_net = None;
+            self.virtio_input_keyboard = None;
+            self.virtio_input_mouse = None;
             self.ide = None;
             self.virtio_blk = None;
             self.uhci = None;
@@ -6103,6 +6474,7 @@ impl Machine {
             self.process_nvme();
             self.process_virtio_blk();
             self.process_aerogpu();
+            self.poll_virtio_input();
 
             self.poll_network();
             self.process_ahci();

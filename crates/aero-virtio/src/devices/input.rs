@@ -514,6 +514,14 @@ impl VirtioInput {
     pub fn leds_mask(&self) -> u8 {
         self.leds_mask
     }
+
+    /// Number of host-injected events currently buffered for delivery to the guest.
+    ///
+    /// This is primarily intended for lightweight integration tests that want to assert that
+    /// injection APIs enqueue events without needing to fully simulate virtqueues.
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
 }
 
 impl Default for VirtioInput {

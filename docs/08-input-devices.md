@@ -81,7 +81,42 @@ Note: the PS/2 mouse model only emits movement packets when mouse reporting is e
 the guest sends `0xF4` via the i8042 “write to mouse” command). Most OS drivers enable this during
 boot; very early bare-metal tests may need to do so explicitly.
 
-For best performance and lowest complexity on the host side, we also plan a **paravirtualized virtio-input** path. This avoids USB controller emulation entirely, but requires a custom Windows 7 driver to surface the virtio device as standard HID keyboard/mouse devices. The definitive virtio-input device contract for Aero (transport + queues + event codes) is specified in [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md).
+### Virtio-input injection (WASM-facing)
+
+For best performance and lowest complexity on the host side, Aero also supports a
+**paravirtualized virtio-input** path (keyboard + mouse) via the canonical
+`aero_machine::Machine` exported to JS as `crates/aero-wasm::Machine`.
+
+To keep `new api.Machine(ramSizeBytes)` backwards-compatible, virtio-input is
+**disabled by default**. Enable it at construction time with
+`Machine.new_with_options(...)`:
+
+```ts
+const machine = api.Machine.new_with_options(64 * 1024 * 1024, {
+  enable_virtio_input: true,
+  // Optional: disable legacy i8042 if you want to force virtio-only bring-up.
+  enable_i8042: false,
+});
+```
+
+Once enabled, JS callers can inject Linux `evdev`-style event codes directly:
+
+- Keyboard: `Machine.inject_virtio_key(linux_key, pressed)` (e.g. `KEY_A`)
+- Mouse movement: `Machine.inject_virtio_rel(dx, dy)` (`REL_X`/`REL_Y`)
+- Mouse buttons: `Machine.inject_virtio_button(btn, pressed)` (e.g. `BTN_LEFT`)
+- Mouse wheel: `Machine.inject_virtio_wheel(delta)` (`REL_WHEEL`)
+
+Driver status is exposed for routing decisions:
+
+- `Machine.virtio_input_keyboard_driver_ok()`
+- `Machine.virtio_input_mouse_driver_ok()`
+
+These return `false` when virtio-input is disabled or the guest driver has not
+completed virtio initialization (`VIRTIO_STATUS_DRIVER_OK`).
+
+The definitive virtio-input device contract for Aero (transport + queues + event
+codes) is specified in
+[`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md).
 
 For a single end-to-end “do these steps” validation checklist (device model + Win7 driver + web runtime routing), see:
 

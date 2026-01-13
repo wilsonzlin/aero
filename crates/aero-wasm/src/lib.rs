@@ -3540,6 +3540,94 @@ impl Machine {
         self.cpu_count as u32
     }
 
+    /// Construct a machine with an options object that can override the default device set.
+    ///
+    /// This preserves the existing `new(ram_size_bytes)` behavior when `options` is omitted.
+    ///
+    /// Example:
+    ///
+    /// ```ts
+    /// const machine = api.Machine.new_with_options(64 * 1024 * 1024, {
+    ///   enable_virtio_input: true,
+    ///   enable_i8042: false,
+    /// });
+    /// ```
+    #[cfg(target_arch = "wasm32")]
+    pub fn new_with_options(
+        ram_size_bytes: u32,
+        options: Option<JsValue>,
+    ) -> Result<Self, JsValue> {
+        let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+
+        if let Some(options) = options {
+            if !options.is_null() && !options.is_undefined() {
+                if !options.is_object() {
+                    return Err(JsValue::from_str("Machine options must be an object"));
+                }
+
+                let get_bool = |key: &str| -> Result<Option<bool>, JsValue> {
+                    let v = Reflect::get(&options, &JsValue::from_str(key))?;
+                    if v.is_undefined() || v.is_null() {
+                        return Ok(None);
+                    }
+                    v.as_bool()
+                        .ok_or_else(|| {
+                            JsValue::from_str(&format!("Machine option `{key}` must be a boolean"))
+                        })
+                        .map(Some)
+                };
+
+                if let Some(v) = get_bool("enable_pc_platform")? {
+                    cfg.enable_pc_platform = v;
+                }
+                if let Some(v) = get_bool("enable_acpi")? {
+                    cfg.enable_acpi = v;
+                }
+                if let Some(v) = get_bool("enable_e1000")? {
+                    cfg.enable_e1000 = v;
+                }
+                if let Some(v) = get_bool("enable_virtio_net")? {
+                    cfg.enable_virtio_net = v;
+                }
+                if let Some(v) = get_bool("enable_virtio_blk")? {
+                    cfg.enable_virtio_blk = v;
+                }
+                if let Some(v) = get_bool("enable_virtio_input")? {
+                    cfg.enable_virtio_input = v;
+                }
+                if let Some(v) = get_bool("enable_ahci")? {
+                    cfg.enable_ahci = v;
+                }
+                if let Some(v) = get_bool("enable_nvme")? {
+                    cfg.enable_nvme = v;
+                }
+                if let Some(v) = get_bool("enable_ide")? {
+                    cfg.enable_ide = v;
+                }
+                if let Some(v) = get_bool("enable_uhci")? {
+                    cfg.enable_uhci = v;
+                }
+                if let Some(v) = get_bool("enable_vga")? {
+                    cfg.enable_vga = v;
+                }
+                if let Some(v) = get_bool("enable_serial")? {
+                    cfg.enable_serial = v;
+                }
+                if let Some(v) = get_bool("enable_i8042")? {
+                    cfg.enable_i8042 = v;
+                }
+                if let Some(v) = get_bool("enable_a20_gate")? {
+                    cfg.enable_a20_gate = v;
+                }
+                if let Some(v) = get_bool("enable_reset_ctrl")? {
+                    cfg.enable_reset_ctrl = v;
+                }
+            }
+        }
+
+        Self::new_with_native_config(cfg)
+    }
+
     pub fn reset(&mut self) {
         self.inner.reset();
         self.mouse_buttons = 0;
@@ -4696,6 +4784,48 @@ impl Machine {
     }
 
     // -------------------------------------------------------------------------
+    // virtio-input (paravirtualized keyboard/mouse)
+    // -------------------------------------------------------------------------
+
+    /// Inject a Linux input `KEY_*` code into the virtio-input keyboard device (if present).
+    ///
+    /// This is safe to call even when virtio-input is disabled; it will no-op.
+    pub fn inject_virtio_key(&mut self, linux_key: u32, pressed: bool) {
+        self.inner.inject_virtio_key(linux_key, pressed);
+    }
+
+    /// Inject relative motion (`REL_X`/`REL_Y`) into the virtio-input mouse device (if present).
+    ///
+    /// This is safe to call even when virtio-input is disabled; it will no-op.
+    pub fn inject_virtio_rel(&mut self, dx: i32, dy: i32) {
+        self.inner.inject_virtio_rel(dx, dy);
+    }
+
+    /// Inject a Linux input `BTN_*` code into the virtio-input mouse device (if present).
+    ///
+    /// This is safe to call even when virtio-input is disabled; it will no-op.
+    pub fn inject_virtio_button(&mut self, btn: u32, pressed: bool) {
+        self.inner.inject_virtio_button(btn, pressed);
+    }
+
+    /// Inject a mouse wheel delta into the virtio-input mouse device (if present).
+    ///
+    /// This is safe to call even when virtio-input is disabled; it will no-op.
+    pub fn inject_virtio_wheel(&mut self, delta: i32) {
+        self.inner.inject_virtio_wheel(delta);
+    }
+
+    /// Whether the guest virtio-input keyboard driver has reached `DRIVER_OK`.
+    pub fn virtio_input_keyboard_driver_ok(&self) -> bool {
+        self.inner.virtio_input_keyboard_driver_ok()
+    }
+
+    /// Whether the guest virtio-input mouse driver has reached `DRIVER_OK`.
+    pub fn virtio_input_mouse_driver_ok(&self) -> bool {
+        self.inner.virtio_input_mouse_driver_ok()
+    }
+
+    // -------------------------------------------------------------------------
     // Network (Option C L2 tunnel via NET_TX / NET_RX AIPC rings)
     // -------------------------------------------------------------------------
 
@@ -5176,6 +5306,40 @@ impl Machine {
         // Restoring rewinds machine device state; we no longer know the current mouse buttons.
         self.mouse_buttons_known = false;
         Ok(())
+    }
+}
+
+impl Machine {
+    /// Rust-native constructor for tests/tools that want to supply a full `aero_machine::MachineConfig`
+    /// without going through JS object parsing.
+    pub fn new_with_machine_config(cfg: aero_machine::MachineConfig) -> Result<Self, JsValue> {
+        Self::new_with_native_config(cfg)
+    }
+
+    /// Rust-only debug helper: number of pending virtio-input keyboard events buffered for delivery.
+    ///
+    /// This is intentionally *not* a wasm-bindgen export; it exists to support lightweight tests.
+    pub fn virtio_input_keyboard_pending_events(&mut self) -> u32 {
+        let Some(dev) = self.inner.virtio_input_keyboard() else {
+            return 0;
+        };
+        let mut dev = dev.borrow_mut();
+        let Some(input) = dev.device_mut::<aero_virtio::devices::input::VirtioInput>() else {
+            return 0;
+        };
+        u32::try_from(input.pending_len()).unwrap_or(u32::MAX)
+    }
+
+    /// Rust-only debug helper: number of pending virtio-input mouse events buffered for delivery.
+    pub fn virtio_input_mouse_pending_events(&mut self) -> u32 {
+        let Some(dev) = self.inner.virtio_input_mouse() else {
+            return 0;
+        };
+        let mut dev = dev.borrow_mut();
+        let Some(input) = dev.device_mut::<aero_virtio::devices::input::VirtioInput>() else {
+            return 0;
+        };
+        u32::try_from(input.pending_len()).unwrap_or(u32::MAX)
     }
 }
 

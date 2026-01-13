@@ -54,4 +54,14 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
             | (aero_wasm::MouseButtons::Forward as u8),
     );
     m.inject_mouse_buttons_mask(0x00);
+
+    // virtio-input exports should be callable even when virtio-input is disabled.
+    assert!(!m.virtio_input_keyboard_driver_ok());
+    assert!(!m.virtio_input_mouse_driver_ok());
+    m.inject_virtio_key(0, true);
+    m.inject_virtio_key(0, false);
+    m.inject_virtio_rel(10, -5);
+    m.inject_virtio_button(0, true);
+    m.inject_virtio_button(0, false);
+    m.inject_virtio_wheel(1);
 }
