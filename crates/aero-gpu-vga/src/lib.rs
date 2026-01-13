@@ -944,7 +944,15 @@ impl VgaDevice {
     fn write_dac_data(&mut self, value: u8) {
         let idx = self.dac_write_index as usize;
         let component = self.dac_write_subindex;
-        let v = palette::vga_6bit_to_8bit(value & 0x3F);
+        // Real VGA hardware exposes a 6-bit DAC, but guests often write 8-bit (0..=255) palette
+        // components directly. Be permissive:
+        // - Values in 0..=63 are treated as native 6-bit DAC writes.
+        // - Values in 64..=255 are treated as 8-bit writes and downscaled to 6-bit via `>> 2`.
+        //
+        // The device stores the palette in 8-bit form for rendering; `vga_6bit_to_8bit` expands
+        // the 6-bit component into the nearest 8-bit approximation.
+        let v6 = if value > 0x3F { value >> 2 } else { value };
+        let v = palette::vga_6bit_to_8bit(v6);
         match component {
             0 => self.dac[idx].r = v,
             1 => self.dac[idx].g = v,

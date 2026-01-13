@@ -1,0 +1,66 @@
+use aero_machine::{Machine, MachineConfig};
+use pretty_assertions::assert_eq;
+
+#[test]
+fn vga_dac_ports_program_palette_entry_and_read_back() {
+    // The VGA device is exposed both in a minimal machine and in the PC platform
+    // configuration. Exercise both paths to ensure the port window is always routed.
+    for enable_pc_platform in [false, true] {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform,
+            enable_vga: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: false,
+            enable_virtio_net: false,
+            ..Default::default()
+        };
+        let mut m = Machine::new(cfg).unwrap();
+
+        // PEL mask is a simple R/W storage register.
+        m.io_write(0x3C6, 1, 0x5A);
+        assert_eq!(m.io_read(0x3C6, 1) as u8, 0x5A);
+
+        // Program two consecutive palette entries starting at index 0x2A:
+        // - first entry uses 8-bit component writes (a common guest behavior),
+        // - second entry uses classic VGA 6-bit component writes.
+        let base_index: u8 = 0x2A;
+        m.io_write(0x3C8, 1, base_index as u32);
+
+        // Entry 0x2A: 8-bit RGB.
+        let (r8, g8, b8) = (0x80u8, 0xC0u8, 0xFFu8);
+        m.io_write(0x3C9, 1, r8 as u32);
+        m.io_write(0x3C9, 1, g8 as u32);
+        m.io_write(0x3C9, 1, b8 as u32);
+
+        // Entry 0x2B: 6-bit RGB.
+        let (r6, g6, b6) = (0x01u8, 0x02u8, 0x03u8);
+        m.io_write(0x3C9, 1, r6 as u32);
+        m.io_write(0x3C9, 1, g6 as u32);
+        m.io_write(0x3C9, 1, b6 as u32);
+
+        // Write index auto-increments after every 3 components.
+        assert_eq!(m.io_read(0x3C8, 1) as u8, base_index.wrapping_add(2));
+
+        // Read back both entries via DAC read mode.
+        m.io_write(0x3C7, 1, base_index as u32);
+        let out_r0 = m.io_read(0x3C9, 1) as u8;
+        let out_g0 = m.io_read(0x3C9, 1) as u8;
+        let out_b0 = m.io_read(0x3C9, 1) as u8;
+        let out_r1 = m.io_read(0x3C9, 1) as u8;
+        let out_g1 = m.io_read(0x3C9, 1) as u8;
+        let out_b1 = m.io_read(0x3C9, 1) as u8;
+
+        // Aero's VGA frontend stores palette entries as 6-bit values; 8-bit writes are
+        // downscaled via `>> 2` (matching what most VGA software does explicitly).
+        assert_eq!([out_r0, out_g0, out_b0], [r8 >> 2, g8 >> 2, b8 >> 2]);
+        assert_eq!([out_r1, out_g1, out_b1], [r6, g6, b6]);
+
+        // Read index auto-increments after every 3 components.
+        assert_eq!(m.io_read(0x3C7, 1) as u8, base_index.wrapping_add(2));
+    }
+}
+
