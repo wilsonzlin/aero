@@ -33,8 +33,8 @@ export function isXhciTopologyBridgeLike(value: unknown): value is XhciTopologyB
  *
  * Returns `null` when the bridge does not expose the required exports.
  *
- * Note: the wrapper preserves method `this` binding via `.call(...)` so it works
- * with wasm-bindgen generated glue.
+ * Note: the wrapper preserves method `this` binding by invoking methods on the original bridge
+ * object so it works with wasm-bindgen generated glue.
  */
 export function createXhciTopologyBridgeShim(bridge: unknown): XhciTopologyBridge | null {
   if (!isXhciTopologyBridgeLike(bridge)) return null;

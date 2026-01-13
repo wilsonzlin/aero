@@ -1633,7 +1633,9 @@ export interface WasmApi {
         readonly last_tick_written_frames: number;
         readonly last_tick_dropped_frames: number;
         /**
-         * Added in newer WASM builds; older builds may not expose this.
+         * Configure the demo's sine-wave generator.
+         *
+         * Optional for older WASM builds.
          */
         set_sine_wave?(freqHz: number, gain: number): void;
         tick(frames: number): number;
