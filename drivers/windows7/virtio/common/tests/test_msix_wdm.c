@@ -96,6 +96,91 @@ static void test_connect_validation(void)
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
 }
 
+static void test_connect_failure_zeroes_state(void)
+{
+    VIRTIO_MSIX_WDM msix;
+    DEVICE_OBJECT dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_msg_desc(1);
+
+    WdkTestResetIoConnectInterruptExCount();
+    WdkTestResetIoDisconnectInterruptExCount();
+
+    memset(&msix, 0xA5, sizeof(msix));
+
+    WdkTestSetIoConnectInterruptExStatus(STATUS_INSUFFICIENT_RESOURCES);
+    status = VirtioMsixConnect(&dev, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    assert(status == STATUS_INSUFFICIENT_RESOURCES);
+
+    assert(msix.Initialized == FALSE);
+    assert(msix.ConnectionContext == NULL);
+    assert(msix.MessageInfo == NULL);
+    assert(msix.Vectors == NULL);
+    assert(msix.QueueLocks == NULL);
+    assert(msix.QueueVectors == NULL);
+    assert(msix.DpcInFlight == 0);
+
+    /* Connect attempted once, no disconnect because connect failed. */
+    assert(WdkTestGetIoConnectInterruptExCount() == 1);
+    assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
+
+    WdkTestSetIoConnectInterruptExStatus(STATUS_SUCCESS);
+}
+
+static void test_connect_disconnect_calls_wdk_routines(void)
+{
+    VIRTIO_MSIX_WDM msix;
+    DEVICE_OBJECT dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_msg_desc(1);
+
+    WdkTestResetIoConnectInterruptExCount();
+    WdkTestResetIoDisconnectInterruptExCount();
+
+    status = VirtioMsixConnect(&dev, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    assert(status == STATUS_SUCCESS);
+    assert(WdkTestGetIoConnectInterruptExCount() == 1);
+    assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
+
+    VirtioMsixDisconnect(&msix);
+    assert(WdkTestGetIoDisconnectInterruptExCount() == 1);
+
+    /* Disconnect again should not call IoDisconnectInterruptEx again. */
+    VirtioMsixDisconnect(&msix);
+    assert(WdkTestGetIoDisconnectInterruptExCount() == 1);
+}
+
+static void test_disconnect_waits_for_inflight_dpc(void)
+{
+    VIRTIO_MSIX_WDM msix;
+    DEVICE_OBJECT dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_msg_desc(1);
+
+    WdkTestResetKeDelayExecutionThreadCount();
+
+    status = VirtioMsixConnect(&dev, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    assert(status == STATUS_SUCCESS);
+
+    /*
+     * Simulate a DPC currently in flight (running but not queued), so
+     * KeRemoveQueueDpc won't decrement it and VirtioMsixDisconnect must wait.
+     */
+    msix.DpcInFlight = 1;
+    WdkTestAutoCompleteDpcInFlightAfterDelayCalls(&msix.DpcInFlight, 3);
+
+    VirtioMsixDisconnect(&msix);
+
+    assert(WdkTestGetKeDelayExecutionThreadCount() == 3);
+    WdkTestClearAutoCompleteDpcInFlight();
+}
+
 static void test_multivector_mapping(void)
 {
     VIRTIO_MSIX_WDM msix;
@@ -180,6 +265,9 @@ static void test_all_on_0_fallback_drains_all_queues(void)
 int main(void)
 {
     test_connect_validation();
+    test_connect_failure_zeroes_state();
+    test_connect_disconnect_calls_wdk_routines();
+    test_disconnect_waits_for_inflight_dpc();
     test_multivector_mapping();
     test_all_on_0_fallback_drains_all_queues();
 
