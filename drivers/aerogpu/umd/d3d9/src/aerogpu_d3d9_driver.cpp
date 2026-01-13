@@ -3714,7 +3714,7 @@ bool emit_create_resource_locked(Device* dev, Resource* res) {
     cmd->width = res->width;
     cmd->height = res->height;
     cmd->mip_levels = res->mip_levels;
-    cmd->array_layers = res->depth;
+    cmd->array_layers = std::max(1u, res->depth);
     cmd->row_pitch_bytes = res->row_pitch;
     cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = res->backing_offset_bytes;
@@ -7421,6 +7421,18 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     }
   }
 
+  // Host-backed resources (backing_alloc_id==0) need CPU shadow storage for
+  // Lock/Unlock and for UPLOAD_RESOURCE updates, even on WDDM builds where the
+  // runtime may have attached a WDDM allocation handle (which we treat as
+  // non-authoritative backing).
+  if (res->backing_alloc_id == 0 && res->size_bytes != 0 && res->storage.size() < res->size_bytes) {
+    try {
+      res->storage.resize(res->size_bytes);
+    } catch (...) {
+      return E_OUTOFMEMORY;
+    }
+  }
+
   if (open_existing_shared) {
     if (!res->share_token) {
       logf("aerogpu-d3d9: Open shared resource missing share_token (alloc_id=%u)\n", res->backing_alloc_id);
@@ -9063,6 +9075,86 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
   return trace.ret(S_OK);
 }
 
+namespace {
+struct Texture2dSubresourceLayout {
+  uint32_t row_pitch_bytes = 0;
+  uint32_t slice_pitch_bytes = 0;
+};
+
+// Computes the row/slice pitch for the texture subresource that contains
+// `offset_bytes` in the packed linear layout used by the AeroGPU protocol.
+//
+// This is required for LockRect on mipmapped and/or layered textures: the D3D9
+// runtime expects RowPitch/SlicePitch to match the mip level being locked, not
+// always mip 0.
+bool calc_texture2d_subresource_layout_for_offset(
+    D3DDDIFORMAT format,
+    uint32_t width,
+    uint32_t height,
+    uint32_t mip_levels,
+    uint32_t array_layers,
+    uint64_t offset_bytes,
+    Texture2dSubresourceLayout* out) {
+  if (!out) {
+    return false;
+  }
+
+  width = std::max(1u, width);
+  height = std::max(1u, height);
+  mip_levels = std::max(1u, mip_levels);
+  array_layers = std::max(1u, array_layers);
+
+  uint64_t layer_base = 0;
+  for (uint32_t layer = 0; layer < array_layers; ++layer) {
+    uint32_t w = width;
+    uint32_t h = height;
+
+    uint64_t level_base = layer_base;
+    for (uint32_t level = 0; level < mip_levels; ++level) {
+      uint64_t row_pitch = 0;
+      uint64_t slice_pitch = 0;
+
+      if (is_block_compressed_format(format)) {
+        const uint32_t block_bytes = block_bytes_per_4x4(format);
+        if (block_bytes == 0) {
+          return false;
+        }
+        const uint32_t blocks_w = std::max(1u, (w + 3u) / 4u);
+        const uint32_t blocks_h = std::max(1u, (h + 3u) / 4u);
+        row_pitch = static_cast<uint64_t>(blocks_w) * block_bytes;
+        slice_pitch = row_pitch * blocks_h;
+      } else {
+        const uint32_t bpp = bytes_per_pixel(format);
+        row_pitch = static_cast<uint64_t>(w) * bpp;
+        slice_pitch = row_pitch * h;
+      }
+
+      if (row_pitch == 0 || slice_pitch == 0) {
+        return false;
+      }
+      if (row_pitch > 0xFFFFFFFFull || slice_pitch > 0xFFFFFFFFull) {
+        return false;
+      }
+
+      const uint64_t start = level_base;
+      const uint64_t end = start + slice_pitch;
+      if (offset_bytes >= start && offset_bytes < end) {
+        out->row_pitch_bytes = static_cast<uint32_t>(row_pitch);
+        out->slice_pitch_bytes = static_cast<uint32_t>(slice_pitch);
+        return true;
+      }
+
+      level_base = end;
+      w = std::max(1u, w / 2);
+      h = std::max(1u, h / 2);
+    }
+
+    layer_base = level_base;
+  }
+  return false;
+}
+} // namespace
+
 HRESULT AEROGPU_D3D9_CALL device_lock(
     D3DDDI_HDEVICE hDevice,
     const D3D9DDIARG_LOCK* pLock,
@@ -9129,8 +9221,25 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
     res->locked_ptr = res->storage.data() + offset;
     d3d9_locked_box_set_ptr(pLockedBox, res->locked_ptr);
   }
-  d3d9_locked_box_set_row_pitch(pLockedBox, res->row_pitch);
-  d3d9_locked_box_set_slice_pitch(pLockedBox, res->slice_pitch);
+
+  uint32_t row_pitch = res->row_pitch;
+  uint32_t slice_pitch = res->slice_pitch;
+  if (res->kind != ResourceKind::Buffer && (res->mip_levels > 1 || res->depth > 1)) {
+    Texture2dSubresourceLayout sub{};
+    if (calc_texture2d_subresource_layout_for_offset(res->format,
+                                                     res->width,
+                                                     res->height,
+                                                     res->mip_levels,
+                                                     res->depth,
+                                                     offset,
+                                                     &sub)) {
+      row_pitch = sub.row_pitch_bytes;
+      slice_pitch = sub.slice_pitch_bytes;
+    }
+  }
+
+  d3d9_locked_box_set_row_pitch(pLockedBox, row_pitch);
+  d3d9_locked_box_set_slice_pitch(pLockedBox, slice_pitch);
   return trace.ret(S_OK);
 }
 
