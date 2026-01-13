@@ -68,6 +68,16 @@ enables the same canonical controller set in the full-system `Machine` integrati
 
 ## Boot flows (normative)
 
+### BIOS boot drive numbering (DL) (normative)
+
+Aero’s legacy BIOS follows PC-compatible drive numbering conventions when transferring control to a
+boot sector / El Torito boot image:
+
+| Medium | BIOS drive number | Notes |
+|---|---:|---|
+| First fixed disk (HDD0) | `DL=0x80` | Boot from the OS disk after install. |
+| First ATAPI CD-ROM (CDROM0) | `DL=0xE0` | Boot from install/recovery ISO via El Torito. |
+
 ### 1) Windows 7 install / recovery flow
 
 1. BIOS boot order is configured to boot from **CD-ROM (El Torito)** first. BIOS transfers control

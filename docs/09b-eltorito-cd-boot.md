@@ -16,22 +16,26 @@ Scope:
 
 ## Sector sizes and addressing (2048 vs 512)
 
-El Torito and ISO9660 describe locations in **ISO logical blocks** of **2048 bytes**. In contrast,
-our legacy BIOS disk interface and INT 13h implementation are **sector-based** with **512-byte
-sectors**.
+El Torito and ISO9660 describe locations in **ISO logical blocks** of **2048 bytes**.
 
-For CD boot, this creates a critical conversion rule:
+In Aero’s BIOS:
 
-* **ISO LBA** (2048-byte units) → **BIOS/INT13 LBA** (512-byte units) by multiplying by **4**:
-  * `lba512 = lba2048 * 4`
+* **Externally (INT 13h for CD drives):** CD-ROM media is exposed as **2048-byte sectors** (and
+  `AH=48h` reports `bytes_per_sector = 2048`).
+* **Internally (firmware `BlockDevice`):** the disk backend is **512-byte sectors**.
+
+For CD boot and CD INT 13h I/O, this creates a critical conversion rule between **2048-byte LBAs**
+and the underlying 512-byte sector backend:
+
+* `lba512 = lba2048 * 4` (and similarly `count512 = count2048 * 4`)
 
 You will see this conversion repeatedly:
 
-* ISO9660 volume descriptors start at **ISO LBA 16** → BIOS LBA `16 * 4 = 64`.
+* ISO9660 volume descriptors start at **ISO LBA 16** → underlying 512-sector LBA `16 * 4 = 64`.
 * The Boot Record volume descriptor’s **boot catalog pointer** is an **ISO LBA**.
 * The boot catalog initial entry’s **`load_rba`** is an **ISO LBA**.
-* The boot catalog initial entry’s **`sector_count`** is in **512-byte sectors** (already the BIOS
-  unit).
+* The boot catalog initial entry’s **`sector_count`** is in **512-byte sectors** (already the
+  underlying unit), even though the catalog’s LBAs are 2048-byte ISO LBAs.
 
 If you forget which fields are 2048-LBA vs 512-sector units, you will load the wrong bytes and
 Windows boot will fail very early.
@@ -290,4 +294,3 @@ Important:
 
 * **Aero BIOS does not consume `-boot-info-table`.**
 * It is an optional bootloader-side convenience, not part of El Torito catalog discovery.
-
