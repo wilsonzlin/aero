@@ -205,6 +205,29 @@ impl PcMachine {
         &mut self.cpu.state
     }
 
+    /// Returns the BIOS "TTY output" buffer accumulated so far.
+    ///
+    /// The legacy HLE BIOS records:
+    /// - bytes written via INT 10h teletype output (AH=0Eh), and
+    /// - certain early boot/panic strings (for example when the boot sector is missing/invalid).
+    ///
+    /// This is primarily intended for **early-boot debugging and tests**. Output is best-effort:
+    /// it is not a stable, user-facing console API and may change as the firmware implementation
+    /// evolves.
+    pub fn bios_tty_output(&self) -> &[u8] {
+        self.bios.tty_output()
+    }
+
+    /// Return a copy of the BIOS "TTY output" buffer accumulated so far.
+    pub fn bios_tty_output_bytes(&self) -> Vec<u8> {
+        self.bios.tty_output().to_vec()
+    }
+
+    /// Clear the BIOS "TTY output" buffer.
+    pub fn clear_bios_tty_output(&mut self) {
+        self.bios.clear_tty_output();
+    }
+
     pub fn platform(&self) -> &PcPlatform {
         &self.bus.platform
     }

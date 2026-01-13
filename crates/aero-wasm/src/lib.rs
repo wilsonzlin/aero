@@ -3877,6 +3877,30 @@ impl Machine {
         RunExit::from_native(self.inner.run_slice(max_insts as u64))
     }
 
+    /// Returns and clears any accumulated BIOS "TTY output".
+    ///
+    /// This is a best-effort early-boot debug log recorded by the HLE BIOS, currently capturing:
+    /// - INT 10h teletype output (AH=0Eh)
+    /// - BIOS boot panic strings (e.g. missing/invalid boot sector)
+    pub fn bios_tty_output(&mut self) -> Vec<u8> {
+        let out = self.inner.bios_tty_output_bytes();
+        self.inner.clear_bios_tty_output();
+        out
+    }
+
+    /// Return the current BIOS TTY output length without copying the bytes into JS.
+    pub fn bios_tty_output_len(&self) -> u32 {
+        self.inner
+            .bios_tty_output()
+            .len()
+            .min(u32::MAX as usize) as u32
+    }
+
+    /// Clear the BIOS TTY output buffer without reading it.
+    pub fn clear_bios_tty_output(&mut self) {
+        self.inner.clear_bios_tty_output();
+    }
+
     /// Returns and clears any accumulated serial output.
     pub fn serial_output(&mut self) -> Vec<u8> {
         self.inner.take_serial_output()

@@ -6,6 +6,27 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|window| window == needle)
 }
 
+fn boot_sector_int10_teletype(message: &[u8]) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+    for &b in message {
+        // mov ax, 0x0E00 | b
+        sector[i] = 0xB8;
+        sector[i + 1] = b;
+        sector[i + 2] = 0x0E;
+        i += 3;
+        // int 0x10
+        sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+        i += 2;
+    }
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 #[test]
 fn bios_tty_output_exposes_boot_panic_message() {
     // Keep the machine minimal so no platform timer interrupts can wake HLT unexpectedly.
@@ -48,4 +69,37 @@ fn bios_tty_output_exposes_boot_panic_message() {
     assert_eq!(tty_cloned, tty);
     m.clear_bios_tty_output();
     assert!(m.bios_tty_output().is_empty());
+}
+
+#[test]
+fn bios_tty_output_captures_int10_teletype_output() {
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).expect("machine should construct");
+    m.set_disk_image(boot_sector_int10_teletype(b"Hi").to_vec())
+        .expect("boot sector should be valid");
+    m.reset();
+
+    // Boot sector should run and halt.
+    loop {
+        match m.run_slice(1000) {
+            RunExit::Halted { .. } => break,
+            RunExit::Completed { .. } => continue,
+            other => panic!("unexpected run exit: {other:?}"),
+        }
+    }
+
+    assert!(
+        contains_bytes(m.bios_tty_output(), b"Hi"),
+        "unexpected BIOS TTY output: {}",
+        String::from_utf8_lossy(m.bios_tty_output())
+    );
 }
