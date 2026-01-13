@@ -52,7 +52,7 @@ type Config struct {
 	Authorizer Authorizer
 
 	// ICEGatheringTimeout bounds how long the relay waits for candidate gathering
-	// on non-trickle HTTP endpoints (e.g. /webrtc/offer).
+	// on non-trickle HTTP endpoints (e.g. /offer and /webrtc/offer).
 	ICEGatheringTimeout time.Duration
 
 	// WebRTCSessionConnectTimeout bounds how long a newly-created PeerConnection

@@ -715,7 +715,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.StringVar(&logFormatStr, "log-format", logFormatDefault, "Log format: text or json")
 	fs.StringVar(&logLevelStr, "log-level", logLevelDefault, "Log level: debug, info, warn, error")
 	fs.DurationVar(&shutdownTimeout, "shutdown-timeout", shutdownTimeout, "Graceful shutdown timeout (e.g. 15s)")
-	fs.DurationVar(&iceGatherTimeout, "ice-gather-timeout", iceGatherTimeout, "Max time to wait for ICE gathering on /webrtc/offer (e.g. 2s)")
+	fs.DurationVar(&iceGatherTimeout, "ice-gather-timeout", iceGatherTimeout, "Max time to wait for ICE gathering on non-trickle HTTP signaling endpoints (/offer, /webrtc/offer) (e.g. 2s)")
 	fs.DurationVar(&webrtcSessionConnectTimeout, FlagWebRTCSessionConnectTimeout, webrtcSessionConnectTimeout, "Max time to wait for WebRTC sessions to connect before closing (env "+EnvWebRTCSessionConnectTimeout+")")
 	fs.StringVar(&iceServersJSON, "ice-servers-json", iceServersJSON, "ICE server JSON config (AERO_ICE_SERVERS_JSON)")
 	fs.StringVar(&stunURLs, "stun-urls", stunURLs, "comma-separated STUN URLs (AERO_STUN_URLS)")
