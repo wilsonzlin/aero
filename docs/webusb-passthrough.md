@@ -12,6 +12,7 @@ The goal is to keep three moving parts coherent and spec-aligned:
 - **Guest USB host controller emulation**:
   - **UHCI** (USB 1.1 full-speed; synchronous, TD-driven)
   - **EHCI/xHCI** (USB 2.0 high-speed; planned for passthrough)
+    - EHCI controller emulation design/implementation notes: [`docs/usb-ehci.md`](./usb-ehci.md)
 - **Rust device model** (`UsbPassthroughDevice`; runs inside WASM/worker)
 - **TypeScript WebUSB broker/executor** (runs where WebUSB is available; usually main thread)
 
@@ -583,6 +584,7 @@ UHCI-oriented fixups would produce incorrect endpoint packet sizes/intervals.
 Once EHCI/xHCI passthrough is implemented (see [ADR 0015](./adr/0015-canonical-usb-stack.md) for the
 canonical stack selection), the intended behavior is:
 
+- EHCI controller model design/contract: [`docs/usb-ehci.md`](./usb-ehci.md)
 - The guest enumerates the physical device as **high-speed**.
 - The WebUSB executor should forward `GET_DESCRIPTOR(CONFIGURATION)` results without rewriting
   descriptor types or attempting other-speed translation.
