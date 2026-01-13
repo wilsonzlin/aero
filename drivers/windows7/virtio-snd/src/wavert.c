@@ -2444,6 +2444,16 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
         if (bytesPerMs == 0) {
             bytesPerMs = 1u;
         }
+    } else if (streamFormat.BlockAlign != 0) {
+        /*
+         * Keep bytesPerMs frame-aligned so subsequent period sizing math stays
+         * consistent for sample rates that don't divide cleanly into
+         * milliseconds (e.g. 44.1kHz).
+         */
+        bytesPerMs = (bytesPerMs / streamFormat.BlockAlign) * streamFormat.BlockAlign;
+        if (bytesPerMs == 0) {
+            bytesPerMs = streamFormat.BlockAlign;
+        }
     }
 
     /*
