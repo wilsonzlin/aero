@@ -5,10 +5,18 @@
 //! - `@group(0)` = vertex shader stage resources
 //! - `@group(1)` = pixel shader stage resources
 //! - `@group(2)` = compute shader stage resources
-//! - `@group(3)` = geometry shader stage resources (used by compute-emulated GS)
+//! - `@group(3)` = D3D11 extended stage resources (GS/HS/DS) + internal emulation helpers
 //!
-//! Internal translation/emulation passes may reserve additional bind groups. For example,
-//! compute-side vertex pulling uses `@group(3)` (see `runtime::vertex_pulling`).
+//! D3D11 extended stages (GS/HS/DS) do not exist in WebGPU, but the guest can still update their
+//! per-stage binding tables (textures/samplers/constant buffers). To keep the bind-group count
+//! within the WebGPU baseline limit (`maxBindGroups >= 4`), those extended-stage resources are
+//! mapped to `@group(3)` (see `runtime::bindings::ShaderStage::as_bind_group_index`). This group is
+//! used by the compute-emulated GS/HS/DS paths.
+//!
+//! Internal translation/emulation helpers may also need to bind resources alongside those
+//! extended-stage tables (e.g. compute-side vertex pulling). Such helpers must use `@binding`
+//! numbers at or above [`BINDING_BASE_INTERNAL`] to avoid collisions with the D3D11 register-space
+//! ranges (`b#`/`t#`/`s#`/`u#`).
 //!
 //! Within each group, D3D register spaces are mapped into disjoint `@binding`
 //! ranges so `b#`, `t#`, `s#`, and SM5 `u#` can coexist.
@@ -34,6 +42,17 @@ pub const BINDING_BASE_SAMPLER: u32 = 160;
 ///
 /// Note: UAVs are currently modeled as WGSL storage buffers/textures.
 pub const BINDING_BASE_UAV: u32 = BINDING_BASE_SAMPLER + MAX_SAMPLER_SLOTS;
+
+/// Base `@binding` offset reserved for internal emulation/translation resources.
+///
+/// Internal passes sometimes need to share a bind group with D3D11 stage resources (notably the
+/// `@group(3)` slot used for GS/HS/DS tables). To make that possible without collisions, all
+/// internal-only bindings must use `@binding >= BINDING_BASE_INTERNAL`.
+///
+/// This constant must remain strictly above the D3D register-space ranges covered by
+/// [`BINDING_BASE_CBUFFER`], [`BINDING_BASE_TEXTURE`], [`BINDING_BASE_SAMPLER`], and
+/// [`BINDING_BASE_UAV`] (+ [`MAX_UAV_SLOTS`]).
+pub const BINDING_BASE_INTERNAL: u32 = 256;
 
 /// Maximum number of constant buffer slots that can be represented without colliding with the
 /// texture binding range.

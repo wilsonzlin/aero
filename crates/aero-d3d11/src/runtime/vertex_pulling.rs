@@ -12,6 +12,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use crate::binding_model::BINDING_BASE_INTERNAL;
 use crate::input_layout::{
     dxgi_format_info, InputLayoutBinding, InputLayoutError, SignatureSemanticKey,
     VsInputSignatureElement, MAX_WGPU_VERTEX_ATTRIBUTES, MAX_WGPU_VERTEX_BUFFERS,
@@ -21,9 +22,9 @@ use crate::input_layout::{
 /// Reserved bind-group index for IA vertex pulling resources.
 ///
 /// Group indices `0..=2` are used by the D3D binding model (`binding_model.rs`) for VS/PS/CS
-/// resources. Extended stages (GS/HS/DS) are executed via compute emulation and share `@group(3)`
-/// due to WebGPU's fixed max bind group count (4 groups). Vertex pulling also uses `@group(3)` for
-/// compute pipelines that need IA buffers.
+/// resources. Extended D3D11 stages (GS/HS/DS) also map to `@group(3)` so we stay within WebGPU's
+/// baseline `maxBindGroups >= 4` limit. Vertex pulling uses the same group for compute pipelines
+/// that need IA buffers, so it must use a disjoint `@binding` range within the group.
 pub const VERTEX_PULLING_GROUP: u32 = 3;
 
 /// First `@binding` number reserved for vertex pulling + compute-expansion internal resources within
@@ -31,18 +32,21 @@ pub const VERTEX_PULLING_GROUP: u32 = 3;
 ///
 /// Bindings below this range are reserved for D3D-style register mappings when `@group(3)` is used
 /// for GS/HS/DS resource bindings (via the `stage_ex` ABI extension).
-pub const VERTEX_PULLING_INTERNAL_BASE_BINDING: u32 = 256;
+///
+/// This is anchored on [`crate::binding_model::BINDING_BASE_INTERNAL`] so all internal bindings are
+/// guaranteed to stay disjoint from the D3D11 register-space ranges (`b#`/`t#`/`s#`/`u#`).
+pub const VERTEX_PULLING_BINDING_BASE: u32 = BINDING_BASE_INTERNAL;
 
 /// Base `@binding` number for pulled IA vertex buffers.
 ///
 /// Vertex buffers are bound at `VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot`.
-pub const VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE: u32 = VERTEX_PULLING_INTERNAL_BASE_BINDING + 1;
+pub const VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE: u32 = VERTEX_PULLING_BINDING_BASE + 1;
 
 /// `@binding` number for the vertex pulling uniform buffer inside [`VERTEX_PULLING_GROUP`].
 ///
 /// This lives in the compute-expansion internal range so it can coexist with D3D register bindings
 /// when `@group(3)` is used for GS/HS/DS resources.
-pub const VERTEX_PULLING_UNIFORM_BINDING: u32 = VERTEX_PULLING_INTERNAL_BASE_BINDING;
+pub const VERTEX_PULLING_UNIFORM_BINDING: u32 = VERTEX_PULLING_BINDING_BASE;
 
 /// Per-slot vertex buffer dynamic state needed for address calculation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
