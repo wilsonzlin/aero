@@ -418,4 +418,41 @@ mod tests {
         assert_eq!(cfg.interrupt_pin(), 1);
         assert_eq!(cfg.interrupt_line(), 11);
     }
+
+    #[test]
+    fn sync_levels_to_sink_after_snapshot_restore_redrives_asserted_gsis() {
+        // Use a non-default routing table (including a duplicated GSI) so the test exercises:
+        // - snapshot/restore of the routing configuration
+        // - per-GSI aggregation across multiple sources
+        // - de-duplication so each unique GSI is re-driven exactly once.
+        let cfg = PciIntxRouterConfig {
+            pirq_to_gsi: [42, 7, 7, 9],
+        };
+
+        let mut router = PciIntxRouter::new(cfg);
+        let mut sink = MockSink::default();
+
+        let dev0 = PciBdf::new(0, 0, 0);
+        let dev4 = PciBdf::new(0, 4, 0); // Same swizzle as dev0 (device mod 4).
+
+        // Two sources share GSI 42, plus a third source on GSI 7.
+        router.assert_intx(dev0, PciInterruptPin::IntA, &mut sink);
+        router.assert_intx(dev4, PciInterruptPin::IntA, &mut sink);
+        router.assert_intx(dev0, PciInterruptPin::IntB, &mut sink);
+
+        let snapshot = router.save_state();
+
+        // Restore into a fresh router instance with a different config to ensure `load_state`
+        // restores routing as well as the asserted-source bookkeeping.
+        let mut restored = PciIntxRouter::new(PciIntxRouterConfig::default());
+        restored.load_state(&snapshot).unwrap();
+
+        // `load_state` can't touch the platform interrupt controller; callers must use
+        // `sync_levels_to_sink` to re-drive restored asserted levels.
+        let mut restored_sink = MockSink::default();
+        restored.sync_levels_to_sink(&mut restored_sink);
+
+        // Levels should be driven once per unique GSI (42, 7, 9), in PIRQ order.
+        assert_eq!(restored_sink.events, vec![(42, true), (7, true), (9, false)]);
+    }
 }
