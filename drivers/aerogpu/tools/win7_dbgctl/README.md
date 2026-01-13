@@ -240,6 +240,23 @@ The most common use of `--read-gpa` is to inspect the scanout framebuffer withou
 If scanout is configured for `B8G8R8X8`, the first pixels should match the expected desktop contents (little-endian BGRA/XRGB).
 If the dump is all zeros, check that scanout is enabled/visible and that `mmio_fb_gpa` is non-zero.
 
+## Manual validation: dumping cursor framebuffer bytes
+
+`--read-gpa` can also be used to inspect the hardware cursor backing store:
+
+1. Run `aerogpu_dbgctl --query-cursor` and note `fb_gpa`, `pitch`, and `size` (`width`×`height`).
+2. Dump a small header slice:
+   ```
+   aerogpu_dbgctl --read-gpa <fb_gpa> --size 256
+   ```
+3. If you need more than 256 bytes (up to 4096), use `--force`:
+   ```
+   aerogpu_dbgctl --read-gpa <fb_gpa> --size 4096 --force --out cursor_page0.bin
+   ```
+
+Note: the installed KMD may disable hardware cursor support depending on the device feature bits; in that case
+`--query-cursor` will report `(not supported)` or a zero GPA.
+
 ## JSON output (`--json[=PATH]`)
 
 `aerogpu_dbgctl` can emit **machine-readable JSON** to enable automation (CI/test runners) without fragile text parsing.
