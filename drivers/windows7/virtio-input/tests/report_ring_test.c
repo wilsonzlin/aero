@@ -168,9 +168,56 @@ static void test_report_ring_locking_and_oversize_drop(void) {
   assert(ctx.lock.unlock_calls == 7);
 }
 
+static void test_report_ring_drop_oldest_with_lock(void) {
+  struct virtio_input_device dev;
+  struct report_ready_and_lock ctx;
+  memset(&ctx, 0, sizeof(ctx));
+
+  virtio_input_device_init(&dev, report_ready_assert_unlocked_cb, &ctx, lock_cb, unlock_cb, &ctx.lock);
+
+  const uint32_t total_reports = (uint32_t)VIRTIO_INPUT_REPORT_RING_CAPACITY + 9u;
+  for (uint32_t seq = 0; seq < total_reports; seq++) {
+    uint8_t report[VIRTIO_INPUT_REPORT_MAX_SIZE];
+    const size_t report_len = report_len_for_seq(seq);
+    make_report(report, seq);
+    dev.translate.emit_report(dev.translate.emit_report_context, report, report_len);
+    assert(dev.report_ring.count <= (uint32_t)VIRTIO_INPUT_REPORT_RING_CAPACITY);
+  }
+
+  assert(ctx.ready.calls == total_reports);
+  assert(ctx.lock.lock_calls == total_reports);
+  assert(ctx.lock.unlock_calls == total_reports);
+  assert(!ctx.lock.locked);
+
+  assert(dev.report_ring.count == (uint32_t)VIRTIO_INPUT_REPORT_RING_CAPACITY);
+  assert(dev.report_ring.head == dev.report_ring.tail);
+
+  const uint32_t first_retained = total_reports - (uint32_t)VIRTIO_INPUT_REPORT_RING_CAPACITY;
+  for (uint32_t i = 0; i < (uint32_t)VIRTIO_INPUT_REPORT_RING_CAPACITY; i++) {
+    struct virtio_input_report out;
+    assert(virtio_input_try_pop_report(&dev, &out));
+    expect_report_seq(&out, first_retained + i);
+  }
+  assert(dev.report_ring.count == 0);
+  assert(dev.report_ring.head == dev.report_ring.tail);
+
+  /* Pops also acquire/release the lock. */
+  assert(ctx.lock.lock_calls == total_reports + (uint32_t)VIRTIO_INPUT_REPORT_RING_CAPACITY);
+  assert(ctx.lock.unlock_calls == total_reports + (uint32_t)VIRTIO_INPUT_REPORT_RING_CAPACITY);
+  assert(ctx.ready.calls == total_reports);
+
+  {
+    struct virtio_input_report out;
+    assert(!virtio_input_try_pop_report(&dev, &out));
+  }
+  assert(ctx.lock.lock_calls == total_reports + (uint32_t)VIRTIO_INPUT_REPORT_RING_CAPACITY + 1u);
+  assert(ctx.lock.unlock_calls == total_reports + (uint32_t)VIRTIO_INPUT_REPORT_RING_CAPACITY + 1u);
+}
+
 int main(void) {
   test_report_ring_drop_oldest();
   test_report_ring_locking_and_oversize_drop();
+  test_report_ring_drop_oldest_with_lock();
   printf("report_ring_test: ok\n");
   return 0;
 }
