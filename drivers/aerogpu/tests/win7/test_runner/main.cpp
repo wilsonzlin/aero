@@ -908,6 +908,7 @@ int main(int argc, char** argv) {
       "vblank_state_sanity",
       "get_scanline_sanity",
       "scanout_state_sanity",
+      "cursor_state_sanity",
       "dump_createalloc_sanity",
       "umd_private_sanity",
       "transfer_feature_sanity",

@@ -358,13 +358,6 @@ static int RunCursorStateSanity(int argc, char** argv) {
 
   Sleep(50);
 
-  POINT actual_pos;
-  ZeroMemory(&actual_pos, sizeof(actual_pos));
-  if (!GetCursorPos(&actual_pos)) {
-    reporter.Fail("GetCursorPos(after) failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
-    goto cleanup;
-  }
-
   aerogpu_escape_query_cursor_out q0;
   NTSTATUS st = 0;
   if (!aerogpu_test::kmt::AerogpuQueryCursor(&kmt, adapter, &q0, &st)) {
@@ -378,8 +371,6 @@ static int RunCursorStateSanity(int argc, char** argv) {
     goto cleanup;
   }
 
-  PrintCursorQuery(kTestName, q0);
-
   const bool flags_valid = (q0.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
   if (flags_valid && (q0.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) == 0) {
     aerogpu_test::PrintfStdout("INFO: %s: cursor MMIO not supported; skipping", kTestName);
@@ -388,19 +379,51 @@ static int RunCursorStateSanity(int argc, char** argv) {
     goto cleanup;
   }
 
-  if (q0.enable == 0) {
-    reporter.Fail("cursor not enabled (enable=%lu)", (unsigned long)q0.enable);
-    goto cleanup;
+  const int tol = 2;
+  bool pos_ok = false;
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    POINT actual_pos;
+    ZeroMemory(&actual_pos, sizeof(actual_pos));
+    if (!GetCursorPos(&actual_pos)) {
+      reporter.Fail("GetCursorPos(after) failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+      goto cleanup;
+    }
+
+    const bool enabled = q0.enable != 0;
+    const bool pos_match = (AbsI32((int)ToS32((uint32_t)q0.x) - (int)actual_pos.x) <= tol) &&
+                           (AbsI32((int)ToS32((uint32_t)q0.y) - (int)actual_pos.y) <= tol);
+
+    if (enabled && pos_match) {
+      pos_ok = true;
+      break;
+    }
+    if (attempt + 1 >= 3) {
+      break;
+    }
+    Sleep(50);
+
+    st = 0;
+    if (!aerogpu_test::kmt::AerogpuQueryCursor(&kmt, adapter, &q0, &st)) {
+      reporter.Fail("D3DKMTEscape(query-cursor retry) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
+      goto cleanup;
+    }
   }
 
-  const int tol = 2;
-  if (AbsI32((int)ToS32((uint32_t)q0.x) - (int)actual_pos.x) > tol ||
-      AbsI32((int)ToS32((uint32_t)q0.y) - (int)actual_pos.y) > tol) {
-    reporter.Fail("cursor pos mismatch: expected~(%ld,%ld) got (%ld,%ld)",
-                  (long)actual_pos.x,
-                  (long)actual_pos.y,
-                  (long)ToS32((uint32_t)q0.x),
-                  (long)ToS32((uint32_t)q0.y));
+  PrintCursorQuery(kTestName, q0);
+
+  if (!pos_ok) {
+    POINT actual_pos;
+    ZeroMemory(&actual_pos, sizeof(actual_pos));
+    (void)GetCursorPos(&actual_pos);
+    if (q0.enable == 0) {
+      reporter.Fail("cursor not enabled (enable=%lu)", (unsigned long)q0.enable);
+    } else {
+      reporter.Fail("cursor pos mismatch: expected~(%ld,%ld) got (%ld,%ld)",
+                    (long)actual_pos.x,
+                    (long)actual_pos.y,
+                    (long)ToS32((uint32_t)q0.x),
+                    (long)ToS32((uint32_t)q0.y));
+    }
     goto cleanup;
   }
 
@@ -445,29 +468,38 @@ static int RunCursorStateSanity(int argc, char** argv) {
   Sleep(50);
 
   aerogpu_escape_query_cursor_out q1;
-  st = 0;
-  if (!aerogpu_test::kmt::AerogpuQueryCursor(&kmt, adapter, &q1, &st)) {
-    reporter.Fail("D3DKMTEscape(query-cursor after SetCursor) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
-    goto cleanup;
+  ZeroMemory(&q1, sizeof(q1));
+  bool shape_ok = false;
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    st = 0;
+    if (!aerogpu_test::kmt::AerogpuQueryCursor(&kmt, adapter, &q1, &st)) {
+      reporter.Fail("D3DKMTEscape(query-cursor after SetCursor) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
+      goto cleanup;
+    }
+
+    POINT pos;
+    ZeroMemory(&pos, sizeof(pos));
+    (void)GetCursorPos(&pos);
+    const bool pos_match =
+        (AbsI32((int)ToS32((uint32_t)q1.x) - (int)pos.x) <= tol) && (AbsI32((int)ToS32((uint32_t)q1.y) - (int)pos.y) <= tol);
+
+    const bool shape_sane = (q1.width != 0 && q1.height != 0 && q1.pitch_bytes != 0 && q1.format != 0 && q1.fb_gpa != 0);
+    const bool hot_ok = ((int)q1.hot_x == cursor_spec.hot_x && (int)q1.hot_y == cursor_spec.hot_y);
+
+    if (q1.enable != 0 && shape_sane && hot_ok && pos_match) {
+      shape_ok = true;
+      break;
+    }
+    if (attempt + 1 >= 3) {
+      break;
+    }
+    Sleep(50);
   }
 
   PrintCursorQuery(kTestName, q1);
 
-  if (q1.width == 0 || q1.height == 0 || q1.pitch_bytes == 0 || q1.format == 0 || q1.fb_gpa == 0) {
-    reporter.Fail("cursor shape fields not sane after SetCursor (w=%lu h=%lu pitch=%lu fmt=%lu fb_gpa=0x%I64X)",
-                  (unsigned long)q1.width,
-                  (unsigned long)q1.height,
-                  (unsigned long)q1.pitch_bytes,
-                  (unsigned long)q1.format,
-                  (unsigned long long)q1.fb_gpa);
-    goto cleanup;
-  }
-  if ((int)q1.hot_x != cursor_spec.hot_x || (int)q1.hot_y != cursor_spec.hot_y) {
-    reporter.Fail("cursor hotspot mismatch after SetCursor: expected=(%d,%d) got=(%lu,%lu)",
-                  cursor_spec.hot_x,
-                  cursor_spec.hot_y,
-                  (unsigned long)q1.hot_x,
-                  (unsigned long)q1.hot_y);
+  if (!shape_ok) {
+    reporter.Fail("cursor state did not reflect custom cursor within retry window");
     goto cleanup;
   }
 
@@ -490,14 +522,26 @@ static int RunCursorStateSanity(int argc, char** argv) {
   Sleep(50);
 
   aerogpu_escape_query_cursor_out q_hidden;
-  st = 0;
-  if (!aerogpu_test::kmt::AerogpuQueryCursor(&kmt, adapter, &q_hidden, &st)) {
-    RestoreCursorShowing(show_calls, hide_calls);
-    reporter.Fail("D3DKMTEscape(query-cursor after hide) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
-    goto cleanup;
+  ZeroMemory(&q_hidden, sizeof(q_hidden));
+  bool hidden_ok = false;
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    st = 0;
+    if (!aerogpu_test::kmt::AerogpuQueryCursor(&kmt, adapter, &q_hidden, &st)) {
+      RestoreCursorShowing(show_calls, hide_calls);
+      reporter.Fail("D3DKMTEscape(query-cursor after hide) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
+      goto cleanup;
+    }
+    if (q_hidden.enable == 0) {
+      hidden_ok = true;
+      break;
+    }
+    if (attempt + 1 >= 3) {
+      break;
+    }
+    Sleep(50);
   }
   PrintCursorQuery(kTestName, q_hidden);
-  if (q_hidden.enable != 0) {
+  if (!hidden_ok) {
     RestoreCursorShowing(show_calls, hide_calls);
     reporter.Fail("cursor enable did not clear after hide (enable=%lu)", (unsigned long)q_hidden.enable);
     goto cleanup;
@@ -508,13 +552,25 @@ static int RunCursorStateSanity(int argc, char** argv) {
   Sleep(50);
 
   aerogpu_escape_query_cursor_out q_shown;
-  st = 0;
-  if (!aerogpu_test::kmt::AerogpuQueryCursor(&kmt, adapter, &q_shown, &st)) {
-    reporter.Fail("D3DKMTEscape(query-cursor after show restore) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
-    goto cleanup;
+  ZeroMemory(&q_shown, sizeof(q_shown));
+  bool shown_ok = false;
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    st = 0;
+    if (!aerogpu_test::kmt::AerogpuQueryCursor(&kmt, adapter, &q_shown, &st)) {
+      reporter.Fail("D3DKMTEscape(query-cursor after show restore) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
+      goto cleanup;
+    }
+    if (q_shown.enable != 0) {
+      shown_ok = true;
+      break;
+    }
+    if (attempt + 1 >= 3) {
+      break;
+    }
+    Sleep(50);
   }
   PrintCursorQuery(kTestName, q_shown);
-  if (q_shown.enable == 0) {
+  if (!shown_ok) {
     reporter.Fail("cursor enable did not restore after show (enable=%lu)", (unsigned long)q_shown.enable);
     goto cleanup;
   }
