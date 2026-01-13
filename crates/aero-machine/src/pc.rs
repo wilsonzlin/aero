@@ -267,6 +267,15 @@ impl PcMachine {
         self.disk.clone()
     }
 
+    /// Set the BIOS boot drive number exposed in `DL` when transferring control to the boot
+    /// sector.
+    ///
+    /// The selection is stored in the BIOS configuration so it is inherited by subsequent
+    /// [`PcMachine::reset`] calls.
+    pub fn set_boot_drive(&mut self, boot_drive: u8) {
+        self.bios.set_boot_drive(boot_drive);
+    }
+
     /// Attach a ring-buffer-backed L2 tunnel network backend.
     pub fn attach_l2_tunnel_rings<TX: FrameRing + 'static, RX: FrameRing + 'static>(
         &mut self,
@@ -340,9 +349,12 @@ impl PcMachine {
                 })
                 .collect();
         }
+        // Preserve the host-selected BIOS boot drive across resets.
+        let boot_drive = self.bios.config().boot_drive;
 
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
+            boot_drive,
             cpu_count: self.cfg.cpu_count,
             smbios_uuid_seed: self.cfg.smbios_uuid_seed,
             ..Default::default()
@@ -685,6 +697,14 @@ mod tests {
     use aero_platform::interrupts::InterruptController as PlatformInterruptController;
     use aero_platform::reset::ResetKind;
     use memory::MemoryBus as _;
+
+    #[test]
+    fn pc_machine_preserves_boot_drive_across_reset() {
+        let mut pc = PcMachine::new(2 * 1024 * 1024);
+        pc.set_boot_drive(0xE0);
+        pc.reset();
+        assert_eq!(pc.bios.config().boot_drive, 0xE0);
+    }
 
     #[test]
     fn pc_machine_e1000_intx_is_synced_but_not_acknowledged_when_pending_event() {

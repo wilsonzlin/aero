@@ -501,9 +501,18 @@ impl Bios {
         &self.config
     }
 
-    /// Set the BIOS boot drive number (`DL`) used when transferring control to the boot sector.
+    /// Set the BIOS boot drive number exposed in `DL` when transferring control to the boot
+    /// sector.
     ///
-    /// This value is also used to populate BIOS Data Area drive count fields during POST.
+    /// This is host-controlled policy (e.g. "boot from HDD" vs "boot from CD") rather than guest
+    /// state. The value is stored in the BIOS configuration so it is captured/restored by BIOS
+    /// snapshots and can be inherited by higher-level machine reset logic.
+    ///
+    /// This value is also used during firmware POST to populate BIOS Data Area (BDA) drive count
+    /// fields.
+    ///
+    /// Note: Changing this does not retroactively update the already-initialized BDA fields.
+    /// Callers that want the change to take effect for firmware POST/boot should perform a reset.
     pub fn set_boot_drive(&mut self, boot_drive: u8) {
         self.config.boot_drive = boot_drive;
     }

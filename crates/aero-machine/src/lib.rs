@@ -2949,6 +2949,8 @@ pub struct Machine {
     bios: Bios,
     disk: SharedDisk,
     install_media: Option<SharedIsoDisk>,
+    /// Host-selected BIOS boot drive number exposed in `DL` when transferring control to the boot
+    /// sector.
     boot_drive: u8,
     /// Whether the machine should automatically keep its canonical [`SharedDisk`] attached to the
     /// canonical AHCI boot slot (port 0).
@@ -3315,13 +3317,17 @@ impl Machine {
         self.bios.smbios_eps_addr()
     }
 
-    /// Select the BIOS boot drive number exposed in `DL` when transferring control to the boot
+    /// Set the BIOS boot drive number exposed in `DL` when transferring control to the boot
     /// sector.
     ///
-    /// Defaults to `0x80` (first hard disk) to preserve existing tests and behavior.
+    /// Defaults to `0x80` (first hard disk).
     ///
-    /// Note: the selected boot drive is consumed during BIOS POST/boot. If you change it after the
-    /// machine has already booted, call [`Machine::reset`] to re-run POST with the new `DL` value.
+    /// This controls which BIOS drive number the firmware treats as the active boot device (for
+    /// example, `0x80` for the first HDD, or `0xE0` for a CD-ROM).
+    ///
+    /// The selection is stored in the BIOS configuration so it is captured/restored by snapshots
+    /// and inherited by subsequent [`Machine::reset`] calls. Call [`Machine::reset`] to apply the
+    /// new value to the next boot.
     pub fn set_boot_drive(&mut self, boot_drive: u8) {
         self.boot_drive = boot_drive;
         // Keep the current BIOS config in sync so snapshots capture the selected boot drive and so
@@ -9920,6 +9926,28 @@ mod tests {
 
         assert_eq!(restored.cpu.state.msr.tsc, 0x1234);
         assert_eq!(restored.cpu.time.read_tsc(), 0x1234);
+    }
+
+    #[test]
+    fn boot_drive_is_preserved_across_reset_and_snapshot_restore() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut m = Machine::new(cfg.clone()).unwrap();
+        m.set_boot_drive(0xE0);
+        m.reset();
+        assert_eq!(m.bios.config().boot_drive, 0xE0);
+
+        let snap = m.take_snapshot_full().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.restore_snapshot_bytes(&snap).unwrap();
+        assert_eq!(restored.bios.config().boot_drive, 0xE0);
+
+        restored.reset();
+        assert_eq!(restored.bios.config().boot_drive, 0xE0);
     }
 
     #[test]
