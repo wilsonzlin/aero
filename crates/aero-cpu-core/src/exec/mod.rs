@@ -156,15 +156,7 @@ where
     /// string mnemonic, keeping overhead out of the common non-string case.
     pub fn step_with_perf(&mut self, cpu: &mut B::Cpu, perf: &mut PerfWorker) -> StepOutcome {
         let outcome = self.step(cpu);
-        if let StepOutcome::Block {
-            instructions_retired,
-            ..
-        } = outcome
-        {
-            if instructions_retired != 0 {
-                perf.retire_instructions(instructions_retired);
-            }
-        }
+        aero_perf::retire_from_step_outcome(perf, &outcome);
         outcome
     }
 
