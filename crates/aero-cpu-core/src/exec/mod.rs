@@ -162,6 +162,26 @@ where
             }
         }
     }
+
+    /// Run `blocks` tiered-execution blocks while updating a [`PerfWorker`].
+    ///
+    /// This is the `PerfWorker`-aware sibling of [`Self::run_blocks`]. It uses
+    /// [`Self::step_with_perf`] for retirement semantics, while preserving the
+    /// `run_blocks` behavior of not charging `InterruptDelivered` toward the
+    /// block budget.
+    pub fn run_blocks_with_perf(
+        &mut self,
+        cpu: &mut B::Cpu,
+        perf: &mut PerfWorker,
+        mut blocks: u64,
+    ) {
+        while blocks > 0 {
+            match self.step_with_perf(cpu, perf) {
+                StepOutcome::InterruptDelivered => continue,
+                StepOutcome::Block { .. } => blocks -= 1,
+            }
+        }
+    }
 }
 
 /// Helper for tracking Tier-0 `REP*` string instruction iterations.
