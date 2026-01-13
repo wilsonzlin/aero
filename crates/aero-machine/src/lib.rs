@@ -3790,6 +3790,13 @@ pub struct Machine {
     /// Deterministic guest time accumulator used when converting CPU cycles (TSC ticks) into
     /// nanoseconds for platform device ticking.
     guest_time: GuestTime,
+
+    /// Deferred snapshot restore error surfaced via `SnapshotTarget::post_restore`.
+    ///
+    /// `SnapshotTarget::restore_device_states` does not return a `Result`, so machine restore logic
+    /// uses this field to record configuration mismatches that should abort restore (for example
+    /// restoring xHCI state into a machine with xHCI disabled).
+    restore_error: Option<snapshot::SnapshotError>,
 }
 
 /// Active scanout source selected by [`Machine::display_present`].
@@ -3963,6 +3970,7 @@ impl Machine {
             next_snapshot_id: 1,
             last_snapshot_id: None,
             guest_time: GuestTime::default(),
+            restore_error: None,
         }
     }
 
@@ -11040,6 +11048,7 @@ impl snapshot::SnapshotTarget for Machine {
         // re-attaching the same ISO on OPFS (sync access handles are exclusive per file). Drop it
         // eagerly so restore leaves the machine in a "backends must be reattached" state.
         self.install_media = None;
+        self.restore_error = None;
         // Reset host-side UHCI tick remainder before applying any snapshot sections. Newer
         // snapshots restore this field from `DeviceId::USB`; older snapshots will leave it at the
         // deterministic default (0).
@@ -11144,11 +11153,20 @@ impl snapshot::SnapshotTarget for Machine {
         // Reset pending CPU bookkeeping to a deterministic baseline, so restores from older
         // snapshots (that lack `CPU_INTERNAL`) still clear stale pending state.
         self.cpu.pending = Default::default();
+        // Clear any deferred restore error from a previous restore attempt.
+        self.restore_error = None;
         // Reset host-side UHCI tick remainder so restores from older snapshots (that lack this
         // field) do not preserve stale partial-tick state from the pre-restore execution.
         self.uhci_ns_remainder = 0;
         self.ehci_ns_remainder = 0;
         self.xhci_ns_remainder = 0;
+
+        // Track whether the snapshot includes an xHCI payload so we can deterministically reset the
+        // controller when restoring older snapshots that only contain UHCI/EHCI state.
+        //
+        // This must *not* eagerly reset/replace the controller, because xHCI snapshot restore prefers
+        // preserving existing host-attached device instances (e.g. HID handles) when possible.
+        let mut saw_xhci_state_in_snapshot = false;
 
         // Restore ordering must be explicit and independent of snapshot file ordering so device
         // state is deterministic (especially for interrupt lines and PCI INTx routing).
@@ -11851,6 +11869,8 @@ impl snapshot::SnapshotTarget for Machine {
             if matches!(state.data.get(8..12), Some(id) if id == b"USBC") {
                 let mut wrapper = MachineUsbSnapshot::default();
                 if wrapper.load_state(&state.data).is_ok() {
+                    saw_xhci_state_in_snapshot = wrapper.xhci.is_some();
+
                     if let Some(uhci_state) = wrapper.uhci.as_deref() {
                         if let Some(uhci) = &self.uhci {
                             self.uhci_ns_remainder = wrapper.uhci_ns_remainder % NS_PER_MS;
@@ -11874,10 +11894,19 @@ impl snapshot::SnapshotTarget for Machine {
                             );
                         }
                     }
-                    if let Some(xhci) = &self.xhci {
-                        if let Some(xhci_bytes) = wrapper.xhci.as_deref() {
-                            self.xhci_ns_remainder = wrapper.xhci_ns_remainder % NS_PER_MS;
-                            let _ = xhci.borrow_mut().load_state(xhci_bytes);
+                    if let Some(xhci_bytes) = wrapper.xhci.as_deref() {
+                        match &self.xhci {
+                            Some(xhci) => {
+                                self.xhci_ns_remainder = wrapper.xhci_ns_remainder % NS_PER_MS;
+                                let _ = xhci.borrow_mut().load_state(xhci_bytes);
+                            }
+                            None => {
+                                // SnapshotTarget::restore_device_states cannot return a `Result`,
+                                // so defer this config mismatch as a post-restore error.
+                                self.restore_error = Some(snapshot::SnapshotError::Corrupt(
+                                    "snapshot contains xHCI state but enable_xhci is false",
+                                ));
+                            }
                         }
                     }
                 }
@@ -11908,13 +11937,18 @@ impl snapshot::SnapshotTarget for Machine {
                         }
                     }
                     Some(id) if id == b"XHCP" => {
-                        if let Some(xhci) = &self.xhci {
-                            let _ = xhci.borrow_mut().load_state(&state.data);
-                        } else {
-                            #[cfg(not(target_arch = "wasm32"))]
-                            eprintln!(
-                                "warning: snapshot contains legacy xHCI USB payload but machine has xHCI disabled; ignoring"
-                            );
+                        saw_xhci_state_in_snapshot = true;
+                        match &self.xhci {
+                            Some(xhci) => {
+                                let _ = xhci.borrow_mut().load_state(&state.data);
+                            }
+                            None => {
+                                // SnapshotTarget::restore_device_states cannot return a `Result`,
+                                // so defer this config mismatch as a post-restore error.
+                                self.restore_error = Some(snapshot::SnapshotError::Corrupt(
+                                    "snapshot contains xHCI state but enable_xhci is false",
+                                ));
+                            }
                         }
                     }
                     _ => {
@@ -11929,6 +11963,15 @@ impl snapshot::SnapshotTarget for Machine {
                         }
                     }
                 }
+            }
+        }
+
+        // If the machine has xHCI enabled but the snapshot did not include any xHCI payload, reset
+        // the controller to a deterministic baseline (while preserving any host-attached device
+        // instances and wiring).
+        if !saw_xhci_state_in_snapshot {
+            if let Some(xhci) = &self.xhci {
+                xhci.borrow_mut().reset();
             }
         }
 
@@ -12075,6 +12118,10 @@ impl snapshot::SnapshotTarget for Machine {
             && self.bios.video.vbe.current_mode.is_none()
         {
             self.sync_text_mode_cursor_bda_to_vga_crtc();
+        }
+
+        if let Some(err) = self.restore_error.take() {
+            return Err(err);
         }
         Ok(())
     }
