@@ -392,6 +392,8 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             device.push_error_scope(wgpu::ErrorFilter::Validation);
             surface.configure(device, &config);
             #[cfg(not(target_arch = "wasm32"))]
+            device.poll(wgpu::Maintain::Wait);
+            #[cfg(target_arch = "wasm32")]
             device.poll(wgpu::Maintain::Poll);
             let err = device.pop_error_scope().await;
             if let Some(err) = err {
