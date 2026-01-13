@@ -148,11 +148,59 @@ impl Bios {
         Ok(())
     }
 
-    fn bios_panic(&mut self, cpu: &mut CpuState, _bus: &mut dyn BiosBus, msg: &'static str) {
-        // The minimal implementation keeps this simple: record the message in the TTY buffer
-        // and halt the CPU. A future VGA implementation can render this to 0xB8000.
+    fn bios_panic(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, msg: &'static str) {
+        // Record the message in the TTY buffer for programmatic inspection.
         self.tty_output.extend_from_slice(msg.as_bytes());
         self.tty_output.push(b'\n');
+
+        // Best-effort: also render to the VGA text buffer so the reason is visible on the guest
+        // display when POST fails before a bootloader takes over.
+        //
+        // Use the INT 10h teletype helper so we update both the on-screen text window and the
+        // BIOS Data Area cursor state. Avoid propagating panics from odd VGA/BDA state or unusual
+        // memory bus implementations; a panic during POST would be worse than missing output.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut mem = BiosMemoryBus::new(bus);
+            for &ch in msg.as_bytes() {
+                self.video.vga.teletype_output(&mut mem, 0, ch, 0x07);
+            }
+            self.video.vga.teletype_output(&mut mem, 0, b'\n', 0x07);
+        }));
+
         cpu.halted = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bios::{BiosConfig, InMemoryDisk, TestMemory};
+
+    #[test]
+    fn post_panic_renders_message_to_vga_text_buffer() {
+        let mut bios = Bios::new(BiosConfig::default());
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
+
+        // Invalid boot signature should trigger a BIOS panic.
+        let bad_sector = [0u8; 512];
+        let mut disk = InMemoryDisk::from_boot_sector(bad_sector);
+
+        bios.post(&mut cpu, &mut mem, &mut disk);
+
+        assert!(cpu.halted);
+
+        let msg = b"Invalid boot signature";
+        assert!(bios
+            .tty_output()
+            .windows(msg.len())
+            .any(|window| window == msg));
+
+        // VGA text mode is word-packed: [char, attr] pairs. Scan only char bytes.
+        let vga = mem.read_bytes(0xB8000, 0x8000);
+        let chars: Vec<u8> = vga.iter().step_by(2).copied().collect();
+        assert!(chars
+            .windows(msg.len())
+            .any(|window| window == msg));
     }
 }
