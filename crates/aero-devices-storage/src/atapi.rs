@@ -107,6 +107,7 @@ fn try_alloc_zeroed(len: usize) -> Option<Vec<u8>> {
 const ASC_MEDIUM_NOT_PRESENT: u8 = 0x3A;
 const ASC_MEDIUM_CHANGED: u8 = 0x28;
 const ASC_INVALID_COMMAND: u8 = 0x20;
+const ASC_INVALID_FIELD_IN_CDB: u8 = 0x24;
 
 #[derive(Debug, Clone, Copy)]
 struct Sense {
@@ -298,6 +299,61 @@ impl AtapiCdrom {
                 }
                 let lba = u32::from_be_bytes([packet[2], packet[3], packet[4], packet[5]]);
                 let blocks = u32::from_be_bytes([packet[6], packet[7], packet[8], packet[9]]);
+                self.read_blocks(lba, blocks, dma_requested)
+            }
+            0xBE => {
+                // READ CD
+                //
+                // We support a conservative subset for data-disc use cases: reads of 2048-byte user
+                // data sectors with no additional header/subchannel fields.
+                if let Err(e) = self.check_ready() {
+                    return e;
+                }
+
+                // Byte 1: Expected sector type (low 3 bits).
+                //
+                // Only accept types that map cleanly onto 2048-byte ISO sectors:
+                // - 0x00: any (treat as 2048-byte user data)
+                // - 0x02: Mode 1
+                // - 0x04: Mode 2 Form 1
+                let expected_sector_type = packet[1] & 0x07;
+                match expected_sector_type {
+                    0x00 | 0x02 | 0x04 => {}
+                    _ => {
+                        self.set_sense(SENSE_ILLEGAL_REQUEST, ASC_INVALID_FIELD_IN_CDB, 0);
+                        return PacketResult::Error {
+                            sense_key: SENSE_ILLEGAL_REQUEST,
+                            asc: ASC_INVALID_FIELD_IN_CDB,
+                            ascq: 0,
+                        };
+                    }
+                }
+
+                // Byte 9: bitmask for which parts of the sector to return. We only support user
+                // data (0x10) and require that no other bits are set.
+                let sector_fields = packet[9];
+                if sector_fields != 0x10 {
+                    self.set_sense(SENSE_ILLEGAL_REQUEST, ASC_INVALID_FIELD_IN_CDB, 0);
+                    return PacketResult::Error {
+                        sense_key: SENSE_ILLEGAL_REQUEST,
+                        asc: ASC_INVALID_FIELD_IN_CDB,
+                        ascq: 0,
+                    };
+                }
+
+                // Byte 10: Sub-channel selection bits. We do not support subchannel reads.
+                if packet[10] != 0 {
+                    self.set_sense(SENSE_ILLEGAL_REQUEST, ASC_INVALID_FIELD_IN_CDB, 0);
+                    return PacketResult::Error {
+                        sense_key: SENSE_ILLEGAL_REQUEST,
+                        asc: ASC_INVALID_FIELD_IN_CDB,
+                        ascq: 0,
+                    };
+                }
+
+                let lba = u32::from_be_bytes([packet[2], packet[3], packet[4], packet[5]]);
+                let blocks =
+                    (u32::from(packet[6]) << 16) | (u32::from(packet[7]) << 8) | u32::from(packet[8]);
                 self.read_blocks(lba, blocks, dma_requested)
             }
             0x03 => {
