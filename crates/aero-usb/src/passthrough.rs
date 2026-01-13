@@ -1176,43 +1176,47 @@ mod tests {
         let mut dev_a = UsbPassthroughDevice::new();
         let mut dev_b = UsbPassthroughDevice::new();
 
-        // Create identical in-flight endpoints so both devices allocate the same IDs.
-        assert_eq!(dev_a.handle_in_transfer(0x81, 8), UsbInResult::Nak);
-        assert_eq!(dev_a.handle_in_transfer(0x82, 8), UsbInResult::Nak);
-        assert_eq!(dev_b.handle_in_transfer(0x81, 8), UsbInResult::Nak);
-        assert_eq!(dev_b.handle_in_transfer(0x82, 8), UsbInResult::Nak);
+        // Use a larger set of endpoints so the test reliably fails if snapshot_save starts
+        // iterating HashMaps without sorting.
+        let endpoints: Vec<u8> = (1u8..=15).map(|n| 0x80 | n).collect();
 
-        let id1_a = dev_a.ep_inflight.get(&0x81).expect("ep 0x81 inflight").id;
-        let id2_a = dev_a.ep_inflight.get(&0x82).expect("ep 0x82 inflight").id;
-        let id1_b = dev_b.ep_inflight.get(&0x81).expect("ep 0x81 inflight").id;
-        let id2_b = dev_b.ep_inflight.get(&0x82).expect("ep 0x82 inflight").id;
-        assert_eq!((id1_a, id2_a), (id1_b, id2_b));
+        // Create identical in-flight endpoints so both devices allocate the same IDs.
+        for &ep in &endpoints {
+            assert_eq!(dev_a.handle_in_transfer(ep, 8), UsbInResult::Nak);
+            assert_eq!(dev_b.handle_in_transfer(ep, 8), UsbInResult::Nak);
+        }
+
+        let mut ids = Vec::with_capacity(endpoints.len());
+        for &ep in &endpoints {
+            let id_a = dev_a.ep_inflight.get(&ep).expect("ep inflight").id;
+            let id_b = dev_b.ep_inflight.get(&ep).expect("ep inflight").id;
+            assert_eq!(id_a, id_b);
+            ids.push(id_a);
+        }
 
         // Push completions in opposite orders; this exercises the completion HashMap ordering.
-        dev_a.push_completion(UsbHostCompletion::BulkIn {
-            id: id1_a,
-            result: UsbHostCompletionIn::Success { data: vec![1] },
-        });
-        dev_a.push_completion(UsbHostCompletion::BulkIn {
-            id: id2_a,
-            result: UsbHostCompletionIn::Success { data: vec![2, 3] },
-        });
-
-        dev_b.push_completion(UsbHostCompletion::BulkIn {
-            id: id2_b,
-            result: UsbHostCompletionIn::Success { data: vec![2, 3] },
-        });
-        dev_b.push_completion(UsbHostCompletion::BulkIn {
-            id: id1_b,
-            result: UsbHostCompletionIn::Success { data: vec![1] },
-        });
+        for (&ep, &id) in endpoints.iter().zip(ids.iter()) {
+            dev_a.push_completion(UsbHostCompletion::BulkIn {
+                id,
+                result: UsbHostCompletionIn::Success { data: vec![ep] },
+            });
+        }
+        for (&ep, &id) in endpoints.iter().rev().zip(ids.iter().rev()) {
+            dev_b.push_completion(UsbHostCompletion::BulkIn {
+                id,
+                result: UsbHostCompletionIn::Success { data: vec![ep] },
+            });
+        }
 
         // Also ensure the endpoint-inflight HashMap sees a different insertion order while
         // preserving identical logical state (same keys + values).
-        let ep1 = dev_b.ep_inflight.remove(&0x81).expect("ep 0x81 inflight");
-        let ep2 = dev_b.ep_inflight.remove(&0x82).expect("ep 0x82 inflight");
-        dev_b.ep_inflight.insert(0x82, ep2);
-        dev_b.ep_inflight.insert(0x81, ep1);
+        let mut inflight_reinsert = Vec::with_capacity(endpoints.len());
+        for &ep in &endpoints {
+            inflight_reinsert.push((ep, dev_b.ep_inflight.remove(&ep).expect("ep inflight")));
+        }
+        for (ep, inflight) in inflight_reinsert.into_iter().rev() {
+            dev_b.ep_inflight.insert(ep, inflight);
+        }
 
         let snap_a = dev_a.snapshot_save();
         let snap_b = dev_b.snapshot_save();
