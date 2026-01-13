@@ -51,15 +51,17 @@ The runtime will then use:
 
 #### Security caveats (open mode vs allowlist)
 
-Just like `/tcp` and `/udp`, DNS answers are subject to the proxy’s security policy:
+`net-proxy` is a **local-dev** relay and is intentionally lightweight:
 
-- **Default (safe-by-default):** only public/unicast IPs are permitted.
-- **Allowlist mode:** `AERO_PROXY_ALLOW` can opt specific targets in.
-  - Domain allowlist rules still only permit targets that resolve to public/unicast IPs (DNS rebinding mitigation).
-  - To allow private/localhost resolution, use explicit IP/CIDR rules (e.g. `127.0.0.1:*`, `10.0.0.0/8:*`).
-- **Open mode:** `AERO_PROXY_OPEN=1` disables restrictions (trusted local dev only).
+- `/dns-query` and `/dns-json` do **not** currently apply the `AERO_PROXY_OPEN` / `AERO_PROXY_ALLOW` target policy.
+  - They resolve using the host’s DNS resolver and may return private/localhost answers (e.g. `localhost → 127.0.0.1`)
+    even when `AERO_PROXY_OPEN=0`.
+- The **connection** endpoints (`/tcp`, `/tcp-mux`, `/udp`) *do* enforce the policy:
+  - **Default (safe-by-default):** only permits targets that resolve to public/unicast IPs.
+  - **Allowlist mode:** `AERO_PROXY_ALLOW` can opt specific targets in (use explicit IP/CIDR entries to allow private ranges).
+  - **Open mode:** `AERO_PROXY_OPEN=1` disables restrictions (trusted local dev only).
 
-Do not expose a dev `net-proxy` instance to the public internet; it is an outbound network proxy.
+Do not expose a dev `net-proxy` instance to the public internet; it is an outbound network proxy with an unauthenticated DoH surface.
 
 #### Example `curl` roundtrips
 
