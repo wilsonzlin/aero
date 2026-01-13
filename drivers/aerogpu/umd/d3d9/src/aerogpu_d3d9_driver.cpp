@@ -3635,7 +3635,7 @@ bool emit_create_resource_locked(Device* dev, Resource* res) {
     cmd->width = res->width;
     cmd->height = res->height;
     cmd->mip_levels = res->mip_levels;
-    cmd->array_layers = 1;
+    cmd->array_layers = res->depth;
     cmd->row_pitch_bytes = res->row_pitch;
     cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = res->backing_offset_bytes;
@@ -6725,11 +6725,34 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     return trace.ret(S_OK);
   }
 
+  bool force_host_backing = false;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  // Guest-backed textures currently only support a single subresource
+  // (mip 0 / array layer 0). Many real D3D9 apps create mipmapped textures in the
+  // default pool; rather than failing creation, fall back to host-backed storage
+  // so the host can allocate the full texture and the UMD can update it via
+  // UPLOAD_RESOURCE.
+  force_host_backing =
+      !wants_shared &&
+      res->kind != ResourceKind::Buffer &&
+      (res->mip_levels > 1 || res->depth > 1);
+  if (force_host_backing) {
+    res->backing_alloc_id = 0;
+    res->backing_offset_bytes = 0;
+    res->share_token = 0;
+    try {
+      res->storage.resize(res->size_bytes);
+    } catch (...) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+  }
+#endif
+
   // On the real WDDM path we want GPU resources to be backed by WDDM allocations
   // and referenced in the command stream via a stable per-allocation `alloc_id`
   // (carried in aerogpu_wddm_alloc_priv and resolved via the per-submit allocation
   // table).
-  if (!wants_shared && dev->wddm_context.hContext != 0) {
+  if (!wants_shared && !force_host_backing && dev->wddm_context.hContext != 0) {
     if (!res->backing_alloc_id) {
       const bool have_runtime_priv =
           (pCreateResource->pPrivateDriverData &&
@@ -6777,14 +6800,6 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       res->share_token = 0;
     }
   }
-
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  // Guest-backed textures currently only support mip 0 / array layer 0. Reject
-  // multi-subresource layouts until the host executor and protocol are extended.
-  if (!wants_shared && (res->mip_levels > 1 || res->depth > 1)) {
-    return E_NOTIMPL;
-  }
-#endif
 
   if (wants_shared && !open_existing_shared) {
     if (!pCreateResource->pPrivateDriverData ||
@@ -6848,7 +6863,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   bool allocation_created = false;
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  if (!has_wddm_allocation && !open_existing_shared && dev->wddm_device != 0) {
+  if (!force_host_backing && !has_wddm_allocation && !open_existing_shared && dev->wddm_device != 0) {
     uint32_t alloc_id = res->backing_alloc_id;
     if (alloc_id == 0) {
       alloc_id = allocate_umd_alloc_id(dev->adapter);
@@ -8623,7 +8638,7 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
   res->locked_ptr = nullptr;
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  if (res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+  if (res->backing_alloc_id != 0 && res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
     void* ptr = nullptr;
     const HRESULT hr = wddm_lock_allocation(dev->wddm_callbacks,
                                            dev->wddm_device,
@@ -8694,7 +8709,7 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
   res->locked_flags = 0;
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  if (res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+  if (res->backing_alloc_id != 0 && res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
     const HRESULT hr =
         wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, res->wddm_hAllocation, dev->wddm_context.hContext);
     if (FAILED(hr)) {
