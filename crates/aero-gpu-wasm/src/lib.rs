@@ -1511,16 +1511,22 @@ mod wasm {
 
         fn present(&mut self) -> Result<(), JsValue> {
             gpu_stats().inc_presents_attempted();
-            self.profiler.begin_frame(None, None);
             self.ensure_surface_matches_canvas();
 
             let device = &self.device;
-            let frame = acquire_surface_frame(
-                &mut self.surface,
-                device,
-                &mut self.config,
-                self.backend_kind,
-            )?;
+            let Some(frame) =
+                acquire_surface_frame(&mut self.surface, device, &self.config, self.backend_kind)?
+            else {
+                // docs/04-graphics-subsystem.md: SurfaceError::Timeout drops the frame (warn) and
+                // continues without throwing.
+                return Ok(());
+            };
+
+            // Start profiler tracking only after we know we're actually going to submit work for
+            // this frame. This avoids leaving the profiler in an "in progress" state if we drop
+            // the frame due to a surface timeout.
+            self.profiler
+                .begin_frame(Some(&self.device), Some(&self.queue));
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -2017,12 +2023,12 @@ mod wasm {
         ) -> Result<(), JsValue> {
             gpu_stats().inc_presents_attempted();
             self.ensure_surface_matches_canvas(device);
-            let frame = acquire_surface_frame(
-                &mut self.surface,
-                device,
-                &mut self.config,
-                self.backend_kind,
-            )?;
+            let Some(frame) =
+                acquire_surface_frame(&mut self.surface, device, &self.config, self.backend_kind)?
+            else {
+                // SurfaceError::Timeout drops the frame (docs/04-graphics-subsystem.md).
+                return Ok(());
+            };
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -2083,12 +2089,12 @@ mod wasm {
                 bytemuck::bytes_of(&viewport_transform),
             );
 
-            let frame = acquire_surface_frame(
-                &mut self.surface,
-                device,
-                &mut self.config,
-                self.backend_kind,
-            )?;
+            let Some(frame) =
+                acquire_surface_frame(&mut self.surface, device, &self.config, self.backend_kind)?
+            else {
+                // SurfaceError::Timeout drops the frame (docs/04-graphics-subsystem.md).
+                return Ok(());
+            };
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -2308,62 +2314,185 @@ mod wasm {
         None
     }
 
-    fn acquire_surface_frame(
-        surface: &mut wgpu::Surface<'static>,
-        device: &wgpu::Device,
-        config: &mut wgpu::SurfaceConfiguration,
+    trait SurfaceFrameProvider {
+        type Frame;
+        fn acquire(&mut self) -> Result<Self::Frame, wgpu::SurfaceError>;
+        fn reconfigure(&mut self);
+    }
+
+    fn handle_surface_acquire_error<F>(
+        err: wgpu::SurfaceError,
         backend_kind: GpuBackendKind,
-    ) -> Result<wgpu::SurfaceTexture, JsValue> {
-        match surface.get_current_texture() {
-            Ok(frame) => Ok(frame),
+        after_reconfigure: bool,
+    ) -> Result<Option<F>, JsValue> {
+        match err {
+            // docs/04-graphics-subsystem.md: timeouts should drop the frame (warn) and continue
+            // without throwing. Do not reconfigure the surface.
+            wgpu::SurfaceError::Timeout => {
+                push_gpu_event(
+                    GpuErrorEvent::now(
+                        backend_kind,
+                        aero_gpu::GpuErrorSeverityKind::Warning,
+                        aero_gpu::GpuErrorCategory::Surface,
+                        "Surface acquire timeout",
+                    )
+                    .with_detail("wgpu_surface_error", "Timeout")
+                    .with_detail("after_reconfigure", after_reconfigure.to_string()),
+                );
+                Ok(None)
+            }
+            // Out of memory is fatal and should stop rendering.
+            wgpu::SurfaceError::OutOfMemory => {
+                push_gpu_event(
+                    GpuErrorEvent::now(
+                        backend_kind,
+                        aero_gpu::GpuErrorSeverityKind::Fatal,
+                        aero_gpu::GpuErrorCategory::OutOfMemory,
+                        "Surface out of memory",
+                    )
+                    .with_detail("wgpu_surface_error", "OutOfMemory"),
+                );
+                Err(JsValue::from_str("Surface out of memory"))
+            }
+            // These are expected surface lifecycle events. If the recovery attempt fails, drop the
+            // frame (warn) rather than throwing (docs/04-graphics-subsystem.md).
+            wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                push_gpu_event(
+                    GpuErrorEvent::now(
+                        backend_kind,
+                        aero_gpu::GpuErrorSeverityKind::Warning,
+                        aero_gpu::GpuErrorCategory::Surface,
+                        "Surface acquire failed after reconfigure",
+                    )
+                    .with_detail("wgpu_surface_error", format!("{err:?}")),
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    fn acquire_surface_frame_inner<S: SurfaceFrameProvider>(
+        surface: &mut S,
+        backend_kind: GpuBackendKind,
+    ) -> Result<Option<S::Frame>, JsValue> {
+        match surface.acquire() {
+            Ok(frame) => Ok(Some(frame)),
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 // Reconfigure and retry once (docs/04-graphics-subsystem.md).
                 //
                 // Note: This is *surface* recovery (reconfigure + reacquire), not device-lost
                 // recovery. Only `surface_reconfigures` should be incremented here; the
                 // `recoveries_*` counters are reserved for the device-lost recovery state machine.
-                surface.configure(device, config);
+                surface.reconfigure();
                 gpu_stats().inc_surface_reconfigures();
-                match surface.get_current_texture() {
-                    Ok(frame) => Ok(frame),
-                    Err(err) => {
-                        // If the surface reconfigure doesn't help, surface the error via the
-                        // diagnostics channel so the GPU worker can report it even if the caller
-                        // discards the thrown JsValue.
-                        push_gpu_event(
-                            GpuErrorEvent::now(
-                                backend_kind,
-                                aero_gpu::GpuErrorSeverityKind::Error,
-                                aero_gpu::GpuErrorCategory::Surface,
-                                "Surface acquire failed after reconfigure",
-                            )
-                            .with_detail("wgpu_surface_error", format!("{err:?}")),
-                        );
-
-                        Err(JsValue::from_str(&format!(
-                            "Surface acquire failed after reconfigure: {err:?}"
-                        )))
-                    }
+                match surface.acquire() {
+                    Ok(frame) => Ok(Some(frame)),
+                    Err(err) => handle_surface_acquire_error(err, backend_kind, true),
                 }
             }
-            Err(wgpu::SurfaceError::Timeout) => {
-                push_gpu_event(GpuErrorEvent::now(
-                    backend_kind,
-                    aero_gpu::GpuErrorSeverityKind::Error,
-                    aero_gpu::GpuErrorCategory::Surface,
-                    "Surface acquire timeout",
-                ));
-                Err(JsValue::from_str("Surface acquire timeout"))
+            Err(err) => handle_surface_acquire_error(err, backend_kind, false),
+        }
+    }
+
+    fn acquire_surface_frame(
+        surface: &mut wgpu::Surface<'static>,
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        backend_kind: GpuBackendKind,
+    ) -> Result<Option<wgpu::SurfaceTexture>, JsValue> {
+        struct WgpuSurfaceFrameProvider<'a> {
+            surface: &'a mut wgpu::Surface<'static>,
+            device: &'a wgpu::Device,
+            config: &'a wgpu::SurfaceConfiguration,
+        }
+
+        impl<'a> SurfaceFrameProvider for WgpuSurfaceFrameProvider<'a> {
+            type Frame = wgpu::SurfaceTexture;
+
+            fn acquire(&mut self) -> Result<Self::Frame, wgpu::SurfaceError> {
+                self.surface.get_current_texture()
             }
-            Err(wgpu::SurfaceError::OutOfMemory) => {
-                push_gpu_event(GpuErrorEvent::now(
-                    backend_kind,
-                    aero_gpu::GpuErrorSeverityKind::Fatal,
-                    aero_gpu::GpuErrorCategory::OutOfMemory,
-                    "Surface out of memory",
-                ));
-                Err(JsValue::from_str("Surface out of memory"))
+
+            fn reconfigure(&mut self) {
+                self.surface.configure(self.device, self.config);
             }
+        }
+
+        let mut provider = WgpuSurfaceFrameProvider {
+            surface,
+            device,
+            config,
+        };
+        acquire_surface_frame_inner(&mut provider, backend_kind)
+    }
+
+    #[cfg(test)]
+    mod surface_tests {
+        use super::*;
+        use wasm_bindgen_test::*;
+
+        wasm_bindgen_test_configure!(run_in_browser);
+
+        #[derive(Default)]
+        struct FakeSurface {
+            outcomes: std::collections::VecDeque<Result<u32, wgpu::SurfaceError>>,
+            reconfigure_calls: u32,
+        }
+
+        impl FakeSurface {
+            fn new(outcomes: impl IntoIterator<Item = Result<u32, wgpu::SurfaceError>>) -> Self {
+                Self {
+                    outcomes: outcomes.into_iter().collect(),
+                    reconfigure_calls: 0,
+                }
+            }
+        }
+
+        impl FakeSurface {
+            fn acquire(&mut self) -> Result<u32, wgpu::SurfaceError> {
+                self.outcomes
+                    .pop_front()
+                    .unwrap_or(Err(wgpu::SurfaceError::Timeout))
+            }
+
+            fn reconfigure(&mut self) {
+                self.reconfigure_calls += 1;
+            }
+        }
+
+        impl SurfaceFrameProvider for FakeSurface {
+            type Frame = u32;
+
+            fn acquire(&mut self) -> Result<Self::Frame, wgpu::SurfaceError> {
+                FakeSurface::acquire(self)
+            }
+
+            fn reconfigure(&mut self) {
+                FakeSurface::reconfigure(self)
+            }
+        }
+
+        #[wasm_bindgen_test]
+        fn timeout_drops_frame_without_reconfigure_and_does_not_throw() {
+            // Clear any previous events from other tests.
+            let _ = gpu_event_queue().drain();
+
+            let mut surface = FakeSurface::new([Err(wgpu::SurfaceError::Timeout)]);
+            let result = acquire_surface_frame_inner(&mut surface, GpuBackendKind::WebGpu);
+            assert!(
+                result.is_ok(),
+                "Timeout should not return Err/throw; got {result:?}"
+            );
+            assert_eq!(result.unwrap(), None);
+            assert_eq!(
+                surface.reconfigure_calls, 0,
+                "Timeout should not trigger surface reconfigure"
+            );
+
+            let events = gpu_event_queue().drain();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].severity, aero_gpu::GpuErrorSeverityKind::Warning);
+            assert_eq!(events[0].category, aero_gpu::GpuErrorCategory::Surface);
         }
     }
 
