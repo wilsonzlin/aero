@@ -71,6 +71,7 @@ members = [
     "crates/aero-pci-firmware-adapter",
     "crates/perf",
     "crates/aero-devices-input",
+    "crates/aero-devices-gpu",
     "crates/aero-devices-nvme",
     "crates/aero-devices-storage",
     "crates/nt-packetlib",

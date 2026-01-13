@@ -176,6 +176,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-devices-gpu"
+version = "0.1.0"
+dependencies = [
+ "aero-protocol",
+ "memory",
+]
+
+[[package]]
 name = "aero-devices-input"
 version = "0.1.0"
 dependencies = [

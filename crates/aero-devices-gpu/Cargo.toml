@@ -1,0 +1,10 @@
+[package]
+name = "aero-devices-gpu"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+aero-protocol = { path = "../../emulator/protocol" }
+memory = { path = "../memory" }
+
