@@ -327,31 +327,37 @@ export class IdbRemoteChunkCache {
     const chunksStore = tx.objectStore("remote_chunks");
     const metaStore = tx.objectStore("remote_chunk_meta");
 
-    const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
-
-    const reqs = missing.map(async (idx) => {
-      const rec = (await idbReq(chunksStore.get([this.cacheKey, idx]))) as RemoteChunkRecord | undefined;
-      return { idx, rec };
-    });
-    const records = await Promise.all(reqs);
-
-    for (const { idx, rec } of records) {
-      if (!rec) continue;
-      meta.accessCounter += 1;
-      rec.lastAccess = meta.accessCounter;
-      // Heal: older versions might not have `byteLength` populated.
-      rec.byteLength = rec.byteLength ?? rec.data.byteLength;
-      chunksStore.put(rec);
-      out.set(idx, new Uint8Array(rec.data));
-    }
-
-    metaStore.put(meta);
     try {
-      await idbTxDone(tx);
+      const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
+
+      const reqs = missing.map(async (idx) => {
+        const rec = (await idbReq(chunksStore.get([this.cacheKey, idx]))) as RemoteChunkRecord | undefined;
+        return { idx, rec };
+      });
+      const records = await Promise.all(reqs);
+
+      for (const { idx, rec } of records) {
+        if (!rec) continue;
+        meta.accessCounter += 1;
+        rec.lastAccess = meta.accessCounter;
+        // Heal: older versions might not have `byteLength` populated.
+        rec.byteLength = rec.byteLength ?? rec.data.byteLength;
+        chunksStore.put(rec);
+        out.set(idx, new Uint8Array(rec.data));
+      }
+
+      metaStore.put(meta);
+      try {
+        await idbTxDone(tx);
+      } catch (err) {
+        // Updating access metadata is best-effort. If the cache is at quota, the read path must
+        // still succeed (and can fall back to network reads for misses).
+        if (!isQuotaExceededError(err) && !isQuotaExceededError(tx.error)) throw err;
+      }
     } catch (err) {
-      // Updating access metadata is best-effort. If the cache is at quota, the read path must
-      // still succeed (and can fall back to network reads for misses).
-      if (!isQuotaExceededError(err)) throw err;
+      // `getMany()` is used on the remote disk read path. Quota errors must not fail reads;
+      // treat them as cache misses.
+      if (!isQuotaExceededError(err) && !isQuotaExceededError(tx.error)) throw err;
     }
 
     for (const [idx, bytes] of out) {
