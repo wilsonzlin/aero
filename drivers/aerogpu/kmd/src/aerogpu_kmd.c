@@ -1149,6 +1149,10 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
                                             _In_ ULONG DescSize,
                                             _In_ PHYSICAL_ADDRESS DescPa)
 {
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
+        DxgkDevicePowerStateD0) {
+        return STATUS_DEVICE_NOT_READY;
+    }
     if (InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
         return STATUS_DEVICE_NOT_READY;
     }
@@ -1192,6 +1196,10 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
                                          _In_ ULONGLONG SignalFence,
                                          _Out_opt_ ULONG* RingTailAfterOut)
 {
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
+        DxgkDevicePowerStateD0) {
+        return STATUS_DEVICE_NOT_READY;
+    }
     if (InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
         return STATUS_DEVICE_NOT_READY;
     }
