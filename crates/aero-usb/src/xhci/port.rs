@@ -89,6 +89,10 @@ impl XhciPort {
         self.device.is_some()
     }
 
+    pub(crate) fn device_mut(&mut self) -> Option<&mut AttachedUsbDevice> {
+        self.device.as_mut()
+    }
+
     pub(crate) fn attach(&mut self, model: Box<dyn UsbDeviceModel>) -> bool {
         self.device = Some(AttachedUsbDevice::new(model));
         self.speed = self.device.as_ref().map(|d| d.speed());

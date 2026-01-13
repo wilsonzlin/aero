@@ -48,6 +48,7 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
+use crate::device::AttachedUsbDevice;
 use crate::{MemoryBus, UsbDeviceModel};
 
 use self::port::XhciPort;
@@ -335,6 +336,92 @@ impl XhciController {
         };
 
         CommandCompletion::success(slot_id)
+    }
+
+    /// Resolve an attached USB device by xHCI topology information.
+    ///
+    /// - `root_port` is the xHCI Root Hub Port Number (1-based).
+    /// - `route` is the decoded Route String, where each element is a 1-based hub port number.
+    pub fn find_device_by_topology(
+        &mut self,
+        root_port: u8,
+        route: &[u8],
+    ) -> Option<&mut AttachedUsbDevice> {
+        if root_port == 0 {
+            return None;
+        }
+        if route.len() > context::XHCI_ROUTE_STRING_MAX_DEPTH {
+            return None;
+        }
+
+        let root_index = usize::from(root_port.checked_sub(1)?);
+        let mut dev = self.ports.get_mut(root_index)?.device_mut()?;
+        for &hop in route {
+            if hop == 0 || hop > context::XHCI_ROUTE_STRING_MAX_PORT {
+                return None;
+            }
+            dev = dev.model_mut().hub_port_device_mut(hop).ok()?;
+        }
+        Some(dev)
+    }
+
+    /// Topology-only Address Device handling.
+    ///
+    /// This does not implement full xHCI semantics yet, but it does resolve the slot's
+    /// `RootHubPortNumber` + `RouteString` to a concrete [`AttachedUsbDevice`] behind an external hub
+    /// (if present) and stores the Slot Context in controller-local state.
+    pub fn address_device(&mut self, slot_id: u8, slot_ctx: SlotContext) -> CommandCompletion {
+        let idx = usize::from(slot_id);
+        if idx == 0 || idx >= self.slots.len() {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+        if !self.slots[idx].enabled {
+            return CommandCompletion::failure(CommandCompletionCode::ContextStateError);
+        }
+
+        let route = match slot_ctx
+            .parsed_route_string()
+            .map(|rs| rs.ports_from_root())
+        {
+            Ok(route) => route,
+            Err(_) => return CommandCompletion::failure(CommandCompletionCode::ParameterError),
+        };
+        let root_port = slot_ctx.root_hub_port_number();
+
+        if self.find_device_by_topology(root_port, &route).is_none() {
+            return CommandCompletion::failure(CommandCompletionCode::ContextStateError);
+        }
+
+        let slot = &mut self.slots[idx];
+        slot.port_id = Some(root_port);
+        slot.device_attached = true;
+        slot.slot_context = slot_ctx;
+
+        CommandCompletion::success(slot_id)
+    }
+
+    /// Topology-only Configure Endpoint handling.
+    ///
+    /// For now, configuring endpoints is equivalent to re-validating that the slot context still
+    /// resolves to a reachable device.
+    pub fn configure_endpoint(&mut self, slot_id: u8, slot_ctx: SlotContext) -> CommandCompletion {
+        self.address_device(slot_id, slot_ctx)
+    }
+
+    /// Return the USB device currently bound to a slot, if any.
+    pub fn slot_device_mut(&mut self, slot_id: u8) -> Option<&mut AttachedUsbDevice> {
+        let idx = usize::from(slot_id);
+        let slot_ctx = {
+            let slot = self.slots.get(idx)?;
+            if !slot.enabled || !slot.device_attached {
+                return None;
+            }
+            slot.slot_context
+        };
+
+        let root_port = slot_ctx.root_hub_port_number();
+        let route = slot_ctx.parsed_route_string().ok()?.ports_from_root();
+        self.find_device_by_topology(root_port, &route)
     }
 
     pub fn irq_level(&self) -> bool {
