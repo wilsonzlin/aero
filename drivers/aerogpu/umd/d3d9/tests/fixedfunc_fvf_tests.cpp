@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -671,8 +672,12 @@ bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
   aerogpu_handle_t expected_input_layout = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (dev->fvf_vertex_decl) {
-      expected_input_layout = dev->fvf_vertex_decl->handle;
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzrhwDiffuse);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (pipe.vertex_decl) {
+        expected_input_layout = pipe.vertex_decl->handle;
+      }
     }
   }
   if (!Check(expected_input_layout != 0, "SetFVF created internal input layout")) {
@@ -697,10 +702,15 @@ bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
   // state but rely on vertex diffuse.)
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_ps != nullptr, "fixedfunc_ps created")) {
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(dev->fvf);
+    if (!Check(variant != FixedFuncVariant::NONE, "fixed-function variant recognized")) {
       return false;
     }
-    if (!Check(dev->ps == dev->fixedfunc_ps, "fixed-function PS is bound (no texture)")) {
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.ps != nullptr, "fixed-function PS created")) {
+      return false;
+    }
+    if (!Check(dev->ps == pipe.ps, "fixed-function PS is bound (no texture)")) {
       return false;
     }
     if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld),
@@ -934,11 +944,15 @@ bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
   bool decl_ok = false;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (dev->fvf_vertex_decl_xyz_diffuse) {
-      expected_input_layout = dev->fvf_vertex_decl_xyz_diffuse->handle;
-      const auto& blob = dev->fvf_vertex_decl_xyz_diffuse->blob;
-      decl_ok = (blob.size() == sizeof(expected_decl)) &&
-                (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzDiffuse);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (pipe.vertex_decl) {
+        expected_input_layout = pipe.vertex_decl->handle;
+        const auto& blob = pipe.vertex_decl->blob;
+        decl_ok = (blob.size() == sizeof(expected_decl)) &&
+                  (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+      }
     }
   }
   // Set a simple world translation; view/projection are identity.
@@ -987,11 +1001,15 @@ bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
 
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "fixedfunc_vs_xyz_diffuse created")) {
-      return false;
-    }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse, "XYZ|DIFFUSE binds WVP VS")) {
-      return false;
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzDiffuse);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (!Check(pipe.vs != nullptr, "fixedfunc VS created (XYZ|DIFFUSE)")) {
+        return false;
+      }
+      if (!Check(dev->vs == pipe.vs, "XYZ|DIFFUSE binds fixed-function VS")) {
+        return false;
+      }
     }
     if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColor),
                "XYZ|DIFFUSE VS bytecode matches kVsWvpPosColor")) {
@@ -1810,7 +1828,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
       {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
   };
 
-  // Set a non-identity transform so the fixed-function WVP constant upload is
+  // Provide a non-identity transform so the fixed-function WVP constant upload is
   // easy to spot (WVP columns are uploaded into c240..c243).
   constexpr float tx = 2.0f;
   constexpr float ty = 3.0f;
@@ -1828,11 +1846,15 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   bool decl_ok = false;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (dev->fvf_vertex_decl_xyz_diffuse) {
-      expected_input_layout = dev->fvf_vertex_decl_xyz_diffuse->handle;
-      const auto& blob = dev->fvf_vertex_decl_xyz_diffuse->blob;
-      decl_ok = (blob.size() == sizeof(expected_decl)) &&
-                (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzDiffuse);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (pipe.vertex_decl) {
+        expected_input_layout = pipe.vertex_decl->handle;
+        const auto& blob = pipe.vertex_decl->blob;
+        decl_ok = (blob.size() == sizeof(expected_decl)) &&
+                  (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+      }
     }
   }
 
@@ -1862,7 +1884,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   if (!Check(expected_input_layout != 0, "SetFVF XYZ|DIFFUSE created internal input layout")) {
     return false;
   }
-  if (!Check(decl_ok, "XYZ|DIFFUSE internal vertex decl matches expected layout")) {
+  if (!Check(decl_ok, "XYZ|DIFFUSE internal vertex decl matches expected layout (VB draw)")) {
     return false;
   }
 
@@ -1948,14 +1970,18 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
 
   {
     std::lock_guard<std::mutex> lock_dev(dev->mutex);
-    if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "fixedfunc_vs_xyz_diffuse created")) {
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzDiffuse);
+    if (!Check(variant == FixedFuncVariant::XYZ_COLOR, "fixedfunc_variant_from_fvf(XYZ|DIFFUSE) == XYZ_COLOR")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse, "XYZ|DIFFUSE binds WVP VS")) {
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.vs != nullptr, "XYZ|DIFFUSE fixed-function VS created")) {
       return false;
     }
-    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColor),
-               "XYZ|DIFFUSE VS bytecode matches kVsWvpPosColor")) {
+    if (!Check(dev->vs == pipe.vs, "XYZ|DIFFUSE binds WVP VS")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColor), "XYZ|DIFFUSE VS bytecode matches kVsWvpPosColor")) {
       return false;
     }
     if (!Check(dev->up_vertex_buffer == nullptr, "VB draw does not allocate scratch UP buffer")) {
@@ -2024,7 +2050,10 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   bool saw_wvp_constants = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 240 || sc->vec4_count != 4) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -2157,8 +2186,12 @@ bool TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders() {
   aerogpu_handle_t expected_input_layout = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (dev->fvf_vertex_decl_tex1) {
-      expected_input_layout = dev->fvf_vertex_decl_tex1->handle;
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzrhwDiffuseTex1);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (pipe.vertex_decl) {
+        expected_input_layout = pipe.vertex_decl->handle;
+      }
     }
   }
   if (!Check(expected_input_layout != 0, "SetFVF TEX1 created internal input layout")) {
@@ -2644,10 +2677,15 @@ bool TestFixedfuncTex1SupportsTexcoordSizeBits() {
         if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl preserved at draw (XYZ)")) {
           return false;
         }
-        if (!Check(dev->fixedfunc_vs_xyz_diffuse_tex1 != nullptr, "fixedfunc_vs_xyz_diffuse_tex1 created")) {
+        const FixedFuncVariant variant = fixedfunc_variant_from_fvf(dev->fvf);
+        if (!Check(variant == FixedFuncVariant::XYZ_COLOR_TEX1, "implied fixedfunc variant == XYZ_COLOR_TEX1")) {
           return false;
         }
-        if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ custom TEXCOORDSIZE0 binds WVP VS")) {
+        const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+        if (!Check(pipe.vs != nullptr, "fixedfunc pipeline VS created (XYZ_COLOR_TEX1)")) {
+          return false;
+        }
+        if (!Check(dev->vs == pipe.vs, "XYZ custom TEXCOORDSIZE0 binds WVP VS")) {
           return false;
         }
         if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColorTex0),
@@ -2858,10 +2896,11 @@ bool TestFixedfuncTex1NoDiffuseSupportsTexcoordSizeBits() {
         if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl preserved at draw (XYZRHW|TEX1)")) {
           return false;
         }
-        if (!Check(dev->fixedfunc_vs_tex1_nodiffuse != nullptr, "fixedfunc_vs_tex1_nodiffuse created")) {
+        const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(FixedFuncVariant::RHW_TEX1)];
+        if (!Check(pipe.vs != nullptr, "fixedfunc RHW_TEX1 VS created")) {
           return false;
         }
-        if (!Check(dev->vs == dev->fixedfunc_vs_tex1_nodiffuse, "XYZRHW|TEX1 binds nodiffuse passthrough VS")) {
+        if (!Check(dev->vs == pipe.vs, "XYZRHW|TEX1 binds nodiffuse passthrough VS")) {
           return false;
         }
         if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosWhiteTex1),
@@ -3020,10 +3059,11 @@ bool TestFixedfuncTex1NoDiffuseSupportsTexcoordSizeBits() {
         if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl preserved at draw (XYZ|TEX1)")) {
           return false;
         }
-        if (!Check(dev->fixedfunc_vs_xyz_tex1 != nullptr, "fixedfunc_vs_xyz_tex1 created")) {
+        const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(FixedFuncVariant::XYZ_TEX1)];
+        if (!Check(pipe.vs != nullptr, "fixedfunc XYZ_TEX1 VS created")) {
           return false;
         }
-        if (!Check(dev->vs == dev->fixedfunc_vs_xyz_tex1, "XYZ|TEX1 binds WVP VS")) {
+        if (!Check(dev->vs == pipe.vs, "XYZ|TEX1 binds WVP VS")) {
           return false;
         }
         if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsTransformPosWhiteTex1),
@@ -3087,11 +3127,15 @@ bool TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl() {
   bool decl_ok = false;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (dev->fvf_vertex_decl_xyz_diffuse_tex1) {
-      expected_input_layout = dev->fvf_vertex_decl_xyz_diffuse_tex1->handle;
-      const auto& blob = dev->fvf_vertex_decl_xyz_diffuse_tex1->blob;
-      decl_ok = (blob.size() == sizeof(expected_decl)) &&
-                (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzDiffuseTex1);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (pipe.vertex_decl) {
+        expected_input_layout = pipe.vertex_decl->handle;
+        const auto& blob = pipe.vertex_decl->blob;
+        decl_ok = (blob.size() == sizeof(expected_decl)) &&
+                  (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+      }
     }
   }
   // Set a simple world translation; view/projection are identity.
@@ -3150,11 +3194,15 @@ bool TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl() {
 
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_vs_xyz_diffuse_tex1 != nullptr, "fixedfunc_vs_xyz_diffuse_tex1 created")) {
-      return false;
-    }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ|DIFFUSE|TEX1 binds WVP VS")) {
-      return false;
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzDiffuseTex1);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (!Check(pipe.vs != nullptr, "fixedfunc VS created (XYZ|DIFFUSE|TEX1)")) {
+        return false;
+      }
+      if (!Check(dev->vs == pipe.vs, "XYZ|DIFFUSE|TEX1 binds fixed-function VS")) {
+        return false;
+      }
     }
     if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColorTex0),
                "XYZ|DIFFUSE|TEX1 VS bytecode matches kVsWvpPosColorTex0")) {
@@ -3296,11 +3344,11 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
       // stream, offset, type, method, usage, usage_index
       {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
       {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexCoord, 0},
       {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
   };
 
-  // Set a non-identity transform so the fixed-function WVP constant upload is
+  // Provide a non-identity transform so the fixed-function WVP constant upload is
   // easy to spot (WVP columns are uploaded into c240..c243).
   constexpr float tx = 2.0f;
   constexpr float ty = 3.0f;
@@ -3318,11 +3366,15 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
   bool decl_ok = false;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (dev->fvf_vertex_decl_xyz_diffuse_tex1) {
-      expected_input_layout = dev->fvf_vertex_decl_xyz_diffuse_tex1->handle;
-      const auto& blob = dev->fvf_vertex_decl_xyz_diffuse_tex1->blob;
-      decl_ok = (blob.size() == sizeof(expected_decl)) &&
-                (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzDiffuseTex1);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (pipe.vertex_decl) {
+        expected_input_layout = pipe.vertex_decl->handle;
+        const auto& blob = pipe.vertex_decl->blob;
+        decl_ok = (blob.size() == sizeof(expected_decl)) &&
+                  (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+      }
     }
   }
 
@@ -3352,7 +3404,7 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
   if (!Check(expected_input_layout != 0, "SetFVF XYZ|DIFFUSE|TEX1 created internal input layout")) {
     return false;
   }
-  if (!Check(decl_ok, "XYZ|DIFFUSE|TEX1 internal vertex decl matches expected layout")) {
+  if (!Check(decl_ok, "XYZ|DIFFUSE|TEX1 internal vertex decl matches expected layout (VB draw)")) {
     return false;
   }
 
@@ -3447,14 +3499,18 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
 
   {
     std::lock_guard<std::mutex> lock_dev(dev->mutex);
-    if (!Check(dev->fixedfunc_vs_xyz_diffuse_tex1 != nullptr, "fixedfunc_vs_xyz_diffuse_tex1 created")) {
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzDiffuseTex1);
+    if (!Check(variant == FixedFuncVariant::XYZ_COLOR_TEX1, "fixedfunc_variant_from_fvf(XYZ|DIFFUSE|TEX1) == XYZ_COLOR_TEX1")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ|DIFFUSE|TEX1 binds WVP VS")) {
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.vs != nullptr, "XYZ|DIFFUSE|TEX1 fixed-function VS created")) {
       return false;
     }
-    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColorTex0),
-               "XYZ|DIFFUSE|TEX1 VS bytecode matches kVsWvpPosColorTex0")) {
+    if (!Check(dev->vs == pipe.vs, "XYZ|DIFFUSE|TEX1 binds WVP VS")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColorTex0), "XYZ|DIFFUSE|TEX1 VS bytecode matches kVsWvpPosColorTex0")) {
       return false;
     }
     if (!Check(dev->up_vertex_buffer == nullptr, "VB draw does not allocate scratch UP buffer (TEX1)")) {
@@ -3466,6 +3522,10 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
   if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE|TEX1 VB draw)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_TEXTURE) >= 1, "SET_TEXTURE emitted")) {
     return false;
   }
 
@@ -3523,7 +3583,10 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
   bool saw_wvp_constants = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 240 || sc->vec4_count != 4) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -3573,11 +3636,15 @@ bool TestFvfXyzrhwTex1EmitsTextureAndShaders() {
   bool decl_ok = false;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (dev->fvf_vertex_decl_tex1_nodiffuse) {
-      expected_input_layout = dev->fvf_vertex_decl_tex1_nodiffuse->handle;
-      const auto& blob = dev->fvf_vertex_decl_tex1_nodiffuse->blob;
-      decl_ok = (blob.size() == sizeof(expected_decl)) &&
-                (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzrhwTex1);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (pipe.vertex_decl) {
+        expected_input_layout = pipe.vertex_decl->handle;
+        const auto& blob = pipe.vertex_decl->blob;
+        decl_ok = (blob.size() == sizeof(expected_decl)) &&
+                  (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+      }
     }
   }
   if (!Check(expected_input_layout != 0, "SetFVF XYZRHW|TEX1 created internal input layout")) {
@@ -3698,11 +3765,15 @@ bool TestFvfXyzTex1EmitsTransformConstantsAndDecl() {
   bool decl_ok = false;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (dev->fvf_vertex_decl_xyz_tex1) {
-      expected_input_layout = dev->fvf_vertex_decl_xyz_tex1->handle;
-      const auto& blob = dev->fvf_vertex_decl_xyz_tex1->blob;
-      decl_ok = (blob.size() == sizeof(expected_decl)) &&
-                (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzTex1);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (pipe.vertex_decl) {
+        expected_input_layout = pipe.vertex_decl->handle;
+        const auto& blob = pipe.vertex_decl->blob;
+        decl_ok = (blob.size() == sizeof(expected_decl)) &&
+                  (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+      }
     }
   }
   // Set a simple world translation; view/projection are identity.
@@ -4463,14 +4534,19 @@ bool TestVertexDeclXyzTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
   {
     std::lock_guard<std::mutex> lock_dev(dev->mutex);
     // Ensure the draw didn't change the explicitly bound vertex decl.
-    if (!Check(dev->vertex_decl == decl_ptr, "vertex decl restored after XYZ|TEX1 draw")) {
+    if (!Check(dev->vertex_decl == decl_ptr, "vertex decl preserved after XYZ|TEX1 draw")) {
       return false;
     }
 
-    if (!Check(dev->fixedfunc_vs_xyz_tex1 != nullptr, "fixedfunc_vs_xyz_tex1 created")) {
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzTex1);
+    if (!Check(variant == FixedFuncVariant::XYZ_TEX1, "fixedfunc_variant_from_fvf(XYZ|TEX1) == XYZ_TEX1 (decl path)")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_tex1, "XYZ|TEX1 via decl binds WVP VS")) {
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.vs != nullptr, "XYZ|TEX1 fixed-function VS created (decl path)")) {
+      return false;
+    }
+    if (!Check(dev->vs == pipe.vs, "XYZ|TEX1 via decl binds VS")) {
       return false;
     }
     if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsTransformPosWhiteTex1),
@@ -4563,7 +4639,7 @@ bool TestVertexDeclXyzTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
   return true;
 }
 
-bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
+bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndKeepsDecl() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
     return false;
@@ -4746,10 +4822,15 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
       return false;
     }
 
-    if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "fixedfunc_vs_xyz_diffuse created")) {
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzDiffuse);
+    if (!Check(variant == FixedFuncVariant::XYZ_COLOR, "fixedfunc_variant_from_fvf(XYZ|DIFFUSE) == XYZ_COLOR (decl path)")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse, "XYZ|DIFFUSE via decl binds WVP VS")) {
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.vs != nullptr, "XYZ|DIFFUSE fixed-function VS created (decl path)")) {
+      return false;
+    }
+    if (!Check(dev->vs == pipe.vs, "XYZ|DIFFUSE via decl binds WVP VS")) {
       return false;
     }
     if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColor),
@@ -4772,30 +4853,6 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
   if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE VB draw via decl)")) {
-    return false;
-  }
-
-  bool saw_wvp_constants = false;
-  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
-    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
-      continue;
-    }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
-      continue;
-    }
-    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
-    if (hdr->size_bytes < need) {
-      continue;
-    }
-    const float* payload = reinterpret_cast<const float*>(
-        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
-    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
-      saw_wvp_constants = true;
-      break;
-    }
-  }
-  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (decl xyz|diffuse)")) {
     return false;
   }
 
@@ -4853,10 +4910,34 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
     return false;
   }
 
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 240 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (decl xyz|diffuse VB draw)")) {
+    return false;
+  }
+
   return true;
 }
 
-bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
+bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndKeepsDecl() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
     return false;
@@ -4963,6 +5044,7 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
     return false;
   }
 
+  // Create a VB with a leading dummy vertex so we can draw with start_vertex=1.
   const VertexXyzDiffuseTex1 verts[4] = {
       {123.0f, 456.0f, 0.0f, 0xFFFFFFFFu, 9.0f, 9.0f},
       {-1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
@@ -5046,10 +5128,15 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
       return false;
     }
 
-    if (!Check(dev->fixedfunc_vs_xyz_diffuse_tex1 != nullptr, "fixedfunc_vs_xyz_diffuse_tex1 created")) {
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzDiffuseTex1);
+    if (!Check(variant == FixedFuncVariant::XYZ_COLOR_TEX1, "fixedfunc_variant_from_fvf(XYZ|DIFFUSE|TEX1) == XYZ_COLOR_TEX1 (decl path)")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ|DIFFUSE|TEX1 via decl binds WVP VS")) {
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.vs != nullptr, "XYZ|DIFFUSE|TEX1 fixed-function VS created (decl path)")) {
+      return false;
+    }
+    if (!Check(dev->vs == pipe.vs, "XYZ|DIFFUSE|TEX1 via decl binds WVP VS")) {
       return false;
     }
     if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColorTex0),
@@ -5075,27 +5162,7 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
     return false;
   }
 
-  bool saw_wvp_constants = false;
-  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
-    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
-      continue;
-    }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
-      continue;
-    }
-    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
-    if (hdr->size_bytes < need) {
-      continue;
-    }
-    const float* payload = reinterpret_cast<const float*>(
-        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
-    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
-      saw_wvp_constants = true;
-      break;
-    }
-  }
-  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (decl xyz|diffuse|tex1)")) {
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_TEXTURE) >= 1, "SET_TEXTURE emitted")) {
     return false;
   }
 
@@ -5150,6 +5217,30 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
     }
   }
   if (!Check(saw_draw, "DRAW uses start_vertex=1 vertex_count=3 instance_count=1 (decl xyz|diffuse|tex1)")) {
+    return false;
+  }
+
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 240 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (decl xyz|diffuse|tex1 VB draw)")) {
     return false;
   }
 
@@ -5712,10 +5803,15 @@ bool TestPsOnlyInteropXyzrhwTex1SynthesizesVs() {
       return false;
     }
 
-    if (!Check(dev->fixedfunc_vs_tex1_nodiffuse != nullptr, "interop created fixedfunc_vs_tex1_nodiffuse")) {
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzrhwTex1);
+    if (!Check(variant != FixedFuncVariant::NONE, "fixed-function variant recognized")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs_tex1_nodiffuse, "interop bound fixedfunc VS (XYZRHW|TEX1)")) {
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.vs != nullptr, "interop created fixed-function VS (XYZRHW|TEX1)")) {
+      return false;
+    }
+    if (!Check(dev->vs == pipe.vs, "interop bound fixed-function VS (XYZRHW|TEX1)")) {
       return false;
     }
     if (!Check(dev->ps == user_ps, "interop kept user PS bound")) {
@@ -5809,10 +5905,15 @@ bool TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp() {
     }
     expected_ps = user_ps->handle;
 
-    if (!Check(dev->fixedfunc_vs_xyz_tex1 != nullptr, "interop created fixedfunc_vs_xyz_tex1")) {
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzTex1);
+    if (!Check(variant != FixedFuncVariant::NONE, "fixed-function variant recognized")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_tex1, "interop bound fixedfunc VS (XYZ|TEX1)")) {
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.vs != nullptr, "interop created fixed-function VS (XYZ|TEX1)")) {
+      return false;
+    }
+    if (!Check(dev->vs == pipe.vs, "interop bound fixed-function VS (XYZ|TEX1)")) {
       return false;
     }
     if (!Check(dev->ps == user_ps, "interop kept user PS bound")) {
@@ -5950,11 +6051,15 @@ bool TestPsOnlyInteropVertexDeclXyzrhwTex1SynthesizesVs() {
     }
     expected_ps = user_ps->handle;
 
-    if (!Check(dev->fixedfunc_vs_tex1_nodiffuse != nullptr, "interop created fixedfunc_vs_tex1_nodiffuse")) {
-      return false;
-    }
-    if (!Check(dev->vs == dev->fixedfunc_vs_tex1_nodiffuse, "interop bound fixedfunc VS (XYZRHW|TEX1)")) {
-      return false;
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzrhwTex1);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (!Check(pipe.vs != nullptr, "interop created fixedfunc VS (XYZRHW|TEX1)")) {
+        return false;
+      }
+      if (!Check(dev->vs == pipe.vs, "interop bound fixedfunc VS (XYZRHW|TEX1)")) {
+        return false;
+      }
     }
     if (!Check(dev->ps == user_ps, "interop kept user PS bound")) {
       return false;
@@ -6091,11 +6196,15 @@ bool TestPsOnlyInteropVertexDeclXyzTex1SynthesizesVsAndUploadsWvp() {
     }
     expected_ps = user_ps->handle;
 
-    if (!Check(dev->fixedfunc_vs_xyz_tex1 != nullptr, "interop created fixedfunc_vs_xyz_tex1")) {
-      return false;
-    }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_tex1, "interop bound fixedfunc VS (XYZ|TEX1)")) {
-      return false;
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kFvfXyzTex1);
+    if (variant != FixedFuncVariant::NONE) {
+      const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+      if (!Check(pipe.vs != nullptr, "interop created fixedfunc VS (XYZ|TEX1)")) {
+        return false;
+      }
+      if (!Check(dev->vs == pipe.vs, "interop bound fixedfunc VS (XYZ|TEX1)")) {
+        return false;
+      }
     }
     if (!Check(dev->ps == user_ps, "interop kept user PS bound")) {
       return false;
@@ -6682,10 +6791,15 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
 
   const auto ExpectFixedfuncPsTokens = [&](const char* tag, bool expect_texld, bool expect_mul) -> bool {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present")) {
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(dev->fvf);
+    if (!Check(variant != FixedFuncVariant::NONE, "fixed-function variant recognized")) {
       return false;
     }
-    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound")) {
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.ps != nullptr, "fixed-function PS present")) {
+      return false;
+    }
+    if (!Check(dev->ps == pipe.ps, "fixed-function PS is bound")) {
       return false;
     }
     if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld) == expect_texld, "PS texld token expectation")) {
@@ -8900,10 +9014,10 @@ int main() {
   if (!aerogpu::TestVertexDeclXyzTex1DrawPrimitiveVbUploadsWvpAndBindsVb()) {
     return 1;
   }
-  if (!aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl()) {
+  if (!aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndKeepsDecl()) {
     return 1;
   }
-  if (!aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl()) {
+  if (!aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndKeepsDecl()) {
     return 1;
   }
   if (!aerogpu::TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs()) {

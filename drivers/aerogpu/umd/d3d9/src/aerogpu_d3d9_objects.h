@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -40,6 +41,332 @@ enum class DeviceLostReason : uint32_t {
   WddmSubmitPresent = 2,
 };
 
+// Fixed-function emulation pipeline variants (FVF + minimal fixed-function state).
+//
+// Notes:
+// - This is internal UMD state (not exposed to the D3D9 runtime).
+// - Keep the enum stable and table-driven so we can add variants without
+//   scattering one-off `fvf == ...` checks throughout draw paths.
+enum class FixedFuncVariant : uint8_t {
+  NONE = 0,
+  RHW_COLOR = 1,
+  RHW_COLOR_TEX1 = 2,
+  XYZ_COLOR = 3,
+  XYZ_COLOR_TEX1 = 4,
+  // TEX-only variants (no DIFFUSE/color in the vertex).
+  RHW_TEX1 = 5,
+  XYZ_TEX1 = 6,
+  // Minimal lighting bring-up: XYZ + NORMAL (+ optional DIFFUSE/TEX1).
+  XYZ_NORMAL = 7,
+  XYZ_NORMAL_TEX1 = 8,
+  XYZ_NORMAL_COLOR = 9,
+  XYZ_NORMAL_COLOR_TEX1 = 10,
+  COUNT = 11,
+};
+
+// ---------------------------------------------------------------------------
+// Minimal D3D9 FVF / vertex-declaration compat types for portable builds.
+// ---------------------------------------------------------------------------
+
+// Local numeric definitions so portable builds don't require d3d9.h/d3d9types.h.
+inline constexpr uint32_t kD3dFvfXyz = 0x00000002u;
+inline constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+// D3DFVF_XYZBn encodings (position + blend weights; see D3DFVF_POSITION_MASK).
+inline constexpr uint32_t kD3dFvfXyzB1 = 0x00000006u;
+inline constexpr uint32_t kD3dFvfXyzB2 = 0x00000008u;
+inline constexpr uint32_t kD3dFvfXyzB3 = 0x0000000Au;
+inline constexpr uint32_t kD3dFvfXyzB4 = 0x0000000Cu;
+inline constexpr uint32_t kD3dFvfXyzB5 = 0x0000000Eu;
+// D3DFVF_XYZW includes the 0x4000 "XYZW" bit combined with D3DFVF_XYZ (0x2).
+inline constexpr uint32_t kD3dFvfXyzw = 0x00004002u;
+inline constexpr uint32_t kD3dFvfNormal = 0x00000010u;
+inline constexpr uint32_t kD3dFvfPSize = 0x00000020u;
+inline constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
+inline constexpr uint32_t kD3dFvfSpecular = 0x00000080u;
+// D3DFVF_LASTBETA_* encodes the type of the last blend index for XYZBn.
+inline constexpr uint32_t kD3dFvfLastBetaUByte4 = 0x00001000u;
+inline constexpr uint32_t kD3dFvfLastBetaD3dColor = 0x00008000u;
+inline constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
+inline constexpr uint32_t kD3dFvfTexCountMask = 0x00000F00u;
+inline constexpr uint32_t kD3dFvfTexCountShift = 8u;
+// D3DFVF_POSITION_MASK (from d3d9types.h). Includes the XYZW high bit (0x4000).
+inline constexpr uint32_t kD3dFvfPositionMask = 0x0000400Eu;
+// D3DFVF_TEXCOORDSIZE* encodes 2 bits per texcoord set starting at bit 16.
+inline constexpr uint32_t kD3dFvfTexCoordSizeMask = 0xFFFF0000u;
+
+#pragma pack(push, 1)
+struct D3DVERTEXELEMENT9_COMPAT {
+  uint16_t Stream;
+  uint16_t Offset;
+  uint8_t Type;
+  uint8_t Method;
+  uint8_t Usage;
+  uint8_t UsageIndex;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9 must be 8 bytes");
+
+inline constexpr uint8_t kD3dDeclTypeFloat1 = 0;
+inline constexpr uint8_t kD3dDeclTypeFloat2 = 1;
+inline constexpr uint8_t kD3dDeclTypeFloat3 = 2;
+inline constexpr uint8_t kD3dDeclTypeFloat4 = 3;
+inline constexpr uint8_t kD3dDeclTypeD3dColor = 4;
+inline constexpr uint8_t kD3dDeclTypeUByte4 = 5;
+inline constexpr uint8_t kD3dDeclTypeUnused = 17;
+
+inline constexpr uint8_t kD3dDeclMethodDefault = 0;
+
+inline constexpr uint8_t kD3dDeclUsagePosition = 0;
+inline constexpr uint8_t kD3dDeclUsageBlendWeight = 1;
+inline constexpr uint8_t kD3dDeclUsageBlendIndices = 2;
+inline constexpr uint8_t kD3dDeclUsagePSize = 4;
+inline constexpr uint8_t kD3dDeclUsageNormal = 3;
+inline constexpr uint8_t kD3dDeclUsageTexCoord = 5;
+inline constexpr uint8_t kD3dDeclUsagePositionT = 9;
+inline constexpr uint8_t kD3dDeclUsageColor = 10;
+
+struct FixedFuncVariantDeclDesc {
+  FixedFuncVariant variant = FixedFuncVariant::NONE;
+  uint32_t fvf = 0;
+  const D3DVERTEXELEMENT9_COMPAT* elems = nullptr;
+  size_t elem_count = 0;
+};
+
+inline constexpr D3DVERTEXELEMENT9_COMPAT kFixedFuncDeclRhwColor[] = {
+    // stream, offset, type, method, usage, usage_index
+    {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+    {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+    {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+};
+
+inline constexpr D3DVERTEXELEMENT9_COMPAT kFixedFuncDeclRhwColorTex1[] = {
+    {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+    {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+    {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexCoord, 0},
+    {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+};
+
+inline constexpr D3DVERTEXELEMENT9_COMPAT kFixedFuncDeclRhwTex1[] = {
+    {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+    {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexCoord, 0},
+    {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+};
+
+inline constexpr D3DVERTEXELEMENT9_COMPAT kFixedFuncDeclXyzColor[] = {
+    {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+    {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+    {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+};
+
+inline constexpr D3DVERTEXELEMENT9_COMPAT kFixedFuncDeclXyzColorTex1[] = {
+    {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+    {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+    {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexCoord, 0},
+    {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+};
+
+inline constexpr D3DVERTEXELEMENT9_COMPAT kFixedFuncDeclXyzTex1[] = {
+    {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+    {0, 12, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexCoord, 0},
+    {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+};
+
+inline constexpr D3DVERTEXELEMENT9_COMPAT kFixedFuncDeclXyzNormal[] = {
+    {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+    {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+    {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+};
+
+inline constexpr D3DVERTEXELEMENT9_COMPAT kFixedFuncDeclXyzNormalTex1[] = {
+    {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+    {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+    {0, 24, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexCoord, 0},
+    {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+};
+
+inline constexpr D3DVERTEXELEMENT9_COMPAT kFixedFuncDeclXyzNormalColor[] = {
+    {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+    {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+    {0, 24, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+    {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+};
+
+inline constexpr D3DVERTEXELEMENT9_COMPAT kFixedFuncDeclXyzNormalColorTex1[] = {
+    {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+    {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+    {0, 24, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+    {0, 28, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexCoord, 0},
+    {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+};
+
+inline constexpr FixedFuncVariantDeclDesc kFixedFuncVariantDeclTable[] = {
+    {FixedFuncVariant::RHW_COLOR,
+     kD3dFvfXyzRhw | kD3dFvfDiffuse,
+     kFixedFuncDeclRhwColor,
+     sizeof(kFixedFuncDeclRhwColor) / sizeof(kFixedFuncDeclRhwColor[0])},
+    {FixedFuncVariant::RHW_COLOR_TEX1,
+     kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1,
+     kFixedFuncDeclRhwColorTex1,
+     sizeof(kFixedFuncDeclRhwColorTex1) / sizeof(kFixedFuncDeclRhwColorTex1[0])},
+    {FixedFuncVariant::RHW_TEX1,
+     kD3dFvfXyzRhw | kD3dFvfTex1,
+     kFixedFuncDeclRhwTex1,
+     sizeof(kFixedFuncDeclRhwTex1) / sizeof(kFixedFuncDeclRhwTex1[0])},
+    {FixedFuncVariant::XYZ_COLOR,
+     kD3dFvfXyz | kD3dFvfDiffuse,
+     kFixedFuncDeclXyzColor,
+     sizeof(kFixedFuncDeclXyzColor) / sizeof(kFixedFuncDeclXyzColor[0])},
+    {FixedFuncVariant::XYZ_COLOR_TEX1,
+     kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1,
+     kFixedFuncDeclXyzColorTex1,
+     sizeof(kFixedFuncDeclXyzColorTex1) / sizeof(kFixedFuncDeclXyzColorTex1[0])},
+    {FixedFuncVariant::XYZ_TEX1,
+     kD3dFvfXyz | kD3dFvfTex1,
+     kFixedFuncDeclXyzTex1,
+     sizeof(kFixedFuncDeclXyzTex1) / sizeof(kFixedFuncDeclXyzTex1[0])},
+    {FixedFuncVariant::XYZ_NORMAL,
+     kD3dFvfXyz | kD3dFvfNormal,
+     kFixedFuncDeclXyzNormal,
+     sizeof(kFixedFuncDeclXyzNormal) / sizeof(kFixedFuncDeclXyzNormal[0])},
+    {FixedFuncVariant::XYZ_NORMAL_TEX1,
+     kD3dFvfXyz | kD3dFvfNormal | kD3dFvfTex1,
+     kFixedFuncDeclXyzNormalTex1,
+     sizeof(kFixedFuncDeclXyzNormalTex1) / sizeof(kFixedFuncDeclXyzNormalTex1[0])},
+    {FixedFuncVariant::XYZ_NORMAL_COLOR,
+     kD3dFvfXyz | kD3dFvfNormal | kD3dFvfDiffuse,
+     kFixedFuncDeclXyzNormalColor,
+     sizeof(kFixedFuncDeclXyzNormalColor) / sizeof(kFixedFuncDeclXyzNormalColor[0])},
+    {FixedFuncVariant::XYZ_NORMAL_COLOR_TEX1,
+     kD3dFvfXyz | kD3dFvfNormal | kD3dFvfDiffuse | kD3dFvfTex1,
+     kFixedFuncDeclXyzNormalColorTex1,
+     sizeof(kFixedFuncDeclXyzNormalColorTex1) / sizeof(kFixedFuncDeclXyzNormalColorTex1[0])},
+};
+
+inline constexpr size_t kFixedFuncVariantDeclTableCount =
+    sizeof(kFixedFuncVariantDeclTable) / sizeof(kFixedFuncVariantDeclTable[0]);
+
+inline constexpr FixedFuncVariant fixedfunc_variant_from_fvf(uint32_t fvf) {
+  // Match only the fixed-function bring-up subset (see drivers/aerogpu/umd/d3d9/README.md).
+  //
+  // Notes:
+  // - TEXCOORDSIZE bits affect the vertex layout (stride/offsets), but they do
+  //   not change which fixed-function shader variant we need. Classify variants
+  //   based on the non-size FVF bits only.
+  // - Some runtimes may leave garbage TEXCOORDSIZE bits set for *unused*
+  //   texcoord sets (e.g. TEXCOORD1 when TEXCOUNT=1); ignore those so internal
+  //   caches key only off the true vertex layout.
+  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  for (size_t i = 0; i < kFixedFuncVariantDeclTableCount; ++i) {
+    if (kFixedFuncVariantDeclTable[i].fvf == base) {
+      return kFixedFuncVariantDeclTable[i].variant;
+    }
+  }
+  return FixedFuncVariant::NONE;
+}
+
+inline constexpr bool fixedfunc_variant_uses_rhw(FixedFuncVariant variant) {
+  return variant == FixedFuncVariant::RHW_COLOR ||
+         variant == FixedFuncVariant::RHW_COLOR_TEX1 ||
+         variant == FixedFuncVariant::RHW_TEX1;
+}
+
+inline constexpr uint32_t fixedfunc_fvf_from_variant(FixedFuncVariant variant) {
+  for (size_t i = 0; i < kFixedFuncVariantDeclTableCount; ++i) {
+    if (kFixedFuncVariantDeclTable[i].variant == variant) {
+      return kFixedFuncVariantDeclTable[i].fvf;
+    }
+  }
+  return 0;
+}
+
+inline const FixedFuncVariantDeclDesc* fixedfunc_decl_desc(FixedFuncVariant variant) {
+  for (size_t i = 0; i < kFixedFuncVariantDeclTableCount; ++i) {
+    if (kFixedFuncVariantDeclTable[i].variant == variant) {
+      return &kFixedFuncVariantDeclTable[i];
+    }
+  }
+  return nullptr;
+}
+
+inline FixedFuncVariant fixedfunc_variant_from_decl_blob(const void* blob, size_t size_bytes) {
+  if (!blob || size_bytes < sizeof(D3DVERTEXELEMENT9_COMPAT) * 2) {
+    return FixedFuncVariant::NONE;
+  }
+  const size_t max_elems = size_bytes / sizeof(D3DVERTEXELEMENT9_COMPAT);
+  const auto* elems = reinterpret_cast<const D3DVERTEXELEMENT9_COMPAT*>(blob);
+
+  // Find the D3DDECL_END terminator.
+  size_t elem_count = 0;
+  for (size_t i = 0; i < max_elems; ++i) {
+    const auto& e = elems[i];
+    if (e.Stream == 0xFF && e.Type == kD3dDeclTypeUnused) {
+      elem_count = i + 1;
+      break;
+    }
+  }
+  if (elem_count == 0) {
+    return FixedFuncVariant::NONE;
+  }
+
+  for (size_t i = 0; i < kFixedFuncVariantDeclTableCount; ++i) {
+    const FixedFuncVariantDeclDesc& desc = kFixedFuncVariantDeclTable[i];
+    if (!desc.elems || desc.elem_count == 0) {
+      continue;
+    }
+    if (elem_count != desc.elem_count) {
+      continue;
+    }
+
+    bool ok = true;
+    for (size_t j = 0; j < elem_count; ++j) {
+      const auto& got = elems[j];
+      const auto& exp = desc.elems[j];
+
+      if (j == 0) {
+        // Runtimes are not consistent about POSITION vs POSITIONT usage for the
+        // first element when synthesizing declarations for SetFVF. Accept either.
+        const bool usage_ok = (got.Usage == kD3dDeclUsagePosition || got.Usage == kD3dDeclUsagePositionT);
+        if (!usage_ok) {
+          ok = false;
+          break;
+        }
+        if (got.Stream != exp.Stream || got.Offset != exp.Offset || got.Type != exp.Type ||
+            got.Method != exp.Method || got.UsageIndex != exp.UsageIndex) {
+          ok = false;
+          break;
+        }
+        continue;
+      }
+
+      if (exp.Usage == kD3dDeclUsageTexCoord) {
+        // Some runtimes leave TEXCOORD usage as 0 when synthesizing declarations
+        // for fixed-function paths. Accept either TEXCOORD or POSITION (0).
+        const bool usage_ok = (got.Usage == kD3dDeclUsageTexCoord || got.Usage == kD3dDeclUsagePosition);
+        if (!usage_ok) {
+          ok = false;
+          break;
+        }
+        if (got.Stream != exp.Stream || got.Offset != exp.Offset || got.Type != exp.Type ||
+            got.Method != exp.Method || got.UsageIndex != exp.UsageIndex) {
+          ok = false;
+          break;
+        }
+        continue;
+      }
+
+      if (std::memcmp(&got, &exp, sizeof(D3DVERTEXELEMENT9_COMPAT)) != 0) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) {
+      return desc.variant;
+    }
+  }
+
+  return FixedFuncVariant::NONE;
+}
 inline uint32_t bytes_per_pixel(D3DDDIFORMAT d3d9_format) {
   // Conservative: handle the formats DWM/typical D3D9 samples use.
   // For unknown formats we assume 4 bytes to avoid undersizing.
@@ -729,7 +1056,7 @@ struct PatchCacheEntry {
   std::vector<uint16_t> indices_u16; // triangle-list indices
 };
 
-  struct Device {
+struct Device {
   explicit Device(Adapter* adapter) : adapter(adapter) {
     // In WDK builds the runtime provides the DMA command buffer later during
     // device/context creation, so defer command stream initialization until the
@@ -943,17 +1270,16 @@ struct PatchCacheEntry {
 
   // Fixed-function (FVF) fallback state.
   uint32_t fvf = 0;
-  // Internal vertex declarations synthesized for common FVFs (SetFVF).
-  VertexDecl* fvf_vertex_decl = nullptr;
-  VertexDecl* fvf_vertex_decl_tex1 = nullptr;
-  VertexDecl* fvf_vertex_decl_tex1_nodiffuse = nullptr;
-  VertexDecl* fvf_vertex_decl_xyz_diffuse = nullptr;
-  VertexDecl* fvf_vertex_decl_xyz_diffuse_tex1 = nullptr;
-  VertexDecl* fvf_vertex_decl_xyz_tex1 = nullptr;
-  VertexDecl* fvf_vertex_decl_xyz_normal = nullptr;
-  VertexDecl* fvf_vertex_decl_xyz_normal_tex1 = nullptr;
-  VertexDecl* fvf_vertex_decl_xyz_normal_diffuse = nullptr;
-  VertexDecl* fvf_vertex_decl_xyz_normal_diffuse_tex1 = nullptr;
+  struct FixedFuncPipelineResources {
+    VertexDecl* vertex_decl = nullptr;
+    // Primary VS variant for this fixed-function vertex layout.
+    Shader* vs = nullptr;
+    // Optional lit VS variant (used for NORMAL FVFs when lighting is enabled).
+    Shader* vs_lit = nullptr;
+    // Cached stage0 fixed-function PS currently selected for this variant.
+    Shader* ps = nullptr;
+  };
+  FixedFuncPipelineResources fixedfunc_pipelines[static_cast<size_t>(FixedFuncVariant::COUNT)] = {};
   // Internal FVF-derived vertex declarations synthesized by `SetFVF` for the
   // programmable pipeline (user shaders with FVF instead of an explicit vertex
   // declaration).
@@ -961,23 +1287,6 @@ struct PatchCacheEntry {
   // Keyed by a canonicalized FVF "layout key" that clears TEXCOORDSIZE bits for
   // *unused* texcoord sets (some runtimes leave garbage size bits set).
   std::unordered_map<uint32_t, VertexDecl*> fvf_vertex_decl_cache;
-  Shader* fixedfunc_vs = nullptr;
-  Shader* fixedfunc_vs_xyz_normal = nullptr;
-  Shader* fixedfunc_vs_xyz_normal_tex1 = nullptr;
-  Shader* fixedfunc_vs_xyz_normal_lit = nullptr;
-  Shader* fixedfunc_vs_xyz_normal_tex1_lit = nullptr;
-  Shader* fixedfunc_vs_xyz_normal_diffuse = nullptr;
-  Shader* fixedfunc_vs_xyz_normal_diffuse_tex1 = nullptr;
-  Shader* fixedfunc_vs_xyz_normal_diffuse_lit = nullptr;
-  Shader* fixedfunc_vs_xyz_normal_diffuse_tex1_lit = nullptr;
-  Shader* fixedfunc_ps = nullptr;
-  Shader* fixedfunc_vs_xyz_diffuse = nullptr;
-  Shader* fixedfunc_vs_tex1 = nullptr;
-  Shader* fixedfunc_vs_tex1_nodiffuse = nullptr;
-  Shader* fixedfunc_ps_tex1 = nullptr;
-  Shader* fixedfunc_vs_xyz_diffuse_tex1 = nullptr;
-  Shader* fixedfunc_ps_xyz_diffuse_tex1 = nullptr;
-  Shader* fixedfunc_vs_xyz_tex1 = nullptr;
 
   // Cached fixed-function pixel shader variants generated from texture stage
   // state (D3DTSS_*).
@@ -1011,7 +1320,7 @@ struct PatchCacheEntry {
   // - If `user_vs != nullptr` and `user_ps == nullptr`, we bind an internal
   //   stage0 fixed-function pixel shader to `ps` at draw time.
   // - If `user_vs == nullptr` and `user_ps != nullptr`, we reuse the existing
-  //   fixed-function VS variants (`fixedfunc_vs*`) as a draw-time fallback.
+  //   fixed-function VS for the active fixed-function variant as a draw-time fallback.
   Shader* fixedfunc_ps_interop = nullptr;
 
   // Scratch vertex buffer used to emulate DrawPrimitiveUP and fixed-function

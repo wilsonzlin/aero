@@ -301,24 +301,30 @@ bool TestFixedFuncVertexDeclPatternsNonCanonicalOrdering() {
   {
     std::lock_guard<std::mutex> lock(dev.mutex);
 
-    if (!Check(dev.fixedfunc_vs_tex1 != nullptr, "fixedfunc_vs_tex1 created")) {
+    const aerogpu::FixedFuncVariant variant = aerogpu::fixedfunc_variant_from_fvf(dev.fvf);
+    if (!Check(variant == aerogpu::FixedFuncVariant::RHW_COLOR_TEX1, "implied fixedfunc variant == RHW_COLOR_TEX1")) {
       return false;
     }
-    if (!Check(dev.vs == dev.fixedfunc_vs_tex1, "fixedfunc_vs_tex1 is bound")) {
+    const auto& pipe = dev.fixedfunc_pipelines[static_cast<size_t>(variant)];
+
+    if (!Check(pipe.vs != nullptr, "fixedfunc pipeline VS created (RHW_COLOR_TEX1)")) {
+      return false;
+    }
+    if (!Check(dev.vs == pipe.vs, "fixedfunc pipeline VS is bound (RHW_COLOR_TEX1)")) {
       return false;
     }
     if (!Check(ShaderBytecodeEquals(dev.vs, aerogpu::fixedfunc::kVsPassthroughPosColorTex1),
-               "fixedfunc_vs_tex1 bytecode matches kVsPassthroughPosColorTex1")) {
+               "fixedfunc pipeline VS bytecode matches kVsPassthroughPosColorTex1")) {
       return false;
     }
 
-    if (!Check(dev.fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 created")) {
+    if (!Check(pipe.ps != nullptr, "fixedfunc pipeline PS created (RHW_COLOR_TEX1)")) {
       return false;
     }
-    if (!Check(dev.ps == dev.fixedfunc_ps_tex1, "fixedfunc_ps_tex1 is bound")) {
+    if (!Check(dev.ps == pipe.ps, "fixedfunc pipeline PS is bound (RHW_COLOR_TEX1)")) {
       return false;
     }
-    if (!Check(!ShaderContainsToken(dev.ps, kPsOpTexld), "fixedfunc_ps_tex1 contains no texld when stage0 texture is unbound")) {
+    if (!Check(!ShaderContainsToken(dev.ps, kPsOpTexld), "fixedfunc pipeline PS contains no texld when stage0 texture is unbound")) {
       return false;
     }
   }
@@ -393,4 +399,3 @@ int main() {
   }
   return 0;
 }
-

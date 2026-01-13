@@ -15432,17 +15432,23 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  if (!Check(dev->fvf_vertex_decl_tex1 != nullptr, "internal FVF vertex decl created")) {
+  const FixedFuncVariant variant = fixedfunc_variant_from_fvf(0x144u);
+  if (!Check(variant != FixedFuncVariant::NONE, "fixed-function variant recognized")) {
     return false;
   }
-  if (!Check(dev->fixedfunc_vs_tex1 != nullptr && dev->fixedfunc_ps_tex1 != nullptr,
+  const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+
+  if (!Check(pipe.vertex_decl != nullptr, "internal FVF vertex decl created")) {
+    return false;
+  }
+  if (!Check(pipe.vs != nullptr && pipe.ps != nullptr,
              "internal fixed-function shaders created")) {
     return false;
   }
 
-  const aerogpu_handle_t decl_handle = dev->fvf_vertex_decl_tex1->handle;
-  const aerogpu_handle_t vs_handle = dev->fixedfunc_vs_tex1->handle;
-  const aerogpu_handle_t ps_handle = dev->fixedfunc_ps_tex1->handle;
+  const aerogpu_handle_t decl_handle = pipe.vertex_decl->handle;
+  const aerogpu_handle_t vs_handle = pipe.vs->handle;
+  const aerogpu_handle_t ps_handle = pipe.ps->handle;
 
   if (!Check(decl_handle != 0, "internal decl handle non-zero")) {
     return false;
@@ -15458,10 +15464,10 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
       {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
       {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
   };
-  if (!Check(dev->fvf_vertex_decl_tex1->blob.size() == sizeof(expected_decl), "FVF TEX1 decl blob size")) {
+  if (!Check(pipe.vertex_decl->blob.size() == sizeof(expected_decl), "FVF TEX1 decl blob size")) {
     return false;
   }
-  if (!Check(std::memcmp(dev->fvf_vertex_decl_tex1->blob.data(), expected_decl, sizeof(expected_decl)) == 0,
+  if (!Check(std::memcmp(pipe.vertex_decl->blob.data(), expected_decl, sizeof(expected_decl)) == 0,
              "FVF TEX1 decl blob matches expected layout")) {
     return false;
   }
@@ -18418,14 +18424,17 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
   if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
     return false;
   }
-
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fvf_vertex_decl_xyz_diffuse != nullptr, "FVF internal vertex decl created")) {
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kD3dFvfXyz | kD3dFvfDiffuse);
+    if (!Check(variant != FixedFuncVariant::NONE, "FVF variant recognized")) {
+      return false;
+    }
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.vertex_decl != nullptr, "FVF internal vertex decl created")) {
       return false;
     }
   }
-
   struct Vertex {
     float x;
     float y;
@@ -19196,8 +19205,12 @@ bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
              "fixed-function fallback creates shaders")) {
     return false;
   }
-  if (!Check(dev->fixedfunc_vs_tex1 != nullptr && dev->fixedfunc_ps_tex1 != nullptr,
-             "fixed-function TEX1 shaders cached on device")) {
+  const FixedFuncVariant variant = fixedfunc_variant_from_fvf(dev->fvf);
+  if (!Check(variant != FixedFuncVariant::NONE, "fixed-function variant recognized")) {
+    return false;
+  }
+  const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+  if (!Check(pipe.vs != nullptr && pipe.ps != nullptr, "fixed-function TEX1 shaders cached on device")) {
     return false;
   }
 
@@ -19206,10 +19219,10 @@ bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
   const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
-  if (!Check(bind_cmd->vs == dev->fixedfunc_vs_tex1->handle, "bind_shaders uses TEX1 fixed-function VS")) {
+  if (!Check(bind_cmd->vs == pipe.vs->handle, "bind_shaders uses TEX1 fixed-function VS")) {
     return false;
   }
-  if (!Check(bind_cmd->ps == dev->fixedfunc_ps_tex1->handle, "bind_shaders uses TEX1 fixed-function PS")) {
+  if (!Check(bind_cmd->ps == pipe.ps->handle, "bind_shaders uses TEX1 fixed-function PS")) {
     return false;
   }
 
@@ -19343,8 +19356,16 @@ bool TestSetFvfIdempotentRebindsInternalXyzrhwInputLayout() {
   if (!Check(dev->vertex_decl == user_decl, "SetVertexDecl binds the explicit decl")) {
     return false;
   }
-  if (!Check(dev->fvf_vertex_decl_tex1 == nullptr, "internal FVF decl not created by SetVertexDecl inference")) {
-    return false;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kSupportedFvfXyzrhwDiffuseTex1);
+    if (!Check(variant != FixedFuncVariant::NONE, "FVF variant recognized")) {
+      return false;
+    }
+    const auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
+    if (!Check(pipe.vertex_decl == nullptr, "internal FVF decl not created by SetVertexDecl inference")) {
+      return false;
+    }
   }
 
   // Regression: even when fvf == dev->fvf, SetFVF must still bind the internal
@@ -19354,7 +19375,15 @@ bool TestSetFvfIdempotentRebindsInternalXyzrhwInputLayout() {
     return false;
   }
 
-  auto* internal_decl = dev->fvf_vertex_decl_tex1;
+  VertexDecl* internal_decl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    const FixedFuncVariant variant = fixedfunc_variant_from_fvf(kSupportedFvfXyzrhwDiffuseTex1);
+    if (!Check(variant != FixedFuncVariant::NONE, "FVF variant recognized")) {
+      return false;
+    }
+    internal_decl = dev->fixedfunc_pipelines[static_cast<size_t>(variant)].vertex_decl;
+  }
   if (!Check(internal_decl != nullptr, "SetFVF created internal FVF-derived decl")) {
     return false;
   }

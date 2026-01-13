@@ -21,13 +21,6 @@ HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
     D3DDDI_HDEVICE hDevice,
     D3D9DDI_HSHADER user_vs,
     D3D9DDI_HSHADER user_ps);
-
-// Portable D3D9 FVF bits (from d3d9types.h).
-constexpr uint32_t kD3dFvfXyz = 0x00000002u;
-constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
-constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
-constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
-
 constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
@@ -1441,10 +1434,15 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
     return false;
   }
 
-  if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "fixedfunc_vs_xyz_diffuse created")) {
-    return false;
+  aerogpu_handle_t wvp_vs_handle = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(FixedFuncVariant::XYZ_COLOR)];
+    if (!Check(pipe.vs != nullptr, "fixedfunc XYZ_COLOR VS created")) {
+      return false;
+    }
+    wvp_vs_handle = pipe.vs->handle;
   }
-  const aerogpu_handle_t wvp_vs_handle = dev->fixedfunc_vs_xyz_diffuse->handle;
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
