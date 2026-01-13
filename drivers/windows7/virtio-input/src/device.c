@@ -287,10 +287,15 @@ static NTSTATUS VioInputQueryInputConfig(
     _Out_opt_ UCHAR* SizeOut)
 {
     NTSTATUS status;
+    ULONG attempt;
     UCHAR selectBytes[2];
     VIRTIO_INPUT_CONFIG cfg;
     UCHAR size;
     ULONG copyLen;
+    UCHAR gen0;
+    UCHAR gen1;
+    BOOLEAN stable;
+    const ULONG kMaxRetries = 5;
 
     if (SizeOut != NULL) {
         *SizeOut = 0;
@@ -303,15 +308,118 @@ static NTSTATUS VioInputQueryInputConfig(
     selectBytes[0] = Select;
     selectBytes[1] = Subsel;
 
-    status = VirtioPciWriteDeviceConfig(&Ctx->PciDevice, 0, selectBytes, sizeof(selectBytes));
-    if (!NT_SUCCESS(status)) {
-        return status;
+    /*
+     * virtio-pci provides common_cfg.config_generation to allow consistent reads
+     * of the device-specific config space. virtio-input config reads are a
+     * multi-step sequence:
+     *   - Write Select/Subsel
+     *   - Read Size + Payload
+     *
+     * To ensure we don't observe torn/mismatched config values, follow the
+     * spec-recommended retry loop around the entire sequence:
+     *   gen0 = config_generation
+     *   write select/subsel
+     *   read config
+     *   gen1 = config_generation
+     *   if gen0 != gen1: retry
+     *
+     * If CommonCfg is not mapped (unexpected for virtio modern), fall back to
+     * a single-shot read without generation validation.
+     */
+    stable = FALSE;
+    gen0 = 0;
+    gen1 = 0;
+
+    for (attempt = 0; attempt < kMaxRetries; ++attempt) {
+        if (Ctx->PciDevice.CommonCfg != NULL) {
+            gen0 = READ_REGISTER_UCHAR((volatile UCHAR *)&Ctx->PciDevice.CommonCfg->config_generation);
+            KeMemoryBarrier();
+        }
+
+        status = VirtioPciWriteDeviceConfig(&Ctx->PciDevice, 0, selectBytes, sizeof(selectBytes));
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+
+        RtlZeroMemory(&cfg, sizeof(cfg));
+        if (Ctx->PciDevice.CommonCfg != NULL) {
+            status = VirtioPciReadDeviceConfig(&Ctx->PciDevice, 0, &cfg, sizeof(cfg));
+        } else {
+            ULONG i;
+            ULONGLONG end;
+            PUCHAR outBytes;
+
+            if (Ctx->PciDevice.DeviceCfg == NULL) {
+                return STATUS_INVALID_DEVICE_STATE;
+            }
+
+            end = (ULONGLONG)sizeof(cfg);
+            if (Ctx->PciDevice.Caps.DeviceCfg.Length != 0 && end > Ctx->PciDevice.Caps.DeviceCfg.Length) {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            outBytes = (PUCHAR)&cfg;
+            for (i = 0; i < sizeof(cfg); ++i) {
+                outBytes[i] = READ_REGISTER_UCHAR((PUCHAR)((ULONG_PTR)Ctx->PciDevice.DeviceCfg + i));
+            }
+            KeMemoryBarrier();
+            status = STATUS_SUCCESS;
+        }
+
+        if (!NT_SUCCESS(status)) {
+            /*
+             * VirtioPciReadDeviceConfig retries internally, but if it still
+             * can't obtain a stable snapshot (STATUS_IO_TIMEOUT), allow our
+             * outer loop to retry a bounded number of times.
+             */
+            if (status == STATUS_IO_TIMEOUT && Ctx->PciDevice.CommonCfg != NULL) {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
+                    "device cfg read unstable (status=%!STATUS!) select=%u subsel=%u retry=%lu/%lu\n",
+                    status,
+                    (ULONG)Select,
+                    (ULONG)Subsel,
+                    attempt + 1,
+                    kMaxRetries);
+                continue;
+            }
+            return status;
+        }
+
+        if (Ctx->PciDevice.CommonCfg == NULL) {
+            stable = TRUE;
+            break;
+        }
+
+        KeMemoryBarrier();
+        gen1 = READ_REGISTER_UCHAR((volatile UCHAR *)&Ctx->PciDevice.CommonCfg->config_generation);
+        KeMemoryBarrier();
+
+        if (gen0 == gen1) {
+            stable = TRUE;
+            break;
+        }
+
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
+            "config_generation changed (gen0=%u gen1=%u) select=%u subsel=%u retry=%lu/%lu\n",
+            (ULONG)gen0,
+            (ULONG)gen1,
+            (ULONG)Select,
+            (ULONG)Subsel,
+            attempt + 1,
+            kMaxRetries);
     }
 
-    RtlZeroMemory(&cfg, sizeof(cfg));
-    status = VirtioPciReadDeviceConfig(&Ctx->PciDevice, 0, &cfg, sizeof(cfg));
-    if (!NT_SUCCESS(status)) {
-        return status;
+    if (!stable) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "device cfg read failed: config_generation did not stabilize (select=%u subsel=%u gen0=%u gen1=%u)\n",
+            (ULONG)Select,
+            (ULONG)Subsel,
+            (ULONG)gen0,
+            (ULONG)gen1);
+        return STATUS_DEVICE_DATA_ERROR;
     }
 
     size = cfg.Size;
