@@ -79,41 +79,45 @@ function Get-MatchingLines([System.Collections.IEnumerable]$Lines, [string]$Rege
 }
 
 function Add-Failure([System.Collections.Generic.List[string]]$Failures, [string]$Message) {
-  [void]$Failures.Add($Message)
-}
-
-$infPathResolved = Resolve-ExistingFile -Path $InfPath -ArgName '-InfPath'
-
-$rawLines = Get-Content -LiteralPath $infPathResolved -ErrorAction Stop
-$lines = New-Object System.Collections.Generic.List[string]
-$sections = @{}
-$currentSection = $null
-
-foreach ($l in $rawLines) {
-  $stripped = Strip-InfComments -Line $l
-  $trimmed = $stripped.Trim()
-  if ($trimmed.Length -eq 0) { continue }
-
-  $lines.Add($trimmed)
-
-  if ($trimmed -match '^\[(?<name>[^\]]+)\]$') {
-    $currentSection = $Matches['name'].Trim()
-    if (-not $sections.ContainsKey($currentSection)) {
-      $sections[$currentSection] = (New-Object System.Collections.Generic.List[string])
-    }
-    continue
-  }
-
-  if ($null -ne $currentSection) {
-    # INF syntax allows the same section name to appear multiple times. Coalesce.
-    if (-not $sections.ContainsKey($currentSection)) {
-      $sections[$currentSection] = (New-Object System.Collections.Generic.List[string])
-    }
-    $sections[$currentSection].Add($trimmed)
+  if (-not $Failures.Contains($Message)) {
+    [void]$Failures.Add($Message)
   }
 }
 
-$failures = New-Object System.Collections.Generic.List[string]
+$exitCode = 0
+try {
+  $infPathResolved = Resolve-ExistingFile -Path $InfPath -ArgName '-InfPath'
+
+  $rawLines = Get-Content -LiteralPath $infPathResolved -ErrorAction Stop
+  $lines = New-Object System.Collections.Generic.List[string]
+  $sections = @{}
+  $currentSection = $null
+
+  foreach ($l in $rawLines) {
+    $stripped = Strip-InfComments -Line $l
+    $trimmed = $stripped.Trim()
+    if ($trimmed.Length -eq 0) { continue }
+
+    $lines.Add($trimmed)
+
+    if ($trimmed -match '^\[(?<name>[^\]]+)\]$') {
+      $currentSection = $Matches['name'].Trim()
+      if (-not $sections.ContainsKey($currentSection)) {
+        $sections[$currentSection] = (New-Object System.Collections.Generic.List[string])
+      }
+      continue
+    }
+
+    if ($null -ne $currentSection) {
+      # INF syntax allows the same section name to appear multiple times. Coalesce.
+      if (-not $sections.ContainsKey($currentSection)) {
+        $sections[$currentSection] = (New-Object System.Collections.Generic.List[string])
+      }
+      $sections[$currentSection].Add($trimmed)
+    }
+  }
+
+  $failures = New-Object System.Collections.Generic.List[string]
 
 #------------------------------------------------------------------------------
 # Version section basics
@@ -412,15 +416,22 @@ foreach ($installSect in $installHwSections) {
   }
 }
 
-if ($failures.Count -gt 0) {
-  Write-Host ("INF validation FAILED: {0}" -f $infPathResolved)
-  Write-Host ""
-  foreach ($f in $failures) {
-    Write-Host ("  - {0}" -f $f)
+  if ($failures.Count -gt 0) {
+    Write-Host ("INF validation FAILED: {0}" -f $infPathResolved)
+    Write-Host ""
+    foreach ($f in $failures) {
+      Write-Host ("  - {0}" -f $f)
+    }
+    Write-Host ""
+    $exitCode = 1
   }
-  Write-Host ""
-  exit 1
+  else {
+    Write-Host ("INF validation OK: {0}" -f $infPathResolved)
+  }
+}
+catch {
+  $exitCode = 1
+  Write-Error $_.Exception.Message
 }
 
-Write-Host ("INF validation OK: {0}" -f $infPathResolved)
-exit 0
+exit $exitCode
