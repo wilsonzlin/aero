@@ -10,6 +10,13 @@ static int32_t ToS32(uint32_t v) { return (int32_t)v; }
 
 static int AbsI32(int v) { return (v < 0) ? -v : v; }
 
+struct TestCursorSpec {
+  int width;
+  int height;
+  int hot_x;
+  int hot_y;
+};
+
 static bool GetCursorShowing(bool* out_showing, std::string* err) {
   if (err) {
     err->clear();
@@ -95,13 +102,21 @@ static void RestoreCursorShowing(int show_calls, int hide_calls) {
   }
 }
 
-static HCURSOR CreateTestCursor32(std::string* err) {
+static HCURSOR CreateTestCursor(const TestCursorSpec& spec, std::string* err) {
   if (err) {
     err->clear();
   }
 
-  const int w = 32;
-  const int h = 32;
+  const int w = spec.width;
+  const int h = spec.height;
+  const int hot_x = spec.hot_x;
+  const int hot_y = spec.hot_y;
+  if (w <= 0 || h <= 0 || w > 256 || h > 256 || hot_x < 0 || hot_y < 0 || hot_x >= w || hot_y >= h) {
+    if (err) {
+      *err = "CreateTestCursor: invalid cursor dimensions/hotspot";
+    }
+    return NULL;
+  }
 
   HDC hdc = GetDC(NULL);
   if (!hdc) {
@@ -179,8 +194,8 @@ static HCURSOR CreateTestCursor32(std::string* err) {
   ICONINFO ii;
   ZeroMemory(&ii, sizeof(ii));
   ii.fIcon = FALSE;  // cursor
-  ii.xHotspot = 0;
-  ii.yHotspot = 0;
+  ii.xHotspot = (DWORD)hot_x;
+  ii.yHotspot = (DWORD)hot_y;
   ii.hbmMask = mask;
   ii.hbmColor = color;
 
@@ -271,7 +286,28 @@ static int RunCursorStateSanity(int argc, char** argv) {
   }
 
   std::string cursor_err;
-  HCURSOR custom_cursor = CreateTestCursor32(&cursor_err);
+  TestCursorSpec cursor_spec;
+  cursor_spec.width = GetSystemMetrics(SM_CXCURSOR);
+  cursor_spec.height = GetSystemMetrics(SM_CYCURSOR);
+  if (cursor_spec.width <= 0 || cursor_spec.height <= 0 || cursor_spec.width > 256 || cursor_spec.height > 256) {
+    cursor_spec.width = 32;
+    cursor_spec.height = 32;
+  }
+  // Use a non-zero hotspot so we can deterministically detect a pointer-shape update.
+  cursor_spec.hot_x = cursor_spec.width / 4;
+  cursor_spec.hot_y = cursor_spec.height / 3;
+  if (cursor_spec.hot_x <= 0) cursor_spec.hot_x = 1;
+  if (cursor_spec.hot_y <= 0) cursor_spec.hot_y = 1;
+  if (cursor_spec.hot_x >= cursor_spec.width) cursor_spec.hot_x = cursor_spec.width - 1;
+  if (cursor_spec.hot_y >= cursor_spec.height) cursor_spec.hot_y = cursor_spec.height - 1;
+  aerogpu_test::PrintfStdout("INFO: %s: creating custom cursor %dx%d hot=(%d,%d)",
+                            kTestName,
+                            cursor_spec.width,
+                            cursor_spec.height,
+                            cursor_spec.hot_x,
+                            cursor_spec.hot_y);
+
+  HCURSOR custom_cursor = CreateTestCursor(cursor_spec, &cursor_err);
   if (!custom_cursor) {
     DestroyWindow(hwnd);
     RestoreCursorShowing(ensure_show_calls, ensure_hide_calls);
@@ -369,17 +405,42 @@ static int RunCursorStateSanity(int argc, char** argv) {
   }
 
   // ----- Program a custom cursor shape -----
-  if (!SetCapture(hwnd)) {
-    // If capture fails for some reason, show the window and retry once.
-    ShowWindow(hwnd, SW_SHOW);
-    UpdateWindow(hwnd);
-    if (!SetCapture(hwnd)) {
-      reporter.Fail("SetCapture failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
-      goto cleanup;
-    }
+  // Make the cursor shape update deterministic by ensuring:
+  //  - a window owned by this thread is visible,
+  //  - the cursor is positioned inside that window, and
+  //  - we synchronously process a WM_SETCURSOR to apply the class cursor.
+  //
+  // This avoids relying on external windows' WM_SETCURSOR behavior (Explorer/desktop), and avoids
+  // needing a message pump.
+  (void)SetClassLongPtr(hwnd, GCLP_HCURSOR, (LONG_PTR)custom_cursor);
+  (void)SetWindowPos(hwnd,
+                     HWND_TOPMOST,
+                     target_x - 80,
+                     target_y - 60,
+                     160,
+                     120,
+                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+  UpdateWindow(hwnd);
+
+  RECT client;
+  ZeroMemory(&client, sizeof(client));
+  if (!GetClientRect(hwnd, &client)) {
+    reporter.Fail("GetClientRect failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    goto cleanup;
   }
-  (void)SetCursor(custom_cursor);
-  ReleaseCapture();
+  POINT inside;
+  inside.x = (client.right - client.left) / 2;
+  inside.y = (client.bottom - client.top) / 2;
+  if (!ClientToScreen(hwnd, &inside)) {
+    reporter.Fail("ClientToScreen failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    goto cleanup;
+  }
+  if (!SetCursorPos(inside.x, inside.y)) {
+    reporter.Fail("SetCursorPos(to window) failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    goto cleanup;
+  }
+  (void)SendMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, (LPARAM)MAKELONG(HTCLIENT, WM_MOUSEMOVE));
 
   Sleep(50);
 
@@ -399,6 +460,14 @@ static int RunCursorStateSanity(int argc, char** argv) {
                   (unsigned long)q1.pitch_bytes,
                   (unsigned long)q1.format,
                   (unsigned long long)q1.fb_gpa);
+    goto cleanup;
+  }
+  if ((int)q1.hot_x != cursor_spec.hot_x || (int)q1.hot_y != cursor_spec.hot_y) {
+    reporter.Fail("cursor hotspot mismatch after SetCursor: expected=(%d,%d) got=(%lu,%lu)",
+                  cursor_spec.hot_x,
+                  cursor_spec.hot_y,
+                  (unsigned long)q1.hot_x,
+                  (unsigned long)q1.hot_y);
     goto cleanup;
   }
 
