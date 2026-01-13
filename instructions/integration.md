@@ -77,10 +77,10 @@ Older docs may still read like “bring your own BIOS binary” or like the mach
 | `crates/aero-machine/` | **Canonical machine integration layer** (ADR 0014): CPU + memory + devices + firmware; dispatches BIOS interrupt “hypercalls” |
 | `crates/firmware/` | **Canonical legacy BIOS HLE** (`firmware::bios`): ROM stub generation + POST + INT services; publishes ACPI + SMBIOS |
 | `crates/aero-acpi/` | ACPI table generator (used by `firmware::bios`) |
-| `crates/devices/` | Device models (PCI, PIT, PIC, HPET, AHCI/IDE, etc.) |
+| `crates/devices/` | Device models (PCI, PIT/RTC/HPET, PIC port wrappers, AHCI/IDE, etc.) |
 | `crates/platform/` / `crates/aero-pc-platform/` | Platform buses + PC/Q35-ish wiring helpers used by `aero-machine` |
 | `crates/aero-interrupts/` | Interrupt controller models (PIC/APIC/I/O APIC) used by the platform layer |
-| `crates/aero-timers/` / `crates/aero-time/` | PIT/HPET/RTC devices + time abstractions |
+| `crates/aero-timers/` / `crates/aero-time/` | Legacy timer stack (currently not used by the canonical `aero-machine` / `aero-pc-platform` wiring; prefer `crates/devices/*` + `crates/platform/src/interrupts/*`) |
 | `crates/aero-snapshot/` | VM snapshot/restore format + helpers |
 | `crates/emulator/` | Legacy/compat full-system device stack (not canonical VM wiring; see [`docs/21-emulator-crate-migration.md`](../docs/21-emulator-crate-migration.md)) |
 | `assets/bios.bin` | **Generated fixture**: a 64 KiB ROM image built from `firmware::bios::build_bios_rom()` (not the runtime BIOS source). Regenerate with `cargo xtask fixtures`. |
