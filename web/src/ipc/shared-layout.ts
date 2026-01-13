@@ -129,6 +129,10 @@ export function layoutFromHeader(header: Int32Array): SharedFramebufferLayout {
 
 export type DirtyRect = { x: number; y: number; w: number; h: number };
 
+// Hard cap on the number of rects we will emit from a dirty-tile bitset before falling back to a
+// single full-frame update. Mirrors `aero_shared::shared_framebuffer::dirty_tiles_to_rects`.
+const MAX_DIRTY_RECTS = 65_536;
+
 /**
  * Convert a per-tile dirty bitset into pixel-space rects, merging runs on the X axis.
  *
@@ -176,7 +180,17 @@ export function dirtyTilesToRects(layout: SharedFramebufferLayout, dirtyWords: U
       let h = tileSize;
       if (y + h > layout.height) h = Math.max(0, layout.height - y);
 
-      rects.push({ x, y, w, h });
+      if (rects.length >= MAX_DIRTY_RECTS) {
+        return [{ x: 0, y: 0, w: layout.width, h: layout.height }];
+      }
+
+      try {
+        rects.push({ x, y, w, h });
+      } catch {
+        // If allocation fails (e.g. OOM / array growth failure), fall back to a full-frame upload
+        // rather than crashing the GPU worker.
+        return [{ x: 0, y: 0, w: layout.width, h: layout.height }];
+      }
     }
   }
 
