@@ -80,6 +80,46 @@ class QmpInputInjectionTests(unittest.TestCase):
             h._qmp_send_command = old_send
             h.time.sleep = old_sleep
 
+    def test_injects_wheel_events_when_enabled(self) -> None:
+        h = self.harness
+
+        sent: list[dict[str, object]] = []
+
+        def fake_connect(endpoint, *, timeout_seconds: float = 5.0):
+            return _DummySock()
+
+        def fake_send_command(sock, cmd):
+            sent.append(cmd)
+            return {"return": {}}
+
+        old_connect = h._qmp_connect
+        old_send = h._qmp_send_command
+        old_sleep = h.time.sleep
+        try:
+            h._qmp_connect = fake_connect
+            h._qmp_send_command = fake_send_command
+            h.time.sleep = lambda _: None
+
+            info = h._try_qmp_input_inject_virtio_input_events(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=4444), with_wheel=True
+            )
+
+            self.assertEqual(info.keyboard_device, h._VIRTIO_INPUT_QMP_KEYBOARD_ID)
+            self.assertEqual(info.mouse_device, h._VIRTIO_INPUT_QMP_MOUSE_ID)
+
+            # 5 commands: key down, key up, mouse rel (x/y/wheel/hwheel), left down, left up.
+            self.assertEqual(len(sent), 5)
+            rel_events = sent[2]["arguments"]["events"]
+            axes = {e["data"]["axis"] for e in rel_events if e["type"] == "rel"}
+            self.assertIn("x", axes)
+            self.assertIn("y", axes)
+            self.assertIn("wheel", axes)
+            self.assertIn("hwheel", axes)
+        finally:
+            h._qmp_connect = old_connect
+            h._qmp_send_command = old_send
+            h.time.sleep = old_sleep
+
     def test_falls_back_to_broadcast_when_device_routing_rejected(self) -> None:
         h = self.harness
 

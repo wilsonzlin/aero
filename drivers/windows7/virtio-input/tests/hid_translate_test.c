@@ -689,9 +689,10 @@ static void test_mouse_reports_le(void) {
   send_rel_le(&t, VIRTIO_INPUT_REL_X, 5);
   send_rel_le(&t, VIRTIO_INPUT_REL_Y, -3);
   send_rel_le(&t, VIRTIO_INPUT_REL_WHEEL, 1);
+  send_rel_le(&t, VIRTIO_INPUT_REL_HWHEEL, -2);
   send_syn_le(&t);
 
-  uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01, 0x00};
+  uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01, 0xFE};
   expect_report(&cap, 1, expect2, sizeof(expect2));
 
   /* Side/back button down. */
@@ -964,9 +965,10 @@ static void test_mouse_reports(void) {
   send_rel(&t, VIRTIO_INPUT_REL_X, 5);
   send_rel(&t, VIRTIO_INPUT_REL_Y, -3);
   send_rel(&t, VIRTIO_INPUT_REL_WHEEL, 1);
+  send_rel(&t, VIRTIO_INPUT_REL_HWHEEL, -2);
   send_syn(&t);
 
-  uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01, 0x00};
+  uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01, 0xFE};
   expect_report(&cap, 1, expect2, sizeof(expect2));
 
   /* Side/back button down. */
@@ -1029,6 +1031,7 @@ static void test_mouse_reports(void) {
   /* Large negative delta is split into multiple reports. */
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
   send_rel(&t, VIRTIO_INPUT_REL_X, -200);
   send_syn(&t);
 
@@ -1041,12 +1044,25 @@ static void test_mouse_reports(void) {
   /* Negative wheel delta is encoded as two's complement. */
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
   send_rel(&t, VIRTIO_INPUT_REL_WHEEL, -1);
   send_syn(&t);
 
   assert(cap.count == 1);
   uint8_t expect9[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0xFF, 0x00};
   expect_report(&cap, 0, expect9, sizeof(expect9));
+  /* Large horizontal wheel delta is split into multiple reports. */
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
+  send_rel(&t, VIRTIO_INPUT_REL_HWHEEL, -200);
+  send_syn(&t);
+
+  assert(cap.count == 2);
+  uint8_t expect10[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0x00, 0x81};
+  uint8_t expect11[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0x00, 0xB7};
+  expect_report(&cap, 0, expect10, sizeof(expect10));
+  expect_report(&cap, 1, expect11, sizeof(expect11));
 }
 
 static void test_consumer_control_reports(void) {

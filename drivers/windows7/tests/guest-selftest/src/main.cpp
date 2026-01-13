@@ -2832,6 +2832,10 @@ struct VirtioInputEventsTestResult {
   bool saw_mouse_move = false;
   bool saw_mouse_left_down = false;
   bool saw_mouse_left_up = false;
+  bool saw_mouse_wheel = false;
+  bool saw_mouse_hwheel = false;
+  int mouse_wheel_total = 0;
+  int mouse_hwheel_total = 0;
   int keyboard_reports = 0;
   int mouse_reports = 0;
   std::string reason;
@@ -3111,7 +3115,7 @@ static void ProcessMouseReport(VirtioInputEventsTestResult& out, const uint8_t* 
 
   size_t off = 0;
   // virtio-input mouse input report is typically 6 bytes with ReportID=2:
-  //   [2][buttons][dx][dy][wheel][hwheel]
+  //   [2][buttons][dx][dy][wheel][pan]
   if (len >= 6 && buf[0] == 2) off = 1;
   if (len < off + 3) return;
 
@@ -3120,6 +3124,17 @@ static void ProcessMouseReport(VirtioInputEventsTestResult& out, const uint8_t* 
   const int8_t dy = static_cast<int8_t>(buf[off + 2]);
 
   if (dx != 0 || dy != 0) out.saw_mouse_move = true;
+
+  const int8_t wheel = (len >= off + 4) ? static_cast<int8_t>(buf[off + 3]) : 0;
+  const int8_t pan = (len >= off + 5) ? static_cast<int8_t>(buf[off + 4]) : 0;
+  if (wheel != 0) {
+    out.saw_mouse_wheel = true;
+    out.mouse_wheel_total += wheel;
+  }
+  if (pan != 0) {
+    out.saw_mouse_hwheel = true;
+    out.mouse_hwheel_total += pan;
+  }
 
   const bool left = (buttons & 0x01) != 0;
   if (left) out.saw_mouse_left_down = true;
@@ -3225,15 +3240,33 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const Virt
   log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY");
 
   const DWORD deadline_ms = GetTickCount() + 10000;
+  bool base_ok = false;
+  DWORD wheel_grace_deadline_ms = 0;
   while (static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
-    if (out.saw_key_a_down && out.saw_key_a_up && out.saw_mouse_move && out.saw_mouse_left_down &&
-        out.saw_mouse_left_up) {
-      out.ok = true;
-      break;
+    const bool have_base = out.saw_key_a_down && out.saw_key_a_up && out.saw_mouse_move &&
+                           out.saw_mouse_left_down && out.saw_mouse_left_up;
+    if (have_base && !base_ok) {
+      // Base test succeeded. Keep reading for a short grace window so optional wheel/hwheel
+      // events injected by the host harness can be observed without delaying the common case.
+      base_ok = true;
+      wheel_grace_deadline_ms = GetTickCount() + 250;
+      if (static_cast<int32_t>(wheel_grace_deadline_ms - deadline_ms) > 0) {
+        wheel_grace_deadline_ms = deadline_ms;
+      }
+    }
+
+    if (base_ok) {
+      // Stop early once we've either seen both wheel axes or the grace window expires.
+      if ((out.saw_mouse_wheel && out.saw_mouse_hwheel) ||
+          static_cast<int32_t>(GetTickCount() - wheel_grace_deadline_ms) >= 0) {
+        out.ok = true;
+        break;
+      }
     }
 
     const DWORD now = GetTickCount();
-    const int32_t diff = static_cast<int32_t>(deadline_ms - now);
+    const DWORD effective_deadline_ms = base_ok ? wheel_grace_deadline_ms : deadline_ms;
+    const int32_t diff = static_cast<int32_t>(effective_deadline_ms - now);
     const DWORD timeout = diff > 0 ? static_cast<DWORD>(diff) : 0;
 
     HANDLE evs[2] = {kbd.ev, mouse.ev};
@@ -7375,6 +7408,7 @@ int wmain(int argc, wchar_t** argv) {
 
   if (!opt.test_input_events) {
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set");
   } else {
     const auto input_events = VirtioInputEventsTest(log, input);
     if (input_events.ok) {
@@ -7393,6 +7427,38 @@ int wmain(int argc, wchar_t** argv) {
           input_events.saw_mouse_left_up ? 1 : 0);
     }
     all_ok = all_ok && input_events.ok;
+
+    // Optional wheel/hwheel coverage (requires host-side injection via QMP).
+    // Keep this separate from the base virtio-input-events result so existing images/harnesses
+    // that do not inject scroll events can still pass.
+    constexpr int kExpectedWheelDelta = 1;
+    constexpr int kExpectedHWheelDelta = -2;
+    if (!input_events.ok) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|input_events_failed|reason=%s|err=%lu|wheel_total=%d|hwheel_total=%d",
+          input_events.reason.empty() ? "unknown" : input_events.reason.c_str(),
+          static_cast<unsigned long>(input_events.win32_error), input_events.mouse_wheel_total,
+          input_events.mouse_hwheel_total);
+    } else if (!input_events.saw_mouse_wheel && !input_events.saw_mouse_hwheel) {
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|not_observed|wheel_total=%d|hwheel_total=%d",
+               input_events.mouse_wheel_total, input_events.mouse_hwheel_total);
+    } else if (!input_events.saw_mouse_wheel || !input_events.saw_mouse_hwheel) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=missing_axis|wheel_total=%d|hwheel_total=%d|saw_wheel=%d|saw_hwheel=%d",
+          input_events.mouse_wheel_total, input_events.mouse_hwheel_total, input_events.saw_mouse_wheel ? 1 : 0,
+          input_events.saw_mouse_hwheel ? 1 : 0);
+    } else if (input_events.mouse_wheel_total == kExpectedWheelDelta &&
+               input_events.mouse_hwheel_total == kExpectedHWheelDelta) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|wheel_total=%d|hwheel_total=%d|expected_wheel=%d|expected_hwheel=%d",
+          input_events.mouse_wheel_total, input_events.mouse_hwheel_total, kExpectedWheelDelta,
+          kExpectedHWheelDelta);
+    } else {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=delta_mismatch|wheel_total=%d|hwheel_total=%d|expected_wheel=%d|expected_hwheel=%d",
+          input_events.mouse_wheel_total, input_events.mouse_hwheel_total, kExpectedWheelDelta,
+          kExpectedHWheelDelta);
+    }
   }
 
   if (!opt.test_input_tablet_events) {

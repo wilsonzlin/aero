@@ -68,6 +68,14 @@ class QmpInputSendEventTests(unittest.TestCase):
         self.assertIn("x", rel_axes)
         self.assertIn("y", rel_axes)
 
+    def test_mouse_events_include_wheel_when_enabled(self) -> None:
+        h = self.harness
+
+        ev = h._qmp_deterministic_mouse_events(with_wheel=True)
+        rel_axes = {e["data"]["axis"] for e in ev if e["type"] == "rel"}
+        self.assertIn("wheel", rel_axes)
+        self.assertIn("hwheel", rel_axes)
+
     def test_tablet_events_include_abs_and_click(self) -> None:
         h = self.harness
 
