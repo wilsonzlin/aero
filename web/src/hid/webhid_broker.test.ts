@@ -1116,6 +1116,45 @@ describe("hid/WebHidBroker", () => {
     broker.destroy();
   });
 
+  it("preserves send order when mixing output ring records with hid.sendReport fallback", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    vi.useFakeTimers();
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      // Report A delivered via ring.
+      expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(1))).toBe(true);
+      // Report B delivered via structured postMessage fallback.
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 2, data: Uint8Array.of(2) });
+
+      // Await enough microtasks for the per-device send queue to run both tasks.
+      for (let i = 0; i < 10 && device.sendReport.mock.calls.length < 2; i += 1) {
+        await Promise.resolve();
+      }
+
+      expect(device.sendReport).toHaveBeenCalledTimes(2);
+      expect(device.sendReport).toHaveBeenNthCalledWith(1, 1, Uint8Array.of(1));
+      expect(device.sendReport).toHaveBeenNthCalledWith(2, 2, Uint8Array.of(2));
+
+      broker.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not block other devices when output ring sends are pending", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 

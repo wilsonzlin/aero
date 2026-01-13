@@ -599,12 +599,23 @@ export class WebHidBroker {
     this.#postToWorker(worker, msg);
   }
 
-  #drainOutputRing(): void {
+  #drainOutputRing(options: { stopAtTail?: number } = {}): void {
     const ring = this.#outputRing;
     if (!ring) return;
 
+    const stopAtTail = options.stopAtTail;
+
     try {
       while (true) {
+        // When draining to enforce ordering relative to an immediate `hid.sendReport` fallback,
+        // do not spin forever if the worker keeps writing to the ring. Instead, snapshot the
+        // ring's `tail` and stop once the consumer `head` reaches that value, leaving any
+        // later writes for the next drain tick.
+        if (stopAtTail !== undefined) {
+          const { head } = ring.debugState();
+          if (head === stopAtTail) break;
+        }
+
         const rec = ring.popOrThrow();
         if (!rec) break;
         if (rec.reportType !== HidRingReportType.Output && rec.reportType !== HidRingReportType.Feature) continue;
@@ -975,13 +986,6 @@ export class WebHidBroker {
   }
 
   #handleSendReportRequest(msg: HidSendReportMessage): void {
-    // `hid.sendReport` can be delivered via postMessage even when the SAB output ring fast path
-    // is enabled (e.g. during transitions/fallback). Drain the ring first so any previously
-    // produced ring records are enqueued before this message, preserving guest report order.
-    if (this.#outputRing) {
-      this.#drainOutputRing();
-    }
-
     if (!this.#attachedToWorker.has(msg.deviceId)) {
       console.warn(`[webhid] sendReport for detached deviceId=${msg.deviceId}`);
       return;
@@ -990,6 +994,16 @@ export class WebHidBroker {
     if (!this.#deviceById.has(msg.deviceId)) {
       console.warn(`[webhid] sendReport for unknown deviceId=${msg.deviceId}`);
       return;
+    }
+
+    // The worker prefers the SharedArrayBuffer output ring, but can fall back to structured
+    // `hid.sendReport` messages when the ring is full or the payload is too large. Because the
+    // ring is drained on a timer, a fallback message could otherwise overtake earlier ring
+    // records for the same device. Drain pending ring records *synchronously* before enqueuing
+    // this message so the per-device send FIFO preserves guest ordering.
+    const ring = this.#outputRing;
+    if (ring) {
+      this.#drainOutputRing({ stopAtTail: ring.debugState().tail });
     }
 
     const deviceId = msg.deviceId >>> 0;
@@ -1013,15 +1027,17 @@ export class WebHidBroker {
   }
 
   #handleGetFeatureReportRequest(msg: HidGetFeatureReportMessage, worker: MessagePort | Worker): void {
-    // Feature-report reads must be ordered relative to any output/feature report writes that may be
-    // pending in the SAB output ring. Drain the ring first so already-produced ring records are
-    // enqueued before this message, preserving guest report ordering across delivery paths.
-    if (this.#outputRing) {
-      this.#drainOutputRing();
-    }
-
     const deviceId = msg.deviceId >>> 0;
     const reportId = msg.reportId >>> 0;
+
+    // Feature-report reads must be ordered relative to any output/feature report writes that may be
+    // pending in the SAB output ring. Drain already-produced ring records so this read cannot
+    // overtake them (even if the periodic ring drain timer hasn't run yet).
+    const ring = this.#outputRing;
+    if (ring) {
+      this.#drainOutputRing({ stopAtTail: ring.debugState().tail });
+    }
+
     const base = {
       type: "hid.featureReportResult" as const,
       requestId: msg.requestId,
