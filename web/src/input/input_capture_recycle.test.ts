@@ -50,10 +50,16 @@ describe("InputCapture input batch buffer recycling", () => {
       const ioWorker = {
         postMessage: (msg: any) => {
           posted.push(msg.buffer);
-          // Simulate the worker transferring the ArrayBuffer back for reuse.
-          (capture as any).handleWorkerMessage({
-            data: { type: "in:input-batch-recycle", buffer: msg.buffer },
-          } as unknown as MessageEvent<unknown>);
+          // Ensure the capture side is requesting recycling via the documented wire format.
+          expect(msg.recycle).toBe(true);
+
+          // Simulate the worker transferring the ArrayBuffer back for reuse. Real workers would only
+          // do this when `recycle: true` was requested.
+          if (msg.recycle === true) {
+            (capture as any).handleWorkerMessage({
+              data: { type: "in:input-batch-recycle", buffer: msg.buffer },
+            } as unknown as MessageEvent<unknown>);
+          }
         },
       };
 
@@ -88,6 +94,7 @@ describe("InputCapture input batch buffer recycling", () => {
       const ioWorker = {
         postMessage: (msg: any) => {
           posted.push(msg.buffer);
+          expect(msg.recycle).not.toBe(true);
           // Even if the worker tries to recycle, InputCapture should ignore it when disabled.
           (capture as any).handleWorkerMessage({
             data: { type: "in:input-batch-recycle", buffer: msg.buffer },
@@ -109,4 +116,3 @@ describe("InputCapture input batch buffer recycling", () => {
     });
   });
 });
-
