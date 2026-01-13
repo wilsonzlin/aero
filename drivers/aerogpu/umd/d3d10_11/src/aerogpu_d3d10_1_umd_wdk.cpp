@@ -911,12 +911,34 @@ static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
   if (!dev || !dst) {
     return;
   }
-  if (dst->bind_flags != 0) {
+
+  // Track writes into staging readback resources so Map(READ)/Map(DO_NOT_WAIT)
+  // can wait on the fence that actually produces the bytes, instead of waiting
+  // on the device's latest fence (which can include unrelated work).
+  //
+  // Prefer using the captured Usage field when available, but keep the legacy
+  // bind-flags heuristic as a fallback in case older WDK structs omit it.
+#ifdef D3D10_USAGE_STAGING
+  if (dst->usage != 0) {
+    if (dst->usage != static_cast<uint32_t>(D3D10_USAGE_STAGING)) {
+      return;
+    }
+  } else
+#endif
+  {
+    if (dst->bind_flags != 0) {
+      return;
+    }
+  }
+
+  // Prefer to only track CPU-readable staging resources, but fall back to
+  // tracking all bindless resources if CPU access flags were not captured (WDK
+  // struct layout differences).
+  if (dst->cpu_access_flags != 0 &&
+      (dst->cpu_access_flags & static_cast<uint32_t>(D3D10_CPU_ACCESS_READ)) == 0) {
     return;
   }
-  if (dst->backing_alloc_id == 0) {
-    return;
-  }
+
   dev->pending_staging_writes.push_back(dst);
 }
 template <typename Fn, typename Handle, typename... Args>

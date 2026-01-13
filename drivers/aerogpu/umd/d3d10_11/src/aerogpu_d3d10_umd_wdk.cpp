@@ -1511,12 +1511,23 @@ static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
     return;
   }
 
-  // D3D10 staging readback resources are typically created with no bind flags.
-  // Track writes so Map(READ)/Map(DO_NOT_WAIT) can wait on the fence that
-  // actually produces the bytes, instead of waiting on the device's latest
-  // fence (which can include unrelated work).
-  if (dst->bind_flags != 0) {
-    return;
+  // Track writes into staging readback resources so Map(READ)/Map(DO_NOT_WAIT)
+  // can wait on the fence that actually produces the bytes, instead of waiting
+  // on the device's latest fence (which can include unrelated work).
+  //
+  // Prefer using the captured Usage field when available, but keep the legacy
+  // bind-flags heuristic as a fallback in case older WDK structs omit it.
+#ifdef D3D10_USAGE_STAGING
+  if (dst->usage != 0) {
+    if (dst->usage != static_cast<uint32_t>(D3D10_USAGE_STAGING)) {
+      return;
+    }
+  } else
+#endif
+  {
+    if (dst->bind_flags != 0) {
+      return;
+    }
   }
 
   // Prefer to only track CPU-readable staging resources, but fall back to
