@@ -322,6 +322,32 @@ constexpr HRESULT kSPresentOccluded = 0x08760868L;
 // Note that some D3D9Ex clients (including DWM) can present to HWNDs that are not
 // straightforward "app windows", so avoid aggressive heuristics that would cause
 // false S_PRESENT_OCCLUDED returns.
+bool hwnd_occlude_invisible_enabled() {
+  static std::once_flag once;
+  static bool enabled = false;
+  std::call_once(once, [] {
+#if defined(_WIN32)
+    char buf[32] = {};
+    const DWORD n = GetEnvironmentVariableA("AEROGPU_D3D9_OCCLUDE_INVISIBLE", buf, static_cast<DWORD>(sizeof(buf)));
+    if (n == 0 || n >= sizeof(buf)) {
+      enabled = false;
+      return;
+    }
+    for (char& c : buf) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    enabled = (std::strcmp(buf, "1") == 0 || std::strcmp(buf, "true") == 0 || std::strcmp(buf, "yes") == 0 ||
+               std::strcmp(buf, "on") == 0);
+#else
+    // Portable builds should never enable HWND-based occlusion heuristics: they
+    // do not have real Win32 windows, and host-side tests exercise PresentEx
+    // semantics using nullptr HWNDs.
+    enabled = false;
+#endif
+  });
+  return enabled;
+}
+
 bool hwnd_is_occluded(HWND hwnd) {
 #if defined(_WIN32)
   if (!hwnd) {
@@ -335,6 +361,12 @@ bool hwnd_is_occluded(HWND hwnd) {
   if (IsIconic(hwnd)) {
     return true;
   }
+  // Optional: treat hidden/invisible windows as occluded. Disabled by default
+  // because some D3D9Ex tests intentionally present to hidden windows (they
+  // still require PresentEx to succeed and exercise pacing/throttling).
+  if (hwnd_occlude_invisible_enabled() && !IsWindowVisible(hwnd)) {
+    return true;
+  }
   RECT rc{};
   if (GetClientRect(hwnd, &rc)) {
     const LONG w = rc.right - rc.left;
@@ -343,9 +375,6 @@ bool hwnd_is_occluded(HWND hwnd) {
       return true;
     }
   }
-  // NOTE: We intentionally do not treat !IsWindowVisible(hwnd) as occluded by
-  // default. Hidden windows can still be valid present targets (including for
-  // pacing-sensitive paths like DWM/PresentEx tests).
   return false;
 #else
   (void)hwnd;
