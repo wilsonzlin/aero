@@ -1423,6 +1423,14 @@ impl Mmu {
             return false;
         }
 
+        // Bits 52..=58 are "available to software"/ignored in most 64-bit paging-structure
+        // entries (IA-32e and PAE). Many OSes use them and real hardware does not raise
+        // reserved-bit faults when they are set.
+        //
+        // Do not apply this relaxation to IA-32 PAE PDPTEs (PDPT entries); that format has
+        // stricter reserved-bit requirements.
+        const IGNORED_AVL_HIGH_MASK: u64 = 0x7f << 52; // bits 52..=58
+
         // NX bit reserved if NXE=0.
         let nx_enabled = self.nx_enabled();
         if !nx_enabled && (entry & PTE_NX != 0) {
@@ -1495,6 +1503,9 @@ impl Mmu {
 
         let allowed_addr = addr_mask & !(page_align - 1);
         let mut allowed = allowed_addr | 0x1fff;
+        if kind != EntryKind64::PdptePae {
+            allowed |= IGNORED_AVL_HIGH_MASK;
+        }
         if nx_enabled {
             allowed |= PTE_NX;
         }

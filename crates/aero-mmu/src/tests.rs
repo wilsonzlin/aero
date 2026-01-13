@@ -305,6 +305,36 @@ fn pae_4kb_translation_sets_accessed_and_dirty() {
 }
 
 #[test]
+fn pae_4kb_ignored_high_bits_do_not_fault() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x20000);
+
+    let pdpt_base = 0x1000u64;
+    let pd_base = 0x2000u64;
+    let pt_base = 0x3000u64;
+    let page_base = 0x4000u64;
+
+    let ignored = (1u64 << 52) | (1u64 << 58);
+
+    // PDPTE[0] -> PD (PDPT entries have strict reserved-bit rules; do NOT set ignored bits here).
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64);
+    // PDE[0] -> PT, with ignored high bits set.
+    mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64 | ignored);
+    // PTE[0] -> page, with ignored high bits set.
+    mem.write_u64_raw(pt_base, page_base | PTE_P64 | PTE_RW64 | PTE_US64 | ignored);
+
+    mmu.set_cr3(pdpt_base);
+    mmu.set_cr4(CR4_PAE);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x456u64;
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
+}
+
+#[test]
 fn long4_canonical_check_and_nx() {
     let mut mmu = Mmu::new();
     let mut mem = TestMemory::new(0x40000);
@@ -348,6 +378,103 @@ fn long4_canonical_check_and_nx() {
     assert_eq!(
         mmu.translate(&mut mem, non_canonical, AccessType::Read, 0),
         Err(TranslateFault::NonCanonical(non_canonical))
+    );
+}
+
+#[test]
+fn long4_4kb_leaf_ignored_high_bits_do_not_fault() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page_base = 0x5000u64;
+
+    let ignored = (1u64 << 52) | (1u64 << 57);
+
+    mem.write_u64_raw(pml4_base, pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    // Leaf has ignored/AVL high bits set (52..=58).
+    mem.write_u64_raw(pt_base, page_base | PTE_P64 | PTE_RW64 | PTE_US64 | ignored);
+
+    mmu.set_cr3(pml4_base);
+    mmu.set_cr4(CR4_PAE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x789u64;
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
+}
+
+#[test]
+fn long4_4kb_non_leaf_ignored_high_bits_do_not_fault() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page_base = 0x5000u64;
+
+    let ignored = 1u64 << 52;
+
+    // Non-leaf PML4E has ignored/AVL high bits set.
+    mem.write_u64_raw(
+        pml4_base,
+        pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64 | ignored,
+    );
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pt_base, page_base | PTE_P64 | PTE_RW64 | PTE_US64);
+
+    mmu.set_cr3(pml4_base);
+    mmu.set_cr4(CR4_PAE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x789u64;
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + vaddr)
+    );
+}
+
+#[test]
+fn nx_without_nxe_causes_reserved_bit_page_fault() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page_base = 0x5000u64;
+
+    mem.write_u64_raw(pml4_base, pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    mem.write_u64_raw(pd_base, pt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    // NX is reserved if EFER.NXE=0.
+    mem.write_u64_raw(pt_base, page_base | PTE_P64 | PTE_RW64 | PTE_US64 | PTE_NX);
+
+    mmu.set_cr3(pml4_base);
+    mmu.set_cr4(CR4_PAE);
+    mmu.set_efer(EFER_LME); // NXE intentionally clear.
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x123u64;
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Err(TranslateFault::PageFault(PageFault {
+            addr: vaddr,
+            error_code: pf_error_code(true, AccessType::Read, true, true),
+        }))
     );
 }
 
