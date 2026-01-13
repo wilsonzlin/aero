@@ -15,10 +15,8 @@ async function runBackend(page: Page, backend: string) {
     if (!api) throw new Error("__aeroTest missing");
     return {
       backend: api.backend ?? "unknown",
-      pass: api.pass ?? false,
       error: api.error ?? null,
       hash: api.hash ?? null,
-      expectedHash: api.expectedHash ?? null,
       samples: api.samplePixels ? await api.samplePixels() : null,
     };
   });
@@ -32,7 +30,6 @@ test.describe("gpu worker presented color policy", () => {
 
     expect(result.error).toBeNull();
     expect(result.backend).toBe("webgl2_raw");
-    expect(result.pass).toBe(true);
 
     const samples = result.samples;
     expect(samples).not.toBeNull();
@@ -42,6 +39,18 @@ test.describe("gpu worker presented color policy", () => {
     expect(samples.topRight).toEqual([0, 255, 0, 255]);
     expect(samples.bottomLeft).toEqual([0, 0, 255, 255]);
     expect(samples.bottomRight).toEqual([255, 255, 255, 255]);
+
+    // Alpha policy: force opaque even when the source framebuffer has alpha=0.
+    expect(samples.alphaZero).toEqual(samples.alphaZeroExpected);
+
+    // Gamma policy: ensure we are sRGB-encoding (not outputting linear bytes or double-encoding).
+    // Use a small tolerance to avoid per-backend float rounding differences.
+    const actual = samples.midGray;
+    const expected = samples.midGrayExpected;
+    expect(actual[3]).toBe(255);
+    for (let c = 0; c < 3; c++) {
+      expect(Math.abs(actual[c]! - expected[c]!)).toBeLessThanOrEqual(2);
+    }
   });
 
   test("webgpu matches expected presented output and matches webgl2_raw @webgpu", async ({ page, browserName }) => {
@@ -50,7 +59,6 @@ test.describe("gpu worker presented color policy", () => {
     const webgl2 = await runBackend(page, "webgl2_raw");
     expect(webgl2.error).toBeNull();
     expect(webgl2.backend).toBe("webgl2_raw");
-    expect(webgl2.pass).toBe(true);
 
     const webgpu = await runBackend(page, "webgpu");
     if (webgpu.error) {
@@ -62,8 +70,21 @@ test.describe("gpu worker presented color policy", () => {
 
     expect(webgpu.error).toBeNull();
     expect(webgpu.backend).toBe("webgpu");
-    expect(webgpu.pass).toBe(true);
-    expect(webgpu.hash).toBe(webgpu.expectedHash);
     expect(webgpu.hash).toBe(webgl2.hash);
+
+    const samples = webgpu.samples;
+    expect(samples).not.toBeNull();
+    expect(samples.topLeft).toEqual([255, 0, 0, 255]);
+    expect(samples.topRight).toEqual([0, 255, 0, 255]);
+    expect(samples.bottomLeft).toEqual([0, 0, 255, 255]);
+    expect(samples.bottomRight).toEqual([255, 255, 255, 255]);
+    expect(samples.alphaZero).toEqual(samples.alphaZeroExpected);
+
+    const actual = samples.midGray;
+    const expected = samples.midGrayExpected;
+    expect(actual[3]).toBe(255);
+    for (let c = 0; c < 3; c++) {
+      expect(Math.abs(actual[c]! - expected[c]!)).toBeLessThanOrEqual(2);
+    }
   });
 });
