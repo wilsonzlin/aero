@@ -133,6 +133,24 @@ l2Proxy:
 
 The chart also sets `AERO_L2_SESSION_SECRET` to the same value for forward-compatibility.
 
+### Optional: L2 tunnel capture (PCAPNG) (debugging only)
+
+`aero-l2-proxy` can optionally write per-tunnel PCAPNG capture files for debugging.
+
+**Privacy warning:** captures contain raw network traffic and may include sensitive user data (DNS queries,
+plaintext protocols, credentials, etc.). Treat capture files as secrets and avoid enabling capture on
+internet-exposed production deployments unless you have an explicit retention/privacy plan.
+
+Enable capture by setting a writable directory inside the container:
+
+```yaml
+l2Proxy:
+  capture:
+    dir: /tmp/aero-l2-captures
+    maxBytes: 104857600 # 100 MiB per capture file (0 disables the cap)
+    flushIntervalMs: 1000
+```
+
 ## Metrics / ServiceMonitor (optional)
 
 `aero-l2-proxy` exposes Prometheus metrics at `GET /metrics` on port 8090.

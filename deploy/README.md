@@ -205,6 +205,16 @@ cp deploy/.env.example deploy/.env
     explicitly enable token auth (e.g. `AERO_L2_AUTH_MODE=token|session_or_token|session_and_token`).
   - Accepted as a fallback value for `AERO_L2_API_KEY` when `AERO_L2_AUTH_MODE=token|session_or_token|session_and_token`.
   - Ignored when `AERO_L2_AUTH_MODE` is set to `session` (legacy alias: `cookie`), `jwt`, `cookie_or_jwt`, or `none`.
+- `AERO_L2_CAPTURE_DIR` (default: empty / unset)
+  - When set, `aero-l2-proxy` writes per-tunnel PCAPNG capture files into this directory (debugging only).
+  - **Privacy warning:** captures contain raw network traffic and may include sensitive user data (DNS queries,
+    plaintext protocols, credentials, etc.). Treat capture files as secrets and avoid enabling capture on
+    internet-exposed production deployments unless you have an explicit retention/privacy plan.
+- `AERO_L2_CAPTURE_MAX_BYTES` (default in compose: `104857600` / 100 MiB)
+  - Max bytes per capture file (`0` disables the cap).
+- `AERO_L2_CAPTURE_FLUSH_INTERVAL_MS` (default in compose: `1000`)
+  - Flush interval for capture writers (`0` flushes every packet). Larger values reduce disk I/O but may lose
+    the last buffered packets if the process crashes.
 - `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
   - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.
 - `AERO_WEBRTC_UDP_RELAY_UPSTREAM` (default: `aero-webrtc-udp-relay:8080`)

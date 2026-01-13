@@ -158,6 +158,23 @@ l2Proxy:
     existingSecret: ""
     key: SESSION_SECRET
 
+  # Optional: L2 tunnel traffic capture (PCAPNG) (debugging only).
+  #
+  # Disabled by default. To enable, set capture.dir to a writable directory inside
+  # the container.
+  #
+  # WARNING: capture files contain raw network traffic and may include sensitive
+  # user data (DNS queries, plaintext protocols, credentials, etc.). Treat them
+  # as secrets and avoid enabling capture on internet-exposed production
+  # deployments unless you have an explicit retention/privacy plan.
+  capture:
+    # When empty, capture is disabled.
+    dir: ""
+    # Max bytes per capture file (`0` disables the cap).
+    maxBytes: 104857600 # 100 MiB
+    # Flush interval for capture writers (`0` flushes every packet).
+    flushIntervalMs: 1000
+
   # Extra environment variables to set directly on the container.
   extraEnv: []
 

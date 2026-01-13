@@ -32,6 +32,11 @@ l2Proxy:
   # `SESSION_SECRET` and `AERO_L2_SESSION_SECRET`.
   auth:
     mode: "session"
+  # Optional: L2 tunnel capture (PCAPNG) (debugging only; treat files as sensitive).
+  #capture:
+  #  dir: /tmp/aero-l2-captures
+  #  maxBytes: 104857600 # 100 MiB per capture file (0 disables the cap)
+  #  flushIntervalMs: 1000
 
 # Optional: override L2 tunnel payload limits (bytes).
 # These are enforced by `aero-l2-proxy` and surfaced to clients via `POST /session` `limits.l2.*`.

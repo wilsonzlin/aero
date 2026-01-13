@@ -102,6 +102,15 @@ spec:
             - name: AERO_L2_MAX_CONTROL_PAYLOAD
               value: {{ $l2MaxControlPayload | quote }}
             {{- end }}
+            {{- $captureDir := (.Values.l2Proxy.capture.dir | default "") -}}
+            {{- if $captureDir }}
+            - name: AERO_L2_CAPTURE_DIR
+              value: {{ $captureDir | quote }}
+            - name: AERO_L2_CAPTURE_MAX_BYTES
+              value: {{ (.Values.l2Proxy.capture.maxBytes | default 104857600) | quote }}
+            - name: AERO_L2_CAPTURE_FLUSH_INTERVAL_MS
+              value: {{ (.Values.l2Proxy.capture.flushIntervalMs | default 1000) | quote }}
+            {{- end }}
             {{- if $allowedOriginsCsv }}
             - name: ALLOWED_ORIGINS
               value: {{ $allowedOriginsCsv | quote }}
