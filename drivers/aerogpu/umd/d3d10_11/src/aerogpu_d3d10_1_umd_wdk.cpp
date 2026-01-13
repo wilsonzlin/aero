@@ -1662,8 +1662,8 @@ struct DdiNoopStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
 //
 // This is intentionally enabled in release builds. If our stub-fill lists ever
 // fall out of sync with WDK header revisions, this check should fail fast
-// (CreateDevice returns `E_NOINTERFACE`) instead of allowing a later NULL-call
-// crash inside the D3D runtime.
+// (OpenAdapter/CreateDevice return `E_NOINTERFACE`) instead of allowing a later
+// NULL-call crash inside the D3D runtime.
 static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t bytes) {
   if (!table || bytes == 0) {
     return false;
@@ -7161,6 +7161,12 @@ HRESULT OpenAdapter_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
     funcs->pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize;
     funcs->pfnCreateDevice = &CreateDevice;
     funcs->pfnCloseAdapter = &CloseAdapter;
+    if (!ValidateNoNullDdiTable("D3D10_1DDI_ADAPTERFUNCS", funcs, sizeof(*funcs))) {
+      pOpenData->hAdapter.pDrvPrivate = nullptr;
+      DestroyKmtAdapterHandle(adapter);
+      delete adapter;
+      AEROGPU_D3D10_RET_HR(E_NOINTERFACE);
+    }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
 
