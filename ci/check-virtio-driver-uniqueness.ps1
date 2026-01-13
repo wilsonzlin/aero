@@ -75,16 +75,19 @@ foreach ($inf in $infFiles) {
   $lines = @(Get-Content -LiteralPath $inf.FullName -ErrorAction Stop)
   for ($i = 0; $i -lt $lines.Count; $i++) {
     $line = [string]$lines[$i]
-    $trim = $line.TrimStart()
-    if ($trim.StartsWith(';')) { continue }
+    # INF comments start with ';' and run to end-of-line. Strip any inline comment
+    # content first so documentation text doesn't get treated as a real HWID match.
+    $uncommented = $line.Split(';', 2)[0].Trim()
+    if ([string]::IsNullOrWhiteSpace($uncommented)) { continue }
 
     foreach ($p in $hwidPatterns) {
-      if (-not $p.Regex.IsMatch($line)) { continue }
+      if (-not $p.Regex.IsMatch($uncommented)) { continue }
       $matchesByPattern[$p.Name].Add([pscustomobject]@{
         Pattern = $p.Name
         Path = $inf.FullName
         Line = $i + 1
-        Text = $line
+        Text = $uncommented
+        OriginalText = $line
       }) | Out-Null
       break
     }
@@ -116,6 +119,9 @@ if ($conflicts.Count -gt 0) {
     Write-Host ("- {0}" -f $c.Pattern)
     foreach ($e in $c.Entries) {
       Write-Host ("    - {0}:{1}: {2}" -f $e.Path, $e.Line, $e.Text)
+      if ($null -ne $e.OriginalText -and $e.OriginalText -ne $e.Text) {
+        Write-Host ("        (original line, comments stripped): {0}" -f $e.OriginalText)
+      }
     }
   }
   Write-Host ""
