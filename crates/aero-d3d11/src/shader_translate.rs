@@ -2811,14 +2811,23 @@ fn emit_instructions(
                 let insert_i = emit_src_vec4_i32(insert, inst_index, "bfi", ctx)?;
                 let base_i = emit_src_vec4_i32(base, inst_index, "bfi", ctx)?;
 
-                // WGSL expects `offset`/`count` to be `u32`.
-                let offset_u = format!("u32(({offset_i}).x)");
-                let count_u = format!("u32(({width_i}).x)");
-                let insert_u = format!("bitcast<u32>(({insert_i}).x)");
-                let base_u = format!("bitcast<u32>(({base_i}).x)");
-
+                // WGSL `insertBits` takes scalar `offset`/`count`, but DXBC operands are vectors.
+                // Emit per-lane inserts so swizzles (common in pack/unpack patterns) behave like
+                // DXBC.
+                let lanes = ['x', 'y', 'z', 'w'];
+                let mut out = Vec::with_capacity(4);
+                for lane in lanes {
+                    let offset_u = format!("u32(({offset_i}).{lane})");
+                    let count_u = format!("u32(({width_i}).{lane})");
+                    let insert_u = format!("bitcast<u32>(({insert_i}).{lane})");
+                    let base_u = format!("bitcast<u32>(({base_i}).{lane})");
+                    out.push(format!(
+                        "bitcast<f32>(insertBits({base_u}, {insert_u}, {offset_u}, {count_u}))"
+                    ));
+                }
                 let expr = format!(
-                    "vec4<f32>(bitcast<f32>(insertBits({base_u}, {insert_u}, {offset_u}, {count_u})))"
+                    "vec4<f32>({}, {}, {}, {})",
+                    out[0], out[1], out[2], out[3]
                 );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bfi", ctx)?;
             }
@@ -2832,12 +2841,20 @@ fn emit_instructions(
                 let offset_i = emit_src_vec4_i32(offset, inst_index, "ubfe", ctx)?;
                 let src_i = emit_src_vec4_i32(src, inst_index, "ubfe", ctx)?;
 
-                let offset_u = format!("u32(({offset_i}).x)");
-                let count_u = format!("u32(({width_i}).x)");
-                let src_u = format!("bitcast<u32>(({src_i}).x)");
-
-                let expr =
-                    format!("vec4<f32>(bitcast<f32>(extractBits({src_u}, {offset_u}, {count_u})))");
+                let lanes = ['x', 'y', 'z', 'w'];
+                let mut out = Vec::with_capacity(4);
+                for lane in lanes {
+                    let offset_u = format!("u32(({offset_i}).{lane})");
+                    let count_u = format!("u32(({width_i}).{lane})");
+                    let src_u = format!("bitcast<u32>(({src_i}).{lane})");
+                    out.push(format!(
+                        "bitcast<f32>(extractBits({src_u}, {offset_u}, {count_u}))"
+                    ));
+                }
+                let expr = format!(
+                    "vec4<f32>({}, {}, {}, {})",
+                    out[0], out[1], out[2], out[3]
+                );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ubfe", ctx)?;
             }
             Sm4Inst::Ibfe {
@@ -2850,13 +2867,21 @@ fn emit_instructions(
                 let offset_i = emit_src_vec4_i32(offset, inst_index, "ibfe", ctx)?;
                 let src_i = emit_src_vec4_i32(src, inst_index, "ibfe", ctx)?;
 
-                let offset_u = format!("u32(({offset_i}).x)");
-                let count_u = format!("u32(({width_i}).x)");
-                let src_s = format!("({src_i}).x");
-
                 // `extractBits(i32, ...)` sign-extends in WGSL, matching D3D's `ibfe`.
-                let expr =
-                    format!("vec4<f32>(bitcast<f32>(extractBits({src_s}, {offset_u}, {count_u})))");
+                let lanes = ['x', 'y', 'z', 'w'];
+                let mut out = Vec::with_capacity(4);
+                for lane in lanes {
+                    let offset_u = format!("u32(({offset_i}).{lane})");
+                    let count_u = format!("u32(({width_i}).{lane})");
+                    let src_s = format!("({src_i}).{lane}");
+                    out.push(format!(
+                        "bitcast<f32>(extractBits({src_s}, {offset_u}, {count_u}))"
+                    ));
+                }
+                let expr = format!(
+                    "vec4<f32>({}, {}, {}, {})",
+                    out[0], out[1], out[2], out[3]
+                );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ibfe", ctx)?;
             }
             Sm4Inst::Sample {
