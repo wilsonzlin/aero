@@ -74,6 +74,22 @@ console.log(result);
 >
 > Browser note: DoH requests are normal `fetch()` calls, so you generally want `/dns-query` and `/dns-json` to be
 > **same-origin** with your frontend (or be served with permissive CORS headers).
+>
+> If you're using the repo-root Vite dev server (`npm run dev`, default `http://localhost:5173`), the simplest approach
+> is to proxy the DoH paths through Vite so they become same-origin (then your browser code can just use `/dns-query`
+> and `/dns-json`, i.e. avoid `http://127.0.0.1:8081/...` URLs that would trigger CORS):
+>
+> ```ts
+> // vite.harness.config.ts
+> export default defineConfig({
+>   server: {
+>     proxy: {
+>       "/dns-query": "http://127.0.0.1:8081",
+>       "/dns-json": "http://127.0.0.1:8081",
+>     },
+>   },
+> });
+> ```
 
 #### Security caveats (open mode vs allowlist)
 
