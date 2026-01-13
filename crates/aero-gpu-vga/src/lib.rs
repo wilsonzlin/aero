@@ -24,9 +24,9 @@ use palette::{rgb_to_rgba_u32, Rgb};
 pub use snapshot::{VgaSnapshotError, VgaSnapshotV1};
 use text_font::FONT8X8_CP437;
 
-#[cfg(feature = "io-snapshot")]
+#[cfg(any(test, feature = "io-snapshot"))]
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-#[cfg(feature = "io-snapshot")]
+#[cfg(any(test, feature = "io-snapshot"))]
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
@@ -1340,10 +1340,10 @@ impl PortIO for VgaDevice {
     }
 }
 
-#[cfg(feature = "io-snapshot")]
+#[cfg(any(test, feature = "io-snapshot"))]
 impl IoSnapshot for VgaDevice {
     const DEVICE_ID: [u8; 4] = *b"VGAD";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_MISC_OUTPUT: u16 = 1;
@@ -1452,6 +1452,7 @@ impl IoSnapshot for VgaDevice {
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+        let snapshot_minor = r.header().device_version.minor;
 
         // Reset to a deterministic baseline.
         *self = Self::new();
@@ -1563,6 +1564,28 @@ impl IoSnapshot for VgaDevice {
                 return Err(SnapshotError::InvalidFieldEncoding("vram"));
             }
             self.vram.copy_from_slice(buf);
+
+            // Backward-compatible migration for snapshots captured before the VRAM layout change
+            // that introduced `VBE_FRAMEBUFFER_OFFSET` (device_version 1.0).
+            //
+            // Old layout (v1.0): VBE linear/banked framebuffer starts at vram[0..].
+            // New layout (v1.1+): VBE framebuffer starts at vram[VBE_FRAMEBUFFER_OFFSET..].
+            //
+            // For v1.0 snapshots captured while VBE is enabled, copy the beginning of VRAM into the
+            // new VBE region so the renderer reads the expected pixels.
+            if snapshot_minor == 0 && self.vbe.enabled() {
+                if let Some(vbe_region_len) = self.vram.len().checked_sub(VBE_FRAMEBUFFER_OFFSET) {
+                    let vbe_len = std::cmp::min(buf.len(), vbe_region_len);
+                    if vbe_len != 0 {
+                        if let Some(dst_end) = VBE_FRAMEBUFFER_OFFSET.checked_add(vbe_len) {
+                            if dst_end <= self.vram.len() && vbe_len <= buf.len() {
+                                self.vram[VBE_FRAMEBUFFER_OFFSET..dst_end]
+                                    .copy_from_slice(&buf[..vbe_len]);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if let Some(buf) = r.bytes(TAG_LATCHES) {
@@ -1842,6 +1865,73 @@ mod tests {
         dev.present();
         assert_eq!(dev.get_resolution(), (64, 64));
         assert_eq!(dev.get_framebuffer()[0], 0xFF00_00FF);
+    }
+
+    #[test]
+    fn io_snapshot_vram_layout_migrates_v1_0_vbe_framebuffer_to_offset() {
+        // Tags must match the `IoSnapshot` implementation above.
+        const TAG_VBE_REGS: u16 = 19;
+        const TAG_VRAM: u16 = 20;
+
+        let mut vram = vec![0u8; DEFAULT_VRAM_SIZE];
+        // Old layout stored packed-pixel framebuffer at vram[0..]. Write a red pixel at (0,0).
+        vram[0] = 0x00; // B
+        vram[1] = 0x00; // G
+        vram[2] = 0xFF; // R
+        vram[3] = 0x00; // X
+
+        let mut w = SnapshotWriter::new(*b"VGAD", SnapshotVersion::new(1, 0));
+        w.field_bytes(
+            TAG_VBE_REGS,
+            Encoder::new()
+                .u16(64) // xres
+                .u16(64) // yres
+                .u16(32) // bpp
+                .u16(0x0041) // enable (enabled + LFB)
+                .u16(0) // bank
+                .u16(64) // virt_width
+                .u16(64) // virt_height
+                .u16(0) // x_offset
+                .u16(0) // y_offset
+                .finish(),
+        );
+        w.field_bytes(TAG_VRAM, vram);
+        let snapshot = w.finish();
+
+        let mut dev = VgaDevice::new();
+        dev.load_state(&snapshot).unwrap();
+        dev.present();
+        assert_eq!(dev.get_resolution(), (64, 64));
+        assert_eq!(dev.get_framebuffer()[0], 0xFF00_00FF);
+    }
+
+    #[test]
+    fn io_snapshot_v1_1_roundtrip_keeps_vram_layout() {
+        let mut dev = VgaDevice::new();
+
+        // 64x64x32bpp, LFB enabled.
+        dev.port_write(0x01CE, 2, 0x0001);
+        dev.port_write(0x01CF, 2, 64);
+        dev.port_write(0x01CE, 2, 0x0002);
+        dev.port_write(0x01CF, 2, 64);
+        dev.port_write(0x01CE, 2, 0x0003);
+        dev.port_write(0x01CF, 2, 32);
+        dev.port_write(0x01CE, 2, 0x0004);
+        dev.port_write(0x01CF, 2, 0x0041);
+
+        // Write a red pixel at (0,0) in BGRX format.
+        dev.mem_write_u8(SVGA_LFB_BASE, 0x00); // B
+        dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x00); // G
+        dev.mem_write_u8(SVGA_LFB_BASE + 2, 0xFF); // R
+        dev.mem_write_u8(SVGA_LFB_BASE + 3, 0x00); // X
+
+        let snapshot = dev.save_state();
+
+        let mut restored = VgaDevice::new();
+        restored.load_state(&snapshot).unwrap();
+        restored.present();
+        assert_eq!(restored.get_resolution(), (64, 64));
+        assert_eq!(restored.get_framebuffer()[0], 0xFF00_00FF);
     }
 
     #[test]

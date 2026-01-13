@@ -12,3 +12,4 @@ default = []
 io-snapshot = ["dep:aero-io-snapshot"]
 
 [dev-dependencies]
+aero-io-snapshot = { path = "../aero-io-snapshot" }
