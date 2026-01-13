@@ -92,6 +92,9 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.MaxUDPDestBucketsPerSession != DefaultMaxUDPDestBucketsPerSession {
 		t.Fatalf("MaxUDPDestBucketsPerSession=%d, want %d", cfg.MaxUDPDestBucketsPerSession, DefaultMaxUDPDestBucketsPerSession)
 	}
+	if cfg.SessionPreallocTTL != DefaultSessionPreallocTTL {
+		t.Fatalf("SessionPreallocTTL=%v, want %v", cfg.SessionPreallocTTL, DefaultSessionPreallocTTL)
+	}
 	if cfg.SignalingWSIdleTimeout != DefaultSignalingWSIdleTimeout {
 		t.Fatalf("SignalingWSIdleTimeout=%v, want %v", cfg.SignalingWSIdleTimeout, DefaultSignalingWSIdleTimeout)
 	}
@@ -130,6 +133,42 @@ func TestMaxUDPDestBuckets_EnvOverride(t *testing.T) {
 	}
 	if cfg.MaxUDPDestBucketsPerSession != 7 {
 		t.Fatalf("MaxUDPDestBucketsPerSession=%d, want %d", cfg.MaxUDPDestBucketsPerSession, 7)
+	}
+}
+
+func TestSessionPreallocTTL_EnvOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:             "secret",
+		EnvSessionPreallocTTL: "5s",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.SessionPreallocTTL != 5*time.Second {
+		t.Fatalf("SessionPreallocTTL=%v, want %v", cfg.SessionPreallocTTL, 5*time.Second)
+	}
+}
+
+func TestSessionPreallocTTL_FlagOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:             "secret",
+		EnvSessionPreallocTTL: "5s",
+	}), []string{"--session-prealloc-ttl", "10s"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.SessionPreallocTTL != 10*time.Second {
+		t.Fatalf("SessionPreallocTTL=%v, want %v", cfg.SessionPreallocTTL, 10*time.Second)
+	}
+}
+
+func TestSessionPreallocTTL_RejectsZero(t *testing.T) {
+	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:             "secret",
+		EnvSessionPreallocTTL: "0s",
+	}), nil)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
 	}
 }
 

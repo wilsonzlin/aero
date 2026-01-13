@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/auth"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
@@ -430,5 +432,147 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 
 	if elapsed > 250*time.Millisecond {
 		t.Fatalf("request took too long: %s", elapsed)
+	}
+}
+
+type unauthorizedAuthorizer struct{}
+
+func (unauthorizedAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error) {
+	return AuthResult{}, auth.ErrMissingCredentials
+}
+
+func TestServer_SessionEndpoint_RequiresAuth(t *testing.T) {
+	cfg := config.Config{}
+	m := metrics.New()
+	sm := relay.NewSessionManager(cfg, m, nil)
+
+	srv := NewServer(Config{
+		Sessions:            sm,
+		RelayConfig:         relay.DefaultConfig(),
+		Policy:              policy.NewDevDestinationPolicy(),
+		Authorizer:          unauthorizedAuthorizer{},
+		ICEGatheringTimeout: 2 * time.Second,
+	})
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(func() {
+		srv.Close()
+		ts.Close()
+	})
+
+	resp, err := http.Post(ts.URL+"/session", "application/json", nil)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+	if got := m.Get(metrics.AuthFailure); got == 0 {
+		t.Fatalf("expected auth_failure metric increment")
+	}
+	if got := sm.ActiveSessions(); got != 0 {
+		t.Fatalf("ActiveSessions=%d, want 0", got)
+	}
+}
+
+func TestServer_SessionEndpoint_ExpiresAndReleasesSession(t *testing.T) {
+	cfg := config.Config{MaxSessions: 10}
+	m := metrics.New()
+	sm := relay.NewSessionManager(cfg, m, nil)
+
+	preallocTTL := 250 * time.Millisecond
+	srv := NewServer(Config{
+		Sessions:           sm,
+		RelayConfig:        relay.DefaultConfig(),
+		Policy:             policy.NewDevDestinationPolicy(),
+		Authorizer:         AllowAllAuthorizer{},
+		SessionPreallocTTL: preallocTTL,
+	})
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(func() {
+		srv.Close()
+		ts.Close()
+	})
+
+	resp, err := http.Post(ts.URL+"/session", "application/json", nil)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		_ = resp.Body.Close()
+		t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	id := strings.TrimSpace(string(body))
+	if id == "" {
+		t.Fatalf("expected non-empty session id")
+	}
+
+	if got := sm.ActiveSessions(); got != 1 {
+		t.Fatalf("ActiveSessions=%d, want 1", got)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if sm.ActiveSessions() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := sm.ActiveSessions(); got != 0 {
+		t.Fatalf("ActiveSessions=%d, want 0 after expiry", got)
+	}
+
+	// Ensure the server does not retain stale reservations after expiry.
+	srv.mu.Lock()
+	reservationCount := len(srv.preSessions)
+	srv.mu.Unlock()
+	if reservationCount != 0 {
+		t.Fatalf("expected 0 preSessions reservations after expiry, got %d", reservationCount)
+	}
+}
+
+func TestServer_Close_ClosesPreallocatedSessions(t *testing.T) {
+	cfg := config.Config{}
+	m := metrics.New()
+	sm := relay.NewSessionManager(cfg, m, nil)
+
+	srv := NewServer(Config{
+		Sessions:           sm,
+		RelayConfig:        relay.DefaultConfig(),
+		Policy:             policy.NewDevDestinationPolicy(),
+		Authorizer:         AllowAllAuthorizer{},
+		SessionPreallocTTL: time.Hour,
+	})
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/session", "application/json", nil)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if got := sm.ActiveSessions(); got != 1 {
+		t.Fatalf("ActiveSessions=%d, want 1", got)
+	}
+
+	srv.Close()
+	if got := sm.ActiveSessions(); got != 0 {
+		t.Fatalf("ActiveSessions=%d, want 0 after server.Close", got)
 	}
 }

@@ -184,7 +184,7 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
   - guarded by the same origin policy as signaling endpoints (to avoid leaking TURN credentials cross-origin)
   - when `AUTH_MODE != none`, also requires the same credentials as signaling endpoints (to avoid leaking TURN REST credentials to unauthenticated callers)
 - `POST /offer` → signaling: exchange SDP offer/answer (non-trickle ICE) per `PROTOCOL.md` (requires auth when `AUTH_MODE != none`)
-- `POST /session` → allocate a server-side session (primarily for quota enforcement; not required by the v1 offer/answer flow) (requires auth when `AUTH_MODE != none`)
+- `POST /session` → allocate a **short-lived** server-side session reservation (expires after `SESSION_PREALLOC_TTL`) (primarily for quota enforcement; not required by the v1 offer/answer flow) (requires auth when `AUTH_MODE != none`)
 - `GET /webrtc/signal` → WebSocket signaling (trickle ICE) (requires auth when `AUTH_MODE != none`)
 - `POST /webrtc/offer` → HTTP offer → answer (non-trickle ICE fallback) (requires auth when `AUTH_MODE != none`)
 - `GET /udp` → WebSocket UDP relay fallback (binary datagram frames; see `PROTOCOL.md`) (requires auth when `AUTH_MODE != none`)
@@ -410,6 +410,7 @@ The forwarded `<credential>` is the same JWT or API key that authenticated the r
 Per-session quotas and rate limits are enforced on the **data plane** (WebRTC DataChannel ↔ UDP):
 
 - `MAX_SESSIONS` / `--max-sessions` (default `0` = unlimited)
+- `SESSION_PREALLOC_TTL` / `--session-prealloc-ttl` (default `60s`) — TTL for `POST /session` preallocated session reservations (auto-released if not used)
 - `MAX_UDP_PPS_PER_SESSION` / `--max-udp-pps-per-session` (default `0` = unlimited) — outbound UDP packets/sec per session
 - `MAX_UDP_BPS_PER_SESSION` / `--max-udp-bps-per-session` (default `0` = unlimited) — outbound UDP bytes/sec per session
 - `MAX_UDP_PPS_PER_DEST` / `--max-udp-pps-per-dest` (default `0` = unlimited) — outbound UDP packets/sec per destination per session

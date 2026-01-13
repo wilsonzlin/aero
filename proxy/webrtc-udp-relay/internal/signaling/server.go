@@ -55,6 +55,10 @@ type Config struct {
 	// on non-trickle HTTP endpoints (e.g. /webrtc/offer).
 	ICEGatheringTimeout time.Duration
 
+	// SessionPreallocTTL controls how long sessions allocated via POST /session
+	// remain reserved before being automatically released.
+	SessionPreallocTTL time.Duration
+
 	// WebSocket auth timeout for AUTH_MODE!=none.
 	SignalingAuthTimeout time.Duration
 
@@ -94,6 +98,7 @@ type Server struct {
 
 	Authorizer          Authorizer
 	ICEGatheringTimeout time.Duration
+	SessionPreallocTTL  time.Duration
 
 	SignalingAuthTimeout time.Duration
 
@@ -105,22 +110,28 @@ type Server struct {
 
 	mu             sync.Mutex
 	webrtcSessions map[*webrtcpeer.Session]struct{}
-	preSessions    []*relay.Session
+	preSessions    map[string]*preSessionReservation
+}
+
+type preSessionReservation struct {
+	sess  *relay.Session
+	timer *time.Timer
 }
 
 var gatheringCompletePromise = webrtc.GatheringCompletePromise
 
 func NewServer(cfg Config) *Server {
 	return &Server{
-		Sessions:                cfg.Sessions,
-		WebRTC:                  cfg.WebRTC,
-		ICEServers:              cfg.ICEServers,
-		RelayConfig:             cfg.RelayConfig,
-		Policy:                  cfg.Policy,
-		AllowedOrigins:          cfg.AllowedOrigins,
-		Authorizer:              cfg.Authorizer,
-		ICEGatheringTimeout:     cfg.ICEGatheringTimeout,
-		SignalingAuthTimeout:    cfg.SignalingAuthTimeout,
+		Sessions:             cfg.Sessions,
+		WebRTC:               cfg.WebRTC,
+		ICEServers:           cfg.ICEServers,
+		RelayConfig:          cfg.RelayConfig,
+		Policy:               cfg.Policy,
+		AllowedOrigins:       cfg.AllowedOrigins,
+		Authorizer:           cfg.Authorizer,
+		ICEGatheringTimeout:  cfg.ICEGatheringTimeout,
+		SessionPreallocTTL:   cfg.SessionPreallocTTL,
+		SignalingAuthTimeout: cfg.SignalingAuthTimeout,
 		SignalingWSIdleTimeout:  cfg.SignalingWSIdleTimeout,
 		SignalingWSPingInterval: cfg.SignalingWSPingInterval,
 
@@ -170,7 +181,13 @@ func (s *Server) Close() {
 	for sess := range s.webrtcSessions {
 		webrtcSessions = append(webrtcSessions, sess)
 	}
-	preSessions := s.preSessions
+	preSessions := make([]preSessionReservation, 0, len(s.preSessions))
+	for _, reservation := range s.preSessions {
+		if reservation == nil {
+			continue
+		}
+		preSessions = append(preSessions, *reservation)
+	}
 	s.webrtcSessions = nil
 	s.preSessions = nil
 	s.mu.Unlock()
@@ -178,8 +195,13 @@ func (s *Server) Close() {
 	for _, sess := range webrtcSessions {
 		_ = sess.Close()
 	}
-	for _, sess := range preSessions {
-		sess.Close()
+	for _, reservation := range preSessions {
+		if reservation.timer != nil {
+			reservation.timer.Stop()
+		}
+		if reservation.sess != nil {
+			reservation.sess.Close()
+		}
 	}
 }
 
@@ -255,6 +277,15 @@ func (s *Server) maxSignalingMessagesPerSecond() int {
 	return s.MaxSignalingMessagesPerSecond
 }
 
+const defaultSessionPreallocTTL = 60 * time.Second
+
+func (s *Server) sessionPreallocTTL() time.Duration {
+	if s.SessionPreallocTTL <= 0 {
+		return defaultSessionPreallocTTL
+	}
+	return s.SessionPreallocTTL
+}
+
 func (s *Server) incMetric(name string) {
 	if s.Sessions == nil {
 		return
@@ -298,14 +329,53 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The /session endpoint is currently a simple pre-allocation mechanism; it
-	// does not yet have a corresponding "use session" handshake. Track the
-	// sessions so they can be cleaned up on shutdown.
+	// does not yet have a corresponding "use session" handshake. To avoid
+	// permanently consuming quota, preallocated sessions automatically expire
+	// after a short TTL.
+	sessionID := session.ID()
+	reservation := &preSessionReservation{sess: session}
+
+	session.AddOnClose(func() {
+		s.mu.Lock()
+		if s.preSessions != nil {
+			if cur, ok := s.preSessions[sessionID]; ok && cur == reservation {
+				delete(s.preSessions, sessionID)
+				if cur.timer != nil {
+					cur.timer.Stop()
+				}
+			}
+		}
+		s.mu.Unlock()
+	})
+
 	s.mu.Lock()
-	s.preSessions = append(s.preSessions, session)
+	if s.preSessions == nil {
+		s.preSessions = make(map[string]*preSessionReservation)
+	}
+	s.preSessions[sessionID] = reservation
+	s.mu.Unlock()
+
+	timer := time.AfterFunc(s.sessionPreallocTTL(), func() {
+		session.Close()
+	})
+
+	// Install the timer reference so it can be stopped on server shutdown or when
+	// the session is otherwise closed. If the reservation has already been
+	// removed (e.g. due to concurrent shutdown), stop the timer immediately.
+	s.mu.Lock()
+	if s.preSessions != nil {
+		if cur, ok := s.preSessions[sessionID]; ok && cur == reservation {
+			cur.timer = timer
+		} else {
+			timer.Stop()
+		}
+	} else {
+		timer.Stop()
+	}
 	s.mu.Unlock()
 
 	w.WriteHeader(http.StatusCreated)
-	_, _ = w.Write([]byte(session.ID()))
+	_, _ = w.Write([]byte(sessionID))
 }
 
 func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {

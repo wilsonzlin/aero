@@ -51,6 +51,9 @@ const (
 
 	// Quota/rate limiting knobs (required by the task).
 	EnvMaxSessions                     = "MAX_SESSIONS"
+	// EnvSessionPreallocTTL controls how long sessions allocated via POST /session
+	// remain reserved before being automatically released.
+	EnvSessionPreallocTTL              = "SESSION_PREALLOC_TTL"
 	EnvMaxUDPPpsPerSession             = "MAX_UDP_PPS_PER_SESSION"
 	EnvMaxUDPBpsPerSession             = "MAX_UDP_BPS_PER_SESSION"
 	EnvMaxUDPPpsPerDest                = "MAX_UDP_PPS_PER_DEST"
@@ -86,6 +89,10 @@ const (
 	DefaultICEGatherTimeout      = 2 * time.Second
 	DefaultViolationWindow       = 10 * time.Second
 	DefaultMode             Mode = ModeDev
+	// DefaultSessionPreallocTTL is a safety bound for POST /session to avoid
+	// permanently consuming session quota due to buggy or malicious callers.
+	// Must be non-zero to avoid unbounded session leaks by default.
+	DefaultSessionPreallocTTL    = 60 * time.Second
 
 	DefaultUDPBindingIdleTimeout     = 60 * time.Second
 	DefaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
@@ -289,6 +296,9 @@ type Config struct {
 	//
 	// A value <= 0 generally means "unlimited" / disabled.
 	MaxSessions                     int
+	// SessionPreallocTTL controls how long sessions allocated via POST /session
+	// remain reserved before being automatically released.
+	SessionPreallocTTL              time.Duration
 	MaxUDPPpsPerSession             int
 	MaxUDPBpsPerSession             int
 	MaxUDPPpsPerDest                int
@@ -487,6 +497,14 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	sessionPreallocTTL := DefaultSessionPreallocTTL
+	if raw, ok := lookup(EnvSessionPreallocTTL); ok && strings.TrimSpace(raw) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvSessionPreallocTTL, raw, err)
+		}
+		sessionPreallocTTL = d
+	}
 	maxUDPPpsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPPpsPerSession, 0)
 	if err != nil {
 		return Config{}, err
@@ -668,6 +686,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&webrtcSCTPMaxReceiveBufferBytes, FlagWebRTCSCTPMaxReceiveBufferBytes, webrtcSCTPMaxReceiveBufferBytes, "Max SCTP receive buffer size in bytes (0 = auto; env "+EnvWebRTCSCTPMaxReceiveBufferBytes+")")
 
 	fs.IntVar(&maxSessions, "max-sessions", maxSessions, "Maximum concurrent sessions (0 = unlimited)")
+	fs.DurationVar(&sessionPreallocTTL, "session-prealloc-ttl", sessionPreallocTTL, "TTL for sessions allocated via POST /session (env "+EnvSessionPreallocTTL+")")
 	fs.IntVar(&maxUDPPpsPerSession, "max-udp-pps-per-session", maxUDPPpsPerSession, "Outbound UDP packets/sec per session (0 = unlimited)")
 	fs.IntVar(&maxUDPBpsPerSession, "max-udp-bps-per-session", maxUDPBpsPerSession, "Outbound UDP bytes/sec per session (0 = unlimited)")
 	fs.IntVar(&maxUDPPpsPerDest, "max-udp-pps-per-dest", maxUDPPpsPerDest, "Outbound UDP packets/sec per destination per session (0 = unlimited)")
@@ -847,6 +866,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if maxUDPDestBucketsPerSession <= 0 {
 		return Config{}, fmt.Errorf("%s/--max-udp-dest-buckets-per-session must be > 0", EnvMaxUDPDestBucketsPerSession)
+	}
+	if sessionPreallocTTL <= 0 {
+		return Config{}, fmt.Errorf("%s/--session-prealloc-ttl must be > 0", EnvSessionPreallocTTL)
 	}
 	if authMode == AuthModeAPIKey && strings.TrimSpace(apiKey) == "" {
 		return Config{}, fmt.Errorf("%s must be set when %s=%s", EnvAPIKey, EnvAuthMode, AuthModeAPIKey)
@@ -1047,6 +1069,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		WebRTCSCTPMaxReceiveBufferBytes:  effectiveSCTPRecvBuf,
 
 		MaxSessions:                     maxSessions,
+		SessionPreallocTTL:              sessionPreallocTTL,
 		MaxUDPPpsPerSession:             maxUDPPpsPerSession,
 		MaxUDPBpsPerSession:             maxUDPBpsPerSession,
 		MaxUDPPpsPerDest:                maxUDPPpsPerDest,

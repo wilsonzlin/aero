@@ -464,6 +464,25 @@ Relay → client:
 
 The server waits up to a small timeout (configurable; default ~2s) for ICE gathering to complete so that candidates are embedded in the returned SDP. If gathering does not complete in time, the server returns an answer anyway; the returned SDP may be missing candidates and connectivity may fail.
 
+### POST /session (session pre-allocation)
+
+This endpoint reserves a server-side session ID ahead of time (primarily for
+quota enforcement / future flows).
+
+- **Request:** `POST /session` (no request body)
+- **Response:** `201 Created` with the raw session ID as the response body
+
+#### Expiry / TTL
+
+Session IDs allocated via `POST /session` are **short-lived**. If the session is
+not used within a TTL window, it is automatically released/closed so it does not
+permanently consume `MAX_SESSIONS` quota.
+
+- Config: `SESSION_PREALLOC_TTL` / `--session-prealloc-ttl` (default `60s`)
+
+Note: today there is not yet a corresponding endpoint/protocol message that
+"consumes" a preallocated session ID.
+
 ### WebSocket signaling (trickle ICE)
 
 **Endpoint:** `GET /webrtc/signal` (upgrades to WebSocket)

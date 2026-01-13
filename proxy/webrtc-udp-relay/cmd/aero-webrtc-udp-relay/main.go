@@ -108,6 +108,7 @@ func main() {
 		AllowedOrigins:      cfg.AllowedOrigins,
 		Authorizer:          authz,
 		ICEGatheringTimeout: cfg.ICEGatheringTimeout,
+		SessionPreallocTTL:  cfg.SessionPreallocTTL,
 
 		SignalingAuthTimeout:          cfg.SignalingAuthTimeout,
 		SignalingWSIdleTimeout:        cfg.SignalingWSIdleTimeout,
