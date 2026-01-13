@@ -300,12 +300,15 @@ dependencies = [
 name = "aero-gpu-trace-replay"
 version = "0.1.0"
 dependencies = [
+ "aero-d3d11",
+ "aero-gpu",
  "aero-gpu-trace",
  "aero-protocol",
  "anyhow",
  "clap",
  "png",
  "serde_json",
+ "pollster",
  "sha2",
  "tempfile",
  "thiserror 1.0.69",
