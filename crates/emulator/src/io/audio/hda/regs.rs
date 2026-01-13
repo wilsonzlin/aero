@@ -496,6 +496,25 @@ impl DmaPositionBufferRegs {
             return None;
         }
 
-        Some(self.base_addr() + (stream_index as u64) * 8)
+        let base = self.base_addr();
+        base.checked_add((stream_index as u64) * 8)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_entry_addr_returns_none_on_overflow_instead_of_panicking() {
+        let mut regs = DmaPositionBufferRegs::default();
+
+        // Base address chosen such that adding 16 * 8 bytes would overflow u64.
+        regs.write_dpubase(0xffff_ffff);
+        regs.write_dplbase(DPLBASE_ENABLE | 0xffff_ff80);
+
+        let addr = std::panic::catch_unwind(|| regs.stream_entry_addr(16))
+            .expect("stream_entry_addr must not panic on overflow");
+        assert_eq!(addr, None);
     }
 }
