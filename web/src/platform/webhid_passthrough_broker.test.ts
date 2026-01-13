@@ -267,6 +267,45 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     expect(Array.from(bufferSourceToBytes(device.sendReport.mock.calls[1]![1]))).toEqual([2]);
   });
 
+  it("drops pending hid:sendReport tasks on detach", async () => {
+    const device = new FakeHidDevice();
+    const target = new TestTarget();
+    const manager = new WebHidPassthroughManager({ hid: null, target });
+
+    await manager.attachKnownDevice(device as unknown as HIDDevice);
+    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+    const deviceId = attach.deviceId as string;
+
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+
+    manager.handleWorkerMessage({
+      type: "hid:sendReport",
+      deviceId,
+      reportType: "output",
+      reportId: 1,
+      data: new Uint8Array([1]).buffer,
+    });
+
+    manager.handleWorkerMessage({
+      type: "hid:sendReport",
+      deviceId,
+      reportType: "output",
+      reportId: 2,
+      data: new Uint8Array([2]).buffer,
+    });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+    await manager.detachDevice(device as unknown as HIDDevice);
+
+    first.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+  });
+
   it("writes inputreport events into the configured SAB ring instead of posting hid:inputReport messages", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
