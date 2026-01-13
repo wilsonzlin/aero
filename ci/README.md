@@ -128,6 +128,14 @@ Packages signed driver staging folders from `out/packages/` into release artifac
 This step refuses to package any driver that is not explicitly opted into CI packaging via
 `drivers/<driver>/ci-package.json` (defense-in-depth against stale/stray packages under `out/packages/`).
 
+### OutDir safety check
+
+`ci/package-drivers.ps1` deletes a staging directory at `$OutDir/_staging`. To prevent accidental
+deletion when `-OutDir` is misconfigured, the script **refuses** to run when `-OutDir` points outside
+`<repo>/out` (or when it is the repo root / drive root).
+
+To intentionally write artifacts outside `<repo>/out`, pass `-AllowUnsafeOutDir`.
+
 ### Deterministic ISO creation (cross-platform)
 
 When `cargo` is available, `ci/package-drivers.ps1` builds the bundle ISO using the deterministic Rust

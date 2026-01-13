@@ -3,6 +3,9 @@ param(
     [string] $InputRoot = "out/packages",
     [string] $CertPath = "out/certs/aero-test.cer",
     [string] $OutDir = "out/artifacts",
+    # By default, the script only allows OutDir under <repo>/out to avoid accidental deletion of
+    # arbitrary directories (it deletes $OutDir/_staging). Use -AllowUnsafeOutDir to override.
+    [switch] $AllowUnsafeOutDir,
     [string] $Version,
     [switch] $NoIso,
     [switch] $LegacyIso,
@@ -35,6 +38,54 @@ function Resolve-RepoPath {
 
     $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
     return [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Path))
+}
+
+function Assert-SafeOutDir {
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $OutDir,
+        [switch] $AllowUnsafeOutDir
+    )
+
+    function Get-NormalizedFullPath {
+        param([Parameter(Mandatory = $true)][string] $Path)
+
+        $full = [System.IO.Path]::GetFullPath($Path)
+        $root = [System.IO.Path]::GetPathRoot($full)
+        if ($full -eq $root) {
+            return $full
+        }
+
+        return $full.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    }
+
+    $repoFull = Get-NormalizedFullPath -Path $RepoRoot
+    $outFull = Get-NormalizedFullPath -Path $OutDir
+    $driveRoot = Get-NormalizedFullPath -Path ([System.IO.Path]::GetPathRoot($outFull))
+
+    if ([string]::IsNullOrWhiteSpace($outFull)) {
+        throw "Refusing to use an empty -OutDir."
+    }
+
+    if ($outFull -eq $repoFull) {
+        throw "Refusing to use -OutDir at the repo root (would delete the working tree): $outFull"
+    }
+    if ($outFull -eq $driveRoot) {
+        throw "Refusing to use -OutDir at the drive root: $outFull"
+    }
+
+    $repoOut = Get-NormalizedFullPath -Path (Join-Path $repoFull "out")
+    $repoOutPrefix = $repoOut.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    if ($outFull.Equals($repoOut, [System.StringComparison]::OrdinalIgnoreCase) -or $outFull.StartsWith($repoOutPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return
+    }
+
+    if ($AllowUnsafeOutDir) {
+        Write-Warning "Using -OutDir outside '$repoOut' because -AllowUnsafeOutDir was provided: $outFull"
+        return
+    }
+
+    throw "Refusing to use -OutDir outside '$repoOut': $outFull`r`nPass -AllowUnsafeOutDir to override."
 }
 
 function Assert-CiPackagedDriversOnly {
@@ -842,13 +893,16 @@ function Invoke-PackageDrivers {
         [switch] $MakeFatImage,
         [switch] $FatImageStrict,
         [int] $FatImageSizeMB = 64,
-        [switch] $NoManifest
+        [switch] $NoManifest,
+        [switch] $AllowUnsafeOutDir
     )
 
     $inputRootResolved = Resolve-RepoPath -Path $InputRoot
     $certPathResolved = Resolve-RepoPath -Path $CertPath
     $outDirResolved = Resolve-RepoPath -Path $OutDir
     $repoRootResolved = Resolve-RepoPath -Path $RepoRoot
+
+    Assert-SafeOutDir -RepoRoot $repoRootResolved -OutDir $outDirResolved -AllowUnsafeOutDir:$AllowUnsafeOutDir
 
     if (-not (Test-Path $inputRootResolved)) {
         throw "InputRoot does not exist: '$inputRootResolved'."
@@ -1042,8 +1096,8 @@ function Invoke-DeterminismSelfTest {
         # external FAT image tooling.
         $env:AERO_MAKE_FAT_IMAGE = "0"
 
-        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest
-        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest
+        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
+        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
 
         $h1 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r1.ZipBundle).Hash
         $h2 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r2.ZipBundle).Hash
@@ -1068,4 +1122,4 @@ if ($DeterminismSelfTest) {
     exit 0
 }
 
-$null = Invoke-PackageDrivers -InputRoot $InputRoot -CertPath $CertPath -OutDir $OutDir -RepoRoot "." -Version $Version -NoIso:$NoIso -MakeFatImage:$MakeFatImage -FatImageStrict:$FatImageStrict -FatImageSizeMB $FatImageSizeMB -NoManifest:$NoManifest
+$null = Invoke-PackageDrivers -InputRoot $InputRoot -CertPath $CertPath -OutDir $OutDir -RepoRoot "." -Version $Version -NoIso:$NoIso -MakeFatImage:$MakeFatImage -FatImageStrict:$FatImageStrict -FatImageSizeMB $FatImageSizeMB -NoManifest:$NoManifest -AllowUnsafeOutDir:$AllowUnsafeOutDir
