@@ -186,7 +186,15 @@ function New-AeroWin7VirtioMouseDeviceArg {
 
 function New-AeroWin7VirtioTabletDeviceArg {
   [CmdletBinding()]
-  param()
+  param(
+    # Optional MSI-X vector count (`vectors=` device property).
+    [Parameter(Mandatory = $false)]
+    [int]$MsixVectors = 0
+  )
 
-  return "virtio-tablet-pci,disable-legacy=on,x-pci-revision=0x01"
+  $arg = "virtio-tablet-pci,disable-legacy=on,x-pci-revision=0x01"
+  if ($MsixVectors -gt 0) {
+    $arg += ",vectors=$MsixVectors"
+  }
+  return $arg
 }

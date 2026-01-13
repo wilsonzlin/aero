@@ -58,6 +58,18 @@ param(
   [Alias("WithVirtioInputEvents", "EnableVirtioInputEvents")]
   [switch]$WithInputEvents,
 
+  # If set, attach a virtio-tablet-pci device, inject deterministic absolute-pointer events via QMP (`input-send-event`),
+  # and require the guest virtio-input-tablet-events marker to PASS.
+  #
+  # Also emits a host marker for each injection attempt:
+  #   AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS/FAIL|attempt=<n>|tablet_mode=device/broadcast
+  #
+  # Note: The guest image must be provisioned with `--test-input-tablet-events` (or env var equivalent) so the
+  # guest selftest runs the read-report loop.
+  [Parameter(Mandatory = $false)]
+  [Alias("WithVirtioInputTabletEvents", "EnableVirtioInputTabletEvents")]
+  [switch]$WithInputTabletEvents,
+
   # If set, stream newly captured COM1 serial output to stdout while waiting.
   [Parameter(Mandatory = $false)]
   [switch]$FollowSerial,
@@ -125,6 +137,7 @@ $ErrorActionPreference = "Stop"
 # Stable QOM `id=` values for virtio-input devices so QMP can target them explicitly.
 $script:VirtioInputKeyboardQmpId = "aero_virtio_kbd0"
 $script:VirtioInputMouseQmpId = "aero_virtio_mouse0"
+$script:VirtioInputTabletQmpId = "aero_virtio_tablet0"
 if ($VerifyVirtioSndWav) {
   if (-not $WithVirtioSnd) {
     throw "-VerifyVirtioSndWav requires -WithVirtioSnd."
@@ -435,6 +448,11 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputEvents")]
     [bool]$RequireVirtioInputEventsPass = $false,
+    # If true, require the optional virtio-input-tablet-events marker to PASS (host will inject absolute-pointer events
+    # via QMP).
+    [Parameter(Mandatory = $false)]
+    [Alias("EnableVirtioInputTabletEvents")]
+    [bool]$RequireVirtioInputTabletEventsPass = $false,
     # Best-effort QMP channel for input injection.
     [Parameter(Mandatory = $false)] [string]$QmpHost = "127.0.0.1",
     [Parameter(Mandatory = $false)] [Nullable[int]]$QmpPort = $null
@@ -454,6 +472,12 @@ function Wait-AeroSelftestResult {
   $sawVirtioInputEventsSkip = $false
   $inputEventsInjectAttempts = 0
   $nextInputEventsInject = [DateTime]::UtcNow
+  $sawVirtioInputTabletEventsReady = $false
+  $sawVirtioInputTabletEventsPass = $false
+  $sawVirtioInputTabletEventsFail = $false
+  $sawVirtioInputTabletEventsSkip = $false
+  $inputTabletEventsInjectAttempts = 0
+  $nextInputTabletEventsInject = [DateTime]::UtcNow
   $sawVirtioSndPass = $false
   $sawVirtioSndSkip = $false
   $sawVirtioSndFail = $false
@@ -511,6 +535,25 @@ function Wait-AeroSelftestResult {
       if ($RequireVirtioInputEventsPass) {
         if ($sawVirtioInputEventsSkip) { return @{ Result = "VIRTIO_INPUT_EVENTS_SKIPPED"; Tail = $tail } }
         if ($sawVirtioInputEventsFail) { return @{ Result = "VIRTIO_INPUT_EVENTS_FAILED"; Tail = $tail } }
+      }
+
+      if (-not $sawVirtioInputTabletEventsReady -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-tablet-events\|READY") {
+        $sawVirtioInputTabletEventsReady = $true
+      }
+      if (-not $sawVirtioInputTabletEventsPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-tablet-events\|PASS") {
+        $sawVirtioInputTabletEventsPass = $true
+      }
+      if (-not $sawVirtioInputTabletEventsFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-tablet-events\|FAIL") {
+        $sawVirtioInputTabletEventsFail = $true
+      }
+      if (-not $sawVirtioInputTabletEventsSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-tablet-events\|SKIP") {
+        $sawVirtioInputTabletEventsSkip = $true
+      }
+
+      # If tablet events are required, fail fast when the guest reports SKIP/FAIL for virtio-input-tablet-events.
+      if ($RequireVirtioInputTabletEventsPass) {
+        if ($sawVirtioInputTabletEventsSkip) { return @{ Result = "VIRTIO_INPUT_TABLET_EVENTS_SKIPPED"; Tail = $tail } }
+        if ($sawVirtioInputTabletEventsFail) { return @{ Result = "VIRTIO_INPUT_TABLET_EVENTS_FAILED"; Tail = $tail } }
       }
       if (-not $sawVirtioSndPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|PASS") {
         $sawVirtioSndPass = $true
@@ -612,6 +655,17 @@ function Wait-AeroSelftestResult {
               return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail }
             }
           }
+          if ($RequireVirtioInputTabletEventsPass) {
+            if ($sawVirtioInputTabletEventsFail) {
+              return @{ Result = "VIRTIO_INPUT_TABLET_EVENTS_FAILED"; Tail = $tail }
+            }
+            if (-not $sawVirtioInputTabletEventsPass) {
+              if ($sawVirtioInputTabletEventsSkip) {
+                return @{ Result = "VIRTIO_INPUT_TABLET_EVENTS_SKIPPED"; Tail = $tail }
+              }
+              return @{ Result = "MISSING_VIRTIO_INPUT_TABLET_EVENTS"; Tail = $tail }
+            }
+          }
 
           return @{ Result = "PASS"; Tail = $tail }
         }
@@ -630,6 +684,13 @@ function Wait-AeroSelftestResult {
                   if (-not $sawVirtioInputEventsPass) {
                     if ($sawVirtioInputEventsSkip) { return @{ Result = "VIRTIO_INPUT_EVENTS_SKIPPED"; Tail = $tail } }
                     return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail }
+                  }
+                }
+                if ($RequireVirtioInputTabletEventsPass) {
+                  if ($sawVirtioInputTabletEventsFail) { return @{ Result = "VIRTIO_INPUT_TABLET_EVENTS_FAILED"; Tail = $tail } }
+                  if (-not $sawVirtioInputTabletEventsPass) {
+                    if ($sawVirtioInputTabletEventsSkip) { return @{ Result = "VIRTIO_INPUT_TABLET_EVENTS_SKIPPED"; Tail = $tail } }
+                    return @{ Result = "MISSING_VIRTIO_INPUT_TABLET_EVENTS"; Tail = $tail }
                   }
                 }
                 return @{ Result = "PASS"; Tail = $tail }
@@ -657,6 +718,13 @@ function Wait-AeroSelftestResult {
             return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail }
           }
         }
+        if ($RequireVirtioInputTabletEventsPass) {
+          if ($sawVirtioInputTabletEventsFail) { return @{ Result = "VIRTIO_INPUT_TABLET_EVENTS_FAILED"; Tail = $tail } }
+          if (-not $sawVirtioInputTabletEventsPass) {
+            if ($sawVirtioInputTabletEventsSkip) { return @{ Result = "VIRTIO_INPUT_TABLET_EVENTS_SKIPPED"; Tail = $tail } }
+            return @{ Result = "MISSING_VIRTIO_INPUT_TABLET_EVENTS"; Tail = $tail }
+          }
+        }
 
         return @{ Result = "PASS"; Tail = $tail }
       }
@@ -675,6 +743,10 @@ function Wait-AeroSelftestResult {
       $delta = ([DateTime]::UtcNow - $virtioInputMarkerTime).TotalSeconds
       if ($delta -ge 20) { return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail } }
     }
+    if ($RequireVirtioInputTabletEventsPass -and ($null -ne $virtioInputMarkerTime) -and (-not $sawVirtioInputTabletEventsReady) -and (-not $sawVirtioInputTabletEventsPass) -and (-not $sawVirtioInputTabletEventsFail) -and (-not $sawVirtioInputTabletEventsSkip)) {
+      $delta = ([DateTime]::UtcNow - $virtioInputMarkerTime).TotalSeconds
+      if ($delta -ge 20) { return @{ Result = "MISSING_VIRTIO_INPUT_TABLET_EVENTS"; Tail = $tail } }
+    }
     if ($RequireVirtioInputEventsPass -and $sawVirtioInputEventsReady -and (-not $sawVirtioInputEventsPass) -and (-not $sawVirtioInputEventsFail) -and (-not $sawVirtioInputEventsSkip)) {
       if (($null -eq $QmpPort) -or ($QmpPort -le 0)) {
         return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
@@ -685,6 +757,20 @@ function Wait-AeroSelftestResult {
         $ok = Try-AeroQmpInjectVirtioInputEvents -Host $QmpHost -Port ([int]$QmpPort) -Attempt $inputEventsInjectAttempts
         if (-not $ok) {
           return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
+        }
+      }
+    }
+
+    if ($RequireVirtioInputTabletEventsPass -and $sawVirtioInputTabletEventsReady -and (-not $sawVirtioInputTabletEventsPass) -and (-not $sawVirtioInputTabletEventsFail) -and (-not $sawVirtioInputTabletEventsSkip)) {
+      if (($null -eq $QmpPort) -or ($QmpPort -le 0)) {
+        return @{ Result = "QMP_INPUT_TABLET_INJECT_FAILED"; Tail = $tail }
+      }
+      if ($inputTabletEventsInjectAttempts -lt 20 -and [DateTime]::UtcNow -ge $nextInputTabletEventsInject) {
+        $inputTabletEventsInjectAttempts++
+        $nextInputTabletEventsInject = [DateTime]::UtcNow.AddMilliseconds(500)
+        $ok = Try-AeroQmpInjectVirtioInputTabletEvents -Host $QmpHost -Port ([int]$QmpPort) -Attempt $inputTabletEventsInjectAttempts
+        if (-not $ok) {
+          return @{ Result = "QMP_INPUT_TABLET_INJECT_FAILED"; Tail = $tail }
         }
       }
     }
@@ -1473,6 +1559,87 @@ function Try-AeroQmpInjectVirtioInputEvents {
   return $false
 }
 
+function Try-AeroQmpInjectVirtioInputTabletEvents {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Host,
+    [Parameter(Mandatory = $true)] [int]$Port,
+    # Outer retry attempt number (1-based). Included in the emitted host marker so log scraping can
+    # correlate guest READY/PASS timing with host injection attempts.
+    [Parameter(Mandatory = $true)] [int]$Attempt
+  )
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  $lastErr = ""
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $client = $null
+    try {
+      $client = [System.Net.Sockets.TcpClient]::new()
+      $client.ReceiveTimeout = 2000
+      $client.SendTimeout = 2000
+      $client.Connect($Host, $Port)
+
+      $stream = $client.GetStream()
+      $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+      $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
+      $writer.NewLine = "`n"
+      $writer.AutoFlush = $true
+
+      # Greeting.
+      $null = $reader.ReadLine()
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "qmp_capabilities" }
+
+      $tabletDevice = $script:VirtioInputTabletQmpId
+
+      # Deterministic absolute-pointer move + click sequence.
+      #
+      # This must match the guest selftest expectations in aero-virtio-selftest.exe.
+      # Reset move (0,0) to avoid "no-op" repeats.
+      $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
+        @{ type = "abs"; data = @{ axis = "x"; value = 0 } },
+        @{ type = "abs"; data = @{ axis = "y"; value = 0 } }
+      )
+
+      Start-Sleep -Milliseconds 50
+
+      # Target move.
+      $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
+        @{ type = "abs"; data = @{ axis = "x"; value = 10000 } },
+        @{ type = "abs"; data = @{ axis = "y"; value = 20000 } }
+      )
+
+      Start-Sleep -Milliseconds 50
+
+      # Left click down/up.
+      $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
+        @{ type = "btn"; data = @{ down = $true; button = "left" } }
+      )
+
+      Start-Sleep -Milliseconds 50
+
+      $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
+        @{ type = "btn"; data = @{ down = $false; button = "left" } }
+      )
+
+      $tabletMode = if ([string]::IsNullOrEmpty($tabletDevice)) { "broadcast" } else { "device" }
+      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=$Attempt|tablet_mode=$tabletMode"
+      return $true
+    } catch {
+      try { $lastErr = [string]$_.Exception.Message } catch { }
+      Start-Sleep -Milliseconds 100
+      continue
+    } finally {
+      if ($client) { $client.Close() }
+    }
+  }
+
+  $reason = "timeout"
+  if (-not [string]::IsNullOrEmpty($lastErr)) {
+    $reason = Sanitize-AeroMarkerValue $lastErr
+  }
+  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=$Attempt|reason=$reason"
+  return $false
+}
+
 $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
 
 $serialParent = Split-Path -Parent $SerialLogPath
@@ -1496,7 +1663,8 @@ try {
   $qmpPort = $null
   $qmpArgs = @()
   $needInputEvents = [bool]$WithInputEvents
-  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents
+  $needInputTabletEvents = [bool]$WithInputTabletEvents
+  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputTabletEvents
   if ($needQmp) {
     # QMP channel:
     # - Used for graceful shutdown when using the `wav` audiodev backend (so the RIFF header is finalized).
@@ -1507,8 +1675,8 @@ try {
         "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
       )
     } catch {
-      if ($needInputEvents) {
-        throw "Failed to allocate QMP port required for -WithInputEvents: $_"
+      if ($needInputEvents -or $needInputTabletEvents) {
+        throw "Failed to allocate QMP port required for -WithInputEvents/-WithInputTabletEvents: $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -1535,6 +1703,7 @@ try {
     $virtioInputArgs = @()
     $haveVirtioKbd = $false
     $haveVirtioMouse = $false
+    $haveVirtioTablet = $false
     try {
       $null = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName "virtio-keyboard-pci"
       $haveVirtioKbd = $true
@@ -1542,6 +1711,10 @@ try {
     try {
       $null = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName "virtio-mouse-pci"
       $haveVirtioMouse = $true
+    } catch { }
+    try {
+      $null = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci"
+      $haveVirtioTablet = $true
     } catch { }
 
     if ($haveVirtioKbd -and $haveVirtioMouse) {
@@ -1555,9 +1728,19 @@ try {
         "-device", $kbdArg,
         "-device", $mouseArg
       )
+      if ($needInputTabletEvents) {
+        if (-not $haveVirtioTablet) {
+          throw "QEMU does not advertise virtio-tablet-pci but -WithInputTabletEvents was enabled. Upgrade QEMU or omit -WithInputTabletEvents."
+        }
+        $tabletArg = "virtio-tablet-pci,id=$($script:VirtioInputTabletQmpId)"
+        if ($VirtioMsixVectors -gt 0) { $tabletArg += ",vectors=$VirtioMsixVectors" }
+        $virtioInputArgs += @(
+          "-device", $tabletArg
+        )
+      }
     } else {
-      if ($needInputEvents) {
-        throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputEvents was enabled. Upgrade QEMU or omit -WithInputEvents."
+      if ($needInputEvents -or $needInputTabletEvents) {
+        throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputEvents/-WithInputTabletEvents was enabled. Upgrade QEMU or omit input event injection."
       }
       Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."
     }
@@ -1616,7 +1799,7 @@ try {
     ) + $virtioSndArgs + $QemuExtraArgs
   } else {
     # Ensure the QEMU binary supports the modern-only + contract revision properties we rely on.
-    Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 -QemuSystem $QemuSystem -WithVirtioInput
+    Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 -QemuSystem $QemuSystem -WithVirtioInput -WithVirtioTablet:$needInputTabletEvents
     # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042/DEV_1052) per AERO-W7-VIRTIO v1.
     # The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
     # drivers bind under QEMU.
@@ -1627,6 +1810,13 @@ try {
 
     $kbd = "$(New-AeroWin7VirtioKeyboardDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputKeyboardQmpId)"
     $mouse = "$(New-AeroWin7VirtioMouseDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputMouseQmpId)"
+    $virtioTabletArgs = @()
+    if ($needInputTabletEvents) {
+      $tablet = "$(New-AeroWin7VirtioTabletDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputTabletQmpId)"
+      $virtioTabletArgs = @(
+        "-device", $tablet
+      )
+    }
 
     $virtioSndArgs = @()
     if ($WithVirtioSnd) {
@@ -1678,7 +1868,8 @@ try {
       "-netdev", $netdev,
       "-device", $nic,
       "-device", $kbd,
-      "-device", $mouse,
+      "-device", $mouse
+    ) + $virtioTabletArgs + @(
       "-drive", $drive,
       "-device", $blk
     ) + $virtioSndArgs + $QemuExtraArgs
@@ -1691,7 +1882,7 @@ try {
   $scriptExitCode = 0
 
   try {
-    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequirePerTestMarkers (-not $VirtioTransitional) -RequireVirtioSndPass ([bool]$WithVirtioSnd) -RequireVirtioInputEventsPass ([bool]$needInputEvents) -QmpHost "127.0.0.1" -QmpPort $qmpPort
+    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequirePerTestMarkers (-not $VirtioTransitional) -RequireVirtioSndPass ([bool]$WithVirtioSnd) -RequireVirtioInputEventsPass ([bool]$needInputEvents) -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) -QmpHost "127.0.0.1" -QmpPort $qmpPort
   } finally {
     if (-not $proc.HasExited) {
       $quitOk = $false
@@ -1808,6 +1999,38 @@ try {
     }
     "QMP_INPUT_INJECT_FAILED" {
       Write-Host "FAIL: QMP_INPUT_INJECT_FAILED: failed to inject virtio-input events via QMP (ensure QMP is reachable and QEMU supports input-send-event)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_INPUT_TABLET_EVENTS" {
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputTabletEvents was enabled (guest selftest too old or missing --test-input-tablet-events)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_TABLET_EVENTS_SKIPPED" {
+      Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but -WithInputTabletEvents was enabled (provision the guest with --test-input-tablet-events)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_TABLET_EVENTS_FAILED" {
+      Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while -WithInputTabletEvents was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "QMP_INPUT_TABLET_INJECT_FAILED" {
+      Write-Host "FAIL: QMP_INPUT_TABLET_INJECT_FAILED: failed to inject virtio-input tablet events via QMP (ensure QMP is reachable and QEMU supports input-send-event)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
