@@ -104,6 +104,14 @@ fn read_u8_through_generic<B: MemoryBus>(mut bus: B, paddr: u64) -> u8 {
     bus.read_u8(paddr)
 }
 
+fn read_bytes_through_generic<B: MemoryBus>(mut bus: B, paddr: u64, dst: &mut [u8]) {
+    bus.read_bytes(paddr, dst)
+}
+
+fn write_bytes_through_generic<B: MemoryBus>(mut bus: B, paddr: u64, src: &[u8]) {
+    bus.write_bytes(paddr, src)
+}
+
 #[test]
 fn memory_bus_is_implemented_for_mut_refs() {
     // Compile-time assertion: `&mut TestMemory` should satisfy `MemoryBus` bounds. This is relied
@@ -116,6 +124,112 @@ fn memory_bus_is_implemented_for_mut_refs() {
     let got = read_u8_through_generic(&mut mem, 0);
     assert_eq!(got, 0xaa);
     assert_eq!(mem.reads(), 1);
+}
+
+#[test]
+fn memory_bus_read_bytes_is_implemented_for_mut_refs() {
+    // Compile-time assertion: `&mut TestMemory` should satisfy `MemoryBus` bounds for bulk ops too.
+    let mut mem = TestMemory::new(0x10);
+    mem.data[0..3].copy_from_slice(&[0xaa, 0xbb, 0xcc]);
+    mem.reset_counters();
+
+    let mut buf = [0u8; 3];
+    read_bytes_through_generic(&mut mem, 0, &mut buf);
+    assert_eq!(buf, [0xaa, 0xbb, 0xcc]);
+    // Default `read_bytes` falls back to `read_u8` byte-by-byte.
+    assert_eq!(mem.reads(), 3);
+}
+
+#[test]
+fn bulk_ops_are_forwarded_for_mut_refs() {
+    // The `MemoryBus for &mut T` blanket impl must forward bulk ops to `T`'s implementation.
+    // This is important because optimized backends often override `read_bytes`/`write_bytes`.
+    #[derive(Clone)]
+    struct BulkTestMemory {
+        data: Vec<u8>,
+        read_u8_calls: usize,
+        read_bytes_calls: usize,
+        write_u8_calls: usize,
+        write_bytes_calls: usize,
+    }
+
+    impl BulkTestMemory {
+        fn new(data: Vec<u8>) -> Self {
+            Self {
+                data,
+                read_u8_calls: 0,
+                read_bytes_calls: 0,
+                write_u8_calls: 0,
+                write_bytes_calls: 0,
+            }
+        }
+    }
+
+    impl MemoryBus for BulkTestMemory {
+        fn read_u8(&mut self, paddr: u64) -> u8 {
+            self.read_u8_calls += 1;
+            self.data[paddr as usize]
+        }
+
+        fn read_u16(&mut self, paddr: u64) -> u16 {
+            let off = paddr as usize;
+            u16::from_le_bytes(self.data[off..off + 2].try_into().unwrap())
+        }
+
+        fn read_u32(&mut self, paddr: u64) -> u32 {
+            let off = paddr as usize;
+            u32::from_le_bytes(self.data[off..off + 4].try_into().unwrap())
+        }
+
+        fn read_u64(&mut self, paddr: u64) -> u64 {
+            let off = paddr as usize;
+            u64::from_le_bytes(self.data[off..off + 8].try_into().unwrap())
+        }
+
+        fn write_u8(&mut self, paddr: u64, value: u8) {
+            self.write_u8_calls += 1;
+            self.data[paddr as usize] = value;
+        }
+
+        fn write_u16(&mut self, paddr: u64, value: u16) {
+            let off = paddr as usize;
+            self.data[off..off + 2].copy_from_slice(&value.to_le_bytes());
+        }
+
+        fn write_u32(&mut self, paddr: u64, value: u32) {
+            let off = paddr as usize;
+            self.data[off..off + 4].copy_from_slice(&value.to_le_bytes());
+        }
+
+        fn write_u64(&mut self, paddr: u64, value: u64) {
+            let off = paddr as usize;
+            self.data[off..off + 8].copy_from_slice(&value.to_le_bytes());
+        }
+
+        fn read_bytes(&mut self, paddr: u64, dst: &mut [u8]) {
+            self.read_bytes_calls += 1;
+            let off = paddr as usize;
+            dst.copy_from_slice(&self.data[off..off + dst.len()]);
+        }
+
+        fn write_bytes(&mut self, paddr: u64, src: &[u8]) {
+            self.write_bytes_calls += 1;
+            let off = paddr as usize;
+            self.data[off..off + src.len()].copy_from_slice(src);
+        }
+    }
+
+    let mut mem = BulkTestMemory::new(vec![0x11, 0x22, 0x33, 0x44]);
+    let mut buf = [0u8; 2];
+    read_bytes_through_generic(&mut mem, 1, &mut buf);
+    assert_eq!(buf, [0x22, 0x33]);
+    assert_eq!(mem.read_bytes_calls, 1);
+    assert_eq!(mem.read_u8_calls, 0);
+
+    write_bytes_through_generic(&mut mem, 0, &[0xAA, 0xBB]);
+    assert_eq!(mem.data[..2], [0xAA, 0xBB]);
+    assert_eq!(mem.write_bytes_calls, 1);
+    assert_eq!(mem.write_u8_calls, 0);
 }
 
 #[test]

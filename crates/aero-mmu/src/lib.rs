@@ -24,6 +24,28 @@ pub trait MemoryBus {
     fn write_u16(&mut self, paddr: u64, value: u16);
     fn write_u32(&mut self, paddr: u64, value: u32);
     fn write_u64(&mut self, paddr: u64, value: u64);
+
+    /// Read a byte slice from physical memory.
+    ///
+    /// The default implementation falls back to byte-at-a-time reads via [`MemoryBus::read_u8`].
+    /// Backends are encouraged to override this with a more efficient bulk implementation.
+    #[inline]
+    fn read_bytes(&mut self, paddr: u64, dst: &mut [u8]) {
+        for (i, slot) in dst.iter_mut().enumerate() {
+            *slot = self.read_u8(paddr.wrapping_add(i as u64));
+        }
+    }
+
+    /// Write a byte slice to physical memory.
+    ///
+    /// The default implementation falls back to byte-at-a-time writes via [`MemoryBus::write_u8`].
+    /// Backends are encouraged to override this with a more efficient bulk implementation.
+    #[inline]
+    fn write_bytes(&mut self, paddr: u64, src: &[u8]) {
+        for (i, byte) in src.iter().copied().enumerate() {
+            self.write_u8(paddr.wrapping_add(i as u64), byte);
+        }
+    }
 }
 
 impl<T: MemoryBus + ?Sized> MemoryBus for &mut T {
@@ -65,6 +87,16 @@ impl<T: MemoryBus + ?Sized> MemoryBus for &mut T {
     #[inline]
     fn write_u64(&mut self, paddr: u64, value: u64) {
         <T as MemoryBus>::write_u64(&mut **self, paddr, value)
+    }
+
+    #[inline]
+    fn read_bytes(&mut self, paddr: u64, dst: &mut [u8]) {
+        <T as MemoryBus>::read_bytes(&mut **self, paddr, dst)
+    }
+
+    #[inline]
+    fn write_bytes(&mut self, paddr: u64, src: &[u8]) {
+        <T as MemoryBus>::write_bytes(&mut **self, paddr, src)
     }
 }
 
@@ -111,6 +143,16 @@ impl MemoryBus for memory::Bus {
     fn write_u64(&mut self, paddr: u64, value: u64) {
         memory::MemoryBus::write_u64(self, paddr, value)
     }
+
+    #[inline]
+    fn read_bytes(&mut self, paddr: u64, dst: &mut [u8]) {
+        memory::MemoryBus::read_physical(self, paddr, dst)
+    }
+
+    #[inline]
+    fn write_bytes(&mut self, paddr: u64, src: &[u8]) {
+        memory::MemoryBus::write_physical(self, paddr, src)
+    }
 }
 
 /// Enable use of [`memory::PhysicalMemoryBus`] as the MMU page-walk backend.
@@ -154,6 +196,16 @@ impl MemoryBus for memory::PhysicalMemoryBus {
     #[inline]
     fn write_u64(&mut self, paddr: u64, value: u64) {
         memory::MemoryBus::write_u64(self, paddr, value)
+    }
+
+    #[inline]
+    fn read_bytes(&mut self, paddr: u64, dst: &mut [u8]) {
+        memory::MemoryBus::read_physical(self, paddr, dst)
+    }
+
+    #[inline]
+    fn write_bytes(&mut self, paddr: u64, src: &[u8]) {
+        memory::MemoryBus::write_physical(self, paddr, src)
     }
 }
 
@@ -199,6 +251,16 @@ impl<'a> MemoryBus for dyn memory::MemoryBus + 'a {
     fn write_u64(&mut self, paddr: u64, value: u64) {
         memory::MemoryBus::write_u64(self, paddr, value)
     }
+
+    #[inline]
+    fn read_bytes(&mut self, paddr: u64, dst: &mut [u8]) {
+        memory::MemoryBus::read_physical(self, paddr, dst)
+    }
+
+    #[inline]
+    fn write_bytes(&mut self, paddr: u64, src: &[u8]) {
+        memory::MemoryBus::write_physical(self, paddr, src)
+    }
 }
 
 /// Enable use of [`aero_mem::MemoryBus`] (the new shared physical address router) as the MMU
@@ -243,6 +305,17 @@ impl MemoryBus for aero_mem::MemoryBus {
     #[inline]
     fn write_u64(&mut self, paddr: u64, value: u64) {
         let _ = self.try_write_u64(paddr, value);
+    }
+
+    #[inline]
+    fn read_bytes(&mut self, paddr: u64, dst: &mut [u8]) {
+        dst.fill(0xFF);
+        let _ = self.try_read_bytes(paddr, dst);
+    }
+
+    #[inline]
+    fn write_bytes(&mut self, paddr: u64, src: &[u8]) {
+        let _ = self.try_write_bytes(paddr, src);
     }
 }
 

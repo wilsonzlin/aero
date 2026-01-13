@@ -342,9 +342,8 @@ impl<B, IO> PagingBus<B, IO> {
             let page_rem = (PAGE_SIZE as usize) - page_off;
             let chunk_len = page_rem.min(dst.len() - offset);
 
-            for i in 0..chunk_len {
-                dst[offset + i] = self.phys.read_u8(paddr.wrapping_add(i as u64));
-            }
+            self.phys
+                .read_bytes(paddr, &mut dst[offset..offset + chunk_len]);
 
             offset += chunk_len;
         }
@@ -381,9 +380,7 @@ impl<B, IO> PagingBus<B, IO> {
 
         let phys = &mut self.phys;
         for (paddr, len, src_off) in self.write_chunks.iter().copied() {
-            for i in 0..len {
-                phys.write_u8(paddr.wrapping_add(i as u64), src[src_off + i]);
-            }
+            phys.write_bytes(paddr, &src[src_off..src_off + len]);
         }
 
         Ok(())
