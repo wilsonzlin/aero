@@ -24,15 +24,19 @@
 //!
 //! Interrupts:
 //! - Legacy INTx is modelled via [`NvmeController::intx_level`].
-//! - The PCI wrapper [`NvmePciDevice`] also supports a single-vector MSI capability; when the
-//!   guest enables MSI and the platform attaches an [`aero_platform::interrupts::msi::MsiTrigger`]
-//!   sink, NVMe completions trigger MSI deliveries instead of asserting INTx.
+//! - [`NvmePciDevice`] exposes MSI and MSI-X PCI capabilities:
+//!   - When MSI is enabled and the platform attaches an [`aero_platform::interrupts::msi::MsiTrigger`]
+//!     sink, NVMe completions trigger MSI deliveries instead of asserting INTx.
+//!   - MSI-X exposes a BAR0-backed MSI-X table/PBA region (currently a single vector). The device
+//!     model routes guest BAR0 MMIO accesses to the table/PBA so guests can configure vectors.
+//!     Interrupt delivery via MSI-X is not yet modelled.
 
 use std::collections::{BTreeMap, HashMap};
 
 use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_devices::pci::{
-    profile, MsiCapability, PciBarDefinition, PciConfigSpace, PciConfigSpaceState, PciDevice,
+    profile, MsiCapability, MsixCapability, PciBarDefinition, PciConfigSpace, PciConfigSpaceState,
+    PciDevice,
 };
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
@@ -86,6 +90,44 @@ const NVME_MAX_IO_QUEUES: usize = 256;
 // the mapped BAR0 window; without a cap this could grow `pending_sq_tail` without bound between
 // processing ticks.
 const NVME_MAX_PENDING_SQ_TAIL_UPDATES: usize = NVME_MAX_IO_QUEUES + 1; // + admin SQ0
+
+// -----------------------------------------------------------------------------
+// MSI-X configuration (BAR0-backed MSI-X table + PBA)
+// -----------------------------------------------------------------------------
+//
+// We expose a minimal MSI-X capability so guests can bind modern NVMe drivers that prefer MSI-X
+// over legacy INTx. The controller model does not yet deliver MSI-X interrupts, but guests still
+// expect the BAR-backed MSI-X table/PBA to exist and to be writable.
+//
+// Layout:
+// - Table: BAR0 + 0x3000, one 16-byte entry (vector 0)
+// - PBA: immediately following the table, 8-byte aligned
+pub const NVME_MSIX_TABLE_SIZE: u16 = 1;
+pub const NVME_MSIX_TABLE_BAR: u8 = 0;
+pub const NVME_MSIX_TABLE_OFFSET: u32 = 0x3000;
+
+pub fn add_nvme_msix_capability(config: &mut PciConfigSpace) {
+    let table_size = NVME_MSIX_TABLE_SIZE;
+    let table_offset = NVME_MSIX_TABLE_OFFSET;
+    let table_bytes = u32::from(table_size).saturating_mul(16);
+    let pba_offset = align_up_u32(table_offset.saturating_add(table_bytes), 8);
+
+    // Keep the layout within the fixed BAR0 window.
+    debug_assert!(u64::from(pba_offset) < NvmeController::bar0_len());
+
+    config.add_capability(Box::new(MsixCapability::new(
+        table_size,
+        NVME_MSIX_TABLE_BAR,
+        table_offset,
+        NVME_MSIX_TABLE_BAR,
+        pba_offset,
+    )));
+}
+
+fn align_up_u32(value: u32, align: u32) -> u32 {
+    debug_assert!(align.is_power_of_two());
+    value.wrapping_add(align - 1) & !(align - 1)
+}
 
 /// Errors returned by disk backends.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -556,7 +598,8 @@ impl NvmeController {
     }
 
     pub const fn bar0_len() -> u64 {
-        // Registers (0x0..0x1000) + a small doorbell region for a few queues.
+        // Registers (0x0..0x1000) + doorbells + a small region reserved for PCI-level structures
+        // (e.g. MSI-X table/PBA).
         0x4000
     }
 
@@ -2203,6 +2246,7 @@ impl NvmePciDevice {
             },
         );
         config.add_capability(Box::new(MsiCapability::new()));
+        add_nvme_msix_capability(&mut config);
         Self {
             config,
             controller,
@@ -2375,6 +2419,39 @@ impl MmioHandler for NvmePciDevice {
         if (self.config.command() & PCI_COMMAND_MEM_ENABLE) == 0 {
             return all_ones(size);
         }
+
+        // MSI-X table/PBA live in BAR0 and must be accessible independently of NVMe controller
+        // register semantics (e.g. doorbells). Dispatch them before handing the access to the NVMe
+        // BAR0 register model.
+        if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
+            if msix.table_bir() == 0 {
+                let base = u64::from(msix.table_offset());
+                let end = base.saturating_add(msix.table_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    let mut data = [0u8; 8];
+                    msix.table_read(offset - base, &mut data[..size]);
+                    let mut out = 0u64;
+                    for i in 0..size {
+                        out |= u64::from(data[i]) << (i * 8);
+                    }
+                    return out;
+                }
+            }
+            if msix.pba_bir() == 0 {
+                let base = u64::from(msix.pba_offset());
+                let end = base.saturating_add(msix.pba_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    let mut data = [0u8; 8];
+                    msix.pba_read(offset - base, &mut data[..size]);
+                    let mut out = 0u64;
+                    for i in 0..size {
+                        out |= u64::from(data[i]) << (i * 8);
+                    }
+                    return out;
+                }
+            }
+        }
+
         self.controller.mmio_read(offset, size)
     }
 
@@ -2386,6 +2463,34 @@ impl MmioHandler for NvmePciDevice {
         if (self.config.command() & PCI_COMMAND_MEM_ENABLE) == 0 {
             return;
         }
+
+        if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
+            if msix.table_bir() == 0 {
+                let base = u64::from(msix.table_offset());
+                let end = base.saturating_add(msix.table_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    let mut data = [0u8; 8];
+                    for i in 0..size {
+                        data[i] = ((value >> (i * 8)) & 0xff) as u8;
+                    }
+                    msix.table_write(offset - base, &data[..size]);
+                    return;
+                }
+            }
+            if msix.pba_bir() == 0 {
+                let base = u64::from(msix.pba_offset());
+                let end = base.saturating_add(msix.pba_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    let mut data = [0u8; 8];
+                    for i in 0..size {
+                        data[i] = ((value >> (i * 8)) & 0xff) as u8;
+                    }
+                    msix.pba_write(offset - base, &data[..size]);
+                    return;
+                }
+            }
+        }
+
         self.controller.mmio_write(offset, size, value)
     }
 }
@@ -2820,6 +2925,43 @@ mod tests {
             0,
             "CSTS.RDY must remain unchanged"
         );
+    }
+
+    #[test]
+    fn msix_table_mmio_round_trip() {
+        let disk = TestDisk::new(1024);
+        let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)).unwrap());
+        dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
+
+        let (table_base, pba_base, table_bir, pba_bir) = {
+            let msix = dev
+                .config()
+                .capability::<MsixCapability>()
+                .expect("NVMe device should expose MSI-X capability");
+            (
+                u64::from(msix.table_offset()),
+                u64::from(msix.pba_offset()),
+                msix.table_bir(),
+                msix.pba_bir(),
+            )
+        };
+        assert_eq!(table_bir, 0, "MSI-X table should be BAR0-backed");
+        assert_eq!(pba_bir, 0, "MSI-X PBA should be BAR0-backed");
+
+        // Program the first MSI-X table entry using MMIO accesses and ensure reads observe the
+        // written bytes.
+        MmioHandler::write(&mut dev, table_base, 8, 0x1122_3344_5566_7788);
+        assert_eq!(
+            MmioHandler::read(&mut dev, table_base, 8),
+            0x1122_3344_5566_7788
+        );
+
+        MmioHandler::write(&mut dev, table_base + 8, 4, 0xAABB_CCDD);
+        assert_eq!(MmioHandler::read(&mut dev, table_base + 8, 4), 0xAABB_CCDD);
+
+        // PBA is read-only; writes must be ignored.
+        MmioHandler::write(&mut dev, pba_base, 8, u64::MAX);
+        assert_eq!(MmioHandler::read(&mut dev, pba_base, 8), 0);
     }
 
     #[test]

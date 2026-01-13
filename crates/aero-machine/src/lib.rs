@@ -59,7 +59,7 @@ use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 use aero_devices::usb::uhci::UhciPciDevice;
 pub use aero_devices_input::Ps2MouseButton;
-use aero_devices_nvme::{NvmeController, NvmePciDevice};
+use aero_devices_nvme::{add_nvme_msix_capability, NvmeController, NvmePciDevice};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
@@ -1075,6 +1075,7 @@ impl NvmePciConfigDevice {
             },
         );
         cfg.add_capability(Box::new(MsiCapability::new()));
+        add_nvme_msix_capability(&mut cfg);
         Self { cfg }
     }
 }
