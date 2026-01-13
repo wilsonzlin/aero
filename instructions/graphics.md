@@ -13,6 +13,32 @@
 
 ---
 
+## Current status / what’s missing
+
+Most of the “hard” graphics pieces already exist in-tree (with unit/integration tests). The main
+remaining gap is **wiring the canonical AeroGPU device (A3A0:0001) into the canonical machine and
+handing off scanout from boot VGA/VBE → WDDM**.
+
+Key docs for that bring-up:
+
+- [`docs/abi/aerogpu-pci-identity.md`](../docs/abi/aerogpu-pci-identity.md) — canonical AeroGPU PCI IDs + current `aero_machine::Machine` status
+- [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md) — required VGA/VBE compatibility + scanout handoff model
+- [`docs/graphics/win7-vblank-present-requirements.md`](../docs/graphics/win7-vblank-present-requirements.md) — Win7 vblank/present timing contract (DWM/Aero stability)
+
+Quick reality check (as of this repo revision):
+
+- ✅ Boot display: `crates/aero-gpu-vga/` is a working VGA/VBE device model and is wired into
+  `crates/aero-machine/` (plus BIOS INT 10h handlers in `crates/firmware/`).
+- ✅ AeroGPU ABI/protocol: `emulator/protocol/` (crate `aero-protocol`) contains Rust **and**
+  TypeScript mirrors + ABI drift tests; it’s consumed by both Rust (`crates/aero-gpu/`, `crates/emulator/`)
+  and the browser GPU worker (`web/src/workers/`).
+- ✅ D3D9 + D3D11 translation: substantial implementations exist (`crates/aero-d3d9/`,
+  `crates/aero-d3d11/`) with extensive host-side tests.
+- ✅ WebGPU backend: `crates/aero-webgpu/` + `crates/aero-gpu/` provide WebGPU/wgpu-backed execution and present paths.
+- 🚧 Missing: `aero_machine::Machine` still uses a **transitional** VGA/VBE PCI stub for boot display and
+  does **not** yet expose the full AeroGPU WDDM device model as the primary display adapter (see the
+  docs linked above).
+
 ## Overview
 
 This workstream owns **graphics emulation**: VGA/VBE for boot, DirectX 9/10/11 translation for Windows applications, and the WebGPU/WebGL2 backend that renders to the browser canvas.
@@ -33,8 +59,10 @@ Graphics is what makes Windows 7 "usable." The Aero glass interface, DWM composi
 | `crates/aero-d3d11/` | DirectX 10/11 translation |
 | `crates/aero-dxbc/` | DXBC bytecode parser (shared) |
 | `crates/aero-webgpu/` | WebGPU abstraction layer |
+| `emulator/protocol/` | **Canonical** AeroGPU ABI mirrors (Rust + TypeScript) |
+| `crates/aero-machine/` | Canonical full-system machine (`aero_machine::Machine`) — currently boots via `aero-gpu-vga` |
 | `drivers/aerogpu/` | Windows 7 AeroGPU driver (KMD + UMD) |
-| `web/src/gpu/` | TypeScript GPU worker code |
+| `web/src/gpu/` + `web/src/workers/` | TypeScript GPU runtime + GPU worker plumbing |
 
 ---
 
@@ -46,6 +74,8 @@ Graphics is what makes Windows 7 "usable." The Aero glass interface, DWM composi
 - [`docs/16-d3d9ex-dwm-compatibility.md`](../docs/16-d3d9ex-dwm-compatibility.md) — D3D9Ex for DWM/Aero
 - [`docs/16-d3d10-11-translation.md`](../docs/16-d3d10-11-translation.md) — D3D10/11 details
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md) — VGA/VBE boot compatibility
+- [`docs/abi/aerogpu-pci-identity.md`](../docs/abi/aerogpu-pci-identity.md) — AeroGPU PCI identity contract (A3A0:0001)
+- [`docs/graphics/win7-vblank-present-requirements.md`](../docs/graphics/win7-vblank-present-requirements.md) — Win7 vblank/present semantics (DWM)
 
 **Reference:**
 
@@ -86,80 +116,75 @@ Reference: `docs/abi/aerogpu-pci-identity.md` (canonical AeroGPU VID/DID contrac
 
 ## Tasks
 
-### VGA Tasks
+The tables below are meant to be an **onboarding map**: what already exists in-tree (with tests) and
+what remains.
 
-| ID | Task | Priority | Dependencies | Complexity |
-|----|------|----------|--------------|------------|
-| VG-001 | VGA register emulation | P0 | None | High |
-| VG-002 | Text mode rendering | P0 | VG-001 | Medium |
-| VG-003 | Mode 13h (320x200x256) | P0 | VG-001 | Medium |
-| VG-004 | Planar graphics modes | P1 | VG-001 | Medium |
-| VG-005 | SVGA/VESA modes | P0 | VG-001 | High |
-| VG-006 | VGA palette handling | P0 | VG-001 | Low |
-| VG-007 | VGA DAC | P0 | VG-006 | Low |
-| VG-008 | VGA BIOS interrupt handlers | P0 | VG-002 | Medium |
+Legend:
 
-### AeroGPU Tasks (Boot VGA + WDDM)
+- **Implemented** = exists in-tree and has at least unit/integration test coverage.
+- **Partial** = exists, but is intentionally minimal/stubbed or has known gaps.
+- **Remaining** = not implemented yet (or only exists as an out-of-tree doc/spec).
 
-| ID | Task | Priority | Dependencies | Complexity |
-|----|------|----------|--------------|------------|
-| AeroGPU-EMU-DEV-001 | Base AeroGPU PCI device model (BARs, interrupts, MMIO) | P0 | DM-007, DM-008 | High |
-| AeroGPU-EMU-DEV-002 | VGA legacy decode + VBE LFB modes + scanout handoff | P0 | AeroGPU-EMU-DEV-001, VG-005 | High |
-| AeroGPU-EMU-DEV-003 | WDDM scanout registers + present path (canvas) | P0 | AeroGPU-EMU-DEV-001 | High |
+### Boot display: VGA/VBE (`crates/aero-gpu-vga`)
 
-### DirectX-9 Tasks
+| ID | Status | Task | Where | How to test |
+|----|--------|------|-------|-------------|
+| VG-001 | Implemented | VGA register + legacy VRAM emulation (sequencer/CRTC/attribute/graphics + 0xA0000..0xBFFFF windows) | `crates/aero-gpu-vga/src/lib.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked` |
+| VG-002 | Implemented | Text mode rasterization (80x25) | `crates/aero-gpu-vga/src/lib.rs`, `crates/aero-gpu-vga/src/text_font.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked` |
+| VG-003 | Implemented | Mode 13h (320x200x256) chain-4 rendering | `crates/aero-gpu-vga/src/lib.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked` |
+| VG-004 | Partial | Planar graphics write modes + basic rasterization (enough for BIOS/boot) | `crates/aero-gpu-vga/src/lib.rs` (planar paths + tests) | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked` |
+| VG-005 | Implemented | Bochs VBE (`VBE_DISPI`) linear framebuffer modes (LFB at `SVGA_LFB_BASE`) | `crates/aero-gpu-vga/src/lib.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_vbe_sets_mode --locked` |
+| VG-006 | Implemented | Palette + DAC behavior (VGA ports `0x3C6..0x3C9`) | `crates/aero-gpu-vga/src/palette.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked` |
+| VG-007 | Implemented | Snapshot/restore (optional; behind `io-snapshot`) | `crates/aero-gpu-vga/src/snapshot.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test vga_snapshot_roundtrip --locked` |
+| VG-008 | Implemented | BIOS INT 10h VGA + VBE entrypoints (real-mode boot) | `crates/firmware/src/bios/int10.rs`, `crates/firmware/src/bios/int10_vbe.rs` | `bash ./scripts/safe-run.sh cargo test -p firmware --test int10_vbe --locked` |
 
-| ID | Task | Priority | Dependencies | Complexity |
-|----|------|----------|--------------|------------|
-| D9-001 | DXBC bytecode parser | P0 | None | High |
-| D9-002 | Shader model 2.0 translation | P0 | D9-001 | High |
-| D9-003 | Shader model 3.0 translation | P0 | D9-002 | High |
-| D9-004 | Vertex shader support | P0 | D9-002 | High |
-| D9-005 | Pixel shader support | P0 | D9-002 | High |
-| D9-006 | Render state translation | P0 | None | High |
-| D9-007 | Texture format translation | P0 | None | Medium |
-| D9-008 | Texture sampling | P0 | D9-007 | Medium |
-| D9-009 | Render target management | P0 | None | Medium |
-| D9-010 | Depth/stencil buffer | P0 | None | Medium |
-| D9-011 | Blend state | P0 | None | Medium |
-| D9-012 | D3D9 test suite | P0 | D9-001..D9-011 | High |
-| D9-013 | D3D9Ex API surface (DWM path) | P0 | D9-009, D9-012 | High |
-| D9-014 | Ex present stats + fences + shared surfaces | P0 | D9-013 | High |
-| D9-015 | D3D9Ex test app + integration test | P0 | D9-014 | Medium |
+### AeroGPU ABI/protocol (`emulator/protocol`, crate `aero-protocol`)
 
-### DirectX-10/11 Tasks
+| ID | Status | Task | Where | How to test |
+|----|--------|------|-------|-------------|
+| AGPU-PROTO-001 | Implemented | Rust mirrors of `drivers/aerogpu/protocol/*.h` (PCI IDs, MMIO regs, ring ABI, command ABI) | `emulator/protocol/aerogpu/*.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-protocol --locked` |
+| AGPU-PROTO-002 | Implemented | TypeScript mirrors + iterators/writers (consumed by `web/src/workers/`) | `emulator/protocol/aerogpu/*.ts` | `npm run test:protocol` |
+| AGPU-PROTO-003 | Implemented | ABI drift / conformance tests (Rust + TS) | `emulator/protocol/tests/*` | `bash ./scripts/safe-run.sh cargo test -p aero-protocol --locked` and `npm run test:protocol` |
 
-| ID | Task | Priority | Dependencies | Complexity |
-|----|------|----------|--------------|------------|
-| D1-001 | Extend DXBC parser for SM4/SM5 | P1 | D9-001 | High |
-| D1-002 | Shader model 4.0 VS/PS translation | P1 | D1-001 | High |
-| D1-003 | Shader model 5.0 VS/PS translation | P1 | D1-002 | High |
-| D1-004 | Constant buffers binding | P1 | WG-004, D1-001 | Medium |
-| D1-005 | Resource views: SRV/RTV/DSV | P1 | WG-005 | High |
-| D1-006 | Input layouts + semantic mapping | P1 | D1-001, WG-002 | High |
-| D1-007 | Blend/depth/rasterizer state objects | P1 | WG-002 | High |
-| D1-008 | DrawIndexed + instancing + indirect | P1 | WG-002, WG-004 | Medium |
-| D1-009 | Synchronization (queries/fences) | P1 | WG-008 | Medium |
-| D1-010 | Geometry shader support | P1 | D1-003 | High |
-| D1-011 | Structured buffers + UAV | P2 | D1-003, WG-004, WG-005 | High |
-| D1-012 | Compute shaders + dispatch | P2 | D1-003, WG-003 | High |
-| D1-013 | Tessellation shaders (HS/DS) | P2 | D1-012 | Very High |
-| D1-014 | D3D10/11 conformance suite | P1 | D1-002..D1-009 | High |
+### AeroGPU device model + scanout plumbing (the real remaining work)
 
-### WebGPU Backend Tasks
+| ID | Status | Task | Where | How to test |
+|----|--------|------|-------|-------------|
+| AGPU-DEV-001 | Implemented (in `crates/emulator/`) | AeroGPU PCI function (A3A0:0001): BAR0 MMIO, rings, IRQs, vblank tick, scanout regs | `crates/emulator/src/devices/pci/aerogpu.rs` | `bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_device --locked` |
+| AGPU-DEV-002 | Implemented | WebGPU-backed command execution + readback for tests | `crates/emulator/src/gpu_worker/aerogpu_wgpu_backend.rs` | `bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_end_to_end --locked` |
+| AGPU-WIRE-001 | **Remaining (P0)** | Wire the AeroGPU PCI device model into the canonical `aero_machine::Machine` (BDF `00:07.0`) | Start at: `crates/aero-machine/src/lib.rs`, `crates/devices/src/pci/profile.rs` (`AEROGPU`), `docs/abi/aerogpu-pci-identity.md` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test pci_display_bdf_contract --locked` |
+| AGPU-WIRE-002 | **Remaining (P0)** | Implement **boot VGA/VBE compatibility + scanout handoff** on the same AeroGPU adapter (remove the need for the transitional `00:0c.0` VGA stub) | Spec: `docs/16-aerogpu-vga-vesa-compat.md` • Legacy implementation reference: `crates/aero-gpu-vga/` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_vbe_sets_mode --locked` |
+| AGPU-WIRE-003 | **Remaining (P0)** | Canonical scanout → browser presentation path for AeroGPU (WDDM scanout should drive the canvas, not VGA) | `crates/aero-wasm/` (machine exports), `web/src/gpu/`, `web/src/workers/gpu-worker.ts` | `npm run test:webgpu` (Playwright WebGPU project) and `bash ./scripts/safe-run.sh cargo test -p aero-wasm --test wasm_smoke --locked` |
+| AGPU-WIRE-004 | **Remaining (P0)** | Validate Win7 vblank + vsynced present behavior against the documented contract (DWM stability) | Spec: `docs/graphics/win7-vblank-present-requirements.md` • Guest tests: `drivers/aerogpu/tests/win7/*` | In Win7 guest: `cd drivers\\aerogpu\\tests\\win7 && build_all_vs2010.cmd && run_all.cmd` |
 
-| ID | Task | Priority | Dependencies | Complexity |
-|----|------|----------|--------------|------------|
-| WG-001 | WebGPU device initialization | P0 | None | Low |
-| WG-002 | Render pipeline creation | P0 | WG-001 | Medium |
-| WG-003 | Compute pipeline creation | P1 | WG-001 | Medium |
-| WG-004 | Buffer management | P0 | WG-001 | Medium |
-| WG-005 | Texture management | P0 | WG-001 | Medium |
-| WG-006 | WGSL shader library | P0 | None | High |
-| WG-007 | Draw call batching | P1 | WG-002 | Medium |
-| WG-008 | Framebuffer presentation | P0 | WG-002 | Medium |
-| WG-009 | WebGL2 fallback | P2 | None | Very High |
-| WG-010 | Persistent GPU cache (IndexedDB/OPFS) | P1 | WG-001 | Medium |
+### DirectX 9 translation (`crates/aero-d3d9`)
+
+| ID | Status | Task | Where | How to test |
+|----|--------|------|-------|-------------|
+| D9-001 | Implemented | DXBC container parsing helpers | `crates/aero-d3d9/src/dxbc/`, `crates/aero-dxbc/src/` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked` |
+| D9-002 | Implemented | SM2/SM3 decode → IR → WGSL generation | `crates/aero-d3d9/src/sm3/`, `crates/aero-d3d9/src/shader.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked` |
+| D9-003 | Implemented | Fixed-function pipeline translation (FVF/TSS → generated WGSL) | `crates/aero-d3d9/src/fixed_function/` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_fixed_function --locked` |
+| D9-004 | Implemented | Resource model + runtime/state tracking (textures, samplers, RT/DS, eviction) | `crates/aero-d3d9/src/resources/`, `crates/aero-d3d9/src/runtime/`, `crates/aero-d3d9/src/state/` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked` |
+| D9-005 | Partial | D3D9Ex/DWM-facing semantics live in the **AeroGPU command processor** layer, not the translator | `crates/aero-gpu/src/command_processor.rs`, `docs/16-d3d9ex-dwm-compatibility.md` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_ex_protocol --locked` |
+
+### DirectX 10/11 translation (`crates/aero-d3d11`)
+
+| ID | Status | Task | Where | How to test |
+|----|--------|------|-------|-------------|
+| D11-001 | Implemented | SM4 decode + minimal SM4/SM5 → WGSL translation (FL10_0 bring-up) | `crates/aero-d3d11/src/sm4/`, `crates/aero-d3d11/src/shader_translate.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test shader_translate --locked` |
+| D11-002 | Implemented | WGPU-backed AeroGPU command executor (render/present path) | `crates/aero-d3d11/src/runtime/` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test aerogpu_cmd_smoke --locked` |
+| D11-003 | Partial | Geometry shaders are currently ignored for forward compatibility | `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_ignore --locked` |
+| D11-004 | Remaining | Compute/UAV/tessellation (SM5 features) | Start at: `crates/aero-d3d11/src/shader_translate.rs` and `crates/aero-d3d11/src/runtime/execute.rs` | Add tests under `crates/aero-d3d11/tests/` and run `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked` |
+
+### WebGPU/WebGL2 backend (`crates/aero-gpu`, `crates/aero-webgpu`, `crates/aero-gpu-wasm`)
+
+| ID | Status | Task | Where | How to test |
+|----|--------|------|-------|-------------|
+| WG-001 | Implemented | WebGPU adapter/device init + feature/limit negotiation | `crates/aero-webgpu/src/webgpu.rs`, `crates/aero-webgpu/src/caps.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-webgpu --test webgpu_smoke --locked` |
+| WG-002 | Implemented | wgpu-backed backend + shader/pipeline/resource helpers | `crates/aero-gpu/src/backend/wgpu_backend.rs`, `crates/aero-gpu/src/*` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu --locked` |
+| WG-003 | Partial | WebGL2 fallback is **present-only** today (no full D3D execution) | `crates/aero-gpu/src/backend/webgl2_present_backend.rs`, `web/src/gpu/raw-webgl2-presenter.ts` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test negotiated_features_gl --locked` |
+| WG-004 | Partial | Persistent caching exists for **D3D9 shader translation artifacts**; pipeline cache is still in-memory | Rust: `crates/aero-d3d9/src/runtime/shader_cache.rs` • JS: `web/gpu-cache/persistent_cache.ts` | (Browser) `wasm-pack test --headless --chrome crates/aero-d3d9` |
+| WG-005 | Implemented | WASM bindings used by the browser runtime | `crates/aero-gpu-wasm/src/lib.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-wasm --locked` |
 
 ---
 
@@ -216,10 +241,19 @@ Key considerations:
 
 ```bash
 # Run graphics tests
+bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked
+bash ./scripts/safe-run.sh cargo test -p aero-protocol --locked
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --locked
+bash ./scripts/safe-run.sh cargo test -p aero-webgpu --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-dxbc --locked
+
+# Run protocol TypeScript tests (Node test runner)
+npm run test:protocol
+
+# Run emulator-side AeroGPU device model tests
+bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_end_to_end --locked
 
 # Run D3D9 integration test
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_blend_depth_stencil --locked
