@@ -27,7 +27,7 @@ use aero_shared::scanout_state::{
 };
 use palette::{rgb_to_rgba_u32, Rgb};
 pub use snapshot::{VgaSnapshotError, VgaSnapshotV1};
-use text_font::FONT8X8_CP437;
+pub use text_font::FONT8X8_CP437;
 
 #[cfg(feature = "integration-memory")]
 mod integration_memory;

@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 mod aerogpu;
+mod aerogpu_legacy_text;
 mod guest_time;
 mod shared_disk;
 mod shared_iso_disk;
@@ -2954,14 +2955,6 @@ pub struct Machine {
     display_fb: Vec<u32>,
     display_width: u32,
     display_height: u32,
-    // Temporary legacy text-mode scanout renderer used when VGA is disabled and AeroGPU is
-    // enabled.
-    //
-    // AeroGPU is mutually exclusive with the standalone VGA/VBE path, but we still want BIOS/boot
-    // text output to be visible before the guest claims scanout (WDDM or VBE).
-    // `display_present` uses this renderer to present text mode by scanning the legacy text buffer
-    // at `0xB8000`.
-    aerogpu_text_renderer: Option<VgaDevice>,
 
     // Optional shared scanout descriptor used by the browser presentation pipeline.
     //
@@ -3146,7 +3139,6 @@ impl Machine {
             display_fb: Vec::new(),
             display_width: 0,
             display_height: 0,
-            aerogpu_text_renderer: None,
             #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
             scanout_state: None,
             ahci_port0_overlay: None,
@@ -3809,7 +3801,8 @@ impl Machine {
     ///
     /// - the guest-programmed AeroGPU scanout (WDDM scanout0), if claimed, or
     /// - the active VBE linear framebuffer (if a VBE mode is set), or
-    /// - BIOS/boot text mode output by scanning the legacy text buffer at `0xB8000`.
+    /// - BIOS/boot text mode output by rendering the legacy text buffer at `0xB8000` using BIOS
+    ///   Data Area (BDA) state for active page selection and cursor overlay.
     ///
     /// Otherwise (no VGA, no AeroGPU fallback), this clears the cached framebuffer and returns
     /// `(0, 0)` resolution.
@@ -4005,80 +3998,9 @@ impl Machine {
     }
 
     fn display_present_aerogpu_text_mode(&mut self) {
-        // Lazily allocate the text-mode renderer so we don't pay the 16MiB VRAM allocation cost
-        // unless the caller actually presents while VGA is disabled.
-        let vga = self
-            .aerogpu_text_renderer
-            .get_or_insert_with(VgaDevice::new);
-
-        // Force deterministic baseline: VGA text mode 80x25 with the built-in font and default VGA
-        // palette.
-        vga.set_text_mode_80x25();
-
-        // Read the full 32KiB legacy text window from guest physical memory.
-        //
-        // This address range is routed to whichever legacy VGA implementation is active
-        // (standalone VGA device model or the AeroGPU legacy VRAM alias), so `read_physical`
-        // provides the correct bytes without the renderer needing to know which path is wired.
-        let mut text = [0u8; 0x8000];
-        self.mem.read_physical(0xB8000, &mut text);
-
-        // The VGA text renderer expects the character bytes in plane 0 and the attribute bytes in
-        // plane 1 (odd/even mapping). The legacy memory window is interleaved `[ch][attr]`, so
-        // deinterleave into planes.
-        {
-            let vram = vga.vram_mut();
-            // Guard against unexpected VRAM size changes in the VGA device model.
-            if vram.len() < aero_gpu_vga::VGA_PLANE_SIZE + 0x4000 {
-                self.display_fb.clear();
-                self.display_width = 0;
-                self.display_height = 0;
-                return;
-            }
-
-            for i in 0..0x4000usize {
-                let base = i * 2;
-                vram[i] = text[base];
-                vram[aero_gpu_vga::VGA_PLANE_SIZE + i] = text[base + 1];
-            }
-        }
-
-        // Mirror BIOS text-mode state from the BDA into the renderer's CRTC regs.
-        let page_offset_bytes = BiosDataArea::read_video_page_offset(&mut self.mem);
-        let start_addr = (page_offset_bytes / 2) & 0x3FFF;
-        vga.port_write(0x3D4, 1, 0x0C);
-        vga.port_write(0x3D5, 1, u32::from((start_addr >> 8) as u8));
-        vga.port_write(0x3D4, 1, 0x0D);
-        vga.port_write(0x3D5, 1, u32::from((start_addr & 0x00FF) as u8));
-
-        let cols = BiosDataArea::read_screen_cols(&mut self.mem).max(1);
-        let page = BiosDataArea::read_active_page(&mut self.mem);
-        let (row, col) = BiosDataArea::read_cursor_pos(&mut self.mem, page);
-        let (cursor_start, cursor_end) = BiosDataArea::read_cursor_shape(&mut self.mem);
-
-        let cell_index = u16::from(row)
-            .saturating_mul(cols)
-            .saturating_add(u16::from(col));
-        let cursor_addr = start_addr.wrapping_add(cell_index) & 0x3FFF;
-
-        vga.port_write(0x3D4, 1, 0x0A);
-        vga.port_write(0x3D5, 1, cursor_start as u32);
-        vga.port_write(0x3D4, 1, 0x0B);
-        vga.port_write(0x3D5, 1, cursor_end as u32);
-        vga.port_write(0x3D4, 1, 0x0E);
-        vga.port_write(0x3D5, 1, u32::from((cursor_addr >> 8) as u8));
-        vga.port_write(0x3D4, 1, 0x0F);
-        vga.port_write(0x3D5, 1, u32::from((cursor_addr & 0x00FF) as u8));
-
-        // Finally render and copy into the host-visible scanout cache.
-        vga.present();
-        let (w, h) = vga.get_resolution();
-        let fb = vga.get_framebuffer();
-
+        let (w, h) = aerogpu_legacy_text::render_into(&mut self.display_fb, &mut self.mem);
         self.display_width = w;
         self.display_height = h;
-        self.display_fb.resize(fb.len(), 0);
-        self.display_fb.copy_from_slice(fb);
     }
 
     /// Return the last framebuffer produced by [`Machine::display_present`].
