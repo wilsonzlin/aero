@@ -69,6 +69,7 @@ static const uint32_t kAerogpuIrqScanoutVblank = (1u << 1);
 static const uint32_t kAerogpuIrqError = (1u << 31);
 
 static bool g_json_output = false;
+static bool g_json_pretty = false;
 static const wchar_t *g_json_path = NULL;
 
 static std::string WideToUtf8(const wchar_t *s) {
@@ -128,7 +129,7 @@ static std::string Win32ErrorToString(DWORD win32) {
 
 class JsonWriter {
 public:
-  explicit JsonWriter(std::string *out) : out_(out) {}
+  explicit JsonWriter(std::string *out, bool pretty = g_json_pretty) : out_(out), pretty_(pretty) {}
 
   void BeginObject() {
     PrepareValue();
@@ -144,8 +145,13 @@ public:
     if (stack_.empty()) {
       return;
     }
-    out_->push_back('}');
+    const Ctx c = stack_.back();
     stack_.pop_back();
+    if (pretty_ && !c.first) {
+      out_->push_back('\n');
+      WriteIndent(stack_.size());
+    }
+    out_->push_back('}');
   }
 
   void BeginArray() {
@@ -162,8 +168,13 @@ public:
     if (stack_.empty()) {
       return;
     }
-    out_->push_back(']');
+    const Ctx c = stack_.back();
     stack_.pop_back();
+    if (pretty_ && !c.first) {
+      out_->push_back('\n');
+      WriteIndent(stack_.size());
+    }
+    out_->push_back(']');
   }
 
   void Key(const char *k) {
@@ -182,8 +193,16 @@ public:
       out_->push_back(',');
     }
     c.first = false;
+    if (pretty_) {
+      out_->push_back('\n');
+      WriteIndent(stack_.size());
+    }
     WriteString(k);
-    out_->push_back(':');
+    if (pretty_) {
+      out_->append(": ");
+    } else {
+      out_->push_back(':');
+    }
     c.expecting_value = true;
   }
 
@@ -239,6 +258,14 @@ private:
     bool expecting_value;
   };
 
+  void WriteIndent(size_t depth) {
+    if (!out_) {
+      return;
+    }
+    const size_t spaces = depth * 2;
+    out_->append(spaces, ' ');
+  }
+
   void PrepareValue() {
     if (!out_) {
       return;
@@ -250,6 +277,10 @@ private:
     if (c.type == CTX_ARRAY) {
       if (!c.first) {
         out_->push_back(',');
+      }
+      if (pretty_) {
+        out_->push_back('\n');
+        WriteIndent(stack_.size());
       }
       c.first = false;
       return;
@@ -306,6 +337,7 @@ private:
   }
 
   std::string *out_;
+  bool pretty_;
   std::vector<Ctx> stack_;
 };
 
@@ -689,13 +721,14 @@ static const uint64_t kDumpLastCmdHardMaxBytes = 64ull * 1024ull * 1024ull; // 6
 static void PrintUsage() {
   fwprintf(stderr,
            L"Usage:\n"
-           L"  aerogpu_dbgctl [--display \\\\.\\DISPLAY1] [--ring-id N] [--timeout-ms N] [--json[=PATH]]\n"
+           L"  aerogpu_dbgctl [--display \\\\.\\DISPLAY1] [--ring-id N] [--timeout-ms N] [--json[=PATH]] [--pretty]\n"
            L"               [--vblank-samples N] [--vblank-interval-ms N]\n"
            L"               [--samples N] [--interval-ms N]\n"
            L"               [--size N] [--out FILE] [--force] <command>\n"
            L"\n"
            L"Global output options:\n"
            L"  --json[=PATH]  Output machine-readable JSON (schema_version=1). If PATH is provided, write JSON there.\n"
+           L"  --pretty       Pretty-print JSON (implies --json).\n"
            L"\n"
            L"Commands:\n"
            L"  --list-displays\n"
@@ -7012,12 +7045,21 @@ int wmain(int argc, wchar_t **argv) {
       return 0;
     }
 
+    if (wcscmp(a, L"--pretty") == 0) {
+      g_json_output = true;
+      g_json_pretty = true;
+      continue;
+    }
+
     if (wcscmp(a, L"--json") == 0) {
       g_json_output = true;
       // Allow "--json <path>" as a convenience/compat form in addition to "--json=<path>".
       if (i + 1 < argc) {
         const wchar_t *next = argv[i + 1];
-        if (next && wcsncmp(next, L"--", 2) != 0) {
+        // Disambiguate between JSON output path and the next option:
+        // - paths typically start with a drive letter or '\\'
+        // - options use '-' or '/' prefixes
+        if (next && next[0] != L'-' && next[0] != L'/') {
           g_json_path = next;
           i += 1;
         }
@@ -7379,17 +7421,34 @@ int wmain(int argc, wchar_t **argv) {
 
     fwprintf(stderr, L"Unknown argument: %s\n", a);
     PrintUsage();
+    if (g_json_output) {
+      std::string json;
+      const std::string msg = std::string("Unknown argument: ") + WideToUtf8(a);
+      JsonWriteTopLevelError(&json, "parse-args", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+      WriteJsonToDestination(json);
+    }
     return 1;
   }
 
   if (cmd == CMD_NONE) {
     PrintUsage();
+    if (g_json_output) {
+      std::string json;
+      JsonWriteTopLevelError(&json, "parse-args", NULL, "No command specified", STATUS_INVALID_PARAMETER);
+      WriteJsonToDestination(json);
+    }
     return 1;
   }
 
   if (createAllocCsvPath && cmd != CMD_DUMP_CREATEALLOCATION) {
     fwprintf(stderr, L"--csv is only supported with --dump-createalloc\n");
     PrintUsage();
+    if (g_json_output) {
+      std::string json;
+      JsonWriteTopLevelError(&json, "parse-args", NULL, "--csv is only supported with --dump-createalloc",
+                             STATUS_INVALID_PARAMETER);
+      WriteJsonToDestination(json);
+    }
     return 1;
   }
 
@@ -7407,11 +7466,22 @@ int wmain(int argc, wchar_t **argv) {
     if (!watchSamplesSet) {
       fwprintf(stderr, L"%s requires --samples N\n", (cmd == CMD_WATCH_RING) ? L"--watch-ring" : L"--watch-fence");
       PrintUsage();
+      if (g_json_output) {
+        std::string json;
+        JsonWriteTopLevelError(&json, "watch-fence", NULL, "--watch-fence requires --samples N", STATUS_INVALID_PARAMETER);
+        WriteJsonToDestination(json);
+      }
       return 1;
     }
     if (!watchIntervalSet) {
       fwprintf(stderr, L"%s requires --interval-ms M\n", (cmd == CMD_WATCH_RING) ? L"--watch-ring" : L"--watch-fence");
       PrintUsage();
+      if (g_json_output) {
+        std::string json;
+        JsonWriteTopLevelError(&json, "watch-fence", NULL, "--watch-fence requires --interval-ms M",
+                               STATUS_INVALID_PARAMETER);
+        WriteJsonToDestination(json);
+      }
       return 1;
     }
   }
@@ -7419,11 +7489,22 @@ int wmain(int argc, wchar_t **argv) {
     if (!watchSamplesSet) {
       fwprintf(stderr, L"--watch-ring requires --samples N\n");
       PrintUsage();
+      if (g_json_output) {
+        std::string json;
+        JsonWriteTopLevelError(&json, "watch-ring", NULL, "--watch-ring requires --samples N", STATUS_INVALID_PARAMETER);
+        WriteJsonToDestination(json);
+      }
       return 1;
     }
     if (!watchIntervalSet) {
       fwprintf(stderr, L"--watch-ring requires --interval-ms M\n");
       PrintUsage();
+      if (g_json_output) {
+        std::string json;
+        JsonWriteTopLevelError(&json, "watch-ring", NULL, "--watch-ring requires --interval-ms M",
+                               STATUS_INVALID_PARAMETER);
+        WriteJsonToDestination(json);
+      }
       return 1;
     }
   }
@@ -7431,6 +7512,12 @@ int wmain(int argc, wchar_t **argv) {
     if (!dumpLastCmdOutPath || !dumpLastCmdOutPath[0]) {
       fwprintf(stderr, L"--dump-last-cmd requires --out <path>\n");
       PrintUsage();
+      if (g_json_output) {
+        std::string json;
+        JsonWriteTopLevelError(&json, "dump-last-cmd", NULL, "--dump-last-cmd requires --out <path>",
+                               STATUS_INVALID_PARAMETER);
+        WriteJsonToDestination(json);
+      }
       return 1;
     }
   }
@@ -7439,6 +7526,11 @@ int wmain(int argc, wchar_t **argv) {
     if (readGpaSizeBytes == 0) {
       fwprintf(stderr, L"--read-gpa requires --size N\n");
       PrintUsage();
+      if (g_json_output) {
+        std::string json;
+        JsonWriteTopLevelError(&json, "read-gpa", NULL, "--read-gpa requires --size N", STATUS_INVALID_PARAMETER);
+        WriteJsonToDestination(json);
+      }
       return 1;
     }
     if (readGpaSizeBytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
@@ -7446,6 +7538,12 @@ int wmain(int argc, wchar_t **argv) {
                L"Refusing --read-gpa size=%lu (max=%lu)\n",
                (unsigned long)readGpaSizeBytes,
                (unsigned long)AEROGPU_DBGCTL_READ_GPA_MAX_BYTES);
+      if (g_json_output) {
+        std::string json;
+        JsonWriteTopLevelError(&json, "read-gpa", NULL, "Refusing --read-gpa size above ABI maximum",
+                               STATUS_INVALID_PARAMETER);
+        WriteJsonToDestination(json);
+      }
       return 1;
     }
     const uint32_t kMaxWithoutForce = 256;
@@ -7455,12 +7553,22 @@ int wmain(int argc, wchar_t **argv) {
                (unsigned long)readGpaSizeBytes,
                (unsigned long)kMaxWithoutForce,
                (unsigned long)AEROGPU_DBGCTL_READ_GPA_MAX_BYTES);
+      if (g_json_output) {
+        std::string json;
+        JsonWriteTopLevelError(&json, "read-gpa", NULL, "Refusing --read-gpa without --force", STATUS_INVALID_PARAMETER);
+        WriteJsonToDestination(json);
+      }
       return 1;
     }
   }
 
   D3DKMT_FUNCS f;
   if (!LoadD3DKMT(&f)) {
+    if (g_json_output) {
+      std::string json;
+      JsonWriteTopLevelError(&json, "init", NULL, "Failed to load D3DKMT entrypoints", STATUS_NOT_SUPPORTED);
+      WriteJsonToDestination(json);
+    }
     return 1;
   }
 
@@ -7478,6 +7586,11 @@ int wmain(int argc, wchar_t **argv) {
   HDC hdc = CreateDCW(L"DISPLAY", displayName, NULL, NULL);
   if (!hdc) {
     fwprintf(stderr, L"CreateDCW failed for %s (GetLastError=%lu)\n", displayName, (unsigned long)GetLastError());
+    if (g_json_output) {
+      std::string json;
+      JsonWriteTopLevelError(&json, "open-adapter", &f, "CreateDCW failed", STATUS_INVALID_PARAMETER);
+      WriteJsonToDestination(json);
+    }
     return 1;
   }
 
@@ -7488,6 +7601,11 @@ int wmain(int argc, wchar_t **argv) {
   DeleteDC(hdc);
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"D3DKMTOpenAdapterFromHdc failed", &f, st);
+    if (g_json_output) {
+      std::string json;
+      JsonWriteTopLevelError(&json, "open-adapter", &f, "D3DKMTOpenAdapterFromHdc failed", st);
+      WriteJsonToDestination(json);
+    }
     return 1;
   }
 

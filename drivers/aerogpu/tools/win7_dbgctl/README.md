@@ -186,7 +186,7 @@ Minimum supported commands:
 ## Usage
 
 ```
-aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] [--json[=PATH]] \
+aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] [--json[=PATH]] [--pretty] \
                [--vblank-samples N] [--vblank-interval-ms N] \
                [--samples N] [--interval-ms N] \
                [--size N] [--out FILE] [--force] <command>
@@ -198,6 +198,7 @@ Examples:
 aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --status
 aerogpu_dbgctl --status --json
+aerogpu_dbgctl --status --pretty
 aerogpu_dbgctl --status --json=C:\\status.json
 aerogpu_dbgctl --query-version
 aerogpu_dbgctl --query-device
@@ -284,6 +285,7 @@ Note: the installed KMD may disable hardware cursor support depending on the dev
 
 - `--json` prints JSON to stdout.
 - `--json=PATH` writes JSON to `PATH` (UTF-8).
+- `--pretty` pretty-prints JSON (implies `--json`).
 
 ### Schema stability
 
