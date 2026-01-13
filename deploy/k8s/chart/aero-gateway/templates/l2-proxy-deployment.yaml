@@ -108,9 +108,9 @@ spec:
             - name: AERO_L2_CAPTURE_DIR
               value: {{ $captureDir | quote }}
             - name: AERO_L2_CAPTURE_MAX_BYTES
-              value: {{ (ternary (get $capture "maxBytes") 67108864 (hasKey $capture "maxBytes")) | quote }}
+              value: {{ (ternary $capture.maxBytes 67108864 (not (kindIs "invalid" $capture.maxBytes))) | quote }}
             - name: AERO_L2_CAPTURE_FLUSH_INTERVAL_MS
-              value: {{ (ternary (get $capture "flushIntervalMs") 1000 (hasKey $capture "flushIntervalMs")) | quote }}
+              value: {{ (ternary $capture.flushIntervalMs 1000 (not (kindIs "invalid" $capture.flushIntervalMs))) | quote }}
             {{- end }}
             {{- if $allowedOriginsCsv }}
             - name: ALLOWED_ORIGINS
