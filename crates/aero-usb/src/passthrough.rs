@@ -1233,6 +1233,72 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_invalid_action_kind() {
+        let bytes = Encoder::new().u32(1).u32(1).u8(99).u32(1).finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_invalid_completion_kind() {
+        let bytes = Encoder::new().u32(1).u32(0).u32(1).u32(1).u8(99).finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_invalid_utf8_in_completion_error_message() {
+        // Encode an `UsbHostResult::Error` completion with invalid UTF-8 bytes.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(1)
+            .u32(1) // completion id
+            .u8(4) // Error
+            .u32(1) // msg len
+            .bytes(&[0xFF])
+            .finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_invalid_bool_encoding() {
+        // `has_control` is decoded as a bool; only 0/1 are valid.
+        let bytes = Encoder::new().u32(1).u32(0).u32(0).u8(2).finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_trailing_bytes() {
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(false)
+            .u32(0)
+            .u8(0xAA) // trailing byte
+            .finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_bytes() {
+        // Truncated immediately after `next_id`; the decoder should report UnexpectedEof.
+        let bytes = Encoder::new().u32(1).finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
     fn snapshot_save_is_deterministic_independent_of_hashmap_order() {
         let mut dev_a = UsbPassthroughDevice::new();
         let mut dev_b = UsbPassthroughDevice::new();

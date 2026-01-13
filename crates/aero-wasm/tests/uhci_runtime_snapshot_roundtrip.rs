@@ -593,6 +593,66 @@ fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
 }
 
 #[wasm_bindgen_test]
+fn uhci_runtime_does_not_reuse_action_ids_across_disconnect_reconnect() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x50_000);
+    let fl_base = {
+        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
+        // at `guest_base`.
+        let guest =
+            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+        setup_webusb_control_in_frame_list(guest)
+    };
+
+    let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
+    rt.webusb_attach(Some(1)).expect("attach WebUSB");
+
+    rt.port_write(REG_FRBASEADD, 4, fl_base);
+    rt.port_write(REG_PORTSC2, 2, PORTSC_PED as u32);
+    rt.port_write(REG_USBCMD, 2, USBCMD_RUN as u32);
+    rt.step_frame();
+
+    let drained = rt.webusb_drain_actions().expect("drain_actions ok");
+    let actions: Vec<UsbHostAction> =
+        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    let first_id = match actions.first() {
+        Some(UsbHostAction::ControlIn { id, .. }) => *id,
+        other => panic!("expected ControlIn action, got {other:?}"),
+    };
+
+    // Stop the controller so the schedule doesn't run while the port is disconnected.
+    rt.port_write(REG_USBCMD, 2, 0);
+    rt.webusb_detach();
+    rt.webusb_attach(Some(1)).expect("reattach WebUSB");
+
+    // The previous run mutated the guest frame list and TD/QH state; reinstall a fresh schedule.
+    let _ = {
+        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
+        // at `guest_base`.
+        let guest =
+            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+        setup_webusb_control_in_frame_list(guest)
+    };
+
+    rt.port_write(REG_FRBASEADD, 4, fl_base);
+    rt.port_write(REG_PORTSC2, 2, PORTSC_PED as u32);
+    rt.port_write(REG_USBCMD, 2, USBCMD_RUN as u32);
+    rt.step_frame();
+
+    let drained = rt.webusb_drain_actions().expect("drain_actions ok");
+    let actions: Vec<UsbHostAction> =
+        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    let second_id = match actions.first() {
+        Some(UsbHostAction::ControlIn { id, .. }) => *id,
+        other => panic!("expected ControlIn action after reconnect, got {other:?}"),
+    };
+
+    assert_ne!(
+        first_id, second_id,
+        "expected WebUSB UsbHostAction.id to be monotonic across disconnect/reconnect"
+    );
+}
+
+#[wasm_bindgen_test]
 fn uhci_runtime_snapshot_restores_external_hub_and_allows_webhid_attach_at_path() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20_000);
 
