@@ -324,7 +324,7 @@ All values are `REG_DWORD`.
 
 | Value | Default | Meaning |
 | --- | --- | --- |
-| `DiagnosticsMask` | `0` | Enables diagnostic logging when the driver is built with diagnostics (`VIOINPUT_DIAGNOSTICS==1`). See `src/log.h` for bit definitions. |
+| `DiagnosticsMask` | `0x0000000F` (DBG builds) | Enables diagnostic logging when the driver is built with diagnostics (`VIOINPUT_DIAGNOSTICS==1`). Set to `0` to disable all logging. See `src/log.h` for bit definitions. |
 | `StatusQDropOnFull` | `0` | Debug knob for the virtio status queue (used for keyboard LED writes). When nonzero, pending statusq writes are dropped when the virtqueue is full. |
 
 Changes take effect the next time the driver is started (reboot or disable/enable the device).
