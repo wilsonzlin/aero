@@ -527,6 +527,146 @@ fn tlb_hit_avoids_page_walk_and_invlpg_forces_miss() {
 }
 
 #[test]
+fn invlpg_invalidates_legacy32_4mb_tlb_entry() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x20000);
+
+    let pd_base = 0x1000u64;
+
+    // Map linear 0x0040_0000..0x0080_0000 (PDE index 1) to physical 0x0000_0000..0x0040_0000.
+    let pde_index = 1u64;
+    let pde_addr = pd_base + pde_index * 4;
+    let pde_val = (PTE_P | PTE_RW | PTE_US | PTE_PS) as u32; // base=0 for simplicity
+    mem.write_u32_raw(pde_addr, pde_val);
+
+    mmu.set_cr3(pd_base);
+    mmu.set_cr4(CR4_PSE);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x0040_1234u64;
+    let expected_paddr = vaddr & 0x3f_ffff;
+
+    // Fill TLB.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(expected_paddr)
+    );
+    assert!(mem.reads() > 0);
+
+    // Hit should avoid page walk.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(expected_paddr)
+    );
+    assert_eq!(mem.reads(), 0);
+
+    // INVLPG should invalidate the 4MB entry even when vaddr is not 4MB-aligned.
+    mmu.invlpg(vaddr);
+
+    // Miss again after invalidation.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(expected_paddr)
+    );
+    assert!(mem.reads() > 0);
+}
+
+#[test]
+fn invlpg_invalidates_pae_2mb_tlb_entry() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pdpt_base = 0x1000u64;
+    let pd_base = 0x2000u64;
+
+    // PDPTE[0] -> PD
+    mem.write_u64_raw(pdpt_base, pd_base | PTE_P64);
+    // PDE[0] maps a 2MB page with base 0, PS=1.
+    mem.write_u64_raw(pd_base, PTE_P64 | PTE_RW64 | PTE_US64 | PTE_PS64);
+
+    mmu.set_cr3(pdpt_base);
+    mmu.set_cr4(CR4_PAE | CR4_PSE);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x0010_1234u64; // within first 2MB
+
+    // Fill TLB.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(vaddr)
+    );
+    assert!(mem.reads() > 0);
+
+    // Hit should avoid page walk.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(vaddr)
+    );
+    assert_eq!(mem.reads(), 0);
+
+    mmu.invlpg(vaddr);
+
+    // Miss again after invalidation.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(vaddr)
+    );
+    assert!(mem.reads() > 0);
+}
+
+#[test]
+fn invlpg_invalidates_long4_1gb_tlb_entry() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+
+    mem.write_u64_raw(pml4_base, pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64);
+    // PDPTE[0] maps 1GB page base=0.
+    mem.write_u64_raw(pdpt_base, PTE_P64 | PTE_RW64 | PTE_US64 | PTE_PS64);
+
+    mmu.set_cr3(pml4_base);
+    mmu.set_cr4(CR4_PAE | CR4_PSE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    let vaddr = 0x1234_5678u64; // within first 1GB
+
+    // Fill TLB.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(vaddr)
+    );
+    assert!(mem.reads() > 0);
+
+    // Hit should avoid page walk.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(vaddr)
+    );
+    assert_eq!(mem.reads(), 0);
+
+    mmu.invlpg(vaddr);
+
+    // Miss again after invalidation.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(vaddr)
+    );
+    assert!(mem.reads() > 0);
+}
+
+#[test]
 fn pae_2mb_large_page_translation() {
     let mut mmu = Mmu::new();
     let mut mem = TestMemory::new(0x40000);
