@@ -303,7 +303,7 @@ set "AEROGT_SELFTEST_SVC=%SVC%"
 set "AEROGT_SELFTEST_ENC=%ENC%"
 
 rem Generate a minimal INF fixture encoded as UTF-16LE/BE without a BOM.
-"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$path=$env:AEROGT_SELFTEST_INF; $svc=$env:AEROGT_SELFTEST_SVC; $enc=$env:AEROGT_SELFTEST_ENC; $crlf=[char]13+[char]10; $q=[char]34; $lines=@('; UTF-16 INF fixture (no BOM)','[DefaultInstall.NT]',('AddService = ' + $q + $svc + $q + ', 0x00000002, Service_Inst')); $text=[string]::Join($crlf,$lines)+$crlf; $e=if($enc -eq 'be'){[System.Text.Encoding]::BigEndianUnicode}else{[System.Text.Encoding]::Unicode}; [System.IO.File]::WriteAllBytes($path,$e.GetBytes($text)); exit 0" >nul 2>&1
+"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$path=$env:AEROGT_SELFTEST_INF; $svc=$env:AEROGT_SELFTEST_SVC; $enc=$env:AEROGT_SELFTEST_ENC; $crlf=[System.Environment]::NewLine; $q=[char]34; $lines=@('; UTF-16 INF fixture (no BOM)','[DefaultInstall.NT]',('AddService = ' + $q + $svc + $q + ', 0x00000002, Service_Inst')); $text=[string]::Join($crlf,$lines)+$crlf; $e=if($enc -eq 'be'){[System.Text.Encoding]::BigEndianUnicode}else{[System.Text.Encoding]::Unicode}; [System.IO.File]::WriteAllBytes($path,$e.GetBytes($text)); exit 0" >nul 2>&1
 if errorlevel 1 (
   del /q "%TMP_INF%" >nul 2>&1
   endlocal & exit /b 1
