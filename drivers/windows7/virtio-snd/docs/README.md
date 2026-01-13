@@ -210,6 +210,7 @@ CI guardrail: PRs must keep `aero_virtio_snd.vcxproj` on the modern-only backend
 
 - Driver architecture overview: [`design.md`](design.md)
 - PortCls/WaveRT plan: [`portcls-wavert-design.md`](portcls-wavert-design.md)
+- Host/device-model checklist (what the Win7 driver enforces at runtime): [`host-integration-checklist.md`](host-integration-checklist.md)
 - QEMU manual test plan: [`../tests/qemu/README.md`](../tests/qemu/README.md)
 - Source tracking (clean-room policy): [`../SOURCES.md`](../SOURCES.md)
 
