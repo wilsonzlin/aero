@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub fn write_deterministic_zip(
     path: &Path,
@@ -50,15 +50,16 @@ pub fn write_deterministic_zip(
 fn collect_dirs(files: &[FileToPackage]) -> BTreeSet<String> {
     let mut dirs = BTreeSet::new();
     for f in files {
-        let path = PathBuf::from(&f.rel_path);
-        for ancestor in path.ancestors().skip(1) {
-            if ancestor.as_os_str().is_empty() {
-                break;
-            }
-            let mut s = ancestor.to_string_lossy().replace('\\', "/");
-            if !s.ends_with('/') {
-                s.push('/');
-            }
+        // `FileToPackage::rel_path` is already a UTF-8 package path using `/` separators.
+        // Collect all parent directory prefixes, with trailing `/`, for explicit zip directory
+        // entries. (This keeps outputs stable across zip implementations.)
+        let parts: Vec<&str> = f.rel_path.split('/').collect();
+        if parts.len() <= 1 {
+            continue;
+        }
+        for i in 1..parts.len() {
+            let mut s = parts[..i].join("/");
+            s.push('/');
             dirs.insert(s);
         }
     }

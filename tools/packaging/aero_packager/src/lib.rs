@@ -291,7 +291,7 @@ fn collect_files(
             .path()
             .strip_prefix(&config.guest_tools_dir)
             .expect("walkdir under guest_tools_dir");
-        let rel_str = path_to_slash(rel);
+        let rel_str = path_to_slash(rel, entry.path())?;
         if rel_str.eq_ignore_ascii_case("config/devices.cmd") {
             continue;
         }
@@ -339,7 +339,7 @@ fn collect_files(
                 .path()
                 .strip_prefix(&config.guest_tools_dir)
                 .expect("walkdir under guest_tools_dir");
-            let rel_str = path_to_slash(rel);
+            let rel_str = path_to_slash(rel, entry.path())?;
             out.push(FileToPackage {
                 rel_path: rel_str,
                 bytes: fs::read(entry.path())
@@ -378,7 +378,7 @@ fn collect_files(
                 .path()
                 .strip_prefix(&certs_dir)
                 .expect("walkdir under certs_dir");
-            let rel_str = path_to_slash(rel);
+            let rel_str = path_to_slash(rel, entry.path())?;
             let lower = rel_str.to_ascii_lowercase();
             // Include only public certificate artifacts and docs (no private keys).
             let is_cert =
@@ -495,7 +495,7 @@ fn collect_files(
                     .path()
                     .strip_prefix(&driver.dir)
                     .expect("walkdir under driver dir");
-                let rel_str = path_to_slash(rel);
+                let rel_str = path_to_slash(rel, entry.path())?;
                 if !should_include_driver_file(entry.path(), &rel_str, &allowlist)
                     .with_context(|| format!("filter driver file {}", entry.path().display()))?
                 {
@@ -768,7 +768,7 @@ fn validate_driver_dir(
         let rel = path
             .strip_prefix(driver_dir)
             .expect("walkdir under driver_dir");
-        let rel_str = path_to_slash(rel);
+        let rel_str = path_to_slash(rel, path)?;
         let include = should_include_driver_file(path, &rel_str, &allowlist)
             .with_context(|| format!("filter driver file {}", path.display()))?;
 
@@ -1709,17 +1709,19 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
-fn path_to_slash(path: &Path) -> String {
-    // We only ever create package paths from in-repo artifacts, so require UTF-8.
+fn path_to_slash(path: &Path, full_path: &Path) -> Result<String> {
+    // Packaged ISO/zip paths are UTF-8 strings. On Unix hosts, filenames are raw bytes and may not
+    // be valid UTF-8; refusing non-UTF8 paths avoids silently mangling/dropping path components and
+    // risking collisions inside the packaged output.
     let mut components = Vec::new();
     for c in path.components() {
-        let s = c.as_os_str().to_str().unwrap_or("");
-        if s.is_empty() {
-            continue;
-        }
+        let s = c
+            .as_os_str()
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF8 path component: {:?}", full_path))?;
         components.push(s);
     }
-    components.join("/")
+    Ok(components.join("/"))
 }
 
 #[cfg(test)]
