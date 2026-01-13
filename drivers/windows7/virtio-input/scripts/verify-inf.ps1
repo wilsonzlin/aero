@@ -41,6 +41,72 @@ function Resolve-ExistingFile([string]$Path, [string]$ArgName) {
   return $resolved.Path
 }
 
+function Read-InfLines([string]$Path) {
+  # INF files are commonly ASCII/ANSI or UTF-16LE. Some INFs are UTF-16LE *without* a BOM,
+  # which PowerShell's default encoding heuristics may misinterpret. Decode the file bytes
+  # ourselves so the validator remains robust across typical INF encodings.
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  if ($bytes.Length -eq 0) {
+    return @()
+  }
+
+  $encoding = $null
+  $offset = 0
+
+  if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+    $encoding = [System.Text.Encoding]::UTF8
+    $offset = 3
+  }
+  elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+    $encoding = [System.Text.Encoding]::Unicode # UTF-16LE
+    $offset = 2
+  }
+  elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+    $encoding = [System.Text.Encoding]::BigEndianUnicode # UTF-16BE
+    $offset = 2
+  }
+  else {
+    # Heuristic detection for UTF-16 without BOM: plain ASCII UTF-16LE will have many 0x00
+    # bytes at odd indices; UTF-16BE will have many 0x00 bytes at even indices.
+    $sampleLen = [Math]::Min($bytes.Length, 4096)
+    $evenZeros = 0
+    $oddZeros = 0
+    for ($i = 0; $i -lt $sampleLen; $i++) {
+      if ($bytes[$i] -eq 0) {
+        if (($i % 2) -eq 0) { $evenZeros++ } else { $oddZeros++ }
+      }
+    }
+
+    if ($oddZeros -gt ($evenZeros * 4 + 10)) {
+      $encoding = [System.Text.Encoding]::Unicode
+    }
+    elseif ($evenZeros -gt ($oddZeros * 4 + 10)) {
+      $encoding = [System.Text.Encoding]::BigEndianUnicode
+    }
+    else {
+      # Prefer UTF-8 when the bytes are valid UTF-8, otherwise fall back to the platform
+      # default (ANSI codepage on Windows PowerShell).
+      $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+      try {
+        $text = $utf8Strict.GetString($bytes)
+        return [regex]::Split($text, "\r\n|\n|\r")
+      }
+      catch {
+        $encoding = [System.Text.Encoding]::Default
+      }
+    }
+  }
+
+  $count = $bytes.Length - $offset
+  if ($count -lt 0) { $count = 0 }
+  $text = $encoding.GetString($bytes, $offset, $count)
+  if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) {
+    $text = $text.Substring(1)
+  }
+
+  return [regex]::Split($text, "\r\n|\n|\r")
+}
+
 function Strip-InfComments([string]$Line) {
   # INF comments begin with ';' outside of quoted strings.
   $inQuote = $false
@@ -96,7 +162,7 @@ $exitCode = 0
 try {
   $infPathResolved = Resolve-ExistingFile -Path $InfPath -ArgName '-InfPath'
 
-  $rawLines = Get-Content -LiteralPath $infPathResolved -ErrorAction Stop
+  $rawLines = Read-InfLines -Path $infPathResolved
   $lines = New-Object System.Collections.Generic.List[string]
   $sections = @{}
   $currentSection = $null
