@@ -75,6 +75,8 @@ pub struct EhciController {
     regs: EhciRegs,
     hub: RootHub,
     irq_level: bool,
+    usblegsup: u32,
+    usblegctlsts: u32,
 }
 
 impl EhciController {
@@ -87,6 +89,10 @@ impl EhciController {
             regs: EhciRegs::new(),
             hub: RootHub::new(port_count),
             irq_level: false,
+            // Start with BIOS ownership so guest OS stacks that implement the EHCI "BIOS handoff"
+            // sequence can request ownership via the OS semaphore.
+            usblegsup: USBLEGSUP_HEADER | USBLEGSUP_BIOS_SEM,
+            usblegctlsts: 0,
         }
     }
 
@@ -123,8 +129,8 @@ impl EhciController {
         // - No 64-bit addressing (bit 0 = 0).
         // - Programmable Frame List Flag (bit 1 = 1).
         // - Asynchronous Schedule Park Capability (bit 2 = 1).
-        // - No extended capabilities (EECP=0).
-        0x0000_0006
+        // - EECP points at the USB Legacy Support extended capability.
+        0x0000_0006 | ((EECP_OFFSET as u32) << HCCPARAMS_EECP_SHIFT)
     }
 
     fn reset_regs(&mut self) {
@@ -273,6 +279,16 @@ impl EhciController {
             return (self.regs.configflag >> shift) as u8;
         }
 
+        // EHCI extended capabilities (USB Legacy Support).
+        if offset >= REG_USBLEGSUP && offset < REG_USBLEGSUP + 4 {
+            let shift = (offset - REG_USBLEGSUP) * 8;
+            return (self.usblegsup >> shift) as u8;
+        }
+        if offset >= REG_USBLEGCTLSTS && offset < REG_USBLEGCTLSTS + 4 {
+            let shift = (offset - REG_USBLEGCTLSTS) * 8;
+            return (self.usblegctlsts >> shift) as u8;
+        }
+
         // Root hub port registers.
         if offset >= REG_PORTSC_BASE {
             let port = ((offset - REG_PORTSC_BASE) / 4) as usize;
@@ -345,6 +361,28 @@ impl EhciController {
             let mask = !(0xffu32 << shift);
             let v = (self.regs.configflag & mask) | ((value as u32) << shift);
             self.write_configflag(v);
+            return;
+        }
+
+        // EHCI extended capabilities (USB Legacy Support).
+        if offset >= REG_USBLEGSUP && offset < REG_USBLEGSUP + 4 {
+            let shift = (offset - REG_USBLEGSUP) * 8;
+            let mask = !(0xffu32 << shift);
+            let v = (self.usblegsup & mask) | ((value as u32) << shift);
+
+            // CAPID/NEXT are read-only; only the semaphore bits are writable.
+            self.usblegsup = (v & USBLEGSUP_RW_MASK) | USBLEGSUP_HEADER;
+
+            // When OS-owned is set, emulate BIOS handoff by clearing BIOS-owned.
+            if self.usblegsup & USBLEGSUP_OS_SEM != 0 {
+                self.usblegsup &= !USBLEGSUP_BIOS_SEM;
+            }
+            return;
+        }
+        if offset >= REG_USBLEGCTLSTS && offset < REG_USBLEGCTLSTS + 4 {
+            let shift = (offset - REG_USBLEGCTLSTS) * 8;
+            let mask = !(0xffu32 << shift);
+            self.usblegctlsts = (self.usblegctlsts & mask) | ((value as u32) << shift);
             return;
         }
 

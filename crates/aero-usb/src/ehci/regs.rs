@@ -106,3 +106,37 @@ pub const PORTSC_WKD: u32 = 1 << 21;
 pub const PORTSC_WKO: u32 = 1 << 22;
 
 pub const PORTSC_W1C_MASK: u32 = PORTSC_CSC | PORTSC_PEDC | PORTSC_OCC;
+
+// --- EHCI extended capabilities ---
+//
+// Many EHCI drivers consult HCCPARAMS.EECP to locate the extended capabilities list and will
+// perform the "BIOS handoff" sequence using the USB Legacy Support capability (CAPID=1).
+//
+// Real PCI EHCI controllers expose these registers in PCI config space; this project places the
+// extended capability list inside the controller's MMIO window (relative to the capability
+// registers base) to keep the model self-contained.
+
+/// `HCCPARAMS` EECP field shift (bits 15:8).
+pub const HCCPARAMS_EECP_SHIFT: u32 = 8;
+
+/// Byte offset of the first EHCI extended capability.
+pub const EECP_OFFSET: u8 = 0x40;
+
+/// EHCI extended capability ID for USB Legacy Support.
+pub const USBLEGSUP_CAPID: u32 = 0x01;
+
+/// USB Legacy Support register (`USBLEGSUP`) offset.
+pub const REG_USBLEGSUP: u64 = EECP_OFFSET as u64;
+/// USB Legacy Support control/status register (`USBLEGCTLSTS`) offset.
+pub const REG_USBLEGCTLSTS: u64 = REG_USBLEGSUP + 0x04;
+
+/// `USBLEGSUP` BIOS-owned semaphore bit.
+pub const USBLEGSUP_BIOS_SEM: u32 = 1 << 16;
+/// `USBLEGSUP` OS-owned semaphore bit.
+pub const USBLEGSUP_OS_SEM: u32 = 1 << 24;
+
+/// Bits in `USBLEGSUP` that are writable in this model.
+pub const USBLEGSUP_RW_MASK: u32 = USBLEGSUP_BIOS_SEM | USBLEGSUP_OS_SEM;
+
+/// Fixed `USBLEGSUP` header bits: CAPID=1, NEXT=0.
+pub const USBLEGSUP_HEADER: u32 = USBLEGSUP_CAPID;
