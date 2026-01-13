@@ -5725,19 +5725,28 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
   }
 
   if (res && res->kind == ResourceKind::Texture2D && res->width && res->height) {
-    if (res->row_pitch_bytes == 0) {
-      res->row_pitch_bytes = res->width * 4;
+    uint32_t bytes_per_pixel = 4;
+    bool is_16bpp = false;
+    uint16_t packed16 = 0;
+
+    if (res->dxgi_format == kDxgiFormatB5G6R5Unorm || res->dxgi_format == kDxgiFormatB5G5R5A1Unorm) {
+      bytes_per_pixel = 2;
+      is_16bpp = true;
     }
-    const uint64_t total_bytes = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
-    if (total_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
-      try {
-        if (res->storage.size() < static_cast<size_t>(total_bytes)) {
-          res->storage.resize(static_cast<size_t>(total_bytes));
+    if (res->row_pitch_bytes == 0) {
+      res->row_pitch_bytes = res->width * bytes_per_pixel;
+    }
+    if (res->row_pitch_bytes >= res->width * bytes_per_pixel) {
+      const uint64_t total_bytes = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
+      if (total_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
+        try {
+          if (res->storage.size() < static_cast<size_t>(total_bytes)) {
+            res->storage.resize(static_cast<size_t>(total_bytes));
+          }
+        } catch (...) {
+          SetError(hDevice, E_OUTOFMEMORY);
+          return;
         }
-      } catch (...) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        return;
-      }
 
       auto float_to_unorm8 = [](float v) -> uint8_t {
         if (v <= 0.0f) {
@@ -5761,6 +5770,50 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
       const uint8_t out_b = float_to_unorm8(color[2]);
       const uint8_t out_a = float_to_unorm8(color[3]);
 
+      if (is_16bpp) {
+        auto float_to_unorm = [](float v, uint32_t max) -> uint32_t {
+          // Use ordered comparisons so NaNs resolve to zero.
+          if (!(v > 0.0f)) {
+            return 0;
+          }
+          if (v >= 1.0f) {
+            return max;
+          }
+          const float scaled = v * static_cast<float>(max) + 0.5f;
+          if (!(scaled > 0.0f)) {
+            return 0;
+          }
+          if (scaled >= static_cast<float>(max)) {
+            return max;
+          }
+          return static_cast<uint32_t>(scaled);
+        };
+
+        bool have_packed = false;
+        if (res->dxgi_format == kDxgiFormatB5G6R5Unorm) {
+          const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(color[0], 31));
+          const uint16_t g6 = static_cast<uint16_t>(float_to_unorm(color[1], 63));
+          const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(color[2], 31));
+          packed16 = static_cast<uint16_t>((r5 << 11) | (g6 << 5) | b5);
+          have_packed = true;
+        } else if (res->dxgi_format == kDxgiFormatB5G5R5A1Unorm) {
+          const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(color[0], 31));
+          const uint16_t g5 = static_cast<uint16_t>(float_to_unorm(color[1], 31));
+          const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(color[2], 31));
+          const uint16_t a1 = static_cast<uint16_t>(float_to_unorm(color[3], 1));
+          packed16 = static_cast<uint16_t>((a1 << 15) | (r5 << 10) | (g5 << 5) | b5);
+          have_packed = true;
+        }
+
+        if (have_packed) {
+          for (uint32_t y = 0; y < res->height; ++y) {
+            uint8_t* row = res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes;
+            for (uint32_t x = 0; x < res->width; ++x) {
+              std::memcpy(row + static_cast<size_t>(x) * 2, &packed16, sizeof(packed16));
+            }
+          }
+        }
+      } else {
       for (uint32_t y = 0; y < res->height; ++y) {
         uint8_t* row = res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes;
         for (uint32_t x = 0; x < res->width; ++x) {
@@ -5793,6 +5846,8 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
               break;
           }
         }
+      }
+      }
       }
     }
   }

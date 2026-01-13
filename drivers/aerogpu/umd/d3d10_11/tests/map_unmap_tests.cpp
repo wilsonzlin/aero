@@ -17,6 +17,8 @@
 namespace {
 
 constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29; // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+constexpr uint32_t kDxgiFormatB5G6R5Unorm = 85; // DXGI_FORMAT_B5G6R5_UNORM
+constexpr uint32_t kDxgiFormatB5G5R5A1Unorm = 86; // DXGI_FORMAT_B5G5R5A1_UNORM
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
 constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91; // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
 constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93; // DXGI_FORMAT_B8G8R8X8_UNORM_SRGB
@@ -34,6 +36,7 @@ constexpr uint32_t kDxgiFormatBc7UnormSrgb = 99; // DXGI_FORMAT_BC7_UNORM_SRGB
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
 constexpr uint32_t kD3D11BindIndexBuffer = 0x2;
 constexpr uint32_t kD3D11BindConstantBuffer = 0x4;
+constexpr uint32_t kD3D11BindRenderTarget = 0x20;
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -564,6 +567,11 @@ struct TestResource {
   std::vector<uint8_t> storage;
 };
 
+struct TestRenderTargetView {
+  D3D10DDI_HRENDERTARGETVIEW hView = {};
+  std::vector<uint8_t> storage;
+};
+
 struct TestShaderResourceView {
   D3D10DDI_HSHADERRESOURCEVIEW hView = {};
   std::vector<uint8_t> storage;
@@ -724,6 +732,25 @@ bool CreateStagingTexture2D(TestDevice* dev,
   return CreateStagingTexture2DWithFormat(dev, width, height, kDxgiFormatB8G8R8A8Unorm, cpu_access_flags, out);
 }
 
+bool CreateRenderTargetView(TestDevice* dev, TestResource* tex, TestRenderTargetView* out) {
+  if (!dev || !tex || !out) {
+    return false;
+  }
+  AEROGPU_DDIARG_CREATERENDERTARGETVIEW desc = {};
+  desc.hResource = tex->hResource;
+  const SIZE_T size = dev->device_funcs.pfnCalcPrivateRTVSize(dev->hDevice, &desc);
+  if (!Check(size != 0, "CalcPrivateRTVSize returned non-zero size")) {
+    return false;
+  }
+  out->storage.assign(static_cast<size_t>(size), 0);
+  out->hView.pDrvPrivate = out->storage.data();
+  const HRESULT hr = dev->device_funcs.pfnCreateRTV(dev->hDevice, &desc, out->hView);
+  if (!Check(hr == S_OK, "CreateRTV")) {
+    return false;
+  }
+  return true;
+}
+
 bool CreateShaderResourceView(TestDevice* dev, TestResource* tex, TestShaderResourceView* out) {
   if (!dev || !tex || !out) {
     return false;
@@ -750,6 +777,47 @@ bool CreateShaderResourceView(TestDevice* dev, TestResource* tex, TestShaderReso
 
   const HRESULT hr = dev->device_funcs.pfnCreateShaderResourceView(dev->hDevice, &desc, out->hView);
   if (!Check(hr == S_OK, "CreateShaderResourceView")) {
+    return false;
+  }
+  return true;
+}
+
+bool CreateTexture2D(TestDevice* dev,
+                     uint32_t width,
+                     uint32_t height,
+                     uint32_t usage,
+                     uint32_t bind_flags,
+                     uint32_t cpu_access_flags,
+                     uint32_t dxgi_format,
+                     TestResource* out) {
+  if (!dev || !out) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATERESOURCE desc = {};
+  desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D;
+  desc.BindFlags = bind_flags;
+  desc.MiscFlags = 0;
+  desc.Usage = usage;
+  desc.CPUAccessFlags = cpu_access_flags;
+  desc.Width = width;
+  desc.Height = height;
+  desc.MipLevels = 1;
+  desc.ArraySize = 1;
+  desc.Format = dxgi_format;
+  desc.pInitialData = nullptr;
+  desc.InitialDataCount = 0;
+
+  const SIZE_T size = dev->device_funcs.pfnCalcPrivateResourceSize(dev->hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateResourceSize returned a non-trivial size")) {
+    return false;
+  }
+
+  out->storage.assign(static_cast<size_t>(size), 0);
+  out->hResource.pDrvPrivate = out->storage.data();
+
+  const HRESULT hr = dev->device_funcs.pfnCreateResource(dev->hDevice, &desc, out->hResource);
+  if (!Check(hr == S_OK, "CreateResource(tex2d)")) {
     return false;
   }
   return true;
@@ -3279,6 +3347,143 @@ bool TestGuestBackedCopyResourceTextureReadback() {
 
   dev.device_funcs.pfnDestroyResource(dev.hDevice, dst.hResource);
   dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestClearRtvB5FormatsProduceCorrectReadback() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(clear rtv b5)")) {
+    return false;
+  }
+
+  constexpr uint32_t kWidth = 3;
+  constexpr uint32_t kHeight = 2;
+
+  auto float_to_unorm = [](float v, uint32_t max) -> uint32_t {
+    // Mirror the UMD's "ordered comparisons" behavior: treat NaNs as zero.
+    if (!(v > 0.0f)) {
+      return 0;
+    }
+    if (v >= 1.0f) {
+      return max;
+    }
+    const float scaled = v * static_cast<float>(max) + 0.5f;
+    if (!(scaled > 0.0f)) {
+      return 0;
+    }
+    if (scaled >= static_cast<float>(max)) {
+      return max;
+    }
+    return static_cast<uint32_t>(scaled);
+  };
+
+  struct Case {
+    const char* name;
+    uint32_t dxgi_format;
+    float clear_rgba[4];
+  };
+
+  auto pack_565 = [&](const float rgba[4]) -> uint16_t {
+    const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(rgba[0], 31));
+    const uint16_t g6 = static_cast<uint16_t>(float_to_unorm(rgba[1], 63));
+    const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(rgba[2], 31));
+    return static_cast<uint16_t>((r5 << 11) | (g6 << 5) | b5);
+  };
+
+  auto pack_5551 = [&](const float rgba[4]) -> uint16_t {
+    const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(rgba[0], 31));
+    const uint16_t g5 = static_cast<uint16_t>(float_to_unorm(rgba[1], 31));
+    const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(rgba[2], 31));
+    const uint16_t a1 = static_cast<uint16_t>(float_to_unorm(rgba[3], 1));
+    return static_cast<uint16_t>((a1 << 15) | (r5 << 10) | (g5 << 5) | b5);
+  };
+
+  const Case kCases[] = {
+      {"DXGI_FORMAT_B5G6R5_UNORM", kDxgiFormatB5G6R5Unorm, {1.0f, 0.5f, 0.0f, 1.0f}},
+      {"DXGI_FORMAT_B5G5R5A1_UNORM", kDxgiFormatB5G5R5A1Unorm, {0.25f, 0.5f, 1.0f, 0.6f}},
+  };
+
+  for (const Case& c : kCases) {
+    TestResource rt{};
+    if (!Check(CreateTexture2D(&dev,
+                               /*width=*/kWidth,
+                               /*height=*/kHeight,
+                               AEROGPU_D3D11_USAGE_DEFAULT,
+                               kD3D11BindRenderTarget,
+                               /*cpu_access_flags=*/0,
+                               c.dxgi_format,
+                               &rt),
+               "CreateTexture2D(render target)")) {
+      return false;
+    }
+
+    TestRenderTargetView rtv{};
+    if (!Check(CreateRenderTargetView(&dev, &rt, &rtv), "CreateRenderTargetView")) {
+      return false;
+    }
+
+    TestResource staging{};
+    if (!Check(CreateStagingTexture2DWithFormat(&dev,
+                                                /*width=*/kWidth,
+                                                /*height=*/kHeight,
+                                                c.dxgi_format,
+                                                AEROGPU_D3D11_CPU_ACCESS_READ,
+                                                &staging),
+               "CreateStagingTexture2DWithFormat(readback)")) {
+      return false;
+    }
+
+    dev.device_funcs.pfnSetRenderTargets(dev.hDevice, rtv.hView, D3D10DDI_HDEPTHSTENCILVIEW{});
+    dev.device_funcs.pfnClearRTV(dev.hDevice, rtv.hView, c.clear_rgba);
+
+    dev.device_funcs.pfnCopyResource(dev.hDevice, staging.hResource, rt.hResource);
+
+    AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+    HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                        staging.hResource,
+                                                        /*subresource=*/0,
+                                                        AEROGPU_DDI_MAP_READ,
+                                                        /*map_flags=*/0,
+                                                        &mapped);
+    if (!Check(hr == S_OK, "StagingResourceMap(READ) after ClearRTV + CopyResource")) {
+      return false;
+    }
+    if (!Check(mapped.pData != nullptr, "Map returned non-null pData")) {
+      return false;
+    }
+    if (!Check(mapped.RowPitch > kWidth * 2, "RowPitch should include padding for guest-backed B5 texture")) {
+      return false;
+    }
+
+    uint16_t expected = 0;
+    if (c.dxgi_format == kDxgiFormatB5G6R5Unorm) {
+      expected = pack_565(c.clear_rgba);
+    } else if (c.dxgi_format == kDxgiFormatB5G5R5A1Unorm) {
+      expected = pack_5551(c.clear_rgba);
+    } else {
+      return false;
+    }
+    const uint8_t* bytes = static_cast<const uint8_t*>(mapped.pData);
+    const uint32_t pitch = mapped.RowPitch;
+    for (uint32_t y = 0; y < kHeight; ++y) {
+      for (uint32_t x = 0; x < kWidth; ++x) {
+        uint16_t actual = 0;
+        std::memcpy(&actual, bytes + static_cast<size_t>(y) * pitch + static_cast<size_t>(x) * 2, sizeof(actual));
+        if (!Check(actual == expected, c.name)) {
+          return false;
+        }
+      }
+    }
+    dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, staging.hResource, /*subresource=*/0);
+
+    dev.device_funcs.pfnDestroyResource(dev.hDevice, staging.hResource);
+    dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv.hView);
+    dev.device_funcs.pfnDestroyResource(dev.hDevice, rt.hResource);
+  }
+
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
@@ -7288,6 +7493,7 @@ int main() {
   ok &= TestHostOwnedCopySubresourceRegionBcTextureReadback();
   ok &= TestGuestBackedCopyResourceBufferReadback();
   ok &= TestGuestBackedCopyResourceTextureReadback();
+  ok &= TestClearRtvB5FormatsProduceCorrectReadback();
   ok &= TestGuestBackedCopyResourceBcTextureReadback();
   ok &= TestGuestBackedCopySubresourceRegionBcTextureReadback();
   ok &= TestHostOwnedUpdateSubresourceUPBufferUploads();

@@ -4470,12 +4470,12 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   }
 }
 
-void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETVIEW, const float rgba[4]) {
+void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETVIEW hRtv, const float rgba[4]) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF_VERBOSE("ClearRTV hDevice=%p rgba=[%f %f %f %f]",
-                               hDevice.pDrvPrivate,
-                               rgba ? rgba[0] : 0.0f,
-                               rgba ? rgba[1] : 0.0f,
+                                hDevice.pDrvPrivate,
+                                rgba ? rgba[0] : 0.0f,
+                                rgba ? rgba[1] : 0.0f,
                                rgba ? rgba[2] : 0.0f,
                                rgba ? rgba[3] : 0.0f);
   if (!hDevice.pDrvPrivate || !rgba) {
@@ -4487,6 +4487,147 @@ void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETV
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+  // Software fallback: update CPU-visible backing so deterministic staging readback
+  // tests can observe the cleared pixels without a real GPU/host compositor.
+  AeroGpuResource* rt = nullptr;
+  if (hRtv.pDrvPrivate) {
+    auto* view = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hRtv);
+    rt = view ? view->resource : nullptr;
+  }
+  if (!rt) {
+    rt = dev->current_rtv;
+  }
+
+  if (rt && rt->kind == ResourceKind::Texture2D && rt->width != 0 && rt->height != 0) {
+    // Resolve the backing pointer (prefer allocation-backed resources when the harness provides mapping callbacks).
+    uint8_t* base = nullptr;
+    AEROGPU_WDDM_ALLOCATION_HANDLE mapped_alloc = 0;
+    void* mapped_ptr = nullptr;
+    const auto* cb = dev->device_callbacks;
+    if (cb && cb->pfnMapAllocation && cb->pfnUnmapAllocation && rt->alloc_handle != 0) {
+      HRESULT hr = cb->pfnMapAllocation(cb->pUserContext, rt->alloc_handle, &mapped_ptr);
+      if (SUCCEEDED(hr) && mapped_ptr) {
+        base = static_cast<uint8_t*>(mapped_ptr) + rt->alloc_offset_bytes;
+        mapped_alloc = rt->alloc_handle;
+      } else if (SUCCEEDED(hr) && !mapped_ptr) {
+        cb->pfnUnmapAllocation(cb->pUserContext, rt->alloc_handle);
+      }
+    }
+
+    uint32_t bytes_per_pixel = 0;
+    bool is_16bpp = false;
+    uint8_t px32[4] = {};
+    uint16_t px16 = 0;
+
+    auto float_to_unorm = [](float v, uint32_t max) -> uint32_t {
+      // Treat NaNs as zero via ordered comparisons.
+      if (!(v > 0.0f)) {
+        return 0;
+      }
+      if (v >= 1.0f) {
+        return max;
+      }
+      const float scaled = v * static_cast<float>(max) + 0.5f;
+      if (!(scaled > 0.0f)) {
+        return 0;
+      }
+      if (scaled >= static_cast<float>(max)) {
+        return max;
+      }
+      return static_cast<uint32_t>(scaled);
+    };
+
+    const uint8_t out_r = static_cast<uint8_t>(float_to_unorm(rgba[0], 255));
+    const uint8_t out_g = static_cast<uint8_t>(float_to_unorm(rgba[1], 255));
+    const uint8_t out_b = static_cast<uint8_t>(float_to_unorm(rgba[2], 255));
+    const uint8_t out_a = static_cast<uint8_t>(float_to_unorm(rgba[3], 255));
+
+    switch (rt->dxgi_format) {
+      case kDxgiFormatB5G6R5Unorm: {
+        const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(rgba[0], 31));
+        const uint16_t g6 = static_cast<uint16_t>(float_to_unorm(rgba[1], 63));
+        const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(rgba[2], 31));
+        px16 = static_cast<uint16_t>((r5 << 11) | (g6 << 5) | b5);
+        bytes_per_pixel = 2;
+        is_16bpp = true;
+        break;
+      }
+      case kDxgiFormatB5G5R5A1Unorm: {
+        const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(rgba[0], 31));
+        const uint16_t g5 = static_cast<uint16_t>(float_to_unorm(rgba[1], 31));
+        const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(rgba[2], 31));
+        const uint16_t a1 = static_cast<uint16_t>(float_to_unorm(rgba[3], 1));
+        px16 = static_cast<uint16_t>((a1 << 15) | (r5 << 10) | (g5 << 5) | b5);
+        bytes_per_pixel = 2;
+        is_16bpp = true;
+        break;
+      }
+      case kDxgiFormatR8G8B8A8Unorm:
+      case kDxgiFormatR8G8B8A8UnormSrgb:
+      case kDxgiFormatR8G8B8A8Typeless:
+        px32[0] = out_r;
+        px32[1] = out_g;
+        px32[2] = out_b;
+        px32[3] = out_a;
+        bytes_per_pixel = 4;
+        break;
+      case kDxgiFormatB8G8R8X8Unorm:
+      case kDxgiFormatB8G8R8X8UnormSrgb:
+      case kDxgiFormatB8G8R8X8Typeless:
+        px32[0] = out_b;
+        px32[1] = out_g;
+        px32[2] = out_r;
+        px32[3] = 255;
+        bytes_per_pixel = 4;
+        break;
+      case kDxgiFormatB8G8R8A8Unorm:
+      case kDxgiFormatB8G8R8A8UnormSrgb:
+      case kDxgiFormatB8G8R8A8Typeless:
+        px32[0] = out_b;
+        px32[1] = out_g;
+        px32[2] = out_r;
+        px32[3] = out_a;
+        bytes_per_pixel = 4;
+        break;
+      default:
+        break;
+    }
+
+    if (bytes_per_pixel != 0) {
+      if (rt->row_pitch_bytes == 0) {
+        rt->row_pitch_bytes = rt->width * bytes_per_pixel;
+      }
+      if (rt->row_pitch_bytes >= rt->width * bytes_per_pixel) {
+        const uint64_t required_bytes =
+            static_cast<uint64_t>(rt->row_pitch_bytes) * static_cast<uint64_t>(rt->height);
+        if (required_bytes != 0 && required_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
+          if (!base) {
+            if (SUCCEEDED(ensure_resource_storage(rt, required_bytes))) {
+              base = rt->storage.data();
+            }
+          }
+          if (base) {
+            for (uint32_t y = 0; y < rt->height; ++y) {
+              uint8_t* row = base + static_cast<size_t>(y) * rt->row_pitch_bytes;
+              for (uint32_t x = 0; x < rt->width; ++x) {
+                uint8_t* dst = row + static_cast<size_t>(x) * bytes_per_pixel;
+                if (is_16bpp) {
+                  std::memcpy(dst, &px16, sizeof(px16));
+                } else {
+                  std::memcpy(dst, px32, sizeof(px32));
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (mapped_alloc != 0 && cb && cb->pfnUnmapAllocation) {
+      cb->pfnUnmapAllocation(cb->pUserContext, mapped_alloc);
+    }
+  }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
   if (!cmd) {

@@ -5280,6 +5280,21 @@ static uint8_t U8FromFloat01(float v) {
   return static_cast<uint8_t>(rounded);
 }
 
+static uint32_t UnormFromFloat01(float v, uint32_t max) {
+  if (std::isnan(v)) {
+    v = 0.0f;
+  }
+  v = std::clamp(v, 0.0f, 1.0f);
+  const long rounded = std::lround(v * static_cast<float>(max));
+  if (rounded < 0) {
+    return 0;
+  }
+  if (static_cast<uint64_t>(rounded) > static_cast<uint64_t>(max)) {
+    return max;
+  }
+  return static_cast<uint32_t>(rounded);
+}
+
 static void SoftwareClearTexture2D(Resource* rt, const FLOAT rgba[4]) {
   if (!rt || rt->kind != ResourceKind::Texture2D || rt->width == 0 || rt->height == 0 || rt->row_pitch_bytes == 0) {
     return;
@@ -5293,7 +5308,10 @@ static void SoftwareClearTexture2D(Resource* rt, const FLOAT rgba[4]) {
   const uint8_t b = U8FromFloat01(rgba[2]);
   const uint8_t a = U8FromFloat01(rgba[3]);
 
+  uint32_t bytes_per_pixel = 0;
+  bool is_16bpp = false;
   uint8_t px[4] = {0, 0, 0, 0};
+  uint16_t px16 = 0;
   switch (rt->dxgi_format) {
     case kDxgiFormatB8G8R8A8Unorm:
     case kDxgiFormatB8G8R8A8UnormSrgb:
@@ -5305,6 +5323,7 @@ static void SoftwareClearTexture2D(Resource* rt, const FLOAT rgba[4]) {
       px[1] = g;
       px[2] = r;
       px[3] = a;
+      bytes_per_pixel = 4;
       break;
     case kDxgiFormatR8G8B8A8Unorm:
     case kDxgiFormatR8G8B8A8UnormSrgb:
@@ -5313,15 +5332,43 @@ static void SoftwareClearTexture2D(Resource* rt, const FLOAT rgba[4]) {
       px[1] = g;
       px[2] = b;
       px[3] = a;
+      bytes_per_pixel = 4;
       break;
+    case kDxgiFormatB5G6R5Unorm: {
+      const uint16_t r5 = static_cast<uint16_t>(UnormFromFloat01(rgba[0], 31));
+      const uint16_t g6 = static_cast<uint16_t>(UnormFromFloat01(rgba[1], 63));
+      const uint16_t b5 = static_cast<uint16_t>(UnormFromFloat01(rgba[2], 31));
+      px16 = static_cast<uint16_t>((r5 << 11) | (g6 << 5) | b5);
+      bytes_per_pixel = 2;
+      is_16bpp = true;
+      break;
+    }
+    case kDxgiFormatB5G5R5A1Unorm: {
+      const uint16_t r5 = static_cast<uint16_t>(UnormFromFloat01(rgba[0], 31));
+      const uint16_t g5 = static_cast<uint16_t>(UnormFromFloat01(rgba[1], 31));
+      const uint16_t b5 = static_cast<uint16_t>(UnormFromFloat01(rgba[2], 31));
+      const uint16_t a1 = static_cast<uint16_t>(UnormFromFloat01(rgba[3], 1));
+      px16 = static_cast<uint16_t>((a1 << 15) | (r5 << 10) | (g5 << 5) | b5);
+      bytes_per_pixel = 2;
+      is_16bpp = true;
+      break;
+    }
     default:
       return;
+  }
+
+  if (bytes_per_pixel == 0 || rt->row_pitch_bytes < rt->width * bytes_per_pixel) {
+    return;
   }
 
   for (uint32_t y = 0; y < rt->height; y++) {
     uint8_t* row = rt->storage.data() + static_cast<size_t>(y) * rt->row_pitch_bytes;
     for (uint32_t x = 0; x < rt->width; x++) {
-      std::memcpy(row + static_cast<size_t>(x) * 4, px, sizeof(px));
+      if (is_16bpp) {
+        std::memcpy(row + static_cast<size_t>(x) * 2, &px16, sizeof(px16));
+      } else {
+        std::memcpy(row + static_cast<size_t>(x) * 4, px, sizeof(px));
+      }
     }
   }
 }
