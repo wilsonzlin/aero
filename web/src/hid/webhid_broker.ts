@@ -3,6 +3,7 @@ import { alignUp, RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
 import { normalizeCollections, type NormalizedHidCollectionInfo } from "./webhid_normalize";
+import { computeInputReportPayloadByteLengths } from "./hid_report_sizes";
 import {
   isHidErrorMessage,
   isHidLogMessage,
@@ -18,8 +19,9 @@ import {
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
 import { createHidReportRingBuffer, HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
 import {
+  HID_INPUT_REPORT_RECORD_MAGIC,
   HID_INPUT_REPORT_RECORD_HEADER_BYTES,
-  writeHidInputReportRingRecord,
+  HID_INPUT_REPORT_RECORD_VERSION,
 } from "./hid_input_report_ring";
 
 export type WebHidBrokerState = {
@@ -65,6 +67,13 @@ function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+const UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES = 64;
+
+function toU32OrZero(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value)) >>> 0;
+}
+
 export class WebHidBroker {
   readonly manager: WebHidPassthroughManager;
 
@@ -96,6 +105,12 @@ export class WebHidBroker {
   readonly #attachedToWorker = new Set<number>();
   readonly #inputReportListeners = new Map<number, (event: HIDInputReportEvent) => void>();
   readonly #lastInputReportInfo = new Map<number, WebHidLastInputReportInfo>();
+  readonly #inputReportExpectedPayloadBytes = new Map<number, Map<number, number>>();
+  readonly #inputReportSizeWarned = new Set<string>();
+  #inputReportTruncated = 0;
+  #inputReportPadded = 0;
+  #inputReportHardCapped = 0;
+  #inputReportUnknownSize = 0;
 
   readonly #listeners = new Set<WebHidBrokerListener>();
 
@@ -430,6 +445,8 @@ export class WebHidBroker {
       // fail deterministically before sending metadata to the worker.
       const collections = normalizeCollections(device.collections, { validate: true });
       const hasInterruptOut = computeHasInterruptOut(collections);
+      const inputReportPayloadBytes = computeInputReportPayloadByteLengths(collections);
+      this.#inputReportExpectedPayloadBytes.set(deviceId, inputReportPayloadBytes);
 
       const attachMsg: HidAttachMessage = {
         type: "hid.attach",
@@ -462,21 +479,69 @@ export class WebHidBroker {
 
         const view = event.data;
         if (!(view instanceof DataView)) return;
-        const src = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+        const reportId = (typeof event.reportId === "number" ? event.reportId : 0) >>> 0;
+        const srcLen = view.byteLength;
+
+        const expected = this.#inputReportExpectedPayloadBytes.get(deviceId)?.get(reportId);
+        let destLen: number;
+        if (expected !== undefined) {
+          destLen = expected;
+          if (srcLen > expected) {
+            this.#inputReportTruncated += 1;
+            this.#warnInputReportSizeOnce(
+              deviceId,
+              reportId,
+              "truncated",
+              `[webhid] inputreport length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); truncating`,
+            );
+          } else if (srcLen < expected) {
+            this.#inputReportPadded += 1;
+            this.#warnInputReportSizeOnce(
+              deviceId,
+              reportId,
+              "padded",
+              `[webhid] inputreport length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); zero-padding`,
+            );
+          }
+        } else {
+          this.#inputReportUnknownSize += 1;
+          if (srcLen > UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES) {
+            destLen = UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES;
+            this.#inputReportHardCapped += 1;
+            this.#warnInputReportSizeOnce(
+              deviceId,
+              reportId,
+              "hardCap",
+              `[webhid] inputreport reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES}`,
+            );
+          } else {
+            destLen = srcLen;
+          }
+        }
+
+        // Only ever create a view over the clamped amount of input data so a bogus
+        // (or malicious) browser/device can't trick us into copying huge buffers.
+        const copyLen = Math.min(srcLen, destLen);
+        const src = new Uint8Array(view.buffer, view.byteOffset, copyLen);
 
         const tsMs = typeof event.timeStamp === "number" ? event.timeStamp : undefined;
-        this.#lastInputReportInfo.set(deviceId, { tsMs: tsMs ?? performance.now(), byteLength: src.byteLength });
+        this.#lastInputReportInfo.set(deviceId, { tsMs: tsMs ?? performance.now(), byteLength: srcLen });
         this.#scheduleEmitForInputReports();
 
         const ring = this.#inputReportRing;
         if (ring && this.#canUseSharedMemory()) {
-          const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + src.byteLength, (dest) => {
-            writeHidInputReportRingRecord(dest, {
-              deviceId,
-              reportId: event.reportId,
-              tsMs,
-              data: src,
-            });
+          const tsU32 = toU32OrZero(tsMs);
+          const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + destLen, (dest) => {
+            const dv = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
+            dv.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
+            dv.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
+            dv.setUint32(8, deviceId >>> 0, true);
+            dv.setUint32(12, reportId, true);
+            dv.setUint32(16, tsU32, true);
+            dv.setUint32(20, destLen >>> 0, true);
+            const payload = dest.subarray(HID_INPUT_REPORT_RECORD_HEADER_BYTES);
+            payload.set(src);
+            if (copyLen < destLen) payload.fill(0, copyLen);
           });
           if (ok) {
             this.#inputReportRingPushed += 1;
@@ -497,16 +562,22 @@ export class WebHidBroker {
 
         const inputRing = this.#inputRing;
         if (inputRing) {
-          inputRing.push(deviceId >>> 0, HidRingReportType.Input, event.reportId >>> 0, src);
+          if (copyLen === destLen) {
+            inputRing.push(deviceId >>> 0, HidRingReportType.Input, reportId, src);
+          } else {
+            const padded = new Uint8Array(destLen);
+            padded.set(src);
+            inputRing.push(deviceId >>> 0, HidRingReportType.Input, reportId, padded);
+          }
           return;
         }
 
-        const data = new Uint8Array(src.byteLength);
+        const data = new Uint8Array(destLen);
         data.set(src);
         const msg: HidInputReportMessage = {
           type: "hid.inputReport",
           deviceId,
-          reportId: event.reportId,
+          reportId,
           data,
           tsMs,
         };
@@ -583,6 +654,13 @@ export class WebHidBroker {
     }
     this.#inputReportListeners.delete(deviceId);
     this.#lastInputReportInfo.delete(deviceId);
+    this.#inputReportExpectedPayloadBytes.delete(deviceId);
+    // Allow future attaches to re-log size mismatches for this device ID.
+    for (const key of this.#inputReportSizeWarned) {
+      if (key.startsWith(`${deviceId}:`)) {
+        this.#inputReportSizeWarned.delete(key);
+      }
+    }
     this.#pendingDeviceSends.delete(deviceId);
     this.#deviceSendTokenById.delete(deviceId);
 
@@ -600,6 +678,13 @@ export class WebHidBroker {
       this.#emit();
     }, 100);
     (this.#inputReportEmitTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  #warnInputReportSizeOnce(deviceId: number, reportId: number, kind: string, message: string): void {
+    const key = `${deviceId}:${reportId}:${kind}`;
+    if (this.#inputReportSizeWarned.has(key)) return;
+    this.#inputReportSizeWarned.add(key);
+    console.warn(message);
   }
 
   #handleSendReportRequest(msg: HidSendReportMessage): void {

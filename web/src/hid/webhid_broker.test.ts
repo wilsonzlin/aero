@@ -137,6 +137,51 @@ describe("hid/WebHidBroker", () => {
     expect(input!.transfer?.[0]).toBe(input!.msg.data.buffer);
   });
 
+  it("clamps oversized inputreport payloads to the expected report size before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      // One input report (ID 1) with 4 bytes of payload (8*4 bits).
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [
+            {
+              reportId: 1,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+      await broker.attachDevice(device as unknown as HIDDevice);
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3, 4], 0);
+      device.dispatchInputReport(1, huge);
+
+      const input = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.inputReport") as
+        | { msg: HidInputReportMessage; transfer?: Transferable[] }
+        | undefined;
+      expect(input).toBeTruthy();
+      expect(input!.msg.reportId).toBe(1);
+      expect(input!.msg.data.byteLength).toBe(4);
+      expect(Array.from(input!.msg.data)).toEqual([1, 2, 3, 4]);
+      expect(input!.transfer?.[0]).toBe(input!.msg.data.buffer);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("forwards reports via SharedArrayBuffer rings when crossOriginIsolated", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
