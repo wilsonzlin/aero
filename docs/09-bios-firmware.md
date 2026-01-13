@@ -102,7 +102,7 @@ services in Rust.
   - constructs a `firmware::bios::Bios`,
   - maps the ROM returned by `build_bios_rom()` into guest physical memory,
   - runs `Bios::post_with_pci(...)`, which performs POST and then loads/jumps to boot code based on
-    `firmware::bios::BiosConfig::boot_drive`:
+    `firmware::bios::BiosConfig::boot_drive` (configured via `aero_machine::Machine::set_boot_drive(...)`):
     - **HDD/floppy boot:** reads LBA0 into `0000:7C00` and jumps to `0000:7C00`.
     - **CD-ROM boot:** when `boot_drive` is in `0xE0..=0xEF`, parses the El Torito boot catalog and
       loads the **no-emulation** boot image to `load_segment:0000` (commonly `07C0:0000`), then
