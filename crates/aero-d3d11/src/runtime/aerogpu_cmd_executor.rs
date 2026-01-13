@@ -14,6 +14,10 @@ use aero_gpu::pipeline_key::{
     ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash,
 };
 use aero_gpu::wgpu_bc_texture_dimensions_compatible;
+use aero_gpu::{
+    expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8,
+    pack_rgba8_to_b5g5r5a1_unorm, pack_rgba8_to_b5g6r5_unorm,
+};
 use aero_gpu::GpuCapabilities;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
@@ -436,13 +440,24 @@ struct ResourceBacking {
 }
 
 #[derive(Debug, Clone, Copy)]
+enum TextureWritebackTransform {
+    /// Write staging bytes directly into guest memory.
+    Direct { force_opaque_alpha: bool },
+    /// Pack staging RGBA8 bytes into `B5G6R5Unorm` before writing to guest memory.
+    B5G6R5,
+    /// Pack staging RGBA8 bytes into `B5G5R5A1Unorm` before writing to guest memory.
+    B5G5R5A1,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct TextureWritebackPlan {
     base_gpa: u64,
     row_pitch: u64,
     padded_bytes_per_row: u32,
-    unpadded_bytes_per_row: u32,
+    staging_unpadded_bytes_per_row: u32,
+    guest_unpadded_bytes_per_row: u32,
     height: u32,
-    is_x8: bool,
+    transform: TextureWritebackTransform,
 }
 
 #[derive(Debug)]
@@ -1956,39 +1971,22 @@ impl AerogpuD3d11Executor {
                         plan.padded_bytes_per_row.try_into().map_err(|_| {
                             anyhow!("COPY_TEXTURE2D: padded bytes_per_row out of range")
                         })?;
-                    let unpadded_bpr_usize: usize = plan
-                        .unpadded_bytes_per_row
+                    let staging_unpadded_bpr_usize: usize = plan
+                        .staging_unpadded_bytes_per_row
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: bytes_per_row out of range"))?;
+                    let guest_unpadded_bpr_usize: usize = plan
+                        .guest_unpadded_bytes_per_row
                         .try_into()
                         .map_err(|_| anyhow!("COPY_TEXTURE2D: bytes_per_row out of range"))?;
                     let mapped = slice.get_mapped_range();
-                    let owned = if plan.is_x8 {
-                        let mut bytes = mapped.to_vec();
-                        for row in 0..plan.height as usize {
-                            let start = row
-                                .checked_mul(padded_bpr_usize)
-                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: row offset overflow"))?;
-                            let end = start
-                                .checked_add(unpadded_bpr_usize)
-                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: row end overflow"))?;
-                            force_opaque_alpha_rgba8(bytes.get_mut(start..end).ok_or_else(
-                                || anyhow!("COPY_TEXTURE2D: staging buffer too small"),
-                            )?);
-                        }
-                        Some(bytes)
-                    } else {
-                        None
-                    };
+                    let mut converted_row = Vec::<u8>::new();
                     for row in 0..plan.height as u64 {
                         let src_start = row as usize * padded_bpr_usize;
-                        let src_end =
-                            src_start.checked_add(unpadded_bpr_usize).ok_or_else(|| {
-                                anyhow!("COPY_TEXTURE2D: src row end overflows usize")
-                            })?;
-                        let row_bytes = match owned.as_ref() {
-                            Some(bytes) => bytes.get(src_start..src_end),
-                            None => mapped.get(src_start..src_end),
-                        }
-                        .ok_or_else(|| {
+                        let src_end = src_start
+                            .checked_add(staging_unpadded_bpr_usize)
+                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src row end overflows usize"))?;
+                        let row_bytes = mapped.get(src_start..src_end).ok_or_else(|| {
                             anyhow!("COPY_TEXTURE2D: writeback staging buffer too small")
                         })?;
                         let dst_gpa = plan
@@ -1999,9 +1997,50 @@ impl AerogpuD3d11Executor {
                             .ok_or_else(|| {
                                 anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)")
                             })?;
-                        guest_mem
-                            .write(dst_gpa, row_bytes)
-                            .map_err(anyhow_guest_mem)?;
+
+                        match plan.transform {
+                            TextureWritebackTransform::Direct { force_opaque_alpha } => {
+                                let row_bytes = row_bytes
+                                    .get(..guest_unpadded_bpr_usize)
+                                    .ok_or_else(|| {
+                                        anyhow!("COPY_TEXTURE2D: staging buffer too small for row")
+                                    })?;
+                                if force_opaque_alpha {
+                                    converted_row.clear();
+                                    converted_row.extend_from_slice(row_bytes);
+                                    force_opaque_alpha_rgba8(&mut converted_row);
+                                    guest_mem
+                                        .write(dst_gpa, &converted_row)
+                                        .map_err(anyhow_guest_mem)?;
+                                } else {
+                                    guest_mem.write(dst_gpa, row_bytes).map_err(anyhow_guest_mem)?;
+                                }
+                            }
+                            TextureWritebackTransform::B5G6R5 => {
+                                if guest_unpadded_bpr_usize != row_bytes.len() / 2 {
+                                    bail!(
+                                        "COPY_TEXTURE2D: internal error: packed writeback row size mismatch"
+                                    );
+                                }
+                                converted_row.resize(guest_unpadded_bpr_usize, 0);
+                                pack_rgba8_to_b5g6r5_unorm(row_bytes, &mut converted_row);
+                                guest_mem
+                                    .write(dst_gpa, &converted_row)
+                                    .map_err(anyhow_guest_mem)?;
+                            }
+                            TextureWritebackTransform::B5G5R5A1 => {
+                                if guest_unpadded_bpr_usize != row_bytes.len() / 2 {
+                                    bail!(
+                                        "COPY_TEXTURE2D: internal error: packed writeback row size mismatch"
+                                    );
+                                }
+                                converted_row.resize(guest_unpadded_bpr_usize, 0);
+                                pack_rgba8_to_b5g5r5a1_unorm(row_bytes, &mut converted_row);
+                                guest_mem
+                                    .write(dst_gpa, &converted_row)
+                                    .map_err(anyhow_guest_mem)?;
+                            }
+                        }
                     }
                     drop(mapped);
                     staging.unmap();
@@ -2067,39 +2106,22 @@ impl AerogpuD3d11Executor {
                         plan.padded_bytes_per_row.try_into().map_err(|_| {
                             anyhow!("COPY_TEXTURE2D: padded bytes_per_row out of range")
                         })?;
-                    let unpadded_bpr_usize: usize = plan
-                        .unpadded_bytes_per_row
+                    let staging_unpadded_bpr_usize: usize = plan
+                        .staging_unpadded_bytes_per_row
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: bytes_per_row out of range"))?;
+                    let guest_unpadded_bpr_usize: usize = plan
+                        .guest_unpadded_bytes_per_row
                         .try_into()
                         .map_err(|_| anyhow!("COPY_TEXTURE2D: bytes_per_row out of range"))?;
                     let mapped = slice.get_mapped_range();
-                    let owned = if plan.is_x8 {
-                        let mut bytes = mapped.to_vec();
-                        for row in 0..plan.height as usize {
-                            let start = row
-                                .checked_mul(padded_bpr_usize)
-                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: row offset overflow"))?;
-                            let end = start
-                                .checked_add(unpadded_bpr_usize)
-                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: row end overflow"))?;
-                            force_opaque_alpha_rgba8(bytes.get_mut(start..end).ok_or_else(
-                                || anyhow!("COPY_TEXTURE2D: staging buffer too small"),
-                            )?);
-                        }
-                        Some(bytes)
-                    } else {
-                        None
-                    };
+                    let mut converted_row = Vec::<u8>::new();
                     for row in 0..plan.height as u64 {
                         let src_start = row as usize * padded_bpr_usize;
-                        let src_end =
-                            src_start.checked_add(unpadded_bpr_usize).ok_or_else(|| {
-                                anyhow!("COPY_TEXTURE2D: src row end overflows usize")
-                            })?;
-                        let row_bytes = match owned.as_ref() {
-                            Some(bytes) => bytes.get(src_start..src_end),
-                            None => mapped.get(src_start..src_end),
-                        }
-                        .ok_or_else(|| {
+                        let src_end = src_start
+                            .checked_add(staging_unpadded_bpr_usize)
+                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src row end overflows usize"))?;
+                        let row_bytes = mapped.get(src_start..src_end).ok_or_else(|| {
                             anyhow!("COPY_TEXTURE2D: writeback staging buffer too small")
                         })?;
                         let dst_gpa = plan
@@ -2110,9 +2132,50 @@ impl AerogpuD3d11Executor {
                             .ok_or_else(|| {
                                 anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)")
                             })?;
-                        guest_mem
-                            .write(dst_gpa, row_bytes)
-                            .map_err(anyhow_guest_mem)?;
+
+                        match plan.transform {
+                            TextureWritebackTransform::Direct { force_opaque_alpha } => {
+                                let row_bytes = row_bytes
+                                    .get(..guest_unpadded_bpr_usize)
+                                    .ok_or_else(|| {
+                                        anyhow!("COPY_TEXTURE2D: staging buffer too small for row")
+                                    })?;
+                                if force_opaque_alpha {
+                                    converted_row.clear();
+                                    converted_row.extend_from_slice(row_bytes);
+                                    force_opaque_alpha_rgba8(&mut converted_row);
+                                    guest_mem
+                                        .write(dst_gpa, &converted_row)
+                                        .map_err(anyhow_guest_mem)?;
+                                } else {
+                                    guest_mem.write(dst_gpa, row_bytes).map_err(anyhow_guest_mem)?;
+                                }
+                            }
+                            TextureWritebackTransform::B5G6R5 => {
+                                if guest_unpadded_bpr_usize != row_bytes.len() / 2 {
+                                    bail!(
+                                        "COPY_TEXTURE2D: internal error: packed writeback row size mismatch"
+                                    );
+                                }
+                                converted_row.resize(guest_unpadded_bpr_usize, 0);
+                                pack_rgba8_to_b5g6r5_unorm(row_bytes, &mut converted_row);
+                                guest_mem
+                                    .write(dst_gpa, &converted_row)
+                                    .map_err(anyhow_guest_mem)?;
+                            }
+                            TextureWritebackTransform::B5G5R5A1 => {
+                                if guest_unpadded_bpr_usize != row_bytes.len() / 2 {
+                                    bail!(
+                                        "COPY_TEXTURE2D: internal error: packed writeback row size mismatch"
+                                    );
+                                }
+                                converted_row.resize(guest_unpadded_bpr_usize, 0);
+                                pack_rgba8_to_b5g5r5a1_unorm(row_bytes, &mut converted_row);
+                                guest_mem
+                                    .write(dst_gpa, &converted_row)
+                                    .map_err(anyhow_guest_mem)?;
+                            }
+                        }
                     }
                     drop(mapped);
                     staging.unmap();
@@ -5412,14 +5475,36 @@ impl AerogpuD3d11Executor {
                     )?;
                 }
             } else {
-                write_texture_linear(
-                    &self.queue,
-                    &tex.texture,
-                    tex.desc,
-                    bytes_per_row,
-                    data,
-                    aerogpu_format_is_x8(tex.format_u32),
-                )?;
+                if let Some(b5_format) = aerogpu_b5_format(tex.format_u32) {
+                    let rgba = expand_b5_texture_to_rgba8(
+                        b5_format,
+                        desc.width,
+                        desc.height,
+                        bytes_per_row,
+                        data,
+                    )?;
+                    let rgba_bpr = desc
+                        .width
+                        .checked_mul(4)
+                        .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: B5 expanded bytes_per_row overflow"))?;
+                    write_texture_linear(
+                        &self.queue,
+                        &tex.texture,
+                        tex.desc,
+                        rgba_bpr,
+                        &rgba,
+                        false,
+                    )?;
+                } else {
+                    write_texture_linear(
+                        &self.queue,
+                        &tex.texture,
+                        tex.desc,
+                        bytes_per_row,
+                        data,
+                        aerogpu_format_is_x8(tex.format_u32),
+                    )?;
+                }
             }
             tex.host_shadow = Some(data.to_vec());
             tex.dirty = false;
@@ -5534,14 +5619,28 @@ impl AerogpuD3d11Executor {
                 write_texture_linear(&self.queue, &tex.texture, tex.desc, rgba_bpr, &rgba, false)?;
             }
         } else {
-            write_texture_linear(
-                &self.queue,
-                &tex.texture,
-                tex.desc,
-                bytes_per_row,
-                shadow,
-                aerogpu_format_is_x8(tex.format_u32),
-            )?;
+            if let Some(b5_format) = aerogpu_b5_format(tex.format_u32) {
+                let rgba = expand_b5_texture_to_rgba8(
+                    b5_format,
+                    desc.width,
+                    desc.height,
+                    bytes_per_row,
+                    shadow,
+                )?;
+                let rgba_bpr = desc.width.checked_mul(4).ok_or_else(|| {
+                    anyhow!("UPLOAD_RESOURCE: B5 expanded bytes_per_row overflow")
+                })?;
+                write_texture_linear(&self.queue, &tex.texture, tex.desc, rgba_bpr, &rgba, false)?;
+            } else {
+                write_texture_linear(
+                    &self.queue,
+                    &tex.texture,
+                    tex.desc,
+                    bytes_per_row,
+                    shadow,
+                    aerogpu_format_is_x8(tex.format_u32),
+                )?;
+            }
         }
         tex.dirty = false;
         // `UPLOAD_RESOURCE` updates do not update guest memory backing.
@@ -5891,7 +5990,7 @@ impl AerogpuD3d11Executor {
 
         if writeback && !aerogpu_format_supports_writeback_dst(dst_format_u32) {
             bail!(
-                "COPY_TEXTURE2D: WRITEBACK_DST is not supported for dst format {dst_format_u32} (only uncompressed 32bpp formats are supported)"
+                "COPY_TEXTURE2D: WRITEBACK_DST is not supported for dst format {dst_format_u32}"
             );
         }
 
@@ -5988,18 +6087,31 @@ impl AerogpuD3d11Executor {
                 bail!("COPY_TEXTURE2D: WRITEBACK_DST requires non-zero dst row_pitch_bytes");
             }
             let row_pitch = dst_row_pitch_bytes as u64;
-            let bytes_per_pixel = bytes_per_texel(dst_desc.format)? as u64;
+
+            let host_bytes_per_pixel_u32 = bytes_per_texel(dst_desc.format)?;
+            let host_row_bytes_u32 = width
+                .checked_mul(host_bytes_per_pixel_u32)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: host bytes_per_row overflow"))?;
+
+            // Guest layout may differ from host `wgpu::TextureFormat` for formats that require
+            // CPU-side conversions (e.g. B5G6R5/B5G5R5A1 represented as RGBA8 on the host).
+            let guest_bytes_per_pixel_u32 = match guest_format_layout {
+                AerogpuTextureFormatLayout::Uncompressed { bytes_per_texel } => bytes_per_texel,
+                AerogpuTextureFormatLayout::BlockCompressed { .. } => {
+                    bail!("COPY_TEXTURE2D: WRITEBACK_DST does not support block-compressed formats")
+                }
+            };
 
             let dst_x_bytes = (dst_x as u64)
-                .checked_mul(bytes_per_pixel)
+                .checked_mul(guest_bytes_per_pixel_u32 as u64)
                 .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow"))?;
 
-            let row_bytes_u32 = width
-                .checked_mul(bytes_per_pixel as u32)
+            let guest_row_bytes_u32 = width
+                .checked_mul(guest_bytes_per_pixel_u32)
                 .ok_or_else(|| anyhow!("COPY_TEXTURE2D: bytes_per_row overflow"))?;
-            let row_bytes = row_bytes_u32 as u64;
+            let guest_row_bytes = guest_row_bytes_u32 as u64;
             if dst_x_bytes
-                .checked_add(row_bytes)
+                .checked_add(guest_row_bytes)
                 .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst row byte range overflow"))?
                 > row_pitch
             {
@@ -6027,7 +6139,7 @@ impl AerogpuD3d11Executor {
                 .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row start overflow"))?;
 
             let end_offset = last_row_start
-                .checked_add(row_bytes)
+                .checked_add(guest_row_bytes)
                 .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing end overflow"))?;
 
             let validate_size = end_offset
@@ -6035,7 +6147,7 @@ impl AerogpuD3d11Executor {
                 .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size underflow"))?;
 
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-            let padded_bpr = row_bytes_u32
+            let padded_bpr = host_row_bytes_u32
                 .checked_add(align - 1)
                 .map(|v| v / align)
                 .and_then(|v| v.checked_mul(align))
@@ -6045,14 +6157,32 @@ impl AerogpuD3d11Executor {
                 .validate_write_range(dst_backing.alloc_id, start_offset, validate_size)
                 .context("COPY_TEXTURE2D: WRITEBACK_DST alloc table validation failed")?;
 
+            let transform = if let Some(b5) = aerogpu_b5_format(dst_format_u32) {
+                match b5 {
+                    AerogpuB5Format::B5G6R5 => TextureWritebackTransform::B5G6R5,
+                    AerogpuB5Format::B5G5R5A1 => TextureWritebackTransform::B5G5R5A1,
+                }
+            } else {
+                TextureWritebackTransform::Direct {
+                    force_opaque_alpha: aerogpu_format_is_x8(dst_format_u32),
+                }
+            };
+
+            if matches!(transform, TextureWritebackTransform::Direct { .. })
+                && guest_row_bytes_u32 != host_row_bytes_u32
+            {
+                bail!("COPY_TEXTURE2D: internal error: direct writeback row size mismatch");
+            }
+
             Some((
                 TextureWritebackPlan {
                     base_gpa,
                     row_pitch,
                     padded_bytes_per_row: padded_bpr,
-                    unpadded_bytes_per_row: row_bytes_u32,
+                    staging_unpadded_bytes_per_row: host_row_bytes_u32,
+                    guest_unpadded_bytes_per_row: guest_row_bytes_u32,
                     height,
-                    is_x8: aerogpu_format_is_x8(dst_format_u32),
+                    transform,
                 },
                 padded_bpr as u64,
             ))
@@ -7968,6 +8098,7 @@ impl AerogpuD3d11Executor {
         };
 
         let force_opaque_alpha = aerogpu_format_is_x8(format_u32);
+        let b5_format = aerogpu_b5_format(format_u32);
 
         let format_layout = aerogpu_texture_format_layout(format_u32)?;
         let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
@@ -8161,6 +8292,124 @@ impl AerogpuD3d11Executor {
                         },
                     );
                 }
+            }
+
+            Ok(())
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn upload_b5_subresource(
+            queue: &wgpu::Queue,
+            texture: &wgpu::Texture,
+            mip_level: u32,
+            array_layer: u32,
+            width: u32,
+            height: u32,
+            src_bytes_per_row: u32,
+            b5_format: AerogpuB5Format,
+            gpa: u64,
+            guest_mem: &mut dyn GuestMemory,
+        ) -> Result<()> {
+            // Guest layout is 16bpp packed, host texture is RGBA8.
+            let src_unpadded_bpr = width
+                .checked_mul(2)
+                .ok_or_else(|| anyhow!("texture upload: B5 bytes_per_row overflow"))?;
+            if src_bytes_per_row < src_unpadded_bpr {
+                bail!("texture upload: B5 bytes_per_row too small");
+            }
+
+            let dst_unpadded_bpr = width
+                .checked_mul(4)
+                .ok_or_else(|| anyhow!("texture upload: B5 expanded bytes_per_row overflow"))?;
+            let aligned = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+            let padded_bpr = if height > 1 {
+                dst_unpadded_bpr
+                    .checked_add(aligned - 1)
+                    .map(|v| v / aligned)
+                    .and_then(|v| v.checked_mul(aligned))
+                    .ok_or_else(|| anyhow!("texture upload: B5 padded bytes_per_row overflow"))?
+            } else {
+                dst_unpadded_bpr
+            };
+
+            let height_usize: usize = height
+                .try_into()
+                .map_err(|_| anyhow!("texture upload: B5 height out of range"))?;
+
+            let padded_bpr_usize: usize = padded_bpr
+                .try_into()
+                .map_err(|_| anyhow!("texture upload: B5 padded bytes_per_row out of range"))?;
+            let src_unpadded_bpr_usize: usize = src_unpadded_bpr
+                .try_into()
+                .map_err(|_| anyhow!("texture upload: B5 bytes_per_row out of range"))?;
+            let dst_unpadded_bpr_usize: usize = dst_unpadded_bpr
+                .try_into()
+                .map_err(|_| anyhow!("texture upload: B5 bytes_per_row out of range"))?;
+
+            let rows_per_chunk = (CHUNK_BYTES / padded_bpr_usize).max(1);
+            let mut src_row_buf = vec![0u8; src_unpadded_bpr_usize];
+            let mut expanded_rows = vec![0u8; padded_bpr_usize * rows_per_chunk];
+
+            for y0 in (0..height_usize).step_by(rows_per_chunk) {
+                let rows = (height_usize - y0).min(rows_per_chunk);
+                let needed = padded_bpr_usize
+                    .checked_mul(rows)
+                    .ok_or_else(|| anyhow!("texture upload: B5 chunk overflows usize"))?;
+                let chunk = &mut expanded_rows[..needed];
+                chunk.fill(0);
+
+                for row in 0..rows {
+                    let row_index = y0
+                        .checked_add(row)
+                        .ok_or_else(|| anyhow!("texture upload: B5 row index overflows usize"))?;
+                    let row_offset = u64::try_from(row_index)
+                        .ok()
+                        .and_then(|v| v.checked_mul(u64::from(src_bytes_per_row)))
+                        .ok_or_else(|| anyhow!("texture upload: B5 row offset overflows u64"))?;
+                    let src_addr = gpa
+                        .checked_add(row_offset)
+                        .ok_or_else(|| anyhow!("texture upload: B5 address overflows u64"))?;
+                    guest_mem
+                        .read(src_addr, &mut src_row_buf)
+                        .map_err(anyhow_guest_mem)?;
+
+                    let dst_start = row * padded_bpr_usize;
+                    let dst_row = chunk
+                        .get_mut(dst_start..dst_start + dst_unpadded_bpr_usize)
+                        .ok_or_else(|| anyhow!("texture upload: B5 staging buffer too small"))?;
+                    match b5_format {
+                        AerogpuB5Format::B5G6R5 => {
+                            expand_b5g6r5_unorm_to_rgba8(&src_row_buf, dst_row);
+                        }
+                        AerogpuB5Format::B5G5R5A1 => {
+                            expand_b5g5r5a1_unorm_to_rgba8(&src_row_buf, dst_row);
+                        }
+                    }
+                }
+
+                queue.write_texture(
+                    wgpu::ImageCopyTexture {
+                        texture,
+                        mip_level,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: y0 as u32,
+                            z: array_layer,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    chunk,
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bpr),
+                        rows_per_image: Some(rows as u32),
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height: rows as u32,
+                        depth_or_array_layers: 1,
+                    },
+                );
             }
 
             Ok(())
@@ -8544,19 +8793,34 @@ impl AerogpuD3d11Executor {
                         )?;
                     }
                 } else {
-                    upload_subresource(
-                        queue,
-                        &tex.texture,
-                        desc.format,
-                        level,
-                        layer,
-                        level_width,
-                        level_height,
-                        level_row_pitch_u32,
-                        force_opaque_alpha,
-                        gpa,
-                        guest_mem,
-                    )?;
+                    if let Some(b5_format) = b5_format {
+                        upload_b5_subresource(
+                            queue,
+                            &tex.texture,
+                            level,
+                            layer,
+                            level_width,
+                            level_height,
+                            level_row_pitch_u32,
+                            b5_format,
+                            gpa,
+                            guest_mem,
+                        )?;
+                    } else {
+                        upload_subresource(
+                            queue,
+                            &tex.texture,
+                            desc.format,
+                            level,
+                            layer,
+                            level_width,
+                            level_height,
+                            level_row_pitch_u32,
+                            force_opaque_alpha,
+                            gpa,
+                            guest_mem,
+                        )?;
+                    }
                 }
             }
         }
@@ -9770,6 +10034,8 @@ const AEROGPU_FORMAT_B8G8R8A8_UNORM: u32 = AerogpuFormat::B8G8R8A8Unorm as u32;
 const AEROGPU_FORMAT_B8G8R8X8_UNORM: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
 const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
 const AEROGPU_FORMAT_R8G8B8X8_UNORM: u32 = AerogpuFormat::R8G8B8X8Unorm as u32;
+const AEROGPU_FORMAT_B5G6R5_UNORM: u32 = AerogpuFormat::B5G6R5Unorm as u32;
+const AEROGPU_FORMAT_B5G5R5A1_UNORM: u32 = AerogpuFormat::B5G5R5A1Unorm as u32;
 const AEROGPU_FORMAT_D24_UNORM_S8_UINT: u32 = AerogpuFormat::D24UnormS8Uint as u32;
 const AEROGPU_FORMAT_D32_FLOAT: u32 = AerogpuFormat::D32Float as u32;
 
@@ -9799,6 +10065,9 @@ fn map_aerogpu_texture_format(format_u32: u32, bc_enabled: bool) -> Result<wgpu:
         AEROGPU_FORMAT_R8G8B8A8_UNORM | AEROGPU_FORMAT_R8G8B8X8_UNORM => {
             wgpu::TextureFormat::Rgba8Unorm
         }
+        // wgpu/WebGPU does not expose 16-bit packed B5 formats; represent them as RGBA8 and
+        // expand/pack on CPU upload/writeback paths.
+        AEROGPU_FORMAT_B5G6R5_UNORM | AEROGPU_FORMAT_B5G5R5A1_UNORM => wgpu::TextureFormat::Rgba8Unorm,
         AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB | AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB => {
             wgpu::TextureFormat::Bgra8UnormSrgb
         }
@@ -9881,6 +10150,20 @@ fn aerogpu_format_is_x8(format_u32: u32) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AerogpuB5Format {
+    B5G6R5,
+    B5G5R5A1,
+}
+
+fn aerogpu_b5_format(format_u32: u32) -> Option<AerogpuB5Format> {
+    match format_u32 {
+        AEROGPU_FORMAT_B5G6R5_UNORM => Some(AerogpuB5Format::B5G6R5),
+        AEROGPU_FORMAT_B5G5R5A1_UNORM => Some(AerogpuB5Format::B5G5R5A1),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AerogpuBcFormat {
     Bc1,
     Bc2,
@@ -9929,6 +10212,10 @@ impl AerogpuTextureFormatLayout {
 
 fn aerogpu_texture_format_layout(format_u32: u32) -> Result<AerogpuTextureFormatLayout> {
     Ok(match format_u32 {
+        AEROGPU_FORMAT_B5G6R5_UNORM | AEROGPU_FORMAT_B5G5R5A1_UNORM => {
+            AerogpuTextureFormatLayout::Uncompressed { bytes_per_texel: 2 }
+        }
+
         AEROGPU_FORMAT_B8G8R8A8_UNORM
         | AEROGPU_FORMAT_B8G8R8X8_UNORM
         | AEROGPU_FORMAT_R8G8B8A8_UNORM
@@ -10039,7 +10326,12 @@ fn compute_guest_texture_layout(
 }
 
 fn aerogpu_format_supports_writeback_dst(format_u32: u32) -> bool {
-    // WRITEBACK_DST currently only supports byte-identical uncompressed 32bpp (RGBA/BGRA) layouts.
+    // WRITEBACK_DST supports formats we can materialize in a CPU-visible staging buffer and write
+    // back into guest memory.
+    //
+    // For 32bpp formats the staging bytes are written back directly (optionally forcing alpha to
+    // opaque for X8 formats). For 16bpp packed B5 formats we read back RGBA8 and pack to the guest
+    // format.
     matches!(
         format_u32,
         AEROGPU_FORMAT_B8G8R8A8_UNORM
@@ -10050,6 +10342,8 @@ fn aerogpu_format_supports_writeback_dst(format_u32: u32) -> bool {
             | AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB
             | AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB
             | AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB
+            | AEROGPU_FORMAT_B5G6R5_UNORM
+            | AEROGPU_FORMAT_B5G5R5A1_UNORM
     )
 }
 
@@ -10057,6 +10351,82 @@ fn force_opaque_alpha_rgba8(pixels: &mut [u8]) {
     for alpha in pixels.iter_mut().skip(3).step_by(4) {
         *alpha = 0xFF;
     }
+}
+
+fn expand_b5_texture_to_rgba8(
+    b5_format: AerogpuB5Format,
+    width: u32,
+    height: u32,
+    src_bytes_per_row: u32,
+    src: &[u8],
+) -> Result<Vec<u8>> {
+    let src_unpadded_bpr = width
+        .checked_mul(2)
+        .ok_or_else(|| anyhow!("B5 expand: bytes_per_row overflow"))?;
+    if src_bytes_per_row < src_unpadded_bpr {
+        bail!("B5 expand: bytes_per_row too small");
+    }
+
+    let dst_unpadded_bpr = width
+        .checked_mul(4)
+        .ok_or_else(|| anyhow!("B5 expand: expanded bytes_per_row overflow"))?;
+
+    let src_bpr_usize: usize = src_bytes_per_row
+        .try_into()
+        .map_err(|_| anyhow!("B5 expand: bytes_per_row out of range"))?;
+    let src_unpadded_bpr_usize: usize = src_unpadded_bpr
+        .try_into()
+        .map_err(|_| anyhow!("B5 expand: bytes_per_row out of range"))?;
+    let dst_bpr_usize: usize = dst_unpadded_bpr
+        .try_into()
+        .map_err(|_| anyhow!("B5 expand: bytes_per_row out of range"))?;
+    let height_usize: usize = height
+        .try_into()
+        .map_err(|_| anyhow!("B5 expand: height out of range"))?;
+
+    let required_src_len = src_bpr_usize
+        .checked_mul(height_usize)
+        .ok_or_else(|| anyhow!("B5 expand: src size overflow"))?;
+    if src.len() < required_src_len {
+        bail!(
+            "B5 expand: source too small: need {required_src_len} bytes, got {}",
+            src.len()
+        );
+    }
+
+    let out_len = dst_bpr_usize
+        .checked_mul(height_usize)
+        .ok_or_else(|| anyhow!("B5 expand: dst size overflow"))?;
+    let mut out = vec![0u8; out_len];
+
+    for row in 0..height_usize {
+        let src_start = row
+            .checked_mul(src_bpr_usize)
+            .ok_or_else(|| anyhow!("B5 expand: src row offset overflow"))?;
+        let src_end = src_start
+            .checked_add(src_unpadded_bpr_usize)
+            .ok_or_else(|| anyhow!("B5 expand: src row end overflow"))?;
+        let dst_start = row
+            .checked_mul(dst_bpr_usize)
+            .ok_or_else(|| anyhow!("B5 expand: dst row offset overflow"))?;
+        let dst_end = dst_start
+            .checked_add(dst_bpr_usize)
+            .ok_or_else(|| anyhow!("B5 expand: dst row end overflow"))?;
+
+        let src_row = src.get(src_start..src_end).ok_or_else(|| {
+            anyhow!("B5 expand: source too small for row {row} (start={src_start} end={src_end})")
+        })?;
+        let dst_row = out.get_mut(dst_start..dst_end).ok_or_else(|| {
+            anyhow!("B5 expand: dst buffer too small for row {row} (start={dst_start} end={dst_end})")
+        })?;
+
+        match b5_format {
+            AerogpuB5Format::B5G6R5 => expand_b5g6r5_unorm_to_rgba8(src_row, dst_row),
+            AerogpuB5Format::B5G5R5A1 => expand_b5g5r5a1_unorm_to_rgba8(src_row, dst_row),
+        }
+    }
+
+    Ok(out)
 }
 
 fn bytes_per_texel(format: wgpu::TextureFormat) -> Result<u32> {
