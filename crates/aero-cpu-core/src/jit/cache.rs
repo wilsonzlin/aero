@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageVersionSnapshot {
@@ -31,8 +31,16 @@ pub struct CodeCache {
     max_blocks: usize,
     max_bytes: usize,
     current_bytes: usize,
-    map: HashMap<u64, CompiledBlockHandle>,
-    lru: VecDeque<u64>,
+    /// Maps an entry RIP to its node index inside `nodes`.
+    map: HashMap<u64, usize>,
+    /// LRU list storage. Nodes are linked by indices so we can update in O(1) without `unsafe`.
+    nodes: Vec<Option<LruNode>>,
+    /// Recycled indices inside `nodes`.
+    free_list: Vec<usize>,
+    /// Most recently used node index.
+    head: Option<usize>,
+    /// Least recently used node index.
+    tail: Option<usize>,
 }
 
 impl CodeCache {
@@ -42,7 +50,10 @@ impl CodeCache {
             max_bytes,
             current_bytes: 0,
             map: HashMap::new(),
-            lru: VecDeque::new(),
+            nodes: Vec::new(),
+            free_list: Vec::new(),
+            head: None,
+            tail: None,
         }
     }
 
@@ -63,46 +74,43 @@ impl CodeCache {
     }
 
     pub fn get_cloned(&mut self, entry_rip: u64) -> Option<CompiledBlockHandle> {
-        if self.map.contains_key(&entry_rip) {
-            self.touch(entry_rip);
-        }
-        self.map.get(&entry_rip).cloned()
+        let idx = *self.map.get(&entry_rip)?;
+        self.touch_idx(idx);
+        Some(
+            self.nodes[idx]
+                .as_ref()
+                .expect("LRU node must exist for map entry")
+                .handle
+                .clone(),
+        )
     }
 
     pub fn insert(&mut self, handle: CompiledBlockHandle) -> Vec<u64> {
         let entry_rip = handle.entry_rip;
         let byte_len = handle.meta.byte_len as usize;
 
-        if let Some(prev) = self.map.insert(entry_rip, handle) {
-            let prev_len = prev.meta.byte_len as usize;
-            self.current_bytes = self.current_bytes.saturating_sub(prev_len);
-            self.remove_from_lru(entry_rip);
+        if self.remove(entry_rip).is_some() {
+            // `remove()` already adjusted bytes and unlinked the old node.
         }
 
         self.current_bytes = self.current_bytes.saturating_add(byte_len);
-        self.lru.push_front(entry_rip);
+        let idx = self.alloc_node(LruNode {
+            entry_rip,
+            handle,
+            prev: None,
+            next: None,
+        });
+        self.map.insert(entry_rip, idx);
+        self.link_front(idx);
 
         self.evict_if_needed()
     }
 
     pub fn remove(&mut self, entry_rip: u64) -> Option<CompiledBlockHandle> {
-        let removed = self.map.remove(&entry_rip)?;
-        self.current_bytes = self
-            .current_bytes
-            .saturating_sub(removed.meta.byte_len as usize);
-        self.remove_from_lru(entry_rip);
-        Some(removed)
-    }
-
-    fn touch(&mut self, entry_rip: u64) {
-        self.remove_from_lru(entry_rip);
-        self.lru.push_front(entry_rip);
-    }
-
-    fn remove_from_lru(&mut self, entry_rip: u64) {
-        if let Some(pos) = self.lru.iter().position(|&k| k == entry_rip) {
-            self.lru.remove(pos);
-        }
+        let idx = self.map.remove(&entry_rip)?;
+        let node = self.remove_idx(idx);
+        debug_assert_eq!(node.entry_rip, entry_rip);
+        Some(node.handle)
     }
 
     fn evict_if_needed(&mut self) -> Vec<u64> {
@@ -110,16 +118,116 @@ impl CodeCache {
         while self.map.len() > self.max_blocks
             || (self.max_bytes != 0 && self.current_bytes > self.max_bytes)
         {
-            let Some(key) = self.lru.pop_back() else {
+            let Some(idx) = self.tail else {
                 break;
             };
-            if let Some(removed) = self.map.remove(&key) {
-                self.current_bytes = self
-                    .current_bytes
-                    .saturating_sub(removed.meta.byte_len as usize);
-                evicted.push(key);
-            }
+            let key = self.nodes[idx]
+                .as_ref()
+                .expect("LRU tail must exist")
+                .entry_rip;
+            // `remove()` is O(1) and updates both list + accounting.
+            let _ = self.remove(key);
+            evicted.push(key);
         }
         evicted
     }
+
+    fn touch_idx(&mut self, idx: usize) {
+        if self.head == Some(idx) {
+            return;
+        }
+        self.unlink(idx);
+        self.link_front(idx);
+    }
+
+    fn alloc_node(&mut self, node: LruNode) -> usize {
+        if let Some(idx) = self.free_list.pop() {
+            self.nodes[idx] = Some(node);
+            idx
+        } else {
+            let idx = self.nodes.len();
+            self.nodes.push(Some(node));
+            idx
+        }
+    }
+
+    fn remove_idx(&mut self, idx: usize) -> LruNode {
+        self.unlink(idx);
+        let node = self.nodes[idx]
+            .take()
+            .expect("LRU node must exist when removing");
+        self.free_list.push(idx);
+        self.current_bytes = self
+            .current_bytes
+            .saturating_sub(node.handle.meta.byte_len as usize);
+        node
+    }
+
+    fn unlink(&mut self, idx: usize) {
+        let (prev, next) = {
+            let node = self.nodes[idx].as_ref().expect("LRU node must exist");
+            (node.prev, node.next)
+        };
+
+        match prev {
+            Some(prev_idx) => {
+                self.nodes[prev_idx]
+                    .as_mut()
+                    .expect("prev node must exist")
+                    .next = next;
+            }
+            None => {
+                self.head = next;
+            }
+        }
+
+        match next {
+            Some(next_idx) => {
+                self.nodes[next_idx]
+                    .as_mut()
+                    .expect("next node must exist")
+                    .prev = prev;
+            }
+            None => {
+                self.tail = prev;
+            }
+        }
+
+        let node = self.nodes[idx].as_mut().expect("LRU node must exist");
+        node.prev = None;
+        node.next = None;
+    }
+
+    fn link_front(&mut self, idx: usize) {
+        let old_head = self.head;
+
+        {
+            let node = self.nodes[idx].as_mut().expect("LRU node must exist");
+            node.prev = None;
+            node.next = old_head;
+        }
+
+        match old_head {
+            Some(old_idx) => {
+                self.nodes[old_idx]
+                    .as_mut()
+                    .expect("old head must exist")
+                    .prev = Some(idx);
+            }
+            None => {
+                // List was empty; this is also the tail.
+                self.tail = Some(idx);
+            }
+        }
+
+        self.head = Some(idx);
+    }
+}
+
+#[derive(Debug)]
+struct LruNode {
+    entry_rip: u64,
+    handle: CompiledBlockHandle,
+    prev: Option<usize>,
+    next: Option<usize>,
 }

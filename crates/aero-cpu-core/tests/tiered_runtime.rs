@@ -249,6 +249,62 @@ fn code_cache_eviction_is_lru_and_size_capped() {
 }
 
 #[test]
+fn code_cache_touch_many_times_does_not_break_eviction_or_accounting() {
+    fn handle(entry_rip: u64) -> CompiledBlockHandle {
+        CompiledBlockHandle {
+            entry_rip,
+            table_index: entry_rip as u32,
+            meta: CompiledBlockMeta {
+                code_paddr: entry_rip,
+                byte_len: 10,
+                page_versions: Vec::new(),
+                instruction_count: 0,
+                inhibit_interrupts_after_block: false,
+            },
+        }
+    }
+
+    // Size limit is enforced by bytes (not block count) so we can stress insertion/eviction without
+    // relying on the block-count path.
+    let mut cache = CodeCache::new(1024, 20);
+    assert!(cache.insert(handle(0)).is_empty());
+    assert!(cache.insert(handle(1)).is_empty());
+    assert_eq!(cache.current_bytes(), 20);
+
+    // Repeated touches of the same key should not grow internal bookkeeping (e.g. accidental LRU
+    // duplication) and should not affect byte accounting.
+    for _ in 0..10_000 {
+        assert!(cache.get_cloned(0).is_some());
+    }
+    assert_eq!(cache.current_bytes(), 20);
+    assert_eq!(cache.len(), 2);
+
+    // Inserting new blocks should always evict the least-recently-used (the non-touched entry),
+    // while keeping accounting stable.
+    let evicted = cache.insert(handle(2));
+    assert_eq!(evicted, vec![1]);
+    assert!(cache.contains(0));
+    assert!(!cache.contains(1));
+    assert!(cache.contains(2));
+    assert_eq!(cache.len(), 2);
+    assert_eq!(cache.current_bytes(), 20);
+
+    for rip in 3..100u64 {
+        // Keep entry 0 hot.
+        for _ in 0..100 {
+            cache.get_cloned(0);
+        }
+        let evicted = cache.insert(handle(rip));
+        assert_eq!(evicted, vec![rip - 1]);
+        assert!(cache.contains(0));
+        assert!(cache.contains(rip));
+        assert!(!cache.contains(rip - 1));
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.current_bytes(), 20);
+    }
+}
+
+#[test]
 fn page_version_invalidation_evicts_and_requests_recompile() {
     let config = JitConfig {
         enabled: true,
