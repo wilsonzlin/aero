@@ -309,7 +309,18 @@ impl HdaController {
             return;
         }
 
-        while let Some(cmd) = self.corb.pop_command(mem) {
+        // Process a bounded number of commands per poll to avoid hangs even if the guest
+        // programs an invalid CORB read/write pointer pair.
+        //
+        // CORB pointers are expected to always be within the current ring size, but the guest
+        // can shrink CORBSIZE after setting CORBWP for a larger ring. That would previously
+        // cause `Corb::pop_command` to never observe `rp == wp`, resulting in an infinite loop.
+        self.corb.sanitize_pointers();
+        let max_cmds = self.corb.entries() as usize;
+        for _ in 0..max_cmds {
+            let Some(cmd) = self.corb.pop_command(mem) else {
+                break;
+            };
             let CodecAddr(codec_addr) = cmd.codec;
             let resp = if codec_addr != 0 {
                 HdaVerbResponse {
@@ -486,6 +497,41 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct ReadPanicMem {
+        data: Vec<u8>,
+        reads: usize,
+        max_reads: usize,
+    }
+
+    impl ReadPanicMem {
+        fn new(size: usize, max_reads: usize) -> Self {
+            Self {
+                data: vec![0; size],
+                reads: 0,
+                max_reads,
+            }
+        }
+    }
+
+    impl MemoryBus for ReadPanicMem {
+        fn read_physical(&mut self, addr: u64, dst: &mut [u8]) {
+            self.reads = self.reads.saturating_add(1);
+            assert!(
+                self.reads <= self.max_reads,
+                "guest memory reads exceeded limit ({}), likely due to an infinite loop",
+                self.max_reads
+            );
+            let addr = addr as usize;
+            dst.copy_from_slice(&self.data[addr..addr + dst.len()]);
+        }
+
+        fn write_physical(&mut self, addr: u64, src: &[u8]) {
+            let addr = addr as usize;
+            self.data[addr..addr + src.len()].copy_from_slice(src);
+        }
+    }
+
     #[test]
     fn corb_command_writes_rirb_response_and_interrupts() {
         let mut mem = TestMem::new(0x10_000);
@@ -530,6 +576,45 @@ mod tests {
         hda.mmio_write(HDA_INTSTS, 4, INTSTS_CIS as u64);
         assert_eq!(hda.mmio_read(HDA_INTSTS, 4) as u32 & INTSTS_CIS, 0);
         assert!(!hda.irq_line());
+    }
+
+    #[test]
+    fn corb_size_shrink_with_stale_wp_does_not_spin_forever() {
+        // Regression test: if CORBSIZE is shrunk after programming CORBWP for a larger ring,
+        // a stale (now out-of-range) WP must not cause CORB processing to spin indefinitely.
+        let mut mem = ReadPanicMem::new(0x10_000, 64);
+        let mut hda = HdaController::new();
+
+        // Leave reset.
+        hda.mmio_write(HDA_GCTL, 4, GCTL_CRST as u64);
+
+        // Program ring buffer bases.
+        let corb_base = 0x2000u64;
+        let rirb_base = 0x3000u64;
+        hda.mmio_write(HDA_CORBLBASE, 4, corb_base);
+        hda.mmio_write(HDA_CORBUBASE, 4, 0);
+        hda.mmio_write(HDA_RIRBLBASE, 4, rirb_base);
+        hda.mmio_write(HDA_RIRBUBASE, 4, 0);
+
+        // Start with a large CORB, then write a WP that would be out-of-range for a 2-entry ring.
+        hda.mmio_write(HDA_CORBSIZE, 1, 2); // 256 entries
+        hda.mmio_write(HDA_CORBWP, 2, 5);
+        assert_eq!(hda.mmio_read(HDA_CORBWP, 2), 5);
+
+        // Shrink CORB to 2 entries without changing WP.
+        hda.mmio_write(HDA_CORBSIZE, 1, 0); // 2 entries
+
+        // Provide at least one valid command in the new ring range.
+        mem.write_u32(corb_base + 4, 0);
+
+        // Configure a minimal RIRB; it must be running for CORB processing to happen.
+        hda.mmio_write(HDA_RIRBSIZE, 1, 0);
+        hda.mmio_write(HDA_RINTCNT, 2, 1);
+        hda.mmio_write(HDA_CORBCTL, 1, CORBCTL_RUN as u64);
+        hda.mmio_write(HDA_RIRBCTL, 1, RIRBCTL_RUN as u64);
+
+        // If CORB processing regresses into an infinite loop, ReadPanicMem will abort quickly.
+        hda.poll(&mut mem);
     }
 
     #[test]

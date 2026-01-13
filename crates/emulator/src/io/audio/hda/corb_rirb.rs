@@ -36,6 +36,17 @@ impl Corb {
         self.ctl & CORBCTL_RUN != 0
     }
 
+    pub fn entries(&self) -> u16 {
+        corb_entries(self.size)
+    }
+
+    pub fn sanitize_pointers(&mut self) {
+        let entries = self.entries();
+        let mask = entries.saturating_sub(1);
+        self.wp &= mask;
+        self.rp &= mask;
+    }
+
     fn base(&self) -> u64 {
         ((self.ubase as u64) << 32) | (self.lbase as u64 & !0x3)
     }
@@ -85,7 +96,16 @@ impl Corb {
             }
             CorbReg::Size => {
                 // Only the size selection bits (1:0) are writable; capability bits are RO.
+                let old_sel = self.size & 0x3;
                 self.size = (self.size & !0x3) | (value as u8 & 0x3);
+                if (self.size & 0x3) != old_sel {
+                    // Keep the read/write pointers in-range for the newly-selected ring size.
+                    //
+                    // If the CORB size is reduced after CORBWP was programmed for a larger ring,
+                    // the (now out-of-range) WP would never be reached by RP modulo the new size,
+                    // causing `pop_command` to spin forever.
+                    self.sanitize_pointers();
+                }
             }
         }
     }
