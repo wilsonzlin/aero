@@ -93,6 +93,7 @@ drivers/aerogpu/tests/win7/
   d3d9ex_draw_indexed_primitive_up/
   d3d9ex_multiframe_triangle/
   d3d9ex_vb_dirty_range/
+  d3d9_process_vertices_smoke/
   d3d9ex_stretchrect/
   d3d9ex_query_latency/
   d3d9ex_shared_surface/
@@ -382,6 +383,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_scissor_sanity` validates `SetScissorRect` + `D3DRS_SCISSORTESTENABLE` actually clips rendering (expects **corner red + center blue** via readback)
 * `d3d9ex_multiframe_triangle` renders multiple frames using a persistent dynamic vertex buffer and confirms the **center pixel changes across frames** via readback (uses non-symmetric colors to catch channel-order regressions)
 * `d3d9ex_vb_dirty_range` renders a blue triangle using a vertex buffer updated via `Lock/Unlock` and confirms **corner red + center blue** via readback (catches regressions in vertex-buffer dirty-range tracking / upload)
+* `d3d9_process_vertices_smoke` calls `IDirect3DDevice9::ProcessVertices` with non-zero `SrcStartIndex`/`DestIndex`, then draws from the processed vertex buffer and confirms **corner red + center blue** via readback (catches regressions where ProcessVertices is a silent no-op or mishandles offsets)
 * `d3d9ex_stretchrect` exercises compositor-critical D3D9Ex DDIs: `ColorFill`, `UpdateSurface`, `StretchRect`, and `UpdateTexture` (validated via readback)
 * `d3d9ex_query_latency` validates D3D9Ex `D3DQUERYTYPE_EVENT` polling + max frame latency APIs (prints query completion timing + configured latency)
 * `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and validates cross-process pixel visibility via readback (pass `--no-validate-sharing` to skip readback validation)
