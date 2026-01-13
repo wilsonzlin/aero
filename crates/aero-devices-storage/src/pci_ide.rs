@@ -1804,4 +1804,25 @@ mod tests {
         assert_eq!(ctl.io_read(drive_addr_port, 2) as u16, 0xFFFF);
         assert_eq!(ctl.io_read(drive_addr_port, 4), 0xFFFF_FFFF);
     }
+
+    #[test]
+    fn drive_address_reflects_head_bits_from_device_reg() {
+        let mut ctl = IdeController::new(0xFFF0);
+        ctl.primary.drive_present[0] = true;
+
+        let device_port = ctl.primary.ports.cmd_base + ATA_REG_DEVICE;
+        // Select master with head=7 (low nibble).
+        ctl.io_write(device_port, 1, 0xE7);
+
+        let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
+        let val = ctl.io_read(drive_addr_port, 1) as u8;
+        assert_eq!(val & 0x0F, 0x07);
+
+        // Select slave with head=5; even if the slave is absent, the register should still reflect
+        // the taskfile image.
+        ctl.io_write(device_port, 1, 0xF5);
+        let val = ctl.io_read(drive_addr_port, 1) as u8;
+        assert_eq!(val & 0x10, 0x10);
+        assert_eq!(val & 0x0F, 0x05);
+    }
 }
