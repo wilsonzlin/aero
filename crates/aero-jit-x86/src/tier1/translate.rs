@@ -207,9 +207,14 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
                 let lhs = emit_read_operand(&mut b, inst, dst, *width, addr_mask);
                 // Tier1 IR requires LHS/RHS have the same width.
                 let rhs = b.const_int(*width, *count as u64);
-                // Tier1 translation currently leaves shift flags unchanged, so we do not request
-                // any flag updates for the IR binop here.
-                let res = b.binop(to_shift_binop(*op), *width, lhs, rhs, FlagSet::EMPTY);
+                // x86 shift instructions update CF/PF/ZF/SF/OF (AF is unaffected).
+                let res = b.binop(
+                    to_shift_binop(*op),
+                    *width,
+                    lhs,
+                    rhs,
+                    FlagSet::ALU.without(FlagSet::AF),
+                );
                 emit_write_operand(&mut b, inst, dst, *width, res, addr_mask);
             }
             InstKind::Cmp { lhs, rhs, width } => {

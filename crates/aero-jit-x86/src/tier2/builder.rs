@@ -518,7 +518,14 @@ impl BlockLowerer<'_> {
             return;
         };
         let dst = self.map_value(dst);
-        let flags = map_flagset(flags);
+        // Tier-2 does not currently model x86 shift flag semantics (Tier-2 `eval_binop` treats
+        // shifts as flagless operations). Keep lowering shift instructions for their result value,
+        // but ignore any requested flag updates to avoid miscompilation and unnecessary deopts.
+        let flags = if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar) {
+            FlagSet::EMPTY
+        } else {
+            map_flagset(flags)
+        };
 
         if width == Width::W64 {
             self.instrs.push(Instr::BinOp {
@@ -570,13 +577,6 @@ impl BlockLowerer<'_> {
                 });
             }
             BinOp::Shl | BinOp::Shr => {
-                // Tier-1 shifts are currently used only for address computation; we do not model
-                // flag updates for them.
-                if !flags.is_empty() {
-                    self.unsupported = true;
-                    return;
-                }
-
                 let mask = width.mask();
                 let lhs_masked = self.fresh_temp();
                 self.instrs.push(Instr::BinOp {
@@ -616,13 +616,6 @@ impl BlockLowerer<'_> {
                 });
             }
             BinOp::Sar => {
-                // Tier-1 SAR is currently used only for sign extension / address-like
-                // computation; we do not model flag updates for it.
-                if !flags.is_empty() {
-                    self.unsupported = true;
-                    return;
-                }
-
                 let mask = width.mask();
 
                 // 1) Mask to the operand width.

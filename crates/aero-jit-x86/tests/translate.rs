@@ -82,6 +82,59 @@ fn compute_sub_flags(width: Width, lhs: u64, rhs: u64, result: u64) -> FlagVals 
     }
 }
 
+fn update_shift_flags(
+    cpu: &mut CpuState,
+    width: Width,
+    op: ShiftOp,
+    lhs: u64,
+    shift_amt: u32,
+    result: u64,
+    flags: FlagSet,
+) {
+    debug_assert!(matches!(op, ShiftOp::Shl | ShiftOp::Shr | ShiftOp::Sar));
+
+    // x86 shifts do not update any flags when the shift count is 0.
+    if shift_amt == 0 {
+        return;
+    }
+
+    let result = width.truncate(result);
+    let sign_bit = 1u64 << (width.bits() - 1);
+
+    if flags.contains(FlagSet::ZF) {
+        write_flag(cpu, Flag::Zf, result == 0);
+    }
+    if flags.contains(FlagSet::SF) {
+        write_flag(cpu, Flag::Sf, (result & sign_bit) != 0);
+    }
+    if flags.contains(FlagSet::PF) {
+        write_flag(cpu, Flag::Pf, parity_even(result as u8));
+    }
+
+    // CF is defined for shift counts in the range [1, width.bits()]. For counts above the operand
+    // width, CF is architecturally undefined; we conservatively leave it unchanged.
+    if flags.contains(FlagSet::CF) && shift_amt <= width.bits() {
+        let cf = match op {
+            ShiftOp::Shl => ((lhs >> (width.bits() - shift_amt)) & 1) != 0,
+            ShiftOp::Shr | ShiftOp::Sar => ((lhs >> (shift_amt - 1)) & 1) != 0,
+        };
+        write_flag(cpu, Flag::Cf, cf);
+    }
+
+    // OF is only defined for a shift count of 1. For counts > 1, OF is undefined; leave unchanged.
+    if flags.contains(FlagSet::OF) && shift_amt == 1 {
+        let of = match op {
+            // For SHL count==1: OF = new MSB XOR CF (where CF is the old MSB).
+            ShiftOp::Shl => ((lhs ^ result) & sign_bit) != 0,
+            // For SHR count==1: OF = old MSB.
+            ShiftOp::Shr => (lhs & sign_bit) != 0,
+            // For SAR count==1: OF = 0.
+            ShiftOp::Sar => false,
+        };
+        write_flag(cpu, Flag::Of, of);
+    }
+}
+
 fn write_flagset(cpu: &mut CpuState, mask: FlagSet, vals: FlagVals) {
     if mask.contains(FlagSet::CF) {
         write_flag(cpu, Flag::Cf, vals.cf);
@@ -255,7 +308,15 @@ fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &
                         width.truncate((signed >> amt) as u64)
                     }
                 };
-                // Flags are intentionally left unchanged: Tier-1 translation uses `FlagSet::EMPTY`.
+                update_shift_flags(
+                    cpu,
+                    *width,
+                    *op,
+                    l,
+                    amt,
+                    res,
+                    FlagSet::ALU.without(FlagSet::AF),
+                );
                 write_op(inst, cpu, bus, dst, *width, res);
                 cpu.rip = next;
             }
@@ -382,6 +443,38 @@ fn assert_block_ir(
         ir.to_text()
     );
     assert_eq!(bus_ir.mem(), bus_x86.mem(), "memory mismatch");
+}
+
+fn assert_block_exec_matches_x86(
+    code: &[u8],
+    entry_rip: u64,
+    cpu: CpuState,
+    mut bus: SimpleBus,
+) -> CpuSnapshot {
+    bus.load(entry_rip, code);
+
+    let block = discover_block(&bus, entry_rip, BlockLimits::default());
+    let ir = translate_block(&block);
+
+    let cpu_initial = cpu;
+    let mut cpu_x86 = cpu_initial.clone();
+    let mut bus_x86 = bus.clone();
+    exec_x86_block(&block.insts, &mut cpu_x86, &mut bus_x86);
+
+    let mut bus_ir = bus;
+    let mut cpu_ir_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu_initial, &mut cpu_ir_bytes);
+    let _ = aero_jit_x86::tier1::ir::interp::execute_block(&ir, &mut cpu_ir_bytes, &mut bus_ir);
+
+    assert_eq!(
+        CpuSnapshot::from_wasm_bytes(&cpu_ir_bytes),
+        CpuSnapshot::from_cpu(&cpu_x86),
+        "CPU state mismatch\nIR:\n{}\n",
+        ir.to_text()
+    );
+    assert_eq!(bus_ir.mem(), bus_x86.mem(), "memory mismatch");
+
+    CpuSnapshot::from_cpu(&cpu_x86)
 }
 
 #[test]
@@ -568,11 +661,11 @@ block 0x6000:
   write.rbx v0
   v1 = read.rbx
   v2 = const.i64 0xd
-  v3 = shr.i64 v1, v2
+  v3 = shr.i64 v1, v2 ; flags=CF|PF|ZF|SF|OF
   write.rbx v3
   v4 = read.rbx
   v5 = const.i64 0x1
-  v6 = shl.i64 v4, v5
+  v6 = shl.i64 v4, v5 ; flags=CF|PF|ZF|SF|OF
   write.rbx v6
   v7 = read.rsp
   v8 = load.i64 [v7]
@@ -616,7 +709,7 @@ block 0x6100:
   write.ax v0
   v1 = read.ax
   v2 = const.i16 0x11
-  v3 = shl.i16 v1, v2
+  v3 = shl.i16 v1, v2 ; flags=CF|PF|ZF|SF|OF
   write.ax v3
   v4 = read.rsp
   v5 = load.i64 [v4]
@@ -659,7 +752,7 @@ block 0x6200:
   write.al v0
   v1 = read.al
   v2 = const.i8 0x9
-  v3 = shl.i8 v1, v2
+  v3 = shl.i8 v1, v2 ; flags=CF|PF|ZF|SF|OF
   write.al v3
   v4 = read.rsp
   v5 = load.i64 [v4]
@@ -701,7 +794,7 @@ block 0x6300:
   write.rax v0
   v1 = read.eax
   v2 = const.i32 0x1
-  v3 = shl.i32 v1, v2
+  v3 = shl.i32 v1, v2 ; flags=CF|PF|ZF|SF|OF
   write.eax v3
   v4 = read.rsp
   v5 = load.i64 [v4]
@@ -744,7 +837,7 @@ block 0x6400:
   write.al v0
   v1 = read.al
   v2 = const.i8 0x1
-  v3 = sar.i8 v1, v2
+  v3 = sar.i8 v1, v2 ; flags=CF|PF|ZF|SF|OF
   write.al v3
   v4 = read.rsp
   v5 = load.i64 [v4]
@@ -785,7 +878,7 @@ block 0x6500:
   write.ax v0
   v1 = read.ah
   v2 = const.i8 0x1
-  v3 = shl.i8 v1, v2
+  v3 = shl.i8 v1, v2 ; flags=CF|PF|ZF|SF|OF
   write.ah v3
   v4 = read.rsp
   v5 = load.i64 [v4]
@@ -796,4 +889,209 @@ block 0x6500:
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
+}
+
+#[test]
+fn shift_count_0_leaves_flags_unchanged() {
+    // mov al, 0x12
+    // shl al, 0
+    // ret
+    let code = [
+        0xb0, 0x12, // mov al, 0x12
+        0xc0, 0xe0, 0x00, // shl al, 0
+        0xc3, // ret
+    ];
+
+    let entry = 0x6600u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+    // Seed flags with a non-trivial pattern.
+    write_flag(&mut cpu, Flag::Cf, true);
+    write_flag(&mut cpu, Flag::Pf, false);
+    write_flag(&mut cpu, Flag::Af, true);
+    write_flag(&mut cpu, Flag::Zf, true);
+    write_flag(&mut cpu, Flag::Sf, false);
+    write_flag(&mut cpu, Flag::Of, true);
+    let expected_status = cpu.rflags_snapshot()
+        & (aero_cpu_core::state::RFLAGS_CF
+            | aero_cpu_core::state::RFLAGS_PF
+            | aero_cpu_core::state::RFLAGS_AF
+            | aero_cpu_core::state::RFLAGS_ZF
+            | aero_cpu_core::state::RFLAGS_SF
+            | aero_cpu_core::state::RFLAGS_OF);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let out = assert_block_exec_matches_x86(&code, entry, cpu, bus);
+    let out_status = out.rflags
+        & (aero_cpu_core::state::RFLAGS_CF
+            | aero_cpu_core::state::RFLAGS_PF
+            | aero_cpu_core::state::RFLAGS_AF
+            | aero_cpu_core::state::RFLAGS_ZF
+            | aero_cpu_core::state::RFLAGS_SF
+            | aero_cpu_core::state::RFLAGS_OF);
+    assert_eq!(out_status, expected_status);
+}
+
+#[test]
+fn shift_count_1_sets_cf_and_of() {
+    // mov al, 0x81
+    // shl al, 1
+    // ret
+    let code = [
+        0xb0, 0x81, // mov al, 0x81
+        0xd0, 0xe0, // shl al, 1
+        0xc3, // ret
+    ];
+
+    let entry = 0x6700u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+    // Start with flags opposite the expected results.
+    write_flag(&mut cpu, Flag::Cf, false);
+    write_flag(&mut cpu, Flag::Of, false);
+    write_flag(&mut cpu, Flag::Pf, true);
+    write_flag(&mut cpu, Flag::Zf, true);
+    write_flag(&mut cpu, Flag::Sf, true);
+    write_flag(&mut cpu, Flag::Af, true);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let out = assert_block_exec_matches_x86(&code, entry, cpu, bus);
+    // 0x81 << 1 = 0x02, CF=1, OF=1, ZF=0, SF=0, PF=0.
+    assert_eq!(out.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 0x02);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_CF != 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_OF != 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_ZF == 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_SF == 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_PF == 0);
+    // AF is not modified by shifts.
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_AF != 0);
+}
+
+#[test]
+fn shift_count_gt_1_leaves_of_unchanged_but_updates_zf_sf_pf() {
+    // mov al, 0x01
+    // shl al, 2
+    // ret
+    let code = [
+        0xb0, 0x01, // mov al, 0x01
+        0xc0, 0xe0, 0x02, // shl al, 2
+        0xc3, // ret
+    ];
+
+    let entry = 0x6800u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+    // Seed flags so updates are observable.
+    write_flag(&mut cpu, Flag::Cf, true);
+    write_flag(&mut cpu, Flag::Of, true);
+    write_flag(&mut cpu, Flag::Pf, true);
+    write_flag(&mut cpu, Flag::Zf, true);
+    write_flag(&mut cpu, Flag::Sf, true);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let out = assert_block_exec_matches_x86(&code, entry, cpu, bus);
+    // 0x01 << 2 = 0x04. OF is undefined for count>1 => unchanged (=1).
+    assert_eq!(out.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 0x04);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_OF != 0);
+    // ZF/SF/PF are updated from result.
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_ZF == 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_SF == 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_PF == 0);
+}
+
+#[test]
+fn shift_count_gt_operand_width_leaves_cf_unchanged() {
+    // mov al, 0x01
+    // shl al, 9     (count masked to 5 bits -> 9; CF undefined because 9 > 8)
+    // ret
+    let code = [
+        0xb0, 0x01, // mov al, 0x01
+        0xc0, 0xe0, 0x09, // shl al, 9
+        0xc3, // ret
+    ];
+
+    let entry = 0x6900u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+    // Seed CF/OF so "undefined => unchanged" is observable.
+    write_flag(&mut cpu, Flag::Cf, true);
+    write_flag(&mut cpu, Flag::Of, false);
+    write_flag(&mut cpu, Flag::Pf, false);
+    write_flag(&mut cpu, Flag::Zf, false);
+    write_flag(&mut cpu, Flag::Sf, true);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let out = assert_block_exec_matches_x86(&code, entry, cpu, bus);
+    // Result is 0 after truncation. CF and OF are unchanged.
+    assert_eq!(out.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 0x00);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_CF != 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_OF == 0);
+    // ZF/SF/PF are updated from result.
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_ZF != 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_SF == 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_PF != 0);
+}
+
+#[test]
+fn shift_count_mask_uses_6_bits_for_64bit_operands() {
+    // mov rax, 1
+    // shl rax, 32  (C1 /4 ib; count masked to 6 bits in 64-bit mode => 32, not 0)
+    // ret
+    let code = [
+        0x48, 0xb8, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rax, 1
+        0x48, 0xc1, 0xe0, 0x20, // shl rax, 32
+        0xc3, // ret
+    ];
+
+    let entry = 0x6a00u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+    // Seed flags so we can observe updates.
+    write_flag(&mut cpu, Flag::Cf, true);
+    write_flag(&mut cpu, Flag::Of, true);
+    write_flag(&mut cpu, Flag::Pf, false);
+    write_flag(&mut cpu, Flag::Zf, true);
+    write_flag(&mut cpu, Flag::Sf, true);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let out = assert_block_exec_matches_x86(&code, entry, cpu, bus);
+    assert_eq!(out.gpr[Gpr::Rax.as_u8() as usize], 1u64 << 32);
+    // OF is undefined for count>1 => unchanged (=1).
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_OF != 0);
+    // ZF/SF/PF updated from result.
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_ZF == 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_SF == 0);
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_PF != 0);
+    // CF defined for count<=64 => updated (=0 for this input).
+    assert!(out.rflags & aero_cpu_core::state::RFLAGS_CF == 0);
 }
