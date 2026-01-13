@@ -945,6 +945,10 @@ static void ReportNotImpl(D3D11DDI_HDEVICECONTEXT hCtx) {
   SetError(DeviceFromContext(hCtx), E_NOTIMPL);
 }
 
+static void LogTextureLockPitchMismatchOnce(const char* context,
+                                            uint32_t expected_pitch,
+                                            uint32_t actual_pitch);
+
 static void EmitBindShadersLocked(Device* dev) {
   if (!dev) {
     return;
@@ -1030,13 +1034,30 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
   }
 
   HRESULT copy_hr = S_OK;
+  if (res->kind == ResourceKind::Texture2D) {
+    uint32_t lock_pitch = 0;
+    __if_exists(D3DDDICB_LOCK::Pitch) {
+      lock_pitch = lock_args.Pitch;
+    }
+    if (lock_pitch) {
+      uint32_t expected_pitch = res->row_pitch_bytes;
+      if (!res->tex2d_subresources.empty()) {
+        expected_pitch = res->tex2d_subresources[0].row_pitch_bytes;
+      }
+      if (expected_pitch && lock_pitch != expected_pitch) {
+        LogTextureLockPitchMismatchOnce("EmitUploadLocked", expected_pitch, lock_pitch);
+        copy_hr = E_FAIL;
+        goto Unlock;
+      }
+    }
+  }
   if (res->kind == ResourceKind::Texture2D &&
       upload_offset == 0 &&
       upload_size == res->storage.size() &&
       res->mip_levels == 1 &&
       res->array_size == 1) {
-    // Single-subresource Texture2D: copy row-by-row so we can honor the runtime's
-    // returned pitch if it differs from our requested row_pitch_bytes.
+    // Single-subresource Texture2D: copy row-by-row so we can use the runtime's
+    // returned pitch (when present) for correct row stepping.
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
     const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
