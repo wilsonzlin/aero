@@ -43,7 +43,7 @@ Common flags:
 * `--require-agpu` – for tests with AGPU-only validation paths (e.g. ring descriptor/alloc table checks), fail instead of skipping when the active device/ring format is legacy.
 * `--display \\.\DISPLAYn` – for `vblank_wait`: pick a display (default: primary).
 * `--ring-id=N` – for `ring_state_sanity`: which ring ID to dump (default 0).
-* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `device_state_sanity`, `segment_budget_sanity`, `d3d9ex_dwm_probe`, `d3d9ex_submit_fence_stress`, `fence_state_sanity`, `ring_state_sanity`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait`, `vblank_wait_pacing`, `vblank_wait_sanity`, `vblank_state_sanity`, `get_scanline_sanity`, `scanout_state_sanity`, `cursor_state_sanity`, `modeset_roundtrip_sanity`, `dump_createalloc_sanity`, `umd_private_sanity`, `transfer_feature_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
+* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `device_state_sanity`, `segment_budget_sanity`, `d3d9ex_dwm_probe`, `d3d9ex_submit_fence_stress`, `fence_state_sanity`, `ring_state_sanity`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait`, `vblank_wait_pacing`, `vblank_wait_sanity`, `vblank_state_sanity`, `get_scanline_sanity`, `scanout_state_sanity`, `cursor_state_sanity`, `modeset_roundtrip_sanity`, `dump_createalloc_sanity`, `umd_private_sanity`, `transfer_feature_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`, `d3d9_process_vertices_sanity`.
 * `--help` / `/?` – print per-test usage.
 
 ## Layout

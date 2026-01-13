@@ -20,6 +20,25 @@ struct VertexXyzDiffuse {
   DWORD color;
 };
 
+struct VertexXyzDiffuseTex1 {
+  float x;
+  float y;
+  float z;
+  DWORD color;
+  float u;
+  float v;
+};
+
+struct VertexXyzrhwDiffuseTex1 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  DWORD color;
+  float u;
+  float v;
+};
+
 static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
                                           HWND hwnd,
                                           D3DPRESENT_PARAMETERS* pp,
@@ -56,7 +75,7 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--hidden] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
-        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]",
         kTestName);
     return 0;
   }
@@ -67,6 +86,16 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
+
+  if (GetSystemMetrics(SM_REMOTESESSION)) {
+    if (allow_remote) {
+      aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
+      reporter.SetSkipped("remote_session");
+      return reporter.Pass();
+    }
+    return reporter.Fail("running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
+  }
 
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
@@ -358,6 +387,94 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
 
     if (!xyz_bytes_match) {
       return reporter.Fail("ProcessVertices XYZ->XYZRHW output bytes did not match expected output");
+    }
+  }
+
+  // Validate TEX1 variant: XYZ|DIFFUSE|TEX1 -> XYZRHW|DIFFUSE|TEX1.
+  {
+    const VertexXyzDiffuseTex1 src = {0.0f, 0.0f, 0.5f, D3DCOLOR_XRGB(10, 20, 30), 0.25f, 0.75f};
+
+    ComPtr<IDirect3DVertexBuffer9> src_vb_tex;
+    hr = dev->CreateVertexBuffer(sizeof(src),
+                                 0,
+                                 D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1,
+                                 D3DPOOL_DEFAULT,
+                                 src_vb_tex.put(),
+                                 NULL);
+    if (FAILED(hr) || !src_vb_tex) {
+      return reporter.FailHresult("CreateVertexBuffer(src_tex)", hr);
+    }
+
+    void* src_tex_ptr = NULL;
+    hr = src_vb_tex->Lock(0, sizeof(src), &src_tex_ptr, 0);
+    if (FAILED(hr) || !src_tex_ptr) {
+      return reporter.FailHresult("src_vb_tex->Lock", hr);
+    }
+    memcpy(src_tex_ptr, &src, sizeof(src));
+    hr = src_vb_tex->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("src_vb_tex->Unlock", hr);
+    }
+
+    ComPtr<IDirect3DVertexBuffer9> dst_vb_tex;
+    hr = dev->CreateVertexBuffer(sizeof(VertexXyzrhwDiffuseTex1),
+                                 0,
+                                 D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1,
+                                 D3DPOOL_SYSTEMMEM,
+                                 dst_vb_tex.put(),
+                                 NULL);
+    if (FAILED(hr) || !dst_vb_tex) {
+      return reporter.FailHresult("CreateVertexBuffer(dst_tex)", hr);
+    }
+
+    // Output declaration: POSITIONT(float4) + COLOR0(D3DCOLOR) + TEXCOORD0(float2).
+    const D3DVERTEXELEMENT9 decl_tex_elems[] = {
+        {0, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITIONT, 0},
+        {0, 16, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
+        {0, 20, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+        D3DDECL_END(),
+    };
+    ComPtr<IDirect3DVertexDeclaration9> decl_tex;
+    hr = dev->CreateVertexDeclaration(decl_tex_elems, decl_tex.put());
+    if (FAILED(hr) || !decl_tex) {
+      return reporter.FailHresult("CreateVertexDeclaration(tex)", hr);
+    }
+
+    hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetFVF(XYZ|DIFFUSE|TEX1)", hr);
+    }
+    hr = dev->SetStreamSource(0, src_vb_tex.get(), 0, sizeof(VertexXyzDiffuseTex1));
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSource(src_tex)", hr);
+    }
+
+    hr = dev->ProcessVertices(/*SrcStartIndex=*/0,
+                              /*DestIndex=*/0,
+                              /*VertexCount=*/1,
+                              dst_vb_tex.get(),
+                              decl_tex.get(),
+                              /*Flags=*/0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(xyz|tex1)", hr);
+    }
+
+    void* dst_tex_ptr = NULL;
+    hr = dst_vb_tex->Lock(0, sizeof(VertexXyzrhwDiffuseTex1), &dst_tex_ptr, D3DLOCK_READONLY);
+    if (FAILED(hr) || !dst_tex_ptr) {
+      return reporter.FailHresult("dst_vb_tex->Lock", hr);
+    }
+
+    const VertexXyzrhwDiffuseTex1 expected = {0.5f, 0.5f, 0.5f, 1.0f, src.color, src.u, src.v};
+    const bool tex_bytes_match = (memcmp(dst_tex_ptr, &expected, sizeof(expected)) == 0);
+
+    hr = dst_vb_tex->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("dst_vb_tex->Unlock", hr);
+    }
+
+    if (!tex_bytes_match) {
+      return reporter.Fail("ProcessVertices XYZ|TEX1 output bytes did not match expected output");
     }
   }
 
