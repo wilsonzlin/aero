@@ -2,6 +2,26 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Aero driver packaging manifest",
   "type": "object",
+  "$defs": {
+    "driverRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "not": {
+            "description": "Disallow absolute paths, drive-letter rooted paths, and UNC roots (paths must be relative to the driver directory).",
+            "pattern": "^(?:[A-Za-z]:|[\\\\/])"
+          }
+        },
+        {
+          "not": {
+            "description": "Best-effort: disallow '..' segments (even if they would normalize back under the driver directory).",
+            "pattern": "(^|[\\\\/])\\.\\.([\\\\/]|$)"
+          }
+        }
+      ]
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "$schema": {
@@ -11,12 +31,13 @@
     },
     "infFiles": {
       "type": "array",
-      "description": "Optional list of INF files (paths relative to the driver directory) to stage for this driver. If omitted, CI discovers all .inf files under the driver directory. Use this to disambiguate drivers that ship multiple INFs (e.g. optional feature variants) that should not be packaged together. If present, the list must be non-empty. Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory). CI stages selected INFs into the package root by file name; ensure INF file names are unique within the driver.",
+      "description": "Optional list of INF files (paths relative to the driver directory) to stage for this driver. If omitted, CI discovers all .inf files under the driver directory. Use this to disambiguate drivers that ship multiple INFs (e.g. optional feature variants) that should not be packaged together. If present, the list must be non-empty. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots) and must not contain '..' segments. CI additionally validates that each path exists and has a .inf extension. CI stages selected INFs into the package root by file name; ensure INF file names are unique within the driver.",
       "minItems": 1,
       "items": {
-        "type": "string",
-        "minLength": 1,
-        "pattern": "^.+\\.[iI][nN][fF]$"
+        "allOf": [
+          { "$ref": "#/$defs/driverRelativePath" },
+          { "pattern": "^.+\\.[iI][nN][fF]$" }
+        ]
       },
       "uniqueItems": true
     },
@@ -26,7 +47,7 @@
       "items": {
         "type": "string",
         "minLength": 1,
-        "pattern": "^[^\\\\/]+\\.[dD][lL][lL]$"
+        "pattern": "^[^\\\\/:]+\\.[dD][lL][lL]$"
       },
       "uniqueItems": true
     },
@@ -41,10 +62,17 @@
     },
     "additionalFiles": {
       "type": "array",
-      "description": "Additional files (paths relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts. Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory). CI refuses to include common binary extensions via this mechanism (currently: .sys, .dll, .exe, .cat, .msi, .cab).",
+      "description": "Additional files (paths relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots), must not contain '..' segments, and must resolve under the driver directory. CI refuses to include common binary extensions via this mechanism (currently: .sys, .dll, .exe, .cat, .msi, .cab). CI additionally validates that each path exists.",
       "items": {
-        "type": "string",
-        "minLength": 1
+        "allOf": [
+          { "$ref": "#/$defs/driverRelativePath" },
+          {
+            "not": {
+              "description": "Disallow common binary extensions in additionalFiles (CI refuses these at packaging time).",
+              "pattern": "\\.([sS][yY][sS]|[dD][lL][lL]|[eE][xX][eE]|[cC][aA][tT]|[mM][sS][iI]|[cC][aA][bB])$"
+            }
+          }
+        ]
       },
       "uniqueItems": true
     },

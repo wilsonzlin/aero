@@ -115,8 +115,9 @@ WDK redistributables (WDF coinstaller):
 
 Other per-driver packaging manifest features:
 
-- `infFiles`: explicitly select which INF(s) are staged for a driver (useful when a driver ships multiple INFs with overlapping HWIDs and should not be packaged as a single combined folder). If present, the list must be non-empty.
+- `infFiles`: explicitly select which INF(s) are staged for a driver (useful when a driver ships multiple INFs with overlapping HWIDs and should not be packaged as a single combined folder). If present, the list must be non-empty. Paths are relative to the driver directory (no absolute paths / drive letters / UNC roots) and should not contain `..` segments.
 - `wow64Files`: for x64 packages that need 32-bit user-mode components, copy specific `.dll` file names (no paths) from the x86 build output into the x64 staging directory *before* stamping INFs + running Inf2Cat. Requires x86 build outputs to be present even when generating/staging only x64 packages. Ensure the WOW64 DLL names do not collide with 64-bit build outputs (use distinct names such as a `_x64` suffix for 64-bit DLLs).
+- `additionalFiles`: copy extra non-binary files from the driver directory into the staged package (relative paths are preserved). Intended for README/license text, install scripts, and extra `.inf` files under subdirectories. Paths are relative to the driver directory (no absolute paths / drive letters / UNC roots) and should not contain `..` segments. CI refuses common binary extensions via this mechanism (`.sys`, `.dll`, `.exe`, `.cat`, `.msi`, `.cab`).
 
 See: `docs/16-driver-packaging-and-signing.md`.
 
