@@ -190,6 +190,7 @@ Semantics:
     - `AEROGPU_MMIO_REG_IRQ_ENABLE = 0`
     - acknowledge any pending bits via `AEROGPU_MMIO_REG_IRQ_ACK`.
   - On legacy devices, also acknowledge any pending fence interrupts via `INT_ACK` (legacy fence IRQ path).
+  - If the device advertises `AEROGPU_FEATURE_CURSOR`, disable the hardware cursor and clear its GPA to stop DMA.
 
 - **Transition to D0**:
   - Block submissions while restoring state.
@@ -199,6 +200,7 @@ Semantics:
     - reprogram the optional fence page GPA when present.
   - Reset cached vblank timing state so scanline/vblank pacing does not consume stale timestamps across resume.
   - Restore the last programmed scanout configuration (best-effort; a full modeset may arrive later).
+  - Restore cached hardware cursor state (shape buffer + position) when `AEROGPU_FEATURE_CURSOR` is available.
   - Restore `IRQ_ENABLE` to the cached enable mask when an ISR has been registered.
 
 This power callback is intentionally minimal: it prioritizes avoiding stuck IRQ/vblank state after resume over

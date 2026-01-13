@@ -306,6 +306,8 @@ typedef struct _AEROGPU_ADAPTER {
     ULONG CursorFormat; /* enum aerogpu_format */
     ULONG CursorHotX;
     ULONG CursorHotY;
+    LONG CursorX;
+    LONG CursorY;
     BOOLEAN CursorVisible;
     BOOLEAN CursorShapeValid;
 
