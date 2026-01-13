@@ -385,10 +385,50 @@ Once the driver binary exists, you can produce a deterministic, redistributable 
 - `scripts/package-release.ps1`
 
 ## Known limitations
+This driver intentionally implements a **minimal, contract-first** subset of virtio-input sufficient
+for Windows 7 keyboard + mouse input via the HID stack.
 
-- The driver is still under active development; it does not yet provide complete virtio-input functionality.
-- The INF installs the driver as a **KMDF HID minidriver** under `HIDClass`.
-- The hardware ID list may need adjustment if the emulator uses a different virtio PCI ID variant.
+### Virtio-input functionality (guest-visible)
+
+| Capability | Status | Notes (what Windows sees) |
+| --- | --- | --- |
+| Keyboard input (`EV_KEY` → HID keyboard) | **Supported** | Boot-protocol-style report (8 modifiers + **6-key** array). Keys outside the translator’s Linux `KEY_*` → HID mapping are ignored. |
+| Mouse relative motion (`EV_REL`: `REL_X`/`REL_Y`) | **Supported** | HID mouse report with signed 8-bit X/Y deltas. |
+| Mouse wheel (`EV_REL`: `REL_WHEEL`) | **Supported** | Vertical wheel only. |
+| Mouse buttons (`BTN_LEFT`/`BTN_RIGHT`/`BTN_MIDDLE`) | **Supported** | Exposed as HID buttons 1–3. |
+| Mouse side/extra buttons (`BTN_SIDE`/`BTN_EXTRA`) | **Supported** | Exposed as HID buttons 4–5 (“back/forward”). |
+| Keyboard LED output (Windows → driver → device) | **Supported** | HID output report is translated to virtio-input `EV_LED` events on `statusq` (Num/Caps/Scroll + Compose/Kana bits). Device may ignore LED state per contract. |
+| Absolute/tablet input (`EV_ABS`) | **Not supported** | No HID tablet/absolute pointer descriptor; `EV_ABS` events are not translated. |
+| Multi-touch | **Not supported** | No multi-touch HID collections or contact tracking. |
+| Consumer/system keys (media keys, power keys, etc.) | **Not supported** | No HID Consumer/System Control reports. |
+| Force feedback (`EV_FF`) | **Not supported** | No force feedback / haptics support. |
+
+> Driver model note: the INF installs the driver as a **KMDF HID minidriver** under `HIDClass`
+> (Windows sees standard “HID Keyboard Device” / “HID-compliant mouse” collections).
+
+### Contract / device-model constraints (AERO-W7-VIRTIO v1)
+
+The driver and INF are intentionally strict and are **not** intended to be “generic virtio-input”:
+
+| Constraint | Status | Where enforced |
+| --- | --- | --- |
+| Aero contract major version | **v1 only** (`REV_01`) | INF HWID match (`&REV_01`) + runtime check in `src/device.c` |
+| Virtio-input PCI Device ID | **`DEV_1052` only** | INF HWID match + runtime device-id allowlist (`0x1052`) |
+| Transitional / legacy virtio-input (`DEV_1011`) | **Unsupported** | Not matched by INF; rejected by runtime checks |
+| Fixed BAR0 virtio-pci modern layout (contract v1) | **Required** | `VirtioPciModernValidateAeroContractV1FixedLayout` in `src/device.c` |
+| Required virtqueues | **2 queues** (`eventq` + `statusq`) | `src/device.c` (expects 64/64) |
+| Device identification strings | **Required** | `ID_NAME` must be `"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`; `ID_DEVIDS` must match contract (validated in `src/device.c`) |
+
+### QEMU compatibility expectations
+
+This driver expects an **Aero contract–compliant** virtio-input device model. “Stock” QEMU virtio-input
+devices may expose the same base `1af4:1052` vendor/device ID, but are **not guaranteed** to satisfy the
+full Aero contract requirements (Revision ID gating, `ID_NAME`/`ID_DEVIDS` values, and fixed BAR0 layout).
+
+For authoritative PCI-ID and contract rules, see:
+
+- `docs/pci-hwids.md`
+- `../../../docs/windows7-virtio-driver-contract.md`
 
 ## Power management notes (Win7 HID idle)
 

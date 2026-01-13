@@ -8,6 +8,10 @@ events from a host (or emulator) to the guest.
 In this project, the Windows 7 guest will see a **PCI** device, and the Aero driver
 translates virtio-input events into the Windows HID stack via a **KMDF HID minidriver**.
 
+For the driver’s current **supported / unsupported** feature matrix and contract constraints, see:
+
+- [`../README.md#known-limitations`](../README.md#known-limitations)
+
 ## PCI IDs (QEMU/virtio standard)
 
 Commonly observed IDs:
