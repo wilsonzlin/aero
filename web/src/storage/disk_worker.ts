@@ -1111,6 +1111,108 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       return;
     }
 
+    case "prune_remote_caches": {
+      if (backend !== "opfs") {
+        // Remote cache pruning is only supported for the OPFS backend.
+        postOk(requestId, { ok: true, pruned: 0, examined: 0 });
+        return;
+      }
+
+      const payload = (msg.payload || {}) as { olderThanMs?: unknown; maxCaches?: unknown; dryRun?: unknown };
+
+      const olderThanMs = Number(payload.olderThanMs);
+      if (!Number.isFinite(olderThanMs) || olderThanMs < 0) {
+        throw new Error("olderThanMs must be a non-negative number");
+      }
+
+      let maxCaches: number | undefined = undefined;
+      if (payload.maxCaches !== undefined) {
+        maxCaches = Number(payload.maxCaches);
+        if (!Number.isSafeInteger(maxCaches) || maxCaches < 0) {
+          throw new Error("maxCaches must be a non-negative safe integer");
+        }
+      }
+
+      const dryRun = !!payload.dryRun;
+
+      const remoteCacheDir = await opfsGetRemoteCacheDir();
+      const entries = remoteCacheDir.entries?.bind(remoteCacheDir);
+      if (!entries) {
+        // Best-effort: if directory iteration is unavailable, we cannot enumerate caches.
+        postOk(requestId, { ok: true, pruned: 0, examined: 0, ...(dryRun ? { prunedKeys: [] } : {}) });
+        return;
+      }
+
+      const manager = await RemoteCacheManager.openOpfs();
+      const nowMs = Date.now();
+      const cutoffMs = nowMs - olderThanMs;
+
+      type Candidate = { cacheKey: string; lastAccessedAtMs: number; stale: boolean };
+      const candidates: Candidate[] = [];
+      let examined = 0;
+
+      for await (const [name, handle] of entries()) {
+        // Caches are stored as directories under `aero/disks/remote-cache/<cacheKey>/`.
+        if (handle.kind !== "directory") continue;
+        examined += 1;
+
+        let meta = null;
+        try {
+          meta = await manager.readMeta(name);
+        } catch {
+          meta = null;
+        }
+
+        const last = meta?.lastAccessedAtMs;
+        const lastAccessedAtMs = typeof last === "number" && Number.isFinite(last) ? last : Number.NEGATIVE_INFINITY;
+        const stale = !meta || lastAccessedAtMs < cutoffMs;
+        candidates.push({ cacheKey: name, lastAccessedAtMs, stale });
+      }
+
+      const keysToPrune = new Set<string>();
+      for (const c of candidates) {
+        if (c.stale) keysToPrune.add(c.cacheKey);
+      }
+
+      if (maxCaches !== undefined) {
+        const remaining = candidates.filter((c) => !keysToPrune.has(c.cacheKey));
+        if (remaining.length > maxCaches) {
+          const toPrune = remaining
+            .slice()
+            .sort((a, b) => a.lastAccessedAtMs - b.lastAccessedAtMs || a.cacheKey.localeCompare(b.cacheKey))
+            .slice(0, remaining.length - maxCaches);
+          for (const c of toPrune) keysToPrune.add(c.cacheKey);
+        }
+      }
+
+      const orderedToPrune = candidates
+        .filter((c) => keysToPrune.has(c.cacheKey))
+        .sort((a, b) => a.lastAccessedAtMs - b.lastAccessedAtMs || a.cacheKey.localeCompare(b.cacheKey))
+        .map((c) => c.cacheKey);
+
+      let pruned = 0;
+      const prunedKeys: string[] = [];
+      for (const cacheKey of orderedToPrune) {
+        if (dryRun) {
+          pruned += 1;
+          prunedKeys.push(cacheKey);
+          continue;
+        }
+        try {
+          await manager.clearCache(cacheKey);
+          pruned += 1;
+        } catch {
+          // best-effort
+        }
+      }
+
+      postOk(
+        requestId,
+        dryRun ? { ok: true, pruned, examined, prunedKeys } : { ok: true, pruned, examined },
+      );
+      return;
+    }
+
     case "export_disk": {
       const meta = await requireDisk(backend, msg.payload.id);
       if (meta.source !== "local") {
