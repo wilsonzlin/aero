@@ -23,6 +23,16 @@ fn is_pci_bar_offset(offset: u16) -> bool {
 }
 
 #[inline]
+fn access_overlaps_pci_bar(offset: u16, size: usize) -> bool {
+    if size == 0 {
+        return false;
+    }
+    // `validate_access` ensures `offset + size <= 256`, so this can't overflow.
+    let end = offset + (size as u16).saturating_sub(1);
+    offset <= PCI_BAR_OFF_END && end >= PCI_BAR_OFF_START
+}
+
+#[inline]
 fn align_pci_dword(offset: u16) -> u16 {
     offset & !0x3
 }
@@ -109,6 +119,21 @@ impl PciConfigSpaceCompat {
         let Ok(mut cfg) = self.0.try_borrow_mut() else {
             return 0;
         };
+
+        // Canonical config-space reads only apply BAR special handling when the access begins
+        // inside the BAR window. If a hostile guest performs a cross-dword read that partially
+        // overlaps the BAR registers, read byte-by-byte so BAR bytes are still sourced from the
+        // BAR state machine rather than the raw config bytes.
+        if access_overlaps_pci_bar(offset, size) && !is_pci_bar_offset(offset) {
+            let mut out = 0u32;
+            for i in 0..size {
+                let byte_off = offset + i as u16;
+                let byte = cfg.read(byte_off, 1) & 0xFF;
+                out |= byte << (8 * i);
+            }
+            return out;
+        }
+
         cfg.read(offset, size)
     }
 
@@ -125,7 +150,12 @@ impl PciConfigSpaceCompat {
             return;
         };
 
-        if is_pci_bar_offset(offset) && (offset & 0x3 != 0 || size != 4) {
+        // Canonical config-space writes only treat an access as a BAR write if the access begins
+        // inside the BAR window; cross-dword accesses can therefore partially clobber BAR bytes
+        // without updating BAR state. Handle any access that overlaps BAR registers (except for
+        // the canonical aligned dword BAR write) via byte-splitting.
+        let is_canonical_bar_dword = is_pci_bar_offset(offset) && (offset & 0x3) == 0 && size == 4;
+        if access_overlaps_pci_bar(offset, size) && !is_canonical_bar_dword {
             // Perform a byte-granular write split across dword boundaries, issuing canonical
             // 32-bit writes for any bytes that land in the BAR window. This avoids panics from the
             // canonical BAR alignment assertions while still behaving like real hardware for
@@ -250,5 +280,26 @@ mod tests {
         compat.write_u32(0x13, 2, 0xABCD);
         assert_eq!(compat.read_u32(0x10, 4), 0xCD00_0000);
         assert_eq!(compat.read_u32(0x14, 4), 0x0000_00AB);
+    }
+
+    #[test]
+    fn config_write_that_starts_before_bar_and_spills_into_bar_updates_bar_state() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x10,
+                prefetchable: false,
+            },
+        );
+
+        let compat = PciConfigSpaceCompat::new(cfg);
+
+        // Write a 16-bit value at 0x0F. This touches config byte 0x0F and BAR0 byte 0x10.
+        compat.write_u32(0x0F, 2, 0xAA55);
+
+        // BAR0 low byte should be updated via BAR state machine (with address bits masked to BAR
+        // alignment). Only bits 7:4 can survive for a 16-byte aligned BAR.
+        assert_eq!(compat.read_u32(0x10, 4), 0x0000_00A0);
     }
 }
