@@ -232,7 +232,9 @@ describe("hid/WebHidBroker", () => {
 
     await new Promise((r) => setTimeout(r, 40));
     expect(device.sendReport).toHaveBeenCalledTimes(3);
-    const calls = device.sendReport.mock.calls as Array<[number, Uint8Array]>;
+    // Vitest stores calls as an untyped `unknown[][]`; cast via `unknown` so TypeScript
+    // doesn't reject the conversion under stricter `--noUncheckedIndexedAccess` + TS 5.9+ rules.
+    const calls = device.sendReport.mock.calls as unknown as Array<[number, Uint8Array<ArrayBufferLike>]>;
     expect(calls[0][0]).toBe(7);
     expect(calls[1][0]).toBe(8);
     expect(calls[2][0]).toBe(9);
