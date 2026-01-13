@@ -138,6 +138,18 @@ Notes:
 
 For background, see [`docs/windows/virtio-pci-modern-interrupts.md`](../../../docs/windows/virtio-pci-modern-interrupts.md) (§5).
 
+### Expected vector mapping
+
+When MSI/MSI-X is active and Windows grants enough messages, the in-tree driver uses:
+
+- **Vector/message 0:** virtio **config** interrupt
+- **Vector/message 1:** queue 0 (`eventq`)
+- **Vector/message 2:** queue 1 (`statusq`)
+
+If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
+
+- **All sources on vector/message 0** (config + all queues)
+
 ### Troubleshooting / verifying which interrupt mode you got
 
 - **Device Manager → Properties → Resources**:
