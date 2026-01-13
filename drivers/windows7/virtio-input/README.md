@@ -415,18 +415,19 @@ for Windows 7 keyboard + mouse input via the HID stack.
 | Capability | Status | Notes (what Windows sees) |
 | --- | --- | --- |
 | Keyboard input (`EV_KEY` → HID keyboard) | **Supported** | Boot-protocol-style report (8 modifiers + **6-key** array). Keys outside the translator’s Linux `KEY_*` → HID mapping are ignored. |
+| Consumer/media keys (subset) | **Supported** | Exposed as a HID **Consumer Control** collection (ReportID `3`) on the keyboard function. Supported keys: mute, volume up/down, play/pause, next/previous, stop. |
 | Mouse relative motion (`EV_REL`: `REL_X`/`REL_Y`) | **Supported** | HID mouse report with signed 8-bit X/Y deltas. |
-| Mouse wheel (`EV_REL`: `REL_WHEEL`) | **Supported** | Vertical wheel only. |
-| Mouse buttons (`BTN_LEFT`/`BTN_RIGHT`/`BTN_MIDDLE`) | **Supported** | Exposed as HID buttons 1–3. |
-| Mouse side/extra buttons (`BTN_SIDE`/`BTN_EXTRA`) | **Supported** | Exposed as HID buttons 4–5 (“back/forward”). |
+| Mouse wheel (`EV_REL`: `REL_WHEEL`) | **Supported** | Vertical wheel. |
+| Mouse horizontal wheel (`EV_REL`: `REL_HWHEEL`) | **Supported** | Exposed as HID **AC Pan** (horizontal wheel). |
+| Mouse buttons | **Supported** | Up to **8 buttons** (`BTN_LEFT/RIGHT/MIDDLE/SIDE/EXTRA/FORWARD/BACK/TASK`) mapped to HID buttons 1–8. |
 | Keyboard LED output (Windows → driver → device) | **Supported** | HID output report is translated to virtio-input `EV_LED` events on `statusq` (Num/Caps/Scroll + Compose/Kana bits). Device may ignore LED state per contract. |
-| Absolute/tablet input (`EV_ABS`) | **Not supported** | No HID tablet/absolute pointer descriptor; `EV_ABS` events are not translated. |
+| Absolute/tablet pointer (`EV_ABS`) | **Not supported (end-to-end)** | The translator has an opt-in tablet report format, but the in-tree driver currently exposes a relative mouse HID interface only (no advertised tablet report/collection). |
 | Multi-touch | **Not supported** | No multi-touch HID collections or contact tracking. |
-| Consumer/system keys (media keys, power keys, etc.) | **Not supported** | No HID Consumer/System Control reports. |
+| System control keys (power/sleep/wake) | **Not supported** | No HID System Control reports. |
 | Force feedback (`EV_FF`) | **Not supported** | No force feedback / haptics support. |
 
 > Driver model note: the INF installs the driver as a **KMDF HID minidriver** under `HIDClass`
-> (Windows sees standard “HID Keyboard Device” / “HID-compliant mouse” collections).
+> (Windows sees standard “HID Keyboard Device” / “HID-compliant mouse” collections; the keyboard function also exposes a “Consumer Control” collection).
 
 ### Contract / device-model constraints (AERO-W7-VIRTIO v1)
 
@@ -439,13 +440,19 @@ The driver and INF are intentionally strict and are **not** intended to be “ge
 | Transitional / legacy virtio-input (`DEV_1011`) | **Unsupported** | Not matched by INF; rejected by runtime checks |
 | Fixed BAR0 virtio-pci modern layout (contract v1) | **Required** | `VirtioPciModernValidateAeroContractV1FixedLayout` in `src/device.c` |
 | Required virtqueues | **2 queues** (`eventq` + `statusq`) | `src/device.c` (expects 64/64) |
-| Device identification strings | **Required** | `ID_NAME` must be `"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`; `ID_DEVIDS` must match contract (validated in `src/device.c`) |
+| Device identification strings | **Strict by default** | Strict mode requires Aero `ID_NAME` strings + contract `ID_DEVIDS`. QEMU/non-Aero devices require enabling `CompatDeviceKind` (see `docs/virtio-input-notes.md`). |
 
 ### QEMU compatibility expectations
 
-This driver expects an **Aero contract–compliant** virtio-input device model. “Stock” QEMU virtio-input
-devices may expose the same base `1af4:1052` vendor/device ID, but are **not guaranteed** to satisfy the
-full Aero contract requirements (Revision ID gating, `ID_NAME`/`ID_DEVIDS` values, and fixed BAR0 layout).
+This driver is **strict by default** (Aero contract v1). In that mode it expects the Aero `ID_NAME` / `ID_DEVIDS`
+values and will refuse to start if the device does not match the contract.
+
+To use “stock” QEMU virtio-input frontends (`virtio-keyboard-pci` / `virtio-mouse-pci`), enable the driver’s
+compatibility mode (`CompatDeviceKind`) so it accepts QEMU-style `ID_NAME` strings and relaxes some identification
+checks. See `docs/virtio-input-notes.md` for details.
+
+Even in compat mode, the INF/runtime checks are still **contract-v1 identity gated** (modern virtio-input `DEV_1052`,
+`REV_01`); under QEMU you typically need `disable-legacy=on,x-pci-revision=0x01` for the device to bind and start.
 
 For authoritative PCI-ID and contract rules, see:
 
