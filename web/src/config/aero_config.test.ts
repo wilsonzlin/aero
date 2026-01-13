@@ -25,6 +25,10 @@ describe("AeroConfig", () => {
     expect(resolved.effective.activeDiskImage).toBeNull();
     expect(resolved.effective.logLevel).toBe("info");
     expect(resolved.effective.uiScale).toBeUndefined();
+    expect(resolved.effective.l2TunnelTransport).toBe("ws");
+    expect(resolved.effective.l2RelaySignalingMode).toBe("ws-trickle");
+    expect(resolved.effective.l2TunnelToken).toBeUndefined();
+    expect(resolved.effective.l2TunnelTokenTransport).toBe("query");
     expect(resolved.effective.virtioNetMode).toBe("modern");
     expect(resolved.effective.virtioInputMode).toBe("modern");
     expect(resolved.effective.virtioSndMode).toBe("modern");
@@ -101,6 +105,58 @@ describe("AeroConfig", () => {
     expect(parsed.lockedKeys.has("enableWorkers")).toBe(true);
     expect(parsed.lockedKeys.has("proxyUrl")).toBe(true);
     expect(parsed.overrides.proxyUrl).toBe("https://example.com");
+  });
+
+  it("query parsing: accepts L2 tunnel overrides", () => {
+    const parsed = parseAeroConfigQueryOverrides(
+      "?l2=webrtc&l2Signal=http-offer&l2Token=sekrit&l2TokenTransport=subprotocol",
+    );
+    expect(parsed.overrides.l2TunnelTransport).toBe("webrtc");
+    expect(parsed.overrides.l2RelaySignalingMode).toBe("http-offer");
+    expect(parsed.overrides.l2TunnelToken).toBe("sekrit");
+    expect(parsed.overrides.l2TunnelTokenTransport).toBe("subprotocol");
+    expect(parsed.lockedKeys.has("l2TunnelTransport")).toBe(true);
+    expect(parsed.lockedKeys.has("l2RelaySignalingMode")).toBe(true);
+    expect(parsed.lockedKeys.has("l2TunnelToken")).toBe(true);
+    expect(parsed.lockedKeys.has("l2TunnelTokenTransport")).toBe(true);
+  });
+
+  it("query parsing: ignores invalid L2 tunnel overrides (and does not lock)", () => {
+    const parsed = parseAeroConfigQueryOverrides(
+      "?l2=bogus&l2Signal=bogus&l2Token=&l2TokenTransport=bogus",
+    );
+    expect(parsed.overrides.l2TunnelTransport).toBeUndefined();
+    expect(parsed.overrides.l2RelaySignalingMode).toBeUndefined();
+    expect(parsed.overrides.l2TunnelToken).toBeUndefined();
+    expect(parsed.overrides.l2TunnelTokenTransport).toBeUndefined();
+    expect(parsed.lockedKeys.has("l2TunnelTransport")).toBe(false);
+    expect(parsed.lockedKeys.has("l2RelaySignalingMode")).toBe(false);
+    expect(parsed.lockedKeys.has("l2TunnelToken")).toBe(false);
+    expect(parsed.lockedKeys.has("l2TunnelTokenTransport")).toBe(false);
+  });
+
+  it("querystring overrides: L2 query takes precedence over stored", () => {
+    const caps = {
+      supportsThreadedWorkers: true,
+      threadedWorkersUnsupportedReason: null,
+      supportsWebGPU: false,
+      webgpuUnsupportedReason: "no webgpu",
+    };
+
+    const resolved = resolveAeroConfigFromSources({
+      capabilities: caps,
+      storedConfig: { l2TunnelTransport: "webrtc", l2RelaySignalingMode: "legacy-offer" },
+      queryString: "?l2=ws&l2Signal=http-offer",
+    });
+
+    // Stored layer should apply to requested config...
+    expect(resolved.requested.l2TunnelTransport).toBe("webrtc");
+    expect(resolved.requested.l2RelaySignalingMode).toBe("legacy-offer");
+    // ...but query overrides win for effective config.
+    expect(resolved.effective.l2TunnelTransport).toBe("ws");
+    expect(resolved.effective.l2RelaySignalingMode).toBe("http-offer");
+    expect(resolved.lockedKeys.has("l2TunnelTransport")).toBe(true);
+    expect(resolved.lockedKeys.has("l2RelaySignalingMode")).toBe(true);
   });
 
   it("query parsing: accepts virtioNetMode override", () => {

@@ -3,6 +3,8 @@ import type { VirtioInputPciMode } from "../io/devices/virtio_input.ts";
 import type { VirtioNetPciMode } from "../io/devices/virtio_net.ts";
 import type { VirtioSndPciMode } from "../io/devices/virtio_snd.ts";
 import type { L2TunnelTokenTransport } from "../net/l2Tunnel";
+import type { L2TunnelTransportMode } from "../net/connectL2Tunnel";
+import type { RelaySignalingMode } from "../net/webrtcRelaySignalingClient";
 
 export const AERO_LOG_LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
 export type AeroLogLevel = (typeof AERO_LOG_LEVELS)[number];
@@ -12,6 +14,20 @@ export interface AeroConfig {
   enableWorkers: boolean;
   enableWebGPU: boolean;
   proxyUrl: string | null;
+  /**
+   * Underlying transport for the L2 tunnel (Option C networking).
+   *
+   * - `"ws"` (default): direct WebSocket tunnel to the gateway `/l2` endpoint.
+   * - `"webrtc"`: WebRTC `RTCDataChannel` tunnel via the UDP relay returned by `POST /session`.
+   */
+  l2TunnelTransport?: L2TunnelTransportMode;
+  /**
+   * Advanced: signaling mode for the WebRTC relay (only relevant when
+   * `l2TunnelTransport="webrtc"`).
+   *
+   * Default: `"ws-trickle"`.
+   */
+  l2RelaySignalingMode?: RelaySignalingMode;
   /**
    * Optional token for deployments that require auth on the `/l2` WebSocket endpoint.
    *
@@ -25,6 +41,8 @@ export interface AeroConfig {
    * How to transport `l2TunnelToken` to the `/l2` endpoint (WebSocket only).
    *
    * See `L2TunnelTokenTransport` / `WebSocketL2TunnelClient` for details.
+   *
+   * Default: `"query"`.
    */
   l2TunnelTokenTransport?: L2TunnelTokenTransport;
   activeDiskImage: string | null;
@@ -145,6 +163,13 @@ function parseNullableString(value: unknown): string | null | undefined {
   return undefined;
 }
 
+function parseNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim();
+  if (v === "") return undefined;
+  return v;
+}
+
 function parseLogLevel(value: unknown): AeroLogLevel | undefined {
   if (typeof value !== "string") return undefined;
   const v = value.trim().toLowerCase();
@@ -171,6 +196,32 @@ function parseVirtioPciMode(value: unknown): "modern" | "transitional" | "legacy
   if (typeof value === "boolean") {
     return value ? "transitional" : "modern";
   }
+  return undefined;
+}
+
+function parseL2TunnelTransport(value: unknown): L2TunnelTransportMode | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim().toLowerCase();
+  if (v === "ws" || v === "websocket" || v === "web-socket") return "ws";
+  if (v === "webrtc" || v === "rtc" || v === "web-rtc") return "webrtc";
+  return undefined;
+}
+
+function parseRelaySignalingMode(value: unknown): RelaySignalingMode | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim().toLowerCase();
+  if (v === "ws-trickle" || v === "trickle" || v === "ws") return "ws-trickle";
+  if (v === "http-offer" || v === "http") return "http-offer";
+  if (v === "legacy-offer" || v === "legacy") return "legacy-offer";
+  return undefined;
+}
+
+function parseL2TunnelTokenTransport(value: unknown): L2TunnelTokenTransport | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim().toLowerCase();
+  if (v === "query" || v === "url") return "query";
+  if (v === "subprotocol" || v === "subproto" || v === "protocol") return "subprotocol";
+  if (v === "both") return "both";
   return undefined;
 }
 
@@ -219,6 +270,9 @@ export function getDefaultAeroConfig(
     proxyUrl: null,
     activeDiskImage: null,
     logLevel: "info",
+    l2TunnelTransport: "ws",
+    l2RelaySignalingMode: "ws-trickle",
+    l2TunnelTokenTransport: "query",
     virtioNetMode: "modern",
     virtioInputMode: "modern",
     virtioSndMode: "modern",
@@ -313,6 +367,46 @@ export function parseAeroConfigOverrides(input: unknown): ParsedAeroConfigOverri
     if (parsed) {
       overrides.proxyUrl = parsed.proxyUrl;
       if ("issue" in parsed) issues.push({ key: "proxyUrl", message: parsed.issue });
+    }
+  }
+
+  if (hasOwn(input, "l2TunnelTransport")) {
+    const parsed = parseL2TunnelTransport(input.l2TunnelTransport);
+    if (parsed !== undefined) {
+      overrides.l2TunnelTransport = parsed;
+    } else {
+      issues.push({ key: "l2TunnelTransport", message: 'l2TunnelTransport must be "ws" or "webrtc".' });
+    }
+  }
+
+  if (hasOwn(input, "l2RelaySignalingMode")) {
+    const parsed = parseRelaySignalingMode(input.l2RelaySignalingMode);
+    if (parsed !== undefined) {
+      overrides.l2RelaySignalingMode = parsed;
+    } else {
+      issues.push({
+        key: "l2RelaySignalingMode",
+        message: 'l2RelaySignalingMode must be "ws-trickle", "http-offer", or "legacy-offer".',
+      });
+    }
+  }
+
+  if (hasOwn(input, "l2TunnelToken")) {
+    const parsed = parseNonEmptyString(input.l2TunnelToken);
+    if (parsed !== undefined) {
+      overrides.l2TunnelToken = parsed;
+    }
+  }
+
+  if (hasOwn(input, "l2TunnelTokenTransport")) {
+    const parsed = parseL2TunnelTokenTransport(input.l2TunnelTokenTransport);
+    if (parsed !== undefined) {
+      overrides.l2TunnelTokenTransport = parsed;
+    } else {
+      issues.push({
+        key: "l2TunnelTokenTransport",
+        message: 'l2TunnelTokenTransport must be "query", "subprotocol", or "both".',
+      });
     }
   }
 
@@ -411,6 +505,59 @@ export function parseAeroConfigQueryOverrides(search: string): ParsedAeroQueryOv
         overrides.proxyUrl = parsed.proxyUrl;
         lockedKeys.add("proxyUrl");
       }
+    }
+  }
+
+  // Option C networking (L2 tunnel) query overrides:
+  // - `l2=ws|webrtc`
+  // - `l2Signal=ws-trickle|http-offer|legacy-offer`
+  // - `l2Token=<token>` (optional)
+  // - `l2TokenTransport=query|subprotocol|both` (optional)
+  const l2 = params.get("l2");
+  if (l2 !== null) {
+    const parsed = parseL2TunnelTransport(l2);
+    if (parsed !== undefined) {
+      overrides.l2TunnelTransport = parsed;
+      lockedKeys.add("l2TunnelTransport");
+    } else {
+      issues.push({ key: "l2TunnelTransport", message: 'l2 must be "ws" or "webrtc".' });
+    }
+  }
+
+  const l2Signal = params.get("l2Signal");
+  if (l2Signal !== null) {
+    const parsed = parseRelaySignalingMode(l2Signal);
+    if (parsed !== undefined) {
+      overrides.l2RelaySignalingMode = parsed;
+      lockedKeys.add("l2RelaySignalingMode");
+    } else {
+      issues.push({
+        key: "l2RelaySignalingMode",
+        message: 'l2Signal must be "ws-trickle", "http-offer", or "legacy-offer".',
+      });
+    }
+  }
+
+  const l2Token = params.get("l2Token");
+  if (l2Token !== null) {
+    const parsed = parseNonEmptyString(l2Token);
+    if (parsed !== undefined) {
+      overrides.l2TunnelToken = parsed;
+      lockedKeys.add("l2TunnelToken");
+    }
+  }
+
+  const l2TokenTransport = params.get("l2TokenTransport");
+  if (l2TokenTransport !== null) {
+    const parsed = parseL2TunnelTokenTransport(l2TokenTransport);
+    if (parsed !== undefined) {
+      overrides.l2TunnelTokenTransport = parsed;
+      lockedKeys.add("l2TunnelTokenTransport");
+    } else {
+      issues.push({
+        key: "l2TunnelTokenTransport",
+        message: 'l2TokenTransport must be "query", "subprotocol", or "both".',
+      });
     }
   }
 
