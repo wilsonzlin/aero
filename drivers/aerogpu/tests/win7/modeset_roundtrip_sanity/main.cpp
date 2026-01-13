@@ -29,6 +29,67 @@ static const char* DispChangeCodeToString(LONG code) {
   }
 }
 
+struct ChangeDisplaySettingsCtx {
+  DEVMODE dm;
+  LONG result;
+};
+
+static DWORD WINAPI ChangeDisplaySettingsThreadProc(LPVOID param) {
+  ChangeDisplaySettingsCtx* ctx = (ChangeDisplaySettingsCtx*)param;
+  if (!ctx) {
+    return 0;
+  }
+  // Note: ChangeDisplaySettingsEx takes a non-const DEVMODE*.
+  ctx->result = ChangeDisplaySettingsEx(NULL, &ctx->dm, NULL, 0, NULL);
+  return 0;
+}
+
+static bool ChangeDisplaySettingsExWithTimeout(const DEVMODE& target,
+                                               DWORD timeout_ms,
+                                               LONG* out_result,
+                                               std::string* err) {
+  if (err) {
+    err->clear();
+  }
+  if (out_result) {
+    *out_result = DISP_CHANGE_FAILED;
+  }
+
+  ChangeDisplaySettingsCtx* ctx = new ChangeDisplaySettingsCtx();
+  ctx->dm = target;
+  ctx->result = DISP_CHANGE_FAILED;
+
+  HANDLE thread = CreateThread(NULL, 0, ChangeDisplaySettingsThreadProc, ctx, 0, NULL);
+  if (!thread) {
+    if (err) {
+      *err = "CreateThread(ChangeDisplaySettingsEx) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    delete ctx;
+    return false;
+  }
+
+  DWORD w = WaitForSingleObject(thread, timeout_ms);
+  if (w == WAIT_OBJECT_0) {
+    CloseHandle(thread);
+    if (out_result) {
+      *out_result = ctx->result;
+    }
+    delete ctx;
+    return true;
+  }
+
+  // Timeout or wait failure. Close the handle but do not free ctx (thread may still access it).
+  CloseHandle(thread);
+  if (err) {
+    if (w == WAIT_TIMEOUT) {
+      *err = aerogpu_test::FormatString("ChangeDisplaySettingsEx timed out after %lu ms", (unsigned long)timeout_ms);
+    } else {
+      *err = "WaitForSingleObject(ChangeDisplaySettingsEx) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+  }
+  return false;
+}
+
 static void PrintModeInfo(const char* label, const DEVMODE& dm) {
   aerogpu_test::PrintfStdout(
       "INFO: %s: %lux%lu bpp=%lu freq=%lu fields=0x%08lX",
@@ -238,7 +299,15 @@ static bool ApplyDisplayModeAndWait(const DEVMODE& target, DWORD timeout_ms, std
   }
 
   DEVMODE dm = target;  // ChangeDisplaySettingsEx takes a non-const pointer.
-  LONG r = ChangeDisplaySettingsEx(NULL, &dm, NULL, 0, NULL);
+  const DWORD start = GetTickCount();
+  LONG r = DISP_CHANGE_FAILED;
+  std::string change_err;
+  if (!ChangeDisplaySettingsExWithTimeout(dm, timeout_ms, &r, &change_err)) {
+    if (err) {
+      *err = change_err;
+    }
+    return false;
+  }
   if (r != DISP_CHANGE_SUCCESSFUL) {
     if (err) {
       *err = aerogpu_test::FormatString("ChangeDisplaySettingsEx failed (%ld: %s)", (long)r, DispChangeCodeToString(r));
@@ -246,14 +315,19 @@ static bool ApplyDisplayModeAndWait(const DEVMODE& target, DWORD timeout_ms, std
     return false;
   }
 
-  DWORD start = GetTickCount();
+  const DWORD elapsed = GetTickCount() - start;
+  DWORD remaining = 0;
+  if (elapsed < timeout_ms) {
+    remaining = timeout_ms - elapsed;
+  }
+  DWORD wait_start = GetTickCount();
   for (;;) {
     const int w = GetSystemMetrics(SM_CXSCREEN);
     const int h = GetSystemMetrics(SM_CYSCREEN);
     if (w == (int)target.dmPelsWidth && h == (int)target.dmPelsHeight) {
       return true;
     }
-    if (GetTickCount() - start >= timeout_ms) {
+    if (remaining == 0 || GetTickCount() - wait_start >= remaining) {
       break;
     }
     Sleep(50);
