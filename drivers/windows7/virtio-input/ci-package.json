@@ -1,4 +1,4 @@
 {
   "$schema": "../../../ci/driver-package.schema.json",
-  "infFiles": ["inf/aero_virtio_input.inf"]
+  "infFiles": ["inf/aero_virtio_input.inf", "inf/aero_virtio_tablet.inf"]
 }

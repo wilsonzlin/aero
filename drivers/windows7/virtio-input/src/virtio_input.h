@@ -21,6 +21,11 @@ extern "C" {
 #endif
 
 enum {
+  /*
+   * Maximum size of any input report that this driver can emit.
+   *
+   * Keep this in sync with hid_translate_report_size.
+   */
   VIRTIO_INPUT_REPORT_MAX_SIZE = HID_TRANSLATE_MAX_REPORT_SIZE,
   VIRTIO_INPUT_REPORT_RING_CAPACITY = 128,
 };
@@ -285,6 +290,7 @@ typedef enum _VIOINPUT_DEVICE_KIND {
 
 #define VIOINPUT_PCI_SUBSYSTEM_ID_KEYBOARD 0x0010
 #define VIOINPUT_PCI_SUBSYSTEM_ID_MOUSE 0x0011
+#define VIOINPUT_PCI_SUBSYSTEM_ID_TABLET 0x0012
 
 /*
  * Forward declaration for the shared virtqueue implementation (drivers/windows/virtio/common).

@@ -27,10 +27,13 @@ Commonly observed IDs:
 The Aero emulator’s Windows 7 virtio contract v1 uses the **modern** virtio-pci
 ID space (so virtio-input is `0x1052`) and the modern virtio-pci transport.
 
-The in-tree Aero virtio-input INF (`inf/aero_virtio_input.inf`) intentionally matches only **contract v1**
-hardware IDs:
+The in-tree Aero virtio-input INFs intentionally match only **contract v1**
+hardware IDs (revision-gated `REV_01`), and split keyboard/mouse vs tablet
+bindings so each INF matches a strict subset:
 
-- `PCI\VEN_1AF4&DEV_1052&REV_01` (and the more-specific `...&SUBSYS_...&REV_01` variants)
+- Keyboard: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` → `inf/aero_virtio_input.inf`
+- Mouse: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` → `inf/aero_virtio_input.inf`
+- Tablet (absolute pointer / EV_ABS): `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` → `inf/aero_virtio_tablet.inf`
 
 The `...&SUBSYS_...&REV_01` variants use distinct `DeviceDesc` strings so the keyboard and mouse PCI functions show up as separate named devices in Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**).
 
@@ -47,9 +50,10 @@ Some QEMU virtio devices report `REV_00` by default; for contract-v1 testing und
 QEMU, pass `x-pci-revision=0x01` (and preferably `disable-legacy=on`) on the
 `-device virtio-*-pci,...` arguments.
 
-If the emulator uses a non-standard ID, update:
+If the emulator uses a non-standard ID, update the relevant INF:
 
-- `inf/aero_virtio_input.inf` → `[Aero.NTx86]` and `[Aero.NTamd64]`
+- `inf/aero_virtio_input.inf` → keyboard/mouse
+- `inf/aero_virtio_tablet.inf` → tablet / absolute pointer
 
 ## QEMU device names
 
@@ -68,8 +72,9 @@ The in-tree Windows 7 virtio-input driver is **strict by default** (Aero contrac
 - It queries `VIRTIO_INPUT_CFG_ID_NAME` and only accepts the exact strings:
   - `Aero Virtio Keyboard`
   - `Aero Virtio Mouse`
+  - `Aero Virtio Tablet`
 - If the name is not recognized, the driver fails start (Code 10) rather than guessing.
-- If the PCI **Subsystem Device ID** indicates a contract kind (`0x0010` keyboard, `0x0011` mouse),
+- If the PCI **Subsystem Device ID** indicates a contract kind (`0x0010` keyboard, `0x0011` mouse, `0x0012` tablet),
   it is cross-checked against `ID_NAME` and mismatches fail start (Code 10). Unknown subsystem IDs
   (`0` or other values) are allowed.
 
@@ -90,7 +95,7 @@ When implementing/debugging the driver logic, the primary references are:
 The driver installs under `Class=HIDClass` and registers with `hidclass.sys` as a HID
 minidriver.
 
-- INF: `inf/aero_virtio_input.inf`
+- INF(s): `inf/aero_virtio_input.inf`, `inf/aero_virtio_tablet.inf`
 - Service name: `aero_virtio_input`
 - Driver binary: `aero_virtio_input.sys`
 

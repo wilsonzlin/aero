@@ -149,6 +149,8 @@ static NTSTATUS VioInputReadPciIdentity(_Inout_ PDEVICE_CONTEXT Ctx)
         VioInputSetDeviceKind(Ctx, VioInputDeviceKindKeyboard);
     } else if (subsysDeviceId == VIOINPUT_PCI_SUBSYSTEM_ID_MOUSE) {
         VioInputSetDeviceKind(Ctx, VioInputDeviceKindMouse);
+    } else if (subsysDeviceId == VIOINPUT_PCI_SUBSYSTEM_ID_TABLET) {
+        VioInputSetDeviceKind(Ctx, VioInputDeviceKindTablet);
     } else {
         VioInputSetDeviceKind(Ctx, VioInputDeviceKindUnknown);
     }
@@ -1502,8 +1504,8 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
     /*
      * Device config discovery (contract v1 required selectors).
      *
-     * Contract v1 uses ID_NAME as the authoritative keyboard-vs-mouse
-     * classification (see docs/windows7-virtio-driver-contract.md §3.3.4).
+     * Contract v1 uses ID_NAME as the authoritative device-kind classification
+     * (keyboard vs mouse vs tablet; see docs/windows7-virtio-driver-contract.md §3.3.4).
      */
     {
         CHAR name[129];
@@ -1532,10 +1534,12 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             kind = VioInputDeviceKindKeyboard;
         } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Mouse")) {
             kind = VioInputDeviceKindMouse;
+        } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Tablet")) {
+            kind = VioInputDeviceKindTablet;
         } else {
             VIOINPUT_LOG(
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-                "virtio-input unsupported ID_NAME: '%s' (expected 'Aero Virtio Keyboard' or 'Aero Virtio Mouse')\n",
+                "virtio-input unsupported ID_NAME: '%s' (expected 'Aero Virtio Keyboard', 'Aero Virtio Mouse', or 'Aero Virtio Tablet')\n",
                 name);
             VirtioPciResetDevice(&deviceContext->PciDevice);
             return STATUS_NOT_SUPPORTED;
@@ -1546,11 +1550,13 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             subsysKind = VioInputDeviceKindKeyboard;
         } else if (deviceContext->PciSubsystemDeviceId == VIOINPUT_PCI_SUBSYSTEM_ID_MOUSE) {
             subsysKind = VioInputDeviceKindMouse;
+        } else if (deviceContext->PciSubsystemDeviceId == VIOINPUT_PCI_SUBSYSTEM_ID_TABLET) {
+            subsysKind = VioInputDeviceKindTablet;
         }
 
         /*
          * Contract v1 cross-check: if the PCI subsystem device ID indicates a
-         * specific kind (keyboard/mouse), it must agree with the kind inferred
+         * specific kind (keyboard/mouse/tablet), it must agree with the kind inferred
          * from ID_NAME.
          *
          * If the subsystem ID is unknown (0 or other), allow ID_NAME to decide.
@@ -1560,9 +1566,13 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
                 "virtio-input kind mismatch: ID_NAME='%s' implies %s but PCI subsystem device ID is 0x%04X (%s)\n",
                 name,
-                (kind == VioInputDeviceKindKeyboard) ? "keyboard" : "mouse",
+                (kind == VioInputDeviceKindKeyboard) ? "keyboard"
+                : (kind == VioInputDeviceKindMouse)   ? "mouse"
+                : (kind == VioInputDeviceKindTablet)  ? "tablet"
+                                                     : "unknown",
                 (ULONG)deviceContext->PciSubsystemDeviceId,
-                (subsysKind == VioInputDeviceKindKeyboard) ? "keyboard" : "mouse");
+                (subsysKind == VioInputDeviceKindKeyboard) ? "keyboard" : (subsysKind == VioInputDeviceKindMouse) ? "mouse"
+                                                                                                                   : "tablet");
             VirtioPciResetDevice(&deviceContext->PciDevice);
             return STATUS_NOT_SUPPORTED;
         }
@@ -1575,6 +1585,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             break;
         case VioInputDeviceKindMouse:
             kindStr = "mouse";
+            break;
+        case VioInputDeviceKindTablet:
+            kindStr = "tablet";
             break;
         case VioInputDeviceKindUnknown:
         default:
@@ -1615,6 +1628,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             break;
         case VioInputDeviceKindMouse:
             expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_MOUSE;
+            break;
+        case VioInputDeviceKindTablet:
+            expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_TABLET;
             break;
         default:
             VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input ID_DEVIDS: unexpected device kind %u\n", (ULONG)deviceContext->DeviceKind);
@@ -1676,21 +1692,21 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
          * Contract v1: devices MUST advertise supported event types via
          * EV_BITS(subsel=0).
          */
+        RtlZeroMemory(bits, sizeof(bits));
+        size = 0;
+        status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_EV_BITS, 0, bits, sizeof(bits), &size);
+        if (!NT_SUCCESS(status) || size == 0) {
+            VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input EV_BITS(types) query failed: %!STATUS!\n", status);
+            VirtioPciResetDevice(&deviceContext->PciDevice);
+            return STATUS_NOT_SUPPORTED;
+        }
+
         if (deviceContext->DeviceKind == VioInputDeviceKindKeyboard) {
             static const VIOINPUT_REQUIRED_EV_CODE kRequiredKeyboardEvTypes[] = {
                 {VIRTIO_INPUT_EV_SYN, "EV_SYN"},
                 {VIRTIO_INPUT_EV_KEY, "EV_KEY"},
                 {VIRTIO_INPUT_EV_LED, "EV_LED"},
             };
-
-            RtlZeroMemory(bits, sizeof(bits));
-            size = 0;
-            status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_EV_BITS, 0, bits, sizeof(bits), &size);
-            if (!NT_SUCCESS(status) || size == 0) {
-                VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input EV_BITS(types) query failed: %!STATUS!\n", status);
-                VirtioPciResetDevice(&deviceContext->PciDevice);
-                return STATUS_NOT_SUPPORTED;
-            }
 
             status = VioInputValidateEvBitsRequired(bits,
                                                    kRequiredKeyboardEvTypes,
@@ -1707,16 +1723,10 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 {VIRTIO_INPUT_EV_REL, "EV_REL"},
             };
 
-            RtlZeroMemory(bits, sizeof(bits));
-            size = 0;
-            status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_EV_BITS, 0, bits, sizeof(bits), &size);
-            if (!NT_SUCCESS(status) || size == 0) {
-                VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input EV_BITS(types) query failed: %!STATUS!\n", status);
-                VirtioPciResetDevice(&deviceContext->PciDevice);
-                return STATUS_NOT_SUPPORTED;
-            }
-
-            status = VioInputValidateEvBitsRequired(bits, kRequiredMouseEvTypes, RTL_NUMBER_OF(kRequiredMouseEvTypes), "virtio-input mouse EV_BITS(types)");
+            status = VioInputValidateEvBitsRequired(bits,
+                                                   kRequiredMouseEvTypes,
+                                                   RTL_NUMBER_OF(kRequiredMouseEvTypes),
+                                                   "virtio-input mouse EV_BITS(types)");
             if (!NT_SUCCESS(status)) {
                 VirtioPciResetDevice(&deviceContext->PciDevice);
                 return status;
@@ -1726,15 +1736,6 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 {VIRTIO_INPUT_EV_SYN, "EV_SYN"},
                 {VIRTIO_INPUT_EV_ABS, "EV_ABS"},
             };
-
-            RtlZeroMemory(bits, sizeof(bits));
-            size = 0;
-            status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_EV_BITS, 0, bits, sizeof(bits), &size);
-            if (!NT_SUCCESS(status) || size == 0) {
-                VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input EV_BITS(types) query failed: %!STATUS!\n", status);
-                VirtioPciResetDevice(&deviceContext->PciDevice);
-                return STATUS_NOT_SUPPORTED;
-            }
 
             status = VioInputValidateEvBitsRequired(bits,
                                                    kRequiredTabletEvTypes,
@@ -1751,9 +1752,12 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                     "virtio-input tablet EV_BITS(types): EV_KEY not advertised; tablet will report no buttons/touch\n");
             }
         } else {
-            VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input EV_BITS(types): invalid device kind %u\n", (ULONG)deviceContext->DeviceKind);
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "virtio-input EV_BITS(types): invalid device kind %u\n",
+                (ULONG)deviceContext->DeviceKind);
             VirtioPciResetDevice(&deviceContext->PciDevice);
-            return STATUS_INVALID_DEVICE_STATE;
+            return STATUS_NOT_SUPPORTED;
         }
 
         if (deviceContext->DeviceKind == VioInputDeviceKindKeyboard) {
@@ -2081,9 +2085,12 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                     (LONG)absY.Max);
             }
         } else {
-            VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input EV_BITS validation: invalid device kind %u\n", (ULONG)deviceContext->DeviceKind);
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "virtio-input EV_BITS validation: invalid device kind %u\n",
+                (ULONG)deviceContext->DeviceKind);
             VirtioPciResetDevice(&deviceContext->PciDevice);
-            return STATUS_INVALID_DEVICE_STATE;
+            return STATUS_NOT_SUPPORTED;
         }
     }
 

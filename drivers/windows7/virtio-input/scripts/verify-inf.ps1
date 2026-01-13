@@ -280,8 +280,7 @@ foreach ($installSect in $installWdfSections) {
 #------------------------------------------------------------------------------
 $requiredHwids = @(
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01',
-  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01',
-  'PCI\VEN_1AF4&DEV_1052&REV_01'
+  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01'
 )
 
 $modelSections = @('Aero.NTx86', 'Aero.NTamd64')
@@ -317,11 +316,6 @@ $requiredModelMappings = @(
     Message = 'Missing x86 mouse model line (expected %AeroVirtioMouse.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...SUBSYS_00111AF4... ).'
   },
   @{
-    Name = 'NTx86 fallback mapping'
-    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
-    Message = 'Missing x86 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...&REV_01).'
-  },
-  @{
     Name = 'NTamd64 keyboard mapping'
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioKeyboard.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01') + '$')
     Message = 'Missing x64 keyboard model line (expected %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...SUBSYS_00101AF4... ).'
@@ -331,16 +325,20 @@ $requiredModelMappings = @(
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioMouse.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01') + '$')
     Message = 'Missing x64 mouse model line (expected %AeroVirtioMouse.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...SUBSYS_00111AF4... ).'
   },
-  @{
-    Name = 'NTamd64 fallback mapping'
-    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
-    Message = 'Missing x64 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...&REV_01).'
-  }
 )
 
 foreach ($m in $requiredModelMappings) {
   if ((Get-MatchingLines -Lines $lines -Regex $m.Regex).Count -eq 0) {
     Add-Failure -Failures $failures -Message $m.Message
+  }
+}
+
+$forbiddenHwidRegex = '(?i)' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01')
+foreach ($sect in $modelSections) {
+  if (-not $sections.ContainsKey($sect)) { continue }
+  if ((Get-MatchingLines -Lines $sections[$sect] -Regex $forbiddenHwidRegex).Count -ne 0) {
+    Add-Failure -Failures $failures -Message (("Unexpected generic HWID in [{0}]: PCI\\VEN_1AF4&DEV_1052&REV_01. " +
+      "This driver package intentionally binds only to SUBSYS-specific contract IDs; use aero_virtio_tablet.inf for tablet devices.") -f $sect)
   }
 }
 
