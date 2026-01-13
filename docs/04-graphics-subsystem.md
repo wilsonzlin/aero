@@ -4,6 +4,42 @@
 
 The graphics subsystem is one of the most challenging components. Windows 7 uses DirectX 9, 10, and 11 for rendering, plus the legacy VGA/SVGA stack for boot. We must translate all of these to WebGPU.
 
+## Current status (reality check)
+
+This repository already contains substantial, *implemented* graphics infrastructure. The rest of this document mixes architecture discussion with historical sketches; treat any code blocks in this file as **illustrative pseudo-code unless they explicitly reference a real path in-tree**.
+
+### What exists today (implemented code)
+
+- **Legacy boot display (VGA + Bochs VBE LFB):**
+  - Device model: [`crates/aero-gpu-vga`](../crates/aero-gpu-vga) (`aero_gpu_vga::VgaDevice`).
+  - Wired into the canonical machine: [`crates/aero-machine`](../crates/aero-machine) (`aero_machine::Machine`).
+- **DirectX translation / execution building blocks (host-side):**
+  - AeroGPU host-side executor (command processing + present + recovery/telemetry): [`crates/aero-gpu`](../crates/aero-gpu)
+  - D3D9 translation/runtime: [`crates/aero-d3d9`](../crates/aero-d3d9)
+  - D3D11/SM4 translation/runtime: [`crates/aero-d3d11`](../crates/aero-d3d11)
+  - DXBC parsing utilities: [`crates/aero-dxbc`](../crates/aero-dxbc)
+- **WebGPU/WebGL2 presenter backends (host-side primitives):**
+  - Rust: [`crates/aero-webgpu`](../crates/aero-webgpu)
+  - Browser runtime presenter implementations: `web/src/gpu/*` (driven by the GPU worker)
+- **Canonical protocol mirror (Rust + TypeScript):**
+  - Source of truth headers: `drivers/aerogpu/protocol/*`
+  - Mirror crate (Rust + TS + conformance tests): [`emulator/protocol`](../emulator/protocol) (`aero-protocol`)
+- **Canonical browser GPU worker:**
+  - [`web/src/workers/gpu-worker.ts`](../web/src/workers/gpu-worker.ts) (OffscreenCanvas presentation + AeroGPU command stream handling)
+
+### Important integration gap (do not assume AeroGPU is wired)
+
+The canonical `aero_machine::Machine` is **still using a transitional VGA PCI stub** for boot graphics and does **not** yet instantiate the full AeroGPU PCI/MMIO device model:
+
+- Boot graphics path today:
+  - `aero_gpu_vga::VgaDevice` + a Bochs/QEMU “Standard VGA”-like PCI function at **`00:0c.0`** (`VID:DID = 1234:1111`) used for VBE linear framebuffer (LFB) routing.
+- AeroGPU is reserved but not wired:
+  - **`00:07.0`** is reserved for the canonical AeroGPU PCI identity (`VID:DID = A3A0:0001`), but `aero_machine::Machine` does not yet attach the full device model.
+  - The canonical AeroGPU PCI/MMIO device model implementation currently lives under
+    [`crates/emulator/src/devices/pci/aerogpu.rs`](../crates/emulator/src/devices/pci/aerogpu.rs) (not yet wired into `aero_machine::Machine`).
+
+See [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md) for the normative statement of this status and the canonical PCI identity contract.
+
 ---
 
 ## Graphics Stack Architecture
@@ -107,6 +143,12 @@ the full AeroGPU device model (VBE mode set + scanout handoff + BAR0 WDDM/MMIO/r
 integrated separately.
 
 See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)
+
+> **Illustrative pseudo-code:** the real VGA/VBE device model is `crates/aero-gpu-vga/src/lib.rs`
+> (`aero_gpu_vga::VgaDevice`), and its wiring into the canonical machine is in
+> `crates/aero-machine/src/lib.rs`.
+>
+> The struct below is *not* the actual in-tree implementation.
 
 ```rust
 pub struct VgaEmulator {
@@ -216,6 +258,11 @@ For DirectX, we intercept GPU commands from the virtual WDDM driver:
 > See also [`graphics/aerogpu-protocols.md`](./graphics/aerogpu-protocols.md) for an overview of
 > similarly named in-tree protocols.
 
+> **Illustrative pseudo-code:** the real AeroGPU command decoding/dispatch lives in:
+>
+> - `crates/aero-gpu/src/command_processor.rs` (host-side executor)
+> - `emulator/protocol` (canonical Rust/TypeScript protocol mirror)
+
 ```rust
 pub struct GpuCommandProcessor {
     command_ring: RingBuffer,
@@ -297,6 +344,12 @@ For the D3D10/11-specific details (SM4/SM5 resource binding, constant buffers, S
 
 ### DXBC Parser
 
+> **Illustrative pseudo-code:** real DXBC parsing/translation lives in:
+>
+> - `crates/aero-dxbc`
+> - `crates/aero-d3d9`
+> - `crates/aero-d3d11`
+
 ```rust
 pub struct DxbcParser {
     // DXBC bytecode format
@@ -370,6 +423,9 @@ impl DxbcParser {
 
 ### IR (Intermediate Representation)
 
+> **Illustrative pseudo-code:** the real shader IRs/translation layers are implemented in
+> `crates/aero-d3d9` and `crates/aero-d3d11` and are not shaped like the enum below.
+
 ```rust
 pub enum IrOp {
     // Arithmetic
@@ -419,6 +475,9 @@ pub struct ShaderIr {
 ```
 
 ### WGSL Code Generator
+
+> **Illustrative pseudo-code:** see `crates/aero-d3d9` / `crates/aero-d3d11` for the real WGSL
+> generation and binding-model handling.
 
 ```rust
 pub struct WgslGenerator {
@@ -560,6 +619,12 @@ D3D10/11 replaces most of these knobs with explicit state objects (blend/depth-s
 
 ### Pipeline State Object
 
+> **Illustrative pseudo-code:** real state tracking/caching is implemented across:
+>
+> - `crates/aero-d3d9/src/state/*` (D3D9 state translation + pipeline caches)
+> - `crates/aero-d3d11/src/runtime/*` (D3D11 pipeline layout + binding caches)
+> - `crates/aero-gpu/src/pipeline_cache.rs` (host-side pipeline caching utilities)
+
 ```rust
 pub struct DxToWebGpuState {
     // Cached pipeline states
@@ -628,6 +693,11 @@ impl DxToWebGpuState {
 
 ### Texture Format Translation
 
+> **Illustrative pseudo-code:** real format mapping lives in:
+>
+> - `crates/aero-d3d9/src/resources/formats.rs`
+> - `crates/aero-gpu/src/texture_format.rs`
+
 ```rust
 pub fn dx_to_webgpu_format(dx_format: DXGI_FORMAT) -> GPUTextureFormat {
     match dx_format {
@@ -653,6 +723,9 @@ pub fn dx_to_webgpu_format(dx_format: DXGI_FORMAT) -> GPUTextureFormat {
 ```
 
 ### Texture Cache
+
+> **Illustrative pseudo-code:** see `crates/aero-d3d9/src/resources/*` and
+> `crates/aero-gpu/src/texture_manager.rs` for real resource lifetime/caching.
 
 ```rust
 pub struct TextureCache {
@@ -735,10 +808,14 @@ See: [D3D9Ex / DWM Compatibility](./16-d3d9ex-dwm-compatibility.md) for the conc
 
 ### Aero Implementation Strategy
 
-Windows 7's Aero glass effect requires:
-1. **Desktop Window Manager (DWM)** compositing
-2. **Blur shader** for glass effect
-3. **Alpha blending** for transparency
+Windows 7's Aero glass effect is implemented by **Windows DWM itself**, using D3D9Ex composition and
+its own shaders/state. On the emulator side, we generally do **not** implement an “Aero compositor”
+by hand; the requirement is that we execute the D3D9Ex/D3D10/11 work submitted by the guest driver
+with the right timing and shared-surface semantics so that DWM’s composition path behaves normally.
+
+> **Illustrative pseudo-code:** the snippet below is a conceptual example of what a blur/composite
+> pass could look like in a WebGPU renderer. It is *not* the actual approach used by Aero, and it
+> should not be read as “how DWM is implemented”.
 
 ```rust
 pub struct AeroCompositor {
@@ -889,6 +966,11 @@ Automate this using Playwright by hashing the presented pixel output per backend
 
 ### Double Buffering
 
+> **Illustrative pseudo-code:** presentation is implemented in-tree by:
+>
+> - `crates/aero-webgpu/src/presenter.rs` (Rust presenter abstractions/backends)
+> - `web/src/workers/gpu-worker.ts` (canonical browser worker that drives the presenters)
+
 ```rust
 pub struct Framebuffer {
     front_buffer: GPUTexture,
@@ -976,6 +1058,10 @@ Expose these via a `get_gpu_stats()` JSON method so they can be polled over IPC.
 
 ### Batching Draw Calls
 
+> **Illustrative pseudo-code:** real batching/state-change minimization is handled inside the
+> D3D9/D3D11 translation layers and the host executor, rather than via a single `DrawCallBatcher`
+> type.
+
 ```rust
 pub struct DrawCallBatcher {
     pending_draws: Vec<DrawCall>,
@@ -1016,6 +1102,11 @@ impl DrawCallBatcher {
 ```
 
 ### Shader Caching
+
+> **Illustrative pseudo-code:** see:
+>
+> - `crates/aero-d3d9/src/runtime/shader_cache.rs`
+> - `web/gpu-cache/persistent_cache.ts`
 
 ```rust
 pub struct ShaderCache {
