@@ -60,6 +60,7 @@ members = [
     "crates/aero-interrupts",
     "crates/aero-d3d11",
     "crates/aero-machine",
+    "crates/aero-machine-cli",
     "crates/devices",
     # Compatibility shim so `cargo test -p devices` continues to work.
     "crates/devices-compat",

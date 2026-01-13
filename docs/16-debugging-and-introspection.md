@@ -23,6 +23,47 @@ When the guest writes to the THR register (offset `+0`, DLAB=0), the UART invoke
 
 ---
 
+## Native CLI runner (`aero-machine`)
+
+For quick boot/integration debugging without the browser runtime, the repo includes a small native CLI tool that runs the canonical [`aero_machine::Machine`] directly.
+
+Build + run (recommended via `scripts/safe-run.sh` to apply time/memory limits when running untrusted disk images):
+
+```bash
+# Boot a tiny fixture disk image and print COM1 output to stdout.
+bash ./scripts/safe-run.sh \
+  cargo run -p aero-machine-cli -- \
+    --disk tests/fixtures/boot/boot_vga_serial_8s.img \
+    --ram 64 \
+    --max-insts 100000 \
+    --serial-out stdout
+```
+
+Optional outputs:
+
+```bash
+# Save a snapshot and dump the last VGA framebuffer to a PNG on exit.
+bash ./scripts/safe-run.sh \
+  cargo run -p aero-machine-cli -- \
+    --disk tests/fixtures/boot/boot_vga_serial_8s.img \
+    --ram 64 \
+    --max-insts 100000 \
+    --serial-out stdout \
+    --snapshot-save /tmp/aero.snap \
+    --vga-png /tmp/aero.png
+
+# Restore a snapshot (disk bytes are still provided externally via --disk).
+bash ./scripts/safe-run.sh \
+  cargo run -p aero-machine-cli -- \
+    --disk tests/fixtures/boot/boot_vga_serial_8s.img \
+    --ram 64 \
+    --max-insts 100000 \
+    --serial-out stdout \
+    --snapshot-load /tmp/aero.snap
+```
+
+---
+
 ## Debug IPC
 
 The core IPC queue format and the stable binary message tags are documented in [`docs/ipc-protocol.md`](./ipc-protocol.md).

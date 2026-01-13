@@ -471,6 +471,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-machine-cli"
+version = "0.1.0"
+dependencies = [
+ "aero-machine",
+ "anyhow",
+ "clap",
+ "image",
+]
+
+[[package]]
 name = "aero-mem"
 version = "0.1.0"
 dependencies = [
