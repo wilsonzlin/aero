@@ -17,6 +17,7 @@
 use crate::layout::{
     align_up, ipc_header, queue_desc, ring_ctrl, IPC_MAGIC, IPC_VERSION, RECORD_ALIGN, WRAP_MARKER,
 };
+use crate::ring::PopError;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -181,7 +182,15 @@ impl SharedRingBuffer {
                 continue;
             }
 
-            let total = align_up(4 + len as usize, RECORD_ALIGN);
+            let total = match record_size_checked(len as usize) {
+                Some(v) => v,
+                None => {
+                    // Bogus length overflow; treat as corruption and drop backlog.
+                    atomics_store_i32(&self.ctrl, ring_ctrl::HEAD as u32, tail as i32);
+                    atomics_notify_i32(&self.ctrl, ring_ctrl::HEAD as u32, 1);
+                    return None;
+                }
+            };
             if total > remaining {
                 // Corrupt record (e.g. bogus length). If we simply return `None` without advancing
                 // `head`, the queue becomes permanently wedged (all future pops will re-read the
@@ -253,6 +262,94 @@ impl SharedRingBuffer {
     }
 }
 
+impl SharedRingBuffer {
+    /// Non-blocking pop returning an owned Rust `Vec<u8>`.
+    ///
+    /// This avoids allocating an intermediate JS `Uint8Array` copy (unlike [`Self::try_pop`],
+    /// which returns an owned JS buffer).
+    pub fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
+        self.try_pop_vec_capped(usize::MAX)
+    }
+
+    /// Like [`Self::try_pop_vec`], but drops oversize records without allocating their payload
+    /// size.
+    ///
+    /// When the next record's payload length exceeds `max_len`, this advances the ring head past
+    /// the record and returns [`PopError::TooLarge`].
+    pub fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        let max_u32 = max_len.min(u32::MAX as usize) as u32;
+        loop {
+            let head = atomics_load_i32(&self.ctrl, ring_ctrl::HEAD as u32) as u32;
+            let tail = atomics_load_i32(&self.ctrl, ring_ctrl::TAIL_COMMIT as u32) as u32;
+            if head == tail {
+                return Err(PopError::Empty);
+            }
+
+            let head_index = (head % self.cap) as usize;
+            let remaining = (self.cap as usize) - head_index;
+
+            if remaining < 4 {
+                let new_head = head.wrapping_add(remaining as u32);
+                atomics_store_i32(&self.ctrl, ring_ctrl::HEAD as u32, new_head as i32);
+                atomics_notify_i32(&self.ctrl, ring_ctrl::HEAD as u32, 1);
+                continue;
+            }
+
+            let len = read_u32_le(&self.data, head_index);
+            if len == WRAP_MARKER {
+                let new_head = head.wrapping_add(remaining as u32);
+                atomics_store_i32(&self.ctrl, ring_ctrl::HEAD as u32, new_head as i32);
+                atomics_notify_i32(&self.ctrl, ring_ctrl::HEAD as u32, 1);
+                continue;
+            }
+
+            let total = match record_size_checked(len as usize) {
+                Some(v) => v,
+                None => {
+                    // Bogus length overflow; treat as corruption and drop backlog for forward
+                    // progress.
+                    atomics_store_i32(&self.ctrl, ring_ctrl::HEAD as u32, tail as i32);
+                    atomics_notify_i32(&self.ctrl, ring_ctrl::HEAD as u32, 1);
+                    return Err(PopError::Corrupt);
+                }
+            };
+            if total > remaining {
+                atomics_store_i32(&self.ctrl, ring_ctrl::HEAD as u32, tail as i32);
+                atomics_notify_i32(&self.ctrl, ring_ctrl::HEAD as u32, 1);
+                return Err(PopError::Corrupt);
+            }
+
+            let committed = tail.wrapping_sub(head);
+            if committed < total as u32 {
+                atomics_store_i32(&self.ctrl, ring_ctrl::HEAD as u32, tail as i32);
+                atomics_notify_i32(&self.ctrl, ring_ctrl::HEAD as u32, 1);
+                return Err(PopError::Corrupt);
+            }
+
+            if len > max_u32 {
+                let new_head = head.wrapping_add(total as u32);
+                atomics_store_i32(&self.ctrl, ring_ctrl::HEAD as u32, new_head as i32);
+                atomics_notify_i32(&self.ctrl, ring_ctrl::HEAD as u32, 1);
+                return Err(PopError::TooLarge { len, max: max_u32 });
+            }
+
+            let len_usize = len as usize;
+            let start = head_index + 4;
+            let end = start + len_usize;
+
+            // `subarray` is a view into the underlying buffer and does not allocate.
+            let view = self.data.subarray(start as u32, end as u32);
+            let mut out = vec![0u8; len_usize];
+            view.copy_to(&mut out);
+
+            let new_head = head.wrapping_add(total as u32);
+            atomics_store_i32(&self.ctrl, ring_ctrl::HEAD as u32, new_head as i32);
+            atomics_notify_i32(&self.ctrl, ring_ctrl::HEAD as u32, 1);
+            return Ok(out);
+        }
+    }
+}
+
 fn read_u32_le(data: &js_sys::Uint8Array, offset: usize) -> u32 {
     let mut tmp = [0u8; 4];
     data.subarray(offset as u32, offset as u32 + 4)
@@ -264,6 +361,21 @@ fn write_u32_le(data: &js_sys::Uint8Array, offset: usize, v: u32) {
     let bytes = v.to_le_bytes();
     data.subarray(offset as u32, offset as u32 + 4)
         .copy_from(&bytes);
+}
+
+fn record_size_checked(payload_len: usize) -> Option<usize> {
+    // Worst-case record layout: 4-byte length + payload + alignment padding.
+    // Use checked arithmetic so a bogus length field cannot overflow `usize` and produce a small
+    // `total` that would make the bounds checks pass.
+    let total = 4usize
+        .checked_add(payload_len)
+        .and_then(|v| align_up_checked(v, RECORD_ALIGN))?;
+    Some(total)
+}
+
+fn align_up_checked(value: usize, align: usize) -> Option<usize> {
+    debug_assert!(align.is_power_of_two());
+    value.checked_add(align - 1).map(|v| v & !(align - 1))
 }
 
 /// Parse an Aero IPC `SharedArrayBuffer` and open the `nth` queue whose descriptor

@@ -231,33 +231,11 @@ impl FrameRing for aero_ipc::wasm::SharedRingBuffer {
     }
 
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
-        match aero_ipc::wasm::SharedRingBuffer::try_pop(self) {
-            Some(buf) => {
-                let mut out = vec![0u8; buf.length() as usize];
-                buf.copy_to(&mut out);
-                Ok(out)
-            }
-            None => Err(PopError::Empty),
-        }
+        aero_ipc::wasm::SharedRingBuffer::try_pop_vec(self)
     }
 
     fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
-        match aero_ipc::wasm::SharedRingBuffer::try_pop(self) {
-            Some(buf) => {
-                let len = buf.length() as usize;
-                if len > max_len {
-                    return Err(PopError::TooLarge {
-                        len: u32::try_from(len).unwrap_or(u32::MAX),
-                        max: u32::try_from(max_len).unwrap_or(u32::MAX),
-                    });
-                }
-
-                let mut out = vec![0u8; len];
-                buf.copy_to(&mut out);
-                Ok(out)
-            }
-            None => Err(PopError::Empty),
-        }
+        aero_ipc::wasm::SharedRingBuffer::try_pop_vec_capped(self, max_len)
     }
 }
 
