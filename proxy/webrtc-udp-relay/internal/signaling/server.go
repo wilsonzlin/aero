@@ -499,13 +499,13 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-gatherComplete:
 	case <-waitCtx.Done():
-		// If the request is canceled (client disconnected), abort without writing a
-		// response; otherwise return the best-effort SDP even if ICE gathering isn't
-		// complete yet (matching /webrtc/offer fallback behavior).
-		if r.Context().Err() != nil {
-			_ = sess.Close()
-			return
-		}
+	}
+	// If the request is canceled (client disconnected), abort without writing a
+	// response; otherwise return the best-effort SDP even if ICE gathering isn't
+	// complete yet (matching /webrtc/offer fallback behavior).
+	if r.Context().Err() != nil {
+		_ = sess.Close()
+		return
 	}
 
 	local := pc.LocalDescription()
@@ -633,6 +633,10 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-gatherComplete:
 	case <-waitCtx.Done():
+	}
+	if r.Context().Err() != nil {
+		_ = sess.Close()
+		return
 	}
 
 	local := pc.LocalDescription()
