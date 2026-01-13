@@ -125,7 +125,8 @@ Already implemented:
     forward report traffic:
     - Preferred fast path (when `crossOriginIsolated`): SharedArrayBuffer ring buffers:
       - `hid.ring.init` (IPC `RingBuffer`) for high-frequency **input reports** (main → worker)
-      - `hid.ringAttach` (`HidReportRing`) for **output/feature reports** (worker → main)
+      - `hid.ringAttach` (`HidReportRing`) for **output/feature reports** (worker → main; can be
+        disabled via `hid.ringDetach` on ring corruption)
       (see [Forwarding mechanism](#forwarding-mechanism)).
     - Fallback/legacy path: `postMessage` forwarding (`hid.inputReport` / `hid.sendReport`).
 - **Worker-side WASM bridge (TypeScript)**
