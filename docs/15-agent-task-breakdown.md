@@ -486,6 +486,15 @@ These tasks cover the **Windows-side packaging** needed for paravirtual devices 
 
 ## FIRMWARE Tasks
 
+> Note: the canonical BIOS/ACPI/machine stack is now implemented in-tree:
+>
+> - `crates/firmware::bios` (legacy BIOS HLE, ACPI/SMBIOS publication, ROM stubs)
+> - `crates/aero-machine` (canonical integration layer; see ADR 0014)
+>
+> The tables below are primarily a historical breakdown and are **not** a reliable “what’s missing”
+> list. Prefer looking at failing tests / open integration gaps (SMP, PCI routing hardening,
+> snapshot determinism) rather than treating every row as unimplemented work.
+
 ### BIOS Tasks
 
 

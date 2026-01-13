@@ -23,19 +23,23 @@ This is the **coordination hub**. You wire together the work from all other work
 
 ## Key Crates & Directories
 
+The **canonical** integration stack is now fully in-tree: BIOS/ACPI are implemented in Rust, and the
+machine wiring lives in `aero-machine` (see [ADR 0014](../docs/adr/0014-canonical-machine-stack.md)).
+Older docs may still read like “bring your own BIOS binary” or like the machine layer is still TBD
+— that is no longer accurate.
+
 | Crate/Directory | Purpose |
 |-----------------|---------|
-| `crates/firmware/` | BIOS implementation |
-| `crates/aero-acpi/` | ACPI table generation |
-| `crates/platform/` | Platform wiring (PCI, interrupts, timers) |
-| `crates/devices/` | Shared device model infrastructure |
-| `crates/aero-interrupts/` | PIC, APIC, I/O APIC |
-| `crates/aero-timers/` | PIT, HPET, RTC |
-| `crates/aero-time/` | Time abstraction |
-| `crates/aero-machine/` | Machine state, VM control |
-| `crates/aero-snapshot/` | VM snapshot/restore |
-| `crates/emulator/` | Main emulator wiring |
-| `assets/bios.bin` | Generated BIOS ROM fixture (canonical ROM is `firmware::bios::build_bios_rom()`) |
+| `crates/aero-machine/` | **Canonical machine integration layer** (ADR 0014): CPU + memory + devices + firmware; dispatches BIOS interrupt “hypercalls” |
+| `crates/firmware/` | **Canonical legacy BIOS HLE** (`firmware::bios`): ROM stub generation + POST + INT services; publishes ACPI + SMBIOS |
+| `crates/aero-acpi/` | ACPI table generator (used by `firmware::bios`) |
+| `crates/devices/` | Device models (PCI, PIT, PIC, HPET, AHCI/IDE, etc.) |
+| `crates/platform/` / `crates/aero-pc-platform/` | Platform buses + PC/Q35-ish wiring helpers used by `aero-machine` |
+| `crates/aero-interrupts/` | Interrupt controller models (PIC/APIC/I/O APIC) used by the platform layer |
+| `crates/aero-timers/` / `crates/aero-time/` | PIT/HPET/RTC devices + time abstractions |
+| `crates/aero-snapshot/` | VM snapshot/restore format + helpers |
+| `crates/emulator/` | Full-system emulator entrypoints (some legacy wiring; increasingly delegates to `aero-machine`) |
+| `assets/bios.bin` | **Generated fixture**: a 64 KiB ROM image built from `firmware::bios::build_bios_rom()` (not the runtime BIOS source) |
 
 ---
 
@@ -56,67 +60,26 @@ This is the **coordination hub**. You wire together the work from all other work
 
 ---
 
-## Tasks
+## Current Status
 
-### BIOS Tasks
+Most “BI-* / AC-* / DM-*” items from the original project plan are now **implemented and covered by
+tests** in the canonical stack:
 
-| ID | Task | Priority | Dependencies | Complexity |
-|----|------|----------|--------------|------------|
-| BI-001 | POST sequence | P0 | None | Medium |
-| BI-002 | Memory detection (E820) | P0 | BI-001 | Medium |
-| BI-003 | Interrupt vector table setup | P0 | BI-001 | Low |
-| BI-004 | BIOS data area setup | P0 | BI-001 | Low |
-| BI-005 | INT 10h (video) | P0 | None | Medium |
-| BI-006 | INT 13h (disk) | P0 | None | Medium |
-| BI-007 | INT 15h (system) | P0 | None | Medium |
-| BI-008 | INT 16h (keyboard) | P0 | None | Low |
-| BI-009 | Boot device selection | P0 | BI-006 | Low |
-| BI-012 | BIOS boot order: CD-first for Win7 install (see [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md)) | P0 | BI-009 | Low |
-| BI-013 | INT 13h CD-ROM / EDD extensions for 2048-byte sectors (ATAPI CD-ROM on PIIX3 IDE `00:01.1` secondary channel master; see [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md)) | P0 | BI-006 | Medium |
-| BI-014 | El Torito CD-ROM boot support (no-emulation) | P0 | BI-012, BI-013 | Medium |
-| BI-010 | MBR/boot sector loading | P0 | BI-009 | Low |
-| BI-011 | BIOS test suite | P0 | BI-001..BI-010, BI-012..BI-014 | Medium |
+- `cargo test -p firmware` exercises BIOS services (INT 10/13/15/16/1A), ROM layout, ACPI/SMBIOS
+  publication, etc.
+- `cargo test -p aero-machine` exercises end-to-end wiring: BIOS POST, PCI layout/INTx routing,
+  storage controllers, snapshots, and platform interrupt delivery.
 
-### ACPI Tasks
+### Remaining integration gaps (high-value work)
 
-| ID | Task | Priority | Dependencies | Complexity |
-|----|------|----------|--------------|------------|
-| AC-001 | RSDP/RSDT/XSDT generation | P0 | None | Medium |
-| AC-002 | FADT (Fixed ACPI Description Table) | P0 | AC-001 | Medium |
-| AC-003 | MADT (Multiple APIC Description Table) | P0 | AC-001 | Medium |
-| AC-004 | HPET table | P0 | AC-001 | Low |
-| AC-005 | DSDT (AML bytecode) | P1 | AC-001 | High |
-| AC-006 | Power management stubs | P1 | AC-002 | Medium |
-| AC-007 | ACPI test suite | P0 | AC-001..AC-004 | Medium |
+If you are looking for impactful integration/boot work today, focus on:
 
-### Device Models Tasks
-
-| ID | Task | Priority | Dependencies | Complexity |
-|----|------|----------|--------------|------------|
-| DM-001 | PIC (8259A) | P0 | None | Medium |
-| DM-002 | PIT (8254) | P0 | None | Medium |
-| DM-003 | CMOS/RTC | P0 | None | Medium |
-| DM-004 | Local APIC | P0 | None | High |
-| DM-005 | I/O APIC | P0 | DM-004 | High |
-| DM-006 | HPET | P0 | None | Medium |
-| DM-007 | PCI configuration space | P0 | None | High |
-| DM-008 | PCI device enumeration | P0 | DM-007 | Medium |
-| DM-009 | DMA controller (8237) | P1 | None | Medium |
-| DM-010 | Serial port (16550) | P2 | None | Medium |
-| DM-011 | Device models test suite | P0 | DM-001..DM-006 | Medium |
-
-### Virtio PCI Transport Tasks
-
-| ID | Task | Priority | Dependencies | Complexity |
-|----|------|----------|--------------|------------|
-| VTP-001 | Virtio core (virtqueue, feature negotiation) | P0 | DM-007 | High |
-| VTP-002 | Virtio PCI modern transport | P0 | VTP-001, DM-007 | High |
-| VTP-003 | Virtio PCI legacy transport | P0 | VTP-001, DM-007 | High |
-| VTP-004 | Virtio PCI transitional device | P0 | VTP-002, VTP-003 | Medium |
-| VTP-005 | Legacy INTx wiring | P0 | VTP-003 | Medium |
-| VTP-006 | MSI-X support | P1 | VTP-002, DM-007 | High |
-| VTP-007 | Unit tests | P0 | VTP-003 | Medium |
-| VTP-008 | Config option: disable modern | P1 | VTP-004 | Low |
+- **SMP / multi-vCPU bring-up**: `aero_machine::Machine` currently enforces `cpu_count = 1`. The next
+  step is AP startup (INIT/SIPI), APIC IPI delivery, and guest-visible CPU topology.
+- **PCI routing hardening**: keep `aero_acpi` DSDT `_PRT`, PCI “Interrupt Line” programming, and the
+  runtime INTx/MSI/MSI-X delivery model coherent and snapshot-safe.
+- **Snapshot determinism & stability**: ensure device ordering, guest time, and interrupt state are
+  reproducible across save/restore (see `docs/16-snapshots.md` and `crates/aero-machine/tests/`).
 
 ---
 
@@ -128,28 +91,24 @@ This is the **coordination hub**. You wire together the work from all other work
 Power On
     │
     ▼
-POST (Power On Self Test)           ← BI-001
+POST (Power On Self Test)
     │
     ▼
-Memory Detection (E820)             ← BI-002
+Memory Detection (E820)
     │
     ▼
-Interrupt Vector Table Setup        ← BI-003
+Interrupt Vector Table Setup
     │
     ▼
-BIOS Data Area Setup                ← BI-004
+BIOS Data Area Setup
     │
     ▼
-Boot Device Selection               ← BI-009
-    │
-    ▼
-Boot order policy (CD-first for Win7 install)  ← BI-012
+Boot Device Selection
     │
     ▼
 Load boot code:
-  - El Torito CD-ROM boot image (no-emulation) ← BI-013, BI-014
-    (ATAPI CD-ROM on PIIX3 IDE `00:01.1` secondary master; see `docs/05-storage-topology-win7.md`)
-  - MBR / boot sector (HDD; normal boot after install) ← BI-010
+  - El Torito CD-ROM boot image (no-emulation) (Win7 install media; see `docs/05-storage-topology-win7.md`)
+  - MBR / boot sector (HDD; normal boot after install)
     │
     ▼
 Jump to loaded boot code
@@ -402,9 +361,9 @@ AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test windo
 2. ☐ Run `bash ./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
 3. ☐ Read [`docs/09-bios-firmware.md`](../docs/09-bios-firmware.md)
 4. ☐ Read [`docs/01-architecture-overview.md`](../docs/01-architecture-overview.md)
-5. ☐ Explore `crates/firmware/src/` and `crates/platform/src/`
+5. ☐ Explore `crates/firmware/src/` and `crates/aero-machine/src/`
 6. ☐ Run boot tests to see current state
-7. ☐ Pick a task from the tables above and begin
+7. ☐ Pick an item from **Remaining integration gaps** above and begin
 
 ---
 
