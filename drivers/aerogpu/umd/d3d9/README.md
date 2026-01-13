@@ -258,9 +258,9 @@ The current implementation targets:
 
 - **Render targets**: `D3DFMT_X8R8G8B8`, `D3DFMT_A8R8G8B8`, `D3DFMT_A8B8G8R8`
 - **Depth/stencil**: `D3DFMT_D24S8`
-- **Legacy sampled texture formats** (via shader sampling + `UpdateTexture`): `D3DFMT_R5G6B5` is expected to work end-to-end
-  (validated by `d3d9_texture_16bit_sampling`). `D3DFMT_A1R5G5B5` is treated as optional and is only exercised when
-  `CheckDeviceFormat` reports it supported.
+- **Legacy sampled texture formats** (via shader sampling + `UpdateTexture`): `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5`
+  (validated by `d3d9_texture_16bit_sampling`; the `A1R5G5B5` path is only exercised when `CheckDeviceFormat` reports it supported).
+  16-bit RGB formats are exposed for texture sampling only (not render targets).
 - **BC/DXT textures**: `D3DFMT_DXT1..DXT5` are only exposed when the active device reports
   ABI minor `>= 2` via `KMTQAITYPE_UMDRIVERPRIVATE` (`aerogpu_umd_private_v1.device_abi_version_u32`).
   - When unsupported, `GetCaps(GETFORMAT*)` omits them and `CreateResource` rejects them to avoid emitting
