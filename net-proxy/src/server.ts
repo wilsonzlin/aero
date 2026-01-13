@@ -30,6 +30,105 @@ export interface RunningProxyServer {
   close: () => Promise<void>;
 }
 
+type MetricsProto = "tcp" | "tcp_mux" | "udp";
+type MetricsErrorKind = "denied" | "error";
+
+interface ProxyServerMetrics {
+  connectionActiveInc: (proto: MetricsProto) => void;
+  connectionActiveDec: (proto: MetricsProto) => void;
+  udpBindingsActiveInc: () => void;
+  udpBindingsActiveDec: (delta?: number) => void;
+  addBytesIn: (proto: MetricsProto, bytes: number) => void;
+  addBytesOut: (proto: MetricsProto, bytes: number) => void;
+  incConnectionError: (kind: MetricsErrorKind) => void;
+  prometheusText: () => string;
+}
+
+function createProxyServerMetrics(): ProxyServerMetrics {
+  const connectionsActive: Record<MetricsProto, number> = {
+    tcp: 0,
+    tcp_mux: 0,
+    udp: 0
+  };
+  const bytesInTotal: Record<MetricsProto, bigint> = {
+    tcp: 0n,
+    tcp_mux: 0n,
+    udp: 0n
+  };
+  const bytesOutTotal: Record<MetricsProto, bigint> = {
+    tcp: 0n,
+    tcp_mux: 0n,
+    udp: 0n
+  };
+  const connectionErrorsTotal: Record<MetricsErrorKind, bigint> = {
+    denied: 0n,
+    error: 0n
+  };
+  let udpBindingsActive = 0;
+
+  const clampNonNegative = (n: number): number => (n < 0 ? 0 : n);
+
+  const prometheusText = (): string => {
+    const lines: string[] = [];
+
+    lines.push("# HELP net_proxy_connections_active Active relay WebSocket connections.");
+    lines.push("# TYPE net_proxy_connections_active gauge");
+    lines.push(`net_proxy_connections_active{proto="tcp"} ${connectionsActive.tcp}`);
+    lines.push(`net_proxy_connections_active{proto="tcp_mux"} ${connectionsActive.tcp_mux}`);
+    lines.push(`net_proxy_connections_active{proto="udp"} ${connectionsActive.udp}`);
+
+    lines.push("# HELP net_proxy_udp_bindings_active Active UDP bindings in multiplexed /udp mode.");
+    lines.push("# TYPE net_proxy_udp_bindings_active gauge");
+    lines.push(`net_proxy_udp_bindings_active ${udpBindingsActive}`);
+
+    lines.push("# HELP net_proxy_bytes_in_total Total bytes received from the client (towards target sockets), by protocol.");
+    lines.push("# TYPE net_proxy_bytes_in_total counter");
+    lines.push(`net_proxy_bytes_in_total{proto="tcp"} ${bytesInTotal.tcp}`);
+    lines.push(`net_proxy_bytes_in_total{proto="tcp_mux"} ${bytesInTotal.tcp_mux}`);
+    lines.push(`net_proxy_bytes_in_total{proto="udp"} ${bytesInTotal.udp}`);
+
+    lines.push("# HELP net_proxy_bytes_out_total Total bytes sent to the client (from target sockets), by protocol.");
+    lines.push("# TYPE net_proxy_bytes_out_total counter");
+    lines.push(`net_proxy_bytes_out_total{proto="tcp"} ${bytesOutTotal.tcp}`);
+    lines.push(`net_proxy_bytes_out_total{proto="tcp_mux"} ${bytesOutTotal.tcp_mux}`);
+    lines.push(`net_proxy_bytes_out_total{proto="udp"} ${bytesOutTotal.udp}`);
+
+    lines.push("# HELP net_proxy_connection_errors_total Total connection errors (denied by policy or failed to connect).");
+    lines.push("# TYPE net_proxy_connection_errors_total counter");
+    lines.push(`net_proxy_connection_errors_total{kind="denied"} ${connectionErrorsTotal.denied}`);
+    lines.push(`net_proxy_connection_errors_total{kind="error"} ${connectionErrorsTotal.error}`);
+
+    return `${lines.join("\n")}\n`;
+  };
+
+  return {
+    connectionActiveInc: (proto) => {
+      connectionsActive[proto] = clampNonNegative(connectionsActive[proto] + 1);
+    },
+    connectionActiveDec: (proto) => {
+      connectionsActive[proto] = clampNonNegative(connectionsActive[proto] - 1);
+    },
+    udpBindingsActiveInc: () => {
+      udpBindingsActive = clampNonNegative(udpBindingsActive + 1);
+    },
+    udpBindingsActiveDec: (delta = 1) => {
+      udpBindingsActive = clampNonNegative(udpBindingsActive - delta);
+    },
+    addBytesIn: (proto, bytes) => {
+      if (!Number.isFinite(bytes) || bytes <= 0) return;
+      bytesInTotal[proto] += BigInt(bytes);
+    },
+    addBytesOut: (proto, bytes) => {
+      if (!Number.isFinite(bytes) || bytes <= 0) return;
+      bytesOutTotal[proto] += BigInt(bytes);
+    },
+    incConnectionError: (kind) => {
+      connectionErrorsTotal[kind] += 1n;
+    },
+    prometheusText
+  };
+}
+
 function truncateCloseReason(reason: string, maxBytes = 123): string {
   const buf = Buffer.from(reason, "utf8");
   if (buf.length <= maxBytes) return reason;
@@ -112,6 +211,7 @@ function parseTargetQuery(url: URL): { host: string; port: number; portRaw: stri
 
 export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Promise<RunningProxyServer> {
   const config: ProxyConfig = { ...loadConfigFromEnv(), ...overrides };
+  const metrics = createProxyServerMetrics();
 
   const server = http.createServer((req, res) => {
     let url: URL;
@@ -131,6 +231,16 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
       res.writeHead(200, {
         "content-type": "application/json; charset=utf-8",
         "content-length": Buffer.byteLength(body)
+      });
+      res.end(body);
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/metrics") {
+      const body = metrics.prometheusText();
+      res.writeHead(200, {
+        "content-type": "text/plain; version=0.0.4; charset=utf-8",
+        "content-length": Buffer.byteLength(body),
+        "cache-control": "no-store"
       });
       res.end(body);
       return;
@@ -192,29 +302,30 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
     const clientAddress = req.socket.remoteAddress ?? null;
 
     // `/udp` can operate in one of two modes:
-    // 1) Per-target (legacy): `/udp?host=...&port=...` (or `target=...`) where WS messages are raw datagrams.
-    // 2) Multiplexed (new): `/udp` with no target params, using v1/v2 framing (see proxy/webrtc-udp-relay/PROTOCOL.md).
-    const hasHost = url.searchParams.has("host");
-    const hasPort = url.searchParams.has("port");
-    const hasTarget = url.searchParams.has("target");
-    if (proto === "udp" && !hasHost && !hasPort && !hasTarget) {
-      log("info", "connect_requested", { connId, proto, mode: "multiplexed", clientAddress });
-      log("info", "connect_accepted", { connId, proto, mode: "multiplexed", clientAddress });
-      void handleUdpRelayMultiplexed(ws, connId, config);
-      return;
-    }
+      // 1) Per-target (legacy): `/udp?host=...&port=...` (or `target=...`) where WS messages are raw datagrams.
+      // 2) Multiplexed (new): `/udp` with no target params, using v1/v2 framing (see proxy/webrtc-udp-relay/PROTOCOL.md).
+      const hasHost = url.searchParams.has("host");
+      const hasPort = url.searchParams.has("port");
+      const hasTarget = url.searchParams.has("target");
+      if (proto === "udp" && !hasHost && !hasPort && !hasTarget) {
+        log("info", "connect_requested", { connId, proto, mode: "multiplexed", clientAddress });
+        log("info", "connect_accepted", { connId, proto, mode: "multiplexed", clientAddress });
+        void handleUdpRelayMultiplexed(ws, connId, config, metrics);
+        return;
+      }
 
-    const parsedTarget = parseTargetQuery(url);
-    if ("error" in parsedTarget) {
-      log("warn", "connect_denied", {
-        connId,
-        proto,
-        clientAddress,
-        reason: parsedTarget.error
-      });
-      wsCloseSafe(ws, 1008, parsedTarget.error);
-      return;
-    }
+      const parsedTarget = parseTargetQuery(url);
+      if ("error" in parsedTarget) {
+        log("warn", "connect_denied", {
+          connId,
+          proto,
+          clientAddress,
+          reason: parsedTarget.error
+        });
+        metrics.incConnectionError("denied");
+        wsCloseSafe(ws, 1008, parsedTarget.error);
+        return;
+      }
 
     const { host, port, portRaw } = parsedTarget;
 
@@ -230,6 +341,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
 
         if (!decision.allowed) {
           log("warn", "connect_denied", { connId, proto, host, port, clientAddress, reason: decision.reason });
+          metrics.incConnectionError("denied");
           wsCloseSafe(ws, 1008, decision.reason);
           return;
         }
@@ -246,12 +358,13 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
         });
 
         if (proto === "udp") {
-          await handleUdpRelay(ws, connId, decision.target.resolvedAddress, decision.target.family, port, config);
+          await handleUdpRelay(ws, connId, decision.target.resolvedAddress, decision.target.family, port, config, metrics);
         } else {
-          await handleTcpRelay(ws, connId, decision.target.resolvedAddress, decision.target.family, port, config);
+          await handleTcpRelay(ws, connId, decision.target.resolvedAddress, decision.target.family, port, config, metrics);
         }
       } catch (err) {
         log("error", "connect_error", { connId, proto, host, port, clientAddress, err: formatError(err) });
+        metrics.incConnectionError("error");
         wsCloseSafe(ws, 1011, "Proxy error");
       }
     })();
@@ -260,7 +373,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
   wssMux.on("connection", (ws, req) => {
     const connId = nextConnId++;
     const clientAddress = req.socket.remoteAddress ?? null;
-    handleTcpMuxRelay(ws, connId, clientAddress, config);
+    handleTcpMuxRelay(ws, connId, clientAddress, config, metrics);
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -304,11 +417,20 @@ type TcpMuxStreamState = {
   connectTimer: NodeJS.Timeout | null;
 };
 
-function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string | null, config: ProxyConfig): void {
+function handleTcpMuxRelay(
+  ws: WebSocket,
+  connId: number,
+  clientAddress: string | null,
+  config: ProxyConfig,
+  metrics: ProxyServerMetrics
+): void {
   if (ws.protocol !== TCP_MUX_SUBPROTOCOL) {
+    metrics.incConnectionError("denied");
     wsCloseSafe(ws, 1002, `Missing required subprotocol: ${TCP_MUX_SUBPROTOCOL}`);
     return;
   }
+
+  metrics.connectionActiveInc("tcp_mux");
 
   const wsStream = createWebSocketStream(ws, { highWaterMark: config.wsStreamHighWaterMarkBytes });
 
@@ -340,6 +462,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
   const closeAll = (why: string, wsCode: number, wsReason: string) => {
     if (closed) return;
     closed = true;
+    metrics.connectionActiveDec("tcp_mux");
 
     for (const streamId of [...streams.keys()]) {
       destroyStream(streamId);
@@ -487,6 +610,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
           dnsTimeoutMs: config.dnsTimeoutMs
         });
       } catch (err) {
+        metrics.incConnectionError("error");
         sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, (err as Error).message);
         destroyStream(stream.id);
         log("error", "connect_error", {
@@ -506,6 +630,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
       if (!current) return;
 
       if (!decision.allowed) {
+        metrics.incConnectionError("denied");
         sendStreamError(stream.id, TcpMuxErrorCode.POLICY_DENIED, decision.reason);
         destroyStream(stream.id);
         log("warn", "connect_denied", {
@@ -560,6 +685,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
 
       tcpSocket.on("data", (chunk) => {
         bytesOut += chunk.length;
+        metrics.addBytesOut("tcp_mux", chunk.length);
         sendMuxFrame(TcpMuxMsgType.DATA, current.id, chunk);
       });
 
@@ -575,6 +701,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
       });
 
       tcpSocket.on("error", (err) => {
+        metrics.incConnectionError("error");
         sendStreamError(current.id, TcpMuxErrorCode.DIAL_FAILED, (err as Error).message);
         destroyStream(current.id);
         log("error", "connect_error", {
@@ -610,6 +737,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
     }
 
     bytesIn += frame.payload.length;
+    metrics.addBytesIn("tcp_mux", frame.payload.length);
 
     if (!stream.socket || !stream.connected || stream.writePaused) {
       enqueueStreamWrite(stream, frame.payload);
@@ -721,6 +849,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
 
   wsStream.on("error", (err) => {
     closeAll("ws_stream_error", 1011, "WebSocket stream error");
+    metrics.incConnectionError("error");
     log("error", "connect_error", { connId, proto: "tcp-mux", clientAddress, err: formatError(err) });
   });
 
@@ -731,6 +860,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
 
   ws.once("error", (err) => {
     closeAll("ws_error", 1011, "WebSocket error");
+    metrics.incConnectionError("error");
     log("error", "connect_error", { connId, proto: "tcp-mux", clientAddress, err: formatError(err) });
   });
 }
@@ -741,9 +871,12 @@ async function handleTcpRelay(
   address: string,
   family: 4 | 6,
   port: number,
-  config: ProxyConfig
+  config: ProxyConfig,
+  metrics: ProxyServerMetrics
 ): Promise<void> {
   const wsStream = createWebSocketStream(ws, { highWaterMark: config.wsStreamHighWaterMarkBytes });
+
+  metrics.connectionActiveInc("tcp");
 
   let bytesIn = 0;
   let bytesOut = 0;
@@ -760,6 +893,7 @@ async function handleTcpRelay(
   const closeBoth = (why: string, wsCode: number, wsReason: string) => {
     if (closed) return;
     closed = true;
+    metrics.connectionActiveDec("tcp");
 
     clearTimeout(connectTimer);
 
@@ -784,6 +918,7 @@ async function handleTcpRelay(
   ws.once("close", (code, reason) => {
     if (closed) return;
     closed = true;
+    metrics.connectionActiveDec("tcp");
     clearTimeout(connectTimer);
     tcpSocket.destroy();
     wsStream.destroy();
@@ -801,6 +936,7 @@ async function handleTcpRelay(
 
   ws.once("error", (err) => {
     closeBoth("ws_error", 1011, "WebSocket error");
+    metrics.incConnectionError("error");
     log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
   });
 
@@ -810,6 +946,7 @@ async function handleTcpRelay(
 
   tcpSocket.once("error", (err) => {
     closeBoth("tcp_error", 1011, "TCP error");
+    metrics.incConnectionError("error");
     log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
   });
 
@@ -824,9 +961,11 @@ async function handleTcpRelay(
 
   fromWs.on("data", (chunk) => {
     bytesIn += chunk.length;
+    metrics.addBytesIn("tcp", chunk.length);
   });
   fromTcp.on("data", (chunk) => {
     bytesOut += chunk.length;
+    metrics.addBytesOut("tcp", chunk.length);
   });
 
   wsStream.pipe(fromWs).pipe(tcpSocket);
@@ -839,10 +978,13 @@ async function handleUdpRelay(
   address: string,
   family: 4 | 6,
   port: number,
-  config: ProxyConfig
+  config: ProxyConfig,
+  metrics: ProxyServerMetrics
 ): Promise<void> {
   const socket = dgram.createSocket(family === 6 ? "udp6" : "udp4");
   socket.connect(port, address);
+
+  metrics.connectionActiveInc("udp");
 
   let bytesIn = 0;
   let bytesOut = 0;
@@ -851,6 +993,7 @@ async function handleUdpRelay(
   const closeBoth = (why: string, wsCode: number, wsReason: string) => {
     if (closed) return;
     closed = true;
+    metrics.connectionActiveDec("udp");
     try {
       socket.close();
     } catch {
@@ -875,6 +1018,7 @@ async function handleUdpRelay(
   ws.once("close", (code, reason) => {
     if (closed) return;
     closed = true;
+    metrics.connectionActiveDec("udp");
     try {
       socket.close();
     } catch {
@@ -894,16 +1038,19 @@ async function handleUdpRelay(
 
   ws.once("error", (err) => {
     closeBoth("ws_error", 1011, "WebSocket error");
+    metrics.incConnectionError("error");
     log("error", "connect_error", { connId, proto: "udp", err: formatError(err) });
   });
 
   socket.on("error", (err) => {
     closeBoth("udp_error", 1011, "UDP error");
+    metrics.incConnectionError("error");
     log("error", "connect_error", { connId, proto: "udp", err: formatError(err) });
   });
 
   socket.on("message", (msg) => {
     bytesOut += msg.length;
+    metrics.addBytesOut("udp", msg.length);
     if (ws.readyState !== ws.OPEN) return;
 
     if (ws.bufferedAmount > config.udpWsBufferedAmountLimitBytes) {
@@ -923,6 +1070,7 @@ async function handleUdpRelay(
     if (!isBinary) return;
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
     bytesIn += buf.length;
+    metrics.addBytesIn("udp", buf.length);
     socket.send(buf);
   });
 }
@@ -949,13 +1097,20 @@ function makeUdpRelayBindingKey(guestPort: number, addressFamily: 4 | 6): UdpRel
   return `${addressFamily}:${guestPort}`;
 }
 
-async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: ProxyConfig): Promise<void> {
+async function handleUdpRelayMultiplexed(
+  ws: WebSocket,
+  connId: number,
+  config: ProxyConfig,
+  metrics: ProxyServerMetrics
+): Promise<void> {
   const bindings = new Map<UdpRelayBindingKey, UdpRelayBinding>();
   let bytesIn = 0;
   let bytesOut = 0;
   let closed = false;
   let gcTimer: NodeJS.Timeout | null = null;
   let clientSupportsV2 = false;
+
+  metrics.connectionActiveInc("udp");
 
   const remoteAllowlistEnabled = config.udpRelayInboundFilterMode === "address_and_port";
   const remoteAllowlistIdleTimeoutMs = config.udpRelayBindingIdleTimeoutMs;
@@ -1016,12 +1171,17 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
   const closeAll = (why: string, wsCode: number, wsReason: string) => {
     if (closed) return;
     closed = true;
+    metrics.connectionActiveDec("udp");
 
     if (gcTimer) {
       clearInterval(gcTimer);
       gcTimer = null;
     }
 
+    const bindingCount = bindings.size;
+    if (bindingCount > 0) {
+      metrics.udpBindingsActiveDec(bindingCount);
+    }
     for (const binding of bindings.values()) {
       try {
         binding.socket.close();
@@ -1050,12 +1210,17 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
   ws.once("close", (code, reason) => {
     if (closed) return;
     closed = true;
+    metrics.connectionActiveDec("udp");
 
     if (gcTimer) {
       clearInterval(gcTimer);
       gcTimer = null;
     }
 
+    const bindingCount = bindings.size;
+    if (bindingCount > 0) {
+      metrics.udpBindingsActiveDec(bindingCount);
+    }
     for (const binding of bindings.values()) {
       try {
         binding.socket.close();
@@ -1079,6 +1244,7 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
 
   ws.once("error", (err) => {
     closeAll("ws_error", 1011, "WebSocket error");
+    metrics.incConnectionError("error");
     log("error", "connect_error", { connId, proto: "udp", mode: "multiplexed", err: formatError(err) });
   });
 
@@ -1090,6 +1256,7 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
       for (const [key, binding] of bindings) {
         if (now - binding.lastActiveMs <= config.udpRelayBindingIdleTimeoutMs) continue;
         bindings.delete(key);
+        metrics.udpBindingsActiveDec();
         try {
           binding.socket.close();
         } catch {
@@ -1123,8 +1290,12 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
     };
 
     socket.on("error", (err) => {
+      metrics.incConnectionError("error");
       log("error", "connect_error", { connId, proto: "udp", mode: "multiplexed", err: formatError(err), guestPort, addressFamily });
-      bindings.delete(key);
+      const removed = bindings.delete(key);
+      if (removed) {
+        metrics.udpBindingsActiveDec();
+      }
       try {
         socket.close();
       } catch {
@@ -1186,7 +1357,8 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
         return;
       }
 
-      bytesOut += frame.length;
+      bytesOut += msg.length;
+      metrics.addBytesOut("udp", msg.length);
 
       if (ws.bufferedAmount > config.udpWsBufferedAmountLimitBytes) {
         log("warn", "udp_drop_backpressure", {
@@ -1202,13 +1374,13 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
     });
 
     bindings.set(key, binding);
+    metrics.udpBindingsActiveInc();
     return binding;
   };
 
   ws.on("message", (data, isBinary) => {
     if (!isBinary) return;
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
-    bytesIn += buf.length;
 
     void (async () => {
       if (closed) return;
@@ -1257,6 +1429,7 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
           dnsTimeoutMs: config.dnsTimeoutMs
         });
       } catch (err) {
+        metrics.incConnectionError("error");
         log("error", "connect_error", {
           connId,
           proto: "udp",
@@ -1270,7 +1443,10 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
         return;
       }
       if (closed) return;
-      if (!decision.allowed) return;
+      if (!decision.allowed) {
+        metrics.incConnectionError("denied");
+        return;
+      }
 
       if (addressFamily === 4 && decision.target.family !== 4) return;
       if (addressFamily === 6 && decision.target.family !== 6) return;
@@ -1280,6 +1456,9 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
       const now = Date.now();
       binding.lastActiveMs = now;
       allowRemote(binding, remoteIpBytes, remotePort, now);
+
+      bytesIn += payload.length;
+      metrics.addBytesIn("udp", payload.length);
 
       // Send the raw UDP payload to the decoded destination.
       try {
