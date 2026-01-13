@@ -232,6 +232,17 @@ typedef struct _AEROGPU_ADAPTER {
     LIST_ENTRY PendingSubmissions;
     KSPIN_LOCK PendingLock;
     LIST_ENTRY PendingInternalSubmissions;
+    /*
+     * Recently retired submissions kept around for dbgctl READ_GPA / post-mortem
+     * dump tooling. These are driver-owned contiguous buffers (cmd stream + optional
+     * alloc table) so retaining them is safe, but must be bounded to avoid
+     * exhausting contiguous memory.
+     *
+     * Protected by PendingLock.
+     */
+    LIST_ENTRY RecentSubmissions;
+    ULONG RecentSubmissionCount;
+    DECLSPEC_ALIGN(8) ULONGLONG RecentSubmissionBytes;
     ULONGLONG LastSubmittedFence;
     ULONGLONG LastCompletedFence;
 

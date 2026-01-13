@@ -40,6 +40,18 @@
 #define AEROGPU_KMD_ALLOC_FLAG_OPENED 0x80000000u
 #define AEROGPU_KMD_ALLOC_FLAG_PRIMARY 0x40000000u
 
+/*
+ * Retain a small window of recently retired submissions so dbgctl tooling can
+ * still dump the most recent command stream bytes even if the submission has
+ * already completed (common when debugging intermittent rendering issues on a
+ * fast emulator/backend).
+ *
+ * These buffers are physically-contiguous, non-paged allocations; keep the
+ * window small and enforce a tight total cap.
+ */
+#define AEROGPU_DBGCTL_RECENT_SUBMISSIONS_MAX_COUNT 8u
+#define AEROGPU_DBGCTL_RECENT_SUBMISSIONS_MAX_BYTES (4ull * 1024ull * 1024ull) /* 4 MiB */
+
 #if DBG
 /*
  * DBG-only rate limiting for logs that can be triggered by misbehaving guests.
@@ -1328,6 +1340,79 @@ static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
     }
 }
 
+static __forceinline ULONGLONG AeroGpuSubmissionTotalBytes(_In_ const AEROGPU_SUBMISSION* Sub)
+{
+    if (!Sub) {
+        return 0;
+    }
+    return (ULONGLONG)Sub->DmaCopySize + (ULONGLONG)Sub->AllocTableSizeBytes + (ULONGLONG)Sub->DescSize;
+}
+
+static VOID AeroGpuFreeSubmission(_In_opt_ AEROGPU_SUBMISSION* Sub)
+{
+    if (!Sub) {
+        return;
+    }
+    AeroGpuFreeContiguousNonCached(Sub->AllocTableVa, (SIZE_T)Sub->AllocTableSizeBytes);
+    AeroGpuFreeContiguousNonCached(Sub->DmaCopyVa, Sub->DmaCopySize);
+    AeroGpuFreeContiguousNonCached(Sub->DescVa, Sub->DescSize);
+    ExFreePoolWithTag(Sub, AEROGPU_POOL_TAG);
+}
+
+static BOOLEAN AeroGpuTryCopyFromSubmissionList(_In_ const LIST_ENTRY* ListHead,
+                                                _In_ ULONGLONG Gpa,
+                                                _In_ ULONG ReqBytes,
+                                                _Out_writes_bytes_(ReqBytes) PUCHAR Out,
+                                                _Inout_ ULONG* BytesToCopyInOut,
+                                                _Inout_ NTSTATUS* OpStatusInOut)
+{
+    if (!ListHead || !Out || !BytesToCopyInOut || !OpStatusInOut) {
+        return FALSE;
+    }
+
+    for (PLIST_ENTRY entry = ListHead->Flink; entry != ListHead; entry = entry->Flink) {
+        const AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
+        if (!sub) {
+            continue;
+        }
+
+        struct range {
+            ULONGLONG Base;
+            ULONGLONG Size;
+            const void* Va;
+        } ranges[] = {
+            {(ULONGLONG)sub->DmaCopyPa.QuadPart, (ULONGLONG)sub->DmaCopySize, sub->DmaCopyVa},
+            {(ULONGLONG)sub->DescPa.QuadPart, (ULONGLONG)sub->DescSize, sub->DescVa},
+            {(ULONGLONG)sub->AllocTablePa.QuadPart, (ULONGLONG)sub->AllocTableSizeBytes, sub->AllocTableVa},
+        };
+
+        for (UINT i = 0; i < (UINT)(sizeof(ranges) / sizeof(ranges[0])); ++i) {
+            if (!ranges[i].Va || ranges[i].Size == 0) {
+                continue;
+            }
+            const ULONGLONG base = ranges[i].Base;
+            const ULONGLONG size = ranges[i].Size;
+            if (Gpa < base) {
+                continue;
+            }
+            const ULONGLONG offset = Gpa - base;
+            if (offset >= size) {
+                continue;
+            }
+            const ULONGLONG maxBytesU64 = size - offset;
+            ULONG bytesToCopy = (maxBytesU64 < (ULONGLONG)ReqBytes) ? (ULONG)maxBytesU64 : ReqBytes;
+            if (bytesToCopy != ReqBytes) {
+                *OpStatusInOut = STATUS_PARTIAL_COPY;
+            }
+            RtlCopyMemory(Out, (const PUCHAR)ranges[i].Va + (SIZE_T)offset, bytesToCopy);
+            *BytesToCopyInOut = bytesToCopy;
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
 static VOID AeroGpuFreeAllPendingSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
     KIRQL oldIrql;
@@ -1339,13 +1424,33 @@ static VOID AeroGpuFreeAllPendingSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
 
         KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
 
-        AeroGpuFreeContiguousNonCached(sub->AllocTableVa, (SIZE_T)sub->AllocTableSizeBytes);
-        AeroGpuFreeContiguousNonCached(sub->DmaCopyVa, sub->DmaCopySize);
-        AeroGpuFreeContiguousNonCached(sub->DescVa, sub->DescSize);
-        ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+        AeroGpuFreeSubmission(sub);
 
         KeAcquireSpinLock(&Adapter->PendingLock, &oldIrql);
     }
+
+    while (!IsListEmpty(&Adapter->RecentSubmissions)) {
+        PLIST_ENTRY entry = RemoveHeadList(&Adapter->RecentSubmissions);
+        AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
+        const ULONGLONG bytes = AeroGpuSubmissionTotalBytes(sub);
+        if (Adapter->RecentSubmissionCount != 0) {
+            Adapter->RecentSubmissionCount -= 1;
+        }
+        if (Adapter->RecentSubmissionBytes >= bytes) {
+            Adapter->RecentSubmissionBytes -= bytes;
+        } else {
+            Adapter->RecentSubmissionBytes = 0;
+        }
+
+        KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+
+        AeroGpuFreeSubmission(sub);
+
+        KeAcquireSpinLock(&Adapter->PendingLock, &oldIrql);
+    }
+
+    Adapter->RecentSubmissionCount = 0;
+    Adapter->RecentSubmissionBytes = 0;
 
     KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
 }
@@ -1353,7 +1458,9 @@ static VOID AeroGpuFreeAllPendingSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
 static VOID AeroGpuRetireSubmissionsUpToFence(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG CompletedFence)
 {
     for (;;) {
-        AEROGPU_SUBMISSION* sub = NULL;
+        AEROGPU_SUBMISSION* retired = NULL;
+        LIST_ENTRY toFree;
+        InitializeListHead(&toFree);
 
         KIRQL oldIrql;
         KeAcquireSpinLock(&Adapter->PendingLock, &oldIrql);
@@ -1362,19 +1469,47 @@ static VOID AeroGpuRetireSubmissionsUpToFence(_Inout_ AEROGPU_ADAPTER* Adapter, 
             AEROGPU_SUBMISSION* candidate = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
             if (candidate->Fence <= CompletedFence) {
                 RemoveEntryList(entry);
-                sub = candidate;
+                retired = candidate;
+            }
+        }
+
+        if (retired) {
+            const ULONGLONG bytes = AeroGpuSubmissionTotalBytes(retired);
+            if (bytes == 0 || bytes > AEROGPU_DBGCTL_RECENT_SUBMISSIONS_MAX_BYTES) {
+                InsertTailList(&toFree, &retired->ListEntry);
+            } else {
+                InsertTailList(&Adapter->RecentSubmissions, &retired->ListEntry);
+                Adapter->RecentSubmissionCount += 1;
+                Adapter->RecentSubmissionBytes += bytes;
+            }
+
+            while (Adapter->RecentSubmissionCount > AEROGPU_DBGCTL_RECENT_SUBMISSIONS_MAX_COUNT ||
+                   Adapter->RecentSubmissionBytes > AEROGPU_DBGCTL_RECENT_SUBMISSIONS_MAX_BYTES) {
+                PLIST_ENTRY e = RemoveHeadList(&Adapter->RecentSubmissions);
+                AEROGPU_SUBMISSION* oldSub = CONTAINING_RECORD(e, AEROGPU_SUBMISSION, ListEntry);
+                const ULONGLONG oldBytes = AeroGpuSubmissionTotalBytes(oldSub);
+                if (Adapter->RecentSubmissionCount != 0) {
+                    Adapter->RecentSubmissionCount -= 1;
+                }
+                if (Adapter->RecentSubmissionBytes >= oldBytes) {
+                    Adapter->RecentSubmissionBytes -= oldBytes;
+                } else {
+                    Adapter->RecentSubmissionBytes = 0;
+                }
+                InsertTailList(&toFree, e);
             }
         }
         KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
 
-        if (!sub) {
-            break;
+        while (!IsListEmpty(&toFree)) {
+            PLIST_ENTRY e = RemoveHeadList(&toFree);
+            AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(e, AEROGPU_SUBMISSION, ListEntry);
+            AeroGpuFreeSubmission(sub);
         }
 
-        AeroGpuFreeContiguousNonCached(sub->AllocTableVa, (SIZE_T)sub->AllocTableSizeBytes);
-        AeroGpuFreeContiguousNonCached(sub->DmaCopyVa, sub->DmaCopySize);
-        AeroGpuFreeContiguousNonCached(sub->DescVa, sub->DescSize);
-        ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+        if (!retired) {
+            break;
+        }
     }
 }
 
@@ -1890,6 +2025,9 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     KeInitializeSpinLock(&adapter->PendingLock);
     InitializeListHead(&adapter->PendingSubmissions);
     InitializeListHead(&adapter->PendingInternalSubmissions);
+    InitializeListHead(&adapter->RecentSubmissions);
+    adapter->RecentSubmissionCount = 0;
+    adapter->RecentSubmissionBytes = 0;
     KeInitializeSpinLock(&adapter->MetaHandleLock);
     InitializeListHead(&adapter->PendingMetaHandles);
     adapter->NextMetaHandle = 0;
@@ -2562,6 +2700,11 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                 while (!IsListEmpty(&adapter->PendingSubmissions)) {
                     InsertTailList(&pendingToFree, RemoveHeadList(&adapter->PendingSubmissions));
                 }
+                while (!IsListEmpty(&adapter->RecentSubmissions)) {
+                    InsertTailList(&pendingToFree, RemoveHeadList(&adapter->RecentSubmissions));
+                }
+                adapter->RecentSubmissionCount = 0;
+                adapter->RecentSubmissionBytes = 0;
                 while (!IsListEmpty(&adapter->PendingInternalSubmissions)) {
                     InsertTailList(&internalToFree, RemoveHeadList(&adapter->PendingInternalSubmissions));
                 }
@@ -2903,6 +3046,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
         AeroGpuFreeContiguousNonCached(cursorVa, cursorSize);
     }
     AeroGpuMetaHandleFreeAll(adapter);
+    AeroGpuFreeAllPendingSubmissions(adapter);
     AeroGpuFreeAllAllocations(adapter);
     AeroGpuFreeAllShareTokenRefs(adapter);
     AeroGpuFreeAllInternalSubmissions(adapter);
@@ -6630,6 +6774,11 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
         while (!IsListEmpty(&adapter->PendingSubmissions)) {
             InsertTailList(&pendingToFree, RemoveHeadList(&adapter->PendingSubmissions));
         }
+        while (!IsListEmpty(&adapter->RecentSubmissions)) {
+            InsertTailList(&pendingToFree, RemoveHeadList(&adapter->RecentSubmissions));
+        }
+        adapter->RecentSubmissionCount = 0;
+        adapter->RecentSubmissionBytes = 0;
         while (!IsListEmpty(&adapter->PendingInternalSubmissions)) {
             InsertTailList(&internalToFree, RemoveHeadList(&adapter->PendingInternalSubmissions));
         }
@@ -8596,47 +8745,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             ULONG bytesToCopy = reqBytes;
             const PUCHAR out = (PUCHAR)io->data;
 
-            for (PLIST_ENTRY entry = adapter->PendingSubmissions.Flink; entry != &adapter->PendingSubmissions; entry = entry->Flink) {
-                const AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
-                if (!sub) {
-                    continue;
-                }
-
-                struct range {
-                    ULONGLONG Base;
-                    ULONGLONG Size;
-                    const void* Va;
-                } ranges[] = {
-                    {(ULONGLONG)sub->DmaCopyPa.QuadPart, (ULONGLONG)sub->DmaCopySize, sub->DmaCopyVa},
-                    {(ULONGLONG)sub->DescPa.QuadPart, (ULONGLONG)sub->DescSize, sub->DescVa},
-                    {(ULONGLONG)sub->AllocTablePa.QuadPart, (ULONGLONG)sub->AllocTableSizeBytes, sub->AllocTableVa},
-                };
-
-                for (UINT i = 0; i < (UINT)(sizeof(ranges) / sizeof(ranges[0])); ++i) {
-                    if (!ranges[i].Va || ranges[i].Size == 0) {
-                        continue;
-                    }
-                    const ULONGLONG base = ranges[i].Base;
-                    const ULONGLONG size = ranges[i].Size;
-                    if (gpa < base) {
-                        continue;
-                    }
-                    const ULONGLONG offset = gpa - base;
-                    if (offset >= size) {
-                        continue;
-                    }
-                    const ULONGLONG maxBytesU64 = size - offset;
-                    bytesToCopy = (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
-                    if (bytesToCopy != reqBytes) {
-                        opSt = STATUS_PARTIAL_COPY;
-                    }
-                    RtlCopyMemory(out, (const PUCHAR)ranges[i].Va + (SIZE_T)offset, bytesToCopy);
-                    found = TRUE;
-                    break;
-                }
-                if (found) {
-                    break;
-                }
+            if (!found) {
+                found = AeroGpuTryCopyFromSubmissionList(&adapter->PendingSubmissions, gpa, reqBytes, out, &bytesToCopy, &opSt);
+            }
+            if (!found) {
+                found = AeroGpuTryCopyFromSubmissionList(&adapter->RecentSubmissions, gpa, reqBytes, out, &bytesToCopy, &opSt);
             }
 
             if (!found) {
