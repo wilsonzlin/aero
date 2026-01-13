@@ -35,6 +35,13 @@ const DEFAULT_MAX_PACKET_SIZE: u16 = 64;
 const DEFAULT_MAX_PENDING_INPUT_REPORTS: usize = 256;
 const DEFAULT_MAX_PENDING_OUTPUT_REPORTS: usize = 256;
 
+/// Upper bound for guest-provided `SET_REPORT` / interrupt OUT payloads when the report ID is not
+/// present in the parsed descriptor.
+///
+/// Without this, an untrusted guest can send `SET_REPORT` with a very large `wLength` (up to
+/// 65535), forcing the device model to allocate and queue arbitrarily large `Vec<u8>` instances.
+const MAX_HID_SET_REPORT_BYTES: usize = 4 * 1024;
+
 // Snapshot metadata used to reconstruct passthrough devices without requiring the host to
 // pre-attach them before restoring a UHCI controller snapshot. These fields encode the static
 // descriptor/report configuration and therefore allow recreating the model instance.
@@ -495,6 +502,77 @@ impl UsbHidPassthrough {
         }
     }
 
+    /// Normalizes a guest-provided Output/Feature report payload (without the report ID prefix)
+    /// to a descriptor-derived length.
+    ///
+    /// For known report IDs this guarantees the returned `Vec<u8>` has the exact payload length
+    /// expected by the descriptor (truncating or zero-padding as required). For unknown report IDs
+    /// the payload is capped to [`MAX_HID_SET_REPORT_BYTES`] to prevent unbounded allocations.
+    fn normalize_report_payload(&self, report_type: u8, report_id: u8, data: &[u8]) -> Vec<u8> {
+        let Some(expected_total_len) = self.report_length(report_type, report_id) else {
+            // Unknown report ID: cap allocations. Some guests include the report ID prefix even
+            // though it is already provided in `wValue`; strip it when it matches.
+            let payload = if report_id != 0 && data.first().copied() == Some(report_id) {
+                data.get(1..).unwrap_or_default()
+            } else {
+                data
+            };
+            let capped = payload.len().min(MAX_HID_SET_REPORT_BYTES);
+            return payload[..capped].to_vec();
+        };
+
+        let expected_payload_len =
+            expected_total_len.saturating_sub(usize::from(report_id != 0));
+        if expected_payload_len == 0 {
+            return Vec::new();
+        }
+
+        // Guests may send either the payload bytes alone (report ID already specified in wValue),
+        // or the full report including a report ID prefix. Prefer stripping the prefix only when
+        // the transfer is at least as large as the descriptor-defined report length, which avoids
+        // discarding a legitimate first payload byte for short transfers.
+        let payload = if report_id != 0
+            && data.len() >= expected_total_len
+            && data.first().copied() == Some(report_id)
+        {
+            data.get(1..).unwrap_or_default()
+        } else {
+            data
+        };
+
+        let mut out = vec![0u8; expected_payload_len];
+        let copy_len = payload.len().min(expected_payload_len);
+        out[..copy_len].copy_from_slice(&payload[..copy_len]);
+        out
+    }
+
+    /// Normalizes a report payload that is known to *not* include a report ID prefix.
+    ///
+    /// This is primarily used for interrupt OUT transfers where the report ID (if any) has already
+    /// been removed from the packet before normalization.
+    fn normalize_report_payload_no_prefix(
+        &self,
+        report_type: u8,
+        report_id: u8,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let Some(expected_total_len) = self.report_length(report_type, report_id) else {
+            let capped = payload.len().min(MAX_HID_SET_REPORT_BYTES);
+            return payload[..capped].to_vec();
+        };
+
+        let expected_payload_len =
+            expected_total_len.saturating_sub(usize::from(report_id != 0));
+        if expected_payload_len == 0 {
+            return Vec::new();
+        }
+
+        let mut out = vec![0u8; expected_payload_len];
+        let copy_len = payload.len().min(expected_payload_len);
+        out[..copy_len].copy_from_slice(&payload[..copy_len]);
+        out
+    }
+
     fn default_report(&self, report_type: u8, report_id: u8, w_length: u16) -> Vec<u8> {
         let requested = w_length as usize;
         let expected = self
@@ -817,16 +895,7 @@ impl UsbDeviceModel for UsbHidPassthrough {
                     let report_id = (setup.w_value & 0x00ff) as u8;
                     match (report_type, data_stage) {
                         (2 | 3, Some(data)) => {
-                            let payload = if report_id != 0 {
-                                self.report_length(report_type, report_id)
-                                    .filter(|&expected_len| expected_len == data.len())
-                                    .and_then(|_| data.first().copied())
-                                    .filter(|&first| first == report_id)
-                                    .map(|_| data[1..].to_vec())
-                                    .unwrap_or_else(|| data.to_vec())
-                            } else {
-                                data.to_vec()
-                            };
+                            let payload = self.normalize_report_payload(report_type, report_id, data);
                             self.push_output_report(UsbHidPassthroughOutputReport {
                                 report_type,
                                 report_id,
@@ -907,13 +976,14 @@ impl UsbDeviceModel for UsbHidPassthrough {
 
         let (report_id, payload) = if self.report_ids_in_use {
             if data.is_empty() {
-                (0, Vec::new())
+                (0, &[][..])
             } else {
-                (data[0], data[1..].to_vec())
+                (data[0], &data[1..])
             }
         } else {
-            (0, data.to_vec())
+            (0, data)
         };
+        let payload = self.normalize_report_payload_no_prefix(2, report_id, payload);
 
         self.push_output_report(UsbHidPassthroughOutputReport {
             report_type: 2, // Output
@@ -2084,6 +2154,182 @@ mod tests {
                 report_type: 2,
                 report_id: 2,
                 data: vec![0x11, 0x22],
+            })
+        );
+    }
+
+    #[test]
+    fn set_report_truncates_oversized_payload_to_descriptor_length() {
+        let report = sample_report_descriptor_output_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        // Descriptor defines report ID 2 with 2 bytes of payload. Send an oversized transfer with
+        // a large `wLength`; only the descriptor-sized payload should be queued.
+        let mut big = vec![0u8; u16::MAX as usize];
+        big[0] = 2; // report ID prefix
+        big[1] = 0x11;
+        big[2] = 0x22;
+        big[3] = 0x33;
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_REPORT,
+                    w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                    w_index: 0,
+                    w_length: u16::MAX,
+                },
+                Some(&big),
+            ),
+            ControlResponse::Ack
+        );
+
+        assert_eq!(
+            dev.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 2,
+                data: vec![0x11, 0x22],
+            })
+        );
+    }
+
+    #[test]
+    fn set_report_pads_short_payload_to_descriptor_length() {
+        let report = sample_report_descriptor_output_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        // Provide only a single payload byte (no report ID prefix). The queued payload should be
+        // padded with zeros to the descriptor-defined length (2 bytes).
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_REPORT,
+                    w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                    w_index: 0,
+                    w_length: 1,
+                },
+                Some(&[0x11]),
+            ),
+            ControlResponse::Ack
+        );
+
+        assert_eq!(
+            dev.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 2,
+                data: vec![0x11, 0x00],
+            })
+        );
+    }
+
+    #[test]
+    fn set_report_unknown_report_id_is_capped() {
+        let report = sample_report_descriptor_output_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        let report_id = 0x99;
+        let data = vec![0xaa; u16::MAX as usize];
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_REPORT,
+                    w_value: (3u16 << 8) | report_id as u16, // Feature, unknown report ID
+                    w_index: 0,
+                    w_length: u16::MAX,
+                },
+                Some(&data),
+            ),
+            ControlResponse::Ack
+        );
+
+        let r = dev.pop_output_report().unwrap();
+        assert_eq!(r.report_type, 3);
+        assert_eq!(r.report_id, report_id);
+        assert_eq!(r.data.len(), super::MAX_HID_SET_REPORT_BYTES);
+        assert_eq!(&r.data[..8], &[0xaa; 8]);
+    }
+
+    #[test]
+    fn interrupt_out_is_normalized_to_descriptor_length() {
+        let report = sample_report_descriptor_output_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            true,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        // Oversized interrupt OUT: should be truncated.
+        assert_eq!(
+            dev.handle_interrupt_out(0x01, &[2, 0x11, 0x22, 0x33]),
+            UsbOutResult::Ack
+        );
+        assert_eq!(
+            dev.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 2,
+                data: vec![0x11, 0x22],
+            })
+        );
+
+        // Short interrupt OUT: should be padded.
+        assert_eq!(
+            dev.handle_interrupt_out(0x01, &[2, 0x11]),
+            UsbOutResult::Ack
+        );
+        assert_eq!(
+            dev.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 2,
+                data: vec![0x11, 0x00],
             })
         );
     }
