@@ -58,7 +58,8 @@ param(
   [string] $OutDir = "out/artifacts",
   [string] $Version,
   [string] $BuildId,
-  [Nullable[long]] $SourceDateEpoch
+  [Nullable[long]] $SourceDateEpoch,
+  [switch] $DeterminismSelfTest
 )
 
 Set-StrictMode -Version Latest
@@ -1242,6 +1243,207 @@ function Show-PackagerHwidDiagnostics {
   }
 }
 
+function Get-Sha256Hex {
+  param([Parameter(Mandatory = $true)][string] $Path)
+
+  $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $Path
+  return ([string]$hash.Hash).ToLowerInvariant()
+}
+
+function Invoke-GuestToolsPackagingRun {
+  param(
+    [Parameter(Mandatory = $true)][string] $StageRoot,
+    [Parameter(Mandatory = $true)][string] $OutDirResolved,
+    [string] $RunLabel = ""
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($RunLabel)) {
+    Write-Host ""
+    Write-Host ("==== {0} ====" -f $RunLabel)
+  }
+
+  $stageDriversRoot = Join-Path $StageRoot "drivers"
+  $stageGuestTools = Join-Path $StageRoot "guest-tools"
+  $stageInputExtract = Join-Path $StageRoot "input"
+  $stageDeviceContract = Join-Path $StageRoot "windows-device-contract.json"
+
+  $success = $false
+  try {
+    Ensure-EmptyDirectory -Path $StageRoot
+    Ensure-EmptyDirectory -Path $stageDriversRoot
+    Ensure-EmptyDirectory -Path $stageInputExtract
+
+    Write-Host "Staging Guest Tools..."
+    Stage-GuestTools -SourceDir $guestToolsResolved -DestDir $stageGuestTools -CertSourcePath $certPathResolved -IncludeCerts:$includeCerts
+    $extraToolsZipEntries = @()
+    if ($extraToolsResolved) {
+      Write-Host "Staging extra Guest Tools utilities..."
+      $stageToolsDir = Join-Path $stageGuestTools "tools"
+      if ($extraToolsDirModeNorm -eq "replace") {
+        if (Test-Path -LiteralPath $stageToolsDir) {
+          Remove-Item -LiteralPath $stageToolsDir -Recurse -Force
+        }
+      }
+      New-Item -ItemType Directory -Force -Path $stageToolsDir | Out-Null
+      $extraToolsZipEntries = Copy-TreeWithSafetyFilters -SourceDir $extraToolsResolved -DestDir $stageToolsDir
+      if (-not $extraToolsZipEntries -or $extraToolsZipEntries.Count -eq 0) {
+        Write-Warning "ExtraToolsDir was provided but no files were staged (all were filtered or the directory is empty)."
+      } else {
+        Write-Host ("  Staged {0} file(s) under guest-tools/tools/." -f $extraToolsZipEntries.Count)
+      }
+    }
+
+    Write-Host "Staging signed drivers..."
+
+    $inputRootForStaging = $inputRootResolved
+    if (Test-Path -LiteralPath $inputRootResolved -PathType Leaf) {
+      $inputExt = [System.IO.Path]::GetExtension($inputRootResolved).ToLowerInvariant()
+      if ($inputExt -eq ".zip") {
+        Write-Host "  Extracting driver bundle ZIP: $inputRootResolved"
+        Expand-Archive -LiteralPath $inputRootResolved -DestinationPath $stageInputExtract -Force
+
+        $topDirs = @(Get-ChildItem -LiteralPath $stageInputExtract -Directory -ErrorAction SilentlyContinue)
+        $topFiles = @(Get-ChildItem -LiteralPath $stageInputExtract -File -ErrorAction SilentlyContinue)
+        if ($topDirs.Count -eq 1 -and $topFiles.Count -eq 0) {
+          $inputRootForStaging = $topDirs[0].FullName
+        } else {
+          $inputRootForStaging = $stageInputExtract
+        }
+      } else {
+        throw "InputRoot is a file with unsupported extension '$inputExt'. Expected a directory, or a .zip."
+      }
+    }
+
+    $bundleDriversDir = Join-Path $inputRootForStaging "drivers"
+    $looksLikeBundle = (Test-Path -LiteralPath $bundleDriversDir -PathType Container) -and (Get-ChildItem -LiteralPath $bundleDriversDir -Directory -ErrorAction SilentlyContinue | Select-Object -First 1)
+
+    $looksLikePackagerLayout = $false
+    $x86Maybe = Resolve-ArchDirName -DriversRoot $inputRootForStaging -ArchOut "x86"
+    $amd64Maybe = Resolve-ArchDirName -DriversRoot $inputRootForStaging -ArchOut "amd64"
+    if ($x86Maybe -and $amd64Maybe) {
+      $hasDriverDirs = (Get-ChildItem -LiteralPath $x86Maybe -Directory -ErrorAction SilentlyContinue | Select-Object -First 1) -and (Get-ChildItem -LiteralPath $amd64Maybe -Directory -ErrorAction SilentlyContinue | Select-Object -First 1)
+      if ($hasDriverDirs) {
+        $looksLikePackagerLayout = $true
+      }
+    }
+
+    if ($looksLikePackagerLayout) {
+      Write-Host "  Detected input layout: packager (x86/ + amd64/)"
+      Stage-DriversFromPackagerLayout -InputDriversRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
+    } elseif ($looksLikeBundle) {
+      Write-Host "  Detected input layout: driver bundle (drivers/<driver>/(x86|x64)/...)"
+      Stage-DriversFromBundleLayout -BundleRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
+    } else {
+      Write-Host "  Detected input layout: CI packages (out/packages/<driver>/<arch>/...)"
+      Copy-DriversToPackagerLayout -InputRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
+    }
+
+    # aero_packager generates config/devices.cmd from the Windows device contract.
+    # Patch a staged copy of the contract so the packaged media uses the storage service name
+    # that matches the staged virtio-blk driver (e.g. viostor for upstream virtio-win bundles).
+    Copy-Item -LiteralPath $windowsDeviceContractResolved -Destination $stageDeviceContract -Force
+    Update-WindowsDeviceContractStorageServiceFromDrivers -ContractPath $stageDeviceContract -StageDriversRoot $stageDriversRoot
+
+    New-Item -ItemType Directory -Force -Path $OutDirResolved | Out-Null
+
+    Write-Host "Packaging via aero_packager..."
+    Write-Host "  version : $Version"
+    Write-Host "  build-id: $BuildId"
+    Write-Host "  epoch   : $epoch"
+    Write-Host "  policy  : $SigningPolicy"
+    Write-Host "  spec    : $specPathResolved"
+    Write-Host "  contract: $stageDeviceContract"
+    Write-Host "  out     : $OutDirResolved"
+
+    try {
+      & cargo run --manifest-path $packagerManifest --release --locked -- `
+        --drivers-dir $stageDriversRoot `
+        --guest-tools-dir $stageGuestTools `
+        --spec $specPathResolved `
+        --windows-device-contract $stageDeviceContract `
+        --out-dir $OutDirResolved `
+        --version $Version `
+        --build-id $BuildId `
+        --signing-policy $SigningPolicy `
+        --source-date-epoch $epoch
+      if ($LASTEXITCODE -ne 0) {
+        throw "aero_packager failed (exit code $LASTEXITCODE)."
+      }
+    } catch {
+      Write-Host ""
+      Write-Host "aero_packager failed; collecting HWID diagnostics to aid debugging..."
+      try {
+        Show-PackagerHwidDiagnostics -StageDriversRoot $stageDriversRoot -SpecPath $specPathResolved -WindowsDeviceContractPath $stageDeviceContract
+      } catch {
+        Write-Warning ("HWID diagnostics failed: {0}" -f $_.Exception.Message)
+      }
+      throw
+    }
+
+    $isoPath = Join-Path $OutDirResolved "aero-guest-tools.iso"
+    $zipPath = Join-Path $OutDirResolved "aero-guest-tools.zip"
+    $manifestPath = Join-Path $OutDirResolved "manifest.json"
+    $manifestCopyPath = Join-Path $OutDirResolved "aero-guest-tools.manifest.json"
+
+    Assert-FileExistsNonEmpty -Path $isoPath
+    Assert-FileExistsNonEmpty -Path $zipPath
+    Assert-FileExistsNonEmpty -Path $manifestPath
+
+    # Some CI workflows publish release assets from a directory that already contains other
+    # artifacts (driver bundle zips, etc). Keep a stable, unique manifest file name so the
+    # Guest Tools manifest doesn't clobber any other `manifest.json` that might be present.
+    Copy-Item -LiteralPath $manifestPath -Destination $manifestCopyPath -Force
+    Assert-FileExistsNonEmpty -Path $manifestCopyPath
+    if ($includeCerts) {
+      $certLeaf = Split-Path -Leaf $certPathResolved
+      Assert-ZipContainsFile -ZipPath $zipPath -EntryPath ("certs/{0}" -f $certLeaf)
+    }
+    if ($extraToolsZipEntries -and $extraToolsZipEntries.Count -gt 0) {
+      Assert-ZipContainsFiles -ZipPath $zipPath -EntryPaths $extraToolsZipEntries
+    }
+
+    $success = $true
+
+    return [pscustomobject]@{
+      OutDirResolved = $OutDirResolved
+      IsoPath = $isoPath
+      ZipPath = $zipPath
+      ManifestPath = $manifestPath
+    }
+  } finally {
+    if ($success -and (Test-Path -LiteralPath $StageRoot)) {
+      Remove-Item -LiteralPath $StageRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+function Assert-GuestToolsArtifactsMatch {
+  param(
+    [Parameter(Mandatory = $true)][string] $OutDirA,
+    [Parameter(Mandatory = $true)][string] $OutDirB
+  )
+
+  $targets = @(
+    "aero-guest-tools.iso",
+    "aero-guest-tools.zip",
+    "manifest.json"
+  )
+
+  foreach ($name in $targets) {
+    $pathA = Join-Path $OutDirA $name
+    $pathB = Join-Path $OutDirB $name
+
+    Assert-FileExistsNonEmpty -Path $pathA
+    Assert-FileExistsNonEmpty -Path $pathB
+
+    $hashA = Get-Sha256Hex -Path $pathA
+    $hashB = Get-Sha256Hex -Path $pathB
+    if ($hashA -ne $hashB) {
+      throw ("Determinism self-test failed: '{0}' differs between runs.`n  run1: {1}`n    sha256: {2}`n  run2: {3}`n    sha256: {4}`n`nTemporary output directories have been left on disk for inspection:`n  {5}`n  {6}" -f $name, $pathA, $hashA, $pathB, $hashB, $OutDirA, $OutDirB)
+    }
+  }
+}
+
 $inputRootResolved = Resolve-RepoPath -Path $InputRoot
 $guestToolsResolved = Resolve-RepoPath -Path $GuestToolsDir
 $extraToolsResolved = $null
@@ -1317,153 +1519,43 @@ if (-not (Test-Path -LiteralPath $packagerManifest -PathType Leaf)) {
   throw "Missing packager Cargo.toml: '$packagerManifest'."
 }
 
-$stageRoot = Resolve-RepoPath -Path "out/_staging_guest_tools"
-$stageDriversRoot = Join-Path $stageRoot "drivers"
-$stageGuestTools = Join-Path $stageRoot "guest-tools"
-$stageInputExtract = Join-Path $stageRoot "input"
-$stageDeviceContract = Join-Path $stageRoot "windows-device-contract.json"
+$stageRootBase = Resolve-RepoPath -Path "out/_staging_guest_tools"
 
-$success = $false
-$extraToolsZipEntries = @()
-try {
-  Ensure-EmptyDirectory -Path $stageRoot
-  Ensure-EmptyDirectory -Path $stageDriversRoot
-  Ensure-EmptyDirectory -Path $stageInputExtract
+if ($DeterminismSelfTest) {
+  $nonce = ([System.Guid]::NewGuid().ToString("N")).Substring(0, 10)
 
-  Write-Host "Staging Guest Tools..."
-  Stage-GuestTools -SourceDir $guestToolsResolved -DestDir $stageGuestTools -CertSourcePath $certPathResolved -IncludeCerts:$includeCerts
-  if ($extraToolsResolved) {
-    Write-Host "Staging extra Guest Tools utilities..."
-    $stageToolsDir = Join-Path $stageGuestTools "tools"
-    if ($extraToolsDirModeNorm -eq "replace") {
-      if (Test-Path -LiteralPath $stageToolsDir) {
-        Remove-Item -LiteralPath $stageToolsDir -Recurse -Force
-      }
-    }
-    New-Item -ItemType Directory -Force -Path $stageToolsDir | Out-Null
-    $extraToolsZipEntries = Copy-TreeWithSafetyFilters -SourceDir $extraToolsResolved -DestDir $stageToolsDir
-    if (-not $extraToolsZipEntries -or $extraToolsZipEntries.Count -eq 0) {
-      Write-Warning "ExtraToolsDir was provided but no files were staged (all were filtered or the directory is empty)."
-    } else {
-      Write-Host ("  Staged {0} file(s) under guest-tools/tools/." -f $extraToolsZipEntries.Count)
-    }
-  }
+  $stageRootRun1 = $stageRootBase.TrimEnd("\", "/") + ".determinism-selftest-$nonce-run1"
+  $stageRootRun2 = $stageRootBase.TrimEnd("\", "/") + ".determinism-selftest-$nonce-run2"
+  $outDirRun1 = $outDirResolved.TrimEnd("\", "/") + ".determinism-selftest-$nonce-run1"
+  $outDirRun2 = $outDirResolved.TrimEnd("\", "/") + ".determinism-selftest-$nonce-run2"
 
-  Write-Host "Staging signed drivers..."
-
-  $inputRootForStaging = $inputRootResolved
-  if (Test-Path -LiteralPath $inputRootResolved -PathType Leaf) {
-    $inputExt = [System.IO.Path]::GetExtension($inputRootResolved).ToLowerInvariant()
-    if ($inputExt -eq ".zip") {
-      Write-Host "  Extracting driver bundle ZIP: $inputRootResolved"
-      Expand-Archive -LiteralPath $inputRootResolved -DestinationPath $stageInputExtract -Force
-
-      $topDirs = @(Get-ChildItem -LiteralPath $stageInputExtract -Directory -ErrorAction SilentlyContinue)
-      $topFiles = @(Get-ChildItem -LiteralPath $stageInputExtract -File -ErrorAction SilentlyContinue)
-      if ($topDirs.Count -eq 1 -and $topFiles.Count -eq 0) {
-        $inputRootForStaging = $topDirs[0].FullName
-      } else {
-        $inputRootForStaging = $stageInputExtract
-      }
-    } else {
-      throw "InputRoot is a file with unsupported extension '$inputExt'. Expected a directory, or a .zip."
-    }
-  }
-
-  $bundleDriversDir = Join-Path $inputRootForStaging "drivers"
-  $looksLikeBundle = (Test-Path -LiteralPath $bundleDriversDir -PathType Container) -and (Get-ChildItem -LiteralPath $bundleDriversDir -Directory -ErrorAction SilentlyContinue | Select-Object -First 1)
-
-  $looksLikePackagerLayout = $false
-  $x86Maybe = Resolve-ArchDirName -DriversRoot $inputRootForStaging -ArchOut "x86"
-  $amd64Maybe = Resolve-ArchDirName -DriversRoot $inputRootForStaging -ArchOut "amd64"
-  if ($x86Maybe -and $amd64Maybe) {
-    $hasDriverDirs = (Get-ChildItem -LiteralPath $x86Maybe -Directory -ErrorAction SilentlyContinue | Select-Object -First 1) -and (Get-ChildItem -LiteralPath $amd64Maybe -Directory -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ($hasDriverDirs) {
-      $looksLikePackagerLayout = $true
-    }
-  }
-
-  if ($looksLikePackagerLayout) {
-    Write-Host "  Detected input layout: packager (x86/ + amd64/)"
-    Stage-DriversFromPackagerLayout -InputDriversRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
-  } elseif ($looksLikeBundle) {
-    Write-Host "  Detected input layout: driver bundle (drivers/<driver>/(x86|x64)/...)"
-    Stage-DriversFromBundleLayout -BundleRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
-  } else {
-    Write-Host "  Detected input layout: CI packages (out/packages/<driver>/<arch>/...)"
-    Copy-DriversToPackagerLayout -InputRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
-  }
-
-  # aero_packager generates config/devices.cmd from the Windows device contract.
-  # Patch a staged copy of the contract so the packaged media uses the storage service name
-  # that matches the staged virtio-blk driver (e.g. viostor for upstream virtio-win bundles).
-  Copy-Item -LiteralPath $windowsDeviceContractResolved -Destination $stageDeviceContract -Force
-  Update-WindowsDeviceContractStorageServiceFromDrivers -ContractPath $stageDeviceContract -StageDriversRoot $stageDriversRoot
-
-  New-Item -ItemType Directory -Force -Path $outDirResolved | Out-Null
-
-  Write-Host "Packaging via aero_packager..."
-  Write-Host "  version : $Version"
-  Write-Host "  build-id: $BuildId"
-  Write-Host "  epoch   : $epoch"
-  Write-Host "  policy  : $SigningPolicy"
-  Write-Host "  spec    : $specPathResolved"
-  Write-Host "  contract: $stageDeviceContract"
-  Write-Host "  out     : $outDirResolved"
-
+  $cleanup = $false
   try {
-    & cargo run --manifest-path $packagerManifest --release --locked -- `
-      --drivers-dir $stageDriversRoot `
-      --guest-tools-dir $stageGuestTools `
-      --spec $specPathResolved `
-      --windows-device-contract $stageDeviceContract `
-      --out-dir $outDirResolved `
-      --version $Version `
-      --build-id $BuildId `
-      --signing-policy $SigningPolicy `
-      --source-date-epoch $epoch
-    if ($LASTEXITCODE -ne 0) {
-      throw "aero_packager failed (exit code $LASTEXITCODE)."
-    }
-  } catch {
+    Ensure-EmptyDirectory -Path $outDirRun1
+    Ensure-EmptyDirectory -Path $outDirRun2
+
+    Invoke-GuestToolsPackagingRun -StageRoot $stageRootRun1 -OutDirResolved $outDirRun1 -RunLabel "Determinism self-test (run 1/2)" | Out-Null
+    Invoke-GuestToolsPackagingRun -StageRoot $stageRootRun2 -OutDirResolved $outDirRun2 -RunLabel "Determinism self-test (run 2/2)" | Out-Null
+
+    Assert-GuestToolsArtifactsMatch -OutDirA $outDirRun1 -OutDirB $outDirRun2
+    $cleanup = $true
+
     Write-Host ""
-    Write-Host "aero_packager failed; collecting HWID diagnostics to aid debugging..."
-    try {
-      Show-PackagerHwidDiagnostics -StageDriversRoot $stageDriversRoot -SpecPath $specPathResolved -WindowsDeviceContractPath $stageDeviceContract
-    } catch {
-      Write-Warning ("HWID diagnostics failed: {0}" -f $_.Exception.Message)
+    Write-Host "Determinism self-test passed."
+  } finally {
+    if ($cleanup) {
+      foreach ($p in @($outDirRun1, $outDirRun2, $stageRootRun1, $stageRootRun2)) {
+        if (Test-Path -LiteralPath $p) {
+          Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue
+        }
+      }
     }
-    throw
   }
 
-  $isoPath = Join-Path $outDirResolved "aero-guest-tools.iso"
-  $zipPath = Join-Path $outDirResolved "aero-guest-tools.zip"
-  $manifestPath = Join-Path $outDirResolved "manifest.json"
-  $manifestCopyPath = Join-Path $outDirResolved "aero-guest-tools.manifest.json"
-
-  Assert-FileExistsNonEmpty -Path $isoPath
-  Assert-FileExistsNonEmpty -Path $zipPath
-  Assert-FileExistsNonEmpty -Path $manifestPath
-
-  # Some CI workflows publish release assets from a directory that already contains other
-  # artifacts (driver bundle zips, etc). Keep a stable, unique manifest file name so the
-  # Guest Tools manifest doesn't clobber any other `manifest.json` that might be present.
-  Copy-Item -LiteralPath $manifestPath -Destination $manifestCopyPath -Force
-  Assert-FileExistsNonEmpty -Path $manifestCopyPath
-  if ($includeCerts) {
-    $certLeaf = Split-Path -Leaf $certPathResolved
-    Assert-ZipContainsFile -ZipPath $zipPath -EntryPath ("certs/{0}" -f $certLeaf)
-  }
-  if ($extraToolsZipEntries -and $extraToolsZipEntries.Count -gt 0) {
-    Assert-ZipContainsFiles -ZipPath $zipPath -EntryPaths $extraToolsZipEntries
-  }
-
-  $success = $true
-} finally {
-  if ($success -and (Test-Path -LiteralPath $stageRoot)) {
-    Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
-  }
+  return
 }
+
+Invoke-GuestToolsPackagingRun -StageRoot $stageRootBase -OutDirResolved $outDirResolved | Out-Null
 
 Write-Host "Guest Tools artifacts created in '$outDirResolved':"
 Write-Host "  aero-guest-tools.iso"
