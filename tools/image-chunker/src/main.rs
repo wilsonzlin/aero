@@ -1,5 +1,6 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +14,8 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
-use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 
@@ -42,6 +44,8 @@ struct Cli {
 enum Commands {
     /// Chunk a raw disk image and publish it to an S3-compatible object store.
     Publish(PublishArgs),
+    /// Verify a published chunked disk image (manifest + chunks) for integrity and correctness.
+    Verify(VerifyArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -146,6 +150,63 @@ struct PublishArgs {
     no_meta: bool,
 }
 
+#[derive(Debug, Parser)]
+struct VerifyArgs {
+    /// Destination bucket name.
+    #[arg(long)]
+    bucket: String,
+
+    /// Prefix of a versioned image (e.g. `images/<imageId>/<version>/`) or an image root
+    /// (e.g. `images/<imageId>/`) when combined with `--image-version`.
+    ///
+    /// The tool will fetch `<prefix>/manifest.json` (versioned prefix) or
+    /// `<prefix>/<imageVersion>/manifest.json` (image root + `--image-version`).
+    #[arg(long)]
+    prefix: Option<String>,
+
+    /// Explicit object key of `manifest.json` to verify.
+    ///
+    /// Mutually exclusive with `--prefix`.
+    #[arg(long)]
+    manifest_key: Option<String>,
+
+    /// Expected image identifier (validated against the manifest).
+    #[arg(long)]
+    image_id: Option<String>,
+
+    /// Expected version identifier (validated against the manifest).
+    #[arg(long)]
+    image_version: Option<String>,
+
+    /// Custom S3 endpoint URL (e.g. http://localhost:9000 for MinIO).
+    #[arg(long)]
+    endpoint: Option<String>,
+
+    /// Use path-style addressing (required for some S3-compatible endpoints).
+    #[arg(long, default_value_t = false)]
+    force_path_style: bool,
+
+    /// AWS region.
+    #[arg(long, default_value = "us-east-1")]
+    region: String,
+
+    /// Number of parallel chunk downloads.
+    #[arg(long, default_value_t = DEFAULT_CONCURRENCY)]
+    concurrency: usize,
+
+    /// Max attempts per object download.
+    #[arg(long, default_value_t = DEFAULT_RETRIES)]
+    retries: usize,
+
+    /// Safety guard for manifest-reported chunk counts.
+    #[arg(long, default_value_t = MAX_CHUNKS)]
+    max_chunks: u64,
+
+    /// Only verify N random chunks plus the final chunk (useful for quick smoke tests).
+    #[arg(long)]
+    chunk_sample: Option<u64>,
+}
+
 #[derive(Debug, Copy, Clone, ValueEnum)]
 enum ChecksumAlgorithm {
     None,
@@ -179,7 +240,7 @@ struct ChunkResult {
     sha256: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ManifestV1 {
     schema: String,
@@ -190,10 +251,11 @@ struct ManifestV1 {
     chunk_size: u64,
     chunk_count: u64,
     chunk_index_width: u32,
-    chunks: Vec<ManifestChunkV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chunks: Option<Vec<ManifestChunkV1>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ManifestChunkV1 {
     size: u64,
@@ -212,7 +274,7 @@ struct Meta {
     checksum_algorithm: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LatestV1 {
     schema: String,
@@ -253,6 +315,7 @@ async fn async_main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Publish(args) => publish(args).await,
+        Commands::Verify(args) => verify(args).await,
     }
 }
 
@@ -274,7 +337,10 @@ async fn publish(args: PublishArgs) -> Result<()> {
     let computed_version = match args.compute_version {
         ComputeVersion::None => None,
         ComputeVersion::Sha256 => {
-            eprintln!("Computing full-image SHA-256 version from {}...", args.file.display());
+            eprintln!(
+                "Computing full-image SHA-256 version from {}...",
+                args.file.display()
+            );
             Some(compute_image_version_sha256(&args.file).await?)
         }
     };
@@ -285,7 +351,12 @@ async fn publish(args: PublishArgs) -> Result<()> {
     let version_prefix = destination.version_prefix.clone();
     let manifest_key = manifest_object_key(&version_prefix);
 
-    let s3 = build_s3_client(&args).await?;
+    let s3 = build_s3_client(
+        args.endpoint.as_deref(),
+        args.force_path_style,
+        &args.region,
+    )
+    .await?;
 
     eprintln!(
         "Publishing {}\n  imageId: {}\n  version: {}\n  total size: {} bytes\n  chunk size: {} bytes\n  chunk count: {}\n  destination: s3://{}/{}",
@@ -461,6 +532,739 @@ async fn publish(args: PublishArgs) -> Result<()> {
     Ok(())
 }
 
+async fn verify(args: VerifyArgs) -> Result<()> {
+    validate_verify_args(&args)?;
+
+    let s3 = build_s3_client(
+        args.endpoint.as_deref(),
+        args.force_path_style,
+        &args.region,
+    )
+    .await?;
+
+    let manifest_key = resolve_verify_manifest_key(&args)?;
+    let version_prefix = manifest_key
+        .strip_suffix("manifest.json")
+        .ok_or_else(|| anyhow!("manifest key must end with 'manifest.json', got '{manifest_key}'"))?
+        .to_string();
+
+    eprintln!("Downloading s3://{}/{}...", args.bucket, manifest_key);
+    let manifest: ManifestV1 =
+        download_json_object_with_retry(&s3, &args.bucket, &manifest_key, args.retries).await?;
+    validate_manifest_v1(&manifest, args.max_chunks)?;
+    let manifest = Arc::new(manifest);
+
+    if let Some(expected) = &args.image_id {
+        if manifest.image_id != *expected {
+            bail!(
+                "manifest imageId mismatch: expected '{expected}', got '{}'",
+                manifest.image_id
+            );
+        }
+    }
+    if let Some(expected) = &args.image_version {
+        if manifest.version != *expected {
+            bail!(
+                "manifest version mismatch: expected '{expected}', got '{}'",
+                manifest.version
+            );
+        }
+    }
+
+    eprintln!(
+        "Verifying imageId={} version={} chunkSize={} chunkCount={} totalSize={}",
+        manifest.image_id,
+        manifest.version,
+        manifest.chunk_size,
+        manifest.chunk_count,
+        manifest.total_size
+    );
+
+    // Optional sanity check: if `latest.json` exists at the inferred image root, validate it.
+    if let Ok(image_root_prefix) = parent_prefix(&version_prefix) {
+        let latest_key = latest_object_key(&image_root_prefix);
+        match download_json_object_optional_with_retry::<LatestV1>(
+            &s3,
+            &args.bucket,
+            &latest_key,
+            args.retries,
+        )
+        .await?
+        {
+            None => {
+                eprintln!(
+                    "Note: s3://{}/{} not found; skipping latest pointer validation.",
+                    args.bucket, latest_key
+                );
+            }
+            Some(latest) => {
+                validate_latest_v1(
+                    &latest,
+                    &image_root_prefix,
+                    &manifest_key,
+                    manifest.as_ref(),
+                )?;
+                // Ensure the referenced manifest exists (unless it is the one we already fetched).
+                if latest.manifest_key != manifest_key {
+                    head_object_with_retry(&s3, &args.bucket, &latest.manifest_key, args.retries)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "latest.json points at missing manifest s3://{}/{}",
+                                args.bucket, latest.manifest_key
+                            )
+                        })?;
+                }
+            }
+        }
+    }
+
+    verify_chunks(
+        &s3,
+        &args.bucket,
+        &version_prefix,
+        Arc::clone(&manifest),
+        args.concurrency,
+        args.retries,
+        args.chunk_sample,
+    )
+    .await?;
+
+    eprintln!("OK.");
+    Ok(())
+}
+
+fn validate_verify_args(args: &VerifyArgs) -> Result<()> {
+    match (&args.prefix, &args.manifest_key) {
+        (None, None) => bail!("either --prefix or --manifest-key is required"),
+        (Some(_), Some(_)) => bail!("--prefix and --manifest-key are mutually exclusive"),
+        _ => {}
+    }
+    if args.concurrency == 0 {
+        bail!("--concurrency must be > 0");
+    }
+    if args.retries == 0 {
+        bail!("--retries must be > 0");
+    }
+    if args.max_chunks == 0 {
+        bail!("--max-chunks must be > 0");
+    }
+    if args.chunk_sample.is_some_and(|n| n == 0) {
+        bail!("--chunk-sample must be > 0");
+    }
+    Ok(())
+}
+
+fn resolve_verify_manifest_key(args: &VerifyArgs) -> Result<String> {
+    if let Some(manifest_key) = &args.manifest_key {
+        return Ok(manifest_key.clone());
+    }
+    let Some(prefix) = &args.prefix else {
+        bail!("--prefix is required when --manifest-key is not provided");
+    };
+    let normalized_prefix = normalize_prefix(prefix);
+
+    if let Some(version) = &args.image_version {
+        let (version_prefix, _image_root_prefix, _resolved_image_id) =
+            resolve_image_root_and_version_prefix(
+                &normalized_prefix,
+                args.image_id.as_deref(),
+                version,
+            )?;
+        Ok(manifest_object_key(&version_prefix))
+    } else {
+        Ok(manifest_object_key(&normalized_prefix))
+    }
+}
+
+fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
+    if manifest.schema != MANIFEST_SCHEMA {
+        bail!(
+            "manifest schema mismatch: expected '{MANIFEST_SCHEMA}', got '{}'",
+            manifest.schema
+        );
+    }
+    if manifest.chunk_size == 0 {
+        bail!("manifest chunkSize must be > 0");
+    }
+    if manifest.chunk_size % 512 != 0 {
+        bail!(
+            "manifest chunkSize must be a multiple of 512 bytes, got {}",
+            manifest.chunk_size
+        );
+    }
+    let expected_chunk_count = chunk_count(manifest.total_size, manifest.chunk_size);
+    if manifest.chunk_count != expected_chunk_count {
+        bail!(
+            "manifest chunkCount mismatch: expected {expected_chunk_count} from totalSize/chunkSize, got {}",
+            manifest.chunk_count
+        );
+    }
+    if manifest.chunk_count > max_chunks {
+        bail!(
+            "manifest chunkCount {} exceeds --max-chunks {max_chunks}",
+            manifest.chunk_count
+        );
+    }
+    if manifest.chunk_index_width != CHUNK_INDEX_WIDTH as u32 {
+        bail!(
+            "manifest chunkIndexWidth {} is not supported (expected {})",
+            manifest.chunk_index_width,
+            CHUNK_INDEX_WIDTH
+        );
+    }
+    if let Some(chunks) = &manifest.chunks {
+        if chunks.len() as u64 != manifest.chunk_count {
+            bail!(
+                "manifest chunks length {} does not match chunkCount {}",
+                chunks.len(),
+                manifest.chunk_count
+            );
+        }
+        for (idx, chunk) in chunks.iter().enumerate() {
+            let idx_u64: u64 = idx
+                .try_into()
+                .map_err(|_| anyhow!("chunk index {idx} does not fit into u64"))?;
+            let expected_size =
+                chunk_size_at_index(manifest.total_size, manifest.chunk_size, idx_u64)
+                    .with_context(|| format!("compute expected size for chunk {idx_u64}"))?;
+            if chunk.size != expected_size {
+                bail!(
+                    "manifest chunk[{idx_u64}].size mismatch: expected {expected_size}, got {}",
+                    chunk.size
+                );
+            }
+            if let Some(sha256) = &chunk.sha256 {
+                validate_sha256_hex(sha256)
+                    .with_context(|| format!("manifest chunk[{idx_u64}].sha256 is invalid"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_latest_v1(
+    latest: &LatestV1,
+    image_root_prefix: &str,
+    verified_manifest_key: &str,
+    manifest: &ManifestV1,
+) -> Result<()> {
+    if latest.schema != LATEST_SCHEMA {
+        bail!(
+            "latest.json schema mismatch: expected '{LATEST_SCHEMA}', got '{}'",
+            latest.schema
+        );
+    }
+    if latest.image_id != manifest.image_id {
+        bail!(
+            "latest.json imageId mismatch: expected '{}', got '{}'",
+            manifest.image_id,
+            latest.image_id
+        );
+    }
+
+    let expected_manifest_key = format!("{image_root_prefix}{}/manifest.json", latest.version);
+    if latest.manifest_key != expected_manifest_key {
+        bail!(
+            "latest.json manifestKey mismatch: expected '{expected_manifest_key}', got '{}'",
+            latest.manifest_key
+        );
+    }
+
+    if latest.manifest_key == verified_manifest_key && latest.version != manifest.version {
+        bail!(
+            "latest.json version mismatch: manifestKey points to '{verified_manifest_key}', but latest.version is '{}' while manifest.version is '{}'",
+            latest.version,
+            manifest.version
+        );
+    }
+    if latest.version == manifest.version && latest.manifest_key != verified_manifest_key {
+        bail!(
+            "latest.json manifestKey mismatch for version '{}': expected '{verified_manifest_key}', got '{}'",
+            manifest.version,
+            latest.manifest_key
+        );
+    }
+    Ok(())
+}
+
+fn validate_sha256_hex(value: &str) -> Result<()> {
+    if value.len() != 64 {
+        bail!(
+            "expected 64 lowercase hex chars, got length {}",
+            value.len()
+        );
+    }
+    if !value.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("expected hex string, got '{value}'");
+    }
+    Ok(())
+}
+
+async fn verify_chunks(
+    s3: &S3Client,
+    bucket: &str,
+    version_prefix: &str,
+    manifest: Arc<ManifestV1>,
+    concurrency: usize,
+    retries: usize,
+    chunk_sample: Option<u64>,
+) -> Result<()> {
+    let chunk_count = manifest.chunk_count;
+
+    let verify_all = match chunk_sample {
+        None => true,
+        Some(n) => n >= chunk_count,
+    };
+
+    let indices: Option<Vec<u64>> = if verify_all {
+        None
+    } else {
+        Some(select_sampled_chunk_indices(
+            chunk_count,
+            chunk_sample.unwrap(),
+        )?)
+    };
+
+    let total_bytes_to_verify = match &indices {
+        None => manifest.total_size,
+        Some(indices) => {
+            let mut total: u64 = 0;
+            for &idx in indices {
+                total = total
+                    .checked_add(expected_chunk_size(manifest.as_ref(), idx)?)
+                    .ok_or_else(|| anyhow!("total bytes to verify overflows u64"))?;
+            }
+            total
+        }
+    };
+
+    let total_chunks_to_verify = indices
+        .as_ref()
+        .map(|v| v.len() as u64)
+        .unwrap_or(chunk_count);
+
+    let pb = ProgressBar::new(total_bytes_to_verify);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg} ({eta})",
+        )?
+        .progress_chars("##-"),
+    );
+    pb.set_message(format!("0/{total_chunks_to_verify} chunks"));
+
+    let chunks_verified = Arc::new(AtomicU64::new(0));
+    let cancelled = Arc::new(AtomicBool::new(false));
+
+    #[derive(Debug, Clone)]
+    struct VerifyChunkJob {
+        index: u64,
+    }
+
+    let (work_tx, work_rx) = async_channel::bounded::<VerifyChunkJob>(concurrency * 2);
+    let (err_tx, mut err_rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Error>();
+
+    let mut workers = Vec::with_capacity(concurrency);
+    for _ in 0..concurrency {
+        let work_rx = work_rx.clone();
+        let err_tx = err_tx.clone();
+        let s3 = s3.clone();
+        let bucket = bucket.to_string();
+        let version_prefix = version_prefix.to_string();
+        let manifest = Arc::clone(&manifest);
+        let pb = pb.clone();
+        let chunks_verified = Arc::clone(&chunks_verified);
+        let cancelled = Arc::clone(&cancelled);
+        workers.push(tokio::spawn(async move {
+            while let Ok(job) = work_rx.recv().await {
+                if cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
+                let key = format!("{version_prefix}{}", chunk_object_key(job.index)?);
+                let expected_size = expected_chunk_size(manifest.as_ref(), job.index)?;
+                let expected_sha256 = expected_chunk_sha256(manifest.as_ref(), job.index)?;
+                match verify_chunk_with_retry(
+                    &s3,
+                    &bucket,
+                    &key,
+                    expected_size,
+                    expected_sha256,
+                    retries,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        pb.inc(expected_size);
+                        let done = chunks_verified.fetch_add(1, Ordering::SeqCst) + 1;
+                        pb.set_message(format!("{done}/{total_chunks_to_verify} chunks"));
+                    }
+                    Err(err) => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        let _ = err_tx.send(err);
+                        break;
+                    }
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        }));
+    }
+    drop(err_tx);
+
+    let send_jobs = async {
+        if let Some(indices) = indices {
+            for index in indices {
+                if cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
+                work_tx
+                    .send(VerifyChunkJob { index })
+                    .await
+                    .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+            }
+        } else {
+            for index in 0..chunk_count {
+                if cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::select! {
+                    res = work_tx.send(VerifyChunkJob { index }) => {
+                        res.map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+                    }
+                    Some(err) = err_rx.recv() => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        return Err(err);
+                    }
+                }
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    let send_result = send_jobs.await;
+    drop(work_tx);
+
+    // If we stopped sending due to an error received via `err_rx`, abort workers immediately.
+    if let Err(err) = send_result {
+        for handle in &workers {
+            handle.abort();
+        }
+        for handle in workers {
+            let _ = handle.await;
+        }
+        pb.finish_and_clear();
+        return Err(err);
+    }
+
+    // Wait for completion or a worker error.
+    let worker_err = err_rx.recv().await;
+    if let Some(err) = worker_err {
+        for handle in &workers {
+            handle.abort();
+        }
+        for handle in workers {
+            let _ = handle.await;
+        }
+        pb.finish_and_clear();
+        return Err(err);
+    }
+
+    for handle in workers {
+        handle
+            .await
+            .map_err(|err| anyhow!("verify worker panicked: {err}"))??;
+    }
+
+    pb.finish_with_message(format!(
+        "{total_chunks_to_verify}/{total_chunks_to_verify} chunks"
+    ));
+    Ok(())
+}
+
+fn select_sampled_chunk_indices(chunk_count: u64, sample: u64) -> Result<Vec<u64>> {
+    if chunk_count == 0 {
+        return Ok(Vec::new());
+    }
+    let desired_random = std::cmp::min(sample, chunk_count);
+    if desired_random >= chunk_count {
+        // Caller should have treated this as `verify_all`, but keep it safe.
+        return Ok((0..chunk_count).collect());
+    }
+
+    let last = chunk_count - 1;
+    let mut selected = BTreeSet::new();
+    selected.insert(last);
+
+    // Add N random chunk indexes (de-duplicated) plus the final chunk.
+    while selected.len() < (desired_random as usize + 1) && selected.len() < chunk_count as usize {
+        selected.insert(fastrand::u64(0..chunk_count));
+    }
+
+    Ok(selected.into_iter().collect())
+}
+
+fn expected_chunk_size(manifest: &ManifestV1, index: u64) -> Result<u64> {
+    if let Some(chunks) = &manifest.chunks {
+        let idx: usize = index
+            .try_into()
+            .map_err(|_| anyhow!("chunk index {index} does not fit into usize"))?;
+        let chunk = chunks
+            .get(idx)
+            .ok_or_else(|| anyhow!("manifest is missing entry for chunk {index}"))?;
+        Ok(chunk.size)
+    } else {
+        chunk_size_at_index(manifest.total_size, manifest.chunk_size, index)
+    }
+}
+
+fn expected_chunk_sha256<'a>(manifest: &'a ManifestV1, index: u64) -> Result<Option<&'a str>> {
+    let Some(chunks) = &manifest.chunks else {
+        return Ok(None);
+    };
+    let idx: usize = index
+        .try_into()
+        .map_err(|_| anyhow!("chunk index {index} does not fit into usize"))?;
+    let chunk = chunks
+        .get(idx)
+        .ok_or_else(|| anyhow!("manifest is missing entry for chunk {index}"))?;
+    Ok(chunk.sha256.as_deref())
+}
+
+async fn verify_chunk_with_retry(
+    s3: &S3Client,
+    bucket: &str,
+    key: &str,
+    expected_size: u64,
+    expected_sha256: Option<&str>,
+    retries: usize,
+) -> Result<()> {
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        match verify_chunk_once(s3, bucket, key, expected_size, expected_sha256).await {
+            Ok(()) => return Ok(()),
+            Err(err) if attempt < retries && is_retryable_chunk_error(&err) => {
+                let sleep_for = retry_backoff(attempt);
+                eprintln!(
+                    "chunk verify failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}; retrying in {:?}",
+                    sleep_for
+                );
+                tokio::time::sleep(sleep_for).await;
+            }
+            Err(err) => {
+                return Err(anyhow!(
+                    "chunk verify failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}"
+                ));
+            }
+        }
+    }
+}
+
+fn is_retryable_chunk_error(err: &anyhow::Error) -> bool {
+    // Treat all size/hash mismatches as non-retryable (deterministic integrity failures).
+    let msg = err.to_string();
+    !msg.contains("size mismatch") && !msg.contains("sha256 mismatch")
+}
+
+async fn verify_chunk_once(
+    s3: &S3Client,
+    bucket: &str,
+    key: &str,
+    expected_size: u64,
+    expected_sha256: Option<&str>,
+) -> Result<()> {
+    let resp = s3
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .with_context(|| format!("GET s3://{bucket}/{key}"))?;
+
+    if let Some(content_length) = resp.content_length() {
+        let len_u64: u64 = content_length.try_into().map_err(|_| {
+            anyhow!("invalid Content-Length {content_length} for s3://{bucket}/{key}")
+        })?;
+        if len_u64 != expected_size {
+            bail!(
+                "size mismatch: expected {expected_size} bytes, got {len_u64} bytes (Content-Length)"
+            );
+        }
+    }
+
+    let mut reader = resp.body.into_async_read();
+    let mut hasher = expected_sha256.map(|_| Sha256::new());
+    let mut buf = [0u8; 64 * 1024];
+    let mut read_total: u64 = 0;
+
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .await
+            .with_context(|| format!("read body of s3://{bucket}/{key}"))?;
+        if n == 0 {
+            break;
+        }
+        read_total = read_total
+            .checked_add(n as u64)
+            .ok_or_else(|| anyhow!("downloaded size overflows u64 for s3://{bucket}/{key}"))?;
+        if let Some(hasher) = hasher.as_mut() {
+            hasher.update(&buf[..n]);
+        }
+    }
+
+    if read_total != expected_size {
+        bail!("size mismatch: expected {expected_size} bytes, got {read_total} bytes (streamed)");
+    }
+
+    if let Some(expected) = expected_sha256 {
+        let Some(hasher) = hasher else {
+            bail!("internal error: expected_sha256 set but hasher not initialised");
+        };
+        let actual = hex::encode(hasher.finalize());
+        if !actual.eq_ignore_ascii_case(expected) {
+            bail!("sha256 mismatch: expected {expected}, got {actual}");
+        }
+    }
+
+    Ok(())
+}
+
+async fn head_object_with_retry(
+    s3: &S3Client,
+    bucket: &str,
+    key: &str,
+    retries: usize,
+) -> Result<()> {
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        let resp = s3.head_object().bucket(bucket).key(key).send().await;
+        match resp {
+            Ok(_) => return Ok(()),
+            Err(err) if attempt < retries => {
+                let sleep_for = retry_backoff(attempt);
+                eprintln!(
+                    "HEAD failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}; retrying in {:?}",
+                    sleep_for
+                );
+                tokio::time::sleep(sleep_for).await;
+            }
+            Err(err) => {
+                return Err(anyhow!(
+                    "HEAD failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}"
+                ));
+            }
+        }
+    }
+}
+
+async fn download_json_object_with_retry<T: DeserializeOwned>(
+    s3: &S3Client,
+    bucket: &str,
+    key: &str,
+    retries: usize,
+) -> Result<T> {
+    let bytes = download_object_bytes_with_retry(s3, bucket, key, retries).await?;
+    serde_json::from_slice(&bytes).with_context(|| format!("parse JSON from s3://{bucket}/{key}"))
+}
+
+async fn download_json_object_optional_with_retry<T: DeserializeOwned>(
+    s3: &S3Client,
+    bucket: &str,
+    key: &str,
+    retries: usize,
+) -> Result<Option<T>> {
+    match download_object_bytes_optional_with_retry(s3, bucket, key, retries).await? {
+        None => Ok(None),
+        Some(bytes) => {
+            Ok(Some(serde_json::from_slice(&bytes).with_context(|| {
+                format!("parse JSON from s3://{bucket}/{key}")
+            })?))
+        }
+    }
+}
+
+async fn download_object_bytes_with_retry(
+    s3: &S3Client,
+    bucket: &str,
+    key: &str,
+    retries: usize,
+) -> Result<Bytes> {
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        let result = s3.get_object().bucket(bucket).key(key).send().await;
+        match result {
+            Ok(output) => {
+                let aggregated = output
+                    .body
+                    .collect()
+                    .await
+                    .with_context(|| format!("read s3://{bucket}/{key}"))?;
+                return Ok(aggregated.into_bytes());
+            }
+            Err(err) if attempt < retries => {
+                let sleep_for = retry_backoff(attempt);
+                eprintln!(
+                    "download failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}; retrying in {:?}",
+                    sleep_for
+                );
+                tokio::time::sleep(sleep_for).await;
+            }
+            Err(err) => {
+                return Err(anyhow!(
+                    "download failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}"
+                ));
+            }
+        }
+    }
+}
+
+async fn download_object_bytes_optional_with_retry(
+    s3: &S3Client,
+    bucket: &str,
+    key: &str,
+    retries: usize,
+) -> Result<Option<Bytes>> {
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        let result = s3.get_object().bucket(bucket).key(key).send().await;
+        match result {
+            Ok(output) => {
+                let aggregated = output
+                    .body
+                    .collect()
+                    .await
+                    .with_context(|| format!("read s3://{bucket}/{key}"))?;
+                return Ok(Some(aggregated.into_bytes()));
+            }
+            Err(err) if is_no_such_key_error(&err) => return Ok(None),
+            Err(err) if attempt < retries => {
+                let sleep_for = retry_backoff(attempt);
+                eprintln!(
+                    "download failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}; retrying in {:?}",
+                    sleep_for
+                );
+                tokio::time::sleep(sleep_for).await;
+            }
+            Err(err) => {
+                return Err(anyhow!(
+                    "download failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}"
+                ));
+            }
+        }
+    }
+}
+
+fn is_no_such_key_error<E>(err: &aws_sdk_s3::error::SdkError<E>) -> bool {
+    // AWS SDK error types differ per operation; match on the shared error string to avoid taking a
+    // dependency on every operation-specific error enum.
+    err.to_string().contains("NoSuchKey")
+        || err.to_string().contains("NotFound")
+        || err.to_string().contains("404")
+}
+
 fn validate_args(args: &PublishArgs) -> Result<()> {
     if args.chunk_size == 0 {
         bail!("--chunk-size must be > 0");
@@ -504,6 +1308,79 @@ struct PublishDestination {
     version_prefix: String,
     /// Prefix for the image root (must end with `/`), used for `latest.json`.
     image_root_prefix: String,
+}
+
+fn resolve_image_root_and_version_prefix(
+    normalized_prefix: &str,
+    image_id: Option<&str>,
+    version: &str,
+) -> Result<(String, String, String)> {
+    let inferred_pair = infer_image_id_and_version(normalized_prefix);
+
+    let segments: Vec<&str> = normalized_prefix
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+
+    let image_id = match image_id {
+        Some(image_id) => image_id.to_string(),
+        None => {
+            if segments.last().is_some_and(|segment| *segment == version) && segments.len() >= 2 {
+                segments[segments.len() - 2].to_string()
+            } else if let Some((_, inferred_version)) = inferred_pair.as_ref() {
+                if looks_like_sha256_version(version)
+                    && looks_like_sha256_version(inferred_version)
+                    && inferred_version != version
+                {
+                    bail!(
+                        "--prefix appears to end with sha256 version '{inferred_version}', but resolved version is '{version}'. Use a prefix ending with '/<imageId>/' (image root), or pass --image-id explicitly."
+                    );
+                }
+                segments.last().map(|v| (*v).to_string()).ok_or_else(|| {
+                    anyhow!("--image-id is required when it cannot be inferred from --prefix")
+                })?
+            } else {
+                segments.last().map(|v| (*v).to_string()).ok_or_else(|| {
+                    anyhow!("--image-id is required when it cannot be inferred from --prefix")
+                })?
+            }
+        }
+    };
+
+    if let Some((inferred_image_id, inferred_version)) = inferred_pair.as_ref() {
+        if inferred_image_id == &image_id && inferred_version != version {
+            bail!(
+                "--prefix appears to include version '{inferred_version}', but resolved version is '{version}'. Use a prefix ending with '/{image_id}/' or update --image-version."
+            );
+        }
+    }
+
+    let ends_with_version =
+        segments.last().is_some_and(|segment| *segment == version) && segments.len() >= 2;
+    let ends_with_image_id = segments.last().is_some_and(|segment| *segment == image_id);
+
+    let (version_prefix, image_root_prefix) = if ends_with_version {
+        let inferred_image_id = segments[segments.len() - 2];
+        if inferred_image_id != image_id {
+            bail!(
+                "--prefix implies imageId '{inferred_image_id}', but resolved imageId is '{image_id}'. Update --prefix or --image-id."
+            );
+        }
+        (
+            normalized_prefix.to_string(),
+            parent_prefix(normalized_prefix)?,
+        )
+    } else if ends_with_image_id {
+        let image_root_prefix = normalized_prefix.to_string();
+        let version_prefix = format!("{image_root_prefix}{version}/");
+        (version_prefix, image_root_prefix)
+    } else {
+        let image_root_prefix = format!("{normalized_prefix}{image_id}/");
+        let version_prefix = format!("{image_root_prefix}{version}/");
+        (version_prefix, image_root_prefix)
+    };
+
+    Ok((version_prefix, image_root_prefix, image_id))
 }
 
 fn resolve_publish_destination(
@@ -573,13 +1450,9 @@ fn resolve_publish_destination(
         }
     }
 
-    let ends_with_version = segments
-        .last()
-        .is_some_and(|segment| *segment == version)
-        && segments.len() >= 2;
-    let ends_with_image_id = segments
-        .last()
-        .is_some_and(|segment| *segment == image_id);
+    let ends_with_version =
+        segments.last().is_some_and(|segment| *segment == version) && segments.len() >= 2;
+    let ends_with_image_id = segments.last().is_some_and(|segment| *segment == image_id);
 
     let (version_prefix, image_root_prefix) = if ends_with_version {
         let inferred_image_id = segments[segments.len() - 2];
@@ -588,7 +1461,10 @@ fn resolve_publish_destination(
                 "--prefix implies imageId '{inferred_image_id}', but resolved imageId is '{image_id}'. Update --prefix or --image-id."
             );
         }
-        (normalized_prefix.to_string(), parent_prefix(normalized_prefix)?)
+        (
+            normalized_prefix.to_string(),
+            parent_prefix(normalized_prefix)?,
+        )
     } else if ends_with_image_id {
         let image_root_prefix = normalized_prefix.to_string();
         let version_prefix = format!("{image_root_prefix}{version}/");
@@ -699,23 +1575,27 @@ fn build_manifest_v1(
         chunk_size,
         chunk_count,
         chunk_index_width: CHUNK_INDEX_WIDTH as u32,
-        chunks,
+        chunks: Some(chunks),
     })
 }
 
-async fn build_s3_client(args: &PublishArgs) -> Result<S3Client> {
+async fn build_s3_client(
+    endpoint: Option<&str>,
+    force_path_style: bool,
+    region: &str,
+) -> Result<S3Client> {
     let region_provider =
-        RegionProviderChain::default_provider().or_else(Region::new(args.region.clone()));
+        RegionProviderChain::default_provider().or_else(Region::new(region.to_owned()));
     let shared_config = aws_config::defaults(BehaviorVersion::latest())
         .region(region_provider)
         .load()
         .await;
 
     let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&shared_config);
-    if let Some(endpoint) = &args.endpoint {
+    if let Some(endpoint) = endpoint {
         s3_config_builder = s3_config_builder.endpoint_url(endpoint);
     }
-    if args.force_path_style {
+    if force_path_style {
         s3_config_builder = s3_config_builder.force_path_style(true);
     }
 
@@ -1035,7 +1915,9 @@ mod tests {
             "--prefix",
             "images/win7/sha256-abc/",
         ]);
-        let Commands::Publish(args) = cli.command;
+        let Commands::Publish(args) = cli.command else {
+            panic!("expected publish subcommand");
+        };
         assert_eq!(args.chunk_size, DEFAULT_CHUNK_SIZE_BYTES);
         assert_eq!(args.chunk_size, 4 * 1024 * 1024);
     }
@@ -1057,22 +1939,38 @@ mod tests {
 
     #[test]
     fn build_manifest_v1_sets_chunk_count_and_last_chunk_size() -> Result<()> {
-        let manifest = build_manifest_v1(
-            10,
-            4,
-            "win7",
-            "sha256-abc",
-            ChecksumAlgorithm::None,
-            &[],
-        )?;
+        let manifest =
+            build_manifest_v1(10, 4, "win7", "sha256-abc", ChecksumAlgorithm::None, &[])?;
         assert_eq!(manifest.total_size, 10);
         assert_eq!(manifest.chunk_size, 4);
         assert_eq!(manifest.chunk_count, 3);
-        assert_eq!(manifest.chunks.len(), 3);
-        assert_eq!(manifest.chunks[0].size, 4);
-        assert_eq!(manifest.chunks[1].size, 4);
-        assert_eq!(manifest.chunks[2].size, 2);
-        assert_eq!(manifest.chunks[0].sha256, None);
+        let chunks = manifest.chunks.expect("chunks present");
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].size, 4);
+        assert_eq!(chunks[1].size, 4);
+        assert_eq!(chunks[2].size, 2);
+        assert_eq!(chunks[0].sha256, None);
         Ok(())
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_unknown_schema() {
+        let manifest = ManifestV1 {
+            schema: "not-a-schema".to_string(),
+            image_id: "win7".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: 0,
+            chunk_size: 512,
+            chunk_count: 0,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: Some(Vec::new()),
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected schema validation failure");
+        assert!(
+            err.to_string().contains("manifest schema mismatch"),
+            "unexpected error: {err}"
+        );
     }
 }

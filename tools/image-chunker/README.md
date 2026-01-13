@@ -133,6 +133,56 @@ export AWS_SECRET_ACCESS_KEY=minioadmin
   --concurrency 8
 ```
 
+## Verify (manifest + chunks)
+
+After publishing, you can re-download and validate the published artifacts end-to-end:
+
+- `manifest.json` schema and internal consistency
+- chunk object existence
+- chunk sizes (`Content-Length` and streamed length)
+- optional per-chunk `sha256` (streamed hashing)
+- optional `latest.json` pointer (if present under `images/<imageId>/latest.json`)
+
+### Example: verify a versioned prefix
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --bucket disk-images \
+  --prefix images/<imageId>/<version>/ \
+  --endpoint http://localhost:9000 \
+  --force-path-style \
+  --region us-east-1 \
+  --concurrency 8
+```
+
+### Example: quick smoke test (sample a few chunks)
+
+Verify 8 random chunks plus the final chunk:
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --bucket disk-images \
+  --prefix images/<imageId>/<version>/ \
+  --endpoint http://localhost:9000 \
+  --force-path-style \
+  --region us-east-1 \
+  --chunk-sample 8
+```
+
+### Example: verify by image root + explicit version
+
+If you prefer to point at an image root prefix (`images/<imageId>/`), provide `--image-version`:
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --bucket disk-images \
+  --prefix images/<imageId>/ \
+  --image-version <version> \
+  --endpoint http://localhost:9000 \
+  --force-path-style \
+  --region us-east-1
+```
+
 ## Verifying with `curl`
 
 If your bucket/prefix is publicly readable (or your local MinIO is configured to allow anonymous GETs), you can verify that the manifest and some chunks exist:
