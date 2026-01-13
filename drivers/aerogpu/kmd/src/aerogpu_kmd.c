@@ -5689,8 +5689,27 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
         return STATUS_SUCCESS;
     }
 
+    const DXGK_POINTERFLAGS flags = pShape->Flags;
+
     const ULONG width = pShape->Width;
-    const ULONG height = pShape->Height;
+    ULONG height = pShape->Height;
+    const ULONG heightIn = height;
+
+    /*
+     * WDDM contract: for monochrome pointers, `pPixels` contains an AND mask followed
+     * by an XOR mask, each `height` rows. The incoming `Height` is the total mask
+     * height (2 * cursor_height). Convert it to the actual cursor height before
+     * sizing allocations and programming the device.
+     */
+    if (flags.Monochrome) {
+        if ((height & 1u) != 0) {
+            return STATUS_INVALID_PARAMETER;
+        }
+        height >>= 1;
+        if (height == 0) {
+            return STATUS_INVALID_PARAMETER;
+        }
+    }
 
     /* Sanity cap to avoid runaway allocations on malformed inputs. */
     if (width > 512u || height > 512u) {
@@ -5757,10 +5776,19 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
      * We always write a 32bpp BGRA/BGRX cursor into the protocol cursor framebuffer and program
      * CURSOR_FORMAT accordingly.
      */
-    const DXGK_POINTERFLAGS flags = pShape->Flags;
     if (flags.Monochrome) {
         const ULONG srcPitch = pShape->Pitch;
         if (srcPitch == 0) {
+            AeroGpuCursorDisable(adapter);
+            adapter->CursorShapeValid = FALSE;
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        /*
+         * The mask buffer is `heightIn` rows (AND + XOR). We only read `height`
+         * rows per plane.
+         */
+        if (heightIn != height * 2u) {
             AeroGpuCursorDisable(adapter);
             adapter->CursorShapeValid = FALSE;
             return STATUS_INVALID_PARAMETER;
