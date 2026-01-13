@@ -59,6 +59,7 @@ static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv4(const uint8_t* ipv4,
                                                    uint8_t* proto_out) {
   uint8_t version;
   size_t ihl;
+  uint16_t frag_field;
 
   if (!ipv4 || !header_len_out || !proto_out) {
     return AEROVNET_OFFLOAD_ERR_INVAL;
@@ -76,6 +77,12 @@ static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv4(const uint8_t* ipv4,
   ihl = (size_t)(ipv4[0] & 0x0Fu) * 4u;
   if (ihl < 20u || ipv4_len < ihl) {
     return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
+  }
+
+  /* Reject fragmented IPv4 packets: offload metadata refers to reassembled L4 payload. */
+  frag_field = aerovnet_read_be16(ipv4 + 6u);
+  if ((frag_field & 0x1FFFu) != 0u || (frag_field & 0x2000u) != 0u) {
+    return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_FRAGMENTATION;
   }
 
   *header_len_out = ihl;
@@ -144,15 +151,8 @@ static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv6_l4_offset(const uint8_t* ipv6
     }
 
     if (next == 44u) {
-      /* Fragment header: fixed 8 bytes. */
-      uint8_t hdr_next;
-      if (ipv6_len < off + 8u) {
-        return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-      }
-      hdr_next = ipv6[off];
-      next = hdr_next;
-      off += 8u;
-      continue;
+      /* Fragment header: offloads do not apply to fragmented packets. */
+      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_FRAGMENTATION;
     }
 
     if (next == 51u) {
@@ -297,4 +297,3 @@ AEROVNET_OFFLOAD_RESULT AerovNetBuildTxVirtioNetHdr(const uint8_t* frame,
 
   return AEROVNET_OFFLOAD_OK;
 }
-

@@ -279,6 +279,58 @@ static void test_ipv6_tcp_lso(void)
     assert(info.IpVersion == 6);
 }
 
+static void test_ipv4_fragment_rejected(void)
+{
+    uint8_t pkt[14 + 20 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 14, 0);
+    build_tcp_header(pkt + 14 + 20);
+
+    /* Set MF (more fragments) flag. */
+    pkt[14 + 6] = 0x20;
+    pkt[14 + 7] = 0x00;
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_UNSUPPORTED_FRAGMENTATION);
+}
+
+static void test_ipv6_fragment_rejected(void)
+{
+    uint8_t pkt[14 + 40 + 8 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+
+    /* IPv6 header: NextHeader = Fragment (44) */
+    memset(pkt + 14, 0, 40);
+    pkt[14] = (6u << 4);
+    pkt[14 + 4] = 0;
+    pkt[14 + 5] = (uint8_t)(8 + 20); /* fragment header + TCP header */
+    pkt[14 + 6] = 44;
+    pkt[14 + 7] = 64;
+
+    /* Fragment header: Next = TCP, rest zero */
+    memset(pkt + 14 + 40, 0, 8);
+    pkt[14 + 40] = 6;
+
+    build_tcp_header(pkt + 14 + 40 + 8);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_UNSUPPORTED_FRAGMENTATION);
+}
+
 static void test_ipv6_hopbyhop_tcp_checksum_only(void)
 {
     uint8_t pkt[14 + 40 + 8 + 20];
@@ -329,6 +381,8 @@ int main(void)
     test_ipv4_tcp_lso();
     test_ipv4_qinq_tcp_lso();
     test_ipv6_tcp_lso();
+    test_ipv4_fragment_rejected();
+    test_ipv6_fragment_rejected();
     test_ipv6_hopbyhop_tcp_checksum_only();
     test_unsupported_protocol();
     return 0;
