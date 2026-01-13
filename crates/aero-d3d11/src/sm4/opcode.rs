@@ -116,6 +116,17 @@ pub const OPCODE_DEFAULT: u32 = 0x37;
 /// `endswitch` (end of structured `switch` body).
 pub const OPCODE_ENDSWITCH: u32 = 0x38;
 
+// ---- Pixel kill ----
+
+/// `discard` (discard pixel based on boolean test in the opcode token).
+///
+/// The opcode token's `test` field encodes whether the condition is tested for
+/// zero (`discard_z`) or non-zero (`discard_nz`).
+pub const OPCODE_DISCARD: u32 = 0x3a;
+
+/// `clip` (discard pixel if any component of operand is < 0).
+pub const OPCODE_CLIP: u32 = 0x3b;
+
 pub const OPCODE_RET: u32 = 0x3e;
 
 // Geometry shader stream emission / cutting.
@@ -355,6 +366,8 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_CASE => Some("case"),
         OPCODE_DEFAULT => Some("default"),
         OPCODE_ENDSWITCH => Some("endswitch"),
+        OPCODE_DISCARD => Some("discard"),
+        OPCODE_CLIP => Some("clip"),
         OPCODE_IF => Some("if"),
         OPCODE_ELSE => Some("else"),
         OPCODE_ENDIF => Some("endif"),

@@ -1211,6 +1211,8 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
         };
         match inst {
             Sm4Inst::If { cond, .. } => scan_src_regs(cond, &mut scan_reg),
+            Sm4Inst::Discard { cond, .. } => scan_src_regs(cond, &mut scan_reg),
+            Sm4Inst::Clip { src } => scan_src_regs(src, &mut scan_reg),
             Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
             Sm4Inst::Mov { dst: _, src } | Sm4Inst::Utof { dst: _, src } => {
                 scan_src_regs(src, &mut scan_reg)
@@ -2413,6 +2415,8 @@ fn scan_resources(
         };
         match inst {
             Sm4Inst::If { cond, .. } => scan_src(cond)?,
+            Sm4Inst::Discard { cond, .. } => scan_src(cond)?,
+            Sm4Inst::Clip { src } => scan_src(src)?,
             Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
             Sm4Inst::Mov { dst: _, src } => scan_src(src)?,
             Sm4Inst::Utof { dst: _, src } => scan_src(src)?,
@@ -2773,6 +2777,12 @@ fn emit_temp_and_output_decls(
         match inst {
             Sm4Inst::If { cond, .. } => {
                 scan_src_regs(cond, &mut scan_reg);
+            }
+            Sm4Inst::Discard { cond, .. } => {
+                scan_src_regs(cond, &mut scan_reg);
+            }
+            Sm4Inst::Clip { src } => {
+                scan_src_regs(src, &mut scan_reg);
             }
             Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
             Sm4Inst::Mov { dst, src } => {
@@ -3824,6 +3834,46 @@ fn emit_instructions(
                 let src_i = emit_src_vec4_i32(src, inst_index, "firstbit_shi", ctx)?;
                 let expr = format!("bitcast<vec4<f32>>(firstLeadingBit({src_i}))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "firstbit_shi", ctx)?;
+            }
+            Sm4Inst::Discard { cond, test } => {
+                let opcode_name = match test {
+                    crate::sm4_ir::Sm4TestBool::Zero => "discard_z",
+                    crate::sm4_ir::Sm4TestBool::NonZero => "discard_nz",
+                };
+                if ctx.stage != ShaderStage::Pixel {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: opcode_name.to_owned(),
+                    });
+                }
+
+                let cond_vec = emit_src_vec4(cond, inst_index, "discard", ctx)?;
+                let cond_bits = format!("bitcast<u32>(({cond_vec}).x)");
+                let cmp = match test {
+                    crate::sm4_ir::Sm4TestBool::Zero => format!("{cond_bits} == 0u"),
+                    crate::sm4_ir::Sm4TestBool::NonZero => format!("{cond_bits} != 0u"),
+                };
+
+                w.line(&format!("if ({cmp}) {{"));
+                w.indent();
+                w.line("discard;");
+                w.dedent();
+                w.line("}");
+            }
+            Sm4Inst::Clip { src } => {
+                if ctx.stage != ShaderStage::Pixel {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "clip".to_owned(),
+                    });
+                }
+
+                let src_vec = emit_src_vec4(src, inst_index, "clip", ctx)?;
+                w.line(&format!("if (any(({src_vec}) < vec4<f32>(0.0))) {{"));
+                w.indent();
+                w.line("discard;");
+                w.dedent();
+                w.line("}");
             }
             Sm4Inst::Sample {
                 dst,

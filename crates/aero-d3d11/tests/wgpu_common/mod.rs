@@ -21,4 +21,3 @@ pub async fn read_texture_rgba8(
 ) -> Result<Vec<u8>> {
     crate::common::wgpu::read_texture_rgba8(device, queue, texture, width, height).await
 }
-

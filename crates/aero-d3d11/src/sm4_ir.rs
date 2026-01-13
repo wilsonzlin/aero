@@ -495,6 +495,20 @@ pub enum Sm4Inst {
         dst: DstOperand,
         src: SrcOperand,
     },
+    /// `discard_z` / `discard_nz` (pixel shader only).
+    ///
+    /// The condition is evaluated by testing the *raw 32-bit value* of the first lane
+    /// (`.x`) against zero, matching how DXBC treats untyped register contents.
+    Discard {
+        cond: SrcOperand,
+        test: Sm4TestBool,
+    },
+    /// `clip` (pixel shader only).
+    ///
+    /// Discards the pixel if **any** component of `src` is `< 0.0`.
+    Clip {
+        src: SrcOperand,
+    },
     /// `sample dest, coord, t#, s#`
     Sample {
         dst: DstOperand,

@@ -2,8 +2,8 @@ use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, CmpOp, CmpType, DxbcFile, DxbcSignature,
     DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel,
-    ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand,
-    Swizzle, TextureRef, WriteMask,
+    ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, Sm4TestBool, SrcKind,
+    SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -85,6 +85,12 @@ fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
 
 fn opcode_token(opcode: u32, len: u32) -> u32 {
     opcode | (len << OPCODE_LEN_SHIFT)
+}
+
+fn opcode_token_with_test(opcode: u32, len: u32, test: u32) -> u32 {
+    opcode
+        | (len << OPCODE_LEN_SHIFT)
+        | ((test & OPCODE_TEST_BOOLEAN_MASK) << OPCODE_TEST_BOOLEAN_SHIFT)
 }
 
 fn operand_token(
@@ -1571,4 +1577,160 @@ fn decodes_and_translates_ult_shader_from_dxbc() {
     assert!(translated
         .wgsl
         .contains("select(vec4<u32>(0u), vec4<u32>(0xffffffffu)"));
+}
+
+#[test]
+fn decodes_and_translates_discard_and_clip_in_pixel_shader() {
+    let mut body = Vec::<u32>::new();
+
+    // discard_nz r0.y (note: r0 is never written; the test checks that src-only temps are still
+    // declared in WGSL).
+    let discard_src = reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::YYYY);
+    body.push(opcode_token_with_test(
+        OPCODE_DISCARD,
+        1 + discard_src.len() as u32,
+        1, // non-zero
+    ));
+    body.extend_from_slice(&discard_src);
+
+    // discard_z r1.z
+    let discard_z_src = reg_src(OPERAND_TYPE_TEMP, &[1], Swizzle::ZZZZ);
+    body.push(opcode_token_with_test(
+        OPCODE_DISCARD,
+        1 + discard_z_src.len() as u32,
+        0, // zero
+    ));
+    body.extend_from_slice(&discard_z_src);
+
+    // clip r2.wzyx
+    let clip_src = reg_src(OPERAND_TYPE_TEMP, &[2], Swizzle([3, 2, 1, 0]));
+    body.push(opcode_token(OPCODE_CLIP, 1 + clip_src.len() as u32));
+    body.extend_from_slice(&clip_src);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert_eq!(module.instructions.len(), 4);
+    assert!(matches!(
+        module.instructions[0],
+        Sm4Inst::Discard {
+            test: Sm4TestBool::NonZero,
+            ..
+        }
+    ));
+    assert!(matches!(
+        module.instructions[1],
+        Sm4Inst::Discard {
+            test: Sm4TestBool::Zero,
+            ..
+        }
+    ));
+    assert!(matches!(module.instructions[2], Sm4Inst::Clip { .. }));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("@fragment"));
+    assert!(
+        translated.wgsl.contains("discard;"),
+        "expected WGSL to contain discard statement:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<u32>"),
+        "expected discard to use bitcast<u32> for the condition:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("any(("),
+        "expected clip to lower to any(vec4 < 0.0):\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn rejects_discard_in_vertex_shader() {
+    let mut body = Vec::<u32>::new();
+
+    let discard_src = reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XXXX);
+    body.push(opcode_token_with_test(
+        OPCODE_DISCARD,
+        1 + discard_src.len() as u32,
+        1, // non-zero
+    ));
+    body.extend_from_slice(&discard_src);
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 1 = vertex shader.
+    let tokens = make_sm5_program_tokens(1, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Position", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Vertex);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_d3d11::ShaderTranslateError::UnsupportedInstruction { inst_index: 0, opcode }
+            if opcode == "discard_nz"
+    ));
+}
+
+#[test]
+fn rejects_clip_in_vertex_shader() {
+    let mut body = Vec::<u32>::new();
+
+    let clip_src = reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW);
+    body.push(opcode_token(OPCODE_CLIP, 1 + clip_src.len() as u32));
+    body.extend_from_slice(&clip_src);
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 1 = vertex shader.
+    let tokens = make_sm5_program_tokens(1, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Position", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Vertex);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_d3d11::ShaderTranslateError::UnsupportedInstruction { inst_index: 0, opcode }
+            if opcode == "clip"
+    ));
 }

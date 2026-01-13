@@ -1085,6 +1085,23 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::EmitThenCut { stream })
         }
+        OPCODE_DISCARD => {
+            let test_raw =
+                (opcode_token >> OPCODE_TEST_BOOLEAN_SHIFT) & OPCODE_TEST_BOOLEAN_MASK;
+            let test = match test_raw {
+                0 => Sm4TestBool::Zero,
+                1 => Sm4TestBool::NonZero,
+                _ => return Ok(Sm4Inst::Unknown { opcode }),
+            };
+            let cond = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Discard { cond, test })
+        }
+        OPCODE_CLIP => {
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Clip { src })
+        }
         OPCODE_RET => {
             r.expect_eof()?;
             Ok(Sm4Inst::Ret)

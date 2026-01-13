@@ -10,7 +10,7 @@ const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 // `bufinfo` opcode IDs are not currently modeled explicitly; the decoder recognizes the operand
 // pattern structurally. Use an unused opcode ID (< 0x100 so it is treated as an instruction) to
 // exercise the fallback path.
-const OPCODE_TEST_BUFINFO: u32 = 0x3b;
+const OPCODE_TEST_BUFINFO: u32 = 0x39;
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)
