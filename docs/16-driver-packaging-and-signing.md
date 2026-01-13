@@ -77,6 +77,7 @@ Template examples are available under `drivers/_template/`:
 - `ci-package.README.md` (field reference)
 - `ci-package.json` (starter template; replace `infFiles` placeholder `REPLACE_ME.inf`, or remove `infFiles` to enable CI auto-discovery)
 - `ci-package.inf-wow64-example.json`
+- `ci-package.tools-example.json`
 - `ci-package.wdf-example.json`
 
 ---

@@ -20,6 +20,8 @@ The manifest can declare:
 - WOW64 payload DLL file names to copy from x86 build outputs into the x64 staged package (`wow64Files`)
   - entries must be file names only (no path separators)
 - extra non-binary files to copy into the staged package (`additionalFiles`)
+- helper tool binaries to copy into the staged package (`toolFiles`)
+  - entries are paths (relative to the driver directory) to `.exe` files
 - whether the driver needs a WDF coinstaller (`wdfCoInstaller`, explicit opt-in)
 
 See `ci-package.README.md` in this directory for a short field reference, and the canonical
@@ -30,4 +32,5 @@ doc at `docs/16-driver-packaging-and-signing.md` for details.
 - `ci-package.README.md`: field-by-field reference (canonical documentation lives under `docs/16-driver-packaging-and-signing.md`).
 - `ci-package.json`: starter template (this file is required for CI build+packaging in real driver directories). Replace `infFiles` placeholder `REPLACE_ME.inf` (or remove `infFiles` to enable CI auto-discovery) and update `wow64Files` as needed.
 - `ci-package.inf-wow64-example.json`: example manifest showing `infFiles` + `wow64Files` usage (explicit INF selection + WOW64 payload DLLs).
+- `ci-package.tools-example.json`: example manifest showing `infFiles` + `toolFiles` usage (ship helper `.exe` without abusing `additionalFiles`).
 - `ci-package.wdf-example.json`: WDF coinstaller example.
