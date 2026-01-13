@@ -110,6 +110,12 @@ Run as Administrator:
 setup.cmd
 ```
 
+Validation-only (no system changes; does not require Administrator):
+
+```bat
+setup.cmd /check
+```
+
 ### Signing policy (manifest.json)
 
 Guest Tools media built by `tools/packaging/aero_packager` includes a `manifest.json` file that carries a `signing_policy` field.
@@ -130,6 +136,12 @@ Explicit command-line flags override the manifest.
 
 Optional flags:
 
+- `setup.cmd /check` (alias: `/validate`)  
+  Non-destructive validation mode intended for CI/automation and cautious users. Performs
+  media-level checks (drivers directory, `config\devices.cmd`, `manifest.json` signing policy,
+  certificate payload presence rules, and virtio-blk `AddService` name validation unless
+  `/skipstorage` is provided).  
+  Writes logs under `%TEMP%\AeroGuestToolsCheck\install.log`.
 - `setup.cmd /force` (or `setup.cmd /quiet`)  
   Fully non-interactive/unattended mode:
    - implies `/noreboot` (never prompts reboot/shutdown)

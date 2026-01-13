@@ -44,6 +44,7 @@ set "ARG_FORCE_SIGNING_POLICY="
 set "ARG_INSTALL_CERTS=0"
 set "ARG_NO_REBOOT=0"
 set "ARG_SKIP_STORAGE=0"
+set "ARG_CHECK=0"
 
 rem Default signing policy (back-compat if manifest.json is missing/old).
 set "SIGNING_POLICY=test"
@@ -61,6 +62,8 @@ for %%A in (%*) do (
   if /i "%%~A"=="/quiet" set "ARG_FORCE=1"
   if /i "%%~A"=="/stageonly" set "ARG_STAGE_ONLY=1"
   if /i "%%~A"=="/stage-only" set "ARG_STAGE_ONLY=1"
+  if /i "%%~A"=="/check" set "ARG_CHECK=1"
+  if /i "%%~A"=="/validate" set "ARG_CHECK=1"
   if /i "%%~A"=="/testsigning" set "ARG_FORCE_TESTSIGN=1"
   if /i "%%~A"=="/forcetestsigning" set "ARG_FORCE_TESTSIGN=1"
   if /i "%%~A"=="/force-testsigning" set "ARG_FORCE_TESTSIGN=1"
@@ -87,6 +90,10 @@ rem /force implies fully non-interactive behavior.
 if "%ARG_FORCE%"=="1" (
   set "ARG_NO_REBOOT=1"
 )
+
+rem Non-destructive validation mode for automation/cautious users.
+rem Must run before any Administrator checks or system modifications.
+if "%ARG_CHECK%"=="1" goto :check_mode
 
 call :require_admin_stdout
 if errorlevel 1 (
@@ -172,6 +179,7 @@ echo Options:
 echo   /force, /quiet        Non-interactive: implies /noreboot.
 echo                        For signing_policy=test, also enables /testsigning on x64
 echo                        (unless /notestsigning is provided).
+echo   /check, /validate     Validate Guest Tools media payloads only (no system changes; does not require admin)
 echo   /stageonly           Only stage drivers into the Driver Store (no install attempts)
 echo   /testsigning         Enable test signing on x64 without prompting (overrides manifest)
 echo   /forcetestsigning    Same as /testsigning
@@ -185,9 +193,73 @@ echo   /installcerts        Force installing certificates from certs\ even when 
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
 echo   /skipstorage         Skip boot-critical virtio-blk storage pre-seeding (alias: /skip-storage; advanced; unsafe to switch boot disk to virtio-blk)
 echo.
-echo Logs are written to C:\AeroGuestTools\install.log
+echo Logs are written to C:\AeroGuestTools\install.log (install mode)
+echo In /check mode, logs are written under %%TEMP%%\AeroGuestToolsCheck\install.log
 popd >nul 2>&1
 exit /b 0
+
+:check_mode
+rem /check mode validates the *media* and does not touch the local system:
+rem  - no certutil -addstore
+rem  - no pnputil -a/-i
+rem  - no reg add/delete
+rem  - no bcdedit
+rem The default C:\AeroGuestTools location is typically not writable without admin, and
+rem the Guest Tools media itself may be read-only (ISO). Log to %%TEMP%% instead.
+set "INSTALL_ROOT=%TEMP%\AeroGuestToolsCheck"
+set "LOG=%INSTALL_ROOT%\install.log"
+set "PKG_LIST=%INSTALL_ROOT%\installed-driver-packages.txt"
+set "CERT_LIST=%INSTALL_ROOT%\installed-certs.txt"
+set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
+set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
+set "STATE_STORAGE_SKIPPED=%INSTALL_ROOT%\storage-preseed.skipped.txt"
+
+call :init_logging
+if errorlevel 1 (
+  popd >nul 2>&1
+  exit /b 1
+)
+
+call :log "Aero Guest Tools validation starting (/check)..."
+call :log "Script dir: %SCRIPT_DIR%"
+call :log "System tools: %SYS32%"
+call :log "Logs: %LOG%"
+
+rem Best-effort admin probe: /check does not require elevation.
+"%SYS32%\fsutil.exe" dirty query %SYSTEMDRIVE% >nul 2>&1
+if errorlevel 1 (
+  call :log "INFO: Not running as Administrator. Some checks are intentionally skipped in /check mode."
+) else (
+  call :log "INFO: Administrator privileges detected (not required for /check)."
+)
+
+call :log_manifest
+if not defined GT_MANIFEST (
+  call :log "INFO: Guest Tools manifest.json not found; using legacy defaults."
+)
+call :validate_manifest_signing_policy || goto :check_fail
+call :detect_arch || goto :check_fail
+call :load_signing_policy
+call :load_config || goto :check_fail
+if "%ARG_SKIP_STORAGE%"=="1" (
+  call :log ""
+  call :log "Skipping virtio-blk storage INF validation (/skipstorage)."
+) else (
+  call :validate_storage_service_infs || goto :check_fail
+)
+call :validate_cert_payload || goto :check_fail
+
+call :log ""
+call :log "Validation complete. No system changes were made."
+popd >nul 2>&1
+exit /b 0
+
+:check_fail
+set "RC=%ERRORLEVEL%"
+call :log ""
+call :log "ERROR: validation failed (exit code %RC%). See %LOG% for details."
+popd >nul 2>&1
+exit /b %RC%
 
 :_selftest_inf_addservice
 rem Usage: setup.cmd /_selftest_inf_addservice <inf> <service>
@@ -272,6 +344,8 @@ if not exist "!MANIFEST!" (
     set "GT_BUILD_ID="
     set "GT_SIGNING_POLICY=test"
     set "GT_CERTS_REQUIRED=1"
+    set "GT_PARSED_SIGNING_POLICY=0"
+    set "GT_PARSED_CERTS_REQUIRED=0"
   ) & exit /b 0
 )
 
@@ -280,6 +354,8 @@ set "GT_VERSION="
 set "GT_BUILD_ID="
 set "GT_SIGNING_POLICY="
 set "GT_CERTS_REQUIRED="
+set "GT_PARSED_SIGNING_POLICY=0"
+set "GT_PARSED_CERTS_REQUIRED=0"
 
 rem Prefer PowerShell JSON parsing (robust to schema/formatting changes). Fall back to
 rem the legacy line-based parser if PowerShell is unavailable or parsing fails.
@@ -299,6 +375,10 @@ if "%ERRORLEVEL%"=="0" (
   )
 )
 del /q "%PWSH_OUT%" >nul 2>&1
+if "%PWSH_OK%"=="1" (
+  if defined GT_SIGNING_POLICY set "GT_PARSED_SIGNING_POLICY=1"
+  if defined GT_CERTS_REQUIRED set "GT_PARSED_CERTS_REQUIRED=1"
+)
 if not "%PWSH_OK%"=="1" (
   call :log "WARNING: Failed to parse manifest.json via PowerShell; falling back to legacy parser."
   set "GT_VERSION="
@@ -339,6 +419,7 @@ for /f "usebackq tokens=1,* delims=:" %%A in ("!MANIFEST!") do (
     if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
     set "VAL=!VAL:"=!"
     set "GT_SIGNING_POLICY=!VAL!"
+    set "GT_PARSED_SIGNING_POLICY=1"
   )
   if /i "!KEY!"=="certs_required" (
     set "VAL=%%B"
@@ -346,7 +427,8 @@ for /f "usebackq tokens=1,* delims=:" %%A in ("!MANIFEST!") do (
     if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
     set "VAL=!VAL:"=!"
     set "GT_CERTS_REQUIRED=!VAL!"
-   )
+    set "GT_PARSED_CERTS_REQUIRED=1"
+  )
 )
 
 :log_manifest_normalize
@@ -389,6 +471,8 @@ endlocal & (
   set "GT_BUILD_ID=%GT_BUILD_ID%"
   set "GT_SIGNING_POLICY=%GT_SIGNING_POLICY%"
   set "GT_CERTS_REQUIRED=%GT_CERTS_REQUIRED%"
+  set "GT_PARSED_SIGNING_POLICY=%GT_PARSED_SIGNING_POLICY%"
+  set "GT_PARSED_CERTS_REQUIRED=%GT_PARSED_CERTS_REQUIRED%"
 ) & exit /b 0
 
 :log_summary
@@ -590,6 +674,83 @@ for %%F in ("!CERT_DIR!\*.p7b") do (
 )
 
 endlocal & exit /b 0
+
+:validate_manifest_signing_policy
+call :log ""
+call :log "Validating manifest signing_policy parsing..."
+
+if not defined GT_MANIFEST exit /b 0
+
+if not "%GT_PARSED_SIGNING_POLICY%"=="1" (
+  call :log "ERROR: manifest.json found but signing_policy could not be parsed: %GT_MANIFEST%"
+  call :log "       Ensure manifest.json includes a 'signing_policy' field (test|production|none)."
+  exit /b 1
+)
+
+if /i not "%GT_SIGNING_POLICY%"=="test" if /i not "%GT_SIGNING_POLICY%"=="production" if /i not "%GT_SIGNING_POLICY%"=="none" (
+  call :log "ERROR: Unsupported signing_policy in manifest.json: %GT_SIGNING_POLICY%"
+  call :log "       Expected: test, production, or none."
+  exit /b 1
+)
+
+set "EXPECT_CERTS=0"
+if /i "%GT_SIGNING_POLICY%"=="test" set "EXPECT_CERTS=1"
+
+if "%GT_PARSED_CERTS_REQUIRED%"=="1" if not "%GT_CERTS_REQUIRED%"=="%EXPECT_CERTS%" (
+  call :log "ERROR: manifest.json certs_required=%GT_CERTS_REQUIRED% is inconsistent with signing_policy=%GT_SIGNING_POLICY%."
+  exit /b 1
+)
+
+if "%GT_PARSED_CERTS_REQUIRED%"=="0" (
+  call :log "WARNING: Could not parse certs_required from manifest.json; using derived value (certs_required=%GT_CERTS_REQUIRED%)."
+)
+
+call :log "OK: manifest signing_policy=%GT_SIGNING_POLICY% (certs_required=%GT_CERTS_REQUIRED%)."
+exit /b 0
+
+:validate_cert_payload
+set "CERT_DIR=%SCRIPT_DIR%certs"
+set "CERTS_REQUIRED=0"
+if /i "%SIGNING_POLICY%"=="test" set "CERTS_REQUIRED=1"
+call :log ""
+call :log "Validating certificate files under %CERT_DIR% (signing_policy=%SIGNING_POLICY%)..."
+
+if not exist "%CERT_DIR%" (
+  if "%CERTS_REQUIRED%"=="1" (
+    call :log "ERROR: Certificate directory not found: %CERT_DIR% (signing_policy=%SIGNING_POLICY%)."
+    call :log "       Expected at least one: *.cer, *.crt, and/or *.p7b"
+    exit /b %EC_CERTS_MISSING%
+  )
+  call :log "OK: Certificate directory not found; signing_policy=%SIGNING_POLICY% does not require certificates."
+  exit /b 0
+)
+
+set "FOUND_CERT=0"
+for %%F in ("%CERT_DIR%\*.cer") do if exist "%%~fF" set "FOUND_CERT=1"
+for %%F in ("%CERT_DIR%\*.crt") do if exist "%%~fF" set "FOUND_CERT=1"
+for %%F in ("%CERT_DIR%\*.p7b") do if exist "%%~fF" set "FOUND_CERT=1"
+
+if "%FOUND_CERT%"=="0" (
+  if "%CERTS_REQUIRED%"=="1" (
+    call :log "ERROR: No certificates found under %CERT_DIR% (expected *.cer/*.crt and/or *.p7b)."
+    call :log "       signing_policy=%SIGNING_POLICY% requires shipping certificate files."
+    exit /b %EC_CERTS_MISSING%
+  )
+  call :log "OK: No certificate files found; signing_policy=%SIGNING_POLICY% does not require them."
+  exit /b 0
+)
+
+call :log "OK: Found certificate file(s):"
+for %%F in ("%CERT_DIR%\*.cer") do if exist "%%~fF" call :log "  - %%~nxF"
+for %%F in ("%CERT_DIR%\*.crt") do if exist "%%~fF" call :log "  - %%~nxF"
+for %%F in ("%CERT_DIR%\*.p7b") do if exist "%%~fF" call :log "  - %%~nxF"
+
+if "%CERTS_REQUIRED%"=="0" (
+  call :log "WARNING: signing_policy=%SIGNING_POLICY% but certificate file(s) were found under %CERT_DIR%."
+  call :log "         Production/none Guest Tools media should NOT ship certificates."
+)
+
+exit /b 0
 
 :install_certs
 set "CERT_DIR=%SCRIPT_DIR%certs"
