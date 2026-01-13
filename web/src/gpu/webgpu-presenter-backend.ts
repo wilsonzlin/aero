@@ -131,62 +131,72 @@ export class WebGpuPresenterBackend implements Presenter {
     this.srcHeight = height;
     this.dpr = dpr;
 
-    const outputWidth = this.opts.outputWidth ?? width;
-    const outputHeight = this.opts.outputHeight ?? height;
-    this.resizeCanvas(outputWidth, outputHeight, dpr);
+    try {
+      const outputWidth = this.opts.outputWidth ?? width;
+      const outputHeight = this.opts.outputHeight ?? height;
+      this.resizeCanvas(outputWidth, outputHeight, dpr);
 
-    const gpu = (navigator as any).gpu;
-    if (!gpu) {
-      throw new PresenterError('webgpu_unavailable', 'WebGPU is not available in this environment');
-    }
-    this.gpu = gpu;
-
-    const isHeadless = /HeadlessChrome/.test((navigator as any).userAgent ?? '');
-    // Prefer the fallback adapter in headless/test runs for stability and deterministic output.
-    // (We still try the "high-performance" path as a backup so real browsers can use hardware.)
-    let adapter = await gpu.requestAdapter?.(isHeadless ? { forceFallbackAdapter: true } : { powerPreference: 'high-performance' });
-    if (!adapter) {
-      adapter = await gpu.requestAdapter?.(isHeadless ? { powerPreference: 'high-performance' } : { forceFallbackAdapter: true });
-    }
-    if (!adapter) {
-      throw new PresenterError('webgpu_no_adapter', 'navigator.gpu.requestAdapter() returned null');
-    }
-
-    const requiredFeatures = (this.opts.requiredFeatures ?? []) as GPUFeatureName[];
-    const device = await adapter.requestDevice?.(
-      requiredFeatures.length ? { requiredFeatures } : undefined,
-    );
-    if (!device) {
-      throw new PresenterError('webgpu_no_device', 'adapter.requestDevice() returned null');
-    }
-    this.device = device;
-    this.queue = device.queue;
-
-    const ctx = (canvas as any).getContext('webgpu') as any;
-    if (!ctx) {
-      try {
-        device.destroy?.();
-      } catch {
-        // Ignore.
+      const gpu = (navigator as any).gpu;
+      if (!gpu) {
+        throw new PresenterError('webgpu_unavailable', 'WebGPU is not available in this environment');
       }
-      throw new PresenterError('webgpu_context_unavailable', 'Failed to create a WebGPU canvas context');
+      this.gpu = gpu;
+
+      const isHeadless = /HeadlessChrome/.test((navigator as any).userAgent ?? '');
+      // Prefer the fallback adapter in headless/test runs for stability and deterministic output.
+      // (We still try the "high-performance" path as a backup so real browsers can use hardware.)
+      let adapter = await gpu.requestAdapter?.(
+        isHeadless ? { forceFallbackAdapter: true } : { powerPreference: 'high-performance' },
+      );
+      if (!adapter) {
+        adapter = await gpu.requestAdapter?.(
+          isHeadless ? { powerPreference: 'high-performance' } : { forceFallbackAdapter: true },
+        );
+      }
+      if (!adapter) {
+        throw new PresenterError('webgpu_no_adapter', 'navigator.gpu.requestAdapter() returned null');
+      }
+
+      const requiredFeatures = (this.opts.requiredFeatures ?? []) as GPUFeatureName[];
+      const device = await adapter.requestDevice?.(
+        requiredFeatures.length ? { requiredFeatures } : undefined,
+      );
+      if (!device) {
+        throw new PresenterError('webgpu_no_device', 'adapter.requestDevice() returned null');
+      }
+      this.device = device;
+      this.queue = device.queue;
+
+      const ctx = (canvas as any).getContext('webgpu') as any;
+      if (!ctx) {
+        throw new PresenterError('webgpu_context_unavailable', 'Failed to create a WebGPU canvas context');
+      }
+      this.ctx = ctx;
+
+      this.installUncapturedErrorHandler(device);
+
+      // Report device loss asynchronously.
+      (device.lost as Promise<any> | undefined)?.then((info) => {
+        if (this.destroyed) return;
+        if (this.device !== device) return;
+        const reason = info?.reason ?? 'unknown';
+        const message = info?.message ? `: ${info.message}` : '';
+        this.opts.onError?.(new PresenterError('webgpu_device_lost', `WebGPU device lost (${reason})${message}`));
+      });
+
+      this.canvasFormat = gpu.getPreferredCanvasFormat?.() ?? 'bgra8unorm';
+      this.configureContext();
+      this.createFrameResources(width, height);
+    } catch (err) {
+      // Ensure partially initialized devices/handlers don't leak if init() fails and the worker
+      // falls back to another backend.
+      try {
+        this.destroy();
+      } catch {
+        // Ignore; rethrow original error.
+      }
+      throw err;
     }
-    this.ctx = ctx;
-
-    this.installUncapturedErrorHandler(device);
-
-    // Report device loss asynchronously.
-    (device.lost as Promise<any> | undefined)?.then((info) => {
-      if (this.destroyed) return;
-      if (this.device !== device) return;
-      const reason = info?.reason ?? 'unknown';
-      const message = info?.message ? `: ${info.message}` : '';
-      this.opts.onError?.(new PresenterError('webgpu_device_lost', `WebGPU device lost (${reason})${message}`));
-    });
-
-    this.canvasFormat = gpu.getPreferredCanvasFormat?.() ?? 'bgra8unorm';
-    this.configureContext();
-    this.createFrameResources(width, height);
   }
 
   public resize(width: number, height: number, dpr: number): void {
