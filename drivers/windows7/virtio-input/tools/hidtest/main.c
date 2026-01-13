@@ -118,6 +118,7 @@
 #define VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN 57
 #define VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN 9
 #define VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN 2
+// Mouse input report (ReportID=2) is 6 bytes: [id][buttons][x][y][wheel][AC Pan].
 #define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 6
 
 /*
