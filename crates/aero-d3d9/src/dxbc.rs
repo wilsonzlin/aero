@@ -155,6 +155,19 @@ impl<'a> Container<'a> {
 /// streams).
 pub fn extract_shader_bytecode(bytes: &[u8]) -> Result<&[u8], DxbcError> {
     if bytes.starts_with(b"DXBC") {
+        // `aero-dxbc` validates offsets by iterating the declared chunk table. Put a hard cap on
+        // `chunk_count` (a guest-controlled value) so corrupted blobs can't force us into a huge
+        // amount of work before we even locate the shader bytecode chunk.
+        if bytes.len() >= 32 {
+            let chunk_count_raw = u32::from_le_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]);
+            if chunk_count_raw > MAX_D3D9_DXBC_CHUNK_COUNT {
+                return Err(DxbcError::ChunkCountTooLarge {
+                    count: chunk_count_raw,
+                    max: MAX_D3D9_DXBC_CHUNK_COUNT,
+                });
+            }
+        }
+
         // Use the shared `aero-dxbc` parser for runtime DXBC validation and
         // chunk extraction. This is strict about bounds and respects the
         // declared `total_size` when slicing.
