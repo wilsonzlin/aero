@@ -45,6 +45,7 @@ dependencies = [
  "aero-devices",
  "aero-pci-routing",
  "aero-platform",
+ "tempfile",
 ]
 
 [[package]]

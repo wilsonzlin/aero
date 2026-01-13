@@ -107,7 +107,8 @@ fn parse_prt_entries(aml: &[u8]) -> Option<Vec<(u32, u8, u32)>> {
 
     let (pkg_len, pkg_len_bytes) = parse_pkg_length(aml, offset)?;
     offset += pkg_len_bytes;
-    let pkg_end = offset + pkg_len;
+    let pkg_payload_len = pkg_len.checked_sub(pkg_len_bytes)?;
+    let pkg_end = offset + pkg_payload_len;
 
     let count = *aml.get(offset)? as usize;
     offset += 1;
@@ -120,7 +121,8 @@ fn parse_prt_entries(aml: &[u8]) -> Option<Vec<(u32, u8, u32)>> {
         offset += 1;
         let (entry_len, entry_len_bytes) = parse_pkg_length(aml, offset)?;
         offset += entry_len_bytes;
-        let entry_end = offset + entry_len;
+        let entry_payload_len = entry_len.checked_sub(entry_len_bytes)?;
+        let entry_end = offset + entry_payload_len;
 
         let entry_count = *aml.get(offset)? as usize;
         if entry_count != 4 {

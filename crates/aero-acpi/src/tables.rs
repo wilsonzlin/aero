@@ -795,6 +795,25 @@ fn aml_pkg_length(len: usize) -> Vec<u8> {
     ]
 }
 
+fn aml_pkg_length_for_payload(payload_len: usize) -> Vec<u8> {
+    // For AML opcodes that carry a PkgLength, the encoded length is the size of the
+    // *entire* package in bytes, including the PkgLength field itself (but not
+    // including the opcode byte(s)).
+    //
+    // This is self-referential: the length value determines how many bytes the
+    // PkgLength encoding takes. Resolve it by iterating; it converges quickly
+    // because the encoding is at most 4 bytes.
+    let mut total_len = payload_len + 1;
+    loop {
+        let enc = aml_pkg_length(total_len);
+        let new_total_len = payload_len + enc.len();
+        if new_total_len == total_len {
+            return enc;
+        }
+        total_len = new_total_len;
+    }
+}
+
 fn aml_name_integer(name: [u8; 4], value: u64) -> Vec<u8> {
     let mut out = Vec::new();
     out.push(0x08); // NameOp
@@ -833,7 +852,7 @@ fn aml_scope(name: [u8; 4], body: &[u8]) -> Vec<u8> {
 
     let mut out = Vec::new();
     out.push(0x10); // ScopeOp
-    out.extend_from_slice(&aml_pkg_length(payload.len()));
+    out.extend_from_slice(&aml_pkg_length_for_payload(payload.len()));
     out.extend_from_slice(&payload);
     out
 }
@@ -845,7 +864,7 @@ fn aml_device(name: [u8; 4], body: &[u8]) -> Vec<u8> {
 
     let mut out = Vec::new();
     out.extend_from_slice(&[0x5B, 0x82]); // DeviceOp
-    out.extend_from_slice(&aml_pkg_length(payload.len()));
+    out.extend_from_slice(&aml_pkg_length_for_payload(payload.len()));
     out.extend_from_slice(&payload);
     out
 }
@@ -878,7 +897,7 @@ fn aml_processor(cpu_id: u8) -> Vec<u8> {
 
     let mut out = Vec::new();
     out.extend_from_slice(&[0x5B, 0x83]); // ProcessorOp
-    out.extend_from_slice(&aml_pkg_length(payload.len()));
+    out.extend_from_slice(&aml_pkg_length_for_payload(payload.len()));
     out.extend_from_slice(&payload);
     out
 }
@@ -908,7 +927,7 @@ fn aml_field(region: [u8; 4], field_flags: u8, fields: &[([u8; 4], usize)]) -> V
 
     let mut out = Vec::new();
     out.extend_from_slice(&[0x5B, 0x81]); // FieldOp
-    out.extend_from_slice(&aml_pkg_length(payload.len()));
+    out.extend_from_slice(&aml_pkg_length_for_payload(payload.len()));
     out.extend_from_slice(&payload);
     out
 }
@@ -936,7 +955,7 @@ fn aml_method_pic() -> Vec<u8> {
 
     let mut out = Vec::new();
     out.push(0x14); // MethodOp
-    out.extend_from_slice(&aml_pkg_length(payload.len()));
+    out.extend_from_slice(&aml_pkg_length_for_payload(payload.len()));
     out.extend_from_slice(&payload);
     out
 }
@@ -949,7 +968,7 @@ fn aml_s5() -> Vec<u8> {
     pkg_payload.push(0x02); // element count
     pkg_payload.extend_from_slice(&aml_integer(5));
     pkg_payload.extend_from_slice(&aml_integer(5));
-    pkg.extend_from_slice(&aml_pkg_length(pkg_payload.len()));
+    pkg.extend_from_slice(&aml_pkg_length_for_payload(pkg_payload.len()));
     pkg.extend_from_slice(&pkg_payload);
 
     let mut out = Vec::new();
@@ -1028,7 +1047,7 @@ fn aml_name_buffer(name: [u8; 4], bytes: &[u8]) -> Vec<u8> {
     buf_payload.extend_from_slice(&aml_integer(bytes.len() as u64));
     buf_payload.extend_from_slice(bytes);
     buf.push(0x11);
-    buf.extend_from_slice(&aml_pkg_length(buf_payload.len()));
+    buf.extend_from_slice(&aml_pkg_length_for_payload(buf_payload.len()));
     buf.extend_from_slice(&buf_payload);
 
     let mut out = Vec::new();
@@ -1057,7 +1076,7 @@ fn aml_package(elements: &[Vec<u8>]) -> Vec<u8> {
 
     let mut out = Vec::new();
     out.push(0x12); // PackageOp
-    out.extend_from_slice(&aml_pkg_length(payload.len()));
+    out.extend_from_slice(&aml_pkg_length_for_payload(payload.len()));
     out.extend_from_slice(&payload);
     out
 }
@@ -1121,7 +1140,8 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
         AddrSpaceDescriptorHeader {
             resource_type: 0x01,
             general_flags: 0x0D,
-            type_specific_flags: 0x00,
+            // "EntireRange" (ACPICA disassembler token) so the emitted descriptor round-trips.
+            type_specific_flags: 0x03,
         },
         AddrSpaceDescriptorRange {
             granularity: 0x0000,
@@ -1137,7 +1157,8 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
         AddrSpaceDescriptorHeader {
             resource_type: 0x01,
             general_flags: 0x0D,
-            type_specific_flags: 0x00,
+            // "EntireRange" (ACPICA disassembler token) so the emitted descriptor round-trips.
+            type_specific_flags: 0x03,
         },
         AddrSpaceDescriptorRange {
             granularity: 0x0000,
@@ -1531,7 +1552,7 @@ mod tests {
 
         // Field (IMCR, ByteAcc, NoLock, Preserve) { IMCS, 8, IMCD, 8 }
         let field = [
-            &[0x5B, 0x81, 0x0F][..], // FieldOp + pkglen (payload is 15 bytes)
+            &[0x5B, 0x81, 0x10][..], // FieldOp + pkglen (payload is 15 bytes, plus PkgLength byte)
             &b"IMCR"[..],
             &[0x01][..], // ByteAcc + NoLock + Preserve
             &b"IMCS"[..],
