@@ -2850,7 +2850,7 @@ impl Machine {
     ) -> Result<(), JsValue> {
         let storage = aero_opfs::OpfsByteStorage::open(&path, true)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_aerospar_opfs_create", &path, e))?;
         let disk = aero_storage::AeroSparseDisk::create(
             storage,
             aero_storage::AeroSparseConfig {
@@ -2861,7 +2861,7 @@ impl Machine {
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.inner
             .set_disk_backend(Box::new(disk))
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(js_error)
     }
 
     /// Create a new OPFS-backed Aero sparse disk (`.aerospar`), attach it as the machine's
@@ -2893,12 +2893,12 @@ impl Machine {
     pub async fn set_disk_aerospar_opfs_open(&mut self, path: String) -> Result<(), JsValue> {
         let storage = aero_opfs::OpfsByteStorage::open(&path, false)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_aerospar_opfs_open", &path, e))?;
         let disk = aero_storage::AeroSparseDisk::open(storage)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.inner
             .set_disk_backend(Box::new(disk))
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(js_error)
     }
 
     /// Open an existing OPFS-backed Aero sparse disk (`.aerospar`), attach it as the machine's
@@ -2935,13 +2935,17 @@ impl Machine {
     ) -> Result<(), JsValue> {
         let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.set_disk_cow_opfs_create(base)", &base_path, e)
+            })?;
         let base_disk = aero_storage::DiskImage::open_auto(base_storage)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_path, true)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.set_disk_cow_opfs_create(overlay)", &overlay_path, e)
+            })?;
 
         let disk = aero_storage::AeroCowDisk::create(
             base_disk,
@@ -2952,7 +2956,7 @@ impl Machine {
 
         self.inner
             .set_disk_backend(Box::new(disk))
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(js_error)
     }
 
     /// Create an OPFS-backed copy-on-write disk, attach it as the machine's canonical disk, and
@@ -2989,20 +2993,22 @@ impl Machine {
     ) -> Result<(), JsValue> {
         let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_cow_opfs_open(base)", &base_path, e))?;
         let base_disk = aero_storage::DiskImage::open_auto(base_storage)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_path, false)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.set_disk_cow_opfs_open(overlay)", &overlay_path, e)
+            })?;
 
         let disk = aero_storage::AeroCowDisk::open(base_disk, overlay_backend)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         self.inner
             .set_disk_backend(Box::new(disk))
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(js_error)
     }
 
     /// Open an OPFS-backed copy-on-write disk, attach it as the machine's canonical disk, and set
@@ -3962,6 +3968,7 @@ impl Machine {
 mod machine_opfs_disk_tests {
     use super::*;
 
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use aero_storage::VirtualDisk as _;
@@ -3982,7 +3989,9 @@ mod machine_opfs_disk_tests {
     }
 
     fn js_error_to_string(err: &JsValue) -> String {
-        err.as_string().unwrap_or_else(|| format!("{err:?}"))
+        err.as_string()
+            .or_else(|| err.dyn_ref::<js_sys::Error>().map(|e| e.message()))
+            .unwrap_or_else(|| format!("{err:?}"))
     }
 
     fn should_skip_opfs(msg: &str) -> bool {
