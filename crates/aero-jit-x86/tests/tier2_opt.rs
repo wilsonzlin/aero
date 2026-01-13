@@ -225,17 +225,15 @@ fn flag_elimination_clears_overwritten_flags() {
 
     optimize_trace(&mut trace, &OptConfig::default());
 
-    let flags: Vec<FlagSet> = trace
+    // The first add's flags are overwritten before they're observed, so its flag writes should be
+    // eliminated. Some optimizations may also rewrite the first add into a non-flag-setting form
+    // (e.g. `Addr`), so assert based on "flag writes" rather than the presence of two BinOps.
+    let flag_writes: Vec<FlagSet> = trace
         .iter_instrs()
-        .filter_map(|i| match i {
-            Instr::BinOp { flags, .. } => Some(*flags),
-            _ => None,
-        })
+        .map(|i| i.flags_written())
+        .filter(|m| !m.is_empty())
         .collect();
-
-    assert!(flags.len() >= 2);
-    assert!(flags[0].is_empty());
-    assert_eq!(flags[1], FlagSet::ALU);
+    assert_eq!(flag_writes, vec![FlagSet::ALU]);
 }
 
 #[test]
