@@ -117,11 +117,8 @@ fn file_backend_read_only_rejects_writes() {
 
     let mut backend = StdFileBackend::open(&path, true).unwrap();
     let err = backend.write_at(0, &[9]).unwrap_err();
-    match err {
-        DiskError::Io(msg) => {
-            assert!(msg.contains("write_at failed"), "unexpected error: {msg}");
-            assert!(msg.contains("path="), "unexpected error: {msg}");
-        }
-        other => panic!("expected DiskError::Io, got {other:?}"),
-    }
+    assert!(matches!(
+        err,
+        DiskError::NotSupported(msg) if msg == "read-only backend"
+    ));
 }

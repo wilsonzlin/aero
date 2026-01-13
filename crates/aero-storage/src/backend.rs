@@ -206,6 +206,7 @@ impl StorageBackend for MemBackend {
 pub struct StdFileBackend {
     file: File,
     path: Option<PathBuf>,
+    read_only: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -227,6 +228,7 @@ impl StdFileBackend {
         Ok(Self {
             file,
             path: Some(path_ref.to_path_buf()),
+            read_only,
         })
     }
 
@@ -260,6 +262,7 @@ impl StdFileBackend {
         let mut backend = Self {
             file,
             path: Some(path_ref.to_path_buf()),
+            read_only: false,
         };
         backend.set_len(size)?;
         Ok(backend)
@@ -276,7 +279,11 @@ impl StdFileBackend {
     /// Note: the returned backend has no path metadata (used only for error messages).
     #[must_use]
     pub fn from_file(file: File) -> Self {
-        Self { file, path: None }
+        Self {
+            file,
+            path: None,
+            read_only: false,
+        }
     }
 
     /// Wrap an already-open [`std::fs::File`] and attach a display path for error messages.
@@ -285,6 +292,7 @@ impl StdFileBackend {
         Self {
             file,
             path: Some(path.as_ref().to_path_buf()),
+            read_only: false,
         }
     }
 
@@ -360,6 +368,9 @@ impl StorageBackend for StdFileBackend {
     }
 
     fn set_len(&mut self, len: u64) -> Result<()> {
+        if self.read_only {
+            return Err(DiskError::NotSupported("read-only backend".to_string()));
+        }
         self.file.set_len(len).map_err(|e| {
             DiskError::Io(format!(
                 "set_len failed (path={} len={}): {e}",
@@ -413,6 +424,9 @@ impl StorageBackend for StdFileBackend {
     }
 
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> Result<()> {
+        if self.read_only {
+            return Err(DiskError::NotSupported("read-only backend".to_string()));
+        }
         let len_u64 = u64::try_from(buf.len()).map_err(|_| DiskError::OffsetOverflow)?;
         let end = offset
             .checked_add(len_u64)
