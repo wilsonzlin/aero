@@ -39,3 +39,11 @@ required-features = ["legacy-interp"]
 [[bench]]
 name = "paging_bus_bulk"
 harness = false
+
+[[bench]]
+name = "tier0_alu"
+harness = false
+
+[[bench]]
+name = "tier0_rep_movsb"
+harness = false
