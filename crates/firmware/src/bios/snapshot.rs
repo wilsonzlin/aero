@@ -228,6 +228,16 @@ impl BiosSnapshot {
             None => w.write_all(&[0])?,
         }
 
+        // v4 extension block: BIOS config video overrides.
+        w.write_all(&[3])?;
+        match self.config.vbe_lfb_base {
+            Some(base) => {
+                w.write_all(&[1])?;
+                w.write_all(&base.to_le_bytes())?;
+            }
+            None => w.write_all(&[0])?,
+        }
+
         Ok(())
     }
 
@@ -373,6 +383,17 @@ impl BiosSnapshot {
                             smbios_eps_addr = Some(u32::from_le_bytes(buf4));
                         }
                     }
+                    3 => {
+                        let mut present = [0u8; 1];
+                        r.read_exact(&mut present)?;
+                        if present[0] != 0 {
+                            let mut buf4 = [0u8; 4];
+                            r.read_exact(&mut buf4)?;
+                            config.vbe_lfb_base = Some(u32::from_le_bytes(buf4));
+                        } else {
+                            config.vbe_lfb_base = None;
+                        }
+                    }
                     _ => {
                         // Unknown extension; ignore trailing bytes.
                         break;
@@ -438,5 +459,44 @@ impl Bios {
         self.smbios_eps_addr = snapshot.smbios_eps_addr;
         self.last_int13_status = snapshot.last_int13_status;
         snapshot.vbe.restore(&mut self.video.vbe);
+        if let Some(base) = self.config.vbe_lfb_base {
+            self.video.vbe.lfb_base = base;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn bios_snapshot_encode_decode_preserves_vbe_lfb_base_config_override() {
+        let base = 0xDEAD_BEEFu32;
+        let bios = Bios::new(BiosConfig {
+            vbe_lfb_base: Some(base),
+            ..BiosConfig::default()
+        });
+        let snapshot = bios.snapshot();
+
+        let mut buf = Vec::new();
+        snapshot.encode(&mut buf).unwrap();
+
+        let decoded = BiosSnapshot::decode(&mut Cursor::new(&buf)).unwrap();
+        assert_eq!(decoded.config.vbe_lfb_base, Some(base));
+    }
+
+    #[test]
+    fn restore_snapshot_applies_vbe_lfb_base_config_override() {
+        let mut bios = Bios::new(BiosConfig::default());
+        let mut snapshot = bios.snapshot();
+        snapshot.vbe.lfb_base = 0x1234_0000;
+        snapshot.config.vbe_lfb_base = Some(0x5678_0000);
+
+        let mut mem = crate::memory::VecMemory::new(2 * 1024 * 1024);
+        bios.restore_snapshot(snapshot, &mut mem);
+
+        assert_eq!(bios.video.vbe.lfb_base, 0x5678_0000);
     }
 }

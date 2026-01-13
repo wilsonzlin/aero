@@ -5549,26 +5549,31 @@ impl snapshot::SnapshotTarget for Machine {
         // Firmware snapshot: required for deterministic BIOS interrupt behaviour.
         if let Some(state) = by_id.remove(&snapshot::DeviceId::BIOS) {
             if state.version == 1 {
-                if let Ok(snapshot) =
+                // Keep the BIOS VBE LFB base coherent with the machine's VGA wiring even when
+                // restoring a snapshot taken under a different `enable_vga` configuration.
+                //
+                // - When VGA is enabled, the machine exposes the SVGA linear framebuffer (LFB) at
+                //   the fixed MMIO address `SVGA_LFB_BASE`.
+                // - When VGA is disabled, avoid reporting `SVGA_LFB_BASE` since it overlaps the
+                //   canonical PCI MMIO window (0xE0000000).
+                let lfb_base = if self.cfg.enable_vga {
+                    aero_gpu_vga::SVGA_LFB_BASE
+                } else {
+                    firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+                };
+
+                if let Ok(mut snapshot) =
                     firmware::bios::BiosSnapshot::decode(&mut Cursor::new(&state.data))
                 {
+                    // `vbe_lfb_base` is a firmware configuration knob; treat the machine wiring as
+                    // the source of truth when restoring.
+                    snapshot.config.vbe_lfb_base =
+                        self.cfg.enable_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE);
+                    snapshot.vbe.lfb_base = lfb_base;
                     self.bios.restore_snapshot(snapshot, &mut self.mem);
                 }
             }
         }
-        // Keep the BIOS VBE LFB base coherent with the machine's VGA wiring, even if the snapshot
-        // did not include a BIOS section (or it failed to decode).
-        //
-        // When VGA is enabled, the machine exposes the SVGA linear framebuffer (LFB) at the fixed
-        // MMIO address `SVGA_LFB_BASE`.
-        //
-        // When VGA is disabled, avoid reporting `SVGA_LFB_BASE` since it overlaps the canonical PCI
-        // MMIO window (0xE0000000).
-        self.bios.video.vbe.lfb_base = if self.cfg.enable_vga {
-            aero_gpu_vga::SVGA_LFB_BASE
-        } else {
-            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
-        };
 
         // Memory/chipset glue.
         if let Some(state) = by_id.remove(&snapshot::DeviceId::MEMORY) {
