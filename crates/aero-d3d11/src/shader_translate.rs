@@ -937,6 +937,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
             }
+            Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
             Sm4Inst::Unknown { .. } | Sm4Inst::Ret => {}
         }
     }
@@ -1932,6 +1933,7 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
                 uav_buffers.insert(uav.slot);
             }
             Sm4Inst::Unknown { .. } => {}
+            Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
             Sm4Inst::Ret => {}
         }
     }
@@ -2101,6 +2103,7 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(value, &mut scan_reg);
             }
             Sm4Inst::Unknown { .. } => {}
+            Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
             Sm4Inst::Ret => {}
         }
     }
@@ -2546,6 +2549,18 @@ fn emit_instructions(
                     opcode: format!("opcode_{opcode}"),
                 });
             }
+            Sm4Inst::Emit { .. } => {
+                return Err(ShaderTranslateError::UnsupportedInstruction {
+                    inst_index,
+                    opcode: "emit".to_owned(),
+                });
+            }
+            Sm4Inst::Cut { .. } => {
+                return Err(ShaderTranslateError::UnsupportedInstruction {
+                    inst_index,
+                    opcode: "cut".to_owned(),
+                });
+            }
             Sm4Inst::Ret => {
                 // DXBC `ret` returns from the current shader invocation. We only need to emit an
                 // explicit WGSL `return` when it appears inside a structured control-flow block;
@@ -2572,6 +2587,10 @@ fn emit_instructions(
                             target_param.param.mask,
                         );
                         w.line(&format!("return {return_expr};"));
+                    }
+                    ShaderStage::Compute => {
+                        // Compute entrypoints return `()`.
+                        w.line("return;");
                     }
                     other => {
                         return Err(ShaderTranslateError::UnsupportedStage(other));
@@ -2602,6 +2621,7 @@ fn emit_src_vec4(
             RegFile::Output => format!("o{}", reg.index),
             RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
         },
+        SrcKind::GsInput { .. } => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
         SrcKind::ConstantBuffer { slot, reg } => {
             // Size is determined by scanning, so the declared array is always
             // large enough.
@@ -2681,6 +2701,7 @@ fn emit_src_vec4_i32(
             };
             format!("bitcast<vec4<i32>>({expr})")
         }
+        SrcKind::GsInput { .. } => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
         SrcKind::ConstantBuffer { slot, reg } => {
             let _ = ctx.resources.cbuffers.get(slot);
             format!("bitcast<vec4<i32>>(cb{slot}.regs[{reg}])")

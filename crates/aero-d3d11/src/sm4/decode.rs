@@ -698,6 +698,24 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Ret)
         }
+        OPCODE_EMIT => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::Emit { stream: 0 })
+        }
+        OPCODE_CUT => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::Cut { stream: 0 })
+        }
+        OPCODE_EMIT_STREAM => {
+            let stream = decode_stream_index(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Emit { stream })
+        }
+        OPCODE_CUT_STREAM => {
+            let stream = decode_stream_index(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Cut { stream })
+        }
         OPCODE_SAMPLE | OPCODE_SAMPLE_L => decode_sample_like(opcode, saturate, &mut r),
         OPCODE_LD => decode_ld(saturate, &mut r),
         OPCODE_LD_RAW => decode_ld_raw(saturate, &mut r),
@@ -716,6 +734,23 @@ pub fn decode_instruction(
             Ok(Sm4Inst::Unknown { opcode: other })
         }
     }
+}
+
+fn decode_stream_index(r: &mut InstrReader<'_>) -> Result<u32, Sm4DecodeError> {
+    // `emit_stream` / `cut_stream` take a single immediate operand indicating the
+    // stream index (0..=3).
+    //
+    // The operand is encoded as an immediate32 scalar (replicated lanes).
+    let op = decode_raw_operand(r)?;
+    let Some(imm) = op.imm32 else {
+        return Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperand(
+                "stream instruction expects an immediate stream index",
+            ),
+        });
+    };
+    Ok(imm[0])
 }
 
 fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
@@ -846,6 +881,35 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
         let z = r.read_u32()?;
         r.expect_eof()?;
         return Ok(Sm4Decl::ThreadGroupSize { x, y, z });
+    }
+    // Geometry shader metadata declarations do not use an operand token; they carry
+    // a small immediate payload (or no payload) instead.
+    match opcode {
+        OPCODE_DCL_GS_INPUT_PRIMITIVE => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let primitive = r.read_u32()?;
+            r.expect_eof()?;
+            return Ok(Sm4Decl::GsInputPrimitive { primitive });
+        }
+        OPCODE_DCL_GS_OUTPUT_TOPOLOGY => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let topology = r.read_u32()?;
+            r.expect_eof()?;
+            return Ok(Sm4Decl::GsOutputTopology { topology });
+        }
+        OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let max = r.read_u32()?;
+            r.expect_eof()?;
+            return Ok(Sm4Decl::GsMaxOutputVertexCount { max });
+        }
+        _ => {}
     }
 
     if r.is_eof() {
@@ -1192,7 +1256,29 @@ fn decode_src(r: &mut InstrReader<'_>) -> Result<SrcOperand, Sm4DecodeError> {
             }),
             OPERAND_TYPE_INPUT => SrcKind::Register(RegisterRef {
                 file: RegFile::Input,
-                index: one_index(op.ty, &op.indices, r.base_at)?,
+                index: match op.indices.as_slice() {
+                    [idx] => *idx,
+                    // Geometry shader inputs are 2D-indexed: [reg, vertex] (e.g. v0[2]).
+                    [reg, vertex] => {
+                        return Ok(SrcOperand {
+                            kind: SrcKind::GsInput {
+                                reg: *reg,
+                                vertex: *vertex,
+                            },
+                            swizzle,
+                            modifier: op.modifier,
+                        });
+                    }
+                    _ => {
+                        return Err(Sm4DecodeError {
+                            at_dword: r.base_at + r.pos.saturating_sub(1),
+                            kind: Sm4DecodeErrorKind::InvalidRegisterIndices {
+                                ty: op.ty,
+                                indices: op.indices,
+                            },
+                        });
+                    }
+                },
             }),
             OPERAND_TYPE_OUTPUT => SrcKind::Register(RegisterRef {
                 file: RegFile::Output,

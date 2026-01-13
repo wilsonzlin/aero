@@ -82,6 +82,24 @@ pub enum Sm4Decl {
         stride: u32,
         kind: BufferKind,
     },
+    /// Geometry shader input primitive type (e.g. point/line/triangle).
+    ///
+    /// Encoded by `dcl_inputprimitive` in SM4/SM5 token streams.
+    GsInputPrimitive {
+        primitive: u32,
+    },
+    /// Geometry shader output topology (e.g. point/line/triangle_strip).
+    ///
+    /// Encoded by `dcl_outputtopology` in SM4/SM5 token streams.
+    GsOutputTopology {
+        topology: u32,
+    },
+    /// Geometry shader maximum number of vertices that can be emitted.
+    ///
+    /// Encoded by `dcl_maxout` / `dcl_maxvertexcount` in SM4/SM5 token streams.
+    GsMaxOutputVertexCount {
+        max: u32,
+    },
     /// Compute shader thread group size (`dcl_thread_group x, y, z`).
     ///
     /// WGSL requires this information to emit `@workgroup_size(x, y, z)` on the
@@ -307,6 +325,18 @@ pub enum Sm4Inst {
     Unknown {
         opcode: u32,
     },
+    /// Geometry shader `emit` / `emit_stream`.
+    ///
+    /// `stream` is always 0 for `emit`, and 0..=3 for `emit_stream`.
+    Emit {
+        stream: u32,
+    },
+    /// Geometry shader `cut` / `cut_stream`.
+    ///
+    /// `stream` is always 0 for `cut`, and 0..=3 for `cut_stream`.
+    Cut {
+        stream: u32,
+    },
     Ret,
 }
 
@@ -381,6 +411,13 @@ pub struct SrcOperand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SrcKind {
     Register(RegisterRef),
+    /// Geometry shader input operand (`v#[]`), indexed by vertex within the input primitive.
+    ///
+    /// D3D assembly syntax typically looks like `v0[2]`, where `reg=0` and `vertex=2`.
+    GsInput {
+        reg: u32,
+        vertex: u32,
+    },
     ConstantBuffer {
         slot: u32,
         reg: u32,

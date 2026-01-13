@@ -56,6 +56,17 @@ pub const OPCODE_CUSTOMDATA: u32 = 0x1f;
 
 pub const OPCODE_RET: u32 = 0x3e;
 
+// Geometry shader stream emission / cutting.
+//
+// Values from the D3D10+ tokenized shader format opcode table:
+// `D3D10_SB_OPCODE_TYPE_EMIT`, `D3D10_SB_OPCODE_TYPE_CUT`,
+// `D3D10_SB_OPCODE_TYPE_EMIT_STREAM`, `D3D10_SB_OPCODE_TYPE_CUT_STREAM`
+// in the Windows SDK header `d3d10tokenizedprogramformat.h`.
+pub const OPCODE_EMIT: u32 = 0x3f;
+pub const OPCODE_CUT: u32 = 0x40;
+pub const OPCODE_EMIT_STREAM: u32 = 0x41;
+pub const OPCODE_CUT_STREAM: u32 = 0x42;
+
 pub const OPCODE_SAMPLE: u32 = 0x45;
 pub const OPCODE_SAMPLE_L: u32 = 0x46;
 /// `ld` (Resource load; used by `Texture2D.Load`).
@@ -77,6 +88,18 @@ pub const OPCODE_STORE_RAW: u32 = 0x56;
 ///
 /// Upstream: `D3D11_SB_OPCODE_STORE_STRUCTURED`.
 pub const OPCODE_STORE_STRUCTURED: u32 = 0x57;
+
+// ---- Declaration opcodes (subset) ----
+//
+// Values are sourced from the D3D10/11 tokenized shader format opcode table in the
+// Windows SDK headers `d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h`.
+
+/// `dcl_inputprimitive` (geometry shader input primitive).
+pub const OPCODE_DCL_GS_INPUT_PRIMITIVE: u32 = 0x10c;
+/// `dcl_outputtopology` (geometry shader output topology).
+pub const OPCODE_DCL_GS_OUTPUT_TOPOLOGY: u32 = 0x10d;
+/// `dcl_maxout` / `dcl_maxvertexcount` (geometry shader max output vertex count).
+pub const OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT: u32 = 0x10e;
 
 /// `dcl_thread_group` declaration.
 ///
