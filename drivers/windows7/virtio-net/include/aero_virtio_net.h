@@ -63,6 +63,11 @@ typedef struct _VIRTIO_NET_HDR {
 
 C_ASSERT(sizeof(VIRTIO_NET_HDR) == 10);
 
+// virtio-net per-packet header flags (virtio spec `virtio_net_hdr.flags`).
+// These are used on both TX and RX when checksum/GSO features are negotiated.
+#define VIRTIO_NET_HDR_F_NEEDS_CSUM 0x01u
+#define VIRTIO_NET_HDR_F_DATA_VALID 0x02u
+
 typedef struct _VIRTIO_NET_CONFIG {
   UCHAR Mac[6];
   USHORT Status;
