@@ -347,6 +347,14 @@ __forceinline BOOLEAN VirtioInputIsHidActive(_In_ const DEVICE_CONTEXT* Ctx)
     return Ctx->HardwareReady && Ctx->InD0 && Ctx->HidActivated;
 }
 
+/*
+ * Updates transport-side state that depends on the HID stack and device kind.
+ *
+ * Currently this only toggles StatusQ (queue 1) active/inactive. StatusQ is
+ * only used by keyboards (e.g. LED writes) and should remain inactive for mice.
+ */
+VOID VirtioInputUpdateStatusQActiveState(_In_ PDEVICE_CONTEXT Ctx);
+
 EVT_WDF_DRIVER_DEVICE_ADD VirtioInputEvtDriverDeviceAdd;
 EVT_WDF_DEVICE_PREPARE_HARDWARE VirtioInputEvtDevicePrepareHardware;
 EVT_WDF_DEVICE_RELEASE_HARDWARE VirtioInputEvtDeviceReleaseHardware;

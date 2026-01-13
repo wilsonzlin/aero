@@ -25,25 +25,6 @@ static VOID VirtioInputFlushPendingReportRings(_In_ PDEVICE_CONTEXT Ctx)
     WdfSpinLockRelease(Ctx->ReadReportLock);
 }
 
-static VOID VirtioInputApplyTransportState(_In_ PDEVICE_CONTEXT Ctx)
-{
-    BOOLEAN active;
-
-    if (Ctx == NULL || Ctx->StatusQ == NULL) {
-        return;
-    }
-
-    active = VirtioInputIsHidActive(Ctx) && (Ctx->DeviceKind == VioInputDeviceKindKeyboard);
-
-    if (Ctx->Interrupts.QueueLocks != NULL && Ctx->Interrupts.QueueCount > 1) {
-        WdfSpinLockAcquire(Ctx->Interrupts.QueueLocks[1]);
-        VirtioStatusQSetActive(Ctx->StatusQ, active);
-        WdfSpinLockRelease(Ctx->Interrupts.QueueLocks[1]);
-    } else {
-        VirtioStatusQSetActive(Ctx->StatusQ, active);
-    }
-}
-
 NTSTATUS VirtioInputHidActivateDevice(_In_ WDFDEVICE Device)
 {
     PDEVICE_CONTEXT ctx = VirtioInputGetDeviceContext(Device);
@@ -60,7 +41,7 @@ NTSTATUS VirtioInputHidActivateDevice(_In_ WDFDEVICE Device)
         virtio_input_device_reset_state(&ctx->InputDevice, true);
     }
 
-    VirtioInputApplyTransportState(ctx);
+    VirtioInputUpdateStatusQActiveState(ctx);
     return STATUS_SUCCESS;
 }
 
@@ -69,7 +50,7 @@ NTSTATUS VirtioInputHidDeactivateDevice(_In_ WDFDEVICE Device)
     PDEVICE_CONTEXT ctx = VirtioInputGetDeviceContext(Device);
 
     ctx->HidActivated = FALSE;
-    VirtioInputApplyTransportState(ctx);
+    VirtioInputUpdateStatusQActiveState(ctx);
     VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);
     VirtioInputDrainReportRing(ctx);
     virtio_input_device_reset_state(&ctx->InputDevice, false);

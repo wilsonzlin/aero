@@ -23,7 +23,6 @@
 #endif
 
 static VOID VioInputSetDeviceKind(_Inout_ PDEVICE_CONTEXT Ctx, _In_ VIOINPUT_DEVICE_KIND Kind);
-static VOID VirtioInputApplyTransportState(_In_ PDEVICE_CONTEXT DeviceContext);
 static VOID VirtioInputInterruptsQuiesceForReset(_Inout_ PDEVICE_CONTEXT DeviceContext);
 static NTSTATUS VirtioInputInterruptsResumeAfterReset(_Inout_ PDEVICE_CONTEXT DeviceContext);
 
@@ -701,7 +700,7 @@ static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
 
     ctx->VirtioStarted = 0;
     ctx->InD0 = FALSE;
-    VirtioInputApplyTransportState(ctx);
+    VirtioInputUpdateStatusQActiveState(ctx);
 
     VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_CANCELLED);
     VioInputDrainInputReportRing(ctx);
@@ -829,22 +828,22 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
     return VirtioInputQueueInitialize(device);
 }
 
-static VOID VirtioInputApplyTransportState(_In_ PDEVICE_CONTEXT DeviceContext)
+VOID VirtioInputUpdateStatusQActiveState(_In_ PDEVICE_CONTEXT Ctx)
 {
     BOOLEAN active;
 
-    active = VirtioInputIsHidActive(DeviceContext) && (DeviceContext->DeviceKind == VioInputDeviceKindKeyboard);
-
-    if (DeviceContext->StatusQ == NULL) {
+    if (Ctx == NULL || Ctx->StatusQ == NULL) {
         return;
     }
 
-    if (DeviceContext->Interrupts.QueueLocks != NULL && DeviceContext->Interrupts.QueueCount > 1) {
-        WdfSpinLockAcquire(DeviceContext->Interrupts.QueueLocks[1]);
-        VirtioStatusQSetActive(DeviceContext->StatusQ, active);
-        WdfSpinLockRelease(DeviceContext->Interrupts.QueueLocks[1]);
+    active = VirtioInputIsHidActive(Ctx) && (Ctx->DeviceKind == VioInputDeviceKindKeyboard);
+
+    if (Ctx->Interrupts.QueueLocks != NULL && Ctx->Interrupts.QueueCount > 1) {
+        WdfSpinLockAcquire(Ctx->Interrupts.QueueLocks[1]);
+        VirtioStatusQSetActive(Ctx->StatusQ, active);
+        WdfSpinLockRelease(Ctx->Interrupts.QueueLocks[1]);
     } else {
-        VirtioStatusQSetActive(DeviceContext->StatusQ, active);
+        VirtioStatusQSetActive(Ctx->StatusQ, active);
     }
 }
 
@@ -1080,7 +1079,7 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     deviceContext->Interrupts.DpcCounter = &deviceContext->Counters.VirtioDpcs;
 
     deviceContext->HardwareReady = TRUE;
-    VirtioInputApplyTransportState(deviceContext);
+    VirtioInputUpdateStatusQActiveState(deviceContext);
     return STATUS_SUCCESS;
 }
 
@@ -1098,7 +1097,7 @@ NTSTATUS VirtioInputEvtDeviceReleaseHardware(_In_ WDFDEVICE Device, _In_ WDFCMRE
         deviceContext->InD0 = FALSE;
         deviceContext->HidActivated = FALSE;
         deviceContext->VirtioStarted = 0;
-        VirtioInputApplyTransportState(deviceContext);
+        VirtioInputUpdateStatusQActiveState(deviceContext);
 
         virtio_input_device_reset_state(&deviceContext->InputDevice, false);
 
@@ -1782,7 +1781,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         }
     }
 
-    VirtioInputApplyTransportState(deviceContext);
+    VirtioInputUpdateStatusQActiveState(deviceContext);
     return STATUS_SUCCESS;
 }
 
@@ -1801,7 +1800,7 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
     VioInputDrainInputReportRing(deviceContext);
     virtio_input_device_reset_state(&deviceContext->InputDevice, false);
 
-    VirtioInputApplyTransportState(deviceContext);
+    VirtioInputUpdateStatusQActiveState(deviceContext);
 
     if (deviceContext->PciDevice.CommonCfg != NULL) {
         VirtioInputInterruptsQuiesceForReset(deviceContext);
