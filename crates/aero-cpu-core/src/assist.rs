@@ -12,6 +12,16 @@ use crate::segmentation::{LoadReason, Seg};
 use crate::state::{mask_bits, CpuMode, CpuState, RFLAGS_IOPL_MASK};
 use crate::time::TimeSource;
 
+/// Maximum number of `INVLPG` addresses retained in [`AssistContext::invlpg_log`].
+///
+/// This log is only intended for tests/debugging; bounding it prevents unbounded
+/// memory growth in long-running test workloads that execute many `INVLPG`s.
+pub const MAX_INVLPG_LOG_ENTRIES: usize = 4096;
+
+// Backwards-compat alias for the constant name used in older discussions/specs.
+// (The "B" is a typo, but keeping it avoids churn in downstream code/tests.)
+pub const MAX_INVLPGB_LOG_ENTRIES: usize = MAX_INVLPG_LOG_ENTRIES;
+
 /// Runtime context needed by the Tier-0 assist layer.
 ///
 /// Tier-0 is intentionally minimal and does not model system state like MSRs,
@@ -25,10 +35,14 @@ pub struct AssistContext {
     /// keeping `IA32_EFER` coherent with advertised features).
     pub features: CpuFeatures,
     /// Optional log of `INVLPG` linear addresses (useful for integration tests).
+    ///
+    /// The log is bounded to [`MAX_INVLPG_LOG_ENTRIES`]. When the capacity is
+    /// reached, new entries are dropped and
+    /// [`AssistContext::dropped_invlpg_log_entries`] is incremented.
     pub invlpg_log: Vec<u64>,
     /// Number of `INVLPG` log entries dropped because [`AssistContext::invlpg_log`] hit
     /// [`AssistContext::INVLPG_LOG_CAP`].
-    pub invlpg_log_dropped: u64,
+    pub dropped_invlpg_log_entries: u64,
 }
 
 impl AssistContext {
@@ -36,17 +50,17 @@ impl AssistContext {
     ///
     /// This log is a debug/testing facility and must never grow without bound (guest kernels can
     /// execute `INVLPG` frequently).
-    pub const INVLPG_LOG_CAP: usize = 4096;
+    pub const INVLPG_LOG_CAP: usize = MAX_INVLPG_LOG_ENTRIES;
 
     #[inline]
     pub fn invlpg_log_dropped(&self) -> u64 {
-        self.invlpg_log_dropped
+        self.dropped_invlpg_log_entries
     }
 
     #[inline]
     pub fn clear_invlpg_log(&mut self) {
         self.invlpg_log.clear();
-        self.invlpg_log_dropped = 0;
+        self.dropped_invlpg_log_entries = 0;
     }
 
     #[inline]
@@ -54,7 +68,8 @@ impl AssistContext {
         if self.invlpg_log.len() < Self::INVLPG_LOG_CAP {
             self.invlpg_log.push(addr);
         } else {
-            self.invlpg_log_dropped = self.invlpg_log_dropped.saturating_add(1);
+            self.dropped_invlpg_log_entries =
+                self.dropped_invlpg_log_entries.saturating_add(1);
         }
     }
 }

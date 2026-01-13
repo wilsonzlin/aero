@@ -560,7 +560,7 @@ impl WasmVm {
 
         // Reset runtime bookkeeping that is intentionally not part of the snapshot encoding.
         self.cpu.pending = Default::default();
-        self.assist.invlpg_log.clear();
+        self.assist.clear_invlpg_log();
 
         // Restore deterministic TSC/time bookkeeping.
         let tsc_hz = self.cpu.time.tsc_hz();
