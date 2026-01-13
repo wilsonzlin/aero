@@ -2362,8 +2362,8 @@ impl AerogpuD3d11Executor {
         report: &mut ExecuteReport,
     ) -> Result<()> {
         let has_color_targets = self.state.render_targets.iter().any(|rt| rt.is_some());
-        if !has_color_targets {
-            bail!("aerogpu_cmd: draw without bound render target");
+        if !has_color_targets && self.state.depth_stencil.is_none() {
+            bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
 
         let Some(next) = stream.iter.peek() else {
@@ -2785,7 +2785,13 @@ impl AerogpuD3d11Executor {
             .flatten()
             .next()
             .and_then(|rt| self.resources.textures.get(rt))
-            .map(|tex| (tex.desc.width, tex.desc.height));
+            .map(|tex| (tex.desc.width, tex.desc.height))
+            .or_else(|| {
+                self.state
+                    .depth_stencil
+                    .and_then(|ds| self.resources.textures.get(&ds))
+                    .map(|tex| (tex.desc.width, tex.desc.height))
+            });
 
         let (color_attachments, depth_stencil_attachment) =
             build_render_pass_attachments(&self.resources, &self.state, wgpu::LoadOp::Load)?;
@@ -9539,7 +9545,6 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
         super::wgsl_link::locations_in_struct(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL, "VsOut")?;
 
     let mut ps_link_locations = ps_declared_inputs.clone();
-    let mut fragment_shader = ps.wgsl_hash;
 
     let ps_missing_locations: BTreeSet<u32> = ps_declared_inputs
         .difference(&vs_outputs)
@@ -9558,18 +9563,41 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
             .intersection(&vs_outputs)
             .copied()
             .collect();
-        if ps_link_locations != ps_declared_inputs {
-            let trimmed_ps_wgsl =
-                super::wgsl_link::trim_ps_inputs_to_locations(&ps.wgsl_source, &ps_link_locations);
-            let (hash, _module) = pipeline_cache.get_or_create_shader_module(
-                device,
-                map_pipeline_cache_stage(ShaderStage::Pixel),
-                &trimmed_ps_wgsl,
-                Some("aerogpu_cmd expanded linked pixel shader"),
-            );
-            fragment_shader = hash;
-        }
     }
+
+    let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl_source.as_str());
+    if ps_link_locations != ps_declared_inputs {
+        linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+            linked_ps_wgsl.as_ref(),
+            &ps_link_locations,
+        ));
+    }
+
+    // Trim fragment shader outputs to the currently-bound render target slots.
+    let keep_output_locations: BTreeSet<u32> = (0..state.render_targets.len() as u32).collect();
+    let declared_outputs = super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
+    let missing_outputs: BTreeSet<u32> = declared_outputs
+        .difference(&keep_output_locations)
+        .copied()
+        .collect();
+    if !missing_outputs.is_empty() {
+        linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
+            linked_ps_wgsl.as_ref(),
+            &keep_output_locations,
+        ));
+    }
+
+    let fragment_shader = if linked_ps_wgsl.as_ref() == ps.wgsl_source.as_str() {
+        ps.wgsl_hash
+    } else {
+        let (hash, _module) = pipeline_cache.get_or_create_shader_module(
+            device,
+            map_pipeline_cache_stage(ShaderStage::Pixel),
+            linked_ps_wgsl.as_ref(),
+            Some("aerogpu_cmd expanded linked pixel shader"),
+        );
+        hash
+    };
 
     let needs_trim = vs_outputs != ps_link_locations;
     let selected_vs_hash = if state.depth_clip_enabled {
