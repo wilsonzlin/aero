@@ -13,6 +13,12 @@ net-trace = []
 # Enable verbose debug logging from the user-space network stack.
 net_log = []
 sinc-resampler = []
+# Opt-in dependency edges to canonical storage device/controller crates.
+#
+# This is kept behind a feature flag for now to avoid pulling the new crates into all build
+# configurations (and to keep dependency graphs minimal until the legacy controller copies are
+# removed).
+storage-device-crates = ["dep:aero-devices-storage", "dep:aero-devices-nvme"]
 # Legacy audio stack (AC97/HDA/DSP + the old virtio-snd model). This is not part of the
 # browser/WASM runtime path; it is retained for reference and for targeted tests.
 legacy-audio = []
@@ -35,6 +41,8 @@ aero-protocol = { path = "../../emulator/protocol" }
 aero-gpu = { path = "../aero-gpu", optional = true }
 aero-storage = { path = "../aero-storage" }
 aero-storage-adapters = { path = "../aero-storage-adapters" }
+aero-devices-storage = { path = "../aero-devices-storage", optional = true }
+aero-devices-nvme = { path = "../aero-devices-nvme", optional = true }
 anyhow = { version = "1", optional = true }
 font8x8 = "0.3"
 lru = "0.16"
