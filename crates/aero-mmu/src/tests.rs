@@ -1253,3 +1253,200 @@ fn invpcid_individual_address_targets_only_specified_pcid() {
     assert_eq!(mem.reads(), 0);
     assert_eq!(mem.writes(), 0);
 }
+
+#[test]
+fn pae_4kb_translate_probe_is_side_effect_free() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x20000);
+
+    let pdpt_base = 0x1000u64;
+    let pd_base = 0x2000u64;
+    let pt_base = 0x3000u64;
+    let page_base = 0x4000u64;
+
+    let vaddr = 0x1234u64;
+    let pdpt_index = (vaddr >> 30) & 0x3;
+    let pd_index = (vaddr >> 21) & 0x1ff;
+    let pt_index = (vaddr >> 12) & 0x1ff;
+    let page_off = vaddr & 0xfff;
+
+    // PDPTE -> PD (PAE PDPT entries have a reduced flag set; notably no A/D bits).
+    mem.write_u64_raw(pdpt_base + pdpt_index * 8, pd_base | PTE_P64);
+    // PDE -> PT
+    mem.write_u64_raw(
+        pd_base + pd_index * 8,
+        pt_base | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+    // PTE -> page
+    mem.write_u64_raw(
+        pt_base + pt_index * 8,
+        page_base | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+
+    mmu.set_cr3(pdpt_base);
+    mmu.set_cr4(CR4_PAE);
+    mmu.set_cr0(CR0_PG);
+
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate_probe(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + page_off)
+    );
+    assert_eq!(mem.writes(), 0);
+
+    // Probe must not set accessed/dirty bits in guest page tables.
+    let pde = mem.read_u64_raw(pd_base + pd_index * 8);
+    let pte = mem.read_u64_raw(pt_base + pt_index * 8);
+    assert_eq!(pde & PTE_A64, 0);
+    assert_eq!(pte & PTE_A64, 0);
+    assert_eq!(pte & PTE_D64, 0);
+
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate_probe(&mut mem, vaddr, AccessType::Write, 3),
+        Ok(page_base + page_off)
+    );
+    assert_eq!(mem.writes(), 0);
+
+    let pde2 = mem.read_u64_raw(pd_base + pd_index * 8);
+    let pte2 = mem.read_u64_raw(pt_base + pt_index * 8);
+    assert_eq!(pde2 & PTE_A64, 0);
+    assert_eq!(pte2 & PTE_A64, 0);
+    assert_eq!(pte2 & PTE_D64, 0);
+}
+
+#[test]
+fn long4_4kb_translate_probe_is_side_effect_free() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page_base = 0x5000u64;
+
+    let vaddr = 0x1234u64;
+    let pml4_index = (vaddr >> 39) & 0x1ff;
+    let pdpt_index = (vaddr >> 30) & 0x1ff;
+    let pd_index = (vaddr >> 21) & 0x1ff;
+    let pt_index = (vaddr >> 12) & 0x1ff;
+    let page_off = vaddr & 0xfff;
+
+    mem.write_u64_raw(
+        pml4_base + pml4_index * 8,
+        pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+    mem.write_u64_raw(
+        pdpt_base + pdpt_index * 8,
+        pd_base | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+    mem.write_u64_raw(
+        pd_base + pd_index * 8,
+        pt_base | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+    mem.write_u64_raw(
+        pt_base + pt_index * 8,
+        page_base | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+
+    mmu.set_cr3(pml4_base);
+    mmu.set_cr4(CR4_PAE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate_probe(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + page_off)
+    );
+    assert_eq!(mem.writes(), 0);
+
+    // Probe must not set accessed/dirty bits in guest page tables.
+    let pml4e = mem.read_u64_raw(pml4_base + pml4_index * 8);
+    let pdpte = mem.read_u64_raw(pdpt_base + pdpt_index * 8);
+    let pde = mem.read_u64_raw(pd_base + pd_index * 8);
+    let pte = mem.read_u64_raw(pt_base + pt_index * 8);
+    assert_eq!(pml4e & PTE_A64, 0);
+    assert_eq!(pdpte & PTE_A64, 0);
+    assert_eq!(pde & PTE_A64, 0);
+    assert_eq!(pte & PTE_A64, 0);
+    assert_eq!(pte & PTE_D64, 0);
+
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate_probe(&mut mem, vaddr, AccessType::Write, 3),
+        Ok(page_base + page_off)
+    );
+    assert_eq!(mem.writes(), 0);
+
+    let pml4e2 = mem.read_u64_raw(pml4_base + pml4_index * 8);
+    let pdpte2 = mem.read_u64_raw(pdpt_base + pdpt_index * 8);
+    let pde2 = mem.read_u64_raw(pd_base + pd_index * 8);
+    let pte2 = mem.read_u64_raw(pt_base + pt_index * 8);
+    assert_eq!(pml4e2 & PTE_A64, 0);
+    assert_eq!(pdpte2 & PTE_A64, 0);
+    assert_eq!(pde2 & PTE_A64, 0);
+    assert_eq!(pte2 & PTE_A64, 0);
+    assert_eq!(pte2 & PTE_D64, 0);
+}
+
+#[test]
+fn translate_probe_does_not_populate_tlb_on_miss_long4() {
+    let mut mmu = Mmu::new();
+    let mut mem = TestMemory::new(0x40000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page_base = 0x8000u64;
+
+    let vaddr = 0x2345u64;
+    let pml4_index = (vaddr >> 39) & 0x1ff;
+    let pdpt_index = (vaddr >> 30) & 0x1ff;
+    let pd_index = (vaddr >> 21) & 0x1ff;
+    let pt_index = (vaddr >> 12) & 0x1ff;
+
+    mem.write_u64_raw(
+        pml4_base + pml4_index * 8,
+        pdpt_base | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+    mem.write_u64_raw(
+        pdpt_base + pdpt_index * 8,
+        pd_base | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+    mem.write_u64_raw(
+        pd_base + pd_index * 8,
+        pt_base | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+    mem.write_u64_raw(
+        pt_base + pt_index * 8,
+        page_base | PTE_P64 | PTE_RW64 | PTE_US64,
+    );
+
+    mmu.set_cr3(pml4_base);
+    mmu.set_cr4(CR4_PAE);
+    mmu.set_efer(EFER_LME);
+    mmu.set_cr0(CR0_PG);
+
+    // First probe should miss and walk the page tables, but must not populate
+    // the TLB.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate_probe(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + (vaddr & 0xfff))
+    );
+
+    // If the probe populated the TLB, the following `translate` would be a
+    // TLB hit and thus do zero memory reads. We expect a real page walk.
+    mem.reset_counters();
+    assert_eq!(
+        mmu.translate(&mut mem, vaddr, AccessType::Read, 3),
+        Ok(page_base + (vaddr & 0xfff))
+    );
+    assert!(
+        mem.reads() > 0,
+        "expected a page walk after probe miss, but translate did no reads"
+    );
+}
