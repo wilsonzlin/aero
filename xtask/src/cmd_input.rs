@@ -1,0 +1,128 @@
+use crate::error::{Result, XtaskError};
+use crate::paths;
+use crate::runner::Runner;
+use crate::tools;
+use std::process::Command;
+
+#[derive(Default)]
+struct InputOpts {
+    e2e: bool,
+    pw_extra_args: Vec<String>,
+}
+
+pub fn print_help() {
+    println!(
+        "\
+Run the USB/input-focused test suite (Rust + web) with one command.
+
+Usage:
+  cargo xtask input [--e2e] [-- <extra playwright args>]
+
+Steps:
+  1. cargo test -p aero-devices-input --locked
+  2. cargo test -p aero-usb --locked
+  3. npm -w web run test:unit -- src/input
+  4. (optional) npm run test:e2e -- <input-related specs...>
+
+Options:
+  --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
+  -h, --help            Show this help.
+
+Examples:
+  cargo xtask input
+  cargo xtask input --e2e
+  cargo xtask input --e2e -- --project=chromium
+"
+    );
+}
+
+pub fn cmd(args: Vec<String>) -> Result<()> {
+    let Some(opts) = parse_args(args)? else {
+        return Ok(());
+    };
+
+    let repo_root = paths::repo_root()?;
+    let runner = Runner::new();
+
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(&repo_root)
+        .args(["test", "-p", "aero-devices-input", "--locked"]);
+    runner.run_step("Rust: cargo test -p aero-devices-input --locked", &mut cmd)?;
+
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(&repo_root)
+        .args(["test", "-p", "aero-usb", "--locked"]);
+    runner.run_step("Rust: cargo test -p aero-usb --locked", &mut cmd)?;
+
+    let mut cmd = tools::check_node_version(&repo_root);
+    runner.run_step("Node: check version", &mut cmd)?;
+
+    if !repo_root.join("node_modules").is_dir() {
+        return Err(XtaskError::Message(
+            "node_modules is missing; install Node dependencies first (e.g. `npm ci`)".to_string(),
+        ));
+    }
+
+    let mut cmd = tools::npm();
+    cmd.current_dir(&repo_root)
+        .args(["-w", "web", "run", "test:unit", "--", "src/input"]);
+    runner.run_step(
+        "Web: npm -w web run test:unit -- src/input",
+        &mut cmd,
+    )?;
+
+    if opts.e2e {
+        let mut cmd = tools::npm();
+        cmd.current_dir(&repo_root).args(["run", "test:e2e", "--"]);
+
+        // Keep this list intentionally small to stay in-scope for input/USB changes and to keep
+        // CI/dev runs fast. Developers can add extra Playwright args after `--`.
+        cmd.args([
+            "tests/e2e/input_capture.spec.ts",
+            "tests/e2e/input_capture_io_worker.spec.ts",
+            "tests/e2e/virtio_input_backend_switch_keyboard.spec.ts",
+            "tests/e2e/virtio_input_backend_switch_mouse.spec.ts",
+        ]);
+        cmd.args(&opts.pw_extra_args);
+
+        runner.run_step(
+            "E2E: npm run test:e2e -- <input specs>",
+            &mut cmd,
+        )?;
+    } else if !opts.pw_extra_args.is_empty() {
+        return Err(XtaskError::Message(
+            "extra Playwright args after `--` require `--e2e`".to_string(),
+        ));
+    }
+
+    println!();
+    println!("==> Input test steps passed.");
+    Ok(())
+}
+
+fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
+    let mut opts = InputOpts::default();
+    let mut iter = args.into_iter().peekable();
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print_help();
+                return Ok(None);
+            }
+            "--e2e" => opts.e2e = true,
+            "--" => {
+                opts.pw_extra_args = iter.collect();
+                break;
+            }
+            other => {
+                return Err(XtaskError::Message(format!(
+                    "unknown argument for `input`: `{other}` (run `cargo xtask input --help`)"
+                )));
+            }
+        }
+    }
+
+    Ok(Some(opts))
+}
+
