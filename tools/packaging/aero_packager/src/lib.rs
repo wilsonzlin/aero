@@ -1010,9 +1010,9 @@ fn is_default_excluded_driver_extension(ext: &str) -> bool {
     matches!(
         ext,
         // Debug symbols.
-        "pdb" | "ipdb" | "iobj"
+        "pdb" | "ipdb" | "iobj" | "dbg" | "map" | "cod"
         // Build metadata.
-        | "obj" | "lib" | "exp" | "ilk" | "tlog" | "log"
+        | "obj" | "lib" | "exp" | "ilk" | "tlog" | "log" | "tmp" | "lastbuildstate" | "idb"
         // Source / project files.
         | "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx" | "idl" | "inl" | "rc" | "s" | "asm"
         | "sln" | "vcxproj" | "props" | "targets"
