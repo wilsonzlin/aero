@@ -892,7 +892,26 @@ impl<B: StorageBackend> VirtualDisk for AeroSparseDisk<B> {
             let remaining = buf.len() - pos;
             let chunk_len = (block_size_usize - within).min(remaining);
 
-            let (phys, existed) = self.ensure_block_allocated(block_idx)?;
+            let block_idx_usize: usize = block_idx
+                .try_into()
+                .map_err(|_| DiskError::CorruptSparseImage("block index out of range"))?;
+            let entry = *self
+                .table
+                .get(block_idx_usize)
+                .ok_or(DiskError::CorruptSparseImage("block index out of range"))?;
+
+            // Fast path: if the target block is unallocated, and we're only writing zeros, treat
+            // this as a no-op to keep the image sparse.
+            if entry == 0 && buf[pos..pos + chunk_len].iter().all(|&b| b == 0) {
+                pos += chunk_len;
+                continue;
+            }
+
+            let (phys, existed) = if entry != 0 {
+                (entry, true)
+            } else {
+                self.ensure_block_allocated(block_idx)?
+            };
 
             if !existed {
                 if within > 0 {
