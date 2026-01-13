@@ -1535,9 +1535,82 @@ fn read_inf_text(path: &Path) -> Result<String> {
     // INF files are often ASCII/UTF-8, but can be UTF-16LE with BOM. We only
     // need a best-effort string for regex matching expected HWIDs.
     let text = if bytes.starts_with(&[0xFF, 0xFE]) {
+        // UTF-16LE with BOM.
         decode_utf16(&bytes[2..], true)
     } else if bytes.starts_with(&[0xFE, 0xFF]) {
+        // UTF-16BE with BOM.
         decode_utf16(&bytes[2..], false)
+    } else if bytes.len() >= 4 && bytes.len() % 2 == 0 {
+        // Some Windows tooling produces UTF-16 INFs without a BOM. Detect by looking for a high
+        // ratio of NUL bytes (common for mostly-ASCII UTF-16 text) and decode best-effort.
+        let nul_count = bytes.iter().filter(|b| **b == 0).count();
+        let nul_ratio = nul_count as f64 / bytes.len() as f64;
+        if nul_ratio >= 0.3 {
+            // Guess endianness by checking whether the NUL bytes are concentrated in either the
+            // even or odd positions (UTF-16BE tends to have NULs in even bytes for ASCII text,
+            // UTF-16LE tends to have NULs in odd bytes).
+            let mut even_nuls = 0usize;
+            let mut odd_nuls = 0usize;
+            for (idx, b) in bytes.iter().enumerate() {
+                if *b != 0 {
+                    continue;
+                }
+                if idx % 2 == 0 {
+                    even_nuls += 1;
+                } else {
+                    odd_nuls += 1;
+                }
+            }
+            let half = bytes.len() / 2;
+            let even_ratio = even_nuls as f64 / half as f64;
+            let odd_ratio = odd_nuls as f64 / half as f64;
+
+            enum Utf16Guess {
+                Little,
+                Big,
+                Ambiguous,
+            }
+            let guess = if odd_ratio > even_ratio + 0.2 {
+                Utf16Guess::Little
+            } else if even_ratio > odd_ratio + 0.2 {
+                Utf16Guess::Big
+            } else {
+                Utf16Guess::Ambiguous
+            };
+
+            let le = decode_utf16(&bytes, true);
+            let be = decode_utf16(&bytes, false);
+
+            fn decode_score(s: &str) -> (usize, usize) {
+                let mut replacement = 0usize;
+                let mut nul = 0usize;
+                for c in s.chars() {
+                    if c == '\u{FFFD}' {
+                        replacement += 1;
+                    } else if c == '\u{0000}' {
+                        nul += 1;
+                    }
+                }
+                (replacement, nul)
+            }
+
+            let le_score = decode_score(&le);
+            let be_score = decode_score(&be);
+            if le_score < be_score {
+                le
+            } else if be_score < le_score {
+                be
+            } else {
+                // When both decodes are equally "good", fall back to byte-pattern heuristics, and
+                // prefer little-endian when still ambiguous (Windows commonly uses UTF-16LE).
+                match guess {
+                    Utf16Guess::Big => be,
+                    Utf16Guess::Little | Utf16Guess::Ambiguous => le,
+                }
+            }
+        } else {
+            String::from_utf8_lossy(&bytes).to_string()
+        }
     } else {
         String::from_utf8_lossy(&bytes).to_string()
     };
