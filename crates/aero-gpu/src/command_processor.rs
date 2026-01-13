@@ -12,8 +12,9 @@
 //! stable synchronization and sharing primitives even if rendering is minimal.
 
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
+use crate::shared_surface::{SharedSurfaceError, SharedSurfaceTable};
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Per-submission allocation table entry (Win7 WDDM 1.1 legacy path).
 ///
@@ -388,24 +389,8 @@ pub struct AeroGpuCommandProcessor {
     completed_fence: u64,
     present_count: u64,
 
-    /// share_token -> underlying resource handle.
-    shared_surface_by_token: HashMap<u64, u32>,
-    /// share_token values that were previously valid but were released (or removed after the
-    /// underlying resource was destroyed).
-    ///
-    /// Prevents misbehaving guests from re-exporting a released token for a different resource.
-    retired_share_tokens: HashSet<u64>,
-
-    /// Handle indirection table for shared surfaces.
-    ///
-    /// - Original surfaces are stored as `handle -> handle`
-    /// - Imported surfaces are stored as `alias_handle -> underlying_handle`
-    shared_surface_handles: HashMap<u32, u32>,
-
-    /// Refcount table keyed by the underlying handle.
-    ///
-    /// Refcount includes the original handle entry plus all imported aliases.
-    shared_surface_refcounts: HashMap<u32, u32>,
+    /// Shared surface bookkeeping for `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
+    shared_surfaces: SharedSurfaceTable,
 
     /// Tracked resource descriptors + stable allocation bindings.
     resources: HashMap<u32, ResourceEntry>,
@@ -428,62 +413,12 @@ impl AeroGpuCommandProcessor {
     ///
     /// Note: destroyed handles are treated as unknown and return `handle` unchanged.
     pub fn resolve_shared_surface(&self, handle: u32) -> u32 {
-        self.shared_surface_handles
-            .get(&handle)
-            .copied()
-            .unwrap_or(handle)
+        self.shared_surfaces.resolve_handle(handle)
     }
 
     /// Returns the exported handle for `share_token` if known.
     pub fn lookup_shared_surface_token(&self, share_token: u64) -> Option<u32> {
-        self.shared_surface_by_token.get(&share_token).copied()
-    }
-
-    fn register_shared_surface(&mut self, handle: u32) -> Result<(), CommandProcessorError> {
-        if handle == 0 {
-            return Err(CommandProcessorError::InvalidResourceHandle(handle));
-        }
-        if let Some(existing_underlying) = self.shared_surface_handles.get(&handle).copied() {
-            // A handle that is already bound as an alias must not be reused as a new texture handle.
-            if existing_underlying != handle {
-                return Err(CommandProcessorError::SharedSurfaceHandleInUse(handle));
-            }
-            return Ok(());
-        }
-        // Handle reuse would corrupt the aliasing tables because this processor uses protocol
-        // handles as the underlying resource id.
-        if self.shared_surface_refcounts.contains_key(&handle) {
-            return Err(CommandProcessorError::SharedSurfaceHandleInUse(handle));
-        }
-        self.shared_surface_handles.insert(handle, handle);
-        *self.shared_surface_refcounts.entry(handle).or_insert(0) += 1;
-        Ok(())
-    }
-
-    fn resolve_shared_surface_handle(&self, handle: u32) -> Option<u32> {
-        self.shared_surface_handles.get(&handle).copied()
-    }
-
-    fn destroy_shared_surface_handle(&mut self, handle: u32) -> Option<u32> {
-        let underlying = self.shared_surface_handles.remove(&handle)?;
-        let count = self.shared_surface_refcounts.get_mut(&underlying)?;
-
-        *count = count.saturating_sub(1);
-        if *count != 0 {
-            return None;
-        }
-
-        self.shared_surface_refcounts.remove(&underlying);
-        let retired = &mut self.retired_share_tokens;
-        self.shared_surface_by_token.retain(|token, v| {
-            if *v == underlying {
-                retired.insert(*token);
-                false
-            } else {
-                true
-            }
-        });
-        Some(underlying)
+        self.shared_surfaces.lookup_token(share_token)
     }
 
     fn lookup_allocation(
@@ -536,23 +471,6 @@ impl AeroGpuCommandProcessor {
             });
         }
         Ok(())
-    }
-
-    fn release_shared_surface_token(&mut self, share_token: u64) {
-        // KMD-emitted "share token is no longer importable" signal.
-        //
-        // Existing imported handles remain valid and keep the underlying resource alive via the
-        // refcount tables; we only remove the token mapping so future imports fail deterministically.
-        if share_token == 0 {
-            return;
-        }
-        // Idempotent: unknown tokens are a no-op (see `aerogpu_cmd.h` contract).
-        //
-        // Only retire tokens that were actually exported at some point (present in
-        // `shared_surface_by_token`), or that are already retired.
-        if self.shared_surface_by_token.remove(&share_token).is_some() {
-            self.retired_share_tokens.insert(share_token);
-        }
     }
 
     /// Process a single command buffer submission and update state.
@@ -614,21 +532,27 @@ impl AeroGpuCommandProcessor {
                     if buffer_handle == 0 {
                         return Err(CommandProcessorError::InvalidResourceHandle(buffer_handle));
                     }
-                    if let Some(underlying) = self.shared_surface_handles.get(&buffer_handle) {
-                        // Shared surface aliases live in the same global handle namespace, so they
-                        // must not be reused for a different resource type.
-                        if *underlying != buffer_handle {
+                    // Shared surface aliases (and reserved underlying IDs) live in the same global
+                    // handle namespace, so they must not be reused for a different resource type.
+                    match self.shared_surfaces.resolve_cmd_handle(buffer_handle) {
+                        Ok(underlying) if underlying != buffer_handle => {
                             return Err(CommandProcessorError::SharedSurfaceHandleInUse(
                                 buffer_handle,
                             ));
                         }
-                    } else if self.shared_surface_refcounts.contains_key(&buffer_handle) {
-                        // Underlying shared surfaces can outlive the original handle while aliases
-                        // remain alive. Reject handle reuse in that case to avoid corrupting the
-                        // aliasing tables.
-                        return Err(CommandProcessorError::SharedSurfaceHandleInUse(
-                            buffer_handle,
-                        ));
+                        Err(SharedSurfaceError::HandleDestroyed(_)) => {
+                            return Err(CommandProcessorError::SharedSurfaceHandleInUse(
+                                buffer_handle,
+                            ));
+                        }
+                        Ok(_) => {}
+                        // `resolve_cmd_handle` only returns `HandleDestroyed`, but defensively map
+                        // any future additions to a deterministic handle collision error.
+                        Err(_) => {
+                            return Err(CommandProcessorError::SharedSurfaceHandleInUse(
+                                buffer_handle,
+                            ));
+                        }
                     }
                     if size_bytes == 0 || size_bytes % 4 != 0 {
                         return Err(CommandProcessorError::InvalidCreateBuffer);
@@ -681,16 +605,26 @@ impl AeroGpuCommandProcessor {
                     if texture_handle == 0 {
                         return Err(CommandProcessorError::InvalidResourceHandle(texture_handle));
                     }
-                    if let Some(underlying) = self.shared_surface_handles.get(&texture_handle) {
-                        if *underlying != texture_handle {
+                    // Check for handle collisions before validating guest-controlled backing
+                    // allocations. This preserves the existing behavior where collisions are
+                    // reported even if the allocation table is missing.
+                    match self.shared_surfaces.resolve_cmd_handle(texture_handle) {
+                        Ok(underlying) if underlying != texture_handle => {
                             return Err(CommandProcessorError::SharedSurfaceHandleInUse(
                                 texture_handle,
                             ));
                         }
-                    } else if self.shared_surface_refcounts.contains_key(&texture_handle) {
-                        return Err(CommandProcessorError::SharedSurfaceHandleInUse(
-                            texture_handle,
-                        ));
+                        Err(SharedSurfaceError::HandleDestroyed(_)) => {
+                            return Err(CommandProcessorError::SharedSurfaceHandleInUse(
+                                texture_handle,
+                            ));
+                        }
+                        Ok(_) => {}
+                        Err(_) => {
+                            return Err(CommandProcessorError::SharedSurfaceHandleInUse(
+                                texture_handle,
+                            ));
+                        }
                     }
                     if width == 0 || height == 0 || mip_levels == 0 || array_layers == 0 {
                         return Err(CommandProcessorError::InvalidCreateTexture2d);
@@ -725,7 +659,18 @@ impl AeroGpuCommandProcessor {
                         Self::validate_range_in_allocation(alloc, offset, resource_size_bytes)?;
                     }
 
-                    self.register_shared_surface(texture_handle)?;
+                    self.shared_surfaces
+                        .register_handle(texture_handle)
+                        .map_err(|err| match err {
+                            SharedSurfaceError::InvalidHandle(h) => {
+                                CommandProcessorError::InvalidResourceHandle(h)
+                            }
+                            SharedSurfaceError::HandleIsAlias { handle, .. }
+                            | SharedSurfaceError::HandleStillInUse(handle) => {
+                                CommandProcessorError::SharedSurfaceHandleInUse(handle)
+                            }
+                            _ => CommandProcessorError::SharedSurfaceHandleInUse(texture_handle),
+                        })?;
 
                     match self.resources.get_mut(&texture_handle) {
                         Some(existing) => {
@@ -745,38 +690,38 @@ impl AeroGpuCommandProcessor {
                     }
                 }
                 AeroGpuCmd::DestroyResource { resource_handle } => {
-                    if let Some(underlying) = self.destroy_shared_surface_handle(resource_handle) {
-                        self.resources.remove(&underlying);
+                    if let Some((underlying, last_ref)) =
+                        self.shared_surfaces.destroy_handle(resource_handle)
+                    {
+                        if last_ref {
+                            self.resources.remove(&underlying);
+                        } else if underlying != resource_handle {
+                            // Aliases do not have separate resource entries, but removing here keeps
+                            // behavior consistent if a misbehaving guest ever manages to create one.
+                            self.resources.remove(&resource_handle);
+                        }
                         continue;
                     }
-
-                    // If this handle is still the underlying ID of a shared surface, do not remove
-                    // the resource until the last alias is destroyed.
-                    if !self.shared_surface_refcounts.contains_key(&resource_handle) {
-                        self.resources.remove(&resource_handle);
-                    }
+                    self.resources.remove(&resource_handle);
                 }
                 AeroGpuCmd::ResourceDirtyRange {
                     resource_handle,
                     offset_bytes,
                     size_bytes,
                 } => {
-                    // Shared surfaces use protocol handles as the underlying resource id. When the
-                    // original handle is destroyed but imported aliases keep the resource alive,
-                    // the underlying id remains present in `shared_surface_refcounts` but its
-                    // handle mapping is removed. Treat commands that reference the destroyed
-                    // handle as invalid instead of accidentally accepting them via the resource
-                    // table entry.
-                    let underlying = if let Some(underlying) =
-                        self.shared_surface_handles.get(&resource_handle).copied()
+                    let underlying = match self.shared_surfaces.resolve_cmd_handle(resource_handle)
                     {
-                        underlying
-                    } else if self.shared_surface_refcounts.contains_key(&resource_handle) {
-                        return Err(CommandProcessorError::UnknownResourceHandle(
-                            resource_handle,
-                        ));
-                    } else {
-                        resource_handle
+                        Ok(underlying) => underlying,
+                        Err(SharedSurfaceError::HandleDestroyed(_)) => {
+                            return Err(CommandProcessorError::UnknownResourceHandle(
+                                resource_handle,
+                            ));
+                        }
+                        Err(_) => {
+                            return Err(CommandProcessorError::UnknownResourceHandle(
+                                resource_handle,
+                            ));
+                        }
                     };
                     let Some(entry) = self.resources.get(&underlying).copied() else {
                         return Err(CommandProcessorError::UnknownResourceHandle(
@@ -817,91 +762,81 @@ impl AeroGpuCommandProcessor {
                     resource_handle,
                     share_token,
                 } => {
-                    if resource_handle == 0 {
-                        return Err(CommandProcessorError::InvalidResourceHandle(
-                            resource_handle,
-                        ));
-                    }
-                    if share_token == 0 {
-                        return Err(CommandProcessorError::InvalidShareToken(share_token));
-                    }
-                    if self.retired_share_tokens.contains(&share_token) {
-                        return Err(CommandProcessorError::ShareTokenRetired(share_token));
-                    }
-                    // If the handle is itself an alias, normalize to the underlying surface.
-                    let Some(underlying) = self.resolve_shared_surface_handle(resource_handle)
-                    else {
-                        return Err(CommandProcessorError::UnknownSharedSurfaceHandle(
-                            resource_handle,
-                        ));
-                    };
-
-                    if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied()
-                    {
-                        // Treat re-export of the same token as idempotent, but reject attempts to
-                        // retarget a token to a different resource (would corrupt sharing tables).
-                        if existing != underlying {
-                            return Err(CommandProcessorError::ShareTokenAlreadyExported {
+                    self.shared_surfaces
+                        .export(resource_handle, share_token)
+                        .map_err(|err| match err {
+                            SharedSurfaceError::InvalidHandle(h) => {
+                                CommandProcessorError::InvalidResourceHandle(h)
+                            }
+                            SharedSurfaceError::UnknownHandle(h) => {
+                                CommandProcessorError::UnknownSharedSurfaceHandle(h)
+                            }
+                            SharedSurfaceError::InvalidToken(t) => {
+                                CommandProcessorError::InvalidShareToken(t)
+                            }
+                            SharedSurfaceError::TokenRetired(t) => {
+                                CommandProcessorError::ShareTokenRetired(t)
+                            }
+                            SharedSurfaceError::TokenAlreadyExported {
                                 share_token,
                                 existing,
-                                new: underlying,
-                            });
-                        }
-                    } else {
-                        self.shared_surface_by_token.insert(share_token, underlying);
-                    }
+                                new,
+                            } => CommandProcessorError::ShareTokenAlreadyExported {
+                                share_token,
+                                existing,
+                                new,
+                            },
+                            _ => CommandProcessorError::UnknownSharedSurfaceHandle(resource_handle),
+                        })?;
                 }
                 AeroGpuCmd::ImportSharedSurface {
                     out_resource_handle,
                     share_token,
                 } => {
-                    if out_resource_handle == 0 {
-                        return Err(CommandProcessorError::InvalidResourceHandle(
+                    // Shared surface alias handles live in the same global handle namespace as
+                    // normal resources. Reject importing into a handle that is already used by
+                    // another resource.
+                    if self.resources.contains_key(&out_resource_handle)
+                        && !self.shared_surfaces.contains_handle(out_resource_handle)
+                    {
+                        return Err(CommandProcessorError::SharedSurfaceHandleInUse(
                             out_resource_handle,
                         ));
                     }
-                    if share_token == 0 {
-                        return Err(CommandProcessorError::InvalidShareToken(share_token));
-                    }
-                    let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
-                        return Err(CommandProcessorError::UnknownShareToken(share_token));
-                    };
 
-                    // If the underlying surface has already been destroyed, treat the token as
-                    // invalid.
-                    if !self.shared_surface_refcounts.contains_key(&underlying) {
-                        return Err(CommandProcessorError::UnknownShareToken(share_token));
-                    }
-
-                    if let Some(existing) = self.shared_surface_handles.get(&out_resource_handle) {
-                        // Idempotent re-import is allowed if it targets the same original.
-                        if *existing != underlying {
-                            return Err(CommandProcessorError::SharedSurfaceAliasAlreadyBound {
-                                alias: out_resource_handle,
-                                existing: *existing,
-                                new: underlying,
-                            });
-                        }
-                    } else {
-                        // Shared surface alias handles live in the same global handle namespace as
-                        // normal resources. Reject importing into a handle that is already used by
-                        // another resource (including an underlying ID kept alive by aliases).
-                        if self.resources.contains_key(&out_resource_handle)
-                            || self
-                                .shared_surface_refcounts
-                                .contains_key(&out_resource_handle)
-                        {
-                            return Err(CommandProcessorError::SharedSurfaceHandleInUse(
-                                out_resource_handle,
-                            ));
-                        }
-                        self.shared_surface_handles
-                            .insert(out_resource_handle, underlying);
-                        *self.shared_surface_refcounts.entry(underlying).or_insert(0) += 1;
-                    }
+                    self.shared_surfaces
+                        .import(out_resource_handle, share_token)
+                        .map_err(|err| match err {
+                            SharedSurfaceError::InvalidHandle(h) => {
+                                CommandProcessorError::InvalidResourceHandle(h)
+                            }
+                            SharedSurfaceError::InvalidToken(t) => {
+                                CommandProcessorError::InvalidShareToken(t)
+                            }
+                            SharedSurfaceError::UnknownToken(t) => {
+                                CommandProcessorError::UnknownShareToken(t)
+                            }
+                            SharedSurfaceError::TokenRefersToDestroyed { share_token, .. } => {
+                                CommandProcessorError::UnknownShareToken(share_token)
+                            }
+                            SharedSurfaceError::AliasAlreadyBound {
+                                alias,
+                                existing,
+                                new,
+                            } => CommandProcessorError::SharedSurfaceAliasAlreadyBound {
+                                alias,
+                                existing,
+                                new,
+                            },
+                            SharedSurfaceError::HandleStillInUse(handle)
+                            | SharedSurfaceError::HandleIsAlias { handle, .. } => {
+                                CommandProcessorError::SharedSurfaceHandleInUse(handle)
+                            }
+                            _ => CommandProcessorError::SharedSurfaceHandleInUse(out_resource_handle),
+                        })?;
                 }
                 AeroGpuCmd::ReleaseSharedSurface { share_token } => {
-                    self.release_shared_surface_token(share_token);
+                    self.shared_surfaces.release_token(share_token);
                 }
                 _ => {
                     // For now the processor treats most commands as "handled elsewhere".

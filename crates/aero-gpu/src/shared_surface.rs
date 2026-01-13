@@ -116,6 +116,14 @@ impl SharedSurfaceTable {
         self.handles.get(&handle).copied().unwrap_or(handle)
     }
 
+    pub(crate) fn contains_handle(&self, handle: u32) -> bool {
+        self.handles.contains_key(&handle)
+    }
+
+    pub(crate) fn lookup_token(&self, share_token: u64) -> Option<u32> {
+        self.by_token.get(&share_token).copied()
+    }
+
     /// Resolves a handle coming from an AeroGPU command stream.
     ///
     /// This differs from [`Self::resolve_handle`] by treating "reserved underlying IDs" as
