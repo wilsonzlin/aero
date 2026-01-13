@@ -538,6 +538,146 @@ async fn chunked_chunk_endpoint_has_expected_headers_and_body() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn public_chunked_responses_with_cookie_are_not_publicly_cacheable() {
+    let (app, _dir, _manifest) = setup_app(None).await;
+
+    for uri in [
+        "/v1/images/disk/chunked/manifest.json",
+        "/v1/images/disk/chunked/chunks/00000000.bin",
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(header::COOKIE, "a=b")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+        assert_eq!(
+            resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+            "private, no-store, no-transform",
+            "{uri}"
+        );
+    }
+
+    // Repeat for versioned endpoints using a versioned on-disk layout.
+    let dir = tempdir().expect("tempdir");
+    tokio::fs::write(dir.path().join("disk.img"), b"raw image bytes")
+        .await
+        .expect("write disk.img");
+    let catalog = serde_json::json!({
+        "images": [
+            { "id": IMAGE_ID, "file": "disk.img", "name": "Disk", "public": true }
+        ]
+    })
+    .to_string();
+    tokio::fs::write(dir.path().join("manifest.json"), catalog)
+        .await
+        .expect("write manifest.json");
+    let chunk_root = dir.path().join("chunked").join(IMAGE_ID).join("v1");
+    tokio::fs::create_dir_all(chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+    tokio::fs::write(
+        chunk_root.join("manifest.json"),
+        b"{\"schema\":\"aero.chunked-disk-image.v1\"}",
+    )
+    .await
+    .expect("write chunked manifest");
+    tokio::fs::write(chunk_root.join("chunks/00000000.bin"), b"ab")
+        .await
+        .expect("write chunk");
+
+    let store = Arc::new(LocalFsImageStore::new(dir.path()).with_require_manifest(true));
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics);
+    let app = http::router_with_state(state);
+
+    for uri in [
+        "/v1/images/disk/chunked/v1/manifest.json",
+        "/v1/images/disk/chunked/v1/chunks/00000000.bin",
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(header::COOKIE, "a=b")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+        assert_eq!(
+            resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+            "private, no-store, no-transform",
+            "{uri}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn private_images_are_not_publicly_cacheable_for_chunked_endpoints() {
+    let dir = tempdir().expect("tempdir");
+
+    tokio::fs::write(dir.path().join("disk.img"), b"raw image bytes")
+        .await
+        .expect("write disk.img");
+
+    // Same fixture as the public tests, but `public: false`.
+    let catalog = serde_json::json!({
+        "images": [
+            { "id": IMAGE_ID, "file": "disk.img", "name": "Disk", "public": false }
+        ]
+    })
+    .to_string();
+    tokio::fs::write(dir.path().join("manifest.json"), catalog)
+        .await
+        .expect("write manifest.json");
+
+    let chunk_root = dir.path().join("chunked").join(IMAGE_ID).join("v1");
+    tokio::fs::create_dir_all(chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+    tokio::fs::write(
+        chunk_root.join("manifest.json"),
+        b"{\"schema\":\"aero.chunked-disk-image.v1\"}",
+    )
+    .await
+    .expect("write chunked manifest");
+    tokio::fs::write(chunk_root.join("chunks/00000000.bin"), b"ab")
+        .await
+        .expect("write chunk");
+
+    let store = Arc::new(LocalFsImageStore::new(dir.path()).with_require_manifest(true));
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics);
+    let app = http::router_with_state(state);
+
+    for uri in [
+        "/v1/images/disk/chunked/v1/manifest.json",
+        "/v1/images/disk/chunked/v1/chunks/00000000.bin",
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+        assert_eq!(
+            resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+            "private, no-store, no-transform",
+            "{uri}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalid_chunk_name_is_rejected_without_traversal() {
     let (app, dir, _manifest) = setup_app(None).await;
 
