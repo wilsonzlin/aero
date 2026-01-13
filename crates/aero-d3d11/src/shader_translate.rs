@@ -2264,6 +2264,23 @@ fn emit_instructions(
 
     let mut blocks: Vec<BlockKind> = Vec::new();
 
+    // Structured buffer access (`*_structured`) requires the element stride in bytes, which is
+    // provided via `dcl_resource_structured` / `dcl_uav_structured`. Collect those declarations so
+    // we can lower address calculations when emitting WGSL.
+    let mut srv_buffer_decls: BTreeMap<u32, (crate::sm4_ir::BufferKind, u32)> = BTreeMap::new();
+    let mut uav_buffer_decls: BTreeMap<u32, (crate::sm4_ir::BufferKind, u32)> = BTreeMap::new();
+    for decl in &module.decls {
+        match decl {
+            Sm4Decl::ResourceBuffer { slot, stride, kind } => {
+                srv_buffer_decls.insert(*slot, (*kind, *stride));
+            }
+            Sm4Decl::UavBuffer { slot, stride, kind } => {
+                uav_buffer_decls.insert(*slot, (*kind, *stride));
+            }
+            _ => {}
+        }
+    }
+
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         let maybe_saturate = |dst: &crate::sm4_ir::DstOperand, expr: String| {
             if dst.saturate {
@@ -2640,24 +2657,33 @@ fn emit_instructions(
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld", ctx)?;
             }
             Sm4Inst::LdRaw { dst, addr, buffer } => {
-                let addr_vec = emit_src_vec4(addr, inst_index, "ld_raw", ctx)?;
+                // Raw buffer loads operate on byte offsets. Model buffers as a storage
+                // `array<u32>` and derive a word index from the byte address.
+                let addr_u = emit_src_vec4_u32(addr, inst_index, "ld_raw", ctx)?;
+                let base_name = format!("ld_raw_base{inst_index}");
+                w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
 
-                // `addr` is a raw byte offset into the SRV buffer. Our internal register model is
-                // `vec4<f32>`, so interpret the lane as a raw u32 bit pattern.
-                //
-                // SRV buffers are bound as `AeroStorageBufferU32` (array<u32>), so divide the byte
-                // address by 4 to get the element index.
-                let base_index = format!("(bitcast<u32>(({addr_vec}).x) >> 2u)");
+                let mask_bits = dst.mask.0 & 0xF;
+                let load_lane = |bit: u8, offset: u32| {
+                    if (mask_bits & bit) != 0 {
+                        format!("t{}.data[{base_name} + {offset}u]", buffer.slot)
+                    } else {
+                        "0u".to_owned()
+                    }
+                };
 
-                let slot = buffer.slot;
-                let expr = format!(
-                    "vec4<f32>(\
-                        bitcast<f32>(t{slot}.data[{base_index} + 0u]), \
-                        bitcast<f32>(t{slot}.data[{base_index} + 1u]), \
-                        bitcast<f32>(t{slot}.data[{base_index} + 2u]), \
-                        bitcast<f32>(t{slot}.data[{base_index} + 3u])\
-                    )"
-                );
+                let u_name = format!("ld_raw_u{inst_index}");
+                w.line(&format!(
+                    "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
+                    load_lane(1, 0),
+                    load_lane(2, 1),
+                    load_lane(4, 2),
+                    load_lane(8, 3),
+                ));
+                let f_name = format!("ld_raw_f{inst_index}");
+                w.line(&format!("let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"));
+
+                let expr = maybe_saturate(dst, f_name);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld_raw", ctx)?;
             }
             Sm4Inst::StoreRaw {
@@ -2666,16 +2692,6 @@ fn emit_instructions(
                 value,
                 mask,
             } => {
-                if ctx.stage != ShaderStage::Compute {
-                    return Err(ShaderTranslateError::UnsupportedInstruction {
-                        inst_index,
-                        opcode: "store_raw".to_owned(),
-                    });
-                }
-
-                let addr_vec = emit_src_vec4(addr, inst_index, "store_raw", ctx)?;
-                let value_vec = emit_src_vec4(value, inst_index, "store_raw", ctx)?;
-
                 let mask_bits = mask.0 & 0xF;
                 if mask_bits == 0 {
                     return Err(ShaderTranslateError::UnsupportedWriteMask {
@@ -2684,37 +2700,122 @@ fn emit_instructions(
                         mask: *mask,
                     });
                 }
+                let addr_u = emit_src_vec4_u32(addr, inst_index, "store_raw", ctx)?;
+                let base_name = format!("store_raw_base{inst_index}");
+                w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
 
-                // `addr` is a raw byte offset into the UAV. Our internal register model is
-                // `vec4<f32>`, so interpret the lane as a raw u32 bit pattern.
-                let base_index = format!("(bitcast<u32>(({addr_vec}).x) >> 2u)");
+                let value_u = emit_src_vec4_u32(value, inst_index, "store_raw", ctx)?;
+                let value_name = format!("store_raw_val{inst_index}");
+                w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
 
-                for (bit, comp, lane_offset) in [
-                    (1u8, 'x', 0u32),
-                    (2u8, 'y', 1u32),
-                    (4u8, 'z', 2u32),
-                    (8u8, 'w', 3u32),
-                ] {
-                    if (mask_bits & bit) == 0 {
-                        continue;
+                let comps = [('x', 1u8, 0u32), ('y', 2u8, 1), ('z', 4u8, 2), ('w', 8u8, 3)];
+                for (c, bit, offset) in comps {
+                    if (mask_bits & bit) != 0 {
+                        w.line(&format!(
+                            "u{}.data[{base_name} + {offset}u] = ({value_name}).{c};",
+                            uav.slot
+                        ));
                     }
-                    w.line(&format!(
-                        "u{}.data[{base_index} + {lane_offset}u] = bitcast<u32>(({value_vec}).{comp});",
-                        uav.slot
-                    ));
                 }
             }
-            Sm4Inst::LdStructured { .. } => {
-                return Err(ShaderTranslateError::UnsupportedInstruction {
+            Sm4Inst::LdStructured {
+                dst,
+                index,
+                offset,
+                buffer,
+            } => {
+                let Some((kind, stride)) = srv_buffer_decls.get(&buffer.slot).copied() else {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "ld_structured".to_owned(),
+                    });
+                };
+                if kind != crate::sm4_ir::BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "ld_structured".to_owned(),
+                    });
+                }
+
+                let index_u = emit_src_vec4_u32(index, inst_index, "ld_structured", ctx)?;
+                let offset_u = emit_src_vec4_u32(offset, inst_index, "ld_structured", ctx)?;
+                let base_name = format!("ld_struct_base{inst_index}");
+                w.line(&format!(
+                    "let {base_name}: u32 = ((({index_u}).x) * {stride}u + (({offset_u}).x)) / 4u;"
+                ));
+
+                let mask_bits = dst.mask.0 & 0xF;
+                let load_lane = |bit: u8, offset: u32| {
+                    if (mask_bits & bit) != 0 {
+                        format!("t{}.data[{base_name} + {offset}u]", buffer.slot)
+                    } else {
+                        "0u".to_owned()
+                    }
+                };
+
+                let u_name = format!("ld_struct_u{inst_index}");
+                w.line(&format!(
+                    "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
+                    load_lane(1, 0),
+                    load_lane(2, 1),
+                    load_lane(4, 2),
+                    load_lane(8, 3),
+                ));
+                let f_name = format!("ld_struct_f{inst_index}");
+                w.line(&format!("let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"));
+
+                let expr = maybe_saturate(dst, f_name);
+                emit_write_masked(
+                    w,
+                    dst.reg,
+                    dst.mask,
+                    expr,
                     inst_index,
-                    opcode: "ld_structured".to_owned(),
-                });
+                    "ld_structured",
+                    ctx,
+                )?;
             }
-            Sm4Inst::StoreStructured { .. } => {
-                return Err(ShaderTranslateError::UnsupportedInstruction {
-                    inst_index,
-                    opcode: "store_structured".to_owned(),
-                });
+            Sm4Inst::StoreStructured {
+                uav,
+                index,
+                offset,
+                value,
+                mask,
+            } => {
+                let Some((kind, stride)) = uav_buffer_decls.get(&uav.slot).copied() else {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "store_structured".to_owned(),
+                    });
+                };
+                if kind != crate::sm4_ir::BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "store_structured".to_owned(),
+                    });
+                }
+
+                let index_u = emit_src_vec4_u32(index, inst_index, "store_structured", ctx)?;
+                let offset_u = emit_src_vec4_u32(offset, inst_index, "store_structured", ctx)?;
+                let base_name = format!("store_struct_base{inst_index}");
+                w.line(&format!(
+                    "let {base_name}: u32 = ((({index_u}).x) * {stride}u + (({offset_u}).x)) / 4u;"
+                ));
+
+                let value_u = emit_src_vec4_u32(value, inst_index, "store_structured", ctx)?;
+                let value_name = format!("store_struct_val{inst_index}");
+                w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
+
+                let mask_bits = mask.0 & 0xF;
+                let comps = [('x', 1u8, 0u32), ('y', 2u8, 1), ('z', 4u8, 2), ('w', 8u8, 3)];
+                for (c, bit, offset) in comps {
+                    if (mask_bits & bit) != 0 {
+                        w.line(&format!(
+                            "u{}.data[{base_name} + {offset}u] = ({value_name}).{c};",
+                            uav.slot
+                        ));
+                    }
+                }
             }
             Sm4Inst::Unknown { opcode } => {
                 let opcode = opcode_name(*opcode)
