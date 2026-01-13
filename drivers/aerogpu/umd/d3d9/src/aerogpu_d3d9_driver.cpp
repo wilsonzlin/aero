@@ -5122,8 +5122,6 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
     const float vp_y = vp.Y;
     const float vp_w = vp.Width;
     const float vp_h = vp.Height;
-    const float vp_minz = vp.MinZ;
-    const float vp_maxz = vp.MaxZ;
 
     for (uint32_t i = 0; i < vertex_count; ++i) {
       const uint8_t* src = src_vertices + static_cast<size_t>(i) * src_stride;
@@ -5167,7 +5165,7 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       // D3D9 viewport transform uses a -0.5 pixel center convention.
       const float out_x = ((ndc_x + 1.0f) * 0.5f) * vp_w + vp_x - 0.5f;
       const float out_y = ((1.0f - ndc_y) * 0.5f) * vp_h + vp_y - 0.5f;
-      const float out_z = vp_minz + ndc_z * (vp_maxz - vp_minz);
+      const float out_z = ndc_z;
       const float out_rhw = inv_w;
 
       write_f32_unaligned(dst + dst_layout.pos_offset + 0, out_x);
