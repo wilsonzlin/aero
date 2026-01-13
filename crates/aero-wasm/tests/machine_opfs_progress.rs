@@ -74,3 +74,48 @@ async fn set_disk_opfs_with_progress_invokes_callback() {
     );
 }
 
+#[wasm_bindgen_test(async)]
+async fn attach_ide_primary_master_disk_opfs_with_progress_invokes_callback() {
+    let path = unique_opfs_path("aero-wasm-opfs-progress-ide-primary-master");
+
+    let progress_samples: Rc<RefCell<Vec<f64>>> = Rc::new(RefCell::new(Vec::new()));
+    let progress_samples_cb = Rc::clone(&progress_samples);
+    let cb = Closure::wrap(Box::new(move |p: f64| {
+        progress_samples_cb.borrow_mut().push(p);
+    }) as Box<dyn FnMut(f64)>);
+    let cb_fn: Function = cb.as_ref().unchecked_ref::<Function>().clone();
+
+    let mut machine = aero_wasm::Machine::new(64 * 1024 * 1024).expect("Machine::new");
+    let res = machine
+        .attach_ide_primary_master_disk_opfs_with_progress(path.clone(), true, 512 * 1024, cb_fn)
+        .await;
+
+    match res {
+        Ok(()) => {}
+        Err(err) => {
+            let msg = js_value_error_message(&err);
+            if msg.contains("backend not supported") || msg.contains("backend unavailable") {
+                return;
+            }
+            panic!(
+                "Machine.attach_ide_primary_master_disk_opfs_with_progress failed: {msg}"
+            );
+        }
+    }
+
+    drop(cb);
+
+    let samples = progress_samples.borrow();
+    assert!(
+        samples.len() >= 2,
+        "expected progress callback to be invoked at least twice; got {samples:?}"
+    );
+    assert!(
+        samples.iter().any(|&v| v == 0.0),
+        "expected progress callback to include 0.0; got {samples:?}"
+    );
+    assert!(
+        samples.iter().any(|&v| v == 1.0),
+        "expected progress callback to include 1.0; got {samples:?}"
+    );
+}

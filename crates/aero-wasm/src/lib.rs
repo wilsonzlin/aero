@@ -3588,7 +3588,32 @@ impl Machine {
                 })?;
         self.inner
             .set_disk_backend(Box::new(backend))
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(js_error)
+    }
+
+    /// Open (or create) an OPFS-backed disk image, attach it as the machine's canonical disk,
+    /// report create/resize progress via a JS callback, and set the snapshot overlay reference
+    /// (`DISKS` entry) for `disk_id=0`.
+    ///
+    /// This is equivalent to calling:
+    /// - [`Machine::set_disk_opfs_with_progress`], then
+    /// - [`Machine::set_ahci_port0_disk_overlay_ref`] with `overlay_image=""`.
+    ///
+    /// This method is intentionally separate from [`Machine::set_disk_opfs_with_progress`] so
+    /// callers do not silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_opfs_with_progress_and_set_overlay_ref(
+        &mut self,
+        path: String,
+        create: bool,
+        size_bytes: u64,
+        progress: js_sys::Function,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.set_disk_opfs_with_progress(path, create, size_bytes, progress)
+            .await?;
+        self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
+        Ok(())
     }
 
     /// Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk,
@@ -3711,6 +3736,33 @@ impl Machine {
             .map_err(js_error)
     }
 
+    /// Open (or create) an OPFS-backed disk image and attach it as the IDE primary channel master
+    /// ATA disk, reporting create/resize progress via a JS callback.
+    ///
+    /// The callback is invoked with a numeric progress value in `[0.0, 1.0]`.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_ide_primary_master_disk_opfs_with_progress(
+        &mut self,
+        path: String,
+        create: bool,
+        size_bytes: u64,
+        progress: js_sys::Function,
+    ) -> Result<(), JsValue> {
+        let backend =
+            aero_opfs::OpfsBackend::open_with_progress(&path, create, size_bytes, Some(&progress))
+                .await
+                .map_err(|e| {
+                    opfs_disk_error_to_js(
+                        "Machine.attach_ide_primary_master_disk_opfs_with_progress",
+                        &path,
+                        e,
+                    )
+                })?;
+        self.inner
+            .attach_ide_primary_master_disk(Box::new(backend))
+            .map_err(js_error)
+    }
+
     /// Open (or create) an OPFS-backed disk image, attach it as the IDE primary channel master ATA
     /// disk, and set the snapshot overlay reference (`DISKS` entry) for `disk_id=2`.
     ///
@@ -3729,6 +3781,28 @@ impl Machine {
     ) -> Result<(), JsValue> {
         let overlay_path = path.clone();
         self.attach_ide_primary_master_disk_opfs(path, create, size_bytes)
+            .await?;
+        self.set_ide_primary_master_ata_overlay_ref(&overlay_path, "");
+        Ok(())
+    }
+
+    /// Open (or create) an OPFS-backed disk image, attach it as the IDE primary channel master ATA
+    /// disk, report create/resize progress via a JS callback, and set the snapshot overlay
+    /// reference (`DISKS` entry) for `disk_id=2`.
+    ///
+    /// This method is intentionally separate from
+    /// [`Machine::attach_ide_primary_master_disk_opfs_with_progress`] so callers do not silently
+    /// overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_ide_primary_master_disk_opfs_with_progress_and_set_overlay_ref(
+        &mut self,
+        path: String,
+        create: bool,
+        size_bytes: u64,
+        progress: js_sys::Function,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.attach_ide_primary_master_disk_opfs_with_progress(path, create, size_bytes, progress)
             .await?;
         self.set_ide_primary_master_ata_overlay_ref(&overlay_path, "");
         Ok(())
