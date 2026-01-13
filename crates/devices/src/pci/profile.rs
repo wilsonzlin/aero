@@ -265,10 +265,10 @@ pub const PCI_DEVICE_ID_INTEL_ICH6_HDA: u16 = 0x2668;
 pub const PCI_DEVICE_ID_INTEL_E1000_82540EM: u16 = 0x100e;
 pub const PCI_DEVICE_ID_REALTEK_RTL8139: u16 = 0x8139;
 pub const PCI_DEVICE_ID_QEMU_NVME: u16 = 0x0010;
-/// QEMU xHCI host controller.
+/// QEMU's "qemu-xhci" PCI device ID (paired with [`PCI_VENDOR_ID_REDHAT_QEMU`]).
 ///
-/// We use QEMU's canonical xHCI PCI identity (`1b36:000d`) so modern guests bind their in-box xHCI
-/// drivers without requiring vendor-specific packages.
+/// We use QEMU's canonical xHCI PCI identity (`1b36:000d`) so modern guests bind their generic
+/// xHCI drivers without requiring vendor-specific packages.
 pub const PCI_DEVICE_ID_QEMU_XHCI: u16 = 0x000d;
 pub const PCI_DEVICE_ID_AERO_AEROGPU: u16 = 0x0001;
 
@@ -302,12 +302,27 @@ pub const UHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::io(4, 32)];
 /// a full 4KiB page so BAR alignment and probing behavior match real hardware.
 pub const EHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, 0x1000, false)];
 
-/// Size in bytes of the xHCI MMIO window (BAR0).
-///
-/// Keep this in sync with `XhciPciDevice::MMIO_BAR_SIZE`.
-pub const XHCI_MMIO_BAR_SIZE: u64 = 0x10000;
+/// PCI BAR index used for the xHCI MMIO register window.
+pub const XHCI_MMIO_BAR_INDEX: u8 = 0;
 
-pub const XHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, XHCI_MMIO_BAR_SIZE, false)];
+/// Size in bytes of the xHCI MMIO register window (BAR0).
+///
+/// We allocate a 64KiB MMIO BAR, matching the conventional "qemu-xhci" layout and leaving ample
+/// room for:
+/// - capability registers (CAP),
+/// - operational registers (OP),
+/// - runtime registers (RT),
+/// - doorbell registers (DB),
+/// - extended capability structures.
+///
+/// Keep this in sync with `crate::usb::xhci::XhciPciDevice::MMIO_BAR_SIZE`.
+pub const XHCI_MMIO_BAR_SIZE_U32: u32 = 0x1_0000;
+
+/// Size in bytes of the xHCI MMIO register window (BAR0).
+pub const XHCI_MMIO_BAR_SIZE: u64 = XHCI_MMIO_BAR_SIZE_U32 as u64;
+
+pub const XHCI_BARS: [PciBarProfile; 1] =
+    [PciBarProfile::mem32(XHCI_MMIO_BAR_INDEX, XHCI_MMIO_BAR_SIZE, false)];
 
 /// Canonical capabilities exposed by the QEMU-style xHCI profile.
 ///
@@ -593,22 +608,27 @@ pub const USB_EHCI_ICH9: PciDeviceProfile = PciDeviceProfile {
     capabilities: &[],
 };
 
-/// USB 3.0 xHCI controller (QEMU-compatible PCI identity).
+/// PCI identity/profile for an xHCI (USB 3.x) controller.
 ///
-/// We intentionally use QEMU's widely-recognized xHCI PCI IDs (`1b36:000d`) so modern guest OSes
-/// bind their generic xHCI drivers by default. Guests still rely primarily on the xHCI class code
-/// (`0c/03/30`), but a realistic VID/DID helps keep enumeration consistent with other virtual
-/// platforms.
+/// Identity choice:
+/// - **VID/DID**: `1b36:000d` ("qemu-xhci"), a widely-recognized QEMU virtual device ID.
+/// - **Class code**: `0x0c0330` (serial bus / USB / xHCI).
+///
+/// Most modern guest OSes (Linux, Windows 8+) bind their generic xHCI driver primarily based on
+/// the class code, not a specific vendor/device ID, so using QEMU's ID is a safe and
+/// well-understood default. (Windows 7 has no inbox xHCI driver; guests that need USB 3.x support
+/// must provide a driver.)
 pub const USB_XHCI_QEMU: PciDeviceProfile = PciDeviceProfile {
     name: "qemu-xhci",
-    // `00:0c.0` is reserved for the transitional VGA/VBE stub; use the next slot by default.
+    // Stable canonical BDF chosen to avoid conflicts with chipset functions (00:01.x) and the
+    // legacy VGA/VBE stub (00:0c.0). Keep this stable so PCI config snapshots restore
+    // deterministically.
     bdf: PciBdf::new(0, 0x0d, 0),
     vendor_id: PCI_VENDOR_ID_REDHAT_QEMU,
     device_id: PCI_DEVICE_ID_QEMU_XHCI,
-    subsystem_vendor_id: 0,
-    subsystem_id: 0,
-    revision_id: 0,
-    // Serial bus / USB / xHCI.
+    subsystem_vendor_id: PCI_VENDOR_ID_REDHAT_QEMU,
+    subsystem_id: PCI_DEVICE_ID_QEMU_XHCI,
+    revision_id: 0x01,
     class: PciClassCode::new(0x0c, 0x03, 0x30),
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),

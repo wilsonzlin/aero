@@ -6,6 +6,7 @@ import { MmioBus } from "./mmio.ts";
 import { PciBus } from "./pci.ts";
 import { PortIoBus } from "./portio.ts";
 import type { PciCapability, PciDevice } from "./pci.ts";
+import { XhciPciDevice } from "../devices/xhci.ts";
 
 function cfgAddr(dev: number, fn: number, off: number): number {
   // PCI config mechanism #1 (I/O ports 0xCF8/0xCFC).
@@ -1123,6 +1124,73 @@ describe("io/bus/pci", () => {
     expect(() => pciBus2.loadState(snapshot)).not.toThrow();
     // The interrupt line should remain the value programmed for devB, not the snapshot's devA.
     expect(cfg2.readU8(0, 0, 0x3c)).toBe(0x44);
+  });
+
+  it("restores xHCI config only when BDF+identity match (stable BDF requirement)", () => {
+    const makeXhci = () =>
+      new XhciPciDevice({
+        bridge: {
+          mmio_read: () => 0,
+          mmio_write: () => {},
+          irq_asserted: () => false,
+          free: () => {},
+        },
+        irqSink: {
+          raiseIrq: () => {},
+          lowerIrq: () => {},
+        },
+      });
+
+    // Snapshot-time bus: xHCI at its canonical BDF (00:0d.0).
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    pciBus.registerDevice(makeXhci());
+    const cfg = makeCfgIo(portBus);
+
+    // Guest programs BAR0 + enables MEM decoding.
+    cfg.writeU32(0x0d, 0, 0x10, 0x9000_0000);
+    cfg.writeU16(0x0d, 0, 0x04, 0x0002);
+
+    const snapshot = pciBus.saveState();
+
+    // Restore-time bus: same BDF + identity => config should be restored.
+    const portBus2 = new PortIoBus();
+    const mmioBus2 = new MmioBus();
+    const pciBus2 = new PciBus(portBus2, mmioBus2);
+    pciBus2.registerToPortBus();
+    pciBus2.registerDevice(makeXhci());
+    pciBus2.loadState(snapshot);
+
+    const cfg2 = makeCfgIo(portBus2);
+    // Avoid JS bitwise ops: BAR bases may exceed 2^31 and would be sign-extended.
+    expect(BigInt(cfg2.readU32(0x0d, 0, 0x10)) & 0xffff_fff0n).toBe(0x9000_0000n);
+    expect(cfg2.readU16(0x0d, 0, 0x04)).toBe(0x0002);
+
+    // Identity mismatch at same BDF => must ignore snapshot entry.
+    const portBus3 = new PortIoBus();
+    const mmioBus3 = new MmioBus();
+    const pciBus3 = new PciBus(portBus3, mmioBus3);
+    pciBus3.registerToPortBus();
+    pciBus3.registerDevice(
+      { name: "not-xhci", vendorId: 0x1234, deviceId: 0x5678, classCode: 0, bdf: { bus: 0, device: 0x0d, function: 0 } },
+      { device: 0x0d, function: 0 },
+    );
+    pciBus3.loadState(snapshot);
+    const cfg3 = makeCfgIo(portBus3);
+    expect(cfg3.readU16(0x0d, 0, 0x04)).toBe(0x0000);
+
+    // BDF mismatch (xhci moved) => snapshot entry must be ignored.
+    const portBus4 = new PortIoBus();
+    const mmioBus4 = new MmioBus();
+    const pciBus4 = new PciBus(portBus4, mmioBus4);
+    pciBus4.registerToPortBus();
+    pciBus4.registerDevice(makeXhci(), { device: 0x0e, function: 0 });
+    pciBus4.loadState(snapshot);
+    const cfg4 = makeCfgIo(portBus4);
+    expect(BigInt(cfg4.readU32(0x0e, 0, 0x10)) & 0xffff_fff0n).not.toBe(0x9000_0000n);
   });
 
   it("restores without transient BAR overlap when devices are registered in a different order", () => {

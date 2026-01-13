@@ -33,6 +33,15 @@ export type XhciControllerBridgeLike = {
 };
 
 const XHCI_CLASS_CODE = 0x0c_03_30;
+
+// Match the native PCI identity in `crates/devices/src/pci/profile.rs`.
+//
+// We intentionally use QEMU's canonical xHCI PCI IDs (`1b36:000d`, "qemu-xhci") so modern guests
+// bind their generic xHCI drivers by default. (Windows 7 has no inbox xHCI driver.)
+const XHCI_VENDOR_ID = 0x1b36; // Red Hat/QEMU
+const XHCI_DEVICE_ID = 0x000d; // qemu-xhci
+const XHCI_REVISION_ID = 0x01;
+
 // Typical xHCI register window size (CAP/OP/RT/DB blocks). Keep power-of-two for PCI BAR sizing.
 const XHCI_MMIO_BAR_SIZE = 0x1_0000;
 // Stable legacy IRQ line value reported in PCI config space (0x3C).
@@ -63,15 +72,15 @@ function maskToSize(value: number, size: number): number {
  */
 export class XhciPciDevice implements PciDevice, TickableDevice {
   readonly name = "xhci";
-  // Use an Intel-ish identity by default; the specific IDs are not currently relied upon by the web runtime.
-  readonly vendorId = 0x8086;
-  readonly deviceId = 0x1e31;
+  // Match the native xHCI PCI identity (qemu-xhci).
+  readonly vendorId = XHCI_VENDOR_ID;
+  readonly deviceId = XHCI_DEVICE_ID;
   readonly classCode = XHCI_CLASS_CODE;
-  readonly revisionId = 0x01;
+  readonly revisionId = XHCI_REVISION_ID;
   readonly irqLine = XHCI_IRQ_LINE;
   readonly interruptPin = 0x01 as const; // INTA#
   // Keep a stable BDF so guest driver installation and snapshots are deterministic.
-  readonly bdf = { bus: 0, device: 2, function: 0 };
+  readonly bdf = { bus: 0, device: 0x0d, function: 0 };
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: XHCI_MMIO_BAR_SIZE }, null, null, null, null, null];
 

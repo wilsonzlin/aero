@@ -78,9 +78,9 @@ pub struct XhciPciDevice {
 
 impl XhciPciDevice {
     /// xHCI MMIO BAR size (BAR0).
-    pub const MMIO_BAR_SIZE: u32 = 0x10000;
+    pub const MMIO_BAR_SIZE: u32 = profile::XHCI_MMIO_BAR_SIZE_U32;
     /// xHCI MMIO BAR index (BAR0).
-    pub const MMIO_BAR_INDEX: u8 = 0;
+    pub const MMIO_BAR_INDEX: u8 = profile::XHCI_MMIO_BAR_INDEX;
 
     /// Create a new xHCI PCI device wrapper with a QEMU-compatible PCI identity.
     pub fn new() -> Self {
@@ -486,8 +486,11 @@ fn all_ones(size: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::XhciPciDevice;
+    use crate::pci::config::PciClassCode;
     use crate::pci::msi::PCI_CAP_ID_MSI;
-    use crate::pci::PciDevice;
+    use crate::pci::profile::{PCI_DEVICE_ID_QEMU_XHCI, PCI_VENDOR_ID_REDHAT_QEMU};
+    use crate::pci::{PciBarDefinition, PciDevice};
+    use memory::MmioHandler;
 
     #[test]
     fn exposes_msi_capability() {
@@ -496,5 +499,67 @@ mod tests {
             dev.config_mut().find_capability(PCI_CAP_ID_MSI).is_some(),
             "xHCI device should expose an MSI capability"
         );
+    }
+
+    #[test]
+    fn config_matches_profile() {
+        let dev = XhciPciDevice::default();
+
+        let id = dev.config.vendor_device_id();
+        assert_eq!(
+            id.vendor_id, PCI_VENDOR_ID_REDHAT_QEMU,
+            "xHCI should use the Red Hat/QEMU vendor ID"
+        );
+        assert_eq!(
+            id.device_id, PCI_DEVICE_ID_QEMU_XHCI,
+            "xHCI should use the QEMU xHCI device ID"
+        );
+
+        assert_eq!(
+            dev.config.class_code(),
+            PciClassCode {
+                class: 0x0c,
+                subclass: 0x03,
+                prog_if: 0x30,
+                revision_id: 0x01,
+            },
+            "xHCI class code must be 0x0c0330 (xHCI) with a stable revision ID"
+        );
+
+        assert_eq!(
+            dev.config.bar_definition(XhciPciDevice::MMIO_BAR_INDEX),
+            Some(PciBarDefinition::Mmio32 {
+                size: XhciPciDevice::MMIO_BAR_SIZE,
+                prefetchable: false,
+            })
+        );
+    }
+
+    #[test]
+    fn bar0_probe_returns_expected_size_mask() {
+        let mut dev = XhciPciDevice::default();
+        let cfg = dev.config_mut();
+
+        // Standard PCI BAR sizing probe: write all 1s then read back the mask.
+        cfg.write(0x10, 4, 0xffff_ffff);
+        let mask = cfg.read(0x10, 4);
+
+        // MMIO32 BAR, non-prefetchable, size 0x10000 => mask 0xffff_0000.
+        let expected = !(XhciPciDevice::MMIO_BAR_SIZE - 1) & 0xffff_fff0;
+        assert_eq!(mask, expected);
+    }
+
+    #[test]
+    fn mmio_reads_return_all_ones_when_mem_decoding_disabled() {
+        let mut dev = XhciPciDevice::default();
+
+        // Program BAR0 base but leave COMMAND.MEM cleared.
+        dev.config_mut()
+            .set_bar_base(XhciPciDevice::MMIO_BAR_INDEX, 0x1000_0000);
+        assert_eq!(MmioHandler::read(&mut dev, 0x00, 4), 0xffff_ffff);
+
+        // Enable MEM decoding and verify the capability dword becomes visible.
+        dev.config_mut().set_command(0x2);
+        assert_eq!(MmioHandler::read(&mut dev, 0x00, 4) as u32, 0x0100_0040);
     }
 }

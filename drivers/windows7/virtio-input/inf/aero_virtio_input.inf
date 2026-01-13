@@ -65,8 +65,8 @@ aero_virtio_input.sys = 1
 ;
 ; This INF includes explicit model lines for the Aero contract v1 keyboard/mouse
 ; virtio-input functions (SUBSYS_0010 and SUBSYS_0011), plus a revision-gated
-; fallback match on the base device ID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for
-; contract-major safety.
+; fallback match on the base device ID (`PCI\VEN_1AF4&DEV_1052&REV_01`) so Aero can
+; still bind the driver when subsystem IDs are not exposed.
 ;
 ; It also includes a revision-gated fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`)
 ; for environments that do not expose Aero subsystem IDs.
