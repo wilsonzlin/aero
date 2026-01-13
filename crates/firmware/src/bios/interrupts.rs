@@ -533,6 +533,25 @@ fn handle_int13(
                     cpu.rflags |= FLAG_CF;
                 }
             }
+            0x15 => {
+                // Get disk type.
+                //
+                // CD-ROM drives use 2048-byte logical sectors. `BlockDevice` is defined in terms of
+                // 512-byte sectors, so report the sector count in 2048-byte units.
+                if !drive_present(bios, bus, drive) {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+                let sectors_u32 = u32::try_from(disk.size_in_sectors() / 4).unwrap_or(u32::MAX);
+                let cx = (sectors_u32 >> 16) as u16;
+                let dx = (sectors_u32 & 0xFFFF) as u16;
+                cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | (cx as u64);
+                cpu.gpr[gpr::RDX] = (cpu.gpr[gpr::RDX] & !0xFFFF) | (dx as u64);
+                // Convention: report type 0x03 ("fixed disk") to indicate "present".
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | 0x0300;
+                bios.last_int13_status = 0;
+                cpu.rflags &= !FLAG_CF;
+            }
             0x03 | 0x05 => {
                 // CHS write / format track.
                 if !drive_present(bios, bus, drive) {
@@ -1778,7 +1797,7 @@ fn build_e820_map(
 mod tests {
     use super::super::{
         ivt, A20Gate, BiosConfig, ElToritoBootInfo, ElToritoBootMediaType, InMemoryDisk, TestMemory,
-        BDA_BASE, EBDA_BASE, MAX_TTY_OUTPUT_BYTES, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
+        BlockDevice, BDA_BASE, EBDA_BASE, MAX_TTY_OUTPUT_BYTES, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
     };
     use super::*;
     use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, FLAG_ZF};
@@ -2106,6 +2125,52 @@ mod tests {
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x02);
+    }
+
+    #[test]
+    fn int13_get_disk_type_cd_reports_present_and_2048_sector_count() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        // 10 logical CD sectors (2048 bytes each) => 40 512-byte sectors.
+        let disk_bytes = vec![0u8; 2048 * 10];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+        let expected_2048_sectors = u32::try_from(disk.size_in_sectors() / 4).unwrap();
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x1500; // AH=15h
+        cpu.gpr[gpr::RDX] = 0x00E0; // DL=CD0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x03);
+        let sectors = ((cpu.gpr[gpr::RCX] as u16 as u32) << 16) | (cpu.gpr[gpr::RDX] as u16 as u32);
+        assert_eq!(sectors, expected_2048_sectors);
+    }
+
+    #[test]
+    fn int13_get_drive_parameters_cd_returns_failure() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let disk_bytes = vec![0u8; 2048 * 10];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x0800; // AH=08h
+        cpu.gpr[gpr::RDX] = 0x00E0; // DL=CD0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0100);
     }
 
     #[test]
