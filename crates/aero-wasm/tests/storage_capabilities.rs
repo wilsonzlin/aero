@@ -14,9 +14,8 @@ fn storage_capabilities_exports_boolean_fields() {
         let v = Reflect::get(&caps, &JsValue::from_str(key))
             .unwrap_or_else(|_| panic!("missing storage_capabilities field: {key}"));
         assert!(
-            v.is_boolean(),
+            v.as_bool().is_some(),
             "storage_capabilities[{key}] must be a boolean"
         );
     }
 }
-
