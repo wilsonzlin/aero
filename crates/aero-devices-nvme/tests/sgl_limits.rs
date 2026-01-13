@@ -81,8 +81,15 @@ fn read_cqe(mem: &mut TestMem, addr: u64) -> Cqe {
     }
 }
 
-#[test]
-fn sgl_descriptor_count_is_capped() {
+fn write_sgl_desc(mem: &mut TestMem, addr: u64, ptr: u64, len: u32, type_byte: u8) {
+    let mut desc = [0u8; 16];
+    desc[0..8].copy_from_slice(&ptr.to_le_bytes());
+    desc[8..12].copy_from_slice(&len.to_le_bytes());
+    desc[15] = type_byte;
+    mem.write_physical(addr, &desc);
+}
+
+fn setup_ctrl_with_io_queues() -> (NvmeController, TestMem, u64, u64) {
     let disk = RawDisk::create(MemBackend::new(), 1024 * SECTOR_SIZE as u64).unwrap();
     let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
     let mut mem = TestMem::new(2 * 1024 * 1024);
@@ -118,6 +125,13 @@ fn sgl_descriptor_count_is_capped() {
     ctrl.mmio_write(0x1000, 4, 2);
     ctrl.process(&mut mem);
 
+    (ctrl, mem, io_cq, io_sq)
+}
+
+#[test]
+fn sgl_descriptor_count_is_capped() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
     // WRITE 1 sector using an SGL segment descriptor with an absurdly large descriptor list length.
     // This should be rejected by the per-command descriptor count cap before the device attempts
     // to walk the segment list.
@@ -145,4 +159,81 @@ fn sgl_descriptor_count_is_capped() {
         0x4004,
         "expected INVALID_FIELD status"
     );
+}
+
+#[test]
+fn sgl_rejects_non_address_subtype() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let buf = 0x60000u64;
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x20);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, buf);
+    // Data Block descriptor with subtype=1 (keyed) is not supported.
+    set_prp2(&mut cmd, 512u64 | ((0x10u64) << 56));
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x20);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_segment_descriptor_requires_alignment() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    // Misaligned segment list pointer.
+    let list = 0x70008u64;
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x21);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    set_prp2(&mut cmd, 16u64 | ((0x02u64) << 56)); // Segment
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x21);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_rejects_segment_descriptor_not_last_in_segment_list() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list1 = 0x70000u64;
+    let list2 = 0x71000u64;
+    let buf = 0x60000u64;
+
+    // First descriptor is a Segment descriptor but it is NOT the last entry -> must be rejected.
+    write_sgl_desc(&mut mem, list1, list2, 16, 0x02);
+    write_sgl_desc(&mut mem, list1 + 16, buf, 512, 0x00);
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x22);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list1);
+    set_prp2(&mut cmd, 32u64 | ((0x02u64) << 56));
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x22);
+    assert_eq!(cqe.status & !0x1, 0x4004);
 }
