@@ -251,6 +251,12 @@ BIOS disk I/O has two relevant "block sizes":
   default sector size used by most boot sectors).
 - **CD-ROM (El Torito):** 2048-byte logical blocks (ISO-9660 / CD-ROM sector size).
 
+BIOS drive numbers are historically split into ranges:
+
+- `DL=0x00..=0x7F`: diskette/floppy drives
+- `DL=0x80..=0xDF`: fixed disks (HDDs)
+- `DL=0xE0..=0xFF`: CD-ROM drives (El Torito / ATAPI CD)
+
 For the Windows 7 install ISO boot path, firmware is expected to support **El Torito (no-emulation)**
 booting from a CD drive number (recommend **`DL=0xE0`** for the first CD), and provide **EDD-style**
 INT 13h services for that drive. At minimum, CD boot loaders are expected to be able to use:
