@@ -285,14 +285,14 @@ impl PendingEventState {
     /// malicious guest indirectly influencing it) injects interrupts faster than
     /// the guest can consume them, we must not allow unbounded growth of
     /// interpreter bookkeeping structures.
-    pub const MAX_EXTERNAL_INTERRUPTS: usize = 1024;
+    pub const MAX_EXTERNAL_INTERRUPTS: usize = crate::interrupts::MAX_EXTERNAL_INTERRUPTS;
     /// Hard cap on the internal interrupt/IRET bookkeeping stack.
     ///
     /// Every delivered interrupt/exception pushes one frame to this stack; the
     /// corresponding `IRET*` pops it. If the guest keeps taking interrupts (or
     /// faults while delivering interrupts) but never completes the return path,
     /// this can grow without bound unless we enforce a limit.
-    pub const MAX_INTERRUPT_FRAMES: usize = 1024;
+    pub const MAX_INTERRUPT_FRAMES: usize = crate::interrupts::MAX_INTERRUPT_FRAMES;
 
     /// Queue a faulting exception for delivery at the next instruction boundary.
     ///
