@@ -14,11 +14,14 @@ pub const REG_HCSPARAMS1: u64 = 0x04;
 pub const REG_HCCPARAMS1: u64 = 0x10;
 pub const REG_USBCMD: u64 = 0x40;
 pub const REG_USBSTS: u64 = 0x44;
+
+/// Command Ring Control Register (CRCR), 64-bit (low/high dwords).
 pub const REG_CRCR_LO: u64 = 0x58;
 pub const REG_CRCR_HI: u64 = 0x5c;
 
 /// USBCMD bit 0 (Run/Stop).
 pub const USBCMD_RUN: u32 = 1 << 0;
+
 /// USBSTS bit 3 (Event Interrupt).
 ///
 /// The full xHCI interrupt model is not implemented yet; the skeleton uses this bit as a generic
@@ -143,4 +146,3 @@ pub const fn encode_psi(psiv: u8, psit: u8, mantissa: u8, exponent: u8) -> u32 {
         | ((mantissa as u32) << 8)
         | ((exponent as u32 & 0x3) << 16)
 }
-
