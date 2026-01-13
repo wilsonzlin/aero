@@ -1282,5 +1282,10 @@ mod tests {
         let snap_a = dev_a.snapshot_save();
         let snap_b = dev_b.snapshot_save();
         assert_eq!(snap_a, snap_b);
+
+        // Optional: round-trip and ensure the canonical encoding is stable.
+        let mut loaded = UsbPassthroughDevice::new();
+        loaded.snapshot_load(&snap_a).unwrap();
+        assert_eq!(loaded.snapshot_save(), snap_a);
     }
 }
