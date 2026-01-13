@@ -506,7 +506,7 @@ static VOID VioInputEventQProcessUsedBuffersLocked(_Inout_ PDEVICE_CONTEXT Ctx)
                 (ULONG)len,
                 bufBytes);
             VioInputCounterInc(&Ctx->Counters.VirtioEventDrops);
-        } else if (Ctx->VirtioStarted != 0 && VirtioInputIsHidActive(Ctx)) {
+        } else if (InterlockedCompareExchange(&Ctx->VirtioStarted, 0, 0) != 0 && VirtioInputIsHidActive(Ctx)) {
             virtio_input_process_event_le(&Ctx->InputDevice, (const struct virtio_input_event_le*)cookie);
         }
 
@@ -587,7 +587,7 @@ static VOID VioInputEvtDrainQueue(_In_ WDFDEVICE Device, _In_ ULONG QueueIndex, 
      * The virtqueue implementation is wired in elsewhere; the interrupt plumbing
      * calls into the relevant queue handlers here.
      */
-    if (devCtx != NULL && devCtx->VirtioStarted != 0) {
+    if (devCtx != NULL && InterlockedCompareExchange(&devCtx->VirtioStarted, 0, 0) != 0) {
         if (QueueIndex == 0) {
             VioInputEventQProcessUsedBuffersLocked(devCtx);
         } else if (QueueIndex == 1) {
@@ -708,12 +708,11 @@ static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
      */
     emitResetReports = ctx->HidActivated ? TRUE : FALSE;
 
-    ctx->VirtioStarted = 0;
+    (VOID)InterlockedExchange(&ctx->VirtioStarted, 0);
 
     if (emitResetReports) {
         virtio_input_device_reset_state(&ctx->InputDevice, true);
     }
-
     ctx->InD0 = FALSE;
     VirtioInputUpdateStatusQActiveState(ctx);
 
@@ -772,7 +771,7 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
         deviceContext->HardwareReady = FALSE;
         deviceContext->InD0 = FALSE;
         deviceContext->HidActivated = FALSE;
-        deviceContext->VirtioStarted = 0;
+        (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
         deviceContext->DeviceKind = VioInputDeviceKindUnknown;
         deviceContext->PciSubsystemDeviceId = 0;
 
@@ -879,7 +878,7 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     RtlZeroMemory(deviceContext->QueueInterruptCount, sizeof(deviceContext->QueueInterruptCount));
     deviceContext->HardwareReady = FALSE;
     deviceContext->InD0 = FALSE;
-    deviceContext->VirtioStarted = 0;
+    (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
 
     status = VirtioPciModernInit(Device, &deviceContext->PciDevice);
     if (!NT_SUCCESS(status)) {
@@ -1108,7 +1107,7 @@ NTSTATUS VirtioInputEvtDeviceReleaseHardware(_In_ WDFDEVICE Device, _In_ WDFCMRE
         deviceContext->HardwareReady = FALSE;
         deviceContext->InD0 = FALSE;
         deviceContext->HidActivated = FALSE;
-        deviceContext->VirtioStarted = 0;
+        (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
         VirtioInputUpdateStatusQActiveState(deviceContext);
 
         virtio_input_device_reset_state(&deviceContext->InputDevice, false);
@@ -1147,7 +1146,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
     compatDeviceKind = VioInputQueryCompatDeviceKindEnabled(Device);
 
     deviceContext->InD0 = FALSE;
-    deviceContext->VirtioStarted = 0;
+    (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
 
     if (!deviceContext->HardwareReady) {
         return STATUS_DEVICE_NOT_READY;
@@ -1765,7 +1764,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);
         }
 
-        deviceContext->VirtioStarted = 1;
+        (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 1);
 
         status = VirtioInputInterruptsResumeAfterReset(deviceContext);
         if (!NT_SUCCESS(status)) {
@@ -1773,11 +1772,10 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
                 "VirtioPciInterruptsResume failed: %!STATUS!\n",
                 status);
-            deviceContext->VirtioStarted = 0;
+            (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
             VirtioPciResetDevice(&deviceContext->PciDevice);
             return status;
         }
-
         VirtioPciAddStatus(&deviceContext->PciDevice, VIRTIO_STATUS_DRIVER_OK);
 
         virtio_input_device_reset_state(&deviceContext->InputDevice, emitResetReports ? true : false);
@@ -1805,7 +1803,7 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
 
     deviceContext = VirtioInputGetDeviceContext(Device);
 
-    deviceContext->VirtioStarted = 0;
+    (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
 
     /*
      * Policy: if HID has been activated, emit an all-zero report before stopping
@@ -1819,7 +1817,6 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
     if (emitResetReports) {
         virtio_input_device_reset_state(&deviceContext->InputDevice, true);
     }
-
     deviceContext->InD0 = FALSE;
 
     VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);

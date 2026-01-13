@@ -326,6 +326,10 @@ typedef struct _DEVICE_CONTEXT {
     BOOLEAN HardwareReady;
     BOOLEAN InD0;
     BOOLEAN HidActivated;
+    /*
+     * Atomic (interlocked) flag used to gate interrupt/DPC paths during power and
+     * PnP transitions. Always access via interlocked operations.
+     */
     volatile LONG VirtioStarted;
     VIOINPUT_DEVICE_KIND DeviceKind;
     USHORT PciSubsystemDeviceId;
