@@ -237,3 +237,49 @@ fn sgl_rejects_segment_descriptor_not_last_in_segment_list() {
     assert_eq!(cqe.cid, 0x22);
     assert_eq!(cqe.status & !0x1, 0x4004);
 }
+
+#[test]
+fn sgl_datablock_rejects_zero_length() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let buf = 0x60000u64;
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x23);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, buf);
+    // Data Block descriptor with length=0 is invalid.
+    set_prp2(&mut cmd, 0);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x23);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_datablock_rejects_null_address() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x24);
+    set_nsid(&mut cmd, 1);
+    // Data Block descriptor with addr=0 is invalid.
+    set_prp1(&mut cmd, 0);
+    set_prp2(&mut cmd, 512);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x24);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
