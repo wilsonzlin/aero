@@ -193,3 +193,33 @@ For convenience, you can also regenerate just the DSDT fixture via:
 ```bash
 cargo run -p firmware --bin gen_dsdt --locked
 ```
+
+## BIOS ROM fixture (`assets/bios.bin`)
+
+This repo keeps a checked-in BIOS ROM image at `assets/bios.bin` for:
+
+- repository policy allowlisting of a tiny, deterministic firmware blob
+- quick manual inspection / diffing
+
+The canonical source of truth is the Rust generator (`firmware::bios::build_bios_rom()`).
+
+To regenerate the checked-in fixture:
+
+```bash
+cargo xtask fixtures
+```
+
+To verify the fixture is up to date without modifying it:
+
+```bash
+cargo xtask fixtures --check
+```
+
+Or, to regenerate/check just the BIOS ROM fixture:
+
+```bash
+cargo run -p firmware --bin gen_bios_rom --locked
+cargo run -p firmware --bin gen_bios_rom --locked -- --check
+```
+
+The `assets/bios.bin` fixture is validated by `crates/firmware/tests/bios_rom_fixture.rs`.
