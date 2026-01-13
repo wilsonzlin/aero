@@ -976,7 +976,8 @@ def main() -> int:
             "Also emits a host marker: "
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS/FAIL|attempt=<n>|tablet_mode=device/broadcast "
             "(may appear multiple times due to retries). "
-            "This requires a guest image provisioned with --test-input-tablet-events (or env var)."
+            "This requires a guest image provisioned with --test-input-tablet-events/--test-tablet-events "
+            "(or env var: AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1)."
         ),
     )
     parser.add_argument(
@@ -1079,7 +1080,7 @@ def main() -> int:
 
     if need_input_tablet_events and not _qemu_has_device(args.qemu_system, "virtio-tablet-pci"):
         parser.error(
-            "--with-input-tablet-events/--with-virtio-input-tablet-events requires QEMU virtio-tablet-pci support. "
+            "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events requires QEMU virtio-tablet-pci support. "
             "Upgrade QEMU or omit tablet event injection."
         )
 
@@ -1142,7 +1143,7 @@ def main() -> int:
             if port is None:
                 if need_input_events or need_input_tablet_events:
                     print(
-                        "ERROR: --with-input-events/--with-virtio-input-events/--with-input-tablet-events requires QMP, but a free TCP port could not be allocated",
+                        "ERROR: --with-input-events/--with-virtio-input-events/--with-input-tablet-events/--with-tablet-events requires QMP, but a free TCP port could not be allocated",
                         file=sys.stderr,
                     )
                     return 2
@@ -1154,7 +1155,7 @@ def main() -> int:
                 qmp_endpoint = _QmpEndpoint(tcp_host="127.0.0.1", tcp_port=port)
     if (need_input_events or need_input_tablet_events) and qmp_endpoint is None:
         print(
-            "ERROR: --with-input-events/--with-virtio-input-events/--with-input-tablet-events requires QMP, but a QMP endpoint could not be allocated",
+            "ERROR: --with-input-events/--with-virtio-input-events/--with-input-tablet-events/--with-tablet-events requires QMP, but a QMP endpoint could not be allocated",
             file=sys.stderr,
         )
         return 2
@@ -1529,7 +1530,7 @@ def main() -> int:
                         if saw_virtio_input_tablet_events_skip:
                             print(
                                 "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
-                                "--with-input-tablet-events was enabled (provision the guest with --test-input-tablet-events)",
+                                "--with-input-tablet-events/--with-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -1537,7 +1538,7 @@ def main() -> int:
                             break
                         if saw_virtio_input_tablet_events_fail:
                             print(
-                                "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while --with-input-tablet-events was enabled",
+                                "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while --with-input-tablet-events/--with-tablet-events was enabled",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -1913,7 +1914,7 @@ def main() -> int:
                 ):
                     print(
                         "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events marker after virtio-input completed while "
-                        "--with-input-tablet-events was enabled (guest selftest too old or missing --test-input-tablet-events)",
+                        "--with-input-tablet-events/--with-tablet-events was enabled (guest selftest too old or missing --test-input-tablet-events/--test-tablet-events)",
                         file=sys.stderr,
                     )
                     _print_tail(serial_log)
@@ -2311,7 +2312,7 @@ def main() -> int:
                             if need_input_tablet_events:
                                 if saw_virtio_input_tablet_events_fail:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while --with-input-tablet-events was enabled",
+                                        "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while --with-input-tablet-events/--with-tablet-events was enabled",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -2321,13 +2322,13 @@ def main() -> int:
                                     if saw_virtio_input_tablet_events_skip:
                                         print(
                                             "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
-                                            "--with-input-tablet-events was enabled (provision the guest with --test-input-tablet-events)",
+                                            "--with-input-tablet-events/--with-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)",
                                             file=sys.stderr,
                                         )
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events PASS marker while "
-                                            "--with-input-tablet-events was enabled",
+                                            "--with-input-tablet-events/--with-tablet-events was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)

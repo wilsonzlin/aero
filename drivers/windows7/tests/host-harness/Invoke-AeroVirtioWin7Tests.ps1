@@ -64,10 +64,11 @@ param(
   # Also emits a host marker for each injection attempt:
   #   AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS/FAIL|attempt=<n>|tablet_mode=device/broadcast
   #
-  # Note: The guest image must be provisioned with `--test-input-tablet-events` (or env var equivalent) so the
-  # guest selftest runs the read-report loop.
+  # Note: The guest image must be provisioned with `--test-input-tablet-events` (alias: `--test-tablet-events`)
+  # (or env var equivalent, e.g. AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or
+  # AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1) so the guest selftest runs the read-report loop.
   [Parameter(Mandatory = $false)]
-  [Alias("WithVirtioInputTabletEvents", "EnableVirtioInputTabletEvents")]
+  [Alias("WithVirtioInputTabletEvents", "EnableVirtioInputTabletEvents", "WithTabletEvents", "EnableTabletEvents")]
   [switch]$WithInputTabletEvents,
 
   # If set, stream newly captured COM1 serial output to stdout while waiting.
@@ -2006,7 +2007,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_TABLET_EVENTS" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputTabletEvents was enabled (guest selftest too old or missing --test-input-tablet-events)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputTabletEvents was enabled (guest selftest too old or missing --test-input-tablet-events/--test-tablet-events)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -2014,7 +2015,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_TABLET_EVENTS_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but -WithInputTabletEvents was enabled (provision the guest with --test-input-tablet-events)"
+      Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but -WithInputTabletEvents was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
