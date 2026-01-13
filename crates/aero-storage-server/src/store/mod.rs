@@ -107,6 +107,31 @@ pub trait ImageStore: Send + Sync {
         Err(StoreError::NotFound)
     }
 
+    /// Open the chunked-disk-image manifest for a specific version, if available.
+    ///
+    /// Stores that do not support chunked delivery should return `StoreError::NotFound` (the
+    /// default implementation does this).
+    async fn open_chunked_manifest_version(
+        &self,
+        _image_id: &str,
+        _version: &str,
+    ) -> Result<ChunkedObject, StoreError> {
+        Err(StoreError::NotFound)
+    }
+
+    /// Open a single chunk object for a specific version, if available.
+    ///
+    /// Stores that do not support chunked delivery should return `StoreError::NotFound` (the
+    /// default implementation does this).
+    async fn open_chunked_chunk_version(
+        &self,
+        _image_id: &str,
+        _version: &str,
+        _chunk_name: &str,
+    ) -> Result<ChunkedObject, StoreError> {
+        Err(StoreError::NotFound)
+    }
+
     async fn exists(&self, image_id: &str) -> Result<bool, StoreError> {
         match self.get_meta(image_id).await {
             Ok(_) => Ok(true),

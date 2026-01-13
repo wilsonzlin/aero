@@ -327,30 +327,7 @@ impl ImageStore for LocalFsImageStore {
             path = path.join(Path::new(version));
         }
         let path = path.join("manifest.json");
-        let canonical = self.ensure_within_root(&path).await?;
-
-        let meta = fs::metadata(&canonical).await.map_err(map_not_found)?;
-        if !meta.is_file() {
-            return Err(StoreError::NotFound);
-        }
-
-        let last_modified = meta
-            .modified()
-            .ok()
-            .filter(|t| t.duration_since(UNIX_EPOCH).is_ok());
-        let etag = Some(etag_from_size_and_mtime(meta.len(), last_modified));
-
-        let file = fs::File::open(&canonical).await.map_err(map_not_found)?;
-
-        Ok(ChunkedObject {
-            meta: ImageMeta {
-                size: meta.len(),
-                etag,
-                last_modified,
-                content_type: CONTENT_TYPE_JSON,
-            },
-            reader: Box::pin(file),
-        })
+        open_chunked_file(&self.root, &path, CONTENT_TYPE_JSON).await
     }
 
     async fn open_chunked_chunk(
@@ -367,31 +344,82 @@ impl ImageStore for LocalFsImageStore {
         let path = path
             .join("chunks")
             .join(Path::new(chunk_name));
-        let canonical = self.ensure_within_root(&path).await?;
-
-        let meta = fs::metadata(&canonical).await.map_err(map_not_found)?;
-        if !meta.is_file() {
-            return Err(StoreError::NotFound);
-        }
-
-        let last_modified = meta
-            .modified()
-            .ok()
-            .filter(|t| t.duration_since(UNIX_EPOCH).is_ok());
-        let etag = Some(etag_from_size_and_mtime(meta.len(), last_modified));
-
-        let file = fs::File::open(&canonical).await.map_err(map_not_found)?;
-
-        Ok(ChunkedObject {
-            meta: ImageMeta {
-                size: meta.len(),
-                etag,
-                last_modified,
-                content_type: CONTENT_TYPE_DISK_IMAGE,
-            },
-            reader: Box::pin(file),
-        })
+        open_chunked_file(&self.root, &path, CONTENT_TYPE_DISK_IMAGE).await
     }
+
+    async fn open_chunked_manifest_version(
+        &self,
+        image_id: &str,
+        version: &str,
+    ) -> Result<ChunkedObject, StoreError> {
+        validate_image_id(image_id)?;
+        // Reuse the same safe identifier rules for version segments.
+        validate_image_id(version)?;
+
+        let path = self
+            .root
+            .join("chunked")
+            .join(Path::new(image_id))
+            .join(Path::new(version))
+            .join("manifest.json");
+        open_chunked_file(&self.root, &path, CONTENT_TYPE_JSON).await
+    }
+
+    async fn open_chunked_chunk_version(
+        &self,
+        image_id: &str,
+        version: &str,
+        chunk_name: &str,
+    ) -> Result<ChunkedObject, StoreError> {
+        validate_image_id(image_id)?;
+        validate_image_id(version)?;
+
+        let path = self
+            .root
+            .join("chunked")
+            .join(Path::new(image_id))
+            .join(Path::new(version))
+            .join("chunks")
+            .join(Path::new(chunk_name));
+        open_chunked_file(&self.root, &path, CONTENT_TYPE_DISK_IMAGE).await
+    }
+}
+
+async fn open_chunked_file(
+    canonical_root: &Path,
+    path: &Path,
+    content_type: &'static str,
+) -> Result<ChunkedObject, StoreError> {
+    // Canonicalize the requested path (resolving symlinks) and ensure it still lives under the
+    // canonical root. This mirrors the `ensure_within_root` logic, but is defined as a helper so
+    // chunked open methods can share metadata/etag handling.
+    let canonical = fs::canonicalize(path).await.map_err(map_not_found)?;
+    if !canonical.starts_with(canonical_root) {
+        return Err(StoreError::NotFound);
+    }
+
+    let meta = fs::metadata(&canonical).await.map_err(map_not_found)?;
+    if !meta.is_file() {
+        return Err(StoreError::NotFound);
+    }
+
+    let last_modified = meta
+        .modified()
+        .ok()
+        .filter(|t| t.duration_since(UNIX_EPOCH).is_ok());
+    let etag = Some(etag_from_size_and_mtime(meta.len(), last_modified));
+
+    let file = fs::File::open(&canonical).await.map_err(map_not_found)?;
+
+    Ok(ChunkedObject {
+        meta: ImageMeta {
+            size: meta.len(),
+            etag,
+            last_modified,
+            content_type,
+        },
+        reader: Box::pin(file),
+    })
 }
 
 #[cfg(test)]

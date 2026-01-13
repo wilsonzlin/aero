@@ -19,6 +19,8 @@ metrics and basic health endpoints.
   (supports `Range` requests)
 - `GET /v1/images/:image_id/chunked/manifest.json` – fetch a pre-chunked image manifest (no `Range`)
 - `GET /v1/images/:image_id/chunked/chunks/:chunkName` – fetch a single chunk object (no `Range`)
+- `GET /v1/images/:image_id/chunked/:version/manifest.json` – fetch a versioned chunk manifest (recommended)
+- `GET /v1/images/:image_id/chunked/:version/chunks/:chunkName` – fetch a versioned chunk object (recommended)
 
 Notes:
 
@@ -127,6 +129,11 @@ chunked/<image_id>/<chunked_version>/
   manifest.json
   chunks/...
 ```
+
+When using the versioned layout, you can also point clients at the versioned manifest endpoint:
+`/v1/images/<image_id>/chunked/<chunked_version>/manifest.json`. Chunk URLs are derived relative to
+the manifest URL, so this yields stable versioned chunk URLs under
+`/v1/images/<image_id>/chunked/<chunked_version>/chunks/...`.
 
 The manifest supports optional per-image cache validator overrides to enable stable browser (OPFS)
 and CDN caching even if filesystem mtimes change during copy/restore:
