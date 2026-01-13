@@ -4721,7 +4721,6 @@ impl Machine {
     pub fn virtio_input_mouse(&self) -> Option<Rc<RefCell<VirtioPciDevice>>> {
         self.virtio_input_mouse.clone()
     }
-
     /// Returns the VGA/SVGA device, if present.
     pub fn vga(&self) -> Option<Rc<RefCell<VgaDevice>>> {
         self.vga.clone()
@@ -5994,6 +5993,68 @@ impl Machine {
                 pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
             }
 
+            // virtio-input keyboard legacy INTx (level-triggered).
+            if let Some(virtio_input_keyboard) = &self.virtio_input_keyboard {
+                let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let command = self
+                    .pci_cfg
+                    .as_ref()
+                    .and_then(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                    })
+                    .unwrap_or(0);
+
+                let mut level = {
+                    let mut dev = virtio_input_keyboard.borrow_mut();
+                    dev.set_pci_command(command);
+                    dev.irq_level()
+                };
+
+                // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
+            // virtio-input mouse legacy INTx (level-triggered).
+            if let Some(virtio_input_mouse) = &self.virtio_input_mouse {
+                let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let command = self
+                    .pci_cfg
+                    .as_ref()
+                    .and_then(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                    })
+                    .unwrap_or(0);
+
+                let mut level = {
+                    let mut dev = virtio_input_mouse.borrow_mut();
+                    dev.set_pci_command(command);
+                    dev.irq_level()
+                };
+
+                // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
             // PIIX3 UHCI legacy INTx (level-triggered).
             if let Some(uhci) = &self.uhci {
                 let bdf: PciBdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
@@ -6444,11 +6505,8 @@ impl Machine {
     /// Inject a Linux input key event (`EV_KEY` + `KEY_*`) into the virtio-input keyboard device.
     ///
     /// This is a no-op when virtio-input is disabled.
-    pub fn inject_virtio_key(&mut self, linux_key: u32, pressed: bool) {
+    pub fn inject_virtio_key(&mut self, linux_key: u16, pressed: bool) {
         let Some(kbd) = &self.virtio_input_keyboard else {
-            return;
-        };
-        let Ok(code) = u16::try_from(linux_key) else {
             return;
         };
         {
@@ -6456,7 +6514,7 @@ impl Machine {
             let Some(input) = dev.device_mut::<VirtioInput>() else {
                 return;
             };
-            input.inject_key(code, pressed);
+            input.inject_key(linux_key, pressed);
         }
         self.poll_virtio_input();
     }
@@ -6482,11 +6540,8 @@ impl Machine {
     /// Inject a Linux input button event (`EV_KEY` + `BTN_*`) into the virtio-input mouse device.
     ///
     /// This is a no-op when virtio-input is disabled.
-    pub fn inject_virtio_button(&mut self, btn: u32, pressed: bool) {
+    pub fn inject_virtio_button(&mut self, btn: u16, pressed: bool) {
         let Some(mouse) = &self.virtio_input_mouse else {
-            return;
-        };
-        let Ok(code) = u16::try_from(btn) else {
             return;
         };
         {
@@ -6494,7 +6549,7 @@ impl Machine {
             let Some(input) = dev.device_mut::<VirtioInput>() else {
                 return;
             };
-            input.inject_button(code, pressed);
+            input.inject_button(btn, pressed);
         }
         self.poll_virtio_input();
     }
@@ -7575,25 +7630,19 @@ impl Machine {
                     );
                 }
                 if let Some(virtio_net) = virtio_net.clone() {
+                    let bdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
                     router.register_handler(
-                        aero_devices::pci::profile::VIRTIO_NET.bdf,
+                        bdf,
                         0,
-                        VirtioPciBar0Mmio::new(
-                            pci_cfg.clone(),
-                            virtio_net,
-                            aero_devices::pci::profile::VIRTIO_NET.bdf,
-                        ),
+                        VirtioPciBar0Mmio::new(pci_cfg.clone(), virtio_net, bdf),
                     );
                 }
                 if let Some(virtio_blk) = virtio_blk.clone() {
+                    let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
                     router.register_handler(
-                        aero_devices::pci::profile::VIRTIO_BLK.bdf,
+                        bdf,
                         0,
-                        VirtioPciBar0Mmio::new(
-                            pci_cfg.clone(),
-                            virtio_blk,
-                            aero_devices::pci::profile::VIRTIO_BLK.bdf,
-                        ),
+                        VirtioPciBar0Mmio::new(pci_cfg.clone(), virtio_blk, bdf),
                     );
                 }
                 if let Some(virtio_input_keyboard) = virtio_input_keyboard.clone() {
@@ -9525,47 +9574,43 @@ impl snapshot::SnapshotSource for Machine {
                 &*virtio_net.borrow(),
             ));
         }
-        // virtio-input is a multi-function virtio-pci device (keyboard + mouse). Snapshot both
-        // PCI functions under a single outer device id so restore can treat the topology
-        // atomically.
-        if self.virtio_input_keyboard.is_some() || self.virtio_input_mouse.is_some() {
-            let mut wrapper = MachineVirtioInputSnapshot::default();
-
-            if let Some(kbd) = &self.virtio_input_keyboard {
-                let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
-                if let Some(pci_cfg) = &self.pci_cfg {
-                    let command = {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
-                            .unwrap_or(0)
-                    };
-                    kbd.borrow_mut().set_pci_command(command);
-                }
-                wrapper.keyboard = Some(kbd.borrow().save_state());
-            }
-
-            if let Some(mouse) = &self.virtio_input_mouse {
-                let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
-                if let Some(pci_cfg) = &self.pci_cfg {
-                    let command = {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
-                            .unwrap_or(0)
-                    };
-                    mouse.borrow_mut().set_pci_command(command);
-                }
-                wrapper.mouse = Some(mouse.borrow().save_state());
+        if let Some(virtio_input_keyboard) = &self.virtio_input_keyboard {
+            let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let command = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg
+                        .bus_mut()
+                        .device_config(bdf)
+                        .map(|cfg| cfg.command())
+                        .unwrap_or(0)
+                };
+                virtio_input_keyboard.borrow_mut().set_pci_command(command);
             }
 
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-                snapshot::DeviceId::VIRTIO_INPUT,
-                &wrapper,
+                snapshot::DeviceId::VIRTIO_INPUT_KEYBOARD,
+                &*virtio_input_keyboard.borrow(),
+            ));
+        }
+
+        if let Some(virtio_input_mouse) = &self.virtio_input_mouse {
+            let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let command = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg
+                        .bus_mut()
+                        .device_config(bdf)
+                        .map(|cfg| cfg.command())
+                        .unwrap_or(0)
+                };
+                virtio_input_mouse.borrow_mut().set_pci_command(command);
+            }
+
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::VIRTIO_INPUT_MOUSE,
+                &*virtio_input_mouse.borrow(),
             ));
         }
         if self.uhci.is_some() || self.ehci.is_some() || self.xhci.is_some() {
@@ -10597,34 +10642,68 @@ impl snapshot::SnapshotTarget for Machine {
             virtio.rewind_queue_next_avail_to_next_used(0);
         }
 
-        // Restore virtio-input (keyboard + mouse) after the interrupt controller + PCI INTx router
-        // so any restored legacy INTx level can be re-driven deterministically.
-        if let Some(state) = by_id.remove(&snapshot::DeviceId::VIRTIO_INPUT) {
-            // Canonical encoding: `DeviceId::VIRTIO_INPUT` stores a `VINP` wrapper that contains
-            // nested virtio-pci snapshots for both PCI functions.
-            if matches!(state.data.get(8..12), Some(id) if id == b"VINP") {
-                let mut wrapper = MachineVirtioInputSnapshot::default();
-                if wrapper.load_state(&state.data).is_ok() {
-                    if let (Some(kbd), Some(kbd_state)) =
-                        (&self.virtio_input_keyboard, wrapper.keyboard.as_deref())
-                    {
-                        let mut dev = kbd.borrow_mut();
-                        if let Some(input) = dev.device_mut::<VirtioInput>() {
-                            aero_virtio::devices::VirtioDevice::reset(input);
-                        }
-                        let _ = dev.load_state(kbd_state);
-                        dev.rewind_queue_next_avail_to_next_used(0);
-                    }
+        // Restore virtio-input keyboard/mouse after the interrupt controller + PCI INTx router so
+        // any restored legacy INTx level can be re-driven deterministically.
+        //
+        // Virtio-input can cache guest-provided event buffers internally without producing used
+        // entries (waiting for host input events). Those cached descriptor chains are runtime-only
+        // and are not currently serialized in snapshot state. Clear them before applying the
+        // transport snapshot, then rewind the event queue progress so the transport will re-pop
+        // the guest-provided buffers post-restore.
+        let mut restored_virtio_input = false;
+        if let (Some(virtio), Some(state)) = (
+            &self.virtio_input_keyboard,
+            by_id.remove(&snapshot::DeviceId::VIRTIO_INPUT_KEYBOARD),
+        ) {
+            let mut virtio = virtio.borrow_mut();
+            if let Some(input) = virtio.device_mut::<VirtioInput>() {
+                aero_virtio::devices::VirtioDevice::reset(input);
+            }
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *virtio);
+            virtio.rewind_queue_next_avail_to_next_used(0);
+            restored_virtio_input = true;
+        }
+        if let (Some(virtio), Some(state)) = (
+            &self.virtio_input_mouse,
+            by_id.remove(&snapshot::DeviceId::VIRTIO_INPUT_MOUSE),
+        ) {
+            let mut virtio = virtio.borrow_mut();
+            if let Some(input) = virtio.device_mut::<VirtioInput>() {
+                aero_virtio::devices::VirtioDevice::reset(input);
+            }
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *virtio);
+            virtio.rewind_queue_next_avail_to_next_used(0);
+            restored_virtio_input = true;
+        }
 
-                    if let (Some(mouse), Some(mouse_state)) =
-                        (&self.virtio_input_mouse, wrapper.mouse.as_deref())
-                    {
-                        let mut dev = mouse.borrow_mut();
-                        if let Some(input) = dev.device_mut::<VirtioInput>() {
-                            aero_virtio::devices::VirtioDevice::reset(input);
+        // Backward compatibility: older snapshots stored both virtio-input PCI functions under the
+        // single wrapper id `DeviceId::VIRTIO_INPUT` (inner snapshot 4CC `VINP`).
+        if !restored_virtio_input {
+            if let Some(state) = by_id.remove(&snapshot::DeviceId::VIRTIO_INPUT) {
+                if matches!(state.data.get(8..12), Some(id) if id == b"VINP") {
+                    let mut wrapper = MachineVirtioInputSnapshot::default();
+                    if wrapper.load_state(&state.data).is_ok() {
+                        if let (Some(kbd), Some(kbd_state)) =
+                            (&self.virtio_input_keyboard, wrapper.keyboard.as_deref())
+                        {
+                            let mut dev = kbd.borrow_mut();
+                            if let Some(input) = dev.device_mut::<VirtioInput>() {
+                                aero_virtio::devices::VirtioDevice::reset(input);
+                            }
+                            let _ = dev.load_state(kbd_state);
+                            dev.rewind_queue_next_avail_to_next_used(0);
                         }
-                        let _ = dev.load_state(mouse_state);
-                        dev.rewind_queue_next_avail_to_next_used(0);
+
+                        if let (Some(mouse), Some(mouse_state)) =
+                            (&self.virtio_input_mouse, wrapper.mouse.as_deref())
+                        {
+                            let mut dev = mouse.borrow_mut();
+                            if let Some(input) = dev.device_mut::<VirtioInput>() {
+                                aero_virtio::devices::VirtioDevice::reset(input);
+                            }
+                            let _ = dev.load_state(mouse_state);
+                            dev.rewind_queue_next_avail_to_next_used(0);
+                        }
                     }
                 }
             }

@@ -138,11 +138,16 @@ impl DeviceId {
     pub const VIRTIO_NET: DeviceId = DeviceId(23);
     /// Guest-visible virtio-input (virtio-pci) multi-function device state (keyboard + mouse).
     ///
-    /// Canonical full-system snapshots store both PCI functions under this single outer ID as a
-    /// wrapper blob so snapshot restore can treat the multi-function topology atomically.
+    /// Canonical snapshots historically stored both PCI functions under this single outer ID as a
+    /// wrapper blob. Newer snapshots may store the functions separately under
+    /// [`DeviceId::VIRTIO_INPUT_KEYBOARD`] and [`DeviceId::VIRTIO_INPUT_MOUSE`].
     pub const VIRTIO_INPUT: DeviceId = DeviceId(24);
     /// AeroGPU PCI device state (BAR0 regs + VRAM + scanout handoff latch).
     pub const AEROGPU: DeviceId = DeviceId(25);
+    /// Guest-visible virtio-input (virtio-pci) keyboard function state (PCI `00:0A.0`).
+    pub const VIRTIO_INPUT_KEYBOARD: DeviceId = DeviceId(26);
+    /// Guest-visible virtio-input (virtio-pci) mouse function state (PCI `00:0A.1`).
+    pub const VIRTIO_INPUT_MOUSE: DeviceId = DeviceId(27);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -171,6 +176,8 @@ impl DeviceId {
             DeviceId::VIRTIO_NET => Some("VIRTIO_NET"),
             DeviceId::VIRTIO_INPUT => Some("VIRTIO_INPUT"),
             DeviceId::AEROGPU => Some("AEROGPU"),
+            DeviceId::VIRTIO_INPUT_KEYBOARD => Some("VIRTIO_INPUT_KEYBOARD"),
+            DeviceId::VIRTIO_INPUT_MOUSE => Some("VIRTIO_INPUT_MOUSE"),
             _ => None,
         }
     }

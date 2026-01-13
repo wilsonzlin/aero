@@ -5306,7 +5306,10 @@ impl Machine {
     ///
     /// This is safe to call even when virtio-input is disabled; it will no-op.
     pub fn inject_virtio_key(&mut self, linux_key: u32, pressed: bool) {
-        self.inner.inject_virtio_key(linux_key, pressed);
+        let Ok(code) = u16::try_from(linux_key) else {
+            return;
+        };
+        self.inner.inject_virtio_key(code, pressed);
     }
 
     /// Inject relative motion (`REL_X`/`REL_Y`) into the virtio-input mouse device (if present).
@@ -5320,7 +5323,10 @@ impl Machine {
     ///
     /// This is safe to call even when virtio-input is disabled; it will no-op.
     pub fn inject_virtio_button(&mut self, btn: u32, pressed: bool) {
-        self.inner.inject_virtio_button(btn, pressed);
+        let Ok(code) = u16::try_from(btn) else {
+            return;
+        };
+        self.inner.inject_virtio_button(code, pressed);
     }
 
     /// Inject a mouse wheel delta into the virtio-input mouse device (if present).

@@ -154,7 +154,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     m.write_physical_u8(scratch_base + 2, 0xCC);
     m.write_physical_u8(scratch_base + 3, 0x00);
 
-    let (bar0_base, bar1_base) = {
+    let (bar0_base, bar1_base, _command) = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
@@ -164,18 +164,22 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
         (
             cfg.bar_range(0).expect("AeroGPU BAR0 must exist").base,
             cfg.bar_range(1).expect("AeroGPU BAR1 must exist").base,
+            cfg.command(),
         )
     };
     assert_ne!(bar0_base, 0);
     assert_ne!(bar1_base, 0);
 
-    // Enable bus mastering (DMA) so AeroGPU scanout reads behave like a real PCI device.
+    // Enable BAR0 decoding + bus mastering (WDDM driver would enable this before programming
+    // scanout).
     {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
         let command = bus.read_config(profile::AEROGPU.bdf, 0x04, 2) as u16;
-        bus.write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | (1 << 2)));
+        // Enable MEM decode + bus mastering so BAR0 MMIO and scanout DMA behave like a real PCI
+        // device.
+        bus.write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | 0x0006));
     }
 
     m.write_physical_u32(
