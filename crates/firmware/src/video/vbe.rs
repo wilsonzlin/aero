@@ -272,11 +272,16 @@ impl VbeDevice {
         mode_attributes |= MODE_ATTR_LFB;
         buf[0..2].copy_from_slice(&mode_attributes.to_le_bytes());
 
-        // Windowing (banked framebuffer). Provide a 64KB window at A000:0000.
+        // Windowing (banked framebuffer).
+        //
+        // Provide a 64KiB banked window at A000:0000. This is used by real-mode code (and some
+        // bootloaders) that cannot directly address the high linear framebuffer.
+        const BANK_WINDOW_SIZE_KB: u16 = 64;
+        const BANK_WINDOW_SIZE_BYTES: u32 = BANK_WINDOW_SIZE_KB as u32 * 1024;
         buf[2] = 0x07; // WinAAttributes: readable/writeable
         buf[3] = 0x00; // WinBAttributes: not supported
-        buf[4..6].copy_from_slice(&64u16.to_le_bytes()); // WinGranularity in KB
-        buf[6..8].copy_from_slice(&64u16.to_le_bytes()); // WinSize in KB
+        buf[4..6].copy_from_slice(&BANK_WINDOW_SIZE_KB.to_le_bytes()); // WinGranularity in KB
+        buf[6..8].copy_from_slice(&BANK_WINDOW_SIZE_KB.to_le_bytes()); // WinSize in KB
         buf[8..10].copy_from_slice(&0xA000u16.to_le_bytes()); // WinASegment
         buf[10..12].copy_from_slice(&0u16.to_le_bytes()); // WinBSegment
         buf[12..16].copy_from_slice(&0u32.to_le_bytes()); // WinFuncPtr
@@ -288,9 +293,16 @@ impl VbeDevice {
         buf[23] = 16; // YCharSize
         buf[24] = 1; // NumberOfPlanes
         buf[25] = mode.bpp; // BitsPerPixel
-        buf[26] = 1; // NumberOfBanks
+        // NumberOfBanks / BankSize are only meaningful for banked access. We still populate them
+        // consistently so software that falls back to windowed access can determine the address
+        // range.
+        let bank_count = mode
+            .framebuffer_size_bytes()
+            .div_ceil(BANK_WINDOW_SIZE_BYTES)
+            .min(u8::MAX as u32) as u8;
+        buf[26] = bank_count.max(1);
         buf[27] = mode.memory_model;
-        buf[28] = 0; // BankSize (unused with 64KB granularity)
+        buf[28] = BANK_WINDOW_SIZE_KB as u8; // BankSize in KB
         buf[29] = 0; // NumberOfImagePages
         buf[30] = 0; // Reserved1
 

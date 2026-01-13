@@ -78,6 +78,13 @@ fn int10_vbe_controller_and_mode_info() {
         assert_eq!(read_u16(&info, 20), height); // YResolution
         assert_eq!(read_u16(&info, 16), width * 4); // BytesPerScanLine
         assert_eq!(info[25], 32); // BitsPerPixel
+        // Banked window parameters: 64KiB window and correct bank count for the mode.
+        assert_eq!(read_u16(&info, 4), 64); // WinGranularity (KB)
+        assert_eq!(read_u16(&info, 6), 64); // WinSize (KB)
+        let fb_bytes = u32::from(width) * u32::from(height) * 4;
+        let expected_banks = fb_bytes.div_ceil(64 * 1024) as u8;
+        assert_eq!(info[26], expected_banks); // NumberOfBanks
+        assert_eq!(info[28], 64); // BankSize (KB)
         assert_eq!(info[27], 0x06); // MemoryModel (direct color)
         assert_eq!(info[31], 8); // RedMaskSize
         assert_eq!(info[32], 16); // RedFieldPosition
@@ -114,6 +121,12 @@ fn int10_vbe_controller_and_mode_info() {
     assert_eq!(read_u16(&info, 18), 640); // XResolution
     assert_eq!(read_u16(&info, 20), 480); // YResolution
     assert_eq!(info[25], 8); // BitsPerPixel
+    assert_eq!(read_u16(&info, 4), 64); // WinGranularity (KB)
+    assert_eq!(read_u16(&info, 6), 64); // WinSize (KB)
+    let fb_bytes = 640u32 * 480u32;
+    let expected_banks = fb_bytes.div_ceil(64 * 1024) as u8;
+    assert_eq!(info[26], expected_banks); // NumberOfBanks
+    assert_eq!(info[28], 64); // BankSize (KB)
 }
 
 #[test]
