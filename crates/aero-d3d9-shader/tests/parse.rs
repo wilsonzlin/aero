@@ -315,3 +315,68 @@ fn malformed_absurdly_large_instruction_length_errors() {
         }
     );
 }
+
+#[test]
+fn malformed_invalid_src_register_encoding_errors() {
+    // mov <dst>, <src> with an invalid/unknown register type encoding in the src token.
+    //
+    // This exercises src-parameter decoding/validation (as opposed to dst-only validation).
+    let invalid_src_token = 0xF0E4_1800;
+    let words = [
+        0xFFFE_0200, // vs_2_0
+        0x0200_0001, // mov (len=2)
+        0x800F_0000, // r0
+        invalid_src_token,
+        0x0000_FFFF, // end
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::InvalidRegisterEncoding {
+            token: invalid_src_token,
+            at_token: 3,
+        }
+    );
+}
+
+#[test]
+fn malformed_invalid_relative_register_encoding_errors() {
+    // mov r0, c0[a?] with an invalid register type for the relative address register.
+    //
+    // Src token sets the relative-address flag, and the following token (the relative address
+    // register) encodes an unknown register type.
+    let relative_reg_token = 0xF000_1800;
+    let words = [
+        0xFFFE_0200, // vs_2_0
+        0x0300_0001, // mov (len=3)
+        0x800F_0000, // r0
+        0xA0E4_2000, // c0 (relative)
+        relative_reg_token,
+        0x0000_FFFF, // end
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::InvalidRegisterEncoding {
+            token: relative_reg_token,
+            at_token: 4,
+        }
+    );
+}
+
+#[test]
+fn malformed_absurd_regular_instruction_length_errors() {
+    // Non-comment instruction with a nonsensical length nibble (15) should not panic and should
+    // fail with a structured truncation error.
+    let words = [0xFFFE_0200, 0x0F00_0001, 0x800F_0000];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 15,
+            remaining_tokens: 1,
+        }
+    );
+}

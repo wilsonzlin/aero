@@ -54,6 +54,7 @@ members = [
     "crates/aero-x86",
     "crates/aero-cpu-decoder",
     "crates/aero-dxbc",
+    "crates/aero-d3d9-shader",
     "crates/aero-d3d9",
     "crates/aero-debug",
     "crates/aero-interrupts",
@@ -97,8 +98,6 @@ exclude = [
     # `crates/legacy/*` are reference-only; keep them out of the workspace so they don't
     # block workspace-wide builds, but mark them as excluded so they can still be built
     # directly via `--manifest-path` without Cargo treating them as a missing workspace member.
-    # Legacy SM2/SM3 token-stream parser + disassembler (the runtime uses `crates/aero-d3d9/src/sm3`).
-    "crates/aero-d3d9-shader",
     "crates/legacy/aero-emulator",
     "crates/legacy/aero-vm",
     "crates/legacy/vm",
