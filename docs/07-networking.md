@@ -1434,4 +1434,5 @@ Capture is **best-effort**:
 - It may be **truncated** when the max-bytes cap is reached, or if file I/O fails.
 - Verify completeness via capture metrics in `/metrics`:
   - `l2_capture_frames_total` / `l2_capture_bytes_total` (written)
-  - `l2_capture_frames_dropped_total` / `l2_capture_bytes_dropped_total` (not captured; non-zero implies an incomplete capture)
+  - `l2_capture_frames_dropped_total` (frames skipped due to the max-bytes cap; non-zero implies an incomplete capture)
+  - `l2_capture_errors_total` (capture I/O errors; non-zero implies the capture may be incomplete)
