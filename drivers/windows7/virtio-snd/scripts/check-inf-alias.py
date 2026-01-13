@@ -57,6 +57,7 @@ def _functional_bytes(path: Path) -> bytes:
 
 def main() -> int:
     virtio_snd_root = Path(__file__).resolve().parents[1]
+    repo_root = virtio_snd_root.parents[2]
     inf_dir = virtio_snd_root / "inf"
 
     canonical = inf_dir / "aero_virtio_snd.inf"
@@ -88,11 +89,16 @@ def main() -> int:
     canonical_lines = canonical_body.decode("utf-8", errors="replace").splitlines(keepends=True)
     alias_lines = alias_body.decode("utf-8", errors="replace").splitlines(keepends=True)
 
+    # Use repo-relative paths in the diff output to keep it readable and stable
+    # across machines/CI environments.
+    canonical_label = str(canonical.relative_to(repo_root))
+    alias_label = str(alias.relative_to(repo_root))
+
     diff = difflib.unified_diff(
         canonical_lines,
         alias_lines,
-        fromfile=str(canonical),
-        tofile=str(alias),
+        fromfile=canonical_label,
+        tofile=alias_label,
         lineterm="\n",
     )
     for line in diff:
