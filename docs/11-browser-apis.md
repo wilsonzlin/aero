@@ -1114,6 +1114,11 @@ function runEmulationLoop() {
 > Note: In production builds, `audio-worklet-processor.js` is emitted as a standalone asset and imports
 > `./audio_worklet_ring_layout.js` at runtime; see `web/vite.config.ts` and `vite.harness.config.ts` for the explicit
 > asset emission workaround (Vite does not automatically follow ESM imports from AudioWorklet modules).
+>
+> The canonical Aero worklet also supports a small **control channel**: the main thread may post
+> `{ type: "ring.reset" }` to the `AudioWorkletNode.port` to discard any buffered playback backlog
+> (`readFrameIndex := writeFrameIndex`). This is used by `createAudioOutput({ discardOnResume: true })`
+> to avoid stale latency after `AudioContext` suspend/resume cycles.
 
 ### Processor Registration
 
