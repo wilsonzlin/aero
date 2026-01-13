@@ -2,7 +2,11 @@ import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
 import type { WasmApi } from "../runtime/wasm_context";
 
 import type { HidAttachMessage, HidDetachMessage, HidInputReportMessage } from "./hid_proxy_protocol";
-import { UhciHidTopologyManager } from "./uhci_hid_topology";
+
+export type HidTopologyManager = {
+  attachDevice(deviceId: number, path: GuestUsbPath, kind: "webhid" | "usb-hid-passthrough", device: unknown): void;
+  detachDevice(deviceId: number): void;
+};
 
 export type HidHostSink = {
   sendReport: (msg: { deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }) => void;
@@ -30,7 +34,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
   constructor(
     private readonly api: WasmApi,
     private readonly host: HidHostSink,
-    private readonly uhciTopology: UhciHidTopologyManager,
+    private readonly topology: HidTopologyManager,
   ) {}
 
   attach(msg: HidAttachMessage): void {
@@ -71,7 +75,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
 
       this.#bridges.set(msg.deviceId, bridge);
       if (guestPath) {
-        this.uhciTopology.attachDevice(msg.deviceId, guestPath, kind, bridge);
+        this.topology.attachDevice(msg.deviceId, guestPath, kind, bridge);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -81,7 +85,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
   }
 
   detach(msg: HidDetachMessage): void {
-    this.uhciTopology.detachDevice(msg.deviceId);
+    this.topology.detachDevice(msg.deviceId);
     const existing = this.#bridges.get(msg.deviceId);
     if (!existing) return;
 
