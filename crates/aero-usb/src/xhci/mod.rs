@@ -19,6 +19,7 @@
 //! In addition, `transfer` provides a small, deterministic transfer-ring executor that can process
 //! Normal TRBs for non-control endpoints (sufficient for HID interrupt IN/OUT).
 
+pub mod command_ring;
 pub mod context;
 pub mod regs;
 pub mod ring;
@@ -257,3 +258,6 @@ impl IoSnapshot for XhciController {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

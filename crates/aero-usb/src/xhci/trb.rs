@@ -4,10 +4,37 @@
 //! a raw `Trb` representation along with helpers for extracting common fields (cycle bit, TRB type,
 //! slot id, endpoint id, etc).
 
+use core::fmt;
+
 use crate::MemoryBus;
 
 /// Size of a TRB in bytes.
 pub const TRB_LEN: usize = 16;
+
+/// xHCI completion codes (Command Completion Event TRB status field, bits 24..=31 of DW2).
+///
+/// Values are defined by the xHCI specification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CompletionCode {
+    Success = 1,
+    TrbError = 5,
+    SlotNotEnabledError = 11,
+    ParameterError = 17,
+    ContextStateError = 19,
+}
+
+impl CompletionCode {
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+impl fmt::Display for CompletionCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}({})", self, *self as u8)
+    }
+}
 
 /// Raw xHCI Transfer Request Block (TRB).
 ///
@@ -177,10 +204,22 @@ impl Trb {
             | (endpoint_id << Self::CONTROL_ENDPOINT_ID_SHIFT);
     }
 
+    /// Interpret the parameter field as a pointer and mask it to 16-byte alignment.
+    ///
+    /// Many xHCI TRBs store guest physical pointers in bits 4..=63 with low bits reserved for
+    /// flags. This helper is suitable for fields like:
+    /// - Link TRB segment pointer
+    /// - Evaluate Context input context pointer
+    /// - Command Completion Event TRB "Command TRB Pointer"
+    #[inline]
+    pub const fn pointer(&self) -> u64 {
+        self.parameter & !0x0f
+    }
+
     /// For Link TRBs, returns the target segment pointer (masked to 16-byte alignment).
     #[inline]
     pub const fn link_segment_ptr(&self) -> u64 {
-        self.parameter & !0x0f
+        self.pointer()
     }
 
     /// For Link TRBs, returns whether the cycle state should be toggled when following the link.
