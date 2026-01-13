@@ -7,7 +7,11 @@ use thiserror::Error;
 
 use crate::dxbc;
 use crate::shader_limits::{
+    MAX_D3D9_ATTR_OUTPUT_REGISTER_INDEX, MAX_D3D9_COLOR_OUTPUT_REGISTER_INDEX,
+    MAX_D3D9_INPUT_REGISTER_INDEX, MAX_D3D9_SAMPLER_REGISTER_INDEX,
     MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_SHADER_TOKEN_COUNT,
+    MAX_D3D9_TEMP_REGISTER_INDEX, MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX,
+    MAX_D3D9_TEXTURE_REGISTER_INDEX,
 };
 use crate::vertex::{DeclUsage, LocationMapError, StandardLocationMap, VertexLocationMap};
 
@@ -300,11 +304,20 @@ fn decode_src(token: u32) -> Result<Src, ShaderError> {
         other => return Err(ShaderError::UnsupportedRegisterType(other)),
     };
 
-    if u32::from(reg_num) > MAX_D3D9_SHADER_REGISTER_INDEX {
+    let max = match file {
+        RegisterFile::Temp => MAX_D3D9_TEMP_REGISTER_INDEX,
+        RegisterFile::Input => MAX_D3D9_INPUT_REGISTER_INDEX,
+        RegisterFile::Const => MAX_D3D9_SHADER_REGISTER_INDEX,
+        RegisterFile::Texture => MAX_D3D9_TEXTURE_REGISTER_INDEX,
+        RegisterFile::Sampler => MAX_D3D9_SAMPLER_REGISTER_INDEX,
+        // Source operands should never use output register files, but keep a defensive fallback.
+        _ => MAX_D3D9_SHADER_REGISTER_INDEX,
+    };
+    if u32::from(reg_num) > max {
         return Err(ShaderError::RegisterIndexTooLarge {
             file,
             index: reg_num,
-            max: MAX_D3D9_SHADER_REGISTER_INDEX,
+            max,
         });
     }
 
@@ -333,11 +346,24 @@ fn decode_dst(token: u32) -> Result<Dst, ShaderError> {
         other => return Err(ShaderError::UnsupportedRegisterType(other)),
     };
 
-    if u32::from(reg_num) > MAX_D3D9_SHADER_REGISTER_INDEX {
+    let max = match file {
+        RegisterFile::Temp => MAX_D3D9_TEMP_REGISTER_INDEX,
+        RegisterFile::Input => MAX_D3D9_INPUT_REGISTER_INDEX,
+        RegisterFile::Const => MAX_D3D9_SHADER_REGISTER_INDEX,
+        RegisterFile::Texture => MAX_D3D9_TEXTURE_REGISTER_INDEX,
+        RegisterFile::Sampler => MAX_D3D9_SAMPLER_REGISTER_INDEX,
+        RegisterFile::AttrOut => MAX_D3D9_ATTR_OUTPUT_REGISTER_INDEX,
+        RegisterFile::TexCoordOut => MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX,
+        RegisterFile::ColorOut => MAX_D3D9_COLOR_OUTPUT_REGISTER_INDEX,
+        // `oPos` is special and doesn't use the numeric index in our codegen. Allow the full
+        // conservative cap to avoid rejecting shaders that write other raster outputs.
+        RegisterFile::RastOut | RegisterFile::Addr => MAX_D3D9_SHADER_REGISTER_INDEX,
+    };
+    if u32::from(reg_num) > max {
         return Err(ShaderError::RegisterIndexTooLarge {
             file,
             index: reg_num,
-            max: MAX_D3D9_SHADER_REGISTER_INDEX,
+            max,
         });
     }
 

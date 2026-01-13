@@ -292,3 +292,20 @@ fn decode_ps2_dcl_texcoord_t0() {
     assert_eq!(dst.reg.index, 0);
     assert_eq!(dst.mask.0, 0x3);
 }
+
+#[test]
+fn decode_rejects_out_of_range_sampler_register() {
+    // ps_2_0 texld r0, t0, s16
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 2, 0),
+        opcode_token(0x0042, 3),
+        dst_token(0, 0, 0xF),
+        src_token(3, 0, 0xE4, 0),
+        src_token(10, 16, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    let err = decode_u32_tokens(&tokens).unwrap_err();
+    assert!(err.message.contains("Sampler"), "{err}");
+    assert!(err.message.contains("exceeds maximum"), "{err}");
+}

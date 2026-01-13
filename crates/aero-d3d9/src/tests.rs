@@ -839,6 +839,34 @@ fn rejects_oversized_shader_bytecode_sm3_decoder() {
 }
 
 #[test]
+fn rejects_out_of_range_sampler_register_legacy_translator() {
+    // ps_2_0 texld r0, t0, s16 (sampler index out of range).
+    let mut out = vec![0xFFFF0200];
+    out.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(3, 0, 0xE4),
+            enc_src(10, 16, 0xE4),
+        ],
+    ));
+    out.push(0x0000FFFF);
+    let bytes = to_bytes(&out);
+
+    let err = shader::parse(&bytes).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            shader::ShaderError::RegisterIndexTooLarge {
+                file: shader::RegisterFile::Sampler,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn dxbc_container_rejects_excessive_chunk_count() {
     use crate::shader_limits::MAX_D3D9_DXBC_CHUNK_COUNT;
 

@@ -1,6 +1,8 @@
 use crate::sm3::types::{ShaderStage, ShaderVersion};
 use crate::shader_limits::{
-    MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_SHADER_TOKEN_COUNT,
+    MAX_D3D9_COLOR_OUTPUT_REGISTER_INDEX, MAX_D3D9_INPUT_REGISTER_INDEX,
+    MAX_D3D9_SAMPLER_REGISTER_INDEX, MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX,
+    MAX_D3D9_SHADER_TOKEN_COUNT, MAX_D3D9_TEMP_REGISTER_INDEX, MAX_D3D9_TEXTURE_REGISTER_INDEX,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1165,11 +1167,23 @@ fn decode_register_ref(
     let regtype_raw = (((token & REGTYPE_MASK) >> REGTYPE_SHIFT)
         | ((token & REGTYPE_MASK2) >> REGTYPE_SHIFT2)) as u8;
     let file = RegisterFile::from_raw(regtype_raw, stage, major, ctx);
-    if index > MAX_D3D9_SHADER_REGISTER_INDEX {
+    let max_index = match file {
+        RegisterFile::Temp => MAX_D3D9_TEMP_REGISTER_INDEX,
+        RegisterFile::Input => MAX_D3D9_INPUT_REGISTER_INDEX,
+        RegisterFile::Const => MAX_D3D9_SHADER_REGISTER_INDEX,
+        RegisterFile::Texture => MAX_D3D9_TEXTURE_REGISTER_INDEX,
+        RegisterFile::Sampler => MAX_D3D9_SAMPLER_REGISTER_INDEX,
+        RegisterFile::ColorOut => MAX_D3D9_COLOR_OUTPUT_REGISTER_INDEX,
+        // Most other register files are either special (single-register) or are not yet used by
+        // Aero's SM3-to-WGSL lowering. Keep a conservative cap to avoid rejecting otherwise-valid
+        // shaders while still preventing pathological indices.
+        _ => MAX_D3D9_SHADER_REGISTER_INDEX,
+    };
+    if index > max_index {
         return Err(DecodeError {
             token_index: start,
             message: format!(
-                "register index {index} in {file:?} exceeds maximum {MAX_D3D9_SHADER_REGISTER_INDEX}"
+                "register index {index} in {file:?} exceeds maximum {max_index}"
             ),
         });
     }

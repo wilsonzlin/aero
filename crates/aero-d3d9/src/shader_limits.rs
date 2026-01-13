@@ -21,6 +21,27 @@ pub(crate) const MAX_D3D9_SHADER_TOKEN_COUNT: usize = MAX_D3D9_SHADER_BYTECODE_B
 /// invalid constant-buffer indexing.
 pub(crate) const MAX_D3D9_SHADER_REGISTER_INDEX: u32 = 255;
 
+/// Maximum temp register index (`r#`) tolerated.
+pub(crate) const MAX_D3D9_TEMP_REGISTER_INDEX: u32 = 31;
+
+/// Maximum input register index (`v#`) tolerated.
+pub(crate) const MAX_D3D9_INPUT_REGISTER_INDEX: u32 = 15;
+
+/// Maximum texture register index (`t#`) tolerated.
+pub(crate) const MAX_D3D9_TEXTURE_REGISTER_INDEX: u32 = 7;
+
+/// Maximum sampler register index (`s#`) tolerated.
+pub(crate) const MAX_D3D9_SAMPLER_REGISTER_INDEX: u32 = 15;
+
+/// Maximum vertex color output register index (`oD#`) tolerated.
+pub(crate) const MAX_D3D9_ATTR_OUTPUT_REGISTER_INDEX: u32 = 1;
+
+/// Maximum vertex texcoord output register index (`oT#`) tolerated.
+pub(crate) const MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX: u32 = 7;
+
+/// Maximum pixel color output register index (`oC#`) tolerated.
+pub(crate) const MAX_D3D9_COLOR_OUTPUT_REGISTER_INDEX: u32 = 3;
+
 /// Maximum number of chunks tolerated in a DXBC container.
 ///
 /// DXBC chunk counts are stored in the container header and must be treated as untrusted. The
