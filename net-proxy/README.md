@@ -30,24 +30,34 @@ curl http://127.0.0.1:8081/healthz
 
 This lets you run local networking (TCP + UDP + DNS) without standing up the full `backend/aero-gateway` service.
 
-#### Browser runtime configuration (what URL to set)
+#### Browser client configuration (what URL to set)
 
-Point the browser runtime at the **HTTP base URL** for `net-proxy`:
+Use the **HTTP base URL** for `net-proxy`:
 
 - `http://127.0.0.1:8081`
 
-In the repo’s web host, this is the `proxyUrl` config (URL query param `proxy`), e.g.:
+If you're using the browser networking clients in `web/src/net`:
 
-```text
-http://localhost:5173/?proxy=http%3A%2F%2F127.0.0.1%3A8081
+- Pass this base URL to the TCP/UDP WebSocket clients (they auto-convert `http://` → `ws://`).
+- Build absolute DoH URLs from the same base:
+
+```ts
+import { WebSocketTcpProxyClient, WebSocketUdpProxyClient, resolveAOverDoh } from "./net";
+
+const baseUrl = "http://127.0.0.1:8081";
+
+const tcp = new WebSocketTcpProxyClient(baseUrl, (ev) => console.log("tcp", ev));
+const udp = new WebSocketUdpProxyClient(baseUrl, (ev) => console.log("udp", ev));
+
+const dohQueryUrl = new URL("/dns-query", baseUrl).toString();
+const result = await resolveAOverDoh("localhost", dohQueryUrl);
+console.log(result);
 ```
 
-The runtime will then use:
-
-- `http://127.0.0.1:8081/dns-query` (and/or `/dns-json`) for DNS resolution
-- `ws://127.0.0.1:8081/tcp`, `/tcp-mux`, `/udp` for socket proxying (WebSocket URLs are derived from the same base)
-
 > Tip: prefer an `http://` base URL (not `ws://`) so the same value works for both WebSocket and `fetch()`-based DNS.
+>
+> Browser note: DoH requests are normal `fetch()` calls, so you generally want `/dns-query` and `/dns-json` to be
+> **same-origin** with your frontend (or be served with permissive CORS headers).
 
 #### Security caveats (open mode vs allowlist)
 
@@ -68,14 +78,14 @@ Do not expose a dev `net-proxy` instance to the public internet; it is an outbou
 `/dns-json` (human readable):
 
 ```bash
-curl -sS 'http://127.0.0.1:8081/dns-json?name=example.com&type=A' \
+curl -sS 'http://127.0.0.1:8081/dns-json?name=localhost&type=A' \
   -H 'accept: application/dns-json'
 ```
 
-`/dns-query` (binary DNS message; `dns` query parameter is base64url-encoded wire bytes for `A example.com`):
+`/dns-query` (binary DNS message; `dns` query parameter is base64url-encoded wire bytes for `A localhost`):
 
 ```bash
-curl -sS 'http://127.0.0.1:8081/dns-query?dns=AAABAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE' \
+curl -sS 'http://127.0.0.1:8081/dns-query?dns=AAABAAABAAAAAAAACWxvY2FsaG9zdAAAAQAB' \
   -H 'accept: application/dns-message' \
   | hexdump -C | head
 ```
@@ -102,6 +112,11 @@ Environment variables:
 | `AERO_PROXY_ALLOW` | (empty) | Comma-separated allowlist rules, e.g. `example.com:80,example.com:443,10.0.0.0/8:53` |
 | `AERO_PROXY_CONNECT_TIMEOUT_MS` | `10000` | TCP connect timeout |
 | `AERO_PROXY_DNS_TIMEOUT_MS` | `5000` | DNS lookup timeout |
+| `AERO_PROXY_DOH_MAX_QUERY_BYTES` | `512` | Max `POST /dns-query` request body size (bytes) |
+| `AERO_PROXY_DOH_MAX_QNAME_LENGTH` | `253` | Max DoH query name length (bytes) |
+| `AERO_PROXY_DOH_ANSWER_TTL_SECONDS` | `60` | TTL seconds used for DoH answers (clamped to `AERO_PROXY_DOH_MAX_ANSWER_TTL_SECONDS`) |
+| `AERO_PROXY_DOH_MAX_ANSWER_TTL_SECONDS` | `300` | Max TTL seconds allowed for DoH answers |
+| `AERO_PROXY_DOH_MAX_ANSWERS` | `16` | Max number of A/AAAA answers returned per DoH query |
 | `AERO_PROXY_WS_MAX_PAYLOAD_BYTES` | `1048576` | Maximum incoming WebSocket message size |
 | `AERO_PROXY_WS_STREAM_HWM_BYTES` | `65536` | Backpressure tuning for the TCP WebSocket stream bridge |
 | `AERO_PROXY_UDP_WS_BUFFER_LIMIT_BYTES` | `1048576` | Drop inbound UDP packets when WebSocket bufferedAmount exceeds this limit |
