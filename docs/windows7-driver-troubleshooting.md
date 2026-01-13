@@ -49,6 +49,7 @@ If you have not installed Guest Tools yet, start here:
   - [Test Mode watermark on the desktop (x64)](#issue-test-mode-watermark-on-the-desktop-x64)
 - Diagnostics:
   - [Collecting useful logs](#collecting-useful-logs)
+  - [Dumping the last AeroGPU submission (cmd stream and alloc table)](#dumping-the-last-aerogpu-submission-cmd-stream-and-alloc-table)
   - [Finding device Hardware IDs](#finding-device-hardware-ids)
   - [Capturing BSOD stop codes](#capturing-bsod-stop-codes)
 
@@ -66,6 +67,41 @@ If you need to debug driver install failures, these are the most useful artifact
 - Driver installation log:
   - `C:\Windows\inf\setupapi.dev.log`
     - Tip: open it and search for the device’s Hardware ID or the `.inf` name.
+
+## Dumping the last AeroGPU submission (cmd stream and alloc table)
+
+If you hit a **GPU hang**, **TDR**, or **incorrect rendering** and need to debug what command stream the guest last submitted (without attaching WinDbg), capture the last submission’s binary blobs and decode them on the host.
+
+This produces a small, shareable artifact pair:
+
+- `cmd.bin`: the raw AeroGPU cmd stream for the submission (`cmd_gpa` region).
+- `alloc.bin`: the raw alloc table for the submission (`alloc_table_gpa` region, when present).
+
+### 1) Guest (Windows 7): dump the last submission
+
+Run this inside the guest as soon as possible after reproducing:
+
+```bat
+aerogpu_dbgctl --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
+```
+
+Then copy `C:\cmd.bin` and `C:\alloc.bin` to the host machine (shared folder, ISO, whatever is convenient).
+
+### 2) Host: decode the submission
+
+From the repo root on the host:
+
+```bash
+cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc alloc.bin
+```
+
+### 3) Optional: list opcodes directly (if implemented)
+
+If your `aero-gpu-trace-replay` build includes an opcode listing subcommand, you can also decode just the cmd stream:
+
+```bash
+cargo run -p aero-gpu-trace-replay -- decode-cmd-stream cmd.bin
+```
 
 ## Finding device Hardware IDs
 

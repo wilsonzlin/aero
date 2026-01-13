@@ -57,6 +57,7 @@ Artifacts collected:
 - per-test stdout/stderr logs (dir):
 - dbgctl `--status` snapshots (dbgctl_<test>_status.txt) (dir):
 - failing test --dump outputs (BMP/bin) (dir):
+- dbgctl last-submit dump (cmd stream + alloc table) (cmd.bin + alloc.bin) (if available):
 - Event Viewer: dxgkrnl/display events around failures (exported EVTX):
 - KMD snapshots: aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
 Notes:
@@ -462,6 +463,8 @@ And if you suspect scanline/vblank state queries are broken, sample `D3DKMTGetSc
 ```bat
 aerogpu_dbgctl --query-scanline --vblank-samples 50 --vblank-interval-ms 10
 ```
+
+If you need to debug a hang or incorrect rendering without attaching WinDbg, capture a last-submission cmd stream + alloc table dump and decode it on the host (see `docs/windows7-driver-troubleshooting.md` for the dump+decode workflow).
 
 ### 5.2 Suggested `aerogpu_dbgctl` commands (implemented today)
 
