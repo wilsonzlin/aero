@@ -52,6 +52,46 @@ static int32_t hid_translate_i32_from_u32_bits(uint32_t u) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Generic helpers                                                            */
+/* -------------------------------------------------------------------------- */
+
+static int32_t hid_translate_clamp_i32(int32_t v, int32_t min_v, int32_t max_v) {
+  if (v < min_v) {
+    return min_v;
+  }
+  if (v > max_v) {
+    return max_v;
+  }
+  return v;
+}
+
+static uint16_t hid_translate_scale_abs_i32_to_u16(int32_t v, int32_t min_v, int32_t max_v, uint16_t out_max) {
+  if (min_v > max_v) {
+    int32_t tmp = min_v;
+    min_v = max_v;
+    max_v = tmp;
+  }
+
+  if (min_v == max_v) {
+    return 0;
+  }
+
+  v = hid_translate_clamp_i32(v, min_v, max_v);
+
+  /*
+   * Map [min_v, max_v] -> [0, out_max] using integer math. Use rounding to
+   * nearest to reduce systematic bias.
+   */
+  const uint64_t range = (uint64_t)((int64_t)max_v - (int64_t)min_v);
+  const uint64_t num = (uint64_t)((int64_t)v - (int64_t)min_v) * (uint64_t)out_max;
+  uint64_t scaled = (num + (range / 2u)) / range;
+  if (scaled > (uint64_t)out_max) {
+    scaled = (uint64_t)out_max;
+  }
+  return (uint16_t)scaled;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Linux keycode -> HID usage mapping                                         */
 /* -------------------------------------------------------------------------- */
 
@@ -515,9 +555,10 @@ static void hid_translate_emit_mouse_reports(struct hid_translate *t) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Tablet handling (absolute pointer)                                         */
+/* Tablet (absolute pointer) handling                                          */
 /* -------------------------------------------------------------------------- */
 
+enum { HID_TRANSLATE_TABLET_LOGICAL_MAX = 32767 };
 static bool hid_translate_tablet_update_button(struct hid_translate *t, uint8_t bit, bool pressed) {
   uint8_t new_buttons = t->tablet_buttons;
   if (pressed) {
@@ -532,22 +573,10 @@ static bool hid_translate_tablet_update_button(struct hid_translate *t, uint8_t 
   return true;
 }
 
-static uint16_t hid_translate_tablet_clamp_axis(int32_t v) {
-  /* Match the HID descriptor logical range for the tablet axes: [0, 32767]. */
-  const int32_t kMin = 0;
-  const int32_t kMax = 0x7FFF;
-  if (v < kMin) {
-    return (uint16_t)kMin;
-  }
-  if (v > kMax) {
-    return (uint16_t)kMax;
-  }
-  return (uint16_t)v;
-}
-
 static void hid_translate_emit_tablet_report(struct hid_translate *t) {
   if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_TABLET) == 0) {
     t->tablet_dirty = false;
+    t->tablet_buttons = 0;
     return;
   }
 
@@ -555,16 +584,18 @@ static void hid_translate_emit_tablet_report(struct hid_translate *t) {
     return;
   }
 
-  uint8_t report[HID_TRANSLATE_TABLET_REPORT_SIZE];
-  uint16_t x = hid_translate_tablet_clamp_axis(t->tablet_abs_x);
-  uint16_t y = hid_translate_tablet_clamp_axis(t->tablet_abs_y);
+  const uint16_t x = hid_translate_scale_abs_i32_to_u16(t->tablet_abs_x, t->tablet_abs_x_min, t->tablet_abs_x_max,
+                                                       (uint16_t)HID_TRANSLATE_TABLET_LOGICAL_MAX);
+  const uint16_t y = hid_translate_scale_abs_i32_to_u16(t->tablet_abs_y, t->tablet_abs_y_min, t->tablet_abs_y_max,
+                                                       (uint16_t)HID_TRANSLATE_TABLET_LOGICAL_MAX);
 
+  uint8_t report[HID_TRANSLATE_TABLET_REPORT_SIZE];
   report[0] = HID_TRANSLATE_REPORT_ID_TABLET;
   report[1] = t->tablet_buttons;
-  report[2] = (uint8_t)(x & 0xFF);
-  report[3] = (uint8_t)((x >> 8) & 0xFF);
-  report[4] = (uint8_t)(y & 0xFF);
-  report[5] = (uint8_t)((y >> 8) & 0xFF);
+  report[2] = (uint8_t)(x & 0xFFu);
+  report[3] = (uint8_t)((x >> 8) & 0xFFu);
+  report[4] = (uint8_t)(y & 0xFFu);
+  report[5] = (uint8_t)((y >> 8) & 0xFFu);
 
   if (t->emit_report) {
     t->emit_report(t->emit_report_context, report, sizeof(report));
@@ -582,12 +613,19 @@ void hid_translate_init(struct hid_translate *t, hid_translate_emit_report_fn em
   t->emit_report = emit_report;
   t->emit_report_context = emit_report_context;
   /*
-   * Backward-compatible default: keyboard + mouse + consumer control.
+   * Backward-compatible default: keyboard + mouse + consumer control reports.
    *
    * Tablet (absolute) reports are opt-in via hid_translate_set_enabled_reports.
+   * The Windows driver instance selects the correct report mask per device.
    */
   t->enabled_reports =
       HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE | HID_TRANSLATE_REPORT_MASK_CONSUMER;
+
+  /* Default tablet scaling range (identity if device reports 0..32767). */
+  t->tablet_abs_x_min = 0;
+  t->tablet_abs_x_max = HID_TRANSLATE_TABLET_LOGICAL_MAX;
+  t->tablet_abs_y_min = 0;
+  t->tablet_abs_y_max = HID_TRANSLATE_TABLET_LOGICAL_MAX;
 }
 
 void hid_translate_set_enabled_reports(struct hid_translate *t, uint8_t enabled_reports) {
@@ -595,6 +633,34 @@ void hid_translate_set_enabled_reports(struct hid_translate *t, uint8_t enabled_
     return;
   }
   t->enabled_reports = enabled_reports;
+}
+
+void hid_translate_set_tablet_abs_range(struct hid_translate *t, int32_t abs_x_min, int32_t abs_x_max, int32_t abs_y_min,
+                                        int32_t abs_y_max) {
+  if (t == NULL) {
+    return;
+  }
+
+  if (abs_x_min > abs_x_max) {
+    int32_t tmp = abs_x_min;
+    abs_x_min = abs_x_max;
+    abs_x_max = tmp;
+  }
+
+  if (abs_y_min > abs_y_max) {
+    int32_t tmp = abs_y_min;
+    abs_y_min = abs_y_max;
+    abs_y_max = tmp;
+  }
+
+  t->tablet_abs_x_min = abs_x_min;
+  t->tablet_abs_x_max = abs_x_max;
+  t->tablet_abs_y_min = abs_y_min;
+  t->tablet_abs_y_max = abs_y_max;
+
+  /* Keep current absolute values within the new bounds for deterministic output. */
+  t->tablet_abs_x = hid_translate_clamp_i32(t->tablet_abs_x, t->tablet_abs_x_min, t->tablet_abs_x_max);
+  t->tablet_abs_y = hid_translate_clamp_i32(t->tablet_abs_y, t->tablet_abs_y_min, t->tablet_abs_y_max);
 }
 
 void hid_translate_reset(struct hid_translate *t, bool emit_reports) {
@@ -612,10 +678,31 @@ void hid_translate_reset(struct hid_translate *t, bool emit_reports) {
   t->mouse_hwheel = 0;
   t->mouse_dirty = false;
 
-  t->tablet_buttons = 0;
-  t->tablet_abs_x = 0;
-  t->tablet_abs_y = 0;
-  t->tablet_dirty = false;
+  {
+    uint8_t old_buttons = t->tablet_buttons;
+    bool had_xy = t->tablet_abs_x_valid && t->tablet_abs_y_valid;
+
+    t->tablet_buttons = 0;
+    t->tablet_dirty = false;
+
+    if (emit_reports && ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_TABLET) != 0)) {
+      /*
+       * Avoid emitting an absolute-position report until we've observed at
+       * least one X/Y pair, unless we need to force-release a previously
+       * pressed button.
+       */
+      if (had_xy || (old_buttons != 0)) {
+        t->tablet_dirty = true;
+        hid_translate_emit_tablet_report(t);
+      }
+    }
+
+    t->tablet_abs_x = 0;
+    t->tablet_abs_y = 0;
+    t->tablet_abs_x_valid = false;
+    t->tablet_abs_y_valid = false;
+    t->tablet_dirty = false;
+  }
 
   if (!emit_reports) {
     return;
@@ -631,10 +718,6 @@ void hid_translate_reset(struct hid_translate *t, bool emit_reports) {
   if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_MOUSE) != 0) {
     t->mouse_dirty = true;
     hid_translate_emit_mouse_reports(t);
-  }
-  if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_TABLET) != 0) {
-    t->tablet_dirty = true;
-    hid_translate_emit_tablet_report(t);
   }
 }
 
@@ -689,6 +772,15 @@ void hid_translate_handle_event(struct hid_translate *t, const struct virtio_inp
         t->mouse_dirty = true;
       }
       if (hid_translate_tablet_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_EXTRA, pressed)) {
+        t->tablet_dirty = true;
+      }
+      break;
+    case VIRTIO_INPUT_BTN_TOUCH:
+      /* Map touch contact to Button 1 for compatibility with absolute-pointer stacks. */
+      if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_LEFT, pressed)) {
+        t->mouse_dirty = true;
+      }
+      if (hid_translate_tablet_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_LEFT, pressed)) {
         t->tablet_dirty = true;
       }
       break;
@@ -750,17 +842,19 @@ void hid_translate_handle_event(struct hid_translate *t, const struct virtio_inp
   }
 
   case VIRTIO_INPUT_EV_ABS: {
-    int32_t value = hid_translate_i32_from_u32_bits(ev->value);
+    int32_t v = hid_translate_i32_from_u32_bits(ev->value);
     switch (ev->code) {
     case VIRTIO_INPUT_ABS_X:
-      if (value != t->tablet_abs_x) {
-        t->tablet_abs_x = value;
+      if (!t->tablet_abs_x_valid || t->tablet_abs_x != v) {
+        t->tablet_abs_x = v;
+        t->tablet_abs_x_valid = true;
         t->tablet_dirty = true;
       }
       break;
     case VIRTIO_INPUT_ABS_Y:
-      if (value != t->tablet_abs_y) {
-        t->tablet_abs_y = value;
+      if (!t->tablet_abs_y_valid || t->tablet_abs_y != v) {
+        t->tablet_abs_y = v;
+        t->tablet_abs_y_valid = true;
         t->tablet_dirty = true;
       }
       break;

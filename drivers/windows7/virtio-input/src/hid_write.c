@@ -96,7 +96,8 @@ static NTSTATUS VirtioInputMapWriteReportBuffer(_In_ WDFREQUEST Request, _Outptr
 
 static BOOLEAN VirtioInputIsValidReportId(_In_ UCHAR ReportId)
 {
-    return (ReportId == VIRTIO_INPUT_REPORT_ID_KEYBOARD) || (ReportId == VIRTIO_INPUT_REPORT_ID_MOUSE);
+    return (ReportId == VIRTIO_INPUT_REPORT_ID_KEYBOARD) || (ReportId == VIRTIO_INPUT_REPORT_ID_MOUSE) ||
+           (ReportId == VIRTIO_INPUT_REPORT_ID_TABLET);
 }
 
 static UCHAR VirtioInputDetermineWriteReportId(_In_ WDFREQUEST Request, _In_opt_ const HID_XFER_PACKET *Packet)

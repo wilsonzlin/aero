@@ -66,7 +66,8 @@ The in-tree Windows 7 virtio-input driver is **strict by default** (Aero contrac
 - It queries `VIRTIO_INPUT_CFG_ID_NAME` and only accepts the exact strings:
   - `Aero Virtio Keyboard`
   - `Aero Virtio Mouse`
-- If the name is not recognized, the driver fails start (Code 10) rather than guessing.
+  - `Aero Virtio Tablet`
+- If the name is not recognized, the driver fails start (Code 10) rather than guessing (except that tablets may still be identified via `VIRTIO_INPUT_CFG_ID_DEVIDS.Product`).
 - If the PCI **Subsystem Device ID** indicates a contract kind (`0x0010` keyboard, `0x0011` mouse),
   it is cross-checked against `ID_NAME` and mismatches fail start (Code 10). Unknown subsystem IDs
   (`0` or other values) are allowed.
@@ -102,6 +103,25 @@ When `CompatDeviceKind` is enabled, device kind is determined as follows:
    - If `EV_ABS` is present → **tablet**
    - Else if `EV_REL` is present → **mouse**
    - Else if `EV_KEY` + `EV_LED` are present → **keyboard**
+
+## Tablet / EV_ABS support (absolute pointer)
+
+In addition to keyboard (`EV_KEY`) and relative mouse (`EV_REL`), the driver also supports
+**tablet-style absolute pointers** (`EV_ABS`).
+
+At minimum, a tablet device must advertise:
+
+- `EV_SYN` + `EV_ABS` in `EV_BITS(types)`
+- `ABS_X` + `ABS_Y` in `EV_BITS(EV_ABS)`
+- `ABS_INFO` for `ABS_X` and `ABS_Y` (used to scale into the HID logical range)
+
+The HID report emitted for tablets is:
+
+- **Report ID 4** (6 bytes total)
+  - Byte 0: `0x04` (Report ID)
+  - Byte 1: Buttons bitmask (bit0=left/touch, bit1=right, bit2=middle, bit3=side, bit4=extra, bit5=forward, bit6=back, bit7=task)
+  - Byte 2..3: X (uint16 LE, logical range `[0, 32767]`)
+  - Byte 4..5: Y (uint16 LE, logical range `[0, 32767]`)
 
 ## Specification pointers
 

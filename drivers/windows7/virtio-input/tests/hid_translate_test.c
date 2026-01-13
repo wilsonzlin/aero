@@ -6,18 +6,17 @@
 #include <string.h>
 
 enum { MAX_CAPTURED_REPORTS = 64 };
-enum { MAX_REPORT_SIZE = 64 };
 
 struct captured_reports {
   size_t count;
   size_t lens[MAX_CAPTURED_REPORTS];
-  uint8_t bytes[MAX_CAPTURED_REPORTS][MAX_REPORT_SIZE];
+  uint8_t bytes[MAX_CAPTURED_REPORTS][HID_TRANSLATE_MAX_REPORT_SIZE];
 };
 
 static void capture_emit(void *context, const uint8_t *report, size_t report_len) {
   struct captured_reports *cap = (struct captured_reports *)context;
   assert(cap->count < MAX_CAPTURED_REPORTS);
-  assert(report_len <= MAX_REPORT_SIZE);
+  assert(report_len <= HID_TRANSLATE_MAX_REPORT_SIZE);
   cap->lens[cap->count] = report_len;
   memcpy(cap->bytes[cap->count], report, report_len);
   cap->count++;
@@ -1343,6 +1342,34 @@ static void test_tablet_multiple_abs_updates_before_syn_is_deterministic(void) {
   expect_report(&cap, 0, expect1, sizeof(expect1));
 }
 
+static void test_tablet_scaling_reports(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+  hid_translate_set_tablet_abs_range(&t, 0, 1000, 0, 500);
+
+  /* Touch down at the middle of the range, flush. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 500);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 250);
+  send_key(&t, VIRTIO_INPUT_BTN_TOUCH, 1);
+  send_syn(&t);
+
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x01, 0x00, 0x40, 0x00, 0x40};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Clamp beyond max, flush. */
+  send_abs_le(&t, VIRTIO_INPUT_ABS_X, 2000);
+  send_abs_le(&t, VIRTIO_INPUT_ABS_Y, -100);
+  send_key_le(&t, VIRTIO_INPUT_BTN_TOUCH, 0);
+  send_syn_le(&t);
+
+  uint8_t expect2[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0xFF, 0x7F, 0x00, 0x00};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+}
+
 int main(void) {
   test_linux_keycode_abi_values();
   test_mapping();
@@ -1372,6 +1399,7 @@ int main(void) {
   test_tablet_clamp_min_max();
   test_tablet_button_press_release();
   test_tablet_multiple_abs_updates_before_syn_is_deterministic();
+  test_tablet_scaling_reports();
   printf("hid_translate_test: ok\n");
   return 0;
 }

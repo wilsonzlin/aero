@@ -32,6 +32,7 @@ C_ASSERT(sizeof(VIRTIO_INPUT_CONFIG) == 136);
 #define VIRTIO_INPUT_CFG_ID_NAME 0x01
 #define VIRTIO_INPUT_CFG_ID_DEVIDS 0x03
 #define VIRTIO_INPUT_CFG_EV_BITS 0x11
+#define VIRTIO_INPUT_CFG_ABS_INFO 0x12
 
 /*
  * ID_DEVIDS payload layout (little-endian fields on the wire; Win7 is LE).
@@ -49,6 +50,7 @@ C_ASSERT(sizeof(VIRTIO_INPUT_DEVIDS) == 8);
 #define VIRTIO_INPUT_DEVIDS_VENDOR_VIRTIO 0x1AF4
 #define VIRTIO_INPUT_DEVIDS_PRODUCT_KEYBOARD 0x0001
 #define VIRTIO_INPUT_DEVIDS_PRODUCT_MOUSE 0x0002
+#define VIRTIO_INPUT_DEVIDS_PRODUCT_TABLET 0x0003
 #define VIRTIO_INPUT_DEVIDS_VERSION 0x0001
 
 // Linux input event types/codes are used by virtio-input.
@@ -65,3 +67,21 @@ C_ASSERT(sizeof(VIRTIO_INPUT_DEVIDS) == 8);
 #define VIRTIO_INPUT_LED_SCROLLL 2
 #define VIRTIO_INPUT_LED_COMPOSE 3
 #define VIRTIO_INPUT_LED_KANA 4
+
+/*
+ * ABS_INFO payload layout.
+ *
+ * This matches the upstream virtio-input specification: min/max/fuzz/flat/res
+ * as 32-bit little-endian values.
+ *
+ * We currently only consume Min/Max for scaling.
+ */
+typedef struct _VIRTIO_INPUT_ABS_INFO {
+    LONG Min;
+    LONG Max;
+    LONG Fuzz;
+    LONG Flat;
+    LONG Res;
+} VIRTIO_INPUT_ABS_INFO, *PVIRTIO_INPUT_ABS_INFO;
+
+C_ASSERT(sizeof(VIRTIO_INPUT_ABS_INFO) == 20);

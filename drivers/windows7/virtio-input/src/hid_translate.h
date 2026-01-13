@@ -32,9 +32,9 @@
  *           bit6: Stop
  *   - ReportID 4: Tablet (absolute pointer)
  *       Byte 0: ReportID = 0x04
- *       Byte 1: Buttons bitmask (bit0=Button1/left .. bit7=Button8)
- *       Byte 2..3: X (uint16, little-endian)
- *       Byte 4..5: Y (uint16, little-endian)
+ *       Byte 1: Buttons bitmask (bit0=Button1/left/touch .. bit7=Button8)
+ *       Byte 2..3: X (uint16 LE, logical range [0, 32767])
+ *       Byte 4..5: Y (uint16 LE, logical range [0, 32767])
  */
 
 #include <stddef.h>
@@ -52,6 +52,8 @@ typedef signed __int16 int16_t;
 typedef unsigned __int16 uint16_t;
 typedef signed __int32 int32_t;
 typedef unsigned __int32 uint32_t;
+typedef signed __int64 int64_t;
+typedef unsigned __int64 uint64_t;
 #else
 #include <stdint.h>
 #endif
@@ -281,6 +283,9 @@ enum virtio_input_key_code {
   VIRTIO_INPUT_BTN_FORWARD = 277,
   VIRTIO_INPUT_BTN_BACK = 278,
   VIRTIO_INPUT_BTN_TASK = 279,
+
+  /* Touch contact (EV_KEY). */
+  VIRTIO_INPUT_BTN_TOUCH = 330,
 };
 
 /* HID report IDs used by this driver. */
@@ -295,10 +300,10 @@ enum hid_translate_report_id {
  * Report mask used to enable/disable subsets of reports.
  *
  * Aero contract v1 exposes virtio-input keyboard and mouse as two separate PCI
- * functions. Each driver instance must expose only the report IDs that exist
- * for that device.
+ * functions. Tablet (absolute pointer) devices are also supported; each driver
+ * instance must expose only the report IDs that exist for that device.
  *
- * The translator defaults to enabling both keyboard and mouse reports for
+ * The translator defaults to enabling keyboard + consumer + mouse reports for
  * backward compatibility and for host-side unit tests. The Win7 KMDF driver
  * sets this mask per device instance.
  */
@@ -307,8 +312,8 @@ enum hid_translate_report_mask {
   HID_TRANSLATE_REPORT_MASK_MOUSE = 0x02,
   HID_TRANSLATE_REPORT_MASK_CONSUMER = 0x04,
   HID_TRANSLATE_REPORT_MASK_TABLET = 0x08,
-  HID_TRANSLATE_REPORT_MASK_ALL = HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE | HID_TRANSLATE_REPORT_MASK_CONSUMER |
-                                 HID_TRANSLATE_REPORT_MASK_TABLET,
+  HID_TRANSLATE_REPORT_MASK_ALL = HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE |
+                                  HID_TRANSLATE_REPORT_MASK_CONSUMER | HID_TRANSLATE_REPORT_MASK_TABLET,
 };
 
 /* Sizes (bytes) of input reports emitted by the translator. */
@@ -317,6 +322,9 @@ enum hid_translate_report_size {
   HID_TRANSLATE_MOUSE_REPORT_SIZE = 6,
   HID_TRANSLATE_CONSUMER_REPORT_SIZE = 2,
   HID_TRANSLATE_TABLET_REPORT_SIZE = 6,
+
+  /* Max report size across all supported report IDs. */
+  HID_TRANSLATE_MAX_REPORT_SIZE = HID_TRANSLATE_KEYBOARD_REPORT_SIZE,
 };
 
 C_ASSERT(HID_TRANSLATE_KEYBOARD_REPORT_SIZE == 9);
@@ -360,15 +368,28 @@ struct hid_translate {
   bool mouse_dirty;
 
   /* Tablet (absolute pointer) state. */
-  uint8_t tablet_buttons;
+  uint8_t tablet_buttons; /* HID button bits. */
   int32_t tablet_abs_x;
   int32_t tablet_abs_y;
+  bool tablet_abs_x_valid;
+  bool tablet_abs_y_valid;
+  int32_t tablet_abs_x_min;
+  int32_t tablet_abs_x_max;
+  int32_t tablet_abs_y_min;
+  int32_t tablet_abs_y_max;
   bool tablet_dirty;
 };
 
 void hid_translate_init(struct hid_translate *t, hid_translate_emit_report_fn emit_report, void *emit_report_context);
 
 void hid_translate_set_enabled_reports(struct hid_translate *t, uint8_t enabled_reports);
+
+/*
+ * Configures the device-reported ABS_X/ABS_Y ranges used for scaling the
+ * absolute tablet coordinates into the fixed HID logical range.
+ */
+void hid_translate_set_tablet_abs_range(struct hid_translate *t, int32_t abs_x_min, int32_t abs_x_max, int32_t abs_y_min,
+                                        int32_t abs_y_max);
 
 /*
  * Clears internal state. If emit_reports is true, emits an all-zero keyboard

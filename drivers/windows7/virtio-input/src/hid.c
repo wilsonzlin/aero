@@ -92,9 +92,12 @@ NTSTATUS VirtioInputHandleHidIoctl(
         if (devCtx->DeviceKind == VioInputDeviceKindKeyboard) {
             status = VirtioInputWriteRequestOutputBuffer(
                 Request, &VirtioInputKeyboardHidDescriptor, sizeof(VirtioInputKeyboardHidDescriptor), &bytesReturned);
-        } else if (devCtx->DeviceKind == VioInputDeviceKindMouse || devCtx->DeviceKind == VioInputDeviceKindTablet) {
+        } else if (devCtx->DeviceKind == VioInputDeviceKindMouse) {
             status = VirtioInputWriteRequestOutputBuffer(
                 Request, &VirtioInputMouseHidDescriptor, sizeof(VirtioInputMouseHidDescriptor), &bytesReturned);
+        } else if (devCtx->DeviceKind == VioInputDeviceKindTablet) {
+            status = VirtioInputWriteRequestOutputBuffer(
+                Request, &VirtioInputTabletHidDescriptor, sizeof(VirtioInputTabletHidDescriptor), &bytesReturned);
         } else {
             status = STATUS_DEVICE_NOT_READY;
         }
@@ -104,9 +107,12 @@ NTSTATUS VirtioInputHandleHidIoctl(
         if (devCtx->DeviceKind == VioInputDeviceKindKeyboard) {
             status = VirtioInputWriteRequestOutputBuffer(
                 Request, VirtioInputKeyboardReportDescriptor, VirtioInputKeyboardReportDescriptorLength, &bytesReturned);
-        } else if (devCtx->DeviceKind == VioInputDeviceKindMouse || devCtx->DeviceKind == VioInputDeviceKindTablet) {
+        } else if (devCtx->DeviceKind == VioInputDeviceKindMouse) {
             status = VirtioInputWriteRequestOutputBuffer(
                 Request, VirtioInputMouseReportDescriptor, VirtioInputMouseReportDescriptorLength, &bytesReturned);
+        } else if (devCtx->DeviceKind == VioInputDeviceKindTablet) {
+            status = VirtioInputWriteRequestOutputBuffer(
+                Request, VirtioInputTabletReportDescriptor, VirtioInputTabletReportDescriptorLength, &bytesReturned);
         } else {
             status = STATUS_DEVICE_NOT_READY;
         }
@@ -138,9 +144,9 @@ NTSTATUS VirtioInputHandleHidIoctl(
         RtlZeroMemory(&attributes, sizeof(attributes));
         attributes.Size = sizeof(attributes);
         attributes.VendorID = VIRTIO_INPUT_VID;
-        attributes.ProductID =
-            (devCtx->DeviceKind == VioInputDeviceKindMouse || devCtx->DeviceKind == VioInputDeviceKindTablet) ? VIRTIO_INPUT_PID_MOUSE
-                                                                                                               : VIRTIO_INPUT_PID_KEYBOARD;
+        attributes.ProductID = (devCtx->DeviceKind == VioInputDeviceKindMouse)     ? VIRTIO_INPUT_PID_MOUSE
+                              : (devCtx->DeviceKind == VioInputDeviceKindTablet)  ? VIRTIO_INPUT_PID_TABLET
+                                                                                  : VIRTIO_INPUT_PID_KEYBOARD;
         attributes.VersionNumber = VIRTIO_INPUT_VERSION;
 
         status = VirtioInputWriteRequestOutputBuffer(Request, &attributes, sizeof(attributes), &bytesReturned);
@@ -151,14 +157,14 @@ NTSTATUS VirtioInputHandleHidIoctl(
         HID_COLLECTION_INFORMATION info;
         RtlZeroMemory(&info, sizeof(info));
 
-        info.DescriptorSize =
-            (devCtx->DeviceKind == VioInputDeviceKindMouse || devCtx->DeviceKind == VioInputDeviceKindTablet) ? VirtioInputMouseReportDescriptorLength
-                                                                                                               : VirtioInputKeyboardReportDescriptorLength;
+        info.DescriptorSize = (devCtx->DeviceKind == VioInputDeviceKindMouse)     ? VirtioInputMouseReportDescriptorLength
+                              : (devCtx->DeviceKind == VioInputDeviceKindTablet)  ? VirtioInputTabletReportDescriptorLength
+                                                                                  : VirtioInputKeyboardReportDescriptorLength;
         info.Polled = FALSE;
         info.VendorID = VIRTIO_INPUT_VID;
-        info.ProductID =
-            (devCtx->DeviceKind == VioInputDeviceKindMouse || devCtx->DeviceKind == VioInputDeviceKindTablet) ? VIRTIO_INPUT_PID_MOUSE
-                                                                                                               : VIRTIO_INPUT_PID_KEYBOARD;
+        info.ProductID = (devCtx->DeviceKind == VioInputDeviceKindMouse)     ? VIRTIO_INPUT_PID_MOUSE
+                        : (devCtx->DeviceKind == VioInputDeviceKindTablet)  ? VIRTIO_INPUT_PID_TABLET
+                                                                            : VIRTIO_INPUT_PID_KEYBOARD;
         info.VersionNumber = VIRTIO_INPUT_VERSION;
 
         status = VirtioInputWriteRequestOutputBuffer(Request, &info, sizeof(info), &bytesReturned);
@@ -179,8 +185,9 @@ NTSTATUS VirtioInputHandleHidIoctl(
         case HID_STRING_ID_IPRODUCT:
             status = VirtioInputWriteRequestOutputString(
                 Request,
-                (devCtx->DeviceKind == VioInputDeviceKindMouse || devCtx->DeviceKind == VioInputDeviceKindTablet) ? VirtioInputGetMouseProductString()
-                                                                                                                   : VirtioInputGetKeyboardProductString(),
+                (devCtx->DeviceKind == VioInputDeviceKindMouse)     ? VirtioInputGetMouseProductString()
+                : (devCtx->DeviceKind == VioInputDeviceKindTablet)  ? VirtioInputGetTabletProductString()
+                                                                   : VirtioInputGetKeyboardProductString(),
                 &bytesReturned);
             break;
         case HID_STRING_ID_ISERIALNUMBER:
@@ -208,8 +215,9 @@ NTSTATUS VirtioInputHandleHidIoctl(
         case 2:
             status = VirtioInputWriteRequestOutputString(
                 Request,
-                (devCtx->DeviceKind == VioInputDeviceKindMouse || devCtx->DeviceKind == VioInputDeviceKindTablet) ? VirtioInputGetMouseProductString()
-                                                                                                                   : VirtioInputGetKeyboardProductString(),
+                (devCtx->DeviceKind == VioInputDeviceKindMouse)     ? VirtioInputGetMouseProductString()
+                : (devCtx->DeviceKind == VioInputDeviceKindTablet)  ? VirtioInputGetTabletProductString()
+                                                                   : VirtioInputGetKeyboardProductString(),
                 &bytesReturned);
             break;
         case 3:

@@ -146,9 +146,51 @@ const HID_DESCRIPTOR VirtioInputMouseHidDescriptor = {
     { HID_REPORT_DESCRIPTOR_TYPE, (USHORT)sizeof(VirtioInputMouseReportDescriptor) },
 };
 
+const UCHAR VirtioInputTabletReportDescriptor[] = {
+    //
+    // Report ID 4: Tablet / absolute pointer (8 buttons + absolute X/Y)
+    //
+    0x05, 0x01,        // Usage Page (Generic Desktop)
+    0x09, 0x02,        // Usage (Mouse)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x04,        //   Report ID (4)
+    0x09, 0x01,        //   Usage (Pointer)
+    0xA1, 0x00,        //   Collection (Physical)
+    0x05, 0x09,        //     Usage Page (Button)
+    0x19, 0x01,        //     Usage Minimum (Button 1)
+    0x29, 0x08,        //     Usage Maximum (Button 8)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x25, 0x01,        //     Logical Maximum (1)
+    0x95, 0x08,        //     Report Count (8)
+    0x75, 0x01,        //     Report Size (1)
+    0x81, 0x02,        //     Input (Data,Var,Abs) ; Buttons
+    0x05, 0x01,        //     Usage Page (Generic Desktop)
+    0x09, 0x30,        //     Usage (X)
+    0x09, 0x31,        //     Usage (Y)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x26, 0xFF, 0x7F,  //     Logical Maximum (32767)
+    0x75, 0x10,        //     Report Size (16)
+    0x95, 0x02,        //     Report Count (2)
+    0x81, 0x02,        //     Input (Data,Var,Abs) ; X, Y
+    0xC0,              //   End Collection
+    0xC0,              // End Collection
+};
+
+const USHORT VirtioInputTabletReportDescriptorLength = (USHORT)sizeof(VirtioInputTabletReportDescriptor);
+
+const HID_DESCRIPTOR VirtioInputTabletHidDescriptor = {
+    (UCHAR)sizeof(HID_DESCRIPTOR),
+    HID_HID_DESCRIPTOR_TYPE,
+    HID_REVISION,
+    0,
+    1,
+    { HID_REPORT_DESCRIPTOR_TYPE, (USHORT)sizeof(VirtioInputTabletReportDescriptor) },
+};
+
 static const WCHAR VirtioInputManufacturerString[] = L"Aero";
 static const WCHAR VirtioInputKeyboardProductString[] = L"Aero Virtio Keyboard";
 static const WCHAR VirtioInputMouseProductString[] = L"Aero Virtio Mouse";
+static const WCHAR VirtioInputTabletProductString[] = L"Aero Virtio Tablet";
 static const WCHAR VirtioInputSerialString[] = L"00000001";
 
 PCWSTR VirtioInputGetManufacturerString(void)
@@ -164,6 +206,11 @@ PCWSTR VirtioInputGetKeyboardProductString(void)
 PCWSTR VirtioInputGetMouseProductString(void)
 {
     return VirtioInputMouseProductString;
+}
+
+PCWSTR VirtioInputGetTabletProductString(void)
+{
+    return VirtioInputTabletProductString;
 }
 
 PCWSTR VirtioInputGetSerialString(void)
