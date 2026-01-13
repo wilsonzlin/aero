@@ -15,6 +15,7 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   - `HidD_GetPreparsedData` + `HidP_GetCaps` (report sizes / usage)
   - `IOCTL_HID_GET_REPORT_DESCRIPTOR` (descriptor length sanity check)
   - `IOCTL_HID_GET_DEVICE_DESCRIPTOR` (cross-check reported descriptor length)
+  - `IOCTL_HID_GET_COLLECTION_DESCRIPTOR` (when supported by the OS/headers; useful for newer HIDCLASS consumers)
 - Reads input reports via `ReadFile` in a loop and prints raw bytes + best-effort decoding for:
   - virtio-input keyboard report (`ReportID=1`)
   - virtio-input mouse report (`ReportID=2`)
@@ -144,6 +145,12 @@ Dump the raw HID report descriptor bytes:
 
 ```bat
 hidtest.exe --dump-desc
+```
+
+Dump the raw bytes returned by `IOCTL_HID_GET_COLLECTION_DESCRIPTOR`:
+
+```bat
+hidtest.exe --dump-collection-desc
 ```
 
 Query virtio-input driver diagnostic counters (IOCTL_VIOINPUT_QUERY_COUNTERS):

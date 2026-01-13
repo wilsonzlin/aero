@@ -40,6 +40,18 @@
 #define IOCTL_HID_GET_REPORT_DESCRIPTOR HID_CTL_CODE(1)
 #endif
 
+#ifndef IOCTL_HID_GET_COLLECTION_DESCRIPTOR
+/*
+ * IOCTL_HID_GET_COLLECTION_DESCRIPTOR is not present in some header sets (e.g.
+ * older WDKs). When it exists, it's a HID class IOCTL using the same METHOD_NEITHER
+ * transfer method as the other IOCTL_HID_* codes.
+ *
+ * The function code is sequential after IOCTL_HID_GET_COLLECTION_INFORMATION in
+ * modern WDKs; 12 is the value used by current Aero builds.
+ */
+#define IOCTL_HID_GET_COLLECTION_DESCRIPTOR HID_CTL_CODE(12)
+#endif
+
 #ifndef IOCTL_HID_GET_DEVICE_DESCRIPTOR
 #define IOCTL_HID_GET_DEVICE_DESCRIPTOR HID_CTL_CODE(0)
 #endif
@@ -179,6 +191,7 @@ typedef struct OPTIONS {
     int ioctl_bad_get_indexed_string_out;
     int hidd_bad_set_output_report;
     int dump_desc;
+    int dump_collection_desc;
     int query_counters;
     int want_keyboard;
     int want_mouse;
@@ -328,6 +341,32 @@ static void dump_report_descriptor(HANDLE handle)
     }
 
     wprintf(L"\nReport descriptor (%lu bytes):\n", bytes);
+    for (i = 0; i < bytes; i += 16) {
+        DWORD chunk = bytes - i;
+        if (chunk > 16) {
+            chunk = 16;
+        }
+        wprintf(L"  %04lX: ", i);
+        dump_hex(buf + i, chunk);
+        wprintf(L"\n");
+    }
+}
+
+static void dump_collection_descriptor(HANDLE handle)
+{
+    BYTE buf[4096];
+    DWORD bytes = 0;
+    BOOL ok;
+    DWORD i;
+
+    ZeroMemory(buf, sizeof(buf));
+    ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
+    if (!ok || bytes == 0) {
+        print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_COLLECTION_DESCRIPTOR)");
+        return;
+    }
+
+    wprintf(L"\nCollection descriptor (%lu bytes):\n", bytes);
     for (i = 0; i < bytes; i += 16) {
         DWORD chunk = bytes - i;
         if (chunk > 16) {
@@ -568,6 +607,7 @@ static void print_usage(void)
     wprintf(L"  hidtest.exe [--list]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-cycle] [--dump-desc]\n");
+    wprintf(L"             [--dump-collection-desc]\n");
     wprintf(L"             [--counters]\n");
     wprintf(L"             [--led-ioctl-set-output 0x07]\n");
     wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report]\n");
@@ -591,6 +631,8 @@ static void print_usage(void)
     wprintf(L"                 Send keyboard LEDs using DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)\n");
     wprintf(L"  --led-cycle     Cycle keyboard LEDs to visually confirm write path\n");
     wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");
+    wprintf(L"  --dump-collection-desc\n");
+    wprintf(L"                 Print the raw bytes returned by IOCTL_HID_GET_COLLECTION_DESCRIPTOR\n");
     wprintf(L"  --counters      Query and print virtio-input driver diagnostic counters\n");
     wprintf(L"  --ioctl-bad-xfer-packet\n");
     wprintf(L"                 Send IOCTL_HID_WRITE_REPORT with an invalid HID_XFER_PACKET pointer\n");
@@ -1748,6 +1790,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--dump-collection-desc") == 0) {
+            opt.dump_collection_desc = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--counters") == 0) {
             opt.query_counters = 1;
             continue;
@@ -2028,10 +2075,11 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.query_counters &&
-        (opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
-         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
-         opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
-         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report)) {
+        (opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.dump_collection_desc || opt.ioctl_bad_xfer_packet ||
+         opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report ||
+         opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
+         opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
+         opt.hidd_bad_set_output_report)) {
         wprintf(L"--counters is mutually exclusive with LED actions, descriptor dump, and negative tests.\n");
         return 2;
     }
@@ -2083,6 +2131,9 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.dump_desc) {
         dump_report_descriptor(dev.handle);
+    }
+    if (opt.dump_collection_desc) {
+        dump_collection_descriptor(dev.handle);
     }
 
     if (opt.query_counters) {
