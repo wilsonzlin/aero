@@ -19,7 +19,12 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 
 - [ ] **BAR0** is a **64-bit MMIO** BAR (memory BAR, not I/O port).
 - [ ] **BAR0 size** is at least `0x4000` bytes (contract/strict mode).
-- [ ] PCI config space exposes a valid **PCI capability list** (Status bit 4 set, aligned pointers).
+- [ ] PCI config space exposes a valid **PCI capability list** (Status bit 4 set, aligned pointers, no loops).
+- [ ] The capability list includes virtio **vendor-specific** caps (PCI cap ID `0x09`) for:
+  - `COMMON_CFG` (`cfg_type=1`, `cap_len>=16`)
+  - `NOTIFY_CFG` (`cfg_type=2`, `cap_len>=20`)
+  - `ISR_CFG` (`cfg_type=3`, `cap_len>=16`)
+  - `DEVICE_CFG` (`cfg_type=4`, `cap_len>=16`)
 - [ ] **BAR0** contains a virtio-pci **modern** vendor-cap layout for:
   - [ ] `COMMON_CFG`
   - [ ] `NOTIFY_CFG`
@@ -50,6 +55,8 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
   - [ ] `3 rxq`: `64`
 - [ ] `queue_notify_off` is valid for each queue (maps to a doorbell address within the NOTIFY region).
 - [ ] (Contract/strict mode) `queue_notify_off(q) == q` for queues `0..3` (driver treats mismatches as unsupported).
+- [ ] `queue_enable` readback works: after the driver programs a queue and writes `queue_enable=1`, reading `queue_enable` returns `1`.
+- [ ] Notify “doorbell” accepts a **16-bit** write of the queue index (this driver uses 16-bit MMIO writes).
 
 ## Interrupt delivery
 
