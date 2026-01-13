@@ -152,8 +152,8 @@ impl StorageBackend for MemBackend {
 /// This backend is available on non-wasm32 targets and is intended for host-side tooling
 /// (conversion, inspection, regression tests, etc.).
 ///
-/// I/O is performed using platform-specific `FileExt::{read_at, write_at}` where available
-/// (Unix/Windows) so the OS file cursor is not disturbed.
+/// I/O is performed using platform-specific `FileExt` offset methods (`read_at`/`write_at` on
+/// Unix, `seek_read`/`seek_write` on Windows) so the OS file cursor is not disturbed.
 ///
 /// `flush()` uses [`File::sync_all`] (data + metadata). This is the safest default for disk
 /// images, especially when writes may extend the file length.
@@ -237,14 +237,24 @@ impl StdFileBackend {
         ))
     }
 
-    #[cfg(any(unix, windows))]
+    #[cfg(unix)]
     fn pread(&self, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
         self.file.read_at(buf, offset)
     }
 
-    #[cfg(any(unix, windows))]
+    #[cfg(windows)]
+    fn pread(&self, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+        self.file.seek_read(buf, offset)
+    }
+
+    #[cfg(unix)]
     fn pwrite(&self, buf: &[u8], offset: u64) -> std::io::Result<usize> {
         self.file.write_at(buf, offset)
+    }
+
+    #[cfg(windows)]
+    fn pwrite(&self, buf: &[u8], offset: u64) -> std::io::Result<usize> {
+        self.file.seek_write(buf, offset)
     }
 
     #[cfg(not(any(unix, windows)))]
