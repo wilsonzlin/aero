@@ -206,7 +206,13 @@ export class InputCapture {
   private latencyLogMaxUs = 0;
 
   private readonly handlePointerLockChange = (locked: boolean): void => {
-    this.updateKeyboardLock();
+    // Pointer lock boundaries are also keyboard-lock boundaries: if the browser exits pointer lock
+    // (e.g. Escape), drop keyboard lock so we don't keep swallowing system-reserved keys.
+    if (!locked) {
+      this.releaseKeyboardLock();
+    } else {
+      this.updateKeyboardLock();
+    }
 
     // If pointer lock exits while the canvas is not focused, we will stop
     // capturing keyboard/mouse events, which can leave the guest with latched
@@ -239,12 +245,13 @@ export class InputCapture {
     // otherwise bubble to app-level handlers (e.g. toggles or global click listeners).
     event.preventDefault();
     event.stopPropagation();
+    // Best-effort: request Keyboard Lock for this capture session. The API requires a user gesture,
+    // so mark the request before any focus/pointer-lock side effects and attempt the lock while
+    // we're still in the click handler.
+    this.keyboardLockRequested = true;
     this.canvas.focus();
     this.pointerLock.request();
-    // Best-effort: request Keyboard Lock on the upcoming capture session. The API requires a user
-    // gesture; we record that the user explicitly initiated capture via click and attempt the lock
-    // once capture is actually active (pointer lock + focus).
-    this.keyboardLockRequested = true;
+    this.updateKeyboardLock();
   };
 
   private readonly handleFocus = (): void => {
@@ -1158,15 +1165,10 @@ export class InputCapture {
   }
 
   private shouldLockKeyboard(): boolean {
-    // Only attempt keyboard lock while capture is active (pointer lock + focus). This improves
-    // delivery of browser-reserved keys (e.g. Escape, function keys) to the guest.
-    return (
-      this.enableKeyboardLock &&
-      this.windowFocused &&
-      this.pageVisible &&
-      this.hasFocus &&
-      this.pointerLock.isLocked
-    );
+    // Only attempt keyboard lock when capture is active and the user explicitly initiated capture
+    // via a gesture (click). This improves delivery of browser-reserved keys (e.g. Escape, function
+    // keys) to the guest without unexpectedly changing global keyboard behavior.
+    return this.enableKeyboardLock && this.keyboardLockRequested && this.isCapturingKeyboard();
   }
 
   private updateKeyboardLock(): void {
@@ -1194,7 +1196,6 @@ export class InputCapture {
       return;
     }
 
-    this.keyboardLockRequested = false;
     this.keyboardLockActive = true;
     const seq = ++this.keyboardLockSeq;
 
