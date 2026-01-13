@@ -351,6 +351,11 @@ Collect:
 
 - Browser permission status + any `getUserMedia` error shown in the console.
 - Mic ring stats (buffered/dropped) if available in UI.
+- **HDA codec gating state** (pin/power/amp) from the I/O worker DevTools console:
+  ```js
+  __aeroAudioHdaBridge?.codec_debug_state?.()
+  ```
+  - If `captureEnabled` is `false`, the failure is likely **gating** (pin widget control / power state / amp mute) rather than DMA/stream plumbing.
 - Screenshot of the guest Recording tab.
 
 ### D) Snapshot for bug reports (when available)

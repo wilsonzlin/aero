@@ -17,7 +17,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use js_sys::{SharedArrayBuffer, Uint8Array};
+use js_sys::{Object, Reflect, SharedArrayBuffer, Uint8Array};
 
 use aero_audio::hda::HdaController;
 use aero_audio::sink::AudioSink;
@@ -388,6 +388,95 @@ impl HdaControllerBridge {
             .as_ref()
             .map(|r| r.underrun_count())
             .unwrap_or(0)
+    }
+
+    /// Return a JS object describing the HDA codec's current gating state.
+    ///
+    /// This is intended for manual debugging of guest driver behavior (e.g. whether the guest has
+    /// enabled the microphone pin widget control / power state after recent codec gating changes).
+    ///
+    /// The returned object is stable and intentionally small so it can be copy/pasted into bug
+    /// reports:
+    ///
+    /// ```js
+    /// // In the I/O worker DevTools console:
+    /// __aeroAudioHdaBridge?.codec_debug_state?.()
+    /// ```
+    pub fn codec_debug_state(&self) -> Result<JsValue, JsValue> {
+        let ring_state = if let Some(ring) = self.audio_ring.as_ref() {
+            ring.snapshot_state()
+        } else if let Some(state) = self.pending_audio_ring_state.as_ref() {
+            state.clone()
+        } else {
+            AudioWorkletRingState {
+                capacity_frames: 0,
+                write_pos: 0,
+                read_pos: 0,
+            }
+        };
+
+        let state = self.hda.snapshot_state(ring_state);
+        let codec = &state.codec;
+        let cap = &state.codec_capture;
+
+        let output_enabled =
+            codec.afg_power_state == 0 && codec.output_pin_power_state == 0 && codec.pin_ctl != 0;
+        let capture_enabled =
+            codec.afg_power_state == 0 && cap.mic_pin_power_state == 0 && cap.mic_pin_ctl != 0;
+
+        let root = Object::new();
+
+        fn set(obj: &Object, key: &str, value: JsValue) -> Result<(), JsValue> {
+            Reflect::set(obj, &JsValue::from_str(key), &value).map(|_| ())
+        }
+
+        set(&root, "outputRateHz", JsValue::from(state.output_rate_hz))?;
+        set(
+            &root,
+            "captureSampleRateHz",
+            JsValue::from(state.capture_sample_rate_hz),
+        )?;
+
+        set(&root, "afgPowerState", JsValue::from(codec.afg_power_state))?;
+
+        set(&root, "outputStreamId", JsValue::from(codec.output_stream_id))?;
+        set(&root, "outputChannel", JsValue::from(codec.output_channel))?;
+        set(&root, "outputFormat", JsValue::from(codec.output_format))?;
+        set(&root, "outputPinCtl", JsValue::from(codec.pin_ctl))?;
+        set(
+            &root,
+            "outputPinPowerState",
+            JsValue::from(codec.output_pin_power_state),
+        )?;
+
+        let out_amp = Object::new();
+        set(&out_amp, "gainLeft", JsValue::from(codec.amp_gain_left))?;
+        set(&out_amp, "gainRight", JsValue::from(codec.amp_gain_right))?;
+        set(&out_amp, "muteLeft", JsValue::from(codec.amp_mute_left))?;
+        set(&out_amp, "muteRight", JsValue::from(codec.amp_mute_right))?;
+        set(&root, "outputAmp", out_amp.into())?;
+
+        set(&root, "inputStreamId", JsValue::from(cap.input_stream_id))?;
+        set(&root, "inputChannel", JsValue::from(cap.input_channel))?;
+        set(&root, "inputFormat", JsValue::from(cap.input_format))?;
+        set(&root, "micPinCtl", JsValue::from(cap.mic_pin_ctl))?;
+        set(
+            &root,
+            "micPinPowerState",
+            JsValue::from(cap.mic_pin_power_state),
+        )?;
+
+        let in_amp = Object::new();
+        set(&in_amp, "gainLeft", JsValue::from(cap.amp_gain_left))?;
+        set(&in_amp, "gainRight", JsValue::from(cap.amp_gain_right))?;
+        set(&in_amp, "muteLeft", JsValue::from(cap.amp_mute_left))?;
+        set(&in_amp, "muteRight", JsValue::from(cap.amp_mute_right))?;
+        set(&root, "inputAmp", in_amp.into())?;
+
+        set(&root, "outputEnabled", JsValue::from(output_enabled))?;
+        set(&root, "captureEnabled", JsValue::from(capture_enabled))?;
+
+        Ok(root.into())
     }
 
     /// Serialize the current HDA controller state into a deterministic snapshot blob.

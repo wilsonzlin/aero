@@ -1990,6 +1990,17 @@ function maybeInitHdaDevice(): void {
     }
     const dev = new HdaPciDevice({ bridge: bridge as HdaControllerBridgeLike, irqSink: mgr.irqSink });
     hdaControllerBridge = bridge;
+    // Debug/diagnostics: expose the live HDA bridge in the worker global so DevTools snippets (and
+    // snapshot fallback plumbing) can access it without needing internal module bindings.
+    //
+    // See `docs/testing/audio-windows7.md` for the Win7 audio smoke-test checklist and debugging
+    // snippets that use this handle.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioHdaBridge = bridge;
+    } catch {
+      // ignore
+    }
     // Use the live HDA controller as the snapshot bridge *only when* it supports the
     // snapshot exports. Older WASM builds (or experimental runtimes) may not expose
     // `save_state/load_state`; in that case leave `audioHdaBridge` unset so the
