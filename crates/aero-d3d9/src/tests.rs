@@ -9,7 +9,7 @@ use aero_dxbc::{
 
 use crate::shader_limits::{MAX_D3D9_SHADER_BLOB_BYTES, MAX_D3D9_SHADER_BYTECODE_BYTES};
 use crate::sm3::decode::TextureType;
-use crate::{dxbc, shader, sm3, software, state};
+use crate::{dxbc, shader, shader_translate, sm3, software, state};
 
 fn enc_reg_type(ty: u8) -> u32 {
     let low = (ty & 0x7) as u32;
@@ -36,6 +36,10 @@ fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
     let mut v = vec![token];
     v.extend_from_slice(params);
     v
+}
+
+fn enc_inst_sm3(opcode: u16, params: &[u32]) -> Vec<u32> {
+    enc_inst(opcode, params)
 }
 
 fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
@@ -100,6 +104,10 @@ fn assemble_vs_passthrough_with_dcl_sm3_decoder() -> Vec<u32> {
     ));
     out.push(0x0000FFFF);
     out
+}
+
+fn assemble_vs_passthrough_sm3_decoder() -> Vec<u32> {
+    assemble_vs_passthrough_with_dcl_sm3_decoder()
 }
 
 fn assemble_ps2_mov_oc0_t0_sm3_decoder() -> Vec<u32> {
@@ -275,6 +283,21 @@ fn assemble_ps_math_ops() -> Vec<u32> {
     // mov oC0, r0
     out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
 
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps_with_unknown_opcode() -> Vec<u32> {
+    // ps_2_0
+    let mut out = vec![0xFFFF0200];
+    // mov oC0, c0
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)],
+    ));
+    // Unknown opcode with 0 operands. The legacy translator skips this, while the SM3 decoder
+    // errors out with "unsupported opcode".
+    out.extend(enc_inst_sm3(0x1234, &[]));
     out.push(0x0000FFFF);
     out
 }
@@ -1281,6 +1304,66 @@ fn translates_simple_vs_to_wgsl() {
     assert!(wgsl.wgsl.contains("@vertex"));
     assert!(wgsl.wgsl.contains("fn vs_main"));
     assert!(wgsl.wgsl.contains("@builtin(position)"));
+}
+
+#[test]
+fn translate_entrypoint_prefers_sm3_when_supported() {
+    let ps_bytes = to_bytes(&assemble_ps3_predicated_lrp());
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::Sm3
+    );
+
+    let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+    assert!(translated.wgsl.contains("@fragment"));
+    assert_eq!(translated.entry_point, "fs_main");
+}
+
+#[test]
+fn translate_entrypoint_falls_back_on_unsupported_opcode() {
+    // Include an unknown opcode that the strict SM3 decoder rejects, but the legacy translator
+    // skips (to support incremental bring-up).
+    let ps_bytes = to_bytes(&assemble_ps_with_unknown_opcode());
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::LegacyFallback
+    );
+    assert!(translated.fallback_reason.as_deref().unwrap_or("").contains("unsupported"));
+
+    let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn translate_entrypoint_rejects_truncated_token_stream() {
+    let mut bytes = to_bytes(&assemble_vs_passthrough_sm3_decoder());
+    // Drop the END token and one operand token from the last instruction, leaving a truncated
+    // instruction stream.
+    bytes.truncate(bytes.len().saturating_sub(8));
+    let err =
+        shader_translate::translate_d3d9_shader_to_wgsl(&bytes, shader::WgslOptions::default())
+            .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
 }
 
 #[test]

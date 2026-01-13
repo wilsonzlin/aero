@@ -9,6 +9,7 @@ use std::sync::mpsc;
 #[cfg(target_arch = "wasm32")]
 use aero_d3d9::runtime::{ShaderCache as PersistentShaderCache, ShaderTranslationFlags};
 use aero_d3d9::shader;
+use aero_d3d9::shader_translate::{self, ShaderTranslateBackend};
 use aero_d3d9::sm3::decode::TextureType;
 use aero_d3d9::vertex::{StandardLocationMap, VertexDeclaration, VertexLocationMap};
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
@@ -63,7 +64,11 @@ pub struct AerogpuD3d9Executor {
     queue: wgpu::Queue,
     stats: Arc<GpuStats>,
 
-    shader_cache: shader::ShaderCache,
+    /// In-memory DXBC/token-stream -> WGSL cache.
+    ///
+    /// This uses the higher-level `aero_d3d9::shader_translate` entrypoint which tries the strict
+    /// SM3 pipeline first and falls back to the legacy translator on unsupported features.
+    shader_cache: shader_translate::ShaderCache,
     /// WASM-only persistent shader translation cache (IndexedDB/OPFS).
     #[cfg(target_arch = "wasm32")]
     persistent_shader_cache: PersistentShaderCache,
@@ -1368,7 +1373,7 @@ impl AerogpuD3d9Executor {
             device,
             queue,
             stats,
-            shader_cache: shader::ShaderCache::new(shader::WgslOptions {
+            shader_cache: shader_translate::ShaderCache::new(shader::WgslOptions {
                 half_pixel_center: config.half_pixel_center,
             }),
             #[cfg(target_arch = "wasm32")]
@@ -1449,7 +1454,7 @@ impl AerogpuD3d9Executor {
     }
 
     pub fn reset(&mut self) {
-        self.shader_cache = shader::ShaderCache::new(shader::WgslOptions {
+        self.shader_cache = shader_translate::ShaderCache::new(shader::WgslOptions {
             half_pixel_center: self.half_pixel_center,
         });
         #[cfg(target_arch = "wasm32")]
@@ -2393,14 +2398,23 @@ impl AerogpuD3d9Executor {
             .map_err(|e| AerogpuD3d9Error::ShaderTranslation(e.to_string()))?;
         let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
         match cached.source {
-            shader::ShaderCacheLookupSource::Memory => {
+            shader_translate::ShaderCacheLookupSource::Memory => {
                 self.stats.inc_d3d9_shader_cache_memory_hits();
             }
-            shader::ShaderCacheLookupSource::Translated => {
+            shader_translate::ShaderCacheLookupSource::Translated => {
                 self.stats.inc_d3d9_shader_translate_calls();
+                if cached.backend == ShaderTranslateBackend::LegacyFallback {
+                    self.stats.inc_d3d9_shader_sm3_fallbacks();
+                    debug!(
+                        shader_handle,
+                        reason = cached.fallback_reason.as_deref().unwrap_or("<unknown>"),
+                        "SM3 shader translation failed; falling back to legacy D3D9 translator"
+                    );
+                }
             }
         }
-        let bytecode_stage = cached.ir.version.stage;
+
+        let bytecode_stage = cached.version.stage;
         if expected_stage != bytecode_stage {
             return Err(AerogpuD3d9Error::ShaderStageMismatch {
                 shader_handle,
@@ -2409,20 +2423,20 @@ impl AerogpuD3d9Executor {
             });
         }
 
-        let wgsl = cached.wgsl.wgsl.clone();
+        let wgsl = cached.wgsl.clone();
         let module = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("aerogpu-d3d9.shader"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(wgsl.as_str())),
-            });
+        });
 
         let mut used_samplers_mask = 0u16;
         let mut cube_samplers_mask = 0u16;
-        for &s in &cached.ir.used_samplers {
+        for &s in &cached.used_samplers {
             if (s as usize) < MAX_SAMPLERS {
                 used_samplers_mask |= 1u16 << s;
-                if cached.ir.sampler_texture_types.get(&s).copied()
+                if cached.sampler_texture_types.get(&s).copied()
                     == Some(TextureType::TextureCube)
                 {
                     cube_samplers_mask |= 1u16 << s;
@@ -2443,8 +2457,8 @@ impl AerogpuD3d9Executor {
                 key,
                 module,
                 wgsl,
-                entry_point: cached.wgsl.entry_point,
-                uses_semantic_locations: cached.ir.uses_semantic_locations
+                entry_point: cached.entry_point,
+                uses_semantic_locations: cached.uses_semantic_locations
                     && bytecode_stage == shader::ShaderStage::Vertex,
                 semantic_locations: cached.ir.semantic_locations.clone(),
                 used_samplers_mask,
@@ -2467,37 +2481,52 @@ impl AerogpuD3d9Executor {
         let mut invalidated_once = false;
 
         loop {
+            let stats = self.stats.clone();
+            let half_pixel_center = flags.half_pixel_center;
             let (artifact, source) = self
                 .persistent_shader_cache
-                .get_or_translate_with_source(dxbc_bytes, flags.clone(), || async {
-                    let program = shader::parse(dxbc_bytes).map_err(|e| e.to_string())?;
-                    let ir = shader::to_ir(&program);
-                    let wgsl = shader::generate_wgsl_with_options(
-                        &ir,
+                .get_or_translate_with_source(dxbc_bytes, flags.clone(), move || async move {
+                    let translated = shader_translate::translate_d3d9_shader_to_wgsl(
+                        dxbc_bytes,
                         shader::WgslOptions {
-                            half_pixel_center: flags.half_pixel_center,
+                            half_pixel_center,
                         },
                     )
                     .map_err(|e| e.to_string())?;
 
+                    if translated.backend == ShaderTranslateBackend::LegacyFallback {
+                        stats.inc_d3d9_shader_sm3_fallbacks();
+                        debug!(
+                            shader_handle,
+                            reason = translated.fallback_reason.as_deref().unwrap_or("<unknown>"),
+                            "SM3 shader translation failed; falling back to legacy D3D9 translator"
+                        );
+                    }
+
                     let mut used_samplers_mask = 0u16;
                     let mut cube_samplers_mask = 0u16;
-                    for &s in &ir.used_samplers {
+                    for &s in &translated.used_samplers {
                         if (s as usize) < MAX_SAMPLERS {
                             used_samplers_mask |= 1u16 << s;
-                            if ir.sampler_texture_types.get(&s).copied()
+                            if translated.sampler_texture_types.get(&s).copied()
                                 == Some(TextureType::TextureCube)
                             {
                                 cube_samplers_mask |= 1u16 << s;
                             }
+                        } else {
+                            debug!(
+                                shader_handle,
+                                sampler = s,
+                                "shader uses out-of-range sampler index"
+                            );
                         }
                     }
 
                     let reflection = PersistentShaderReflection {
                         schema_version: PERSISTENT_SHADER_REFLECTION_SCHEMA_VERSION,
-                        stage: PersistentShaderStage::from_stage(ir.version.stage),
-                        entry_point: wgsl.entry_point.to_string(),
-                        uses_semantic_locations: ir.uses_semantic_locations,
+                        stage: PersistentShaderStage::from_stage(translated.version.stage),
+                        entry_point: translated.entry_point.to_string(),
+                        uses_semantic_locations: translated.uses_semantic_locations,
                         used_samplers_mask,
                         cube_samplers_mask,
                         semantic_locations: ir.semantic_locations.clone(),
@@ -2505,7 +2534,7 @@ impl AerogpuD3d9Executor {
                     let reflection = serde_json::to_value(reflection).map_err(|e| e.to_string())?;
 
                     Ok(aero_d3d9::runtime::PersistedShaderArtifact {
-                        wgsl: wgsl.wgsl,
+                        wgsl: translated.wgsl,
                         reflection,
                     })
                 })

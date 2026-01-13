@@ -226,6 +226,11 @@ mod wasm {
         );
         let _ = Reflect::set(
             &obj,
+            &JsValue::from_str("d3d9_shader_sm3_fallbacks"),
+            &JsValue::from_f64(snapshot.d3d9_shader_sm3_fallbacks as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
             &JsValue::from_str("d3d9_shader_cache_persistent_hits"),
             &JsValue::from_f64(snapshot.d3d9_shader_cache_persistent_hits as f64),
         );

@@ -20,6 +20,7 @@ fn get_gpu_stats_returns_object_with_expected_counters() {
         "surface_reconfigures",
         // D3D9 shader translation + cache counters (WG-010(D)).
         "d3d9_shader_translate_calls",
+        "d3d9_shader_sm3_fallbacks",
         "d3d9_shader_cache_persistent_hits",
         "d3d9_shader_cache_persistent_misses",
         "d3d9_shader_cache_memory_hits",

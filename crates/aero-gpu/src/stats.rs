@@ -35,6 +35,11 @@ pub struct GpuStats {
     // D3D9 shader translation + cache counters (WG-010(D))
     // ---------------------------------------------------------------------
     d3d9_shader_translate_calls: AtomicU64,
+    /// Count of translations that fell back from the strict SM3 pipeline to the legacy D3D9
+    /// translator.
+    ///
+    /// This is a temporary compatibility bridge while SM3 opcode coverage is completed.
+    d3d9_shader_sm3_fallbacks: AtomicU64,
     d3d9_shader_cache_persistent_hits: AtomicU64,
     d3d9_shader_cache_persistent_misses: AtomicU64,
     d3d9_shader_cache_memory_hits: AtomicU64,
@@ -80,6 +85,11 @@ impl GpuStats {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn inc_d3d9_shader_sm3_fallbacks(&self) {
+        self.d3d9_shader_sm3_fallbacks
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn inc_d3d9_shader_cache_persistent_hits(&self) {
         self.d3d9_shader_cache_persistent_hits
             .fetch_add(1, Ordering::Relaxed);
@@ -118,6 +128,7 @@ impl GpuStats {
             surface_reconfigures: self.surface_reconfigures.load(Ordering::Relaxed),
 
             d3d9_shader_translate_calls: self.d3d9_shader_translate_calls.load(Ordering::Relaxed),
+            d3d9_shader_sm3_fallbacks: self.d3d9_shader_sm3_fallbacks.load(Ordering::Relaxed),
             d3d9_shader_cache_persistent_hits: self
                 .d3d9_shader_cache_persistent_hits
                 .load(Ordering::Relaxed),
@@ -151,6 +162,7 @@ pub struct GpuStatsSnapshot {
     pub surface_reconfigures: u64,
 
     pub d3d9_shader_translate_calls: u64,
+    pub d3d9_shader_sm3_fallbacks: u64,
     pub d3d9_shader_cache_persistent_hits: u64,
     pub d3d9_shader_cache_persistent_misses: u64,
     pub d3d9_shader_cache_memory_hits: u64,
@@ -161,18 +173,20 @@ impl GpuStatsSnapshot {
     pub fn to_json(self) -> String {
         // Note: This is hand-built JSON for speed/alloc avoidance on the render thread.
         format!(
-            "{{\"presents_attempted\":{},\"presents_succeeded\":{},\"recoveries_attempted\":{},\"recoveries_succeeded\":{},\"surface_reconfigures\":{},\"d3d9_shader_translate_calls\":{},\"d3d9_shader_cache_persistent_hits\":{},\"d3d9_shader_cache_persistent_misses\":{},\"d3d9_shader_cache_memory_hits\":{},\"d3d9_shader_cache_disabled\":{},\"d3d9_shader_cache\":{{\"translate_calls\":{},\"persistent_hits\":{},\"persistent_misses\":{},\"memory_hits\":{},\"disabled\":{}}}}}",
+            "{{\"presents_attempted\":{},\"presents_succeeded\":{},\"recoveries_attempted\":{},\"recoveries_succeeded\":{},\"surface_reconfigures\":{},\"d3d9_shader_translate_calls\":{},\"d3d9_shader_sm3_fallbacks\":{},\"d3d9_shader_cache_persistent_hits\":{},\"d3d9_shader_cache_persistent_misses\":{},\"d3d9_shader_cache_memory_hits\":{},\"d3d9_shader_cache_disabled\":{},\"d3d9_shader_cache\":{{\"translate_calls\":{},\"sm3_fallbacks\":{},\"persistent_hits\":{},\"persistent_misses\":{},\"memory_hits\":{},\"disabled\":{}}}}}",
             self.presents_attempted,
             self.presents_succeeded,
             self.recoveries_attempted,
             self.recoveries_succeeded,
             self.surface_reconfigures,
             self.d3d9_shader_translate_calls,
+            self.d3d9_shader_sm3_fallbacks,
             self.d3d9_shader_cache_persistent_hits,
             self.d3d9_shader_cache_persistent_misses,
             self.d3d9_shader_cache_memory_hits,
             self.d3d9_shader_cache_disabled,
             self.d3d9_shader_translate_calls,
+            self.d3d9_shader_sm3_fallbacks,
             self.d3d9_shader_cache_persistent_hits,
             self.d3d9_shader_cache_persistent_misses,
             self.d3d9_shader_cache_memory_hits,
@@ -192,14 +206,17 @@ mod tests {
         stats.inc_d3d9_shader_translate_calls();
         stats.inc_surface_reconfigures();
         stats.inc_d3d9_shader_translate_calls();
+        stats.inc_d3d9_shader_sm3_fallbacks();
         stats.inc_d3d9_shader_cache_memory_hits();
         let json = stats.to_json();
         assert!(json.contains("\"presents_attempted\":1"));
         assert!(json.contains("\"surface_reconfigures\":1"));
         assert!(json.contains("\"d3d9_shader_translate_calls\":2"));
+        assert!(json.contains("\"d3d9_shader_sm3_fallbacks\":1"));
         assert!(json.contains("\"d3d9_shader_cache_memory_hits\":1"));
         // Nested object (used by browser E2E harnesses).
         assert!(json.contains("\"translate_calls\":2"));
+        assert!(json.contains("\"sm3_fallbacks\":1"));
         assert!(json.contains("\"memory_hits\":1"));
     }
 }
