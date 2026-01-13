@@ -93,6 +93,69 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
     expect(tickSawCmdData).toBe(true);
   });
 
+  it("runAsync still yields/ticks under malformed command traffic", async () => {
+    const { buffer: ipcBuffer, queues } = createIpcBuffer([
+      { kind: queueKind.CMD, capacityBytes: 1 << 16 },
+      { kind: queueKind.EVT, capacityBytes: 1 << 16 },
+    ]);
+    const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
+    const evtQ = openRingByKind(ipcBuffer, queueKind.EVT);
+
+    const cmdOffset = queues.find((q) => q.kind === queueKind.CMD)?.offsetBytes;
+    if (cmdOffset == null) throw new Error("CMD ring not found in IPC buffer");
+    const cmdCtrl = new Int32Array(ipcBuffer, cmdOffset, ringCtrl.WORDS);
+
+    // Unknown u16 tag -> decodeCommand throws -> safeDecodeCommand returns null.
+    const malformed = new Uint8Array([0xff, 0xff]);
+
+    let tickCount = 0;
+    let tickSawCmdData = false;
+
+    const target: AeroIpcIoDispatchTarget = {
+      portRead: () => 0,
+      portWrite: () => {},
+      mmioRead: () => 0,
+      mmioWrite: () => {},
+      tick: () => {
+        tickCount++;
+        const head = Atomics.load(cmdCtrl, ringCtrl.HEAD);
+        const tail = Atomics.load(cmdCtrl, ringCtrl.TAIL_COMMIT);
+        if (head !== tail) tickSawCmdData = true;
+      },
+    };
+
+    const server = new AeroIpcIoServer(cmdQ, evtQ, target, {
+      tickIntervalMs: 1,
+      emitEvent: () => {},
+    });
+
+    // Fill the ring up front so the server never blocks on an empty ring unless
+    // it yields.
+    while (cmdQ.tryPush(malformed)) {}
+
+    let timerFired = false;
+    const timer = setTimeout(() => {
+      timerFired = true;
+    }, 0);
+    (timer as unknown as { unref?: () => void }).unref?.();
+
+    const abort = new AbortController();
+    const serverTask = server.runAsync({ signal: abort.signal, yieldEveryNCommands: 64 });
+
+    const end = nowMs() + 50;
+    while (nowMs() < end) {
+      while (cmdQ.tryPush(malformed)) {}
+      await sleep0();
+    }
+
+    abort.abort();
+    await withTimeout(serverTask, 2000, "server.runAsync() shutdown (malformed)");
+
+    expect(timerFired).toBe(true);
+    expect(tickCount).toBeGreaterThan(0);
+    expect(tickSawCmdData).toBe(true);
+  });
+
   it("run ticks while draining (no tick starvation under sustained command traffic)", async () => {
     const { buffer: ipcBuffer } = createIpcBuffer([
       { kind: queueKind.CMD, capacityBytes: 1 << 16 },
