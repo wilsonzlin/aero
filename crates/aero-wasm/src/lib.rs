@@ -88,7 +88,6 @@ pub use ehci_controller_bridge::EhciControllerBridge;
 
 #[cfg(target_arch = "wasm32")]
 mod xhci_controller_bridge;
-
 #[cfg(target_arch = "wasm32")]
 pub use xhci_controller_bridge::XhciControllerBridge;
 

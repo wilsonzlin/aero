@@ -4,10 +4,14 @@
 //! forwarded into this bridge which updates the canonical Rust xHCI model
 //! (`aero_usb::xhci::XhciController`).
 //!
+//! The controller can DMA into guest RAM. In the browser runtime, guest physical address 0 begins
+//! at `guest_base` within the module's linear memory; this bridge provides an `aero_usb::MemoryBus`
+//! view over that region so the controller can read/write guest memory.
+//!
 //! The JS/TS side treats this export as optional because older deployed WASM builds will not
 //! include it. When present, the bridge provides:
 //! - MMIO register access (`mmio_read`/`mmio_write`)
-//! - a coarse stepping hook (`step_frames` / `tick`) for future expansion
+//! - a coarse stepping hook (`step_frames` / `tick`) for deterministic time progression
 //! - IRQ level query (`irq_asserted`)
 //! - deterministic snapshot/restore helpers.
 #![cfg(target_arch = "wasm32")]
@@ -24,6 +28,10 @@ use aero_usb::{UsbDeviceModel, UsbHubAttachError};
 const XHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"XHCB";
 const XHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 const XHCI_MAX_ROUTE_PORT: u32 = 15;
+
+// Defensive cap for host-provided snapshot payloads. This is primarily to keep the JS→WASM copy
+// bounded for `restore_state(bytes: &[u8])` parameters.
+const MAX_XHCI_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
@@ -364,6 +372,11 @@ impl XhciControllerBridge {
         self.step_frames(1);
     }
 
+    /// Alias for `step_frame` to match other USB controller bridges.
+    pub fn tick_1ms(&mut self) {
+        self.step_frame();
+    }
+
     /// Alias for {@link step_frames} retained for older call sites.
     pub fn tick(&mut self, frames: u32) {
         self.step_frames(frames);
@@ -403,6 +416,14 @@ impl XhciControllerBridge {
 
     /// Restore xHCI controller state from a snapshot blob produced by [`save_state`].
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        if bytes.len() > MAX_XHCI_SNAPSHOT_BYTES {
+            return Err(js_error(format!(
+                "xHCI snapshot too large ({} bytes, max {})",
+                bytes.len(),
+                MAX_XHCI_SNAPSHOT_BYTES
+            )));
+        }
+
         const TAG_CONTROLLER: u16 = 1;
         const TAG_TICK_COUNT: u16 = 2;
 
@@ -488,3 +509,4 @@ impl XhciControllerBridge {
         attach_device_at_path(&mut self.ctrl, &path, Box::new(device.as_usb_device()))
     }
 }
+
