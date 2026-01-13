@@ -1,0 +1,150 @@
+use crate::{merge_and_cap_rects, Rect};
+
+/// Simple deterministic PRNG (xorshift64*) for "property-like" tests without external deps.
+///
+/// We avoid pulling in `rand`/`proptest` and keep the sequence stable across platforms.
+#[derive(Clone)]
+struct Rng(u64);
+
+impl Rng {
+    const fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        // xorshift64*
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    fn next_u32(&mut self) -> u32 {
+        (self.next_u64() >> 32) as u32
+    }
+
+    fn gen_range_u32(&mut self, range: std::ops::RangeInclusive<u32>) -> u32 {
+        let start = *range.start();
+        let end = *range.end();
+        if start == end {
+            return start;
+        }
+        let span = end.wrapping_sub(start).wrapping_add(1);
+        // Bias is fine for tests; keep it simple and deterministic.
+        start.wrapping_add(self.next_u32() % span)
+    }
+
+    fn gen_range_usize(&mut self, range: std::ops::RangeInclusive<usize>) -> usize {
+        let start = *range.start();
+        let end = *range.end();
+        if start == end {
+            return start;
+        }
+        let span = end - start + 1;
+        start + (self.next_u64() as usize % span)
+    }
+}
+
+fn assert_rect_within_bounds(rect: Rect, width: u32, height: u32) {
+    assert!(rect.w > 0 && rect.h > 0, "rect should be non-empty: {rect:?}");
+    assert!(
+        rect.x < width && rect.y < height,
+        "rect origin out of bounds (width={width}, height={height}): {rect:?}"
+    );
+    assert!(
+        u64::from(rect.x) + u64::from(rect.w) <= u64::from(width),
+        "rect extends past width (width={width}): {rect:?}"
+    );
+    assert!(
+        u64::from(rect.y) + u64::from(rect.h) <= u64::from(height),
+        "rect extends past height (height={height}): {rect:?}"
+    );
+}
+
+#[test]
+fn merge_and_cap_rects_empty_input_is_a_noop() {
+    // Canonical policy: the absence of dirty rects is treated as "no update", not "full frame".
+    // This allows callers to explicitly skip uploads for frames that are known to be unchanged.
+    let out = merge_and_cap_rects(&[], (64, 64), 128);
+    assert!(out.rects.is_empty());
+    assert_eq!(out.rects_clamped, 0);
+    assert_eq!(out.rects_after_merge, 0);
+    assert_eq!(out.rects_after_cap, 0);
+}
+
+#[test]
+fn merge_and_cap_rects_clamps_to_framebuffer_bounds() {
+    let bounds = (10u32, 10u32);
+    let rects = [
+        Rect::new(8, 8, 10, 10), // partially out-of-bounds -> clamps to 2x2.
+        Rect::new(20, 0, 5, 5),  // fully out-of-bounds -> dropped.
+        Rect::new(0, 0, 1, 1),   // in-bounds.
+    ];
+
+    let out = merge_and_cap_rects(&rects, bounds, 128);
+    assert_eq!(out.rects, vec![Rect::new(0, 0, 1, 1), Rect::new(8, 8, 2, 2)]);
+    for r in &out.rects {
+        assert_rect_within_bounds(*r, bounds.0, bounds.1);
+    }
+}
+
+#[test]
+fn merge_and_cap_rects_merges_transitively() {
+    // r1 adjacent to r2, r2 adjacent to r3 => all should merge into one bbox.
+    let r1 = Rect::new(0, 0, 10, 10);
+    let r2 = Rect::new(10, 0, 10, 10);
+    let r3 = Rect::new(20, 0, 10, 10);
+
+    let out = merge_and_cap_rects(&[r1, r2, r3], (100, 100), 128);
+    assert_eq!(out.rects, vec![Rect::new(0, 0, 30, 10)]);
+}
+
+#[test]
+fn merge_and_cap_rects_randomized_invariants() {
+    // This test is specifically aimed at catching regressions that could lead to out-of-bounds
+    // texture uploads in the presenter (e.g. `x+w > width`).
+    let mut rng = Rng::new(0xC0FFEE_FACADE_1234);
+
+    for _case in 0..2_000 {
+        let width = rng.gen_range_u32(0..=512);
+        let height = rng.gen_range_u32(0..=512);
+        let cap = rng.gen_range_usize(0..=64);
+
+        let rect_count = rng.gen_range_usize(0..=128);
+        let mut rects = Vec::with_capacity(rect_count);
+        for _ in 0..rect_count {
+            rects.push(Rect::new(
+                rng.next_u32(),
+                rng.next_u32(),
+                rng.next_u32(),
+                rng.next_u32(),
+            ));
+        }
+
+        let out = merge_and_cap_rects(&rects, (width, height), cap);
+
+        // Internal consistency.
+        assert_eq!(out.rects_after_cap, out.rects.len());
+
+        if width == 0 || height == 0 || cap == 0 {
+            assert!(
+                out.rects.is_empty(),
+                "expected empty output for bounds=({width},{height}) cap={cap}, got {out:?}"
+            );
+            continue;
+        }
+
+        assert!(
+            out.rects.len() <= cap,
+            "output rect list exceeds cap={cap}: {}",
+            out.rects.len()
+        );
+
+        for r in out.rects {
+            assert_rect_within_bounds(r, width, height);
+        }
+    }
+}
+
