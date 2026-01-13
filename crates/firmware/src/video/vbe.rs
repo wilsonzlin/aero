@@ -234,7 +234,11 @@ impl VbeDevice {
     }
 
     pub fn write_mode_info(&self, mem: &mut impl MemoryBus, mode: u16, dest: u64) -> bool {
-        let mode = match self.find_mode(mode) {
+        // VBE function 4F01 passes a 14-bit mode number; callers sometimes preserve the "mode set"
+        // flag bits (e.g. bit14 = LFB requested) when querying mode info. Mask off the high bits so
+        // we accept both `0x0118` and `0x4118`.
+        let mode_id = mode & 0x3FFF;
+        let mode = match self.find_mode(mode_id) {
             Some(mode) => mode,
             None => return false,
         };

@@ -94,6 +94,8 @@ fn int10_vbe_controller_and_mode_info() {
     assert_mode_info(0x115, 800, 600);
     assert_mode_info(0x118, 1024, 768);
     assert_mode_info(0x160, 1280, 720);
+    // Some bootloaders preserve the "LFB requested" flag bit when calling 4F01; accept it.
+    assert_mode_info(0x118 | 0x4000, 1024, 768);
 
     // Also verify an 8bpp packed-pixel mode advertises the same expected attributes.
     cpu.set_ax(0x4F01);
