@@ -232,6 +232,18 @@ Expected `info pci` line (device ID may be shown in lowercase):
 Keyboard: PCI device 1af4:1052
 ```
 
+Or run the helper script (exits non-zero if the expected `1af4:1052` ID is not found):
+
+```bash
+bash ./drivers/windows7/virtio-input/tests/qemu/info-pci.sh
+```
+
+To use a non-default QEMU binary:
+
+```bash
+QEMU_BIN=/path/to/qemu-system-x86_64 bash ./drivers/windows7/virtio-input/tests/qemu/info-pci.sh
+```
+
 ## Driver installation (Windows 7 guest)
 
 1. Boot Windows 7 normally (with PS/2 input still enabled).
