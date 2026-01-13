@@ -5,6 +5,7 @@
 // - `tools/net-proxy-server` (dev relay)
 
 import { buildWebSocketUrl } from "./wsUrl.ts";
+import type { NetTracer } from "./net_tracer";
 
 export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 
@@ -287,6 +288,11 @@ export type TcpMuxProxyOptions = Readonly<{
    * poll on this interval until it drains.
    */
   bufferedAmountPollMs?: number;
+
+  /**
+   * Optional network tracer hook (best-effort).
+   */
+  tracer?: NetTracer;
 }>;
 
 type StreamState = {
@@ -347,12 +353,14 @@ export class WebSocketTcpMuxProxyClient {
   private readonly maxBufferedAmount: number;
   private readonly maxDataChunkBytes: number;
   private readonly bufferedAmountPollMs: number;
+  private readonly tracer?: NetTracer;
 
   constructor(gatewayBaseUrl: string, opts: TcpMuxProxyOptions = {}) {
     this.maxQueuedBytes = opts.maxQueuedBytes ?? 4 * 1024 * 1024;
     this.maxBufferedAmount = opts.maxBufferedAmount ?? 8 * 1024 * 1024;
     this.maxDataChunkBytes = opts.maxDataChunkBytes ?? 16 * 1024;
     this.bufferedAmountPollMs = opts.bufferedAmountPollMs ?? 10;
+    this.tracer = opts.tracer;
 
     this.parser = new TcpMuxFrameParser({
       maxPayloadBytes: opts.maxIncomingFramePayloadBytes ?? 16 * 1024 * 1024,
@@ -439,13 +447,18 @@ export class WebSocketTcpMuxProxyClient {
       try {
         const frame = encodeTcpMuxFrame(TcpMuxMsgType.DATA, streamId, chunk);
         this.enqueue(TcpMuxMsgType.DATA, streamId, frame);
+        if (st.closed) return;
+        try {
+          this.tracer?.recordTcpProxy("guest_to_remote", streamId, chunk);
+        } catch {
+          // Best-effort tracing: never interfere with proxy traffic.
+        }
       } catch (err) {
         this.maybeNotifyOpen(streamId);
         this.onError?.(streamId, { code: 0, message: (err as Error).message });
         this.closeStream(streamId);
         return;
       }
-      if (st.closed) return;
     }
   }
 
@@ -600,6 +613,11 @@ export class WebSocketTcpMuxProxyClient {
         const st = this.streams.get(frame.streamId);
         if (!st || st.closed) return;
         this.maybeNotifyOpen(frame.streamId);
+        try {
+          this.tracer?.recordTcpProxy("remote_to_guest", frame.streamId, frame.payload);
+        } catch {
+          // Best-effort tracing: never interfere with proxy traffic.
+        }
         this.onData?.(frame.streamId, frame.payload);
         return;
       }

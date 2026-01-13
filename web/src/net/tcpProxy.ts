@@ -1,5 +1,6 @@
 import { WebSocketTcpMuxProxyClient, type TcpMuxProxyOptions } from "./tcpMuxProxy.ts";
 import { buildWebSocketUrl } from "./wsUrl.ts";
+import type { NetTracer } from "./net_tracer";
 
 export type TcpProxyEvent =
   | { type: "connected"; connectionId: number }
@@ -20,10 +21,12 @@ export class WebSocketTcpProxyClient {
   private readonly sockets = new Map<number, WebSocket>();
   private readonly proxyBaseUrl: string;
   private readonly sink: TcpProxyEventSink;
+  private readonly tracer?: NetTracer;
 
-  constructor(proxyBaseUrl: string, sink: TcpProxyEventSink) {
+  constructor(proxyBaseUrl: string, sink: TcpProxyEventSink, opts: { tracer?: NetTracer } = {}) {
     this.proxyBaseUrl = proxyBaseUrl;
     this.sink = sink;
+    this.tracer = opts.tracer;
   }
 
   connect(connectionId: number, remoteIp: string, remotePort: number): void {
@@ -43,10 +46,16 @@ export class WebSocketTcpProxyClient {
     ws.onopen = () => this.sink({ type: "connected", connectionId });
     ws.onmessage = (evt) => {
       if (evt.data instanceof ArrayBuffer) {
+        const data = new Uint8Array(evt.data);
+        try {
+          this.tracer?.recordTcpProxy("remote_to_guest", connectionId, data);
+        } catch {
+          // Best-effort tracing: never interfere with proxy traffic.
+        }
         this.sink({
           type: "data",
           connectionId,
-          data: new Uint8Array(evt.data),
+          data,
         });
       }
     };
@@ -59,6 +68,11 @@ export class WebSocketTcpProxyClient {
   send(connectionId: number, data: Uint8Array): void {
     const ws = this.sockets.get(connectionId);
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try {
+      this.tracer?.recordTcpProxy("guest_to_remote", connectionId, data);
+    } catch {
+      // Best-effort tracing: never interfere with proxy traffic.
+    }
     ws.send(data);
   }
 

@@ -1,4 +1,5 @@
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "../shared/udpRelayProtocol";
+import type { NetTracer } from "./net_tracer";
 import { buildWebSocketUrl } from "./wsUrl.ts";
 
 export type UdpProxyEvent = {
@@ -150,6 +151,11 @@ export type WebSocketUdpProxyClientOptions = {
    * Defaults to 10s.
    */
   connectTimeoutMs?: number;
+
+  /**
+   * Optional network tracer hook (best-effort).
+   */
+  tracer?: NetTracer;
 };
 
 export class WebSocketUdpProxyClient {
@@ -157,6 +163,7 @@ export class WebSocketUdpProxyClient {
   private ready = false;
   private pending: Uint8Array[] = [];
   private readonly opts: WebSocketUdpProxyClientOptions;
+  private readonly tracer?: NetTracer;
 
   constructor(
     private readonly proxyBaseUrl: string,
@@ -164,6 +171,7 @@ export class WebSocketUdpProxyClient {
     optsOrAuthToken: WebSocketUdpProxyClientOptions | string = {},
   ) {
     this.opts = typeof optsOrAuthToken === "string" ? { auth: { token: optsOrAuthToken } } : optsOrAuthToken;
+    this.tracer = this.opts.tracer;
   }
 
   connect(): Promise<void> {
@@ -259,6 +267,18 @@ export class WebSocketUdpProxyClient {
         try {
           const frame = decodeUdpRelayFrame(buf);
           if (frame.version === 1) {
+            try {
+              this.tracer?.recordUdpProxy(
+                "remote_to_guest",
+                "proxy",
+                frame.remoteIpv4,
+                frame.remotePort,
+                frame.guestPort,
+                frame.payload,
+              );
+            } catch {
+              // Best-effort tracing: never interfere with proxy traffic.
+            }
             this.sink({
               srcIp: formatIpv4(frame.remoteIpv4),
               srcPort: frame.remotePort,
@@ -266,6 +286,23 @@ export class WebSocketUdpProxyClient {
               data: frame.payload,
             });
           } else {
+            // NetTracer's UDP pseudo-header currently only supports IPv4.
+            // Skip tracing IPv6 datagrams until the format is extended.
+            if (frame.addressFamily === 4) {
+              const ip4: [number, number, number, number] = [frame.remoteIp[0]!, frame.remoteIp[1]!, frame.remoteIp[2]!, frame.remoteIp[3]!];
+              try {
+                this.tracer?.recordUdpProxy(
+                  "remote_to_guest",
+                  "proxy",
+                  ip4,
+                  frame.remotePort,
+                  frame.guestPort,
+                  frame.payload,
+                );
+              } catch {
+                // Best-effort tracing: never interfere with proxy traffic.
+              }
+            }
             this.sink({
               srcIp: frame.addressFamily === 4 ? formatIpv4(frame.remoteIp) : formatIpv6(frame.remoteIp),
               srcPort: frame.remotePort,
@@ -303,6 +340,15 @@ export class WebSocketUdpProxyClient {
     try {
       const pkt = encodeDatagram(srcPort, dstIp, dstPort, payload);
       if (this.ready && this.ws.readyState === WebSocket.OPEN) {
+        // NetTracer's UDP pseudo-header currently only supports IPv4.
+        // Skip tracing IPv6 datagrams until the format is extended.
+        if (!dstIp.includes(":") && !(dstIp.startsWith("[") && dstIp.endsWith("]"))) {
+          try {
+            this.tracer?.recordUdpProxy("guest_to_remote", "proxy", parseIpv4(dstIp), srcPort, dstPort, payload);
+          } catch {
+            // Best-effort tracing: never interfere with proxy traffic.
+          }
+        }
         this.ws.send(pkt);
         return;
       }
@@ -311,6 +357,15 @@ export class WebSocketUdpProxyClient {
       // dropping early packets (e.g. DNS) during the handshake.
       const max = this.opts.maxPendingDatagrams ?? 128;
       if (this.pending.length < max) {
+        // NetTracer's UDP pseudo-header currently only supports IPv4.
+        // Skip tracing IPv6 datagrams until the format is extended.
+        if (!dstIp.includes(":") && !(dstIp.startsWith("[") && dstIp.endsWith("]"))) {
+          try {
+            this.tracer?.recordUdpProxy("guest_to_remote", "proxy", parseIpv4(dstIp), srcPort, dstPort, payload);
+          } catch {
+            // Best-effort tracing: never interfere with proxy traffic.
+          }
+        }
         this.pending.push(pkt);
       }
     } catch {
@@ -333,10 +388,14 @@ export class WebSocketUdpProxyClient {
  * likely have an existing signaling channel for other purposes.
  */
 export class WebRtcUdpProxyClient {
+  private readonly tracer?: NetTracer;
+
   constructor(
     private readonly channel: RTCDataChannel,
     private readonly sink: UdpProxyEventSink,
+    opts: { tracer?: NetTracer } = {},
   ) {
+    this.tracer = opts.tracer;
     channel.binaryType = "arraybuffer";
     channel.onmessage = (evt) => {
       if (!(evt.data instanceof ArrayBuffer)) return;
@@ -344,6 +403,18 @@ export class WebRtcUdpProxyClient {
       try {
         const frame = decodeUdpRelayFrame(buf);
         if (frame.version === 1) {
+          try {
+            this.tracer?.recordUdpProxy(
+              "remote_to_guest",
+              "webrtc",
+              frame.remoteIpv4,
+              frame.remotePort,
+              frame.guestPort,
+              frame.payload,
+            );
+          } catch {
+            // Best-effort tracing: never interfere with proxy traffic.
+          }
           this.sink({
             srcIp: formatIpv4(frame.remoteIpv4),
             srcPort: frame.remotePort,
@@ -351,6 +422,23 @@ export class WebRtcUdpProxyClient {
             data: frame.payload,
           });
         } else {
+          // NetTracer's UDP pseudo-header currently only supports IPv4.
+          // Skip tracing IPv6 datagrams until the format is extended.
+          if (frame.addressFamily === 4) {
+            const ip4: [number, number, number, number] = [frame.remoteIp[0]!, frame.remoteIp[1]!, frame.remoteIp[2]!, frame.remoteIp[3]!];
+            try {
+              this.tracer?.recordUdpProxy(
+                "remote_to_guest",
+                "webrtc",
+                ip4,
+                frame.remotePort,
+                frame.guestPort,
+                frame.payload,
+              );
+            } catch {
+              // Best-effort tracing: never interfere with proxy traffic.
+            }
+          }
           this.sink({
             srcIp: frame.addressFamily === 4 ? formatIpv4(frame.remoteIp) : formatIpv6(frame.remoteIp),
             srcPort: frame.remotePort,
@@ -367,7 +455,18 @@ export class WebRtcUdpProxyClient {
   send(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): void {
     if (this.channel.readyState !== "open") return;
     try {
-      this.channel.send(encodeDatagram(srcPort, dstIp, dstPort, payload));
+      const pkt = encodeDatagram(srcPort, dstIp, dstPort, payload);
+      this.channel.send(pkt);
+
+      // NetTracer's UDP pseudo-header currently only supports IPv4.
+      // Skip tracing IPv6 datagrams until the format is extended.
+      if (!dstIp.includes(":") && !(dstIp.startsWith("[") && dstIp.endsWith("]"))) {
+        try {
+          this.tracer?.recordUdpProxy("guest_to_remote", "webrtc", parseIpv4(dstIp), srcPort, dstPort, payload);
+        } catch {
+          // Best-effort tracing: never interfere with proxy traffic.
+        }
+      }
     } catch {
       // Drop invalid/oversized datagrams.
     }
