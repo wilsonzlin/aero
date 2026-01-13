@@ -40,7 +40,6 @@ aero-audio = { path = "../aero-audio", features = ["io-snapshot"] }
 aero-mmu = { path = "../aero-mmu" }
 aero-opfs = { path = "../aero-opfs" }
 aero-storage = { path = "../aero-storage" }
-aero-devices-storage = { path = "../aero-devices-storage" }
 aero-snapshot = { path = "../aero-snapshot" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-net-e1000 = { path = "../aero-net-e1000", features = ["io-snapshot"] }

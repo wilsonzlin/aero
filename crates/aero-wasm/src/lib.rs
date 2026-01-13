@@ -4648,6 +4648,19 @@ impl Machine {
             return Ok(());
         };
 
+        let opfs_error =
+            |disk_id: u32, which: &str, path: &str, err: aero_opfs::DiskError| -> JsValue {
+            let msg = format!(
+                "Machine.reattach_restored_disks_from_opfs: failed to open OPFS {which} for disk_id={disk_id} ({path:?}): {err}"
+            );
+            match err {
+                aero_opfs::DiskError::NotSupported(_) | aero_opfs::DiskError::BackendUnavailable => {
+                    Error::new(&format!("{msg}\n{}", opfs_worker_hint())).into()
+                }
+                _ => JsValue::from_str(&msg),
+            }
+        };
+
         for disk in overlays.disks {
             let disk_id = disk.disk_id;
             let base_image = disk.base_image;
@@ -4668,11 +4681,7 @@ impl Machine {
                 aero_machine::Machine::DISK_ID_PRIMARY_HDD => {
                     let base_backend = aero_opfs::OpfsByteStorage::open(&base_image, false)
                         .await
-                        .map_err(|e| {
-                            JsValue::from_str(&format!(
-                                "reattach_restored_disks_from_opfs: failed to open OPFS base_image for disk_id=0 ({base_image:?}): {e}"
-                            ))
-                        })?;
+                        .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
                     let base_disk = aero_storage::DiskImage::open_auto(base_backend).map_err(|e| {
                         JsValue::from_str(&format!(
                             "reattach_restored_disks_from_opfs: failed to open disk image for disk_id=0 base_image={base_image:?}: {e}"
@@ -4692,11 +4701,7 @@ impl Machine {
 
                     let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_image, false)
                         .await
-                        .map_err(|e| {
-                            JsValue::from_str(&format!(
-                                "reattach_restored_disks_from_opfs: failed to open OPFS overlay_image for disk_id=0 ({overlay_image:?}): {e}"
-                            ))
-                        })?;
+                        .map_err(|e| opfs_error(disk_id, "overlay_image", &overlay_image, e))?;
                     let cow =
                         aero_storage::AeroCowDisk::open(base_disk, overlay_backend).map_err(|e| {
                             JsValue::from_str(&format!(
@@ -4723,20 +4728,15 @@ impl Machine {
                     {
                         let backend = aero_opfs::OpfsBackend::open_existing(&base_image)
                             .await
-                            .map_err(|e| {
-                                JsValue::from_str(&format!(
-                                    "reattach_restored_disks_from_opfs: failed to open OPFS ISO for disk_id=1 ({base_image:?}): {e}"
-                                ))
-                            })?;
+                            .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
                         let disk: Box<dyn aero_storage::VirtualDisk + Send> = Box::new(backend);
-                        let iso = aero_devices_storage::atapi::VirtualDiskIsoBackend::new(disk)
+                        self.inner
+                            .attach_ide_secondary_master_iso_for_restore(disk)
                             .map_err(|e| {
                                 JsValue::from_str(&format!(
-                                    "reattach_restored_disks_from_opfs: failed to wrap ISO as ATAPI backend for disk_id=1 base_image={base_image:?}: {e}"
+                                    "reattach_restored_disks_from_opfs: attach failed for disk_id=1 base_image={base_image:?}: {e}"
                                 ))
                             })?;
-                        self.inner
-                            .attach_ide_secondary_master_atapi_backend_for_restore(Box::new(iso));
                     }
 
                     #[cfg(target_feature = "atomics")]
@@ -4750,11 +4750,7 @@ impl Machine {
                 aero_machine::Machine::DISK_ID_IDE_PRIMARY_MASTER => {
                     let base_backend = aero_opfs::OpfsByteStorage::open(&base_image, false)
                         .await
-                        .map_err(|e| {
-                            JsValue::from_str(&format!(
-                                "reattach_restored_disks_from_opfs: failed to open OPFS base_image for disk_id=2 ({base_image:?}): {e}"
-                            ))
-                        })?;
+                        .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
                     let base_disk = aero_storage::DiskImage::open_auto(base_backend).map_err(|e| {
                         JsValue::from_str(&format!(
                             "reattach_restored_disks_from_opfs: failed to open disk image for disk_id=2 base_image={base_image:?}: {e}"
@@ -4774,11 +4770,7 @@ impl Machine {
 
                     let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_image, false)
                         .await
-                        .map_err(|e| {
-                            JsValue::from_str(&format!(
-                                "reattach_restored_disks_from_opfs: failed to open OPFS overlay_image for disk_id=2 ({overlay_image:?}): {e}"
-                            ))
-                        })?;
+                        .map_err(|e| opfs_error(disk_id, "overlay_image", &overlay_image, e))?;
                     let cow =
                         aero_storage::AeroCowDisk::open(base_disk, overlay_backend).map_err(|e| {
                             JsValue::from_str(&format!(
