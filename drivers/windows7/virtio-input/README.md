@@ -423,6 +423,9 @@ Note: QEMU’s virtio-input devices typically report `ID_NAME` strings like `"QE
 **strict by default** and expects the Aero contract strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`), so
 stock QEMU virtio-input usually requires enabling the per-device `CompatDeviceKind` mode (see `docs/virtio-input-notes.md`).
 
+Note: `virtio-tablet-pci` is an **absolute** pointing device (`EV_ABS`). Tablet/absolute input is not yet supported
+end-to-end by the in-tree Win7 driver package (see “Known limitations”).
+
 ## Testing
 
 - User-mode HID verification tool: `tools/hidtest/README.md`
@@ -478,8 +481,12 @@ The driver and INF are intentionally strict and are **not** intended to be “ge
 
 ### QEMU compatibility expectations
 
-This driver is **strict by default** (Aero contract v1). In that mode it expects the Aero `ID_NAME` / `ID_DEVIDS`
-values and will refuse to start if the device does not match the contract.
+This driver is built for the **Aero contract v1** device model (`AERO-W7-VIRTIO`). Using “stock” QEMU virtio-input
+devices is **best-effort** for development and is not guaranteed to work unless the device matches the contract
+(PCI identity, virtio-pci layout, and required virtio-input config).
+
+In strict mode (default), the driver expects the Aero `ID_NAME` / `ID_DEVIDS` values and will refuse to start if the
+device does not match.
 
 To use “stock” QEMU virtio-input frontends (`virtio-keyboard-pci` / `virtio-mouse-pci`), enable the driver’s
 compatibility mode (`CompatDeviceKind`) so it accepts QEMU-style `ID_NAME` strings and relaxes some identification
