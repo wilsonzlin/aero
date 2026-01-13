@@ -19,6 +19,8 @@ The manifest can declare:
   - if present, the list must be non-empty
 - WOW64 payload DLL file names to copy from x86 build outputs into the x64 staged package (`wow64Files`)
   - entries must be file names only (no path separators)
+- extra build outputs that must exist after building (`requiredBuildOutputFiles`)
+  - entries are paths relative to `out/drivers/<driver>/<arch>/`
 - extra non-binary files to copy into the staged package (`additionalFiles`)
 - helper tool binaries to copy into the staged package (`toolFiles`)
   - entries are paths (relative to the driver directory) to `.exe` files

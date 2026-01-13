@@ -64,12 +64,15 @@ This is a guardrail to ensure auxiliary build products that should ship alongsid
 example, helper tools built by CI and staged into `out/drivers/...`) were actually produced before
 `ci/make-catalogs.ps1` stages packages.
 
+Note: CI already copies the entire build output directory into `out/packages/<driver>/<arch>/`.
+This field is only a validation check; it does not copy extra files by itself.
+
 - Entries must be relative paths (no absolute paths; cannot escape the build output directory).
 
 Example:
 
 ```json
-{ "requiredBuildOutputFiles": ["tools/myhelper.exe"] }
+{ "requiredBuildOutputFiles": ["tools/mydriver_dbgctl.exe"] }
 ```
 
 ### `additionalFiles` (optional)

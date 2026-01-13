@@ -39,6 +39,7 @@ Supported fields:
 - `requiredBuildOutputFiles` (optional): list of file paths (relative to the per-arch build output directory under `out/drivers/<driver>/<arch>/`) that must exist after building.
   - CI will fail staging if any listed path is missing.
   - Paths must be relative (no absolute paths; cannot escape the build output directory).
+  - Intended for auxiliary build products that should ship alongside the driver (for example, in-guest debug utilities).
 - `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<driver>/`) and must resolve under it (no absolute paths; cannot escape the driver directory).
   - CI refuses to include common binary extensions via `additionalFiles` (currently: `.sys`, `.dll`, `.exe`, `.cat`, `.msi`, `.cab`).
 - `toolFiles` (optional): list of user-mode helper tool binaries to include in staged packages (paths relative to the driver directory).
