@@ -256,32 +256,22 @@ export const AerogpuShaderStage = {
 
 export type AerogpuShaderStage = (typeof AerogpuShaderStage)[keyof typeof AerogpuShaderStage];
 
-/**
- * Extended shader stage used by the "stage_ex" ABI extension.
- *
- * Matches the DXBC/D3D10+ `D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE` values:
- * - 0 = Pixel
- * - 1 = Vertex
- * - 2 = Geometry
- * - 3 = Hull
- * - 4 = Domain
- * - 5 = Compute
- *
- * Note: this intentionally does **not** match `AerogpuShaderStage` (legacy AeroGPU stage enum).
- *
- * ## ABI note (`stage_ex` in binding packets)
- *
- * Some binding packets overload a trailing `reserved0` field to carry `stage_ex` (e.g.
- * `SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`, `SET_SHADER_RESOURCE_BUFFERS`,
- * `SET_UNORDERED_ACCESS_BUFFERS`, `SET_SHADER_CONSTANTS_F`).
- *
- * In those packets, `stage_ex == 0` is treated as the legacy/default "no stage_ex" value because
- * old guests always write `0` into reserved fields. As a result, the DXBC program-type value
- * `0 = Pixel` is not carried through the overloaded `reserved0` field; VS/PS continue to bind via
- * the legacy `shaderStage` field with `stage_ex = 0`.
- */
+// Extended shader stage selector encoded via the `reserved0` field in some packets when
+// `shaderStage == AerogpuShaderStage.Compute`.
+//
+// Encoding invariant (mirrors `drivers/aerogpu/protocol/aerogpu_cmd.h`):
+// - If `shaderStage != Compute`, then `reserved0` MUST be 0 and is ignored.
+// - If `shaderStage == Compute`:
+//   - `reserved0 == 0` means the real Compute stage (legacy behavior).
+//   - `reserved0 != 0` means an extended stage is present and `reserved0` encodes a non-zero
+//     `AerogpuShaderStageEx`.
+//
+// Numeric values intentionally match DXBC program type values for non-zero types:
+//   1=vs, 2=gs, 3=hs, 4=ds, 5=cs.
+//
+// Pixel shaders are intentionally not representable here because `0` is reserved for legacy compute
+// packets.
 export const AerogpuShaderStageEx = {
-  Pixel: 0,
   Vertex: 1,
   Geometry: 2,
   Hull: 3,
@@ -291,78 +281,49 @@ export const AerogpuShaderStageEx = {
 
 export type AerogpuShaderStageEx = (typeof AerogpuShaderStageEx)[keyof typeof AerogpuShaderStageEx];
 
-export function shaderStageExFromDxbcProgramType(programType: number): AerogpuShaderStageEx | undefined {
-  switch (programType >>> 0) {
-    case AerogpuShaderStageEx.Pixel:
-      return AerogpuShaderStageEx.Pixel;
+export function decodeStageEx(shaderStage: number, reserved0: number): AerogpuShaderStageEx | null {
+  if ((shaderStage >>> 0) !== AerogpuShaderStage.Compute) return null;
+  const v = reserved0 >>> 0;
+  if (v === 0) return null;
+  switch (v) {
     case AerogpuShaderStageEx.Vertex:
-      return AerogpuShaderStageEx.Vertex;
     case AerogpuShaderStageEx.Geometry:
-      return AerogpuShaderStageEx.Geometry;
     case AerogpuShaderStageEx.Hull:
-      return AerogpuShaderStageEx.Hull;
     case AerogpuShaderStageEx.Domain:
-      return AerogpuShaderStageEx.Domain;
     case AerogpuShaderStageEx.Compute:
-      return AerogpuShaderStageEx.Compute;
+      return v as AerogpuShaderStageEx;
     default:
-      return undefined;
+      return null;
   }
 }
 
-/**
- * Decode the extended shader stage ("stage_ex") from a `(shaderStage, reserved0)` pair.
- *
- * The "stage_ex" ABI extension overloads the `reserved0` field of certain binding commands
- * (e.g. `SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`) to carry an extended shader stage.
- * The overload is only active when the legacy `shaderStage` field equals
- * `AEROGPU_SHADER_STAGE_COMPUTE`.
- */
-export function decodeStageEx(shaderStage: number, reserved0: number): AerogpuShaderStageEx | undefined {
-  // The `stage_ex` overload is only active when `shaderStage == COMPUTE` *and* the reserved field
-  // is non-zero. `reserved0 == 0` must remain the legacy/default encoding (old guests always wrote
-  // 0 into reserved fields), so it cannot be interpreted as DXBC program-type 0 (Pixel).
-  if ((shaderStage >>> 0) !== AerogpuShaderStage.Compute) return undefined;
-
-  const tag = reserved0 >>> 0;
-  if (tag === 0) return undefined;
-
-  // For binding packets we only accept the extended stages routed via `stage_ex` (GS/HS/DS).
-  // Optionally tolerate `stage_ex == 5` (Compute) for older buggy writers.
-  switch (tag) {
-    case AerogpuShaderStageEx.Geometry:
-      return AerogpuShaderStageEx.Geometry;
-    case AerogpuShaderStageEx.Hull:
-      return AerogpuShaderStageEx.Hull;
-    case AerogpuShaderStageEx.Domain:
-      return AerogpuShaderStageEx.Domain;
-    case AerogpuShaderStageEx.Compute:
-      return AerogpuShaderStageEx.Compute;
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Encode the extended shader stage ("stage_ex") into `(shaderStage, reserved0)`.
- */
+/** Encode the extended shader stage ("stage_ex") into `(shaderStage, reserved0)`. */
 export function encodeStageEx(stageEx: AerogpuShaderStageEx): [shaderStage: number, reserved0: number] {
-  // Encoding rules for resource-binding packets:
-  // - VS/PS/CS use the legacy `shaderStage` field, with `reserved0 == 0`.
-  // - GS/HS/DS are encoded by setting `shaderStage = COMPUTE` and `reserved0` to a non-zero
-  //   `stage_ex` tag (DXBC program type: 2/3/4).
-  switch (stageEx) {
-    case AerogpuShaderStageEx.Pixel:
-      return [AerogpuShaderStage.Pixel, 0];
-    case AerogpuShaderStageEx.Vertex:
-      return [AerogpuShaderStage.Vertex, 0];
-    case AerogpuShaderStageEx.Compute:
-      return [AerogpuShaderStage.Compute, 0];
-    case AerogpuShaderStageEx.Geometry:
-    case AerogpuShaderStageEx.Hull:
-    case AerogpuShaderStageEx.Domain:
-      return [AerogpuShaderStage.Compute, stageEx];
+  const v = stageEx >>> 0;
+  if (v === 0) {
+    // Should be impossible since `AerogpuShaderStageEx` does not include a zero value.
+    throw new Error("stageEx must be non-zero; 0 is reserved for legacy compute");
   }
+  return [AerogpuShaderStage.Compute, v];
+}
+
+export function encodeStageExReserved0(
+  shaderStage: AerogpuShaderStage,
+  stageEx?: AerogpuShaderStageEx | null,
+): number {
+  const ex = stageEx === null ? undefined : stageEx;
+  if (shaderStage !== AerogpuShaderStage.Compute) {
+    if (ex !== undefined) {
+      throw new Error(`stageEx can only be encoded when shaderStage==Compute (got ${shaderStage})`);
+    }
+    return 0;
+  }
+  if (ex === undefined) return 0;
+  const v = ex >>> 0;
+  if (v === 0) {
+    throw new Error("stageEx must be non-zero; 0 is reserved for legacy compute");
+  }
+  return v;
 }
 
 export type AerogpuShaderStageResolved =
@@ -1575,12 +1536,18 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 56, flags, true);
   }
 
-  createShaderDxbc(shaderHandle: AerogpuHandle, stage: AerogpuShaderStage, dxbcBytes: Uint8Array): void {
+  createShaderDxbc(
+    shaderHandle: AerogpuHandle,
+    stage: AerogpuShaderStage,
+    dxbcBytes: Uint8Array,
+    stageEx?: AerogpuShaderStageEx | null,
+  ): void {
     const unpadded = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + dxbcBytes.byteLength;
     const base = this.appendRaw(AerogpuCmdOpcode.CreateShaderDxbc, unpadded);
     this.view.setUint32(base + 8, shaderHandle, true);
     this.view.setUint32(base + 12, stage, true);
     this.view.setUint32(base + 16, dxbcBytes.byteLength, true);
+    this.view.setUint32(base + 20, encodeStageExReserved0(stage, stageEx), true);
     new Uint8Array(this.buf, base + AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE, dxbcBytes.byteLength).set(dxbcBytes);
   }
 
@@ -1846,18 +1813,19 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 8, topology, true);
   }
 
-  setTexture(shaderStage: AerogpuShaderStage, slot: number, texture: AerogpuHandle, stageEx?: AerogpuShaderStageEx): void {
+  setTexture(
+    shaderStage: AerogpuShaderStage,
+    slot: number,
+    texture: AerogpuHandle,
+    stageEx?: AerogpuShaderStageEx,
+  ): void {
     const base = this.appendRaw(AerogpuCmdOpcode.SetTexture, AEROGPU_CMD_SET_TEXTURE_SIZE);
-    if (stageEx !== undefined) {
-      const [shaderStageEx, reserved0] = encodeStageEx(stageEx);
-      this.view.setUint32(base + 8, shaderStageEx, true);
-      this.view.setUint32(base + 20, reserved0, true);
-    } else {
-      this.view.setUint32(base + 8, shaderStage, true);
-      this.view.setUint32(base + 20, 0, true);
-    }
+    const [shaderStageEnc, reserved0] =
+      stageEx !== undefined ? encodeStageEx(stageEx) : [shaderStage, 0];
+    this.view.setUint32(base + 8, shaderStageEnc, true);
     this.view.setUint32(base + 12, slot, true);
     this.view.setUint32(base + 16, texture, true);
+    this.view.setUint32(base + 20, reserved0, true);
   }
 
   /**
@@ -1912,16 +1880,12 @@ export class AerogpuCmdWriter {
   ): void {
     const unpadded = AEROGPU_CMD_SET_SAMPLERS_SIZE + handles.length * 4;
     const base = this.appendRaw(AerogpuCmdOpcode.SetSamplers, unpadded);
-    if (stageEx !== undefined) {
-      const [shaderStageEx, reserved0] = encodeStageEx(stageEx);
-      this.view.setUint32(base + 8, shaderStageEx, true);
-      this.view.setUint32(base + 20, reserved0, true);
-    } else {
-      this.view.setUint32(base + 8, shaderStage, true);
-      this.view.setUint32(base + 20, 0, true);
-    }
+    const [shaderStageEnc, reserved0] =
+      stageEx !== undefined ? encodeStageEx(stageEx) : [shaderStage, 0];
+    this.view.setUint32(base + 8, shaderStageEnc, true);
     this.view.setUint32(base + 12, startSlot, true);
     this.view.setUint32(base + 16, handles.length, true);
+    this.view.setUint32(base + 20, reserved0, true);
     for (let i = 0; i < handles.length; i++) {
       this.view.setUint32(base + AEROGPU_CMD_SET_SAMPLERS_SIZE + i * 4, handles[i]!, true);
     }
@@ -1955,16 +1919,12 @@ export class AerogpuCmdWriter {
   ): void {
     const unpadded = AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + bindings.length * 16;
     const base = this.appendRaw(AerogpuCmdOpcode.SetConstantBuffers, unpadded);
-    if (stageEx !== undefined) {
-      const [shaderStageEx, reserved0] = encodeStageEx(stageEx);
-      this.view.setUint32(base + 8, shaderStageEx, true);
-      this.view.setUint32(base + 20, reserved0, true);
-    } else {
-      this.view.setUint32(base + 8, shaderStage, true);
-      this.view.setUint32(base + 20, 0, true);
-    }
+    const [shaderStageEnc, reserved0] =
+      stageEx !== undefined ? encodeStageEx(stageEx) : [shaderStage, 0];
+    this.view.setUint32(base + 8, shaderStageEnc, true);
     this.view.setUint32(base + 12, startSlot, true);
     this.view.setUint32(base + 16, bindings.length, true);
+    this.view.setUint32(base + 20, reserved0, true);
     for (let i = 0; i < bindings.length; i++) {
       const b = bindings[i];
       const off = base + AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + i * 16;

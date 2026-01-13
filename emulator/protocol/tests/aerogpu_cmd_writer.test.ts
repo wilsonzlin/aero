@@ -535,24 +535,28 @@ test("alignUp handles values > 2^31 without signed 32-bit wrap", () => {
   assert.equal(aligned, 2 ** 31 + 4);
 });
 
-test("stage_ex encode/decode helpers follow the reserved0==0 legacy rule", () => {
-  // Legacy stages (VS/PS/CS): stage_ex is not used and reserved0 stays 0.
-  assert.deepEqual(encodeStageEx(AerogpuShaderStageEx.Pixel), [AerogpuShaderStage.Pixel, 0]);
-  assert.deepEqual(encodeStageEx(AerogpuShaderStageEx.Vertex), [AerogpuShaderStage.Vertex, 0]);
-  assert.deepEqual(encodeStageEx(AerogpuShaderStageEx.Compute), [AerogpuShaderStage.Compute, 0]);
-
-  // Extended stages (GS/HS/DS): encoded as (shaderStage=COMPUTE, reserved0=2/3/4).
-  for (const stageEx of [AerogpuShaderStageEx.Geometry, AerogpuShaderStageEx.Hull, AerogpuShaderStageEx.Domain]) {
+test("stage_ex encode/decode helpers roundtrip (nonzero only)", () => {
+  for (const stageEx of [
+    AerogpuShaderStageEx.Vertex,
+    AerogpuShaderStageEx.Geometry,
+    AerogpuShaderStageEx.Hull,
+    AerogpuShaderStageEx.Domain,
+    AerogpuShaderStageEx.Compute,
+  ]) {
     const [shaderStage, reserved0] = encodeStageEx(stageEx);
     assert.equal(shaderStage, AerogpuShaderStage.Compute);
+    assert.equal(reserved0, stageEx);
     assert.equal(decodeStageEx(shaderStage, reserved0), stageEx);
   }
 
-  // Regression: legacy compute binding (COMPUTE, reserved0=0) must not decode as Pixel.
-  assert.equal(decodeStageEx(AerogpuShaderStage.Compute, 0), undefined);
-
   // Non-compute legacy stage never uses stage_ex.
-  assert.equal(decodeStageEx(AerogpuShaderStage.Vertex, AerogpuShaderStageEx.Geometry), undefined);
+  assert.equal(decodeStageEx(AerogpuShaderStage.Vertex, AerogpuShaderStageEx.Geometry), null);
+
+  // Legacy compute binding (COMPUTE, reserved0=0) must not decode as stage_ex.
+  assert.equal(decodeStageEx(AerogpuShaderStage.Compute, 0), null);
+
+  // Backwards-compat: stage_ex=0 is not representable (0 is reserved for legacy compute).
+  assert.throws(() => encodeStageEx(0 as unknown as AerogpuShaderStageEx));
 });
 
 test("AerogpuCmdWriter.createShaderDxbcEx encodes stageEx=Pixel using the legacy stage field", () => {
@@ -698,13 +702,19 @@ test("AerogpuCmdWriter stage_ex binding packets encode GS/HS/DS via (COMPUTE, re
   // SET_TEXTURE
   assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
   assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Geometry);
-  assert.equal(decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)), AerogpuShaderStageEx.Geometry);
+  assert.equal(
+    decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)),
+    AerogpuShaderStageEx.Geometry,
+  );
   cursor += AEROGPU_CMD_SET_TEXTURE_SIZE;
 
   // SET_SAMPLERS
   assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
   assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Hull);
-  assert.equal(decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)), AerogpuShaderStageEx.Hull);
+  assert.equal(
+    decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)),
+    AerogpuShaderStageEx.Hull,
+  );
   cursor += AEROGPU_CMD_SET_SAMPLERS_SIZE + 3 * 4;
 
   // SET_CONSTANT_BUFFERS
@@ -733,9 +743,11 @@ test("AerogpuCmdWriter stage_ex binding packets encode GS/HS/DS via (COMPUTE, re
 
   // SET_SHADER_CONSTANTS_F
   assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
-  // Compute bindings remain the legacy encoding: reserved0 stays 0 (not 5).
-  assert.equal(view.getUint32(cursor + 20, true), 0);
-  assert.equal(decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)), undefined);
+  assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Compute);
+  assert.equal(
+    decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)),
+    AerogpuShaderStageEx.Compute,
+  );
   cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16;
 
   assert.equal(cursor, bytes.byteLength);
@@ -792,8 +804,7 @@ test("AerogpuCmdWriter optional stageEx parameters encode (shaderStage=COMPUTE, 
 
   // SET_SHADER_CONSTANTS_F
   assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
-  // Compute bindings remain the legacy encoding: reserved0 stays 0 (not 5).
-  assert.equal(view.getUint32(cursor + 20, true), 0);
+  assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Compute);
   cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16;
 
   assert.equal(cursor, bytes.byteLength);
@@ -841,5 +852,52 @@ test("AerogpuCmdWriter emits stage_ex packets and extended BindShaders encoding"
   assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Hull);
   cursor += AEROGPU_CMD_SET_TEXTURE_SIZE;
 
+  assert.equal(cursor, bytes.byteLength);
+});
+
+test("decodeStageEx treats reserved0==0 as legacy compute (and decodes nonzero stageEx)", () => {
+  const w = new AerogpuCmdWriter();
+
+  // Legacy compute packets: shader_stage == COMPUTE and reserved0 == 0.
+  w.setTexture(AerogpuShaderStage.Compute, 0, 99);
+  w.setConstantBuffers(AerogpuShaderStage.Compute, 0, [{ buffer: 1, offsetBytes: 0, sizeBytes: 16 }]);
+
+  // Extended stage example: shader_stage == COMPUTE and reserved0 != 0.
+  w.setTexture(AerogpuShaderStage.Compute, 1, 100, AerogpuShaderStageEx.Geometry);
+  w.flush();
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  let cursor = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  // SET_TEXTURE (legacy compute)
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetTexture);
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  assert.equal(decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)), null);
+  cursor += AEROGPU_CMD_SET_TEXTURE_SIZE;
+
+  // SET_CONSTANT_BUFFERS (legacy compute)
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetConstantBuffers);
+  const cbSizeBytes = view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true);
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  assert.equal(decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)), null);
+  cursor += cbSizeBytes;
+
+  // SET_TEXTURE (stage_ex = GEOMETRY)
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetTexture);
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Geometry);
+  assert.equal(
+    decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)),
+    AerogpuShaderStageEx.Geometry,
+  );
+  cursor += AEROGPU_CMD_SET_TEXTURE_SIZE;
+
+  // FLUSH
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Flush);
+  cursor += 16;
   assert.equal(cursor, bytes.byteLength);
 });

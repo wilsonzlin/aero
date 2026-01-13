@@ -164,39 +164,29 @@ enum aerogpu_shader_stage {
 };
 
 /*
- * Extended shader stage used by the "stage_ex" ABI extension.
+ * Extended shader stage selector.
  *
- * Matches the DXBC/D3D10+ `D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE` values:
- * - 0 = Pixel
- * - 1 = Vertex
- * - 2 = Geometry
- * - 3 = Hull
- * - 4 = Domain
- * - 5 = Compute
+ * The baseline AeroGPU shader stage ABI mirrors WebGPU and only includes VS/PS/CS.
+ * To support APIs that have additional programmable stages (e.g. D3D11 GS/HS/DS),
+ * some packets reuse their `reserved0` field as an "extended stage" selector when
+ * `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`.
  *
- * Note: this intentionally does **not** match `enum aerogpu_shader_stage` (legacy AeroGPU stage
- * enum).
+ * Note: values intentionally do **not** match `enum aerogpu_shader_stage` (legacy stage enum).
  *
- * ABI note (binding packets using `stage_ex`):
- * Some resource-binding packets (SET_TEXTURE / SET_SAMPLERS / SET_CONSTANT_BUFFERS /
- * SET_SHADER_RESOURCE_BUFFERS / SET_UNORDERED_ACCESS_BUFFERS / SET_SHADER_CONSTANTS_F) overload a
- * trailing `reserved0` field to carry `stage_ex`.
+ * Encoding invariant (must be enforced by writers and hosts):
+ * - If `shader_stage != AEROGPU_SHADER_STAGE_COMPUTE`, then `reserved0` MUST be 0 and is ignored.
+ * - If `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`:
+ *   - `reserved0 == 0` means the real Compute stage (legacy behavior).
+ *   - `reserved0 != 0` means an extended stage is present and `reserved0` encodes a non-zero
+ *     `enum aerogpu_shader_stage_ex`.
  *
- * For backwards compatibility with older guests, `stage_ex == 0` in those packets is treated as
- * the legacy/default "no stage_ex" value (because old guests always write 0 into reserved fields).
- * As a result, the DXBC program-type value `0 = Pixel` is not carried through the overloaded
- * `reserved0` field; VS/PS continue to bind via the legacy `shader_stage` field with `stage_ex = 0`.
+ * Numeric values intentionally match DXBC program type values for non-zero types:
+ *   1=vs, 2=gs, 3=hs, 4=ds, 5=cs.
  *
- * Encoding rule (binding packets):
- * - VS: shader_stage = VERTEX,  stage_ex = 0
- * - PS: shader_stage = PIXEL,   stage_ex = 0
- * - CS: shader_stage = COMPUTE, stage_ex = 0
- * - GS: shader_stage = COMPUTE, stage_ex = GEOMETRY (2)
- * - HS: shader_stage = COMPUTE, stage_ex = HULL     (3)
- * - DS: shader_stage = COMPUTE, stage_ex = DOMAIN   (4)
+ * Note: Pixel shaders use `AEROGPU_SHADER_STAGE_PIXEL` and are intentionally not representable
+ * here because 0 is reserved for legacy compute.
  */
 enum aerogpu_shader_stage_ex {
-  AEROGPU_SHADER_STAGE_EX_PIXEL = 0,
   AEROGPU_SHADER_STAGE_EX_VERTEX = 1,
   AEROGPU_SHADER_STAGE_EX_GEOMETRY = 2,
   AEROGPU_SHADER_STAGE_EX_HULL = 3,
@@ -930,7 +920,7 @@ struct aerogpu_cmd_set_texture {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t slot;
   aerogpu_handle_t texture; /* 0 = unbind */
-  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (0 = legacy/default; see aerogpu_shader_stage_ex docs) */
+  uint32_t reserved0; /* stage_ex selector (enum aerogpu_shader_stage_ex) when shader_stage==COMPUTE; 0=legacy */
 };
 #pragma pack(pop)
 
@@ -984,7 +974,7 @@ struct aerogpu_cmd_set_samplers {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t sampler_count;
-  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (0 = legacy/default; see aerogpu_shader_stage_ex docs) */
+  uint32_t reserved0; /* stage_ex selector (enum aerogpu_shader_stage_ex) when shader_stage==COMPUTE; 0=legacy */
 };
 #pragma pack(pop)
 
@@ -1017,7 +1007,7 @@ struct aerogpu_cmd_set_constant_buffers {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t buffer_count;
-  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (0 = legacy/default; see aerogpu_shader_stage_ex docs) */
+  uint32_t reserved0; /* stage_ex selector (enum aerogpu_shader_stage_ex) when shader_stage==COMPUTE; 0=legacy */
 };
 #pragma pack(pop)
 

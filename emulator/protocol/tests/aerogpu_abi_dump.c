@@ -512,10 +512,10 @@ int main(void) {
   
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, last_submitted_fence);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, last_completed_fence);
-  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, ring0_head);
-  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, ring0_tail);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, ring0_size_bytes);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, ring0_entry_count);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, ring0_head);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, ring0_tail);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, total_submissions);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, total_presents);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, total_render_submits);
@@ -798,7 +798,6 @@ int main(void) {
   PRINT_CONST(AEROGPU_SHADER_STAGE_COMPUTE);
   PRINT_CONST(AEROGPU_SHADER_STAGE_GEOMETRY);
 
-  PRINT_CONST(AEROGPU_SHADER_STAGE_EX_PIXEL);
   PRINT_CONST(AEROGPU_SHADER_STAGE_EX_VERTEX);
   PRINT_CONST(AEROGPU_SHADER_STAGE_EX_GEOMETRY);
   PRINT_CONST(AEROGPU_SHADER_STAGE_EX_HULL);

@@ -245,14 +245,13 @@ The AeroGPU command stream historically only had `Vertex/Pixel/Compute` stage en
 To bind resources for additional D3D stages (GS/HS/DS) without breaking ABI, the protocol supports a
 “stage_ex” extension (see `emulator/protocol/aerogpu/aerogpu_cmd.rs`):
 
-- For certain binding commands (e.g. `SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`), the trailing
-  `reserved0` field is interpreted as a small `stage_ex` tag when `shader_stage == COMPUTE`:
-  - `stage_ex` values match DXBC program types (`D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE`):
-    - `0 = Pixel`, `1 = Vertex`, `2 = Geometry`, `3 = Hull`, `4 = Domain`, `5 = Compute`
-  - For compatibility, `stage_ex == 0` is treated as “legacy compute” in binding packets (since old
-    guests always write zeros into reserved fields).
-  - To bind GS/HS/DS resources, send `shader_stage = COMPUTE` with:
-    - `stage_ex = 2` (GS), `3` (HS), `4` (DS)
+- For certain binding commands (`SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`, `SET_SHADER_CONSTANTS_F`):
+  - set `shader_stage = COMPUTE` (legacy value `2`)
+  - use `reserved0` as a small `stage_ex` tag (values match DXBC program types for non-zero types):
+    - `1 = Vertex`, `2 = Geometry`, `3 = Hull`, `4 = Domain`, `5 = Compute`
+  - for compatibility, `reserved0 == 0` is treated as “legacy compute” in binding packets; any
+    non-zero `stage_ex` value selects an extended stage (GS/HS/DS). (Pixel shaders use the legacy
+    `shader_stage = PIXEL` field; `0` is reserved for legacy compute.)
 
 This keeps older hosts/guests forward-compatible while letting newer versions express GS-stage bindings.
 

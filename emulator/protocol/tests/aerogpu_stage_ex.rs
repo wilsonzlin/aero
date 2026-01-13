@@ -1,46 +1,33 @@
 use core::mem::{offset_of, size_of};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_hdr_le, decode_stage_ex, encode_stage_ex, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers,
-    AerogpuCmdSetSamplers, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers,
-    AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader,
-    AerogpuConstantBufferBinding, AerogpuShaderResourceBufferBinding, AerogpuShaderStage,
-    AerogpuShaderStageEx, AerogpuUnorderedAccessBufferBinding,
+    decode_cmd_hdr_le, decode_stage_ex, encode_stage_ex, AerogpuCmdOpcode,
+    AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers, AerogpuCmdSetShaderConstantsF,
+    AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers,
+    AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuConstantBufferBinding,
+    AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
+    AerogpuUnorderedAccessBufferBinding,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 #[test]
-fn stage_ex_encode_decode_semantics() {
-    // Legacy stages (VS/PS/CS): stage_ex is not used and reserved0 stays 0.
-    assert_eq!(
-        encode_stage_ex(AerogpuShaderStageEx::Pixel),
-        (AerogpuShaderStage::Pixel as u32, 0)
-    );
-    assert_eq!(
-        encode_stage_ex(AerogpuShaderStageEx::Vertex),
-        (AerogpuShaderStage::Vertex as u32, 0)
-    );
-    assert_eq!(
-        encode_stage_ex(AerogpuShaderStageEx::Compute),
-        (AerogpuShaderStage::Compute as u32, 0)
-    );
-
-    // Extended stages (GS/HS/DS): encoded as (shader_stage=COMPUTE, reserved0=2/3/4).
+fn stage_ex_encode_decode_roundtrip_nonzero() {
     for stage_ex in [
+        AerogpuShaderStageEx::Vertex,
         AerogpuShaderStageEx::Geometry,
         AerogpuShaderStageEx::Hull,
         AerogpuShaderStageEx::Domain,
+        AerogpuShaderStageEx::Compute,
     ] {
         let (shader_stage, reserved0) = encode_stage_ex(stage_ex);
         assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
+        assert_eq!(reserved0, stage_ex as u32);
         assert_eq!(decode_stage_ex(shader_stage, reserved0), Some(stage_ex));
     }
 
-    // Regression: reserved0=0 is legacy/no override, not "Pixel".
-    assert_eq!(
-        decode_stage_ex(AerogpuShaderStage::Compute as u32, 0),
-        None
-    );
+    // Legacy compute: `reserved0 == 0` means the real compute stage (no stage_ex).
+    // Backwards-compat: this must *not* be interpreted as Pixel.
+    assert_eq!(decode_stage_ex(AerogpuShaderStage::Compute as u32, 0), None);
 
     // Non-compute legacy stage never uses stage_ex.
     assert_eq!(
@@ -295,7 +282,10 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
             .try_into()
             .unwrap(),
     );
-    assert_eq!(decode_stage_ex(AerogpuShaderStage::Compute as u32, reserved0), Some(AerogpuShaderStageEx::Geometry));
+    assert_eq!(
+        decode_stage_ex(AerogpuShaderStage::Compute as u32, reserved0),
+        Some(AerogpuShaderStageEx::Geometry)
+    );
     cursor += size_bytes as usize;
 
     // SET_SAMPLERS (stage_ex)
@@ -309,7 +299,10 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
             .try_into()
             .unwrap(),
     );
-    assert_eq!(decode_stage_ex(AerogpuShaderStage::Compute as u32, reserved0), Some(AerogpuShaderStageEx::Hull));
+    assert_eq!(
+        decode_stage_ex(AerogpuShaderStage::Compute as u32, reserved0),
+        Some(AerogpuShaderStageEx::Hull)
+    );
     cursor += size_bytes as usize;
 
     // SET_CONSTANT_BUFFERS (stage_ex)
@@ -323,7 +316,10 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
             .try_into()
             .unwrap(),
     );
-    assert_eq!(decode_stage_ex(AerogpuShaderStage::Compute as u32, reserved0), Some(AerogpuShaderStageEx::Domain));
+    assert_eq!(
+        decode_stage_ex(AerogpuShaderStage::Compute as u32, reserved0),
+        Some(AerogpuShaderStageEx::Domain)
+    );
     cursor += size_bytes as usize;
 
     // SET_SHADER_RESOURCE_BUFFERS (stage_ex)
@@ -379,10 +375,84 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
             .try_into()
             .unwrap(),
     );
-    // Compute bindings remain the legacy encoding: reserved0 stays 0 (not 5).
-    assert_eq!(reserved0, 0);
-    assert_eq!(decode_stage_ex(stage, reserved0), None);
+    assert_eq!(reserved0, AerogpuShaderStageEx::Compute as u32);
+    assert_eq!(
+        decode_stage_ex(stage, reserved0),
+        Some(AerogpuShaderStageEx::Compute)
+    );
     cursor += size_bytes as usize;
 
     assert_eq!(cursor, buf.len());
+}
+
+#[test]
+fn legacy_compute_packets_do_not_decode_reserved0_zero_as_stage_ex() {
+    let mut w = AerogpuCmdWriter::new();
+
+    // Legacy compute packets: shader_stage == COMPUTE and reserved0 == 0.
+    w.set_texture(AerogpuShaderStage::Compute, 0, 99);
+    let bindings: [AerogpuConstantBufferBinding; 1] = [AerogpuConstantBufferBinding {
+        buffer: 1,
+        offset_bytes: 0,
+        size_bytes: 16,
+        reserved0: 0,
+    }];
+    w.set_constant_buffers(AerogpuShaderStage::Compute, 0, &bindings);
+
+    // Extended stage example: shader_stage == COMPUTE and reserved0 != 0.
+    w.set_texture_stage_ex(
+        AerogpuShaderStage::Compute,
+        Some(AerogpuShaderStageEx::Geometry),
+        1,
+        100,
+    );
+
+    w.flush();
+
+    let bytes = w.finish();
+    let packets = AerogpuCmdStreamIter::new(&bytes)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    // SET_TEXTURE (legacy compute).
+    assert_eq!(packets[0].opcode, Some(AerogpuCmdOpcode::SetTexture));
+    {
+        let payload = packets[0].payload;
+        assert_eq!(payload.len(), 16);
+        let shader_stage = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+        let reserved0 = u32::from_le_bytes(payload[12..16].try_into().unwrap());
+        assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
+        assert_eq!(reserved0, 0);
+        assert_eq!(decode_stage_ex(shader_stage, reserved0), None);
+    }
+
+    // SET_CONSTANT_BUFFERS (legacy compute).
+    assert_eq!(
+        packets[1].opcode,
+        Some(AerogpuCmdOpcode::SetConstantBuffers)
+    );
+    {
+        let (cmd, _bindings) = packets[1].decode_set_constant_buffers_payload_le().unwrap();
+        // Copy out packed fields to avoid creating references to unaligned data (E0793).
+        let shader_stage = cmd.shader_stage;
+        let reserved0 = cmd.reserved0;
+        assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
+        assert_eq!(reserved0, 0);
+        assert_eq!(decode_stage_ex(shader_stage, reserved0), None);
+    }
+
+    // SET_TEXTURE (stage_ex = GEOMETRY).
+    assert_eq!(packets[2].opcode, Some(AerogpuCmdOpcode::SetTexture));
+    {
+        let payload = packets[2].payload;
+        let shader_stage = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+        let reserved0 = u32::from_le_bytes(payload[12..16].try_into().unwrap());
+        assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
+        assert_eq!(reserved0, AerogpuShaderStageEx::Geometry as u32);
+        assert_eq!(
+            decode_stage_ex(shader_stage, reserved0),
+            Some(AerogpuShaderStageEx::Geometry)
+        );
+    }
 }

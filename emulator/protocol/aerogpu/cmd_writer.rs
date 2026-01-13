@@ -7,7 +7,8 @@
 use core::mem::{offset_of, size_of};
 
 use super::aerogpu_cmd::{
-    encode_stage_ex, AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdClear, AerogpuCmdCopyBuffer,
+    encode_stage_ex, encode_stage_ex_reserved0, AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdClear,
+    AerogpuCmdCopyBuffer,
     AerogpuCmdCopyTexture2d, AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout,
     AerogpuCmdCreateSampler, AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d,
     AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource, AerogpuCmdDestroySampler,
@@ -441,6 +442,21 @@ impl AerogpuCmdWriter {
         stage: AerogpuShaderStage,
         dxbc_bytes: &[u8],
     ) {
+        self.create_shader_dxbc_with_stage_ex(shader_handle, stage, dxbc_bytes, None);
+    }
+
+    /// CREATE_SHADER_DXBC with an optional `stage_ex` selector encoded via the packet's `reserved0`
+    /// field (only meaningful when `stage == COMPUTE`).
+    ///
+    /// See `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h` for the
+    /// encoding rules.
+    pub fn create_shader_dxbc_with_stage_ex(
+        &mut self,
+        shader_handle: AerogpuHandle,
+        stage: AerogpuShaderStage,
+        dxbc_bytes: &[u8],
+        stage_ex: Option<AerogpuShaderStageEx>,
+    ) {
         assert!(dxbc_bytes.len() <= u32::MAX as usize);
         let unpadded_size = size_of::<AerogpuCmdCreateShaderDxbc>()
             .checked_add(dxbc_bytes.len())
@@ -457,6 +473,10 @@ impl AerogpuCmdWriter {
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateShaderDxbc, dxbc_size_bytes),
             dxbc_bytes.len() as u32,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateShaderDxbc, reserved0),
+            encode_stage_ex_reserved0(stage, stage_ex),
         );
         self.buf[base + size_of::<AerogpuCmdCreateShaderDxbc>()
             ..base + size_of::<AerogpuCmdCreateShaderDxbc>() + dxbc_bytes.len()]
@@ -940,36 +960,12 @@ impl AerogpuCmdWriter {
         start_slot: u32,
         samplers: &[AerogpuHandle],
     ) {
-        let (shader_stage, reserved0) = encode_stage_ex(stage_ex);
-        assert!(samplers.len() <= u32::MAX as usize);
-        let samplers_size = size_of::<AerogpuHandle>()
-            .checked_mul(samplers.len())
-            .expect("SET_SAMPLERS packet too large (usize overflow)");
-        let unpadded_size = size_of::<AerogpuCmdSetSamplers>()
-            .checked_add(samplers_size)
-            .expect("SET_SAMPLERS packet too large (usize overflow)");
-        let base = self.append_raw(AerogpuCmdOpcode::SetSamplers, unpadded_size);
-        self.write_u32_at(
-            base + offset_of!(AerogpuCmdSetSamplers, shader_stage),
-            shader_stage,
-        );
-        self.write_u32_at(
-            base + offset_of!(AerogpuCmdSetSamplers, start_slot),
+        self.set_samplers_stage_ex(
+            AerogpuShaderStage::Compute,
+            Some(stage_ex),
             start_slot,
+            samplers,
         );
-        self.write_u32_at(
-            base + offset_of!(AerogpuCmdSetSamplers, sampler_count),
-            samplers.len() as u32,
-        );
-        self.write_u32_at(
-            base + offset_of!(AerogpuCmdSetSamplers, reserved0),
-            reserved0,
-        );
-
-        let payload_base = base + size_of::<AerogpuCmdSetSamplers>();
-        for (i, &sampler) in samplers.iter().enumerate() {
-            self.write_u32_at(payload_base + i * size_of::<AerogpuHandle>(), sampler);
-        }
     }
 
     pub fn set_sampler(

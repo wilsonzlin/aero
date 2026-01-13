@@ -318,7 +318,8 @@ Consumers (the emulator) must:
 Producers (the driver) must:
 
 - Emit correct `size_bytes` for every packet.
-- Zero all reserved fields.
+- Zero all reserved fields (unless a field is explicitly repurposed by an encoding rule in the
+  headers, e.g. `aerogpu_shader_stage_ex` via `reserved0` when `shader_stage==COMPUTE`).
 - Only use features/opcodes indicated by the ABI version and feature bits.
 
 ### Minimal opcode set

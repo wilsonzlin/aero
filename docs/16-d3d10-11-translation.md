@@ -539,9 +539,10 @@ This is implemented in the emulator-side protocol mirror as `AerogpuShaderStageE
 
 **CREATE_SHADER_DXBC encoding:**
 
-- Legacy encoding: `stage` is `VERTEX/PIXEL/COMPUTE` and `reserved0 = 0`.
-- Stage-ex encoding: set `stage = COMPUTE` and store the extended stage in `reserved0`:
-  - GS: `reserved0 = GEOMETRY` (2) (alternative to legacy `stage = GEOMETRY` where supported)
+- Invariant: if `stage != COMPUTE`, `reserved0` must be 0 and is ignored.
+- Legacy compute (ABI 1.0+): `stage = COMPUTE` and `reserved0 = 0`.
+- Extended stage selector: set `stage = COMPUTE` and store a non-zero `stage_ex` in `reserved0`:
+  - GS: `reserved0 = GEOMETRY` (2) (alternative to legacy `stage = GEOMETRY`)
   - HS: `reserved0 = HULL` (3)
   - DS: `reserved0 = DOMAIN` (4)
 
@@ -571,15 +572,15 @@ Implementers should copy the exact struct definitions (and sizes) from
 `drivers/aerogpu/protocol/aerogpu_cmd.h` (source of truth). The table above exists so readers can
 understand the extension pattern without having to jump to the header.
 
-**Definition (matches DXBC program type values):**
+**Definition (matches DXBC program type values for non-zero types):**
 
 ```c
 // New: used when binding resources for GS/HS/DS (and optionally compute).
 //
-// Values match DXBC program-type IDs (`D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE`):
-//   0 = Pixel, 1 = Vertex, 2 = Geometry, 3 = Hull, 4 = Domain, 5 = Compute.
+// Values match DXBC program-type IDs (`D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE`) for
+// non-zero types:
+//   1 = Vertex, 2 = Geometry, 3 = Hull, 4 = Domain, 5 = Compute.
 enum aerogpu_shader_stage_ex {
-   AEROGPU_SHADER_STAGE_EX_PIXEL    = 0,
    AEROGPU_SHADER_STAGE_EX_VERTEX   = 1,
    AEROGPU_SHADER_STAGE_EX_GEOMETRY = 2,
    AEROGPU_SHADER_STAGE_EX_HULL     = 3,
@@ -590,7 +591,7 @@ enum aerogpu_shader_stage_ex {
 // Note: in the *binding commands* described here, `stage_ex = 0` is treated as the legacy/default
 // “no stage_ex” value (because old guests always write 0 into reserved fields). As a result, the
 // DXBC program-type value `0 = Pixel` is not used via this extension; VS/PS continue to bind via
-// the legacy `shader_stage` field.
+// the legacy `shader_stage` field. (Equivalently: `0` is reserved for legacy compute packets.)
 
 // Example: SET_TEXTURE
 struct aerogpu_cmd_set_texture {

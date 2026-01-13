@@ -2725,6 +2725,12 @@ fn rust_layout_matches_c_headers() {
     );
     assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "flags"), 180);
 
+    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "flags"), 16);
+    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_code"), 20);
+    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_fence"), 24);
+    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_count"), 32);
+    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "reserved0"), 36);
+
     assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "signal_fence"), 0);
     assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "cmd_gpa"), 8);
     assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "cmd_size_bytes"), 16);
@@ -4146,11 +4152,6 @@ fn rust_layout_matches_c_headers() {
 
     check_const(
         &mut cmd_consts_seen,
-        "AEROGPU_SHADER_STAGE_EX_PIXEL",
-        AerogpuShaderStageEx::Pixel as u64,
-    );
-    check_const(
-        &mut cmd_consts_seen,
         "AEROGPU_SHADER_STAGE_EX_VERTEX",
         AerogpuShaderStageEx::Vertex as u64,
     );
@@ -4386,7 +4387,6 @@ fn rust_layout_matches_c_headers() {
 
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_FENCE"), 2);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_PERF"), 12);
-    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_READ_GPA"), 13);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_DUMP_RING"), 3);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_SELFTEST"), 4);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_VBLANK"), 5);
