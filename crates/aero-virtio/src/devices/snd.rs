@@ -52,13 +52,19 @@ pub const CAPTURE_STREAM_ID: u32 = 1;
 /// The TX and RX PCM payloads are fixed at 48kHz S16_LE in the guest-facing ABI.
 pub const PCM_SAMPLE_RATE_HZ: u32 = 48_000;
 
-/// Maximum PCM payload size accepted in a single TX/RX descriptor chain.
+/// Contract v1 safety cap for PCM payload bytes in a single TX/RX descriptor chain.
+///
+/// This value is normative for the Windows 7 guest driver contract:
+/// `docs/windows7-virtio-driver-contract.md` §3.4.6.
+///
+/// The cap is on **PCM payload bytes** (excluding the 8-byte TX header and excluding the RX
+/// header/status descriptors).
 ///
 /// This device is guest-driven and must treat descriptor lengths as untrusted. A malicious guest
 /// could otherwise force the host to allocate unbounded scratch buffers when decoding/resampling.
 ///
-/// 256KiB is ~1.3s of stereo S16_LE at 48kHz (and ~2.6s of mono capture), which is plenty for the
-/// minimal Win7 contract while still bounding worst-case allocations.
+/// 256 KiB (262,144 bytes) is ~1.3s of stereo S16_LE at 48kHz (and ~2.6s of mono capture), which is
+/// plenty for the minimal Win7 contract while still bounding worst-case allocations.
 const MAX_PCM_XFER_BYTES: u64 = 256 * 1024;
 
 /// Defensive upper bound for host-provided sample rates.
@@ -1189,8 +1195,10 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
 mod tests {
     use super::*;
     use crate::devices::VirtioDevice;
-    use crate::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
-    use crate::queue::{PoppedDescriptorChain, VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_WRITE};
+    use crate::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
+    use crate::queue::{
+        PoppedDescriptorChain, VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
+    };
 
     fn status(resp: &[u8]) -> u32 {
         u32::from_le_bytes(resp[0..4].try_into().unwrap())
@@ -1406,5 +1414,163 @@ mod tests {
             avail_idx - qsize,
             "extra event buffers should be completed with used.len=0 once the internal queue is full"
         );
+    }
+
+    #[test]
+    fn tx_rejects_payloads_over_max_pcm_xfer_bytes() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        snd.playback.state = StreamState::Running;
+
+        let mut mem = GuestRam::new(0x100000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let header_addr = 0x4000;
+        let payload_addr = 0x5000;
+        let resp_addr = 0x9000;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        mem.write(header_addr, &hdr).unwrap();
+
+        let oversize = (MAX_PCM_XFER_BYTES + 2) as u32;
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            header_addr,
+            8,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            payload_addr,
+            oversize,
+            VIRTQ_DESC_F_NEXT,
+            2,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            2,
+            resp_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+            PoppedDescriptorChain::Chain(chain) => chain,
+            PoppedDescriptorChain::Invalid { error, .. } => {
+                panic!("unexpected descriptor chain parse error: {error:?}")
+            }
+        };
+
+        snd.process_queue(VIRTIO_SND_QUEUE_TX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        let resp = mem.get_slice(resp_addr, 8).unwrap();
+        assert_eq!(u32::from_le_bytes(resp[0..4].try_into().unwrap()), VIRTIO_SND_S_BAD_MSG);
+    }
+
+    #[test]
+    fn rx_rejects_payloads_over_max_pcm_xfer_bytes() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        snd.capture.state = StreamState::Running;
+
+        let mut mem = GuestRam::new(0x100000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let header_addr = 0x4000;
+        let payload_addr = 0x5000;
+        let resp_addr = payload_addr + MAX_PCM_XFER_BYTES + 0x100;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&CAPTURE_STREAM_ID.to_le_bytes());
+        mem.write(header_addr, &hdr).unwrap();
+
+        let oversize = (MAX_PCM_XFER_BYTES + 2) as u32;
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            header_addr,
+            8,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            payload_addr,
+            oversize,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            2,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            2,
+            resp_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+            PoppedDescriptorChain::Chain(chain) => chain,
+            PoppedDescriptorChain::Invalid { error, .. } => {
+                panic!("unexpected descriptor chain parse error: {error:?}")
+            }
+        };
+
+        snd.process_queue(VIRTIO_SND_QUEUE_RX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        let resp = mem.get_slice(resp_addr, 8).unwrap();
+        assert_eq!(u32::from_le_bytes(resp[0..4].try_into().unwrap()), VIRTIO_SND_S_BAD_MSG);
     }
 }

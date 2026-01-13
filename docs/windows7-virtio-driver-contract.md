@@ -879,7 +879,9 @@ Playback data path (`txq`):
 - After start, the driver submits PCM buffers on `txq`.
 - The device MUST play buffers in order and complete each buffer with OK status when consumed.
 - On underrun, the device MUST output silence and continue.
-- The device MAY reject playback buffers with payloads larger than **4 MiB** with `BAD_MSG` (implementation safety limit).
+- **Safety cap (contract v1):** the device MUST reject any TX buffer whose PCM **payload** exceeds **256 KiB** (`262,144` bytes) with `BAD_MSG`.
+  - For TX, *payload bytes* are counted as the total byte length of all **device-readable** descriptors in the chain, **minus** the 8-byte `virtio_snd_pcm_xfer` header (`stream_id: u32`, `reserved: u32`).
+  - The 8-byte `virtio_snd_pcm_status` response (device-writable) is **not** included in this count.
 
 Capture data path (`rxq`):
 
@@ -891,7 +893,14 @@ Capture data path (`rxq`):
 - The device MUST fill payload bytes with captured PCM samples when stream 1 is running.
 - If not enough captured samples are available, the device MUST fill the missing part with silence and complete the buffer with OK status.
 - If stream 1 is not running, the device MUST complete the buffer with `IO_ERR`.
-- The device MAY reject capture buffers with payloads larger than **4 MiB** with `BAD_MSG` (implementation safety limit).
+- **Safety cap (contract v1):** the device MUST reject any RX buffer whose PCM **payload** exceeds **256 KiB** (`262,144` bytes) with `BAD_MSG`.
+  - For RX, *payload bytes* are counted as the total byte length of all **device-writable payload** descriptors, excluding:
+    - the 8-byte OUT header, and
+    - the final 8-byte `virtio_snd_pcm_status` descriptor.
+
+> Rationale (non-normative): virtio-snd PCM I/O is guest-driven and descriptor lengths are untrusted.
+> A tight per-buffer cap is a defensive bound against malicious guests and prevents large scratch
+> allocations during S16 decode and sample-rate resampling.
 
 ## 4. Versioning and compatibility
 
