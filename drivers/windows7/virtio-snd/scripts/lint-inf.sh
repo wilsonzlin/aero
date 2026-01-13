@@ -94,10 +94,11 @@ section_contains_norm() {
   # POSIX awk: avoid non-standard capture groups; do manual bracket stripping.
   section_lc=$(printf '%s' "$section" | tr 'A-Z' 'a-z')
 
-  if ! awk -v section="$section_lc" -v needle="$needle" '
+  if ! LINT_INF_NEEDLE="$needle" awk -v section="$section_lc" '
     BEGIN {
       in_section = 0
       found = 0
+      needle = tolower(ENVIRON["LINT_INF_NEEDLE"])
     }
     {
       sub(/\r$/, "")
@@ -150,10 +151,41 @@ require_file "$INF_CONTRACT" "inf/aero_virtio_snd.inf"
 
 note "checking inf/aero_virtio_snd.inf invariants..."
 
-require_contains_norm \
+note "checking HWID binding..."
+section_contains_norm \
   "$INF_CONTRACT" \
+  'AeroVirtioSndModels.NTx86' \
   'pci\ven_1af4&dev_1059&rev_01' \
-  "inf/aero_virtio_snd.inf must contain HWID PCI\\VEN_1AF4&DEV_1059&REV_01"
+  "inf/aero_virtio_snd.inf must bind PCI\\VEN_1AF4&DEV_1059&REV_01 in [AeroVirtioSndModels.NTx86]"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSndModels.NTamd64' \
+  'pci\ven_1af4&dev_1059&rev_01' \
+  "inf/aero_virtio_snd.inf must bind PCI\\VEN_1AF4&DEV_1059&REV_01 in [AeroVirtioSndModels.NTamd64]"
+
+# Guardrail: ensure we never accidentally loosen the match to DEV_1059 without
+# revision gating. This driver intentionally matches only the contract-v1 HWID.
+if awk '
+  {
+    sub(/\r$/, "")
+    line = $0
+    # Skip full-line comments.
+    if (line ~ /^[[:space:]]*;/) next
+    # Strip inline comments.
+    sub(/[[:space:]]*;.*$/, "", line)
+    if (line == "") next
+
+    low = tolower(line)
+    if (index(low, "pci\\ven_1af4&dev_1059") != 0 && index(low, "&rev_01") == 0) {
+      print line
+      exit 0
+    }
+  }
+  END { exit 1 }
+' "$INF_CONTRACT" >/dev/null; then
+  fail "inf/aero_virtio_snd.inf must not contain unqualified PCI\\VEN_1AF4&DEV_1059 matches (missing &REV_01)"
+fi
 
 require_not_contains_norm_all \
   "$INF_CONTRACT" \
@@ -237,7 +269,7 @@ fi
 section_contains_norm \
   "$INF_CONTRACT" \
   'AeroVirtioSnd_Service_Inst' \
-  'servicebinary=%12%\\aero_virtio_snd.sys' \
+  'servicebinary=%12%\aero_virtio_snd.sys' \
   "inf/aero_virtio_snd.inf must reference aero_virtio_snd.sys via ServiceBinary"
 
 section_contains_norm \
