@@ -858,6 +858,24 @@ fn dxbc_container_rejects_excessive_chunk_count() {
     );
 }
 
+#[test]
+fn dxbc_container_does_not_panic_on_huge_chunk_offset() {
+    // On 32-bit targets (notably wasm32), `usize` arithmetic can overflow when parsing a DXBC
+    // container that includes absurd chunk offsets. Ensure we return an error instead of panicking.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"DXBC");
+    bytes.extend_from_slice(&[0u8; 16]); // checksum
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // unknown field
+    bytes.extend_from_slice(&36u32.to_le_bytes()); // total size (ignored by this parser)
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk count
+    bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // chunk offset
+
+    let result = std::panic::catch_unwind(|| dxbc::Container::parse(&bytes));
+    assert!(result.is_ok(), "Container::parse panicked");
+    let err = result.unwrap().unwrap_err();
+    assert!(matches!(err, dxbc::DxbcError::ChunkOutOfBounds), "{err:?}");
+}
+
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }

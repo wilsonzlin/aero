@@ -51,11 +51,14 @@ impl FourCC {
 }
 
 fn read_u32_le(bytes: &[u8], offset: &mut usize) -> Result<u32, DxbcError> {
-    if *offset + 4 > bytes.len() {
+    let end = offset
+        .checked_add(4)
+        .ok_or(DxbcError::BufferTooSmall)?;
+    if end > bytes.len() {
         return Err(DxbcError::BufferTooSmall);
     }
-    let val = u32::from_le_bytes(bytes[*offset..*offset + 4].try_into().unwrap());
-    *offset += 4;
+    let val = u32::from_le_bytes(bytes[*offset..end].try_into().unwrap());
+    *offset = end;
     Ok(val)
 }
 
@@ -115,16 +118,22 @@ impl<'a> Container<'a> {
 
         let mut chunks = HashMap::new();
         for chunk_offset in chunk_offsets {
-            if chunk_offset + 8 > bytes.len() {
+            let header_end = chunk_offset
+                .checked_add(8)
+                .ok_or(DxbcError::ChunkOutOfBounds)?;
+            if header_end > bytes.len() {
                 return Err(DxbcError::ChunkOutOfBounds);
             }
             let mut local = chunk_offset;
             let fourcc = FourCC(read_u32_le(bytes, &mut local)?);
             let size = read_u32_le(bytes, &mut local)? as usize;
-            if local + size > bytes.len() {
+            let data_end = local
+                .checked_add(size)
+                .ok_or(DxbcError::ChunkSizeOutOfBounds)?;
+            if data_end > bytes.len() {
                 return Err(DxbcError::ChunkSizeOutOfBounds);
             }
-            let data = &bytes[local..local + size];
+            let data = &bytes[local..data_end];
             chunks.insert(fourcc, Chunk { fourcc, data });
         }
 
