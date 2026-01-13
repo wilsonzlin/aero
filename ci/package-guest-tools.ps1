@@ -21,12 +21,6 @@
 param(
   [string] $InputRoot = "out/packages",
   [string] $GuestToolsDir = "guest-tools",
-  # Optional directory whose contents are staged under `guest-tools/tools/` in the packaged
-  # ISO/zip. This is intended for CI/local builds that want to ship extra guest-side utilities
-  # (e.g. debug/selftest helpers) without checking them into `guest-tools/`.
-  [string] $ExtraToolsDir,
-  [ValidateSet("merge", "replace")]
-  [string] $ExtraToolsDirMode = "merge",
  
   # Driver signing / boot policy embedded in Guest Tools manifest.json.
   #
@@ -59,6 +53,12 @@ param(
   [string] $Version,
   [string] $BuildId,
   [Nullable[long]] $SourceDateEpoch,
+  # Optional directory whose contents are staged under `guest-tools/tools/` in the packaged
+  # ISO/zip. This is intended for CI/local builds that want to ship extra guest-side utilities
+  # (e.g. debug/selftest helpers) without checking them into `guest-tools/`.
+  [string] $ExtraToolsDir,
+  [ValidateSet("merge", "replace")]
+  [string] $ExtraToolsDirMode = "merge",
   [switch] $DeterminismSelfTest
 )
 
