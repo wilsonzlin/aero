@@ -427,3 +427,10 @@ impl StorageBackend for StdFileBackend {
         self.file.sync_all().map_err(|e| self.io_err("sync_all", e))
     }
 }
+
+/// Alias for [`StdFileBackend`].
+///
+/// This exists primarily for ergonomic call sites where `FileBackend` reads better than
+/// `StdFileBackend`, especially in native tooling.
+#[cfg(not(target_arch = "wasm32"))]
+pub type FileBackend = StdFileBackend;

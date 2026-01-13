@@ -28,6 +28,22 @@
 //! disk.read_sectors(0, &mut sector).unwrap();
 //! ```
 //!
+//! On native targets, you can use [`StdFileBackend`] to open a disk image directly from the local
+//! filesystem:
+//!
+//! ```rust,no_run
+//! # #[cfg(not(target_arch = "wasm32"))]
+//! # {
+//! use aero_storage::{DiskImage, StdFileBackend, VirtualDisk};
+//!
+//! let backend = StdFileBackend::open("disk.img", false).unwrap();
+//! let mut disk = DiskImage::open_auto(backend).unwrap();
+//!
+//! let mut sector = [0u8; 512];
+//! disk.read_sectors(0, &mut sector).unwrap();
+//! # }
+//! ```
+//!
 //! In the browser, local persistence is typically backed by OPFS. Aero provides a
 //! Rust/wasm32 OPFS backend implementation in `crates/aero-opfs` that implements
 //! [`StorageBackend`] (byte-addressed) and [`VirtualDisk`] (disk-oriented).
@@ -64,6 +80,8 @@ mod vhd;
 pub use backend::{MemBackend, StorageBackend};
 #[cfg(not(target_arch = "wasm32"))]
 pub use backend::StdFileBackend;
+#[cfg(not(target_arch = "wasm32"))]
+pub use backend::FileBackend;
 pub use cache::{BlockCacheStats, BlockCachedDisk};
 pub use cow::AeroCowDisk;
 pub use disk::{RawDisk, VirtualDisk, SECTOR_SIZE};
