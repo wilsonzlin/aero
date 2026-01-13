@@ -2178,10 +2178,43 @@ static void UnbindResourceFromSrvsLocked(AeroGpuDevice* dev, aerogpu_handle_t re
   }
 }
 
+static void NormalizeRenderTargetsNoGapsLocked(AeroGpuDevice* dev) {
+  if (!dev) {
+    return;
+  }
+
+  // The current AeroGPU host executors only support render target bindings that
+  // are a contiguous prefix starting at slot 0. Any "gap" (a non-zero RTV handle
+  // after a zero) is normalized away by truncating the RTV list at the first
+  // null slot.
+  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  uint32_t new_count = 0;
+  bool seen_gap = false;
+  for (uint32_t i = 0; i < count; ++i) {
+    const aerogpu_handle_t h = dev->current_rtvs[i];
+    if (h == 0) {
+      seen_gap = true;
+      continue;
+    }
+    if (seen_gap) {
+      dev->current_rtvs[i] = 0;
+      dev->current_rtv_resources[i] = nullptr;
+    } else {
+      new_count = i + 1;
+    }
+  }
+  for (uint32_t i = new_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    dev->current_rtvs[i] = 0;
+    dev->current_rtv_resources[i] = nullptr;
+  }
+  dev->current_rtv_count = new_count;
+}
+
 static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
   if (!dev) {
     return;
   }
+  NormalizeRenderTargetsNoGapsLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   cmd->color_count = dev->current_rtv_count;
   cmd->depth_stencil = dev->current_dsv;
@@ -2211,6 +2244,7 @@ static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t
     changed = true;
   }
   if (changed) {
+    NormalizeRenderTargetsNoGapsLocked(dev);
     EmitSetRenderTargetsLocked(dev);
   }
 }
@@ -6130,6 +6164,8 @@ void APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
 
   dev->current_dsv = dsv_handle;
   dev->current_dsv_res = dsv_res;
+
+  NormalizeRenderTargetsNoGapsLocked(dev);
 
   // D3D10/11 hazard rule: outputs cannot be simultaneously bound as SRVs.
   for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {

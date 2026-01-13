@@ -175,6 +175,11 @@ struct TestRtv {
   std::vector<uint8_t> storage;
 };
 
+struct TestSrv {
+  D3D10DDI_HSHADERRESOURCEVIEW hSrv{};
+  std::vector<uint8_t> storage;
+};
+
 bool CreateDevice(TestDevice* out) {
   if (!out) {
     return false;
@@ -261,6 +266,28 @@ bool CreateRTV(TestDevice* dev, const TestResource* res, TestRtv* out) {
   return Check(hr == S_OK, "CreateRTV");
 }
 
+bool CreateSRV(TestDevice* dev, const TestResource* res, TestSrv* out) {
+  if (!dev || !res || !out) {
+    return false;
+  }
+  AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW desc{};
+  desc.hResource = res->hResource;
+  desc.Format = 0; // use resource format
+  desc.ViewDimension = AEROGPU_DDI_SRV_DIMENSION_TEXTURE2D;
+  desc.MostDetailedMip = 0;
+  desc.MipLevels = 1;
+
+  const SIZE_T size = dev->device_funcs.pfnCalcPrivateShaderResourceViewSize(dev->hDevice, &desc);
+  if (!Check(size != 0, "CalcPrivateShaderResourceViewSize returned non-zero size")) {
+    return false;
+  }
+  out->storage.assign(static_cast<size_t>(size), 0);
+  out->hSrv.pDrvPrivate = out->storage.data();
+
+  const HRESULT hr = dev->device_funcs.pfnCreateShaderResourceView(dev->hDevice, &desc, out->hSrv);
+  return Check(hr == S_OK, "CreateShaderResourceView");
+}
+
 bool TestSetRenderTargetsEncodesMrtAndClamps() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
@@ -340,15 +367,115 @@ bool TestSetRenderTargetsEncodesMrtAndClamps() {
   return true;
 }
 
+bool TestSrvBindingUnbindsRtvsWithoutGaps() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  TestResource tex0{};
+  TestResource tex1{};
+  TestRtv rtv0{};
+  TestRtv rtv1{};
+  TestSrv srv0{};
+
+  if (!CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex0) ||
+      !CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex1)) {
+    return false;
+  }
+  if (!CreateRTV(&dev, &tex0, &rtv0) || !CreateRTV(&dev, &tex1, &rtv1)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &tex0, &srv0)) {
+    return false;
+  }
+
+  D3D10DDI_HRENDERTARGETVIEW rtvs[2] = {rtv0.hRtv, rtv1.hRtv};
+  D3D10DDI_HDEPTHSTENCILVIEW null_dsv{};
+
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/2, rtvs, null_dsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after SetRenderTargets)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const std::vector<aerogpu_handle_t> created =
+      CollectCreateTexture2DHandles(dev.harness.last_stream.data(), dev.harness.last_stream.size());
+  if (!Check(created.size() >= 2, "captured CREATE_TEXTURE2D handles (2)")) {
+    return false;
+  }
+  {
+    const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+    if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after SetRenderTargets)")) {
+      return false;
+    }
+    const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+    if (!Check(set_rt->color_count == 2, "SET_RENDER_TARGETS color_count==2 (initial bind)")) {
+      return false;
+    }
+    if (!Check(set_rt->colors[0] == created[0], "SET_RENDER_TARGETS colors[0] (initial bind)")) {
+      return false;
+    }
+    if (!Check(set_rt->colors[1] == created[1], "SET_RENDER_TARGETS colors[1] (initial bind)")) {
+      return false;
+    }
+  }
+
+  // Binding a SRV that aliases RTV[0] must unbind RTV[0]. The current AeroGPU host
+  // executor does not support gapped RTV bindings (RTV[1] set while RTV[0] is
+  // unbound), so the driver should also clear RTV[1] (color_count becomes 0).
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv0.hSrv};
+  dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after PSSetShaderResources)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after PSSetShaderResources)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after PSSetShaderResources)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+  if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (no gaps)")) {
+    return false;
+  }
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (no gaps)")) {
+      return false;
+    }
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv0.hSrv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv1.hRtv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex0.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex1.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
   bool ok = true;
   ok &= TestSetRenderTargetsEncodesMrtAndClamps();
+  ok &= TestSrvBindingUnbindsRtvsWithoutGaps();
   if (!ok) {
     return 1;
   }
   std::fprintf(stderr, "PASS: aerogpu_d3d10_11_mrt_tests\n");
   return 0;
 }
-
