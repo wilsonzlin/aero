@@ -1884,6 +1884,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "emulator-protocol"
+version = "0.1.0"
+dependencies = [
+ "aero-protocol",
+]
+
+[[package]]
 name = "encode_unicode"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

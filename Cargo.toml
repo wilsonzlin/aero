@@ -86,6 +86,7 @@ members = [
     "crates/st-idb",
     "crates/conformance",
     "emulator/protocol",
+    "emulator/protocol-compat",
     "crates/aero-gpu-vga",
     "drivers/protocol/virtio",
     "crates/aero-time",
