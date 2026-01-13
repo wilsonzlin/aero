@@ -283,6 +283,15 @@ For a repeatable manual bring-up/validation plan under QEMU, see:
 
 - `tests/qemu/README.md`
 
+## INF linter (Linux/macOS)
+
+To catch accidental drift in the contract-v1 INF (HWIDs, KS/WDMAudio registrations, render/capture interface registration, and `virtio-snd.inf.disabled` sync), run:
+
+```sh
+cd drivers/windows7/virtio-snd
+./scripts/lint-inf.sh
+```
+
 ## Host unit tests (Linux/macOS)
 
 Kernel drivers cannot run in CI, but parts of the virtio-snd protocol engines can
