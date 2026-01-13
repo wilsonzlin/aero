@@ -80,16 +80,17 @@ reintroduce an independent USB stack.
   - async execution of host transfers
   - main thread ↔ worker proxying (default: `postMessage` with transferred `ArrayBuffer`s).
     When `globalThis.crossOriginIsolated === true` and `SharedArrayBuffer`/`Atomics` are available:
-    - WebHID passthrough uses SAB ring buffers to avoid per-report messaging overhead:
-      - **Input reports (main → worker):** IPC `RingBuffer` initialized via `hid.ring.init` and filled
-        with compact, versioned `"HIDR"` input report records.
-      - **Output/feature reports (worker → main):** SPSC `HidReportRing` wired via `hid.ringAttach`.
-      - Implementation:
-        - `web/src/ipc/ring_buffer.ts` (`RingBuffer`)
-        - `web/src/hid/hid_input_report_ring.ts` (record codec + writer)
-        - `web/src/hid/hid_proxy_protocol.ts` (`hid.ring.init`, `hid.ringAttach`)
-        - `web/src/hid/webhid_broker.ts` (runtime selection + producers)
-        - `web/src/workers/io_hid_input_ring.ts` (worker drain helper)
+      - WebHID passthrough uses SAB ring buffers to avoid per-report messaging overhead:
+        - **Input reports (main → worker):** IPC `RingBuffer` initialized via `hid.ring.init` and filled
+          with compact, versioned `"HIDR"` input report records.
+        - **Output/feature reports (worker → main):** SPSC `HidReportRing` wired via `hid.ringAttach`
+          (and can be disabled via `hid.ringDetach` on ring corruption, falling back to `postMessage`).
+        - Implementation:
+          - `web/src/ipc/ring_buffer.ts` (`RingBuffer`)
+          - `web/src/hid/hid_input_report_ring.ts` (record codec + writer)
+          - `web/src/hid/hid_proxy_protocol.ts` (`hid.ring.init`, `hid.ringAttach`, `hid.ringDetach`)
+          - `web/src/hid/webhid_broker.ts` (runtime selection + producers)
+          - `web/src/workers/io_hid_input_ring.ts` (worker drain helper)
     - WebUSB passthrough supports a SAB ring-buffer fast path for host action/completion proxying,
       negotiated by `usb.ringAttach` (and can be disabled via `usb.ringDetach` on ring corruption):
       - **Actions (worker → main):** `UsbHostAction` records.
