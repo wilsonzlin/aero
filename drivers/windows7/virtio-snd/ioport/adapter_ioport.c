@@ -112,16 +112,10 @@ VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
      * Preferred location (INF creates this by default):
      *   HKR\Parameters\ForceNullBackend (REG_DWORD)
      *
-     * Also accept a root value if the environment places it there.
+     * Fallback: also accept a root value if the environment places it there.
      */
     if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &rootKey)) || rootKey == NULL) {
         return FALSE;
-    }
-
-    if (VirtIoSndQueryDwordValue(rootKey, L"ForceNullBackend", &value)) {
-        forceNullBackend = value ? TRUE : FALSE;
-        ZwClose(rootKey);
-        return forceNullBackend;
     }
 
     RtlInitUnicodeString(&paramsSubkeyName, L"Parameters");
@@ -129,8 +123,15 @@ VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
     if (NT_SUCCESS(ZwOpenKey(&paramsKey, KEY_READ, &oa)) && paramsKey != NULL) {
         if (VirtIoSndQueryDwordValue(paramsKey, L"ForceNullBackend", &value)) {
             forceNullBackend = value ? TRUE : FALSE;
+            ZwClose(paramsKey);
+            ZwClose(rootKey);
+            return forceNullBackend;
         }
         ZwClose(paramsKey);
+    }
+
+    if (VirtIoSndQueryDwordValue(rootKey, L"ForceNullBackend", &value)) {
+        forceNullBackend = value ? TRUE : FALSE;
     }
 
     ZwClose(rootKey);

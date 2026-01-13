@@ -112,17 +112,12 @@ static BOOLEAN VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
      * Preferred location (INF creates this by default):
      *   HKR\Parameters\ForceNullBackend (REG_DWORD)
      *
-     * Some environments may place the value at the root key returned by
-     * IoOpenDeviceRegistryKey, so check the root first for robustness.
+     * Fallback: some environments may place the value at the root key returned
+     * by IoOpenDeviceRegistryKey, so check the root if the Parameters subkey is
+     * missing or does not contain the value.
      */
     if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &rootKey)) || rootKey == NULL) {
         return FALSE;
-    }
-
-    if (VirtIoSndQueryDwordValue(rootKey, L"ForceNullBackend", &value)) {
-        forceNullBackend = value ? TRUE : FALSE;
-        ZwClose(rootKey);
-        return forceNullBackend;
     }
 
     RtlInitUnicodeString(&paramsSubkeyName, L"Parameters");
@@ -130,8 +125,15 @@ static BOOLEAN VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
     if (NT_SUCCESS(ZwOpenKey(&paramsKey, KEY_READ, &oa)) && paramsKey != NULL) {
         if (VirtIoSndQueryDwordValue(paramsKey, L"ForceNullBackend", &value)) {
             forceNullBackend = value ? TRUE : FALSE;
+            ZwClose(paramsKey);
+            ZwClose(rootKey);
+            return forceNullBackend;
         }
         ZwClose(paramsKey);
+    }
+
+    if (VirtIoSndQueryDwordValue(rootKey, L"ForceNullBackend", &value)) {
+        forceNullBackend = value ? TRUE : FALSE;
     }
 
     ZwClose(rootKey);
@@ -162,17 +164,12 @@ static BOOLEAN VirtIoSndReadAllowPollingOnly(_In_ PDEVICE_OBJECT DeviceObject)
      * Preferred location (INF creates this by default):
      *   HKR\Parameters\AllowPollingOnly (REG_DWORD)
      *
-     * Some environments may place the value at the root key returned by
-     * IoOpenDeviceRegistryKey, so check the root first for robustness.
+     * Fallback: some environments may place the value at the root key returned
+     * by IoOpenDeviceRegistryKey, so check the root if the Parameters subkey is
+     * missing or does not contain the value.
      */
     if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &rootKey)) || rootKey == NULL) {
         return FALSE;
-    }
-
-    if (VirtIoSndQueryDwordValue(rootKey, L"AllowPollingOnly", &value)) {
-        allowPollingOnly = value ? TRUE : FALSE;
-        ZwClose(rootKey);
-        return allowPollingOnly;
     }
 
     RtlInitUnicodeString(&paramsSubkeyName, L"Parameters");
@@ -180,8 +177,15 @@ static BOOLEAN VirtIoSndReadAllowPollingOnly(_In_ PDEVICE_OBJECT DeviceObject)
     if (NT_SUCCESS(ZwOpenKey(&paramsKey, KEY_READ, &oa)) && paramsKey != NULL) {
         if (VirtIoSndQueryDwordValue(paramsKey, L"AllowPollingOnly", &value)) {
             allowPollingOnly = value ? TRUE : FALSE;
+            ZwClose(paramsKey);
+            ZwClose(rootKey);
+            return allowPollingOnly;
         }
         ZwClose(paramsKey);
+    }
+
+    if (VirtIoSndQueryDwordValue(rootKey, L"AllowPollingOnly", &value)) {
+        allowPollingOnly = value ? TRUE : FALSE;
     }
 
     ZwClose(rootKey);

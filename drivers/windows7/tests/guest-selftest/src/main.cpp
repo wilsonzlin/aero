@@ -1086,18 +1086,20 @@ static std::optional<DWORD> QueryDeviceDevRegDword(HDEVINFO devinfo, SP_DEVINFO_
   HKEY root = SetupDiOpenDevRegKey(devinfo, dev, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_QUERY_VALUE);
   if (root == INVALID_HANDLE_VALUE) return std::nullopt;
 
-  // Some values are written directly under the device key (historical),
-  // but driver bring-up toggles are typically placed under a Parameters subkey.
-  if (auto value = QueryRegDword(root, value_name)) {
-    RegCloseKey(root);
-    return value;
-  }
-
+  // Bring-up toggles are typically placed under a Parameters subkey, but some
+  // environments may store values directly under the device key as a fallback.
   HKEY params = INVALID_HANDLE_VALUE;
   const LONG rc = RegOpenKeyExW(root, L"Parameters", 0, KEY_QUERY_VALUE, &params);
   if (rc == ERROR_SUCCESS && params != INVALID_HANDLE_VALUE) {
     auto value = QueryRegDword(params, value_name);
     RegCloseKey(params);
+    if (value.has_value()) {
+      RegCloseKey(root);
+      return value;
+    }
+  }
+
+  if (auto value = QueryRegDword(root, value_name)) {
     RegCloseKey(root);
     return value;
   }
