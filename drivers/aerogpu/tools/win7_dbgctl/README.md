@@ -121,9 +121,10 @@ Minimum supported commands:
 - `aerogpu_dbgctl --dump-last-cmd --out <path>`
   Dumps the raw bytes of the most recent command stream buffer (`cmd_gpa .. cmd_gpa+cmd_size_bytes`) from the ring
   into `<path>` (binary). Use `--index-from-tail K` to select older submissions (0 = newest).
-  Also writes a small metadata file to `<path>.txt` (ring head/tail, selected descriptor, etc.) when possible.
   On AGPU rings, if the submission has an allocation table (`alloc_table_gpa/alloc_table_size_bytes`), it is also dumped
-  to `<path>.alloc_table.bin`. A small metadata summary is also written to `<path>.txt` (ring/fence/GPAs/sizes).
+  to `<path>.alloc_table.bin`.
+
+  dbgctl also writes a small metadata summary to `<path>.txt` (ring/fence/GPAs/sizes) when possible.
 
   Safety: by default dbgctl refuses to dump buffers larger than 1 MiB; use `--force` to override.
 
@@ -319,7 +320,7 @@ This tool currently supports JSON output for snapshot-style commands:
 - `--list-displays`
 
 Streaming/binary-output commands (`--watch-fence`, `--watch-ring`, `--wait-vblank`, `--query-scanline`, `--dump-scanout-bmp`,
-`--dump-cursor-bmp`, `--dump-last-cmd`, `--read-gpa`) currently return `ok:false` in JSON mode.
+`--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`, `--dump-last-cmd`, `--read-gpa`) currently return `ok:false` in JSON mode.
 
 ## Build (Windows 7)
 
