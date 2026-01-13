@@ -151,6 +151,11 @@ fn build_patched_dxbc(data: &[u8]) -> Option<Vec<u8>> {
     let major = 4 + (b1 % 2) as u32; // 4 or 5
     let minor = (b2 % 2) as u32;
     let version = (ty << 16) | (major << 4) | minor;
+    let shader_fourcc = if major >= 5 {
+        FourCC(*b"SHEX")
+    } else {
+        FourCC(*b"SHDR")
+    };
 
     let mut shdr = vec![0u8; shader_len];
     let copy_len = shader_len.min(data.len());
@@ -162,7 +167,7 @@ fn build_patched_dxbc(data: &[u8]) -> Option<Vec<u8>> {
         (FourCC(*b"ISGN"), &sig_isgn),
         (FourCC(*b"OSGN"), &sig_osgn),
         (FourCC(*b"PSGN"), &sig_psgn),
-        (FourCC(*b"SHDR"), &shdr),
+        (shader_fourcc, &shdr),
     ])
 }
 
