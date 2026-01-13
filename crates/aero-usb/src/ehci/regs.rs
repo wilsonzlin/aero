@@ -68,12 +68,8 @@ pub const USBINTR_FLR: u32 = 1 << 3;
 pub const USBINTR_HSE: u32 = 1 << 4;
 pub const USBINTR_IAA: u32 = 1 << 5;
 
-pub const USBINTR_MASK: u32 = USBINTR_USBINT
-    | USBINTR_USBERRINT
-    | USBINTR_PCD
-    | USBINTR_FLR
-    | USBINTR_HSE
-    | USBINTR_IAA;
+pub const USBINTR_MASK: u32 =
+    USBINTR_USBINT | USBINTR_USBERRINT | USBINTR_PCD | USBINTR_FLR | USBINTR_HSE | USBINTR_IAA;
 
 // FRINDEX is a 14-bit microframe counter in bits 0..=13.
 pub const FRINDEX_MASK: u32 = 0x3fff;
@@ -95,6 +91,7 @@ pub const PORTSC_SUSP: u32 = 1 << 7;
 pub const PORTSC_PR: u32 = 1 << 8;
 pub const PORTSC_LS_MASK: u32 = 0b11 << 10;
 pub const PORTSC_PP: u32 = 1 << 12;
+/// Port Owner: 1 = companion controller owns the port, 0 = EHCI owns the port.
 pub const PORTSC_PO: u32 = 1 << 13;
 pub const PORTSC_PIC_MASK: u32 = 0b11 << 14;
 pub const PORTSC_PTC_MASK: u32 = 0b1111 << 16;

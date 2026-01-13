@@ -20,6 +20,13 @@ struct Port {
     resuming: bool,
     resume_countdown_ms: u8,
     powered: bool,
+    /// Port ownership bit (`PORTSC.PORT_OWNER`, bit 13).
+    ///
+    /// When `true`, the port is treated as owned by a companion controller (UHCI/OHCI). Aero does
+    /// not yet model companion controllers, so `PORT_OWNER=1` conservatively makes the attached
+    /// device unreachable from the EHCI controller (while still reporting physical connection via
+    /// `CCS`).
+    port_owner: bool,
 }
 
 impl Port {
@@ -40,6 +47,9 @@ impl Port {
             // Many EHCI controllers power ports by default; we model ports as powered-on after reset
             // while still allowing software to explicitly toggle power via PORTSC.PP.
             powered: true,
+            // Conservative default: ports start routed to a companion controller until
+            // CONFIGFLAG=1 claims them for EHCI.
+            port_owner: true,
         }
     }
 
@@ -124,8 +134,34 @@ impl Port {
         if self.powered {
             v |= PORTSC_PP;
         }
+        if self.port_owner {
+            v |= PORTSC_PO;
+        }
 
         v
+    }
+
+    fn set_port_owner(&mut self, owner: bool) -> bool {
+        if self.port_owner == owner {
+            return false;
+        }
+        self.port_owner = owner;
+
+        // If the port is handed off to a companion controller, EHCI should no longer report it as
+        // enabled and should drop any in-progress reset/suspend/resume state.
+        if owner {
+            if self.enabled {
+                self.enabled = false;
+                self.enable_change = true;
+            }
+            self.set_suspended(false);
+            self.resuming = false;
+            self.resume_countdown_ms = 0;
+            self.reset = false;
+            self.reset_countdown_ms = 0;
+        }
+
+        true
     }
 
     fn write_portsc(&mut self, value: u32, write_mask: u32) {
@@ -138,6 +174,17 @@ impl Port {
         }
         if write_mask & PORTSC_OCC != 0 && value & PORTSC_OCC != 0 {
             self.over_current_change = false;
+        }
+
+        // PORT_OWNER is only writable when the port is disabled.
+        if write_mask & PORTSC_PO != 0 && !self.enabled {
+            let want_owner = value & PORTSC_PO != 0;
+            self.set_port_owner(want_owner);
+        }
+
+        // When the port is owned by a companion controller, EHCI should not drive reset/enable/etc.
+        if self.port_owner {
+            return;
         }
 
         // Port power (R/W when HCSPARAMS.PPC=1).
@@ -370,6 +417,16 @@ impl RootHub {
         self.ports.get(port).map(|p| p.read_portsc()).unwrap_or(0)
     }
 
+    pub(crate) fn set_all_port_owner(&mut self, owner: bool) -> bool {
+        let mut changed = false;
+        for p in &mut self.ports {
+            if p.set_port_owner(owner) {
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub fn write_portsc(&mut self, port: usize, value: u32) {
         self.write_portsc_masked(port, value, 0xffff_ffff);
     }
@@ -401,7 +458,7 @@ impl RootHub {
 
     pub fn device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice> {
         for p in &mut self.ports {
-            if !(p.enabled && p.powered) || p.suspended || p.resuming {
+            if p.port_owner || !(p.enabled && p.powered) || p.suspended || p.resuming {
                 continue;
             }
             if let Some(dev) = p.device.as_mut() {
@@ -419,4 +476,3 @@ impl Default for RootHub {
         Self::new(6)
     }
 }
-

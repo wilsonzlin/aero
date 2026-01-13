@@ -3,6 +3,18 @@
 //! This is intentionally a *bring-up* implementation: it models the capability/operational MMIO
 //! registers and an EHCI root hub with per-port state machines. The schedule engine is stubbed out
 //! and will be implemented by follow-up tasks (EHCI-003/004).
+//!
+//! ## Companion controller handoff
+//!
+//! Real EHCI controllers expose port-routing knobs so firmware/OSes can decide whether a root hub
+//! port is serviced by EHCI or by a "companion" OHCI/UHCI controller:
+//! - `CONFIGFLAG` (global configure flag)
+//! - `PORTSC[n].PORT_OWNER` (per-port owner bit)
+//!
+//! This model implements the guest-visible semantics needed by Windows/Linux EHCI drivers:
+//! - `CONFIGFLAG` is read/write, and on 0→1 claims all ports for EHCI (clears `PORT_OWNER`).
+//! - Clearing `CONFIGFLAG` (1→0) releases all ports back to companion ownership (sets `PORT_OWNER`).
+//! - Writes that change `PORT_OWNER` assert `USBSTS.PCD` (Port Change Detect).
 
 mod hub;
 pub use hub::RootHub;
@@ -170,7 +182,29 @@ impl EhciController {
     }
 
     fn write_configflag(&mut self, value: u32) {
-        self.regs.configflag = value & CONFIGFLAG_CF;
+        let prev = self.regs.configflag & CONFIGFLAG_CF;
+        let next = value & CONFIGFLAG_CF;
+        self.regs.configflag = next;
+
+        // On real hardware, CONFIGFLAG is used to route *all* ports to EHCI (1) or to companion
+        // controllers (0). We model this by toggling PORTSC.PORT_OWNER on all ports.
+        if prev == next {
+            return;
+        }
+
+        let changed = if prev == 0 && next != 0 {
+            // Claim ports for EHCI: clear PORT_OWNER.
+            self.hub.set_all_port_owner(false)
+        } else if prev != 0 && next == 0 {
+            // Release ports to companion: set PORT_OWNER.
+            self.hub.set_all_port_owner(true)
+        } else {
+            false
+        };
+
+        if changed {
+            self.regs.usbsts |= USBSTS_PCD;
+        }
     }
 
     fn mmio_read_u8(&self, offset: u64) -> u8 {
@@ -241,11 +275,7 @@ impl EhciController {
         // explicitly modelled are reserved and read back as 0; out-of-range reads are treated as
         // open bus.
         const EHCI_MMIO_SIZE: u64 = 0x100;
-        if offset < EHCI_MMIO_SIZE {
-            0
-        } else {
-            0xff
-        }
+        if offset < EHCI_MMIO_SIZE { 0 } else { 0xff }
     }
 
     fn mmio_write_u8(&mut self, offset: u64, value: u8) {
@@ -310,11 +340,16 @@ impl EhciController {
             let port = ((offset - REG_PORTSC_BASE) / 4) as usize;
             let off_in_port = (offset - REG_PORTSC_BASE) % 4;
             if port < self.hub.num_ports() {
+                let old_owner = (self.hub.read_portsc(port) & PORTSC_PO) != 0;
                 self.hub.write_portsc_masked(
                     port,
                     (value as u32) << (off_in_port * 8),
                     0xffu32 << (off_in_port * 8),
                 );
+                let new_owner = (self.hub.read_portsc(port) & PORTSC_PO) != 0;
+                if old_owner != new_owner {
+                    self.regs.usbsts |= USBSTS_PCD;
+                }
             }
         }
     }
@@ -340,7 +375,12 @@ impl EhciController {
             _ if offset >= REG_PORTSC_BASE && size == 4 => {
                 let port = ((offset - REG_PORTSC_BASE) / 4) as usize;
                 if port < self.hub.num_ports() && offset == reg_portsc(port) {
+                    let old_owner = (self.hub.read_portsc(port) & PORTSC_PO) != 0;
                     self.hub.write_portsc(port, value);
+                    let new_owner = (self.hub.read_portsc(port) & PORTSC_PO) != 0;
+                    if old_owner != new_owner {
+                        self.regs.usbsts |= USBSTS_PCD;
+                    }
                 } else {
                     for i in 0..size.min(4) {
                         let byte = ((value >> (i * 8)) & 0xff) as u8;
@@ -387,3 +427,4 @@ impl Default for EhciController {
         Self::new()
     }
 }
+
