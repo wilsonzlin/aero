@@ -292,7 +292,7 @@ Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 - `ensure_fixedfunc_pipeline_locked()`
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
 
-Not yet implemented (not rendered by the fixed-function fallback path):
+Not yet implemented (not rendered by the fixed-function fallback path; expected by some fixed-function apps):
 
 - `D3DFVF_XYZ | D3DFVF_DIFFUSE`
 - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
