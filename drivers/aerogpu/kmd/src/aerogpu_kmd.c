@@ -7522,8 +7522,15 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
 
         const ULONG minMaskPitch = (width + 7u) / 8u;
         if (srcPitch < minMaskPitch) {
-            AeroGpuCursorDisable(adapter);
-            adapter->CursorShapeValid = FALSE;
+            if (poweredOn) {
+                AeroGpuCursorDisable(adapter);
+            }
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
             return STATUS_INVALID_PARAMETER;
         }
 
