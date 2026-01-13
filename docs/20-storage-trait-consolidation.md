@@ -120,6 +120,22 @@ Rule of thumb:
   `VirtualDisk` and (if it needs a resizable backing store) be generic over `StorageBackend`.
 - Do **not** introduce new format-specific “disk traits” in other crates.
 
+### Aero sparse formats: `AEROSPAR` vs legacy `AEROSPRS`
+
+- `AEROSPAR` (“AeroSparse”, magic `AEROSPAR`) is the **current** sparse disk format implemented in
+  `crates/aero-storage` as `aero_storage::AeroSparseDisk` in
+  [`crates/aero-storage/src/sparse.rs`](../crates/aero-storage/src/sparse.rs).
+- `AEROSPRS` (magic `AEROSPRS`) is a **legacy** sparse format still implemented in the emulator:
+  [`crates/emulator/src/io/storage/formats/aerosprs.rs`](../crates/emulator/src/io/storage/formats/aerosprs.rs)
+  (selected via [`crates/emulator/src/io/storage/formats/sparse.rs`](../crates/emulator/src/io/storage/formats/sparse.rs)).
+- Why it exists: open/migrate older images created before `AEROSPAR` became canonical.
+- Differences: `AEROSPAR` has a 64‑byte header + simple u64 allocation table; `AEROSPRS` uses a 4 KiB
+  header with explicit sector size (512/4096) plus a small journal for crash‑safe table updates.
+- Status/limits: `AEROSPRS` is **emulator-only** and not used by the new controller stack; new work
+  should create/consume `AEROSPAR` via `crates/aero-storage`.
+- Tests: [`crates/emulator/tests/storage_formats.rs`](../crates/emulator/tests/storage_formats.rs)
+  (`detect_aerosprs_*`) and [`crates/aero-storage/tests/storage_formats.rs`](../crates/aero-storage/tests/storage_formats.rs).
+
 ### Layer 4 (synchronous device/controller models): canonical = `aero_storage::VirtualDisk`
 
 New synchronous Rust device/controller models should treat `aero_storage::VirtualDisk` as the
