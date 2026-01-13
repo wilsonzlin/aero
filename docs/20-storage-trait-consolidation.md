@@ -131,8 +131,9 @@ Rule of thumb:
 - Why it exists: open/migrate older images created before `AEROSPAR` became canonical.
 - Differences: `AEROSPAR` has a 64‑byte header + simple u64 allocation table; `AEROSPRS` uses a 4 KiB
   header with explicit sector size (512/4096) plus a small journal for crash‑safe table updates.
-- Status/limits: `AEROSPRS` is **emulator-only** and not used by the new controller stack; new work
-  should create/consume `AEROSPAR` via `crates/aero-storage`.
+- Status/limits: `AEROSPRS` is **emulator-only** and not used by the new controller stack.
+  `crates/emulator` creates only `AEROSPAR` (`SparseDisk::create`); `AEROSPRS` is supported only for
+  opening/mutating legacy images. New work should create/consume `AEROSPAR` via `crates/aero-storage`.
 - Migration: see the offline converter tool
   [`crates/emulator/src/bin/aerosparse_convert.rs`](../crates/emulator/src/bin/aerosparse_convert.rs).
 - Tests: [`crates/emulator/tests/storage_formats.rs`](../crates/emulator/tests/storage_formats.rs)
