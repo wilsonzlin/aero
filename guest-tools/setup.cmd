@@ -263,6 +263,8 @@ exit /b %RC%
 
 :_selftest_inf_addservice
 rem Usage: setup.cmd /_selftest_inf_addservice <inf> <service>
+rem Tip: to exercise UTF-16-without-BOM handling, write the INF as UTF-16LE or UTF-16BE
+rem without a BOM (e.g. in Python: Path('x.inf').write_bytes('...'.encode('utf-16-le'))).
 if "%~2"=="" (
   echo ERROR: Missing INF path.
   exit /b 2
@@ -1126,9 +1128,9 @@ if "%FOUND_MATCH%"=="1" (
   exit /b 0
 )
 
-rem No ASCII/UTF-8 match found. Some driver bundles ship UTF-16LE INFs, which `findstr`
-rem may not be able to scan. Do one PowerShell pass over the scan list (BOM-aware)
-rem before failing with EC_STORAGE_SERVICE_MISMATCH.
+rem No ASCII/UTF-8 match found. Some driver bundles ship UTF-16 INFs, which `findstr`
+rem may not be able to scan. Do one PowerShell pass over the scan list (BOM-aware,
+rem plus a UTF-16-without-BOM heuristic) before failing with EC_STORAGE_SERVICE_MISMATCH.
 set "PWSH_MATCH_INF="
 call :inf_find_addservice_in_scan_list_powershell "%SCAN_LIST%" "%TARGET_SVC%"
 if not errorlevel 1 (
@@ -1201,7 +1203,7 @@ if not exist "%PWSH%" set "PWSH=powershell.exe"
 set "AEROGT_INF_SCAN_LIST=%SCAN_LIST%"
 set "AEROGT_INF_TARGET=%TARGET%"
 
-for /f "usebackq delims=" %%M in (`"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$list=$env:AEROGT_INF_SCAN_LIST; $target=$env:AEROGT_INF_TARGET; try{ $enc=[Console]::OutputEncoding; $bytes=[System.IO.File]::ReadAllBytes($list); $text=$enc.GetString($bytes); $paths=$text -split '\r\n|\n|\r' }catch{ exit 1 }; foreach($p in $paths){ $inf=$p.Trim(); if($inf.Length -ge 2 -and $inf[0] -eq [char]34 -and $inf[$inf.Length-1] -eq [char]34){ $inf=$inf.Substring(1,$inf.Length-2) }; try{ $text=[System.IO.File]::ReadAllText($inf) }catch{ continue }; foreach($line in ($text -split '\r\n|\n|\r')){ if($line.Length -gt 0 -and $line[0] -eq [char]0xFEFF){ $line=$line.Substring(1) }; $noComment=$line.Split(';')[0]; $noComment=$noComment.Replace([char]34,''); if($noComment -match '^\s*AddService\s*=\s*([^,;\s]+)'){ if([string]::Equals($matches[1],$target,[System.StringComparison]::OrdinalIgnoreCase)){ [Console]::WriteLine($inf); exit 0 } } } }; exit 1" 2^>nul`) do (
+for /f "usebackq delims=" %%M in (`"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$list=$env:AEROGT_INF_SCAN_LIST; $target=$env:AEROGT_INF_TARGET; try{ $enc=[Console]::OutputEncoding; $bytes=[System.IO.File]::ReadAllBytes($list); $text=$enc.GetString($bytes); $paths=$text -split '\r\n|\n|\r' }catch{ exit 1 }; foreach($p in $paths){ $inf=$p.Trim(); if($inf.Length -ge 2 -and $inf[0] -eq [char]34 -and $inf[$inf.Length-1] -eq [char]34){ $inf=$inf.Substring(1,$inf.Length-2) }; try{ $b=[System.IO.File]::ReadAllBytes($inf) }catch{ continue }; $encInf=$null; $off=0; if($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF){ $encInf=[System.Text.Encoding]::UTF8; $off=3 } elseif($b.Length -ge 2 -and $b[0] -eq 0xFF -and $b[1] -eq 0xFE){ $encInf=[System.Text.Encoding]::Unicode; $off=2 } elseif($b.Length -ge 2 -and $b[0] -eq 0xFE -and $b[1] -eq 0xFF){ $encInf=[System.Text.Encoding]::BigEndianUnicode; $off=2 } else { $zero=0; $ze=0; $zo=0; for($i=0; $i -lt $b.Length; $i++){ if($b[$i] -eq 0){ $zero++; if(($i -band 1) -eq 0){ $ze++ } else { $zo++ } } }; if($b.Length -gt 0 -and ($zero/[double]$b.Length) -ge 0.2){ if($zo -gt $ze){ $encInf=[System.Text.Encoding]::Unicode } elseif($ze -gt $zo){ $encInf=[System.Text.Encoding]::BigEndianUnicode } else { $encInf=[System.Text.Encoding]::Unicode } } else { $encInf=[System.Text.Encoding]::UTF8 } }; try{ $text=$encInf.GetString($b,$off,$b.Length-$off) }catch{ continue }; foreach($line in ($text -split '\r\n|\n|\r')){ if($line.Length -gt 0 -and $line[0] -eq [char]0xFEFF){ $line=$line.Substring(1) }; $noComment=$line.Split(';')[0]; $noComment=$noComment.Replace([char]34,''); if($noComment -match '^\s*AddService\s*=\s*([^,;\s]+)'){ if([string]::Equals($matches[1],$target,[System.StringComparison]::OrdinalIgnoreCase)){ [Console]::WriteLine($inf); exit 0 } } } }; exit 1" 2^>nul`) do (
   set "MATCH_INF=%%M"
 )
 
@@ -1254,13 +1256,15 @@ if "%HAD_FINDSTR%"=="1" (
   endlocal & exit /b 1
 )
 
-rem Fallback for UTF-16LE (and other BOM-based) INF files: findstr/cmd parsing can yield
-rem no output at all. Use PowerShell 2.0 + .NET File.ReadAllText(), which is BOM-aware.
+rem Fallback for UTF-16 (including some BOM-less files): findstr/cmd parsing can yield
+rem no output at all. Use PowerShell 2.0 + ReadAllBytes(), decoding with:
+rem - BOM-aware detection (UTF-8/UTF-16LE/UTF-16BE), and
+rem - a UTF-16-without-BOM heuristic (many 0x00 bytes).
 set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
 if not exist "%PWSH%" set "PWSH=powershell.exe"
 set "AEROGT_INF_FILE=%INF_FILE%"
 set "AEROGT_INF_TARGET=%TARGET%"
-"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$inf=$env:AEROGT_INF_FILE; $target=$env:AEROGT_INF_TARGET; try{ $text=[System.IO.File]::ReadAllText($inf) }catch{ exit 1 }; foreach($line in ($text -split '\r\n|\n|\r')){ if($line.Length -gt 0 -and $line[0] -eq [char]0xFEFF){ $line=$line.Substring(1) }; $noComment=$line.Split(';')[0]; $noComment=$noComment.Replace([char]34,''); if($noComment -match '^\s*AddService\s*=\s*([^,;\s]+)'){ if([string]::Equals($matches[1],$target,[System.StringComparison]::OrdinalIgnoreCase)){ exit 0 } } }; exit 1" >nul 2>&1
+"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$inf=$env:AEROGT_INF_FILE; $target=$env:AEROGT_INF_TARGET; try{ $b=[System.IO.File]::ReadAllBytes($inf) }catch{ exit 1 }; $enc=$null; $off=0; if($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF){ $enc=[System.Text.Encoding]::UTF8; $off=3 } elseif($b.Length -ge 2 -and $b[0] -eq 0xFF -and $b[1] -eq 0xFE){ $enc=[System.Text.Encoding]::Unicode; $off=2 } elseif($b.Length -ge 2 -and $b[0] -eq 0xFE -and $b[1] -eq 0xFF){ $enc=[System.Text.Encoding]::BigEndianUnicode; $off=2 } else { $zero=0; $ze=0; $zo=0; for($i=0; $i -lt $b.Length; $i++){ if($b[$i] -eq 0){ $zero++; if(($i -band 1) -eq 0){ $ze++ } else { $zo++ } } }; if($b.Length -gt 0 -and ($zero/[double]$b.Length) -ge 0.2){ if($zo -gt $ze){ $enc=[System.Text.Encoding]::Unicode } elseif($ze -gt $zo){ $enc=[System.Text.Encoding]::BigEndianUnicode } else { $enc=[System.Text.Encoding]::Unicode } } else { $enc=[System.Text.Encoding]::UTF8 } }; $text=$enc.GetString($b,$off,$b.Length-$off); foreach($line in ($text -split '\r\n|\n|\r')){ if($line.Length -gt 0 -and $line[0] -eq [char]0xFEFF){ $line=$line.Substring(1) }; $noComment=$line.Split(';')[0]; $noComment=$noComment.Replace([char]34,''); if($noComment -match '^\s*AddService\s*=\s*([^,;\s]+)'){ if([string]::Equals($matches[1],$target,[System.StringComparison]::OrdinalIgnoreCase)){ exit 0 } } }; exit 1" >nul 2>&1
 if not errorlevel 1 (
   endlocal & exit /b 0
 )
