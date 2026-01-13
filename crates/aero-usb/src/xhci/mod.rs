@@ -136,7 +136,6 @@ impl XhciController {
         self.usbsts |= regs::USBSTS_EINT;
     }
 }
-
 impl IoSnapshot for XhciController {
     const DEVICE_ID: [u8; 4] = *b"XHCI";
     const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 1);
