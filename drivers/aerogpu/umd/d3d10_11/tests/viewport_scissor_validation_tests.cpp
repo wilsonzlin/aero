@@ -138,6 +138,73 @@ bool TestMultiViewportReportsNotImplAndEmitsFirst() {
   return true;
 }
 
+bool TestMultiViewportIdenticalDoesNotReportNotImplAndEmitsFirst() {
+  Device dev{};
+  std::vector<HRESULT> errors;
+
+  const AEROGPU_DDI_VIEWPORT viewports[2] = {
+      AEROGPU_DDI_VIEWPORT{
+          /*TopLeftX=*/1.0f,
+          /*TopLeftY=*/2.0f,
+          /*Width=*/3.0f,
+          /*Height=*/4.0f,
+          /*MinDepth=*/0.0f,
+          /*MaxDepth=*/1.0f,
+      },
+      AEROGPU_DDI_VIEWPORT{
+          /*TopLeftX=*/1.0f,
+          /*TopLeftY=*/2.0f,
+          /*Width=*/3.0f,
+          /*Height=*/4.0f,
+          /*MinDepth=*/0.0f,
+          /*MaxDepth=*/1.0f,
+      },
+  };
+
+  validate_and_emit_viewports_locked(&dev,
+                                     /*num_viewports=*/2,
+                                     viewports,
+                                     [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(errors.empty(), "SetViewports(2 identical) should not report errors")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.cmd.data();
+  const size_t stream_len = dev.cmd.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    return false;
+  }
+
+  const auto* hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_VIEWPORT);
+  if (!Check(hdr != nullptr, "expected SET_VIEWPORT to be emitted")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_viewport*>(hdr);
+  const auto& vp0 = viewports[0];
+  if (!Check(cmd->x_f32 == f32_bits(vp0.TopLeftX), "SET_VIEWPORT x matches first viewport")) {
+    return false;
+  }
+  if (!Check(cmd->y_f32 == f32_bits(vp0.TopLeftY), "SET_VIEWPORT y matches first viewport")) {
+    return false;
+  }
+  if (!Check(cmd->width_f32 == f32_bits(vp0.Width), "SET_VIEWPORT width matches first viewport")) {
+    return false;
+  }
+  if (!Check(cmd->height_f32 == f32_bits(vp0.Height), "SET_VIEWPORT height matches first viewport")) {
+    return false;
+  }
+  if (!Check(cmd->min_depth_f32 == f32_bits(vp0.MinDepth), "SET_VIEWPORT min_depth matches first viewport")) {
+    return false;
+  }
+  if (!Check(cmd->max_depth_f32 == f32_bits(vp0.MaxDepth), "SET_VIEWPORT max_depth matches first viewport")) {
+    return false;
+  }
+
+  return true;
+}
+
 struct TestRect {
   int32_t left;
   int32_t top;
@@ -181,6 +248,53 @@ bool TestMultiScissorReportsNotImplAndEmitsFirst() {
     return false;
   }
 
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_scissor*>(hdr);
+  const auto& r0 = rects[0];
+  if (!Check(cmd->x == r0.left, "SET_SCISSOR x matches first rect")) {
+    return false;
+  }
+  if (!Check(cmd->y == r0.top, "SET_SCISSOR y matches first rect")) {
+    return false;
+  }
+  if (!Check(cmd->width == (r0.right - r0.left), "SET_SCISSOR width matches first rect")) {
+    return false;
+  }
+  if (!Check(cmd->height == (r0.bottom - r0.top), "SET_SCISSOR height matches first rect")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestMultiScissorIdenticalDoesNotReportNotImplAndEmitsFirst() {
+  Device dev{};
+  std::vector<HRESULT> errors;
+
+  const TestRect rects[2] = {
+      TestRect{/*left=*/1, /*top=*/2, /*right=*/3, /*bottom=*/4},
+      TestRect{/*left=*/1, /*top=*/2, /*right=*/3, /*bottom=*/4},
+  };
+
+  validate_and_emit_scissor_rects_locked(&dev,
+                                         /*num_rects=*/2,
+                                         rects,
+                                         [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(errors.empty(), "SetScissorRects(2 identical) should not report errors")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.cmd.data();
+  const size_t stream_len = dev.cmd.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    return false;
+  }
+
+  const auto* hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_SCISSOR);
+  if (!Check(hdr != nullptr, "expected SET_SCISSOR to be emitted")) {
+    return false;
+  }
   const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_scissor*>(hdr);
   const auto& r0 = rects[0];
   if (!Check(cmd->x == r0.left, "SET_SCISSOR x matches first rect")) {
@@ -254,7 +368,9 @@ bool TestViewportAndScissorDisableEncodesDefaults() {
 int main() {
   bool ok = true;
   ok &= TestMultiViewportReportsNotImplAndEmitsFirst();
+  ok &= TestMultiViewportIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestMultiScissorReportsNotImplAndEmitsFirst();
+  ok &= TestMultiScissorIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestViewportAndScissorDisableEncodesDefaults();
   if (!ok) {
     return 1;

@@ -417,6 +417,14 @@ typedef struct AEROGPU_DDI_VIEWPORT {
   float MaxDepth;
 } AEROGPU_DDI_VIEWPORT;
 
+// D3D10/11 scissor rectangle (matches the layout of RECT / D3D10_DDI_RECT).
+typedef struct AEROGPU_DDI_RECT {
+  int32_t left;
+  int32_t top;
+  int32_t right;
+  int32_t bottom;
+} AEROGPU_DDI_RECT;
+
 typedef enum AEROGPU_DDI_CLEAR_FLAGS {
   AEROGPU_DDI_CLEAR_DEPTH = 0x1,
   AEROGPU_DDI_CLEAR_STENCIL = 0x2,
@@ -644,6 +652,15 @@ typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETVERTEXBUFFER)(D3D10DDI_HDEVICE,
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETINDEXBUFFER)(D3D10DDI_HDEVICE, D3D10DDI_HRESOURCE, uint32_t format,
                                                               uint32_t offset);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETVIEWPORT)(D3D10DDI_HDEVICE, const AEROGPU_DDI_VIEWPORT *);
+// Real D3D10/11 exposes viewports/scissors as arrays. The protocol only supports a
+// single viewport/scissor, so the portable UMD exposes these entrypoints to allow
+// host-side tests to validate multi-viewport/scissor error reporting.
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETVIEWPORTS)(D3D10DDI_HDEVICE,
+                                                            uint32_t num_viewports,
+                                                            const AEROGPU_DDI_VIEWPORT *pViewports);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETSCISSORRECTS)(D3D10DDI_HDEVICE,
+                                                               uint32_t num_rects,
+                                                               const AEROGPU_DDI_RECT *pRects);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETDRAWSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HSHADER vs, D3D10DDI_HSHADER ps);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETBLENDSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETRASTERIZERSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HRASTERIZERSTATE);
@@ -786,6 +803,8 @@ struct AEROGPU_D3D10_11_DEVICEFUNCS {
   PFNAEROGPU_DDI_SETVERTEXBUFFER pfnSetVertexBuffer;
   PFNAEROGPU_DDI_SETINDEXBUFFER pfnSetIndexBuffer;
   PFNAEROGPU_DDI_SETVIEWPORT pfnSetViewport;
+  PFNAEROGPU_DDI_SETVIEWPORTS pfnSetViewports;
+  PFNAEROGPU_DDI_SETSCISSORRECTS pfnSetScissorRects;
   PFNAEROGPU_DDI_SETDRAWSTATE pfnSetDrawState;
   PFNAEROGPU_DDI_SETBLENDSTATE pfnSetBlendState;
   PFNAEROGPU_DDI_SETRASTERIZERSTATE pfnSetRasterizerState;

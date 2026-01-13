@@ -4800,6 +4800,149 @@ void AEROGPU_APIENTRY SetIndexBuffer(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURC
   track_alloc_for_submit_locked(dev, ib_alloc);
 }
 
+void AEROGPU_APIENTRY SetViewports(D3D10DDI_HDEVICE hDevice,
+                                   uint32_t num_viewports,
+                                   const AEROGPU_DDI_VIEWPORT* pViewports) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  AEROGPU_D3D10_TRACEF_VERBOSE("SetViewports hDevice=%p num=%u",
+                               hDevice.pDrvPrivate,
+                               static_cast<unsigned>(num_viewports));
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  bool report_notimpl = false;
+  if (num_viewports > 1 && pViewports) {
+    const auto& vp0 = pViewports[0];
+    for (uint32_t i = 1; i < num_viewports; i++) {
+      const auto& vp = pViewports[i];
+      if (vp.TopLeftX != vp0.TopLeftX ||
+          vp.TopLeftY != vp0.TopLeftY ||
+          vp.Width != vp0.Width ||
+          vp.Height != vp0.Height ||
+          vp.MinDepth != vp0.MinDepth ||
+          vp.MaxDepth != vp0.MaxDepth) {
+        report_notimpl = true;
+        break;
+      }
+    }
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (num_viewports == 0) {
+    // D3D10/11 runtimes reset state by calling SetViewports(0, nullptr). The
+    // protocol has no explicit "unset viewport" command, so encode a degenerate
+    // viewport that the host treats as "use default".
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+    if (!cmd) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return;
+    }
+    cmd->x_f32 = f32_bits(0.0f);
+    cmd->y_f32 = f32_bits(0.0f);
+    cmd->width_f32 = f32_bits(0.0f);
+    cmd->height_f32 = f32_bits(0.0f);
+    cmd->min_depth_f32 = f32_bits(0.0f);
+    cmd->max_depth_f32 = f32_bits(1.0f);
+    return;
+  }
+
+  if (!pViewports) {
+    ReportDeviceErrorLocked(dev, hDevice, E_INVALIDARG);
+    return;
+  }
+
+  const auto& vp = pViewports[0];
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->x_f32 = f32_bits(vp.TopLeftX);
+  cmd->y_f32 = f32_bits(vp.TopLeftY);
+  cmd->width_f32 = f32_bits(vp.Width);
+  cmd->height_f32 = f32_bits(vp.Height);
+  cmd->min_depth_f32 = f32_bits(vp.MinDepth);
+  cmd->max_depth_f32 = f32_bits(vp.MaxDepth);
+
+  if (report_notimpl) {
+    // Protocol supports a single viewport; additional viewports are ignored.
+    ReportDeviceErrorLocked(dev, hDevice, E_NOTIMPL);
+  }
+}
+
+void AEROGPU_APIENTRY SetScissorRects(D3D10DDI_HDEVICE hDevice,
+                                      uint32_t num_rects,
+                                      const AEROGPU_DDI_RECT* pRects) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  AEROGPU_D3D10_TRACEF_VERBOSE("SetScissorRects hDevice=%p num=%u",
+                               hDevice.pDrvPrivate,
+                               static_cast<unsigned>(num_rects));
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  bool report_notimpl = false;
+  if (num_rects > 1 && pRects) {
+    const auto& r0 = pRects[0];
+    for (uint32_t i = 1; i < num_rects; i++) {
+      const auto& r = pRects[i];
+      if (r.left != r0.left || r.top != r0.top || r.right != r0.right || r.bottom != r0.bottom) {
+        report_notimpl = true;
+        break;
+      }
+    }
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (num_rects == 0) {
+    // Reset scissor. The host treats non-positive width/height as "disabled".
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
+    if (!cmd) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return;
+    }
+    cmd->x = 0;
+    cmd->y = 0;
+    cmd->width = 0;
+    cmd->height = 0;
+    return;
+  }
+
+  if (!pRects) {
+    ReportDeviceErrorLocked(dev, hDevice, E_INVALIDARG);
+    return;
+  }
+
+  const auto& r = pRects[0];
+  const int32_t w = r.right - r.left;
+  const int32_t h = r.bottom - r.top;
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->x = r.left;
+  cmd->y = r.top;
+  cmd->width = w;
+  cmd->height = h;
+
+  if (report_notimpl) {
+    // Protocol supports a single scissor rect; additional rects are ignored.
+    ReportDeviceErrorLocked(dev, hDevice, E_NOTIMPL);
+  }
+}
+
 void AEROGPU_APIENTRY SetViewport(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDI_VIEWPORT* pVp) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF_VERBOSE("SetViewport hDevice=%p x=%f y=%f w=%f h=%f",
@@ -5721,6 +5864,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
   funcs.pfnSetVertexBuffer = &SetVertexBuffer;
   funcs.pfnSetIndexBuffer = &SetIndexBuffer;
   funcs.pfnSetViewport = &SetViewport;
+  funcs.pfnSetViewports = &SetViewports;
+  funcs.pfnSetScissorRects = &SetScissorRects;
   funcs.pfnSetDrawState = &SetDrawState;
   funcs.pfnSetBlendState = &SetBlendState;
   funcs.pfnSetRasterizerState = &SetRasterizerState;

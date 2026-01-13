@@ -5540,22 +5540,51 @@ void APIENTRY SetViewports(D3D10DDI_HDEVICE hDevice, UINT numViewports, const D3
     SetError(hDevice, E_INVALIDARG);
     return;
   }
-  if (numViewports == 0) {
-    // Some runtimes clear state by calling SetViewports(0, nullptr). Treat this
-    // as a no-op for bring-up rather than returning E_INVALIDARG.
-    return;
-  }
-  if (!pViewports) {
-    SetError(hDevice, E_INVALIDARG);
-    return;
-  }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev) {
     SetError(hDevice, E_INVALIDARG);
     return;
   }
 
+  bool report_notimpl = false;
+  if (numViewports > 1 && pViewports) {
+    const auto& vp0 = pViewports[0];
+    for (UINT i = 1; i < numViewports; ++i) {
+      const auto& vp = pViewports[i];
+      if (vp.TopLeftX != vp0.TopLeftX ||
+          vp.TopLeftY != vp0.TopLeftY ||
+          vp.Width != vp0.Width ||
+          vp.Height != vp0.Height ||
+          vp.MinDepth != vp0.MinDepth ||
+          vp.MaxDepth != vp0.MaxDepth) {
+        report_notimpl = true;
+        break;
+      }
+    }
+  }
+
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (numViewports == 0) {
+    // Some runtimes clear state by calling SetViewports(0, nullptr). The AeroGPU
+    // protocol supports only a single viewport, so encode this reset using a
+    // degenerate viewport (width/height = 0) which the host treats as "use
+    // default viewport".
+    dev->viewport_width = 0;
+    dev->viewport_height = 0;
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+    cmd->x_f32 = f32_bits(0.0f);
+    cmd->y_f32 = f32_bits(0.0f);
+    cmd->width_f32 = f32_bits(0.0f);
+    cmd->height_f32 = f32_bits(0.0f);
+    cmd->min_depth_f32 = f32_bits(0.0f);
+    cmd->max_depth_f32 = f32_bits(1.0f);
+    return;
+  }
+  if (!pViewports) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
 
   const auto& vp = pViewports[0];
   if (vp.Width > 0.0f && vp.Height > 0.0f) {
@@ -5569,19 +5598,17 @@ void APIENTRY SetViewports(D3D10DDI_HDEVICE hDevice, UINT numViewports, const D3
   cmd->height_f32 = f32_bits(vp.Height);
   cmd->min_depth_f32 = f32_bits(vp.MinDepth);
   cmd->max_depth_f32 = f32_bits(vp.MaxDepth);
+
+  if (report_notimpl) {
+    // Protocol supports only one viewport. Apply slot 0 as best-effort but
+    // surface the unsupported multi-viewport state to the runtime for easier
+    // debugging.
+    SetError(hDevice, E_NOTIMPL);
+  }
 }
 
 void APIENTRY SetScissorRects(D3D10DDI_HDEVICE hDevice, UINT numRects, const D3D10_DDI_RECT* pRects) {
   if (!hDevice.pDrvPrivate) {
-    SetError(hDevice, E_INVALIDARG);
-    return;
-  }
-  if (numRects == 0) {
-    // Some runtimes clear state by calling SetScissorRects(0, nullptr). Treat
-    // this as a no-op for bring-up rather than returning E_INVALIDARG.
-    return;
-  }
-  if (!pRects) {
     SetError(hDevice, E_INVALIDARG);
     return;
   }
@@ -5591,7 +5618,34 @@ void APIENTRY SetScissorRects(D3D10DDI_HDEVICE hDevice, UINT numRects, const D3D
     return;
   }
 
+  bool report_notimpl = false;
+  if (numRects > 1 && pRects) {
+    const auto& r0 = pRects[0];
+    for (UINT i = 1; i < numRects; ++i) {
+      const auto& r = pRects[i];
+      if (r.left != r0.left || r.top != r0.top || r.right != r0.right || r.bottom != r0.bottom) {
+        report_notimpl = true;
+        break;
+      }
+    }
+  }
+
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (numRects == 0) {
+    // Reset scissor state. The host treats non-positive width/height as
+    // "scissor disabled".
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
+    cmd->x = 0;
+    cmd->y = 0;
+    cmd->width = 0;
+    cmd->height = 0;
+    return;
+  }
+  if (!pRects) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
 
   const auto& r = pRects[0];
   const int32_t w = r.right - r.left;
@@ -5601,6 +5655,13 @@ void APIENTRY SetScissorRects(D3D10DDI_HDEVICE hDevice, UINT numRects, const D3D
   cmd->y = r.top;
   cmd->width = w;
   cmd->height = h;
+
+  if (report_notimpl) {
+    // Protocol supports only one scissor rect. Apply slot 0 as best-effort but
+    // surface the unsupported multi-scissor state to the runtime for easier
+    // debugging.
+    SetError(hDevice, E_NOTIMPL);
+  }
 }
 
 void APIENTRY SetRasterizerState(D3D10DDI_HDEVICE, D3D10DDI_HRASTERIZERSTATE) {
