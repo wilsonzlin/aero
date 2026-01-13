@@ -270,8 +270,6 @@ version = "0.1.0"
 dependencies = [
  "aero-cpu-decoder",
  "aero-types",
- "yaxpeax-arch",
- "yaxpeax-x86",
 ]
 
 [[package]]
@@ -2644,26 +2642,6 @@ name = "xxhash-rust"
 version = "0.8.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
-
-[[package]]
-name = "yaxpeax-arch"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f005c964432a1f9ee04598e094a3eb5f7568f6b33e89a2762d7bef6fbe8b255"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "yaxpeax-x86"
-version = "1.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9107477944697db42c41326f82d4c65b769b32512cdad1e086f36f0e0f25ff45"
-dependencies = [
- "cfg-if",
- "num-traits",
- "yaxpeax-arch",
-]
 
 [[package]]
 name = "yoke"
