@@ -31,8 +31,9 @@ impl PcInterruptController {
 impl CpuInterruptController for PcInterruptController {
     fn poll_interrupt(&mut self) -> Option<u8> {
         let mut interrupts = self.interrupts.borrow_mut();
-        let vector = interrupts.get_pending_for_cpu(self.cpu_index)?;
-        interrupts.acknowledge_for_cpu(self.cpu_index, vector);
+        let cpu = self.cpu_index as usize;
+        let vector = interrupts.get_pending_for_cpu(cpu)?;
+        interrupts.acknowledge_for_cpu(cpu, vector);
         Some(vector)
     }
 }

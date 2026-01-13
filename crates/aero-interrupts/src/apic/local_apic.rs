@@ -501,6 +501,8 @@ impl LocalApic {
     }
 
     /// Register a callback that is invoked when the guest writes the ICR low register.
+    ///
+    /// The callback receives a decoded [`Icr`] send request (xAPIC format).
     pub fn register_icr_notifier(&self, notifier: IcrNotifier) {
         self.icr_notifiers.lock().unwrap().push(notifier);
     }

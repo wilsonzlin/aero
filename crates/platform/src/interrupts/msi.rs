@@ -136,9 +136,8 @@ mod tests {
     }
 
     fn enable_lapic_svr(ints: &PlatformInterrupts) {
-        for cpu_index in 0..ints.cpu_count() {
-            let apic_id = u8::try_from(cpu_index).expect("cpu_count should fit in u8");
-            enable_lapic_svr_for_apic(ints, apic_id);
+        for cpu in 0..ints.cpu_count() {
+            ints.lapic_mmio_write_for_cpu(cpu, 0xF0, &(0x1FFu32).to_le_bytes());
         }
     }
 

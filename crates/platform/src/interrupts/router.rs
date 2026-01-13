@@ -109,6 +109,7 @@ pub struct PlatformInterrupts {
     lapic_clock: Arc<AtomicClock>,
     apic_enabled: Arc<AtomicBool>,
     pending_init: Arc<Vec<AtomicBool>>,
+    pending_sipi: Arc<Mutex<Vec<Option<u8>>>>,
 
     imcr_select: u8,
     imcr: u8,
@@ -192,7 +193,6 @@ impl PlatformInterrupts {
     /// machine configurations can construct a stable topology.
     pub fn new_with_cpu_count(cpu_count: u8) -> Self {
         let cpu_count = cpu_count.max(1);
-
         let mut isa_irq_to_gsi = [0u32; 16];
         for (idx, slot) in isa_irq_to_gsi.iter_mut().enumerate() {
             *slot = idx as u32;
@@ -224,6 +224,7 @@ impl PlatformInterrupts {
             }));
             lapics.push(lapic);
         }
+        let pending_sipi = Arc::new(Mutex::new(vec![None; cpu_count as usize]));
         let ioapic = Arc::new(Mutex::new(IoApic::with_lapics(IoApicId(0), sinks)));
 
         // Wire LAPIC EOI -> IOAPIC Remote-IRR handling.
@@ -234,21 +235,23 @@ impl PlatformInterrupts {
             }));
         }
 
-        // Register LAPIC ICR notifiers for IPI delivery.
+        // Register LAPIC ICR notifiers for IPI delivery and INIT/SIPI event queueing.
         //
         // `LocalApic` decodes a completed ICR_LOW write and notifies listeners with a decoded
         // [`Icr`]. This keeps IPI routing out of the LAPIC model itself (it cannot see other CPUs)
         // while allowing the platform interrupt fabric to emulate SMP IPI delivery.
         let lapics_for_ipi = Arc::new(lapics.clone());
         for src_apic_id in 0..cpu_count {
-            let pending_init = pending_init.clone();
+            let pending_init_for_ipi = pending_init.clone();
+            let pending_sipi_for_ipi = pending_sipi.clone();
             let lapics_for_ipi = lapics_for_ipi.clone();
             lapics[src_apic_id as usize].register_icr_notifier(Arc::new(move |icr: Icr| {
                 PlatformInterrupts::handle_icr_ipi(
                     src_apic_id,
                     icr,
                     lapics_for_ipi.as_ref(),
-                    &pending_init,
+                    &pending_init_for_ipi,
+                    &pending_sipi_for_ipi,
                 );
             }));
         }
@@ -280,6 +283,7 @@ impl PlatformInterrupts {
             lapic_clock,
             apic_enabled,
             pending_init,
+            pending_sipi,
 
             imcr_select: 0,
             imcr: 0,
@@ -291,6 +295,7 @@ impl PlatformInterrupts {
         icr: Icr,
         lapics: &[Arc<LocalApic>],
         pending_init: &Arc<Vec<AtomicBool>>,
+        pending_sipi: &Arc<Mutex<Vec<Option<u8>>>>,
     ) {
         let mut targets: Vec<Arc<LocalApic>> = Vec::new();
         match icr.destination_shorthand {
@@ -344,6 +349,15 @@ impl PlatformInterrupts {
                     lapic.reset_state(apic_id);
                 }
             }
+            DeliveryMode::Startup => {
+                let mut sipi = pending_sipi.lock().unwrap();
+                for lapic in targets {
+                    let apic_id = lapic.apic_id() as usize;
+                    if let Some(slot) = sipi.get_mut(apic_id) {
+                        *slot = Some(icr.vector);
+                    }
+                }
+            }
             _ => {
                 // Other delivery modes are currently ignored.
             }
@@ -351,33 +365,33 @@ impl PlatformInterrupts {
     }
 
     /// Like [`InterruptController::get_pending`], but scoped to a specific vCPU.
-    pub fn get_pending_for_cpu(&self, cpu_index: u8) -> Option<u8> {
+    pub fn get_pending_for_cpu(&self, cpu: usize) -> Option<u8> {
         match self.mode {
             // Legacy PIC mode only routes interrupts to the bootstrap processor (CPU0).
             PlatformInterruptMode::LegacyPic => {
-                if cpu_index != 0 {
+                if cpu != 0 {
                     return None;
                 }
                 self.pic.get_pending_vector()
             }
             PlatformInterruptMode::Apic => {
-                let lapic = self.lapics.get(cpu_index as usize)?;
+                let lapic = self.lapics.get(cpu)?;
                 lapic.get_pending_vector()
             }
         }
     }
 
     /// Like [`InterruptController::acknowledge`], but scoped to a specific vCPU.
-    pub fn acknowledge_for_cpu(&mut self, cpu_index: u8, vector: u8) {
+    pub fn acknowledge_for_cpu(&mut self, cpu: usize, vector: u8) {
         match self.mode {
             PlatformInterruptMode::LegacyPic => {
-                if cpu_index != 0 {
+                if cpu != 0 {
                     return;
                 }
                 self.pic.acknowledge(vector);
             }
             PlatformInterruptMode::Apic => {
-                let Some(lapic) = self.lapics.get(cpu_index as usize) else {
+                let Some(lapic) = self.lapics.get(cpu) else {
                     return;
                 };
                 let _ = lapic.ack(vector);
@@ -386,17 +400,17 @@ impl PlatformInterrupts {
     }
 
     /// Like [`InterruptController::eoi`], but scoped to a specific vCPU.
-    pub fn eoi_for_cpu(&mut self, cpu_index: u8, vector: u8) {
+    pub fn eoi_for_cpu(&mut self, cpu: usize, vector: u8) {
         match self.mode {
             PlatformInterruptMode::LegacyPic => {
-                if cpu_index != 0 {
+                if cpu != 0 {
                     return;
                 }
                 self.pic.eoi(vector);
             }
             PlatformInterruptMode::Apic => {
                 let _ = vector;
-                let Some(lapic) = self.lapics.get(cpu_index as usize) else {
+                let Some(lapic) = self.lapics.get(cpu) else {
                     return;
                 };
                 lapic.eoi();
@@ -608,6 +622,21 @@ impl PlatformInterrupts {
         }
     }
 
+    pub fn lapic_mmio_read_for_cpu(&self, cpu: usize, offset: u64, data: &mut [u8]) {
+        let Some(lapic) = self.lapics.get(cpu) else {
+            data.fill(0);
+            return;
+        };
+        lapic.mmio_read(offset, data);
+    }
+
+    pub fn lapic_mmio_write_for_cpu(&self, cpu: usize, offset: u64, data: &[u8]) {
+        let Some(lapic) = self.lapics.get(cpu) else {
+            return;
+        };
+        lapic.mmio_write(offset, data);
+    }
+
     pub fn lapic_mmio_read(&self, offset: u64, data: &mut [u8]) {
         self.lapic_mmio_read_for_apic(0, offset, data);
     }
@@ -631,21 +660,6 @@ impl PlatformInterrupts {
         lapic.mmio_write(offset, data);
     }
 
-    pub fn lapic_mmio_read_for_cpu(&self, cpu: usize, offset: u64, data: &mut [u8]) {
-        let Some(lapic) = self.lapics.get(cpu) else {
-            data.fill(0);
-            return;
-        };
-        lapic.mmio_read(offset, data);
-    }
-
-    pub fn lapic_mmio_write_for_cpu(&self, cpu: usize, offset: u64, data: &[u8]) {
-        let Some(lapic) = self.lapics.get(cpu) else {
-            return;
-        };
-        lapic.mmio_write(offset, data);
-    }
-
     /// Returns the LAPIC for `apic_id` if present.
     ///
     /// This returns a cloned [`Arc`] rather than exposing internal references, so callers cannot
@@ -655,6 +669,10 @@ impl PlatformInterrupts {
             .iter()
             .find(|lapic| lapic.apic_id() == apic_id)
             .cloned()
+    }
+
+    pub fn lapic_by_index(&self, cpu_index: usize) -> Option<Arc<LocalApic>> {
+        self.lapics.get(cpu_index).cloned()
     }
 
     /// Register a callback that is invoked when the guest writes to `ICR_LOW` on the given LAPIC.
@@ -669,6 +687,22 @@ impl PlatformInterrupts {
         for lapic in &self.lapics {
             lapic.poll();
         }
+    }
+
+    /// Take and clear the pending INIT-reset flag for `cpu`.
+    ///
+    /// The platform interrupt fabric marks this flag when it delivers an INIT IPI with
+    /// `level=assert`. Consumers (e.g. a VM's vCPU loop) can poll this to reset vCPU state.
+    pub fn take_pending_init(&self, cpu: usize) -> bool {
+        self.pending_init
+            .get(cpu)
+            .map(|flag| flag.swap(false, Ordering::SeqCst))
+            .unwrap_or(false)
+    }
+
+    pub fn take_pending_sipi(&self, cpu: usize) -> Option<u8> {
+        let mut pending = self.pending_sipi.lock().unwrap();
+        pending.get_mut(cpu).and_then(Option::take)
     }
 
     /// Emulates the Interrupt Mode Configuration Register (IMCR).
@@ -756,17 +790,6 @@ impl PlatformInterrupts {
         for lapic in &self.lapics {
             lapic.inject_fixed_interrupt(vector);
         }
-    }
-
-    /// Take and clear the pending INIT-reset flag for `apic_id`.
-    ///
-    /// The platform interrupt fabric marks this flag when it delivers an INIT IPI with
-    /// `level=assert`. Consumers (e.g. a VM's vCPU loop) can poll this to reset vCPU state.
-    pub fn take_pending_init(&self, apic_id: u8) -> bool {
-        self.pending_init
-            .get(apic_id as usize)
-            .map(|flag| flag.swap(false, Ordering::SeqCst))
-            .unwrap_or(false)
     }
     /// Reset a specific LAPIC's internal state back to its power-on baseline.
     ///
@@ -898,15 +921,15 @@ impl PlatformInterrupts {
 
 impl InterruptController for PlatformInterrupts {
     fn get_pending(&self) -> Option<u8> {
-        self.get_pending_for_apic(0)
+        self.get_pending_for_cpu(0)
     }
 
     fn acknowledge(&mut self, vector: u8) {
-        self.acknowledge_for_apic(0, vector);
+        self.acknowledge_for_cpu(0, vector);
     }
 
     fn eoi(&mut self, vector: u8) {
-        self.eoi_for_apic(0, vector);
+        self.eoi_for_cpu(0, vector);
     }
 }
 
@@ -1006,6 +1029,9 @@ impl IoSnapshot for PlatformInterrupts {
         for flag in self.pending_init.iter() {
             flag.store(false, Ordering::SeqCst);
         }
+
+        // Clear pending INIT/SIPI events on restore.
+        self.pending_sipi.lock().unwrap().fill(None);
 
         if let Some(buf) = r.bytes(TAG_ISA_IRQ_TO_GSI) {
             let mut d = Decoder::new(buf);
@@ -1723,5 +1749,62 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].destination, 1);
         assert_eq!(events[0].vector, 0x46);
+    }
+
+    fn lapic_write_u32_for_cpu(ints: &PlatformInterrupts, cpu: usize, offset: u64, value: u32) {
+        ints.lapic_mmio_write_for_cpu(cpu, offset, &value.to_le_bytes());
+    }
+
+    fn lapic_read_u32_for_cpu(ints: &PlatformInterrupts, cpu: usize, offset: u64) -> u32 {
+        let mut buf = [0u8; 4];
+        ints.lapic_mmio_read_for_cpu(cpu, offset, &mut buf);
+        u32::from_le_bytes(buf)
+    }
+
+    #[test]
+    fn fixed_ipi_injects_vector_into_target_lapic() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // CPU0 sends IPI vector 0x41 to CPU1.
+        lapic_write_u32_for_cpu(&ints, 0, 0x310, (1u32) << 24); // ICR high: dest=1
+        lapic_write_u32_for_cpu(&ints, 0, 0x300, 0x41); // ICR low: FIXED delivery, vector=0x41
+
+        assert_eq!(ints.get_pending_for_cpu(0), None);
+        assert_eq!(ints.get_pending_for_cpu(1), Some(0x41));
+    }
+
+    #[test]
+    fn init_ipi_records_pending_init_and_resets_destination_lapic() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // LAPICs start enabled by PlatformInterrupts (SVR[8]=1).
+        let svr_before = lapic_read_u32_for_cpu(&ints, 1, 0xF0);
+        assert_ne!(svr_before & (1 << 8), 0);
+
+        // CPU0 sends INIT (level=assert) to CPU1.
+        lapic_write_u32_for_cpu(&ints, 0, 0x310, (1u32) << 24); // dest=1
+        lapic_write_u32_for_cpu(&ints, 0, 0x300, (5u32 << 8) | (1u32 << 14)); // INIT + level=assert
+
+        assert!(ints.take_pending_init(1));
+        assert!(!ints.take_pending_init(1));
+
+        // Destination LAPIC should be reset (SVR enable bit cleared).
+        let svr_after = lapic_read_u32_for_cpu(&ints, 1, 0xF0);
+        assert_eq!(svr_after & (1 << 8), 0);
+    }
+
+    #[test]
+    fn sipi_ipi_records_startup_vector() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // CPU0 sends SIPI with vector 0x08 to CPU1.
+        lapic_write_u32_for_cpu(&ints, 0, 0x310, (1u32) << 24); // dest=1
+        lapic_write_u32_for_cpu(&ints, 0, 0x300, (6u32 << 8) | 0x08); // STARTUP + vector=0x08
+
+        assert_eq!(ints.take_pending_sipi(1), Some(0x08));
+        assert_eq!(ints.take_pending_sipi(1), None);
     }
 }
