@@ -64,6 +64,8 @@ use core::fmt;
 pub enum UsbSpeed {
     /// USB 1.1 full-speed (12Mbps).
     Full,
+    /// USB 2.0 high-speed (480Mbps).
+    High,
     /// USB 1.1 low-speed (1.5Mbps).
     Low,
     /// USB 2.0 high-speed (480Mbps).
