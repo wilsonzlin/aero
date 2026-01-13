@@ -31,6 +31,7 @@ transport:
 
 - `virtio_pci_intx_wdm.*` — WDM INTx ISR read-to-ack + DPC dispatch
 - `virtio_pci_msix_wdm.*` — WDM MSI/MSI-X message interrupt ISR + per-vector DPC dispatch
+- `virtio_pci_interrupts_wdm.*` — WDM INTx-or-MSI/MSI-X helper that selects the appropriate connect path and dispatches config/queue work in DPCs
 - `virtio_pci_contract.*` — AERO-W7-VIRTIO v1 PCI identity validation helpers
 
 ## Aero contract v1 (AERO-W7-VIRTIO)
@@ -94,8 +95,11 @@ is retained only for compatibility/testing with transitional/QEMU devices.
 - `include/virtio_pci_intx_wdm.h` + `src/virtio_pci_intx_wdm.c`
    - Shared WDM INTx ISR + DPC helper for virtio-pci devices (ISR read-to-ack, then DPC dispatch).
 - `include/virtio_pci_msix_wdm.h` + `src/virtio_pci_msix_wdm.c`
-   - Shared WDM MSI/MSI-X interrupt helper for virtio-pci modern devices (message-based interrupts via `IoConnectInterruptEx`).
-   - Provides a reusable ISR + per-vector DPC dispatch layer with a virtio-friendly vector/queue mapping policy.
+    - Shared WDM MSI/MSI-X interrupt helper for virtio-pci modern devices (message-based interrupts via `IoConnectInterruptEx`).
+    - Provides a reusable ISR + per-vector DPC dispatch layer with a virtio-friendly vector/queue mapping policy.
+- `include/virtio_pci_interrupts_wdm.h` + `src/virtio_pci_interrupts_wdm.c`
+   - Shared WDM helper that combines INTx (`virtio_pci_intx_wdm`) and message-signaled interrupts (`IoConnectInterruptEx`) under a single connect/disconnect API.
+   - Provides a caller-controlled MessageId→(IsConfig/QueueIndex) routing table for MSI/MSI-X.
 - `include/virtio_pci_contract.h` + `src/virtio_pci_contract.c`
    - Optional PCI identity validation helpers (AERO-W7-VIRTIO contract checks).
 - `include/virtio_pci_legacy.h` + `src/virtio_pci_legacy.c`

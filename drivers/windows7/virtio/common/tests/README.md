@@ -17,6 +17,8 @@ Notable targets:
   (`virtio_pci_intx_wdm.c`) using a minimal `wdk_stubs/ntddk.h`.
 - `virtio_msix_wdm_tests`: unit tests for the WDM MSI/MSI-X helper
   (`virtio_pci_msix_wdm.c`) using a minimal message-interrupt simulation in `wdk_stubs/`.
+- `virtio_interrupts_wdm_tests`: unit tests for the combined WDM INTx/MSI helper
+  (`virtio_pci_interrupts_wdm.c`).
 - `virtio_pci_modern_miniport_tests`: unit tests for the Win7 miniport-style
   virtio-pci modern transport helper (`virtio_pci_modern_miniport.c`) using a
   tiny BAR0 MMIO simulator and WDK stubs.

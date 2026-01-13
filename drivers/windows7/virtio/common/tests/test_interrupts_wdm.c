@@ -26,6 +26,8 @@ typedef struct interrupts_test_ctx {
     int config_calls;
     int queue_calls;
     int dpc_calls;
+    int dpc_config_calls;
+    int dpc_queue_calls;
     ULONG last_message_id;
     USHORT last_queue_index;
     BOOLEAN last_is_config;
@@ -59,6 +61,11 @@ static VOID evt_dpc(
     assert(ctx != NULL);
     assert(Interrupts == ctx->expected);
     ctx->dpc_calls++;
+    if (IsConfig) {
+        ctx->dpc_config_calls++;
+    } else {
+        ctx->dpc_queue_calls++;
+    }
     ctx->last_message_id = MessageId;
     ctx->last_is_config = IsConfig;
     ctx->last_queue_index = QueueIndex;
@@ -71,6 +78,19 @@ static CM_PARTIAL_RESOURCE_DESCRIPTOR make_msg_desc(_In_ USHORT MessageCount)
     desc.Type = CmResourceTypeInterrupt;
     desc.Flags = CM_RESOURCE_INTERRUPT_MESSAGE;
     desc.u.MessageInterrupt.MessageCount = MessageCount;
+    return desc;
+}
+
+static CM_PARTIAL_RESOURCE_DESCRIPTOR make_int_desc(void)
+{
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    RtlZeroMemory(&desc, sizeof(desc));
+    desc.Type = CmResourceTypeInterrupt;
+    desc.ShareDisposition = 3; /* shared */
+    desc.Flags = 0;
+    desc.u.Interrupt.Vector = 0x10;
+    desc.u.Interrupt.Level = 0x5;
+    desc.u.Interrupt.Affinity = 0x1;
     return desc;
 }
 
@@ -110,6 +130,63 @@ static void test_connect_validation(void)
     assert(WdkTestGetIoDisconnectInterruptCount() == 0);
     assert(WdkTestGetIoConnectInterruptExCount() == 0);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
+}
+
+static void test_intx_connect_and_dispatch(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    interrupts_test_ctx_t ctx;
+    NTSTATUS status;
+    volatile UCHAR isr_reg = 0;
+    BOOLEAN claimed;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioPciWdmInterruptConnect(&dev, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intr);
+    assert(status == STATUS_SUCCESS);
+    assert(intr.Mode == VirtioPciWdmInterruptModeIntx);
+    ctx.expected = &intr;
+
+    /* Spurious interrupt: status byte contains 0. */
+    isr_reg = 0;
+    claimed = WdkTestTriggerInterrupt(intr.u.Intx.Intx.InterruptObject);
+    assert(claimed == FALSE);
+    assert(WdkTestRunQueuedDpc(&intr.u.Intx.Intx.Dpc) == FALSE);
+    assert(ctx.config_calls == 0);
+    assert(ctx.queue_calls == 0);
+
+    /* Queue only. */
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    claimed = WdkTestTriggerInterrupt(intr.u.Intx.Intx.InterruptObject);
+    assert(claimed != FALSE);
+    assert(isr_reg == 0); /* ACK via read-to-clear */
+    assert(WdkTestRunQueuedDpc(&intr.u.Intx.Intx.Dpc) != FALSE);
+    assert(ctx.queue_calls == 1);
+    assert(ctx.last_queue_index == VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN);
+    assert(ctx.config_calls == 0);
+
+    /* Config only. */
+    isr_reg = VIRTIO_PCI_ISR_CONFIG_INTERRUPT;
+    claimed = WdkTestTriggerInterrupt(intr.u.Intx.Intx.InterruptObject);
+    assert(claimed != FALSE);
+    assert(isr_reg == 0);
+    assert(WdkTestRunQueuedDpc(&intr.u.Intx.Intx.Dpc) != FALSE);
+    assert(ctx.config_calls == 1);
+    assert(ctx.queue_calls == 1);
+
+    /* Both bits. */
+    isr_reg = (UCHAR)(VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT);
+    claimed = WdkTestTriggerInterrupt(intr.u.Intx.Intx.InterruptObject);
+    assert(claimed != FALSE);
+    assert(isr_reg == 0);
+    assert(WdkTestRunQueuedDpc(&intr.u.Intx.Intx.Dpc) != FALSE);
+    assert(ctx.config_calls == 2);
+    assert(ctx.queue_calls == 2);
+
+    VirtioPciWdmInterruptDisconnect(&intr);
 }
 
 static void test_message_connect_disconnect_calls_wdk_routines(void)
@@ -235,6 +312,8 @@ static void test_message_isr_dpc_routing_and_evt_dpc_override(void)
     assert(ctx.last_message_id == 1);
     assert(ctx.last_is_config == FALSE);
     assert(ctx.last_queue_index == 7);
+    assert(ctx.dpc_queue_calls == 1);
+    assert(ctx.dpc_config_calls == 0);
     assert(ctx.config_calls == 0);
     assert(ctx.queue_calls == 0);
 
@@ -266,6 +345,37 @@ static void test_connect_failure_zeroes_state(void)
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
 
     WdkTestSetIoConnectInterruptExStatus(STATUS_SUCCESS);
+}
+
+static void test_intx_evt_dpc_override(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    interrupts_test_ctx_t ctx;
+    NTSTATUS status;
+    volatile UCHAR isr_reg = 0;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioPciWdmInterruptConnect(&dev, &desc, &isr_reg, evt_config, evt_queue, evt_dpc, &ctx, &intr);
+    assert(status == STATUS_SUCCESS);
+    ctx.expected = &intr;
+
+    isr_reg = (UCHAR)(VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT);
+    assert(WdkTestTriggerInterrupt(intr.u.Intx.Intx.InterruptObject) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intr.u.Intx.Intx.Dpc) != FALSE);
+
+    /* INTx adapter splits config + queue into two dispatch calls. */
+    assert(ctx.dpc_calls == 2);
+    assert(ctx.dpc_config_calls == 1);
+    assert(ctx.dpc_queue_calls == 1);
+    assert(ctx.last_message_id == VIRTIO_PCI_WDM_MESSAGE_ID_NONE);
+    assert(ctx.config_calls == 0);
+    assert(ctx.queue_calls == 0);
+
+    VirtioPciWdmInterruptDisconnect(&intr);
 }
 
 static void test_disconnect_waits_for_inflight_dpc(void)
@@ -314,14 +424,15 @@ static void test_disconnect_cancels_queued_dpc(void)
 int main(void)
 {
     test_connect_validation();
+    test_intx_connect_and_dispatch();
     test_message_connect_disconnect_calls_wdk_routines();
     test_message_isr_does_not_read_isr_status_byte();
     test_message_isr_dpc_routing_and_evt_dpc_override();
     test_connect_failure_zeroes_state();
+    test_intx_evt_dpc_override();
     test_disconnect_waits_for_inflight_dpc();
     test_disconnect_cancels_queued_dpc();
 
     printf("virtio_interrupts_wdm_tests: PASS\n");
     return 0;
 }
-
