@@ -59,6 +59,13 @@ Minimum supported commands:
   
   Useful for diagnosing mode/pitch mismatches (e.g. scanline bounds issues or a blank display even though fences advance).
 
+- `aerogpu_dbgctl --dump-scanout-bmp C:\scanout.bmp`  
+  Dumps the current scanout 0 framebuffer contents to an **uncompressed 32bpp BMP** using:
+  - `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` to discover width/height/format/pitch/fb_gpa
+  - `AEROGPU_ESCAPE_OP_READ_GPA` to read framebuffer bytes from guest physical memory
+  
+  Useful for diagnosing pitch/format/fb_gpa bugs **without screen capture / RDP**.
+
 - `aerogpu_dbgctl --query-cursor` *(alias: `--dump-cursor`)*  
   Dumps cursor MMIO state (`CURSOR_*` registers), including:
   - enable, position, hot spot
@@ -138,11 +145,12 @@ aerogpu_dbgctl --query-umd-private
 aerogpu_dbgctl --query-fence
 aerogpu_dbgctl --watch-fence --samples 120 --interval-ms 250 --timeout-ms 30000
 aerogpu_dbgctl --query-scanout
+aerogpu_dbgctl --dump-scanout-bmp C:\scanout.bmp
 aerogpu_dbgctl --query-cursor
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --watch-ring --ring-id 0 --samples 200 --interval-ms 50
 aerogpu_dbgctl --dump-createalloc
-aerogpu_dbgctl --dump-createalloc --csv C:\\createalloc.csv
+aerogpu_dbgctl --dump-createalloc --csv C:\createalloc.csv
 aerogpu_dbgctl --dump-vblank
 aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
 aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
@@ -207,11 +215,13 @@ The AeroGPU KMD is expected to implement `DxgkDdiEscape` handling for these pack
 Escape ops used:
 
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (fallback: `AEROGPU_ESCAPE_OP_QUERY_DEVICE`) → `--query-version` / `--query-device`
-- `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
+- `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`, `--watch-fence`
+- `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` → `--query-scanout`, `--dump-scanout-bmp`
+- `AEROGPU_ESCAPE_OP_READ_GPA` → `--dump-scanout-bmp`
+- `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`
 - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring` / `--watch-ring`
 - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` → `--dump-createalloc`
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
-- `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`
 - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` → `--map-shared-handle`
 - `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
 
