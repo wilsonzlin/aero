@@ -1680,6 +1680,26 @@ static D3D11DDI_ADAPTERFUNCS MakeStubAdapterFuncs11() {
   return funcs;
 }
 
+static void LogTextureLockPitchMismatchOnce(const char* context,
+                                            uint32_t expected_pitch,
+                                            uint32_t actual_pitch) {
+  static std::once_flag once;
+  std::call_once(once, [context, expected_pitch, actual_pitch] {
+    char buf[256] = {};
+    snprintf(buf,
+             sizeof(buf),
+             "aerogpu-d3d11: %s: texture LockCb pitch mismatch (expected=%u actual=%u); refusing WDDM mapping\n",
+             context ? context : "unknown",
+             static_cast<unsigned>(expected_pitch),
+             static_cast<unsigned>(actual_pitch));
+    OutputDebugStringA(buf);
+    AEROGPU_D3D10_11_LOG("%s: texture LockCb pitch mismatch (expected=%u actual=%u)",
+                         context ? context : "unknown",
+                         static_cast<unsigned>(expected_pitch),
+                         static_cast<unsigned>(actual_pitch));
+  });
+}
+
 static bool UnmapLocked(Device* dev, Resource* res) {
   if (!dev || !res) {
     return false;
@@ -1712,11 +1732,21 @@ static bool UnmapLocked(Device* dev, Resource* res) {
               const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
               const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, sub_layout.width);
               const uint32_t rows = sub_layout.rows_in_layout;
-              const uint32_t src_pitch = sub_layout.row_pitch_bytes;
+              uint32_t src_pitch = sub_layout.row_pitch_bytes;
+              if (sub_layout.mip_level == 0 && res->mapped_wddm_pitch) {
+                src_pitch = res->mapped_wddm_pitch;
+              }
               const uint32_t dst_pitch = sub_layout.row_pitch_bytes;
 
+              const uint64_t src_needed =
+                  (rows == 0) ? 0 : (static_cast<uint64_t>(rows - 1) * static_cast<uint64_t>(src_pitch) + row_bytes);
+              const uint64_t dst_needed =
+                  (rows == 0) ? 0 : (static_cast<uint64_t>(rows - 1) * static_cast<uint64_t>(dst_pitch) + row_bytes);
+
               if (row_bytes != 0 && rows != 0 && src_pitch != 0 && dst_pitch != 0 &&
-                  src_pitch >= row_bytes && dst_pitch >= row_bytes) {
+                  src_pitch >= row_bytes && dst_pitch >= row_bytes &&
+                  src_needed <= size && dst_needed <= size &&
+                  size <= static_cast<uint64_t>(remaining)) {
                 const uint8_t* src = src_base + static_cast<size_t>(off);
                 uint8_t* dst = res->storage.data() + static_cast<size_t>(off);
                 for (uint32_t y = 0; y < rows; y++) {
@@ -7055,6 +7085,12 @@ static HRESULT MapLocked11(Device* dev,
       mapped_size = sub_layout.size_bytes;
     }
 
+    const uint64_t storage_size = static_cast<uint64_t>(res->storage.size());
+    if (mapped_off > storage_size || mapped_size > storage_size - mapped_off) {
+      SetError(dev, E_FAIL);
+      return E_FAIL;
+    }
+
     pMapped->pData = (res->storage.empty() || mapped_off >= res->storage.size())
                          ? nullptr
                          : (res->storage.data() + static_cast<size_t>(mapped_off));
@@ -7212,6 +7248,43 @@ static HRESULT MapLocked11(Device* dev,
     return E_FAIL;
   }
 
+  if (res->kind == ResourceKind::Texture2D) {
+    uint32_t lock_pitch = 0;
+    __if_exists(D3DDDICB_LOCK::Pitch) {
+      lock_pitch = lock.Pitch;
+    }
+    if (lock_pitch) {
+      uint32_t expected_pitch = res->row_pitch_bytes;
+      if (!res->tex2d_subresources.empty()) {
+        expected_pitch = res->tex2d_subresources[0].row_pitch_bytes;
+      }
+      if (expected_pitch && lock_pitch != expected_pitch) {
+        LogTextureLockPitchMismatchOnce("MapLocked11", expected_pitch, lock_pitch);
+
+        D3DDDICB_UNLOCK unlock = {};
+        unlock.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
+        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+          unlock.SubresourceIndex = lock_subresource;
+        }
+        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+          unlock.SubResourceIndex = lock_subresource;
+        }
+        if (lock_path == LockCbPath::Wddm) {
+          (void)CallCbMaybeHandle(cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+        } else {
+          (void)CallCbMaybeHandle(cb_device->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+        }
+
+        if (allow_storage_map) {
+          return map_storage();
+        }
+
+        SetError(dev, E_FAIL);
+        return E_FAIL;
+      }
+    }
+  }
+
   res->mapped_wddm_ptr = lock.pData;
   res->mapped_wddm_allocation = alloc_handle;
   __if_exists(D3DDDICB_LOCK::Pitch) {
@@ -7226,6 +7299,26 @@ static HRESULT MapLocked11(Device* dev,
   const uint64_t mapped_size = (res->kind == ResourceKind::Texture2D)
                                    ? sub_layout.size_bytes
                                    : (res->kind == ResourceKind::Buffer ? res->size_bytes : res->storage.size());
+  if (res->kind == ResourceKind::Texture2D) {
+    const uint64_t storage_size = static_cast<uint64_t>(res->storage.size());
+    if (mapped_off > storage_size || mapped_size > storage_size - mapped_off) {
+      D3DDDICB_UNLOCK unlock = {};
+      unlock.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock.SubresourceIndex = lock_subresource;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock.SubResourceIndex = lock_subresource;
+      }
+      if (lock_path == LockCbPath::Wddm) {
+        (void)CallCbMaybeHandle(cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+      } else {
+        (void)CallCbMaybeHandle(cb_device->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+      }
+      SetError(dev, E_FAIL);
+      return E_FAIL;
+    }
+  }
   uint8_t* mapped_ptr = static_cast<uint8_t*>(lock.pData);
   if (res->kind == ResourceKind::Texture2D && mapped_off != 0) {
     if (mapped_off > static_cast<uint64_t>(SIZE_MAX)) {
@@ -7281,13 +7374,18 @@ static HRESULT MapLocked11(Device* dev,
 
   pMapped->pData = mapped_ptr;
   if (res->kind == ResourceKind::Texture2D) {
-    pMapped->RowPitch = sub_layout.row_pitch_bytes;
-    pMapped->DepthPitch = static_cast<UINT>(sub_layout.size_bytes);
-  } else if (res->kind == ResourceKind::Buffer) {
-    // Undefined for buffers; keep deterministic zeroes for spec-friendly behavior.
-    pMapped->RowPitch = 0;
-    pMapped->DepthPitch = 0;
+    uint32_t row_pitch = sub_layout.row_pitch_bytes;
+    if (sub_layout.mip_level == 0 && res->mapped_wddm_pitch) {
+      row_pitch = res->mapped_wddm_pitch;
+    }
+    pMapped->RowPitch = row_pitch;
+    if (sub_layout.mip_level == 0 && res->mapped_wddm_slice_pitch) {
+      pMapped->DepthPitch = res->mapped_wddm_slice_pitch;
+    } else {
+      pMapped->DepthPitch = static_cast<UINT>(sub_layout.size_bytes);
+    }
   } else {
+    // Undefined for buffers/other resources; keep deterministic zeroes for spec-friendly behavior.
     pMapped->RowPitch = 0;
     pMapped->DepthPitch = 0;
   }
@@ -7829,6 +7927,89 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
+    D3DDDICB_LOCK lock_args = {};
+    uint8_t* wddm_base = nullptr;
+    uint32_t wddm_pitch = dst_sub_layout.row_pitch_bytes;
+    bool have_wddm_lock = false;
+
+    if (is_guest_backed) {
+      lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
+      __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+        lock_args.SubresourceIndex = 0;
+      }
+      __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+        lock_args.SubResourceIndex = 0;
+      }
+      InitLockForWrite(&lock_args);
+
+      HRESULT hr = lock_for_write(&lock_args);
+      if (FAILED(hr)) {
+        SetError(dev, hr);
+        return;
+      }
+      if (!lock_args.pData) {
+        D3DDDICB_UNLOCK unlock_args = {};
+        unlock_args.hAllocation = lock_args.hAllocation;
+        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+          unlock_args.SubresourceIndex = 0;
+        }
+        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+          unlock_args.SubResourceIndex = 0;
+        }
+        (void)unlock(&unlock_args);
+        SetError(dev, E_FAIL);
+        return;
+      }
+      have_wddm_lock = true;
+
+      uint32_t lock_pitch = 0;
+      __if_exists(D3DDDICB_LOCK::Pitch) {
+        lock_pitch = lock_args.Pitch;
+      }
+      if (lock_pitch) {
+        uint32_t expected_pitch = res->row_pitch_bytes;
+        if (!res->tex2d_subresources.empty()) {
+          expected_pitch = res->tex2d_subresources[0].row_pitch_bytes;
+        }
+        if (expected_pitch && lock_pitch != expected_pitch) {
+          LogTextureLockPitchMismatchOnce("UpdateSubresourceUP11", expected_pitch, lock_pitch);
+
+          D3DDDICB_UNLOCK unlock_args = {};
+          unlock_args.hAllocation = lock_args.hAllocation;
+          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+            unlock_args.SubresourceIndex = 0;
+          }
+          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+            unlock_args.SubResourceIndex = 0;
+          }
+          (void)unlock(&unlock_args);
+
+          SetError(dev, E_FAIL);
+          return;
+        }
+      }
+
+      if (dst_sub_layout.mip_level == 0 && lock_pitch) {
+        wddm_pitch = lock_pitch;
+      }
+
+      if (dst_sub_layout.offset_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+        D3DDDICB_UNLOCK unlock_args = {};
+        unlock_args.hAllocation = lock_args.hAllocation;
+        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+          unlock_args.SubresourceIndex = 0;
+        }
+        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+          unlock_args.SubResourceIndex = 0;
+        }
+        (void)unlock(&unlock_args);
+        SetError(dev, E_FAIL);
+        return;
+      }
+      wddm_base =
+          static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(dst_sub_layout.offset_bytes);
+    }
+
     for (uint32_t y = 0; y < copy_height_blocks; y++) {
       const size_t dst_off =
           static_cast<size_t>(dst_sub_layout.offset_bytes) +
@@ -7836,6 +8017,17 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
           static_cast<size_t>(block_left) * layout.bytes_per_block;
       const size_t src_off = static_cast<size_t>(y) * pitch;
       if (dst_off + row_bytes > res->storage.size()) {
+        if (have_wddm_lock) {
+          D3DDDICB_UNLOCK unlock_args = {};
+          unlock_args.hAllocation = lock_args.hAllocation;
+          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+            unlock_args.SubresourceIndex = 0;
+          }
+          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+            unlock_args.SubResourceIndex = 0;
+          }
+          (void)unlock(&unlock_args);
+        }
         SetError(dev, E_FAIL);
         return;
       }
@@ -7853,44 +8045,18 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
-    D3DDDICB_LOCK lock_args = {};
-    lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
-    __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
-      lock_args.SubresourceIndex = 0;
-    }
-    __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
-      lock_args.SubResourceIndex = 0;
-    }
-    InitLockForWrite(&lock_args);
-
-    HRESULT hr = lock_for_write(&lock_args);
-    if (FAILED(hr)) {
-      SetError(dev, hr);
-      return;
-    }
-    if (!lock_args.pData) {
-      D3DDDICB_UNLOCK unlock_args = {};
-      unlock_args.hAllocation = lock_args.hAllocation;
-      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-        unlock_args.SubresourceIndex = 0;
-      }
-      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-        unlock_args.SubResourceIndex = 0;
-      }
-      (void)unlock(&unlock_args);
+    if (!have_wddm_lock || !wddm_base) {
       SetError(dev, E_FAIL);
       return;
     }
 
-    const uint32_t dst_pitch = dst_sub_layout.row_pitch_bytes;
-    uint8_t* dst_base = static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(dst_sub_layout.offset_bytes);
     for (uint32_t y = 0; y < copy_height_blocks; y++) {
       const size_t dst_off =
-          static_cast<size_t>(block_top + y) * dst_pitch + static_cast<size_t>(block_left) * layout.bytes_per_block;
+          static_cast<size_t>(block_top + y) * wddm_pitch + static_cast<size_t>(block_left) * layout.bytes_per_block;
       const size_t src_off = static_cast<size_t>(y) * pitch;
-      std::memcpy(dst_base + dst_off, src_bytes + src_off, row_bytes);
-      if (full_row_update && dst_pitch > row_bytes) {
-        std::memset(dst_base + dst_off + row_bytes, 0, dst_pitch - row_bytes);
+      std::memcpy(wddm_base + dst_off, src_bytes + src_off, row_bytes);
+      if (full_row_update && wddm_pitch > row_bytes) {
+        std::memset(wddm_base + dst_off + row_bytes, 0, wddm_pitch - row_bytes);
       }
     }
 
@@ -7902,16 +8068,13 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
     __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
       unlock_args.SubResourceIndex = 0;
     }
-    hr = unlock(&unlock_args);
+    HRESULT hr = unlock(&unlock_args);
     if (FAILED(hr)) {
       SetError(dev, hr);
       return;
     }
 
-    EmitDirtyRangeLocked(dev,
-                         res,
-                         dst_sub_layout.offset_bytes,
-                         dst_sub_layout.size_bytes);
+    EmitDirtyRangeLocked(dev, res, dst_sub_layout.offset_bytes, dst_sub_layout.size_bytes);
     return;
   }
 
