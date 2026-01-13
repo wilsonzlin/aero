@@ -2536,12 +2536,12 @@ fn emit_instructions(
                 // LOD selection (typically base LOD). Using LOD 0 is a reasonable approximation and
                 // keeps the generated WGSL valid.
                 let expr = match ctx.stage {
-                    ShaderStage::Vertex | ShaderStage::Compute => format!(
-                        "textureSampleLevel(t{}, s{}, ({coord}).xy, 0.0)",
+                    ShaderStage::Pixel => format!(
+                        "textureSample(t{}, s{}, ({coord}).xy)",
                         texture.slot, sampler.slot
                     ),
                     _ => format!(
-                        "textureSample(t{}, s{}, ({coord}).xy)",
+                        "textureSampleLevel(t{}, s{}, ({coord}).xy, 0.0)",
                         texture.slot, sampler.slot
                     ),
                 };
@@ -3244,8 +3244,7 @@ mod tests {
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
         let signatures = ShaderSignatures::default();
 
-        let translated =
-            translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+        let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
 
         assert_wgsl_validates(&translated.wgsl);
         assert!(translated.wgsl.contains("@compute"));
@@ -3482,14 +3481,15 @@ mod tests {
 
         let mut dxbc_bytes = Vec::new();
         dxbc_bytes.extend_from_slice(b"DXBC");
-        dxbc_bytes.extend_from_slice(&[0u8; 16]);
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes());
-        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes());
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes());
+        dxbc_bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
+        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved
+        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
+        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
         assert_eq!(dxbc_bytes.len(), 32);
 
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
         let signatures = ShaderSignatures::default();
+
         let translated =
             translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
 
@@ -3497,6 +3497,48 @@ mod tests {
         assert!(translated
             .wgsl
             .contains("@compute @workgroup_size(64, 2, 1)"));
+    }
+
+    #[test]
+    fn compute_sample_uses_texture_sample_level() {
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+            instructions: vec![
+                Sm4Inst::Sample {
+                    dst: dummy_dst(),
+                    coord: dummy_coord(),
+                    texture: crate::sm4_ir::TextureRef { slot: 0 },
+                    sampler: crate::sm4_ir::SamplerRef { slot: 0 },
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let mut dxbc_bytes = Vec::new();
+        dxbc_bytes.extend_from_slice(b"DXBC");
+        dxbc_bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
+        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved
+        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
+        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
+        assert_eq!(dxbc_bytes.len(), 32);
+
+        let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+        let signatures = ShaderSignatures::default();
+
+        let translated =
+            translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(translated
+            .wgsl
+            .contains("textureSampleLevel("), "{}", translated.wgsl);
+        assert!(
+            !translated.wgsl.contains("textureSample("),
+            "{}",
+            translated.wgsl
+        );
     }
 
     #[test]
