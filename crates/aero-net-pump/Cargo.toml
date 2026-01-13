@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 aero-net-backend = { path = "../aero-net-backend" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
+aero-virtio = { path = "../aero-virtio", default-features = false }
 memory = { path = "../memory" }
 
 [dev-dependencies]

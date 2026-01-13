@@ -472,6 +472,7 @@ dependencies = [
  "aero-net-backend",
  "aero-net-e1000",
  "aero-net-stack",
+ "aero-virtio",
  "memory",
 ]
 

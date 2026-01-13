@@ -39,6 +39,9 @@
 
 use aero_net_backend::NetworkBackend;
 use aero_net_e1000::E1000Device;
+use aero_virtio::devices::net::VirtioNet;
+use aero_virtio::memory::GuestMemory as VirtioGuestMemory;
+use aero_virtio::pci::VirtioPciDevice;
 use memory::MemoryBus;
 
 /// Default frame budget for each direction per [`E1000Pump::poll`] call.
@@ -295,6 +298,141 @@ impl<B: NetworkBackend> E1000Pump<B> {
     pub fn set_max_rx_frames_per_poll(&mut self, value: usize) {
         self.max_rx_frames_per_poll = value;
     }
+}
+
+/// Virtio-net backend adapter that forwards frames to an optional host [`NetworkBackend`] while
+/// enforcing a per-tick receive budget.
+///
+/// Without this, a backend that always has frames available could cause unbounded work in a single
+/// "tick" because `VirtioNet` can poll the backend repeatedly while flushing RX, and the virtio-pci
+/// transport may invoke RX flushing multiple times per tick (`process_notified_queues*` and
+/// `poll*`).
+#[derive(Default)]
+pub struct VirtioNetBackendAdapter {
+    backend: Option<Box<dyn NetworkBackend>>,
+    rx_budget: usize,
+}
+
+impl VirtioNetBackendAdapter {
+    pub fn new(backend: Option<Box<dyn NetworkBackend>>) -> Self {
+        Self {
+            backend,
+            rx_budget: 0,
+        }
+    }
+
+    pub fn set_backend(&mut self, backend: Option<Box<dyn NetworkBackend>>) {
+        self.backend = backend;
+    }
+
+    pub fn take_backend(&mut self) -> Option<Box<dyn NetworkBackend>> {
+        self.backend.take()
+    }
+
+    pub fn set_rx_budget(&mut self, budget: usize) {
+        self.rx_budget = budget;
+    }
+}
+
+impl NetworkBackend for VirtioNetBackendAdapter {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        if let Some(backend) = self.backend.as_mut() {
+            backend.transmit(frame);
+        }
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        if self.rx_budget == 0 {
+            return None;
+        }
+        let frame = self
+            .backend
+            .as_mut()
+            .and_then(|backend| backend.poll_receive());
+        if frame.is_some() {
+            self.rx_budget = self.rx_budget.saturating_sub(1);
+        }
+        frame
+    }
+
+    fn l2_ring_stats(&self) -> Option<aero_net_backend::L2TunnelRingBackendStats> {
+        self.backend
+            .as_ref()
+            .and_then(|backend| backend.l2_ring_stats())
+    }
+}
+
+/// Configuration-only pump helper for modern virtio-net devices (`VirtioPciDevice` + `VirtioNet`)
+/// that are owned by the integration layer.
+///
+/// This matches the "tick" style used by emulator main loops: the pump stores budgets and
+/// `tick()` is called once per emulation slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VirtioNetTickPump {
+    /// Upper bound on the number of descriptor chains consumed from **each** virtqueue's avail ring
+    /// per tick.
+    pub max_chains_per_queue_per_tick: usize,
+    /// Upper bound on the number of backend RX frames (`poll_receive()` calls) permitted per tick.
+    ///
+    /// This is enforced by resetting [`VirtioNetBackendAdapter::rx_budget`] at the start of each
+    /// tick.
+    pub max_rx_frames_per_tick: usize,
+}
+
+impl Default for VirtioNetTickPump {
+    fn default() -> Self {
+        Self {
+            max_chains_per_queue_per_tick: DEFAULT_MAX_FRAMES_PER_POLL,
+            max_rx_frames_per_tick: DEFAULT_MAX_FRAMES_PER_POLL,
+        }
+    }
+}
+
+impl VirtioNetTickPump {
+    pub fn new(max_chains_per_queue_per_tick: usize, max_rx_frames_per_tick: usize) -> Self {
+        Self {
+            max_chains_per_queue_per_tick,
+            max_rx_frames_per_tick,
+        }
+    }
+
+    pub fn tick(&self, virtio: &mut VirtioPciDevice, mem: &mut dyn VirtioGuestMemory) {
+        tick_virtio_net(
+            virtio,
+            mem,
+            self.max_chains_per_queue_per_tick,
+            self.max_rx_frames_per_tick,
+        );
+    }
+}
+
+/// Pump a modern virtio-net PCI device once in a deterministic, bounded way.
+///
+/// Ordering is deterministic and mirrors the canonical machine (`aero-machine`):
+/// 1) Reset the per-tick backend RX budget via [`VirtioNetBackendAdapter::set_rx_budget`].
+/// 2) Call [`VirtioPciDevice::process_notified_queues_bounded`] to consume notified/pending virtqueue
+///    avail entries, clamped to `max_chains_per_queue_per_tick` per queue.
+/// 3) Call [`VirtioPciDevice::poll_bounded`] with a chain budget of `0` so device-driven work (e.g.
+///    virtio-net RX flush) runs once per queue without consuming additional avail entries.
+///
+/// Note: [`VirtioPciDevice`] itself gates guest-memory DMA on PCI COMMAND.BME (bus master enable).
+/// Callers are expected to keep the transport's PCI command register synchronized with their
+/// canonical PCI config space via [`VirtioPciDevice::set_pci_command`].
+pub fn tick_virtio_net(
+    virtio: &mut VirtioPciDevice,
+    mem: &mut dyn VirtioGuestMemory,
+    max_chains_per_queue_per_tick: usize,
+    max_rx_frames_per_tick: usize,
+) {
+    // Reset the per-tick backend RX budget so virtio-net cannot drain the backend indefinitely.
+    if let Some(net) = virtio.device_mut::<VirtioNet<VirtioNetBackendAdapter>>() {
+        net.backend_mut().set_rx_budget(max_rx_frames_per_tick);
+    }
+
+    virtio.process_notified_queues_bounded(mem, max_chains_per_queue_per_tick);
+    // Poll device-driven work (e.g. virtio-net RX) without consuming additional avail entries beyond
+    // the per-queue budget above.
+    virtio.poll_bounded(mem, 0);
 }
 
 #[cfg(test)]
@@ -1839,5 +1977,270 @@ mod tests {
             backend.stack().is_ip_assigned(),
             "expected backend stack to mark IP assigned after DHCP ACK"
         );
+    }
+}
+
+#[cfg(test)]
+mod virtio_net_tick_tests {
+    use super::*;
+
+    use aero_virtio::devices::net_offload::VirtioNetHdr;
+    use aero_virtio::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
+    use aero_virtio::pci::InterruptLog;
+    use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
+
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn write_desc(
+        mem: &mut GuestRam,
+        table: u64,
+        index: u16,
+        addr: u64,
+        len: u32,
+        flags: u16,
+        next: u16,
+    ) {
+        let base = table + u64::from(index) * 16;
+        write_u64_le(mem, base, addr).unwrap();
+        write_u32_le(mem, base + 8, len).unwrap();
+        write_u16_le(mem, base + 12, flags).unwrap();
+        write_u16_le(mem, base + 14, next).unwrap();
+    }
+
+    #[derive(Debug, Default)]
+    struct BackendState {
+        tx_frames: Vec<Vec<u8>>,
+        rx_polls: usize,
+    }
+
+    #[derive(Clone)]
+    struct CountingBackend {
+        state: Rc<RefCell<BackendState>>,
+        rx_frame: Vec<u8>,
+    }
+
+    impl aero_net_backend::NetworkBackend for CountingBackend {
+        fn transmit(&mut self, frame: Vec<u8>) {
+            self.state.borrow_mut().tx_frames.push(frame);
+        }
+
+        fn poll_receive(&mut self) -> Option<Vec<u8>> {
+            let mut state = self.state.borrow_mut();
+            state.rx_polls += 1;
+            Some(self.rx_frame.clone())
+        }
+    }
+
+    #[test]
+    fn tick_virtio_net_binds_tx_chains_per_queue() {
+        let state = Rc::new(RefCell::new(BackendState::default()));
+        let backend = CountingBackend {
+            state: state.clone(),
+            rx_frame: vec![0x5a; 14],
+        };
+
+        let net = VirtioNet::new(
+            VirtioNetBackendAdapter::new(Some(Box::new(backend))),
+            [0x02, 0x00, 0x00, 0x00, 0x00, 0x01],
+        );
+        let mut dev = VirtioPciDevice::new(Box::new(net), Box::new(InterruptLog::default()));
+
+        // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA).
+        dev.set_pci_command(0x0006);
+
+        let mut mem = GuestRam::new(0x20000);
+
+        // Configure TX queue 1.
+        let tx_desc: u64 = 0x4000;
+        let tx_avail: u64 = 0x5000;
+        let tx_used: u64 = 0x6000;
+        dev.bar0_write(0x16, &1u16.to_le_bytes()); // queue_select
+        dev.bar0_write(0x20, &tx_desc.to_le_bytes());
+        dev.bar0_write(0x28, &tx_avail.to_le_bytes());
+        dev.bar0_write(0x30, &tx_used.to_le_bytes());
+        dev.bar0_write(0x1c, &1u16.to_le_bytes()); // queue_enable
+
+        // Three TX descriptor chains: header + payload.
+        let hdr = [0u8; VirtioNetHdr::BASE_LEN];
+        let payload0 = b"\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\x08\x00";
+        let payload1 = b"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x08\x00";
+        let payload2 = b"\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x08\x00";
+        let hdr_addr0 = 0x7000;
+        let hdr_addr1 = 0x7100;
+        let hdr_addr2 = 0x7200;
+        let payload_addr0 = 0x7300;
+        let payload_addr1 = 0x7400;
+        let payload_addr2 = 0x7500;
+        mem.write(hdr_addr0, &hdr).unwrap();
+        mem.write(hdr_addr1, &hdr).unwrap();
+        mem.write(hdr_addr2, &hdr).unwrap();
+        mem.write(payload_addr0, payload0).unwrap();
+        mem.write(payload_addr1, payload1).unwrap();
+        mem.write(payload_addr2, payload2).unwrap();
+
+        // Heads: 0, 2, 4.
+        write_desc(
+            &mut mem,
+            tx_desc,
+            0,
+            hdr_addr0,
+            hdr.len() as u32,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            tx_desc,
+            1,
+            payload_addr0,
+            payload0.len() as u32,
+            0,
+            0,
+        );
+        write_desc(
+            &mut mem,
+            tx_desc,
+            2,
+            hdr_addr1,
+            hdr.len() as u32,
+            VIRTQ_DESC_F_NEXT,
+            3,
+        );
+        write_desc(
+            &mut mem,
+            tx_desc,
+            3,
+            payload_addr1,
+            payload1.len() as u32,
+            0,
+            0,
+        );
+        write_desc(
+            &mut mem,
+            tx_desc,
+            4,
+            hdr_addr2,
+            hdr.len() as u32,
+            VIRTQ_DESC_F_NEXT,
+            5,
+        );
+        write_desc(
+            &mut mem,
+            tx_desc,
+            5,
+            payload_addr2,
+            payload2.len() as u32,
+            0,
+            0,
+        );
+
+        write_u16_le(&mut mem, tx_avail, 0).unwrap(); // flags
+        write_u16_le(&mut mem, tx_avail + 2, 3).unwrap(); // idx
+        write_u16_le(&mut mem, tx_avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, tx_avail + 6, 2).unwrap();
+        write_u16_le(&mut mem, tx_avail + 8, 4).unwrap();
+        write_u16_le(&mut mem, tx_used, 0).unwrap(); // flags
+        write_u16_le(&mut mem, tx_used + 2, 0).unwrap(); // idx
+
+        // Budget of 1 chain per queue per tick should only process the first TX chain.
+        tick_virtio_net(&mut dev, &mut mem, 1, 0);
+
+        assert_eq!(state.borrow().tx_frames, vec![payload0.to_vec()]);
+        assert_eq!(read_u16_le(&mem, tx_used + 2).unwrap(), 1);
+    }
+
+    #[test]
+    fn tick_virtio_net_rx_budget_is_enforced() {
+        let state = Rc::new(RefCell::new(BackendState::default()));
+        let backend = CountingBackend {
+            state: state.clone(),
+            rx_frame: vec![0x5a; 14],
+        };
+
+        let net = VirtioNet::new(
+            VirtioNetBackendAdapter::new(Some(Box::new(backend))),
+            [0x02, 0x00, 0x00, 0x00, 0x00, 0x01],
+        );
+        let mut dev = VirtioPciDevice::new(Box::new(net), Box::new(InterruptLog::default()));
+        dev.set_pci_command(0x0006);
+
+        let mut mem = GuestRam::new(0x20000);
+
+        // Configure RX queue 0.
+        let rx_desc: u64 = 0x1000;
+        let rx_avail: u64 = 0x2000;
+        let rx_used: u64 = 0x3000;
+        dev.bar0_write(0x16, &0u16.to_le_bytes()); // queue_select
+        dev.bar0_write(0x20, &rx_desc.to_le_bytes());
+        dev.bar0_write(0x28, &rx_avail.to_le_bytes());
+        dev.bar0_write(0x30, &rx_used.to_le_bytes());
+        dev.bar0_write(0x1c, &1u16.to_le_bytes()); // queue_enable
+
+        // Post 4 RX buffers (2 descriptors each). We will budget only 2 backend frames.
+        const BUF_LEN: u32 = 64;
+        let mut payload_addrs = Vec::new();
+        for i in 0..4u16 {
+            let head = i * 2;
+            let hdr_addr = 0x8000 + u64::from(i) * 0x100;
+            let payload_addr = hdr_addr + 0x40;
+            payload_addrs.push(payload_addr);
+
+            mem.write(hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN]).unwrap();
+            mem.write(payload_addr, &[0xbb; BUF_LEN as usize]).unwrap();
+
+            write_desc(
+                &mut mem,
+                rx_desc,
+                head,
+                hdr_addr,
+                VirtioNetHdr::BASE_LEN as u32,
+                VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+                head + 1,
+            );
+            write_desc(
+                &mut mem,
+                rx_desc,
+                head + 1,
+                payload_addr,
+                BUF_LEN,
+                VIRTQ_DESC_F_WRITE,
+                0,
+            );
+        }
+
+        write_u16_le(&mut mem, rx_avail, 0).unwrap(); // flags
+        write_u16_le(&mut mem, rx_avail + 2, 4).unwrap(); // idx
+        write_u16_le(&mut mem, rx_avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, rx_avail + 6, 2).unwrap();
+        write_u16_le(&mut mem, rx_avail + 8, 4).unwrap();
+        write_u16_le(&mut mem, rx_avail + 10, 6).unwrap();
+        write_u16_le(&mut mem, rx_used, 0).unwrap(); // flags
+        write_u16_le(&mut mem, rx_used + 2, 0).unwrap(); // idx
+
+        // Process all 4 RX buffer chains, but only allow 2 backend frames to be consumed.
+        tick_virtio_net(&mut dev, &mut mem, 4, 2);
+
+        assert_eq!(
+            read_u16_le(&mem, rx_used + 2).unwrap(),
+            2,
+            "expected only 2 RX buffers to be completed due to rx budget"
+        );
+        assert_eq!(
+            state.borrow().rx_polls,
+            2,
+            "expected backend poll_receive() calls to be bounded by rx budget"
+        );
+
+        // First two payload buffers should contain the injected frame bytes, and remaining buffers
+        // should remain untouched (still 0xbb).
+        for (i, &payload_addr) in payload_addrs.iter().enumerate() {
+            let bytes = mem.get_slice(payload_addr, 14).unwrap();
+            if i < 2 {
+                assert_eq!(bytes, vec![0x5a; 14]);
+            } else {
+                assert_eq!(bytes, vec![0xbb; 14]);
+            }
+        }
     }
 }

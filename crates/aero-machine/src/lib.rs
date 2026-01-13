@@ -69,7 +69,7 @@ use aero_io_snapshot::io::state::{
 use aero_io_snapshot::io::storage::dskc::DiskControllersSnapshot;
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
-use aero_net_pump::tick_e1000;
+use aero_net_pump::{tick_e1000, tick_virtio_net, VirtioNetBackendAdapter};
 use aero_pc_platform::{PciIoBarHandler, PciIoBarRouter};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
@@ -951,66 +951,6 @@ impl VirtioInterruptSink for NoopVirtioInterruptSink {
     fn lower_legacy_irq(&mut self) {}
 
     fn signal_msix(&mut self, _message: MsiMessage) {}
-}
-
-/// Virtio-net backend adapter that forwards frames to an optional host [`NetworkBackend`] while
-/// enforcing a per-poll receive budget.
-///
-/// Without this, a backend that always has frames available could cause unbounded work in a single
-/// `Machine::poll_network()` call because `VirtioNet::flush_rx` polls until no frames remain or
-/// guest buffers are exhausted.
-struct VirtioNetBackendAdapter {
-    backend: Option<Box<dyn NetworkBackend>>,
-    rx_budget: usize,
-}
-
-impl VirtioNetBackendAdapter {
-    fn new(backend: Option<Box<dyn NetworkBackend>>) -> Self {
-        Self {
-            backend,
-            rx_budget: 0,
-        }
-    }
-
-    fn set_backend(&mut self, backend: Option<Box<dyn NetworkBackend>>) {
-        self.backend = backend;
-    }
-
-    fn take_backend(&mut self) -> Option<Box<dyn NetworkBackend>> {
-        self.backend.take()
-    }
-
-    fn set_rx_budget(&mut self, budget: usize) {
-        self.rx_budget = budget;
-    }
-}
-
-impl NetworkBackend for VirtioNetBackendAdapter {
-    fn transmit(&mut self, frame: Vec<u8>) {
-        if let Some(backend) = self.backend.as_mut() {
-            backend.transmit(frame);
-        }
-    }
-
-    fn poll_receive(&mut self) -> Option<Vec<u8>> {
-        if self.rx_budget == 0 {
-            return None;
-        }
-        let frame = self
-            .backend
-            .as_mut()
-            .and_then(|backend| backend.poll_receive());
-        if frame.is_some() {
-            self.rx_budget = self.rx_budget.saturating_sub(1);
-        }
-        frame
-    }
-
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        self.backend
-            .as_ref()
-            .and_then(|backend| backend.l2_ring_stats())
-    }
 }
 
 struct VirtioPciBar0Mmio {
@@ -4720,15 +4660,12 @@ impl Machine {
         // `poll_network()` call.
         const MAX_CHAINS_PER_QUEUE_PER_POLL: usize = MAX_FRAMES_PER_POLL;
 
-        // Reset the per-poll backend RX budget so `VirtioNet::flush_rx` is bounded.
-        if let Some(net) = virtio.device_mut::<VirtioNet<VirtioNetBackendAdapter>>() {
-            net.backend_mut().set_rx_budget(MAX_FRAMES_PER_POLL);
-        }
-
-        virtio.process_notified_queues_bounded(&mut dma, MAX_CHAINS_PER_QUEUE_PER_POLL);
-        // Poll device-driven work (e.g. virtio-net RX) without consuming additional avail entries
-        // beyond the per-queue budget above.
-        virtio.poll_bounded(&mut dma, 0);
+        tick_virtio_net(
+            &mut virtio,
+            &mut dma,
+            MAX_CHAINS_PER_QUEUE_PER_POLL,
+            MAX_FRAMES_PER_POLL,
+        );
     }
     /// Run the CPU for at most `max_insts` guest instructions.
     pub fn run_slice(&mut self, max_insts: u64) -> RunExit {
