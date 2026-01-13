@@ -1018,6 +1018,129 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
     *OutSizeBytes = (UINT)sizeBytes;
     return STATUS_SUCCESS;
 }
+
+typedef struct _AEROGPU_SCANOUT_MMIO_SNAPSHOT {
+    ULONG Enable;
+    ULONG Width;
+    ULONG Height;
+    ULONG PitchBytes;
+    ULONG Format; /* enum aerogpu_format */
+    PHYSICAL_ADDRESS FbPa;
+} AEROGPU_SCANOUT_MMIO_SNAPSHOT;
+
+static BOOLEAN AeroGpuBytesPerPixelFromFormat(_In_ ULONG Format, _Out_ ULONG* OutBytesPerPixel)
+{
+    if (!OutBytesPerPixel) {
+        return FALSE;
+    }
+
+    switch (Format) {
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM:
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM:
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
+        *OutBytesPerPixel = 4;
+        return TRUE;
+    case AEROGPU_FORMAT_B5G6R5_UNORM:
+    case AEROGPU_FORMAT_B5G5R5A1_UNORM:
+        *OutBytesPerPixel = 2;
+        return TRUE;
+    default:
+        *OutBytesPerPixel = 0;
+        return FALSE;
+    }
+}
+
+static BOOLEAN AeroGpuIsPlausibleScanoutSnapshot(_In_ const AEROGPU_SCANOUT_MMIO_SNAPSHOT* Snapshot)
+{
+    if (!Snapshot) {
+        return FALSE;
+    }
+    if (Snapshot->Width == 0 || Snapshot->Height == 0 || Snapshot->PitchBytes == 0) {
+        return FALSE;
+    }
+
+    if (Snapshot->Width > 16384u || Snapshot->Height > 16384u) {
+        return FALSE;
+    }
+
+    ULONG bpp = 0;
+    if (!AeroGpuBytesPerPixelFromFormat(Snapshot->Format, &bpp) || bpp == 0) {
+        return FALSE;
+    }
+
+    if (Snapshot->Width > (0xFFFFFFFFu / bpp)) {
+        return FALSE;
+    }
+    const ULONG rowBytes = Snapshot->Width * bpp;
+    if (Snapshot->PitchBytes < rowBytes) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static BOOLEAN AeroGpuGetScanoutMmioSnapshot(_In_ const AEROGPU_ADAPTER* Adapter, _Out_ AEROGPU_SCANOUT_MMIO_SNAPSHOT* Out)
+{
+    if (!Adapter || !Adapter->Bar0 || !Out) {
+        return FALSE;
+    }
+
+    RtlZeroMemory(Out, sizeof(*Out));
+    Out->FbPa.QuadPart = 0;
+
+    if ((Adapter->UsingNewAbi || Adapter->AbiKind == AEROGPU_ABI_KIND_V1) &&
+        Adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
+        Out->Enable = AeroGpuReadRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE);
+        Out->Width = AeroGpuReadRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_WIDTH);
+        Out->Height = AeroGpuReadRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_HEIGHT);
+        Out->Format = AeroGpuReadRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_FORMAT);
+        Out->PitchBytes = AeroGpuReadRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES);
+        Out->FbPa.QuadPart =
+            (LONGLONG)AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI);
+        return TRUE;
+    }
+
+    if (Adapter->Bar0Length < (AEROGPU_LEGACY_REG_SCANOUT_FB_HI + sizeof(ULONG))) {
+        return FALSE;
+    }
+
+    Out->Enable = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE);
+    Out->Width = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_WIDTH);
+    Out->Height = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_HEIGHT);
+    Out->PitchBytes = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_PITCH);
+
+    const ULONG legacyFormat = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_FORMAT);
+    if (legacyFormat == AEROGPU_LEGACY_SCANOUT_X8R8G8B8) {
+        Out->Format = AEROGPU_FORMAT_B8G8R8X8_UNORM;
+    } else {
+        Out->Format = AEROGPU_FORMAT_INVALID;
+    }
+
+    Out->FbPa.QuadPart =
+        (LONGLONG)AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_LO, AEROGPU_LEGACY_REG_SCANOUT_FB_HI);
+    return TRUE;
+}
+
+static D3DDDIFORMAT AeroGpuDdiColorFormatFromScanoutFormat(_In_ ULONG Format)
+{
+    switch (Format) {
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
+        return D3DDDIFMT_A8R8G8B8;
+    case AEROGPU_FORMAT_B5G6R5_UNORM:
+        return D3DDDIFMT_R5G6B5;
+    case AEROGPU_FORMAT_B5G5R5A1_UNORM:
+        return D3DDDIFMT_A1R5G5B5;
+    default:
+        return D3DDDIFMT_X8R8G8B8;
+    }
+}
+
 static VOID AeroGpuProgramScanout(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ PHYSICAL_ADDRESS FbPa)
 {
     if (!Adapter || !Adapter->Bar0) {
@@ -1027,7 +1150,18 @@ static VOID AeroGpuProgramScanout(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ PHYSICA
         return;
     }
 
-    const ULONG enable = Adapter->SourceVisible ? 1u : 0u;
+    /*
+     * Guard against stale/invalid framebuffer addresses.
+     *
+     * During boot and during post-display-ownership transitions, dxgkrnl may call
+     * StartDevice/AcquirePostDisplayOwnership before it has committed a VidPN and
+     * before it has provided a valid PrimaryAddress via SetVidPnSourceAddress.
+     *
+     * Never enable scanout with FbPa == 0, otherwise the device may DMA from GPA 0
+     * continuously (cursor/scanout) which can destabilize guests and makes
+     * transitions flicker/black.
+     */
+    const ULONG enable = (Adapter->SourceVisible && FbPa.QuadPart != 0) ? 1u : 0u;
 
     if (Adapter->UsingNewAbi || Adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
         AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_WIDTH, Adapter->CurrentWidth);
@@ -1065,6 +1199,15 @@ static VOID AeroGpuSetScanoutEnable(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG
     }
     if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) != DxgkDevicePowerStateD0) {
         return;
+    }
+
+    if (Enable && Adapter->CurrentScanoutFbPa.QuadPart == 0) {
+        /*
+         * Be conservative: never enable scanout unless we have a non-zero cached
+         * framebuffer address. This prevents accidental DMA from GPA 0 when
+         * dxgkrnl toggles visibility before SetVidPnSourceAddress runs.
+         */
+        Enable = 0;
     }
 
     if (Adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
@@ -2488,14 +2631,55 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     }
 
     /*
-     * Program an initial scanout configuration. A real modeset will come
-     * through CommitVidPn + SetVidPnSourceAddress later.
+     * Preserve any pre-existing scanout configuration (post-display ownership
+     * handoff).
+     *
+     * On Win7, dxgkrnl can call DxgkDdiAcquirePostDisplayOwnership immediately
+     * after StartDevice to map the existing framebuffer without doing a full
+     * modeset. Do not clobber scanout state here; instead snapshot it and update
+     * our cached mode/FbPa so AcquirePostDisplayOwnership can report consistent
+     * values.
+     *
+     * Also proactively disable the hardware cursor so the device will not DMA
+     * from a stale cursor GPA during transitions (cursor backing store is
+     * driver-managed).
      */
     {
-        PHYSICAL_ADDRESS zero;
-        zero.QuadPart = 0;
-        adapter->CurrentScanoutFbPa = zero;
-        AeroGpuProgramScanout(adapter, zero);
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, 0);
+        }
+
+        AEROGPU_SCANOUT_MMIO_SNAPSHOT mmio;
+        const BOOLEAN haveMmio = AeroGpuGetScanoutMmioSnapshot(adapter, &mmio);
+        if (haveMmio && AeroGpuIsPlausibleScanoutSnapshot(&mmio)) {
+            adapter->CurrentWidth = mmio.Width;
+            adapter->CurrentHeight = mmio.Height;
+            adapter->CurrentPitch = mmio.PitchBytes;
+            adapter->CurrentFormat = mmio.Format;
+            adapter->CurrentScanoutFbPa = mmio.FbPa;
+            adapter->SourceVisible = mmio.Enable ? TRUE : FALSE;
+
+            /* Never leave scanout enabled with an invalid framebuffer address. */
+            if (mmio.Enable != 0 && mmio.FbPa.QuadPart == 0) {
+                AeroGpuSetScanoutEnable(adapter, 0);
+            }
+        } else {
+            PHYSICAL_ADDRESS zero;
+            zero.QuadPart = 0;
+            adapter->CurrentScanoutFbPa = zero;
+
+            /*
+             * Be conservative: ensure scanout is disabled until dxgkrnl provides
+             * a valid PrimaryAddress via SetVidPnSourceAddress.
+             */
+            AeroGpuSetScanoutEnable(adapter, 0);
+        }
     }
 
     InterlockedExchange(&adapter->AcceptingSubmissions, 1);
@@ -3016,14 +3200,99 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
     _In_ const HANDLE hAdapter,
     _Inout_ DXGKARG_ACQUIREPOSTDISPLAYOWNERSHIP* pAcquirePostDisplayOwnership)
 {
-    UNREFERENCED_PARAMETER(pAcquirePostDisplayOwnership);
-
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
-    if (!adapter) {
+    if (!adapter || !pAcquirePostDisplayOwnership) {
         return STATUS_INVALID_PARAMETER;
     }
 
     AEROGPU_LOG0("AcquirePostDisplayOwnership");
+
+    /*
+     * Best-effort snapshot of the currently-programmed scanout configuration.
+     *
+     * This is used by dxgkrnl to map the existing framebuffer during boot and
+     * display-driver transitions (VGA/basic <-> WDDM). Keep it robust: if the
+     * device is not mapped yet, or if the scanout registers are not plausible,
+     * fall back to the cached mode and report no framebuffer address.
+     */
+    if (adapter->Bar0) {
+        /* Stop cursor DMA until the OS programs a new pointer shape. */
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, 0);
+        }
+
+        AEROGPU_SCANOUT_MMIO_SNAPSHOT mmio;
+        if (AeroGpuGetScanoutMmioSnapshot(adapter, &mmio) && AeroGpuIsPlausibleScanoutSnapshot(&mmio)) {
+            adapter->CurrentWidth = mmio.Width;
+            adapter->CurrentHeight = mmio.Height;
+            adapter->CurrentPitch = mmio.PitchBytes;
+            adapter->CurrentFormat = mmio.Format;
+            adapter->CurrentScanoutFbPa = mmio.FbPa;
+
+            /*
+             * Treat the hardware enable bit as authoritative during acquisition:
+             * dxgkrnl has not yet called SetVidPnSourceVisibility in some paths.
+             */
+            adapter->SourceVisible = mmio.Enable ? TRUE : FALSE;
+
+            /* Ensure we never enable scanout with FbPa == 0. */
+            if (mmio.Enable != 0 && mmio.FbPa.QuadPart == 0) {
+                AeroGpuSetScanoutEnable(adapter, 0);
+            }
+        } else {
+            /* Unknown scanout state; do not report a framebuffer address. */
+            PHYSICAL_ADDRESS zero;
+            zero.QuadPart = 0;
+            adapter->CurrentScanoutFbPa = zero;
+        }
+    } else {
+        /* Device isn't mapped yet (early init / teardown). */
+        PHYSICAL_ADDRESS zero;
+        zero.QuadPart = 0;
+        adapter->CurrentScanoutFbPa = zero;
+    }
+
+    /*
+     * Report the current mode + framebuffer info back to dxgkrnl.
+     *
+     * The argument struct provides caller-allocated output structs.
+     */
+    {
+        DXGK_DISPLAY_INFORMATION* displayInfo = pAcquirePostDisplayOwnership->pDisplayInfo;
+        if (displayInfo) {
+            RtlZeroMemory(displayInfo, sizeof(*displayInfo));
+            displayInfo->Width = adapter->CurrentWidth;
+            displayInfo->Height = adapter->CurrentHeight;
+            displayInfo->Pitch = adapter->CurrentPitch;
+            displayInfo->ColorFormat = AeroGpuDdiColorFormatFromScanoutFormat(adapter->CurrentFormat);
+            displayInfo->PhysicalAddress = adapter->CurrentScanoutFbPa;
+            displayInfo->TargetId = AEROGPU_VIDPN_TARGET_ID;
+        }
+
+        DXGK_FRAMEBUFFER_INFORMATION* fbInfo = pAcquirePostDisplayOwnership->pFrameBufferInfo;
+        if (fbInfo) {
+            RtlZeroMemory(fbInfo, sizeof(*fbInfo));
+            fbInfo->FrameBufferBase = adapter->CurrentScanoutFbPa;
+
+            ULONGLONG len = 0;
+            if (adapter->CurrentPitch != 0 && adapter->CurrentHeight != 0) {
+                len = (ULONGLONG)adapter->CurrentPitch * (ULONGLONG)adapter->CurrentHeight;
+            }
+            if (len > 0xFFFFFFFFull) {
+                len = 0xFFFFFFFFull;
+            }
+            fbInfo->FrameBufferLength = (ULONG)len;
+
+            fbInfo->FrameBufferSegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
+            fbInfo->FrameBufferSegmentOffset = 0;
+        }
+    }
 
     /*
      * Reacquire is expected to make the miniport responsible for programming
