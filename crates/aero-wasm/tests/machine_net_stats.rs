@@ -84,6 +84,9 @@ fn machine_net_stats_smoke() {
         assert_eq!(s, "0", "{key} should start at 0");
     }
 
+    let rx_broken = Reflect::get(&stats, &JsValue::from_str("rx_broken")).expect("Reflect::get");
+    assert_eq!(rx_broken.as_bool(), Some(false), "rx_broken should start false");
+
     // Push one host->guest frame into NET_RX and run the network pump once.
     // This should cause the ring backend to pop the frame and increment its RX counters.
     let frame = vec![0u8; aero_net_e1000::MIN_L2_FRAME_LEN];

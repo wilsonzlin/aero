@@ -470,8 +470,18 @@ impl VirtioNetPciBridge {
         );
         let _ = Reflect::set(
             &obj,
+            &JsValue::from_str("tx_pushed_bytes"),
+            &BigInt::from(stats.tx_pushed_bytes).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
             &JsValue::from_str("tx_dropped_oversize"),
             &BigInt::from(stats.tx_dropped_oversize).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("tx_dropped_oversize_bytes"),
+            &BigInt::from(stats.tx_dropped_oversize_bytes).into(),
         );
         let _ = Reflect::set(
             &obj,
@@ -480,8 +490,18 @@ impl VirtioNetPciBridge {
         );
         let _ = Reflect::set(
             &obj,
+            &JsValue::from_str("tx_dropped_full_bytes"),
+            &BigInt::from(stats.tx_dropped_full_bytes).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
             &JsValue::from_str("rx_popped_frames"),
             &BigInt::from(stats.rx_popped_frames).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_popped_bytes"),
+            &BigInt::from(stats.rx_popped_bytes).into(),
         );
         let _ = Reflect::set(
             &obj,
@@ -490,8 +510,18 @@ impl VirtioNetPciBridge {
         );
         let _ = Reflect::set(
             &obj,
+            &JsValue::from_str("rx_dropped_oversize_bytes"),
+            &BigInt::from(stats.rx_dropped_oversize_bytes).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
             &JsValue::from_str("rx_corrupt"),
             &BigInt::from(stats.rx_corrupt).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_broken"),
+            &JsValue::from_bool(stats.rx_broken),
         );
 
         obj.into()
