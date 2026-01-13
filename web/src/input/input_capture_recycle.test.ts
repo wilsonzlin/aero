@@ -45,12 +45,14 @@ describe("InputCapture buffer recycling", () => {
       } as unknown as HTMLCanvasElement;
 
       const posted: ArrayBuffer[] = [];
+      const postedByteLengths: number[] = [];
       let recycledFromFirstFlush: ArrayBuffer | null = null;
       let postCount = 0;
       let capture: InputCapture;
 
       const ioWorker = {
         postMessage: (msg: any, transfer?: any[]) => {
+          postedByteLengths.push(msg.buffer.byteLength);
           posted.push(msg.buffer);
           // Ensure the capture side is requesting recycling via the documented wire format.
           expect(msg.recycle).toBe(true);
@@ -62,9 +64,10 @@ describe("InputCapture buffer recycling", () => {
             postCount++;
             // NOTE: In real worker transfer semantics, the ArrayBuffer object identity is not
             // preserved across threads. The sender's buffer is detached and the receiver sees a new
-            // ArrayBuffer instance. Mimic that by recycling a distinct ArrayBuffer of identical
-            // byteLength.
-            const recycled = new ArrayBuffer(msg.buffer.byteLength);
+            // ArrayBuffer instance. Use `structuredClone(..., { transfer })` to mimic that behavior
+            // (including detaching the sender-side buffer).
+            const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
+            const recycled = structuredClone(workerSide, { transfer: [workerSide] });
             if (postCount === 1) {
               recycledFromFirstFlush = recycled;
             }
@@ -85,10 +88,12 @@ describe("InputCapture buffer recycling", () => {
       capture.flushNow();
 
       expect(posted).toHaveLength(2);
+      expect(postedByteLengths).toHaveLength(2);
       expect(recycledFromFirstFlush).not.toBeNull();
       // When the worker returns a buffer, the next flush should reuse it (no fresh allocation).
       expect(posted[1]).toBe(recycledFromFirstFlush);
-      expect(posted[1]?.byteLength).toBe(recycledFromFirstFlush?.byteLength);
+      expect(postedByteLengths[1]).toBe(postedByteLengths[0]);
+      expect(postedByteLengths[1]).toBeGreaterThan(0);
       // Returned buffers should be a separate instance than what we originally posted (detached).
       expect(posted[0]).not.toBe(recycledFromFirstFlush);
     });
@@ -104,18 +109,21 @@ describe("InputCapture buffer recycling", () => {
       } as unknown as HTMLCanvasElement;
 
       const posted: ArrayBuffer[] = [];
+      const postedByteLengths: number[] = [];
       let recycledFromFirstFlush: ArrayBuffer | null = null;
       let postCount = 0;
       let capture: InputCapture;
 
       const ioWorker = {
         postMessage: (msg: any, transfer?: any[]) => {
+          postedByteLengths.push(msg.buffer.byteLength);
           posted.push(msg.buffer);
           expect(msg.recycle).toBe(true);
           expect(transfer).toContain(msg.buffer);
           if (msg.recycle === true) {
             postCount++;
-            const recycled = new ArrayBuffer(msg.buffer.byteLength);
+            const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
+            const recycled = structuredClone(workerSide, { transfer: [workerSide] });
             if (postCount === 1) {
               recycledFromFirstFlush = recycled;
             }
@@ -139,15 +147,16 @@ describe("InputCapture buffer recycling", () => {
       capture.flushNow();
 
       expect(posted).toHaveLength(2);
+      expect(postedByteLengths).toHaveLength(2);
       expect(recycledFromFirstFlush).not.toBeNull();
 
       // Sanity: the grown queue should have a larger backing buffer than the default 128-event queue.
       // Default: (2 + 128*4) * 4 = 2056 bytes; grown: (2 + 256*4) * 4 = 4104 bytes.
-      expect(posted[0].byteLength).toBeGreaterThan(2056);
+      expect(postedByteLengths[0]).toBeGreaterThan(2056);
 
       // The second flush should still be able to reuse the recycled buffer of that larger size.
       expect(posted[1]).toBe(recycledFromFirstFlush);
-      expect(posted[1].byteLength).toBe(recycledFromFirstFlush?.byteLength);
+      expect(postedByteLengths[1]).toBe(postedByteLengths[0]);
       expect(posted[0]).not.toBe(recycledFromFirstFlush);
     });
   });
