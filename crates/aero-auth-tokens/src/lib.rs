@@ -24,19 +24,23 @@ const MAX_JWT_HEADER_B64_LEN: usize = 4 * 1024;
 const MAX_JWT_PAYLOAD_B64_LEN: usize = 16 * 1024;
 const MAX_JWT_SIG_B64_LEN: usize = 128;
 
-fn decode_base64url(raw: &str, max_len: usize) -> Option<Vec<u8>> {
+fn is_base64url(raw: &str, max_len: usize) -> bool {
     if raw.is_empty() {
-        return None;
+        return false;
     }
     if raw.len() > max_len {
-        return None;
+        return false;
     }
-    if !raw.as_bytes().iter().all(|b| {
+    raw.as_bytes().iter().all(|b| {
         matches!(
             b,
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_'
         )
-    }) {
+    })
+}
+
+fn decode_base64url(raw: &str, max_len: usize) -> Option<Vec<u8>> {
+    if !is_base64url(raw, max_len) {
         return None;
     }
     general_purpose::URL_SAFE_NO_PAD.decode(raw).ok()
@@ -96,7 +100,8 @@ pub fn verify_gateway_session_token(
         return None;
     }
 
-    if payload_b64.len() > MAX_SESSION_TOKEN_PAYLOAD_B64_LEN || sig_b64.len() > MAX_SESSION_TOKEN_SIG_B64_LEN {
+    // Avoid doing any HMAC work for obviously-malformed tokens.
+    if !is_base64url(payload_b64, MAX_SESSION_TOKEN_PAYLOAD_B64_LEN) {
         return None;
     }
 
@@ -173,6 +178,9 @@ pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Clai
         || payload_b64.len() > MAX_JWT_PAYLOAD_B64_LEN
         || sig_b64.len() > MAX_JWT_SIG_B64_LEN
     {
+        return None;
+    }
+    if !is_base64url(payload_b64, MAX_JWT_PAYLOAD_B64_LEN) {
         return None;
     }
 
