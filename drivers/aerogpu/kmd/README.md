@@ -10,8 +10,55 @@ drivers/aerogpu/kmd/
   src/                     Miniport implementation (.c)
 ```
 
+## WDDM segment size / memory reporting (`NonLocalMemorySizeMB`)
+
+AeroGPU is a **system-memory-only** WDDM adapter: all GPU allocations are backed by **guest system RAM** and the emulator
+accesses them via physical addresses (there is no dedicated VRAM segment).
+
+The KMD reports a single WDDM segment (Aperture + CPU-visible) in:
+
+- `DXGKQAITYPE_QUERYSEGMENT` (segment descriptor size), and
+- `DXGKQAITYPE_GETSEGMENTGROUPSIZE` (`NonLocalMemorySize`)
+
+Windows uses this as a *budget* for resource allocation. If the budget is too small, D3D9/D3D11 workloads that create many
+large textures/buffers can fail with allocation errors even when the guest still has free RAM.
+
+The non-local segment budget can be overridden via a device registry parameter:
+
+- **Key:** `HKR\Parameters\NonLocalMemorySizeMB`
+- **Type:** `REG_DWORD`
+- **Unit:** megabytes
+- **Default:** 512
+- **Clamped:** min 128; max 2048 on x64, max 1024 on x86
+
+Notes:
+
+- This value does **not** reserve memory up front; it only changes the reported WDDM budget.
+- Setting it too high can increase guest RAM consumption and paging pressure under heavy workloads.
+
+Recommended values:
+
+- **Win7 x64:** 1024–2048 (depending on guest RAM and workload)
+- **Win7 x86:** 256–1024 (the KMD will clamp larger values down to 1024)
+
+Where to set it:
+
+- `HKR` is the AeroGPU adapter's device/driver registry key (the same place that stores `InstalledDisplayDrivers`).
+- On Win7 this is typically under the display class key
+  `HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\000X\`.
+  Create/open a `Parameters` subkey and add `NonLocalMemorySizeMB` there (the exact `000X` varies by machine).
+
+### Manual validation guidance
+
+1. Set `NonLocalMemorySizeMB` to a larger value (e.g., 1024 or 2048 on x64).
+2. Reboot the guest (or disable/enable the AeroGPU device).
+3. Run a D3D11 workload that allocates multiple large textures (for example, repeatedly call
+   `ID3D11Device::CreateTexture2D` for 4096×4096 RGBA textures in a loop).
+4. Confirm the workload no longer fails early due to segment budget/`E_OUTOFMEMORY` when configured larger (until you hit
+   actual guest RAM limits).
+
 ## Device ABI status (versioned vs legacy)
- 
+  
 The legacy bring-up device ABI is defined in `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`.
 
 The Win7 AeroGPU KMD supports two AeroGPU PCI/MMIO ABIs:

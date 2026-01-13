@@ -10,6 +10,32 @@
 
 #define AEROGPU_VBLANK_PERIOD_NS_DEFAULT 16666667u
 
+/*
+ * AeroGPU exposes a single system-memory-backed segment (Aperture + CpuVisible).
+ *
+ * Historically this was hard-coded to 512MiB, which is sufficient for bring-up
+ * but can cause D3D9/D3D11 workloads to fail allocations due to an artificially
+ * small WDDM segment budget.
+ *
+ * Allow tuning via registry:
+ *   HKR\Parameters\NonLocalMemorySizeMB (REG_DWORD, megabytes)
+ *
+ * This value controls the segment size reported via DXGKQAITYPE_QUERYSEGMENT and
+ * DXGKQAITYPE_GETSEGMENTGROUPSIZE. It is a budget hint to dxgkrnl (not dedicated
+ * VRAM); allocations are backed by pageable guest system memory and consumed by
+ * the emulator via physical addresses.
+ *
+ * Clamp values to avoid unrealistic budgets and keep Win7 x86 guests safe.
+ */
+#define AEROGPU_NON_LOCAL_MEMORY_SIZE_MB_MIN 128u
+#if defined(_WIN64)
+#define AEROGPU_NON_LOCAL_MEMORY_SIZE_MB_DEFAULT 512u
+#define AEROGPU_NON_LOCAL_MEMORY_SIZE_MB_MAX 2048u
+#else
+#define AEROGPU_NON_LOCAL_MEMORY_SIZE_MB_DEFAULT 512u
+#define AEROGPU_NON_LOCAL_MEMORY_SIZE_MB_MAX 1024u
+#endif
+
 /* Internal-only bits stored in AEROGPU_ALLOCATION::Flags (not exposed to UMD). */
 #define AEROGPU_KMD_ALLOC_FLAG_OPENED 0x80000000u
 #define AEROGPU_KMD_ALLOC_FLAG_PRIMARY 0x40000000u
@@ -2029,6 +2055,106 @@ static VOID APIENTRY AeroGpuDdiUnload(VOID)
     AEROGPU_LOG0("Unload");
 }
 
+static __forceinline ULONG AeroGpuClampUlong(_In_ ULONG Value, _In_ ULONG Min, _In_ ULONG Max)
+{
+    if (Value < Min) {
+        return Min;
+    }
+    if (Value > Max) {
+        return Max;
+    }
+    return Value;
+}
+
+static BOOLEAN AeroGpuTryQueryRegistryDword(_In_ HANDLE Key, _In_ PCWSTR ValueNameW, _Out_ ULONG* ValueOut)
+{
+    if (!Key || !ValueNameW || !ValueOut) {
+        return FALSE;
+    }
+
+    UNICODE_STRING valueName;
+    RtlInitUnicodeString(&valueName, ValueNameW);
+
+    UCHAR buf[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
+    PKEY_VALUE_PARTIAL_INFORMATION info = (PKEY_VALUE_PARTIAL_INFORMATION)buf;
+    RtlZeroMemory(buf, sizeof(buf));
+
+    ULONG resultLen = 0;
+    if (NT_SUCCESS(ZwQueryValueKey(Key, &valueName, KeyValuePartialInformation, info, sizeof(buf), &resultLen)) &&
+        info->Type == REG_DWORD && info->DataLength >= sizeof(ULONG)) {
+        *ValueOut = *(UNALIGNED const ULONG*)info->Data;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static BOOLEAN AeroGpuTryReadRegistryDword(_In_ PDEVICE_OBJECT PhysicalDeviceObject,
+                                          _In_ ULONG RootKeyType,
+                                          _In_opt_ PCWSTR SubKeyNameW,
+                                          _In_ PCWSTR ValueNameW,
+                                          _Out_ ULONG* ValueOut)
+{
+    if (!PhysicalDeviceObject || !ValueNameW || !ValueOut) {
+        return FALSE;
+    }
+
+    HANDLE rootKey = NULL;
+    if (!NT_SUCCESS(IoOpenDeviceRegistryKey(PhysicalDeviceObject, RootKeyType, KEY_READ, &rootKey)) || rootKey == NULL) {
+        return FALSE;
+    }
+
+    BOOLEAN ok = FALSE;
+
+    if (SubKeyNameW && SubKeyNameW[0] != L'\0') {
+        HANDLE subKey = NULL;
+        UNICODE_STRING subKeyName;
+        OBJECT_ATTRIBUTES oa;
+        RtlInitUnicodeString(&subKeyName, SubKeyNameW);
+        InitializeObjectAttributes(&oa, &subKeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, rootKey, NULL);
+
+        if (NT_SUCCESS(ZwOpenKey(&subKey, KEY_READ, &oa)) && subKey != NULL) {
+            ok = AeroGpuTryQueryRegistryDword(subKey, ValueNameW, ValueOut);
+            ZwClose(subKey);
+        }
+    } else {
+        ok = AeroGpuTryQueryRegistryDword(rootKey, ValueNameW, ValueOut);
+    }
+
+    ZwClose(rootKey);
+    return ok;
+}
+
+static ULONGLONG AeroGpuGetNonLocalMemorySizeBytes(_In_ const AEROGPU_ADAPTER* Adapter)
+{
+    ULONG sizeMb = AEROGPU_NON_LOCAL_MEMORY_SIZE_MB_DEFAULT;
+
+    /*
+     * QueryAdapterInfo may run very early in adapter bring-up; read from the
+     * device registry key (HKR) if available, otherwise keep the default.
+     *
+     * The registry APIs require PASSIVE_LEVEL.
+     */
+    if (Adapter && Adapter->PhysicalDeviceObject && KeGetCurrentIrql() == PASSIVE_LEVEL) {
+        ULONG regMb = 0;
+        if (AeroGpuTryReadRegistryDword(Adapter->PhysicalDeviceObject,
+                                        PLUGPLAY_REGKEY_DRIVER,
+                                        L"Parameters",
+                                        L"NonLocalMemorySizeMB",
+                                        &regMb) ||
+            AeroGpuTryReadRegistryDword(Adapter->PhysicalDeviceObject,
+                                        PLUGPLAY_REGKEY_DEVICE,
+                                        L"Parameters",
+                                        L"NonLocalMemorySizeMB",
+                                        &regMb)) {
+            sizeMb = regMb;
+        }
+    }
+
+    sizeMb = AeroGpuClampUlong(sizeMb, AEROGPU_NON_LOCAL_MEMORY_SIZE_MB_MIN, AEROGPU_NON_LOCAL_MEMORY_SIZE_MB_MAX);
+    return (ULONGLONG)sizeMb * 1024ull * 1024ull;
+}
+
 static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
                                                     _In_ const DXGKARG_QUERYADAPTERINFO* pQueryAdapterInfo)
 {
@@ -2061,12 +2187,14 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
             return STATUS_BUFFER_TOO_SMALL;
         }
 
+        const ULONGLONG nonLocalBytes = AeroGpuGetNonLocalMemorySizeBytes(adapter);
+
         DXGK_QUERYSEGMENTOUT* out = (DXGK_QUERYSEGMENTOUT*)pQueryAdapterInfo->pOutputData;
         RtlZeroMemory(out, sizeof(*out));
 
         out->NbSegments = 1;
         out->pSegmentDescriptor[0].BaseAddress.QuadPart = 0;
-        out->pSegmentDescriptor[0].Size = 512ull * 1024ull * 1024ull;
+        out->pSegmentDescriptor[0].Size = nonLocalBytes;
         out->pSegmentDescriptor[0].Flags.Value = 0;
         out->pSegmentDescriptor[0].Flags.Aperture = 1;
         out->pSegmentDescriptor[0].Flags.CpuVisible = 1;
@@ -2086,7 +2214,7 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         DXGK_SEGMENTGROUPSIZE* sizes = (DXGK_SEGMENTGROUPSIZE*)pQueryAdapterInfo->pOutputData;
         RtlZeroMemory(sizes, sizeof(*sizes));
         sizes->LocalMemorySize = 0;
-        sizes->NonLocalMemorySize = 512ull * 1024ull * 1024ull;
+        sizes->NonLocalMemorySize = AeroGpuGetNonLocalMemorySizeBytes(adapter);
         return STATUS_SUCCESS;
     }
 
