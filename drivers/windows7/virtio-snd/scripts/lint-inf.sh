@@ -251,7 +251,10 @@ if [ -f "$INF_DISABLED" ]; then
   strip_leading_comment_header "$INF_DISABLED" > "$tmp2"
 
   if ! diff -u "$tmp1" "$tmp2" >/dev/null; then
-    diff -u "$tmp1" "$tmp2" >&2 || true
+    # Show a unified diff, but label it with the real file paths to make CI logs
+    # actionable (instead of referencing mktemp paths).
+    diff -u "$tmp1" "$tmp2" \
+      | sed "1s|^--- .*|--- $INF_CONTRACT|;2s|^+++ .*|+++ $INF_DISABLED|" >&2 || true
     fail "inf/virtio-snd.inf.disabled is out of sync with inf/aero_virtio_snd.inf (ignoring leading comment headers)"
   fi
 fi
