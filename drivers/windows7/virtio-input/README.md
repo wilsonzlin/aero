@@ -487,7 +487,7 @@ The driver and INF are intentionally strict and are **not** intended to be “ge
 | Fixed BAR0 virtio-pci modern layout (contract v1) | **Required** | `VirtioPciModernValidateAeroContractV1FixedLayout` in `src/device.c` (expects BAR0 `len >= 0x4000`, caps at offsets `0x0000/0x1000/0x2000/0x3000`, `notify_off_multiplier = 4`) |
 | Required virtqueues | **2 queues** (`eventq` + `statusq`) | `src/device.c` (expects 64/64 and `queue_notify_off` of `0/1`) |
 | Virtqueue/ring feature negotiation | **Split ring only** | `src/device.c` requires `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` and refuses to negotiate `VIRTIO_F_RING_EVENT_IDX` (no EVENT_IDX / packed rings in contract v1). |
-| Required advertised event types/codes (`EV_BITS`) | **Required** | `src/device.c` enforces minimum `EV_BITS` sets per device kind (keyboard vs mouse). Tablet (`EV_ABS`) requires `ABS_X/ABS_Y` and `ABS_INFO` ranges when enabled via compat mode. |
+| Required advertised event types/codes (`EV_BITS`) | **Required** | `src/device.c` enforces minimum `EV_BITS` sets per device kind (keyboard vs mouse; see `docs/windows7-virtio-driver-contract.md` §3.3.5 for the contract minimum lists). Tablet (`EV_ABS`) requires `ABS_X/ABS_Y` and `ABS_INFO` ranges when enabled via compat mode. |
 | Device identification strings | **Strict by default** | Strict mode requires Aero `ID_NAME` strings + contract `ID_DEVIDS`. QEMU/non-Aero devices require enabling `CompatDeviceKind` (see `docs/virtio-input-notes.md`). |
 
 ### QEMU compatibility expectations
