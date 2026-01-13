@@ -15,13 +15,47 @@ import {
 } from "./scanout_state";
 
 describe("ipc/scanout_state", () => {
-  it("wrapScanoutState rejects invalid byte offsets", () => {
+  it("publishScanoutState + snapshotScanoutState roundtrips values", () => {
     const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
+    const words = wrapScanoutState(scanoutSab, 0);
 
+    const update = {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: 0x89ab_cdef,
+      basePaddrHi: 0x0123_4567,
+      width: 0x8000_0001,
+      height: 0xffff_ffff,
+      pitchBytes: 0x8000_0000,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    };
+
+    const generation = publishScanoutState(words, update);
+    const snap = snapshotScanoutState(words);
+
+    expect((snap.generation & SCANOUT_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+    expect(snap.generation >>> 0).toBe(generation >>> 0);
+    expect(snap).toEqual({ generation: generation >>> 0, ...update });
+  });
+
+  it("wrapScanoutState validates bounds and 4-byte alignment", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(() => wrapScanoutState(new ArrayBuffer(SCANOUT_STATE_BYTE_LEN) as any)).toThrow(TypeError);
+
+    const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
+    expect(() => wrapScanoutState(scanoutSab, NaN)).toThrow(RangeError);
+    expect(() => wrapScanoutState(scanoutSab, Infinity)).toThrow(RangeError);
     expect(() => wrapScanoutState(scanoutSab, -4)).toThrow(RangeError);
     expect(() => wrapScanoutState(scanoutSab, 2)).toThrow(RangeError);
     // Any positive aligned offset into a minimum-sized SAB would exceed bounds.
     expect(() => wrapScanoutState(scanoutSab, 4)).toThrow(RangeError);
+
+    const tooSmall = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN - 4);
+    expect(() => wrapScanoutState(tooSmall, 0)).toThrow(RangeError);
+
+    const withOffset = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN * 2);
+    const words = wrapScanoutState(withOffset, SCANOUT_STATE_BYTE_LEN);
+    expect(words.length).toBe(SCANOUT_STATE_U32_LEN);
+    expect(words.byteOffset).toBe(SCANOUT_STATE_BYTE_LEN);
   });
 
   it("wrapScanoutState validates size and publish wraps across the busy-bit boundary", () => {
