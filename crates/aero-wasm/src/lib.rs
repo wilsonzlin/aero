@@ -3474,8 +3474,10 @@ impl Machine {
     ///
     /// `enable_aerogpu` is forwarded to [`aero_machine::MachineConfig::enable_aerogpu`].
     ///
-    /// When `enable_aerogpu` is `true`, VGA is disabled by default to avoid multiple scanout paths.
-    /// Pass `enable_vga=true` explicitly to keep VGA enabled.
+    /// When `enable_aerogpu` is `true`, VGA is disabled by default.
+    ///
+    /// Note: `enable_aerogpu` and `enable_vga` are mutually exclusive in the native machine
+    /// configuration; passing `enable_aerogpu=true` and `enable_vga=true` will fail construction.
     #[wasm_bindgen]
     pub fn new_with_config(
         ram_size_bytes: u32,
