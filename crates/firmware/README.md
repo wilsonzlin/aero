@@ -53,7 +53,12 @@ In the canonical full-system VM stack, [`aero_machine::Machine`](../aero-machine
 handles this automatically by dispatching BIOS interrupts when Tier-0 reports a `BiosInterrupt`
 exit.
 
-For a minimal, older reference wiring, see `crates/legacy/vm` (formerly `crates/vm`).
+For the canonical machine wiring / integration reference, see `crates/aero-machine`
+([`aero_machine::Machine`](../aero-machine/src/lib.rs); see
+[ADR 0014](../../docs/adr/0014-canonical-machine-stack.md)).
+
+`crates/legacy/vm` (formerly `crates/vm`) remains as a deprecated, reference-only VM stack and is
+**not built by default** (it is excluded from the workspace).
 
 ## ACPI DSDT fixture (`crates/firmware/acpi/dsdt.aml`)
 
@@ -62,9 +67,15 @@ This repo keeps a checked-in DSDT AML blob at `crates/firmware/acpi/dsdt.aml` fo
 - ACPICA `iasl` decompile/recompile validation in CI (`scripts/validate-acpi.sh`)
 - quick manual inspection / diffing
 
-The canonical source of truth is the `aero-acpi` Rust generator. To regenerate the
+The canonical source of truth is the `aero-acpi` Rust generator. To regenerate the checked-in
 fixture after AML changes:
 
 ```bash
 cargo run -p firmware --bin gen_dsdt --locked
 ```
+
+The `dsdt.aml` fixture is validated in CI in two ways:
+
+- `scripts/validate-acpi.sh` decompiles and recompiles the checked-in AML tables using ACPICA `iasl`.
+- `crates/firmware/tests/acpi_tables.rs` asserts that `crates/firmware/acpi/dsdt.aml` matches the
+  bytes produced by the `aero-acpi` Rust generator.
