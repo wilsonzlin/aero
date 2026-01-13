@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Aero Guest Tools packaging spec (aero_packager)",
+  "description": "Schema for tools/packaging/specs/*.json consumed by tools/packaging/aero_packager/.\n\nThis schema exists purely for editor/CI feedback. The packager enforces the same shape at load time via strict serde parsing (deny_unknown_fields).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON Schema reference for editor tooling (example: \"../packaging-spec.schema.json\"). The packager ignores this field.",
+      "minLength": 1
+    },
+    "drivers": {
+      "type": "array",
+      "description": "Unified driver list containing both required and optional drivers.",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/driver"
+      },
+      "uniqueItems": false
+    },
+    "required_drivers": {
+      "type": "array",
+      "description": "Legacy schema (backward compatibility): required drivers only. aero_packager treats these as drivers with required=true and merges them into the unified drivers list.",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/legacyRequiredDriver"
+      }
+    },
+    "require_optional_drivers_on_all_arches": {
+      "type": "boolean",
+      "description": "If true, optional drivers (required=false) must be present for both x86 and amd64. This prevents producing Guest Tools media where a driver is shipped for only one guest architecture.",
+      "default": false
+    },
+    "fail_on_unlisted_driver_dirs": {
+      "type": "boolean",
+      "description": "If true, fail packaging when the input drivers directory contains driver directories not listed in the spec.",
+      "default": false
+    }
+  },
+  "anyOf": [
+    { "required": ["drivers"] },
+    { "required": ["required_drivers"] }
+  ],
+  "$defs": {
+    "driver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "required"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Driver directory name under drivers/{x86,amd64}/<name>/.",
+          "minLength": 1,
+          "pattern": "^[^\\\\/]+$"
+        },
+        "required": {
+          "type": "boolean",
+          "description": "If true, missing driver artifacts are fatal. If false, missing driver artifacts are logged as a warning and skipped."
+        },
+        "expected_hardware_ids": {
+          "type": "array",
+          "description": "List of regex patterns that must appear somewhere in at least one INF file for this driver (per-architecture). Matched case-insensitively; comment-only matches are ignored.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "expected_hardware_ids_from_devices_cmd_var": {
+          "type": ["string", "null"],
+          "description": "Optional guest-tools/config/devices.cmd variable name to source expected HWIDs from. Parsed as a token list, normalized to base PCI\\\\VEN_....&DEV_.... form, regex-escaped, then appended to expected_hardware_ids.",
+          "minLength": 1
+        },
+        "allow_extensions": {
+          "type": "array",
+          "description": "Allowlist of file extensions that should not be excluded from the packaged driver directory (case-insensitive, with or without leading dots).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "allow_path_regexes": {
+          "type": "array",
+          "description": "Allowlist exceptions matched against the driver-relative path (using / separators) as a case-insensitive regex.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "expected_inf_files": {
+          "type": "array",
+          "description": "Optional list of INF filenames (no paths) expected to be present for this driver.",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\\\/]+\\.[iI][nN][fF]$"
+          },
+          "uniqueItems": true
+        },
+        "expected_add_services": {
+          "type": "array",
+          "description": "Optional list of expected INF AddService service names for this driver.",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "expected_add_services_from_devices_cmd_var": {
+          "type": ["string", "null"],
+          "description": "Optional guest-tools/config/devices.cmd variable name to source an expected service name from. The variable's value is treated as a single service name and appended to expected_add_services if not already present.",
+          "minLength": 1
+        }
+      }
+    },
+    "legacyRequiredDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Legacy required driver directory name under drivers/{x86,amd64}/<name>/.",
+          "minLength": 1,
+          "pattern": "^[^\\\\/]+$"
+        },
+        "expected_hardware_ids": {
+          "type": "array",
+          "description": "Legacy expected HWID regex patterns (see drivers[].expected_hardware_ids).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "expected_hardware_ids_from_devices_cmd_var": {
+          "type": ["string", "null"],
+          "description": "Legacy expected HWID devices.cmd variable name (see drivers[].expected_hardware_ids_from_devices_cmd_var).",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

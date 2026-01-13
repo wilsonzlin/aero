@@ -92,6 +92,12 @@ pub struct DriverSpec {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PackagingSpecRaw {
+    /// Optional JSON Schema reference for editor tooling.
+    ///
+    /// This is ignored by the packager. It exists purely to enable schema-based validation in
+    /// editors/CI while keeping strict spec parsing (`deny_unknown_fields`) enabled.
+    #[serde(rename = "$schema", default)]
+    schema: Option<String>,
     #[serde(default)]
     require_optional_drivers_on_all_arches: bool,
     #[serde(default)]
@@ -117,8 +123,14 @@ struct LegacyRequiredDriver {
 
 impl From<PackagingSpecRaw> for PackagingSpec {
     fn from(raw: PackagingSpecRaw) -> Self {
-        let require_optional_drivers_on_all_arches = raw.require_optional_drivers_on_all_arches;
-        let fail_on_unlisted_driver_dirs = raw.fail_on_unlisted_driver_dirs;
+        let PackagingSpecRaw {
+            schema,
+            require_optional_drivers_on_all_arches,
+            fail_on_unlisted_driver_dirs,
+            drivers,
+            required_drivers,
+        } = raw;
+        let _schema = schema;
         // Merge legacy `required_drivers` into the unified `drivers` list while
         // preserving the (already stable) JSON ordering:
         // - entries from `drivers` first
@@ -129,7 +141,7 @@ impl From<PackagingSpecRaw> for PackagingSpec {
         let mut out = Vec::new();
         let mut index_by_name = std::collections::HashMap::<String, usize>::new();
 
-        for mut drv in raw.drivers {
+        for mut drv in drivers {
             drv.name = normalize_driver_name(&drv.name);
             // Treat driver names as case-insensitive for merge purposes. This
             // matches our packaging-time validation (which rejects duplicates
@@ -140,7 +152,7 @@ impl From<PackagingSpecRaw> for PackagingSpec {
             out.push(drv);
         }
 
-        for legacy in raw.required_drivers {
+        for legacy in required_drivers {
             let name = normalize_driver_name(&legacy.name);
             if let Some(idx) = index_by_name.get(&name.to_ascii_lowercase()).copied() {
                 let existing = &mut out[idx];

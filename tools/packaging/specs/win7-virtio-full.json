@@ -1,4 +1,5 @@
 {
+  "$schema": "../packaging-spec.schema.json",
   "require_optional_drivers_on_all_arches": true,
   "drivers": [
     {
