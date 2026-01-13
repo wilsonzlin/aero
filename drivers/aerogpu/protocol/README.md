@@ -313,6 +313,29 @@ The initial protocol defines an IR sufficient for D3D9-style rendering and can b
 
 See `aerogpu_cmd.h` for the full opcode list and packet layouts.
 
+### Debugging: decoding raw command stream dumps
+
+When debugging Win7 guest driver issues it’s often useful to inspect the **raw AeroGPU command stream** that was most recently submitted
+(for example, a dump captured via `aerogpu_dbgctl --dump-last-cmd` or any other mechanism that writes the byte stream to disk).
+
+The host-side tool `aero-gpu-trace-replay` includes a small decoder that prints a stable, grep-friendly opcode listing:
+
+```bash
+# From the repo root:
+cargo run -p aero-gpu-trace-replay -- decode-cmd-stream <cmd-stream.bin>
+
+# Fail on unknown opcodes (default is forward-compatible: prints UNKNOWN and continues):
+cargo run -p aero-gpu-trace-replay -- decode-cmd-stream --strict <cmd-stream.bin>
+```
+
+The input file must contain the raw `aerogpu_cmd_stream_header` followed by the packet sequence.
+Output format is one packet per line:
+
+```
+0x00000018 CreateBuffer size_bytes=40 ...
+0x00000040 UploadResource size_bytes=36 ...
+```
+
 ### Shared-surface MVP limitation (single allocation)
 
 The shared-surface ABI (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`) currently assumes that a shared surface is backed by a **single** WDDM allocation (one contiguous guest memory range). Many WDDM resources can be split across multiple allocations (mips/arrays/planes).

@@ -21,6 +21,16 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Decode a raw command stream dump and print a per-packet opcode listing.
+    DecodeCmdStream {
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Fail on unknown opcodes (default is forward-compatible and prints UNKNOWN).
+        #[arg(long)]
+        strict: bool,
+    },
+
     /// Decode a raw alloc table dump (from `alloc_table_gpa`) and print entries.
     DecodeAllocTable {
         #[arg(value_name = "PATH")]
@@ -49,11 +59,20 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Command::DecodeCmdStream { path, strict }) => decode_cmd_stream_cmd(path, strict),
         Some(Command::DecodeAllocTable { path }) => decode_alloc_table_cmd(path),
         Some(Command::DecodeSubmit { cmd, alloc }) => decode_submit_cmd(cmd, alloc),
         Some(Command::ReplayTrace { path }) => replay_trace_cmd(path),
         None => replay_trace_cmd(cli.trace.expect("clap should require TRACE")),
     }
+}
+
+fn decode_cmd_stream_cmd(path: PathBuf, strict: bool) -> Result<()> {
+    let bytes = fs::read(&path).with_context(|| format!("read cmd stream {}", path.display()))?;
+    let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, strict)
+        .with_context(|| format!("decode cmd stream {}", path.display()))?;
+    print!("{listing}");
+    Ok(())
 }
 
 fn replay_trace_cmd(path: PathBuf) -> Result<()> {

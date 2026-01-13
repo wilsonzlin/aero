@@ -1,7 +1,7 @@
 use aero_gpu_trace::{BlobKind, TraceReadError, TraceReader, TraceRecord};
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuPrimitiveTopology,
-    AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
+    AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
+    AerogpuPrimitiveTopology, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use sha2::{Digest, Sha256};
@@ -690,4 +690,642 @@ impl SubmissionMemory {
     fn get(&self, alloc_id: u32) -> Option<&SubmissionAlloc> {
         self.allocs.get(&alloc_id)
     }
+}
+
+#[derive(Debug)]
+pub enum CmdStreamDecodeError {
+    Header(AerogpuCmdDecodeError),
+    Packet {
+        offset: usize,
+        err: AerogpuCmdDecodeError,
+    },
+    UnknownOpcode {
+        offset: usize,
+        opcode_id: u32,
+    },
+    Payload {
+        offset: usize,
+        opcode: AerogpuCmdOpcode,
+        err: AerogpuCmdDecodeError,
+    },
+    MalformedPayload {
+        offset: usize,
+        opcode: AerogpuCmdOpcode,
+        msg: &'static str,
+    },
+    OffsetOverflow {
+        offset: usize,
+        size_bytes: u32,
+    },
+}
+
+impl fmt::Display for CmdStreamDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CmdStreamDecodeError::Header(err) => {
+                write!(f, "failed to decode command stream header: {err:?}")
+            }
+            CmdStreamDecodeError::Packet { offset, err } => write!(
+                f,
+                "command packet decode error at offset 0x{offset:08X}: {err:?}"
+            ),
+            CmdStreamDecodeError::UnknownOpcode { offset, opcode_id } => write!(
+                f,
+                "unknown opcode_id=0x{opcode_id:08X} at offset 0x{offset:08X}"
+            ),
+            CmdStreamDecodeError::Payload { offset, opcode, err } => write!(
+                f,
+                "failed to decode {opcode:?} payload at offset 0x{offset:08X}: {err:?}"
+            ),
+            CmdStreamDecodeError::MalformedPayload { offset, opcode, msg } => write!(
+                f,
+                "malformed {opcode:?} payload at offset 0x{offset:08X}: {msg}"
+            ),
+            CmdStreamDecodeError::OffsetOverflow { offset, size_bytes } => write!(
+                f,
+                "command stream offset overflow at offset 0x{offset:08X} adding size_bytes={size_bytes}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CmdStreamDecodeError {}
+
+fn u32_le_at(bytes: &[u8], off: usize) -> Option<u32> {
+    let b = bytes.get(off..off + 4)?;
+    Some(u32::from_le_bytes(b.try_into().unwrap()))
+}
+
+fn u64_le_at(bytes: &[u8], off: usize) -> Option<u64> {
+    let b = bytes.get(off..off + 8)?;
+    Some(u64::from_le_bytes(b.try_into().unwrap()))
+}
+
+fn i32_le_at(bytes: &[u8], off: usize) -> Option<i32> {
+    let b = bytes.get(off..off + 4)?;
+    Some(i32::from_le_bytes(b.try_into().unwrap()))
+}
+
+fn f32_bits_at(bytes: &[u8], off: usize) -> Option<f32> {
+    Some(f32::from_bits(u32_le_at(bytes, off)?))
+}
+
+fn fmt_f32_3(v: f32) -> String {
+    // Fixed precision yields more stable/grep-friendly output than the shortest-repr formatter.
+    format!("{v:.3}")
+}
+
+fn hex_prefix(bytes: &[u8], max_len: usize) -> String {
+    let mut out = String::new();
+    let take = bytes.len().min(max_len);
+    for b in &bytes[..take] {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{b:02x}");
+    }
+    if bytes.len() > max_len {
+        out.push_str("..");
+    }
+    out
+}
+
+fn opcode_name(op: AerogpuCmdOpcode) -> &'static str {
+    match op {
+        AerogpuCmdOpcode::Nop => "Nop",
+        AerogpuCmdOpcode::DebugMarker => "DebugMarker",
+        AerogpuCmdOpcode::CreateBuffer => "CreateBuffer",
+        AerogpuCmdOpcode::CreateTexture2d => "CreateTexture2d",
+        AerogpuCmdOpcode::DestroyResource => "DestroyResource",
+        AerogpuCmdOpcode::ResourceDirtyRange => "ResourceDirtyRange",
+        AerogpuCmdOpcode::UploadResource => "UploadResource",
+        AerogpuCmdOpcode::CopyBuffer => "CopyBuffer",
+        AerogpuCmdOpcode::CopyTexture2d => "CopyTexture2d",
+        AerogpuCmdOpcode::CreateShaderDxbc => "CreateShaderDxbc",
+        AerogpuCmdOpcode::DestroyShader => "DestroyShader",
+        AerogpuCmdOpcode::BindShaders => "BindShaders",
+        AerogpuCmdOpcode::SetShaderConstantsF => "SetShaderConstantsF",
+        AerogpuCmdOpcode::CreateInputLayout => "CreateInputLayout",
+        AerogpuCmdOpcode::DestroyInputLayout => "DestroyInputLayout",
+        AerogpuCmdOpcode::SetInputLayout => "SetInputLayout",
+        AerogpuCmdOpcode::SetBlendState => "SetBlendState",
+        AerogpuCmdOpcode::SetDepthStencilState => "SetDepthStencilState",
+        AerogpuCmdOpcode::SetRasterizerState => "SetRasterizerState",
+        AerogpuCmdOpcode::SetRenderTargets => "SetRenderTargets",
+        AerogpuCmdOpcode::SetViewport => "SetViewport",
+        AerogpuCmdOpcode::SetScissor => "SetScissor",
+        AerogpuCmdOpcode::SetVertexBuffers => "SetVertexBuffers",
+        AerogpuCmdOpcode::SetIndexBuffer => "SetIndexBuffer",
+        AerogpuCmdOpcode::SetPrimitiveTopology => "SetPrimitiveTopology",
+        AerogpuCmdOpcode::SetTexture => "SetTexture",
+        AerogpuCmdOpcode::SetSamplerState => "SetSamplerState",
+        AerogpuCmdOpcode::SetRenderState => "SetRenderState",
+        AerogpuCmdOpcode::CreateSampler => "CreateSampler",
+        AerogpuCmdOpcode::DestroySampler => "DestroySampler",
+        AerogpuCmdOpcode::SetSamplers => "SetSamplers",
+        AerogpuCmdOpcode::SetConstantBuffers => "SetConstantBuffers",
+        AerogpuCmdOpcode::Clear => "Clear",
+        AerogpuCmdOpcode::Draw => "Draw",
+        AerogpuCmdOpcode::DrawIndexed => "DrawIndexed",
+        AerogpuCmdOpcode::Present => "Present",
+        AerogpuCmdOpcode::PresentEx => "PresentEx",
+        AerogpuCmdOpcode::ExportSharedSurface => "ExportSharedSurface",
+        AerogpuCmdOpcode::ImportSharedSurface => "ImportSharedSurface",
+        AerogpuCmdOpcode::ReleaseSharedSurface => "ReleaseSharedSurface",
+        AerogpuCmdOpcode::Flush => "Flush",
+    }
+}
+
+/// Decode an AeroGPU command stream (`aerogpu_cmd_stream_header` + packet sequence) and return a
+/// stable, grep-friendly opcode listing.
+///
+/// This is intended for inspecting raw dumps from Win7 guests (e.g. via dbgctl) without writing
+/// ad-hoc parsers.
+pub fn decode_cmd_stream_listing(
+    bytes: &[u8],
+    strict: bool,
+) -> Result<String, CmdStreamDecodeError> {
+    let iter = AerogpuCmdStreamIter::new(bytes).map_err(CmdStreamDecodeError::Header)?;
+    let header = *iter.header();
+
+    // Avoid taking references to packed fields (UB) by copying them into locals first.
+    let magic = header.magic;
+    let abi_version = header.abi_version;
+    let stream_size_bytes = header.size_bytes;
+    let flags = header.flags;
+    let reserved0 = header.reserved0;
+    let reserved1 = header.reserved1;
+
+    let abi_major = (abi_version >> 16) as u16;
+    let abi_minor = (abi_version & 0xFFFF) as u16;
+
+    let mut out = String::new();
+    use std::fmt::Write as _;
+    let _ = writeln!(
+        out,
+        "header magic=0x{magic:08X} abi={abi_major}.{abi_minor} size_bytes={stream_size_bytes} flags=0x{flags:08X} reserved0=0x{reserved0:08X} reserved1=0x{reserved1:08X} file_len={}",
+        bytes.len()
+    );
+
+    // Track offsets explicitly; the iterator currently does not expose them.
+    let mut offset = AerogpuCmdStreamHeader::SIZE_BYTES;
+    for pkt in iter {
+        let pkt = pkt.map_err(|err| CmdStreamDecodeError::Packet { offset, err })?;
+
+        let opcode_id = pkt.hdr.opcode;
+        let size_bytes = pkt.hdr.size_bytes;
+
+        let mut line = String::new();
+        match pkt.opcode {
+            Some(opcode) => {
+                let _ = write!(
+                    line,
+                    "0x{offset:08X} {} size_bytes={size_bytes} opcode_id=0x{opcode_id:08X}",
+                    opcode_name(opcode)
+                );
+
+                match opcode {
+                    AerogpuCmdOpcode::Nop => {}
+                    AerogpuCmdOpcode::DebugMarker => {
+                        let marker_bytes = pkt.payload;
+                        let marker = String::from_utf8_lossy(marker_bytes)
+                            .trim_end_matches('\0')
+                            .replace('\n', "\\n");
+                        let marker = marker.chars().take(80).collect::<String>();
+                        let _ = write!(line, " marker=\"{marker}\"");
+                    }
+
+                    AerogpuCmdOpcode::CreateBuffer => {
+                        if pkt.payload.len() < 32 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 32 bytes",
+                            });
+                        }
+                        let buffer_handle = u32_le_at(pkt.payload, 0).unwrap();
+                        let usage_flags = u32_le_at(pkt.payload, 4).unwrap();
+                        let buffer_size_bytes = u64_le_at(pkt.payload, 8).unwrap();
+                        let backing_alloc_id = u32_le_at(pkt.payload, 16).unwrap();
+                        let backing_offset_bytes = u32_le_at(pkt.payload, 20).unwrap();
+                        let _ = write!(
+                            line,
+                            " buffer_handle={buffer_handle} usage_flags=0x{usage_flags:08X} buffer_size_bytes={buffer_size_bytes} backing_alloc_id={backing_alloc_id} backing_offset_bytes={backing_offset_bytes}"
+                        );
+                    }
+                    AerogpuCmdOpcode::CreateTexture2d => {
+                        if pkt.payload.len() < 48 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 48 bytes",
+                            });
+                        }
+                        let texture_handle = u32_le_at(pkt.payload, 0).unwrap();
+                        let usage_flags = u32_le_at(pkt.payload, 4).unwrap();
+                        let format = u32_le_at(pkt.payload, 8).unwrap();
+                        let width = u32_le_at(pkt.payload, 12).unwrap();
+                        let height = u32_le_at(pkt.payload, 16).unwrap();
+                        let mip_levels = u32_le_at(pkt.payload, 20).unwrap();
+                        let array_layers = u32_le_at(pkt.payload, 24).unwrap();
+                        let row_pitch_bytes = u32_le_at(pkt.payload, 28).unwrap();
+                        let backing_alloc_id = u32_le_at(pkt.payload, 32).unwrap();
+                        let backing_offset_bytes = u32_le_at(pkt.payload, 36).unwrap();
+
+                        let format_name = match format {
+                            v if v == AerogpuFormat::Invalid as u32 => Some("Invalid"),
+                            v if v == AerogpuFormat::B8G8R8A8Unorm as u32 => Some("B8G8R8A8Unorm"),
+                            v if v == AerogpuFormat::B8G8R8X8Unorm as u32 => Some("B8G8R8X8Unorm"),
+                            v if v == AerogpuFormat::R8G8B8A8Unorm as u32 => Some("R8G8B8A8Unorm"),
+                            v if v == AerogpuFormat::R8G8B8X8Unorm as u32 => Some("R8G8B8X8Unorm"),
+                            v if v == AerogpuFormat::B5G6R5Unorm as u32 => Some("B5G6R5Unorm"),
+                            v if v == AerogpuFormat::B5G5R5A1Unorm as u32 => Some("B5G5R5A1Unorm"),
+                            v if v == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => {
+                                Some("B8G8R8A8UnormSrgb")
+                            }
+                            v if v == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => {
+                                Some("B8G8R8X8UnormSrgb")
+                            }
+                            v if v == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => {
+                                Some("R8G8B8A8UnormSrgb")
+                            }
+                            v if v == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => {
+                                Some("R8G8B8X8UnormSrgb")
+                            }
+                            v if v == AerogpuFormat::D24UnormS8Uint as u32 => Some("D24UnormS8Uint"),
+                            v if v == AerogpuFormat::D32Float as u32 => Some("D32Float"),
+                            v if v == AerogpuFormat::BC1RgbaUnorm as u32 => Some("BC1RgbaUnorm"),
+                            v if v == AerogpuFormat::BC1RgbaUnormSrgb as u32 => {
+                                Some("BC1RgbaUnormSrgb")
+                            }
+                            v if v == AerogpuFormat::BC2RgbaUnorm as u32 => Some("BC2RgbaUnorm"),
+                            v if v == AerogpuFormat::BC2RgbaUnormSrgb as u32 => {
+                                Some("BC2RgbaUnormSrgb")
+                            }
+                            v if v == AerogpuFormat::BC3RgbaUnorm as u32 => Some("BC3RgbaUnorm"),
+                            v if v == AerogpuFormat::BC3RgbaUnormSrgb as u32 => {
+                                Some("BC3RgbaUnormSrgb")
+                            }
+                            v if v == AerogpuFormat::BC7RgbaUnorm as u32 => Some("BC7RgbaUnorm"),
+                            v if v == AerogpuFormat::BC7RgbaUnormSrgb as u32 => {
+                                Some("BC7RgbaUnormSrgb")
+                            }
+                            _ => None,
+                        };
+
+                        let _ = write!(
+                            line,
+                            " texture_handle={texture_handle} usage_flags=0x{usage_flags:08X} format=0x{format:08X}"
+                        );
+                        if let Some(name) = format_name {
+                            let _ = write!(line, " format_name={name}");
+                        }
+                        let _ = write!(
+                            line,
+                            " width={width} height={height} mip_levels={mip_levels} array_layers={array_layers} row_pitch_bytes={row_pitch_bytes} backing_alloc_id={backing_alloc_id} backing_offset_bytes={backing_offset_bytes}"
+                        );
+                    }
+                    AerogpuCmdOpcode::DestroyResource => {
+                        if pkt.payload.len() < 8 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 8 bytes",
+                            });
+                        }
+                        let resource_handle = u32_le_at(pkt.payload, 0).unwrap();
+                        let _ = write!(line, " resource_handle={resource_handle}");
+                    }
+                    AerogpuCmdOpcode::ResourceDirtyRange => {
+                        if pkt.payload.len() < 24 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 24 bytes",
+                            });
+                        }
+                        let resource_handle = u32_le_at(pkt.payload, 0).unwrap();
+                        let range_offset_bytes = u64_le_at(pkt.payload, 8).unwrap();
+                        let range_size_bytes = u64_le_at(pkt.payload, 16).unwrap();
+                        let _ = write!(
+                            line,
+                            " resource_handle={resource_handle} offset_bytes={range_offset_bytes} range_size_bytes={range_size_bytes}"
+                        );
+                    }
+                    AerogpuCmdOpcode::UploadResource => {
+                        let (cmd, data) = pkt
+                            .decode_upload_resource_payload_le()
+                            .map_err(|err| CmdStreamDecodeError::Payload {
+                                offset,
+                                opcode,
+                                err,
+                            })?;
+                        // Avoid taking references to packed fields.
+                        let resource_handle = cmd.resource_handle;
+                        let upload_offset_bytes = cmd.offset_bytes;
+                        let upload_size_bytes = cmd.size_bytes;
+                        let prefix = hex_prefix(data, 16);
+                        let _ = write!(
+                            line,
+                            " resource_handle={} offset_bytes={} upload_size_bytes={} data_len={} data_prefix={}",
+                            resource_handle,
+                            upload_offset_bytes,
+                            upload_size_bytes,
+                            data.len(),
+                            prefix
+                        );
+                    }
+                    AerogpuCmdOpcode::CopyBuffer => {
+                        if pkt.payload.len() < 40 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 40 bytes",
+                            });
+                        }
+                        let dst_buffer = u32_le_at(pkt.payload, 0).unwrap();
+                        let src_buffer = u32_le_at(pkt.payload, 4).unwrap();
+                        let dst_offset_bytes = u64_le_at(pkt.payload, 8).unwrap();
+                        let src_offset_bytes = u64_le_at(pkt.payload, 16).unwrap();
+                        let copy_size_bytes = u64_le_at(pkt.payload, 24).unwrap();
+                        let flags = u32_le_at(pkt.payload, 32).unwrap();
+                        let _ = write!(
+                            line,
+                            " dst_buffer={dst_buffer} src_buffer={src_buffer} dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} copy_size_bytes={copy_size_bytes} flags=0x{flags:08X}"
+                        );
+                    }
+                    AerogpuCmdOpcode::CopyTexture2d => {
+                        if pkt.payload.len() < 56 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 56 bytes",
+                            });
+                        }
+                        let dst_texture = u32_le_at(pkt.payload, 0).unwrap();
+                        let src_texture = u32_le_at(pkt.payload, 4).unwrap();
+                        let dst_mip_level = u32_le_at(pkt.payload, 8).unwrap();
+                        let dst_array_layer = u32_le_at(pkt.payload, 12).unwrap();
+                        let src_mip_level = u32_le_at(pkt.payload, 16).unwrap();
+                        let src_array_layer = u32_le_at(pkt.payload, 20).unwrap();
+                        let dst_x = u32_le_at(pkt.payload, 24).unwrap();
+                        let dst_y = u32_le_at(pkt.payload, 28).unwrap();
+                        let src_x = u32_le_at(pkt.payload, 32).unwrap();
+                        let src_y = u32_le_at(pkt.payload, 36).unwrap();
+                        let width = u32_le_at(pkt.payload, 40).unwrap();
+                        let height = u32_le_at(pkt.payload, 44).unwrap();
+                        let flags = u32_le_at(pkt.payload, 48).unwrap();
+                        let _ = write!(
+                            line,
+                            " dst_texture={dst_texture} src_texture={src_texture} dst_mip_level={dst_mip_level} dst_array_layer={dst_array_layer} src_mip_level={src_mip_level} src_array_layer={src_array_layer} dst_xy={dst_x},{dst_y} src_xy={src_x},{src_y} size={width}x{height} flags=0x{flags:08X}"
+                        );
+                    }
+                    AerogpuCmdOpcode::CreateShaderDxbc => {
+                        let (cmd, dxbc) = pkt
+                            .decode_create_shader_dxbc_payload_le()
+                            .map_err(|err| CmdStreamDecodeError::Payload {
+                                offset,
+                                opcode,
+                                err,
+                            })?;
+                        // Avoid taking references to packed fields.
+                        let shader_handle = cmd.shader_handle;
+                        let stage = cmd.stage;
+                        let dxbc_size_bytes = cmd.dxbc_size_bytes;
+                        let _ = write!(
+                            line,
+                            " shader_handle={} stage={} dxbc_size_bytes={} dxbc_prefix={}",
+                            shader_handle,
+                            stage,
+                            dxbc_size_bytes,
+                            hex_prefix(dxbc, 16)
+                        );
+                    }
+                    AerogpuCmdOpcode::CreateInputLayout => {
+                        let (cmd, blob) = pkt
+                            .decode_create_input_layout_payload_le()
+                            .map_err(|err| CmdStreamDecodeError::Payload {
+                                offset,
+                                opcode,
+                                err,
+                            })?;
+                        // Avoid taking references to packed fields.
+                        let input_layout_handle = cmd.input_layout_handle;
+                        let blob_size_bytes = cmd.blob_size_bytes;
+                        let _ = write!(
+                            line,
+                            " input_layout_handle={} blob_size_bytes={} blob_prefix={}",
+                            input_layout_handle,
+                            blob_size_bytes,
+                            hex_prefix(blob, 16)
+                        );
+                    }
+
+                    AerogpuCmdOpcode::SetRenderTargets => {
+                        if pkt.payload.len() < 40 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 40 bytes",
+                            });
+                        }
+                        let color_count = u32_le_at(pkt.payload, 0).unwrap();
+                        let depth_stencil = u32_le_at(pkt.payload, 4).unwrap();
+                        let mut colors = Vec::new();
+                        let max = (color_count as usize).min(8);
+                        for i in 0..max {
+                            colors.push(u32_le_at(pkt.payload, 8 + i * 4).unwrap());
+                        }
+                        let _ = write!(
+                            line,
+                            " color_count={color_count} depth_stencil={depth_stencil} colors={:?}",
+                            colors
+                        );
+                    }
+                    AerogpuCmdOpcode::SetViewport => {
+                        if pkt.payload.len() < 24 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 24 bytes",
+                            });
+                        }
+                        let x = f32_bits_at(pkt.payload, 0).unwrap();
+                        let y = f32_bits_at(pkt.payload, 4).unwrap();
+                        let width = f32_bits_at(pkt.payload, 8).unwrap();
+                        let height = f32_bits_at(pkt.payload, 12).unwrap();
+                        let min_depth = f32_bits_at(pkt.payload, 16).unwrap();
+                        let max_depth = f32_bits_at(pkt.payload, 20).unwrap();
+                        let _ = write!(
+                            line,
+                            " x={} y={} width={} height={} min_depth={} max_depth={}",
+                            fmt_f32_3(x),
+                            fmt_f32_3(y),
+                            fmt_f32_3(width),
+                            fmt_f32_3(height),
+                            fmt_f32_3(min_depth),
+                            fmt_f32_3(max_depth)
+                        );
+                    }
+                    AerogpuCmdOpcode::SetScissor => {
+                        if pkt.payload.len() < 16 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 16 bytes",
+                            });
+                        }
+                        let x = i32_le_at(pkt.payload, 0).unwrap();
+                        let y = i32_le_at(pkt.payload, 4).unwrap();
+                        let width = i32_le_at(pkt.payload, 8).unwrap();
+                        let height = i32_le_at(pkt.payload, 12).unwrap();
+                        let _ = write!(line, " x={x} y={y} width={width} height={height}");
+                    }
+
+                    AerogpuCmdOpcode::Clear => {
+                        if pkt.payload.len() < 28 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 28 bytes",
+                            });
+                        }
+                        let flags = u32_le_at(pkt.payload, 0).unwrap();
+                        let color = [
+                            f32_bits_at(pkt.payload, 4).unwrap(),
+                            f32_bits_at(pkt.payload, 8).unwrap(),
+                            f32_bits_at(pkt.payload, 12).unwrap(),
+                            f32_bits_at(pkt.payload, 16).unwrap(),
+                        ];
+                        let depth = f32_bits_at(pkt.payload, 20).unwrap();
+                        let stencil = u32_le_at(pkt.payload, 24).unwrap();
+
+                        let _ = write!(line, " flags=0x{flags:08X}");
+                        if (flags & AEROGPU_CLEAR_COLOR) != 0 {
+                            let _ = write!(
+                                line,
+                                " color_rgba=[{},{},{},{}]",
+                                fmt_f32_3(color[0]),
+                                fmt_f32_3(color[1]),
+                                fmt_f32_3(color[2]),
+                                fmt_f32_3(color[3])
+                            );
+                        }
+                        let _ = write!(line, " depth={}", fmt_f32_3(depth));
+                        let _ = write!(line, " stencil={stencil}");
+                    }
+                    AerogpuCmdOpcode::Draw => {
+                        if pkt.payload.len() < 16 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 16 bytes",
+                            });
+                        }
+                        let vertex_count = u32_le_at(pkt.payload, 0).unwrap();
+                        let instance_count = u32_le_at(pkt.payload, 4).unwrap();
+                        let first_vertex = u32_le_at(pkt.payload, 8).unwrap();
+                        let first_instance = u32_le_at(pkt.payload, 12).unwrap();
+                        let _ = write!(
+                            line,
+                            " vertex_count={vertex_count} instance_count={instance_count} first_vertex={first_vertex} first_instance={first_instance}"
+                        );
+                    }
+                    AerogpuCmdOpcode::DrawIndexed => {
+                        if pkt.payload.len() < 20 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 20 bytes",
+                            });
+                        }
+                        let index_count = u32_le_at(pkt.payload, 0).unwrap();
+                        let instance_count = u32_le_at(pkt.payload, 4).unwrap();
+                        let first_index = u32_le_at(pkt.payload, 8).unwrap();
+                        let base_vertex = i32_le_at(pkt.payload, 12).unwrap();
+                        let first_instance = u32_le_at(pkt.payload, 16).unwrap();
+                        let _ = write!(
+                            line,
+                            " index_count={index_count} instance_count={instance_count} first_index={first_index} base_vertex={base_vertex} first_instance={first_instance}"
+                        );
+                    }
+                    AerogpuCmdOpcode::Present => {
+                        if pkt.payload.len() < 8 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 8 bytes",
+                            });
+                        }
+                        let scanout_id = u32_le_at(pkt.payload, 0).unwrap();
+                        let flags = u32_le_at(pkt.payload, 4).unwrap();
+                        let _ = write!(
+                            line,
+                            " scanout_id={scanout_id} flags=0x{flags:08X}"
+                        );
+                    }
+                    AerogpuCmdOpcode::PresentEx => {
+                        if pkt.payload.len() < 12 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 12 bytes",
+                            });
+                        }
+                        let scanout_id = u32_le_at(pkt.payload, 0).unwrap();
+                        let flags = u32_le_at(pkt.payload, 4).unwrap();
+                        let d3d9_present_flags = u32_le_at(pkt.payload, 8).unwrap();
+                        let _ = write!(
+                            line,
+                            " scanout_id={scanout_id} flags=0x{flags:08X} d3d9_present_flags=0x{d3d9_present_flags:08X}"
+                        );
+                    }
+
+                    AerogpuCmdOpcode::Flush
+                    | AerogpuCmdOpcode::DestroyShader
+                    | AerogpuCmdOpcode::BindShaders
+                    | AerogpuCmdOpcode::SetShaderConstantsF
+                    | AerogpuCmdOpcode::DestroyInputLayout
+                    | AerogpuCmdOpcode::SetInputLayout
+                    | AerogpuCmdOpcode::SetBlendState
+                    | AerogpuCmdOpcode::SetDepthStencilState
+                    | AerogpuCmdOpcode::SetRasterizerState
+                    | AerogpuCmdOpcode::SetVertexBuffers
+                    | AerogpuCmdOpcode::SetIndexBuffer
+                    | AerogpuCmdOpcode::SetPrimitiveTopology
+                    | AerogpuCmdOpcode::SetTexture
+                    | AerogpuCmdOpcode::SetSamplerState
+                    | AerogpuCmdOpcode::SetRenderState
+                    | AerogpuCmdOpcode::CreateSampler
+                    | AerogpuCmdOpcode::DestroySampler
+                    | AerogpuCmdOpcode::SetSamplers
+                    | AerogpuCmdOpcode::SetConstantBuffers
+                    | AerogpuCmdOpcode::ExportSharedSurface
+                    | AerogpuCmdOpcode::ImportSharedSurface
+                    | AerogpuCmdOpcode::ReleaseSharedSurface => {
+                        // Decoders for the less-common opcodes can be added as needed; keep the
+                        // listing stable and always show opcode_id/size_bytes for forward-compat.
+                        let _ = write!(line, " payload_len={}", pkt.payload.len());
+                    }
+                }
+            }
+            None => {
+                if strict {
+                    return Err(CmdStreamDecodeError::UnknownOpcode { offset, opcode_id });
+                }
+                let _ = write!(
+                    line,
+                    "0x{offset:08X} Unknown size_bytes={size_bytes} opcode_id=0x{opcode_id:08X} payload_len={}",
+                    pkt.payload.len()
+                );
+            }
+        }
+
+        out.push_str(&line);
+        out.push('\n');
+
+        offset = offset
+            .checked_add(size_bytes as usize)
+            .ok_or(CmdStreamDecodeError::OffsetOverflow { offset, size_bytes })?;
+    }
+
+    Ok(out)
 }
