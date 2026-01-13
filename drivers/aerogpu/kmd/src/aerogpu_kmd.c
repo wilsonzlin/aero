@@ -3908,6 +3908,68 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
         return STATUS_SUCCESS;
     }
 
+    /*
+     * Validate topology: AeroGPU supports exactly one path (source 0 -> target 0)
+     * with identity transforms.
+     *
+     * Note: keep this best-effort to avoid regressing bring-up flows if a header
+     * variant omits topology callbacks.
+     */
+    if (vidpn.pfnGetTopology && vidpn.pfnGetTopologyInterface && vidpn.pfnReleaseTopology) {
+        D3DKMDT_HVIDPNTOPOLOGY hTopology = 0;
+        status = vidpn.pfnGetTopology(pEnum->hFunctionalVidPn, &hTopology);
+        if (NT_SUCCESS(status) && hTopology) {
+            DXGK_VIDPNTOPOLOGY_INTERFACE topo;
+            RtlZeroMemory(&topo, sizeof(topo));
+            status = vidpn.pfnGetTopologyInterface(pEnum->hFunctionalVidPn, hTopology, &topo);
+            if (NT_SUCCESS(status) && topo.pfnGetNumPaths && topo.pfnAcquireFirstPathInfo && topo.pfnReleasePathInfo) {
+                UINT numPaths = 0;
+                status = topo.pfnGetNumPaths(hTopology, &numPaths);
+                if (!NT_SUCCESS(status) || numPaths != 1) {
+                    vidpn.pfnReleaseTopology(pEnum->hFunctionalVidPn, hTopology);
+                    return STATUS_GRAPHICS_INVALID_VIDPN_TOPOLOGY;
+                }
+
+                const D3DKMDT_VIDPN_PRESENT_PATH* pathInfo = NULL;
+                status = topo.pfnAcquireFirstPathInfo(hTopology, &pathInfo);
+                if (!NT_SUCCESS(status) || !pathInfo) {
+                    vidpn.pfnReleaseTopology(pEnum->hFunctionalVidPn, hTopology);
+                    return STATUS_GRAPHICS_INVALID_VIDPN_TOPOLOGY;
+                }
+
+                BOOLEAN ok = TRUE;
+                if (pathInfo->VidPnSourceId != AEROGPU_VIDPN_SOURCE_ID || pathInfo->VidPnTargetId != AEROGPU_VIDPN_TARGET_ID) {
+                    ok = FALSE;
+                }
+
+                if (ok) {
+                    const D3DKMDT_VIDPN_PRESENT_PATH_ROTATION rot = pathInfo->ContentTransformation.Rotation;
+                    if (rot != D3DKMDT_VPPR_IDENTITY && rot != D3DKMDT_VPPR_UNINITIALIZED) {
+                        topo.pfnReleasePathInfo(hTopology, pathInfo);
+                        vidpn.pfnReleaseTopology(pEnum->hFunctionalVidPn, hTopology);
+                        return STATUS_NOT_SUPPORTED;
+                    }
+
+                    const D3DKMDT_VIDPN_PRESENT_PATH_SCALING sc = pathInfo->ContentTransformation.Scaling;
+                    if (sc != D3DKMDT_VPPS_IDENTITY && sc != D3DKMDT_VPPS_UNINITIALIZED) {
+                        topo.pfnReleasePathInfo(hTopology, pathInfo);
+                        vidpn.pfnReleaseTopology(pEnum->hFunctionalVidPn, hTopology);
+                        return STATUS_NOT_SUPPORTED;
+                    }
+                }
+
+                topo.pfnReleasePathInfo(hTopology, pathInfo);
+                vidpn.pfnReleaseTopology(pEnum->hFunctionalVidPn, hTopology);
+
+                if (!ok) {
+                    return STATUS_GRAPHICS_INVALID_VIDPN_TOPOLOGY;
+                }
+            } else {
+                vidpn.pfnReleaseTopology(pEnum->hFunctionalVidPn, hTopology);
+            }
+        }
+    }
+
     if (!vidpn.pfnCreateNewSourceModeSet || !vidpn.pfnAssignSourceModeSet || !vidpn.pfnGetSourceModeSetInterface ||
         !vidpn.pfnReleaseSourceModeSet || !vidpn.pfnCreateNewTargetModeSet || !vidpn.pfnAssignTargetModeSet ||
         !vidpn.pfnGetTargetModeSetInterface || !vidpn.pfnReleaseTargetModeSet) {
