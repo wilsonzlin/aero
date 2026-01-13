@@ -863,8 +863,11 @@ fn aml_processor(cpu_id: u8) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend_from_slice(&name);
     payload.push(cpu_id); // Processor ID
-    payload.extend_from_slice(&0x0000_0810u32.to_le_bytes()); // PblkAddress
-    payload.push(0x06); // PblkLength
+    // Do not advertise a CPU PBLK (processor power management I/O ports) unless we actually
+    // implement the device model behind it. Some OSes (notably Windows 7) may probe/use these
+    // ports based on FADT/CPU feature flags.
+    payload.extend_from_slice(&0u32.to_le_bytes()); // PblkAddress
+    payload.push(0x00); // PblkLength
 
     let mut out = Vec::new();
     out.extend_from_slice(&[0x5B, 0x83]); // ProcessorOp

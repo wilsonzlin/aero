@@ -177,6 +177,27 @@ fn read_sdt_signature(mem: &TestMemory, paddr: u64) -> [u8; 4] {
 }
 
 #[test]
+fn processor_objects_do_not_advertise_unimplemented_pblk_ports() {
+    let cfg = AcpiConfig {
+        cpu_count: 2,
+        ..Default::default()
+    };
+    let placement = AcpiPlacement::default();
+    let tables = AcpiTables::build(&cfg, placement);
+    let aml = &tables.dsdt[36..];
+
+    // Little-endian encoding of the historical hardcoded PBLK base (0x810).
+    // Until we implement the corresponding device model, ProcessorOp must use
+    // PblkAddress=0/PblkLength=0 to prevent OSes (e.g. Windows 7) from probing
+    // unimplemented I/O ports.
+    let needle = 0x0000_0810u32.to_le_bytes();
+    assert!(
+        !aml.windows(needle.len()).any(|w| w == needle),
+        "DSDT AML must not contain legacy PBLK I/O base 0x810"
+    );
+}
+
+#[test]
 fn generated_tables_are_self_consistent_and_checksums_pass() {
     let cfg = AcpiConfig {
         cpu_count: 2,
