@@ -1935,9 +1935,13 @@ fn map_buffer_usage(usage: BufferUsage) -> wgpu::BufferUsages {
     }
     if usage.contains(BufferUsage::INDEX) {
         out |= wgpu::BufferUsages::INDEX;
+        // IA index buffers are also consumed by internal compute prepasses (vertex pulling).
+        out |= wgpu::BufferUsages::STORAGE;
     }
     if usage.contains(BufferUsage::VERTEX) {
         out |= wgpu::BufferUsages::VERTEX;
+        // IA vertex buffers are also consumed by internal compute prepasses (vertex pulling).
+        out |= wgpu::BufferUsages::STORAGE;
     }
     if usage.contains(BufferUsage::UNIFORM) {
         out |= wgpu::BufferUsages::UNIFORM;

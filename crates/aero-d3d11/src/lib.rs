@@ -9,6 +9,7 @@
 pub mod binding_model;
 pub mod input_layout;
 pub mod runtime;
+pub mod shader_lib;
 pub mod shader_translate;
 pub mod signature;
 pub mod sm4;
