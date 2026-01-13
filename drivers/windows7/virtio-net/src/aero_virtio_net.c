@@ -13,6 +13,12 @@ C_ASSERT(sizeof(VIRTIO_NET_HDR) == sizeof(AEROVNET_VIRTIO_NET_HDR));
 
 static NDIS_HANDLE g_NdisDriverHandle = NULL;
 
+#if DBG
+static volatile LONG g_AerovNetDbgTxCancelBeforeSg = 0;
+static volatile LONG g_AerovNetDbgTxCancelAfterSg = 0;
+static volatile LONG g_AerovNetDbgTxCancelAfterSubmit = 0;
+#endif
+
 static const NDIS_OID g_SupportedOids[] = {
     OID_GEN_SUPPORTED_LIST,
     OID_GEN_HARDWARE_STATUS,
@@ -157,12 +163,32 @@ static VOID AerovNetTxNblCompleteOneNetBufferLocked(_Inout_ AEROVNET_ADAPTER* Ad
 }
 
 static VOID AerovNetCompleteTxRequest(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_TX_REQUEST* TxReq, _In_ NDIS_STATUS TxStatus,
-                                     _Inout_ PNET_BUFFER_LIST* CompleteNblHead, _Inout_ PNET_BUFFER_LIST* CompleteNblTail) {
+                                      _Inout_ PNET_BUFFER_LIST* CompleteNblHead, _Inout_ PNET_BUFFER_LIST* CompleteNblTail) {
   if (!TxReq || !TxReq->Nbl) {
     return;
   }
 
   AerovNetTxNblCompleteOneNetBufferLocked(Adapter, TxReq->Nbl, TxStatus, CompleteNblHead, CompleteNblTail);
+  // Ensure TxReq completion is idempotent in case a cancellation/teardown path
+  // races and attempts to complete the same request twice.
+  TxReq->Nbl = NULL;
+}
+
+static __forceinline VOID AerovNetSgMappingsRefLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  // Adapter->Lock must be held by the caller.
+  if (Adapter->OutstandingSgMappings == 0) {
+    KeClearEvent(&Adapter->OutstandingSgEvent);
+  }
+  Adapter->OutstandingSgMappings++;
+}
+
+static __forceinline VOID AerovNetSgMappingsDerefLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  // Adapter->Lock must be held by the caller.
+  ASSERT(Adapter->OutstandingSgMappings > 0);
+  Adapter->OutstandingSgMappings--;
+  if (Adapter->OutstandingSgMappings == 0) {
+    KeSetEvent(&Adapter->OutstandingSgEvent, IO_NO_INCREMENT, FALSE);
+  }
 }
 
 static BOOLEAN AerovNetIsBroadcastAddress(_In_reads_(ETH_LENGTH_OF_ADDRESS) const UCHAR* Mac) {
@@ -1635,6 +1661,13 @@ static VOID AerovNetVirtioStop(_Inout_ AEROVNET_ADAPTER* Adapter) {
     AerovNetCompleteNblSend(Adapter, Nbl, NET_BUFFER_LIST_STATUS(Nbl));
   }
 
+#if DBG
+  DbgPrint("aero_virtio_net: tx cancel stats: before_sg=%ld after_sg=%ld after_submit=%ld\n",
+           InterlockedCompareExchange(&g_AerovNetDbgTxCancelBeforeSg, 0, 0),
+           InterlockedCompareExchange(&g_AerovNetDbgTxCancelAfterSg, 0, 0),
+           InterlockedCompareExchange(&g_AerovNetDbgTxCancelAfterSubmit, 0, 0));
+#endif
+
   AerovNetFreeTxResources(Adapter);
   AerovNetFreeRxResources(Adapter);
 
@@ -1971,7 +2004,7 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
   UNREFERENCED_PARAMETER(Reserved);
 
   TxReq = (AEROVNET_TX_REQUEST*)Context;
-  if (!TxReq || !ScatterGatherList) {
+  if (!TxReq) {
     return;
   }
 
@@ -1980,7 +2013,7 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
     return;
   }
 
-  ElemCount = ScatterGatherList->NumberOfElements;
+  ElemCount = ScatterGatherList ? ScatterGatherList->NumberOfElements : 0;
   Needed = (uint16_t)(ElemCount + 1);
 
   CompleteNow = FALSE;
@@ -2003,6 +2036,11 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
     CompleteNow = TRUE;
   } else if (Adapter->State == AerovNetAdapterStopped) {
     AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_RESET_IN_PROGRESS, &CompleteHead, &CompleteTail);
+    CompleteNow = TRUE;
+  } else if (ScatterGatherList == NULL) {
+    // NDIS can invoke the callback with a NULL SG list if DMA mapping fails
+    // asynchronously. Treat this as a resources failure and complete the NET_BUFFER.
+    AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_RESOURCES, &CompleteHead, &CompleteTail);
     CompleteNow = TRUE;
   } else if (ElemCount > AEROVNET_MAX_TX_SG_ELEMENTS) {
     AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_BUFFER_OVERFLOW, &CompleteHead, &CompleteTail);
@@ -2073,9 +2111,9 @@ ReleaseAndExit:
   }
 
   // Signal HaltEx once all SG mapping callbacks have finished.
-  if (InterlockedDecrement(&Adapter->OutstandingSgMappings) == 0) {
-    KeSetEvent(&Adapter->OutstandingSgEvent, IO_NO_INCREMENT, FALSE);
-  }
+  NdisAcquireSpinLock(&Adapter->Lock);
+  AerovNetSgMappingsDerefLocked(Adapter);
+  NdisReleaseSpinLock(&Adapter->Lock);
 }
 
 static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ BOOLEAN UseCurrentConfig, _Out_ NDIS_OFFLOAD* Offload) {
@@ -2852,23 +2890,20 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
       TxReq->SgList = NULL;
       InsertTailList(&Adapter->TxAwaitingSgList, &TxReq->Link);
 
-      if (InterlockedIncrement(&Adapter->OutstandingSgMappings) == 1) {
-        KeClearEvent(&Adapter->OutstandingSgEvent);
-      }
+      AerovNetSgMappingsRefLocked(Adapter);
 
       NdisReleaseSpinLock(&Adapter->Lock);
 
       SgStatus = NdisMAllocateNetBufferSGList(Adapter->DmaHandle, Nb, TxReq, 0);
       if (SgStatus != NDIS_STATUS_SUCCESS && SgStatus != NDIS_STATUS_PENDING) {
         // SG allocation failed synchronously; undo the TxReq.
-        if (InterlockedDecrement(&Adapter->OutstandingSgMappings) == 0) {
-          KeSetEvent(&Adapter->OutstandingSgEvent, IO_NO_INCREMENT, FALSE);
-        }
-
         NdisAcquireSpinLock(&Adapter->Lock);
-        RemoveEntryList(&TxReq->Link);
+        if (TxReq->State == AerovNetTxAwaitingSg) {
+          RemoveEntryList(&TxReq->Link);
+        }
         AerovNetCompleteTxRequest(Adapter, TxReq, SgStatus, &CompleteHead, &CompleteTail);
         AerovNetFreeTxRequestNoLock(Adapter, TxReq);
+        AerovNetSgMappingsDerefLocked(Adapter);
         NdisReleaseSpinLock(&Adapter->Lock);
       }
     }
@@ -2939,8 +2974,13 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
   // completed in the SG callback once the mapping finishes.
   for (Entry = Adapter->TxAwaitingSgList.Flink; Entry != &Adapter->TxAwaitingSgList; Entry = Entry->Flink) {
     AEROVNET_TX_REQUEST* TxReq = CONTAINING_RECORD(Entry, AEROVNET_TX_REQUEST, Link);
-    if (NET_BUFFER_LIST_CANCEL_ID(TxReq->Nbl) == CancelId) {
-      TxReq->Cancelled = TRUE;
+    if (TxReq->Nbl != NULL && NET_BUFFER_LIST_CANCEL_ID(TxReq->Nbl) == CancelId) {
+      if (!TxReq->Cancelled) {
+        TxReq->Cancelled = TRUE;
+#if DBG
+        InterlockedIncrement(&g_AerovNetDbgTxCancelBeforeSg);
+#endif
+      }
     }
   }
 
@@ -2950,12 +2990,26 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
     AEROVNET_TX_REQUEST* TxReq = CONTAINING_RECORD(Entry, AEROVNET_TX_REQUEST, Link);
     Entry = Entry->Flink;
 
-    if (NET_BUFFER_LIST_CANCEL_ID(TxReq->Nbl) == CancelId) {
+    if (TxReq->Nbl != NULL && NET_BUFFER_LIST_CANCEL_ID(TxReq->Nbl) == CancelId) {
       RemoveEntryList(&TxReq->Link);
       InsertTailList(&CancelledReqs, &TxReq->Link);
       AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_REQUEST_ABORTED, &CompleteHead, &CompleteTail);
+#if DBG
+      InterlockedIncrement(&g_AerovNetDbgTxCancelAfterSg);
+#endif
     }
   }
+
+#if DBG
+  // Requests already submitted to the device cannot be cancelled deterministically,
+  // but track them for debugging/diagnostics.
+  for (Entry = Adapter->TxSubmittedList.Flink; Entry != &Adapter->TxSubmittedList; Entry = Entry->Flink) {
+    AEROVNET_TX_REQUEST* TxReq = CONTAINING_RECORD(Entry, AEROVNET_TX_REQUEST, Link);
+    if (TxReq->Nbl != NULL && NET_BUFFER_LIST_CANCEL_ID(TxReq->Nbl) == CancelId) {
+      InterlockedIncrement(&g_AerovNetDbgTxCancelAfterSubmit);
+    }
+  }
+#endif
 
   NdisReleaseSpinLock(&Adapter->Lock);
 
