@@ -92,3 +92,40 @@ func TestUdpPortBinding_AllowRemote_EvictsOldest(t *testing.T) {
 		t.Fatalf("eviction metric=%d, want 1", got)
 	}
 }
+
+func TestUdpPortBinding_RemoteAllowlist_ExpiresByIdleTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.InboundFilterMode = InboundFilterAddressAndPort
+	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
+
+	b := &UdpPortBinding{
+		cfg:     cfg,
+		allowed: make(map[remoteKey]time.Time),
+	}
+
+	remote := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001}
+	key, ok := makeRemoteKey(remote)
+	if !ok {
+		t.Fatalf("makeRemoteKey failed")
+	}
+
+	start := time.Unix(0, 0)
+	b.AllowRemote(remote, start)
+
+	// Allowed shortly after creation (and refreshes the timestamp).
+	if ok := b.remoteAllowed(remote, start.Add(500*time.Millisecond)); !ok {
+		t.Fatalf("expected remote to be allowed before TTL expiry")
+	}
+
+	// Expires after idle timeout.
+	if ok := b.remoteAllowed(remote, start.Add(2*time.Second)); ok {
+		t.Fatalf("expected remote to be denied after TTL expiry")
+	}
+
+	b.allowedMu.Lock()
+	_, present := b.allowed[key]
+	b.allowedMu.Unlock()
+	if present {
+		t.Fatalf("expected remote allowlist entry to be removed after TTL expiry")
+	}
+}
