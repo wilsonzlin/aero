@@ -168,8 +168,14 @@ cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000 -dict=fuzz_targets/
 # D3D9 SM2/SM3 bytecode decode + IR build
 cd fuzz && cargo fuzz run fuzz_d3d9_sm3_decode -- -runs=10000
 
+# Optional: use the bundled dictionary to help libFuzzer find version/opcode tokens faster
+cd fuzz && cargo fuzz run fuzz_d3d9_sm3_decode -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_sm3.dict
+
 # D3D9 SM2/SM3 IR -> WGSL generation
 cd fuzz && cargo fuzz run fuzz_d3d9_sm3_wgsl -- -runs=10000
+
+# Optional: same dictionary for WGSL generation fuzzer
+cd fuzz && cargo fuzz run fuzz_d3d9_sm3_wgsl -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_sm3.dict
  
 # Networking (quick sanity)
 cd fuzz && cargo fuzz run fuzz_l2_protocol_decode -- -runs=1000
