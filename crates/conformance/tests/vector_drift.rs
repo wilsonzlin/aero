@@ -68,8 +68,6 @@ struct ConformanceSessionVectors {
     secret: String,
     #[serde(rename = "nowMs")]
     now_ms: u64,
-    #[serde(rename = "ttlSeconds")]
-    ttl_seconds: u64,
     tokens: ConformanceSessionTokens,
 }
 
@@ -98,8 +96,6 @@ struct ConformanceJwtVectors {
     secret: String,
     #[serde(rename = "nowUnix")]
     now_unix: u64,
-    #[serde(rename = "ttlSeconds")]
-    ttl_seconds: u64,
     tokens: ConformanceJwtTokens,
 }
 
@@ -180,6 +176,199 @@ struct ProtocolJwtTokenVector {
     expect_error: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ConformanceVectorsFileV2 {
+    version: u32,
+    #[serde(rename = "aero-tcp-mux-v1")]
+    aero_tcp_mux_v1: ConformanceTcpMuxVectors,
+    #[serde(rename = "aero-udp-relay-v1v2")]
+    aero_udp_relay_v1v2: ConformanceUdpRelayVectors,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConformanceTcpMuxVectors {
+    schema: u32,
+    frames: Vec<ConformanceTcpMuxFrameVector>,
+    #[serde(rename = "openPayloads")]
+    open_payloads: Vec<ConformanceTcpMuxOpenPayloadVector>,
+    #[serde(rename = "closePayloads")]
+    close_payloads: Vec<ConformanceTcpMuxClosePayloadVector>,
+    #[serde(rename = "errorPayloads")]
+    error_payloads: Vec<ConformanceTcpMuxErrorPayloadVector>,
+    #[serde(rename = "parserStreams")]
+    parser_streams: Vec<ConformanceTcpMuxParserStreamVector>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConformanceTcpMuxFrameVector {
+    name: String,
+    #[serde(rename = "msgType")]
+    msg_type: u8,
+    #[serde(rename = "streamId")]
+    stream_id: u32,
+    #[serde(rename = "payloadHex")]
+    payload_hex: String,
+    #[serde(rename = "frameHex")]
+    frame_hex: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConformanceTcpMuxOpenPayloadVector {
+    name: String,
+    #[serde(rename = "payloadHex")]
+    payload_hex: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConformanceTcpMuxClosePayloadVector {
+    name: String,
+    flags: u8,
+    #[serde(rename = "payloadHex")]
+    payload_hex: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConformanceTcpMuxErrorPayloadVector {
+    name: String,
+    #[serde(rename = "payloadHex")]
+    payload_hex: String,
+    #[serde(rename = "expectError")]
+    expect_error: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConformanceTcpMuxParserStreamVector {
+    name: String,
+    #[serde(rename = "chunksHex")]
+    chunks_hex: Vec<String>,
+    #[serde(rename = "expectFrames")]
+    expect_frames: Option<Vec<ConformanceTcpMuxExpectedFrame>>,
+    #[serde(rename = "expectError")]
+    expect_error: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConformanceTcpMuxExpectedFrame {
+    #[serde(rename = "msgType")]
+    msg_type: u8,
+    #[serde(rename = "streamId")]
+    stream_id: u32,
+    #[serde(rename = "payloadHex")]
+    payload_hex: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConformanceUdpRelayVectors {
+    schema: u32,
+    vectors: Vec<ConformanceUdpRelayVector>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConformanceUdpRelayVector {
+    name: String,
+    #[serde(rename = "frameHex")]
+    frame_hex: String,
+    version: Option<u8>,
+    #[serde(rename = "guestPort")]
+    guest_port: Option<u16>,
+    #[serde(rename = "remoteIp")]
+    remote_ip: Option<String>,
+    #[serde(rename = "remotePort")]
+    remote_port: Option<u16>,
+    #[serde(rename = "payloadHex")]
+    payload_hex: Option<String>,
+    #[serde(rename = "expectError")]
+    expect_error: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolTcpMuxVectorsFile {
+    schema: u32,
+    frames: Vec<ProtocolTcpMuxFrameVector>,
+    #[serde(rename = "openPayloads")]
+    open_payloads: Vec<ProtocolTcpMuxOpenPayloadVector>,
+    #[serde(rename = "closePayloads")]
+    close_payloads: Vec<ProtocolTcpMuxClosePayloadVector>,
+    #[serde(rename = "errorPayloads")]
+    error_payloads: Vec<ProtocolTcpMuxErrorPayloadVector>,
+    #[serde(rename = "parserStreams")]
+    parser_streams: Vec<ProtocolTcpMuxParserStreamVector>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolTcpMuxFrameVector {
+    name: String,
+    #[serde(rename = "msgType")]
+    msg_type: u8,
+    #[serde(rename = "streamId")]
+    stream_id: u32,
+    payload_b64: String,
+    frame_b64: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolTcpMuxOpenPayloadVector {
+    name: String,
+    payload_b64: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolTcpMuxClosePayloadVector {
+    name: String,
+    flags: u8,
+    payload_b64: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolTcpMuxErrorPayloadVector {
+    name: String,
+    payload_b64: String,
+    #[serde(rename = "expectError")]
+    expect_error: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolTcpMuxParserStreamVector {
+    name: String,
+    #[serde(rename = "chunks_b64")]
+    chunks_b64: Vec<String>,
+    #[serde(rename = "expectFrames")]
+    expect_frames: Option<Vec<ProtocolTcpMuxExpectedFrame>>,
+    #[serde(rename = "expectError")]
+    expect_error: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolTcpMuxExpectedFrame {
+    #[serde(rename = "msgType")]
+    msg_type: u8,
+    #[serde(rename = "streamId")]
+    stream_id: u32,
+    payload_b64: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolUdpRelayVectorsFile {
+    schema: u32,
+    vectors: Vec<ProtocolUdpRelayVector>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolUdpRelayVector {
+    name: String,
+    version: Option<u8>,
+    frame_b64: String,
+    #[serde(rename = "guestPort")]
+    guest_port: Option<u16>,
+    #[serde(rename = "remoteIp")]
+    remote_ip: Option<String>,
+    #[serde(rename = "remotePort")]
+    remote_port: Option<u16>,
+    payload_b64: Option<String>,
+    #[serde(rename = "expectError")]
+    expect_error: Option<bool>,
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -192,8 +381,20 @@ fn protocol_auth_tokens_path() -> PathBuf {
     repo_root().join("protocol-vectors/auth-tokens.json")
 }
 
+fn protocol_tcp_mux_v1_path() -> PathBuf {
+    repo_root().join("protocol-vectors/tcp-mux-v1.json")
+}
+
+fn protocol_udp_relay_path() -> PathBuf {
+    repo_root().join("protocol-vectors/udp-relay.json")
+}
+
 fn conformance_vectors_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-vectors/aero-vectors-v1.json")
+}
+
+fn conformance_vectors_v2_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-vectors/aero-vectors-v2.json")
 }
 
 fn decode_b64(ctx: &str, b64: &str) -> Vec<u8> {
@@ -618,6 +819,199 @@ fn auth_token_vectors_do_not_drift() {
                 proto_v.expect_error.unwrap_or(false),
                 "{ctx}: expected protocol-vectors to mark this case as expectError=true"
             );
+        }
+    }
+}
+
+#[test]
+fn tcp_mux_vectors_do_not_drift() {
+    let proto_path = protocol_tcp_mux_v1_path();
+    let conf_path = conformance_vectors_v2_path();
+
+    let proto: ProtocolTcpMuxVectorsFile = read_json(&proto_path);
+    assert_eq!(proto.schema, 1, "unexpected protocol tcp-mux vector schema");
+
+    let conf: ConformanceVectorsFileV2 = read_json(&conf_path);
+    assert_eq!(conf.version, 2, "unexpected conformance vector schema version");
+    assert_eq!(conf.aero_tcp_mux_v1.schema, 1, "unexpected conformance tcp-mux schema");
+
+    let mut proto_frames: BTreeMap<&str, &ProtocolTcpMuxFrameVector> = BTreeMap::new();
+    for v in &proto.frames {
+        proto_frames.insert(v.name.as_str(), v);
+    }
+
+    for v in &conf.aero_tcp_mux_v1.frames {
+        let ctx = format!("tcp-mux frame {:?} (protocol-vectors vs conformance)", v.name);
+        let proto_v = proto_frames.get(v.name.as_str()).copied().unwrap_or_else(|| {
+            panic!("{ctx}: missing entry in {proto_path:?} (frames)")
+        });
+
+        assert_eq!(proto_v.msg_type, v.msg_type, "{ctx}: msgType drift");
+        assert_eq!(proto_v.stream_id, v.stream_id, "{ctx}: streamId drift");
+
+        let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
+        let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
+        assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
+
+        let conf_frame = decode_hex(&format!("{ctx}: frameHex"), &v.frame_hex);
+        let proto_frame = decode_b64(&format!("{ctx}: frame_b64"), &proto_v.frame_b64);
+        assert_bytes_eq(&format!("{ctx}: frame bytes"), &conf_frame, &proto_frame);
+    }
+
+    let mut proto_open: BTreeMap<&str, &ProtocolTcpMuxOpenPayloadVector> = BTreeMap::new();
+    for v in &proto.open_payloads {
+        proto_open.insert(v.name.as_str(), v);
+    }
+    for v in &conf.aero_tcp_mux_v1.open_payloads {
+        let ctx = format!("tcp-mux open payload {:?} (protocol-vectors vs conformance)", v.name);
+        let proto_v = proto_open.get(v.name.as_str()).copied().unwrap_or_else(|| {
+            panic!("{ctx}: missing entry in {proto_path:?} (openPayloads)")
+        });
+        let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
+        let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
+        assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
+    }
+
+    let mut proto_close: BTreeMap<&str, &ProtocolTcpMuxClosePayloadVector> = BTreeMap::new();
+    for v in &proto.close_payloads {
+        proto_close.insert(v.name.as_str(), v);
+    }
+    for v in &conf.aero_tcp_mux_v1.close_payloads {
+        let ctx = format!("tcp-mux close payload {:?} (protocol-vectors vs conformance)", v.name);
+        let proto_v = proto_close.get(v.name.as_str()).copied().unwrap_or_else(|| {
+            panic!("{ctx}: missing entry in {proto_path:?} (closePayloads)")
+        });
+        assert_eq!(proto_v.flags, v.flags, "{ctx}: flags drift");
+        let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
+        let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
+        assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
+    }
+
+    let mut proto_error: BTreeMap<&str, &ProtocolTcpMuxErrorPayloadVector> = BTreeMap::new();
+    for v in &proto.error_payloads {
+        proto_error.insert(v.name.as_str(), v);
+    }
+    for v in &conf.aero_tcp_mux_v1.error_payloads {
+        let ctx = format!("tcp-mux error payload {:?} (protocol-vectors vs conformance)", v.name);
+        let proto_v = proto_error.get(v.name.as_str()).copied().unwrap_or_else(|| {
+            panic!("{ctx}: missing entry in {proto_path:?} (errorPayloads)")
+        });
+        assert_eq!(
+            proto_v.expect_error.unwrap_or(false),
+            v.expect_error.unwrap_or(false),
+            "{ctx}: expectError drift"
+        );
+        let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
+        let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
+        assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
+    }
+
+    let mut proto_streams: BTreeMap<&str, &ProtocolTcpMuxParserStreamVector> = BTreeMap::new();
+    for v in &proto.parser_streams {
+        proto_streams.insert(v.name.as_str(), v);
+    }
+    for v in &conf.aero_tcp_mux_v1.parser_streams {
+        let ctx = format!("tcp-mux parser stream {:?} (protocol-vectors vs conformance)", v.name);
+        let proto_v = proto_streams.get(v.name.as_str()).copied().unwrap_or_else(|| {
+            panic!("{ctx}: missing entry in {proto_path:?} (parserStreams)")
+        });
+
+        assert_eq!(
+            proto_v.chunks_b64.len(),
+            v.chunks_hex.len(),
+            "{ctx}: chunk count drift"
+        );
+        for (i, (proto_chunk_b64, conf_chunk_hex)) in
+            proto_v.chunks_b64.iter().zip(&v.chunks_hex).enumerate()
+        {
+            let conf_chunk = decode_hex(&format!("{ctx}: chunksHex[{i}]"), conf_chunk_hex);
+            let proto_chunk = decode_b64(&format!("{ctx}: chunks_b64[{i}]"), proto_chunk_b64);
+            assert_bytes_eq(&format!("{ctx}: chunk {i} bytes"), &conf_chunk, &proto_chunk);
+        }
+
+        let conf_is_error = v.expect_error.unwrap_or(false);
+        let proto_is_error = proto_v.expect_error.unwrap_or(false);
+        assert_eq!(proto_is_error, conf_is_error, "{ctx}: expectError drift");
+
+        if conf_is_error {
+            continue;
+        }
+
+        let conf_frames = v
+            .expect_frames
+            .as_ref()
+            .unwrap_or_else(|| panic!("{ctx}: conformance missing expectFrames"));
+        let proto_frames = proto_v
+            .expect_frames
+            .as_ref()
+            .unwrap_or_else(|| panic!("{ctx}: protocol-vectors missing expectFrames"));
+
+        assert_eq!(
+            proto_frames.len(),
+            conf_frames.len(),
+            "{ctx}: expectFrames length drift"
+        );
+        for (i, (proto_f, conf_f)) in proto_frames.iter().zip(conf_frames).enumerate() {
+            let fctx = format!("{ctx}: expectFrames[{i}]");
+            assert_eq!(proto_f.msg_type, conf_f.msg_type, "{fctx}: msgType drift");
+            assert_eq!(proto_f.stream_id, conf_f.stream_id, "{fctx}: streamId drift");
+
+            let conf_payload = decode_hex(&format!("{fctx}: payloadHex"), &conf_f.payload_hex);
+            let proto_payload = decode_b64(&format!("{fctx}: payload_b64"), &proto_f.payload_b64);
+            assert_bytes_eq(&format!("{fctx}: payload bytes"), &conf_payload, &proto_payload);
+        }
+    }
+}
+
+#[test]
+fn udp_relay_vectors_do_not_drift() {
+    let proto_path = protocol_udp_relay_path();
+    let conf_path = conformance_vectors_v2_path();
+
+    let proto: ProtocolUdpRelayVectorsFile = read_json(&proto_path);
+    assert_eq!(proto.schema, 1, "unexpected protocol udp-relay vector schema");
+
+    let conf: ConformanceVectorsFileV2 = read_json(&conf_path);
+    assert_eq!(conf.version, 2, "unexpected conformance vector schema version");
+    assert_eq!(
+        conf.aero_udp_relay_v1v2.schema, 1,
+        "unexpected conformance udp-relay schema"
+    );
+
+    let mut proto_vectors: BTreeMap<&str, &ProtocolUdpRelayVector> = BTreeMap::new();
+    for v in &proto.vectors {
+        proto_vectors.insert(v.name.as_str(), v);
+    }
+
+    for v in &conf.aero_udp_relay_v1v2.vectors {
+        let ctx = format!("udp-relay vector {:?} (protocol-vectors vs conformance)", v.name);
+        let proto_v = proto_vectors.get(v.name.as_str()).copied().unwrap_or_else(|| {
+            panic!("{ctx}: missing entry in {proto_path:?} (vectors)")
+        });
+
+        assert_eq!(
+            proto_v.expect_error.unwrap_or(false),
+            v.expect_error.unwrap_or(false),
+            "{ctx}: expectError drift"
+        );
+        assert_eq!(proto_v.version, v.version, "{ctx}: version drift");
+        assert_eq!(proto_v.guest_port, v.guest_port, "{ctx}: guestPort drift");
+        assert_eq!(proto_v.remote_ip.as_deref(), v.remote_ip.as_deref(), "{ctx}: remoteIp drift");
+        assert_eq!(proto_v.remote_port, v.remote_port, "{ctx}: remotePort drift");
+
+        let conf_frame = decode_hex(&format!("{ctx}: frameHex"), &v.frame_hex);
+        let proto_frame = decode_b64(&format!("{ctx}: frame_b64"), &proto_v.frame_b64);
+        assert_bytes_eq(&format!("{ctx}: frame bytes"), &conf_frame, &proto_frame);
+
+        match (&v.payload_hex, &proto_v.payload_b64) {
+            (None, None) => {}
+            (Some(_), None) => panic!("{ctx}: missing payload_b64 in protocol-vectors"),
+            (None, Some(_)) => panic!("{ctx}: unexpected payload_b64 in protocol-vectors"),
+            (Some(conf_payload_hex), Some(proto_payload_b64)) => {
+                let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), conf_payload_hex);
+                let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), proto_payload_b64);
+                assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
+            }
         }
     }
 }
