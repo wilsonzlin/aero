@@ -228,7 +228,13 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
   private nextPingNonce = (Math.random() * 0xffff_ffff) >>> 0;
   private pendingPings = new Map<number, number>();
   private lastInboundAtMs = 0;
+  // Never close for keepalive timeout before we've emitted at least one ping on this session.
   private sentKeepalivePing = false;
+  // For keepalive timeouts, ensure we attempt at least one ping since the last inbound message
+  // before closing due to extended inbound silence. This avoids prematurely closing in
+  // environments with coarse timer resolution (and makes unit tests with very small keepalive
+  // intervals stable).
+  private keepaliveSentSinceLastInbound = false;
 
   private opened = false;
   private closed = false;
@@ -313,6 +319,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     this.opened = true;
     this.lastInboundAtMs = nowMs();
     this.sentKeepalivePing = false;
+    this.keepaliveSentSinceLastInbound = false;
     this.sink({ type: "open" });
     this.startKeepalive();
     this.scheduleFlush();
@@ -347,6 +354,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       return;
     }
     this.lastInboundAtMs = receivedAt;
+    this.keepaliveSentSinceLastInbound = false;
 
     if (msg.type === L2_TUNNEL_TYPE_FRAME) {
       this.sink({ type: "frame", frame: msg.payload });
@@ -484,6 +492,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     }
     this.pendingPings.clear();
     this.sentKeepalivePing = false;
+    this.keepaliveSentSinceLastInbound = false;
   }
 
   private scheduleNextPing(): void {
@@ -515,9 +524,14 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     if (this.sentKeepalivePing && this.opts.keepaliveMaxMs > 0 && this.lastInboundAtMs > 0) {
       const idleTimeoutMs = this.opts.keepaliveMaxMs * 2;
       if (idleTimeoutMs > 0 && sentAt - this.lastInboundAtMs > idleTimeoutMs) {
-        this.emitSessionErrorThrottled(new Error(`closing L2 tunnel: keepalive timeout (${idleTimeoutMs}ms)`));
-        this.close();
-        return;
+        // If we've already sent a keepalive ping since the last inbound message, treat this as a
+        // real timeout. Otherwise, send one more ping first (the next keepalive interval will
+        // close if the peer still doesn't respond).
+        if (this.keepaliveSentSinceLastInbound) {
+          this.emitSessionErrorThrottled(new Error(`closing L2 tunnel: keepalive timeout (${idleTimeoutMs}ms)`));
+          this.close();
+          return;
+        }
       }
     }
 
@@ -534,6 +548,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       }
     }
 
+    this.keepaliveSentSinceLastInbound = true;
     this.enqueue(encodePing(pingPayload, { maxPayload: this.opts.maxControlSize }));
     this.sentKeepalivePing = true;
     this.scheduleNextPing();

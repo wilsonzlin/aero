@@ -4,6 +4,21 @@
 
 Windows 7 requires keyboard and mouse input. The baseline approach is to capture browser events and translate them into **legacy PS/2** (works out-of-the-box), or **USB HID** (also inbox, but requires a much larger emulation surface).
 
+### Two runtime shapes: full-system `Machine` vs worker runtime
+
+This repo supports input in two different (but related) integration styles:
+
+- **Canonical full-system VM (`aero_machine::Machine` → `crates/aero-wasm::Machine`)**
+  - One object owns the CPU core + device models.
+  - Primarily used by native Rust integration tests and by the JS/WASM “single machine” API.
+  - Input is injected by calling `Machine.inject_*` methods directly.
+- **Browser worker runtime (production)**
+  - A main-thread coordinator plus a **CPU worker** (executes guest CPU in WASM) and an **I/O worker** (owns device models + routing).
+  - Browser input is captured + batched in `web/src/input/*` and delivered to the I/O worker (`web/src/workers/io.worker.ts`) as `in:input-batch` messages.
+  - The I/O worker routes each event to one of: **PS/2** (fallback), **virtio-input** (fast path), or **synthetic USB HID devices behind UHCI** (when enabled).
+
+When editing the browser runtime input pipeline, treat `web/src/input/*` + `web/src/workers/io.worker.ts` as canonical; the `aero-wasm::Machine` injection API is an ergonomic/testing surface.
+
 ### WASM / browser integration: canonical `Machine` input injection
 
 For JS/WASM-side input testing and future in-browser integration, the canonical full-system VM (`aero_machine::Machine`) is exported to JS via `crates/aero-wasm::Machine`.
@@ -677,61 +692,15 @@ back to the sender once processed:
 
 This avoids allocating a new `ArrayBuffer` per flush on the main thread.
 
-### Event Handler
+#### Consumption + routing in the I/O worker
 
-```rust
-pub struct InputCapture {
-    canvas: HtmlCanvasElement,
-    pointer_locked: bool,
-    keyboard_buffer: VecDeque<KeyEvent>,
-    mouse_buffer: VecDeque<MouseEvent>,
-}
+Input batches are consumed in the I/O worker (`web/src/workers/io.worker.ts`) by handling `message` events with `type: "in:input-batch"`.
 
-impl InputCapture {
-    pub fn setup(&mut self) {
-        // Keyboard events
-        let keyboard_buffer = self.keyboard_buffer.clone();
-        self.canvas.add_event_listener("keydown", move |event: web_sys::KeyboardEvent| {
-            event.prevent_default();
-            
-            let scancode = js_keycode_to_scancode(event.code().as_str());
-            keyboard_buffer.borrow_mut().push_back(KeyEvent {
-                scancode,
-                pressed: true,
-            });
-        });
-        
-        let keyboard_buffer = self.keyboard_buffer.clone();
-        self.canvas.add_event_listener("keyup", move |event: web_sys::KeyboardEvent| {
-            event.prevent_default();
-            
-            let scancode = js_keycode_to_scancode(event.code().as_str());
-            keyboard_buffer.borrow_mut().push_back(KeyEvent {
-                scancode,
-                pressed: false,
-            });
-        });
-        
-        // Mouse events (with pointer lock)
-        let mouse_buffer = self.mouse_buffer.clone();
-        self.canvas.add_event_listener("mousemove", move |event: web_sys::MouseEvent| {
-            mouse_buffer.borrow_mut().push_back(MouseEvent::Move {
-                dx: event.movement_x(),
-                dy: event.movement_y(),
-            });
-        });
-        
-        // Request pointer lock on click
-        self.canvas.add_event_listener("click", |event| {
-            event.target().request_pointer_lock();
-        });
-    }
-    
-    pub fn request_pointer_lock(&self) {
-        self.canvas.request_pointer_lock();
-    }
-}
-```
+The worker decodes the `InputEventType` stream and routes each event into the currently selected guest-facing backend (see `maybeUpdateKeyboardInputBackend` / `maybeUpdateMouseInputBackend`):
+
+- **PS/2 fallback**: i8042 + PS/2 keyboard/mouse (`crates/aero-devices-input` is the canonical model; the browser runtime uses an equivalent bridge/model).
+- **virtio-input fast path**: routed to the virtio-input PCI functions (once the guest sets `DRIVER_OK`).
+- **USB HID**: routed to synthetic USB HID devices behind the UHCI external hub (or to passthrough devices when enabled).
 
 ### Scancode Translation
 
@@ -786,7 +755,7 @@ Current implementation details:
   - Switching is explicitly **gated on held-state** (do not switch while any key/mouse button is held) to avoid stuck key/button states in the guest.
   - Current backend selection order (matches `web/src/workers/io.worker.ts`):
     - **Keyboard:** virtio-input (once the guest sets `DRIVER_OK`) → synthetic USB keyboard (once configured) → PS/2 i8042
-    - **Mouse:** PS/2 i8042 until the synthetic USB mouse is configured (to avoid duplicate active mice), then USB; virtio-input (once `DRIVER_OK`) always wins
+    - **Mouse:** virtio-input (once the guest sets `DRIVER_OK`) → PS/2 i8042 while the synthetic USB mouse is unconfigured → synthetic USB mouse (once configured; or if PS/2 is unavailable)
   - **Gamepad:** synthetic USB gamepad (no virtio/PS/2 fallback)
 
 For USB HID **gamepad** details (including the composite HID topology and the exact

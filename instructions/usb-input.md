@@ -19,14 +19,33 @@ This workstream owns **input emulation** and **USB passthrough**: PS/2 keyboard/
 
 Input is essential for usability. Without keyboard/mouse, the emulator is unusable.
 
+### Two runtime shapes (important)
+
+Aero supports input through two different integration styles:
+
+- **Canonical full-system VM (`aero_machine::Machine`, exported to JS as `crates/aero-wasm::Machine`)**
+  - One object owns CPU + devices.
+  - Used by native tests and by the JS/WASM “single machine” API.
+  - Input is injected directly via `Machine.inject_*`.
+- **Browser worker runtime (production)**
+  - Main thread captures browser events and batches them in `web/src/input/*`.
+  - The **I/O worker** (`web/src/workers/io.worker.ts`) receives batches (`in:input-batch`) and routes them to:
+    - **virtio-input** (fast path, once the guest driver sets `DRIVER_OK`)
+    - **synthetic USB HID devices behind UHCI** (when enabled/available)
+    - **PS/2 i8042** fallback (via the `aero-devices-input` model / equivalents)
+
 ---
 
 ## Key Crates & Directories
 
 | Crate/Directory | Purpose |
 |-----------------|---------|
+| `crates/aero-machine/` | Canonical full-system VM (`aero_machine::Machine`) |
+| `crates/aero-wasm/` | WASM exports (`Machine`, virtio-input core, device bridges) |
 | `crates/aero-usb/` | Canonical USB stack (ADR 0015) |
 | `crates/aero-devices-input/` | PS/2 controller (i8042), keyboard, mouse |
+| `web/src/workers/io.worker.ts` | I/O worker routing (PS/2 vs USB HID vs virtio-input) |
+| `web/src/io/devices/` | Browser-side device models (i8042, UHCI, virtio-input, …) |
 | `web/src/usb/` | TypeScript USB broker and passthrough |
 | `web/src/input/` | Browser input event capture |
 
@@ -78,62 +97,45 @@ Input is essential for usability. Without keyboard/mouse, the emulator is unusab
 
 ## Input Architecture
 
-### PS/2 Path (Legacy, Always Works)
+### Canonical browser runtime input pipeline (main thread → I/O worker)
 
 ```
-┌─────────────────────────────────────────────┐
-│            Browser                           │
-│                 │                            │
-│    keydown/keyup/mousemove events           │
-│                 │                            │
-│                 ▼                            │
-│        Scancode Translation                 │  ← IN-004
-│                 │                            │
-└─────────────────┼───────────────────────────┘
-                  │ SharedArrayBuffer
-                  ▼
-┌─────────────────────────────────────────────┐
-│            Emulator                          │
-│                 │                            │
-│         i8042 Controller                    │  ← IN-001
-│                 │                            │
-│         PS/2 Keyboard/Mouse                 │  ← IN-002, IN-003
-│                 │                            │
-│                 ▼                            │
-│         Windows 7 Guest                      │
-└─────────────────────────────────────────────┘
+Browser DOM events
+  → `web/src/input/*` capture + batching
+  → `postMessage({ type: "in:input-batch", buffer })`
+  → `web/src/workers/io.worker.ts` (route + inject)
+     → virtio-input (fast path) OR USB HID (UHCI) OR PS/2 i8042 (fallback)
+  → Windows 7 guest input stacks
 ```
 
-### Virtio-input Path (Paravirtualized, Faster)
+Routing policy (high level):
 
-```
-Browser events → virtio-input device model → virtio-input driver → Windows HID stack
-```
+- **Keyboard:** virtio-input (when `DRIVER_OK`) → synthetic USB keyboard (once configured) → PS/2 i8042
+- **Mouse:** virtio-input (when `DRIVER_OK`) → PS/2 until the synthetic USB mouse is configured → synthetic USB mouse (once configured; or if PS/2 is unavailable)
+- **Gamepad:** synthetic USB gamepad (no PS/2 fallback)
 
-### USB Passthrough Path (Physical Devices)
+### USB HID devices behind UHCI (synthetic + passthrough)
 
-```
-Physical USB device → WebUSB/WebHID → UHCI emulation → Windows USB stack
-```
+The browser runtime can expose input as guest-visible USB HID devices in two ways:
+
+- **Synthetic HID devices** (keyboard/mouse/gamepad) attached behind the UHCI external hub (see `web/src/usb/uhci_external_hub.ts` and the attachment logic in `web/src/workers/io.worker.ts`).
+- **Physical device passthrough** via WebHID/WebUSB, bridged into UHCI (see `docs/webhid-webusb-passthrough.md`).
 
 ---
 
 ## Scancode Translation
 
-Browser `KeyboardEvent.code` → PS/2 Set 2 scancode:
+DOM `KeyboardEvent.code` is mapped to PS/2 **Set 2** scancode bytes via a single source-of-truth table:
 
-```typescript
-// Example mapping (see web/src/input/ for full implementation)
-const scancodeMap: Record<string, number[]> = {
-  'KeyA': [0x1C],           // Make code
-  'KeyA_break': [0xF0, 0x1C], // Break code
-  'Enter': [0x5A],
-  'Escape': [0x76],
-  // Extended keys use 0xE0 prefix
-  'ArrowUp': [0xE0, 0x75],
-  // ...
-};
-```
+- `tools/gen_scancodes/scancodes.json`
+
+Generated outputs:
+
+- `web/src/input/scancodes.ts` (browser capture)
+- `src/input/scancodes.ts` (repo-root harness)
+- `crates/aero-devices-input/src/scancodes_generated.rs` (Rust/WASM)
+
+In the web runtime, capture uses `ps2Set2ScancodeForCode` from `web/src/input/scancode.ts`. On the Rust side, the canonical helper is `aero_devices_input::scancode::browser_code_to_set2_bytes`.
 
 ---
 
@@ -167,29 +169,12 @@ pub trait UsbDevice {
 
 ## Browser Event Capture
 
-Key considerations:
+The canonical browser capture implementation lives in `web/src/input/`:
 
-1. **Pointer Lock**: Essential for mouse capture in games
-2. **Key repeat**: Browser handles repeat; emulator may need to filter
-3. **Focus**: Events only captured when canvas is focused
-4. **Modifier keys**: Track Ctrl/Alt/Shift state
+- `web/src/input/input_capture.ts`: installs listeners (focus/blur, Pointer Lock, keyboard/mouse/wheel, optional Gamepad polling) and flushes input at a fixed rate (default 125Hz).
+- `web/src/input/event_queue.ts`: packs events into an `Int32Array`-compatible `ArrayBuffer` and sends batches to the I/O worker.
 
-```typescript
-// Example event capture setup
-canvas.addEventListener('keydown', (e) => {
-  e.preventDefault();
-  sendScancode(e.code, true); // make
-});
-
-canvas.addEventListener('keyup', (e) => {
-  e.preventDefault();
-  sendScancode(e.code, false); // break
-});
-
-canvas.addEventListener('click', () => {
-  canvas.requestPointerLock();
-});
-```
+The I/O worker consumes the batches in `web/src/workers/io.worker.ts` (`type: "in:input-batch"`), decodes `InputEventType`, and injects into the active backend (PS/2, USB HID, or virtio-input).
 
 ---
 
@@ -210,7 +195,7 @@ canvas.addEventListener('click', () => {
 ## Testing
 
 ```bash
-# Run the full USB/input-focused test suite (Rust + web unit tests).
+# Run the USB/input-focused test suite (Rust + targeted web unit tests).
 # (Assumes Node deps are installed; run `npm ci` from repo root if needed.)
 cargo xtask input
 
@@ -219,6 +204,18 @@ cargo xtask input --e2e
 
 # If you're running in a constrained sandbox, consider using safe-run:
 bash ./scripts/safe-run.sh cargo xtask input
+
+# --- Manual / debugging (run pieces individually) ---
+
+# Rust device-model tests
+bash ./scripts/safe-run.sh cargo test -p aero-devices-input --locked
+bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
+
+# Web unit tests (full suite)
+npm -w web run test:unit
+
+# Playwright E2E suite (repo root)
+npm run test:e2e
 ```
 
 ---
