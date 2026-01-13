@@ -127,8 +127,9 @@ impl Tier2WasmCodegen {
     /// ABI:
     /// - export `trace(cpu_ptr: i32, jit_ctx_ptr: i32) -> i64` (returns `next_rip`)
     /// - import `env.memory`
-    /// - when the trace performs memory operations, import memory helpers described by the
-    ///   `IMPORT_MEM_*` constants
+    /// - when the trace performs memory operations, import only the slow-path memory helpers
+    ///   (described by the `IMPORT_MEM_*` constants) actually required by the widths used in the
+    ///   trace
     /// - optionally import `env.mmu_translate(cpu_ptr, jit_ctx_ptr, vaddr, access_code) -> i64` when
     ///   inline-TLB is enabled
     /// - optionally import `env.code_page_version(cpu_ptr: i32, page: i64) -> i64` when
@@ -153,12 +154,36 @@ impl Tier2WasmCodegen {
 
         let mut has_load_mem = false;
         let mut has_store_mem = false;
+        let mut uses_read_u8 = false;
+        let mut uses_read_u16 = false;
+        let mut uses_read_u32 = false;
+        let mut uses_read_u64 = false;
+        let mut uses_write_u8 = false;
+        let mut uses_write_u16 = false;
+        let mut uses_write_u32 = false;
+        let mut uses_write_u64 = false;
         let mut has_code_version_guards = false;
         let mut uses_rflags = false;
         for inst in trace.iter_instrs() {
             match *inst {
-                Instr::LoadMem { .. } => has_load_mem = true,
-                Instr::StoreMem { .. } => has_store_mem = true,
+                Instr::LoadMem { width, .. } => {
+                    has_load_mem = true;
+                    match width {
+                        Width::W8 => uses_read_u8 = true,
+                        Width::W16 => uses_read_u16 = true,
+                        Width::W32 => uses_read_u32 = true,
+                        Width::W64 => uses_read_u64 = true,
+                    }
+                }
+                Instr::StoreMem { width, .. } => {
+                    has_store_mem = true;
+                    match width {
+                        Width::W8 => uses_write_u8 = true,
+                        Width::W16 => uses_write_u16 = true,
+                        Width::W32 => uses_write_u32 = true,
+                        Width::W64 => uses_write_u64 = true,
+                    }
+                }
                 Instr::GuardCodeVersion { .. } => has_code_version_guards = true,
                 Instr::LoadFlag { .. } | Instr::SetFlags { .. } => uses_rflags = true,
                 Instr::BinOp { flags, .. } if !flags.is_empty() => uses_rflags = true,
@@ -264,55 +289,69 @@ impl Tier2WasmCodegen {
         let func_base = 0u32;
         let mut next_func = func_base;
         let imported = ImportedFuncs {
-            mem_read_u8: has_mem_ops.then(|| next(&mut next_func)),
-            mem_read_u16: has_mem_ops.then(|| next(&mut next_func)),
-            mem_read_u32: has_mem_ops.then(|| next(&mut next_func)),
-            mem_read_u64: has_mem_ops.then(|| next(&mut next_func)),
-            mem_write_u8: has_mem_ops.then(|| next(&mut next_func)),
-            mem_write_u16: has_mem_ops.then(|| next(&mut next_func)),
-            mem_write_u32: has_mem_ops.then(|| next(&mut next_func)),
-            mem_write_u64: has_mem_ops.then(|| next(&mut next_func)),
+            mem_read_u8: uses_read_u8.then(|| next(&mut next_func)),
+            mem_read_u16: uses_read_u16.then(|| next(&mut next_func)),
+            mem_read_u32: uses_read_u32.then(|| next(&mut next_func)),
+            mem_read_u64: uses_read_u64.then(|| next(&mut next_func)),
+            mem_write_u8: uses_write_u8.then(|| next(&mut next_func)),
+            mem_write_u16: uses_write_u16.then(|| next(&mut next_func)),
+            mem_write_u32: uses_write_u32.then(|| next(&mut next_func)),
+            mem_write_u64: uses_write_u64.then(|| next(&mut next_func)),
             code_page_version: needs_code_page_version_import.then(|| next(&mut next_func)),
             mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
             count: next_func - func_base,
         };
 
-        if has_mem_ops {
+        if uses_read_u8 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U8,
                 EntityType::Function(ty_mem_read_u8),
             );
+        }
+        if uses_read_u16 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U16,
                 EntityType::Function(ty_mem_read_u16),
             );
+        }
+        if uses_read_u32 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U32,
                 EntityType::Function(ty_mem_read_u32),
             );
+        }
+        if uses_read_u64 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U64,
                 EntityType::Function(ty_mem_read_u64),
             );
+        }
+        if uses_write_u8 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U8,
                 EntityType::Function(ty_mem_write_u8),
             );
+        }
+        if uses_write_u16 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U16,
                 EntityType::Function(ty_mem_write_u16),
             );
+        }
+        if uses_write_u32 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U32,
                 EntityType::Function(ty_mem_write_u32),
             );
+        }
+        if uses_write_u64 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U64,
