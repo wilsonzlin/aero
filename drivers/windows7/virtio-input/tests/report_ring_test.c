@@ -241,6 +241,7 @@ static void test_report_ring_drop_oldest_after_pop(void) {
   assert(dev.report_ring.count == cap - popped_first);
 
   const uint32_t pushed_next = 20;
+  assert(pushed_next > popped_first);
   for (uint32_t seq = cap; seq < cap + pushed_next; seq++) {
     uint8_t report[VIRTIO_INPUT_REPORT_MAX_SIZE];
     const size_t report_len = report_len_for_seq(seq);
@@ -253,9 +254,10 @@ static void test_report_ring_drop_oldest_after_pop(void) {
 
   /*
    * Initial retained window after the first pops is [popped_first, cap-1].
-   * Pushing pushed_next causes pushed_next - popped_first drops once the ring is full.
+   * Pushing pushed_next causes (pushed_next - popped_first) drops once the ring is full.
    */
-  const uint32_t first_retained = popped_first + (pushed_next - popped_first);
+  const uint32_t drops = pushed_next - popped_first;
+  const uint32_t first_retained = popped_first + drops;
   for (uint32_t seq = first_retained; seq < cap + pushed_next; seq++) {
     struct virtio_input_report out;
     assert(virtio_input_try_pop_report(&dev, &out));
