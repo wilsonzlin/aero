@@ -1444,6 +1444,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
     deviceContext->InD0 = FALSE;
     (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
     (VOID)InterlockedExchange64(&deviceContext->NegotiatedFeatures, 0);
+    deviceContext->KeyboardLedSupportedBitmask = 0;
 
     if (!deviceContext->HardwareReady) {
         return STATUS_DEVICE_NOT_READY;
@@ -1925,6 +1926,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_KANA)) {
                     ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_KANA);
                 }
+
+                /* Keep a copy in the device context for debugging/telemetry. */
+                deviceContext->KeyboardLedSupportedBitmask = ledSupportedMask;
 
                 if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 1) {
                     WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[1]);

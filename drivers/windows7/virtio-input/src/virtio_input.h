@@ -356,6 +356,18 @@ typedef struct _DEVICE_CONTEXT {
      */
     volatile LONG VirtioStarted;
     VIOINPUT_DEVICE_KIND DeviceKind;
+    /*
+     * Keyboard LED support advertised by the virtio-input device via
+     * EV_BITS(EV_LED).
+     *
+     * Bits are in the same order as the HID keyboard LED output report:
+     *   bit0=NumLock, bit1=CapsLock, bit2=ScrollLock, bit3=Compose, bit4=Kana
+     *
+     * The Aero contract v1 requires at least the first 3 bits to be supported;
+     * some device models may reject events for non-advertised codes, so the
+     * status queue filters updates using this mask.
+     */
+    UCHAR KeyboardLedSupportedBitmask;
     USHORT PciSubsystemDeviceId;
     // Cached for IOCTL_VIOINPUT_QUERY_STATE diagnostics.
     UCHAR PciRevisionId;
