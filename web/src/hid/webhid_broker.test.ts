@@ -78,7 +78,6 @@ class FakeHidDevice {
   readonly sendReport = vi.fn(async () => {});
   readonly sendFeatureReport = vi.fn(async () => {});
   readonly receiveFeatureReport = vi.fn(async () => new DataView(new ArrayBuffer(0)));
-  readonly receiveFeatureReport = vi.fn(async () => new DataView(new ArrayBuffer(0)));
 
   readonly #listeners = new Map<string, Set<DeviceListener>>();
 
