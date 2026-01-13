@@ -101,6 +101,16 @@ export class RuntimeDiskClient {
 
   write(handle: number, lba: number, data: Uint8Array): Promise<void> {
     // Transfer to avoid copying when possible.
+    //
+    // If the caller provides a standalone `ArrayBuffer`-backed view (not SharedArrayBuffer, and
+    // not a subrange view), we can transfer it directly with zero copy. Note that transferring
+    // detaches ("neuters") the buffer in the sender, so callers must treat `data` as consumed
+    // after calling `write()`.
+    const buffer = data.buffer;
+    if (buffer instanceof ArrayBuffer && data.byteOffset === 0 && data.byteLength === buffer.byteLength) {
+      return this.request("write", { handle, lba, data }, [buffer]).then(() => undefined);
+    }
+
     const buf = data.slice();
     return this.request("write", { handle, lba, data: buf }, [buf.buffer]).then(() => undefined);
   }
