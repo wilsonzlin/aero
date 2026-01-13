@@ -26,6 +26,37 @@ pub struct AssistContext {
     pub features: CpuFeatures,
     /// Optional log of `INVLPG` linear addresses (useful for integration tests).
     pub invlpg_log: Vec<u64>,
+    /// Number of `INVLPG` log entries dropped because [`AssistContext::invlpg_log`] hit
+    /// [`AssistContext::INVLPG_LOG_CAP`].
+    pub invlpg_log_dropped: u64,
+}
+
+impl AssistContext {
+    /// Hard cap on the number of `INVLPG` addresses recorded in [`AssistContext::invlpg_log`].
+    ///
+    /// This log is a debug/testing facility and must never grow without bound (guest kernels can
+    /// execute `INVLPG` frequently).
+    pub const INVLPG_LOG_CAP: usize = 4096;
+
+    #[inline]
+    pub fn invlpg_log_dropped(&self) -> u64 {
+        self.invlpg_log_dropped
+    }
+
+    #[inline]
+    pub fn clear_invlpg_log(&mut self) {
+        self.invlpg_log.clear();
+        self.invlpg_log_dropped = 0;
+    }
+
+    #[inline]
+    fn record_invlpg(&mut self, addr: u64) {
+        if self.invlpg_log.len() < Self::INVLPG_LOG_CAP {
+            self.invlpg_log.push(addr);
+        } else {
+            self.invlpg_log_dropped = self.invlpg_log_dropped.saturating_add(1);
+        }
+    }
 }
 
 /// Execute a Tier-0 assist exit.
@@ -1223,7 +1254,7 @@ fn instr_invlpg(
         addr &= 0xffff_ffff;
     }
     bus.invlpg(addr);
-    ctx.invlpg_log.push(addr);
+    ctx.record_invlpg(addr);
     Ok(())
 }
 
