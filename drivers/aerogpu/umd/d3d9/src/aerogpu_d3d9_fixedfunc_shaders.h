@@ -4,8 +4,9 @@
 
 namespace aerogpu {
 
-// Minimal built-in D3D9 SM2.0 shader token streams used as a fixed-function
-// fallback for the Win7 `d3d9ex_triangle` test.
+// Minimal built-in D3D9 SM2.0 shader token streams used by the AeroGPU D3D9 UMD
+// fixed-function fallback path (bring-up FVF subset: `XYZRHW|DIFFUSE` and
+// `XYZRHW|DIFFUSE|TEX1`).
 //
 // These are intentionally tiny and avoid declarations so they can be consumed by
 // early bring-up shader translators (mov/add/mul subset).
