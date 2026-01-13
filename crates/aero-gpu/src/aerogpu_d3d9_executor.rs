@@ -27,6 +27,7 @@ use crate::bc_decompress::{
 };
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
+use crate::shared_surface::{SharedSurfaceError, SharedSurfaceTable};
 use crate::stats::GpuStats;
 use crate::texture_manager::TextureRegion;
 use crate::{readback_depth32f, readback_rgba8, readback_stencil8};
@@ -70,22 +71,11 @@ pub struct AerogpuD3d9Executor {
     persistent_shader_cache_flags: ShaderTranslationFlags,
 
     resources: HashMap<u32, Resource>,
-    /// Handle indirection table for shared resources.
+    /// D3D9Ex shared surface import/export bookkeeping (EXPORT/IMPORT_SHARED_SURFACE).
     ///
-    /// - Original resources are stored as `handle -> handle`.
-    /// - Imported shared resources are stored as `alias_handle -> underlying_handle`.
-    resource_handles: HashMap<u32, u32>,
-    /// Refcount table keyed by the underlying handle.
-    ///
-    /// Refcount includes the original handle entry plus all imported aliases.
-    resource_refcounts: HashMap<u32, u32>,
-    /// share_token -> underlying resource handle.
-    shared_surface_by_token: HashMap<u64, u32>,
-    /// share_token values that were previously valid but were released (or otherwise removed).
-    ///
-    /// Prevents misbehaving guests from "re-arming" a released token by re-exporting it for a
-    /// different resource.
-    retired_share_tokens: HashSet<u64>,
+    /// This table also tracks all resource handle aliasing so imported handles and refcounting
+    /// behave consistently across textures and buffers.
+    shared_surfaces: SharedSurfaceTable,
     shaders: HashMap<u32, Shader>,
     input_layouts: HashMap<u32, InputLayout>,
 
@@ -1067,10 +1057,7 @@ impl AerogpuD3d9Executor {
             #[cfg(target_arch = "wasm32")]
             persistent_shader_cache_flags,
             resources: HashMap::new(),
-            resource_handles: HashMap::new(),
-            resource_refcounts: HashMap::new(),
-            shared_surface_by_token: HashMap::new(),
-            retired_share_tokens: HashSet::new(),
+            shared_surfaces: SharedSurfaceTable::default(),
             shaders: HashMap::new(),
             input_layouts: HashMap::new(),
             constants_buffer,
@@ -1143,10 +1130,7 @@ impl AerogpuD3d9Executor {
             );
         }
         self.resources.clear();
-        self.resource_handles.clear();
-        self.resource_refcounts.clear();
-        self.shared_surface_by_token.clear();
-        self.retired_share_tokens.clear();
+        self.shared_surfaces.clear();
         self.shaders.clear();
         self.input_layouts.clear();
         self.presented_scanouts.clear();
@@ -1967,28 +1951,24 @@ impl AerogpuD3d9Executor {
         if handle == 0 {
             return Ok(0);
         }
-        self.resource_handles
-            .get(&handle)
-            .copied()
-            .ok_or(AerogpuD3d9Error::UnknownResource(handle))
+        let resolved = match self.shared_surfaces.resolve_cmd_handle(handle) {
+            Ok(resolved) => resolved,
+            // Preserve existing executor behavior: treat references to destroyed/reserved handles
+            // as unknown resources.
+            Err(_) => return Err(AerogpuD3d9Error::UnknownResource(handle)),
+        };
+        if self.resources.contains_key(&resolved) {
+            Ok(resolved)
+        } else {
+            Err(AerogpuD3d9Error::UnknownResource(handle))
+        }
     }
 
     fn handle_in_use(&self, handle: u32) -> bool {
-        self.resource_handles.contains_key(&handle)
+        self.shared_surfaces.contains_handle(handle)
             || self.resources.contains_key(&handle)
             || self.shaders.contains_key(&handle)
             || self.input_layouts.contains_key(&handle)
-    }
-
-    fn register_resource_handle(&mut self, handle: u32) {
-        if handle == 0 {
-            return;
-        }
-        if self.resource_handles.contains_key(&handle) {
-            return;
-        }
-        self.resource_handles.insert(handle, handle);
-        *self.resource_refcounts.entry(handle).or_insert(0) += 1;
     }
 
     fn invalidate_bind_groups(&mut self) {
@@ -2004,52 +1984,21 @@ impl AerogpuD3d9Executor {
         if handle == 0 {
             return;
         }
-
-        let Some(underlying) = self.resource_handles.remove(&handle) else {
+        let Some((underlying, last_ref)) = self.shared_surfaces.destroy_handle(handle) else {
             return;
         };
 
         // Texture bindings (and therefore bind groups) may reference the destroyed handle. Drop
-        // cached bind groups so subsequent draws re-resolve handles against the updated table.
+        // cached bind groups so subsequent draws re-resolve handles against the updated alias
+        // table.
         self.invalidate_bind_groups();
 
-        let Some(count) = self.resource_refcounts.get_mut(&underlying) else {
-            return;
-        };
-        *count = count.saturating_sub(1);
-        if *count != 0 {
+        if !last_ref {
             return;
         }
 
-        self.resource_refcounts.remove(&underlying);
         self.resources.remove(&underlying);
-        let to_retire: Vec<u64> = self
-            .shared_surface_by_token
-            .iter()
-            .filter_map(|(k, v)| (*v == underlying).then_some(*k))
-            .collect();
-        for token in to_retire {
-            self.shared_surface_by_token.remove(&token);
-            self.retired_share_tokens.insert(token);
-        }
         self.presented_scanouts.retain(|_, v| *v != underlying);
-    }
-
-    fn release_shared_surface_token(&mut self, share_token: u64) {
-        // KMD-emitted "share token is no longer importable" signal.
-        //
-        // Existing imported aliases remain valid and keep the underlying resource alive. We only
-        // remove the token mapping so future imports fail deterministically.
-        if share_token == 0 {
-            return;
-        }
-        // Idempotent: unknown tokens are a no-op (see `aerogpu_cmd.h` contract).
-        //
-        // Only retire tokens that were actually exported at some point (present in
-        // `shared_surface_by_token`), or that are already retired.
-        if self.shared_surface_by_token.remove(&share_token).is_some() {
-            self.retired_share_tokens.insert(share_token);
-        }
     }
 
     fn create_shader_dxbc_in_memory(
@@ -2393,14 +2342,6 @@ impl AerogpuD3d9Executor {
                 {
                     return Err(AerogpuD3d9Error::ResourceHandleInUse(buffer_handle));
                 }
-                // Underlying handles remain reserved as long as any aliases still reference them.
-                // If the original handle was destroyed, reject reusing it until the underlying
-                // resource is fully released.
-                if !self.resource_handles.contains_key(&buffer_handle)
-                    && self.resource_refcounts.contains_key(&buffer_handle)
-                {
-                    return Err(AerogpuD3d9Error::ResourceHandleInUse(buffer_handle));
-                }
 
                 if size_bytes == 0 {
                     return Err(AerogpuD3d9Error::Validation(
@@ -2437,7 +2378,7 @@ impl AerogpuD3d9Executor {
                     })
                 };
 
-                if self.resource_handles.contains_key(&buffer_handle) {
+                if self.shared_surfaces.contains_handle(buffer_handle) {
                     let underlying = self.resolve_resource_handle(buffer_handle)?;
                     let Some(res) = self.resources.get_mut(&underlying) else {
                         return Err(AerogpuD3d9Error::UnknownResource(buffer_handle));
@@ -2470,17 +2411,24 @@ impl AerogpuD3d9Executor {
                         buffer_usage |= wgpu::BufferUsages::UNIFORM;
                     }
 
+                    let shadow_len = usize::try_from(size_bytes).map_err(|_| {
+                        AerogpuD3d9Error::Validation(format!(
+                            "CREATE_BUFFER: size_bytes is too large for host shadow copy (size_bytes={size_bytes})"
+                        ))
+                    })?;
+
+                    // Reserve the handle before inserting the resource so we don't overwrite an
+                    // underlying resource kept alive by shared-surface aliases.
+                    self.shared_surfaces
+                        .register_handle(buffer_handle)
+                        .map_err(|_| AerogpuD3d9Error::ResourceHandleInUse(buffer_handle))?;
+
                     let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some("aerogpu-d3d9.buffer"),
                         size: size_bytes,
                         usage: buffer_usage,
                         mapped_at_creation: false,
                     });
-                    let shadow_len = usize::try_from(size_bytes).map_err(|_| {
-                        AerogpuD3d9Error::Validation(format!(
-                            "CREATE_BUFFER: size_bytes is too large for host shadow copy (size_bytes={size_bytes})"
-                        ))
-                    })?;
                     self.resources.insert(
                         buffer_handle,
                         Resource::Buffer {
@@ -2492,7 +2440,6 @@ impl AerogpuD3d9Executor {
                             shadow: vec![0u8; shadow_len],
                         },
                     );
-                    self.register_resource_handle(buffer_handle);
                     Ok(())
                 }
             }
@@ -2516,11 +2463,6 @@ impl AerogpuD3d9Executor {
                 }
                 if self.shaders.contains_key(&texture_handle)
                     || self.input_layouts.contains_key(&texture_handle)
-                {
-                    return Err(AerogpuD3d9Error::ResourceHandleInUse(texture_handle));
-                }
-                if !self.resource_handles.contains_key(&texture_handle)
-                    && self.resource_refcounts.contains_key(&texture_handle)
                 {
                     return Err(AerogpuD3d9Error::ResourceHandleInUse(texture_handle));
                 }
@@ -2627,7 +2569,7 @@ impl AerogpuD3d9Executor {
                     })
                 };
 
-                if self.resource_handles.contains_key(&texture_handle) {
+                if self.shared_surfaces.contains_handle(texture_handle) {
                     let underlying = self.resolve_resource_handle(texture_handle)?;
                     let Some(res) = self.resources.get_mut(&underlying) else {
                         return Err(AerogpuD3d9Error::UnknownResource(texture_handle));
@@ -2692,6 +2634,13 @@ impl AerogpuD3d9Executor {
                     } else {
                         Vec::new()
                     };
+
+                    // Reserve the handle before inserting the resource so we don't overwrite an
+                    // underlying resource kept alive by shared-surface aliases.
+                    self.shared_surfaces
+                        .register_handle(texture_handle)
+                        .map_err(|_| AerogpuD3d9Error::ResourceHandleInUse(texture_handle))?;
+
                     let mut usage = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
                     if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_TEXTURE) != 0 {
                         usage |= wgpu::TextureUsages::TEXTURE_BINDING;
@@ -2793,7 +2742,6 @@ impl AerogpuD3d9Executor {
                             dirty_ranges: Vec::new(),
                         },
                     );
-                    self.register_resource_handle(texture_handle);
                     Ok(())
                 }
             }
@@ -4807,9 +4755,6 @@ impl AerogpuD3d9Executor {
                         "EXPORT_SHARED_SURFACE: share_token 0 is reserved".into(),
                     ));
                 }
-                if self.retired_share_tokens.contains(&share_token) {
-                    return Err(AerogpuD3d9Error::ShareTokenRetired(share_token));
-                }
                 let underlying = self.resolve_resource_handle(resource_handle)?;
                 match self.resources.get(&underlying) {
                     Some(Resource::Texture2d { .. }) => {}
@@ -4820,17 +4765,26 @@ impl AerogpuD3d9Executor {
                     }
                     None => return Err(AerogpuD3d9Error::UnknownResource(resource_handle)),
                 }
-                if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied() {
-                    if existing != underlying {
-                        return Err(AerogpuD3d9Error::ShareTokenAlreadyExported {
+                self.shared_surfaces
+                    .export(resource_handle, share_token)
+                    .map_err(|e| match e {
+                        SharedSurfaceError::TokenRetired(token) => {
+                            AerogpuD3d9Error::ShareTokenRetired(token)
+                        }
+                        SharedSurfaceError::TokenAlreadyExported {
                             share_token,
                             existing,
-                            new: underlying,
-                        });
-                    }
-                } else {
-                    self.shared_surface_by_token.insert(share_token, underlying);
-                }
+                            new,
+                        } => AerogpuD3d9Error::ShareTokenAlreadyExported {
+                            share_token,
+                            existing,
+                            new,
+                        },
+                        SharedSurfaceError::UnknownHandle(handle) => {
+                            AerogpuD3d9Error::UnknownResource(handle)
+                        }
+                        other => AerogpuD3d9Error::Validation(other.to_string()),
+                    })?;
                 Ok(())
             }
             AeroGpuCmd::ImportSharedSurface {
@@ -4847,12 +4801,15 @@ impl AerogpuD3d9Executor {
                         "IMPORT_SHARED_SURFACE: share_token 0 is reserved".into(),
                     ));
                 }
-                let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
+                if self.shaders.contains_key(&out_resource_handle)
+                    || self.input_layouts.contains_key(&out_resource_handle)
+                {
+                    return Err(AerogpuD3d9Error::ResourceHandleInUse(out_resource_handle));
+                }
+
+                let Some(underlying) = self.shared_surfaces.lookup_token(share_token) else {
                     return Err(AerogpuD3d9Error::UnknownShareToken(share_token));
                 };
-                if !self.resource_refcounts.contains_key(&underlying) {
-                    return Err(AerogpuD3d9Error::UnknownShareToken(share_token));
-                }
                 match self.resources.get(&underlying) {
                     Some(Resource::Texture2d { .. }) => {}
                     Some(Resource::Buffer { .. }) => {
@@ -4863,21 +4820,30 @@ impl AerogpuD3d9Executor {
                     None => return Err(AerogpuD3d9Error::UnknownShareToken(share_token)),
                 }
 
-                if let Some(existing) = self.resource_handles.get(&out_resource_handle).copied() {
-                    if existing != underlying {
-                        return Err(AerogpuD3d9Error::SharedSurfaceAliasAlreadyBound {
-                            alias: out_resource_handle,
-                            existing,
-                            new: underlying,
-                        });
-                    }
-                } else {
-                    if self.handle_in_use(out_resource_handle) {
-                        return Err(AerogpuD3d9Error::ResourceHandleInUse(out_resource_handle));
-                    }
-                    self.resource_handles
-                        .insert(out_resource_handle, underlying);
-                    *self.resource_refcounts.entry(underlying).or_insert(0) += 1;
+                let existed = self.shared_surfaces.contains_handle(out_resource_handle);
+                self.shared_surfaces
+                    .import(out_resource_handle, share_token)
+                    .map_err(|e| match e {
+                        SharedSurfaceError::UnknownToken(token) => {
+                            AerogpuD3d9Error::UnknownShareToken(token)
+                        }
+                        SharedSurfaceError::TokenRefersToDestroyed { share_token, .. } => {
+                            AerogpuD3d9Error::UnknownShareToken(share_token)
+                        }
+                        SharedSurfaceError::AliasAlreadyBound { alias, existing, new } => {
+                            AerogpuD3d9Error::SharedSurfaceAliasAlreadyBound {
+                                alias,
+                                existing,
+                                new,
+                            }
+                        }
+                        SharedSurfaceError::HandleStillInUse(handle) => {
+                            AerogpuD3d9Error::ResourceHandleInUse(handle)
+                        }
+                        other => AerogpuD3d9Error::Validation(other.to_string()),
+                    })?;
+
+                if !existed {
                     // Bringing a previously-unknown alias handle into existence changes how
                     // `SetTexture` bindings resolve. Drop any cached bind groups (including for
                     // other contexts) so subsequent draws re-resolve handles against the updated
@@ -4888,7 +4854,7 @@ impl AerogpuD3d9Executor {
                 Ok(())
             }
             AeroGpuCmd::ReleaseSharedSurface { share_token } => {
-                self.release_shared_surface_token(share_token);
+                self.shared_surfaces.release_token(share_token);
                 Ok(())
             }
             AeroGpuCmd::ResourceDirtyRange {

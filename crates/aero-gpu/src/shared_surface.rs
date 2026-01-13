@@ -112,15 +112,18 @@ impl SharedSurfaceTable {
         Ok(())
     }
 
-    pub(crate) fn resolve_handle(&self, handle: u32) -> u32 {
-        self.handles.get(&handle).copied().unwrap_or(handle)
-    }
-
     pub(crate) fn contains_handle(&self, handle: u32) -> bool {
         self.handles.contains_key(&handle)
     }
 
+    pub(crate) fn resolve_handle(&self, handle: u32) -> u32 {
+        self.handles.get(&handle).copied().unwrap_or(handle)
+    }
+
     pub(crate) fn lookup_token(&self, share_token: u64) -> Option<u32> {
+        if share_token == 0 {
+            return None;
+        }
         self.by_token.get(&share_token).copied()
     }
 
