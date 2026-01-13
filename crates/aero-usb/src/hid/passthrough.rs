@@ -457,28 +457,51 @@ impl UsbHidPassthrough {
     }
 
     pub fn push_input_report(&mut self, report_id: u8, data: &[u8]) {
-        // WebHID is expected to provide the report ID separately (via `reportId`) and the report
-        // payload without the report ID prefix (via `data`). However, some browser/device
-        // combinations may include the prefix in `data` anyway; in that case avoid double
-        // prefixing and generating `[id, id, ...]` which can exceed the report size declared by
-        // the report descriptor.
-        let data_already_prefixed = report_id != 0
-            && self
-                .input_report_lengths
-                .get(&report_id)
-                .is_some_and(|&expected_len| expected_len == data.len())
-            && data.first() == Some(&report_id);
+        let out = match self.input_report_lengths.get(&report_id).copied() {
+            Some(expected_len) => {
+                if expected_len == 0 {
+                    Vec::new()
+                } else if report_id == 0 {
+                    let mut out = vec![0u8; expected_len];
+                    let copy_len = data.len().min(expected_len);
+                    out[..copy_len].copy_from_slice(&data[..copy_len]);
+                    out
+                } else {
+                    let mut out = vec![0u8; expected_len];
+                    out[0] = report_id;
 
-        let out = if data_already_prefixed {
-            data.to_vec()
-        } else {
-            let mut out =
-                Vec::with_capacity(data.len().saturating_add((report_id != 0) as usize));
-            if report_id != 0 {
-                out.push(report_id);
+                    // WebHID is expected to provide the report ID separately (via `reportId`) and
+                    // the report payload without the report ID prefix (via `data`). However, some
+                    // host APIs include the report ID prefix in `data` anyway; in that case avoid
+                    // double-prefixing and generating `[id, id, ...]`.
+                    //
+                    // Only strip the prefix when the provided bytes match the descriptor-derived
+                    // total report length, mirroring the SET_REPORT double-prefix protection.
+                    let payload =
+                        if expected_len == data.len() && data.first() == Some(&report_id) {
+                            &data[1..]
+                        } else {
+                            data
+                        };
+
+                    let payload_len = expected_len.saturating_sub(1);
+                    let copy_len = payload.len().min(payload_len);
+                    if copy_len != 0 {
+                        out[1..1 + copy_len].copy_from_slice(&payload[..copy_len]);
+                    }
+                    out
+                }
             }
-            out.extend_from_slice(data);
-            out
+            None => {
+                // Unknown report ID: preserve legacy behaviour (accept arbitrary lengths).
+                let mut out =
+                    Vec::with_capacity(data.len().saturating_add((report_id != 0) as usize));
+                if report_id != 0 {
+                    out.push(report_id);
+                }
+                out.extend_from_slice(data);
+                out
+            }
         };
 
         self.last_input_reports.insert(report_id, out.clone());
@@ -2213,7 +2236,7 @@ mod tests {
             None,
         );
 
-        dev.push_input_report(1, &[0xaa, 0xbb, 0xcc]);
+        dev.push_input_report(1, &[0xaa, 0xbb, 0xcc, 0xdd]);
         assert_eq!(
             dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
             UsbInResult::Nak
@@ -2222,7 +2245,7 @@ mod tests {
         configure_device(&mut dev);
         assert_eq!(
             dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
-            UsbInResult::Data(vec![1, 0xaa, 0xbb, 0xcc])
+            UsbInResult::Data(vec![1, 0xaa, 0xbb, 0xcc, 0xdd])
         );
 
         dev.push_input_report(0, &[0x11, 0x22]);
@@ -2233,7 +2256,7 @@ mod tests {
     }
 
     #[test]
-    fn push_input_report_does_not_double_prefix_report_id() {
+    fn push_input_report_pads_short_input_report_to_descriptor_length() {
         let report = sample_report_descriptor_with_ids();
         let mut dev = UsbHidPassthroughHandle::new(
             0x1234,
@@ -2247,12 +2270,89 @@ mod tests {
             None,
             None,
         );
-
         configure_device(&mut dev);
 
-        // Descriptor defines report ID 1 with 4 bytes of payload (total length 5 including the
-        // report ID prefix). If `data` already contains the report ID prefix, it should be queued
-        // as-is rather than being prefixed again.
+        // Descriptor defines report ID 1 with 4 bytes of payload (5 bytes total including ID).
+        dev.push_input_report(1, &[0xaa, 0xbb]);
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Data(vec![1, 0xaa, 0xbb, 0, 0])
+        );
+
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (1u16 << 8) | 1u16, // Input, report ID 1
+                w_index: 0,
+                w_length: 64,
+            },
+            None,
+        );
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data, vec![1, 0xaa, 0xbb, 0, 0]);
+    }
+
+    #[test]
+    fn push_input_report_truncates_long_input_report_to_descriptor_length() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        dev.push_input_report(1, &[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Data(vec![1, 0xaa, 0xbb, 0xcc, 0xdd])
+        );
+
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (1u16 << 8) | 1u16, // Input, report ID 1
+                w_index: 0,
+                w_length: 64,
+            },
+            None,
+        );
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data, vec![1, 0xaa, 0xbb, 0xcc, 0xdd]);
+    }
+
+    #[test]
+    fn push_input_report_accepts_already_prefixed_input_report() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        // Pass bytes already prefixed with the report ID; the queued report should not be double
+        // prefixed.
         dev.push_input_report(1, &[1, 0xaa, 0xbb, 0xcc, 0xdd]);
         assert_eq!(
             dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
@@ -2746,11 +2846,11 @@ mod tests {
 
         assert_eq!(
             dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
-            UsbInResult::Data(vec![1, 0x01])
+            UsbInResult::Data(vec![1, 0x01, 0, 0, 0])
         );
         assert_eq!(
             dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
-            UsbInResult::Data(vec![1, 0x02])
+            UsbInResult::Data(vec![1, 0x02, 0, 0, 0])
         );
         assert_eq!(
             dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
@@ -2959,7 +3059,7 @@ mod tests {
         }
         assert_eq!(
             last.unwrap(),
-            vec![1, (DEFAULT_MAX_PENDING_INPUT_REPORTS + 49) as u8]
+            vec![1, (DEFAULT_MAX_PENDING_INPUT_REPORTS + 49) as u8, 0, 0, 0]
         );
 
         // Overflow output queue.
