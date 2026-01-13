@@ -221,6 +221,203 @@ static BOOLEAN AerovNetAcceptFrame(_In_ const AEROVNET_ADAPTER* Adapter, _In_rea
   return AerovNetMacEqual(Dst, Adapter->CurrentMac) ? TRUE : FALSE;
 }
 
+static __forceinline USHORT AerovNetReadBe16(_In_reads_bytes_(2) const UCHAR* Buf) {
+  return (USHORT)(((USHORT)Buf[0] << 8) | (USHORT)Buf[1]);
+}
+
+static VOID AerovNetIndicateRxChecksum(_In_ const AEROVNET_ADAPTER* Adapter, _Inout_ PNET_BUFFER_LIST Nbl,
+                                      _In_reads_bytes_(FrameLen) const UCHAR* Frame, _In_ ULONG FrameLen, _In_ const VIRTIO_NET_HDR* Vhdr) {
+  NDIS_TCP_IP_CHECKSUM_NET_BUFFER_LIST_INFO CsumInfo;
+  ULONG L3Offset;
+  USHORT EtherType;
+  ULONG VlanCount;
+
+  if (!Adapter || !Nbl) {
+    return;
+  }
+
+  // NBLs are recycled; always clear the checksum indication to avoid leaking
+  // status between frames.
+  NET_BUFFER_LIST_INFO(Nbl, TcpIpChecksumNetBufferListInfo) = NULL;
+
+  // Only trust checksum info when the device negotiated checksum support and
+  // explicitly marks the data as validated.
+  if ((Adapter->GuestFeatures & (VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM)) == 0) {
+    return;
+  }
+  if (!Vhdr || (Vhdr->Flags & VIRTIO_NET_HDR_F_DATA_VALID) == 0 || (Vhdr->Flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) != 0) {
+    return;
+  }
+
+  if (!Frame || FrameLen < 14) {
+    return;
+  }
+
+  CsumInfo.Value = 0;
+
+  // Ethernet II header, with up to 2 VLAN tags (QinQ) as allowed by the
+  // contract's frame sizing rules.
+  EtherType = AerovNetReadBe16(Frame + 12);
+  L3Offset = 14;
+
+  VlanCount = 0;
+  while (VlanCount < 2) {
+    if (EtherType == 0x8100u || EtherType == 0x88A8u || EtherType == 0x9100u) {
+      if (FrameLen < L3Offset + 4) {
+        return;
+      }
+      EtherType = AerovNetReadBe16(Frame + L3Offset + 2);
+      L3Offset += 4;
+      VlanCount++;
+      continue;
+    }
+    break;
+  }
+
+  if (EtherType == 0x0800u) {
+    // IPv4.
+    UCHAR VerIhl;
+    UCHAR Ihl;
+    ULONG IpHdrLen;
+    UCHAR Proto;
+    USHORT FragField;
+    BOOLEAN Fragmented;
+
+    if (FrameLen < L3Offset + 20) {
+      return;
+    }
+
+    VerIhl = Frame[L3Offset];
+    if ((VerIhl >> 4) != 4u) {
+      return;
+    }
+
+    Ihl = (UCHAR)(VerIhl & 0x0Fu);
+    IpHdrLen = (ULONG)Ihl * 4u;
+    if (IpHdrLen < 20u || FrameLen < L3Offset + IpHdrLen) {
+      return;
+    }
+
+    Proto = Frame[L3Offset + 9];
+    FragField = AerovNetReadBe16(Frame + L3Offset + 6);
+    Fragmented = ((FragField & 0x1FFFu) != 0) || ((FragField & 0x2000u) != 0);
+
+    CsumInfo.Receive.IpChecksumSucceeded = 1;
+
+    // Do not claim L4 checksum validity on fragmented packets: the checksum
+    // covers the reassembled payload, which this miniport does not validate.
+    if (!Fragmented) {
+      if (Proto == 6u) {
+        CsumInfo.Receive.TcpChecksumSucceeded = 1;
+      } else if (Proto == 17u) {
+        CsumInfo.Receive.UdpChecksumSucceeded = 1;
+      }
+    }
+  } else if (EtherType == 0x86DDu) {
+    // IPv6. No header checksum; only indicate TCP/UDP if we can identify it.
+    ULONG Off;
+    UCHAR NextHeader;
+    BOOLEAN Fragmented;
+    ULONG Iter;
+
+    if (FrameLen < L3Offset + 40) {
+      return;
+    }
+    if ((Frame[L3Offset] >> 4) != 6u) {
+      return;
+    }
+
+    NextHeader = Frame[L3Offset + 6];
+    Off = L3Offset + 40;
+    Fragmented = FALSE;
+
+    for (Iter = 0; Iter < 8; Iter++) {
+      if (NextHeader == 6u) {
+        if (!Fragmented) {
+          CsumInfo.Receive.TcpChecksumSucceeded = 1;
+        }
+        break;
+      }
+      if (NextHeader == 17u) {
+        if (!Fragmented) {
+          CsumInfo.Receive.UdpChecksumSucceeded = 1;
+        }
+        break;
+      }
+
+      // Common extension headers with length in 8-octet units (excluding the
+      // first 8 octets).
+      if (NextHeader == 0u || NextHeader == 43u || NextHeader == 60u) {
+        UCHAR ExtNext;
+        UCHAR ExtLen;
+        ULONG ExtBytes;
+
+        if (FrameLen < Off + 2) {
+          return;
+        }
+        ExtNext = Frame[Off];
+        ExtLen = Frame[Off + 1];
+        ExtBytes = ((ULONG)ExtLen + 1u) * 8u;
+        if (FrameLen < Off + ExtBytes) {
+          return;
+        }
+
+        NextHeader = ExtNext;
+        Off += ExtBytes;
+        continue;
+      }
+
+      // Fragment header.
+      if (NextHeader == 44u) {
+        UCHAR ExtNext;
+
+        if (FrameLen < Off + 8) {
+          return;
+        }
+
+        ExtNext = Frame[Off];
+        Fragmented = TRUE;
+        NextHeader = ExtNext;
+        Off += 8;
+        continue;
+      }
+
+      // Authentication header (length in 32-bit words, excluding first two).
+      if (NextHeader == 51u) {
+        UCHAR ExtNext;
+        UCHAR PayloadLen;
+        ULONG ExtBytes;
+
+        if (FrameLen < Off + 2) {
+          return;
+        }
+
+        ExtNext = Frame[Off];
+        PayloadLen = Frame[Off + 1];
+        ExtBytes = ((ULONG)PayloadLen + 2u) * 4u;
+        if (FrameLen < Off + ExtBytes) {
+          return;
+        }
+
+        NextHeader = ExtNext;
+        Off += ExtBytes;
+        continue;
+      }
+
+      // Unknown/unsupported extension header (e.g. ESP): leave checksum status
+      // unspecified so the OS performs validation.
+      break;
+    }
+  } else {
+    // Non-IP frame; no checksum offload semantics.
+    return;
+  }
+
+  if (CsumInfo.Value != 0) {
+    NET_BUFFER_LIST_INFO(Nbl, TcpIpChecksumNetBufferListInfo) = (PVOID)(ULONG_PTR)CsumInfo.Value;
+  }
+}
+
 static BOOLEAN AerovNetExtractMemoryResource(_In_ const CM_PARTIAL_RESOURCE_DESCRIPTOR* Desc, _Out_ PHYSICAL_ADDRESS* Start,
                                             _Out_ ULONG* Length) {
   USHORT Large;
@@ -993,7 +1190,9 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   // Contract v1 features (docs/windows7-virtio-driver-contract.md §3.2.3):
   // - required: VERSION_1 + INDIRECT_DESC + MAC + STATUS
   RequiredFeatures = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | AEROVNET_FEATURE_RING_INDIRECT_DESC;
-  WantedFeatures = 0;
+  // Optional: allow the device to report receive checksum status via virtio-net
+  // header flags (e.g. VIRTIO_NET_HDR_F_DATA_VALID).
+  WantedFeatures = VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM;
   NegotiatedFeatures = 0;
 
   NtStatus = VirtioPciNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
@@ -1400,6 +1599,8 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
     NET_BUFFER_DATA_LENGTH(Rx->Nb) = PayloadLen;
     NET_BUFFER_LIST_STATUS(Rx->Nbl) = NDIS_STATUS_SUCCESS;
     NET_BUFFER_LIST_NEXT_NBL(Rx->Nbl) = NULL;
+
+    AerovNetIndicateRxChecksum(Adapter, Rx->Nbl, Rx->BufferVa + sizeof(VIRTIO_NET_HDR), PayloadLen, (const VIRTIO_NET_HDR*)Rx->BufferVa);
 
     if (IndicateTail) {
       NET_BUFFER_LIST_NEXT_NBL(IndicateTail) = Rx->Nbl;

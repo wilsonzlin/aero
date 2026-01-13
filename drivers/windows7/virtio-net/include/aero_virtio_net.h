@@ -47,6 +47,10 @@
 // virtio-net device status bits (config.status) if VIRTIO_NET_F_STATUS is negotiated.
 #define VIRTIO_NET_S_LINK_UP 1u
 
+// virtio-net header flags (struct virtio_net_hdr::flags).
+#define VIRTIO_NET_HDR_F_NEEDS_CSUM 1u
+#define VIRTIO_NET_HDR_F_DATA_VALID 2u
+
 #pragma pack(push, 1)
 typedef struct _VIRTIO_NET_HDR {
   UCHAR Flags;
