@@ -2021,7 +2021,13 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
   }
 
   const backend_kind = backend ?? presenter?.backend ?? backendKindForEvent();
-  const isInitFailure = !presenter && !!runtimeCanvas;
+  // Best-effort init-vs-runtime classification:
+  // - before READY is sent: treat as init failure (often fatal)
+  // - after READY: treat as runtime/present failure
+  //
+  // This avoids misclassifying `presentFn`-mode exceptions as init failures just because the
+  // built-in presenter is not in use.
+  const isInitFailure = !runtimeReadySent && !!runtimeCanvas;
 
   // WebGPU validation errors can surface asynchronously as `GPUUncapturedErrorEvent`s.
   // Surface these as structured diagnostics events instead of treating them as fatal worker errors.
