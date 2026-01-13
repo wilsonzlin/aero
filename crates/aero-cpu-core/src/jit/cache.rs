@@ -89,19 +89,31 @@ impl CodeCache {
         let entry_rip = handle.entry_rip;
         let byte_len = handle.meta.byte_len as usize;
 
-        if self.remove(entry_rip).is_some() {
-            // `remove()` already adjusted bytes and unlinked the old node.
+        if let Some(&idx) = self.map.get(&entry_rip) {
+            let prev_len = self.nodes[idx]
+                .as_ref()
+                .expect("LRU node must exist for map entry")
+                .handle
+                .meta
+                .byte_len as usize;
+            self.current_bytes = self.current_bytes.saturating_sub(prev_len);
+            self.current_bytes = self.current_bytes.saturating_add(byte_len);
+            self.nodes[idx]
+                .as_mut()
+                .expect("LRU node must exist for map entry")
+                .handle = handle;
+            self.touch_idx(idx);
+        } else {
+            self.current_bytes = self.current_bytes.saturating_add(byte_len);
+            let idx = self.alloc_node(LruNode {
+                entry_rip,
+                handle,
+                prev: None,
+                next: None,
+            });
+            self.map.insert(entry_rip, idx);
+            self.link_front(idx);
         }
-
-        self.current_bytes = self.current_bytes.saturating_add(byte_len);
-        let idx = self.alloc_node(LruNode {
-            entry_rip,
-            handle,
-            prev: None,
-            next: None,
-        });
-        self.map.insert(entry_rip, idx);
-        self.link_front(idx);
 
         self.evict_if_needed()
     }
