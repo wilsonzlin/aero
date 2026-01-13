@@ -306,6 +306,49 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     expect(device.sendReport).toHaveBeenCalledTimes(1);
   });
 
+  it("continues draining hid:sendReport queue after sendReport failure", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      device.sendReport.mockImplementationOnce(async () => {
+        throw new Error("nope");
+      });
+      device.sendReport.mockImplementationOnce(async () => {});
+
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 1,
+        data: new Uint8Array([1]).buffer,
+      });
+
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 2,
+        data: new Uint8Array([2]).buffer,
+      });
+
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(device.sendReport).toHaveBeenCalledTimes(2);
+      expect(device.sendReport.mock.calls[0]![0]).toBe(1);
+      expect(device.sendReport.mock.calls[1]![0]).toBe(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("writes inputreport events into the configured SAB ring instead of posting hid:inputReport messages", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 

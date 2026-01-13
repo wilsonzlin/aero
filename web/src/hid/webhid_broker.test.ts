@@ -894,6 +894,43 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("continues draining the per-device send queue after a ring sendReport failure", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      device.sendReport.mockImplementationOnce(async () => {
+        throw new Error("nope");
+      });
+      device.sendReport.mockImplementationOnce(async () => {});
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(1))).toBe(true);
+      expect(outputRing.push(id, HidReportType.Output, 2, Uint8Array.of(2))).toBe(true);
+
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(device.sendReport).toHaveBeenCalledTimes(2);
+      expect(device.sendReport).toHaveBeenNthCalledWith(1, 1, Uint8Array.of(1));
+      expect(device.sendReport).toHaveBeenNthCalledWith(2, 2, Uint8Array.of(2));
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("drops pending per-device sends on detach (does not run queued reports after detach)", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });

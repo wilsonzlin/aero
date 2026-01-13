@@ -393,6 +393,43 @@ describe("WebHidPassthroughRuntime", () => {
     expect(device.sendReport).toHaveBeenCalledTimes(1);
   });
 
+  it("continues sending output reports after sendReport failure", async () => {
+    const device = new FakeHidDevice();
+
+    device.sendReport.mockImplementationOnce(async () => {
+      throw new Error("nope");
+    });
+    device.sendReport.mockImplementationOnce(async () => {});
+
+    const drain = vi
+      .fn()
+      .mockReturnValueOnce({ reportType: "output", reportId: 1, data: new Uint8Array([1]) })
+      .mockReturnValueOnce({ reportType: "output", reportId: 2, data: new Uint8Array([2]) })
+      .mockReturnValueOnce(null);
+
+    const bridge: WebHidPassthroughBridgeLike = {
+      push_input_report: vi.fn(),
+      drain_next_output_report: drain,
+      configured: vi.fn(() => true),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebHidPassthroughRuntime({
+      createBridge: () => bridge,
+      pollIntervalMs: 0,
+      logger: () => {},
+    });
+    await runtime.attachDevice(device as unknown as HIDDevice);
+
+    runtime.pollOnce();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(device.sendReport).toHaveBeenCalledTimes(2);
+    expect(device.sendReport.mock.calls[0]![0]).toBe(1);
+    expect(device.sendReport.mock.calls[1]![0]).toBe(2);
+  });
+
   it("cleans up listeners and frees wasm bridge on detach", async () => {
     const device = new FakeHidDevice();
 
