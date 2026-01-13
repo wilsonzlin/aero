@@ -164,6 +164,7 @@ if not "%ERRORLEVEL%"=="0" (
   echo [ERROR] Alternatively, sign the package on a Windows 10/11 host using:
   echo [ERROR]   pwsh ci/install-wdk.ps1
   echo [ERROR]   pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu
+  echo [ERROR]   pwsh ci/build-aerogpu-dbgctl.ps1 -ToolchainJson out/toolchain.json
   echo [ERROR]   pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
   echo [ERROR]   pwsh ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
   exit /b 1
