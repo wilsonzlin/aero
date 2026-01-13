@@ -336,6 +336,33 @@ for key in ("wow64Files", "requiredBuildOutputFiles", "additionalFiles", "toolFi
         raise SystemExit(f"{path}: {key} must be an array; got: {type(value).__name__}")
 
 print("Driver template manifest check: OK")
+
+# Ensure the worked examples stay aligned with the manifest field documentation.
+tools_example = "drivers/_template/ci-package.tools-example.json"
+with open(tools_example, "r", encoding="utf-8") as f:
+    example = json.load(f)
+
+for key in ("infFiles", "toolFiles", "additionalFiles"):
+    if key not in example:
+        raise SystemExit(f"{tools_example}: missing required example key: {key}")
+
+inf_files = example.get("infFiles")
+if not isinstance(inf_files, list) or not inf_files or not isinstance(inf_files[0], str) or not inf_files[0].lower().endswith(".inf"):
+    raise SystemExit(f"{tools_example}: infFiles must be a non-empty array of .inf paths")
+
+tool_files = example.get("toolFiles")
+if not isinstance(tool_files, list) or not tool_files:
+    raise SystemExit(f"{tools_example}: toolFiles must be a non-empty array")
+if not any(isinstance(x, str) and x.lower().endswith(".exe") for x in tool_files):
+    raise SystemExit(f"{tools_example}: toolFiles must include at least one .exe path")
+
+additional = example.get("additionalFiles")
+if not isinstance(additional, list):
+    raise SystemExit(f"{tools_example}: additionalFiles must be an array")
+if not any(isinstance(x, str) and x.replace('\\\\', '/').lower().endswith('readme.md') for x in additional):
+    raise SystemExit(f"{tools_example}: additionalFiles must include a README (e.g. README.md)")
+
+print("Driver template examples check: OK")
 PY
 else
   echo "warning: python3 not found; skipping driver template manifest check" >&2
