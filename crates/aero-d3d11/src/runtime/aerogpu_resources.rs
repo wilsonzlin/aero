@@ -859,11 +859,19 @@ pub fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat> {
 
 pub fn map_buffer_usage_flags(usage_flags: u32) -> wgpu::BufferUsages {
     let mut out = wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
+    let mut needs_storage = false;
     if (usage_flags & AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER) != 0 {
         out |= wgpu::BufferUsages::VERTEX;
+        needs_storage = true;
     }
     if (usage_flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0 {
         out |= wgpu::BufferUsages::INDEX;
+        needs_storage = true;
+    }
+    // D3D11 IA buffers are also consumed as `var<storage>` in compute prepasses (vertex pulling),
+    // so ensure they're created with `STORAGE`.
+    if needs_storage {
+        out |= wgpu::BufferUsages::STORAGE;
     }
     if (usage_flags & AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER) != 0 {
         out |= wgpu::BufferUsages::UNIFORM;
@@ -1518,6 +1526,11 @@ mod tests {
         assert!(bu.contains(wgpu::BufferUsages::COPY_SRC));
         assert!(bu.contains(wgpu::BufferUsages::COPY_DST));
         assert!(bu.contains(wgpu::BufferUsages::VERTEX));
+        assert!(bu.contains(wgpu::BufferUsages::STORAGE));
+
+        let bu = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_INDEX_BUFFER);
+        assert!(bu.contains(wgpu::BufferUsages::INDEX));
+        assert!(bu.contains(wgpu::BufferUsages::STORAGE));
 
         let tu = map_texture_usage_flags(AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
         assert!(tu.contains(wgpu::TextureUsages::COPY_SRC));

@@ -9325,11 +9325,20 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 
 fn map_buffer_usage_flags(flags: u32) -> wgpu::BufferUsages {
     let mut usage = wgpu::BufferUsages::COPY_DST;
+    let mut needs_storage = false;
     if flags & AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER != 0 {
         usage |= wgpu::BufferUsages::VERTEX;
+        needs_storage = true;
     }
     if flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER != 0 {
         usage |= wgpu::BufferUsages::INDEX;
+        needs_storage = true;
+    }
+    // D3D11 IA buffers are read by our compute prepasses ("vertex pulling") when emulating
+    // GS/HS/DS. WebGPU requires such buffers to be created with `STORAGE` in order to bind them
+    // as `var<storage>` in those compute pipelines.
+    if needs_storage {
+        usage |= wgpu::BufferUsages::STORAGE;
     }
     if flags & AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER != 0 {
         usage |= wgpu::BufferUsages::UNIFORM;
@@ -10098,6 +10107,120 @@ mod tests {
                 .expect("SET_SHADER_CONSTANTS_F should succeed");
 
             assert!(exec.encoder_has_commands);
+        });
+    }
+
+    #[test]
+    fn ia_buffers_are_bindable_as_storage_for_vertex_pulling() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const VB: u32 = 1;
+            const IB: u32 = 2;
+
+            let allocs = AllocTable::new(None).unwrap();
+
+            for (handle, usage_flags) in [
+                (VB, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER),
+                (IB, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER),
+            ] {
+                let mut cmd_bytes = Vec::new();
+                cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+                cmd_bytes.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
+                cmd_bytes.extend_from_slice(&handle.to_le_bytes());
+                cmd_bytes.extend_from_slice(&usage_flags.to_le_bytes());
+                cmd_bytes.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+                cmd_bytes.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+                assert_eq!(cmd_bytes.len(), 40);
+
+                exec.exec_create_buffer(&cmd_bytes, &allocs)
+                    .expect("CREATE_BUFFER should succeed");
+            }
+
+            let wgsl = r#"
+struct Data {
+    values: array<u32>,
+};
+
+@group(0) @binding(0) var<storage, read> data: Data;
+
+@compute @workgroup_size(1)
+fn main() {
+    let _x: u32 = data.values[0];
+}
+"#;
+
+            let shader = exec.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("aerogpu_cmd ia buffer storage bind test shader"),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(wgsl)),
+            });
+
+            let bgl = exec
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("aerogpu_cmd ia buffer storage bind test bgl"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(4),
+                        },
+                        count: None,
+                    }],
+                });
+
+            let pipeline_layout = exec
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aerogpu_cmd ia buffer storage bind test pipeline layout"),
+                    bind_group_layouts: &[&bgl],
+                    push_constant_ranges: &[],
+                });
+
+            exec.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("aerogpu_cmd ia buffer storage bind test pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: "main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                });
+
+            for (label, handle) in [("vertex", VB), ("index", IB)] {
+                let buffer = &exec
+                    .resources
+                    .buffers
+                    .get(&handle)
+                    .unwrap_or_else(|| panic!("{label} buffer should exist"))
+                    .buffer;
+
+                exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+                exec.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu_cmd ia buffer storage bind test bg"),
+                    layout: &bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                });
+                #[cfg(not(target_arch = "wasm32"))]
+                exec.device.poll(wgpu::Maintain::Wait);
+                let err = exec.device.pop_error_scope().await;
+                assert!(
+                    err.is_none(),
+                    "{label} buffer must be bindable as STORAGE for vertex pulling, got: {err:?}"
+                );
+            }
         });
     }
 
