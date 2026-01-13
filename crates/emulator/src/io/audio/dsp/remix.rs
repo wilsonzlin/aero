@@ -24,7 +24,11 @@ impl std::error::Error for RemixError {}
 fn ensure_capacity_and_len(out: &mut Vec<f32>, len: usize) {
     out.clear();
     if out.capacity() < len {
-        out.reserve(len - out.capacity());
+        // NOTE: `Vec::reserve` takes an "additional" count relative to the current length,
+        // not a delta to the current capacity. Since we `clear()` above, `len` is always
+        // the correct additional amount needed to ensure `capacity >= len` before the
+        // `set_len` below.
+        out.reserve(len);
     }
     // SAFETY: the caller writes every element below.
     unsafe {
@@ -159,6 +163,15 @@ mod tests {
     }
 
     #[test]
+    fn identity_remix_copies_input() {
+        // Two 3-channel frames.
+        let input = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let mut out = Vec::new();
+        remix_interleaved(&input, 3, 3, &mut out).unwrap();
+        assert_eq!(out, input);
+    }
+
+    #[test]
     fn stereo_to_mono_averages() {
         let input = [1.0f32, -1.0, 0.5, 0.25];
         let mut out = Vec::new();
@@ -186,6 +199,21 @@ mod tests {
     }
 
     #[test]
+    fn stereo_to_5_1_upmixes() {
+        // Two stereo frames.
+        let input = [1.0f32, -1.0, 0.5, 0.25];
+        let mut out = Vec::new();
+        remix_interleaved(&input, 2, 6, &mut out).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                1.0, -1.0, 0.0, 0.0, 1.0, -1.0, // frame 0
+                0.5, 0.25, 0.375, 0.0, 0.5, 0.25, // frame 1
+            ]
+        );
+    }
+
+    #[test]
     fn remix_3_to_2_folds_extra_channels_half_gain() {
         // Two 3-channel frames: [L, R, C]
         let input = [1.0f32, 2.0, 4.0, -1.0, 0.5, 2.0];
@@ -210,6 +238,33 @@ mod tests {
         let mut out = Vec::new();
         remix_interleaved(&input, 2, 4, &mut out).unwrap();
         assert_eq!(out, vec![1.0, -1.0, 0.0, 0.0, 0.5, 0.25, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn remix_1_to_3_duplicates_and_grows_output_vec_safely() {
+        // Exercise the `src_channels == 1` generic fallback as well as the output buffer
+        // growth path.
+        let input = [0.25f32, -0.5, 1.0];
+        let mut out = Vec::with_capacity(4);
+        remix_interleaved(&input, 1, 3, &mut out).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                0.25, 0.25, 0.25, // frame 0
+                -0.5, -0.5, -0.5, // frame 1
+                1.0, 1.0, 1.0, // frame 2
+            ]
+        );
+        assert!(out.capacity() >= out.len());
+    }
+
+    #[test]
+    fn remix_4_to_3_truncates() {
+        // Two 4-channel frames.
+        let input = [1.0f32, 2.0, 3.0, 4.0, -1.0, -2.0, -3.0, -4.0];
+        let mut out = Vec::new();
+        remix_interleaved(&input, 4, 3, &mut out).unwrap();
+        assert_eq!(out, vec![1.0, 2.0, 3.0, -1.0, -2.0, -3.0]);
     }
 
     #[test]
