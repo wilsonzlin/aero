@@ -311,6 +311,15 @@ impl LocalApic {
         }
     }
 
+    /// Reset the LAPIC's internal register state in-place.
+    ///
+    /// This is used to model SMP INIT/reset semantics where the LAPIC state must be cleared
+    /// without changing the [`Arc<LocalApic>`] identity (e.g. because an IOAPIC routes interrupts
+    /// to existing sinks).
+    pub fn reset_state(&self, apic_id: u8) {
+        *self.state.lock().unwrap() = LapicState::new(apic_id);
+    }
+
     pub fn apic_id(&self) -> u8 {
         self.state.lock().unwrap().id
     }
@@ -711,6 +720,60 @@ mod tests {
         let vec = apic.get_pending_vector().expect("pending");
         assert_eq!(vec, 0x30);
         assert!(apic.ack(vec));
+    }
+
+    #[test]
+    fn reset_state_clears_pending_and_registers() {
+        let clock = Arc::new(TestClock::default());
+        let apic = LocalApic::with_clock(clock, 0x3);
+
+        // Program some non-default state.
+        write_u32(&apic, REG_SVR, 1 << 8);
+        write_u32(&apic, REG_TPR, 0x70);
+        write_u32(&apic, REG_ICR_LOW, 0xDEAD_BEEF);
+        write_u32(&apic, REG_ICR_HIGH, 0xCAFE_BABE);
+        write_u32(&apic, REG_LVT_TIMER, 0x40); // unmasked
+        write_u32(&apic, REG_DIVIDE_CONFIG, 0xB);
+        write_u32(&apic, REG_INITIAL_COUNT, 100);
+
+        // Inject a fixed interrupt and ensure it becomes pending/deliverable.
+        // (TPR is programmed to 0x70 above, so we need a vector in a higher priority class.)
+        apic.inject_fixed_interrupt(0x80);
+        assert_eq!(apic.get_pending_vector(), Some(0x80));
+        assert!(apic.is_pending(0x80));
+
+        // Register a notifier and ensure it is preserved by reset.
+        apic.register_eoi_notifier(Arc::new(|_| {}));
+        assert_eq!(apic.eoi_notifiers.lock().unwrap().len(), 1);
+
+        apic.reset_state(0x3);
+
+        // Pending interrupts are cleared.
+        assert_eq!(apic.get_pending_vector(), None);
+        assert!(!apic.is_pending(0x80));
+
+        // Registers are reset to their defaults.
+        assert_eq!(read_u32(&apic, REG_ID), 0x03_00_00_00);
+        assert_eq!(read_u32(&apic, REG_TPR), 0);
+        assert_eq!(read_u32(&apic, REG_SVR), 0xFF);
+        assert_eq!(read_u32(&apic, REG_ICR_LOW), 0);
+        assert_eq!(read_u32(&apic, REG_ICR_HIGH), 0);
+        assert_eq!(read_u32(&apic, REG_LVT_TIMER), 1 << 16);
+        assert_eq!(read_u32(&apic, REG_DIVIDE_CONFIG), 0);
+        assert_eq!(read_u32(&apic, REG_INITIAL_COUNT), 0);
+        assert_eq!(read_u32(&apic, REG_CURRENT_COUNT), 0);
+
+        for i in 0..8 {
+            let off = REG_IRR_BASE + (i as u64) * 0x10;
+            assert_eq!(read_u32(&apic, off), 0);
+        }
+        for i in 0..8 {
+            let off = REG_ISR_BASE + (i as u64) * 0x10;
+            assert_eq!(read_u32(&apic, off), 0);
+        }
+
+        // Notifiers are not cleared by reset.
+        assert_eq!(apic.eoi_notifiers.lock().unwrap().len(), 1);
     }
 
     #[test]
