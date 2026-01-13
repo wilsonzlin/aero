@@ -919,10 +919,27 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check(caps.PixelShaderVersion >= D3DPS_VERSION(2, 0), "PixelShaderVersion >= 2.0")) {
     return false;
   }
+  if (!Check((caps.DevCaps & D3DDEVCAPS_HWTRANSFORMANDLIGHT) != 0, "DevCaps includes HWTRANSFORMANDLIGHT")) {
+    return false;
+  }
   if (!Check((caps.TextureCaps & D3DPTEXTURECAPS_POW2) == 0, "TextureCaps does not include POW2")) {
     return false;
   }
   if (!Check((caps.RasterCaps & D3DPRASTERCAPS_SCISSORTEST) != 0, "RasterCaps includes SCISSORTEST")) {
+    return false;
+  }
+  // Patch/NPatch draw DDIs are not implemented; caps should remain conservative
+  // to avoid the runtime selecting unsupported paths.
+  const uint32_t patch_caps = D3DDEVCAPS_NPATCHES | D3DDEVCAPS_RTPATCHES | D3DDEVCAPS_QUINTICRTPATCHES;
+  if (!Check((caps.DevCaps & patch_caps) == 0, "DevCaps does not advertise patch support")) {
+    return false;
+  }
+  // If we enumerate a depth/stencil format, we must advertise the corresponding
+  // compare-function caps so the runtime accepts render-state updates.
+  if (!Check((caps.ZCmpCaps & D3DPCMPCAPS_ALWAYS) != 0, "ZCmpCaps includes ALWAYS")) {
+    return false;
+  }
+  if (!Check((caps.AlphaCmpCaps & D3DPCMPCAPS_ALWAYS) != 0, "AlphaCmpCaps includes ALWAYS")) {
     return false;
   }
 

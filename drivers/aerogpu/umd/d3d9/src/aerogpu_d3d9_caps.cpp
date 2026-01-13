@@ -423,11 +423,39 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
 #else
       auto* caps = reinterpret_cast<D3DCAPS9*>(pGetCaps->pData);
       std::memset(caps, 0, sizeof(*caps));
+      caps->DeviceType = D3DDEVTYPE_HAL;
+      caps->AdapterOrdinal = 0;
       caps->Caps2 = D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANSHARERESOURCE;
+      caps->DevCaps = D3DDEVCAPS_HWTRANSFORMANDLIGHT |
+                      D3DDEVCAPS_DRAWPRIMITIVES2 |
+                      D3DDEVCAPS_DRAWPRIMITIVES2EX;
+      caps->PrimitiveMiscCaps = D3DPMISCCAPS_CLIPTLVERTS;
       caps->RasterCaps = D3DPRASTERCAPS_SCISSORTEST;
+      const DWORD cmp_caps = D3DPCMPCAPS_NEVER |
+                             D3DPCMPCAPS_LESS |
+                             D3DPCMPCAPS_EQUAL |
+                             D3DPCMPCAPS_LESSEQUAL |
+                             D3DPCMPCAPS_GREATER |
+                             D3DPCMPCAPS_NOTEQUAL |
+                             D3DPCMPCAPS_GREATEREQUAL |
+                             D3DPCMPCAPS_ALWAYS;
+      caps->ZCmpCaps = cmp_caps;
+      caps->AlphaCmpCaps = cmp_caps;
+      caps->StencilCaps = D3DSTENCILCAPS_KEEP |
+                          D3DSTENCILCAPS_ZERO |
+                          D3DSTENCILCAPS_REPLACE |
+                          D3DSTENCILCAPS_INCRSAT |
+                          D3DSTENCILCAPS_DECRSAT |
+                          D3DSTENCILCAPS_INVERT |
+                          D3DSTENCILCAPS_INCR |
+                          D3DSTENCILCAPS_DECR |
+                          D3DSTENCILCAPS_TWOSIDED;
+      caps->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
+      caps->TextureCaps = D3DPTEXTURECAPS_ALPHA;
       caps->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MAGFPOINT |
                                 D3DPTFILTERCAPS_MAGFLINEAR;
       caps->StretchRectFilterCaps = caps->TextureFilterCaps;
+      caps->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP;
       caps->SrcBlendCaps = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA;
       caps->DestBlendCaps = caps->SrcBlendCaps;
       caps->MaxTextureWidth = 4096;
