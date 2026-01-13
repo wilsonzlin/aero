@@ -96,6 +96,7 @@ impl Level {
 pub struct Icr {
     pub vector: u8,
     pub delivery_mode: DeliveryMode,
+    pub destination_mode: bool,
     pub level: Level,
     pub destination_shorthand: DestinationShorthand,
     /// xAPIC physical destination field (APIC ID).
@@ -106,13 +107,16 @@ impl Icr {
     pub fn decode(icr_low: u32, icr_high: u32) -> Self {
         let vector = (icr_low & 0xFF) as u8;
         let delivery_mode = DeliveryMode::from_bits(((icr_low >> 8) & 0x7) as u8);
+        let destination_mode = ((icr_low >> 11) & 1) != 0;
         let level = Level::from_bit(((icr_low >> 14) & 1) != 0);
-        let destination_shorthand = DestinationShorthand::from_bits(((icr_low >> 18) & 0x3) as u8);
+        let destination_shorthand =
+            DestinationShorthand::from_bits(((icr_low >> 18) & 0x3) as u8);
         let destination = ((icr_high >> 24) & 0xFF) as u8;
 
         Self {
             vector,
             delivery_mode,
+            destination_mode,
             level,
             destination_shorthand,
             destination,
@@ -133,7 +137,6 @@ struct LapicState {
     svr: u32,
     icr_low: u32,
     icr_high: u32,
-    icr_low_write_mask: u8,
     irr: [u32; 8],
     isr: [u32; 8],
     lvt_timer: u32,
@@ -153,7 +156,6 @@ impl LapicState {
             svr: 0xFF,
             icr_low: 0,
             icr_high: 0,
-            icr_low_write_mask: 0,
             irr: [0; 8],
             isr: [0; 8],
             // Mask timer by default.
@@ -419,7 +421,13 @@ impl LocalApic {
     /// Note: Registered EOI/ICR notifiers are preserved so IOAPIC Remote-IRR wiring and interrupt
     /// routing continue to function across LAPIC resets.
     pub fn reset_state(&self, apic_id: u8) {
-        *self.state.lock().unwrap() = LapicState::new(apic_id);
+        let mut state = self.state.lock().unwrap();
+        let current_id = state.id;
+        debug_assert_eq!(
+            apic_id, current_id,
+            "reset_state should not change the LAPIC ID"
+        );
+        *state = LapicState::new(current_id);
     }
     pub fn apic_id(&self) -> u8 {
         self.state.lock().unwrap().id
@@ -557,7 +565,6 @@ impl LocalApic {
                 let word_offset = off & !3;
                 let start_in_word = (off & 3) as usize;
                 let mut word = state.read_u32(now, word_offset);
-                let mut write_mask = 0u8;
 
                 for byte_idx in start_in_word..4 {
                     if idx >= data.len() {
@@ -577,7 +584,6 @@ impl LocalApic {
                     let shift = (byte_idx * 8) as u32;
                     word &= !(0xFF_u32 << shift);
                     word |= (data[idx] as u32) << shift;
-                    write_mask |= 1u8 << byte_idx;
                     idx += 1;
                 }
 
@@ -586,12 +592,7 @@ impl LocalApic {
                 }
 
                 if word_offset == REG_ICR_LOW {
-                    state.icr_low_write_mask |= write_mask;
-                    // Only fire once per completed 32-bit update of ICR_LOW.
-                    if state.icr_low_write_mask == 0xF {
-                        state.icr_low_write_mask = 0;
-                        icr_events.push(Icr::decode(word, state.icr_high));
-                    }
+                    icr_events.push(Icr::decode(word, state.icr_high));
                 }
             }
         }
@@ -650,7 +651,6 @@ impl LocalApic {
         if let Some(icr_high) = r.u32(TAG_ICR_HIGH)? {
             state.icr_high = icr_high;
         }
-        state.icr_low_write_mask = 0;
 
         if let Some(buf) = r.bytes(TAG_IRR) {
             let mut d = Decoder::new(buf);
@@ -984,6 +984,7 @@ mod tests {
             vec![Icr {
                 vector: 0x40,
                 delivery_mode: DeliveryMode::Fixed,
+                destination_mode: false,
                 level: Level::Assert,
                 destination_shorthand: DestinationShorthand::None,
                 destination: 2,
@@ -999,6 +1000,7 @@ mod tests {
             vec![Icr {
                 vector: 0x00,
                 delivery_mode: DeliveryMode::Init,
+                destination_mode: false,
                 level: Level::Assert,
                 destination_shorthand: DestinationShorthand::None,
                 destination: 1,
@@ -1014,6 +1016,7 @@ mod tests {
             vec![Icr {
                 vector: 0x08,
                 delivery_mode: DeliveryMode::Startup,
+                destination_mode: false,
                 level: Level::Assert,
                 destination_shorthand: DestinationShorthand::None,
                 destination: 3,
@@ -1022,7 +1025,7 @@ mod tests {
     }
 
     #[test]
-    fn icr_notifier_fires_once_per_complete_low_write() {
+    fn icr_notifier_fires_on_partial_writes() {
         let apic = LocalApic::new(0);
 
         let seen: Arc<Mutex<Vec<Icr>>> = Arc::new(Mutex::new(Vec::new()));
@@ -1040,18 +1043,39 @@ mod tests {
         let bytes = icr_low.to_le_bytes();
 
         apic.mmio_write(REG_ICR_LOW, &bytes[0..2]);
-        assert!(seen.lock().unwrap().is_empty());
-
-        apic.mmio_write(REG_ICR_LOW + 2, &bytes[2..4]);
         assert_eq!(
             *seen.lock().unwrap(),
             vec![Icr {
                 vector: 0x40,
                 delivery_mode: DeliveryMode::Fixed,
+                destination_mode: false,
                 level: Level::Assert,
-                destination_shorthand: DestinationShorthand::AllExcludingSelf,
+                destination_shorthand: DestinationShorthand::None,
                 destination: 2,
             }]
+        );
+
+        apic.mmio_write(REG_ICR_LOW + 2, &bytes[2..4]);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                Icr {
+                    vector: 0x40,
+                    delivery_mode: DeliveryMode::Fixed,
+                    destination_mode: false,
+                    level: Level::Assert,
+                    destination_shorthand: DestinationShorthand::None,
+                    destination: 2,
+                },
+                Icr {
+                    vector: 0x40,
+                    delivery_mode: DeliveryMode::Fixed,
+                    destination_mode: false,
+                    level: Level::Assert,
+                    destination_shorthand: DestinationShorthand::AllExcludingSelf,
+                    destination: 2,
+                }
+            ]
         );
     }
 }
