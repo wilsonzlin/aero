@@ -467,7 +467,7 @@ And if you suspect scanline/vblank state queries are broken, sample `D3DKMTGetSc
 aerogpu_dbgctl --query-scanline --vblank-samples 50 --vblank-interval-ms 10
 ```
 
-If you need to debug a hang or incorrect rendering without attaching WinDbg, capture a last-submission cmd stream + alloc table dump and decode it on the host (see `docs/windows7-driver-troubleshooting.md` for the dump+decode workflow).
+If you need to debug a hang or incorrect rendering without attaching WinDbg, capture a last-submission cmd stream + alloc table dump and decode it on the host (see [Dumping the last AeroGPU submission (cmd stream and alloc table)](../windows7-driver-troubleshooting.md#dumping-the-last-aerogpu-submission-cmd-stream-and-alloc-table)).
 
 ### 5.2 Suggested `aerogpu_dbgctl` commands (implemented today)
 
