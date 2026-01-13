@@ -215,6 +215,43 @@ function ReadZipEntryText {
   return $text
 }
 
+function Test-ZipHasEntry {
+  param(
+    [Parameter(Mandatory = $true)][string]$ZipPath,
+    [Parameter(Mandatory = $true)][string]$EntryPath
+  )
+
+  Add-Type -AssemblyName System.IO.Compression
+  $fs = [System.IO.File]::OpenRead($ZipPath)
+  $zip = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Read, $false)
+  try {
+    return $null -ne ($zip.Entries | Where-Object { $_.FullName -eq $EntryPath } | Select-Object -First 1)
+  } finally {
+    $zip.Dispose()
+    $fs.Dispose()
+  }
+}
+
+function Assert-ZipContainsEntry {
+  param(
+    [Parameter(Mandatory = $true)][string]$ZipPath,
+    [Parameter(Mandatory = $true)][string]$EntryPath
+  )
+  if (-not (Test-ZipHasEntry -ZipPath $ZipPath -EntryPath $EntryPath)) {
+    throw "Expected ZIP '$ZipPath' to contain entry '$EntryPath'."
+  }
+}
+
+function Assert-ZipNotContainsEntry {
+  param(
+    [Parameter(Mandatory = $true)][string]$ZipPath,
+    [Parameter(Mandatory = $true)][string]$EntryPath
+  )
+  if (Test-ZipHasEntry -ZipPath $ZipPath -EntryPath $EntryPath) {
+    throw "Expected ZIP '$ZipPath' to NOT contain entry '$EntryPath'."
+  }
+}
+
 function Get-DevicesCmdVarValue {
   param(
     [Parameter(Mandatory = $true)][string]$DevicesCmdText,
@@ -781,6 +818,76 @@ if (-not $OmitOptionalDrivers) {
     }
   }
 }
+
+# Exercise the CI Guest Tools packager wrapper with -ExtraToolsDir, ensuring optional
+# tools are staged under `tools/` and that debug symbol artifacts are excluded from the
+# final packaged outputs.
+$ciGuestToolsInputRoot = Join-Path $OutRoot "ci-guest-tools-input"
+Ensure-EmptyDirectory -Path $ciGuestToolsInputRoot
+foreach ($arch in @("x86", "amd64")) {
+  Ensure-Directory -Path (Join-Path $ciGuestToolsInputRoot $arch)
+}
+
+$ciDriverSources = @(
+  [pscustomobject]@{ Name = "viostor"; Upstream = "viostor" },
+  [pscustomobject]@{ Name = "netkvm"; Upstream = "NetKVM" },
+  [pscustomobject]@{ Name = "viosnd"; Upstream = "viosnd" },
+  [pscustomobject]@{ Name = "vioinput"; Upstream = "vioinput" }
+)
+foreach ($drv in $ciDriverSources) {
+  foreach ($arch in @("x86", "amd64")) {
+    $src = Join-Path $syntheticRoot (Join-Path $drv.Upstream (Join-Path $osDir $arch))
+    if (-not (Test-Path -LiteralPath $src -PathType Container)) { continue }
+    $dest = Join-Path (Join-Path $ciGuestToolsInputRoot $arch) $drv.Name
+    Ensure-Directory -Path $dest
+    Copy-Item -Path (Join-Path $src "*") -Destination $dest -Recurse -Force
+  }
+}
+
+foreach ($req in @("viostor", "netkvm")) {
+  foreach ($arch in @("x86", "amd64")) {
+    $p = Join-Path (Join-Path $ciGuestToolsInputRoot $arch) $req
+    if (-not (Test-Path -LiteralPath $p -PathType Container)) {
+      throw "CI Guest Tools packaging input missing expected driver directory: $p"
+    }
+  }
+}
+
+$extraToolsDir = Join-Path $OutRoot "extra-tools"
+Ensure-EmptyDirectory -Path $extraToolsDir
+Write-PlaceholderBinary -Path (Join-Path $extraToolsDir "aerogpu_dbgctl.exe")
+Write-PlaceholderBinary -Path (Join-Path $extraToolsDir "aerogpu_dbgctl.pdb")
+
+$ciGuestToolsOutDir = Join-Path $OutRoot "ci-guest-tools-out"
+Ensure-EmptyDirectory -Path $ciGuestToolsOutDir
+$ciGuestToolsLog = Join-Path $logsDir "package-guest-tools-extra-tools.log"
+$ciGuestToolsScript = Join-Path $repoRoot "ci\\package-guest-tools.ps1"
+
+Write-Host "Running package-guest-tools.ps1 (-ExtraToolsDir)..."
+$ciGuestToolsArgs = @(
+  "-InputRoot", $ciGuestToolsInputRoot,
+  "-GuestToolsDir", (Join-Path $repoRoot "guest-tools"),
+  "-SigningPolicy", "none",
+  "-SpecPath", $GuestToolsSpecPath,
+  "-WindowsDeviceContractPath", "docs/windows-device-contract-virtio-win.json",
+  "-OutDir", $ciGuestToolsOutDir,
+  "-Version", "0.0.0",
+  "-BuildId", "ci-extra-tools",
+  "-ExtraToolsDir", $extraToolsDir
+)
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $ciGuestToolsScript @ciGuestToolsArgs *>&1 | Tee-Object -FilePath $ciGuestToolsLog
+if ($LASTEXITCODE -ne 0) {
+  throw "package-guest-tools.ps1 failed (exit $LASTEXITCODE). See $ciGuestToolsLog"
+}
+
+$ciGuestToolsZip = Join-Path $ciGuestToolsOutDir "aero-guest-tools.zip"
+if (-not (Test-Path -LiteralPath $ciGuestToolsZip -PathType Leaf)) {
+  throw "Expected package-guest-tools.ps1 output ZIP missing: $ciGuestToolsZip"
+}
+
+Write-Host "Verifying optional tools are packaged..."
+Assert-ZipContainsEntry -ZipPath $ciGuestToolsZip -EntryPath "tools/aerogpu_dbgctl.exe"
+Assert-ZipNotContainsEntry -ZipPath $ciGuestToolsZip -EntryPath "tools/aerogpu_dbgctl.pdb"
 
 if ($TestSigningPolicies) {
   $guestToolsTestSigningOutDir = Join-Path $OutRoot "guest-tools-testsigning"
