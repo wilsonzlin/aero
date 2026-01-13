@@ -6,10 +6,10 @@ For the consolidated end-to-end virtio-input validation plan (Rust device model 
 
 ## Host-side unit tests (portable)
 
-`hid_translate.c/h` (and the thin `virtio_input.c/h` wrapper around it) are written to be portable so the virtio-input → HID
+`hid_translate.c/h` (and the thin `virtio_input.c/h` wrapper around it, plus other helpers in `../src/`) are written to be portable so the virtio-input → HID
 mapping and report queuing behavior can be validated without the Windows WDK.
 
-Run:
+Run the full suite:
 
 ```bash
 # From drivers/windows7/virtio-input/
@@ -21,6 +21,24 @@ To force a specific compiler, set `CC`:
 
 ```bash
 CC=clang bash tests/run.sh
+```
+
+### Individual tests (manual one-liners)
+
+If you just want to build and run a single test directly with `gcc`:
+
+```bash
+# From drivers/windows7/virtio-input/tests/
+gcc -std=c11 -Wall -Wextra -Werror \
+  -o /tmp/hid_translate_test \
+  hid_translate_test.c ../src/hid_translate.c && /tmp/hid_translate_test
+```
+
+```bash
+# From drivers/windows7/virtio-input/tests/
+gcc -std=c11 -Wall -Wextra -Werror \
+  -o /tmp/led_translate_test \
+  led_translate_test.c ../src/led_translate.c && /tmp/led_translate_test
 ```
 
 ### Adding new host-side tests

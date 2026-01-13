@@ -6,11 +6,11 @@
 #include <wdf.h>
 
 #include "virtio_input.h"
-#include "virtio_input_proto.h"
+#include "led_translate.h"
 
 #define VIOINPUT_STATUSQ_POOL_TAG 'qSoV'
 
-enum { VIOINPUT_STATUSQ_EVENTS_PER_BUFFER = 6 };
+enum { VIOINPUT_STATUSQ_EVENTS_PER_BUFFER = LED_TRANSLATE_EVENT_COUNT };
 
 typedef struct _VIRTIO_STATUSQ {
     WDFDEVICE Device;
@@ -78,43 +78,6 @@ static __forceinline BOOLEAN VirtioStatusQCookieToIndex(_In_ const VIRTIO_STATUS
     return TRUE;
 }
 
-static ULONG VirtioStatusQBuildLedEvents(_In_ UCHAR LedBitfield, _Out_writes_(VIOINPUT_STATUSQ_EVENTS_PER_BUFFER) struct virtio_input_event_le* Events)
-{
-    ULONG eventCount = 0;
-
-    Events[eventCount].type = (uint16_t)VIRTIO_INPUT_EV_LED;
-    Events[eventCount].code = (uint16_t)VIRTIO_INPUT_LED_NUML;
-    Events[eventCount].value = (uint32_t)((LedBitfield & 0x01) ? 1 : 0);
-    eventCount++;
-
-    Events[eventCount].type = (uint16_t)VIRTIO_INPUT_EV_LED;
-    Events[eventCount].code = (uint16_t)VIRTIO_INPUT_LED_CAPSL;
-    Events[eventCount].value = (uint32_t)((LedBitfield & 0x02) ? 1 : 0);
-    eventCount++;
-
-    Events[eventCount].type = (uint16_t)VIRTIO_INPUT_EV_LED;
-    Events[eventCount].code = (uint16_t)VIRTIO_INPUT_LED_SCROLLL;
-    Events[eventCount].value = (uint32_t)((LedBitfield & 0x04) ? 1 : 0);
-    eventCount++;
-
-    Events[eventCount].type = (uint16_t)VIRTIO_INPUT_EV_LED;
-    Events[eventCount].code = (uint16_t)VIRTIO_INPUT_LED_COMPOSE;
-    Events[eventCount].value = (uint32_t)((LedBitfield & 0x08) ? 1 : 0);
-    eventCount++;
-
-    Events[eventCount].type = (uint16_t)VIRTIO_INPUT_EV_LED;
-    Events[eventCount].code = (uint16_t)VIRTIO_INPUT_LED_KANA;
-    Events[eventCount].value = (uint32_t)((LedBitfield & 0x10) ? 1 : 0);
-    eventCount++;
-
-    Events[eventCount].type = (uint16_t)VIRTIO_INPUT_EV_SYN;
-    Events[eventCount].code = (uint16_t)VIRTIO_INPUT_SYN_REPORT;
-    Events[eventCount].value = 0;
-    eventCount++;
-
-    return eventCount;
-}
-
 static __forceinline VOID VirtioStatusQUpdateDepthCounter(_In_ PVIRTIO_STATUSQ Q)
 {
     PDEVICE_CONTEXT devCtx;
@@ -177,7 +140,7 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
     bufVa = VirtioStatusQTxBufVa(Q, idx);
     bufPa = VirtioStatusQTxBufPa(Q, idx);
 
-    eventCount = VirtioStatusQBuildLedEvents(Q->PendingLedBitfield, (struct virtio_input_event_le*)bufVa);
+    eventCount = (ULONG)led_translate_build_virtio_events((uint8_t)Q->PendingLedBitfield, (struct virtio_input_event_le*)bufVa);
     bytes = (UINT32)(eventCount * sizeof(struct virtio_input_event_le));
 
     sg.addr = bufPa;
