@@ -1086,11 +1086,12 @@ fn tier2_loop_trace_invalidates_on_mid_execution_code_version_bump() {
     init_state.cpu.rip = entry_rip;
     init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
 
-    // The loop trace will guard pages [0, 1] at trace entry (2 calls), and again at the start of
-    // the loop body. Bump page 1 on the 4th call to simulate mid-trace self-modifying code.
+    // The loop trace will guard pages [0, 1] at the start of each iteration (2 calls per
+    // iteration). Bump page 1 on the 2nd call (page 1 of the first iteration) to simulate
+    // mid-trace self-modifying code.
     let host_env = HostEnv {
         code_version_calls: 0,
-        bump_on_call: Some((4, 1)),
+        bump_on_call: Some((2, 1)),
     };
     let (mut store, memory, func) = instantiate_trace(&wasm, host_env);
 
