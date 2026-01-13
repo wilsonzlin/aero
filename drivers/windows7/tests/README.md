@@ -71,8 +71,13 @@ drivers/windows7/tests/
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
   AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
-AERO_VIRTIO_SELFTEST|RESULT|PASS
+ AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
+
+The guest may also emit optional interrupt-mode diagnostics markers (informational):
+
+- `virtio-<dev>-irq|INFO|...`
+- `virtio-<dev>-irq|WARN|...`
 
 The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and also enforces that key per-test markers
 (virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net) were emitted so older selftest binaries
