@@ -499,6 +499,42 @@ mod tests {
     }
 
     #[test]
+    fn parse_accepts_u64_max_start_but_resolution_drops_start_equal_to_len() {
+        let len = u64::MAX;
+        let max = u64::MAX.to_string();
+
+        // start == len should be dropped as unsatisfiable.
+        let header = format!("bytes={max}-");
+        let specs = parse_range_header(&header).unwrap();
+        assert_eq!(specs, vec![ByteRangeSpec::From { start: u64::MAX }]);
+        assert!(matches!(
+            resolve_ranges(&specs, len, false),
+            Err(RangeResolveError::Unsatisfiable)
+        ));
+
+        let header = format!("bytes={max}-{max}");
+        let specs = parse_range_header(&header).unwrap();
+        assert_eq!(
+            specs,
+            vec![ByteRangeSpec::FromTo {
+                start: u64::MAX,
+                end: u64::MAX
+            }]
+        );
+        assert!(matches!(
+            resolve_ranges(&specs, len, false),
+            Err(RangeResolveError::Unsatisfiable)
+        ));
+
+        // end == u64::MAX is clamped to len-1.
+        let start = u64::MAX - 1;
+        let header = format!("bytes={start}-{max}");
+        let specs = parse_range_header(&header).unwrap();
+        let resolved = resolve_ranges(&specs, len, false).unwrap();
+        assert_resolved_eq(&resolved, &[(u64::MAX - 1, u64::MAX - 1)], len);
+    }
+
+    #[test]
     fn parse_rejects_missing_suffix_length() {
         assert!(matches!(
             parse_range_header("bytes=-").unwrap_err(),
