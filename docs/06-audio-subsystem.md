@@ -267,6 +267,8 @@ Key options (in addition to the existing `sampleRate`/`latencyHint`/`ringBufferF
       startup silence prefill can still mask initial underruns.
     - If you need to flush explicitly (or you are in a browser that doesn’t reliably support `AudioContext` `statechange`
       listeners), `createAudioOutput` also exposes `audioOutput.discardBufferedFrames()` to manually request a ring reset.
+    - Control message: `{ type: "ring.reset" }` posted to `AudioWorkletNode.port` (the worklet atomically applies
+      `readFrameIndex := writeFrameIndex`).
 
 Related diagnostics knobs (not latency controls, but useful when tuning):
 
