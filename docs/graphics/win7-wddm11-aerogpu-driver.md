@@ -584,18 +584,37 @@ See:
 ## 5. Memory model (minimal)
  
 ### 5.1 Segments
- 
+  
 **MVP segment plan:**
- 
+  
 - Expose **exactly one** memory segment to VidMM:
   - **Segment 1:** System memory (`D3DKMDT_MEMORY_SEGMENT_TYPE_SYSTEM`)
   - CPU-visible, GPU-visible (for our virtual GPU “GPU-visible” just means “emulator can read guest physical memory”)
   - No dedicated VRAM, no aperture, no tiling/swizzling
- 
-This keeps the KMD simple and allows the emulator to access all resources directly from guest RAM.
- 
-### 5.2 Allocation backing and “guest physical” mapping
   
+This keeps the KMD simple and allows the emulator to access all resources directly from guest RAM.
+
+#### Segment size / budget hint (`NonLocalMemorySizeMB`)
+
+Even though AeroGPU allocations are backed by **guest system RAM**, Win7’s `dxgkrnl` still enforces a per-adapter **segment budget**
+based on what the KMD reports via:
+
+- `DXGKQAITYPE_QUERYSEGMENT` (segment size), and
+- `DXGKQAITYPE_GETSEGMENTGROUPSIZE` (`NonLocalMemorySize`)
+
+The in-tree Win7 KMD defaults this non-local budget to **512 MB** for bring-up. If the budget is too small, D3D workloads can fail
+allocations with `E_OUTOFMEMORY` / `D3DERR_OUTOFVIDEOMEMORY` even when the guest still has free RAM.
+
+You can tune the reported budget via the device registry parameter:
+
+- `HKR\Parameters\NonLocalMemorySizeMB` (REG_DWORD, MB)
+  - Default 512; clamped min 128; max 2048 on x64; max 1024 on x86
+
+This does **not** reserve memory up front; it is a **budget hint** (system-memory-backed), not dedicated VRAM.
+See `drivers/aerogpu/kmd/README.md` and `docs/graphics/win7-aerogpu-validation.md` for tuning guidance.
+  
+### 5.2 Allocation backing and “guest physical” mapping
+   
 For each allocation created by the KMD:
   
 - Back it with locked system pages (nonpaged) to avoid paging complexity.

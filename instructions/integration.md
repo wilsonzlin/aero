@@ -63,8 +63,7 @@ Older docs may still read like “bring your own BIOS binary” or like the mach
 
 ## Current Status
 
-Most “BI-* / AC-* / DM-*” items from the original project plan are now **implemented and covered by
-tests** in the canonical stack:
+Most `BI-*` / `AC-*` / `DM-*` items from the original project plan are now **implemented and covered by tests** in the canonical stack:
 
 - `cargo test -p firmware` exercises BIOS services (INT 10/13/15/16/1A), ROM layout, ACPI/SMBIOS
   publication, etc.
