@@ -6924,6 +6924,30 @@ impl AerogpuD3d11Executor {
         }
 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
+
+        // Future-proofing for SM5 geometry-shader stream semantics:
+        // - The DXBC signature entries include a `stream` field (used by GS multi-stream output /
+        //   stream-out).
+        // - Our rasterization path currently only supports stream 0. If a shader declares outputs
+        //   on non-zero streams, treating them as stream 0 would silently misrender.
+        //
+        // Fail fast with a clear error so we never rasterize with the wrong stream mapping.
+        if matches!(stage, ShaderStage::Vertex | ShaderStage::Pixel) {
+            if let Some(osgn) = signatures.osgn.as_ref() {
+                for p in &osgn.parameters {
+                    if p.stream != 0 {
+                        bail!(
+                            "CREATE_SHADER_DXBC: output signature parameter {}{} (r{}) is declared on stream {} (only stream 0 is supported)",
+                            p.semantic_name,
+                            p.semantic_index,
+                            p.register,
+                            p.stream
+                        );
+                    }
+                }
+            }
+        }
+
         // Compute-stage DXBC frequently omits signature chunks entirely. The signature-driven
         // translator can still handle compute shaders, so only require ISGN/OSGN for VS/PS.
         let signature_driven = stage == ShaderStage::Compute

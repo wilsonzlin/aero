@@ -481,6 +481,27 @@ impl AerogpuCmdRuntime {
         };
 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
+
+        // Future-proofing for SM5 geometry shader output streams:
+        //
+        // DXBC signatures include a `stream` field which is used by geometry shader multi-stream
+        // output (and stream-out). Our rasterization pipeline currently only supports stream 0, so
+        // reject shaders that declare non-zero streams to avoid silently rasterizing the wrong
+        // stream.
+        if let Some(osgn) = signatures.osgn.as_ref() {
+            for p in &osgn.parameters {
+                if p.stream != 0 {
+                    bail!(
+                        "create_shader_dxbc: output signature parameter {}{} (r{}) is declared on stream {} (only stream 0 is supported)",
+                        p.semantic_name,
+                        p.semantic_index,
+                        p.register,
+                        p.stream
+                    );
+                }
+            }
+        }
+
         let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
         let (wgsl, reflection, vs_input_signature) = if signature_driven {
             let module = crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;

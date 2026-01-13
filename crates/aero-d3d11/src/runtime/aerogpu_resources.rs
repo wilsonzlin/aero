@@ -358,6 +358,28 @@ impl AerogpuResourceManager {
             bail!("CreateShaderDxbc: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
+
+        // Future-proofing for SM5 geometry shader output streams:
+        //
+        // Signature entries include a `stream` field (used by GS multi-stream output / stream-out).
+        // Our rasterization pipeline only supports stream 0 at the moment, so reject shaders that
+        // declare non-zero streams to avoid silent misrendering.
+        if matches!(stage, AerogpuShaderStage::Vertex | AerogpuShaderStage::Pixel) {
+            if let Some(osgn) = signatures.osgn.as_ref() {
+                for p in &osgn.parameters {
+                    if p.stream != 0 {
+                        bail!(
+                            "CreateShaderDxbc: output signature parameter {}{} (r{}) is declared on stream {} (only stream 0 is supported)",
+                            p.semantic_name,
+                            p.semantic_index,
+                            p.register,
+                            p.stream
+                        );
+                    }
+                }
+            }
+        }
+
         // Compute shaders often omit signature chunks entirely. The signature-driven translator
         // can still handle compute modules, so only require ISGN/OSGN for VS/PS.
         let signature_driven = match stage {

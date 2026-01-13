@@ -39,6 +39,10 @@ pub struct IoParam {
     pub builtin: Option<Builtin>,
     /// Bitmask of components (x=1, y=2, z=4, w=8).
     pub mask: u8,
+    /// Signature stream index (used by geometry shaders / stream-out).
+    ///
+    /// For VS/PS this is typically 0.
+    pub stream: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1048,6 +1052,7 @@ impl IoMaps {
                 location: p.builtin.is_none().then_some(p.param.register),
                 builtin: p.builtin,
                 mask: p.param.mask,
+                stream: p.param.stream,
             })
             .collect()
     }
@@ -1062,6 +1067,7 @@ impl IoMaps {
                 location: p.builtin.is_none().then_some(p.param.register),
                 builtin: p.builtin,
                 mask: p.param.mask,
+                stream: p.param.stream,
             })
             .collect()
     }
@@ -1078,6 +1084,7 @@ impl IoMaps {
                     location: is_target.then_some(p.param.register),
                     builtin: None,
                     mask: p.param.mask,
+                    stream: p.param.stream,
                 }
             })
             .collect()
