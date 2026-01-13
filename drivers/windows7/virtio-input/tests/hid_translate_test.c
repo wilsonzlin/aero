@@ -6,17 +6,18 @@
 #include <string.h>
 
 enum { MAX_CAPTURED_REPORTS = 64 };
+enum { MAX_REPORT_SIZE = 64 };
 
 struct captured_reports {
   size_t count;
   size_t lens[MAX_CAPTURED_REPORTS];
-  uint8_t bytes[MAX_CAPTURED_REPORTS][HID_TRANSLATE_KEYBOARD_REPORT_SIZE];
+  uint8_t bytes[MAX_CAPTURED_REPORTS][MAX_REPORT_SIZE];
 };
 
 static void capture_emit(void *context, const uint8_t *report, size_t report_len) {
   struct captured_reports *cap = (struct captured_reports *)context;
   assert(cap->count < MAX_CAPTURED_REPORTS);
-  assert(report_len <= HID_TRANSLATE_KEYBOARD_REPORT_SIZE);
+  assert(report_len <= MAX_REPORT_SIZE);
   cap->lens[cap->count] = report_len;
   memcpy(cap->bytes[cap->count], report, report_len);
   cap->count++;
@@ -39,6 +40,14 @@ static void send_rel(struct hid_translate *t, uint16_t code, int32_t delta) {
   ev.type = VIRTIO_INPUT_EV_REL;
   ev.code = code;
   ev.value = (uint32_t)delta;
+  hid_translate_handle_event(t, &ev);
+}
+
+static void send_abs(struct hid_translate *t, uint16_t code, int32_t value) {
+  struct virtio_input_event ev;
+  ev.type = VIRTIO_INPUT_EV_ABS;
+  ev.code = code;
+  ev.value = (uint32_t)value;
   hid_translate_handle_event(t, &ev);
 }
 
@@ -71,6 +80,14 @@ static void send_rel_le(struct hid_translate *t, uint16_t code, int32_t delta) {
   ev.type = to_le16(VIRTIO_INPUT_EV_REL);
   ev.code = to_le16(code);
   ev.value = to_le32((uint32_t)delta);
+  hid_translate_handle_event_le(t, &ev);
+}
+
+static void send_abs_le(struct hid_translate *t, uint16_t code, int32_t value) {
+  struct virtio_input_event_le ev;
+  ev.type = to_le16(VIRTIO_INPUT_EV_ABS);
+  ev.code = to_le16(code);
+  ev.value = to_le32((uint32_t)value);
   hid_translate_handle_event_le(t, &ev);
 }
 
@@ -177,6 +194,11 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_BTN_FORWARD == 277);
   assert(VIRTIO_INPUT_BTN_BACK == 278);
   assert(VIRTIO_INPUT_BTN_TASK == 279);
+
+  /* Tablet-related event and ABS codes (Linux input userspace ABI). */
+  assert(VIRTIO_INPUT_EV_ABS == 0x03);
+  assert(VIRTIO_INPUT_ABS_X == 0);
+  assert(VIRTIO_INPUT_ABS_Y == 1);
 }
 
 static void test_mapping(void) {
@@ -259,6 +281,7 @@ static void test_keyboard_modifier_reports(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Press LeftCtrl, flush. */
   send_key(&t, VIRTIO_INPUT_KEY_LEFTCTRL, 1);
@@ -303,6 +326,7 @@ static void test_keyboard_all_modifier_bits_report(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Press all 8 modifiers, flush once. */
   send_key(&t, VIRTIO_INPUT_KEY_LEFTCTRL, 1);
@@ -339,6 +363,7 @@ static void test_keyboard_ctrl_alt_delete_report(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Press Ctrl+Alt+Delete, flush. */
   send_key(&t, VIRTIO_INPUT_KEY_LEFTCTRL, 1);
@@ -371,6 +396,7 @@ static void test_keyboard_unsupported_key_ignored(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Linux KEY_RESERVED=0 is not mapped; should produce no report. */
   send_key(&t, 0, 1);
@@ -384,6 +410,7 @@ static void test_keyboard_lock_keys_reports(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* CapsLock */
   send_key(&t, VIRTIO_INPUT_KEY_CAPSLOCK, 1);
@@ -426,6 +453,7 @@ static void test_keyboard_repeat_does_not_emit(void) {
   /* Repeat for a normal key in the 6-key array (F1). */
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
   send_key(&t, VIRTIO_INPUT_KEY_F1, 1);
   send_syn(&t);
   assert(cap.count == 1);
@@ -436,6 +464,7 @@ static void test_keyboard_repeat_does_not_emit(void) {
   /* Repeat for a modifier key (LeftShift). */
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
   send_key(&t, VIRTIO_INPUT_KEY_LEFTSHIFT, 1);
   send_syn(&t);
   assert(cap.count == 1);
@@ -450,6 +479,7 @@ static void test_keyboard_reports(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Press A, flush. */
   send_key(&t, VIRTIO_INPUT_KEY_A, 1);
@@ -482,6 +512,7 @@ static void test_keyboard_reports(void) {
   /* Repeat shouldn't create another report (state doesn't change). */
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
   send_key(&t, VIRTIO_INPUT_KEY_A, 1);
   send_syn(&t);
   assert(cap.count == 1);
@@ -496,6 +527,7 @@ static void test_keyboard_function_key_reports(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Press+release F1, flushing after each. */
   send_key(&t, VIRTIO_INPUT_KEY_F1, 1);
@@ -530,6 +562,7 @@ static void test_keyboard_function_key_reports_le(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Press+release F12, delivered in little-endian wire format. */
   send_key_le(&t, VIRTIO_INPUT_KEY_F12, 1);
@@ -551,6 +584,7 @@ static void test_keyboard_keypad_and_misc_key_reports(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* PrintScreen (Linux KEY_SYSRQ). */
   send_key(&t, VIRTIO_INPUT_KEY_SYSRQ, 1);
@@ -636,6 +670,7 @@ static void test_mouse_reports_le(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Left button down. */
   send_key_le(&t, VIRTIO_INPUT_BTN_LEFT, 1);
@@ -816,6 +851,7 @@ static void test_keyboard_overflow_queue(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Press 7 keys, flush once. */
   send_key(&t, VIRTIO_INPUT_KEY_A, 1);
@@ -844,6 +880,7 @@ static void test_keyboard_overflow_queue_does_not_emit_on_queued_press(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Press 6 keys, flush. */
   send_key(&t, VIRTIO_INPUT_KEY_A, 1);
@@ -878,6 +915,7 @@ static void test_mouse_reports(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   /* Left button down. */
   send_key(&t, VIRTIO_INPUT_BTN_LEFT, 1);
@@ -942,6 +980,7 @@ static void test_mouse_reports(void) {
   /* Large delta is split into multiple reports. */
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE);
   send_rel(&t, VIRTIO_INPUT_REL_X, 200);
   send_syn(&t);
 
@@ -1036,6 +1075,7 @@ static void test_reset_emits_release_reports(void) {
 
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_CONSUMER | HID_TRANSLATE_REPORT_MASK_MOUSE);
 
   send_key(&t, VIRTIO_INPUT_KEY_A, 1);
   send_key(&t, VIRTIO_INPUT_BTN_LEFT, 1);
@@ -1115,6 +1155,180 @@ static void test_mouse_only_enable(void) {
   expect_report(&cap, 0, expect_release, sizeof(expect_release));
 }
 
+static void test_tablet_basic_abs_reports(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /*
+   * X/Y updates should not emit until SYN_REPORT.
+   */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 100);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 200);
+  assert(cap.count == 0);
+  send_syn(&t);
+
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {
+      HID_TRANSLATE_REPORT_ID_TABLET,
+      0x00,
+      0x64,
+      0x00,
+      0xC8,
+      0x00,
+  };
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
+static void test_tablet_basic_abs_reports_le(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /* Delivered in little-endian wire format. */
+  send_abs_le(&t, VIRTIO_INPUT_ABS_X, 0x1234);
+  send_abs_le(&t, VIRTIO_INPUT_ABS_Y, 0x5678);
+  send_syn_le(&t);
+
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {
+      HID_TRANSLATE_REPORT_ID_TABLET,
+      0x00,
+      0x34,
+      0x12,
+      0x78,
+      0x56,
+  };
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
+static void test_tablet_clamp_min_max(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /* Below-min values should clamp to 0. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, -123);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, -1);
+  send_syn(&t);
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {
+      HID_TRANSLATE_REPORT_ID_TABLET,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+  };
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Exact max should map to max. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 0x7FFF);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 0x7FFF);
+  send_syn(&t);
+  uint8_t expect2[HID_TRANSLATE_TABLET_REPORT_SIZE] = {
+      HID_TRANSLATE_REPORT_ID_TABLET,
+      0x00,
+      0xFF,
+      0x7F,
+      0xFF,
+      0x7F,
+  };
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+
+  /* Above-max values should clamp to max. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 0x7FFF + 1);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 0x7FFF + 100);
+  send_syn(&t);
+  expect_report(&cap, 2, expect2, sizeof(expect2));
+}
+
+static void test_tablet_button_press_release(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /* Establish a position first. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 10);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 20);
+  send_syn(&t);
+
+  uint8_t expect_pos[HID_TRANSLATE_TABLET_REPORT_SIZE] = {
+      HID_TRANSLATE_REPORT_ID_TABLET,
+      0x00,
+      0x0A,
+      0x00,
+      0x14,
+      0x00,
+  };
+  expect_report(&cap, 0, expect_pos, sizeof(expect_pos));
+
+  /* Left button down. */
+  send_key(&t, VIRTIO_INPUT_BTN_LEFT, 1);
+  send_syn(&t);
+
+  uint8_t expect_down[HID_TRANSLATE_TABLET_REPORT_SIZE] = {
+      HID_TRANSLATE_REPORT_ID_TABLET,
+      0x01,
+      0x0A,
+      0x00,
+      0x14,
+      0x00,
+  };
+  expect_report(&cap, 1, expect_down, sizeof(expect_down));
+
+  /* Left button up. */
+  send_key(&t, VIRTIO_INPUT_BTN_LEFT, 0);
+  send_syn(&t);
+
+  uint8_t expect_up[HID_TRANSLATE_TABLET_REPORT_SIZE] = {
+      HID_TRANSLATE_REPORT_ID_TABLET,
+      0x00,
+      0x0A,
+      0x00,
+      0x14,
+      0x00,
+  };
+  expect_report(&cap, 2, expect_up, sizeof(expect_up));
+}
+
+static void test_tablet_multiple_abs_updates_before_syn_is_deterministic(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 1);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 2);
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 3);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 4);
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 5);
+  assert(cap.count == 0);
+  send_syn(&t);
+
+  assert(cap.count == 1);
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {
+      HID_TRANSLATE_REPORT_ID_TABLET,
+      0x00,
+      0x05,
+      0x00,
+      0x04,
+      0x00,
+  };
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
 int main(void) {
   test_linux_keycode_abi_values();
   test_mapping();
@@ -1138,6 +1352,11 @@ int main(void) {
   test_reset_emits_release_reports();
   test_keyboard_only_enable();
   test_mouse_only_enable();
+  test_tablet_basic_abs_reports();
+  test_tablet_basic_abs_reports_le();
+  test_tablet_clamp_min_max();
+  test_tablet_button_press_release();
+  test_tablet_multiple_abs_updates_before_syn_is_deterministic();
   printf("hid_translate_test: ok\n");
   return 0;
 }

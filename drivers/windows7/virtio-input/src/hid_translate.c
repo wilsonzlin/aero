@@ -511,6 +511,65 @@ static void hid_translate_emit_mouse_reports(struct hid_translate *t) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Tablet handling (absolute pointer)                                         */
+/* -------------------------------------------------------------------------- */
+
+static bool hid_translate_tablet_update_button(struct hid_translate *t, uint8_t bit, bool pressed) {
+  uint8_t new_buttons = t->tablet_buttons;
+  if (pressed) {
+    new_buttons |= bit;
+  } else {
+    new_buttons &= (uint8_t)~bit;
+  }
+  if (new_buttons == t->tablet_buttons) {
+    return false;
+  }
+  t->tablet_buttons = new_buttons;
+  return true;
+}
+
+static uint16_t hid_translate_tablet_clamp_axis(int32_t v) {
+  /* Match the HID descriptor logical range for the tablet axes: [0, 32767]. */
+  const int32_t kMin = 0;
+  const int32_t kMax = 0x7FFF;
+  if (v < kMin) {
+    return (uint16_t)kMin;
+  }
+  if (v > kMax) {
+    return (uint16_t)kMax;
+  }
+  return (uint16_t)v;
+}
+
+static void hid_translate_emit_tablet_report(struct hid_translate *t) {
+  if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_TABLET) == 0) {
+    t->tablet_dirty = false;
+    return;
+  }
+
+  if (!t->tablet_dirty) {
+    return;
+  }
+
+  uint8_t report[HID_TRANSLATE_TABLET_REPORT_SIZE];
+  uint16_t x = hid_translate_tablet_clamp_axis(t->tablet_abs_x);
+  uint16_t y = hid_translate_tablet_clamp_axis(t->tablet_abs_y);
+
+  report[0] = HID_TRANSLATE_REPORT_ID_TABLET;
+  report[1] = t->tablet_buttons;
+  report[2] = (uint8_t)(x & 0xFF);
+  report[3] = (uint8_t)((x >> 8) & 0xFF);
+  report[4] = (uint8_t)(y & 0xFF);
+  report[5] = (uint8_t)((y >> 8) & 0xFF);
+
+  if (t->emit_report) {
+    t->emit_report(t->emit_report_context, report, sizeof(report));
+  }
+
+  t->tablet_dirty = false;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Public API                                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -518,7 +577,13 @@ void hid_translate_init(struct hid_translate *t, hid_translate_emit_report_fn em
   hid_translate_memzero(t, sizeof(*t));
   t->emit_report = emit_report;
   t->emit_report_context = emit_report_context;
-  t->enabled_reports = HID_TRANSLATE_REPORT_MASK_ALL;
+  /*
+   * Backward-compatible default: keyboard + mouse + consumer control.
+   *
+   * Tablet (absolute) reports are opt-in via hid_translate_set_enabled_reports.
+   */
+  t->enabled_reports =
+      HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE | HID_TRANSLATE_REPORT_MASK_CONSUMER;
 }
 
 void hid_translate_set_enabled_reports(struct hid_translate *t, uint8_t enabled_reports) {
@@ -542,6 +607,11 @@ void hid_translate_reset(struct hid_translate *t, bool emit_reports) {
   t->mouse_wheel = 0;
   t->mouse_dirty = false;
 
+  t->tablet_buttons = 0;
+  t->tablet_abs_x = 0;
+  t->tablet_abs_y = 0;
+  t->tablet_dirty = false;
+
   if (!emit_reports) {
     return;
   }
@@ -556,6 +626,10 @@ void hid_translate_reset(struct hid_translate *t, bool emit_reports) {
   if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_MOUSE) != 0) {
     t->mouse_dirty = true;
     hid_translate_emit_mouse_reports(t);
+  }
+  if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_TABLET) != 0) {
+    t->tablet_dirty = true;
+    hid_translate_emit_tablet_report(t);
   }
 }
 
@@ -577,40 +651,64 @@ void hid_translate_handle_event(struct hid_translate *t, const struct virtio_inp
       if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_LEFT, pressed)) {
         t->mouse_dirty = true;
       }
+      if (hid_translate_tablet_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_LEFT, pressed)) {
+        t->tablet_dirty = true;
+      }
       break;
     case VIRTIO_INPUT_BTN_RIGHT:
       if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_RIGHT, pressed)) {
         t->mouse_dirty = true;
+      }
+      if (hid_translate_tablet_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_RIGHT, pressed)) {
+        t->tablet_dirty = true;
       }
       break;
     case VIRTIO_INPUT_BTN_MIDDLE:
       if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_MIDDLE, pressed)) {
         t->mouse_dirty = true;
       }
+      if (hid_translate_tablet_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_MIDDLE, pressed)) {
+        t->tablet_dirty = true;
+      }
       break;
     case VIRTIO_INPUT_BTN_SIDE:
       if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_SIDE, pressed)) {
         t->mouse_dirty = true;
+      }
+      if (hid_translate_tablet_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_SIDE, pressed)) {
+        t->tablet_dirty = true;
       }
       break;
     case VIRTIO_INPUT_BTN_EXTRA:
       if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_EXTRA, pressed)) {
         t->mouse_dirty = true;
       }
+      if (hid_translate_tablet_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_EXTRA, pressed)) {
+        t->tablet_dirty = true;
+      }
       break;
     case VIRTIO_INPUT_BTN_FORWARD:
       if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_FORWARD, pressed)) {
         t->mouse_dirty = true;
+      }
+      if (hid_translate_tablet_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_FORWARD, pressed)) {
+        t->tablet_dirty = true;
       }
       break;
     case VIRTIO_INPUT_BTN_BACK:
       if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_BACK, pressed)) {
         t->mouse_dirty = true;
       }
+      if (hid_translate_tablet_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_BACK, pressed)) {
+        t->tablet_dirty = true;
+      }
       break;
     case VIRTIO_INPUT_BTN_TASK:
       if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_TASK, pressed)) {
         t->mouse_dirty = true;
+      }
+      if (hid_translate_tablet_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_TASK, pressed)) {
+        t->tablet_dirty = true;
       }
       break;
     default:
@@ -643,6 +741,27 @@ void hid_translate_handle_event(struct hid_translate *t, const struct virtio_inp
     break;
   }
 
+  case VIRTIO_INPUT_EV_ABS: {
+    int32_t value = hid_translate_i32_from_u32_bits(ev->value);
+    switch (ev->code) {
+    case VIRTIO_INPUT_ABS_X:
+      if (value != t->tablet_abs_x) {
+        t->tablet_abs_x = value;
+        t->tablet_dirty = true;
+      }
+      break;
+    case VIRTIO_INPUT_ABS_Y:
+      if (value != t->tablet_abs_y) {
+        t->tablet_abs_y = value;
+        t->tablet_dirty = true;
+      }
+      break;
+    default:
+      break;
+    }
+    break;
+  }
+
   case VIRTIO_INPUT_EV_SYN:
     if (ev->code == VIRTIO_INPUT_SYN_REPORT) {
       if (t->keyboard_dirty) {
@@ -652,6 +771,7 @@ void hid_translate_handle_event(struct hid_translate *t, const struct virtio_inp
         hid_translate_emit_consumer_report(t);
       }
       hid_translate_emit_mouse_reports(t);
+      hid_translate_emit_tablet_report(t);
     }
     break;
 

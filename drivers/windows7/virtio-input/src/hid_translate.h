@@ -13,6 +13,12 @@
  *       Byte 1: Modifier bitmask (E0..E7 -> bits 0..7)
  *       Byte 2: Reserved (0)
  *       Byte 3..8: Up to 6 concurrent key usages
+ *   - ReportID 2: Mouse
+ *       Byte 0: ReportID = 0x02
+ *       Byte 1: Buttons bitmask (bit0=Button1/left .. bit7=Button8)
+ *       Byte 2: X (int8)
+ *       Byte 3: Y (int8)
+ *       Byte 4: Wheel (int8)
  *   - ReportID 3: Consumer Control (media keys)
  *       Byte 0: ReportID = 0x03
  *       Byte 1: Bitmask
@@ -23,12 +29,11 @@
  *           bit4: Next Track
  *           bit5: Previous Track
  *           bit6: Stop
- *   - ReportID 2: Mouse
- *       Byte 0: ReportID = 0x02
+ *   - ReportID 4: Tablet (absolute pointer)
+ *       Byte 0: ReportID = 0x04
  *       Byte 1: Buttons bitmask (bit0=Button1/left .. bit7=Button8)
- *       Byte 2: X (int8)
- *       Byte 3: Y (int8)
- *       Byte 4: Wheel (int8)
+ *       Byte 2..3: X (uint16, little-endian)
+ *       Byte 4..5: Y (uint16, little-endian)
  */
 
 #include <stddef.h>
@@ -106,6 +111,7 @@ enum virtio_input_ev_type {
   VIRTIO_INPUT_EV_SYN = 0x00,
   VIRTIO_INPUT_EV_KEY = 0x01,
   VIRTIO_INPUT_EV_REL = 0x02,
+  VIRTIO_INPUT_EV_ABS = 0x03,
 };
 
 /* EV_SYN codes (subset). */
@@ -118,6 +124,12 @@ enum virtio_input_rel_code {
   VIRTIO_INPUT_REL_X = 0x00,
   VIRTIO_INPUT_REL_Y = 0x01,
   VIRTIO_INPUT_REL_WHEEL = 0x08,
+};
+
+/* EV_ABS codes (subset). */
+enum virtio_input_abs_code {
+  VIRTIO_INPUT_ABS_X = 0x00,
+  VIRTIO_INPUT_ABS_Y = 0x01,
 };
 
 /*
@@ -274,6 +286,7 @@ enum hid_translate_report_id {
   HID_TRANSLATE_REPORT_ID_KEYBOARD = 0x01,
   HID_TRANSLATE_REPORT_ID_MOUSE = 0x02,
   HID_TRANSLATE_REPORT_ID_CONSUMER = 0x03,
+  HID_TRANSLATE_REPORT_ID_TABLET = 0x04,
 };
 
 /*
@@ -291,7 +304,9 @@ enum hid_translate_report_mask {
   HID_TRANSLATE_REPORT_MASK_KEYBOARD = 0x01,
   HID_TRANSLATE_REPORT_MASK_MOUSE = 0x02,
   HID_TRANSLATE_REPORT_MASK_CONSUMER = 0x04,
-  HID_TRANSLATE_REPORT_MASK_ALL = HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE | HID_TRANSLATE_REPORT_MASK_CONSUMER,
+  HID_TRANSLATE_REPORT_MASK_TABLET = 0x08,
+  HID_TRANSLATE_REPORT_MASK_ALL = HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE | HID_TRANSLATE_REPORT_MASK_CONSUMER |
+                                 HID_TRANSLATE_REPORT_MASK_TABLET,
 };
 
 /* Sizes (bytes) of input reports emitted by the translator. */
@@ -299,6 +314,7 @@ enum hid_translate_report_size {
   HID_TRANSLATE_KEYBOARD_REPORT_SIZE = 9,
   HID_TRANSLATE_MOUSE_REPORT_SIZE = 5,
   HID_TRANSLATE_CONSUMER_REPORT_SIZE = 2,
+  HID_TRANSLATE_TABLET_REPORT_SIZE = 6,
 };
 
 C_ASSERT(HID_TRANSLATE_KEYBOARD_REPORT_SIZE == 9);
@@ -337,6 +353,12 @@ struct hid_translate {
   int32_t mouse_rel_y;
   int32_t mouse_wheel;
   bool mouse_dirty;
+
+  /* Tablet (absolute pointer) state. */
+  uint8_t tablet_buttons;
+  int32_t tablet_abs_x;
+  int32_t tablet_abs_y;
+  bool tablet_dirty;
 };
 
 void hid_translate_init(struct hid_translate *t, hid_translate_emit_report_fn emit_report, void *emit_report_context);
