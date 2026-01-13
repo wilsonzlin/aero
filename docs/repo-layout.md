@@ -86,7 +86,7 @@ Most maintained backend work lives under:
 - `backend/` (e.g. `backend/aero-gateway`)
 - `services/` (deployment-oriented services)
 - `proxy/` (networking relays used in production deployments, e.g. `proxy/webrtc-udp-relay`)
-- `net-proxy/` (local-dev WebSocket TCP/UDP relay; run alongside `vite dev`)
+- `net-proxy/` (local-dev WebSocket TCP/UDP relay + DNS-over-HTTPS endpoints; run alongside `vite dev`)
 
 ### Protocol golden vectors (canonical): `protocol-vectors/`
 

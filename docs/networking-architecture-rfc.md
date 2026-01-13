@@ -242,7 +242,7 @@ For the legacy socket-level relays (Phase 0 `/tcp`, DoH, UDP datagrams), use:
 
 - `backend/aero-gateway` for TCP + DNS (`/tcp`, `/tcp-mux`, `/dns-query`, `/dns-json`; see `docs/backend/openapi.yaml`)
 - `proxy/webrtc-udp-relay` for UDP datagrams (`/webrtc/*`, `/udp`; see `proxy/webrtc-udp-relay/PROTOCOL.md`)
-- `net-proxy/` can be used as a local dev relay.
+- `net-proxy/` can be used as a local dev relay (`/tcp`, `/tcp-mux`, `/udp`, plus DoH `/dns-query` + `/dns-json`).
 - `tools/aero-gateway-rs` is an older Rust/Axum gateway prototype kept only for
   **legacy/diagnostic** purposes (historical `/tcp?target=<host>:<port>`). It is not
   production-hardened; the canonical gateway is `backend/aero-gateway`.

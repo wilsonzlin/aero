@@ -95,7 +95,7 @@ Quick map:
 - `crates/` – Rust workspace crates (emulator core + supporting libs)
 - `backend/`, `services/` – maintained backend services
 - `proxy/` – maintained networking relays (e.g. `proxy/webrtc-udp-relay`)
-- `net-proxy/` – local-dev WebSocket TCP/UDP relay (run alongside `vite dev`)
+- `net-proxy/` – local-dev WebSocket TCP/UDP relay + DNS-over-HTTPS endpoints (run alongside `vite dev`)
 - `server/` – **legacy** backend (see `server/LEGACY.md`)
 - `poc/`, `prototype/` – experiments / RFC companions (not production)
 
