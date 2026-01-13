@@ -53,6 +53,7 @@ dependencies = [
  "aero-devices",
  "aero-io-snapshot",
  "aero-platform",
+ "criterion",
  "memory",
 ]
 
