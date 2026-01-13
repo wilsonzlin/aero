@@ -16,6 +16,25 @@ Run the full suite:
 bash tests/run.sh
 ```
 
+### Run via the repo-root CMake/CTest suite (CI path)
+
+These tests are also integrated into the repo-root host test build when
+`AERO_VIRTIO_BUILD_TESTS=ON`:
+
+```bash
+cmake -S . -B build-virtio-host-tests \
+  -DAERO_VIRTIO_BUILD_TESTS=ON \
+  -DAERO_AEROGPU_BUILD_TESTS=OFF \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-virtio-host-tests
+
+# Run everything:
+ctest --test-dir build-virtio-host-tests --output-on-failure
+
+# Or just the virtio-input tests:
+ctest --test-dir build-virtio-host-tests --output-on-failure -R '^(hid_translate_test|led_.*_test|report_ring_test)$'
+```
+
 The script will attempt to run the test suite with both `gcc` and `clang` (if present).
 To force a specific compiler, set `CC`:
 
