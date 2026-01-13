@@ -25,6 +25,8 @@ For CD boot and CD reads, Aero’s BIOS expects **El Torito (no-emulation)** boo
 13h Extensions (EDD)** for CD drive numbers (recommend `DL=0xE0` for the first CD). At minimum,
 Windows-style bootloaders expect `AH=41h` (extensions check), `AH=42h` (extended read), and `AH=48h`
 (extended drive parameters) to work for CD, with `AH=48h` reporting `bytes_per_sector = 2048`.
+Legacy CHS reads like `AH=02h` are HDD/floppy-oriented and are **not required** for CD media (as long
+as the EDD path works).
 
 See [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md) for the exact structures and call
 contracts.
