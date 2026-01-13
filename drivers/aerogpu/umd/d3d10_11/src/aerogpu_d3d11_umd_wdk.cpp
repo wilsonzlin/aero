@@ -4858,45 +4858,28 @@ void AEROGPU_APIENTRY GsSetSamplers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const
 
 void AEROGPU_APIENTRY SetViewports11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumViewports, const D3D10_DDI_VIEWPORT* pViewports) {
   auto* dev = DeviceFromContext(hCtx);
-  if (!dev || !pViewports || NumViewports == 0) {
+  if (!dev) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  const auto& vp = pViewports[0];
-  dev->viewport_x = vp.TopLeftX;
-  dev->viewport_y = vp.TopLeftY;
-  dev->viewport_width = vp.Width;
-  dev->viewport_height = vp.Height;
-  dev->viewport_min_depth = vp.MinDepth;
-  dev->viewport_max_depth = vp.MaxDepth;
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
-  cmd->x_f32 = f32_bits(vp.TopLeftX);
-  cmd->y_f32 = f32_bits(vp.TopLeftY);
-  cmd->width_f32 = f32_bits(vp.Width);
-  cmd->height_f32 = f32_bits(vp.Height);
-  cmd->min_depth_f32 = f32_bits(vp.MinDepth);
-  cmd->max_depth_f32 = f32_bits(vp.MaxDepth);
+  validate_and_emit_viewports_locked(dev,
+                                    static_cast<uint32_t>(NumViewports),
+                                    pViewports,
+                                    [&](HRESULT hr) { SetError(dev, hr); });
 }
 
 void AEROGPU_APIENTRY SetScissorRects11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumRects, const D3D10_DDI_RECT* pRects) {
   auto* dev = DeviceFromContext(hCtx);
-  if (!dev || !pRects || NumRects == 0) {
+  if (!dev) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  const D3D10_DDI_RECT& r = pRects[0];
-  dev->scissor_valid = true;
-  dev->scissor_left = r.left;
-  dev->scissor_top = r.top;
-  dev->scissor_right = r.right;
-  dev->scissor_bottom = r.bottom;
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
-  cmd->x = r.left;
-  cmd->y = r.top;
-  cmd->width = r.right - r.left;
-  cmd->height = r.bottom - r.top;
+  validate_and_emit_scissor_rects_locked(dev,
+                                         static_cast<uint32_t>(NumRects),
+                                         pRects,
+                                         [&](HRESULT hr) { SetError(dev, hr); });
 }
 
 static uint32_t D3D11CullModeToAerogpu(uint32_t cull_mode) {

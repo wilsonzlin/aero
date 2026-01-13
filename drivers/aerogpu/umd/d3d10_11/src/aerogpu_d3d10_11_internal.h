@@ -927,6 +927,195 @@ inline bool EmitSetRenderTargetsCmdFromStateLocked(Device* dev) {
   return true;
 }
 
+// -------------------------------------------------------------------------------------------------
+// Dynamic state helpers (viewport + scissor)
+// -------------------------------------------------------------------------------------------------
+//
+// The AeroGPU command stream currently supports only a single viewport and a single scissor rect.
+// D3D11 supports arrays of viewports/scissors; the Win7 runtime will pass those arrays down to the
+// UMD. To avoid silent misrendering when applications use multiple viewports or scissors, we
+// validate that any additional entries are either identical to the first entry or effectively
+// disabled/unused, and report E_NOTIMPL otherwise.
+//
+// These helpers are WDK-free so they can be exercised by host-side unit tests without requiring
+// d3d11umddi.h. The caller is expected to hold `dev->mutex`.
+
+template <typename ViewportT>
+inline bool viewport_is_default_or_disabled(const ViewportT& vp) {
+  // Treat viewports with non-positive dimensions (or NaNs) as disabled. This matches the host-side
+  // command executor's behavior, where width/height <= 0 results in leaving the render pass's
+  // default viewport in place.
+  return !(vp.Width > 0.0f && vp.Height > 0.0f);
+}
+
+template <typename ViewportT>
+inline bool viewport_equal(const ViewportT& a, const ViewportT& b) {
+  return a.TopLeftX == b.TopLeftX &&
+         a.TopLeftY == b.TopLeftY &&
+         a.Width == b.Width &&
+         a.Height == b.Height &&
+         a.MinDepth == b.MinDepth &&
+         a.MaxDepth == b.MaxDepth;
+}
+
+template <typename RectT>
+inline bool scissor_is_default_or_disabled(const RectT& r) {
+  const int64_t w = static_cast<int64_t>(r.right) - static_cast<int64_t>(r.left);
+  const int64_t h = static_cast<int64_t>(r.bottom) - static_cast<int64_t>(r.top);
+  return w <= 0 || h <= 0;
+}
+
+template <typename RectT>
+inline bool scissor_equal(const RectT& a, const RectT& b) {
+  return a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
+}
+
+template <typename ViewportT, typename SetErrorFn>
+inline void validate_and_emit_viewports_locked(Device* dev,
+                                               uint32_t num_viewports,
+                                               const ViewportT* viewports,
+                                               SetErrorFn&& set_error) {
+  if (!dev) {
+    return;
+  }
+
+  // D3D11: NumViewports==0 disables viewports (runtime clear-state path). Encode this as a
+  // zero-area viewport so the host runtime falls back to its default full-target viewport.
+  if (num_viewports == 0) {
+    dev->viewport_x = 0.0f;
+    dev->viewport_y = 0.0f;
+    dev->viewport_width = 0.0f;
+    dev->viewport_height = 0.0f;
+    dev->viewport_min_depth = 0.0f;
+    dev->viewport_max_depth = 1.0f;
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+    if (!cmd) {
+      set_error(E_OUTOFMEMORY);
+      return;
+    }
+    cmd->x_f32 = f32_bits(dev->viewport_x);
+    cmd->y_f32 = f32_bits(dev->viewport_y);
+    cmd->width_f32 = f32_bits(dev->viewport_width);
+    cmd->height_f32 = f32_bits(dev->viewport_height);
+    cmd->min_depth_f32 = f32_bits(dev->viewport_min_depth);
+    cmd->max_depth_f32 = f32_bits(dev->viewport_max_depth);
+    return;
+  }
+
+  if (!viewports) {
+    set_error(E_INVALIDARG);
+    return;
+  }
+
+  const ViewportT& vp0 = viewports[0];
+  bool unsupported = false;
+  if (num_viewports > 1) {
+    for (uint32_t i = 1; i < num_viewports; i++) {
+      const ViewportT& vpi = viewports[i];
+      if (viewport_equal(vpi, vp0) || viewport_is_default_or_disabled(vpi)) {
+        continue;
+      }
+      unsupported = true;
+      break;
+    }
+  }
+
+  if (unsupported) {
+    set_error(E_NOTIMPL);
+  }
+
+  dev->viewport_x = vp0.TopLeftX;
+  dev->viewport_y = vp0.TopLeftY;
+  dev->viewport_width = vp0.Width;
+  dev->viewport_height = vp0.Height;
+  dev->viewport_min_depth = vp0.MinDepth;
+  dev->viewport_max_depth = vp0.MaxDepth;
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return;
+  }
+  cmd->x_f32 = f32_bits(vp0.TopLeftX);
+  cmd->y_f32 = f32_bits(vp0.TopLeftY);
+  cmd->width_f32 = f32_bits(vp0.Width);
+  cmd->height_f32 = f32_bits(vp0.Height);
+  cmd->min_depth_f32 = f32_bits(vp0.MinDepth);
+  cmd->max_depth_f32 = f32_bits(vp0.MaxDepth);
+}
+
+template <typename RectT, typename SetErrorFn>
+inline void validate_and_emit_scissor_rects_locked(Device* dev,
+                                                   uint32_t num_rects,
+                                                   const RectT* rects,
+                                                   SetErrorFn&& set_error) {
+  if (!dev) {
+    return;
+  }
+
+  // D3D11: NumRects==0 disables scissor rects. Encode this as a 0x0 rect; the host command executor
+  // treats width/height <= 0 as "scissor disabled".
+  if (num_rects == 0) {
+    dev->scissor_valid = false;
+    dev->scissor_left = 0;
+    dev->scissor_top = 0;
+    dev->scissor_right = 0;
+    dev->scissor_bottom = 0;
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
+    if (!cmd) {
+      set_error(E_OUTOFMEMORY);
+      return;
+    }
+    cmd->x = 0;
+    cmd->y = 0;
+    cmd->width = 0;
+    cmd->height = 0;
+    return;
+  }
+
+  if (!rects) {
+    set_error(E_INVALIDARG);
+    return;
+  }
+
+  const RectT& r0 = rects[0];
+  bool unsupported = false;
+  if (num_rects > 1) {
+    for (uint32_t i = 1; i < num_rects; i++) {
+      const RectT& ri = rects[i];
+      if (scissor_equal(ri, r0) || scissor_is_default_or_disabled(ri)) {
+        continue;
+      }
+      unsupported = true;
+      break;
+    }
+  }
+
+  if (unsupported) {
+    set_error(E_NOTIMPL);
+  }
+
+  const int32_t w = r0.right - r0.left;
+  const int32_t h = r0.bottom - r0.top;
+  dev->scissor_valid = (w > 0 && h > 0);
+  dev->scissor_left = r0.left;
+  dev->scissor_top = r0.top;
+  dev->scissor_right = r0.right;
+  dev->scissor_bottom = r0.bottom;
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return;
+  }
+  cmd->x = r0.left;
+  cmd->y = r0.top;
+  cmd->width = w;
+  cmd->height = h;
+}
+
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);
