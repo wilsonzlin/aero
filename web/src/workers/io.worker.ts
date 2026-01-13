@@ -202,6 +202,7 @@ import { tryInitVirtioSndDevice } from "./io_virtio_snd_init";
 import { tryInitXhciDevice } from "./io_xhci_init";
 import { registerVirtioInputKeyboardPciFunction } from "./io_virtio_input_register";
 import { VmTimebase } from "../runtime/vm_timebase";
+import { INPUT_BATCH_HEADER_WORDS, INPUT_BATCH_WORDS_PER_EVENT, validateInputBatchBuffer } from "./io_input_batch";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -265,6 +266,7 @@ let hidInRing: RingBuffer | null = null;
 let hidProxyInputRing: RingBuffer | null = null;
 let hidProxyInputRingForwarded = 0;
 let hidProxyInputRingInvalid = 0;
+let invalidInputBatchCount = 0;
 const pendingIoEvents: Uint8Array[] = [];
 
 const DISK_ERROR_NO_ACTIVE_DISK = 1;
@@ -5306,9 +5308,21 @@ function safeSyntheticUsbHidConfigured(dev: UsbHidPassthroughBridge | null): boo
 
 function handleInputBatch(buffer: ArrayBuffer): void {
   const t0 = performance.now();
+  const decoded = validateInputBatchBuffer(buffer);
+  if (!decoded.ok) {
+    invalidInputBatchCount += 1;
+    try {
+      Atomics.add(status, StatusIndex.IoInputBatchDropCounter, 1);
+    } catch {
+      // ignore if shared status isn't initialized yet.
+    }
+    // `invalidInputBatchCount` is local (non-atomic) but sufficient for perf/debug counters.
+    perf.counter("io:inputBatchDrops", invalidInputBatchCount);
+    return;
+  }
+
   // `buffer` is transferred from the main thread, so it is uniquely owned here.
-  const words = new Int32Array(buffer);
-  const count = words[0] >>> 0;
+  const { words, count } = decoded;
 
   Atomics.add(status, StatusIndex.IoInputBatchCounter, 1);
   Atomics.add(status, StatusIndex.IoInputEventCounter, count);
@@ -5324,9 +5338,9 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
   maybeUpdateMouseInputBackend({ virtioMouseOk });
 
-  const base = 2;
+  const base = INPUT_BATCH_HEADER_WORDS;
   for (let i = 0; i < count; i++) {
-    const off = base + i * 4;
+    const off = base + i * INPUT_BATCH_WORDS_PER_EVENT;
     const type = words[off] >>> 0;
     switch (type) {
       case InputEventType.KeyHidUsage: {
@@ -5429,7 +5443,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         break;
       }
       default:
-        // Unknown event type; ignore.
+        // Should be unreachable: `validateInputBatchBuffer` rejects unknown types.
         break;
     }
   }

@@ -40,7 +40,7 @@ export const StatusIndex = {
   IoInputEventCounter: 3,
   // Total input batches received by the I/O worker (including queued/dropped while snapshot-paused).
   IoInputBatchReceivedCounter: 28,
-  // Total input batches dropped by the I/O worker (e.g. when snapshot-paused queue is full).
+  // Total input batches dropped by the I/O worker (e.g. when snapshot-paused queue is full, or when a malformed batch is received).
   IoInputBatchDropCounter: 29,
   // Total backend switches (ps2↔usb↔virtio) observed by the I/O worker input pipeline.
   IoKeyboardBackendSwitchCounter: 30,
