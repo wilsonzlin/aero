@@ -39,6 +39,8 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 		api = webrtc.NewAPI()
 	}
 
+	relayCfg = relayCfg.WithDefaults()
+
 	pc, err := api.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
 	if err != nil {
 		return nil, err
