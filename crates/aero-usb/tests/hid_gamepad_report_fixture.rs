@@ -61,6 +61,9 @@ fn hid_gamepad_report_vectors_match_fixture() {
     );
 
     for (idx, v) in vectors.iter().enumerate() {
+        // Fixture inputs may be out of the HID logical ranges; the goal is to validate that
+        // `GamepadReport` clamps them consistently with the TypeScript-side packing logic.
+
         let report = GamepadReport {
             buttons: clamp_buttons_to_u16(v.buttons),
             hat: clamp_hat_to_u8(v.hat),

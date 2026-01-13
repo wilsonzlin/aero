@@ -19,6 +19,9 @@
 //!
 //! In addition, `transfer` provides a small, deterministic transfer-ring executor that can process
 //! Normal TRBs for non-control endpoints (sufficient for HID interrupt IN/OUT).
+//!
+//! Finally, this module models a tiny root hub (USB2 ports only) and generates Port Status Change
+//! Event TRBs when devices connect/disconnect or a port reset completes.
 
 pub mod command_ring;
 pub mod context;
@@ -27,13 +30,26 @@ pub mod ring;
 pub mod transfer;
 pub mod trb;
 
+mod port;
+
+pub use port::{PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR};
+
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use crate::MemoryBus;
+use core::fmt;
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
+use crate::{MemoryBus, UsbDeviceModel};
+
+use self::port::XhciPort;
+use self::trb::{Trb, TrbType};
+
 const DEFAULT_PORT_COUNT: u8 = 2;
+const MAX_PENDING_EVENTS: usize = 256;
+const COMPLETION_CODE_SUCCESS: u8 = 1;
 
 use self::context::{EndpointContext, SlotContext};
 use self::ring::RingCursor;
@@ -168,15 +184,39 @@ impl SlotState {
 ///
 /// This is *not* a full xHCI implementation. It is sufficient to wire into a PCI/MMIO wrapper and
 /// to host unit tests that need a stable controller surface.
-#[derive(Debug, Clone)]
 pub struct XhciController {
     port_count: u8,
     ext_caps: Vec<u32>,
+
+    // Minimal MMIO-visible register file for emulator PCI/MMIO integration.
     usbcmd: u32,
     usbsts: u32,
     crcr: u64,
     dcbaap: u64,
     slots: Vec<SlotState>,
+
+    // Root hub ports.
+    ports: Vec<XhciPort>,
+
+    // Host-side event buffering (until a real guest event ring is implemented).
+    pending_events: VecDeque<Trb>,
+    dropped_event_trbs: u64,
+}
+
+impl fmt::Debug for XhciController {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("XhciController")
+            .field("port_count", &self.port_count)
+            .field("ext_caps_dwords", &self.ext_caps.len())
+            .field("usbcmd", &self.usbcmd)
+            .field("usbsts", &self.usbsts)
+            .field("crcr", &self.crcr)
+            .field("dcbaap", &self.dcbaap)
+            .field("slots", &self.slots.len())
+            .field("pending_events", &self.pending_events.len())
+            .field("dropped_event_trbs", &self.dropped_event_trbs)
+            .finish()
+    }
 }
 
 impl Default for XhciController {
@@ -211,7 +251,11 @@ impl XhciController {
             crcr: 0,
             dcbaap: 0,
             slots,
+            ports: (0..port_count).map(|_| XhciPort::new()).collect(),
+            pending_events: VecDeque::new(),
+            dropped_event_trbs: 0,
         };
+
         ctrl.rebuild_ext_caps();
         ctrl
     }
@@ -289,6 +333,72 @@ impl XhciController {
 
     pub fn irq_level(&self) -> bool {
         (self.usbsts & regs::USBSTS_EINT) != 0
+    }
+
+    /// Returns true if there are pending event TRBs queued in host memory.
+    pub fn irq_pending(&self) -> bool {
+        !self.pending_events.is_empty()
+    }
+
+    pub fn dropped_event_trbs(&self) -> u64 {
+        self.dropped_event_trbs
+    }
+
+    pub fn read_portsc(&self, port: usize) -> u32 {
+        self.ports[port].read_portsc()
+    }
+
+    pub fn write_portsc(&mut self, port: usize, value: u32) {
+        let changed = self.ports[port].write_portsc(value);
+        if changed {
+            self.queue_port_status_change_event(port);
+        }
+    }
+
+    /// Advances controller internal time by 1ms.
+    pub fn tick_1ms(&mut self) {
+        let mut ports_with_events = Vec::new();
+        for (i, port) in self.ports.iter_mut().enumerate() {
+            if port.tick_1ms() {
+                ports_with_events.push(i);
+            }
+        }
+        for port in ports_with_events {
+            self.queue_port_status_change_event(port);
+        }
+    }
+
+    /// Attach a device model to a root hub port (0-based).
+    pub fn attach_device(&mut self, port: usize, dev: Box<dyn UsbDeviceModel>) {
+        // Replace any existing device (host-side convenience).
+        if self.ports[port].has_device() {
+            self.detach_device(port);
+        }
+
+        let changed = self.ports[port].attach(dev);
+        if changed {
+            self.queue_port_status_change_event(port);
+        }
+    }
+
+    /// Detach any device from a root hub port (0-based).
+    pub fn detach_device(&mut self, port: usize) {
+        let changed = self.ports[port].detach();
+        if changed {
+            self.queue_port_status_change_event(port);
+        }
+    }
+
+    /// Pops the next pending event TRB (interrupter 0), if any.
+    ///
+    /// This is a temporary host-facing interface until the full guest event ring model is
+    /// implemented.
+    pub fn pop_pending_event(&mut self) -> Option<Trb> {
+        self.pending_events.pop_front()
+    }
+
+    pub fn pending_event_count(&self) -> usize {
+        self.pending_events.len()
     }
 
     fn rebuild_ext_caps(&mut self) {
@@ -371,9 +481,7 @@ impl XhciController {
             }
             regs::REG_DBOFF => regs::DBOFF_VALUE,
             regs::REG_RTSOFF => regs::RTSOFF_VALUE,
-            off if off >= regs::EXT_CAPS_OFFSET_BYTES as u64
-                && off < regs::CAPLENGTH_BYTES as u64 =>
-            {
+            off if off >= regs::EXT_CAPS_OFFSET_BYTES as u64 && off < regs::CAPLENGTH_BYTES as u64 => {
                 let idx = (off - regs::EXT_CAPS_OFFSET_BYTES as u64) / 4;
                 self.ext_caps.get(idx as usize).copied().unwrap_or(0)
             }
@@ -431,6 +539,11 @@ impl XhciController {
                 // Treat USBSTS as RW1C. Writing 1 clears the bit.
                 let write_val = merge(0);
                 self.usbsts &= !write_val;
+
+                // If events are still pending, keep the interrupt asserted.
+                if !self.pending_events.is_empty() {
+                    self.usbsts |= regs::USBSTS_EINT;
+                }
             }
             regs::REG_CRCR_LO => {
                 let lo = merge(self.crcr as u32) as u64;
@@ -454,6 +567,20 @@ impl XhciController {
         }
     }
 
+    fn queue_port_status_change_event(&mut self, port: usize) {
+        let port_id = (port + 1) as u8;
+        self.queue_event(make_port_status_change_event_trb(port_id));
+    }
+
+    fn queue_event(&mut self, trb: Trb) {
+        if self.pending_events.len() >= MAX_PENDING_EVENTS {
+            self.pending_events.pop_front();
+            self.dropped_event_trbs += 1;
+        }
+        self.pending_events.push_back(trb);
+        self.usbsts |= regs::USBSTS_EINT;
+    }
+
     fn dma_on_run(&mut self, mem: &mut dyn MemoryBus) {
         // Read a dword from CRCR and surface an interrupt. The data itself is ignored; the goal is
         // to touch the memory bus when bus mastering is enabled so the emulator wrapper can gate
@@ -463,6 +590,22 @@ impl XhciController {
         self.usbsts |= regs::USBSTS_EINT;
     }
 }
+
+fn make_port_status_change_event_trb(port_id: u8) -> Trb {
+    // xHCI spec: Port Status Change Event TRB
+    // - Parameter bits 24..=31: Port ID
+    // - Status bits 24..=31: Completion Code (Success)
+    // - Control bits 10..=15: TRB Type
+    let mut trb = Trb::new(
+        (port_id as u64) << 24,
+        (u32::from(COMPLETION_CODE_SUCCESS)) << Trb::STATUS_COMPLETION_CODE_SHIFT,
+        0,
+    );
+    trb.set_cycle(true);
+    trb.set_trb_type(TrbType::PortStatusChangeEvent);
+    trb
+}
+
 impl IoSnapshot for XhciController {
     const DEVICE_ID: [u8; 4] = *b"XHCI";
     const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 2);
@@ -492,23 +635,14 @@ impl IoSnapshot for XhciController {
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
-        *self = Self::new();
+
+        let port_count = r.u8(TAG_PORT_COUNT)?.unwrap_or(DEFAULT_PORT_COUNT).max(1);
+        *self = Self::with_port_count(port_count);
+
         self.usbcmd = r.u32(TAG_USBCMD)?.unwrap_or(0);
         self.usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0);
         self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0);
-        if let Some(v) = r.u8(TAG_PORT_COUNT)? {
-            // Clamp invalid snapshots to a sane value rather than panicking.
-            self.port_count = v.max(1);
-            self.rebuild_ext_caps();
-        }
-        if let Some(v) = r.u64(TAG_DCBAAP)? {
-            self.dcbaap = v & !0x3f;
-        }
-        // Reset slot state; full context snapshotting will be added when a command/event ring model
-        // is implemented.
-        for slot in self.slots.iter_mut() {
-            *slot = SlotState::default();
-        }
+        self.dcbaap = r.u64(TAG_DCBAAP)?.unwrap_or(0) & !0x3f;
         Ok(())
     }
 }
