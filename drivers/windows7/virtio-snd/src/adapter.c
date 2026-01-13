@@ -157,10 +157,13 @@ static BOOLEAN VirtIoSndReadAllowPollingOnly(_In_ PDEVICE_OBJECT DeviceObject)
     }
 
     /*
+     * Read AllowPollingOnly from the per-device registry key.
+     *
      * Preferred location (INF creates this by default):
      *   HKR\Parameters\AllowPollingOnly (REG_DWORD)
      *
-     * Also accept a root value for compatibility with older/test setups.
+     * Some environments may place the value at the root key returned by
+     * IoOpenDeviceRegistryKey, so check the root first for robustness.
      */
     if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &rootKey)) || rootKey == NULL) {
         return FALSE;
