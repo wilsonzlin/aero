@@ -66,6 +66,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-d3d9-shader"
+version = "0.1.0"
+dependencies = [
+ "aero-dxbc",
+]
+
+[[package]]
 name = "aero-devices"
 version = "0.1.0"
 dependencies = [
@@ -1324,6 +1331,7 @@ dependencies = [
  "aero-cpu-core",
  "aero-d3d11",
  "aero-d3d9",
+ "aero-d3d9-shader",
  "aero-devices",
  "aero-devices-input",
  "aero-devices-storage",

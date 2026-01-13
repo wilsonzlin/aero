@@ -57,6 +57,9 @@ path = "../crates/aero-virtio"
 [dependencies.aero-gpu-trace]
 path = "../crates/aero-gpu-trace"
 
+[dependencies.aero-d3d9-shader]
+path = "../crates/aero-d3d9-shader"
+
 [dependencies.aero-protocol]
 path = "../emulator/protocol"
 
@@ -267,5 +270,11 @@ doc = false
 [[bin]]
 name = "fuzz_aerogpu_trace_read"
 path = "fuzz_targets/fuzz_aerogpu_trace_read.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_d3d9_shader_parse"
+path = "fuzz_targets/fuzz_d3d9_shader_parse.rs"
 test = false
 doc = false

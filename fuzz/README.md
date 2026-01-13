@@ -14,6 +14,7 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 - AeroGPU command stream + alloc-table parsing (`aero-gpu` / `aero-protocol`)
 - DXBC container + shader bytecode parsing (`aero-dxbc`)
 - D3D9 SM2/SM3 shader decoding + IR/WGSL lowering (`aero-d3d9::sm3`)
+- D3D9 shader token stream parsing + disassembly formatting (`aero-d3d9-shader`)
 - Intel HDA controller emulation (MMIO + CORB/RIRB parsing) (`aero-audio`)
 - virtio-snd queue parsing + playback/capture request handling (`aero-virtio`)
 
@@ -51,6 +52,7 @@ cargo +"$nightly" fuzz run fuzz_linear_mem_wrapped
   cargo +"$nightly" fuzz run fuzz_dxbc_parse
   cargo +"$nightly" fuzz run fuzz_d3d9_sm3_decode
   cargo +"$nightly" fuzz run fuzz_d3d9_sm3_wgsl
+  cargo +"$nightly" fuzz run fuzz_d3d9_shader_parse
   
   # Audio
   cargo +"$nightly" fuzz run fuzz_hda_mmio
