@@ -357,38 +357,240 @@ pub fn align_copy_bytes_per_row(bytes_per_row: u32) -> u32 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn dxt_formats_use_bc_when_supported() {
-        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+    const ALL_FORMATS: &[D3DFormat] = &[
+        D3DFormat::A8R8G8B8,
+        D3DFormat::X8R8G8B8,
+        D3DFormat::Dxt1,
+        D3DFormat::Dxt3,
+        D3DFormat::Dxt5,
+        D3DFormat::D16,
+        D3DFormat::D24S8,
+        D3DFormat::D32,
+    ];
 
-        for (format, expected_wgpu) in [
-            (D3DFormat::Dxt1, wgpu::TextureFormat::Bc1RgbaUnorm),
-            (D3DFormat::Dxt3, wgpu::TextureFormat::Bc2RgbaUnorm),
-            (D3DFormat::Dxt5, wgpu::TextureFormat::Bc3RgbaUnorm),
-        ] {
-            let info = format_info(format, features, TextureUsageKind::Sampled).unwrap();
-            assert_eq!(info.wgpu, expected_wgpu);
-            assert!(!info.decompress_to_bgra8);
-            assert!(info.upload_is_compressed);
-            assert!(info.d3d_is_compressed);
+    const ALL_USAGES: &[TextureUsageKind] = &[
+        TextureUsageKind::Sampled,
+        TextureUsageKind::RenderTarget,
+        TextureUsageKind::DepthStencil,
+    ];
+
+    #[test]
+    fn format_info_is_exhaustively_tested_and_validates_usage_pairs() {
+        // `ALL_FORMATS`/`ALL_USAGES` are used by the tests below and should be updated whenever new
+        // variants are introduced. The `expected_ok` match further below is intentionally
+        // exhaustive (no wildcard arm) so adding a new `D3DFormat` variant will fail to compile
+        // until the expected behavior is captured in this test.
+
+        #[derive(Debug)]
+        struct ExpectedOk {
+            wgpu: wgpu::TextureFormat,
+            d3d_bytes_per_block: u32,
+            d3d_block_width: u32,
+            d3d_block_height: u32,
+            d3d_is_compressed: bool,
+            upload_bytes_per_block: u32,
+            upload_block_width: u32,
+            upload_block_height: u32,
+            upload_is_compressed: bool,
+            decompress_to_bgra8: bool,
+            force_opaque_alpha: bool,
         }
-    }
 
-    #[test]
-    fn dxt_formats_fallback_to_bgra8_when_bc_unsupported() {
-        let features = wgpu::Features::empty();
+        fn expected_ok(format: D3DFormat, bc_supported: bool) -> ExpectedOk {
+            match format {
+                D3DFormat::A8R8G8B8 => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Bgra8Unorm,
+                    d3d_bytes_per_block: 4,
+                    d3d_block_width: 1,
+                    d3d_block_height: 1,
+                    d3d_is_compressed: false,
+                    upload_bytes_per_block: 4,
+                    upload_block_width: 1,
+                    upload_block_height: 1,
+                    upload_is_compressed: false,
+                    decompress_to_bgra8: false,
+                    force_opaque_alpha: false,
+                },
+                D3DFormat::X8R8G8B8 => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Bgra8Unorm,
+                    d3d_bytes_per_block: 4,
+                    d3d_block_width: 1,
+                    d3d_block_height: 1,
+                    d3d_is_compressed: false,
+                    upload_bytes_per_block: 4,
+                    upload_block_width: 1,
+                    upload_block_height: 1,
+                    upload_is_compressed: false,
+                    decompress_to_bgra8: false,
+                    force_opaque_alpha: true,
+                },
 
-        for format in [D3DFormat::Dxt1, D3DFormat::Dxt3, D3DFormat::Dxt5] {
-            let info = format_info(format, features, TextureUsageKind::Sampled).unwrap();
-            assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
-            assert!(info.decompress_to_bgra8);
-            assert!(!info.upload_is_compressed);
-            assert!(info.d3d_is_compressed);
+                D3DFormat::Dxt1 if bc_supported => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Bc1RgbaUnorm,
+                    d3d_bytes_per_block: 8,
+                    d3d_block_width: 4,
+                    d3d_block_height: 4,
+                    d3d_is_compressed: true,
+                    upload_bytes_per_block: 8,
+                    upload_block_width: 4,
+                    upload_block_height: 4,
+                    upload_is_compressed: true,
+                    decompress_to_bgra8: false,
+                    force_opaque_alpha: false,
+                },
+                D3DFormat::Dxt3 if bc_supported => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Bc2RgbaUnorm,
+                    d3d_bytes_per_block: 16,
+                    d3d_block_width: 4,
+                    d3d_block_height: 4,
+                    d3d_is_compressed: true,
+                    upload_bytes_per_block: 16,
+                    upload_block_width: 4,
+                    upload_block_height: 4,
+                    upload_is_compressed: true,
+                    decompress_to_bgra8: false,
+                    force_opaque_alpha: false,
+                },
+                D3DFormat::Dxt5 if bc_supported => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Bc3RgbaUnorm,
+                    d3d_bytes_per_block: 16,
+                    d3d_block_width: 4,
+                    d3d_block_height: 4,
+                    d3d_is_compressed: true,
+                    upload_bytes_per_block: 16,
+                    upload_block_width: 4,
+                    upload_block_height: 4,
+                    upload_is_compressed: true,
+                    decompress_to_bgra8: false,
+                    force_opaque_alpha: false,
+                },
+
+                // DXTn fallback path: always upload as BGRA8 with CPU decompression.
+                D3DFormat::Dxt1 => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Bgra8Unorm,
+                    d3d_bytes_per_block: 8,
+                    d3d_block_width: 4,
+                    d3d_block_height: 4,
+                    d3d_is_compressed: true,
+                    upload_bytes_per_block: 4,
+                    upload_block_width: 1,
+                    upload_block_height: 1,
+                    upload_is_compressed: false,
+                    decompress_to_bgra8: true,
+                    force_opaque_alpha: false,
+                },
+                D3DFormat::Dxt3 | D3DFormat::Dxt5 => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Bgra8Unorm,
+                    d3d_bytes_per_block: 16,
+                    d3d_block_width: 4,
+                    d3d_block_height: 4,
+                    d3d_is_compressed: true,
+                    upload_bytes_per_block: 4,
+                    upload_block_width: 1,
+                    upload_block_height: 1,
+                    upload_is_compressed: false,
+                    decompress_to_bgra8: true,
+                    force_opaque_alpha: false,
+                },
+
+                D3DFormat::D16 => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Depth16Unorm,
+                    d3d_bytes_per_block: 2,
+                    d3d_block_width: 1,
+                    d3d_block_height: 1,
+                    d3d_is_compressed: false,
+                    upload_bytes_per_block: 2,
+                    upload_block_width: 1,
+                    upload_block_height: 1,
+                    upload_is_compressed: false,
+                    decompress_to_bgra8: false,
+                    force_opaque_alpha: false,
+                },
+                D3DFormat::D24S8 => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Depth24PlusStencil8,
+                    d3d_bytes_per_block: 4,
+                    d3d_block_width: 1,
+                    d3d_block_height: 1,
+                    d3d_is_compressed: false,
+                    upload_bytes_per_block: 4,
+                    upload_block_width: 1,
+                    upload_block_height: 1,
+                    upload_is_compressed: false,
+                    decompress_to_bgra8: false,
+                    force_opaque_alpha: false,
+                },
+                D3DFormat::D32 => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Depth32Float,
+                    d3d_bytes_per_block: 4,
+                    d3d_block_width: 1,
+                    d3d_block_height: 1,
+                    d3d_is_compressed: false,
+                    upload_bytes_per_block: 4,
+                    upload_block_width: 1,
+                    upload_block_height: 1,
+                    upload_is_compressed: false,
+                    decompress_to_bgra8: false,
+                    force_opaque_alpha: false,
+                },
+            }
+        }
+
+        for bc_supported in [false, true] {
+            let features = if bc_supported {
+                wgpu::Features::TEXTURE_COMPRESSION_BC
+            } else {
+                wgpu::Features::empty()
+            };
+
+            for &format in ALL_FORMATS {
+                for &usage in ALL_USAGES {
+                    let res = format_info(format, features, usage);
+
+                    let expects_ok = match (format, usage) {
+                        (D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32, TextureUsageKind::DepthStencil) => true,
+                        (D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32, _) => false,
+                        _ => true,
+                    };
+
+                    assert_eq!(
+                        res.is_ok(),
+                        expects_ok,
+                        "format_info({format:?}, bc_supported={bc_supported}, usage={usage:?})"
+                    );
+
+                    if expects_ok {
+                        let info = res.unwrap();
+                        let expected = expected_ok(format, bc_supported);
+                        assert_eq!(info.d3d, format);
+                        assert_eq!(info.wgpu, expected.wgpu);
+                        assert_eq!(info.d3d_bytes_per_block, expected.d3d_bytes_per_block);
+                        assert_eq!(info.d3d_block_width, expected.d3d_block_width);
+                        assert_eq!(info.d3d_block_height, expected.d3d_block_height);
+                        assert_eq!(info.d3d_is_compressed, expected.d3d_is_compressed);
+                        assert_eq!(info.upload_bytes_per_block, expected.upload_bytes_per_block);
+                        assert_eq!(info.upload_block_width, expected.upload_block_width);
+                        assert_eq!(info.upload_block_height, expected.upload_block_height);
+                        assert_eq!(info.upload_is_compressed, expected.upload_is_compressed);
+                        assert_eq!(info.decompress_to_bgra8, expected.decompress_to_bgra8);
+                        assert_eq!(info.force_opaque_alpha, expected.force_opaque_alpha);
+                    } else {
+                        let err = res.unwrap_err();
+                        let msg = err.to_string();
+                        assert!(
+                            msg.contains("must be used with TextureUsageKind::DepthStencil"),
+                            "Unexpected error message: {msg}"
+                        );
+                    }
+                }
+            }
         }
     }
 
     #[test]
     fn bc_dimension_compatibility_requires_block_aligned_base_mip() {
+        assert!(!wgpu_bc_texture_dimensions_compatible(0, 4, 1));
+        assert!(!wgpu_bc_texture_dimensions_compatible(4, 0, 1));
+        assert!(!wgpu_bc_texture_dimensions_compatible(4, 4, 0));
         assert!(!wgpu_bc_texture_dimensions_compatible(1, 1, 1));
         assert!(!wgpu_bc_texture_dimensions_compatible(9, 9, 1));
         assert!(!wgpu_bc_texture_dimensions_compatible(2, 2, 1));
@@ -413,43 +615,138 @@ mod tests {
     }
 
     #[test]
-    fn dxt_format_selection_falls_back_when_dims_incompatible_even_if_bc_supported() {
-        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+    fn dxt_format_selection_uses_bc_only_when_supported_and_dimensions_compatible() {
+        let bc_features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let no_bc = wgpu::Features::empty();
 
-        let info = format_info_for_texture(
-            D3DFormat::Dxt1,
-            features,
+        for (format, expected_bc) in [
+            (D3DFormat::Dxt1, wgpu::TextureFormat::Bc1RgbaUnorm),
+            (D3DFormat::Dxt3, wgpu::TextureFormat::Bc2RgbaUnorm),
+            (D3DFormat::Dxt5, wgpu::TextureFormat::Bc3RgbaUnorm),
+        ] {
+            // Feature off: always BGRA8 + CPU decompression.
+            let info = format_info_for_texture(
+                format,
+                no_bc,
+                TextureUsageKind::Sampled,
+                8,
+                8,
+                2,
+            )
+            .unwrap();
+            assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+            assert!(info.decompress_to_bgra8);
+
+            // Feature on but dimensions incompatible: still use BGRA8.
+            let info = format_info_for_texture(
+                format,
+                bc_features,
+                TextureUsageKind::Sampled,
+                1,
+                1,
+                1,
+            )
+            .unwrap();
+            assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+            assert!(info.decompress_to_bgra8);
+
+            // Feature on but mips incompatible: still use BGRA8.
+            let info = format_info_for_texture(
+                format,
+                bc_features,
+                TextureUsageKind::Sampled,
+                12,
+                12,
+                2,
+            )
+            .unwrap();
+            assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+            assert!(info.decompress_to_bgra8);
+
+            // Feature on and dimensions compatible: use native BC texture.
+            let info = format_info_for_texture(
+                format,
+                bc_features,
+                TextureUsageKind::Sampled,
+                8,
+                8,
+                2,
+            )
+            .unwrap();
+            assert_eq!(info.wgpu, expected_bc);
+            assert!(!info.decompress_to_bgra8);
+            assert!(info.upload_is_compressed);
+        }
+    }
+
+    #[test]
+    fn mip_helpers_match_expected_memory_layouts() {
+        // Uncompressed BGRA8.
+        let bgra8 = format_info(
+            D3DFormat::A8R8G8B8,
+            wgpu::Features::empty(),
             TextureUsageKind::Sampled,
-            1,
-            1,
-            1,
         )
         .unwrap();
-        assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
-        assert!(info.decompress_to_bgra8);
+        assert_eq!(bgra8.d3d_mip_level_pitch(7, 0), 7 * 4);
+        assert_eq!(bgra8.d3d_mip_level_byte_len(7, 5, 0), 7 * 5 * 4);
+        assert_eq!(bgra8.d3d_mip_level_pitch(7, 1), 3 * 4);
+        assert_eq!(bgra8.d3d_mip_level_byte_len(7, 5, 1), 3 * 2 * 4);
+        assert_eq!(bgra8.d3d_mip_level_pitch(7, 2), 1 * 4);
+        assert_eq!(bgra8.d3d_mip_level_byte_len(7, 5, 2), 1 * 1 * 4);
+        assert_eq!(bgra8.upload_bytes_per_row(7, 0), 7 * 4);
+        assert_eq!(bgra8.upload_rows_per_image(5, 0), 5);
+        assert_eq!(bgra8.upload_mip_level_byte_len(7, 5, 0), 7 * 5 * 4);
 
-        let info = format_info_for_texture(
+        // Native BC1 upload when supported.
+        let bc1 = format_info(
             D3DFormat::Dxt1,
-            features,
+            wgpu::Features::TEXTURE_COMPRESSION_BC,
             TextureUsageKind::Sampled,
-            12,
-            12,
-            2,
         )
         .unwrap();
-        assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
-        assert!(info.decompress_to_bgra8);
+        assert!(bc1.d3d_is_compressed);
+        assert!(bc1.upload_is_compressed);
+        assert!(!bc1.decompress_to_bgra8);
+        assert_eq!(bc1.d3d_mip_level_pitch(8, 0), 2 * 8);
+        assert_eq!(bc1.d3d_mip_level_byte_len(8, 8, 0), 2 * 2 * 8);
+        assert_eq!(bc1.d3d_mip_level_pitch(8, 1), 1 * 8);
+        assert_eq!(bc1.d3d_mip_level_byte_len(8, 8, 1), 1 * 1 * 8);
+        // 2x2 still occupies a full 4x4 block in D3D memory layout.
+        assert_eq!(bc1.d3d_mip_level_pitch(8, 2), 1 * 8);
+        assert_eq!(bc1.d3d_mip_level_byte_len(8, 8, 2), 1 * 1 * 8);
+        assert_eq!(bc1.upload_bytes_per_row(8, 0), 2 * 8);
+        assert_eq!(bc1.upload_rows_per_image(8, 0), 2);
+        assert_eq!(bc1.upload_mip_level_byte_len(8, 8, 0), 2 * 2 * 8);
 
-        let info = format_info_for_texture(
-            D3DFormat::Dxt1,
-            features,
+        // DXT5 fallback decompression path (upload is uncompressed, source/D3D layout is BC).
+        let dxt5_fallback = format_info(
+            D3DFormat::Dxt5,
+            wgpu::Features::empty(),
             TextureUsageKind::Sampled,
-            8,
-            8,
-            2,
         )
         .unwrap();
-        assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
-        assert!(!info.decompress_to_bgra8);
+        assert!(dxt5_fallback.decompress_to_bgra8);
+        assert!(dxt5_fallback.d3d_is_compressed);
+        assert!(!dxt5_fallback.upload_is_compressed);
+        assert_eq!(dxt5_fallback.d3d_mip_level_pitch(7, 0), 2 * 16);
+        assert_eq!(dxt5_fallback.d3d_mip_level_byte_len(7, 5, 0), 2 * 2 * 16);
+        assert_eq!(dxt5_fallback.d3d_mip_level_pitch(7, 1), 1 * 16);
+        assert_eq!(dxt5_fallback.d3d_mip_level_byte_len(7, 5, 1), 1 * 1 * 16);
+        assert_eq!(dxt5_fallback.upload_bytes_per_row(7, 0), 7 * 4);
+        assert_eq!(dxt5_fallback.upload_rows_per_image(5, 0), 5);
+        assert_eq!(dxt5_fallback.upload_mip_level_byte_len(7, 5, 0), 7 * 5 * 4);
+        assert_eq!(dxt5_fallback.upload_bytes_per_row(7, 1), 3 * 4);
+        assert_eq!(dxt5_fallback.upload_rows_per_image(5, 1), 2);
+        assert_eq!(dxt5_fallback.upload_mip_level_byte_len(7, 5, 1), 3 * 2 * 4);
+    }
+
+    #[test]
+    fn align_copy_bytes_per_row_matches_wgpu_alignment_rules() {
+        assert_eq!(align_copy_bytes_per_row(0), 0);
+        assert_eq!(align_copy_bytes_per_row(1), 256);
+        assert_eq!(align_copy_bytes_per_row(255), 256);
+        assert_eq!(align_copy_bytes_per_row(256), 256);
+        assert_eq!(align_copy_bytes_per_row(257), 512);
     }
 }
