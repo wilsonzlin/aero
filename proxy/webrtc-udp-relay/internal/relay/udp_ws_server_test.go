@@ -116,49 +116,15 @@ func readWSBinary(t *testing.T, c *websocket.Conn, timeout time.Duration) []byte
 }
 
 func TestUDPWebSocketServer_IdleTimeoutClosesWithoutPong(t *testing.T) {
-	cfg := config.Config{
-		AuthMode:                 config.AuthModeNone,
-		SignalingAuthTimeout:     50 * time.Millisecond,
-		MaxSignalingMessageBytes: 64 * 1024,
-		UDPWSIdleTimeout:         200 * time.Millisecond,
-		UDPWSPingInterval:        50 * time.Millisecond,
-	}
-	relayCfg := DefaultConfig()
+	idleTimeout := 500 * time.Millisecond
+	pingInterval := 50 * time.Millisecond
 
-	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, policy.NewDevDestinationPolicy(), nil)
-	if err != nil {
-		t.Fatalf("NewUDPWebSocketServer: %v", err)
-	}
-
-	mux := http.NewServeMux()
-	mux.Handle("GET /udp", srv)
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	c := dialWS(t, ts.URL, "/udp")
-	_ = readWSJSON(t, c, 2*time.Second) // ready
-
-	// Read, but do not reply to pings.
-	c.SetPingHandler(func(string) error { return nil })
-
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, _, err = c.ReadMessage()
-	if err == nil {
-		t.Fatalf("expected server to close the websocket")
-	}
-	if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-		t.Fatalf("expected close normal closure, got %v", err)
-	}
-}
-
-func TestUDPWebSocketServer_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.T) {
-	idleTimeout := 200 * time.Millisecond
 	cfg := config.Config{
 		AuthMode:                 config.AuthModeNone,
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 		UDPWSIdleTimeout:         idleTimeout,
-		UDPWSPingInterval:        50 * time.Millisecond,
+		UDPWSPingInterval:        pingInterval,
 	}
 	relayCfg := DefaultConfig()
 
@@ -173,6 +139,16 @@ func TestUDPWebSocketServer_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.
 	defer ts.Close()
 
 	c := dialWS(t, ts.URL, "/udp")
+	pingSeen := make(chan struct{}, 1)
+	c.SetPingHandler(func(string) error {
+		select {
+		case pingSeen <- struct{}{}:
+		default:
+		}
+		// Intentionally do not respond with pong.
+		return nil
+	})
+
 	_ = readWSJSON(t, c, 2*time.Second) // ready
 
 	errCh := make(chan error, 1)
@@ -181,7 +157,76 @@ func TestUDPWebSocketServer_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.
 		errCh <- err
 	}()
 
-	time.Sleep(3 * idleTimeout)
+	select {
+	case <-pingSeen:
+	case err := <-errCh:
+		t.Fatalf("connection closed before receiving ping: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for server ping")
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatalf("expected server to close the websocket")
+		}
+		if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+			t.Fatalf("expected close normal closure, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for server to close idle websocket")
+	}
+}
+
+func TestUDPWebSocketServer_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.T) {
+	idleTimeout := 500 * time.Millisecond
+	pingInterval := 50 * time.Millisecond
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+		UDPWSIdleTimeout:         idleTimeout,
+		UDPWSPingInterval:        pingInterval,
+	}
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+	pingSeen := make(chan struct{}, 1)
+	c.SetPingHandler(func(appData string) error {
+		select {
+		case pingSeen <- struct{}{}:
+		default:
+		}
+		return c.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(1*time.Second))
+	})
+
+	_ = readWSJSON(t, c, 2*time.Second) // ready
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := c.ReadMessage()
+		errCh <- err
+	}()
+
+	select {
+	case <-pingSeen:
+	case err := <-errCh:
+		t.Fatalf("connection closed before receiving ping: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for server ping")
+	}
+
+	time.Sleep(idleTimeout + 2*pingInterval)
 
 	select {
 	case err := <-errCh:

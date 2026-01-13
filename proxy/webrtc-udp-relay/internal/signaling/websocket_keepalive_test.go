@@ -15,13 +15,16 @@ import (
 )
 
 func TestWebSocketSignaling_IdleTimeoutClosesWithoutPong(t *testing.T) {
+	idleTimeout := 500 * time.Millisecond
+	pingInterval := 50 * time.Millisecond
+
 	srv := NewServer(Config{
 		WebRTC:                  webrtc.NewAPI(),
 		RelayConfig:             relay.DefaultConfig(),
 		Policy:                  policy.NewDevDestinationPolicy(),
 		Authorizer:              AllowAllAuthorizer{},
-		SignalingWSIdleTimeout:  200 * time.Millisecond,
-		SignalingWSPingInterval: 50 * time.Millisecond,
+		SignalingWSIdleTimeout:  idleTimeout,
+		SignalingWSPingInterval: pingInterval,
 	})
 
 	mux := http.NewServeMux()
@@ -36,21 +39,46 @@ func TestWebSocketSignaling_IdleTimeoutClosesWithoutPong(t *testing.T) {
 	}
 	defer c.Close()
 
-	// Read, but do not reply to pings.
-	c.SetPingHandler(func(string) error { return nil })
+	pingSeen := make(chan struct{}, 1)
+	c.SetPingHandler(func(string) error {
+		select {
+		case pingSeen <- struct{}{}:
+		default:
+		}
+		// Intentionally do not respond with pong.
+		return nil
+	})
 
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, _, err = c.ReadMessage()
-	if err == nil {
-		t.Fatalf("expected server to close the websocket")
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := c.ReadMessage()
+		errCh <- err
+	}()
+
+	select {
+	case <-pingSeen:
+	case err := <-errCh:
+		t.Fatalf("connection closed before receiving ping: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for server ping")
 	}
-	if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-		t.Fatalf("expected close normal closure, got %v", err)
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatalf("expected server to close the websocket")
+		}
+		if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+			t.Fatalf("expected close normal closure, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for server to close idle websocket")
 	}
 }
 
 func TestWebSocketSignaling_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.T) {
-	idleTimeout := 200 * time.Millisecond
+	idleTimeout := 500 * time.Millisecond
+	pingInterval := 50 * time.Millisecond
 
 	srv := NewServer(Config{
 		WebRTC:                  webrtc.NewAPI(),
@@ -58,7 +86,7 @@ func TestWebSocketSignaling_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.
 		Policy:                  policy.NewDevDestinationPolicy(),
 		Authorizer:              AllowAllAuthorizer{},
 		SignalingWSIdleTimeout:  idleTimeout,
-		SignalingWSPingInterval: 50 * time.Millisecond,
+		SignalingWSPingInterval: pingInterval,
 	})
 
 	mux := http.NewServeMux()
@@ -72,15 +100,33 @@ func TestWebSocketSignaling_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.
 		t.Fatalf("dial: %v", err)
 	}
 
+	pingSeen := make(chan struct{}, 1)
+	c.SetPingHandler(func(appData string) error {
+		select {
+		case pingSeen <- struct{}{}:
+		default:
+		}
+		// Respond with pong so the server extends the read deadline.
+		return c.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(1*time.Second))
+	})
+
 	errCh := make(chan error, 1)
 	go func() {
 		_, _, err := c.ReadMessage()
 		errCh <- err
 	}()
 
+	select {
+	case <-pingSeen:
+	case err := <-errCh:
+		t.Fatalf("connection closed before receiving ping: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for server ping")
+	}
+
 	// Wait longer than the idle timeout. The read goroutine will process ping
-	// frames and respond with pong (gorilla's default PingHandler).
-	time.Sleep(3 * idleTimeout)
+	// frames and respond with pong.
+	time.Sleep(idleTimeout + 2*pingInterval)
 
 	select {
 	case err := <-errCh:
