@@ -3178,7 +3178,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
             enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
             adapter->IrqEnableMask = enable;
 
-            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->InterruptRegistered ? enable : 0);
 
             /* Be robust against stale pending bits when disabling. */
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
@@ -3328,7 +3328,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
 
             enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
             adapter->IrqEnableMask = enable;
-            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->InterruptRegistered ? enable : 0);
 
             KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
         }
@@ -7059,6 +7059,7 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
             /* Legacy ABI does not expose an INTx enable mask for fence interrupts. */
             return STATUS_SUCCESS;
         }
+        const BOOLEAN haveIrqRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG));
         {
             KIRQL oldIrql;
             KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
@@ -7069,8 +7070,13 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                 enable &= ~AEROGPU_IRQ_FENCE;
             }
             adapter->IrqEnableMask = enable;
-            if (poweredOn) {
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+            if (poweredOn && haveIrqRegs) {
+                /*
+                 * Only unmask device IRQ generation when we have successfully registered an ISR
+                 * with dxgkrnl. If RegisterInterrupt failed, leaving IRQ_ENABLE non-zero can
+                 * trigger an unhandled interrupt storm.
+                 */
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->InterruptRegistered ? enable : 0);
                 if (!EnableInterrupt) {
                     AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_FENCE);
                 }
@@ -7137,7 +7143,11 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
             }
             adapter->IrqEnableMask = enable;
             if (poweredOn) {
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+                /*
+                 * Only unmask device IRQ generation when we have successfully registered an ISR
+                 * with dxgkrnl. This mirrors StartDevice and avoids unhandled interrupt storms.
+                 */
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->InterruptRegistered ? enable : 0);
             }
 
             /* Be robust against stale pending bits when disabling. */
@@ -7270,7 +7280,10 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
     if (poweredOn && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
         KIRQL irqIrql;
         KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
-        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->IrqEnableMask);
+        /* Avoid enabling device IRQs if we failed to register an ISR. */
+        AeroGpuWriteRegU32(adapter,
+                           AEROGPU_MMIO_REG_IRQ_ENABLE,
+                           adapter->InterruptRegistered ? adapter->IrqEnableMask : 0);
         KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
     }
 
