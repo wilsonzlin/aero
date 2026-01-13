@@ -1022,35 +1022,40 @@ impl HpetDevice {
 
 ## Boot Sequence
 
+The canonical Aero legacy BIOS boot path is intentionally **simple and deterministic**:
+
+- The host provides a single INT 13h `BlockDevice` to firmware (512-byte sectors).
+- Firmware reads LBA 0 from that device into `0x7C00` and jumps to it.
+- The BIOS boot drive number placed in `DL` is configured by `firmware::bios::BiosConfig::boot_drive`
+  (for example, `0x80` for “HDD0”, and `0xE0` for “CD0” in a CD-first El Torito install flow).
+
 ```rust
 impl Bios {
-    fn boot(&mut self, cpu: &mut CpuState, memory: &mut MemoryBus) {
-        // Find boot device
-        let boot_device = self.find_boot_device();
-        
-        // Read MBR (first sector)
-        let mut mbr = [0u8; 512];
-        self.read_sector(boot_device, 0, &mut mbr);
-        
-        // Verify boot signature
-        if mbr[510] != 0x55 || mbr[511] != 0xAA {
+    fn boot(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
+        // Read boot sector (LBA 0, 512 bytes).
+        let mut sector = [0u8; 512];
+        disk.read_sector(0, &mut sector).expect("disk read error");
+
+        // Verify boot signature (0x55AA).
+        if sector[510] != 0x55 || sector[511] != 0xAA {
             panic!("Invalid boot signature");
         }
-        
-        // Copy MBR to 0x7C00
-        memory.write_bytes(0x7C00, &mbr);
-        
-        // Set up registers for boot
+
+        // Copy sector to 0x7C00.
+        bus.write_physical(0x7C00, &sector);
+
+        // Set up registers for boot.
+        // (Most registers are zeroed; DL contains the BIOS boot drive number.)
         cpu.rax = 0;
         cpu.rbx = 0;
         cpu.rcx = 0;
-        cpu.rdx = boot_device as u64;  // Boot drive in DL
+        cpu.rdx = self.config.boot_drive as u64;  // Boot drive in DL
         cpu.rsi = 0;
         cpu.rdi = 0;
         cpu.rbp = 0;
         cpu.rsp = 0x7C00;
-        
-        // Jump to boot sector
+
+        // Jump to boot sector at 0000:7C00.
         cpu.cs.selector = 0x0000;
         cpu.cs.base = 0x0000_0000;
         cpu.ds.selector = 0x0000;
