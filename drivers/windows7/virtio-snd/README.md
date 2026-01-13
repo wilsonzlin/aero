@@ -321,6 +321,7 @@ For diagnostics / bring-up, the driver exposes per-device registry toggles (**de
 - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` (`REG_DWORD`)
   - Default: `0` (interrupt-driven; fail `START_DEVICE` if no usable interrupt resource can be discovered/connected — neither MSI/MSI-X nor INTx)
   - Set to `1` to allow the driver to start even when no usable interrupt can be wired up. In this mode the driver relies on periodic used-ring polling (driven by the WaveRT period timer DPC).
+  - Applies to the modern virtio-pci transport packages (`aero_virtio_snd.sys` and `virtiosnd_legacy.sys`); the legacy I/O-port bring-up package does not use this toggle.
 
 Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
 

@@ -238,6 +238,7 @@ Backend layer (WaveRT ↔ virtio-snd):
   - When `AllowPollingOnly=1`, the driver may start even if no usable interrupt resource can be discovered/connected (neither MSI/MSI-X nor INTx).
   - In that case it relies on polling used rings (driven by the WaveRT period timer DPC) instead of ISR/DPC delivery, and disables per-queue virtqueue interrupts best-effort to reduce interrupt storm risk.
   - This is intended for early emulator/device-model bring-up and debugging; the default behavior remains interrupt-driven by default.
+  - Applies to the modern virtio-pci transport packages (`aero_virtio_snd.sys` and `virtiosnd_legacy.sys`); the legacy I/O-port bring-up package does not use this toggle.
   - After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
 
 Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
