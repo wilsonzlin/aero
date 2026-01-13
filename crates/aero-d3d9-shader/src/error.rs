@@ -6,6 +6,10 @@ pub enum ShaderParseError {
     InvalidByteLength {
         len: usize,
     },
+    BytecodeTooLarge {
+        len: usize,
+        max: usize,
+    },
     Dxbc(aero_dxbc::DxbcError),
     DxbcMissingShaderChunk,
     Truncated {
@@ -43,6 +47,9 @@ impl fmt::Display for ShaderParseError {
             ShaderParseError::Empty => write!(f, "empty shader blob"),
             ShaderParseError::InvalidByteLength { len } => {
                 write!(f, "shader blob length {len} is not a multiple of 4")
+            }
+            ShaderParseError::BytecodeTooLarge { len, max } => {
+                write!(f, "shader bytecode length {len} exceeds maximum {max} bytes")
             }
             ShaderParseError::Dxbc(e) => write!(f, "DXBC parse error: {e}"),
             ShaderParseError::DxbcMissingShaderChunk => {

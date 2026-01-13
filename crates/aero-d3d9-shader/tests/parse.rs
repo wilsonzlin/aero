@@ -8,6 +8,17 @@ fn words_to_bytes(words: &[u32]) -> Vec<u8> {
     bytes
 }
 
+#[test]
+fn rejects_oversized_bytecode() {
+    // Ensure the debug/disassembler parser does not allocate unbounded memory on hostile input.
+    let bytes = vec![0u8; 256 * 1024 + 4];
+    let err = D3d9Shader::parse(&bytes).unwrap_err();
+    assert!(
+        matches!(err, aero_d3d9_shader::ShaderParseError::BytecodeTooLarge { .. }),
+        "{err:?}"
+    );
+}
+
 const VS_2_0_PASSTHROUGH: [u32; 14] = [
     0xFFFE_0200, // vs_2_0
     // dcl_position v0

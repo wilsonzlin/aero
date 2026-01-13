@@ -17,6 +17,13 @@ pub struct D3d9Shader {
     pub stats: ShaderStats,
 }
 
+/// Maximum accepted D3D9 shader bytecode length in bytes.
+///
+/// This crate is primarily used for debugging/disassembly, but the shader blob is still treated as
+/// untrusted input. The limit prevents pathological blobs from causing large allocations while
+/// converting raw bytes into a `Vec<u32>` token stream.
+const MAX_D3D9_SHADER_BYTECODE_BYTES: usize = 256 * 1024; // 256 KiB
+
 pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
     let raw = if blob.starts_with(b"DXBC") {
         let dxbc = aero_dxbc::DxbcFile::parse(blob)?;
@@ -32,6 +39,12 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
     }
     if raw.len() % 4 != 0 {
         return Err(ShaderParseError::InvalidByteLength { len: raw.len() });
+    }
+    if raw.len() > MAX_D3D9_SHADER_BYTECODE_BYTES {
+        return Err(ShaderParseError::BytecodeTooLarge {
+            len: raw.len(),
+            max: MAX_D3D9_SHADER_BYTECODE_BYTES,
+        });
     }
 
     let mut tokens = Vec::with_capacity(raw.len() / 4);
