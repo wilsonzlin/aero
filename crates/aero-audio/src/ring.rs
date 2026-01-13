@@ -16,7 +16,6 @@
 /// producer must not advance it to make room.
 #[derive(Debug, Clone)]
 pub struct AudioRingBuffer {
-    channels: usize,
     capacity_frames: usize,
     data: Vec<f32>,
     read_frame: usize,
@@ -33,6 +32,7 @@ pub struct AudioRingBuffer {
 ///
 /// `2^20` frames is ~21s at 48kHz; at stereo f32 this is ~8MiB of sample storage.
 const MAX_CAPACITY_FRAMES: usize = 1_048_576;
+const CHANNELS: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RingBufferTelemetry {
@@ -49,11 +49,9 @@ impl AudioRingBuffer {
         // Treat capacity as untrusted (e.g. from host config); clamp to avoid panics and
         // multi-gigabyte allocations.
         let capacity_frames = capacity_frames.clamp(1, MAX_CAPACITY_FRAMES);
-        let channels = 2;
         Self {
-            channels,
             capacity_frames,
-            data: vec![0.0; capacity_frames * channels],
+            data: vec![0.0; capacity_frames * CHANNELS],
             read_frame: 0,
             write_frame: 0,
             len_frames: 0,
@@ -91,7 +89,7 @@ impl AudioRingBuffer {
     /// Push interleaved stereo samples.
     pub fn push_interleaved_stereo(&mut self, samples: &[f32]) {
         // Treat inputs as untrusted; ignore any trailing partial frame.
-        let frames = samples.len() / self.channels;
+        let frames = samples.len() / CHANNELS;
         if frames == 0 {
             return;
         }
@@ -115,14 +113,13 @@ impl AudioRingBuffer {
         let first_frames = frames_to_write.min(self.capacity_frames - write_pos);
         let second_frames = frames_to_write - first_frames;
 
-        let cc = self.channels;
-        let first_samples = first_frames * cc;
-        let write_sample_pos = write_pos * cc;
+        let first_samples = first_frames * CHANNELS;
+        let write_sample_pos = write_pos * CHANNELS;
         self.data[write_sample_pos..write_sample_pos + first_samples]
             .copy_from_slice(&samples[..first_samples]);
 
         if second_frames > 0 {
-            let second_samples = second_frames * cc;
+            let second_samples = second_frames * CHANNELS;
             self.data[..second_samples]
                 .copy_from_slice(&samples[first_samples..first_samples + second_samples]);
         }
@@ -169,7 +166,7 @@ impl AudioRingBuffer {
             return;
         }
 
-        let out_len = frames.saturating_mul(self.channels);
+        let out_len = frames.saturating_mul(CHANNELS);
         // `try_reserve_exact` reserves *additional* elements beyond the current
         // length. Avoid reserving `out_len` extra when the caller is reusing a
         // buffer that already has the right size.
@@ -189,14 +186,13 @@ impl AudioRingBuffer {
             let first_frames = available.min(self.capacity_frames - read_pos);
             let second_frames = available - first_frames;
 
-            let cc = self.channels;
-            let first_samples = first_frames * cc;
-            let read_sample_pos = read_pos * cc;
+            let first_samples = first_frames * CHANNELS;
+            let read_sample_pos = read_pos * CHANNELS;
             out[..first_samples]
                 .copy_from_slice(&self.data[read_sample_pos..read_sample_pos + first_samples]);
 
             if second_frames > 0 {
-                let second_samples = second_frames * cc;
+                let second_samples = second_frames * CHANNELS;
                 out[first_samples..first_samples + second_samples]
                     .copy_from_slice(&self.data[..second_samples]);
             }
@@ -211,7 +207,7 @@ impl AudioRingBuffer {
             self.read_frame = read_frame;
         }
 
-        let available_samples = available * self.channels;
+        let available_samples = available * CHANNELS;
         if available_samples < out_len {
             // Underrun: ensure the remainder is zeroed. (The caller may be
             // reusing an output buffer that contains old samples.)
