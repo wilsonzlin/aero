@@ -2,7 +2,10 @@ use pretty_assertions::assert_eq;
 
 use std::collections::HashMap;
 
-use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
+use aero_dxbc::{
+    parse_ctab_chunk, parse_rdef_chunk, parse_signature_chunk, test_utils as dxbc_test_utils,
+    FourCC as DxbcFourCC,
+};
 use crate::shader_limits::MAX_D3D9_SHADER_BYTECODE_BYTES;
 use crate::{dxbc, shader, software, state};
 
@@ -807,16 +810,12 @@ fn parses_isgn_signature_chunk() {
 
     chunk.extend_from_slice(b"POSITION\0");
 
-    let sig = dxbc::parse_signature(&chunk).unwrap();
-    assert_eq!(
-        sig,
-        vec![dxbc::SignatureElement {
-            semantic: "POSITION".to_string(),
-            semantic_index: 0,
-            register: 0,
-            mask: 0xF,
-        }]
-    );
+    let sig = parse_signature_chunk(&chunk).unwrap();
+    assert_eq!(sig.entries.len(), 1);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+    assert_eq!(sig.entries[0].semantic_index, 0);
+    assert_eq!(sig.entries[0].register, 0);
+    assert_eq!(sig.entries[0].mask, 0xF);
 }
 
 #[test]
@@ -843,7 +842,7 @@ fn parses_rdef_resource_bindings() {
 
     chunk.extend_from_slice(b"tex0\0");
 
-    let rdef = dxbc::parse_rdef(&chunk).unwrap();
+    let rdef = parse_rdef_chunk(&chunk).unwrap();
     assert_eq!(rdef.resources.len(), 1);
     assert_eq!(rdef.resources[0].name, "tex0");
     assert_eq!(rdef.resources[0].bind_point, 3);
@@ -873,7 +872,7 @@ fn parses_ctab_constant_table() {
     chunk.extend_from_slice(b"ps_2_0\0"); // 7 bytes -> next offset 55
     chunk.extend_from_slice(b"C0\0");
 
-    let ctab = dxbc::parse_ctab(&chunk).unwrap();
+    let ctab = parse_ctab_chunk(&chunk).unwrap();
     assert_eq!(ctab.target.as_deref(), Some("ps_2_0"));
     assert_eq!(ctab.constants.len(), 1);
     assert_eq!(ctab.constants[0].name, "C0");

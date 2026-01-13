@@ -17,6 +17,10 @@ mod fourcc;
 pub mod signature;
 /// Parsers for SM4/SM5 shader bytecode chunks (`SHDR`/`SHEX`).
 pub mod sm4;
+/// Parsers for DXBC resource definition chunks (`RDEF`).
+pub mod rdef;
+/// Parsers for legacy Direct3D constant table chunks (`CTAB`).
+pub mod ctab;
 
 /// Helpers for building synthetic DXBC blobs in tests.
 ///
@@ -32,4 +36,8 @@ pub use crate::fourcc::FourCC;
 pub use crate::signature::{
     parse_signature_chunk, parse_signature_chunk_with_fourcc, SignatureChunk, SignatureEntry,
 };
-pub use crate::sm4::{decode_version_token, ShaderModel, ShaderStage, Sm4Error, Sm4Program, Sm5Program};
+pub use crate::sm4::{
+    decode_version_token, ShaderModel, ShaderStage, Sm4Error, Sm4Program, Sm5Program,
+};
+pub use crate::rdef::{parse_rdef_chunk, ResourceBinding, ResourceDefs};
+pub use crate::ctab::{parse_ctab_chunk, ConstantTable, CtabConstant};
