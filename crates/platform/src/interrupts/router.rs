@@ -1,6 +1,9 @@
 use super::pic::Pic8259;
 use crate::io::{IoPortBus, PortIoDevice};
-use aero_interrupts::apic::{IcrNotifier, IoApic, IoApicId, LapicInterruptSink, LocalApic};
+use aero_interrupts::apic::{
+    DeliveryMode, DestinationShorthand, Icr, IcrNotifier, IoApic, IoApicId, LapicInterruptSink,
+    Level, LocalApic,
+};
 use aero_interrupts::clock::Clock;
 use aero_interrupts::pic8259::{MASTER_DATA, SLAVE_DATA};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
@@ -105,6 +108,7 @@ pub struct PlatformInterrupts {
     lapics: Vec<Arc<LocalApic>>,
     lapic_clock: Arc<AtomicClock>,
     apic_enabled: Arc<AtomicBool>,
+    pending_init: Arc<Vec<AtomicBool>>,
 
     imcr_select: u8,
     imcr: u8,
@@ -202,6 +206,11 @@ impl PlatformInterrupts {
 
         let lapic_clock = Arc::new(AtomicClock::default());
         let apic_enabled = Arc::new(AtomicBool::new(false));
+        let pending_init: Arc<Vec<AtomicBool>> = Arc::new(
+            (0..cpu_count)
+                .map(|_| AtomicBool::new(false))
+                .collect::<Vec<_>>(),
+        );
         let mut lapics = Vec::with_capacity(cpu_count as usize);
         let mut sinks: Vec<Arc<dyn LapicInterruptSink>> = Vec::with_capacity(cpu_count as usize);
         for apic_id in 0..cpu_count {
@@ -222,6 +231,25 @@ impl PlatformInterrupts {
             let ioapic_for_eoi = ioapic.clone();
             lapic.register_eoi_notifier(Arc::new(move |vector| {
                 ioapic_for_eoi.lock().unwrap().notify_eoi(vector);
+            }));
+        }
+
+        // Register LAPIC ICR notifiers for IPI delivery.
+        //
+        // `LocalApic` decodes a completed ICR_LOW write and notifies listeners with a decoded
+        // [`Icr`]. This keeps IPI routing out of the LAPIC model itself (it cannot see other CPUs)
+        // while allowing the platform interrupt fabric to emulate SMP IPI delivery.
+        let lapics_for_ipi = Arc::new(lapics.clone());
+        for src_apic_id in 0..cpu_count {
+            let pending_init = pending_init.clone();
+            let lapics_for_ipi = lapics_for_ipi.clone();
+            lapics[src_apic_id as usize].register_icr_notifier(Arc::new(move |icr: Icr| {
+                PlatformInterrupts::handle_icr_ipi(
+                    src_apic_id,
+                    icr,
+                    lapics_for_ipi.as_ref(),
+                    &pending_init,
+                );
             }));
         }
 
@@ -251,9 +279,74 @@ impl PlatformInterrupts {
             lapics,
             lapic_clock,
             apic_enabled,
+            pending_init,
 
             imcr_select: 0,
             imcr: 0,
+        }
+    }
+
+    fn handle_icr_ipi(
+        src_apic_id: u8,
+        icr: Icr,
+        lapics: &[Arc<LocalApic>],
+        pending_init: &Arc<Vec<AtomicBool>>,
+    ) {
+        let mut targets: Vec<Arc<LocalApic>> = Vec::new();
+        match icr.destination_shorthand {
+            DestinationShorthand::None => {
+                if let Some(lapic) = lapics
+                    .iter()
+                    .find(|lapic| lapic.apic_id() == icr.destination)
+                    .cloned()
+                {
+                    targets.push(lapic);
+                }
+            }
+            DestinationShorthand::SelfOnly => {
+                if let Some(lapic) = lapics
+                    .iter()
+                    .find(|lapic| lapic.apic_id() == src_apic_id)
+                    .cloned()
+                {
+                    targets.push(lapic);
+                }
+            }
+            DestinationShorthand::AllIncludingSelf => {
+                targets.extend(lapics.iter().cloned());
+            }
+            DestinationShorthand::AllExcludingSelf => {
+                targets.extend(
+                    lapics
+                        .iter()
+                        .filter(|lapic| lapic.apic_id() != src_apic_id)
+                        .cloned(),
+                );
+            }
+        }
+
+        match icr.delivery_mode {
+            DeliveryMode::Fixed => {
+                for lapic in targets {
+                    lapic.inject_fixed_interrupt(icr.vector);
+                }
+            }
+            DeliveryMode::Init => {
+                // Only INIT with level=assert has reset semantics. INIT deassert is a no-op.
+                if icr.level != Level::Assert {
+                    return;
+                }
+                for lapic in targets {
+                    let apic_id = lapic.apic_id();
+                    if let Some(flag) = pending_init.get(apic_id as usize) {
+                        flag.store(true, Ordering::SeqCst);
+                    }
+                    lapic.reset_state(apic_id);
+                }
+            }
+            _ => {
+                // Other delivery modes are currently ignored.
+            }
         }
     }
 
@@ -599,6 +692,17 @@ impl PlatformInterrupts {
             lapic.inject_fixed_interrupt(vector);
         }
     }
+
+    /// Take and clear the pending INIT-reset flag for `apic_id`.
+    ///
+    /// The platform interrupt fabric marks this flag when it delivers an INIT IPI with
+    /// `level=assert`. Consumers (e.g. a VM's vCPU loop) can poll this to reset vCPU state.
+    pub fn take_pending_init(&self, apic_id: u8) -> bool {
+        self.pending_init
+            .get(apic_id as usize)
+            .map(|flag| flag.swap(false, Ordering::SeqCst))
+            .unwrap_or(false)
+    }
     /// Reset a specific LAPIC's internal state back to its power-on baseline.
     ///
     /// This is used by machine-level INIT IPI delivery to reset the target vCPU's local APIC.
@@ -843,6 +947,9 @@ impl IoSnapshot for PlatformInterrupts {
         self.gsi_level.fill(false);
         self.gsi_restore_baseline.fill(false);
         self.gsi_assert_count.fill(0);
+        for flag in self.pending_init.iter() {
+            flag.store(false, Ordering::SeqCst);
+        }
 
         if let Some(buf) = r.bytes(TAG_ISA_IRQ_TO_GSI) {
             let mut d = Decoder::new(buf);
