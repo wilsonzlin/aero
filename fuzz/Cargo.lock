@@ -1300,7 +1300,6 @@ dependencies = [
  "aero-audio",
  "aero-cpu-core",
  "aero-d3d9",
- "aero-cpu-core",
  "aero-devices",
  "aero-devices-storage",
  "aero-dxbc",

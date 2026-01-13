@@ -6,6 +6,11 @@ use libfuzzer_sys::fuzz_target;
 /// Max fuzz input size to avoid pathological allocations in the token decoder.
 const MAX_INPUT_SIZE_BYTES: usize = 1024 * 1024; // 1 MiB
 
+/// Even with an overall input cap, fully tokenizing large buffers is expensive. Keep the
+/// "decode the full input" path smaller, and rely on the forced-version (truncated) path for
+/// coverage on large inputs.
+const MAX_RAW_DECODE_BYTES: usize = 256 * 1024; // 256 KiB
+
 /// When the input doesn't contain a valid SM2/3 version token, we also try a
 /// "forced version" variant to reach deeper decode/IR paths without requiring
 /// libFuzzer to guess the magic bits.
@@ -13,10 +18,17 @@ const MAX_INPUT_SIZE_BYTES: usize = 1024 * 1024; // 1 MiB
 /// Keep this small to avoid copying 1MiB inputs every iteration.
 const MAX_FORCED_VERSION_BYTES: usize = 64 * 1024; // 64 KiB
 
+/// Cap decoded instruction count before IR build/verification to avoid pathological allocations
+/// and runtimes in later passes.
+const MAX_INSTRUCTIONS: usize = 4096;
+
 fn decode_build_verify(bytes: &[u8]) {
     let Ok(decoded) = decode_u8_le_bytes(bytes) else {
         return;
     };
+    if decoded.instructions.len() > MAX_INSTRUCTIONS {
+        return;
+    }
     if let Ok(ir) = build_ir(&decoded) {
         let _ = verify_ir(&ir);
     }
@@ -41,7 +53,7 @@ fuzz_target!(|data: &[u8]| {
 
     let first = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     let first_high = first & 0xFFFF_0000;
-    if first_high == 0xFFFE_0000 || first_high == 0xFFFF_0000 {
+    if (first_high == 0xFFFE_0000 || first_high == 0xFFFF_0000) && data.len() <= MAX_RAW_DECODE_BYTES {
         decode_build_verify(data);
     }
 
