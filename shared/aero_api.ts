@@ -86,10 +86,35 @@ export interface AeroNetTraceApi {
   getStats?: () => unknown | Promise<unknown>;
 }
 
+export type IoInputTelemetrySnapshot = {
+  batchesReceived: number;
+  batchesProcessed: number;
+  batchesDropped: number;
+  keyboardBackendSwitches: number;
+  mouseBackendSwitches: number;
+};
+
+export interface AeroDebugApi {
+  /**
+   * Reads IO worker input telemetry counters from the given shared status view.
+   *
+   * In the browser runtime, `status` is an `Int32Array` view into the shared
+   * `control` SharedArrayBuffer (`StatusIndex`).
+   */
+  readIoInputTelemetry?: (status: Int32Array) => IoInputTelemetrySnapshot;
+
+  /**
+   * Returns IO worker input telemetry for the active runtime (or null if no VM
+   * is running / shared status is unavailable).
+   */
+  getIoInputTelemetry?: () => IoInputTelemetrySnapshot | null;
+}
+
 export interface AeroGlobalApi {
   perf?: AeroPerfApi;
   bench?: AeroBenchApi;
   netTrace?: AeroNetTraceApi;
+  debug?: AeroDebugApi;
 
   /**
    * Host-visible status that macrobench scenarios can wait on.

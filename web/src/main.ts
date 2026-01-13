@@ -43,6 +43,7 @@ import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
 import { installNetTraceBackendOnAeroGlobal } from "./net/trace_backend";
+import { installIoInputTelemetryBackendOnAeroGlobal } from "./runtime/io_input_telemetry_backend";
 import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
 import { IO_IPC_HID_IN_QUEUE_KIND, StatusIndex, type WorkerRole } from "./runtime/shared_layout";
@@ -98,6 +99,7 @@ installAeroGlobals();
 
 const workerCoordinator = new WorkerCoordinator();
 installNetTraceBackendOnAeroGlobal(workerCoordinator);
+installIoInputTelemetryBackendOnAeroGlobal(workerCoordinator);
 const usbBroker = new UsbBroker();
 const diskManagerPromise = DiskManager.create();
 

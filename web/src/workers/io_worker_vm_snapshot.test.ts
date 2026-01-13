@@ -45,7 +45,6 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
-        usbXhciControllerBridge: null,
         usbUhciRuntime,
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
@@ -148,7 +147,6 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
-        usbXhciControllerBridge: null,
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
@@ -245,7 +243,6 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
-        usbXhciControllerBridge: null,
         usbUhciRuntime: { save_state: () => usbState },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
@@ -309,7 +306,6 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
-        usbXhciControllerBridge: null,
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
@@ -371,10 +367,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const xhciBytes = new Uint8Array([0x06]);
 
     const usbBlob = snapshotUsbDeviceState({
-      usbXhciControllerBridge: { save_state: () => xhciBytes },
       usbUhciRuntime: { save_state: () => uhciBytes },
       usbUhciControllerBridge: null,
       usbEhciControllerBridge: { save_state: () => ehciBytes },
+      usbXhciControllerBridge: { save_state: () => xhciBytes },
     });
 
     expect(usbBlob?.kind).toBe("usb.uhci");
@@ -385,10 +381,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const xhciLoad = vi.fn();
     restoreUsbDeviceState(
       {
-        usbXhciControllerBridge: { load_state: xhciLoad },
         usbUhciRuntime: { load_state: uhciLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: { load_state: ehciLoad },
+        usbXhciControllerBridge: { load_state: xhciLoad },
       },
       usbBlob!.bytes,
     );
