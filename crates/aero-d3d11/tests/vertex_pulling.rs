@@ -196,6 +196,10 @@ fn create_vertex_pulling_pipeline_layout(
 
 #[test]
 fn compute_vertex_pulling_reads_pos3_color4() {
+    assert_eq!(
+        VERTEX_PULLING_GROUP,
+        aero_d3d11::binding_model::BIND_GROUP_INTERNAL_EMULATION
+    );
     pollster::block_on(async {
         let (device, queue, supports_compute) = match create_device_queue().await {
             Ok(v) => v,
@@ -421,6 +425,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
 #[test]
 fn compute_vertex_pulling_reads_unorm8x4() {
+    assert_eq!(
+        VERTEX_PULLING_GROUP,
+        aero_d3d11::binding_model::BIND_GROUP_INTERNAL_EMULATION
+    );
     fn push_u32(buf: &mut Vec<u8>, v: u32) {
         buf.extend_from_slice(&v.to_le_bytes());
     }

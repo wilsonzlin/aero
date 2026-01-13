@@ -1,6 +1,11 @@
 use std::collections::BTreeSet;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
+
+use crate::binding_model::{
+    BIND_GROUP_INTERNAL_EMULATION, BINDING_INTERNAL_EXPANDED_VERTICES,
+    EXPANDED_VERTEX_MAX_VARYINGS,
+};
 
 fn parse_location_attr(line: &str) -> Option<u32> {
     let idx = line.find("@location(")?;
@@ -487,9 +492,60 @@ pub(crate) fn trim_ps_outputs_to_locations(
     out
 }
 
+/// Generate WGSL for an emulation-only passthrough vertex shader.
+///
+/// The shader performs **vertex pulling** from a storage buffer containing expanded geometry
+/// produced by a preceding compute pass. It outputs clip-space position and only the subset of
+/// `@location(N)` varyings that the bound pixel shader actually reads.
+///
+/// The output is deterministic: the same `keep_locations` set produces byte-identical WGSL, which
+/// means `aero_gpu::pipeline_key::hash_wgsl` (and therefore pipeline caching) is stable.
+pub(crate) fn generate_passthrough_vs_wgsl(keep_locations: &BTreeSet<u32>) -> Result<String> {
+    for &loc in keep_locations {
+        if loc >= EXPANDED_VERTEX_MAX_VARYINGS {
+            bail!(
+                "passthrough VS requested @location({loc}), but expanded vertex record only stores 0..{}",
+                EXPANDED_VERTEX_MAX_VARYINGS.saturating_sub(1)
+            );
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str("struct ExpandedVertex {\n");
+    out.push_str("    pos: vec4<f32>,\n");
+    out.push_str(&format!(
+        "    varyings: array<vec4<f32>, {EXPANDED_VERTEX_MAX_VARYINGS}>,\n"
+    ));
+    out.push_str("};\n\n");
+    out.push_str(&format!(
+        "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({BINDING_INTERNAL_EXPANDED_VERTICES})\n"
+    ));
+    out.push_str("var<storage, read> expanded_vertices: array<ExpandedVertex>;\n\n");
+
+    out.push_str("struct VsOut {\n");
+    out.push_str("    @builtin(position) pos: vec4<f32>,\n");
+    for &loc in keep_locations {
+        out.push_str(&format!("    @location({loc}) o{loc}: vec4<f32>,\n"));
+    }
+    out.push_str("};\n\n");
+
+    out.push_str("@vertex\n");
+    out.push_str("fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {\n");
+    out.push_str("    let v = expanded_vertices[vertex_index];\n");
+    out.push_str("    var out: VsOut;\n");
+    out.push_str("    out.pos = v.pos;\n");
+    for &loc in keep_locations {
+        out.push_str(&format!("    out.o{loc} = v.varyings[{loc}u];\n"));
+    }
+    out.push_str("    return out;\n");
+    out.push_str("}\n");
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_gpu::pipeline_key::hash_wgsl;
 
     #[test]
     fn finds_locations_in_struct() {
@@ -725,5 +781,34 @@ mod tests {
         let keep = BTreeSet::from([1u32]);
         let trimmed = trim_ps_outputs_to_locations(wgsl, &keep);
         assert_eq!(trimmed.trim(), wgsl.trim());
+    }
+
+    #[test]
+    fn passthrough_vs_is_deterministic_and_hashable() {
+        let ps_wgsl = r#"
+            struct PsIn {
+                @builtin(position) pos: vec4<f32>,
+                @location(1) v1: vec4<f32>,
+                @location(2) v2: vec4<f32>,
+            };
+
+            @fragment
+            fn fs_main(input: PsIn) -> @location(0) vec4<f32> {
+                // Only v1 is referenced.
+                return input.v1;
+            }
+        "#;
+
+        let used = referenced_ps_input_locations(ps_wgsl);
+        assert_eq!(used.iter().copied().collect::<Vec<_>>(), vec![1u32]);
+
+        let a = generate_passthrough_vs_wgsl(&used).unwrap();
+        let b = generate_passthrough_vs_wgsl(&used).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(hash_wgsl(&a), hash_wgsl(&b));
+
+        let other = BTreeSet::from([2u32]);
+        let c = generate_passthrough_vs_wgsl(&other).unwrap();
+        assert_ne!(hash_wgsl(&a), hash_wgsl(&c));
     }
 }

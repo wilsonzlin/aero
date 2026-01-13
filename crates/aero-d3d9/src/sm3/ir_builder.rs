@@ -782,12 +782,12 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             src,
             modifiers,
         }
-        | IrOp::Rsq {
+        | IrOp::Frc {
             dst,
             src,
             modifiers,
         }
-        | IrOp::Frc {
+        | IrOp::Rsq {
             dst,
             src,
             modifiers,
@@ -1098,12 +1098,12 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             src,
             modifiers,
         }
-        | IrOp::Rsq {
+        | IrOp::Frc {
             dst,
             src,
             modifiers,
         }
-        | IrOp::Frc {
+        | IrOp::Rsq {
             dst,
             src,
             modifiers,
