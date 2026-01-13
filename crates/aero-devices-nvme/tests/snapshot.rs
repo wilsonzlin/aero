@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use aero_devices::pci::{msi::PCI_CAP_ID_MSI, MsiCapability, MsixCapability, PciDevice};
+use aero_devices::pci::{
+    msi::PCI_CAP_ID_MSI, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability, PciDevice,
+};
 use aero_devices_nvme::{AeroStorageDiskAdapter, NvmePciDevice};
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
@@ -704,11 +706,11 @@ fn snapshot_restore_preserves_msix_table_and_pba_state() {
         disk.clone(),
     ))));
 
-    // Add an MSI-X capability with a single table entry, backed by BAR0.
+    // NVMe profile exposes an MSI-X capability backed by BAR0.
     let msix_cap_off = dev
         .config_mut()
-        .add_capability(Box::new(MsixCapability::new(1, 0, 0x2000, 0, 0x3000)))
-        as u16;
+        .find_capability(PCI_CAP_ID_MSIX)
+        .expect("NVMe device should expose MSI-X capability") as u16;
 
     // Enable MSI-X via the Message Control enable bit.
     let ctrl = dev.config_mut().read(msix_cap_off + 0x02, 2) as u16;
@@ -751,8 +753,8 @@ fn snapshot_restore_preserves_msix_table_and_pba_state() {
     ))));
     let msix_cap_off2 = restored
         .config_mut()
-        .add_capability(Box::new(MsixCapability::new(1, 0, 0x2000, 0, 0x3000)))
-        as u16;
+        .find_capability(PCI_CAP_ID_MSIX)
+        .expect("restored device should expose MSI-X capability") as u16;
     restored.load_state(&snap).unwrap();
 
     // MSI-X enable bit should be preserved via PCI config-space snapshot.

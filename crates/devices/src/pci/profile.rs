@@ -334,6 +334,28 @@ pub const AHCI_CAPS: [PciCapabilityProfile; 1] = [PciCapabilityProfile::Msi {
 
 pub const NVME_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false)];
 
+/// Canonical capabilities exposed by the NVMe controller profile.
+///
+/// Aero's NVMe device model uses a single interrupt vector, so a single-vector MSI capability is
+/// sufficient. We also expose a minimal MSI-X table/PBA in BAR0 so modern guests can bind MSI-X
+/// capable NVMe drivers (even if the controller model currently uses INTx/MSI delivery).
+pub const NVME_CAPS: [PciCapabilityProfile; 2] = [
+    PciCapabilityProfile::Msi {
+        is_64bit: true,
+        per_vector_masking: true,
+    },
+    // MSI-X table/PBA in BAR0:
+    // - table: 1 entry at +0x3000
+    // - PBA: immediately after the table (8-byte aligned) at +0x3010
+    PciCapabilityProfile::Msix {
+        table_size: 1,
+        table_bar: 0,
+        table_offset: 0x3000,
+        pba_bar: 0,
+        pba_offset: 0x3010,
+    },
+];
+
 pub const HDA_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, 0x4000, false)];
 
 pub const E1000_BARS: [PciBarProfile; 2] = [
@@ -610,7 +632,7 @@ pub const NVME_CONTROLLER: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &NVME_BARS,
-    capabilities: &[],
+    capabilities: &NVME_CAPS,
 };
 
 pub const HDA_ICH6: PciDeviceProfile = PciDeviceProfile {

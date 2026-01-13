@@ -2250,8 +2250,6 @@ impl NvmePciDevice {
                 prefetchable: false,
             },
         );
-        config.add_capability(Box::new(MsiCapability::new()));
-        add_nvme_msix_capability(&mut config);
         Self {
             config,
             controller,
