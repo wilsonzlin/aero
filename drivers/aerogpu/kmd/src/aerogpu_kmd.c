@@ -3601,25 +3601,34 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hA
         return STATUS_NOT_SUPPORTED;
     }
 
+    if (!vidpn.pfnCreateNewSourceModeSet || !vidpn.pfnAssignSourceModeSet || !vidpn.pfnGetSourceModeSetInterface ||
+        !vidpn.pfnReleaseSourceModeSet || !vidpn.pfnCreateNewTargetModeSet || !vidpn.pfnAssignTargetModeSet ||
+        !vidpn.pfnGetTargetModeSetInterface || !vidpn.pfnReleaseTargetModeSet) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     D3DKMDT_HVIDPNTOPOLOGY hTopology = 0;
+    D3DKMDT_HVIDPNSOURCEMODESET hSourceModeSet = 0;
+    D3DKMDT_HVIDPNTARGETMODESET hTargetModeSet = 0;
+
     status = vidpn.pfnCreateNewTopology(pRecommend->hFunctionalVidPn, &hTopology);
     if (!NT_SUCCESS(status) || !hTopology) {
-        return status;
+        return NT_SUCCESS(status) ? STATUS_INSUFFICIENT_RESOURCES : status;
     }
 
     DXGK_VIDPNTOPOLOGY_INTERFACE topo;
     RtlZeroMemory(&topo, sizeof(topo));
     status = vidpn.pfnGetTopologyInterface(pRecommend->hFunctionalVidPn, hTopology, &topo);
     if (!NT_SUCCESS(status) || !topo.pfnCreateNewPathInfo || !topo.pfnAddPath || !topo.pfnReleasePathInfo) {
-        vidpn.pfnReleaseTopology(pRecommend->hFunctionalVidPn, hTopology);
-        return STATUS_NOT_SUPPORTED;
+        status = STATUS_NOT_SUPPORTED;
+        goto Cleanup;
     }
 
     D3DKMDT_VIDPN_PRESENT_PATH* path = NULL;
     status = topo.pfnCreateNewPathInfo(hTopology, &path);
     if (!NT_SUCCESS(status) || !path) {
-        vidpn.pfnReleaseTopology(pRecommend->hFunctionalVidPn, hTopology);
-        return NT_SUCCESS(status) ? STATUS_INSUFFICIENT_RESOURCES : status;
+        status = NT_SUCCESS(status) ? STATUS_INSUFFICIENT_RESOURCES : status;
+        goto Cleanup;
     }
 
     RtlZeroMemory(path, sizeof(*path));
@@ -3631,12 +3640,131 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hA
     status = topo.pfnAddPath(hTopology, path);
     topo.pfnReleasePathInfo(hTopology, path);
     if (!NT_SUCCESS(status)) {
-        vidpn.pfnReleaseTopology(pRecommend->hFunctionalVidPn, hTopology);
-        return status;
+        goto Cleanup;
     }
 
     status = vidpn.pfnAssignTopology(pRecommend->hFunctionalVidPn, hTopology);
-    vidpn.pfnReleaseTopology(pRecommend->hFunctionalVidPn, hTopology);
+    if (!NT_SUCCESS(status)) {
+        goto Cleanup;
+    }
+
+    /* Build a conservative 32bpp @ 60Hz mode list and assign it to both source and target. */
+    AEROGPU_DISPLAY_MODE modes[16];
+    UINT modeCount = AeroGpuBuildModeList(modes, (UINT)(sizeof(modes) / sizeof(modes[0])));
+    const ULONG pinW = (modeCount > 0) ? modes[0].Width : 0;
+    const ULONG pinH = (modeCount > 0) ? modes[0].Height : 0;
+
+    status = vidpn.pfnCreateNewSourceModeSet(pRecommend->hFunctionalVidPn, AEROGPU_VIDPN_SOURCE_ID, &hSourceModeSet);
+    if (!NT_SUCCESS(status) || !hSourceModeSet) {
+        status = NT_SUCCESS(status) ? STATUS_INSUFFICIENT_RESOURCES : status;
+        goto Cleanup;
+    }
+
+    DXGK_VIDPNSOURCEMODESET_INTERFACE sms;
+    RtlZeroMemory(&sms, sizeof(sms));
+    status = vidpn.pfnGetSourceModeSetInterface(pRecommend->hFunctionalVidPn, hSourceModeSet, &sms);
+    if (!NT_SUCCESS(status) || !sms.pfnCreateNewModeInfo || !sms.pfnAddMode || !sms.pfnReleaseModeInfo) {
+        status = STATUS_NOT_SUPPORTED;
+        goto Cleanup;
+    }
+
+    for (UINT i = 0; i < modeCount; ++i) {
+        const ULONG w = modes[i].Width;
+        const ULONG h = modes[i].Height;
+        if (w == 0 || h == 0) {
+            continue;
+        }
+
+        D3DKMDT_VIDPN_SOURCE_MODE* modeInfo = NULL;
+        NTSTATUS st2 = sms.pfnCreateNewModeInfo(hSourceModeSet, &modeInfo);
+        if (!NT_SUCCESS(st2) || !modeInfo) {
+            continue;
+        }
+
+        RtlZeroMemory(modeInfo, sizeof(*modeInfo));
+        modeInfo->Type = D3DKMDT_RMT_GRAPHICS;
+        modeInfo->Format.Graphics.PrimSurfSize.cx = w;
+        modeInfo->Format.Graphics.PrimSurfSize.cy = h;
+        modeInfo->Format.Graphics.PixelFormat = D3DDDIFMT_X8R8G8B8;
+
+        st2 = sms.pfnAddMode(hSourceModeSet, modeInfo);
+        if (NT_SUCCESS(st2) && sms.pfnPinMode && w == pinW && h == pinH) {
+            (void)sms.pfnPinMode(hSourceModeSet, modeInfo);
+        }
+
+        sms.pfnReleaseModeInfo(hSourceModeSet, modeInfo);
+    }
+
+    status = vidpn.pfnAssignSourceModeSet(pRecommend->hFunctionalVidPn, AEROGPU_VIDPN_SOURCE_ID, hSourceModeSet);
+    if (!NT_SUCCESS(status)) {
+        goto Cleanup;
+    }
+
+    status = vidpn.pfnCreateNewTargetModeSet(pRecommend->hFunctionalVidPn, AEROGPU_VIDPN_TARGET_ID, &hTargetModeSet);
+    if (!NT_SUCCESS(status) || !hTargetModeSet) {
+        status = NT_SUCCESS(status) ? STATUS_INSUFFICIENT_RESOURCES : status;
+        goto Cleanup;
+    }
+
+    DXGK_VIDPNTARGETMODESET_INTERFACE tms;
+    RtlZeroMemory(&tms, sizeof(tms));
+    status = vidpn.pfnGetTargetModeSetInterface(pRecommend->hFunctionalVidPn, hTargetModeSet, &tms);
+    if (!NT_SUCCESS(status) || !tms.pfnCreateNewModeInfo || !tms.pfnAddMode || !tms.pfnReleaseModeInfo) {
+        status = STATUS_NOT_SUPPORTED;
+        goto Cleanup;
+    }
+
+    for (UINT i = 0; i < modeCount; ++i) {
+        const ULONG w = modes[i].Width;
+        const ULONG h = modes[i].Height;
+        if (w == 0 || h == 0) {
+            continue;
+        }
+
+        D3DKMDT_VIDPN_TARGET_MODE* modeInfo = NULL;
+        NTSTATUS st2 = tms.pfnCreateNewModeInfo(hTargetModeSet, &modeInfo);
+        if (!NT_SUCCESS(st2) || !modeInfo) {
+            continue;
+        }
+
+        RtlZeroMemory(modeInfo, sizeof(*modeInfo));
+        modeInfo->VideoSignalInfo.VideoStandard = D3DKMDT_VSS_OTHER;
+        modeInfo->VideoSignalInfo.ActiveSize.cx = w;
+        modeInfo->VideoSignalInfo.ActiveSize.cy = h;
+        modeInfo->VideoSignalInfo.TotalSize = modeInfo->VideoSignalInfo.ActiveSize;
+        modeInfo->VideoSignalInfo.VSyncFreq.Numerator = 60;
+        modeInfo->VideoSignalInfo.VSyncFreq.Denominator = 1;
+        modeInfo->VideoSignalInfo.HSyncFreq.Numerator = 60 * h;
+        modeInfo->VideoSignalInfo.HSyncFreq.Denominator = 1;
+        {
+            ULONGLONG pixelRate = (ULONGLONG)60ull * (ULONGLONG)w * (ULONGLONG)h;
+            if (pixelRate > (ULONGLONG)0xFFFFFFFFu) {
+                pixelRate = 0;
+            }
+            modeInfo->VideoSignalInfo.PixelRate = (ULONG)pixelRate;
+        }
+        modeInfo->VideoSignalInfo.ScanLineOrdering = D3DKMDT_VSSLO_PROGRESSIVE;
+
+        st2 = tms.pfnAddMode(hTargetModeSet, modeInfo);
+        if (NT_SUCCESS(st2) && tms.pfnPinMode && w == pinW && h == pinH) {
+            (void)tms.pfnPinMode(hTargetModeSet, modeInfo);
+        }
+
+        tms.pfnReleaseModeInfo(hTargetModeSet, modeInfo);
+    }
+
+    status = vidpn.pfnAssignTargetModeSet(pRecommend->hFunctionalVidPn, AEROGPU_VIDPN_TARGET_ID, hTargetModeSet);
+
+Cleanup:
+    if (hSourceModeSet) {
+        vidpn.pfnReleaseSourceModeSet(pRecommend->hFunctionalVidPn, hSourceModeSet);
+    }
+    if (hTargetModeSet) {
+        vidpn.pfnReleaseTargetModeSet(pRecommend->hFunctionalVidPn, hTargetModeSet);
+    }
+    if (hTopology) {
+        vidpn.pfnReleaseTopology(pRecommend->hFunctionalVidPn, hTopology);
+    }
     return status;
 }
 
