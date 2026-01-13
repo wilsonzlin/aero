@@ -1,6 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_storage::{DiskError, StdFileBackend, StorageBackend as _};
+use aero_storage::{
+    DiskError, DiskFormat, DiskImage, StdFileBackend, StorageBackend as _, VirtualDisk, SECTOR_SIZE,
+};
 use tempfile::tempdir;
 
 #[test]
@@ -64,3 +66,23 @@ fn file_backend_read_beyond_eof_is_out_of_bounds() {
     assert!(matches!(err, DiskError::OutOfBounds { .. }));
 }
 
+#[test]
+fn file_backend_can_open_disk_image_auto() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("disk.img");
+
+    let backend = StdFileBackend::create(&path, (SECTOR_SIZE * 8) as u64).unwrap();
+    let mut disk = DiskImage::open_auto(backend).unwrap();
+    assert_eq!(disk.format(), DiskFormat::Raw);
+
+    let sector = vec![0xA5u8; SECTOR_SIZE];
+    disk.write_sectors(0, &sector).unwrap();
+    disk.flush().unwrap();
+
+    // Ensure data persists after reopening.
+    let backend = StdFileBackend::open(&path, false).unwrap();
+    let mut disk = DiskImage::open_auto(backend).unwrap();
+    let mut buf = vec![0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut buf).unwrap();
+    assert_eq!(buf, sector);
+}
