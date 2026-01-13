@@ -7,7 +7,7 @@
 //! It exists primarily to provide an end-to-end smoke test path from a command
 //! stream to WebGPU execution.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use aero_d3d9::runtime::{
     ColorFormat, D3D9Runtime, IndexFormat as RuntimeIndexFormat, RenderTarget, RuntimeConfig,
@@ -22,6 +22,7 @@ use crate::protocol_d3d9::{
     IndexFormat, Opcode, ShaderStage, TextureFormat, VertexFormat, COMMAND_HEADER_LEN,
     STREAM_HEADER_LEN, STREAM_MAGIC, STREAM_VERSION_MAJOR,
 };
+use crate::shared_surface::SharedSurfaceTable;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ProcessorConfig {
@@ -54,176 +55,11 @@ pub struct CommandProcessor {
     devices: HashMap<u32, DeviceEntry>,
     contexts: HashMap<u32, u32>,
 
-    shared_textures: SharedTextureState,
+    shared_textures: SharedSurfaceTable,
 }
 
 struct DeviceEntry {
     runtime: D3D9Runtime,
-}
-
-#[derive(Default)]
-struct SharedTextureState {
-    /// `share_token -> underlying texture handle`.
-    shared_surface_by_token: HashMap<u64, u32>,
-    /// `share_token` values that were previously valid but were released (or removed after the
-    /// underlying texture was destroyed).
-    ///
-    /// Prevents misbehaving guests from "re-arming" a released token by re-exporting it for a
-    /// different resource.
-    retired_share_tokens: HashSet<u64>,
-    /// `texture handle -> underlying texture handle`.
-    ///
-    /// Includes both original handles (identity mapping) and imported aliases.
-    texture_handles: HashMap<u32, u32>,
-    /// `underlying texture handle -> live handle refcount` (original + aliases).
-    texture_refcounts: HashMap<u32, u32>,
-}
-
-impl SharedTextureState {
-    fn retire_tokens_for_underlying(&mut self, underlying: u32) {
-        let to_retire: Vec<u64> = self
-            .shared_surface_by_token
-            .iter()
-            .filter_map(|(k, v)| (*v == underlying).then_some(*k))
-            .collect();
-        for token in to_retire {
-            self.shared_surface_by_token.remove(&token);
-            self.retired_share_tokens.insert(token);
-        }
-    }
-
-    fn clear(&mut self) {
-        self.shared_surface_by_token.clear();
-        self.retired_share_tokens.clear();
-        self.texture_handles.clear();
-        self.texture_refcounts.clear();
-    }
-
-    fn resolve_texture_handle(&self, handle: u32) -> Option<u32> {
-        self.texture_handles.get(&handle).copied()
-    }
-
-    fn register_texture_handle(&mut self, handle: u32, underlying: u32) -> Result<(), String> {
-        if handle == 0 {
-            return Err("texture handle 0 is reserved".into());
-        }
-        if self.texture_handles.contains_key(&handle) {
-            return Err(format!("texture handle {handle} already exists"));
-        }
-        if self.texture_refcounts.contains_key(&handle) {
-            // Underlying handles remain reserved as long as any aliases still reference them. If an
-            // original handle was destroyed, reject reusing its numeric ID until the underlying
-            // texture is fully released.
-            return Err(format!(
-                "texture handle {handle} is still in use (underlying id kept alive by shared surface aliases)"
-            ));
-        }
-        self.texture_handles.insert(handle, underlying);
-        *self.texture_refcounts.entry(underlying).or_insert(0) += 1;
-        Ok(())
-    }
-
-    fn destroy_texture_handle(
-        &mut self,
-        runtime: &mut D3D9Runtime,
-        handle: u32,
-    ) -> Result<(), String> {
-        let underlying = match self.texture_handles.remove(&handle) {
-            Some(underlying) => underlying,
-            None => {
-                // If the original handle has already been destroyed (removed from `texture_handles`)
-                // but aliases keep the underlying texture alive (`texture_refcounts` still contains
-                // the underlying ID), treat duplicate destroys as an idempotent no-op.
-                if self.texture_refcounts.contains_key(&handle) {
-                    return Ok(());
-                }
-                return Err(format!("unknown texture handle {handle}"));
-            }
-        };
-
-        let Some(count) = self.texture_refcounts.get_mut(&underlying) else {
-            return Err(format!(
-                "internal error: missing refcount entry for texture {underlying}"
-            ));
-        };
-
-        *count = count.saturating_sub(1);
-        if *count == 0 {
-            self.texture_refcounts.remove(&underlying);
-            runtime
-                .destroy_texture(underlying)
-                .map_err(|e| e.to_string())?;
-            self.retire_tokens_for_underlying(underlying);
-        }
-
-        Ok(())
-    }
-
-    fn export_shared_surface(
-        &mut self,
-        resource_handle: u32,
-        share_token: u64,
-    ) -> Result<(), String> {
-        if resource_handle == 0 {
-            return Err("ExportSharedSurface resource_handle 0 is reserved".into());
-        }
-        if share_token == 0 {
-            return Err("ExportSharedSurface share_token 0 is reserved".into());
-        }
-        if self.retired_share_tokens.contains(&share_token) {
-            return Err(format!(
-                "shared surface token 0x{share_token:016X} was previously released and cannot be reused"
-            ));
-        }
-        let underlying = self
-            .resolve_texture_handle(resource_handle)
-            .ok_or_else(|| {
-                format!("ExportSharedSurface references unknown texture handle {resource_handle}")
-            })?;
-        if let Some(existing) = self.shared_surface_by_token.get(&share_token).copied() {
-            if existing != underlying {
-                return Err(format!(
-                    "shared surface token 0x{share_token:016X} already exported (existing_handle={existing} new_handle={underlying})"
-                ));
-            }
-        } else {
-            self.shared_surface_by_token.insert(share_token, underlying);
-        }
-        Ok(())
-    }
-
-    fn import_shared_surface(
-        &mut self,
-        out_resource_handle: u32,
-        share_token: u64,
-    ) -> Result<(), String> {
-        if out_resource_handle == 0 {
-            return Err("ImportSharedSurface out_resource_handle 0 is reserved".into());
-        }
-        if share_token == 0 {
-            return Err("ImportSharedSurface share_token 0 is reserved".into());
-        }
-        let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
-            return Err(format!("unknown shared surface token 0x{share_token:016X}"));
-        };
-
-        if !self.texture_refcounts.contains_key(&underlying) {
-            return Err(format!(
-                "shared surface token 0x{share_token:016X} refers to destroyed texture {underlying}"
-            ));
-        }
-
-        if let Some(existing) = self.texture_handles.get(&out_resource_handle).copied() {
-            if existing != underlying {
-                return Err(format!(
-                    "texture handle {out_resource_handle} already exists (existing_handle={existing} new_handle={underlying})"
-                ));
-            }
-            Ok(())
-        } else {
-            self.register_texture_handle(out_resource_handle, underlying)
-        }
-    }
 }
 
 impl CommandProcessor {
@@ -232,7 +68,7 @@ impl CommandProcessor {
             config,
             devices: HashMap::new(),
             contexts: HashMap::new(),
-            shared_textures: SharedTextureState::default(),
+            shared_textures: SharedSurfaceTable::default(),
         }
     }
 
@@ -379,10 +215,13 @@ impl CommandProcessor {
         device_id: u32,
         texture_handle: u32,
     ) -> Result<(u32, u32, Vec<u8>), String> {
+        if texture_handle == 0 {
+            return Err("texture handle 0 is reserved".into());
+        }
         let underlying = self
             .shared_textures
-            .resolve_texture_handle(texture_handle)
-            .ok_or_else(|| format!("unknown texture handle {texture_handle}"))?;
+            .resolve_cmd_handle(texture_handle)
+            .map_err(|e| e.to_string())?;
 
         let device = self
             .devices
@@ -475,7 +314,8 @@ impl CommandProcessor {
                 }
 
                 self.shared_textures
-                    .export_shared_surface(resource_handle, share_token)
+                    .export(resource_handle, share_token)
+                    .map_err(|e| e.to_string())
             }
             Opcode::ImportSharedSurface => {
                 let out_resource_handle = p.read_u32_le().map_err(|e| e.message)?;
@@ -486,7 +326,8 @@ impl CommandProcessor {
                 }
 
                 self.shared_textures
-                    .import_shared_surface(out_resource_handle, share_token)
+                    .import(out_resource_handle, share_token)
+                    .map_err(|e| e.to_string())
             }
             _ => {
                 let context_id = p.read_u32_le().map_err(|e| e.message)?;
@@ -525,7 +366,7 @@ impl CommandProcessor {
     }
 
     async fn execute_context_command(
-        shared_textures: &mut SharedTextureState,
+        shared_textures: &mut SharedSurfaceTable,
         runtime: &mut D3D9Runtime,
         opcode: Opcode,
         _context_id: u32,
@@ -614,17 +455,6 @@ impl CommandProcessor {
                 if texture_id == 0 {
                     return Err("texture handle 0 is reserved".into());
                 }
-                if shared_textures.texture_handles.contains_key(&texture_id) {
-                    return Err(format!("texture handle {texture_id} already exists"));
-                }
-                if shared_textures.texture_refcounts.contains_key(&texture_id) {
-                    // Underlying handles remain reserved as long as any aliases still reference
-                    // them. If the original handle was destroyed, reject reusing its numeric ID
-                    // until the underlying texture is fully released.
-                    return Err(format!(
-                        "texture handle {texture_id} is still in use (underlying id kept alive by shared surface aliases)"
-                    ));
-                }
 
                 let format = TextureFormat::from_u32(format_raw)
                     .ok_or_else(|| format!("unknown texture format {format_raw}"))?;
@@ -641,7 +471,18 @@ impl CommandProcessor {
                         },
                     )
                     .map_err(|e| e.to_string())?;
-                shared_textures.register_texture_handle(texture_id, texture_id)?;
+                if let Err(e) = shared_textures.register_handle(texture_id) {
+                    // Avoid leaking the newly-created texture if the handle is invalid (e.g.
+                    // collides with an imported alias handle).
+                    if let Err(runtime_err) = runtime.destroy_texture(texture_id) {
+                        warn!(
+                            texture_id,
+                            error = %runtime_err,
+                            "failed to destroy texture after shared-surface registration failure"
+                        );
+                    }
+                    return Err(e.to_string());
+                }
                 Ok(())
             }
             Opcode::TextureUpdate => {
@@ -651,9 +492,12 @@ impl CommandProcessor {
                 let height = p.read_u32_le().map_err(|e| e.message)?;
                 let data = p.read_bytes(p.remaining()).map_err(|e| e.message)?;
 
+                if texture_handle == 0 {
+                    return Err("TextureUpdate texture handle 0 is reserved".into());
+                }
                 let texture_id = shared_textures
-                    .resolve_texture_handle(texture_handle)
-                    .ok_or_else(|| format!("unknown texture handle {texture_handle}"))?;
+                    .resolve_cmd_handle(texture_handle)
+                    .map_err(|e| e.to_string())?;
                 runtime
                     .write_texture_full_mip(texture_id, mip_level, width, height, data)
                     .map_err(|e| e.to_string())?;
@@ -664,7 +508,15 @@ impl CommandProcessor {
                 if p.remaining() != 0 {
                     return Err("TextureDestroy payload must be exactly 8 bytes".into());
                 }
-                shared_textures.destroy_texture_handle(runtime, texture_id)?;
+                let Some((underlying, last_ref)) = shared_textures.destroy_handle(texture_id)
+                else {
+                    return Err(format!("unknown texture handle {texture_id}"));
+                };
+                if last_ref {
+                    runtime
+                        .destroy_texture(underlying)
+                        .map_err(|e| e.to_string())?;
+                }
                 Ok(())
             }
             Opcode::SetRenderTargets => match p.remaining() {
@@ -690,8 +542,11 @@ impl CommandProcessor {
                         1 => Some(RenderTarget::SwapChain(color_id)),
                         2 => {
                             let texture_id = shared_textures
-                                .resolve_texture_handle(color_id)
-                                .ok_or_else(|| format!("unknown texture handle {color_id}"))?;
+                                .resolve_cmd_handle(color_id)
+                                .map_err(|e| e.to_string())?;
+                            if texture_id == 0 {
+                                return Err(format!("unknown texture handle {color_id}"));
+                            }
                             Some(RenderTarget::Texture(texture_id))
                         }
                         _ => return Err(format!("unknown color render target kind {color_kind}")),
@@ -701,11 +556,14 @@ impl CommandProcessor {
                         0 => None,
                         2 => Some(
                             shared_textures
-                                .resolve_texture_handle(depth_id)
-                                .ok_or_else(|| format!("unknown texture handle {depth_id}"))?,
+                                .resolve_cmd_handle(depth_id)
+                                .map_err(|e| e.to_string())?,
                         ),
                         _ => return Err(format!("unknown depth-stencil target kind {depth_kind}")),
                     };
+                    if depth == Some(0) {
+                        return Err(format!("unknown texture handle {depth_id}"));
+                    }
 
                     runtime
                         .set_render_targets(color, depth)
