@@ -312,4 +312,54 @@ mod tests {
         // alignment). Only bits 7:4 can survive for a 16-byte aligned BAR.
         assert_eq!(compat.read_u32(0x10, 4), 0x0000_00A0);
     }
+
+    #[test]
+    fn config_read_that_starts_before_bar_and_spills_into_bar_uses_bar_semantics() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+
+        let compat = PciConfigSpaceCompat::new(cfg);
+
+        // BAR probe: config bytes at 0x10..0x13 remain zero, but BAR reads return the size mask.
+        compat.write_u32(0x10, 4, 0xFFFF_FFFF);
+        assert_eq!(compat.read_u32(0x10, 4), 0xFFFF_F000);
+
+        // Unaligned dword read starting at 0x0E overlaps BAR0 bytes 0x10..0x11. The helper must
+        // source those bytes via BAR semantics, not the raw config bytes (which are still zero).
+        //
+        // Bytes at 0x10..0x13 for the size mask 0xFFFF_F000 are [00, F0, FF, FF].
+        // Reading 4 bytes starting at 0x0E includes byte 0x11 as the top byte of the result.
+        assert_eq!(compat.read_u32(0x0E, 4), 0xF000_0000);
+    }
+
+    #[test]
+    fn mmio64_bar_high_dword_subword_write_updates_base_without_panic() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: 0x4000,
+                prefetchable: false,
+            },
+        );
+
+        let compat = PciConfigSpaceCompat::new(cfg);
+
+        // Program a low 32-bit base (flags are ignored by the canonical implementation and will
+        // be reinserted on reads).
+        compat.write_u32(0x10, 4, 0x2345_6000);
+        assert_eq!(compat.read_u32(0x10, 4), 0x2345_4004);
+
+        // Subword write into the high dword (BAR1). This must not panic and must update the high
+        // dword as observed through config reads.
+        compat.write_u32(0x15, 1, 0x01);
+        assert_eq!(compat.read_u32(0x14, 4), 0x0000_0100);
+        assert_eq!(compat.read_u32(0x10, 4), 0x2345_4004);
+    }
 }
