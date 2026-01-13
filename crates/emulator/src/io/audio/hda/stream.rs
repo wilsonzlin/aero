@@ -485,9 +485,17 @@ impl HdaStream {
             }
 
             let format = StreamFormat::from_hda_fmt(self.fmt);
-            let bytes_per_sample = (u32::from(format.bits_per_sample).div_ceil(8)).max(1);
-            let bytes_per_frame = bytes_per_sample.saturating_mul(format.channels as u32);
-            let bytes_per_tick = bytes_per_frame.saturating_mul(128).max(1);
+            // Use the *container* width implied by our DSP mapping (e.g. 20/24-bit in 32-bit
+            // little-endian words), not the nominal bit depth. This keeps tick sizing aligned
+            // with the downstream PCM decode pipeline.
+            let bytes_per_sample = format
+                .to_pcm_spec()
+                .map(|spec| spec.format.bytes_per_sample() as u32)
+                .unwrap_or_else(|| (u32::from(format.bits_per_sample).div_ceil(8)).max(1));
+            let bytes_per_frame = bytes_per_sample
+                .saturating_mul(format.channels as u32)
+                .max(1);
+            let bytes_per_tick = bytes_per_frame.saturating_mul(128);
             let take = remaining.min(bytes_per_tick);
 
             let bytes = take as usize;
@@ -538,9 +546,14 @@ impl HdaStream {
             }
 
             let format = StreamFormat::from_hda_fmt(self.fmt);
-            let bytes_per_sample = (u32::from(format.bits_per_sample).div_ceil(8)).max(1);
-            let bytes_per_frame = bytes_per_sample.saturating_mul(format.channels as u32);
-            let bytes_per_tick = bytes_per_frame.saturating_mul(128).max(1);
+            let bytes_per_sample = format
+                .to_pcm_spec()
+                .map(|spec| spec.format.bytes_per_sample() as u32)
+                .unwrap_or_else(|| (u32::from(format.bits_per_sample).div_ceil(8)).max(1));
+            let bytes_per_frame = bytes_per_sample
+                .saturating_mul(format.channels as u32)
+                .max(1);
+            let bytes_per_tick = bytes_per_frame.saturating_mul(128);
             let take = remaining.min(bytes_per_tick);
 
             let bytes = take as usize;
@@ -661,10 +674,11 @@ mod tests {
     use super::AudioRingBuffer;
     use super::HdaStream;
     use super::StreamFormat;
-    use super::{SD_CTL_RUN, SD_CTL_SRST, StreamId};
+    use super::{StreamId, SD_CTL_RUN, SD_CTL_SRST};
     use crate::io::audio::dsp::pcm::PcmSampleFormat;
     use memory::MemoryBus;
     use std::collections::BTreeMap;
+    use std::panic::AssertUnwindSafe;
 
     #[derive(Clone, Debug)]
     struct CountingMem {
@@ -871,7 +885,13 @@ mod tests {
         let mut audio = AudioRingBuffer::new(16);
         let mut intsts = 0u32;
 
-        stream.process(&mut mem, &mut audio, &mut intsts);
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            stream.process(&mut mem, &mut audio, &mut intsts)
+        }));
+        assert!(
+            result.is_ok(),
+            "process() must not panic on overflowing BDL base/index arithmetic"
+        );
         assert!(audio.is_empty());
         assert_eq!(intsts, 0);
     }
@@ -893,7 +913,13 @@ mod tests {
         let before = capture.len();
         let mut intsts = 0u32;
 
-        stream.process_capture(&mut mem, &mut capture, &mut intsts);
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            stream.process_capture(&mut mem, &mut capture, &mut intsts)
+        }));
+        assert!(
+            result.is_ok(),
+            "process_capture() must not panic on overflowing BDL base/index arithmetic"
+        );
         assert_eq!(capture.len(), before);
         assert_eq!(intsts, 0);
     }
@@ -1016,7 +1042,8 @@ mod tests {
         let mut mem = CountingMem::new(0x3000, 128);
         // BDL entry 0: 1 byte at BUF0, no IOC.
         mem.data[BDL_BASE as usize..BDL_BASE as usize + 8].copy_from_slice(&BUF0.to_le_bytes());
-        mem.data[BDL_BASE as usize + 8..BDL_BASE as usize + 12].copy_from_slice(&1u32.to_le_bytes());
+        mem.data[BDL_BASE as usize + 8..BDL_BASE as usize + 12]
+            .copy_from_slice(&1u32.to_le_bytes());
         mem.data[BDL_BASE as usize + 12..BDL_BASE as usize + 16]
             .copy_from_slice(&0u32.to_le_bytes());
         mem.data[BUF0 as usize] = 0xaa;
@@ -1060,5 +1087,53 @@ mod tests {
         assert_eq!(entry.addr, 0);
         assert_eq!(entry.len, 0);
         assert!(!entry.ioc);
+    }
+
+    #[test]
+    fn stream_process_20bit_stereo_ticks_use_32bit_containers() {
+        const BDL_BASE: u64 = 0x1000;
+        const BUF_ADDR: u64 = 0x2000;
+
+        // HDA FMT encoding: 48kHz base, mult=1, div=1, 20-bit, 2 channels.
+        const FMT_20BIT_STEREO: u16 = 0x21;
+
+        let mut stream = HdaStream::new(super::StreamId::Out0);
+        let mut stream_intsts = 0u32;
+        stream.mmio_write(super::StreamReg::Bdpl, 4, BDL_BASE, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Bdpu, 4, 0, &mut stream_intsts);
+        stream.mmio_write(
+            super::StreamReg::Fmt,
+            2,
+            FMT_20BIT_STEREO as u64,
+            &mut stream_intsts,
+        );
+        stream.mmio_write(super::StreamReg::Cbl, 4, 2048, &mut stream_intsts);
+        stream.mmio_write(super::StreamReg::Lvi, 2, 0, &mut stream_intsts);
+        stream.mmio_write(
+            super::StreamReg::CtlSts,
+            4,
+            (super::SD_CTL_RUN | super::SD_CTL_SRST) as u64,
+            &mut stream_intsts,
+        );
+
+        let expected = 4usize * 2usize * 128usize;
+        let entry_len = (expected * 2) as u32;
+
+        let mut mem = CountingMem::new(0x4000, 64);
+        let bdl_off = BDL_BASE as usize;
+        mem.data[bdl_off..bdl_off + 8].copy_from_slice(&BUF_ADDR.to_le_bytes());
+        mem.data[bdl_off + 8..bdl_off + 12].copy_from_slice(&entry_len.to_le_bytes());
+        mem.data[bdl_off + 12..bdl_off + 16].copy_from_slice(&0u32.to_le_bytes());
+        for i in 0..entry_len as usize {
+            if let Some(slot) = mem.data.get_mut(BUF_ADDR as usize + i) {
+                *slot = (i & 0xff) as u8;
+            }
+        }
+
+        let mut audio = AudioRingBuffer::new(4096);
+        let mut intsts = 0u32;
+        stream.process(&mut mem, &mut audio, &mut intsts);
+
+        assert_eq!(audio.len(), expected);
     }
 }
