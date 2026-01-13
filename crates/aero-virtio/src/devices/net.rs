@@ -72,6 +72,13 @@ impl<B: NetBackend> VirtioNet<B> {
     pub fn backend_mut(&mut self) -> &mut B {
         &mut self.backend
     }
+
+    /// Feature bits that were accepted by the device after negotiation.
+    ///
+    /// This is derived from (and always a subset of) [`VirtioDevice::device_features`].
+    pub fn negotiated_features(&self) -> u64 {
+        self.negotiated_features
+    }
 }
 
 impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
@@ -87,7 +94,11 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
     }
 
     fn set_features(&mut self, features: u64) {
-        self.negotiated_features = features;
+        // Defensively mask to the feature bits this device actually offers. The virtio-pci
+        // transport enforces this during negotiation, but other call-sites (e.g. snapshot restore)
+        // may supply corrupted or malicious feature values.
+        let offered = <Self as VirtioDevice>::device_features(self);
+        self.negotiated_features = features & offered;
     }
 
     fn num_queues(&self) -> u16 {
@@ -159,7 +170,7 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
 }
 
 impl<B: NetBackend> VirtioNet<B> {
-    fn negotiated_hdr_len(&self) -> usize {
+    pub fn negotiated_hdr_len(&self) -> usize {
         if (self.negotiated_features & VIRTIO_NET_F_MRG_RXBUF) != 0 {
             VirtioNetHdr::LEN
         } else {
@@ -652,9 +663,11 @@ mod tests {
     }
 
     #[test]
-    fn tx_gso_with_negotiated_features_segments_and_transmits() {
+    fn tx_gso_request_does_not_allocate_or_stall_when_offloads_not_supported() {
         let mut dev = VirtioNet::new(LoopbackNet::default(), [0; 6]);
-        dev.set_features(VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4);
+        // Even if a caller supplies offload feature bits, the virtio-net device must mask them out
+        // because the Win7 contract does not advertise offloads.
+        dev.set_features(u64::MAX);
 
         let mut mem = GuestRam::new(0x10000);
 
@@ -722,7 +735,9 @@ mod tests {
         };
         dev.process_queue(1, chain, &mut queue, &mut mem).unwrap();
 
-        assert_eq!(dev.backend_mut().tx_packets.len(), 3);
+        // The packet is oversized unless GSO offload is negotiated (which it never is for the
+        // Win7 contract). The chain must still be completed without transmitting anything.
+        assert!(dev.backend_mut().tx_packets.is_empty());
         assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
     }
 

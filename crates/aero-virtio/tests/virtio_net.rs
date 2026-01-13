@@ -1,5 +1,6 @@
 use aero_virtio::devices::net::{LoopbackNet, NetBackend, VirtioNet};
-use aero_virtio::devices::net_offload::VirtioNetHdr;
+use aero_virtio::devices::net_offload::{self, VirtioNetHdr};
+use aero_virtio::devices::VirtioDevice;
 use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
 };
@@ -115,6 +116,21 @@ fn write_desc(
     write_u32_le(mem, base + 8, len).unwrap();
     write_u16_le(mem, base + 12, flags).unwrap();
     write_u16_le(mem, base + 14, next).unwrap();
+}
+
+#[test]
+fn virtio_net_set_features_masks_to_device_features() {
+    let mut dev = VirtioNet::new(LoopbackNet::default(), [0; 6]);
+    let offered = dev.device_features();
+    dev.set_features(u64::MAX);
+    assert_eq!(dev.negotiated_features(), offered);
+}
+
+#[test]
+fn virtio_net_negotiated_hdr_len_is_always_base_len() {
+    let mut dev = VirtioNet::new(LoopbackNet::default(), [0; 6]);
+    dev.set_features(u64::MAX);
+    assert_eq!(dev.negotiated_hdr_len(), VirtioNetHdr::BASE_LEN);
 }
 
 #[test]
@@ -306,6 +322,109 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
         mem.get_slice(rx_payload_addr, rx_packet.len()).unwrap(),
         rx_packet.as_slice()
     );
+}
+
+#[test]
+fn virtio_net_tx_completes_with_offload_request_header() {
+    let backing = Rc::new(RefCell::new(LoopbackNet::default()));
+    let backend = SharedNet(backing.clone());
+
+    let net = VirtioNet::new(backend, [0x02, 0x00, 0x00, 0x00, 0x00, 0x03]);
+    let mut dev = VirtioPciDevice::new(Box::new(net), Box::new(InterruptLog::default()));
+
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
+
+    let caps = parse_caps(&mut dev);
+    let mut mem = GuestRam::new(0x20000);
+
+    // Feature negotiation: accept everything the device offers.
+    bar_write_u8(&mut dev, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    bar_write_u8(
+        &mut dev,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    bar_write_u32(&mut dev, caps.common, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, caps.common + 0x0c, f0);
+
+    bar_write_u32(&mut dev, caps.common, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, caps.common + 0x0c, f1);
+
+    bar_write_u8(
+        &mut dev,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure TX queue 1.
+    let tx_desc = 0x4000;
+    let tx_avail = 0x5000;
+    let tx_used = 0x6000;
+    bar_write_u16(&mut dev, caps.common + 0x16, 1);
+    bar_write_u64(&mut dev, caps.common + 0x20, tx_desc);
+    bar_write_u64(&mut dev, caps.common + 0x28, tx_avail);
+    bar_write_u64(&mut dev, caps.common + 0x30, tx_used);
+    bar_write_u16(&mut dev, caps.common + 0x1c, 1);
+
+    // TX: offload-requesting header + payload.
+    let hdr_addr = 0x7000;
+    let payload_addr = 0x7100;
+    let mut hdr = [0u8; VirtioNetHdr::BASE_LEN];
+    hdr[0] = net_offload::VIRTIO_NET_HDR_F_NEEDS_CSUM;
+    hdr[1] = net_offload::VIRTIO_NET_HDR_GSO_TCPV4;
+    let payload = b"\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\x08\x00";
+    mem.write(hdr_addr, &hdr).unwrap();
+    mem.write(payload_addr, payload).unwrap();
+
+    write_desc(
+        &mut mem,
+        tx_desc,
+        0,
+        hdr_addr,
+        hdr.len() as u32,
+        VIRTQ_DESC_F_NEXT,
+        1,
+    );
+    write_desc(
+        &mut mem,
+        tx_desc,
+        1,
+        payload_addr,
+        payload.len() as u32,
+        0,
+        0,
+    );
+
+    write_u16_le(&mut mem, tx_avail, 0).unwrap();
+    write_u16_le(&mut mem, tx_avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, tx_avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, tx_used, 0).unwrap();
+    write_u16_le(&mut mem, tx_used + 2, 0).unwrap();
+
+    dev.bar0_write(
+        caps.notify + u64::from(caps.notify_mult),
+        &1u16.to_le_bytes(),
+    );
+    dev.process_notified_queues(&mut mem);
+
+    // Offloads are not negotiated under the Win7 contract, but the device must still complete the
+    // chain and transmit the packet unchanged.
+    assert_eq!(backing.borrow().tx_packets, vec![payload.to_vec()]);
+    assert_eq!(read_u16_le(&mem, tx_used + 2).unwrap(), 1);
 }
 
 #[test]
