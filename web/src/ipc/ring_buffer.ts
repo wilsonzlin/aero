@@ -273,6 +273,55 @@ export class RingBuffer {
   }
 
   /**
+   * Single-producer variant of {@link RingBuffer.tryPushWithWriter} that throws on corruption.
+   *
+   * The generic `tryPushWithWriter` implementation supports multiple concurrent producers and
+   * enforces in-order commits via a `TAIL_COMMIT` spin/wait loop. On the browser main thread,
+   * `Atomics.wait` is unavailable, so a corrupted commit state can otherwise spin indefinitely.
+   *
+   * Use this helper when the ring is known to have exactly one producer (common for main-thread
+   * producers pushing to a worker consumer).
+   */
+  tryPushWithWriterSpsc(payloadLen: number, writer: (dest: Uint8Array) => void): boolean {
+    const len = Math.max(0, Math.floor(payloadLen)) >>> 0;
+    const recordSize = alignUp(4 + len, RECORD_ALIGN);
+    if (recordSize > this.cap) return false;
+
+    const head = u32(Atomics.load(this.ctrl, ringCtrl.HEAD));
+    const tail = u32(Atomics.load(this.ctrl, ringCtrl.TAIL_COMMIT));
+    const used = u32(tail - head);
+    if (used > this.cap) throw ringBufferCorruption("tail/head out of range");
+    const free = this.cap - used;
+
+    const tailIndex = tail % this.cap;
+    const remaining = this.cap - tailIndex;
+    const needsWrap = remaining >= 4 && remaining < recordSize;
+    const padding = remaining < recordSize ? remaining : 0;
+    const reserve = padding + recordSize;
+    if (reserve > free) return false;
+
+    if (needsWrap) {
+      this.view.setUint32(tailIndex, WRAP_MARKER, true);
+    }
+
+    const start = u32(tail + padding);
+    const startIndex = start % this.cap;
+    this.view.setUint32(startIndex, len, true);
+    const dest = this.data.subarray(startIndex + 4, startIndex + 4 + len);
+    try {
+      writer(dest);
+    } catch {
+      dest.fill(0);
+    }
+
+    const newTail = u32(tail + reserve);
+    Atomics.store(this.ctrl, ringCtrl.TAIL_RESERVE, newTail | 0);
+    Atomics.store(this.ctrl, ringCtrl.TAIL_COMMIT, newTail | 0);
+    Atomics.notify(this.ctrl, ringCtrl.TAIL_COMMIT, 1);
+    return true;
+  }
+
+  /**
    * Consume (and commit) the next record without allocating a new payload buffer.
    *
    * Returns `false` when the ring is empty. The `payload` passed to `consumer` is

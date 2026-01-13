@@ -76,6 +76,16 @@ describe("ipc/ring_buffer", () => {
     expect(Array.from(ring.tryPop() ?? [])).toEqual([9, 8, 7, 6]);
   });
 
+  it("supports single-producer tryPushWithWriterSpsc (used by main-thread fast paths)", () => {
+    const ring = makeRing(64);
+    expect(
+      ring.tryPushWithWriterSpsc(4, (dest) => {
+        dest.set(Uint8Array.of(1, 2, 3, 4));
+      }),
+    ).toBe(true);
+    expect(Array.from(ring.tryPop() ?? [])).toEqual([1, 2, 3, 4]);
+  });
+
   it("can consume records without allocating a new payload buffer", () => {
     const ring = makeRing(64);
     expect(ring.tryPush(Uint8Array.of(1, 2, 3))).toBe(true);

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createIpcBuffer, openRingByKind } from "../ipc/ipc";
+import { ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
 import { StatusIndex } from "../runtime/shared_layout";
@@ -548,6 +549,44 @@ describe("hid/WebHidBroker", () => {
     expect(input!.msg.deviceId).toBe(id);
     expect(input!.msg.reportId).toBe(3);
     expect(Array.from(input!.msg.data)).toEqual([5]);
+
+    broker.destroy();
+  });
+
+  it("detaches rings and posts hid.ringDetach when the input report ring is corrupted", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringInit = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ring.init")?.msg as
+      | { sab: SharedArrayBuffer; offsetBytes: number }
+      | undefined;
+    expect(ringInit).toBeTruthy();
+
+    // Corrupt the ring control header so the producer-side push path detects a bogus head/tail relationship.
+    const ctrl = new Int32Array(ringInit!.sab, ringInit!.offsetBytes, ringCtrl.WORDS);
+    Atomics.store(ctrl, ringCtrl.HEAD, 0x7fff_ffff);
+
+    const device = new FakeHidDevice();
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    const before = port.posted.length;
+    device.dispatchInputReport(1, Uint8Array.of(9));
+
+    const after = port.posted.slice(before);
+    expect(after.some((p) => (p.msg as { type?: unknown }).type === "hid.ringDetach")).toBe(true);
+
+    const input = after.find((p) => (p.msg as { type?: unknown }).type === "hid.inputReport") as
+      | { msg: HidInputReportMessage; transfer?: Transferable[] }
+      | undefined;
+    expect(input).toBeTruthy();
+    expect(input!.msg.deviceId).toBe(id);
+    expect(input!.msg.reportId).toBe(1);
+    expect(Array.from(input!.msg.data)).toEqual([9]);
+    expect(input!.transfer?.[0]).toBe(input!.msg.data.buffer);
 
     broker.destroy();
   });

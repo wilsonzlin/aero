@@ -760,33 +760,42 @@ export class WebHidBroker {
         const ring = this.#inputReportRing;
         if (ring && this.#canUseSharedMemory()) {
           const tsU32 = toU32OrZero(tsMs);
-          const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + destLen, (dest) => {
-            const dv = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
-            dv.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
-            dv.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
-            dv.setUint32(8, deviceId >>> 0, true);
-            dv.setUint32(12, reportId, true);
-            dv.setUint32(16, tsU32, true);
-            dv.setUint32(20, destLen >>> 0, true);
-            const payload = dest.subarray(HID_INPUT_REPORT_RECORD_HEADER_BYTES);
-            payload.set(src);
-            if (copyLen < destLen) payload.fill(0, copyLen);
-          });
-          if (ok) {
+          let ok = false;
+          try {
+            ok = ring.tryPushWithWriterSpsc(HID_INPUT_REPORT_RECORD_HEADER_BYTES + destLen, (dest) => {
+              const dv = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
+              dv.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
+              dv.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
+              dv.setUint32(8, deviceId >>> 0, true);
+              dv.setUint32(12, reportId, true);
+              dv.setUint32(16, tsU32, true);
+              dv.setUint32(20, destLen >>> 0, true);
+              const payload = dest.subarray(HID_INPUT_REPORT_RECORD_HEADER_BYTES);
+              payload.set(src);
+              if (copyLen < destLen) payload.fill(0, copyLen);
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.#handleRingFailure(`HID proxy rings disabled: ${message}`);
+          }
+          if (ok && this.#inputReportRing === ring) {
             this.#inputReportRingPushed += 1;
             return;
           }
-          // Drop rather than blocking/spinning; this is a best-effort fast path.
-          this.#inputReportRingDropped += 1;
-          const status = this.#status;
-          if (status) {
-            try {
-              Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, 1);
-            } catch {
-              // ignore (status may not be SharedArrayBuffer-backed in tests/harnesses)
+          if (this.#inputReportRing === ring) {
+            // Drop rather than blocking/spinning; this is a best-effort fast path.
+            this.#inputReportRingDropped += 1;
+            const status = this.#status;
+            if (status) {
+              try {
+                Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, 1);
+              } catch {
+                // ignore (status may not be SharedArrayBuffer-backed in tests/harnesses)
+              }
             }
+            return;
           }
-          return;
+          // Ring was detached due to corruption; fall through to postMessage.
         }
 
         const inputRing = this.#inputRing;

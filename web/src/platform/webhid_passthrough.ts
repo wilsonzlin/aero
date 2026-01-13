@@ -537,28 +537,39 @@ export class WebHidPassthroughManager {
           if (ring && this.#canUseSharedMemory()) {
             const ts = (event as unknown as { timeStamp?: unknown }).timeStamp;
             const tsMs = typeof ts === "number" ? (Math.max(0, Math.floor(ts)) >>> 0) : 0;
-            const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + destLen, (dest) => {
-              const dv = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
-              dv.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
-              dv.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
-              dv.setUint32(8, numericDeviceId >>> 0, true);
-              dv.setUint32(12, reportId, true);
-              dv.setUint32(16, tsMs, true);
-              dv.setUint32(20, destLen >>> 0, true);
-              const payload = dest.subarray(HID_INPUT_REPORT_RECORD_HEADER_BYTES);
-              payload.set(src);
-              if (copyLen < destLen) payload.fill(0, copyLen);
-            });
-            if (ok) return;
-            const status = this.#status;
-            if (status) {
-              try {
-                Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, 1);
-              } catch {
-                // ignore (status may not be SharedArrayBuffer-backed in tests/harnesses)
-              }
+            let ok = false;
+            try {
+              ok = ring.tryPushWithWriterSpsc(HID_INPUT_REPORT_RECORD_HEADER_BYTES + destLen, (dest) => {
+                const dv = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
+                dv.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
+                dv.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
+                dv.setUint32(8, numericDeviceId >>> 0, true);
+                dv.setUint32(12, reportId, true);
+                dv.setUint32(16, tsMs, true);
+                dv.setUint32(20, destLen >>> 0, true);
+                const payload = dest.subarray(HID_INPUT_REPORT_RECORD_HEADER_BYTES);
+                payload.set(src);
+                if (copyLen < destLen) payload.fill(0, copyLen);
+              });
+            } catch (err) {
+              // Ring corruption should not wedge the main thread; disable the SAB fast path and
+              // fall back to per-report postMessage forwarding.
+              console.warn("[webhid] input report ring push failed; disabling ring fast path", err);
+              this.#inputReportRing = null;
+              this.#status = null;
             }
-            return;
+            if (ok && this.#inputReportRing === ring) return;
+            if (this.#inputReportRing === ring) {
+              const status = this.#status;
+              if (status) {
+                try {
+                  Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, 1);
+                } catch {
+                  // ignore (status may not be SharedArrayBuffer-backed in tests/harnesses)
+                }
+              }
+              return;
+            }
           }
 
           const out = new Uint8Array(destLen);
