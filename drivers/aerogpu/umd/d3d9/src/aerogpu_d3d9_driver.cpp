@@ -15208,7 +15208,11 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
       return E_INVALIDARG;
     }
     HRESULT hr = convert_xyzrhw_to_clipspace_locked(
-        dev, pDraw->pVertexStreamZeroData, pDraw->VertexStreamZeroStride, static_cast<uint32_t>(vertex_count_u64), &converted);
+        dev,
+        pDraw->pVertexStreamZeroData,
+        pDraw->VertexStreamZeroStride,
+        static_cast<uint32_t>(vertex_count_u64),
+        &converted);
     if (FAILED(hr)) {
       return hr;
     }

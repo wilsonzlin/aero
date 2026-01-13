@@ -83,6 +83,7 @@ drivers/aerogpu/tests/win7/
   d3d9_get_state_roundtrip/
   dwm_flush_pacing/
   d3d9ex_triangle/
+  d3d9ex_fixedfunc_textured_triangle/
   d3d9ex_stateblock_sanity/
   d3d9ex_scissor_sanity/
   d3d9ex_draw_indexed_primitive_up/

@@ -27,17 +27,6 @@ static constexpr uint32_t kVsPassthroughPosColor[] = {
     0x0000FFFFu, // end
 };
 
-// ps_2_0:
-//   mov oC0, v0
-//   end
-static constexpr uint32_t kPsPassthroughColor[] = {
-    0xFFFF0200u, // ps_2_0
-    0x02000001u, // mov (2 operands)
-    0x000F0800u, // oC0.xyzw
-    0x10E40000u, // v0.xyzw
-    0x0000FFFFu, // end
-};
-
 // vs_2_0:
 //   mov oPos, v0
 //   mov oD0, v1
@@ -54,6 +43,17 @@ static constexpr uint32_t kVsPassthroughPosColorTex1[] = {
     0x02000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40002u, // v2.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0:
+//   mov oC0, v0
+//   end
+static constexpr uint32_t kPsPassthroughColor[] = {
+    0xFFFF0200u, // ps_2_0
+    0x02000001u, // mov (2 operands)
+    0x000F0800u, // oC0.xyzw
+    0x10E40000u, // v0.xyzw
     0x0000FFFFu, // end
 };
 
