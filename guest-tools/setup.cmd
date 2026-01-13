@@ -41,6 +41,7 @@ set "ARG_FORCE_TESTSIGN=0"
 set "ARG_SKIP_TESTSIGN=0"
 set "ARG_FORCE_NOINTEGRITY=0"
 set "ARG_FORCE_SIGNING_POLICY="
+set "ARG_INSTALL_CERTS=0"
 set "ARG_NO_REBOOT=0"
 set "ARG_SKIP_STORAGE=0"
 
@@ -74,6 +75,8 @@ for %%A in (%*) do (
   rem Legacy aliases:
   if /i "%%~A"=="/forcesigningpolicy:testsigning" set "ARG_FORCE_SIGNING_POLICY=test"
   if /i "%%~A"=="/forcesigningpolicy:nointegritychecks" set "ARG_FORCE_SIGNING_POLICY=none"
+  if /i "%%~A"=="/installcerts" set "ARG_INSTALL_CERTS=1"
+  if /i "%%~A"=="/install-certs" set "ARG_INSTALL_CERTS=1"
   if /i "%%~A"=="/noreboot" set "ARG_NO_REBOOT=1"
   if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
   if /i "%%~A"=="/skipstorage" set "ARG_SKIP_STORAGE=1"
@@ -110,6 +113,7 @@ if "%ARG_SKIP_STORAGE%"=="0" (
 call :require_admin || goto :fail
 call :detect_arch || goto :fail
 call :load_signing_policy
+call :warn_if_unexpected_certs
 call :apply_force_defaults || goto :fail
 call :load_config || goto :fail
 if "%ARG_SKIP_STORAGE%"=="1" (
@@ -177,6 +181,7 @@ echo   /forcenointegritychecks  Same as /nointegritychecks
 echo   /forcesigningpolicy:none^|test^|production
 echo                        Override the signing_policy read from manifest.json (if present)
 echo                        (legacy aliases: testsigning=test, nointegritychecks=none)
+echo   /installcerts        Force installing certificates from certs\ even when signing_policy is production^|none (advanced; not recommended)
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
 echo   /skipstorage         Skip boot-critical virtio-blk storage pre-seeding (alias: /skip-storage; advanced; unsafe to switch boot disk to virtio-blk)
 echo.
@@ -488,11 +493,90 @@ if defined ARG_FORCE_SIGNING_POLICY (
 call :log "Effective signing_policy: %SIGNING_POLICY%"
 exit /b 0
 
+:warn_if_unexpected_certs
+setlocal EnableDelayedExpansion
+if /i "%SIGNING_POLICY%"=="test" (
+  endlocal & exit /b 0
+)
+
+set "CERT_DIR=%SCRIPT_DIR%certs"
+if not exist "!CERT_DIR!" (
+  endlocal & exit /b 0
+)
+
+set "DID_WARN=0"
+
+for %%F in ("!CERT_DIR!\*.cer") do (
+  if exist "%%~fF" (
+    if "!DID_WARN!"=="0" (
+      call :log ""
+      call :log "WARNING: signing_policy=%SIGNING_POLICY% but certificate file(s) were found under !CERT_DIR!."
+      call :log "         Production/none Guest Tools media should NOT ship certificates."
+      if "%ARG_INSTALL_CERTS%"=="1" (
+        call :log "         NOTE: /installcerts was specified; setup will attempt to install them anyway."
+      ) else (
+        call :log "         They will be ignored (certificate installation is disabled by policy)."
+      )
+      set "DID_WARN=1"
+    )
+    call :log "         - %%~nxF"
+  )
+)
+
+for %%F in ("!CERT_DIR!\*.crt") do (
+  if exist "%%~fF" (
+    if "!DID_WARN!"=="0" (
+      call :log ""
+      call :log "WARNING: signing_policy=%SIGNING_POLICY% but certificate file(s) were found under !CERT_DIR!."
+      call :log "         Production/none Guest Tools media should NOT ship certificates."
+      if "%ARG_INSTALL_CERTS%"=="1" (
+        call :log "         NOTE: /installcerts was specified; setup will attempt to install them anyway."
+      ) else (
+        call :log "         They will be ignored (certificate installation is disabled by policy)."
+      )
+      set "DID_WARN=1"
+    )
+    call :log "         - %%~nxF"
+  )
+)
+
+for %%F in ("!CERT_DIR!\*.p7b") do (
+  if exist "%%~fF" (
+    if "!DID_WARN!"=="0" (
+      call :log ""
+      call :log "WARNING: signing_policy=%SIGNING_POLICY% but certificate file(s) were found under !CERT_DIR!."
+      call :log "         Production/none Guest Tools media should NOT ship certificates."
+      if "%ARG_INSTALL_CERTS%"=="1" (
+        call :log "         NOTE: /installcerts was specified; setup will attempt to install them anyway."
+      ) else (
+        call :log "         They will be ignored (certificate installation is disabled by policy)."
+      )
+      set "DID_WARN=1"
+    )
+    call :log "         - %%~nxF"
+  )
+)
+
+endlocal & exit /b 0
+
 :install_certs
 set "CERT_DIR=%SCRIPT_DIR%certs"
 set "CERTS_REQUIRED=0"
 if /i "%SIGNING_POLICY%"=="test" set "CERTS_REQUIRED=1"
 call :log ""
+
+rem In production/none mode, never import certificates by default. Production media should not ship cert files.
+if /i not "%SIGNING_POLICY%"=="test" if not "%ARG_INSTALL_CERTS%"=="1" (
+  call :log "signing_policy=%SIGNING_POLICY%: skipping certificate installation by policy."
+  call :log "WARNING: Certificate files should NOT be present on production/WHQL Guest Tools media."
+  call :log "         Remove certs\*.cer, certs\*.crt, and certs\*.p7b from the media. (Advanced override: /installcerts)"
+  exit /b 0
+)
+
+if /i not "%SIGNING_POLICY%"=="test" if "%ARG_INSTALL_CERTS%"=="1" (
+  call :log "WARNING: /installcerts specified; forcing certificate installation even though signing_policy=%SIGNING_POLICY%."
+)
+
 call :log "Checking certificate files under %CERT_DIR% (signing_policy=%SIGNING_POLICY%)..."
 
 if not exist "%CERT_DIR%" (
@@ -501,7 +585,11 @@ if not exist "%CERT_DIR%" (
     call :log "       Expected at least one: *.cer, *.crt, and/or *.p7b"
     exit /b %EC_CERTS_MISSING%
   )
-  call :log "INFO: Certificate directory not found; signing_policy=%SIGNING_POLICY% does not require certificates; skipping certificate installation."
+  if "%ARG_INSTALL_CERTS%"=="1" (
+    call :log "WARNING: /installcerts requested but certificate directory not found: %CERT_DIR%."
+  ) else (
+    call :log "INFO: Certificate directory not found; signing_policy=%SIGNING_POLICY% does not require certificates; skipping certificate installation."
+  )
   exit /b 0
 )
 
@@ -534,7 +622,11 @@ if "%FOUND_CERT%"=="0" (
     call :log "       signing_policy=%SIGNING_POLICY% requires shipping certificate files."
     exit /b %EC_CERTS_MISSING%
   )
-  call :log "INFO: No certificate files found (no *.cer/*.crt/*.p7b). signing_policy=%SIGNING_POLICY% does not require them; skipping certificate installation."
+  if "%ARG_INSTALL_CERTS%"=="1" (
+    call :log "WARNING: /installcerts requested but no certificate files found (no *.cer/*.crt/*.p7b)."
+  ) else (
+    call :log "INFO: No certificate files found (no *.cer/*.crt/*.p7b). signing_policy=%SIGNING_POLICY% does not require them; skipping certificate installation."
+  )
   exit /b 0
 )
 

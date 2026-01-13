@@ -9,7 +9,7 @@ It provides:
 - `verify.cmd` / `verify.ps1`: offline diagnostics/verification
 - `THIRD_PARTY_NOTICES.md`: third-party attribution/redistribution notices for packaged components
 - `licenses\`: third-party license/notice files (when present in the packaged media)
-- `certs\`: optional public certificate(s) needed to validate driver signatures (for test-signed/custom-signed drivers; may be empty for WHQL/production-signed media)
+- `certs\`: optional public certificate(s) needed to validate driver signatures (for test-signed/custom-signed drivers; installed only when `signing_policy=test` unless overridden; should be empty for WHQL/production-signed media)
 - `drivers\`: PnP driver packages for x86 + amd64 (at minimum `.inf/.sys/.cat`, plus any INF-referenced payload files such as UMD/coinstaller `*.dll`)
 - `config\`: expected device IDs (PCI VEN/DEV pairs) used for boot-critical pre-seeding (generated; see below)
 - `tools\`: optional guest-side helper utilities (debugging, selftests, diagnostics) shipped alongside the media (see below)
@@ -74,9 +74,11 @@ Designed for the standard flow:
 ### What it does
 
 1. Creates a state directory at `C:\AeroGuestTools\`.
-2. Installs Aero signing certificate(s) from `certs\` (`*.cer`, `*.crt`, `*.p7b`) into:
+2. For `manifest.json` `signing_policy=test` (default for dev/test builds), installs Aero signing certificate(s) from `certs\` (`*.cer`, `*.crt`, `*.p7b`) into:
    - `Root` (Trusted Root Certification Authorities)
    - `TrustedPublisher` (Trusted Publishers)
+   
+   For `signing_policy=production|none`, `setup.cmd` skips certificate installation by default (even if cert files are present) and logs a warning; production/WHQL Guest Tools media should not ship any `certs\*.cer`, `certs\*.crt`, or `certs\*.p7b`.
 3. On **Windows 7 x64**, may prompt to enable **Test Signing** depending on `manifest.json` `signing_policy`:
    - `test`: test-signed/custom-signed drivers are expected; `setup.cmd` may prompt to enable Test Signing.
    - `production` / `none`: production/WHQL-signed drivers are expected; `setup.cmd` does **not** prompt by default.
@@ -147,6 +149,8 @@ Optional flags:
 - `setup.cmd /forcesigningpolicy:none|test|production`  
   Override the `signing_policy` read from `manifest.json` (if present).
   - legacy aliases accepted: `testsigning`→`test`, `nointegritychecks`→`none`
+- `setup.cmd /installcerts`  
+  Force certificate installation from `certs\` even when `signing_policy=production|none` (advanced; not recommended).
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 - `setup.cmd /skipstorage` (alias: `/skip-storage`)  
@@ -165,7 +169,7 @@ Exit codes (for automation):
 
 If you are shipping only WHQL/production-signed drivers (for example from `virtio-win`), you can build Guest Tools media that:
 
-- contains **no** `certs\*.cer/*.crt/*.p7b`, and
+- contains **no** `certs\*.cer`, `certs\*.crt`, or `certs\*.p7b`, and
 - does **not** prompt to enable Test Mode / `nointegritychecks` by default.
 
 When building artifacts with `tools/packaging/aero_packager`, set:
@@ -173,6 +177,8 @@ When building artifacts with `tools/packaging/aero_packager`, set:
 - `--signing-policy production` (or `none`)
 
 and ensure the input Guest Tools `certs\` directory contains **zero** certificate files.
+
+Newer `setup.cmd` versions also refuse to import certificates when `signing_policy=production|none` (unless `/installcerts` is explicitly provided), but production/WHQL media should still ship with an empty `certs\` directory to avoid warnings and reduce the risk of accidentally trusting development certificates.
 
 ## `uninstall.cmd`
 
