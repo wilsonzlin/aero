@@ -16,7 +16,7 @@ test("npm run generate:goldens exits 0 and does not modify tracked goldens", () 
     `generate:goldens failed (status=${res.status})\n\nstdout:\n${res.stdout}\n\nstderr:\n${res.stderr}`,
   );
 
-  const diff = spawnSync("git", ["diff", "--exit-code", "tests/golden"], {
+  const diff = spawnSync("git", ["diff", "--exit-code", "--", "tests/golden"], {
     cwd: repoRoot,
     encoding: "utf8",
   });
