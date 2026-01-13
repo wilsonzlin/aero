@@ -11091,7 +11091,6 @@ mod tests {
                 .get_downlevel_capabilities()
                 .flags
                 .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
-
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
                 Ok(exec) => exec,
                 Err(e) => {
@@ -11126,6 +11125,54 @@ mod tests {
                     "expected supports_compute={expected} based on DownlevelFlags, got error {err:?}"
                 ),
             }
+        });
+    }
+
+    #[test]
+    fn adjacency_topology_is_accepted_but_draw_requires_emulation() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // Build a minimal stream that attempts to draw with a D3D11 adjacency topology.
+            //
+            // The current executor has no geometry shader emulation path, but it must still accept
+            // the `SET_PRIMITIVE_TOPOLOGY` value and defer the error to draw time.
+            const RT: u32 = 1;
+            let mut writer = AerogpuCmdWriter::new();
+            writer.create_texture2d(
+                RT,
+                AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                AerogpuFormat::R8G8B8A8Unorm as u32,
+                1,
+                1,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            writer.set_render_targets(&[RT], 0);
+            writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleListAdj);
+            writer.draw(3, 1, 0, 0);
+            let stream = writer.finish();
+
+            let mut guest_mem = VecGuestMemory::new(0);
+            let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).expect_err(
+                "adjacency draw should error until geometry shader emulation is implemented",
+            );
+            assert!(
+                err.to_string()
+                    .contains("adjacency primitive topology requires geometry shader emulation"),
+                "unexpected error: {err:#}"
+            );
+
+            assert_eq!(exec.state.primitive_topology, CmdPrimitiveTopology::TriangleListAdj);
         });
     }
 

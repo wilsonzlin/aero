@@ -547,15 +547,15 @@ compat) optionally treat `reserved0` as `gs`.
    - `AEROGPU_TOPOLOGY_TRIANGLELIST_ADJ`  = 12
    - `AEROGPU_TOPOLOGY_TRIANGLESTRIP_ADJ` = 13
 - **Patchlists** (for tessellation input), matching D3D11 numbering:
-   - `AEROGPU_TOPOLOGY_1_CONTROL_POINT_PATCHLIST`  = 33
+   - `AEROGPU_TOPOLOGY_PATCHLIST_1`  = 33
    - …
-   - `AEROGPU_TOPOLOGY_32_CONTROL_POINT_PATCHLIST` = 64
+   - `AEROGPU_TOPOLOGY_PATCHLIST_32` = 64
 
 Notes:
 
 - `AEROGPU_TOPOLOGY_TRIANGLEFAN` remains for the D3D9 path; D3D11 does not emit triangle fans.
-- Adjacency/patch topologies always route through the compute-expansion pipeline (even if GS/HS/DS
-   are unbound) so behavior is deterministic and validation errors can be surfaced consistently.
+- Adjacency/patch topologies require the compute-expansion pipeline (GS/HS/DS emulation). Until
+   that is implemented, the direct render path rejects these topologies at draw time.
 
 ### 2) Compute-expansion runtime pipeline
 
