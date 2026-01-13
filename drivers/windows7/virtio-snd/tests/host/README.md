@@ -3,7 +3,7 @@
 # virtio-snd host unit tests
 
 These tests build and run the Windows 7 virtio-snd **protocol engines** (control/tx/rx)
-in a normal host environment (Linux/macOS) using small WDK shims. This lets CI catch
+in a normal host environment (Linux/macOS/Windows) using small WDK shims. This lets CI catch
 regressions in:
 
 - Control message framing/parsing (contract-v1 subset)
@@ -24,16 +24,30 @@ From the repo root:
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh
 ```
 
+On Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1
+```
+
 To force a clean rebuild:
 
 ```sh
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --clean
 ```
 
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Clean
+```
+
 The default build directory is `out/virtiosnd-tests`. Override with:
 
 ```sh
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --build-dir out/my-virtiosnd-tests
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -BuildDir out/my-virtiosnd-tests
 ```
 
 Or run directly:
@@ -56,10 +70,18 @@ run:
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only
 ```
 
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly
+```
+
 The default build directory for `--host-only` is `out/virtiosnd-host-tests`. Override with:
 
 ```sh
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only --build-dir out/my-virtiosnd-host-tests
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly -BuildDir out/my-virtiosnd-host-tests
 ```
 
 Or run directly:

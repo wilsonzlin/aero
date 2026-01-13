@@ -305,7 +305,7 @@ cd drivers/windows7/virtio-snd
 ./scripts/lint-inf.sh
 ```
 
-## Host unit tests (Linux/macOS)
+## Host unit tests (host builds)
 
 Kernel drivers cannot run in CI, but parts of the virtio-snd protocol engines can
 be compiled and unit tested on the host (descriptor/SG building, framing, and
@@ -326,16 +326,30 @@ From the repo root:
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh
 ```
 
+On Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1
+```
+
 To force a clean rebuild:
 
 ```sh
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --clean
 ```
 
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -Clean
+```
+
 The default build directory is `out/virtiosnd-tests`. Override with:
 
 ```sh
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --build-dir out/my-virtiosnd-tests
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -BuildDir out/my-virtiosnd-tests
 ```
 
 Or run directly:
@@ -359,10 +373,18 @@ suite above):
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only
 ```
 
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly
+```
+
 The default build directory for `--host-only` is `out/virtiosnd-host-tests`. Override with:
 
 ```sh
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only --build-dir out/my-virtiosnd-host-tests
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1 -HostOnly -BuildDir out/my-virtiosnd-host-tests
 ```
 
 Or run directly:
@@ -372,6 +394,11 @@ cmake -S drivers/windows7/virtio-snd/tests/host -B out/virtiosnd-host-tests
 cmake --build out/virtiosnd-host-tests
 ctest --test-dir out/virtiosnd-host-tests --output-on-failure
 ```
+
+Note: for multi-config generators (Visual Studio, Ninja Multi-Config), add:
+
+- `--config Release` to `cmake --build`
+- `-C Release` to `ctest`
 
 ## Release packaging (optional)
 
