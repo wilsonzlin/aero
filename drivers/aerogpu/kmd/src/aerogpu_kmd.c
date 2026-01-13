@@ -3351,19 +3351,25 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
                         }
                     }
 
+                    if (!ok) {
+                        supported = FALSE;
+                        sms.pfnReleaseModeInfo(hSourceModeSet, mode);
+                        mode = NULL;
+                        break;
+                    }
+
                     const D3DKMDT_VIDPN_SOURCE_MODE* next = NULL;
                     NTSTATUS stNext = sms.pfnAcquireNextModeInfo(hSourceModeSet, mode, &next);
                     sms.pfnReleaseModeInfo(hSourceModeSet, mode);
                     mode = next;
 
-                    if (!ok) {
-                        supported = FALSE;
-                        break;
-                    }
-
                     if (mode == NULL) {
                         /* End of enumeration. Some WDDM helpers return STATUS_GRAPHICS_NO_MORE_ELEMENTS here. */
                         if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS) {
+                            supported = FALSE;
+                        } else if (next != NULL) {
+                            /* Defensive: unexpected next pointer at end-of-list. */
+                            sms.pfnReleaseModeInfo(hSourceModeSet, next);
                             supported = FALSE;
                         }
                         break;
@@ -3371,6 +3377,8 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
 
                     if (stNext != STATUS_SUCCESS) {
                         supported = FALSE;
+                        sms.pfnReleaseModeInfo(hSourceModeSet, mode);
+                        mode = NULL;
                         break;
                     }
                 }
@@ -3452,18 +3460,23 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
                                                  h);
                     }
 
+                    if (!ok) {
+                        supported = FALSE;
+                        tms.pfnReleaseModeInfo(hTargetModeSet, mode);
+                        mode = NULL;
+                        break;
+                    }
+
                     const D3DKMDT_VIDPN_TARGET_MODE* next = NULL;
                     NTSTATUS stNext = tms.pfnAcquireNextModeInfo(hTargetModeSet, mode, &next);
                     tms.pfnReleaseModeInfo(hTargetModeSet, mode);
                     mode = next;
 
-                    if (!ok) {
-                        supported = FALSE;
-                        break;
-                    }
-
                     if (mode == NULL) {
                         if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS) {
+                            supported = FALSE;
+                        } else if (next != NULL) {
+                            tms.pfnReleaseModeInfo(hTargetModeSet, next);
                             supported = FALSE;
                         }
                         break;
@@ -3471,6 +3484,8 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
 
                     if (stNext != STATUS_SUCCESS) {
                         supported = FALSE;
+                        tms.pfnReleaseModeInfo(hTargetModeSet, mode);
+                        mode = NULL;
                         break;
                     }
                 }
