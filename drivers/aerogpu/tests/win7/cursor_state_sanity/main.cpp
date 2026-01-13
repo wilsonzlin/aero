@@ -516,6 +516,8 @@ static int RunCursorStateSanity(int argc, char** argv) {
   int hide_calls = 0;
   int show_calls = 0;
   if (!SetCursorShowing(false, &show_calls, &hide_calls, &show_err)) {
+    // Best-effort undo any counter changes made before the helper failed.
+    RestoreCursorShowing(show_calls, hide_calls);
     reporter.Fail("%s", show_err.c_str());
     goto cleanup;
   }
