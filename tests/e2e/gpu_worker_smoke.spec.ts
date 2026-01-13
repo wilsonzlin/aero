@@ -76,8 +76,29 @@ test("gpu worker smoke: presenter errors emit structured events", async ({ page,
   await page.goto("/web/gpu-worker-smoke.html?triggerPresenterError=1", { waitUntil: "load" });
   await waitForReady(page);
 
+  // The smoke page triggers the same validation error twice. The worker should:
+  // - post legacy `type:"error"` messages twice (printed as `gpu_error ...`)
+  // - emit a structured `events` message only once due to per-generation dedupe.
+  await page.waitForFunction(() => {
+    const text = document.getElementById("status")?.textContent ?? "";
+    const needle = "gpu_error msg=cursor_set_image width/height must be non-zero";
+    return text.split(needle).length - 1 >= 2;
+  });
+
   await page.waitForFunction(() => {
     const text = document.getElementById("status")?.textContent ?? "";
     return text.includes("gpu_event error Validation:") && text.includes("cursor_set_image width/height must be non-zero");
   });
+
+  const counts = await page.evaluate(() => {
+    const text = document.getElementById("status")?.textContent ?? "";
+    const eventNeedle = "gpu_event error Validation:";
+    const errorNeedle = "gpu_error msg=cursor_set_image width/height must be non-zero";
+    return {
+      events: text.split(eventNeedle).length - 1,
+      errors: text.split(errorNeedle).length - 1,
+    };
+  });
+  expect(counts.errors).toBeGreaterThanOrEqual(2);
+  expect(counts.events).toBe(1);
 });

@@ -235,11 +235,16 @@ async function main() {
       // `events` message (in addition to the legacy `error` message). Use a cursor_set_image with
       // invalid dimensions because it is deterministic and does not depend on backend-specific
       // failure modes.
-      const rgba8 = new ArrayBuffer(0);
-      gpu.worker.postMessage(
-        { ...GPU_MESSAGE_BASE, type: "cursor_set_image", width: 0, height: 0, rgba8 },
-        [rgba8],
-      );
+      //
+      // Send it twice so the worker's per-generation dedupe can be exercised (events should only
+      // include one entry, even though the legacy `error` message is posted twice).
+      for (let i = 0; i < 2; i += 1) {
+        const rgba8 = new ArrayBuffer(0);
+        gpu.worker.postMessage(
+          { ...GPU_MESSAGE_BASE, type: "cursor_set_image", width: 0, height: 0, rgba8 },
+          [rgba8],
+        );
+      }
     }
   } catch (err) {
     renderError(err instanceof Error ? err.message : String(err));
