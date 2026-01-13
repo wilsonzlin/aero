@@ -335,6 +335,7 @@ pub struct WebGpuFramebufferPresenter<'a> {
     pub(crate) context: WebGpuContext,
     surface: wgpu::Surface<'a>,
     _surface_format: wgpu::TextureFormat,
+    surface_view_format: wgpu::TextureFormat,
     srgb_encode: bool,
     config: wgpu::SurfaceConfiguration,
 
@@ -367,10 +368,12 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         let adapter = context.adapter();
 
         let surface_caps = surface.get_capabilities(adapter);
-        let surface_format = preferred_surface_format(&surface_caps.formats);
+        let prefer_srgb_view = matches!(context.kind(), BackendKind::WebGpu);
+        let (surface_format, surface_view_format, view_formats) =
+            preferred_surface_config(&surface_caps.formats, prefer_srgb_view);
         let alpha_mode = preferred_composite_alpha_mode(&surface_caps.alpha_modes);
         let present_mode = preferred_present_mode(&surface_caps.present_modes);
-        let srgb_encode = surface_format_requires_manual_srgb_encoding(surface_format);
+        let srgb_encode = surface_format_requires_manual_srgb_encoding(surface_view_format);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -380,7 +383,7 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             present_mode,
             alpha_mode,
             desired_maximum_frame_latency: 2,
-            view_formats: vec![],
+            view_formats,
         };
 
         surface.configure(device, &config);
@@ -427,7 +430,7 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             &bind_group_layout,
             &shader,
             "fs_main",
-            surface_format,
+            surface_view_format,
             Some("aero framebuffer presenter pipeline"),
         );
 
@@ -449,6 +452,7 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             context,
             surface,
             _surface_format: surface_format,
+            surface_view_format,
             srgb_encode,
             config,
             surface_size,
@@ -616,9 +620,15 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             }
             Err(e) => return Err(e.into()),
         };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view_desc = wgpu::TextureViewDescriptor {
+            format: if self.surface_view_format == self.config.format {
+                None
+            } else {
+                Some(self.surface_view_format)
+            },
+            ..Default::default()
+        };
+        let view = frame.texture.create_view(&view_desc);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("aero framebuffer presenter encoder"),
@@ -751,6 +761,33 @@ fn preferred_surface_format(formats: &[wgpu::TextureFormat]) -> wgpu::TextureFor
         .first()
         .copied()
         .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb)
+}
+
+fn preferred_surface_config(
+    formats: &[wgpu::TextureFormat],
+    prefer_srgb_view: bool,
+) -> (
+    wgpu::TextureFormat,
+    wgpu::TextureFormat,
+    Vec<wgpu::TextureFormat>,
+) {
+    let surface_format = preferred_surface_format(formats);
+
+    if prefer_srgb_view && !surface_format.is_srgb() {
+        if let Some(srgb_view) = srgb_view_format_for_surface_format(surface_format) {
+            return (surface_format, srgb_view, vec![srgb_view]);
+        }
+    }
+
+    (surface_format, surface_format, Vec::new())
+}
+
+fn srgb_view_format_for_surface_format(format: wgpu::TextureFormat) -> Option<wgpu::TextureFormat> {
+    match format {
+        wgpu::TextureFormat::Bgra8Unorm => Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+        wgpu::TextureFormat::Rgba8Unorm => Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        _ => None,
+    }
 }
 
 fn preferred_present_mode(modes: &[wgpu::PresentMode]) -> wgpu::PresentMode {
@@ -888,18 +925,35 @@ mod tests {
     }
 
     #[test]
-    fn surface_format_prefers_srgb_and_requires_encode_for_linear() {
+    fn surface_config_prefers_srgb_format_when_available() {
         let formats = [
             wgpu::TextureFormat::Bgra8Unorm,
             wgpu::TextureFormat::Bgra8UnormSrgb,
         ];
-        let chosen = preferred_surface_format(&formats);
-        assert_eq!(chosen, wgpu::TextureFormat::Bgra8UnormSrgb);
-        assert!(!surface_format_requires_manual_srgb_encoding(chosen));
+        let (surface_format, view_format, view_formats) = preferred_surface_config(&formats, true);
+        assert_eq!(surface_format, wgpu::TextureFormat::Bgra8UnormSrgb);
+        assert_eq!(view_format, wgpu::TextureFormat::Bgra8UnormSrgb);
+        assert!(view_formats.is_empty());
+        assert!(!surface_format_requires_manual_srgb_encoding(view_format));
+    }
 
+    #[test]
+    fn surface_config_linear_fallback_encodes_when_srgb_view_not_requested() {
         let formats = [wgpu::TextureFormat::Bgra8Unorm];
-        let chosen = preferred_surface_format(&formats);
-        assert_eq!(chosen, wgpu::TextureFormat::Bgra8Unorm);
-        assert!(surface_format_requires_manual_srgb_encoding(chosen));
+        let (surface_format, view_format, view_formats) = preferred_surface_config(&formats, false);
+        assert_eq!(surface_format, wgpu::TextureFormat::Bgra8Unorm);
+        assert_eq!(view_format, wgpu::TextureFormat::Bgra8Unorm);
+        assert!(view_formats.is_empty());
+        assert!(surface_format_requires_manual_srgb_encoding(view_format));
+    }
+
+    #[test]
+    fn surface_config_uses_srgb_view_on_webgpu_when_available() {
+        let formats = [wgpu::TextureFormat::Bgra8Unorm];
+        let (surface_format, view_format, view_formats) = preferred_surface_config(&formats, true);
+        assert_eq!(surface_format, wgpu::TextureFormat::Bgra8Unorm);
+        assert_eq!(view_format, wgpu::TextureFormat::Bgra8UnormSrgb);
+        assert_eq!(view_formats, vec![wgpu::TextureFormat::Bgra8UnormSrgb]);
+        assert!(!surface_format_requires_manual_srgb_encoding(view_format));
     }
 }
