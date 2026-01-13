@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"
+#include "aerogpu_d3d10_11_internal.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_trace.h"
 #include "../../common/aerogpu_win32_security.h"
@@ -487,18 +488,6 @@ uint32_t aerogpu_mip_dim(uint32_t base, uint32_t mip_level) {
   }
   const uint32_t shifted = (mip_level >= 32) ? 0u : (base >> mip_level);
   return std::max(1u, shifted);
-}
-
-uint32_t aerogpu_calc_full_mip_levels(uint32_t width, uint32_t height) {
-  uint32_t w = width ? width : 1u;
-  uint32_t h = height ? height : 1u;
-  uint32_t levels = 1;
-  while (w > 1 || h > 1) {
-    w = (w > 1) ? (w / 2) : 1u;
-    h = (h > 1) ? (h / 2) : 1u;
-    levels++;
-  }
-  return levels;
 }
 
 bool compute_texture2d_subresource_layout(uint32_t aerogpu_format,
@@ -1730,7 +1719,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     const bool is_shared = (pDesc->MiscFlags & kD3D11ResourceMiscShared) != 0;
     const uint32_t requested_mip_levels = pDesc->MipLevels;
     const uint32_t mip_levels =
-        requested_mip_levels ? requested_mip_levels : aerogpu_calc_full_mip_levels(pDesc->Width, pDesc->Height);
+        requested_mip_levels ? requested_mip_levels : aerogpu::d3d10_11::CalcFullMipLevels(pDesc->Width, pDesc->Height);
     const uint32_t array_size = pDesc->ArraySize ? pDesc->ArraySize : 1u;
     if (is_shared && (mip_levels != 1 || array_size != 1)) {
       // MVP: shared surfaces are single-allocation only.

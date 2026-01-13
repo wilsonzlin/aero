@@ -332,6 +332,23 @@ inline uint32_t aerogpu_mip_dim(uint32_t base, uint32_t mip_level) {
   return std::max(1u, shifted);
 }
 
+// D3D10/10.1/11 semantics: when the API/DDI passes `MipLevels == 0` for a 2D
+// texture, it means "allocate the full mip chain" down to 1x1.
+//
+// (This is not the same as "1 mip"; treating it as such causes applications
+// that rely on full-chain sampling or GenerateMips to silently see only mip0.)
+inline uint32_t CalcFullMipLevels(uint32_t width, uint32_t height) {
+  uint32_t w = width ? width : 1u;
+  uint32_t h = height ? height : 1u;
+  uint32_t levels = 1;
+  while (w > 1 || h > 1) {
+    w = (w > 1) ? (w / 2) : 1u;
+    h = (h > 1) ? (h / 2) : 1u;
+    levels++;
+  }
+  return levels;
+}
+
 inline bool build_texture2d_subresource_layouts(uint32_t aerogpu_format,
                                                 uint32_t width,
                                                 uint32_t height,

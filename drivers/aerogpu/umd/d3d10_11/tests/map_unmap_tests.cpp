@@ -1062,6 +1062,87 @@ bool TestCreateTexture2dSrgbFormatEncodesSrgbAerogpuFormat() {
   return true;
 }
 
+bool TestCreateTexture2DMipLevelsZeroAllocatesFullChain() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(create tex2d mips=0)")) {
+    return false;
+  }
+
+  constexpr uint32_t width = 7;
+  constexpr uint32_t height = 5;
+  const uint32_t expected_mips = CalcFullMipLevels(width, height);
+  if (!Check(expected_mips > 1, "test expects a non-trivial full mip chain")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2DWithFormatAndDesc(&dev,
+                                                     width,
+                                                     height,
+                                                     kDxgiFormatB8G8R8A8Unorm,
+                                                     AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                                     /*mip_levels=*/0,
+                                                     /*array_size=*/1,
+                                                     &tex),
+             "CreateStagingTexture2DWithFormatAndDesc(mips=0)")) {
+    return false;
+  }
+
+  const uint32_t last_subresource = expected_mips - 1;
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                      tex.hResource,
+                                                      last_subresource,
+                                                      AEROGPU_DDI_MAP_WRITE,
+                                                      /*map_flags=*/0,
+                                                      &mapped);
+  if (!Check(hr == S_OK, "StagingResourceMap(WRITE) last mip (mips=0)")) {
+    return false;
+  }
+  if (!Check(mapped.pData != nullptr, "StagingResourceMap returned non-null pData")) {
+    return false;
+  }
+  if (!Check(mapped.RowPitch == 4, "last mip RowPitch == 4 (1x1 RGBA8)")) {
+    return false;
+  }
+  static_cast<uint8_t*>(mapped.pData)[0] = 0xAB;
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, tex.hResource, last_subresource);
+
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateResource(tex2d mips=0)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted (mips=0)")) {
+    return false;
+  }
+
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+  if (!Check(create_cmd->width == width, "CREATE_TEXTURE2D width matches (mips=0)")) {
+    return false;
+  }
+  if (!Check(create_cmd->height == height, "CREATE_TEXTURE2D height matches (mips=0)")) {
+    return false;
+  }
+  if (!Check(create_cmd->mip_levels == expected_mips, "CREATE_TEXTURE2D mip_levels == full mip chain")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestGuestBackedBufferUnmapDirtyRange() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(guest-backed)")) {
@@ -6501,6 +6582,7 @@ int main() {
   ok &= TestHostOwnedBufferUnmapUploads();
   ok &= TestHostOwnedTextureUnmapUploads();
   ok &= TestCreateTexture2dSrgbFormatEncodesSrgbAerogpuFormat();
+  ok &= TestCreateTexture2DMipLevelsZeroAllocatesFullChain();
   ok &= TestGuestBackedBufferUnmapDirtyRange();
   ok &= TestGuestBackedTextureUnmapDirtyRange();
   ok &= TestGuestBackedBcTextureUnmapDirtyRange();

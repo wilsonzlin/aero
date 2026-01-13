@@ -38,6 +38,7 @@
 #include <d3dkmthk.h>
 
 #include "aerogpu_cmd_writer.h"
+#include "aerogpu_d3d10_11_internal.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "../../common/aerogpu_win32_security.h"
 #include "aerogpu_d3d10_11_wddm_submit.h"
@@ -2423,7 +2424,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->kind = ResourceKind::Texture2D;
     res->width = pDesc->Width;
     res->height = pDesc->Height;
-    res->mip_levels = pDesc->MipLevels ? pDesc->MipLevels : 1;
+    res->mip_levels = pDesc->MipLevels ? pDesc->MipLevels : aerogpu::d3d10_11::CalcFullMipLevels(res->width, res->height);
     res->array_size = pDesc->ArraySize ? pDesc->ArraySize : 1;
     res->dxgi_format = static_cast<uint32_t>(pDesc->Format);
 

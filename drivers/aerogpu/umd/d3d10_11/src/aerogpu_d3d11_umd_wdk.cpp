@@ -2775,7 +2775,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     res->kind = ResourceKind::Texture2D;
     res->width = pDesc->Width;
     res->height = pDesc->Height;
-    res->mip_levels = pDesc->MipLevels ? pDesc->MipLevels : 1;
+    res->mip_levels = pDesc->MipLevels ? pDesc->MipLevels : CalcFullMipLevels(res->width, res->height);
     res->array_size = pDesc->ArraySize ? pDesc->ArraySize : 1;
     res->dxgi_format = static_cast<uint32_t>(pDesc->Format);
 

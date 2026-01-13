@@ -40,6 +40,7 @@
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"
+#include "aerogpu_d3d10_11_internal.h"
 #include "aerogpu_d3d10_11_wddm_submit.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_trace.h"
@@ -3155,7 +3156,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->kind = ResourceKind::Texture2D;
     res->width = pDesc->pMipInfoList[0].TexelWidth;
     res->height = pDesc->pMipInfoList[0].TexelHeight;
-    res->mip_levels = pDesc->MipLevels ? pDesc->MipLevels : 1;
+    res->mip_levels = pDesc->MipLevels ? pDesc->MipLevels : aerogpu::d3d10_11::CalcFullMipLevels(res->width, res->height);
     res->array_size = pDesc->ArraySize;
     res->dxgi_format = static_cast<uint32_t>(pDesc->Format);
     if (res->mip_levels == 0 || res->array_size == 0) {
