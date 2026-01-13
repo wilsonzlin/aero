@@ -205,7 +205,14 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   // We still report SM2.0 (VS/PS 2.0) as required by DWM on Win7.
   out->DevCaps = D3DDEVCAPS_HWTRANSFORMANDLIGHT |
                  D3DDEVCAPS_DRAWPRIMITIVES2 |
-                 D3DDEVCAPS_DRAWPRIMITIVES2EX;
+                 D3DDEVCAPS_DRAWPRIMITIVES2EX |
+                 D3DDEVCAPS_RTPATCHES |
+                 D3DDEVCAPS_NPATCHES;
+
+  // Win7-era D3D9 runtimes gate patch usage on a non-zero maximum tessellation
+  // level. Keep this finite so the runtime and apps do not request unbounded
+  // tessellation.
+  out->MaxNpatchTessellationLevel = 64.0f;
 
   out->Caps2 = D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANSHARERESOURCE;
 

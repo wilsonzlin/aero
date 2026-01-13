@@ -206,6 +206,10 @@ aerogpu_add_win7_test(d3d9ex_texture_16bit_formats
   d3d9ex_texture_16bit_formats/main.cpp
 )
 target_link_libraries(d3d9ex_texture_16bit_formats PRIVATE user32 gdi32 d3d9)
+aerogpu_add_win7_test(d3d9_patch_sanity
+  d3d9_patch_sanity/main.cpp
+)
+target_link_libraries(d3d9_patch_sanity PRIVATE user32 gdi32 d3d9)
 
 aerogpu_add_win7_test(d3d9ex_stateblock_sanity
   d3d9ex_stateblock_sanity/main.cpp

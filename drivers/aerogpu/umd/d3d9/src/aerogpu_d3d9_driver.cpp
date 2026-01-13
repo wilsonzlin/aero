@@ -7786,9 +7786,17 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   // AeroGPU only supports 2D textures/surfaces (CREATE_TEXTURE2D) plus buffers.
   // Reject volume / 3D resources up front so we never silently mis-create them as
   // 2D textures.
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
+  // Portable build heuristic: allow array textures by interpreting depth>1 for
+  // D3DRTYPE_TEXTURE as an array layer count. For other non-buffer resources,
+  // reject depth>1 to avoid silently treating volume/cube resources as 2D arrays.
   if (create_size_bytes == 0 && create_depth > 1) {
-    return trace.ret(D3DERR_INVALIDCALL);
+    constexpr uint32_t kD3dRTypeTexture = 3u; // D3DRESOURCETYPE::D3DRTYPE_TEXTURE
+    if (d3d9_resource_type(*pCreateResource) != kD3dRTypeTexture) {
+      return trace.ret(D3DERR_INVALIDCALL);
+    }
   }
+#endif
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   // When compiling against WDK headers we can identify cube/volume resource
   // types explicitly. This avoids accidentally treating them as 2D surfaces via
@@ -17099,6 +17107,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   return S_OK;
 }
 
+static HRESULT device_draw_indexed_primitive2_locked(Device* dev,
+                                                     const D3DDDIARG_DRAWINDEXEDPRIMITIVE2* pDraw);
+
 HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
     D3DDDI_HDEVICE hDevice,
     const D3DDDIARG_DRAWINDEXEDPRIMITIVE2* pDraw) {
@@ -17119,6 +17130,16 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
     return E_INVALIDARG;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
+  return device_draw_indexed_primitive2_locked(dev, pDraw);
+}
+
+// Shared implementation for indexed UP draws. Callers must hold `Device::mutex`.
+static HRESULT device_draw_indexed_primitive2_locked(
+    Device* dev,
+    const D3DDDIARG_DRAWINDEXEDPRIMITIVE2* pDraw) {
+  if (!dev || !pDraw) {
+    return E_INVALIDARG;
+  }
   if (device_is_lost(dev)) {
     return kD3dErrDeviceLost;
   }
@@ -17328,6 +17349,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
 
   return S_OK;
 }
+
 
 HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     D3DDDI_HDEVICE hDevice,
