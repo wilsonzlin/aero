@@ -257,7 +257,10 @@ version = "0.1.0"
 dependencies = [
  "aero-gpu-trace",
  "aero-protocol",
+ "anyhow",
+ "clap",
  "sha2",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

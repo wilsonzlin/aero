@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io::{Read, Seek};
 
+pub mod alloc_table_dump;
+pub mod submit_decode;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReplayedFrame {
     pub frame_index: u32,
