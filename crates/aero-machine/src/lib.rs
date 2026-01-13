@@ -2723,11 +2723,6 @@ impl Machine {
             .and_then(|b| b.l2_ring_stats())
     }
 
-    /// Return the guest physical address of the ACPI RSDP, if the BIOS published ACPI tables.
-    pub fn acpi_rsdp_addr(&self) -> Option<u64> {
-        self.bios.rsdp_addr()
-    }
-
     /// Debug/testing helper: read a single guest physical byte.
     pub fn read_physical_u8(&mut self, paddr: u64) -> u8 {
         self.mem.read_u8(paddr)
