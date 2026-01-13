@@ -893,8 +893,10 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   # diagnostics so the host marker is still produced for older selftest binaries.
   $blkPrefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|"
   $blkMatches = [regex]::Matches($Tail, [regex]::Escape($blkPrefix) + "[^`r`n]*")
-  if ($blkMatches.Count -eq 0) { return }
-  $blkLine = $blkMatches[$blkMatches.Count - 1].Value
+  $blkLine = $null
+  if ($blkMatches.Count -gt 0) {
+    $blkLine = $blkMatches[$blkMatches.Count - 1].Value
+  }
 
   $fields = @{}
   $addLineFields = {
@@ -936,6 +938,8 @@ function Try-EmitAeroVirtioBlkIrqMarker {
     & $addLineFields $irqMatches[$irqMatches.Count - 1].Value
   }
 
+  if ($fields.Count -eq 0) { return }
+
   $mode = $null
   if ($fields.ContainsKey("mode")) { $mode = $fields["mode"] }
   elseif ($fields.ContainsKey("irq_mode")) { $mode = $fields["irq_mode"] }
@@ -967,8 +971,10 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   if (-not $mode -and -not $messages -and -not $vectors -and -not $msiVector -and -not $msixConfigVector -and -not $msixQueueVector) { return }
 
   $status = "INFO"
-  if ($blkLine -match "\|FAIL(\||$)") { $status = "FAIL" }
-  elseif ($blkLine -match "\|PASS(\||$)") { $status = "PASS" }
+  if (-not [string]::IsNullOrEmpty($blkLine)) {
+    if ($blkLine -match "\|FAIL(\||$)") { $status = "FAIL" }
+    elseif ($blkLine -match "\|PASS(\||$)") { $status = "PASS" }
+  }
 
   $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|$status"
   if ($mode) { $out += "|irq_mode=$(Sanitize-AeroMarkerValue $mode)" }
