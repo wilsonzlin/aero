@@ -294,7 +294,7 @@ Supported FVF combinations (currently implemented):
 Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 
 - `fixedfunc_supported_fvf()` + `kSupportedFvfXyz{,rhw}Diffuse{,Tex1}`
-- `fixedfunc_fvf_supported()` (internal FVF decl path; used by some bring-up-only code paths like patch emulation)
+- `fixedfunc_fvf_supported()` (internal SetFVF→vertex-decl synthesis; **XYZRHW variants only**; also required by patch emulation)
 - `ensure_fixedfunc_pipeline_locked()` / `ensure_draw_pipeline_locked()`
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
@@ -386,6 +386,8 @@ Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 Limitations:
 
 - Only the fixed-function fallback path is supported (no user shaders).
+- Only pre-transformed `XYZRHW` control points are supported: patch entrypoints require `fixedfunc_fvf_supported(dev->fvf)`,
+  i.e. `D3DFVF_XYZRHW | D3DFVF_DIFFUSE` (+ optional `D3DFVF_TEX1`).
 - Only Bezier cubic patches are supported (`Basis=BEZIER`, `Degree=CUBIC`).
 
 ### ProcessVertices
