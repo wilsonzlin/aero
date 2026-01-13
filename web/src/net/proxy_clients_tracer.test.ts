@@ -7,7 +7,12 @@ import { WebSocketTcpProxyClient } from "./tcpProxy";
 import { WebRtcUdpProxyClient, WebSocketUdpProxyClient } from "./udpProxy";
 
 function toArrayBuffer(view: Uint8Array): ArrayBuffer {
-  return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
+  // `Uint8Array.buffer` is `ArrayBufferLike` (can be `SharedArrayBuffer`), but the WebSocket
+  // codepaths exercised by these tests expect a plain `ArrayBuffer`. Copy to guarantee an
+  // `ArrayBuffer` return type even if the source view is backed by shared memory.
+  const out = new Uint8Array(view.byteLength);
+  out.set(view);
+  return out.buffer;
 }
 
 class FakeWebSocket {
@@ -179,4 +184,3 @@ describe("NetTracer integration (proxy clients)", () => {
     expect(audp.some((p) => p[4] === 1 && p[5] === 0)).toBe(true); // inbound, webrtc
   });
 });
-

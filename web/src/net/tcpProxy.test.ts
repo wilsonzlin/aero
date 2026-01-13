@@ -179,7 +179,10 @@ describe("WebSocketTcpProxyClient lifecycle", () => {
       const client = new WebSocketTcpProxyClient("https://gateway.example.com/base", (evt) => events.push(evt));
 
       client.connect(1, "127.0.0.1", 1234);
-      const first = FakeWebSocket.last;
+      // Keep an explicit union type here: TypeScript may treat `FakeWebSocket.last` as definitely
+      // null after we reset it above, since it cannot see the side-effecting assignment from
+      // `client.connect()` into our FakeWebSocket constructor.
+      const first: FakeWebSocket | null = FakeWebSocket.last;
       expect(first).not.toBeNull();
 
       // Simulate remote close (i.e. without calling client.close()).
@@ -187,7 +190,7 @@ describe("WebSocketTcpProxyClient lifecycle", () => {
 
       // Should be able to reconnect using the same connection ID.
       client.connect(1, "127.0.0.1", 1234);
-      const second = FakeWebSocket.last;
+      const second: FakeWebSocket | null = FakeWebSocket.last;
       expect(second).not.toBeNull();
       expect(second).not.toBe(first);
 
