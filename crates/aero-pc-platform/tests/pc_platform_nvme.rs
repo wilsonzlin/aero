@@ -625,6 +625,7 @@ fn pc_platform_routes_nvme_intx_via_ioapic_in_apic_mode() {
             enable_nvme: true,
             enable_ahci: false,
             enable_uhci: false,
+            enable_ehci: false,
             ..Default::default()
         },
     );

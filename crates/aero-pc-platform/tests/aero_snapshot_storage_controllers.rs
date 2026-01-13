@@ -397,6 +397,7 @@ fn aero_snapshot_roundtrip_preserves_ide_inflight_pio_and_allows_resume() {
             enable_ahci: false,
             enable_ide: true,
             enable_uhci: false,
+            enable_ehci: false,
             ..Default::default()
         },
     );
@@ -433,6 +434,7 @@ fn aero_snapshot_roundtrip_preserves_ide_inflight_pio_and_allows_resume() {
             enable_ahci: false,
             enable_ide: true,
             enable_uhci: false,
+            enable_ehci: false,
             ..Default::default()
         },
     );

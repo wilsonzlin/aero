@@ -115,7 +115,9 @@ fn pci_bar_router_routes_mmio_and_tracks_bar_reprogramming() {
     let dev = Rc::new(RefCell::new(TestMmioDev::new(0x1000)));
     pc.register_pci_mmio_bar_handler(bdf, 0, dev.clone());
 
-    let base = alloc_cfg.mmio_base + 0x2000;
+    // Pick a base far enough into the MMIO window that it won't collide with the platform's
+    // built-in PCI devices (which allocate BARs starting at `mmio_base` during BIOS POST).
+    let base = alloc_cfg.mmio_base + 0x0100_0000;
     assert_eq!(base % 0x1000, 0);
 
     // Program BAR0 and enable memory decoding.

@@ -623,6 +623,7 @@ fn st010_ide_atapi_dma_and_irq15_routing() {
             enable_ide: true,
             enable_ahci: false,
             enable_uhci: false,
+            enable_ehci: false,
             ..Default::default()
         },
     );
@@ -736,6 +737,7 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
         PcPlatformConfig {
             enable_ahci: true,
             enable_uhci: false,
+            enable_ehci: false,
             ..Default::default()
         },
     );
@@ -853,6 +855,7 @@ fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
         PcPlatformConfig {
             enable_ahci: true,
             enable_uhci: false,
+            enable_ehci: false,
             ..Default::default()
         },
     );
@@ -892,6 +895,7 @@ fn st010_nvme_snapshot_roundtrip_preserves_intx_level() {
             enable_nvme: true,
             enable_ahci: false,
             enable_uhci: false,
+            enable_ehci: false,
             ..Default::default()
         },
     );
@@ -947,6 +951,7 @@ fn st010_nvme_snapshot_roundtrip_preserves_intx_level() {
             enable_nvme: true,
             enable_ahci: false,
             enable_uhci: false,
+            enable_ehci: false,
             ..Default::default()
         },
     );
@@ -978,6 +983,7 @@ fn st010_ide_snapshot_roundtrip_preserves_irq14_level() {
             enable_ide: true,
             enable_uhci: false,
             enable_ahci: false,
+            enable_ehci: false,
             ..Default::default()
         },
     );
@@ -1043,6 +1049,7 @@ fn st010_ide_snapshot_roundtrip_preserves_irq14_level() {
             enable_ide: true,
             enable_uhci: false,
             enable_ahci: false,
+            enable_ehci: false,
             ..Default::default()
         },
     );
