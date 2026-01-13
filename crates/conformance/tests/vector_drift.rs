@@ -239,6 +239,8 @@ struct ConformanceTcpMuxErrorPayloadVector {
     payload_hex: String,
     #[serde(rename = "expectError")]
     expect_error: Option<bool>,
+    #[serde(rename = "errorContains")]
+    error_contains: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,6 +252,8 @@ struct ConformanceTcpMuxParserStreamVector {
     expect_frames: Option<Vec<ConformanceTcpMuxExpectedFrame>>,
     #[serde(rename = "expectError")]
     expect_error: Option<bool>,
+    #[serde(rename = "errorContains")]
+    error_contains: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,6 +288,8 @@ struct ConformanceUdpRelayVector {
     payload_hex: Option<String>,
     #[serde(rename = "expectError")]
     expect_error: Option<bool>,
+    #[serde(rename = "errorContains")]
+    error_contains: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -330,6 +336,8 @@ struct ProtocolTcpMuxErrorPayloadVector {
     payload_b64: String,
     #[serde(rename = "expectError")]
     expect_error: Option<bool>,
+    #[serde(rename = "errorContains")]
+    error_contains: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -341,6 +349,8 @@ struct ProtocolTcpMuxParserStreamVector {
     expect_frames: Option<Vec<ProtocolTcpMuxExpectedFrame>>,
     #[serde(rename = "expectError")]
     expect_error: Option<bool>,
+    #[serde(rename = "errorContains")]
+    error_contains: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -372,6 +382,8 @@ struct ProtocolUdpRelayVector {
     payload_b64: Option<String>,
     #[serde(rename = "expectError")]
     expect_error: Option<bool>,
+    #[serde(rename = "errorContains")]
+    error_contains: Option<String>,
 }
 
 fn repo_root() -> PathBuf {
@@ -980,6 +992,13 @@ fn tcp_mux_vectors_do_not_drift() {
             v.expect_error.unwrap_or(false),
             "{ctx}: expectError drift"
         );
+        if proto_v.expect_error.unwrap_or(false) {
+            assert_eq!(
+                proto_v.error_contains.as_deref(),
+                v.error_contains.as_deref(),
+                "{ctx}: errorContains drift"
+            );
+        }
         let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
         let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
         assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
@@ -1013,6 +1032,11 @@ fn tcp_mux_vectors_do_not_drift() {
         assert_eq!(proto_is_error, conf_is_error, "{ctx}: expectError drift");
 
         if conf_is_error {
+            assert_eq!(
+                proto_v.error_contains.as_deref(),
+                v.error_contains.as_deref(),
+                "{ctx}: errorContains drift"
+            );
             continue;
         }
 
@@ -1068,11 +1092,16 @@ fn udp_relay_vectors_do_not_drift() {
             panic!("{ctx}: missing entry in {proto_path:?} (vectors)")
         });
 
-        assert_eq!(
-            proto_v.expect_error.unwrap_or(false),
-            v.expect_error.unwrap_or(false),
-            "{ctx}: expectError drift"
-        );
+        let proto_is_error = proto_v.expect_error.unwrap_or(false);
+        let conf_is_error = v.expect_error.unwrap_or(false);
+        assert_eq!(proto_is_error, conf_is_error, "{ctx}: expectError drift");
+        if conf_is_error {
+            assert_eq!(
+                proto_v.error_contains.as_deref(),
+                v.error_contains.as_deref(),
+                "{ctx}: errorContains drift"
+            );
+        }
         assert_eq!(proto_v.version, v.version, "{ctx}: version drift");
         assert_eq!(proto_v.guest_port, v.guest_port, "{ctx}: guestPort drift");
         assert_eq!(proto_v.remote_ip.as_deref(), v.remote_ip.as_deref(), "{ctx}: remoteIp drift");
