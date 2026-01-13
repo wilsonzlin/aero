@@ -14,7 +14,7 @@ fn run_until_halt(m: &mut Machine) {
     panic!("machine did not halt within budget");
 }
 
-fn build_vbe_boot_sector() -> [u8; 512] {
+fn build_vbe_boot_sector(mode: u16) -> [u8; 512] {
     let mut sector = [0u8; 512];
     let mut i = 0usize;
 
@@ -30,8 +30,9 @@ fn build_vbe_boot_sector() -> [u8; 512] {
     // mov ax, 0x4F01
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x01, 0x4F]);
     i += 3;
-    // mov cx, 0x0118
-    sector[i..i + 3].copy_from_slice(&[0xB9, 0x18, 0x01]);
+    // mov cx, mode
+    let [mode_lo, mode_hi] = mode.to_le_bytes();
+    sector[i..i + 3].copy_from_slice(&[0xB9, mode_lo, mode_hi]);
     i += 3;
     // int 0x10
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
@@ -39,8 +40,10 @@ fn build_vbe_boot_sector() -> [u8; 512] {
     // mov ax, 0x4F02
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
     i += 3;
-    // mov bx, 0x4118 (mode 0x118 + LFB requested)
-    sector[i..i + 3].copy_from_slice(&[0xBB, 0x18, 0x41]);
+    // mov bx, (mode + LFB requested)
+    let bx = mode | 0x4000;
+    let [bx_lo, bx_hi] = bx.to_le_bytes();
+    sector[i..i + 3].copy_from_slice(&[0xBB, bx_lo, bx_hi]);
     i += 3;
     // int 0x10
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
@@ -207,29 +210,32 @@ fn bios_vbe_sync_mode_and_lfb_base() {
     };
 
     let mut m = Machine::new(cfg).unwrap();
-    m.set_disk_image(build_vbe_boot_sector().to_vec()).unwrap();
-    m.reset();
-    run_until_halt(&mut m);
-
-    // VBE mode info block was written to 0x0000:0x0500 by INT 10h AX=4F01.
-    let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
-    assert_eq!(phys_base_ptr, SVGA_LFB_BASE);
-
-    let vga = m.vga().expect("pc platform should include VGA");
+    for (mode, (w, h)) in [(0x115u16, (800, 600)), (0x118u16, (1024, 768)), (0x160u16, (1280, 720))]
     {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        assert_eq!(vga.get_resolution(), (1024, 768));
-    }
+        m.set_disk_image(build_vbe_boot_sector(mode).to_vec()).unwrap();
+        m.reset();
+        run_until_halt(&mut m);
 
-    // Write a single red pixel at (0,0) in packed 32bpp BGRX.
-    m.write_physical_u32(u64::from(SVGA_LFB_BASE), 0x00FF_0000);
-    let pixel0 = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        vga.get_framebuffer()[0]
-    };
-    assert_eq!(pixel0, 0xFF00_00FF);
+        // VBE mode info block was written to 0x0000:0x0500 by INT 10h AX=4F01.
+        let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
+        assert_eq!(phys_base_ptr, SVGA_LFB_BASE);
+
+        let vga = m.vga().expect("pc platform should include VGA");
+        {
+            let mut vga = vga.borrow_mut();
+            vga.present();
+            assert_eq!(vga.get_resolution(), (w, h));
+        }
+
+        // Write a single red pixel at (0,0) in packed 32bpp BGRX.
+        m.write_physical_u32(u64::from(SVGA_LFB_BASE), 0x00FF_0000);
+        let pixel0 = {
+            let mut vga = vga.borrow_mut();
+            vga.present();
+            vga.get_framebuffer()[0]
+        };
+        assert_eq!(pixel0, 0xFF00_00FF);
+    }
 }
 
 #[test]
