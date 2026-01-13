@@ -16,6 +16,20 @@ static void report_ready_cb(void *context) {
   c->calls++;
 }
 
+#define REPORT_SEQ_BYTES 5u
+_Static_assert((size_t)VIRTIO_INPUT_REPORT_MAX_SIZE >= (size_t)REPORT_SEQ_BYTES,
+               "test expects enough space to encode a 32-bit sequence number");
+
+static size_t report_len_for_seq(uint32_t seq) {
+  /*
+   * Use variable report lengths (but always include the sequence number) to
+   * ensure the ring copies and preserves lengths correctly.
+   */
+  const size_t min_len = REPORT_SEQ_BYTES;
+  const size_t span = (size_t)VIRTIO_INPUT_REPORT_MAX_SIZE - min_len + 1u;
+  return min_len + (size_t)(seq % (uint32_t)span);
+}
+
 static void make_report(uint8_t out[VIRTIO_INPUT_REPORT_MAX_SIZE], uint32_t seq) {
   out[0] = 0xA5; /* constant marker */
   out[1] = (uint8_t)(seq & 0xFFu);
@@ -30,9 +44,10 @@ static void make_report(uint8_t out[VIRTIO_INPUT_REPORT_MAX_SIZE], uint32_t seq)
 
 static void expect_report_seq(const struct virtio_input_report *r, uint32_t seq) {
   uint8_t expected[VIRTIO_INPUT_REPORT_MAX_SIZE];
+  const size_t expected_len = report_len_for_seq(seq);
   make_report(expected, seq);
-  assert(r->len == (uint8_t)VIRTIO_INPUT_REPORT_MAX_SIZE);
-  assert(memcmp(r->data, expected, (size_t)VIRTIO_INPUT_REPORT_MAX_SIZE) == 0);
+  assert(r->len == (uint8_t)expected_len);
+  assert(memcmp(r->data, expected, expected_len) == 0);
 }
 
 static void test_report_ring_drop_oldest(void) {
@@ -49,8 +64,9 @@ static void test_report_ring_drop_oldest(void) {
   const uint32_t total_reports = (uint32_t)VIRTIO_INPUT_REPORT_RING_CAPACITY * 3u + 7u;
   for (uint32_t seq = 0; seq < total_reports; seq++) {
     uint8_t report[VIRTIO_INPUT_REPORT_MAX_SIZE];
+    const size_t report_len = report_len_for_seq(seq);
     make_report(report, seq);
-    dev.translate.emit_report(dev.translate.emit_report_context, report, sizeof(report));
+    dev.translate.emit_report(dev.translate.emit_report_context, report, report_len);
   }
 
   assert(ready.calls == total_reports);
