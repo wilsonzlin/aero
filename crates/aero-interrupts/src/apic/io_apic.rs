@@ -127,7 +127,7 @@ pub struct IoApic {
     pin_active_low: Vec<bool>,
     /// Raw electrical level on each IOAPIC input pin (true = high).
     pin_level: Vec<bool>,
-    lapic: Arc<dyn LapicInterruptSink>,
+    lapics: Vec<Arc<dyn LapicInterruptSink>>,
 }
 
 impl IoApic {
@@ -137,7 +137,26 @@ impl IoApic {
         Self::with_entries(id, lapic, Self::NUM_REDIRECTION_ENTRIES)
     }
 
+    /// Construct an IOAPIC that can route interrupts to multiple LAPICs.
+    ///
+    /// Delivery is currently limited to xAPIC physical destination mode:
+    /// - `destination_mode == 0` (physical)
+    /// - `delivery_mode == 0` (fixed)
+    ///
+    /// When the redirection entry destination is `0xFF`, interrupts are broadcast to all LAPICs.
+    pub fn with_lapics(id: IoApicId, lapics: Vec<Arc<dyn LapicInterruptSink>>) -> Self {
+        Self::with_entries_and_lapics(id, lapics, Self::NUM_REDIRECTION_ENTRIES)
+    }
+
     pub fn with_entries(id: IoApicId, lapic: Arc<dyn LapicInterruptSink>, entries: usize) -> Self {
+        Self::with_entries_and_lapics(id, vec![lapic], entries)
+    }
+
+    fn with_entries_and_lapics(
+        id: IoApicId,
+        lapics: Vec<Arc<dyn LapicInterruptSink>>,
+        entries: usize,
+    ) -> Self {
         let mut pin_active_low = vec![false; entries];
         for (gsi, active_low) in pin_active_low.iter_mut().enumerate() {
             // Default PC wiring:
@@ -153,7 +172,7 @@ impl IoApic {
             redirection: vec![RedirectionEntry::default(); entries],
             pin_active_low,
             pin_level,
-            lapic,
+            lapics,
         }
     }
 
@@ -363,15 +382,39 @@ impl IoApic {
             return;
         }
 
-        if entry.destination != self.lapic.apic_id() {
+        let mut delivered = false;
+
+        if entry.destination == 0xFF {
+            if self.lapics.is_empty() {
+                return;
+            }
+            if entry.trigger_mode == TriggerMode::Level {
+                entry.remote_irr = true;
+            }
+            for lapic in &self.lapics {
+                lapic.inject_external_interrupt(entry.vector);
+            }
             return;
         }
 
-        if entry.trigger_mode == TriggerMode::Level {
-            entry.remote_irr = true;
+        for lapic in &self.lapics {
+            if entry.destination != lapic.apic_id() {
+                continue;
+            }
+
+            if !delivered {
+                delivered = true;
+                if entry.trigger_mode == TriggerMode::Level {
+                    entry.remote_irr = true;
+                }
+            }
+
+            lapic.inject_external_interrupt(entry.vector);
         }
 
-        self.lapic.inject_external_interrupt(entry.vector);
+        if !delivered {
+            return;
+        }
     }
 }
 
@@ -541,11 +584,16 @@ mod tests {
     use super::*;
     use crate::apic::LocalApic;
 
-    fn mk_ioapic() -> (IoApic, Arc<LocalApic>) {
-        let lapic = Arc::new(LocalApic::new(0));
+    fn mk_lapic(apic_id: u8) -> Arc<LocalApic> {
+        let lapic = Arc::new(LocalApic::new(apic_id));
         // Enable LAPIC with a valid spurious interrupt vector (0xFF) so injected
         // interrupts are accepted.
         lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
+        lapic
+    }
+
+    fn mk_ioapic() -> (IoApic, Arc<LocalApic>) {
+        let lapic = mk_lapic(0);
         let ioapic = IoApic::new(IoApicId(0), lapic.clone());
         (ioapic, lapic)
     }
@@ -661,5 +709,39 @@ mod tests {
             err,
             SnapshotError::InvalidFieldEncoding("ioapic redirection count")
         ));
+    }
+
+    #[test]
+    fn physical_destination_routes_to_matching_lapic() {
+        let lapic0 = mk_lapic(0);
+        let lapic1 = mk_lapic(1);
+        let mut ioapic = IoApic::with_lapics(IoApicId(0), vec![lapic0.clone(), lapic1.clone()]);
+
+        // GSI0 -> vector 0x20, edge-triggered, unmasked, destination=APIC1.
+        ioapic.mmio_write(0x00, 4, 0x10);
+        ioapic.mmio_write(0x10, 4, 0x20);
+        ioapic.mmio_write(0x00, 4, 0x11);
+        ioapic.mmio_write(0x10, 4, 1u64 << 24);
+
+        ioapic.set_irq_level(0, true);
+        assert_eq!(service_next(&lapic0), None);
+        assert_eq!(service_next(&lapic1), Some(0x20));
+    }
+
+    #[test]
+    fn physical_destination_broadcast_ff_delivers_to_all_lapics() {
+        let lapic0 = mk_lapic(0);
+        let lapic1 = mk_lapic(1);
+        let mut ioapic = IoApic::with_lapics(IoApicId(0), vec![lapic0.clone(), lapic1.clone()]);
+
+        // GSI0 -> vector 0x20, edge-triggered, unmasked, destination=broadcast (0xFF).
+        ioapic.mmio_write(0x00, 4, 0x10);
+        ioapic.mmio_write(0x10, 4, 0x20);
+        ioapic.mmio_write(0x00, 4, 0x11);
+        ioapic.mmio_write(0x10, 4, 0xFFu64 << 24);
+
+        ioapic.set_irq_level(0, true);
+        assert_eq!(service_next(&lapic0), Some(0x20));
+        assert_eq!(service_next(&lapic1), Some(0x20));
     }
 }
