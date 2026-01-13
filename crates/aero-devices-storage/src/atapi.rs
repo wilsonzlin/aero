@@ -3,10 +3,15 @@ use std::io;
 use aero_io_snapshot::io::storage::state::{IdeAtapiDeviceState, MAX_IDE_DATA_BUFFER_BYTES};
 use aero_storage::{DiskError, VirtualDisk};
 
-#[cfg(target_arch = "wasm32")]
-pub type IsoDisk = Box<dyn VirtualDisk>;
+/// Underlying `VirtualDisk` trait object used by ISO/CD backends.
+///
+/// On native targets we require `Send` so callers can safely move disk backends between threads.
+/// On `wasm32` we intentionally drop the `Send` bound so browser-only storage handles (e.g. OPFS)
+/// can be used even when they are not `Send`.
 #[cfg(not(target_arch = "wasm32"))]
 pub type IsoDisk = Box<dyn VirtualDisk + Send>;
+#[cfg(target_arch = "wasm32")]
+pub type IsoDisk = Box<dyn VirtualDisk>;
 
 /// Read-only ISO9660 (or raw CD) backing store.
 ///

@@ -4046,6 +4046,9 @@ impl Machine {
     }
 
     /// Attach a disk image as an ATAPI CD-ROM ISO on the IDE secondary master, if present.
+    ///
+    /// On `wasm32`, disk backends such as OPFS handles may not be `Send`, so we intentionally
+    /// accept a non-`Send` `VirtualDisk` trait object.
     #[cfg(target_arch = "wasm32")]
     pub fn attach_ide_secondary_master_iso(
         &mut self,
