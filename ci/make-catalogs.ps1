@@ -720,7 +720,8 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     foreach ($relPath in $manifest.AdditionalFiles) {
       $ext = [IO.Path]::GetExtension($relPath)
       if ($ext -in @('.sys', '.dll', '.exe', '.cat', '.msi', '.cab')) {
-        throw "Driver '$driverNameForLog' additionalFiles must be non-binary; refusing to include '$relPath'."
+        $hint = if ($ext -eq '.exe') { " Use toolFiles to include helper .exe binaries." } else { "" }
+        throw "Driver '$driverNameForLog' additionalFiles must be non-binary; refusing to include '$relPath'.$hint"
       }
       if ($ext -in @('.pfx', '.p12', '.pvk', '.snk', '.key', '.pem', '.p8', '.ppk', '.jks', '.keystore', '.kdbx', '.gpg', '.pgp')) {
         throw "Driver '$driverNameForLog' additionalFiles must not include sensitive/secret material; refusing to include '$relPath'."

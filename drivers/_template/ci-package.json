@@ -2,5 +2,6 @@
   "$schema": "../../ci/driver-package.schema.json",
   "infFiles": ["REPLACE_ME.inf"],
   "wow64Files": [],
-  "additionalFiles": []
+  "additionalFiles": [],
+  "toolFiles": []
 }

@@ -325,6 +325,9 @@ function Validate-DriverPackageManifest {
 
       $ext = [System.IO.Path]::GetExtension($s).ToLowerInvariant()
       if ($binaryExts -contains $ext) {
+        if ($ext -eq '.exe') {
+          throw "Invalid manifest '$ManifestPath': additionalFiles[$index] '$s' must not include binary extension '$ext'. Use toolFiles to include helper .exe binaries."
+        }
         throw "Invalid manifest '$ManifestPath': additionalFiles[$index] '$s' must not include binary extension '$ext'."
       }
       if ($secretExts -contains $ext) {
