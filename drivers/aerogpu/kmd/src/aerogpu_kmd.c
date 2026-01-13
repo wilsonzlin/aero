@@ -3923,6 +3923,20 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hA
         return STATUS_NOT_SUPPORTED;
     }
 
+    /* Build a conservative 32bpp @ 60Hz mode list up front. */
+    AEROGPU_DISPLAY_MODE modes[16];
+    UINT modeCount = AeroGpuBuildModeList(modes, (UINT)(sizeof(modes) / sizeof(modes[0])));
+    if (modeCount == 0) {
+        /*
+         * This can only happen if a registry max-resolution cap filters out all
+         * modes. Avoid returning an empty recommended VidPN.
+         */
+        return STATUS_GRAPHICS_NO_RECOMMENDED_FUNCTIONAL_VIDPN;
+    }
+
+    const ULONG pinW = modes[0].Width;
+    const ULONG pinH = modes[0].Height;
+
     D3DKMDT_HVIDPNTOPOLOGY hTopology = 0;
     D3DKMDT_HVIDPNSOURCEMODESET hSourceModeSet = 0;
     D3DKMDT_HVIDPNTARGETMODESET hTargetModeSet = 0;
@@ -3963,12 +3977,6 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hA
     if (!NT_SUCCESS(status)) {
         goto Cleanup;
     }
-
-    /* Build a conservative 32bpp @ 60Hz mode list and assign it to both source and target. */
-    AEROGPU_DISPLAY_MODE modes[16];
-    UINT modeCount = AeroGpuBuildModeList(modes, (UINT)(sizeof(modes) / sizeof(modes[0])));
-    const ULONG pinW = (modeCount > 0) ? modes[0].Width : 0;
-    const ULONG pinH = (modeCount > 0) ? modes[0].Height : 0;
 
     status = vidpn.pfnCreateNewSourceModeSet(pRecommend->hFunctionalVidPn, AEROGPU_VIDPN_SOURCE_ID, &hSourceModeSet);
     if (!NT_SUCCESS(status) || !hSourceModeSet) {
