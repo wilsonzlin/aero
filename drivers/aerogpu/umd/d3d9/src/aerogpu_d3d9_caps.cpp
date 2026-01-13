@@ -224,9 +224,11 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 
   out->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
 
+  // Mipmapped textures (multi-subresource layouts) are not supported yet on the
+  // Win7/WDDM path (see CreateResource restrictions in aerogpu_d3d9_driver.cpp),
+  // so keep filtering caps to min/mag only.
   out->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
-                           D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR |
-                           D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR;
+                           D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
 
   out->StretchRectFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
                                D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
@@ -235,7 +237,7 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 
   // NPOT textures are required for DWM (arbitrary window sizes). Do NOT set
   // D3DPTEXTURECAPS_POW2. Also avoid cubemap/volume caps until implemented.
-  out->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP;
+  out->TextureCaps = D3DPTEXTURECAPS_ALPHA;
 
   out->MaxTextureWidth = 4096;
   out->MaxTextureHeight = 4096;
