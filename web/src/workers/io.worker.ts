@@ -115,9 +115,8 @@ import {
   type HidProxyMessage,
   type HidRingAttachMessage,
   type HidRingInitMessage,
-  type HidSendReportMessage,
 } from "../hid/hid_proxy_protocol";
-import { InMemoryHidGuestBridge, ensureArrayBufferBacked } from "../hid/in_memory_hid_guest_bridge";
+import { InMemoryHidGuestBridge } from "../hid/in_memory_hid_guest_bridge";
 import { UhciHidTopologyManager } from "../hid/uhci_hid_topology";
 import { WasmHidGuestBridge, type HidGuestBridge, type HidHostSink } from "../hid/wasm_hid_guest_bridge";
 import { WasmUhciHidGuestBridge } from "../hid/wasm_uhci_hid_guest_bridge";
@@ -162,6 +161,7 @@ import {
 } from "../usb/uhci_external_hub";
 import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy_adapter";
 import { drainIoHidInputRing } from "./io_hid_input_ring";
+import { forwardHidSendReportToMainThread } from "./io_hid_output_report_forwarding";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
 import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
@@ -2346,6 +2346,7 @@ function handleUsbDemoFailure(context: string, err: unknown): void {
 
 let hidInputRing: HidReportRing | null = null;
 let hidOutputRing: HidReportRing | null = null;
+let hidOutputRingFallback = 0;
 
 function attachHidRings(msg: HidRingAttachMessage): void {
   // `isHidRingAttachMessage` validates SAB existence + instance checks.
@@ -2409,15 +2410,27 @@ const hidHostSink: HidHostSink = {
     }
 
     const outRing = hidOutputRing;
-    if (outRing) {
-      const ty = payload.reportType === "feature" ? HidRingReportType.Feature : HidRingReportType.Output;
-      outRing.push(payload.deviceId >>> 0, ty, payload.reportId >>> 0, payload.data);
-      return;
+    const res = forwardHidSendReportToMainThread(payload, {
+      outputRing: outRing,
+      postMessage: (msg, transfer) => ctx.postMessage(msg, transfer),
+    });
+    if (res.path === "postMessage" && res.ringFailed) {
+      hidOutputRingFallback += 1;
+      const shouldLog =
+        import.meta.env.DEV || hidOutputRingFallback <= 3 || (hidOutputRingFallback & 0xff) === 0;
+      if (shouldLog) {
+        let dropped = 0;
+        try {
+          dropped = outRing?.dropped() ?? 0;
+        } catch {
+          dropped = 0;
+        }
+        console.warn(
+          `[io.worker] HID ${payload.reportType} report ring push failed; falling back to postMessage ` +
+            `(deviceId=${payload.deviceId} reportId=${payload.reportId} bytes=${payload.data.byteLength} ringDropped=${dropped} fallbackCount=${hidOutputRingFallback})`,
+        );
+      }
     }
-
-    const data = ensureArrayBufferBacked(payload.data);
-    const msg: HidSendReportMessage = { type: "hid.sendReport", ...payload, data };
-    ctx.postMessage(msg, [data.buffer]);
   },
   log: (message, deviceId) => {
     const msg: HidLogMessage = { type: "hid.log", message, ...(deviceId !== undefined ? { deviceId } : {}) };
