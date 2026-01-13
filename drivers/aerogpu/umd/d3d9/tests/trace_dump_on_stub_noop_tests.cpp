@@ -52,8 +52,9 @@ int main() {
     trace.ret(S_OK);
   }
 
-  // Previously-stubbed DDIs that are now implemented should also NOT carry the
-  // "(stub)" marker in trace output.
+  // Previously-stub-tagged trace IDs should not carry the "(stub)" marker once
+  // they are promoted to normal (non-stub) trace names, so they do not trigger
+  // AEROGPU_D3D9_TRACE_DUMP_ON_STUB.
   {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceDrawRectPatch, 0x111, 0, 0, 0);
     trace.ret(S_OK);
