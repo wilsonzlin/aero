@@ -11,6 +11,7 @@ on:
       - "emulator/protocol/aerogpu/aerogpu_pci.rs"
       - "tools/packaging/**"
       - "tools/device_contract_validator/**"
+      - "scripts/generate-windows-device-contract-virtio-win.py"
       - ".github/workflows/windows-device-contract.yml"
   push:
     branches: ["main"]
@@ -23,6 +24,7 @@ on:
       - "emulator/protocol/aerogpu/aerogpu_pci.rs"
       - "tools/packaging/**"
       - "tools/device_contract_validator/**"
+      - "scripts/generate-windows-device-contract-virtio-win.py"
       - ".github/workflows/windows-device-contract.yml"
   merge_group:
     paths:
@@ -34,6 +36,7 @@ on:
       - "emulator/protocol/aerogpu/aerogpu_pci.rs"
       - "tools/packaging/**"
       - "tools/device_contract_validator/**"
+      - "scripts/generate-windows-device-contract-virtio-win.py"
       - ".github/workflows/windows-device-contract.yml"
   workflow_dispatch:
 
@@ -51,6 +54,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check generated virtio-win device contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/generate-windows-device-contract-virtio-win.py --check
 
       - name: Setup Rust
         id: setup-rust

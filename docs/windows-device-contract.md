@@ -39,10 +39,13 @@ The virtio-win contract file is intended to be passed to the Guest Tools package
 
 - `ci/package-guest-tools.ps1 -WindowsDeviceContractPath docs/windows-device-contract-virtio-win.json`
 
-Keep in sync:
+`windows-device-contract-virtio-win.json` is **generated** from the canonical contract:
 
-- Any change to virtio PCI IDs or `hardware_id_patterns` in the canonical contract must be reflected in the
-  virtio-win variant. Only `driver_service_name` and `inf_name` should differ for virtio devices.
+- Generator: `python3 scripts/generate-windows-device-contract-virtio-win.py`
+- CI drift check: `python3 scripts/generate-windows-device-contract-virtio-win.py --check`
+
+Only `driver_service_name` and `inf_name` should differ for virtio devices; PCI IDs and `hardware_id_patterns`
+must remain identical to `windows-device-contract.json`.
 
 ## Contract rules (normative)
 
