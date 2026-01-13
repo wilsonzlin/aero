@@ -5,3 +5,4 @@ pub mod dce;
 pub mod flag_elim;
 pub mod licm;
 pub mod regalloc;
+pub mod strength_reduction;
