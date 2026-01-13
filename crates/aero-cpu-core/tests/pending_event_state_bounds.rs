@@ -78,5 +78,5 @@ fn interrupt_frame_stack_overflow_triggers_triple_fault() {
         cpu.deliver_pending_event(&mut mem),
         Err(CpuExit::TripleFault)
     );
+    assert_eq!(cpu.pending.dropped_interrupt_frames(), 1);
 }
-

@@ -23,6 +23,26 @@ use crate::state::{
 };
 use crate::time::TimeSource;
 
+/// Maximum number of queued externally injected interrupt vectors.
+///
+/// External interrupts may be injected by higher layers (PIC/APIC models, host integrations, etc).
+/// A misbehaving integration could otherwise enqueue an unbounded number of vectors and cause the
+/// CPU core to grow memory without limit.
+///
+/// The value is intentionally generous: typical guests will never accumulate anywhere near this
+/// many pending vectors, but it is small enough to be safe in constrained CI environments.
+pub const MAX_EXTERNAL_INTERRUPTS: usize = 1024;
+
+/// Maximum depth of the internal interrupt/exception frame bookkeeping stack.
+///
+/// Tier-0 tracks the kind of stack frame that was pushed for each delivered interrupt/exception so
+/// that `IRET*` can pop the correct amount of state. Guests that continually nest interrupts
+/// without returning could otherwise cause this vector to grow without bound.
+///
+/// This is a hard cap; exceeding it causes vector delivery to fail deterministically with
+/// [`CpuExit::TripleFault`].
+pub const MAX_INTERRUPT_FRAMES: usize = 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CpuExit {
     /// Failure to deliver an exception (including #DF) that results in a reset.
@@ -252,6 +272,10 @@ pub struct PendingEventState {
 
     // --- IRET bookkeeping ---
     interrupt_frames: Vec<InterruptFrame>,
+    /// Number of attempted interrupt frame pushes dropped due to [`MAX_INTERRUPT_FRAMES`].
+    ///
+    /// When this counter is incremented the CPU exits with [`CpuExit::TripleFault`].
+    dropped_interrupt_frames: u64,
 }
 
 impl PendingEventState {
@@ -318,6 +342,11 @@ impl PendingEventState {
     /// Number of externally injected interrupts dropped due to queue overflow.
     pub fn dropped_external_interrupts(&self) -> u64 {
         self.dropped_external_interrupts
+    }
+
+    /// Number of interrupt deliveries that failed due to the interrupt frame stack being full.
+    pub fn dropped_interrupt_frames(&self) -> u64 {
+        self.dropped_interrupt_frames
     }
 
     /// Inhibit maskable interrupts for exactly one instruction.
@@ -390,6 +419,7 @@ impl PendingEventState {
             //
             // We treat this as a triple fault (reset) rather than trying to
             // limp forward with incorrect state.
+            self.dropped_interrupt_frames = self.dropped_interrupt_frames.saturating_add(1);
             return Err(CpuExit::TripleFault);
         }
         self.interrupt_frames.push(frame);

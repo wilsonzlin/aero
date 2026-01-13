@@ -26,9 +26,9 @@ pub fn apply_cpu_internal_state_to_cpu_core(
 
     core.pending
         .set_interrupt_inhibit_for_restore(state.interrupt_inhibit);
-    core.pending
-        .external_interrupts
-        .extend(state.pending_external_interrupts.iter().copied());
+    for &vector in &state.pending_external_interrupts {
+        core.pending.inject_external_interrupt(vector);
+    }
 }
 
 pub fn cpu_core_from_snapshot(cpu: &CpuState, mmu: &MmuState) -> CoreCpuState {
