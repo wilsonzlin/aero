@@ -494,7 +494,12 @@ function Write-InstallTxt {
 
     $dir = Split-Path -Parent $DestPath
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $lines | Set-Content -Path $DestPath -Encoding UTF8
+    # Make the generated file stable across PowerShell versions/hosts:
+    # - UTF-8 without BOM
+    # - CRLF newlines (Windows-friendly, deterministic even when running under pwsh on Unix)
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    $text = ($lines -join "`r`n") + "`r`n"
+    [System.IO.File]::WriteAllText($DestPath, $text, $utf8NoBom)
 }
 
 function New-DriverArtifactRoot {
