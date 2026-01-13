@@ -40,7 +40,12 @@ typedef uint8_t BOOLEAN;
 typedef uint8_t UCHAR;
 typedef uint16_t USHORT;
 typedef uint32_t ULONG;
+#if defined(_WIN32)
+/* Match WDK: LONG is a 32-bit signed long on Windows. */
+typedef long LONG;
+#else
 typedef int32_t LONG;
+#endif
 typedef int64_t LONGLONG;
 typedef uint64_t ULONGLONG;
 typedef unsigned int UINT;
@@ -204,23 +209,27 @@ static __forceinline void ExQueueWorkItem(_Inout_ PWORK_QUEUE_ITEM Item, _In_ WO
 
 /* ---- Interlocked operations (single-process host tests) ---- */
 
-#if defined(_WIN32) || defined(_MSC_VER)
+#if defined(_MSC_VER)
+static __forceinline LONG InterlockedIncrement(volatile LONG *addend) { return _InterlockedIncrement(addend); }
+static __forceinline LONG InterlockedDecrement(volatile LONG *addend) { return _InterlockedDecrement(addend); }
+static __forceinline LONG InterlockedExchange(volatile LONG *target, LONG value) { return _InterlockedExchange(target, value); }
+static __forceinline LONG InterlockedCompareExchange(volatile LONG *dest, LONG exchange, LONG comparand)
+{
+    return _InterlockedCompareExchange(dest, exchange, comparand);
+}
+#elif defined(_WIN32)
 /*
- * The host unit tests are single-threaded, so these helpers only need to preserve
- * return-value semantics (not atomicity).
- *
- * Keep the signatures matching the WDK surface area used by the driver sources.
+ * Host unit tests are currently single-threaded; keep a Windows fallback that
+ * does not depend on GCC/Clang __sync builtins.
  */
 static __forceinline LONG InterlockedIncrement(volatile LONG *addend) { return ++(*addend); }
 static __forceinline LONG InterlockedDecrement(volatile LONG *addend) { return --(*addend); }
-
 static __forceinline LONG InterlockedExchange(volatile LONG *target, LONG value)
 {
     LONG old = *target;
     *target = value;
     return old;
 }
-
 static __forceinline LONG InterlockedCompareExchange(volatile LONG *dest, LONG exchange, LONG comparand)
 {
     LONG old = *dest;
@@ -289,17 +298,13 @@ static __forceinline void KeReleaseSpinLock(KSPIN_LOCK *lock, KIRQL old_irql)
 
 static __forceinline void KeMemoryBarrier(void)
 {
-#if defined(_WIN32) || defined(_MSC_VER)
-    /*
-     * Host tests are single-threaded, but keep this as a compiler barrier to
-     * prevent reordering across buffer accesses in the protocol engines.
-     */
 #if defined(_MSC_VER)
-    _ReadWriteBarrier();
-#else
+    /* Interlocked operations act as full barriers on Windows. */
+    volatile LONG barrier = 0;
+    (void)InterlockedCompareExchange(&barrier, 0, 0);
+#elif defined(_WIN32)
     /* Best-effort compiler barrier for other Windows toolchains. */
     asm volatile("" ::: "memory");
-#endif
 #else
     __sync_synchronize();
 #endif
