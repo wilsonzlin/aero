@@ -796,6 +796,63 @@ function Try-EmitAeroVirtioNetLargeMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail
+  )
+
+  # Guest selftest may emit interrupt mode diagnostics markers:
+  #   virtio-<dev>-irq|INFO|mode=msix|vectors=...
+  #   virtio-<dev>-irq|WARN|mode=intx|reason=...
+  #
+  # These are informational by default and do not affect PASS/FAIL; the harness
+  # re-emits them as host-side markers for log scraping/diagnostics.
+  $byDev = @{}
+  foreach ($line in ($Tail -split "`r?`n")) {
+    if ($line -match "^virtio-(.+)-irq\|(INFO|WARN)(?:\|(.*))?$") {
+      $dev = $Matches[1]
+      $level = $Matches[2]
+      $rest = $Matches[3]
+      $fields = @{}
+      $extras = @()
+      if (-not [string]::IsNullOrEmpty($rest)) {
+        foreach ($tok in $rest.Split("|")) {
+          if ([string]::IsNullOrEmpty($tok)) { continue }
+          $idx = $tok.IndexOf("=")
+          if ($idx -gt 0) {
+            $k = $tok.Substring(0, $idx).Trim()
+            $v = $tok.Substring($idx + 1).Trim()
+            if (-not [string]::IsNullOrEmpty($k)) {
+              $fields[$k] = $v
+            }
+          } else {
+            $extras += $tok.Trim()
+          }
+        }
+      }
+      if ($extras.Count -gt 0) {
+        $fields["msg"] = ($extras -join "|")
+      }
+      $byDev[$dev] = @{
+        Level = $level
+        Fields = $fields
+      }
+    }
+  }
+
+  foreach ($dev in ($byDev.Keys | Sort-Object)) {
+    $info = $byDev[$dev]
+    $level = $info.Level
+    $fields = $info.Fields
+    $name = "VIRTIO_$($dev.ToUpperInvariant().Replace('-', '_'))_IRQ_DIAG"
+    $out = "AERO_VIRTIO_WIN7_HOST|$name|$level"
+    foreach ($k in ($fields.Keys | Sort-Object)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+    Write-Host $out
+  }
+}
+
 function Invoke-AeroVirtioSndWavVerification {
   param(
     [Parameter(Mandatory = $true)] [string]$WavPath,
@@ -1533,6 +1590,7 @@ try {
   }
 
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail
+  Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail
 
   switch ($result.Result) {
     "PASS" {

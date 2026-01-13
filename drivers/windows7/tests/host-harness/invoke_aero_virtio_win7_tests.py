@@ -56,6 +56,10 @@ It may also mirror guest-side IRQ diagnostics (when present) into per-device hos
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
+
+It also mirrors the standalone guest IRQ diagnostic lines (when present):
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|INFO/WARN|...`
 """
 
 from __future__ import annotations
@@ -65,6 +69,7 @@ import http.server
 import hashlib
 import json
 import math
+import re
 import warnings
 import os
 import shlex
@@ -2086,6 +2091,7 @@ def main() -> int:
         _emit_virtio_net_irq_host_marker(tail)
         _emit_virtio_snd_irq_host_marker(tail)
         _emit_virtio_input_irq_host_marker(tail)
+        _emit_virtio_irq_host_markers(tail)
 
         return result_code if result_code is not None else 2
 
@@ -2534,6 +2540,90 @@ def _parse_marker_kv_fields(marker_line: str) -> dict[str, str]:
             continue
         out[k] = v
     return out
+
+
+_VIRTIO_IRQ_MARKER_RE = re.compile(r"^virtio-(?P<dev>.+)-irq\|(?P<level>INFO|WARN)(?:\|(?P<rest>.*))?$")
+
+
+def _parse_virtio_irq_markers(tail: bytes) -> dict[str, dict[str, str]]:
+    """
+    Parse guest IRQ diagnostics markers.
+
+    The guest selftest may emit interrupt mode diagnostics for each virtio device:
+
+      virtio-<dev>-irq|INFO|mode=msix|vectors=...|...
+      virtio-<dev>-irq|WARN|mode=intx|reason=...|...
+
+    Returns a mapping from device name (e.g. "virtio-net") to a dict of parsed fields.
+    The dict always includes a "level" key ("INFO" or "WARN") and may include additional
+    key/value fields (e.g. "mode", "vectors", ...).
+
+    These markers are informational by default and do not affect overall harness PASS/FAIL.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for raw in tail.splitlines():
+        if not raw.startswith(b"virtio-") or b"-irq|" not in raw:
+            continue
+        try:
+            line = raw.decode("utf-8", errors="replace").strip()
+        except Exception:
+            continue
+        m = _VIRTIO_IRQ_MARKER_RE.match(line)
+        if not m:
+            continue
+        dev = m.group("dev")
+        level = m.group("level")
+        rest = m.group("rest") or ""
+
+        fields: dict[str, str] = {"level": level}
+        extra_parts: list[str] = []
+        for tok in rest.split("|") if rest else []:
+            tok = tok.strip()
+            if not tok:
+                continue
+            if "=" not in tok:
+                extra_parts.append(tok)
+                continue
+            k, v = tok.split("=", 1)
+            k = k.strip()
+            v = v.strip()
+            if not k:
+                continue
+            fields[k] = v
+        if extra_parts:
+            # Preserve non key/value tokens in a best-effort field so callers can still surface
+            # diagnostics even if the guest marker format changes slightly.
+            fields["msg"] = "|".join(extra_parts)
+
+        out[f"virtio-{dev}"] = fields
+    return out
+
+
+def _emit_virtio_irq_host_markers(tail: bytes) -> None:
+    """
+    Best-effort: emit host-side markers mirroring the guest `virtio-<dev>-irq|...` diagnostics.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    markers = _parse_virtio_irq_markers(tail)
+    if not markers:
+        return
+
+    for dev, fields in sorted(markers.items()):
+        level = fields.get("level", "INFO")
+        dev_short = dev
+        if dev_short.startswith("virtio-"):
+            dev_short = dev_short[len("virtio-") :]
+        # Avoid colliding with the stable PASS/FAIL/INFO `VIRTIO_*_IRQ` host markers that mirror
+        # `irq_*` fields from `AERO_VIRTIO_SELFTEST|TEST|...` lines.
+        marker_name = "VIRTIO_" + dev_short.upper().replace("-", "_") + "_IRQ_DIAG"
+
+        parts = [f"AERO_VIRTIO_WIN7_HOST|{marker_name}|{level}"]
+        for k in sorted(fields.keys()):
+            if k == "level":
+                continue
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+        print("|".join(parts))
 
 
 def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
