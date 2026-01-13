@@ -182,7 +182,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 
 - URL overrides are intentionally *highest precedence* and are shown as read-only in the Settings panel.
 - Some settings may be forced off at runtime if the browser lacks required capabilities (e.g. workers require `SharedArrayBuffer` + cross-origin isolation).
-- `proxy` (`proxyUrl`) may be either an absolute `ws(s)://` / `http(s)://` URL or a same-origin path like `/l2`.
+- `proxy` (`proxyUrl`) may be either an absolute `ws(s)://` / `http(s)://` URL or a same-origin path like `/l2` (legacy alias: `/eth`).
 
 ## WASM in workers
 
@@ -310,9 +310,9 @@ Browsers cannot open arbitrary TCP/UDP sockets directly. Aero’s guest networki
   Wire contracts: [`docs/backend/01-aero-gateway-api.md`](./docs/backend/01-aero-gateway-api.md)
 
 - **L2 tunnel (Option C):** [`crates/aero-l2-proxy`](./crates/aero-l2-proxy/) provides an Ethernet (L2) tunnel over WebSocket:
-  - `WS /l2` (subprotocol `aero-l2-tunnel-v1`)
+  - `WS /l2` (legacy alias: `/eth`; subprotocol `aero-l2-tunnel-v1`)
   - Browser clients should call `POST /session` first and use the gateway response for discovery (`endpoints.l2`) and tuning (`limits.l2`) instead of hardcoding paths.
-  - Deployment note: the canonical `deploy/docker-compose.yml` stack enforces an Origin allowlist for `/l2` by default.
+  - Deployment note: the canonical `deploy/docker-compose.yml` stack enforces an Origin allowlist for `/l2` (and legacy `/eth`) by default.
     Authentication is opt-in via `AERO_L2_AUTH_MODE` (recommended: `session` for same-origin browser clients; legacy alias:
     `cookie`). When using session-cookie auth (`AERO_L2_AUTH_MODE=session|cookie_or_jwt|session_or_token|session_and_token`;
     legacy aliases: `cookie_or_api_key`, `cookie_and_api_key`), the gateway and L2 proxy must share `SESSION_SECRET` (set it

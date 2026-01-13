@@ -70,7 +70,7 @@ docker run --rm -p 8080:8080 aero-gateway
 - `GET /version` build/version info
 - `GET /metrics` Prometheus metrics
 - `POST /session` issues the `aero_session` cookie used by `/dns-query`, `/tcp`, and `/tcp-mux` (and advertises base-path-aware endpoint paths for browser clients via the `endpoints` object)
-  - `endpoints.l2` points at the Option C L2 tunnel endpoint (`/l2`, subprotocol `aero-l2-tunnel-v1`), which is served by `aero-l2-proxy` behind the reverse proxy (not by the Node gateway process itself).
+  - `endpoints.l2` points at the Option C L2 tunnel endpoint (`/l2`; legacy alias: `/eth`; subprotocol `aero-l2-tunnel-v1`), which is served by `aero-l2-proxy` behind the reverse proxy (not by the Node gateway process itself).
   - `limits.l2` provides protocol payload size caps (`FRAME` vs control messages) so clients can tune buffering.
   - When the gateway is configured with `UDP_RELAY_BASE_URL`, the JSON response also includes `udpRelay` metadata (base URL + endpoints + short-lived token) for `proxy/webrtc-udp-relay`.
 - `GET /session` (dev-only helper; not part of the backend contract) sets a session cookie so Secure-cookie behavior is easy to validate in local TLS / reverse-proxy setups
@@ -176,7 +176,7 @@ TCP proxy (`/tcp`, `/tcp-mux`):
 - `TCP_MUX_MAX_STREAM_BUFFER_BYTES` (default: `1048576`)
 - `TCP_MUX_MAX_FRAME_PAYLOAD_BYTES` (default: `16777216`)
 
-L2 tunnel (`/l2`) payload limits (advertised via `POST /session` `limits.l2.*`):
+L2 tunnel (`/l2`; legacy alias: `/eth`) payload limits (advertised via `POST /session` `limits.l2.*`):
 
 - `AERO_L2_MAX_FRAME_PAYLOAD` (default: `2048`; legacy alias: `AERO_L2_MAX_FRAME_SIZE`)
   - Maximum payload bytes for L2 tunnel `FRAME` messages.
@@ -186,7 +186,7 @@ L2 tunnel (`/l2`) payload limits (advertised via `POST /session` `limits.l2.*`):
   - This value is surfaced to clients as `limits.l2.maxControlPayloadBytes`.
   - Values must be positive integers; `0`/blank are treated as unset (defaults apply).
 
-Note: the gateway does **not** terminate `/l2` itself; `aero-l2-proxy` enforces these limits at runtime. Keep
+Note: the gateway does **not** terminate `/l2` (or `/eth`) itself; `aero-l2-proxy` enforces these limits at runtime. Keep
 the gateway's advertised values in sync with the actual proxy configuration.
 
 DNS-over-HTTPS:

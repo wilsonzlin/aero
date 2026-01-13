@@ -197,7 +197,7 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 ## L2 tunnel bridging (optional)
 
 The relay can also bridge a WebRTC DataChannel labeled `l2` to a backend WebSocket
-endpoint (typically `aero-l2-proxy`).
+endpoint (typically `aero-l2-proxy` at `/l2`; legacy alias: `/eth`).
 
 The `l2` DataChannel must be **fully reliable and ordered**:
 
@@ -205,7 +205,7 @@ The `l2` DataChannel must be **fully reliable and ordered**:
 - do **not** set `maxRetransmits` / `maxPacketLifeTime` (partial reliability)
 
 ```
-browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2
+browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2 (legacy alias: /eth)
 ```
 
 The relay does not interpret `l2` messages, but the framing constants and helper codec used by tests live in:
@@ -277,7 +277,7 @@ export AERO_L2_AUTH_MODE=token
 export AERO_L2_API_KEY='REPLACE_WITH_SECRET'
 
 # WebRTC relay (bridge).
-export L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2
+export L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2 # legacy alias: /eth
 export L2_BACKEND_ORIGIN=https://aero.example.com
 export L2_BACKEND_TOKEN='REPLACE_WITH_SECRET'
 
@@ -297,7 +297,7 @@ Use the L2 proxy Service DNS name in `L2_BACKEND_WS_URL`, for example:
 ```yaml
 env:
   - name: L2_BACKEND_WS_URL
-    value: ws://aero-l2-proxy.aero.svc.cluster.local:8090/l2
+    value: ws://aero-l2-proxy.aero.svc.cluster.local:8090/l2 # legacy alias: /eth
   - name: L2_BACKEND_ORIGIN
     value: https://aero.example.com
   - name: L2_BACKEND_TOKEN
@@ -387,7 +387,7 @@ backend WebSocket (typically `aero-l2-proxy`) that speaks subprotocol `aero-l2-t
 Env vars / flags:
 
 - `L2_BACKEND_WS_URL` / `--l2-backend-ws-url` (optional; when unset, `l2` DataChannels are rejected)
-  - Example: `ws://127.0.0.1:8090/l2`
+  - Example: `ws://127.0.0.1:8090/l2` (legacy alias: `/eth`)
 - `L2_MAX_MESSAGE_BYTES` / `--l2-max-message-bytes` (default `4096`)
 - `L2_BACKEND_FORWARD_ORIGIN` / `--l2-backend-forward-origin` (default: `true` when `L2_BACKEND_WS_URL` is set)
   - When enabled, the relay forwards the normalized browser `Origin` (or a derived origin from request Host/scheme)

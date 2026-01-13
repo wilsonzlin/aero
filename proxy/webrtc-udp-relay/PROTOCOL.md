@@ -46,7 +46,7 @@ Unlike `udp`, the relay does **not** parse or frame messages on `l2`. Instead,
 it acts as a transport bridge:
 
 ```
-browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2
+browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2 (legacy alias: /eth)
 ```
 
 - Each binary DataChannel message is forwarded as a single WebSocket **binary**

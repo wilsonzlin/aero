@@ -91,6 +91,8 @@ Expected behavior:
   - `GET /readyz` – readiness
   - `GET /version` – build/version info
   - `GET /metrics` – Prometheus metrics
+- WebSocket tunnel endpoint:
+  - `GET /l2` (legacy alias: `/eth`) – L2 tunnel (subprotocol `aero-l2-tunnel-v1`)
 - The proxy is configured with a strict egress policy in production; local dev may enable “open” mode.
 
 #### Browser: establish the L2 tunnel over WebSocket
@@ -103,7 +105,7 @@ import { WebSocketL2TunnelClient } from "./net";
 // `gatewayBaseUrl` can be:
 // - `ws://...` / `wss://...` (explicit WebSocket URL), or
 // - `http://...` / `https://...` (auto-converted to ws(s) and `/l2` appended), or
-// - a same-origin path like `/l2` when running the full web app.
+// - a same-origin path like `/l2` (legacy alias: `/eth`) when running the full web app.
 const l2 = new WebSocketL2TunnelClient("http://127.0.0.1:8090", (ev) => {
   if (ev.type === "frame") nicRx(ev.frame);
   if (ev.type === "error") console.error(ev.error);
