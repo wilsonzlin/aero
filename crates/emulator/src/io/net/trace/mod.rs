@@ -645,7 +645,7 @@ impl NetTracer {
             Some(redactor) => redactor
                 .redact_ethernet(direction, frame)
                 .map(|frame| frame.into()),
-            None => Some(Arc::from(frame.to_vec())),
+            None => Some(Arc::from(frame)),
         }
     }
 
@@ -659,7 +659,7 @@ impl NetTracer {
             Some(redactor) => redactor
                 .redact_tcp_proxy(direction, connection_id, data)
                 .map(|data| data.into()),
-            None => Some(Arc::from(data.to_vec())),
+            None => Some(Arc::from(data)),
         }
     }
 
@@ -684,7 +684,7 @@ impl NetTracer {
                     data,
                 )
                 .map(|data| data.into()),
-            None => Some(Arc::from(data.to_vec())),
+            None => Some(Arc::from(data)),
         }
     }
 
