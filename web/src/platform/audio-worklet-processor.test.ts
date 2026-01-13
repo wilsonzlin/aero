@@ -178,6 +178,69 @@ describe("audio-worklet-processor underrun counter", () => {
     }
   });
 
+  it("flushes a final rate-limited underrun message after recovery", () => {
+    const capacityFrames = 4;
+    const channelCount = 1;
+    const { sab, views } = makeRingBuffer(capacityFrames, channelCount);
+
+    Atomics.store(views.readIndex, 0, 0);
+    Atomics.store(views.writeIndex, 0, 0);
+    Atomics.store(views.underrunCount, 0, 0);
+
+    const originalCurrentTime = (globalThis as unknown as { currentTime?: unknown }).currentTime;
+    try {
+      (globalThis as unknown as { currentTime?: number }).currentTime = 0;
+
+      const proc = new AeroAudioProcessor({
+        processorOptions: {
+          ringBuffer: sab,
+          channelCount,
+          capacityFrames,
+          sendUnderrunMessages: true,
+          underrunMessageIntervalMs: 1000,
+        },
+      });
+
+      const postMessage = vi.fn();
+      proc.port.postMessage = postMessage;
+
+      const framesNeeded = 4;
+      const outputs: Float32Array[][] = [[new Float32Array(framesNeeded)]];
+
+      // Two underrun callbacks within the interval: only the first should post.
+      proc.process([], outputs);
+      proc.process([], outputs);
+
+      expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(8);
+      expect(postMessage.mock.calls.length).toBe(1);
+
+      // Simulate recovery by making samples available in the ring (so no underrun occurs). The
+      // processor should flush the suppressed underrun frames once the interval elapses.
+      views.samples.set([0.1, 0.2, 0.3, 0.4]);
+      Atomics.store(views.writeIndex, 0, 4);
+
+      (globalThis as unknown as { currentTime?: number }).currentTime = 2;
+      const outputs2: Float32Array[][] = [[new Float32Array(framesNeeded)]];
+      proc.process([], outputs2);
+
+      expect(outputs2[0][0]).toEqual(Float32Array.from([0.1, 0.2, 0.3, 0.4]));
+      expect(postMessage.mock.calls.length).toBe(2);
+      expect(postMessage.mock.calls[1]?.[0]).toEqual({
+        type: "underrun",
+        underrunFramesAdded: 4,
+        underrunFramesTotal: 8,
+        underrunCount: 8,
+      });
+    } finally {
+      const g = globalThis as unknown as { currentTime?: unknown };
+      if (originalCurrentTime === undefined) {
+        delete g.currentTime;
+      } else {
+        g.currentTime = originalCurrentTime;
+      }
+    }
+  });
+
   it("suppresses underrun messages by default (but still increments the shared counter)", () => {
     const capacityFrames = 4;
     const channelCount = 1;

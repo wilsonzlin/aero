@@ -218,6 +218,46 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
       }
     }
 
+    // If underruns were rate-limited and then recovered before the next message interval elapses,
+    // flush a final message once allowed so consumers that rely on messages (instead of shared
+    // memory) can observe the latest total.
+    //
+    // Note: this check intentionally only runs on non-underrun callbacks (framesToRead ==
+    // framesNeeded) to avoid redundant time computations in persistent underrun scenarios.
+    if (this._sendUnderrunMessages && this._pendingUnderrunFrames !== 0 && framesToRead === framesNeeded) {
+      const nowMs = (() => {
+        // AudioWorkletGlobalScope exposes `currentTime` (seconds) / `currentFrame` (frames). When
+        // running under Node-based tests, fall back to `performance.now()` / `Date.now()`.
+        // eslint-disable-next-line no-undef
+        const ct = typeof currentTime === "number" && Number.isFinite(currentTime) ? currentTime : null;
+        if (ct !== null) return ct * 1000;
+        if (typeof globalThis.performance?.now === "function") return globalThis.performance.now();
+        return Date.now();
+      })();
+
+      const last = this._lastUnderrunMessageTimeMs;
+      const intervalMs = this._underrunMessageIntervalMs;
+      const canSend = last === null || !Number.isFinite(last) || nowMs - last >= intervalMs || nowMs < last;
+
+      if (canSend) {
+        this._lastUnderrunMessageTimeMs = nowMs;
+        const added = this._pendingUnderrunFrames >>> 0;
+        this._pendingUnderrunFrames = 0;
+        const total = Atomics.load(this._header, UNDERRUN_COUNT_INDEX) >>> 0;
+        try {
+          this.port.postMessage({
+            type: "underrun",
+            underrunFramesAdded: added,
+            underrunFramesTotal: total,
+            // Backwards-compatible field name; this is a frame counter (not events).
+            underrunCount: total,
+          });
+        } catch (_e) {
+          // Ignore.
+        }
+      }
+    }
+
     if (framesToRead > 0) {
       Atomics.store(this._header, READ_FRAME_INDEX, readFrameIndex + framesToRead);
     }
