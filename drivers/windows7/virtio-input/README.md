@@ -401,6 +401,10 @@ For contract-v1 testing under QEMU, you typically want:
 - `disable-legacy=on` (modern-only virtio-pci)
 - `x-pci-revision=0x01` (so the device matches the `REV_01` contract major version / INF HWID gate)
 
+Note: QEMU’s virtio-input devices typically report `ID_NAME` strings like `"QEMU Virtio Keyboard"`. This driver is
+**strict by default** and expects the Aero contract strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`), so
+stock QEMU virtio-input usually requires enabling the per-device `CompatDeviceKind` mode (see `docs/virtio-input-notes.md`).
+
 ## Testing
 
 - User-mode HID verification tool: `tools/hidtest/README.md`
