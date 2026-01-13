@@ -685,8 +685,14 @@ VirtIoSndHwDrainEventqUsed(
 
     bufVa = (PUCHAR)dx->EventqBufferPool.Va + off;
 
-    if (UsedLen >= (UINT32)sizeof(VIRTIO_SND_EVENT)) {
-        const UINT32 cappedLen = (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) ? (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE : UsedLen;
+    /*
+     * Validate UsedLen before parsing: it must never exceed the posted writable
+     * buffer size. Treat oversized completions as malformed and ignore them.
+     */
+    if (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) {
+        /* Malformed completion; ignore payload. */
+    } else if (UsedLen >= (UINT32)sizeof(VIRTIO_SND_EVENT)) {
+        const UINT32 cappedLen = UsedLen; /* already validated against buffer size */
         VIRTIO_SND_EVENT_PARSED evt;
 
         /* Ensure device DMA writes are visible before inspecting the buffer. */
