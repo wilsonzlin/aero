@@ -244,19 +244,22 @@ impl SlotContext {
     }
 
     /// Sets the Route String field from downstream hub ports ordered from root-to-device.
-    pub fn set_route_string_from_root_ports(&mut self, ports: &[u8]) -> Result<(), XhciRouteStringError> {
+    pub fn set_route_string_from_root_ports(
+        &mut self,
+        ports: &[u8],
+    ) -> Result<(), XhciRouteStringError> {
         let route = XhciRouteString::encode_from_root(ports)?;
         self.set_route_string(route.raw());
         Ok(())
     }
 
-    /// Root Hub Port Number field (DW1 bits 0..=7).
+    /// Root Hub Port Number field (DW1 bits 16..=23).
     pub fn root_hub_port_number(&self) -> u8 {
-        (self.dwords[1] & 0xff) as u8
+        ((self.dwords[1] >> 16) & 0xff) as u8
     }
 
     pub fn set_root_hub_port_number(&mut self, port: u8) {
-        self.dwords[1] = (self.dwords[1] & !0xff) | (port as u32);
+        self.dwords[1] = (self.dwords[1] & !(0xff << 16)) | ((port as u32) << 16);
     }
 }
 

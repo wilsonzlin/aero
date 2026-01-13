@@ -48,7 +48,7 @@ fn parse_input_context_slot_and_endpoint_context() {
     let speed_id = 3u32; // High speed (value doesn't matter for this test).
     let context_entries = 3u32;
     mem.write_u32(slot_ctx + 0, (speed_id << 20) | (context_entries << 27));
-    mem.write_u32(slot_ctx + 4, 5); // port = 5
+    mem.write_u32(slot_ctx + 4, 5u32 << 16); // port = 5
 
     // Endpoint Context for Device Context index 3 (Endpoint 1 IN, typically).
     let ep_ctx = input_ctx_base + 0x20 * 4; // Input ctx index = device idx + 1 => 3 + 1 = 4.
