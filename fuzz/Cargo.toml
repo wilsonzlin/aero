@@ -51,6 +51,9 @@ path = "../crates/aero-virtio"
 [dependencies.aero-protocol]
 path = "../emulator/protocol"
 
+[dependencies.aero-cpu-core]
+path = "../crates/aero-cpu-core"
+
 [dependencies.aero-l2-protocol]
 path = "../crates/aero-l2-protocol"
 
@@ -59,8 +62,6 @@ path = "../crates/aero-net-stack"
 
 [dependencies.aero-net-e1000]
 path = "../crates/aero-net-e1000"
-[dependencies.aero-cpu-core]
-path = "../crates/aero-cpu-core"
 
 [[bin]]
 name = "fuzz_mmu_translate"
@@ -221,5 +222,11 @@ doc = false
 [[bin]]
 name = "fuzz_tier0_step"
 path = "fuzz_targets/fuzz_tier0_step.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_linear_mem_wrapped"
+path = "fuzz_targets/fuzz_linear_mem_wrapped.rs"
 test = false
 doc = false

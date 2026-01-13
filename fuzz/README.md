@@ -4,6 +4,7 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 
 - MMU page walking / translation
 - Physical bus routing logic
+- x86 linear-memory wrapped helpers (`aero-cpu-core::linear_mem::*_wrapped`)
 - Storage controller emulation (AHCI + IDE + ATAPI + PIIX3 PCI wrapper)
 - L2 tunnel protocol codec (`aero-l2-protocol`)
 - User-space network stack Ethernet ingress (`aero-net-stack`)
@@ -41,6 +42,7 @@ cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
 cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
 cargo +"$nightly" fuzz run fuzz_aerogpu_parse
 cargo +"$nightly" fuzz run fuzz_tier0_step
+cargo +"$nightly" fuzz run fuzz_linear_mem_wrapped
 
 # DXBC / shaders
 cargo +"$nightly" fuzz run fuzz_dxbc_sm4_parse
