@@ -702,6 +702,54 @@ async fn invalid_chunk_name_is_rejected_without_traversal() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn invalid_chunked_version_is_rejected_without_traversal() {
+    let (app, dir, _manifest) = setup_app(None).await;
+
+    // A file that would be leaked if the server allowed `..` traversal in the version segment.
+    tokio::fs::create_dir_all(dir.path().join("chunked/secret"))
+        .await
+        .expect("create secret dir");
+    tokio::fs::write(dir.path().join("chunked/secret/manifest.json"), b"top secret")
+        .await
+        .expect("write secret manifest");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/..%2Fsecret/manifest.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn overly_long_raw_chunked_version_segment_is_rejected_early() {
+    let (app, _dir, _manifest) = setup_app(None).await;
+
+    let too_long_raw = "a".repeat(aero_storage_server::store::MAX_IMAGE_ID_LEN * 3 + 1);
+    let uri = format!("/v1/images/disk/chunked/{too_long_raw}/manifest.json");
+
+    let resp = app
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chunk_larger_than_limit_is_rejected() {
     let dir = tempdir().expect("tempdir");
 
