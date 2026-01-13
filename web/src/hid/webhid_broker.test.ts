@@ -802,6 +802,38 @@ describe("hid/WebHidBroker", () => {
     broker.destroy();
   });
 
+  it("drains the output ring before enqueuing hid.sendReport messages (preserves ring->message order even without timer)", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+    const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+    const device = new FakeHidDevice();
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    // Push a ring record and immediately deliver a message report without giving the periodic ring drain
+    // timer a chance to run. The broker should drain the ring synchronously while handling the message so
+    // the ring record is sent first.
+    expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(1))).toBe(true);
+    port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 2, data: Uint8Array.of(2) });
+
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(device.sendReport).toHaveBeenCalledTimes(2);
+    expect(device.sendReport).toHaveBeenNthCalledWith(1, 1, Uint8Array.of(1));
+    expect(device.sendReport).toHaveBeenNthCalledWith(2, 2, Uint8Array.of(2));
+
+    broker.destroy();
+  });
+
   it("does not block other devices when output ring sends are pending", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 

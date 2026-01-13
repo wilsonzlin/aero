@@ -827,6 +827,13 @@ export class WebHidBroker {
   }
 
   #handleSendReportRequest(msg: HidSendReportMessage): void {
+    // `hid.sendReport` can be delivered via postMessage even when the SAB output ring fast path
+    // is enabled (e.g. during transitions/fallback). Drain the ring first so any previously
+    // produced ring records are enqueued before this message, preserving guest report order.
+    if (this.#outputRing) {
+      this.#drainOutputRing();
+    }
+
     if (!this.#attachedToWorker.has(msg.deviceId)) {
       console.warn(`[webhid] sendReport for detached deviceId=${msg.deviceId}`);
       return;
