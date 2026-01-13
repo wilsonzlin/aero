@@ -178,3 +178,80 @@ fn dxbc_get_ctab_parses_chunk() {
     assert_eq!(ctab.constants.len(), 1);
     assert_eq!(ctab.constants[0].name, "C0");
 }
+
+#[test]
+fn dxbc_get_rdef_skips_malformed_duplicate_chunks() {
+    let bad_chunk = [0u8; 4]; // truncated RDEF header
+
+    let mut good_chunk = Vec::new();
+    push_u32(&mut good_chunk, 0); // cb count
+    push_u32(&mut good_chunk, 0); // cb offset
+    push_u32(&mut good_chunk, 1); // resource count
+    push_u32(&mut good_chunk, 28); // resource offset (header size)
+    push_u32(&mut good_chunk, 0); // shader model
+    push_u32(&mut good_chunk, 0); // flags
+    push_u32(&mut good_chunk, 0); // creator offset
+
+    // Resource entry (32 bytes).
+    push_u32(&mut good_chunk, 60); // name offset
+    push_u32(&mut good_chunk, 0); // type
+    push_u32(&mut good_chunk, 0); // return type
+    push_u32(&mut good_chunk, 0); // dimension
+    push_u32(&mut good_chunk, 0); // num samples
+    push_u32(&mut good_chunk, 3); // bind point
+    push_u32(&mut good_chunk, 1); // bind count
+    push_u32(&mut good_chunk, 0); // flags
+    good_chunk.extend_from_slice(b"tex0\0");
+
+    let dxbc_bytes = build_dxbc(&[
+        (FourCC(*b"RDEF"), &bad_chunk),
+        (FourCC(*b"RDEF"), &good_chunk),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let rdef = dxbc
+        .get_rdef()
+        .expect("expected an RDEF chunk")
+        .expect("RDEF parse should succeed");
+    assert_eq!(rdef.resources.len(), 1);
+    assert_eq!(rdef.resources[0].name, "tex0");
+}
+
+#[test]
+fn dxbc_get_ctab_skips_malformed_duplicate_chunks() {
+    let bad_chunk = [0u8; 4]; // truncated CTAB header
+
+    let mut good_chunk = Vec::new();
+    push_u32(&mut good_chunk, 0); // size (ignored)
+    push_u32(&mut good_chunk, 0); // creator offset
+    push_u32(&mut good_chunk, 0); // version
+    push_u32(&mut good_chunk, 1); // constant count
+    push_u32(&mut good_chunk, 28); // constant info offset
+    push_u32(&mut good_chunk, 0); // flags
+    push_u32(&mut good_chunk, 48); // target offset (after entry)
+
+    // Constant info entry (20 bytes).
+    push_u32(&mut good_chunk, 55); // name offset (after target string)
+    push_u16(&mut good_chunk, 0); // register set
+    push_u16(&mut good_chunk, 0); // register index
+    push_u16(&mut good_chunk, 1); // register count
+    push_u16(&mut good_chunk, 0); // reserved
+    push_u32(&mut good_chunk, 0); // type info offset
+    push_u32(&mut good_chunk, 0); // default value offset
+    good_chunk.extend_from_slice(b"ps_2_0\0");
+    good_chunk.extend_from_slice(b"C0\0");
+
+    let dxbc_bytes = build_dxbc(&[
+        (FourCC(*b"CTAB"), &bad_chunk),
+        (FourCC(*b"CTAB"), &good_chunk),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let ctab = dxbc
+        .get_ctab()
+        .expect("expected a CTAB chunk")
+        .expect("CTAB parse should succeed");
+    assert_eq!(ctab.target.as_deref(), Some("ps_2_0"));
+    assert_eq!(ctab.constants.len(), 1);
+    assert_eq!(ctab.constants[0].name, "C0");
+}
