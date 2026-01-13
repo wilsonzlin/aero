@@ -255,6 +255,7 @@ version = "0.1.0"
 dependencies = [
  "aero-d3d9",
  "aero-dxbc",
+ "aero-gpu-trace",
  "aero-protocol",
  "aero-shared",
  "bcdec_rs",

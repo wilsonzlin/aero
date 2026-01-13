@@ -38,6 +38,7 @@ js-sys = "0.3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
+aero-gpu-trace = { path = "../aero-gpu-trace" }
 
 [dev-dependencies]
 aero-dxbc = { path = "../aero-dxbc", features = ["test-utils"] }
@@ -50,4 +51,8 @@ wasm-bindgen-test = "0.3"
 
 [[bench]]
 name = "tile_diff"
+harness = false
+
+[[bench]]
+name = "cmd_stream"
 harness = false
