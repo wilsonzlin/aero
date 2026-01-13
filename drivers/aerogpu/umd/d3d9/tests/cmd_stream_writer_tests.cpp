@@ -3334,6 +3334,63 @@ bool TestGetDisplayModeExReturnsPrimaryMode() {
   return Check(rotation == D3DDDI_ROTATION_IDENTITY, "display rotation identity");
 }
 
+bool TestCheckDeviceStateNullHwndReturnsOk() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCheckDeviceState != nullptr, "CheckDeviceState must be available")) {
+    return false;
+  }
+
+  // Some D3D9Ex clients (including DWM) call CheckDeviceState without a HWND.
+  hr = cleanup.device_funcs.pfnCheckDeviceState(create_dev.hDevice, nullptr);
+  return Check(hr == S_OK, "CheckDeviceState(NULL)");
+}
+
 bool TestDeviceMiscExApisSucceed() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -9855,6 +9912,7 @@ int main() {
   failures += !aerogpu::TestPresentSplitsRenderAndPresentSubmissions();
   failures += !aerogpu::TestFlushNoopsOnEmptyCommandBuffer();
   failures += !aerogpu::TestGetDisplayModeExReturnsPrimaryMode();
+  failures += !aerogpu::TestCheckDeviceStateNullHwndReturnsOk();
   failures += !aerogpu::TestDeviceMiscExApisSucceed();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
   failures += !aerogpu::TestDrawStateTrackingPreSplitRetainsAllocs();

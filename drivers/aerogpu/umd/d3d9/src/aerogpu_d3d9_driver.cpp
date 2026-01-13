@@ -315,6 +315,43 @@ constexpr HRESULT kSPresentOccluded = S_PRESENT_OCCLUDED;
 constexpr HRESULT kSPresentOccluded = 0x08760868L;
 #endif
 
+// Best-effort occlusion detection shared by Present/PresentEx/CheckDeviceState.
+//
+// This must stay cheap/non-blocking: only query cached window state (no waits).
+// Note that some D3D9Ex clients (including DWM) can present to HWNDs that are not
+// straightforward "app windows", so avoid aggressive heuristics that would cause
+// false S_PRESENT_OCCLUDED returns.
+bool hwnd_is_occluded(HWND hwnd) {
+#if defined(_WIN32)
+  if (!hwnd) {
+    return false;
+  }
+  // If the HWND is stale/invalid, don't guess: treat it as "not occluded" to
+  // avoid spurious S_PRESENT_OCCLUDED.
+  if (!IsWindow(hwnd)) {
+    return false;
+  }
+  if (IsIconic(hwnd)) {
+    return true;
+  }
+  RECT rc{};
+  if (GetClientRect(hwnd, &rc)) {
+    const LONG w = rc.right - rc.left;
+    const LONG h = rc.bottom - rc.top;
+    if (w <= 0 || h <= 0) {
+      return true;
+    }
+  }
+  // NOTE: We intentionally do not treat !IsWindowVisible(hwnd) as occluded by
+  // default. Hidden windows can still be valid present targets (including for
+  // pacing-sensitive paths like DWM/PresentEx tests).
+  return false;
+#else
+  (void)hwnd;
+  return false;
+#endif
+}
+
 // D3D9 API/UMD query constants (numeric values from d3d9types.h).
 constexpr uint32_t kD3DQueryTypeEvent = 8u;
 constexpr uint32_t kD3DIssueEnd = 0x1u;
@@ -8578,13 +8615,9 @@ HRESULT AEROGPU_D3D9_CALL device_check_device_state(
   if (!hDevice.pDrvPrivate) {
     return trace.ret(E_INVALIDARG);
   }
-#if defined(_WIN32)
-  if (hWnd) {
-    if (IsIconic(hWnd)) {
-      return trace.ret(kSPresentOccluded);
-    }
+  if (hwnd_is_occluded(hWnd)) {
+    return trace.ret(kSPresentOccluded);
   }
-#endif
   return trace.ret(S_OK);
 }
 
@@ -16472,9 +16505,8 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
     std::lock_guard<std::mutex> lock(dev->mutex);
 
     bool occluded = false;
-#if defined(_WIN32)
     // Returning S_PRESENT_OCCLUDED from PresentEx helps some D3D9Ex clients avoid
-    // pathological present loops when their target window is minimized.
+    // pathological present loops when their target window is minimized/occluded.
     // Keep the check cheap and never block on it.
     HWND hwnd = d3d9_present_hwnd(*pPresentEx);
     if (!hwnd) {
@@ -16484,12 +16516,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       }
       hwnd = sc ? sc->hwnd : nullptr;
     }
-    if (hwnd) {
-      if (IsIconic(hwnd)) {
-        occluded = true;
-      }
-    }
-#endif
+    occluded = hwnd_is_occluded(hwnd);
 
     if (occluded) {
       // Even when occluded, Present/PresentEx act as a flush point and must
@@ -16858,7 +16885,6 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     std::lock_guard<std::mutex> lock(dev->mutex);
 
     bool occluded = false;
-#if defined(_WIN32)
     HWND hwnd = wnd;
     if (!hwnd) {
       SwapChain* sc = as_swapchain(pPresent->hSwapChain);
@@ -16876,12 +16902,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
       }
       hwnd = sc ? sc->hwnd : nullptr;
     }
-    if (hwnd) {
-      if (IsIconic(hwnd)) {
-        occluded = true;
-      }
-    }
-#endif
+    occluded = hwnd_is_occluded(hwnd);
 
     if (occluded) {
       retire_completed_presents_locked(dev);
