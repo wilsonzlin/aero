@@ -96,6 +96,7 @@ proptest! {
     // a wide input space.
     #![proptest_config(ProptestConfig {
         cases: 256,
+        rng_seed: proptest::test_runner::RngSeed::Fixed(0xA3A0_47),
         .. ProptestConfig::default()
     })]
 
