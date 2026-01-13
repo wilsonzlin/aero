@@ -26,6 +26,7 @@ Implementation references (current repo):
 - (Dev/harness) WASM standalone WebUSB UHCI bridge (`WebUsbUhciBridge`): `crates/aero-wasm/src/webusb_uhci_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
 - WASM demo driver (`UsbPassthroughDemo`; queues GET_DESCRIPTOR requests to validate the action↔completion contract end-to-end): `crates/aero-wasm/src/lib.rs`
 - WASM UHCI enumeration harness (dev smoke; `WebUsbUhciPassthroughHarness`): `crates/aero-wasm/src/webusb_uhci_passthrough_harness.rs`
+- (Dev/harness) WASM EHCI passthrough harness (EHCI-like; validates action↔completion + USBSTS/IRQ semantics without full qTD/QH walking): `crates/aero-wasm/src/webusb_ehci_passthrough_harness.rs`
 - TS canonical wire types (`SetupPacket`/`UsbHostAction`/`UsbHostCompletion`): `web/src/usb/usb_passthrough_types.ts`
 - TS WebUSB backend/executor (`WebUsbBackend`): `web/src/usb/webusb_backend.ts` (+ `web/src/usb/webusb_executor.ts`)
 - TS main-thread broker for workers (optional): `web/src/usb/usb_broker.ts` (+ `web/src/usb/usb_proxy_protocol.ts`, `web/src/usb/usb_proxy_ring.ts`)
@@ -34,6 +35,7 @@ Implementation references (current repo):
 - Guest-visible worker wiring (UHCI PCI device + WebUSB hotplug + passthrough runtime): `web/src/workers/io.worker.ts`
 - TS worker-side demo runtime (drains `UsbPassthroughDemo` actions, pushes completions, defines `usb.demo.run`, emits `usb.demoResult`): `web/src/usb/usb_passthrough_demo_runtime.ts`
 - TS worker-side UHCI harness runner (dev smoke): `web/src/usb/webusb_harness_runtime.ts`
+- TS worker-side EHCI harness runner (dev smoke): `web/src/usb/webusb_ehci_harness_runtime.ts`
 - TS guest-visible UHCI PCI device (I/O worker): `web/src/io/devices/uhci.ts`
 - (Dev/harness) TS standalone WebUSB UHCI PCI device: `web/src/io/devices/uhci_webusb.ts`
 - TS UI harness panels:
@@ -42,6 +44,7 @@ Implementation references (current repo):
   - WebUSB UHCI harness panel (main thread): `web/src/usb/webusb_uhci_harness_panel.ts`
 - WebUSB passthrough demo panel (IO worker result + Run buttons, including a “Configuration full” rerun when `wTotalLength` indicates truncation): `web/src/main.ts` (`renderWebUsbPassthroughDemoWorkerPanel`)
 - WebUSB UHCI harness panel (I/O worker): `web/src/main.ts` (`renderWebUsbUhciHarnessWorkerPanel`)
+- WebUSB EHCI harness panel (I/O worker): `web/src/main.ts` (`renderWebUsbEhciHarnessWorkerPanel`)
 - Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
 - (Legacy repo-root WebUSB demo broker/client RPC; deprecated; not the passthrough wire contract): `src/platform/legacy/webusb_{broker,client,protocol}.ts`
 
@@ -718,6 +721,8 @@ Use the Web UI:
 - WebUSB standalone diagnostics page: `/webusb_diagnostics.html` (`web/src/webusb_diagnostics.ts`)
 - WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts` (rendered from `web/src/main.ts`)
 - WebUSB passthrough demo panel (IO worker): `web/src/main.ts` (`renderWebUsbPassthroughDemoWorkerPanel`)
+- WebUSB UHCI harness panel (IO worker): `web/src/main.ts` (`renderWebUsbUhciHarnessWorkerPanel`)
+- WebUSB EHCI harness panel (IO worker): `web/src/main.ts` (`renderWebUsbEhciHarnessWorkerPanel`)
 
 These panels cover: device selection (`requestDevice`), open/claim failures, protected interface
 behavior, and basic `GET_DESCRIPTOR` control transfer smoke tests (including via `usb.demo.run`).
