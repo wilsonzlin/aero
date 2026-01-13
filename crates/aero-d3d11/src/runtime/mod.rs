@@ -3,6 +3,7 @@ pub mod aerogpu_execute;
 pub mod aerogpu_resources;
 pub mod aerogpu_state;
 pub mod bindings;
+pub mod expansion_scratch;
 pub mod execute;
 pub mod pipeline_layout_cache;
 mod reflection_bindings;

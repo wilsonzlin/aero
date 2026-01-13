@@ -39,6 +39,7 @@ use crate::{
 };
 
 use super::bindings::{BindingState, BoundConstantBuffer, BoundSampler, ShaderStage};
+use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchDescriptor};
 use super::pipeline_layout_cache::PipelineLayoutCache;
 use super::reflection_bindings;
 
@@ -577,6 +578,7 @@ pub struct AerogpuD3d11Executor {
 
     cbuffer_scratch: HashMap<(ShaderStage, u32), ConstantBufferScratch>,
     next_scratch_buffer_id: u64,
+    expansion_scratch: ExpansionScratchAllocator,
 
     dummy_uniform: wgpu::Buffer,
     dummy_texture_view: wgpu::TextureView,
@@ -725,6 +727,7 @@ impl AerogpuD3d11Executor {
             legacy_constants,
             cbuffer_scratch: HashMap::new(),
             next_scratch_buffer_id: 1u64 << 32,
+            expansion_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default()),
             dummy_uniform,
             dummy_texture_view,
             sampler_cache,
@@ -821,6 +824,7 @@ impl AerogpuD3d11Executor {
         self.shared_surfaces.clear();
         self.pipeline_cache.clear();
         self.cbuffer_scratch.clear();
+        self.expansion_scratch.reset();
         self.encoder_used_buffers.clear();
         self.encoder_used_textures.clear();
         self.next_scratch_buffer_id = 1u64 << 32;
@@ -6536,6 +6540,7 @@ impl AerogpuD3d11Executor {
             presented_render_target,
         });
         self.submit_encoder(encoder, "aerogpu_cmd encoder after present");
+        self.expansion_scratch.begin_frame();
         Ok(())
     }
 
@@ -6568,11 +6573,13 @@ impl AerogpuD3d11Executor {
             presented_render_target,
         });
         self.submit_encoder(encoder, "aerogpu_cmd encoder after present_ex");
+        self.expansion_scratch.begin_frame();
         Ok(())
     }
 
     fn exec_flush(&mut self, encoder: &mut wgpu::CommandEncoder) -> Result<()> {
         self.submit_encoder(encoder, "aerogpu_cmd encoder after flush");
+        self.expansion_scratch.begin_frame();
         Ok(())
     }
 
