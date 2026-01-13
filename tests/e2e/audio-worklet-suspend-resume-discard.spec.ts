@@ -94,15 +94,14 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     { timeout: 20_000 },
   );
 
-  const CAPACITY_FRAMES = 262_144;
-  const BACKLOG_TARGET_FRAMES = 250_000;
+  const MIN_RING_CAPACITY_FRAMES = 262_144;
   const BACKLOG_DISCARDED_THRESHOLD_FRAMES = 512;
-  // If resume-discard is broken, draining ~120k frames at 48kHz takes ~2.5s (and still >600ms at
-  // 192kHz). Keep the assertion window tight enough that a real-time drain can't satisfy it, while
-  // still allowing for CI jitter.
+  // If resume-discard is broken, draining a nearly-full multi-second ring takes far longer than the
+  // bounded timeout (even at unusually high AudioContext sample rates). Keep this tight enough that
+  // a real-time drain can't satisfy it, while still allowing for CI jitter.
   const DISCARD_TIMEOUT_MS = 150;
 
-  const setupResult = await page.evaluate(({ CAPACITY_FRAMES }) => {
+  const setupResult = await page.evaluate(({ MIN_RING_CAPACITY_FRAMES }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutput;
     if (!out?.enabled) return { ok: false as const, reason: "Missing enabled audio output." };
@@ -123,10 +122,10 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     }
 
     const capacity = ring.capacityFrames >>> 0;
-    if (capacity < (CAPACITY_FRAMES as number)) {
+    if (capacity < (MIN_RING_CAPACITY_FRAMES as number)) {
       return {
         ok: false as const,
-        reason: `Unexpected ring capacity (${capacity} frames); expected >= ${CAPACITY_FRAMES}.`,
+        reason: `Unexpected ring capacity (${capacity} frames); expected >= ${MIN_RING_CAPACITY_FRAMES}.`,
       };
     }
 
@@ -230,13 +229,14 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     };
 
     return { ok: true as const, capacity };
-  }, { CAPACITY_FRAMES });
+  }, { MIN_RING_CAPACITY_FRAMES });
 
   if (!setupResult.ok) {
     throw new Error(`Failed to set up suspend/resume harness: ${setupResult.reason}`);
   }
 
-  expect(setupResult.capacity).toBeGreaterThanOrEqual(CAPACITY_FRAMES);
+  expect(setupResult.capacity).toBeGreaterThanOrEqual(MIN_RING_CAPACITY_FRAMES);
+  const backlogTargetFrames = Math.max(1, Math.floor(setupResult.capacity * 0.95));
 
   const beforeSuspend = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -263,11 +263,11 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     return t.getMetrics();
   });
 
-  await page.evaluate(({ BACKLOG_TARGET_FRAMES }) => {
+  await page.evaluate(({ backlogTargetFrames }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
-    t.fillBacklog(BACKLOG_TARGET_FRAMES);
-  }, { BACKLOG_TARGET_FRAMES });
+    t.fillBacklog(backlogTargetFrames);
+  }, { backlogTargetFrames });
 
   const afterFill = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -276,7 +276,7 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
   });
 
   expect(afterFill.state).toBe("suspended");
-  expect(afterFill.level).toBeGreaterThanOrEqual(BACKLOG_TARGET_FRAMES);
+  expect(afterFill.level).toBeGreaterThanOrEqual(backlogTargetFrames);
   // Ensure the backlog-building step actually did work (avoid silently passing due to an already-empty ring).
   expect(afterFill.level).toBeGreaterThanOrEqual(suspendedBaseline.level);
 
