@@ -882,11 +882,11 @@ struct Uniforms {
 @group(0) @binding(2) var src_samp: sampler;
 
 fn linear_to_srgb_channel(x: f32) -> f32 {
-    let x = max(x, 0.0);
-    if (x <= 0.0031308) {
-        return x * 12.92;
+    let xc = max(x, 0.0);
+    if (xc <= 0.0031308) {
+        return xc * 12.92;
     }
-    return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+    return 1.055 * pow(xc, 1.0 / 2.4) - 0.055;
 }
 
 fn linear_to_srgb(rgb: vec3<f32>) -> vec3<f32> {
@@ -969,6 +969,24 @@ fn surface_format_requires_manual_srgb_encoding(format: wgpu::TextureFormat) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn require_webgpu() -> bool {
+        let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
+            return false;
+        };
+        let v = raw.trim();
+        v == "1"
+            || v.eq_ignore_ascii_case("true")
+            || v.eq_ignore_ascii_case("yes")
+            || v.eq_ignore_ascii_case("on")
+    }
+
+    fn skip_or_panic(test_name: &str, reason: &str) {
+        if require_webgpu() {
+            panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
+        }
+        eprintln!("skipping {test_name}: {reason}");
+    }
 
     #[test]
     fn composite_alpha_mode_prefers_opaque() {
@@ -1068,5 +1086,295 @@ mod tests {
             surface_acquire_error_action(&wgpu::SurfaceError::OutOfMemory),
             SurfaceAcquireErrorAction::Fatal
         );
+    }
+
+    #[test]
+    fn present_shader_srgb_encode_flag_controls_output_gamma() {
+        pollster::block_on(async {
+            let ctx = match crate::WebGpuContext::request_headless(Default::default()).await {
+                Ok(ctx) => ctx,
+                Err(err) => {
+                    skip_or_panic(
+                        "present_shader_srgb_encode_flag_controls_output_gamma",
+                        &err.to_string(),
+                    );
+                    return;
+                }
+            };
+
+            let device = ctx.device();
+            let queue = ctx.queue();
+
+            let bind_group_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("present shader test bgl"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                multisampled: false,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("present shader test shader"),
+                source: wgpu::ShaderSource::Wgsl(PRESENT_WGSL.into()),
+            });
+
+            let pipeline = crate::pipeline::create_fullscreen_triangle_pipeline(
+                device,
+                &bind_group_layout,
+                &shader,
+                "fs_main",
+                wgpu::TextureFormat::Rgba8Unorm,
+                Some("present shader test pipeline"),
+            );
+
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("present shader test sampler"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            });
+
+            let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("present shader test uniforms"),
+                size: std::mem::size_of::<PresentUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let input = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("present shader test input"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let input_view = input.create_view(&wgpu::TextureViewDescriptor::default());
+            // `queue.write_texture` requires `bytes_per_row` alignment, so pad the single pixel
+            // row out to 256 bytes.
+            let mut input_row = [0u8; wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize];
+            input_row[..4].copy_from_slice(&[128u8, 0, 0, 255]);
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &input,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                // Mid-gray in linear space.
+                &input_row,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            let output = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("present shader test output"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let output_view = output.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let bytes_per_row = padded_bytes_per_row(4);
+            let readback = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("present shader test readback"),
+                size: bytes_per_row as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("present shader test bind group"),
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&input_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                ],
+            });
+
+            async fn render_and_readback(
+                device: &wgpu::Device,
+                queue: &wgpu::Queue,
+                pipeline: &wgpu::RenderPipeline,
+                bind_group: &wgpu::BindGroup,
+                uniform_buffer: &wgpu::Buffer,
+                output: &wgpu::Texture,
+                output_view: &wgpu::TextureView,
+                readback: &wgpu::Buffer,
+                srgb_encode: bool,
+            ) -> [u8; 4] {
+                let uniforms = PresentUniforms {
+                    output_size: [1.0, 1.0],
+                    input_size: [1.0, 1.0],
+                    mode: 0,
+                    srgb_encode: if srgb_encode { 1 } else { 0 },
+                    _pad: [0; 2],
+                };
+                queue.write_buffer(uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+                let mut encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("present shader test encoder"),
+                    });
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("present shader test pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: output_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+
+                encoder.copy_texture_to_buffer(
+                    wgpu::ImageCopyTexture {
+                        texture: output,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::ImageCopyBuffer {
+                        buffer: readback,
+                        layout: wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(padded_bytes_per_row(4)),
+                            rows_per_image: Some(1),
+                        },
+                    },
+                    wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                queue.submit(Some(encoder.finish()));
+
+                let slice = readback.slice(..);
+                let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+                slice.map_async(wgpu::MapMode::Read, move |res| {
+                    sender.send(res).ok();
+                });
+                #[cfg(not(target_arch = "wasm32"))]
+                device.poll(wgpu::Maintain::Wait);
+                #[cfg(target_arch = "wasm32")]
+                device.poll(wgpu::Maintain::Poll);
+                receiver.receive().await.unwrap().unwrap();
+
+                let mapped = slice.get_mapped_range();
+                let out = [mapped[0], mapped[1], mapped[2], mapped[3]];
+                drop(mapped);
+                readback.unmap();
+                out
+            }
+
+            let linear = render_and_readback(
+                device,
+                queue,
+                &pipeline,
+                &bind_group,
+                &uniform_buffer,
+                &output,
+                &output_view,
+                &readback,
+                false,
+            )
+            .await;
+            assert_eq!(linear[0], 128, "linear path should preserve input channel");
+            assert_eq!(linear[1], 0);
+            assert_eq!(linear[2], 0);
+            assert_eq!(linear[3], 255, "present shader must force opaque alpha");
+
+            let encoded = render_and_readback(
+                device,
+                queue,
+                &pipeline,
+                &bind_group,
+                &uniform_buffer,
+                &output,
+                &output_view,
+                &readback,
+                true,
+            )
+            .await;
+            assert!(
+                (186..=189).contains(&encoded[0]),
+                "manual sRGB encode produced unexpected value: {}",
+                encoded[0]
+            );
+            assert_eq!(encoded[1], 0);
+            assert_eq!(encoded[2], 0);
+            assert_eq!(encoded[3], 255, "present shader must force opaque alpha");
+            assert!(
+                encoded[0] > linear[0],
+                "manual sRGB encoding should increase mid-range values"
+            );
+        });
     }
 }
