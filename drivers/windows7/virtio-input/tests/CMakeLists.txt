@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(virtio_input_hid_translate_tests C)
+project(virtio_input_tests C)
 
 enable_testing()
 
@@ -9,9 +9,58 @@ add_executable(hid_translate_test
 )
 
 set_target_properties(hid_translate_test PROPERTIES
-    C_STANDARD 99
+    C_STANDARD 11
     C_STANDARD_REQUIRED YES
 )
 
 add_test(NAME hid_translate_test COMMAND hid_translate_test)
 
+add_executable(led_translate_test
+    led_translate_test.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/led_translate.c
+)
+
+set_target_properties(led_translate_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+)
+
+add_test(NAME led_translate_test COMMAND led_translate_test)
+
+add_executable(led_report_parse_test
+    led_report_parse_test.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/led_report_parse.c
+)
+
+set_target_properties(led_report_parse_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+)
+
+add_test(NAME led_report_parse_test COMMAND led_report_parse_test)
+
+add_executable(led_output_pipeline_test
+    led_output_pipeline_test.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/led_report_parse.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/led_translate.c
+)
+
+set_target_properties(led_output_pipeline_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+)
+
+add_test(NAME led_output_pipeline_test COMMAND led_output_pipeline_test)
+
+add_executable(report_ring_test
+    report_ring_test.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_input.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/hid_translate.c
+)
+
+set_target_properties(report_ring_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+)
+
+add_test(NAME report_ring_test COMMAND report_ring_test)
