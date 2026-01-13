@@ -1,0 +1,350 @@
+import {
+  FRAME_DIRTY,
+  FRAME_PRESENTED,
+  FRAME_SEQ_INDEX,
+  FRAME_STATUS_INDEX,
+  GPU_PROTOCOL_NAME,
+  GPU_PROTOCOL_VERSION,
+} from "./src/ipc/gpu-protocol";
+import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "./src/ipc/scanout_state";
+import type { WorkerInitMessage } from "./src/runtime/protocol";
+import { allocateSharedMemorySegments, createSharedMemoryViews } from "./src/runtime/shared_layout";
+import { fnv1a32Hex } from "./src/utils/fnv1a";
+
+declare global {
+  interface Window {
+    __aeroTest?: {
+      ready?: boolean;
+      backend?: string;
+      error?: string;
+      hash?: string;
+      expectedHash?: string;
+      pass?: boolean;
+      samplePixels?: () => Promise<{
+        backend: string;
+        width: number;
+        height: number;
+        topLeft: number[];
+        topRight: number[];
+        bottomLeft: number[];
+        bottomRight: number[];
+      }>;
+    };
+  }
+}
+
+function $(id: string): HTMLElement | null {
+  return document.getElementById(id);
+}
+
+function renderError(message: string): void {
+  const status = $("status");
+  if (status) status.textContent = message;
+  window.__aeroTest = { ready: true, error: message, pass: false };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createExpectedTestPattern(width: number, height: number): Uint8Array {
+  const halfW = Math.floor(width / 2);
+  const halfH = Math.floor(height / 2);
+  const out = new Uint8Array(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 4;
+      const left = x < halfW;
+      const top = y < halfH;
+
+      // Top-left origin:
+      // - top-left: red
+      // - top-right: green
+      // - bottom-left: blue
+      // - bottom-right: white
+      if (top && left) {
+        out[i + 0] = 255;
+        out[i + 1] = 0;
+        out[i + 2] = 0;
+        out[i + 3] = 255;
+      } else if (top && !left) {
+        out[i + 0] = 0;
+        out[i + 1] = 255;
+        out[i + 2] = 0;
+        out[i + 3] = 255;
+      } else if (!top && left) {
+        out[i + 0] = 0;
+        out[i + 1] = 0;
+        out[i + 2] = 255;
+        out[i + 3] = 255;
+      } else {
+        out[i + 0] = 255;
+        out[i + 1] = 255;
+        out[i + 2] = 255;
+        out[i + 3] = 255;
+      }
+    }
+  }
+
+  return out;
+}
+
+function writeBgrxTestPattern(dst: Uint8Array, width: number, height: number, pitchBytes: number): void {
+  const halfW = Math.floor(width / 2);
+  const halfH = Math.floor(height / 2);
+  const rowBytes = width * 4;
+  if (pitchBytes < rowBytes) throw new Error("pitchBytes too small");
+
+  dst.fill(0);
+
+  for (let y = 0; y < height; y += 1) {
+    const rowOff = y * pitchBytes;
+    for (let x = 0; x < width; x += 1) {
+      const pxOff = rowOff + x * 4;
+      const left = x < halfW;
+      const top = y < halfH;
+
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      if (top && left) {
+        r = 255;
+      } else if (top && !left) {
+        g = 255;
+      } else if (!top && left) {
+        b = 255;
+      } else {
+        r = 255;
+        g = 255;
+        b = 255;
+      }
+
+      // B8G8R8X8 (BGRX) in memory, with X intentionally 0 to validate alpha=255 policy.
+      dst[pxOff + 0] = b;
+      dst[pxOff + 1] = g;
+      dst[pxOff + 2] = r;
+      dst[pxOff + 3] = 0;
+    }
+  }
+}
+
+async function main(): Promise<void> {
+  const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
+
+  const canvas = $("frame");
+  if (!(canvas instanceof HTMLCanvasElement)) {
+    renderError("Canvas element not found");
+    return;
+  }
+
+  const backendEl = $("backend");
+  const status = $("status");
+  const log = (line: string) => {
+    if (status) status.textContent += `${line}\n`;
+  };
+
+  try {
+    if (!("transferControlToOffscreen" in canvas)) {
+      throw new Error("OffscreenCanvas is not supported in this browser.");
+    }
+
+    const width = 64;
+    const height = 64;
+    const pitchBytes = width * 4 + 16;
+    const basePaddr = 0x10_0000; // 1 MiB (stays clear of demo/shared framebuffer offsets)
+
+    canvas.width = width;
+    canvas.height = height;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+
+    // Small guest RAM (but note wasm32 runtime reserves 128MiB).
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
+    const views = createSharedMemoryViews(segments);
+
+    if (!views.scanoutStateI32) {
+      throw new Error("scanoutState was not allocated");
+    }
+
+    const requiredScanoutBytes = pitchBytes * height;
+    if (basePaddr + requiredScanoutBytes > views.guestLayout.guest_size) {
+      throw new Error("guest RAM too small for scanout test pattern");
+    }
+
+    // Write BGRX pixels into guest RAM at base_paddr (with non-tight pitch).
+    const backing = views.guestU8.subarray(basePaddr, basePaddr + requiredScanoutBytes);
+    writeBgrxTestPattern(backing, width, height, pitchBytes);
+
+    // Publish a WDDM scanout descriptor pointing at the guest RAM surface.
+    publishScanoutState(views.scanoutStateI32, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: basePaddr >>> 0,
+      basePaddrHi: 0,
+      width,
+      height,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    // Spawn the canonical GPU worker.
+    const worker = new Worker(new URL("./src/workers/gpu.worker.ts", import.meta.url), { type: "module" });
+
+    let fatalError: string | null = null;
+    let backendKind: string | null = null;
+    let readyResolve!: () => void;
+    let readyReject!: (err: unknown) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      readyResolve = resolve;
+      readyReject = reject;
+    });
+
+    let nextRequestId = 1;
+    const pendingScreenshot = new Map<number, { resolve: (msg: any) => void; reject: (err: unknown) => void }>();
+
+    worker.addEventListener("message", (event) => {
+      const msg = event.data as any;
+      if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
+
+      switch (msg.type) {
+        case "ready":
+          backendKind = String(msg.backendKind ?? "unknown");
+          readyResolve();
+          break;
+        case "screenshot": {
+          const pending = pendingScreenshot.get(msg.requestId);
+          if (!pending) break;
+          pendingScreenshot.delete(msg.requestId);
+          pending.resolve(msg);
+          break;
+        }
+        case "error":
+          fatalError = String(msg.message ?? "unknown worker error");
+          readyResolve();
+          break;
+      }
+    });
+
+    worker.addEventListener("error", (event) => {
+      readyReject((event as ErrorEvent).error ?? event);
+    });
+
+    // Worker init (SharedArrayBuffers + shared guest RAM).
+    const initMsg: WorkerInitMessage = {
+      kind: "init",
+      role: "gpu",
+      controlSab: segments.control,
+      guestMemory: segments.guestMemory,
+      vgaFramebuffer: segments.vgaFramebuffer,
+      ioIpcSab: segments.ioIpc,
+      sharedFramebuffer: segments.sharedFramebuffer,
+      sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+      scanoutState: segments.scanoutState,
+      scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+    };
+    worker.postMessage(initMsg);
+
+    // GPU runtime init (presenter + screenshot API).
+    const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+    const frameState = new Int32Array(sharedFrameState);
+    Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+    Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
+
+    const offscreen = canvas.transferControlToOffscreen();
+    worker.postMessage(
+      {
+        ...GPU_MESSAGE_BASE,
+        type: "init",
+        canvas: offscreen,
+        sharedFrameState,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        options: {
+          forceBackend: "webgl2_raw",
+          disableWebGpu: true,
+          outputWidth: width,
+          outputHeight: height,
+          dpr: 1,
+        },
+      },
+      [offscreen],
+    );
+
+    await ready;
+    if (fatalError) throw new Error(fatalError);
+
+    const backend = backendKind ?? "unknown";
+    if (backendEl) backendEl.textContent = backend;
+
+    // Mark a frame dirty and trigger a few ticks.
+    const nextSeq = (Atomics.load(frameState, FRAME_SEQ_INDEX) + 1) | 0;
+    Atomics.store(frameState, FRAME_SEQ_INDEX, nextSeq);
+    Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+    Atomics.notify(frameState, FRAME_STATUS_INDEX);
+
+    for (let i = 0; i < 3; i += 1) {
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+      await sleep(10);
+    }
+
+    // Wait briefly for PRESENTED so screenshot readback is stable.
+    {
+      const deadline = performance.now() + 2000;
+      while (Atomics.load(frameState, FRAME_STATUS_INDEX) !== FRAME_PRESENTED && performance.now() < deadline) {
+        await sleep(5);
+      }
+    }
+
+    const requestScreenshot = (): Promise<any> => {
+      const requestId = nextRequestId++;
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId });
+      return new Promise((resolve, reject) => {
+        pendingScreenshot.set(requestId, { resolve, reject });
+        setTimeout(() => {
+          const pending = pendingScreenshot.get(requestId);
+          if (!pending) return;
+          pendingScreenshot.delete(requestId);
+          reject(new Error("screenshot request timed out"));
+        }, 5000);
+      });
+    };
+
+    const shot = await requestScreenshot();
+    const rgba8 = new Uint8Array(shot.rgba8);
+    const expected = createExpectedTestPattern(width, height);
+
+    const hash = fnv1a32Hex(rgba8);
+    const expectedHash = fnv1a32Hex(expected);
+    const pass = hash === expectedHash;
+
+    const sample = (x: number, y: number): number[] => {
+      const i = (y * width + x) * 4;
+      return [rgba8[i + 0] ?? 0, rgba8[i + 1] ?? 0, rgba8[i + 2] ?? 0, rgba8[i + 3] ?? 0];
+    };
+
+    log(`backend=${backend}`);
+    log(`hash=${hash} expected=${expectedHash} ${pass ? "PASS" : "FAIL"}`);
+
+    window.__aeroTest = {
+      ready: true,
+      backend,
+      hash,
+      expectedHash,
+      pass,
+      samplePixels: async () => ({
+        backend,
+        width,
+        height,
+        topLeft: sample(8, 8),
+        topRight: sample(width - 9, 8),
+        bottomLeft: sample(8, height - 9),
+        bottomRight: sample(width - 9, height - 9),
+      }),
+    };
+  } catch (err) {
+    renderError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+void main();
+

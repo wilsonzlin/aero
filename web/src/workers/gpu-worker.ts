@@ -91,8 +91,8 @@ import {
   createSharedMemoryViews,
   ringRegionsForWorker,
   setReadyFlag,
-  StatusIndex,
   type GuestRamLayout,
+  StatusIndex,
   type WorkerRole,
 } from '../runtime/shared_layout';
 import { RingBuffer } from '../ipc/ring_buffer';
@@ -167,6 +167,9 @@ let eventRing: RingBuffer | null = null;
 let runtimePollTimer: number | null = null;
 
 let scanoutState: Int32Array | null = null;
+let wddmScanoutRgba: Uint8Array | null = null;
+let wddmScanoutWidth = 0;
+let wddmScanoutHeight = 0;
 
 // Optional `present()` entrypoint supplied by a dynamically imported module.
 // When unset, the worker uses the built-in presenter backends.
@@ -1647,8 +1650,94 @@ type CurrentFrameInfo = {
   dirtyRects?: DirtyRect[] | null;
 };
 
+type WddmScanoutFrameInfo = {
+  width: number;
+  height: number;
+  strideBytes: number;
+  pixels: Uint8Array;
+};
+
+const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameInfo | null => {
+  if (snap.source !== SCANOUT_SOURCE_WDDM) return null;
+  if ((snap.basePaddrLo | snap.basePaddrHi) === 0) return null;
+  if (snap.format !== SCANOUT_FORMAT_B8G8R8X8) return null;
+
+  const layout = guestLayout;
+  const ram = guestU8;
+  if (!layout || !ram) return null;
+
+  const width = snap.width >>> 0;
+  const height = snap.height >>> 0;
+  if (width === 0 || height === 0) return null;
+
+  const pitchBytes = snap.pitchBytes >>> 0;
+  const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
+  if (pitchBytes < rowBytes) return null;
+
+  // base_paddr is a guest physical address (u64). Clamp to the safe-integer subset
+  // so we can index into JS typed arrays.
+  const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
+  if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  const basePaddrNum = Number(basePaddr);
+
+  const requiredBytes = rowBytes * height;
+  if (
+    !wddmScanoutRgba ||
+    wddmScanoutWidth !== width ||
+    wddmScanoutHeight !== height ||
+    wddmScanoutRgba.byteLength < requiredBytes
+  ) {
+    wddmScanoutRgba = new Uint8Array(requiredBytes);
+    wddmScanoutWidth = width;
+    wddmScanoutHeight = height;
+  }
+  const out = wddmScanoutRgba;
+
+  // Translate each row's guest physical address into a contiguous RAM offset (handles the
+  // PC/Q35 low-RAM + high-RAM remap when guest RAM exceeds the PCI hole).
+  for (let y = 0; y < height; y += 1) {
+    const rowPaddr = basePaddrNum + y * pitchBytes;
+    if (!Number.isSafeInteger(rowPaddr)) return null;
+    const rowOffset = guestPaddrToRamOffset(layout, rowPaddr);
+    if (rowOffset === null) return null;
+    const rowStart = rowOffset;
+    const rowEnd = rowStart + rowBytes;
+    if (rowStart < 0 || rowEnd > ram.byteLength) return null;
+
+    const src = ram.subarray(rowStart, rowEnd);
+    const dstBase = y * rowBytes;
+    for (let x = 0; x < width; x += 1) {
+      const s = x * 4;
+      const d = dstBase + x * 4;
+      // B8G8R8X8 -> RGBA8 with forced alpha=255.
+      out[d + 0] = src[s + 2] ?? 0;
+      out[d + 1] = src[s + 1] ?? 0;
+      out[d + 2] = src[s + 0] ?? 0;
+      out[d + 3] = 0xff;
+    }
+  }
+
+  return { width, height, strideBytes: rowBytes, pixels: out };
+};
+
 const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
   refreshFramebufferViews();
+
+  if (scanoutState) {
+    try {
+      const snap = snapshotScanoutState(scanoutState);
+      const wddm = tryReadWddmScanoutFrame(snap);
+      if (wddm) {
+        // Scanout descriptors use guest physical addresses (base_paddr) and can point at padded
+        // guest surfaces (pitchBytes). We normalize to a tightly-packed RGBA8 buffer so existing
+        // presenter backends can consume it directly.
+        const seq = frameState ? Atomics.load(frameState, FRAME_SEQ_INDEX) : 0;
+        return { ...wddm, frameSeq: seq };
+      }
+    } catch {
+      // Ignore and fall back to the legacy framebuffer sources.
+    }
+  }
 
   if (sharedFramebufferViews) {
     const active = Atomics.load(sharedFramebufferViews.header, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
@@ -1760,24 +1849,31 @@ const presentOnce = async (): Promise<boolean> => {
       // prefer that over the legacy shared framebuffer. This prevents "flash back" to legacy
       // output after WDDM has claimed scanout, matching `docs/16-aerogpu-vga-vesa-compat.md` §5.
       if (scanoutSnap?.source === SCANOUT_SOURCE_WDDM) {
-        const last = aerogpuLastPresentedFrame;
-        if (last) {
-          if (last.width !== presenterSrcWidth || last.height !== presenterSrcHeight) {
-            presenterSrcWidth = last.width;
-            presenterSrcHeight = last.height;
-            if (presenter.backend === "webgpu") surfaceReconfigures += 1;
-            presenter.resize(last.width, last.height, outputDpr);
-            presenterNeedsFullUpload = true;
-          }
+        const hasBasePaddr = ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
+        // When the scanout descriptor points at a real guest surface (base_paddr != 0), prefer
+        // presenting directly from guest RAM. Only use the last AeroGPU-presented texture as a
+        // fallback for the legacy placeholder descriptor (base_paddr == 0).
+        if (!hasBasePaddr) {
+          const last = aerogpuLastPresentedFrame;
+          if (last) {
+            if (last.width !== presenterSrcWidth || last.height !== presenterSrcHeight) {
+              presenterSrcWidth = last.width;
+              presenterSrcHeight = last.height;
+              if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+              presenter.resize(last.width, last.height, outputDpr);
+              presenterNeedsFullUpload = true;
+            }
 
-          if (presenterNeedsFullUpload || aerogpuLastOutputSource !== "aerogpu") {
-            presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
-            presenterNeedsFullUpload = false;
-            lastPresentUploadKind = "full";
+            if (presenterNeedsFullUpload || aerogpuLastOutputSource !== "aerogpu") {
+              presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
+              presenterNeedsFullUpload = false;
+              lastPresentUploadKind = "full";
+              lastPresentUploadDirtyRectCount = 0;
+            }
+            aerogpuLastOutputSource = "aerogpu";
+            clearSharedFramebufferDirty();
+            return true;
           }
-          aerogpuLastOutputSource = "aerogpu";
-          clearSharedFramebufferDirty();
-          return true;
         }
       }
 
