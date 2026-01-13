@@ -45,6 +45,7 @@
 
 #include "aerogpu_cmd_writer.h"
 #include "aerogpu_d3d10_11_internal.h"
+#include "aerogpu_d3d10_blend_state_validate.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_trace.h"
 #include "../../common/aerogpu_win32_security.h"
@@ -1011,7 +1012,7 @@ struct AeroGpuSampler {
 // conservative defaults for any state not explicitly encoded in the command
 // stream.
 struct AeroGpuBlendState {
-  uint32_t dummy = 0;
+  aerogpu::d3d10_11::AerogpuBlendStateBase state;
 };
 struct AeroGpuRasterizerState {
   // Stored as raw numeric values so this portable build remains independent of
@@ -4157,14 +4158,46 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateBlendStateSize(D3D10DDI_HDEVICE, const AEROGP
 }
 
 HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
-                                          const AEROGPU_DDIARG_CREATEBLENDSTATE*,
+                                          const AEROGPU_DDIARG_CREATEBLENDSTATE* pDesc,
                                           D3D10DDI_HBLENDSTATE hState) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("CreateBlendState hDevice=%p", hDevice.pDrvPrivate);
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
-  new (hState.pDrvPrivate) AeroGpuBlendState();
+  // Default to D3D10 default blend state (blending disabled, write RGBA).
+  aerogpu::d3d10_11::AerogpuBlendStateBase base{};
+  base.enable = 0;
+  base.src_factor = AEROGPU_BLEND_ONE;
+  base.dst_factor = AEROGPU_BLEND_ZERO;
+  base.blend_op = AEROGPU_BLEND_OP_ADD;
+  base.src_factor_alpha = AEROGPU_BLEND_ONE;
+  base.dst_factor_alpha = AEROGPU_BLEND_ZERO;
+  base.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
+  base.color_write_mask = 0xFu;
+
+  if (pDesc) {
+    aerogpu::d3d10_11::D3dRtBlendDesc rts[8]{};
+    for (uint32_t i = 0; i < 8; ++i) {
+      rts[i].blend_enable = pDesc->BlendEnable[i] != 0;
+      rts[i].write_mask = pDesc->RenderTargetWriteMask[i];
+      rts[i].src_blend = pDesc->SrcBlend;
+      rts[i].dest_blend = pDesc->DestBlend;
+      rts[i].blend_op = pDesc->BlendOp;
+      rts[i].src_blend_alpha = pDesc->SrcBlendAlpha;
+      rts[i].dest_blend_alpha = pDesc->DestBlendAlpha;
+      rts[i].blend_op_alpha = pDesc->BlendOpAlpha;
+    }
+
+    const HRESULT hr = aerogpu::d3d10_11::ValidateAndConvertBlendDesc(
+        rts, 8, pDesc->AlphaToCoverageEnable != 0, &base);
+    if (FAILED(hr)) {
+      AEROGPU_D3D10_RET_HR(hr);
+    }
+  }
+
+  auto* s = new (hState.pDrvPrivate) AeroGpuBlendState();
+  s->state = base;
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 

@@ -41,6 +41,7 @@
 
 #include "aerogpu_cmd_writer.h"
 #include "aerogpu_d3d10_11_internal.h"
+#include "aerogpu_d3d10_blend_state_validate.h"
 #include "aerogpu_d3d10_11_wddm_submit.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_trace.h"
@@ -819,7 +820,7 @@ struct AeroGpuShaderResourceView {
 };
 
 struct AeroGpuBlendState {
-  uint32_t dummy = 0;
+  aerogpu::d3d10_11::AerogpuBlendStateBase state;
 };
 
 struct AeroGpuRasterizerState {
@@ -4998,13 +4999,47 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateBlendStateSize(D3D10DDI_HDEVICE, const D3D10_
 }
 
 HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
-                                          const D3D10_1_DDI_BLEND_DESC*,
+                                          const D3D10_1_DDI_BLEND_DESC* pDesc,
                                           D3D10DDI_HBLENDSTATE hState,
                                           D3D10DDI_HRTBLENDSTATE) {
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  new (hState.pDrvPrivate) AeroGpuBlendState();
+
+  // Default to the D3D10 default blend state (blending disabled, write RGBA).
+  aerogpu::d3d10_11::AerogpuBlendStateBase base{};
+  base.enable = 0;
+  base.src_factor = AEROGPU_BLEND_ONE;
+  base.dst_factor = AEROGPU_BLEND_ZERO;
+  base.blend_op = AEROGPU_BLEND_OP_ADD;
+  base.src_factor_alpha = AEROGPU_BLEND_ONE;
+  base.dst_factor_alpha = AEROGPU_BLEND_ZERO;
+  base.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
+  base.color_write_mask = 0xFu;
+
+  if (pDesc) {
+    aerogpu::d3d10_11::D3dRtBlendDesc rts[AEROGPU_MAX_RENDER_TARGETS]{};
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+      const auto& rt = pDesc->RenderTarget[i];
+      rts[i].blend_enable = rt.BlendEnable ? true : false;
+      rts[i].write_mask = static_cast<uint8_t>(rt.RenderTargetWriteMask);
+      rts[i].src_blend = static_cast<uint32_t>(rt.SrcBlend);
+      rts[i].dest_blend = static_cast<uint32_t>(rt.DestBlend);
+      rts[i].blend_op = static_cast<uint32_t>(rt.BlendOp);
+      rts[i].src_blend_alpha = static_cast<uint32_t>(rt.SrcBlendAlpha);
+      rts[i].dest_blend_alpha = static_cast<uint32_t>(rt.DestBlendAlpha);
+      rts[i].blend_op_alpha = static_cast<uint32_t>(rt.BlendOpAlpha);
+    }
+
+    const HRESULT hr = aerogpu::d3d10_11::ValidateAndConvertBlendDesc(
+        rts, AEROGPU_MAX_RENDER_TARGETS, pDesc->AlphaToCoverageEnable ? true : false, &base);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
+  auto* s = new (hState.pDrvPrivate) AeroGpuBlendState();
+  s->state = base;
   return S_OK;
 }
 

@@ -374,7 +374,21 @@ typedef struct AEROGPU_DDIARG_CREATESAMPLER {
 } AEROGPU_DDIARG_CREATESAMPLER;
 
 typedef struct AEROGPU_DDIARG_CREATEBLENDSTATE {
-  uint32_t dummy;
+  // Mirrors the D3D10_BLEND_DESC shape (global blend factors/ops + per-RT enable
+  // + write mask arrays). Numeric enum values match the Windows SDK.
+  //
+  // This is used by the portable (non-WDK) build and unit tests. The real Win7
+  // WDK build uses the official D3D10DDIARG_CREATEBLENDSTATE /
+  // D3D10_1_DDI_BLEND_DESC structures instead.
+  uint32_t AlphaToCoverageEnable; // BOOL
+  uint32_t BlendEnable[8]; // BOOL per render target
+  uint32_t SrcBlend; // D3D10_BLEND / D3D10_DDI_BLEND
+  uint32_t DestBlend;
+  uint32_t BlendOp; // D3D10_BLEND_OP / D3D10_DDI_BLEND_OP
+  uint32_t SrcBlendAlpha;
+  uint32_t DestBlendAlpha;
+  uint32_t BlendOpAlpha;
+  uint8_t RenderTargetWriteMask[8]; // D3D10_COLOR_WRITE_ENABLE bits (0xF = RGBA)
 } AEROGPU_DDIARG_CREATEBLENDSTATE;
 
 typedef struct AEROGPU_DDIARG_CREATERASTERIZERSTATE {
