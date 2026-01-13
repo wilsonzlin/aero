@@ -1023,6 +1023,8 @@ impl NvmeController {
             0x00 => self.cmd_flush(),
             0x01 => self.cmd_write(cmd, memory),
             0x02 => self.cmd_read(cmd, memory),
+            0x08 => self.cmd_write_zeroes(cmd),
+            0x09 => self.cmd_dataset_management(cmd, memory),
             _ => (NvmeStatus::INVALID_OPCODE, 0),
         }
     }
@@ -1355,6 +1357,119 @@ impl NvmeController {
         (status, 0)
     }
 
+    fn cmd_write_zeroes(&mut self, cmd: NvmeCommand) -> (NvmeStatus, u32) {
+        // Best-effort implementation: we materialize a zero-filled buffer (bounded by
+        // `NVME_MAX_DMA_BYTES`) and issue a normal backend write. This ensures guests observe zeros
+        // when they read the range back even if the backend has no fast "write zeroes" primitive.
+        if cmd.nsid != 1 {
+            return (NvmeStatus::INVALID_NS, 0);
+        }
+
+        let slba = (cmd.cdw11 as u64) << 32 | cmd.cdw10 as u64;
+        let nlb = (cmd.cdw12 & 0xffff) as u64;
+        let sectors = nlb + 1;
+        let sector_size = self.disk.sector_size() as u64;
+        if sector_size == 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+
+        if slba
+            .checked_add(sectors)
+            .is_none_or(|end| end > self.disk.total_sectors())
+        {
+            return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
+        }
+
+        let Some(len_u64) = sectors.checked_mul(sector_size) else {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        };
+        let Ok(len) = usize::try_from(len_u64) else {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        };
+        if len > NVME_MAX_DMA_BYTES {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+
+        let mut zeros = Vec::new();
+        if zeros.try_reserve_exact(len).is_err() {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        zeros.resize(len, 0);
+
+        let status = match self.disk.write_sectors(slba, &zeros) {
+            Ok(()) => NvmeStatus::SUCCESS,
+            Err(_) => NvmeStatus::INVALID_FIELD,
+        };
+        (status, 0)
+    }
+
+    fn cmd_dataset_management(
+        &mut self,
+        cmd: NvmeCommand,
+        memory: &mut dyn MemoryBus,
+    ) -> (NvmeStatus, u32) {
+        // Best-effort implementation: support the Deallocate attribute and validate the DSM range
+        // list, but treat the actual deallocation request as a no-op if the backend has no native
+        // trim/discard operation.
+        //
+        // This improves guest compatibility (many stacks issue DSM/TRIM) without requiring the disk
+        // backend abstraction to expose hole-punching primitives.
+        if cmd.nsid != 1 {
+            return (NvmeStatus::INVALID_NS, 0);
+        }
+
+        const DSM_ATTR_DEALLOCATE: u32 = 1 << 2;
+        if cmd.cdw11 != DSM_ATTR_DEALLOCATE {
+            // Only "Deallocate" is supported for now. Reject any other attribute combinations.
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+
+        // CDW10 contains the 0-based number of ranges (NR).
+        let Some(ranges) = cmd.cdw10.checked_add(1) else {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        };
+
+        // DSM range definition entries are 16 bytes each.
+        let Some(list_bytes_u64) = u64::from(ranges).checked_mul(16) else {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        };
+        let Ok(list_bytes) = usize::try_from(list_bytes_u64) else {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        };
+        if list_bytes > NVME_MAX_DMA_BYTES {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+
+        let mut ranges_buf = Vec::new();
+        if ranges_buf.try_reserve_exact(list_bytes).is_err() {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        ranges_buf.resize(list_bytes, 0);
+        let status = self.dma_read(memory, cmd.psdt, cmd.prp1, cmd.prp2, &mut ranges_buf);
+        if status != NvmeStatus::SUCCESS {
+            return (status, 0);
+        }
+
+        let capacity = self.disk.total_sectors();
+        for i in 0..ranges {
+            let off = (i as usize) * 16;
+            let nlb = u32::from_le_bytes(ranges_buf[off + 4..off + 8].try_into().unwrap());
+            let slba = u64::from_le_bytes(ranges_buf[off + 8..off + 16].try_into().unwrap());
+
+            let Some(sectors) = (nlb as u64).checked_add(1) else {
+                return (NvmeStatus::INVALID_FIELD, 0);
+            };
+            if slba
+                .checked_add(sectors)
+                .is_none_or(|end| end > capacity)
+            {
+                return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
+            }
+        }
+
+        (NvmeStatus::SUCCESS, 0)
+    }
+
     fn dma_write(
         &self,
         memory: &mut dyn MemoryBus,
@@ -1411,6 +1526,14 @@ impl NvmeController {
 
         // NN (Number of Namespaces) at offset 516 (0x204)
         data[516..520].copy_from_slice(&1u32.to_le_bytes());
+
+        // ONCS (Optional NVM Command Support) at offset 520 (0x208).
+        //
+        // Advertise support for:
+        // - Dataset Management (DSM) (bit 2)
+        // - Write Zeroes (bit 3)
+        let oncs: u16 = (1 << 2) | (1 << 3);
+        data[520..522].copy_from_slice(&oncs.to_le_bytes());
 
         // MDTS (Maximum Data Transfer Size) at offset 77 (0x4d).
         // Max transfer = 2^MDTS * min page size (4KiB for this device).
@@ -2785,6 +2908,229 @@ mod tests {
         let mut data = vec![0u8; sector_size];
         disk.read_at(0, &mut data).unwrap();
         assert_eq!(data, payload.as_slice());
+    }
+
+    #[test]
+    fn write_zeroes_zeros_range() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut mem = TestMem::new(2 * 1024 * 1024);
+        let sector_size = 512usize;
+
+        let asq = 0x10000;
+        let acq = 0x20000;
+        let io_cq = 0x40000;
+        let io_sq = 0x50000;
+        let write_buf = 0x60000;
+        let read_buf = 0x61000;
+
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+        ctrl.mmio_write(0x0028, 8, asq);
+        ctrl.mmio_write(0x0030, 8, acq);
+        ctrl.mmio_write(0x0014, 4, 1);
+
+        // Create IO CQ (qid=1, size=16, PC+IEN).
+        let mut cmd = build_command(0x05);
+        set_cid(&mut cmd, 1);
+        set_prp1(&mut cmd, io_cq);
+        set_cdw10(&mut cmd, (15u32 << 16) | 1);
+        set_cdw11(&mut cmd, 0x3);
+        mem.write_physical(asq, &cmd);
+        ctrl.mmio_write(0x1000, 4, 1);
+        ctrl.process(&mut mem);
+
+        // Create IO SQ (qid=1, size=16, CQID=1).
+        let mut cmd = build_command(0x01);
+        set_cid(&mut cmd, 2);
+        set_prp1(&mut cmd, io_sq);
+        set_cdw10(&mut cmd, (15u32 << 16) | 1);
+        set_cdw11(&mut cmd, 1);
+        mem.write_physical(asq + 64, &cmd);
+        ctrl.mmio_write(0x1000, 4, 2);
+        ctrl.process(&mut mem);
+
+        let slba = 5u32;
+        let sectors = 2u32;
+        let nlb = sectors - 1;
+
+        // Write non-zero data.
+        let payload: Vec<u8> = (0..sector_size as u32 * sectors)
+            .map(|v| (v.wrapping_add(1) & 0xff) as u8)
+            .collect();
+        mem.write_physical(write_buf, &payload);
+
+        let mut cmd = build_command(0x01); // WRITE
+        set_cid(&mut cmd, 0x10);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, write_buf);
+        set_cdw10(&mut cmd, slba);
+        set_cdw11(&mut cmd, 0);
+        set_cdw12(&mut cmd, nlb);
+        mem.write_physical(io_sq, &cmd);
+        ctrl.mmio_write(0x1008, 4, 1);
+        ctrl.process(&mut mem);
+
+        let cqe = read_cqe(&mut mem, io_cq);
+        assert_eq!(cqe.cid, 0x10);
+        assert_eq!(cqe.status & !0x1, 0);
+
+        // Write Zeroes over the same range.
+        let mut cmd = build_command(0x08); // WRITE ZEROES
+        set_cid(&mut cmd, 0x11);
+        set_nsid(&mut cmd, 1);
+        set_cdw10(&mut cmd, slba);
+        set_cdw11(&mut cmd, 0);
+        set_cdw12(&mut cmd, nlb);
+        mem.write_physical(io_sq + 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 2);
+        ctrl.process(&mut mem);
+
+        let cqe = read_cqe(&mut mem, io_cq + 16);
+        assert_eq!(cqe.cid, 0x11);
+        assert_eq!(cqe.status & !0x1, 0);
+
+        // Read it back and ensure it's all zeros.
+        let mut cmd = build_command(0x02); // READ
+        set_cid(&mut cmd, 0x12);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, read_buf);
+        set_cdw10(&mut cmd, slba);
+        set_cdw11(&mut cmd, 0);
+        set_cdw12(&mut cmd, nlb);
+        mem.write_physical(io_sq + 2 * 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 3);
+        ctrl.process(&mut mem);
+
+        let cqe = read_cqe(&mut mem, io_cq + 2 * 16);
+        assert_eq!(cqe.cid, 0x12);
+        assert_eq!(cqe.status & !0x1, 0);
+
+        let mut out = vec![0u8; sector_size * sectors as usize];
+        mem.read_physical(read_buf, &mut out);
+        assert_eq!(out, vec![0u8; sector_size * sectors as usize]);
+    }
+
+    #[test]
+    fn dataset_management_deallocate_completes_and_does_not_corrupt_outside_range() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut mem = TestMem::new(2 * 1024 * 1024);
+        let sector_size = 512usize;
+
+        let asq = 0x10000;
+        let acq = 0x20000;
+        let io_cq = 0x40000;
+        let io_sq = 0x50000;
+        let write_buf = 0x60000;
+        let read_buf = 0x61000;
+        let dsm_ranges = 0x62000;
+
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+        ctrl.mmio_write(0x0028, 8, asq);
+        ctrl.mmio_write(0x0030, 8, acq);
+        ctrl.mmio_write(0x0014, 4, 1);
+
+        // Create IO CQ (qid=1, size=16, PC+IEN).
+        let mut cmd = build_command(0x05);
+        set_cid(&mut cmd, 1);
+        set_prp1(&mut cmd, io_cq);
+        set_cdw10(&mut cmd, (15u32 << 16) | 1);
+        set_cdw11(&mut cmd, 0x3);
+        mem.write_physical(asq, &cmd);
+        ctrl.mmio_write(0x1000, 4, 1);
+        ctrl.process(&mut mem);
+
+        // Create IO SQ (qid=1, size=16, CQID=1).
+        let mut cmd = build_command(0x01);
+        set_cid(&mut cmd, 2);
+        set_prp1(&mut cmd, io_sq);
+        set_cdw10(&mut cmd, (15u32 << 16) | 1);
+        set_cdw11(&mut cmd, 1);
+        mem.write_physical(asq + 64, &cmd);
+        ctrl.mmio_write(0x1000, 4, 2);
+        ctrl.process(&mut mem);
+
+        // Write distinct patterns into 3 consecutive sectors so we can detect corruption.
+        let sector0 = vec![0xAA; sector_size];
+        let sector1 = vec![0xBB; sector_size];
+        let sector2 = vec![0xCC; sector_size];
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&sector0);
+        payload.extend_from_slice(&sector1);
+        payload.extend_from_slice(&sector2);
+        mem.write_physical(write_buf, &payload);
+
+        let mut cmd = build_command(0x01); // WRITE
+        set_cid(&mut cmd, 0x10);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, write_buf);
+        set_cdw10(&mut cmd, 0);
+        set_cdw11(&mut cmd, 0);
+        set_cdw12(&mut cmd, 2); // 3 sectors (nlb=2)
+        mem.write_physical(io_sq, &cmd);
+        ctrl.mmio_write(0x1008, 4, 1);
+        ctrl.process(&mut mem);
+
+        let cqe = read_cqe(&mut mem, io_cq);
+        assert_eq!(cqe.cid, 0x10);
+        assert_eq!(cqe.status & !0x1, 0);
+
+        // DSM Deallocate sector 1 (1 range).
+        //
+        // DSM range definition layout (16 bytes):
+        // - CATTR (u32)
+        // - NLB (u32, 0-based)
+        // - SLBA (u64)
+        let mut range = [0u8; 16];
+        range[4..8].copy_from_slice(&0u32.to_le_bytes()); // 1 sector
+        range[8..16].copy_from_slice(&1u64.to_le_bytes()); // slba=1
+        mem.write_physical(dsm_ranges, &range);
+
+        let mut cmd = build_command(0x09); // DSM
+        set_cid(&mut cmd, 0x11);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, dsm_ranges);
+        set_cdw10(&mut cmd, 0); // NR=0 => 1 range
+        set_cdw11(&mut cmd, 1 << 2); // Deallocate attribute
+        mem.write_physical(io_sq + 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 2);
+        ctrl.process(&mut mem);
+
+        let cqe = read_cqe(&mut mem, io_cq + 16);
+        assert_eq!(cqe.cid, 0x11);
+        assert_eq!(cqe.status & !0x1, 0);
+
+        // Read back sectors 0 and 2 to ensure they are unchanged.
+        let mut cmd = build_command(0x02); // READ sector 0
+        set_cid(&mut cmd, 0x12);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, read_buf);
+        set_cdw10(&mut cmd, 0);
+        set_cdw11(&mut cmd, 0);
+        set_cdw12(&mut cmd, 0);
+        mem.write_physical(io_sq + 2 * 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 3);
+        ctrl.process(&mut mem);
+
+        let mut out0 = vec![0u8; sector_size];
+        mem.read_physical(read_buf, &mut out0);
+        assert_eq!(out0, sector0);
+
+        let mut cmd = build_command(0x02); // READ sector 2
+        set_cid(&mut cmd, 0x13);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, read_buf);
+        set_cdw10(&mut cmd, 2);
+        set_cdw11(&mut cmd, 0);
+        set_cdw12(&mut cmd, 0);
+        mem.write_physical(io_sq + 3 * 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 4);
+        ctrl.process(&mut mem);
+
+        let mut out2 = vec![0u8; sector_size];
+        mem.read_physical(read_buf, &mut out2);
+        assert_eq!(out2, sector2);
     }
 
     #[test]
