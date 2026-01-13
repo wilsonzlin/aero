@@ -3640,6 +3640,7 @@ impl Machine {
     /// internal tray/media state but drops the host-side ISO backend.
     ///
     /// If the IDE controller is not present, this is a no-op and returns `Ok(())`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn attach_ide_secondary_master_iso_for_restore(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
@@ -3650,6 +3651,22 @@ impl Machine {
         let shared = SharedIsoDisk::new(disk)?;
         self.install_media = Some(shared.clone());
         let backend: Box<dyn IsoBackend> = Box::new(shared);
+        self.attach_ide_secondary_master_atapi_backend_for_restore(backend);
+        Ok(())
+    }
+
+    /// wasm32 variant of [`Machine::attach_ide_secondary_master_iso_for_restore`].
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_ide_secondary_master_iso_for_restore(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
+    ) -> std::io::Result<()> {
+        use aero_devices_storage::atapi::VirtualDiskIsoBackend;
+
+        if self.ide.is_none() {
+            return Ok(());
+        }
+        let backend: Box<dyn IsoBackend> = Box::new(VirtualDiskIsoBackend::new(disk)?);
         self.attach_ide_secondary_master_atapi_backend_for_restore(backend);
         Ok(())
     }
