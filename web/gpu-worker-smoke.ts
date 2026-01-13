@@ -1,4 +1,5 @@
 import { createGpuWorker } from "./src/main/createGpuWorker";
+import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "./src/ipc/gpu-protocol";
 import { fnv1a32Hex } from "./src/utils/fnv1a";
 
 declare global {
@@ -116,6 +117,8 @@ async function main() {
     return;
   }
 
+  const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
+
   const status = $("status");
   const backendEl = $("backend");
   let loggedFrameTimings = false;
@@ -133,6 +136,7 @@ async function main() {
     let statsLinesWritten = 0;
     const requestedBackend = getBackendParam();
     const disableWebGpu = getBoolParam("disableWebGpu");
+    const triggerPresenterError = getBoolParam("triggerPresenterError");
     // In practice, WebGPU-in-worker can be flaky in headless Chromium unless
     // launched with the dedicated WebGPU project flags. Prefer WebGL2 for the
     // default smoke test, but still allow forcing WebGPU (or testing fallback)
@@ -225,6 +229,18 @@ async function main() {
         bottomRight: sample(screenshot.width - 9, screenshot.height - 9),
       }),
     };
+
+    if (triggerPresenterError) {
+      // Trigger a non-device-lost presenter error path and ensure it is surfaced as a structured
+      // `events` message (in addition to the legacy `error` message). Use a cursor_set_image with
+      // invalid dimensions because it is deterministic and does not depend on backend-specific
+      // failure modes.
+      const rgba8 = new ArrayBuffer(0);
+      gpu.worker.postMessage(
+        { ...GPU_MESSAGE_BASE, type: "cursor_set_image", width: 0, height: 0, rgba8 },
+        [rgba8],
+      );
+    }
   } catch (err) {
     renderError(err instanceof Error ? err.message : String(err));
   }

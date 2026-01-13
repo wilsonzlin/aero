@@ -69,3 +69,15 @@ test("gpu worker smoke: disableWebGpu forces WebGL2 fallback", async ({ page, br
   expect(result.fallback.to).toBe("webgl2_raw");
   expect(result.pass).toBe(true);
 });
+
+test("gpu worker smoke: presenter errors emit structured events", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
+
+  await page.goto("/web/gpu-worker-smoke.html?triggerPresenterError=1", { waitUntil: "load" });
+  await waitForReady(page);
+
+  await page.waitForFunction(() => {
+    const text = document.getElementById("status")?.textContent ?? "";
+    return text.includes("gpu_event error Validation:") && text.includes("cursor_set_image width/height must be non-zero");
+  });
+});
