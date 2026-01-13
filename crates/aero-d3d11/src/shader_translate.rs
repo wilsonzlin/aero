@@ -54,6 +54,10 @@ pub enum Builtin {
     PrimitiveIndex,
     GsInstanceIndex,
     FrontFacing,
+    GlobalInvocationId,
+    LocalInvocationId,
+    WorkgroupId,
+    LocalInvocationIndex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,8 +314,44 @@ fn translate_cs(
         return Err(ShaderTranslateError::InvalidThreadGroupSize { x, y, z });
     }
 
+    let used_regs = scan_used_input_registers(module);
+    let mut reflected_inputs = Vec::<IoParam>::new();
+    for reg in &used_regs {
+        let Some(siv) = io.cs_inputs.get(reg) else {
+            continue;
+        };
+
+        let mask = module
+            .decls
+            .iter()
+            .find_map(|decl| match decl {
+                Sm4Decl::InputSiv {
+                    reg: decl_reg,
+                    mask,
+                    sys_value,
+                } if decl_reg == reg && compute_sys_value_from_d3d_name(*sys_value) == Some(*siv) => {
+                    Some(mask.0)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| match siv {
+                ComputeSysValue::GroupIndex => 0b0001,
+                _ => 0b0111,
+            });
+
+        reflected_inputs.push(IoParam {
+            semantic_name: siv.d3d_semantic_name().to_owned(),
+            semantic_index: 0,
+            register: *reg,
+            location: None,
+            builtin: Some(siv.builtin()),
+            mask,
+            stream: 0,
+        });
+    }
+
     let reflection = ShaderReflection {
-        inputs: Vec::new(),
+        inputs: reflected_inputs,
         outputs: Vec::new(),
         bindings: resources.bindings(ShaderStage::Compute),
         rdef,
@@ -747,6 +787,24 @@ impl ComputeSysValue {
         }
     }
 
+    fn d3d_semantic_name(self) -> &'static str {
+        match self {
+            ComputeSysValue::DispatchThreadId => "SV_DispatchThreadID",
+            ComputeSysValue::GroupThreadId => "SV_GroupThreadID",
+            ComputeSysValue::GroupId => "SV_GroupID",
+            ComputeSysValue::GroupIndex => "SV_GroupIndex",
+        }
+    }
+
+    fn builtin(self) -> Builtin {
+        match self {
+            ComputeSysValue::DispatchThreadId => Builtin::GlobalInvocationId,
+            ComputeSysValue::GroupThreadId => Builtin::LocalInvocationId,
+            ComputeSysValue::GroupId => Builtin::WorkgroupId,
+            ComputeSysValue::GroupIndex => Builtin::LocalInvocationIndex,
+        }
+    }
+
     fn wgsl_field_name(self) -> &'static str {
         // Use the WGSL builtin name as the field name for easy/greppable lowering.
         self.wgsl_builtin()
@@ -1023,8 +1081,12 @@ impl ParamInfo {
             Some(Builtin::VertexIndex)
             | Some(Builtin::InstanceIndex)
             | Some(Builtin::PrimitiveIndex)
-            | Some(Builtin::GsInstanceIndex) => ("u32", 1, [0, 0, 0, 0]),
+            | Some(Builtin::GsInstanceIndex)
+            | Some(Builtin::LocalInvocationIndex) => ("u32", 1, [0, 0, 0, 0]),
             Some(Builtin::FrontFacing) => ("bool", 1, [0, 0, 0, 0]),
+            Some(Builtin::GlobalInvocationId)
+            | Some(Builtin::LocalInvocationId)
+            | Some(Builtin::WorkgroupId) => ("vec3<u32>", 3, [0, 1, 2, 0]),
             _ => (wgsl_ty, count, comps),
         };
 
@@ -1489,6 +1551,10 @@ fn builtin_from_d3d_name(name: u32) -> Option<Builtin> {
         D3D_NAME_INSTANCE_ID => Some(Builtin::InstanceIndex),
         D3D_NAME_GS_INSTANCE_ID => Some(Builtin::GsInstanceIndex),
         D3D_NAME_IS_FRONT_FACE => Some(Builtin::FrontFacing),
+        D3D_NAME_DISPATCH_THREAD_ID => Some(Builtin::GlobalInvocationId),
+        D3D_NAME_GROUP_THREAD_ID => Some(Builtin::LocalInvocationId),
+        D3D_NAME_GROUP_ID => Some(Builtin::WorkgroupId),
+        D3D_NAME_GROUP_INDEX => Some(Builtin::LocalInvocationIndex),
         _ => None,
     }
 }
@@ -1525,6 +1591,9 @@ fn semantic_to_d3d_name(name: &str) -> Option<u32> {
     if is_sv_is_front_face(name) {
         return Some(D3D_NAME_IS_FRONT_FACE);
     }
+    if is_sv_target(name) {
+        return Some(D3D_NAME_TARGET);
+    }
     if is_sv_dispatch_thread_id(name) {
         return Some(D3D_NAME_DISPATCH_THREAD_ID);
     }
@@ -1536,9 +1605,6 @@ fn semantic_to_d3d_name(name: &str) -> Option<u32> {
     }
     if is_sv_group_index(name) {
         return Some(D3D_NAME_GROUP_INDEX);
-    }
-    if is_sv_target(name) {
-        return Some(D3D_NAME_TARGET);
     }
     if is_sv_depth(name) {
         return Some(D3D_NAME_DEPTH);
@@ -3665,6 +3731,164 @@ mod tests {
         validator
             .validate(&module)
             .expect("generated WGSL failed to validate");
+    }
+
+    #[test]
+    fn compute_system_value_builtins_reflect_and_emit_wgsl() {
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+                Sm4Decl::InputSiv {
+                    reg: 0,
+                    mask: WriteMask(0b0111),
+                    sys_value: D3D_NAME_DISPATCH_THREAD_ID,
+                },
+                Sm4Decl::InputSiv {
+                    reg: 1,
+                    mask: WriteMask(0b0111),
+                    sys_value: D3D_NAME_GROUP_THREAD_ID,
+                },
+                Sm4Decl::InputSiv {
+                    reg: 2,
+                    mask: WriteMask(0b0111),
+                    sys_value: D3D_NAME_GROUP_ID,
+                },
+                Sm4Decl::InputSiv {
+                    reg: 3,
+                    mask: WriteMask::X,
+                    sys_value: D3D_NAME_GROUP_INDEX,
+                },
+            ],
+            instructions: vec![
+                Sm4Inst::Mov {
+                    dst: crate::sm4_ir::DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: crate::sm4_ir::SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Input,
+                            index: 0,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Mov {
+                    dst: crate::sm4_ir::DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 1,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: crate::sm4_ir::SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Input,
+                            index: 1,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Mov {
+                    dst: crate::sm4_ir::DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 2,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: crate::sm4_ir::SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Input,
+                            index: 2,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Mov {
+                    dst: crate::sm4_ir::DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 3,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: crate::sm4_ir::SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Input,
+                            index: 3,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let translated = translate_cs(&module, None).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+
+        assert!(translated
+            .wgsl
+            .contains("@builtin(global_invocation_id) global_invocation_id: vec3<u32>"));
+        assert!(translated
+            .wgsl
+            .contains("@builtin(local_invocation_id) local_invocation_id: vec3<u32>"));
+        assert!(translated
+            .wgsl
+            .contains("@builtin(workgroup_id) workgroup_id: vec3<u32>"));
+        assert!(translated
+            .wgsl
+            .contains("@builtin(local_invocation_index) local_invocation_index: u32"));
+
+        let v0 = translated
+            .reflection
+            .inputs
+            .iter()
+            .find(|p| p.register == 0)
+            .expect("missing v0 reflection");
+        assert_eq!(v0.builtin, Some(Builtin::GlobalInvocationId));
+        assert_eq!(v0.location, None);
+
+        let v1 = translated
+            .reflection
+            .inputs
+            .iter()
+            .find(|p| p.register == 1)
+            .expect("missing v1 reflection");
+        assert_eq!(v1.builtin, Some(Builtin::LocalInvocationId));
+        assert_eq!(v1.location, None);
+
+        let v2 = translated
+            .reflection
+            .inputs
+            .iter()
+            .find(|p| p.register == 2)
+            .expect("missing v2 reflection");
+        assert_eq!(v2.builtin, Some(Builtin::WorkgroupId));
+        assert_eq!(v2.location, None);
+
+        let v3 = translated
+            .reflection
+            .inputs
+            .iter()
+            .find(|p| p.register == 3)
+            .expect("missing v3 reflection");
+        assert_eq!(v3.builtin, Some(Builtin::LocalInvocationIndex));
+        assert_eq!(v3.location, None);
     }
 
     #[test]
