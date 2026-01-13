@@ -750,12 +750,18 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
 }
 
 fn preferred_surface_format(formats: &[wgpu::TextureFormat]) -> wgpu::TextureFormat {
-    for &format in formats {
-        if matches!(
-            format,
-            wgpu::TextureFormat::Bgra8UnormSrgb | wgpu::TextureFormat::Rgba8UnormSrgb
-        ) {
-            return format;
+    // Use an explicit preference order so behavior is deterministic even if the
+    // backend enumerates formats in different orders.
+    for &preferred in [
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        wgpu::TextureFormat::Bgra8Unorm,
+        wgpu::TextureFormat::Rgba8Unorm,
+    ]
+    .iter()
+    {
+        if formats.contains(&preferred) {
+            return preferred;
         }
     }
     formats
@@ -942,6 +948,25 @@ mod tests {
         assert_eq!(view_format, wgpu::TextureFormat::Bgra8UnormSrgb);
         assert!(view_formats.is_empty());
         assert!(!surface_format_requires_manual_srgb_encoding(view_format));
+    }
+
+    #[test]
+    fn surface_format_preference_is_deterministic() {
+        // BGRA sRGB should win over RGBA sRGB regardless of enumeration order.
+        let formats = [
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+        ];
+        let chosen = preferred_surface_format(&formats);
+        assert_eq!(chosen, wgpu::TextureFormat::Bgra8UnormSrgb);
+
+        // Linear BGRA should win over linear RGBA.
+        let formats = [
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Bgra8Unorm,
+        ];
+        let chosen = preferred_surface_format(&formats);
+        assert_eq!(chosen, wgpu::TextureFormat::Bgra8Unorm);
     }
 
     #[test]
