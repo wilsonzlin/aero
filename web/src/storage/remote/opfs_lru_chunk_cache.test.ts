@@ -178,7 +178,7 @@ describe("OpfsLruChunkCache", () => {
       return await originalCreateWritable.call(this, options);
     };
 
-    let result: { stored: boolean; evicted: number[] } | null = null;
+    let result: { stored: boolean; evicted: number[]; quotaExceeded: boolean } | null = null;
     try {
       result = await cache.putChunk(1, new Uint8Array([1, 1, 1, 1]));
     } finally {
@@ -187,6 +187,7 @@ describe("OpfsLruChunkCache", () => {
 
     expect(result).not.toBeNull();
     expect(result!.stored).toBe(false);
+    expect(result!.quotaExceeded).toBe(true);
 
     // The cache may evict entries to try to make room, but it must not end up with a partially
     // cached chunk or a corrupt index.

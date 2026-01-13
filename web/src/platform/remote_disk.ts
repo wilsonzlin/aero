@@ -456,6 +456,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   private cacheGeneration = 0;
   private idbCache: IdbRemoteChunkCache | null = null;
   private idbCacheDisabled = false;
+  private opfsCacheDisabled = false;
   private readonly leaseRefresher: DiskAccessLeaseRefresher;
   private remoteEtag: string | null = null;
   private remoteLastModified: string | null = null;
@@ -687,7 +688,8 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async getCacheStatus(): Promise<RemoteDiskCacheStatus> {
-    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled) {
+    const cacheDisabled = this.cacheLimitBytes === 0 || this.idbCacheDisabled || this.opfsCacheDisabled;
+    if (cacheDisabled) {
       return {
         totalSize: this.totalSize,
         cachedBytes: 0,
@@ -724,12 +726,13 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   getTelemetrySnapshot(): RemoteDiskTelemetrySnapshot {
+    const cacheDisabled = this.cacheLimitBytes === 0 || this.idbCacheDisabled || this.opfsCacheDisabled;
     return {
       url: this.sourceId,
       totalSize: this.totalSize,
       blockSize: this.blockSize,
-      cacheLimitBytes: this.idbCacheDisabled ? 0 : this.cacheLimitBytes,
-      cachedBytes: this.idbCacheDisabled ? 0 : this.cachedBytes,
+      cacheLimitBytes: cacheDisabled ? 0 : this.cacheLimitBytes,
+      cachedBytes: cacheDisabled ? 0 : this.cachedBytes,
 
       blockRequests: this.telemetry.blockRequests,
       cacheHits: this.telemetry.cacheHits,
@@ -748,7 +751,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async flushCache(): Promise<void> {
-    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled) return;
+    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled || this.opfsCacheDisabled) return;
     if (this.cacheBackend === "idb") return;
     await this.opfsCache?.flush();
   }
@@ -913,7 +916,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       lastFetchRange: null,
     };
 
-    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled) return;
+    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled || this.opfsCacheDisabled) return;
 
     if (this.cacheBackend === "idb") {
       if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
@@ -965,7 +968,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     }
 
     this.telemetry.blockRequests++;
-    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled) {
+    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled || this.opfsCacheDisabled) {
       return await this.getBlockNoCache(blockIndex, onLog);
     }
     if (this.cacheBackend === "idb") {
@@ -1018,7 +1021,25 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       }
       this.telemetry.bytesDownloaded += buf.byteLength;
 
+      // Another request may have disabled caching while this fetch was in-flight (e.g. after a
+      // quota failure). Allow the read to succeed but skip any cache writes/metadata updates.
+      if (this.opfsCacheDisabled) {
+        this.telemetry.lastFetchMs = performance.now() - start;
+        this.telemetry.lastFetchAtMs = Date.now();
+        return buf;
+      }
+
       const put = await this.opfsCache!.putChunk(blockIndex, buf);
+      if (put.quotaExceeded) {
+        // Cache write failures (quota) should never fail the caller's remote read. Disable caching
+        // for the remainder of the disk lifetime so we don't retry failing eviction+write paths.
+        this.opfsCacheDisabled = true;
+        this.rangeSet = new RangeSet();
+        this.cachedBytes = 0;
+        this.telemetry.lastFetchMs = performance.now() - start;
+        this.telemetry.lastFetchAtMs = Date.now();
+        return buf;
+      }
       if (put.stored) {
         this.rangeSet.insert(r.start, r.end);
       }
@@ -1266,7 +1287,9 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
             }
           }
         } else {
-          await this.opfsCache?.clear();
+          if (!this.opfsCacheDisabled) {
+            await this.opfsCache?.clear();
+          }
         }
       }
 

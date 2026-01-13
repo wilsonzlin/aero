@@ -9,6 +9,13 @@ export type RemoteChunkCacheStats = {
 export type RemoteChunkCachePutResult = {
   stored: boolean;
   evicted: number[];
+  /**
+   * True when the put failed because the browser/storage quota was exceeded.
+   *
+   * This allows callers to distinguish "not stored" due to quota from "not stored"
+   * due to policy (e.g. maxBytes=0 / chunk too large).
+   */
+  quotaExceeded: boolean;
 };
 
 export type RemoteChunkCacheSignature = {
@@ -611,10 +618,10 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
       if (!(data instanceof Uint8Array)) throw new Error("data must be a Uint8Array");
 
       if (this.maxBytes !== null) {
-        if (this.maxBytes === 0) return { stored: false, evicted: [] };
+        if (this.maxBytes === 0) return { stored: false, evicted: [], quotaExceeded: false };
         if (data.byteLength > this.maxBytes) {
           // Too large to ever fit; skip caching entirely.
-          return { stored: false, evicted: [] };
+          return { stored: false, evicted: [], quotaExceeded: false };
         }
       }
 
@@ -706,7 +713,7 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
           // Still out of quota after eviction: skip caching without failing the caller.
           await this.deleteChunkFile(index);
           await this.persistIndexIfDirty();
-          return { stored: false, evicted };
+          return { stored: false, evicted, quotaExceeded: true };
         }
       }
 
@@ -722,7 +729,7 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
       evicted.push(...(await this.evictIfNeeded()));
       await this.persistIndexIfDirty();
 
-      return { stored: !!this.index.chunks[key], evicted };
+      return { stored: !!this.index.chunks[key], evicted, quotaExceeded: false };
     });
   }
 
