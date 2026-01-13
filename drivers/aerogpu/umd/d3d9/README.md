@@ -298,6 +298,9 @@ Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 - `ensure_fixedfunc_pipeline_locked()` / `ensure_draw_pipeline_locked()`
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
+  - Note: `device_set_fvf()` only synthesizes an internal declaration for `fixedfunc_fvf_supported()` (XYZRHW variants).
+    The `D3DFVF_XYZ*` bring-up path relies on a compatible vertex declaration being set (via `SetVertexDecl`) so
+    `device_set_vertex_decl()` can infer the implied FVF.
 
 Not yet implemented (examples; expected by some fixed-function apps):
 
