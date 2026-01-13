@@ -6,6 +6,9 @@ use blake3::Hash;
 use thiserror::Error;
 
 use crate::dxbc;
+use crate::shader_limits::{
+    MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_SHADER_TOKEN_COUNT,
+};
 use crate::vertex::{DeclUsage, LocationMapError, StandardLocationMap, VertexLocationMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -200,6 +203,10 @@ pub struct ShaderProgram {
 pub enum ShaderError {
     #[error("dxbc error: {0}")]
     Dxbc(#[from] dxbc::DxbcError),
+    #[error("shader bytecode length {len} exceeds maximum {max} bytes")]
+    BytecodeTooLarge { len: usize, max: usize },
+    #[error("shader token count {count} exceeds maximum {max} tokens")]
+    TokenCountTooLarge { count: usize, max: usize },
     #[error("shader token stream too small")]
     TokenStreamTooSmall,
     #[error("unsupported shader version token 0x{0:08x}")]
@@ -214,6 +221,12 @@ pub enum ShaderError {
     UnsupportedSrcModifier(u8),
     #[error("unsupported ifc comparison op {0}")]
     UnsupportedCompareOp(u8),
+    #[error("register index {index} in {file:?} exceeds maximum {max}")]
+    RegisterIndexTooLarge {
+        file: RegisterFile,
+        index: u16,
+        max: u32,
+    },
     #[error("invalid control flow: {0}")]
     InvalidControlFlow(&'static str),
     #[error(transparent)]
@@ -287,6 +300,14 @@ fn decode_src(token: u32) -> Result<Src, ShaderError> {
         other => return Err(ShaderError::UnsupportedRegisterType(other)),
     };
 
+    if u32::from(reg_num) > MAX_D3D9_SHADER_REGISTER_INDEX {
+        return Err(ShaderError::RegisterIndexTooLarge {
+            file,
+            index: reg_num,
+            max: MAX_D3D9_SHADER_REGISTER_INDEX,
+        });
+    }
+
     Ok(Src {
         reg: Register {
             file,
@@ -311,6 +332,14 @@ fn decode_dst(token: u32) -> Result<Dst, ShaderError> {
         8 => RegisterFile::ColorOut,
         other => return Err(ShaderError::UnsupportedRegisterType(other)),
     };
+
+    if u32::from(reg_num) > MAX_D3D9_SHADER_REGISTER_INDEX {
+        return Err(ShaderError::RegisterIndexTooLarge {
+            file,
+            index: reg_num,
+            max: MAX_D3D9_SHADER_REGISTER_INDEX,
+        });
+    }
 
     Ok(Dst {
         reg: Register {
@@ -375,6 +404,19 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     }
     if !token_bytes.len().is_multiple_of(4) {
         return Err(ShaderError::TokenStreamTooSmall);
+    }
+    if token_bytes.len() > MAX_D3D9_SHADER_BYTECODE_BYTES {
+        return Err(ShaderError::BytecodeTooLarge {
+            len: token_bytes.len(),
+            max: MAX_D3D9_SHADER_BYTECODE_BYTES,
+        });
+    }
+    let token_count = token_bytes.len() / 4;
+    if token_count > MAX_D3D9_SHADER_TOKEN_COUNT {
+        return Err(ShaderError::TokenCountTooLarge {
+            count: token_count,
+            max: MAX_D3D9_SHADER_TOKEN_COUNT,
+        });
     }
     let words: Vec<u32> = token_bytes
         .chunks_exact(4)
@@ -484,6 +526,13 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 return Err(ShaderError::UnsupportedRegisterType(reg_type));
             }
             let reg_num = decode_reg_num(dst_token);
+            if u32::from(reg_num) > MAX_D3D9_SHADER_REGISTER_INDEX {
+                return Err(ShaderError::RegisterIndexTooLarge {
+                    file: RegisterFile::Const,
+                    index: reg_num,
+                    max: MAX_D3D9_SHADER_REGISTER_INDEX,
+                });
+            }
             let mut vals = [0f32; 4];
             for i in 0..4 {
                 vals[i] = f32::from_bits(params[1 + i]);

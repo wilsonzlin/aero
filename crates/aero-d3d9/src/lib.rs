@@ -12,6 +12,7 @@ pub mod fixed_function;
 pub mod resources;
 pub mod runtime;
 pub mod shader;
+mod shader_limits;
 pub mod sm3;
 pub mod software;
 pub mod state;

@@ -2,6 +2,7 @@ use pretty_assertions::assert_eq;
 
 use std::collections::HashMap;
 
+use crate::shader_limits::MAX_D3D9_SHADER_BYTECODE_BYTES;
 use crate::{dxbc, shader, software, state};
 
 fn enc_reg_type(ty: u8) -> u32 {
@@ -755,6 +756,27 @@ fn supports_shader_model_3() {
     let vs_bytes = to_bytes(&assemble_vs_passthrough_sm3());
     let program = shader::parse(&vs_bytes).unwrap();
     assert_eq!(program.version.model.major, 3);
+}
+
+#[test]
+fn rejects_oversized_shader_bytecode_legacy_translator() {
+    // Ensure the legacy token-stream translator rejects oversized inputs without trying to
+    // allocate a gigantic `Vec<u32>`.
+    let bytes = vec![0u8; MAX_D3D9_SHADER_BYTECODE_BYTES + 4];
+    let err = shader::parse(&bytes).unwrap_err();
+    assert!(
+        matches!(err, shader::ShaderError::BytecodeTooLarge { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn rejects_oversized_shader_bytecode_sm3_decoder() {
+    // Ensure the SM3 decoder rejects oversized inputs without allocating.
+    let bytes = vec![0u8; MAX_D3D9_SHADER_BYTECODE_BYTES + 4];
+    let err = crate::sm3::decode_u8_le_bytes(&bytes).unwrap_err();
+    assert_eq!(err.token_index, 0);
+    assert!(err.message.contains("exceeds maximum"), "{}", err);
 }
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {

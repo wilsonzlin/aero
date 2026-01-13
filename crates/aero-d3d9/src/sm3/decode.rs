@@ -1,4 +1,7 @@
 use crate::sm3::types::{ShaderStage, ShaderVersion};
+use crate::shader_limits::{
+    MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_SHADER_TOKEN_COUNT,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodeError {
@@ -451,13 +454,32 @@ pub enum TextureType {
 }
 
 pub fn decode_u8_le_bytes(bytes: &[u8]) -> Result<DecodedShader, DecodeError> {
+    if bytes.len() > MAX_D3D9_SHADER_BYTECODE_BYTES {
+        return Err(DecodeError {
+            token_index: 0,
+            message: format!(
+                "bytecode length {} exceeds maximum {} bytes",
+                bytes.len(),
+                MAX_D3D9_SHADER_BYTECODE_BYTES
+            ),
+        });
+    }
     if !bytes.len().is_multiple_of(4) {
         return Err(DecodeError {
             token_index: 0,
             message: format!("bytecode length {} is not a multiple of 4", bytes.len()),
         });
     }
-    let mut tokens = Vec::with_capacity(bytes.len() / 4);
+    let token_count = bytes.len() / 4;
+    if token_count > MAX_D3D9_SHADER_TOKEN_COUNT {
+        return Err(DecodeError {
+            token_index: 0,
+            message: format!(
+                "token count {token_count} exceeds maximum {MAX_D3D9_SHADER_TOKEN_COUNT}"
+            ),
+        });
+    }
+    let mut tokens = Vec::with_capacity(token_count);
     for chunk in bytes.chunks_exact(4) {
         let token = u32::from_le_bytes(chunk.try_into().unwrap());
         tokens.push(token);
@@ -466,6 +488,16 @@ pub fn decode_u8_le_bytes(bytes: &[u8]) -> Result<DecodedShader, DecodeError> {
 }
 
 pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
+    if tokens.len() > MAX_D3D9_SHADER_TOKEN_COUNT {
+        return Err(DecodeError {
+            token_index: 0,
+            message: format!(
+                "token count {} exceeds maximum {}",
+                tokens.len(),
+                MAX_D3D9_SHADER_TOKEN_COUNT
+            ),
+        });
+    }
     if tokens.is_empty() {
         return Err(DecodeError {
             token_index: 0,
@@ -1087,6 +1119,14 @@ fn decode_register_ref(
     let regtype_raw = (((token & REGTYPE_MASK) >> REGTYPE_SHIFT)
         | ((token & REGTYPE_MASK2) >> REGTYPE_SHIFT2)) as u8;
     let file = RegisterFile::from_raw(regtype_raw, stage, major, ctx);
+    if index > MAX_D3D9_SHADER_REGISTER_INDEX {
+        return Err(DecodeError {
+            token_index: start,
+            message: format!(
+                "register index {index} in {file:?} exceeds maximum {MAX_D3D9_SHADER_REGISTER_INDEX}"
+            ),
+        });
+    }
     let mut consumed = 1usize;
 
     let relative = if (token & RELATIVE) != 0 {
