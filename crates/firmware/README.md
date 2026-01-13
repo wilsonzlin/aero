@@ -67,10 +67,17 @@ The BIOS uses the following **drive numbers** in `DL`:
 > Also note that this BIOS currently models **exactly one boot device** (backed by the single
 > [`BlockDevice`] passed to POST/interrupt handlers). In particular, when booting from a CD-ROM
 > drive number, the BIOS reports no fixed disks in the BDA (see `bios::ivt::init_bda`).
+>
+> INT 13h note: for CD drive numbers, the BIOS implements **INT 13h Extensions** (at minimum
+> AH=41h/42h/48h) and treats the DAP `LBA` and `count` fields as **2048-byte logical blocks**
+> (ISO LBAs), even though the host-side backing store is exposed as 512-byte sectors.
 
 #### Firmware lifecycle wiring
 
 - On reset:
+  - Choose a boot drive number via [`BiosConfig::boot_drive`]. There are currently no separate
+    CD-specific POST/dispatch entrypoints; CD boot/reads are selected purely by the `DL` drive
+    number.
   - Call [`Bios::post`] (or [`Bios::post_with_pci`] if you want PCI IRQ routing).
   - Resume execution at the CPU state configured by POST:
     - MBR boot: `CS:IP = 0000:7C00`
