@@ -166,21 +166,13 @@ import {
 import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy_adapter";
 import { drainIoHidInputRing } from "./io_hid_input_ring";
 import { forwardHidSendReportToMainThread } from "./io_hid_output_report_forwarding";
+import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs } from "./io_worker_vm_snapshot";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
-import { decodeUsbSnapshotContainer, encodeUsbSnapshotContainer, USB_SNAPSHOT_TAG_EHCI, USB_SNAPSHOT_TAG_UHCI } from "./usb_snapshot_container";
 import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
   VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND,
   VM_SNAPSHOT_DEVICE_E1000_KIND,
-  VM_SNAPSHOT_DEVICE_I8042_KIND,
-  VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
-  VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
-  parseAeroIoSnapshotVersion,
-  resolveVmSnapshotRestoreFromOpfsExport,
-  resolveVmSnapshotSaveToOpfsExport,
-  vmSnapshotDeviceIdToKind,
-  vmSnapshotDeviceKindToId,
 } from "./vm_snapshot_wasm";
 import { tryInitVirtioNetDevice } from "./io_virtio_net_init";
 import { tryInitVirtioSndDevice } from "./io_virtio_snd_init";
@@ -257,33 +249,6 @@ const DISK_ERROR_DISK_OFFSET_TOO_LARGE = 3;
 const DISK_ERROR_IO_FAILURE = 4;
 const DISK_ERROR_READ_ONLY = 5;
 const DISK_ERROR_DISK_OOB = 6;
-
-// Snapshot kind strings for PCI config/bus state (web runtime).
-//
-// - Canonical: `aero_snapshot::DeviceId::PCI_CFG` (`14`)
-// - Legacy/compat: some older web snapshots stored PCI config state under `DeviceId::PCI` (`5`)
-//
-// Note: We *only* treat legacy `device.5` blobs as PCI config state if they contain the expected
-// inner `aero-io-snapshot` DEVICE_ID (`PCIB`). This avoids misinterpreting unrelated legacy
-// `DeviceId::PCI` payloads (e.g. Rust `PCIC` / `PCPT` blobs) as the JS PCI bus snapshot.
-const VM_SNAPSHOT_DEVICE_PCI_CFG_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}14`;
-const VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}5`;
-
-function isPciBusSnapshot(bytes: Uint8Array): boolean {
-  // `web/src/io/bus/pci.ts` uses an `aero-io-snapshot`-shaped 16-byte header and sets
-  // device_id="PCIB".
-  return (
-    bytes.byteLength >= 12 &&
-    bytes[0] === 0x41 &&
-    bytes[1] === 0x45 &&
-    bytes[2] === 0x52 &&
-    bytes[3] === 0x4f &&
-    bytes[8] === 0x50 &&
-    bytes[9] === 0x43 &&
-    bytes[10] === 0x49 &&
-    bytes[11] === 0x42
-  );
-}
 
 let deviceManager: DeviceManager | null = null;
 
@@ -615,12 +580,6 @@ function flushQueuedInputBatches(): void {
   }
 }
 
-function copyU8ToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const out = new Uint8Array(bytes.byteLength);
-  out.set(bytes);
-  return out.buffer;
-}
-
 // Intercept async input-related messages while snapshot-paused so WebUSB/WebHID runtimes (and other
 // listeners) cannot apply them and mutate guest RAM/device state mid-snapshot.
 //
@@ -650,78 +609,6 @@ ctx.addEventListener(
   },
   { capture: true },
 );
-
-function snapshotUsbDeviceState(): { kind: string; bytes: Uint8Array } | null {
-  const trySave = (instance: unknown): Uint8Array | null => {
-    if (!instance || typeof instance !== "object") return null;
-    const save =
-      (instance as unknown as { save_state?: unknown }).save_state ??
-      (instance as unknown as { snapshot_state?: unknown }).snapshot_state;
-    if (typeof save !== "function") return null;
-    const bytes = save.call(instance) as unknown;
-    return bytes instanceof Uint8Array ? bytes : null;
-  };
-
-  let uhciBytes: Uint8Array | null = null;
-  const runtime = uhciRuntime;
-  if (runtime) {
-    try {
-      uhciBytes = trySave(runtime);
-    } catch (err) {
-      console.warn("[io.worker] UhciRuntime save_state failed:", err);
-    }
-  }
-  if (!uhciBytes) {
-    const bridge = uhciControllerBridge;
-    if (bridge) {
-      try {
-        uhciBytes = trySave(bridge);
-      } catch (err) {
-        console.warn("[io.worker] UhciControllerBridge save_state failed:", err);
-      }
-    }
-  }
-
-  let ehciBytes: Uint8Array | null = null;
-  const ehci = ehciControllerBridge;
-  if (ehci) {
-    try {
-      ehciBytes = trySave(ehci);
-    } catch (err) {
-      console.warn("[io.worker] EhciControllerBridge save_state failed:", err);
-    }
-  }
-
-  if (!uhciBytes && !ehciBytes) return null;
-
-  // Backwards compatibility: when only UHCI exists, keep emitting the legacy raw UHCI blob.
-  if (uhciBytes && !ehciBytes) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: uhciBytes };
-
-  const entries: Array<{ tag: string; bytes: Uint8Array }> = [];
-  if (uhciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_UHCI, bytes: uhciBytes });
-  if (ehciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_EHCI, bytes: ehciBytes });
-  return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: encodeUsbSnapshotContainer(entries) };
-}
-
-function snapshotI8042DeviceState(): { kind: string; bytes: Uint8Array } | null {
-  if (i8042Wasm) {
-    try {
-      const bytes = i8042Wasm.save_state();
-      if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_I8042_KIND, bytes };
-    } catch (err) {
-      console.warn("[io.worker] I8042Bridge save_state failed:", err);
-    }
-  }
-  if (i8042Ts) {
-    try {
-      return { kind: VM_SNAPSHOT_DEVICE_I8042_KIND, bytes: i8042Ts.saveState() };
-    } catch (err) {
-      console.warn("[io.worker] i8042 saveState failed:", err);
-    }
-  }
-  return null;
-}
-
 function snapshotE1000DeviceState(): { kind: string; bytes: Uint8Array } | null {
   const bridge = e1000Bridge;
   if (!bridge) return null;
@@ -737,92 +624,6 @@ function snapshotE1000DeviceState(): { kind: string; bytes: Uint8Array } | null 
     console.warn("[io.worker] E1000 save_state failed:", err);
   }
   return null;
-}
-
-function restoreUsbDeviceState(bytes: Uint8Array): void {
-  const tryLoad = (instance: unknown, data: Uint8Array): boolean => {
-    if (!instance || typeof instance !== "object") return false;
-    const load =
-      (instance as unknown as { load_state?: unknown }).load_state ??
-      (instance as unknown as { restore_state?: unknown }).restore_state;
-    if (typeof load !== "function") return false;
-    load.call(instance, data);
-    return true;
-  };
-
-  const restoreUhci = (data: Uint8Array): void => {
-    const runtime = uhciRuntime;
-    if (runtime) {
-      try {
-        if (tryLoad(runtime, data)) return;
-      } catch (err) {
-        console.warn("[io.worker] UhciRuntime load_state failed:", err);
-      }
-    }
-
-    const bridge = uhciControllerBridge;
-    if (bridge) {
-      try {
-        tryLoad(bridge, data);
-      } catch (err) {
-        console.warn("[io.worker] UhciControllerBridge load_state failed:", err);
-      }
-    }
-  };
-
-  const decoded = decodeUsbSnapshotContainer(bytes);
-  if (decoded) {
-    const uhci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)?.bytes ?? null;
-    const ehci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_EHCI)?.bytes ?? null;
-    if (uhci) restoreUhci(uhci);
-    if (ehci) {
-      const bridge = ehciControllerBridge;
-      if (!bridge) {
-        console.warn("[io.worker] Snapshot contains EHCI USB state but EhciControllerBridge runtime is unavailable; ignoring blob.");
-      } else {
-        try {
-          if (!tryLoad(bridge, ehci)) {
-            console.warn("[io.worker] Snapshot contains EHCI USB state but EhciControllerBridge has no load_state/restore_state hook; ignoring blob.");
-          }
-        } catch (err) {
-          console.warn("[io.worker] EhciControllerBridge load_state failed:", err);
-        }
-      }
-    }
-  } else {
-    // Backwards compatibility: legacy snapshots stored only a UHCI blob.
-    restoreUhci(bytes);
-  }
-
-  // WebUSB host actions are backed by JS Promises and cannot be resumed after restoring a VM
-  // snapshot. Cancel any in-flight worker-side awaits so the guest can re-emit actions instead of
-  // deadlocking on completions that will never arrive.
-  if (usbPassthroughRuntime) {
-    try {
-      usbPassthroughRuntime.stop();
-      usbPassthroughRuntime.start();
-    } catch (err) {
-      console.warn("[io.worker] Failed to reset WebUSB passthrough runtime after snapshot restore", err);
-    }
-  }
-}
-
-function restoreI8042DeviceState(bytes: Uint8Array): void {
-  if (i8042Wasm) {
-    try {
-      i8042Wasm.load_state(bytes);
-    } catch (err) {
-      console.warn("[io.worker] I8042Bridge load_state failed:", err);
-    }
-    return;
-  }
-  if (i8042Ts) {
-    try {
-      i8042Ts.loadState(bytes);
-    } catch (err) {
-      console.warn("[io.worker] i8042 loadState failed:", err);
-    }
-  }
 }
 
 function restoreE1000DeviceState(bytes: Uint8Array): void {
@@ -1124,28 +925,6 @@ function restoreAudioVirtioSndDeviceState(bytes: Uint8Array): void {
   }
 }
 
-function snapshotPciDeviceState(): { kind: string; bytes: Uint8Array } | null {
-  const mgr = deviceManager;
-  if (!mgr) return null;
-  try {
-    const bytes = mgr.pciBus.saveState();
-    if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_PCI_CFG_KIND, bytes };
-  } catch (err) {
-    console.warn("[io.worker] PCI saveState failed:", err);
-  }
-  return null;
-}
-
-function restorePciDeviceState(bytes: Uint8Array): void {
-  const mgr = deviceManager;
-  if (!mgr) return;
-  try {
-    mgr.pciBus.loadState(bytes);
-  } catch (err) {
-    console.warn("[io.worker] PCI loadState failed:", err);
-  }
-}
-
 type NetStackSnapshotBridgeLike = {
   save_state?: () => Uint8Array;
   snapshot_state?: () => Uint8Array;
@@ -1177,88 +956,6 @@ function resolveNetStackSnapshotBridge(): NetStackSnapshotBridgeLike | null {
   return candidate as NetStackSnapshotBridgeLike;
 }
 
-function snapshotNetStackDeviceState(): { kind: string; bytes: Uint8Array } | null {
-  const bridge = resolveNetStackSnapshotBridge();
-  if (!bridge) return null;
-
-  const save =
-    (bridge as unknown as { save_state?: unknown }).save_state ?? (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
-  if (typeof save !== "function") return null;
-  try {
-    const bytes = save.call(bridge) as unknown;
-    if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_NET_STACK_KIND, bytes };
-  } catch (err) {
-    console.warn("[io.worker] NET_STACK save_state failed:", err);
-  }
-  return null;
-}
-
-function applyNetStackTcpRestorePolicy(netStack: unknown, policy: "drop" | "reconnect"): void {
-  if (!netStack || (typeof netStack !== "object" && typeof netStack !== "function")) return;
-
-  const fn =
-    (netStack as unknown as { apply_tcp_restore_policy?: unknown }).apply_tcp_restore_policy ??
-    (netStack as unknown as { applyTcpRestorePolicy?: unknown }).applyTcpRestorePolicy ??
-    (netStack as unknown as { set_tcp_restore_policy?: unknown }).set_tcp_restore_policy ??
-    (netStack as unknown as { setTcpRestorePolicy?: unknown }).setTcpRestorePolicy;
-  if (typeof fn !== "function") return;
-
-  // Prefer a readable string API, but fall back to a numeric enum-like encoding if
-  // the runtime expects it (e.g. wasm-bindgen enum variants).
-  try {
-    fn.call(netStack, policy);
-    return;
-  } catch {
-    // continue
-  }
-  try {
-    fn.call(netStack, policy === "drop" ? 0 : 1);
-  } catch (err) {
-    console.warn("[io.worker] net.stack apply_tcp_restore_policy failed:", err);
-  }
-}
-
-function restoreNetStackDeviceState(bytes: Uint8Array): void {
-  const bridge = resolveNetStackSnapshotBridge();
-  if (!bridge) {
-    console.warn("[io.worker] Snapshot contains net.stack state but net.stack runtime is unavailable; ignoring blob.");
-    return;
-  }
-
-  const load =
-    (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
-  if (typeof load !== "function") {
-    console.warn("[io.worker] Snapshot contains net.stack state but net.stack bridge has no load_state/restore_state hook; ignoring blob.");
-    return;
-  }
-  try {
-    load.call(bridge, bytes);
-  } catch (err) {
-    console.warn("[io.worker] NET_STACK load_state failed:", err);
-    return;
-  }
-
-  // Default to dropping any in-flight TCP connections: the browser-side stack can restore NAT
-  // tables, but resuming live connections without an out-of-band handshake is unsafe.
-  applyNetStackTcpRestorePolicy(bridge, "drop");
-}
-
-function snapshotDeviceKindForWasm(kind: string): string {
-  // WASM snapshot free-function exports historically only understood `usb.uhci` and `device.<id>`.
-  // Use the numeric-id spelling when we can map it so new device kinds can roundtrip even when the
-  // wasm bindings haven't been updated yet.
-  const id = vmSnapshotDeviceKindToId(kind);
-  if (id === null) return kind;
-  return `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}${id >>> 0}`;
-}
-
-function normalizeRestoredDeviceKind(kind: string): string {
-  if (kind.startsWith(VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID)) {
-    const id = vmSnapshotDeviceKindToId(kind);
-    if (id !== null) return vmSnapshotDeviceIdToKind(id);
-  }
-  return kind;
-}
 // Keep broker IDs from overlapping between multiple concurrent USB action sources (UHCI runtime,
 // harness panel, demo driver, etc). The demo uses 1_000_000_000 and the harness uses 2_000_000_000.
 const UHCI_RUNTIME_WEBUSB_ID_BASE = 3_000_000_000;
@@ -3518,93 +3215,39 @@ async function handleVmSnapshotSaveToOpfs(
     if (!api) {
       throw new Error("WASM is not initialized in the IO worker; cannot save VM snapshot.");
     }
-
-    const usb = snapshotUsbDeviceState();
-    const ps2 = snapshotI8042DeviceState();
-    const hda = snapshotAudioHdaDeviceState();
-    const vsnd = snapshotAudioVirtioSndDeviceState();
-    const pci = snapshotPciDeviceState();
-    const e1000 = snapshotE1000DeviceState();
-    const netStack = snapshotNetStackDeviceState();
-
-    // Merge in any previously restored device blobs so unknown/unhandled device state survives a
-    // restore → save cycle (forward compatibility).
-    const freshDevices: Array<{ kind: string; bytes: Uint8Array }> = [];
-    if (usb) freshDevices.push(usb);
-    if (ps2) freshDevices.push(ps2);
-    if (hda) freshDevices.push(hda);
-    if (vsnd) freshDevices.push(vsnd);
-    if (pci) freshDevices.push(pci);
-    if (e1000) freshDevices.push(e1000);
-    if (netStack) freshDevices.push(netStack);
-
-    // Merge in any coordinator-provided device blobs (e.g. CPU-owned device state like CPU_INTERNAL).
-    // Treat these as "fresh" so they override any cached restored blobs of the same kind.
-    if (Array.isArray(coordinatorDevices)) {
-      for (const dev of coordinatorDevices) {
-        if (!dev || typeof dev !== "object") continue;
-        if (typeof (dev as { kind?: unknown }).kind !== "string") continue;
-        if (!((dev as { bytes?: unknown }).bytes instanceof ArrayBuffer)) continue;
-        const kind = normalizeRestoredDeviceKind((dev as { kind: string }).kind);
-        freshDevices.push({ kind, bytes: new Uint8Array((dev as { bytes: ArrayBuffer }).bytes) });
-      }
-    }
-
-    const freshKinds = new Set(freshDevices.map((d) => d.kind));
-    const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
-    const seen = new Set<string>();
-    for (const cached of snapshotRestoredDeviceBlobs) {
-      if (freshKinds.has(cached.kind)) continue;
-      if (seen.has(cached.kind)) continue;
-      devices.push(cached);
-      seen.add(cached.kind);
-    }
-    for (const dev of freshDevices) {
-      if (seen.has(dev.kind)) continue;
-      devices.push(dev);
-      seen.add(dev.kind);
-    }
-
-    const saveExport = resolveVmSnapshotSaveToOpfsExport(api);
-    if (!saveExport) {
-      throw new Error("WASM VM snapshot save export is unavailable (expected *_snapshot*_to_opfs or WorkerVmSnapshot).");
-    }
-
-    if (saveExport.kind === "free-function") {
-      // Build a JS-friendly device blob list; wasm-bindgen can accept this as `JsValue`.
-      const devicePayload = devices.map((d) => ({ kind: snapshotDeviceKindForWasm(d.kind), bytes: d.bytes }));
-
-      // Always pass fresh Uint8Array views for the CPU state so callers can transfer the ArrayBuffer.
-      const cpuBytes = new Uint8Array(cpu);
-      const mmuBytes = new Uint8Array(mmu);
-
-      await Promise.resolve(saveExport.fn.call(api as unknown, path, cpuBytes, mmuBytes, devicePayload));
-      return;
-    }
-
-    const builder = new saveExport.Ctor(guestBase >>> 0, guestSize >>> 0);
-    try {
-      builder.set_cpu_state_v2(new Uint8Array(cpu), new Uint8Array(mmu));
-
-      for (const device of devices) {
-        const id = vmSnapshotDeviceKindToId(device.kind);
-        if (id === null) {
-          throw new Error(`Unsupported VM snapshot device kind: ${device.kind}`);
-        }
-        // CPU_INTERNAL (`DeviceId::CPU_INTERNAL = 9`) uses a raw v2 encoding (no `AERO` header), so
-        // we must not rely on `parseAeroIoSnapshotVersion`'s default fallback (v1.0).
-        const { version, flags } = id === 9 ? { version: 2, flags: 0 } : parseAeroIoSnapshotVersion(device.bytes);
-        builder.add_device_state(id, version, flags, device.bytes);
-      }
-
-      await builder.snapshot_full_to_opfs(path);
-    } finally {
-      try {
-        builder.free();
-      } catch {
-        // ignore
-      }
-    }
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path,
+      cpu,
+      mmu,
+      guestBase,
+      guestSize,
+      runtimes: {
+        usbUhciRuntime: uhciRuntime,
+        usbUhciControllerBridge: uhciControllerBridge,
+        usbEhciControllerBridge: ehciControllerBridge,
+        i8042: i8042Wasm ?? i8042Ts,
+        // Wrap audio devices so snapshot restore semantics (pending bytes + ring reattachment) stay
+        // centralized in the IO worker.
+        audioHda: {
+          save_state: () => snapshotAudioHdaDeviceState()?.bytes,
+          load_state: (bytes: Uint8Array) => restoreAudioHdaDeviceState(bytes),
+        },
+        audioVirtioSnd: {
+          save_state: () => snapshotAudioVirtioSndDeviceState()?.bytes,
+          load_state: (bytes: Uint8Array) => restoreAudioVirtioSndDeviceState(bytes),
+        },
+        pciBus: deviceManager?.pciBus ?? null,
+        // Wrap net.e1000 so we can preserve IO-worker-side reset hooks (see `E1000PciDevice.onSnapshotRestore()`).
+        netE1000: {
+          save_state: () => snapshotE1000DeviceState()?.bytes,
+          load_state: (bytes: Uint8Array) => restoreE1000DeviceState(bytes),
+        },
+        netStack: resolveNetStackSnapshotBridge(),
+      },
+      restoredDevices: snapshotRestoredDeviceBlobs,
+      coordinatorDevices,
+    });
   } finally {
     snapshotOpInFlight = false;
   }
@@ -3624,182 +3267,44 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
     if (!api) {
       throw new Error("WASM is not initialized in the IO worker; cannot restore VM snapshot.");
     }
+    const restored = await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path,
+      guestBase,
+      guestSize,
+      runtimes: {
+        usbUhciRuntime: uhciRuntime,
+        usbUhciControllerBridge: uhciControllerBridge,
+        usbEhciControllerBridge: ehciControllerBridge,
+        i8042: i8042Wasm ?? i8042Ts,
+        audioHda: {
+          load_state: (bytes: Uint8Array) => restoreAudioHdaDeviceState(bytes),
+        },
+        audioVirtioSnd: {
+          load_state: (bytes: Uint8Array) => restoreAudioVirtioSndDeviceState(bytes),
+        },
+        pciBus: deviceManager?.pciBus ?? null,
+        netE1000: {
+          load_state: (bytes: Uint8Array) => restoreE1000DeviceState(bytes),
+        },
+        netStack: resolveNetStackSnapshotBridge(),
+      },
+    });
 
-    const restoreExport = resolveVmSnapshotRestoreFromOpfsExport(api);
-    if (!restoreExport) {
-      throw new Error(
-        "WASM VM snapshot restore export is unavailable (expected *_restore*_from_opfs or WorkerVmSnapshot).",
-      );
-    }
-
-    if (restoreExport.kind === "free-function") {
-      const res = await Promise.resolve(restoreExport.fn.call(api as unknown, path));
-      const rec = res as { cpu?: unknown; mmu?: unknown; devices?: unknown };
-      if (!(rec?.cpu instanceof Uint8Array) || !(rec?.mmu instanceof Uint8Array)) {
-        throw new Error("WASM snapshot restore returned an unexpected result shape (expected {cpu:Uint8Array, mmu:Uint8Array}).");
-      }
-
-      const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
-      const devices: VmSnapshotDeviceBlob[] = [];
-      const cachedDevices: Array<{ kind: string; bytes: Uint8Array }> = [];
-      let usbBytes: Uint8Array | null = null;
-      let i8042Bytes: Uint8Array | null = null;
-      let hdaBytes: Uint8Array | null = null;
-      let virtioSndBytes: Uint8Array | null = null;
-      let pciBytes: Uint8Array | null = null;
-      let e1000Bytes: Uint8Array | null = null;
-      let netStackBytes: Uint8Array | null = null;
-      for (const entry of devicesRaw) {
-        if (!entry || typeof entry !== "object") continue;
-        const e = entry as { kind?: unknown; bytes?: unknown };
-        if (typeof e.kind !== "string") continue;
-        if (!(e.bytes instanceof Uint8Array)) continue;
-
-        let kind = normalizeRestoredDeviceKind(e.kind);
-        if (kind === VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND && isPciBusSnapshot(e.bytes)) {
-          kind = VM_SNAPSHOT_DEVICE_PCI_CFG_KIND;
-        }
-        cachedDevices.push({ kind, bytes: e.bytes });
-        devices.push({ kind, bytes: copyU8ToArrayBuffer(e.bytes) });
-
-        if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.bytes;
-        if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.bytes;
-        if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.bytes;
-        if (kind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) virtioSndBytes = e.bytes;
-        if (kind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND) pciBytes = e.bytes;
-        if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.bytes;
-        if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) netStackBytes = e.bytes;
-      }
-
-      // Apply device state locally when the device exists in this build.
-      if (usbBytes) restoreUsbDeviceState(usbBytes);
-      if (i8042Bytes) restoreI8042DeviceState(i8042Bytes);
-      if (hdaBytes) restoreAudioHdaDeviceState(hdaBytes);
-      if (virtioSndBytes) restoreAudioVirtioSndDeviceState(virtioSndBytes);
-      // If the snapshot contains E1000 state but the NIC wasn't initialized yet, register it
-      // before restoring PCI config state so the PCI snapshot (command/BAR programming) is
-      // applied to the newly created function.
-      if (pciBytes && e1000Bytes && !e1000Bridge && !virtioNetDevice) {
-        maybeInitE1000Device();
-      }
-      if (e1000Bytes) restoreE1000DeviceState(e1000Bytes);
-      if (pciBytes) restorePciDeviceState(pciBytes);
-      if (netStackBytes) restoreNetStackDeviceState(netStackBytes);
-      snapshotRestoredDeviceBlobs = cachedDevices;
-
-      return {
-        cpu: copyU8ToArrayBuffer(rec.cpu),
-        mmu: copyU8ToArrayBuffer(rec.mmu),
-        devices: devices.length ? devices : undefined,
-      };
-    }
-
-    const builder = new restoreExport.Ctor(guestBase >>> 0, guestSize >>> 0);
-    try {
-      const res = await builder.restore_snapshot_from_opfs(path);
-      const rec = res as { cpu?: unknown; mmu?: unknown; devices?: unknown };
-      if (!(rec?.cpu instanceof Uint8Array) || !(rec?.mmu instanceof Uint8Array) || !Array.isArray(rec.devices)) {
-        throw new Error(
-          "WASM snapshot restore returned an unexpected result shape (expected {cpu:Uint8Array, mmu:Uint8Array, devices:Array}).",
-        );
-      }
-
-      const devices: VmSnapshotDeviceBlob[] = [];
-      const cachedDevices: Array<{ kind: string; bytes: Uint8Array }> = [];
-      let usbBytes: Uint8Array | null = null;
-      let i8042Bytes: Uint8Array | null = null;
-      let hdaBytes: Uint8Array | null = null;
-      let virtioSndBytes: Uint8Array | null = null;
-      let pciBytes: Uint8Array | null = null;
-      let e1000Bytes: Uint8Array | null = null;
-      let netStackBytes: Uint8Array | null = null;
-      for (const entry of rec.devices) {
-        if (!entry || typeof entry !== "object") {
-          throw new Error(
-            "WASM snapshot restore returned an unexpected devices entry (expected {id:number,version:number,flags:number,data:Uint8Array}).",
-          );
-        }
-        const e = entry as { id?: unknown; version?: unknown; flags?: unknown; data?: unknown };
-        if (
-          typeof e.id !== "number" ||
-          typeof e.version !== "number" ||
-          typeof e.flags !== "number" ||
-          !(e.data instanceof Uint8Array)
-        ) {
-          throw new Error(
-            "WASM snapshot restore returned an unexpected devices entry shape (expected {id:number,version:number,flags:number,data:Uint8Array}).",
-          );
-        }
-
-        const kind = vmSnapshotDeviceIdToKind(e.id);
-        if (!kind) continue;
-        const kindIsLegacyPci = kind === VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND && isPciBusSnapshot(e.data);
-        const canonicalKind = kindIsLegacyPci ? VM_SNAPSHOT_DEVICE_PCI_CFG_KIND : kind;
-
-        if (canonicalKind === VM_SNAPSHOT_DEVICE_USB_KIND) {
-          usbBytes = e.data;
-        }
-        if (canonicalKind === VM_SNAPSHOT_DEVICE_I8042_KIND) {
-          i8042Bytes = e.data;
-        }
-        if (canonicalKind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) {
-          hdaBytes = e.data;
-        }
-        if (canonicalKind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) {
-          virtioSndBytes = e.data;
-        }
-        if (canonicalKind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND) {
-          pciBytes = e.data;
-        }
-        if (canonicalKind === VM_SNAPSHOT_DEVICE_E1000_KIND) {
-          e1000Bytes = e.data;
-        }
-        if (canonicalKind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) {
-          netStackBytes = e.data;
-        }
-        cachedDevices.push({ kind: canonicalKind, bytes: e.data });
-        devices.push({ kind: canonicalKind, bytes: copyU8ToArrayBuffer(e.data) });
-      }
-
-      if (usbBytes) {
-        restoreUsbDeviceState(usbBytes);
-      }
-      if (i8042Bytes) {
-        restoreI8042DeviceState(i8042Bytes);
-      }
-      if (hdaBytes) {
-        restoreAudioHdaDeviceState(hdaBytes);
-      }
-      if (virtioSndBytes) {
-        restoreAudioVirtioSndDeviceState(virtioSndBytes);
-      }
-      if (pciBytes && e1000Bytes && !e1000Bridge && !virtioNetDevice) {
-        maybeInitE1000Device();
-      }
-      if (e1000Bytes) {
-        restoreE1000DeviceState(e1000Bytes);
-      }
-      if (pciBytes) {
-        restorePciDeviceState(pciBytes);
-      }
-      if (netStackBytes) {
-        restoreNetStackDeviceState(netStackBytes);
-      }
-
-      snapshotRestoredDeviceBlobs = cachedDevices;
-
-      return {
-        cpu: copyU8ToArrayBuffer(rec.cpu),
-        mmu: copyU8ToArrayBuffer(rec.mmu),
-        devices: devices.length ? devices : undefined,
-      };
-    } finally {
+    // WebUSB host actions are backed by JS Promises and cannot be resumed after restoring a VM
+    // snapshot. Cancel any in-flight worker-side awaits so the guest can re-emit actions instead of
+    // deadlocking on completions that will never arrive.
+    if (restored.restoredDevices.some((d) => d.kind === VM_SNAPSHOT_DEVICE_USB_KIND) && usbPassthroughRuntime) {
       try {
-        builder.free();
-      } catch {
-        // ignore
+        usbPassthroughRuntime.stop();
+        usbPassthroughRuntime.start();
+      } catch (err) {
+        console.warn("[io.worker] Failed to reset WebUSB passthrough runtime after snapshot restore", err);
       }
     }
+
+    snapshotRestoredDeviceBlobs = restored.restoredDevices;
+    return { cpu: restored.cpu, mmu: restored.mmu, devices: restored.devices };
   } finally {
     snapshotOpInFlight = false;
   }

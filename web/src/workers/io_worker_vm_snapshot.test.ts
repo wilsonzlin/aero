@@ -314,4 +314,67 @@ describe("workers/io_worker_vm_snapshot", () => {
     expect(ehciLoad).toHaveBeenCalledWith(expect.any(Uint8Array));
     expect((ehciLoad.mock.calls[0]![0] as Uint8Array)).toEqual(ehciBytes);
   });
+
+  it("preserves unknown device blobs across restore → save (device list merge semantics)", async () => {
+    const unknownBytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+    const usbOld = new Uint8Array([0x01]);
+    const usbFresh = new Uint8Array([0x02]);
+
+    const restore = vi.fn(() => ({
+      cpu: new Uint8Array([0xaa]),
+      mmu: new Uint8Array([0xbb]),
+      devices: [
+        { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbOld },
+        { kind: "device.123", bytes: unknownBytes },
+      ],
+    }));
+
+    const saveCalls: Array<{ devices: unknown }> = [];
+    const save = vi.fn((_path: string, _cpu: Uint8Array, _mmu: Uint8Array, devices: unknown) => {
+      saveCalls.push({ devices });
+    });
+
+    const api = {
+      vm_snapshot_restore_from_opfs: restore,
+      vm_snapshot_save_to_opfs: save,
+    } as unknown as WasmApi;
+
+    const restored = await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path: "state/next.snap",
+      cpu: new ArrayBuffer(4),
+      mmu: new ArrayBuffer(8),
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbUhciRuntime: { save_state: () => usbFresh },
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+      restoredDevices: restored.restoredDevices,
+    });
+
+    expect(saveCalls).toHaveLength(1);
+    // Unknown blob should be preserved, and the USB blob should come from the fresh snapshot (not restored).
+    expect(saveCalls[0]!.devices).toEqual([
+      { kind: "device.123", bytes: unknownBytes },
+      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbFresh },
+    ]);
+  });
 });

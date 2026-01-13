@@ -2,6 +2,7 @@ import type { WasmApi } from "../runtime/wasm_loader";
 import type { VmSnapshotDeviceBlob } from "../runtime/snapshot_protocol";
 import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
+  VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND,
   VM_SNAPSHOT_DEVICE_E1000_KIND,
   VM_SNAPSHOT_DEVICE_I8042_KIND,
   VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
@@ -23,9 +24,38 @@ export type IoWorkerSnapshotRuntimes = Readonly<{
   usbEhciControllerBridge: unknown | null;
   i8042?: unknown | null;
   audioHda?: unknown | null;
+  audioVirtioSnd?: unknown | null;
+  pciBus?: unknown | null;
   netE1000: unknown | null;
   netStack: unknown | null;
 }>;
+
+// Snapshot kind strings for PCI config/bus state (web runtime).
+//
+// - Canonical: `aero_snapshot::DeviceId::PCI_CFG` (`14`)
+// - Legacy/compat: some older web snapshots stored PCI config state under `DeviceId::PCI` (`5`)
+//
+// Note: We *only* treat legacy `device.5` blobs as PCI config state if they contain the expected
+// inner `aero-io-snapshot` DEVICE_ID (`PCIB`). This avoids misinterpreting unrelated legacy
+// `DeviceId::PCI` payloads (e.g. Rust `PCIC` / `PCPT` blobs) as the JS PCI bus snapshot.
+const VM_SNAPSHOT_DEVICE_PCI_CFG_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}14`;
+const VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}5`;
+
+function isPciBusSnapshot(bytes: Uint8Array): boolean {
+  // `web/src/io/bus/pci.ts` uses an `aero-io-snapshot`-shaped 16-byte header and sets
+  // device_id="PCIB".
+  return (
+    bytes.byteLength >= 12 &&
+    bytes[0] === 0x41 &&
+    bytes[1] === 0x45 &&
+    bytes[2] === 0x52 &&
+    bytes[3] === 0x4f &&
+    bytes[8] === 0x50 &&
+    bytes[9] === 0x43 &&
+    bytes[10] === 0x49 &&
+    bytes[11] === 0x42
+  );
+}
 
 function snapshotDeviceKindForWasm(kind: string): string {
   // WASM snapshot free-function exports historically understood `device.<id>` blobs (and may lag
@@ -54,7 +84,9 @@ function trySaveState(instance: unknown): Uint8Array | null {
   if (!instance || typeof instance !== "object") return null;
   const save =
     (instance as unknown as { save_state?: unknown }).save_state ??
-    (instance as unknown as { snapshot_state?: unknown }).snapshot_state;
+    (instance as unknown as { snapshot_state?: unknown }).snapshot_state ??
+    (instance as unknown as { saveState?: unknown }).saveState ??
+    (instance as unknown as { snapshotState?: unknown }).snapshotState;
   if (typeof save !== "function") return null;
   const bytes = save.call(instance) as unknown;
   return bytes instanceof Uint8Array ? bytes : null;
@@ -64,7 +96,9 @@ function tryLoadState(instance: unknown, bytes: Uint8Array): boolean {
   if (!instance || typeof instance !== "object") return false;
   const load =
     (instance as unknown as { load_state?: unknown }).load_state ??
-    (instance as unknown as { restore_state?: unknown }).restore_state;
+    (instance as unknown as { restore_state?: unknown }).restore_state ??
+    (instance as unknown as { loadState?: unknown }).loadState ??
+    (instance as unknown as { restoreState?: unknown }).restoreState;
   if (typeof load !== "function") return false;
   load.call(instance, bytes);
   return true;
@@ -149,6 +183,28 @@ export function snapshotAudioHdaDeviceState(audioHda: unknown | null): IoWorkerS
   return null;
 }
 
+export function snapshotAudioVirtioSndDeviceState(audioVirtioSnd: unknown | null): IoWorkerSnapshotDeviceState | null {
+  if (!audioVirtioSnd) return null;
+  try {
+    const bytes = trySaveState(audioVirtioSnd);
+    if (bytes) return { kind: VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND, bytes };
+  } catch (err) {
+    console.warn("[io.worker] audio.virtio_snd save_state failed:", err);
+  }
+  return null;
+}
+
+export function snapshotPciDeviceState(pciBus: unknown | null): IoWorkerSnapshotDeviceState | null {
+  if (!pciBus) return null;
+  try {
+    const bytes = trySaveState(pciBus);
+    if (bytes) return { kind: VM_SNAPSHOT_DEVICE_PCI_CFG_KIND, bytes };
+  } catch (err) {
+    console.warn("[io.worker] PCI saveState failed:", err);
+  }
+  return null;
+}
+
 export function snapshotNetStackDeviceState(netStack: unknown | null): IoWorkerSnapshotDeviceState | null {
   if (!netStack) return null;
   try {
@@ -171,6 +227,12 @@ export function collectIoWorkerSnapshotDeviceStates(runtimes: IoWorkerSnapshotRu
 
   const hda = snapshotAudioHdaDeviceState(runtimes.audioHda ?? null);
   if (hda) devices.push(hda);
+
+  const virtioSnd = snapshotAudioVirtioSndDeviceState(runtimes.audioVirtioSnd ?? null);
+  if (virtioSnd) devices.push(virtioSnd);
+
+  const pci = snapshotPciDeviceState(runtimes.pciBus ?? null);
+  if (pci) devices.push(pci);
 
   const e1000 = snapshotNetE1000DeviceState(runtimes.netE1000);
   if (e1000) devices.push(e1000);
@@ -277,8 +339,35 @@ export function restoreAudioHdaDeviceState(audioHda: unknown | null, bytes: Uint
   }
 }
 
+export function restoreAudioVirtioSndDeviceState(audioVirtioSnd: unknown | null, bytes: Uint8Array): void {
+  if (!audioVirtioSnd) {
+    console.warn("[io.worker] Snapshot contains audio.virtio_snd state but audio runtime is unavailable; ignoring blob.");
+    return;
+  }
+  try {
+    if (!tryLoadState(audioVirtioSnd, bytes)) {
+      console.warn(
+        "[io.worker] Snapshot contains audio.virtio_snd state but audio runtime has no load_state/restore_state hook; ignoring blob.",
+      );
+    }
+  } catch (err) {
+    console.warn("[io.worker] audio.virtio_snd load_state failed:", err);
+  }
+}
+
+export function restorePciDeviceState(pciBus: unknown | null, bytes: Uint8Array): void {
+  if (!pciBus) return;
+  try {
+    if (!tryLoadState(pciBus, bytes)) {
+      console.warn("[io.worker] Snapshot contains PCI state but PCI runtime has no load_state/restore_state hook; ignoring blob.");
+    }
+  } catch (err) {
+    console.warn("[io.worker] PCI loadState failed:", err);
+  }
+}
+
 function applyNetStackTcpRestorePolicy(netStack: unknown, policy: "drop" | "reconnect"): void {
-  if (!netStack || typeof netStack !== "object") return;
+  if (!netStack || (typeof netStack !== "object" && typeof netStack !== "function")) return;
 
   const fn =
     (netStack as unknown as { apply_tcp_restore_policy?: unknown }).apply_tcp_restore_policy ??
@@ -329,8 +418,49 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
   guestBase: number;
   guestSize: number;
   runtimes: IoWorkerSnapshotRuntimes;
+  /**
+   * Device blobs recovered from the most recent VM snapshot restore. These are merged into the
+   * next save so unknown/unhandled device state survives a restore → save cycle (forward
+   * compatibility).
+   */
+  restoredDevices?: IoWorkerSnapshotDeviceState[];
+  /**
+   * Optional device blobs supplied by the coordinator (typically CPU-owned device state such as
+   * CPU_INTERNAL).
+   */
+  coordinatorDevices?: VmSnapshotDeviceBlob[];
 }): Promise<void> {
-  const devices = collectIoWorkerSnapshotDeviceStates(opts.runtimes);
+  // Fresh device blobs produced by this IO worker.
+  const freshDevices: IoWorkerSnapshotDeviceState[] = collectIoWorkerSnapshotDeviceStates(opts.runtimes);
+
+  // Merge in any coordinator-provided device blobs (e.g. CPU-owned device state like CPU_INTERNAL).
+  // Treat these as "fresh" so they override any cached restored blobs of the same kind.
+  if (Array.isArray(opts.coordinatorDevices)) {
+    for (const dev of opts.coordinatorDevices) {
+      if (!dev || typeof dev !== "object") continue;
+      if (typeof (dev as { kind?: unknown }).kind !== "string") continue;
+      if (!((dev as { bytes?: unknown }).bytes instanceof ArrayBuffer)) continue;
+      const kind = normalizeRestoredDeviceKind((dev as { kind: string }).kind);
+      freshDevices.push({ kind, bytes: new Uint8Array((dev as { bytes: ArrayBuffer }).bytes) });
+    }
+  }
+
+  // Merge in any previously restored device blobs so unknown/unhandled device state survives a
+  // restore → save cycle (forward compatibility).
+  const freshKinds = new Set(freshDevices.map((d) => d.kind));
+  const devices: IoWorkerSnapshotDeviceState[] = [];
+  const seen = new Set<string>();
+  for (const cached of opts.restoredDevices ?? []) {
+    if (freshKinds.has(cached.kind)) continue;
+    if (seen.has(cached.kind)) continue;
+    devices.push(cached);
+    seen.add(cached.kind);
+  }
+  for (const dev of freshDevices) {
+    if (seen.has(dev.kind)) continue;
+    devices.push(dev);
+    seen.add(dev.kind);
+  }
 
   const saveExport = resolveVmSnapshotSaveToOpfsExport(opts.api);
   if (!saveExport) {
@@ -358,7 +488,9 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
       if (id === null) {
         throw new Error(`Unsupported VM snapshot device kind: ${device.kind}`);
       }
-      const { version, flags } = parseAeroIoSnapshotVersion(device.bytes);
+      // CPU_INTERNAL (`DeviceId::CPU_INTERNAL = 9`) uses a raw v2 encoding (no `AERO` header), so
+      // we must not rely on `parseAeroIoSnapshotVersion`'s default fallback (v1.0).
+      const { version, flags } = id === 9 ? { version: 2, flags: 0 } : parseAeroIoSnapshotVersion(device.bytes);
       builder.add_device_state(id, version, flags, device.bytes);
     }
 
@@ -382,6 +514,11 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
   cpu: ArrayBuffer;
   mmu: ArrayBuffer;
   devices?: VmSnapshotDeviceBlob[];
+  /**
+   * Normalized device blobs recovered from the snapshot file, suitable for caching and merging
+   * into subsequent saves.
+   */
+  restoredDevices: IoWorkerSnapshotDeviceState[];
 }> {
   const restoreExport = resolveVmSnapshotRestoreFromOpfsExport(opts.api);
   if (!restoreExport) {
@@ -397,9 +534,12 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
     const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
     const devices: VmSnapshotDeviceBlob[] = [];
+    const restoredDevices: IoWorkerSnapshotDeviceState[] = [];
     let usbBytes: Uint8Array | null = null;
     let i8042Bytes: Uint8Array | null = null;
     let hdaBytes: Uint8Array | null = null;
+    let virtioSndBytes: Uint8Array | null = null;
+    let pciBytes: Uint8Array | null = null;
     let e1000Bytes: Uint8Array | null = null;
     let stackBytes: Uint8Array | null = null;
     for (const entry of devicesRaw) {
@@ -408,12 +548,18 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       if (typeof e.kind !== "string") continue;
       if (!(e.bytes instanceof Uint8Array)) continue;
 
-      const kind = normalizeRestoredDeviceKind(e.kind);
+      let kind = normalizeRestoredDeviceKind(e.kind);
+      if (kind === VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND && isPciBusSnapshot(e.bytes)) {
+        kind = VM_SNAPSHOT_DEVICE_PCI_CFG_KIND;
+      }
       devices.push({ kind, bytes: copyU8ToArrayBuffer(e.bytes) });
+      restoredDevices.push({ kind, bytes: e.bytes });
 
       if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.bytes;
+      if (kind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) virtioSndBytes = e.bytes;
+      if (kind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND) pciBytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) stackBytes = e.bytes;
     }
@@ -422,13 +568,16 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     if (usbBytes) restoreUsbDeviceState(opts.runtimes, usbBytes);
     if (i8042Bytes) restoreI8042DeviceState(opts.runtimes.i8042 ?? null, i8042Bytes);
     if (hdaBytes) restoreAudioHdaDeviceState(opts.runtimes.audioHda ?? null, hdaBytes);
+    if (virtioSndBytes) restoreAudioVirtioSndDeviceState(opts.runtimes.audioVirtioSnd ?? null, virtioSndBytes);
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
+    if (pciBytes) restorePciDeviceState(opts.runtimes.pciBus ?? null, pciBytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
 
     return {
       cpu: copyU8ToArrayBuffer(rec.cpu),
       mmu: copyU8ToArrayBuffer(rec.mmu),
       devices: devices.length ? devices : undefined,
+      restoredDevices,
     };
   }
 
@@ -441,9 +590,12 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     }
 
     const devices: VmSnapshotDeviceBlob[] = [];
+    const restoredDevices: IoWorkerSnapshotDeviceState[] = [];
     let usbBytes: Uint8Array | null = null;
     let i8042Bytes: Uint8Array | null = null;
     let hdaBytes: Uint8Array | null = null;
+    let virtioSndBytes: Uint8Array | null = null;
+    let pciBytes: Uint8Array | null = null;
     let e1000Bytes: Uint8Array | null = null;
     let stackBytes: Uint8Array | null = null;
     for (const entry of rec.devices) {
@@ -457,26 +609,34 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
       const kind = vmSnapshotDeviceIdToKind(e.id);
       if (!kind) continue;
+      const kindIsLegacyPci = kind === VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND && isPciBusSnapshot(e.data);
+      const canonicalKind = kindIsLegacyPci ? VM_SNAPSHOT_DEVICE_PCI_CFG_KIND : kind;
 
-      if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.data;
-      if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.data;
-      if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.data;
-      if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.data;
-      if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) stackBytes = e.data;
+      if (canonicalKind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.data;
+      if (canonicalKind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.data;
+      if (canonicalKind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.data;
+      if (canonicalKind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) virtioSndBytes = e.data;
+      if (canonicalKind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND) pciBytes = e.data;
+      if (canonicalKind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.data;
+      if (canonicalKind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) stackBytes = e.data;
 
-      devices.push({ kind, bytes: copyU8ToArrayBuffer(e.data) });
+      restoredDevices.push({ kind: canonicalKind, bytes: e.data });
+      devices.push({ kind: canonicalKind, bytes: copyU8ToArrayBuffer(e.data) });
     }
 
     if (usbBytes) restoreUsbDeviceState(opts.runtimes, usbBytes);
     if (i8042Bytes) restoreI8042DeviceState(opts.runtimes.i8042 ?? null, i8042Bytes);
     if (hdaBytes) restoreAudioHdaDeviceState(opts.runtimes.audioHda ?? null, hdaBytes);
+    if (virtioSndBytes) restoreAudioVirtioSndDeviceState(opts.runtimes.audioVirtioSnd ?? null, virtioSndBytes);
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
+    if (pciBytes) restorePciDeviceState(opts.runtimes.pciBus ?? null, pciBytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
 
     return {
       cpu: copyU8ToArrayBuffer(rec.cpu),
       mmu: copyU8ToArrayBuffer(rec.mmu),
       devices: devices.length ? devices : undefined,
+      restoredDevices,
     };
   } finally {
     try {
