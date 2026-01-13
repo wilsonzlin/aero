@@ -30,6 +30,15 @@ pub const OPCODE_DP4: u32 = 0x09;
 pub const OPCODE_MIN: u32 = 0x0a;
 pub const OPCODE_MAX: u32 = 0x0b;
 
+/// Unsigned integer add with carry: `uaddc dst_sum, dst_carry, a, b`.
+pub const OPCODE_UADDC: u32 = 0x6a;
+/// Unsigned integer subtract with borrow: `usubb dst_diff, dst_borrow, a, b`.
+pub const OPCODE_USUBB: u32 = 0x6b;
+/// Signed integer add with carry: `iaddc dst_sum, dst_carry, a, b`.
+pub const OPCODE_IADDC: u32 = 0x6c;
+/// Signed integer subtract with borrow/carry: `isubc dst_diff, dst_borrow, a, b`.
+pub const OPCODE_ISUBC: u32 = 0x6d;
+
 /// `udiv dst_quot, dst_rem, a, b` (unsigned integer quotient + remainder).
 pub const OPCODE_UDIV: u32 = 0x3c;
 /// `idiv dst_quot, dst_rem, a, b` (signed integer quotient + remainder).
@@ -261,6 +270,10 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DP4 => Some("dp4"),
         OPCODE_MIN => Some("min"),
         OPCODE_MAX => Some("max"),
+        OPCODE_IADDC => Some("iaddc"),
+        OPCODE_UADDC => Some("uaddc"),
+        OPCODE_ISUBC => Some("isubc"),
+        OPCODE_USUBB => Some("usubb"),
         OPCODE_UDIV => Some("udiv"),
         OPCODE_IDIV => Some("idiv"),
         OPCODE_BFI => Some("bfi"),

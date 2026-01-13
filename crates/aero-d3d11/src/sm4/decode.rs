@@ -657,6 +657,58 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Add { dst, a, b })
         }
+        OPCODE_IADDC => {
+            let dst_sum = decode_dst(&mut r)?;
+            let dst_carry = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::IAddC {
+                dst_sum,
+                dst_carry,
+                a,
+                b,
+            })
+        }
+        OPCODE_UADDC => {
+            let dst_sum = decode_dst(&mut r)?;
+            let dst_carry = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::UAddC {
+                dst_sum,
+                dst_carry,
+                a,
+                b,
+            })
+        }
+        OPCODE_ISUBC => {
+            let dst_diff = decode_dst(&mut r)?;
+            let dst_borrow = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::ISubC {
+                dst_diff,
+                dst_borrow,
+                a,
+                b,
+            })
+        }
+        OPCODE_USUBB => {
+            let dst_diff = decode_dst(&mut r)?;
+            let dst_borrow = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::USubB {
+                dst_diff,
+                dst_borrow,
+                a,
+                b,
+            })
+        }
         OPCODE_MUL => {
             let mut dst = decode_dst(&mut r)?;
             dst.saturate = saturate;

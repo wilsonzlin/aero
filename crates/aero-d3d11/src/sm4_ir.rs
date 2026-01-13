@@ -200,6 +200,38 @@ pub enum Sm4Inst {
         a: SrcOperand,
         b: SrcOperand,
     },
+    /// Signed integer add with carry.
+    ///
+    /// DXBC encodes integer values as raw 32-bit bits in the untyped register file. The
+    /// translator models temporaries/outputs as `vec4<f32>`, so integer math is performed by
+    /// bitcasting source lanes to `u32`, then writing the resulting bits back via `bitcast<f32>`.
+    IAddC {
+        dst_sum: DstOperand,
+        dst_carry: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Unsigned integer add with carry.
+    UAddC {
+        dst_sum: DstOperand,
+        dst_carry: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Signed integer subtract with borrow.
+    ISubC {
+        dst_diff: DstOperand,
+        dst_borrow: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Unsigned integer subtract with borrow.
+    USubB {
+        dst_diff: DstOperand,
+        dst_borrow: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
     Mul {
         dst: DstOperand,
         a: SrcOperand,
