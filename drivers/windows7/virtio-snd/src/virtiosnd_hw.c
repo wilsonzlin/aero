@@ -2,6 +2,7 @@
 
 #include <ntddk.h>
 
+#include "topology.h"
 #include "trace.h"
 #include "pci_interface.h"
 #include "virtiosnd.h"
@@ -612,7 +613,6 @@ VirtIoSndHwDrainEventqUsed(
     NTSTATUS status;
 
     UNREFERENCED_PARAMETER(QueueIndex);
-    UNREFERENCED_PARAMETER(UsedLen);
 
     ctx = (PVIRTIOSND_EVENTQ_POLL_CONTEXT)Context;
     if (ctx == NULL) {
@@ -661,6 +661,53 @@ VirtIoSndHwDrainEventqUsed(
 
     if (off + (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE > poolEnd - poolBase) {
         return;
+    }
+
+    /*
+     * Best-effort parse events so polling-only mode still observes jack
+     * plug/unplug state changes.
+     *
+     * This mirrors the INTx DPC eventq parsing path but must remain optional:
+     * contract v1 defines no required event messages.
+     */
+    InterlockedIncrement(&dx->EventqStats.Completions);
+
+    if (UsedLen >= (UINT32)sizeof(VIRTIO_SND_EVENT)) {
+        const UINT32 cappedLen = (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) ? (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE : UsedLen;
+        VIRTIO_SND_EVENT_PARSED evt;
+
+        /* Ensure device DMA writes are visible before inspecting the buffer. */
+        KeMemoryBarrier();
+
+        status = VirtioSndParseEvent(Cookie, cappedLen, &evt);
+        if (NT_SUCCESS(status)) {
+            InterlockedIncrement(&dx->EventqStats.Parsed);
+
+            switch (evt.Kind) {
+            case VIRTIO_SND_EVENT_KIND_JACK_CONNECTED:
+                InterlockedIncrement(&dx->EventqStats.JackConnected);
+                VirtIoSndTopology_UpdateJackState(evt.Data, TRUE);
+                break;
+            case VIRTIO_SND_EVENT_KIND_JACK_DISCONNECTED:
+                InterlockedIncrement(&dx->EventqStats.JackDisconnected);
+                VirtIoSndTopology_UpdateJackState(evt.Data, FALSE);
+                break;
+            case VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED:
+                InterlockedIncrement(&dx->EventqStats.PcmPeriodElapsed);
+                break;
+            case VIRTIO_SND_EVENT_KIND_PCM_XRUN:
+                InterlockedIncrement(&dx->EventqStats.PcmXrun);
+                break;
+            case VIRTIO_SND_EVENT_KIND_CTL_NOTIFY:
+                InterlockedIncrement(&dx->EventqStats.CtlNotify);
+                break;
+            default:
+                InterlockedIncrement(&dx->EventqStats.UnknownType);
+                break;
+            }
+        }
+    } else if (UsedLen != 0) {
+        InterlockedIncrement(&dx->EventqStats.ShortBuffers);
     }
 
     sg.addr = dx->EventqBufferPool.DmaAddr + (UINT64)off;
