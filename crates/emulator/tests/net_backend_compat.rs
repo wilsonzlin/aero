@@ -39,11 +39,17 @@ fn queue_backend_paths_work() {
         backend.stats(),
         L2TunnelBackendStats {
             tx_enqueued_frames: 1,
+            tx_enqueued_bytes: 3,
             tx_dropped_oversize: 1,
+            tx_dropped_oversize_bytes: 4,
             tx_dropped_full: 0,
+            tx_dropped_full_bytes: 0,
             rx_enqueued_frames: 2,
+            rx_enqueued_bytes: 6,
             rx_dropped_oversize: 0,
+            rx_dropped_oversize_bytes: 0,
             rx_dropped_full: 1,
+            rx_dropped_full_bytes: 3,
         }
     );
 }
@@ -114,11 +120,17 @@ fn network_backend_is_implemented_for_arc_mutex() {
         inner.lock().unwrap().stats(),
         L2TunnelBackendStats {
             tx_enqueued_frames: 1,
+            tx_enqueued_bytes: 3,
             tx_dropped_oversize: 1,
+            tx_dropped_oversize_bytes: 4,
             tx_dropped_full: 0,
+            tx_dropped_full_bytes: 0,
             rx_enqueued_frames: 1,
+            rx_enqueued_bytes: 3,
             rx_dropped_oversize: 0,
+            rx_dropped_oversize_bytes: 0,
             rx_dropped_full: 0,
+            rx_dropped_full_bytes: 0,
         }
     );
 }

@@ -6,12 +6,18 @@ use crate::NetworkBackend;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct L2TunnelBackendStats {
     pub tx_enqueued_frames: u64,
+    pub tx_enqueued_bytes: u64,
     pub tx_dropped_oversize: u64,
+    pub tx_dropped_oversize_bytes: u64,
     pub tx_dropped_full: u64,
+    pub tx_dropped_full_bytes: u64,
 
     pub rx_enqueued_frames: u64,
+    pub rx_enqueued_bytes: u64,
     pub rx_dropped_oversize: u64,
+    pub rx_dropped_oversize_bytes: u64,
     pub rx_dropped_full: u64,
+    pub rx_dropped_full_bytes: u64,
 }
 
 /// A "dumb" L2 backend that forwards raw Ethernet frames to/from an external transport.
@@ -74,17 +80,21 @@ impl L2TunnelBackend {
     ///
     /// Frames may be dropped if oversized or if the RX queue is full.
     pub fn push_rx_frame(&mut self, frame: Vec<u8>) {
+        let frame_bytes = frame.len() as u64;
         if frame.len() > self.max_frame_bytes {
             self.stats.rx_dropped_oversize += 1;
+            self.stats.rx_dropped_oversize_bytes += frame_bytes;
             return;
         }
 
         if self.rx_frames.len() >= self.max_rx_frames {
             self.stats.rx_dropped_full += 1;
+            self.stats.rx_dropped_full_bytes += frame_bytes;
             return;
         }
 
         self.stats.rx_enqueued_frames += 1;
+        self.stats.rx_enqueued_bytes += frame_bytes;
         self.rx_frames.push_back(frame);
     }
 
@@ -101,17 +111,21 @@ impl Default for L2TunnelBackend {
 
 impl NetworkBackend for L2TunnelBackend {
     fn transmit(&mut self, frame: Vec<u8>) {
+        let frame_bytes = frame.len() as u64;
         if frame.len() > self.max_frame_bytes {
             self.stats.tx_dropped_oversize += 1;
+            self.stats.tx_dropped_oversize_bytes += frame_bytes;
             return;
         }
 
         if self.tx_frames.len() >= self.max_tx_frames {
             self.stats.tx_dropped_full += 1;
+            self.stats.tx_dropped_full_bytes += frame_bytes;
             return;
         }
 
         self.stats.tx_enqueued_frames += 1;
+        self.stats.tx_enqueued_bytes += frame_bytes;
         self.tx_frames.push_back(frame);
     }
 
@@ -158,11 +172,17 @@ mod tests {
             backend.stats(),
             L2TunnelBackendStats {
                 tx_enqueued_frames: 0,
+                tx_enqueued_bytes: 0,
                 tx_dropped_oversize: 1,
+                tx_dropped_oversize_bytes: 3,
                 tx_dropped_full: 0,
+                tx_dropped_full_bytes: 0,
                 rx_enqueued_frames: 0,
+                rx_enqueued_bytes: 0,
                 rx_dropped_oversize: 1,
+                rx_dropped_oversize_bytes: 3,
                 rx_dropped_full: 0,
+                rx_dropped_full_bytes: 0,
             }
         );
 
@@ -184,11 +204,17 @@ mod tests {
             backend.stats(),
             L2TunnelBackendStats {
                 tx_enqueued_frames: 1,
+                tx_enqueued_bytes: 1,
                 tx_dropped_oversize: 0,
+                tx_dropped_oversize_bytes: 0,
                 tx_dropped_full: 1,
+                tx_dropped_full_bytes: 1,
                 rx_enqueued_frames: 1,
+                rx_enqueued_bytes: 1,
                 rx_dropped_oversize: 0,
+                rx_dropped_oversize_bytes: 0,
                 rx_dropped_full: 1,
+                rx_dropped_full_bytes: 1,
             }
         );
 
