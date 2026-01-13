@@ -1337,6 +1337,73 @@ mod tests {
             .any(|window| window == needle)
     }
 
+    fn parse_crs_dword_memory_ranges(buf: &[u8]) -> Vec<(u64, u64)> {
+        // We only implement what we need for these tests:
+        // - scan a resource template buffer for Large DWord Address Space descriptors (tag 0x87)
+        // - filter to Memory resources (ResourceType=0)
+        // - extract the inclusive min/max address fields (DWORDs) written by `dword_addr_space_descriptor`
+        //
+        // DWord Address Space Descriptor layout (as emitted by `dword_addr_space_descriptor`):
+        //   Byte 0: 0x87
+        //   Byte 1..2: length (u16) == 0x0017
+        //   Byte 3: ResourceType
+        //   Byte 4: GeneralFlags
+        //   Byte 5: TypeSpecificFlags
+        //   Byte 6..9: Granularity (u32)
+        //   Byte 10..13: Min (u32)
+        //   Byte 14..17: Max (u32)
+        //   Byte 18..21: Translation (u32)
+        //   Byte 22..25: Length (u32)
+        let mut ranges = Vec::new();
+
+        let mut i = 0usize;
+        while i < buf.len() {
+            let tag = buf[i];
+
+            // EndTag (Small item 0x79, length=1).
+            if tag == 0x79 {
+                break;
+            }
+
+            if (tag & 0x80) == 0 {
+                // Small item: header encodes payload length in the low 3 bits.
+                let payload_len = (tag & 0x07) as usize;
+                i = i
+                    .checked_add(1 + payload_len)
+                    .expect("resource template parsing overflow");
+                continue;
+            }
+
+            // Large item: 1-byte tag, 2-byte payload length.
+            assert!(i + 3 <= buf.len(), "truncated large resource descriptor");
+            let payload_len = u16::from_le_bytes([buf[i + 1], buf[i + 2]]) as usize;
+            let total_len = 3 + payload_len;
+            assert!(
+                i + total_len <= buf.len(),
+                "truncated large resource descriptor payload"
+            );
+
+            if tag == 0x87 {
+                assert!(
+                    payload_len >= 0x17,
+                    "unexpected DWordAddressSpaceDescriptor length: 0x{payload_len:x}"
+                );
+                let resource_type = buf[i + 3];
+                if resource_type == 0x00 {
+                    let min = u32::from_le_bytes(buf[i + 10..i + 14].try_into().unwrap());
+                    let max = u32::from_le_bytes(buf[i + 14..i + 18].try_into().unwrap());
+                    ranges.push((u64::from(min), u64::from(max)));
+                }
+            }
+
+            i = i
+                .checked_add(total_len)
+                .expect("resource template parsing overflow");
+        }
+
+        ranges
+    }
+
     #[test]
     fn pkg_length_encoding_matches_acpica_examples() {
         assert_eq!(aml_pkg_length(0x3F), vec![0x3F]);
@@ -1682,5 +1749,38 @@ mod tests {
             contains_subslice(&crs, &expected_after),
             "expected PCI0._CRS to contain MMIO descriptor above ECAM"
         );
+    }
+
+    #[test]
+    fn pci0_crs_mmio_ranges_do_not_overlap_ecam_window() {
+        let cfg = AcpiConfig {
+            pci_mmio_base: 0xC000_0000,
+            // Enable ECAM/MMCONFIG at the typical Q35 address.
+            pcie_ecam_base: 0xB000_0000,
+            pcie_start_bus: 0,
+            pcie_end_bus: 0xFF,
+            ..Default::default()
+        };
+
+        let crs = pci0_crs(&cfg);
+        let mmio_ranges = parse_crs_dword_memory_ranges(&crs);
+        assert!(
+            !mmio_ranges.is_empty(),
+            "expected PCI0._CRS to contain at least one DWord memory range descriptor"
+        );
+
+        let bus_count = u64::from(cfg.pcie_end_bus.saturating_sub(cfg.pcie_start_bus)) + 1;
+        let ecam_start = cfg.pcie_ecam_base;
+        let ecam_end = ecam_start.saturating_add(bus_count.saturating_mul(1 << 20));
+
+        for (min, max) in mmio_ranges {
+            // Descriptor min/max are inclusive; convert to [start, end) for intersection testing.
+            let range_start = min;
+            let range_end = max + 1;
+            assert!(
+                range_end <= ecam_start || range_start >= ecam_end,
+                "PCI0._CRS MMIO range 0x{range_start:08x}..0x{range_end:08x} overlaps ECAM/MMCONFIG window 0x{ecam_start:08x}..0x{ecam_end:08x}"
+            );
+        }
     }
 }
