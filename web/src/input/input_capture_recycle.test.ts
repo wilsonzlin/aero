@@ -174,12 +174,15 @@ describe("InputCapture buffer recycling", () => {
       let capture: InputCapture;
 
       const ioWorker = {
-        postMessage: (msg: any, _transfer?: any[]) => {
+        postMessage: (msg: any, transfer?: any[]) => {
           posted.push(msg.buffer);
           expect(msg.recycle).not.toBe(true);
+          expect(transfer).toContain(msg.buffer);
+          // Detach the sender-side buffer to match real transfer semantics.
+          const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
           // Even if the worker tries to recycle, InputCapture should ignore it when disabled.
           (capture as any).handleWorkerMessage({
-            data: { type: "in:input-batch-recycle", buffer: new ArrayBuffer(msg.buffer.byteLength) },
+            data: { type: "in:input-batch-recycle", buffer: structuredClone(workerSide, { transfer: [workerSide] }) },
           } as unknown as MessageEvent<unknown>);
         },
       };
