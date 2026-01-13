@@ -8,6 +8,7 @@ pub struct VgaDac {
     write_index: u8,
     read_index: u8,
     component_index: u8,
+    write_latch: [u8; 3],
 }
 
 impl Default for VgaDac {
@@ -26,6 +27,7 @@ impl VgaDac {
             write_index: 0,
             read_index: 0,
             component_index: 0,
+            write_latch: [0; 3],
         }
     }
 
@@ -110,22 +112,42 @@ impl VgaDac {
 
     fn write_data(&mut self, value: u8) {
         let idx = self.write_index as usize;
-        let component = self.component_index as usize;
-        self.palette_rgb6[idx][component] = value & 0x3F;
+        let component = (self.component_index as usize) % 3;
+        self.write_latch[component] = value;
         self.component_index += 1;
-        if self.component_index == 3 {
-            self.component_index = 0;
-            let [r, g, b] = self.palette_rgb6[idx];
-            let rgba = pack_rgba(
-                scale_6bit_to_8bit(r),
-                scale_6bit_to_8bit(g),
-                scale_6bit_to_8bit(b),
-                0xFF,
-            );
-            self.palette_rgba[idx] = rgba;
-            self.dirty = true;
-            self.write_index = self.write_index.wrapping_add(1);
+        if self.component_index < 3 {
+            return;
         }
+
+        // VGA DAC is natively 6-bit (0..=63), but software commonly writes 8-bit components
+        // directly. Be permissive by detecting 8-bit mode per entry:
+        // - If any component in the triplet is > 63, treat all components as 8-bit and downscale
+        //   with `>> 2`.
+        // - Otherwise treat them as 6-bit.
+        let is_8bit = self.write_latch.iter().any(|&v| v > 0x3F);
+        let to_6bit = |v: u8| -> u8 {
+            if is_8bit {
+                v >> 2
+            } else {
+                v & 0x3F
+            }
+        };
+
+        let r = to_6bit(self.write_latch[0]);
+        let g = to_6bit(self.write_latch[1]);
+        let b = to_6bit(self.write_latch[2]);
+        self.palette_rgb6[idx] = [r, g, b];
+
+        let rgba = pack_rgba(
+            scale_6bit_to_8bit(r),
+            scale_6bit_to_8bit(g),
+            scale_6bit_to_8bit(b),
+            0xFF,
+        );
+        self.palette_rgba[idx] = rgba;
+        self.dirty = true;
+        self.write_index = self.write_index.wrapping_add(1);
+        self.component_index = 0;
     }
 
     fn read_data(&mut self) -> u8 {
