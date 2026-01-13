@@ -1612,24 +1612,23 @@ fn read_inf_text(path: &Path) -> Result<String> {
     } else if bytes.len() >= 4 && bytes.len() % 2 == 0 {
         // Some Windows tooling produces UTF-16 INFs without a BOM. Detect by looking for a high
         // ratio of NUL bytes (common for mostly-ASCII UTF-16 text) and decode best-effort.
-        let nul_count = bytes.iter().filter(|b| **b == 0).count();
-        let nul_ratio = nul_count as f64 / bytes.len() as f64;
-        if nul_ratio >= 0.3 {
-            // Guess endianness by checking whether the NUL bytes are concentrated in either the
-            // even or odd positions (UTF-16BE tends to have NULs in even bytes for ASCII text,
-            // UTF-16LE tends to have NULs in odd bytes).
-            let mut even_nuls = 0usize;
-            let mut odd_nuls = 0usize;
-            for (idx, b) in bytes.iter().enumerate() {
-                if *b != 0 {
-                    continue;
-                }
-                if idx % 2 == 0 {
-                    even_nuls += 1;
-                } else {
-                    odd_nuls += 1;
-                }
+        // Guess endianness by checking whether the NUL bytes are concentrated in either the even
+        // or odd positions (UTF-16BE tends to have NULs in even bytes for ASCII text, UTF-16LE
+        // tends to have NULs in odd bytes).
+        let mut even_nuls = 0usize;
+        let mut odd_nuls = 0usize;
+        for (idx, b) in bytes.iter().enumerate() {
+            if *b != 0 {
+                continue;
             }
+            if idx % 2 == 0 {
+                even_nuls += 1;
+            } else {
+                odd_nuls += 1;
+            }
+        }
+        let nul_ratio = (even_nuls + odd_nuls) as f64 / bytes.len() as f64;
+        if nul_ratio >= 0.2 {
             let half = bytes.len() / 2;
             let even_ratio = even_nuls as f64 / half as f64;
             let odd_ratio = odd_nuls as f64 / half as f64;
