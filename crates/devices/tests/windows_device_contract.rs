@@ -126,6 +126,59 @@ fn inf_installs_service(contents: &str, expected_service: &str) -> bool {
     })
 }
 
+fn inf_model_entry_for_hwid(
+    contents: &str,
+    section_name: &str,
+    expected_hwid: &str,
+) -> Option<(String, String)> {
+    // Parse a single model entry within `section_name` and return:
+    //   (device_desc_token, install_section)
+    //
+    // Example line:
+    //   %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_...
+    let expected_hwid_upper = expected_hwid.to_ascii_uppercase();
+    let mut current_section = String::new();
+
+    for raw in contents.lines() {
+        let line = raw.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') && line.len() >= 2 {
+            current_section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+        if !current_section.eq_ignore_ascii_case(section_name) {
+            continue;
+        }
+        let mut parts = line.splitn(2, '=');
+        let device_desc = parts.next().unwrap_or("").trim();
+        let rhs = parts.next().unwrap_or("").trim();
+        if device_desc.is_empty() || rhs.is_empty() {
+            continue;
+        }
+        let rhs_parts: Vec<&str> = rhs
+            .split(',')
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .collect();
+        if rhs_parts.len() < 2 {
+            continue;
+        }
+        let install_section = rhs_parts[0];
+        let hwid = rhs_parts
+            .iter()
+            .rev()
+            .copied()
+            .find(|p| p.to_ascii_uppercase().starts_with("PCI\\VEN_"))?;
+        if hwid.to_ascii_uppercase() != expected_hwid_upper {
+            continue;
+        }
+        return Some((device_desc.to_string(), install_section.to_string()));
+    }
+    None
+}
+
 #[test]
 fn windows_device_contract_virtio_input_matches_pci_profile() {
     let contract: serde_json::Value =
@@ -210,6 +263,69 @@ fn windows_device_contract_virtio_input_inf_installs_declared_service() {
         "expected {} to install service {expected_service:?} via an AddService directive",
         inf_path.display()
     );
+}
+
+#[test]
+fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_descs() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
+            .expect("parse windows-device-contract.json");
+
+    let devices = contract
+        .get("devices")
+        .and_then(|v| v.as_array())
+        .expect("windows-device-contract.json missing devices array");
+    let input = find_contract_device(devices, "virtio-input");
+    let inf_name = input
+        .get("inf_name")
+        .and_then(|v| v.as_str())
+        .expect("device entry missing inf_name");
+
+    let inf_path = repo_root()
+        .join("drivers/windows7/virtio-input/inf")
+        .join(inf_name);
+    let inf_contents =
+        std::fs::read_to_string(&inf_path).expect("read virtio-input INF from repository");
+
+    let hwid_kbd = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01";
+    let hwid_mouse = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01";
+    let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
+
+    for section in ["Aero.NTx86", "Aero.NTamd64"] {
+        let (kbd_desc, kbd_install) =
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
+                .unwrap_or_else(|| panic!("missing {hwid_kbd} model entry in [{section}]"));
+        let (mouse_desc, mouse_install) =
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse)
+                .unwrap_or_else(|| panic!("missing {hwid_mouse} model entry in [{section}]"));
+        let (fallback_desc, fallback_install) =
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback)
+                .unwrap_or_else(|| panic!("missing {hwid_fallback} model entry in [{section}]"));
+
+        assert_eq!(kbd_install, mouse_install, "{section}: install section mismatch");
+        assert_eq!(kbd_install, fallback_install, "{section}: install section mismatch");
+
+        assert_ne!(
+            kbd_desc.to_ascii_lowercase(),
+            mouse_desc.to_ascii_lowercase(),
+            "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
+        );
+        assert_ne!(
+            fallback_desc.to_ascii_lowercase(),
+            kbd_desc.to_ascii_lowercase(),
+            "{section}: fallback DeviceDesc token must be generic (not keyboard)"
+        );
+        assert_ne!(
+            fallback_desc.to_ascii_lowercase(),
+            mouse_desc.to_ascii_lowercase(),
+            "{section}: fallback DeviceDesc token must be generic (not mouse)"
+        );
+
+        // The canonical INF is expected to use these tokens (kept in sync with docs/tests).
+        assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
+        assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
+        assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
+    }
 }
 
 #[test]
