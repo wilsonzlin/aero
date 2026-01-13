@@ -3764,6 +3764,10 @@ mod tests {
             first_out.iter().any(|&s| s.abs() > 1e-6),
             "first TX should produce non-zero audio"
         );
+        assert!(
+            snd.resampler.queued_source_frames() > 0,
+            "precondition: first TX should leave queued resampler state"
+        );
 
         // Release and restart.
         control_simple(&mut snd, VIRTIO_SND_R_PCM_RELEASE, PLAYBACK_STREAM_ID);
@@ -3920,6 +3924,10 @@ mod tests {
         snd.process_queue(VIRTIO_SND_QUEUE_RX, chain, &mut queue, &mut mem)
             .unwrap();
         assert_eq!(snd.capture_source.remaining_samples(), 0);
+        assert!(
+            snd.capture_resampler.queued_source_frames() > 0,
+            "precondition: first RX should leave queued resampler state"
+        );
 
         // Release and restart. With an empty capture source, the next RX response must be pure
         // silence.
