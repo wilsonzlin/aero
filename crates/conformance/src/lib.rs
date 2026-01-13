@@ -185,9 +185,14 @@ fn templates_for_run() -> Result<Vec<InstructionTemplate>, String> {
         return Ok(templates);
     }
 
+    let coverage_keys = templates
+        .iter()
+        .map(|t| t.coverage_key.to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+
     let filtered: Vec<InstructionTemplate> = templates
         .into_iter()
-        .filter(|t| template_matches_filter(t, &terms))
+        .filter(|t| template_matches_filter(t, &terms, &coverage_keys))
         .collect();
 
     if filtered.is_empty() {
@@ -208,12 +213,22 @@ fn parse_filter_terms(filter: &str) -> Vec<String> {
         .collect()
 }
 
-fn template_matches_filter(template: &InstructionTemplate, terms: &[String]) -> bool {
+fn template_matches_filter(
+    template: &InstructionTemplate,
+    terms: &[String],
+    coverage_keys: &std::collections::BTreeSet<String>,
+) -> bool {
     let name = template.name.to_ascii_lowercase();
     let coverage_key = template.coverage_key.to_ascii_lowercase();
-    terms
-        .iter()
-        .any(|term| coverage_key == *term || name.contains(term))
+    // If a filter term matches a known coverage key, interpret it as a coverage-key selector.
+    // Otherwise, treat it as a substring match on the template name.
+    terms.iter().any(|term| {
+        if coverage_keys.contains(term) {
+            coverage_key == *term
+        } else {
+            name.contains(term)
+        }
+    })
 }
 
 fn detect_memory_fault_signal(
@@ -311,10 +326,8 @@ mod tests {
         );
         assert!(!filtered.is_empty());
         for template in filtered {
-            let term_match =
-                template.coverage_key.eq_ignore_ascii_case("add") || template.name.contains("add");
             assert!(
-                term_match,
+                template.coverage_key.eq_ignore_ascii_case("add"),
                 "template unexpectedly matched filter: {:?} (coverage_key={})",
                 template.name,
                 template.coverage_key
