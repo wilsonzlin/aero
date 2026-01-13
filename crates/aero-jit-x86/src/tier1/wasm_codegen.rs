@@ -48,6 +48,16 @@ pub struct Tier1WasmOptions {
     ///   `env.mem_write_*`) and continues executing the block.
     pub inline_tlb_mmio_exit: bool,
 
+    /// When [`Self::inline_tlb`] is enabled, allow cross-page (4KiB boundary-crossing) loads/stores
+    /// to use an inline-TLB RAM fast-path instead of immediately falling back to the imported slow
+    /// helpers (`env.mem_read_*` / `env.mem_write_*`).
+    ///
+    /// When enabled and an access crosses a page boundary, the code generator emits a split access
+    /// that translates both pages and performs direct guest-RAM loads/stores for each page.
+    ///
+    /// Note: this option is ignored unless the crate feature `tier1-inline-tlb` is enabled.
+    pub inline_tlb_cross_page_fastpath: bool,
+
     /// Whether the imported `env.memory` is expected to be a shared memory (i.e. created with
     /// `WebAssembly.Memory({ shared: true, ... })`).
     ///
@@ -73,6 +83,8 @@ impl Default for Tier1WasmOptions {
             inline_tlb_stores: true,
             // Preserve existing behaviour by default: MMIO/non-RAM access forces a runtime exit.
             inline_tlb_mmio_exit: true,
+            // Preserve historical behaviour: cross-page accesses always used the slow helpers.
+            inline_tlb_cross_page_fastpath: false,
             // Preserve existing behaviour by default: import an unshared memory with min=1 and no
             // maximum.
             memory_shared: false,
@@ -885,7 +897,8 @@ impl Emitter<'_> {
                 };
                 let slow_read = slow_read.expect("memory read helper import missing");
 
-                // Cross-page accesses use the slow helper for correctness.
+                // Cross-page accesses default to the slow helper for correctness unless the
+                // optional split-access fast-path is enabled.
                 let cross_limit =
                     crate::PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
                 self.func
@@ -900,18 +913,150 @@ impl Emitter<'_> {
                 self.func.instruction(&Instruction::If(BlockType::Empty));
                 self.depth += 1;
                 {
-                    // Slow path.
-                    self.func
-                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-                    self.func
-                        .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-                    self.func.instruction(&Instruction::Call(slow_read));
-                    if !matches!(*width, Width::W64) {
-                        self.func.instruction(&Instruction::I64ExtendI32U);
+                    if self.options.inline_tlb_cross_page_fastpath
+                        && matches!(*width, Width::W16 | Width::W32 | Width::W64)
+                    {
+                        // Cross-page fast-path: translate both pages, ensure both are RAM, then do
+                        // two direct same-page loads and combine the result (little-endian).
+
+                        // shift_bytes = (vaddr & 0xFFF) - (PAGE_SIZE - size_bytes)
+                        let page_tail = crate::PAGE_SIZE.saturating_sub(size_bytes as u64);
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                        self.func
+                            .instruction(&Instruction::I64Const(crate::PAGE_OFFSET_MASK as i64));
+                        self.func.instruction(&Instruction::I64And);
+                        self.func
+                            .instruction(&Instruction::I64Const(page_tail as i64));
+                        self.func.instruction(&Instruction::I64Sub);
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.scratch_local()));
+
+                        // Page 0: translate and ensure RAM.
+                        self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
+                        self.emit_mmio_exit(size_bytes, 0, None);
+
+                        // Page 1: translate and ensure RAM. Use the original vaddr for the MMIO
+                        // exit payload (even though we probe the second page).
+                        //
+                        // vaddr1 = vaddr + size_bytes - shift_bytes
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                        self.func
+                            .instruction(&Instruction::I64Const(size_bytes as i64));
+                        self.func.instruction(&Instruction::I64Add);
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_local()));
+                        self.func.instruction(&Instruction::I64Sub);
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+
+                        self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
+
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+                        self.emit_mmio_exit(size_bytes, 0, None);
+
+                        // part0 = loadN(vaddr - shift_bytes) >> (shift_bytes * 8)
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_local()));
+                        self.func.instruction(&Instruction::I64Sub);
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+
+                        self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
+                        self.emit_compute_ram_addr();
+                        match *width {
+                            Width::W16 => self
+                                .func
+                                .instruction(&Instruction::I64Load16U(memarg(0, 1))),
+                            Width::W32 => self
+                                .func
+                                .instruction(&Instruction::I64Load32U(memarg(0, 2))),
+                            Width::W64 => self.func.instruction(&Instruction::I64Load(memarg(0, 3))),
+                            _ => unreachable!(),
+                        };
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_local()));
+                        self.func.instruction(&Instruction::I64Const(8));
+                        self.func.instruction(&Instruction::I64Mul);
+                        self.func.instruction(&Instruction::I64ShrU);
+                        // Stash part0 in `dst`'s local as a temporary.
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+
+                        // part1 = (loadN(vaddr1) & ((1 << (shift_bytes * 8)) - 1))
+                        //           << ((size_bytes * 8) - (shift_bytes * 8))
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                        self.func
+                            .instruction(&Instruction::I64Const(size_bytes as i64));
+                        self.func.instruction(&Instruction::I64Add);
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_local()));
+                        self.func.instruction(&Instruction::I64Sub);
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+
+                        self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
+                        self.emit_compute_ram_addr();
+                        match *width {
+                            Width::W16 => self
+                                .func
+                                .instruction(&Instruction::I64Load16U(memarg(0, 1))),
+                            Width::W32 => self
+                                .func
+                                .instruction(&Instruction::I64Load32U(memarg(0, 2))),
+                            Width::W64 => self.func.instruction(&Instruction::I64Load(memarg(0, 3))),
+                            _ => unreachable!(),
+                        };
+
+                        // mask = (1 << (shift_bytes*8)) - 1
+                        self.func.instruction(&Instruction::I64Const(1));
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_local()));
+                        self.func.instruction(&Instruction::I64Const(8));
+                        self.func.instruction(&Instruction::I64Mul);
+                        self.func.instruction(&Instruction::I64Shl);
+                        self.func.instruction(&Instruction::I64Const(1));
+                        self.func.instruction(&Instruction::I64Sub);
+                        self.func.instruction(&Instruction::I64And);
+
+                        // << ((size_bytes*8) - (shift_bytes*8))
+                        self.func
+                            .instruction(&Instruction::I64Const((size_bytes * 8) as i64));
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_local()));
+                        self.func.instruction(&Instruction::I64Const(8));
+                        self.func.instruction(&Instruction::I64Mul);
+                        self.func.instruction(&Instruction::I64Sub);
+                        self.func.instruction(&Instruction::I64Shl);
+
+                        // part0 | part1
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*dst)));
+                        self.func.instruction(&Instruction::I64Or);
+                        self.emit_trunc(*width);
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+                    } else {
+                        // Slow path.
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                        self.func.instruction(&Instruction::Call(slow_read));
+                        if !matches!(*width, Width::W64) {
+                            self.func.instruction(&Instruction::I64ExtendI32U);
+                        }
+                        self.emit_trunc(*width);
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
                     }
-                    self.emit_trunc(*width);
-                    self.func
-                        .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
                 }
                 self.func.instruction(&Instruction::Else);
                 {
@@ -1075,18 +1220,321 @@ impl Emitter<'_> {
                 self.func.instruction(&Instruction::If(BlockType::Empty));
                 self.depth += 1;
                 {
-                    // Slow path.
-                    self.func
-                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-                    self.func
-                        .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-                    self.func
-                        .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
-                    if !matches!(*width, Width::W64) {
-                        self.emit_trunc(*width);
-                        self.func.instruction(&Instruction::I32WrapI64);
+                    if self.options.inline_tlb_cross_page_fastpath
+                        && matches!(*width, Width::W16 | Width::W32 | Width::W64)
+                    {
+                        // Cross-page fast-path: translate both pages, ensure both are RAM, then
+                        // split the store into per-page writes (little-endian).
+
+                        // shift_bytes = (vaddr & 0xFFF) - (PAGE_SIZE - size_bytes)
+                        let page_tail = crate::PAGE_SIZE.saturating_sub(size_bytes as u64);
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                        self.func
+                            .instruction(&Instruction::I64Const(crate::PAGE_OFFSET_MASK as i64));
+                        self.func.instruction(&Instruction::I64And);
+                        self.func
+                            .instruction(&Instruction::I64Const(page_tail as i64));
+                        self.func.instruction(&Instruction::I64Sub);
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.scratch_local()));
+
+                        // Page 0: translate and ensure RAM.
+                        self.emit_translate_and_cache(MMU_ACCESS_WRITE, crate::TLB_FLAG_WRITE);
+                        self.emit_mmio_exit(size_bytes, 1, Some(*src));
+
+                        // Page 1: translate and ensure RAM (but use original vaddr in the exit
+                        // payload).
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                        self.func
+                            .instruction(&Instruction::I64Const(size_bytes as i64));
+                        self.func.instruction(&Instruction::I64Add);
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_local()));
+                        self.func.instruction(&Instruction::I64Sub);
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+
+                        self.emit_translate_and_cache(MMU_ACCESS_WRITE, crate::TLB_FLAG_WRITE);
+
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+                        self.emit_mmio_exit(size_bytes, 1, Some(*src));
+
+                        // After confirming both pages are RAM, emit a per-chunk split store. The
+                        // additional inline-TLB probes in these chunks should hit the already
+                        // cached entries in the common case, while keeping the codegen simple.
+
+                        let addr_local = self.layout.value_local(*addr);
+                        let src_local = self.layout.value_local(*src);
+                        let shift_local = self.layout.scratch_local();
+                        let scratch_vaddr_local = self.layout.scratch_vaddr_local();
+
+                        let emit_store_page0_chunk =
+                            |this: &mut Self, mem_off: u32, nbytes: u32, shift_bits: u32| {
+                                // scratch_vaddr = vaddr + mem_off
+                                this.func.instruction(&Instruction::LocalGet(addr_local));
+                                if mem_off != 0 {
+                                    this.func
+                                        .instruction(&Instruction::I64Const(mem_off as i64));
+                                    this.func.instruction(&Instruction::I64Add);
+                                }
+                                this.func
+                                    .instruction(&Instruction::LocalSet(scratch_vaddr_local));
+
+                                this.emit_translate_and_cache(
+                                    MMU_ACCESS_WRITE,
+                                    crate::TLB_FLAG_WRITE,
+                                );
+                                this.emit_compute_ram_addr();
+                                this.func.instruction(&Instruction::LocalGet(src_local));
+                                if shift_bits != 0 {
+                                    this.func
+                                        .instruction(&Instruction::I64Const(shift_bits as i64));
+                                    this.func.instruction(&Instruction::I64ShrU);
+                                }
+                                match nbytes {
+                                    1 => this
+                                        .func
+                                        .instruction(&Instruction::I64Store8(memarg(0, 0))),
+                                    2 => this
+                                        .func
+                                        .instruction(&Instruction::I64Store16(memarg(0, 1))),
+                                    4 => this
+                                        .func
+                                        .instruction(&Instruction::I64Store32(memarg(0, 2))),
+                                    _ => unreachable!("invalid store chunk size: {nbytes}"),
+                                };
+                            };
+
+                        let emit_store_page1_chunk =
+                            |this: &mut Self, mem_off: u32, nbytes: u32, shift_bits: u32| {
+                                // scratch_vaddr = vaddr + size_bytes - shift_bytes + mem_off
+                                this.func.instruction(&Instruction::LocalGet(addr_local));
+                                this.func
+                                    .instruction(&Instruction::I64Const(size_bytes as i64));
+                                this.func.instruction(&Instruction::I64Add);
+                                this.func.instruction(&Instruction::LocalGet(shift_local));
+                                this.func.instruction(&Instruction::I64Sub);
+                                if mem_off != 0 {
+                                    this.func
+                                        .instruction(&Instruction::I64Const(mem_off as i64));
+                                    this.func.instruction(&Instruction::I64Add);
+                                }
+                                this.func
+                                    .instruction(&Instruction::LocalSet(scratch_vaddr_local));
+
+                                this.emit_translate_and_cache(
+                                    MMU_ACCESS_WRITE,
+                                    crate::TLB_FLAG_WRITE,
+                                );
+                                this.emit_compute_ram_addr();
+                                this.func.instruction(&Instruction::LocalGet(src_local));
+                                if shift_bits != 0 {
+                                    this.func
+                                        .instruction(&Instruction::I64Const(shift_bits as i64));
+                                    this.func.instruction(&Instruction::I64ShrU);
+                                }
+                                match nbytes {
+                                    1 => this
+                                        .func
+                                        .instruction(&Instruction::I64Store8(memarg(0, 0))),
+                                    2 => this
+                                        .func
+                                        .instruction(&Instruction::I64Store16(memarg(0, 1))),
+                                    4 => this
+                                        .func
+                                        .instruction(&Instruction::I64Store32(memarg(0, 2))),
+                                    _ => unreachable!("invalid store chunk size: {nbytes}"),
+                                };
+                            };
+
+                        // Dispatch based on `shift_bytes` (bytes written to page 1). Note that in
+                        // the cross-page case `shift_bytes` is always in the range [1, size_bytes).
+                        match *width {
+                            Width::W16 => {
+                                emit_store_page0_chunk(self, 0, 1, 0);
+                                emit_store_page1_chunk(self, 0, 1, 8);
+                            }
+                            Width::W32 => {
+                                self.func.instruction(&Instruction::LocalGet(shift_local));
+                                self.func.instruction(&Instruction::I64Const(1));
+                                self.func.instruction(&Instruction::I64Eq);
+                                self.func.instruction(&Instruction::If(BlockType::Empty));
+                                {
+                                    // n1=3, n2=1
+                                    emit_store_page0_chunk(self, 0, 2, 0);
+                                    emit_store_page0_chunk(self, 2, 1, 16);
+                                    emit_store_page1_chunk(self, 0, 1, 24);
+                                }
+                                self.func.instruction(&Instruction::Else);
+                                {
+                                    self.func.instruction(&Instruction::LocalGet(shift_local));
+                                    self.func.instruction(&Instruction::I64Const(2));
+                                    self.func.instruction(&Instruction::I64Eq);
+                                    self.func.instruction(&Instruction::If(BlockType::Empty));
+                                    {
+                                        // n1=2, n2=2
+                                        emit_store_page0_chunk(self, 0, 2, 0);
+                                        emit_store_page1_chunk(self, 0, 2, 16);
+                                    }
+                                    self.func.instruction(&Instruction::Else);
+                                    {
+                                        // n1=1, n2=3
+                                        emit_store_page0_chunk(self, 0, 1, 0);
+                                        emit_store_page1_chunk(self, 0, 2, 8);
+                                        emit_store_page1_chunk(self, 2, 1, 24);
+                                    }
+                                    self.func.instruction(&Instruction::End);
+                                }
+                                self.func.instruction(&Instruction::End);
+                            }
+                            Width::W64 => {
+                                self.func.instruction(&Instruction::LocalGet(shift_local));
+                                self.func.instruction(&Instruction::I64Const(1));
+                                self.func.instruction(&Instruction::I64Eq);
+                                self.func.instruction(&Instruction::If(BlockType::Empty));
+                                {
+                                    // n1=7, n2=1
+                                    emit_store_page0_chunk(self, 0, 4, 0);
+                                    emit_store_page0_chunk(self, 4, 2, 32);
+                                    emit_store_page0_chunk(self, 6, 1, 48);
+                                    emit_store_page1_chunk(self, 0, 1, 56);
+                                }
+                                self.func.instruction(&Instruction::Else);
+                                {
+                                    self.func.instruction(&Instruction::LocalGet(shift_local));
+                                    self.func.instruction(&Instruction::I64Const(2));
+                                    self.func.instruction(&Instruction::I64Eq);
+                                    self.func.instruction(&Instruction::If(BlockType::Empty));
+                                    {
+                                        // n1=6, n2=2
+                                        emit_store_page0_chunk(self, 0, 4, 0);
+                                        emit_store_page0_chunk(self, 4, 2, 32);
+                                        emit_store_page1_chunk(self, 0, 2, 48);
+                                    }
+                                    self.func.instruction(&Instruction::Else);
+                                    {
+                                        self.func.instruction(&Instruction::LocalGet(shift_local));
+                                        self.func.instruction(&Instruction::I64Const(3));
+                                        self.func.instruction(&Instruction::I64Eq);
+                                        self.func.instruction(&Instruction::If(BlockType::Empty));
+                                        {
+                                            // n1=5, n2=3
+                                            emit_store_page0_chunk(self, 0, 4, 0);
+                                            emit_store_page0_chunk(self, 4, 1, 32);
+                                            emit_store_page1_chunk(self, 0, 2, 40);
+                                            emit_store_page1_chunk(self, 2, 1, 56);
+                                        }
+                                        self.func.instruction(&Instruction::Else);
+                                        {
+                                            self.func
+                                                .instruction(&Instruction::LocalGet(shift_local));
+                                            self.func.instruction(&Instruction::I64Const(4));
+                                            self.func.instruction(&Instruction::I64Eq);
+                                            self.func
+                                                .instruction(&Instruction::If(BlockType::Empty));
+                                            {
+                                                // n1=4, n2=4
+                                                emit_store_page0_chunk(self, 0, 4, 0);
+                                                emit_store_page1_chunk(self, 0, 4, 32);
+                                            }
+                                            self.func.instruction(&Instruction::Else);
+                                            {
+                                                self.func.instruction(&Instruction::LocalGet(
+                                                    shift_local,
+                                                ));
+                                                self.func.instruction(&Instruction::I64Const(5));
+                                                self.func.instruction(&Instruction::I64Eq);
+                                                self.func.instruction(&Instruction::If(
+                                                    BlockType::Empty,
+                                                ));
+                                                {
+                                                    // n1=3, n2=5
+                                                    emit_store_page0_chunk(self, 0, 2, 0);
+                                                    emit_store_page0_chunk(self, 2, 1, 16);
+                                                    emit_store_page1_chunk(self, 0, 4, 24);
+                                                    emit_store_page1_chunk(self, 4, 1, 56);
+                                                }
+                                                self.func.instruction(&Instruction::Else);
+                                                {
+                                                    self.func.instruction(&Instruction::LocalGet(
+                                                        shift_local,
+                                                    ));
+                                                    self.func.instruction(&Instruction::I64Const(6));
+                                                    self.func.instruction(&Instruction::I64Eq);
+                                                    self.func.instruction(&Instruction::If(
+                                                        BlockType::Empty,
+                                                    ));
+                                                    {
+                                                        // n1=2, n2=6
+                                                        emit_store_page0_chunk(self, 0, 2, 0);
+                                                        emit_store_page1_chunk(self, 0, 4, 16);
+                                                        emit_store_page1_chunk(self, 4, 2, 48);
+                                                    }
+                                                    self.func.instruction(&Instruction::Else);
+                                                    {
+                                                        // n1=1, n2=7
+                                                        emit_store_page0_chunk(self, 0, 1, 0);
+                                                        emit_store_page1_chunk(self, 0, 4, 8);
+                                                        emit_store_page1_chunk(self, 4, 2, 40);
+                                                        emit_store_page1_chunk(self, 6, 1, 56);
+                                                    }
+                                                    self.func.instruction(&Instruction::End);
+                                                }
+                                                self.func.instruction(&Instruction::End);
+                                            }
+                                            self.func.instruction(&Instruction::End);
+                                        }
+                                        self.func.instruction(&Instruction::End);
+                                    }
+                                    self.func.instruction(&Instruction::End);
+                                }
+                                self.func.instruction(&Instruction::End);
+                            }
+                            _ => unreachable!(),
+                        }
+
+                        // Self-modifying code invalidation: bump the version entry for both written
+                        // physical pages.
+                        //
+                        // Re-translate each page to get the correct physical base for the bump.
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+                        self.emit_translate_and_cache(MMU_ACCESS_WRITE, crate::TLB_FLAG_WRITE);
+                        self.emit_bump_code_version_fastpath();
+
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                        self.func
+                            .instruction(&Instruction::I64Const(size_bytes as i64));
+                        self.func.instruction(&Instruction::I64Add);
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_local()));
+                        self.func.instruction(&Instruction::I64Sub);
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+                        self.emit_translate_and_cache(MMU_ACCESS_WRITE, crate::TLB_FLAG_WRITE);
+                        self.emit_bump_code_version_fastpath();
+                    } else {
+                        // Slow path.
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
+                        if !matches!(*width, Width::W64) {
+                            self.emit_trunc(*width);
+                            self.func.instruction(&Instruction::I32WrapI64);
+                        }
+                        self.func.instruction(&Instruction::Call(slow_write));
                     }
-                    self.func.instruction(&Instruction::Call(slow_write));
                 }
                 self.func.instruction(&Instruction::Else);
                 {
