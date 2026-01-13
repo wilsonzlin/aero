@@ -201,10 +201,10 @@ pub const OPCODE_RET: u32 = 0x3e;
 // in the Windows SDK header `d3d10tokenizedprogramformat.h`.
 pub const OPCODE_EMITTHENCUT: u32 = 0x3f;
 pub const OPCODE_EMITTHENCUT_STREAM: u32 = 0x40;
-pub const OPCODE_EMIT: u32 = 0x43;
-pub const OPCODE_CUT: u32 = 0x44;
 pub const OPCODE_EMIT_STREAM: u32 = 0x41;
 pub const OPCODE_CUT_STREAM: u32 = 0x42;
+pub const OPCODE_EMIT: u32 = 0x43;
+pub const OPCODE_CUT: u32 = 0x44;
 
 pub const OPCODE_SAMPLE: u32 = 0x45;
 pub const OPCODE_SAMPLE_L: u32 = 0x46;

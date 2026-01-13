@@ -1,5 +1,11 @@
 use crate::common;
+use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
 use aero_d3d11::runtime::execute::D3D11Runtime;
+use aero_d3d11::{
+    translate_sm4_module_to_wgsl, BufferKind, BufferRef, DstOperand, DxbcFile, OperandModifier,
+    RegFile, RegisterRef, ShaderModel, ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module,
+    SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
+};
 use aero_gpu::protocol_d3d11::{
     BindingDesc, BindingType, BufferUsage, CmdWriter, DxgiFormat, PipelineKind, PrimitiveTopology,
     RenderPipelineDesc, ShaderStageFlags, Texture2dDesc, Texture2dUpdate, TextureUsage,
@@ -132,6 +138,29 @@ async fn read_texture_rgba8(
     drop(mapped);
     staging.unmap();
     out
+}
+
+fn dummy_dxbc() -> DxbcFile<'static> {
+    // Minimal DXBC container with no chunks. The translator only uses the DXBC input for
+    // diagnostics today, so this is sufficient for unit tests.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"DXBC");
+    bytes.extend_from_slice(&[0u8; 16]); // checksum
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
+    bytes.extend_from_slice(&(0u32).to_le_bytes()); // chunk_count
+    assert_eq!(bytes.len(), 32);
+    // Leak to extend lifetime for the test.
+    let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+    DxbcFile::parse(leaked).expect("dummy DXBC parse")
+}
+
+fn src_imm_u32_bits(bits: u32) -> SrcOperand {
+    SrcOperand {
+        kind: SrcKind::ImmediateF32([bits; 4]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    }
 }
 
 #[test]
@@ -523,6 +552,223 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 i as u32 * 2 + 1
             );
         }
+    });
+}
+
+#[test]
+fn d3d11_compute_structured_buffer_copy_sm5() {
+    // End-to-end test for SM5 structured buffers:
+    // - `StructuredBuffer<T>` modeled as `var<storage, read>` `array<u32>`
+    // - `RWStructuredBuffer<T>` modeled as `var<storage, read_write>` `array<u32>`
+    // - Addressing: (index * stride_bytes + byte_offset) / 4
+    pollster::block_on(async {
+        let test_name = concat!(module_path!(), "::d3d11_compute_structured_buffer_copy_sm5");
+        let Some(rt) = new_runtime(test_name).await else {
+            return;
+        };
+        if !rt.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+
+        let dxbc = dummy_dxbc();
+        let signatures = ShaderSignatures::default();
+
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+                Sm4Decl::ResourceBuffer {
+                    slot: 0,
+                    stride: 16,
+                    kind: BufferKind::Structured,
+                },
+                Sm4Decl::UavBuffer {
+                    slot: 0,
+                    stride: 16,
+                    kind: BufferKind::Structured,
+                },
+            ],
+            instructions: vec![
+                Sm4Inst::LdStructured {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    index: src_imm_u32_bits(1),
+                    offset: src_imm_u32_bits(0),
+                    buffer: BufferRef { slot: 0 },
+                },
+                Sm4Inst::StoreStructured {
+                    uav: UavRef { slot: 0 },
+                    index: src_imm_u32_bits(1),
+                    offset: src_imm_u32_bits(0),
+                    value: SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                    mask: WriteMask::XYZW,
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+        let wgsl = translated.wgsl;
+
+        // Populate the input buffer with u32 words representing non-integral f32 values so our
+        // untyped `vec4<f32>` register model roundtrips the raw bits.
+        let in_words: [u32; 16] = [
+            0.5f32.to_bits(),
+            1.5f32.to_bits(),
+            2.5f32.to_bits(),
+            3.5f32.to_bits(),
+            4.5f32.to_bits(),
+            5.5f32.to_bits(),
+            6.5f32.to_bits(),
+            7.5f32.to_bits(),
+            8.5f32.to_bits(),
+            9.5f32.to_bits(),
+            10.5f32.to_bits(),
+            11.5f32.to_bits(),
+            12.5f32.to_bits(),
+            13.5f32.to_bits(),
+            14.5f32.to_bits(),
+            15.5f32.to_bits(),
+        ];
+
+        let size = (in_words.len() * 4) as u64;
+
+        let device = rt.device();
+        let queue = rt.queue();
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("d3d11_smoke structured buffer copy shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("d3d11_smoke empty bind group layout"),
+            entries: &[],
+        });
+        let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("d3d11_smoke structured buffer layout (@group(2))"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: BINDING_BASE_TEXTURE,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: BINDING_BASE_UAV,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("d3d11_smoke structured buffer pipeline layout (@group(2))"),
+            bind_group_layouts: &[&empty_layout, &empty_layout, &group2_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("d3d11_smoke structured buffer pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "cs_main",
+            compilation_options: Default::default(),
+        });
+
+        let in_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("d3d11_smoke structured buffer input"),
+            size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&in_buf, 0, bytemuck::cast_slice(&in_words));
+
+        let out = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("d3d11_smoke structured buffer output"),
+            size,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("d3d11_smoke structured buffer readback"),
+            size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("d3d11_smoke structured buffer bind group (@group(2))"),
+            layout: &group2_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: BINDING_BASE_TEXTURE,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &in_buf,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: BINDING_BASE_UAV,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &out,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("d3d11_smoke structured buffer encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("d3d11_smoke structured buffer pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(2, &bg, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, size);
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_mapped_buffer(device, &readback).await;
+        let words: Vec<u32> = bytes
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+
+        // With stride 16 bytes, index 1 starts at word 4 (16/4).
+        assert_eq!(&words[4..8], &in_words[4..8]);
     });
 }
 
