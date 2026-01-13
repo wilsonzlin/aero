@@ -1,5 +1,6 @@
 use firmware::{
     bios::Bios,
+    bios::BiosConfig,
     cpu::CpuState,
     memory::{far_ptr_to_phys, real_addr, MemoryBus, VecMemory},
     rtc::{CmosRtc, DateTime},
@@ -12,6 +13,34 @@ fn read_u16(buf: &[u8], off: usize) -> u16 {
 
 fn read_u32(buf: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]])
+}
+
+#[test]
+fn int10_vbe_mode_info_uses_configured_lfb_base() {
+    let mut mem = VecMemory::new(32 * 1024 * 1024);
+    let rtc = CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0));
+    let lfb_base = 0x00C0_0000;
+    let mut bios = Bios::new_with_rtc(
+        BiosConfig {
+            vbe_lfb_base: Some(lfb_base),
+            ..BiosConfig::default()
+        },
+        rtc,
+    );
+    let mut cpu = CpuState::default();
+
+    cpu.set_ax(0x4F01);
+    cpu.set_cx(0x118);
+    cpu.set_es(0x2000);
+    cpu.set_di(0x0300);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+
+    let mode_addr = real_addr(cpu.es(), cpu.di());
+    let mut info = vec![0u8; 256];
+    mem.read_bytes(mode_addr, &mut info);
+    assert_eq!(read_u32(&info, 40), lfb_base); // PhysBasePtr
 }
 
 #[test]
