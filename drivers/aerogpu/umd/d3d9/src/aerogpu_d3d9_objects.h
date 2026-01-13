@@ -907,6 +907,14 @@ struct Device {
   Shader* fixedfunc_vs_xyz_diffuse_tex1 = nullptr;
   Shader* fixedfunc_ps_xyz_diffuse_tex1 = nullptr;
   Shader* fixedfunc_vs_xyz_tex1 = nullptr;
+
+  // Cached fixed-function stage0 pixel shader variants.
+  //
+  // Keyed by the driver-side FixedfuncStage0Key (stage0 COLOROP/COLORARG/ALPHAOP/ALPHAARG decode).
+  // The mapping is encoded in `fixedfunc_stage0_variant_index()` in
+  // `aerogpu_d3d9_driver.cpp`. The current FixedfuncStage0Src enum spans 10 values
+  // (0..9), so we reserve 10*10 entries (color_src * 10 + alpha_src).
+  Shader* fixedfunc_stage0_ps_variants[100] = {};
   // True when cached world/view/proj transforms changed and the fixed-function
   // fallback needs to re-upload the combined matrix constant registers.
   bool fixedfunc_matrix_dirty = true;

@@ -13419,6 +13419,203 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   return Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles");
 }
 
+bool TestFixedfuncStage0TextureStageStateRebindsPixelShader() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hTex{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_tex = false;
+
+    ~Cleanup() {
+      if (has_tex && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hTex);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  constexpr uint32_t kD3dTssColorOp = 1u;    // D3DTSS_COLOROP
+  constexpr uint32_t kD3dTssColorArg1 = 2u;  // D3DTSS_COLORARG1
+  constexpr uint32_t kD3dTopSelectArg1 = 2u; // D3DTOP_SELECTARG1
+
+  constexpr uint32_t kD3dTaDiffuse = 0u; // D3DTA_DIFFUSE
+  constexpr uint32_t kD3dTaTexture = 2u; // D3DTA_TEXTURE
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
+
+  // Bind a dummy texture so stage0 selection can safely choose texture-sampling variants.
+  D3D9DDIARG_CREATERESOURCE create_tex{};
+  create_tex.type = kD3dRTypeTexture;
+  create_tex.format = 22u; // D3DFMT_X8R8G8B8
+  create_tex.width = 2;
+  create_tex.height = 2;
+  create_tex.depth = 1;
+  create_tex.mip_levels = 1;
+  create_tex.usage = 0;
+  create_tex.pool = 0;
+  create_tex.size = 0;
+  create_tex.hResource.pDrvPrivate = nullptr;
+  create_tex.pSharedHandle = nullptr;
+  create_tex.pKmdAllocPrivateData = nullptr;
+  create_tex.KmdAllocPrivateDataSize = 0;
+  create_tex.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
+  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+    return false;
+  }
+  if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource returned texture handle")) {
+    return false;
+  }
+  cleanup.hTex = create_tex.hResource;
+  cleanup.has_tex = true;
+
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, create_tex.hResource);
+  if (!Check(hr == S_OK, "SetTexture(0)")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1.
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x144u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+    float u;
+    float v;
+  };
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {0.0f, 0.0f, 0.5f, 1.0f, kWhite, 0.0f, 0.0f};
+  verts[1] = {1.0f, 0.0f, 0.5f, 1.0f, kWhite, 1.0f, 0.0f};
+  verts[2] = {0.0f, 1.0f, 0.5f, 1.0f, kWhite, 0.0f, 1.0f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  dev->cmd.finalize();
+  const uint8_t* buf0 = dev->cmd.data();
+  const size_t len0 = dev->cmd.bytes_used();
+
+  const size_t binds0 = CountOpcode(buf0, len0, AEROGPU_CMD_BIND_SHADERS);
+  const size_t creates0 = CountOpcode(buf0, len0, AEROGPU_CMD_CREATE_SHADER_DXBC);
+  if (!Check(binds0 >= 1, "initial fixedfunc draw emits bind_shaders")) {
+    return false;
+  }
+  if (!Check(creates0 >= 2, "initial fixedfunc draw emits create_shader_dxbc for VS/PS")) {
+    return false;
+  }
+
+  // 1) Switch from default MODULATE to SELECTARG1(TEXTURE): should create 1 new PS and rebind.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf1 = dev->cmd.data();
+  const size_t len1 = dev->cmd.bytes_used();
+  const size_t binds1 = CountOpcode(buf1, len1, AEROGPU_CMD_BIND_SHADERS);
+  const size_t creates1 = CountOpcode(buf1, len1, AEROGPU_CMD_CREATE_SHADER_DXBC);
+  if (!Check(binds1 == binds0 + 1, "SetTextureStageState causes a shader rebind")) {
+    return false;
+  }
+  if (!Check(creates1 == creates0 + 1, "SetTextureStageState creates one new internal PS")) {
+    return false;
+  }
+
+  // 2) Switch to SELECTARG1(DIFFUSE): should create 1 new PS and rebind.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLORARG1=DIFFUSE)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf2 = dev->cmd.data();
+  const size_t len2 = dev->cmd.bytes_used();
+  const size_t binds2 = CountOpcode(buf2, len2, AEROGPU_CMD_BIND_SHADERS);
+  const size_t creates2 = CountOpcode(buf2, len2, AEROGPU_CMD_CREATE_SHADER_DXBC);
+  if (!Check(binds2 == binds1 + 1, "SetTextureStageState(DIFFUSE) causes a shader rebind")) {
+    return false;
+  }
+  if (!Check(creates2 == creates1 + 1, "SetTextureStageState(DIFFUSE) creates one new internal PS")) {
+    return false;
+  }
+
+  // 3) Switch back to SELECTARG1(TEXTURE): should rebind but not create a new shader.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf3 = dev->cmd.data();
+  const size_t len3 = dev->cmd.bytes_used();
+  const size_t binds3 = CountOpcode(buf3, len3, AEROGPU_CMD_BIND_SHADERS);
+  const size_t creates3 = CountOpcode(buf3, len3, AEROGPU_CMD_CREATE_SHADER_DXBC);
+  if (!Check(binds3 == binds2 + 1, "SetTextureStageState(TEXTURE) causes a shader rebind")) {
+    return false;
+  }
+  return Check(creates3 == creates2, "SetTextureStageState(TEXTURE) reuses cached shader");
+}
+
 bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -29887,6 +30084,7 @@ int main() {
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestFixedfuncStage0TextureStageStateRebindsPixelShader();
   failures += !aerogpu::TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants();
   failures += !aerogpu::TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants();

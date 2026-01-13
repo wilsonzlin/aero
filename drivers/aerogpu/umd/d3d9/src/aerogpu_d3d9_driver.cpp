@@ -4568,6 +4568,13 @@ bool shader_bytecode_equals(const Shader* sh, const void* bytes, uint32_t size) 
   return std::memcmp(sh->bytecode.data(), bytes, size) == 0;
 }
 
+constexpr uint32_t fixedfunc_stage0_variant_index(FixedfuncStage0Key key) {
+  // FixedfuncStage0Src values are defined densely (0..N-1). Use a dense 2D index
+  // so stage0 variants can be cached in a flat array without hashing.
+  constexpr uint32_t kSrcCount = static_cast<uint32_t>(FixedfuncStage0Src::ModulateTextureFactor) + 1u;
+  return static_cast<uint32_t>(key.color) * kSrcCount + static_cast<uint32_t>(key.alpha);
+}
+
 FixedfuncStage0Src fixedfunc_decode_arg_src(uint32_t arg) {
   switch (arg & kD3dTaSelectMask) {
     case kD3dTaTexture:
@@ -4957,6 +4964,14 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
   }
 
   const FixedfuncStage0Key key = fixedfunc_stage0_key_locked(dev);
+  const uint32_t variant_index = fixedfunc_stage0_variant_index(key);
+  if (variant_index >= (sizeof(dev->fixedfunc_stage0_ps_variants) / sizeof(dev->fixedfunc_stage0_ps_variants[0]))) {
+    return E_FAIL;
+  }
+
+  // Fixed-function stage0 variant shaders are cached per-device so toggling texture-stage-state does not
+  // spam CREATE_SHADER_DXBC/DESTROY_SHADER.
+  Shader* new_ps = dev->fixedfunc_stage0_ps_variants[variant_index];
   uint32_t ps_size = 0;
   const void* ps_bytes = fixedfunc_ps_variant_bytes(key, &ps_size);
   if (!ps_bytes || ps_size == 0) {
@@ -4971,24 +4986,30 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
     }
   }
 
-  if (*ps_slot && shader_bytecode_equals(*ps_slot, ps_bytes, ps_size)) {
+  if (!new_ps) {
+    // If this cache slot is already pointing at the desired bytecode, reuse it
+    // rather than creating a duplicate shader.
+    if (*ps_slot && shader_bytecode_equals(*ps_slot, ps_bytes, ps_size)) {
+      new_ps = *ps_slot;
+    } else {
+      new_ps = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
+      if (!new_ps) {
+        return E_OUTOFMEMORY;
+      }
+    }
+    dev->fixedfunc_stage0_ps_variants[variant_index] = new_ps;
+  }
+
+  if (*ps_slot == new_ps) {
     return S_OK;
   }
 
   Shader* old_ps = *ps_slot;
-  Shader* new_ps = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
-  if (!new_ps) {
-    return E_OUTOFMEMORY;
-  }
-
   *ps_slot = new_ps;
 
   // If the PS we're replacing is currently bound (either via the full
   // fixed-function fallback or via shader-stage interop fallbacks where one
-  // shader stage is NULL), rebind to the new PS before destroying the old one.
-  //
-  // The host command stream executes commands in-order and expects shaders to be
-  // unbound before they are destroyed.
+  // shader stage is NULL), rebind so the change takes effect immediately.
   const bool ps_bound = (old_ps != nullptr && dev->ps == old_ps);
   if (ps_bound) {
     Shader* prev_ps = dev->ps;
@@ -4998,18 +5019,8 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
     if (!dev->vs || !emit_bind_shaders_locked(dev)) {
       dev->ps = prev_ps;
       *ps_slot = old_ps;
-      (void)emit_destroy_shader_locked(dev, new_ps->handle);
-      delete new_ps;
       return E_OUTOFMEMORY;
     }
-  }
-
-  if (old_ps) {
-    (void)emit_destroy_shader_locked(dev, old_ps->handle);
-    if (dev->ps == old_ps) {
-      dev->ps = nullptr;
-    }
-    delete old_ps;
   }
 
   return S_OK;
@@ -8824,11 +8835,6 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fixedfunc_vs_xyz_tex1;
       dev->fixedfunc_vs_xyz_tex1 = nullptr;
     }
-    if (dev->fixedfunc_ps) {
-      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps->handle);
-      delete dev->fixedfunc_ps;
-      dev->fixedfunc_ps = nullptr;
-    }
     if (dev->fixedfunc_ps_xyz) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_xyz->handle);
       delete dev->fixedfunc_ps_xyz;
@@ -8844,21 +8850,18 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fixedfunc_vs_tex1_nodiffuse;
       dev->fixedfunc_vs_tex1_nodiffuse = nullptr;
     }
-    if (dev->fixedfunc_ps_tex1) {
-      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_tex1->handle);
-      delete dev->fixedfunc_ps_tex1;
-      dev->fixedfunc_ps_tex1 = nullptr;
+    for (Shader*& ps : dev->fixedfunc_stage0_ps_variants) {
+      if (!ps) {
+        continue;
+      }
+      (void)emit_destroy_shader_locked(dev, ps->handle);
+      delete ps;
+      ps = nullptr;
     }
-    if (dev->fixedfunc_ps_xyz_diffuse_tex1) {
-      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_xyz_diffuse_tex1->handle);
-      delete dev->fixedfunc_ps_xyz_diffuse_tex1;
-      dev->fixedfunc_ps_xyz_diffuse_tex1 = nullptr;
-    }
-    if (dev->fixedfunc_ps_interop) {
-      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_interop->handle);
-      delete dev->fixedfunc_ps_interop;
-      dev->fixedfunc_ps_interop = nullptr;
-    }
+    dev->fixedfunc_ps = nullptr;
+    dev->fixedfunc_ps_tex1 = nullptr;
+    dev->fixedfunc_ps_xyz_diffuse_tex1 = nullptr;
+    dev->fixedfunc_ps_interop = nullptr;
     if (dev->up_vertex_buffer) {
       (void)emit_destroy_resource_locked(dev, dev->up_vertex_buffer->handle);
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
@@ -14102,6 +14105,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
 #endif
 
   // Samplers/textures.
+  bool stage0_tss_dirty = false;
   for (uint32_t stage = 0; stage < 16; ++stage) {
     if (sb->texture_mask.test(stage)) {
       Resource* tex = sb->textures[stage];
@@ -14147,6 +14151,11 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       const uint32_t value = sb->texture_stage_state_values[idx];
       dev->texture_stage_states[stage][s] = value;
       stateblock_record_texture_stage_state_locked(dev, stage, s, value);
+      if (stage == 0 &&
+          (s == kD3dTssColorOp || s == kD3dTssColorArg1 || s == kD3dTssColorArg2 ||
+           s == kD3dTssAlphaOp || s == kD3dTssAlphaArg1 || s == kD3dTssAlphaArg2)) {
+        stage0_tss_dirty = true;
+      }
     }
   }
 
@@ -14397,6 +14406,35 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     const HRESULT hr = apply_consts_b(kD3d9ShaderStagePs, sb->ps_const_b_mask, sb->ps_consts_b.data(), dev->ps_consts_b);
     if (FAILED(hr)) {
       return hr;
+    }
+  }
+
+  // If fixed-function shaders are active, stage0 texture stage state changes may
+  // require a different internal PS variant. Update the cached selection and
+  // rebind so the change takes effect without waiting for a draw call.
+  if (stage0_tss_dirty && fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+    Shader** ps_slot = nullptr;
+    switch (dev->fvf) {
+      case kSupportedFvfXyzrhwDiffuse:
+      case kSupportedFvfXyzDiffuse:
+        ps_slot = &dev->fixedfunc_ps;
+        break;
+      case kSupportedFvfXyzrhwDiffuseTex1:
+      case kSupportedFvfXyzrhwTex1:
+        ps_slot = &dev->fixedfunc_ps_tex1;
+        break;
+      case kSupportedFvfXyzDiffuseTex1:
+      case kSupportedFvfXyzTex1:
+        ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+        break;
+      default:
+        break;
+    }
+    if (ps_slot) {
+      const HRESULT hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+      if (FAILED(hr)) {
+        return hr;
+      }
     }
   }
 
@@ -23630,8 +23668,12 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnSetViewport = device_set_viewport;
   pDeviceFuncs->pfnSetScissorRect = device_set_scissor;
   pDeviceFuncs->pfnSetTexture = device_set_texture;
-  pDeviceFuncs->pfnSetTextureStageState = device_set_texture_stage_state;
-  pDeviceFuncs->pfnGetTextureStageState = device_get_texture_stage_state;
+  if constexpr (aerogpu_has_member_pfnSetTextureStageState<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnSetTextureStageState = device_set_texture_stage_state;
+  }
+  if constexpr (aerogpu_has_member_pfnGetTextureStageState<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnGetTextureStageState = device_get_texture_stage_state;
+  }
   pDeviceFuncs->pfnSetSamplerState = device_set_sampler_state;
   pDeviceFuncs->pfnSetRenderState = device_set_render_state;
   if constexpr (aerogpu_has_member_pfnSetTransform<D3D9DDI_DEVICEFUNCS>::value) {
