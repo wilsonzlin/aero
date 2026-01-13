@@ -646,9 +646,9 @@ fn emit_op_line(op: &IrOp, f32_defs: &BTreeMap<u32, [f32; 4]>) -> Result<String,
             src2,
             modifiers,
         } => {
-            let (a, aty) = src_expr(src0)?;
-            let (b, bty) = src_expr(src1)?;
-            let (c, cty) = src_expr(src2)?;
+            let (a, aty) = src_expr(src0, f32_defs)?;
+            let (b, bty) = src_expr(src1, f32_defs)?;
+            let (c, cty) = src_expr(src2, f32_defs)?;
             if aty != ScalarTy::F32 || bty != ScalarTy::F32 || cty != ScalarTy::F32 {
                 return Err(err("lrp only supports float sources in WGSL lowering"));
             }
