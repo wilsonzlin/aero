@@ -1119,3 +1119,273 @@ fn tier2_loop_trace_invalidates_on_mid_execution_code_version_bump() {
     let bumped_page1 = read_u32_from_memory(&memory, &store, table_ptr as usize + 4);
     assert_eq!(bumped_page1, 3);
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+mod random_traces {
+    use super::*;
+
+    use rand::{seq::SliceRandom, Rng, RngCore, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+
+    use aero_jit_x86::tier2::interp::run_trace;
+    use aero_jit_x86::tier2::ir::ALL_GPRS;
+
+    fn v(idx: u32) -> ValueId {
+        ValueId(idx)
+    }
+
+    fn make_random_state(rng: &mut ChaCha8Rng) -> T2State {
+        let mut state = T2State::default();
+
+        for reg in ALL_GPRS {
+            state.cpu.gpr[reg.as_u8() as usize] = rng.gen();
+        }
+
+        state.cpu.rip = 0x1000;
+        state.cpu.rflags = abi::RFLAGS_RESERVED1;
+        for flag in [Flag::Cf, Flag::Pf, Flag::Af, Flag::Zf, Flag::Sf, Flag::Of] {
+            if rng.gen() {
+                state.cpu.rflags |= 1u64 << flag.rflags_bit();
+            }
+        }
+
+        state
+    }
+
+    fn gen_operand(rng: &mut ChaCha8Rng, values: &[ValueId]) -> Operand {
+        if !values.is_empty() && rng.gen_bool(0.7) {
+            Operand::Value(values[rng.gen_range(0..values.len())])
+        } else {
+            Operand::Const(rng.gen())
+        }
+    }
+
+    fn gen_random_trace(rng: &mut ChaCha8Rng, instr_count: usize) -> TraceIr {
+        let mut next_value: u32 = 0;
+        let mut values: Vec<ValueId> = Vec::new();
+        let mut body: Vec<Instr> = Vec::new();
+
+        for _ in 0..instr_count {
+            match rng.gen_range(0..100u32) {
+                0..=15 => {
+                    let dst = v(next_value);
+                    next_value += 1;
+                    body.push(Instr::Const {
+                        dst,
+                        value: rng.gen(),
+                    });
+                    values.push(dst);
+                }
+                16..=33 => {
+                    let dst = v(next_value);
+                    next_value += 1;
+                    let reg = *ALL_GPRS.choose(rng).unwrap();
+                    body.push(Instr::LoadReg { dst, reg });
+                    values.push(dst);
+                }
+                34..=69 => {
+                    if values.is_empty() {
+                        continue;
+                    }
+                    let dst = v(next_value);
+                    next_value += 1;
+                    let op = match rng.gen_range(0..11u32) {
+                        0 => BinOp::Add,
+                        1 => BinOp::Sub,
+                        2 => BinOp::Mul,
+                        3 => BinOp::And,
+                        4 => BinOp::Or,
+                        5 => BinOp::Xor,
+                        6 => BinOp::Shl,
+                        7 => BinOp::Shr,
+                        8 => BinOp::Sar,
+                        9 => BinOp::Eq,
+                        _ => BinOp::LtU,
+                    };
+                    let lhs = gen_operand(rng, &values);
+                    let rhs = gen_operand(rng, &values);
+                    let flags = if rng.gen_bool(0.3) {
+                        FlagSet::ALU
+                    } else {
+                        FlagSet::EMPTY
+                    };
+                    body.push(Instr::BinOp {
+                        dst,
+                        op,
+                        lhs,
+                        rhs,
+                        flags,
+                    });
+                    values.push(dst);
+                }
+                70..=79 => {
+                    let dst = v(next_value);
+                    next_value += 1;
+                    let base = gen_operand(rng, &values);
+                    let index = gen_operand(rng, &values);
+                    let scale = *[1u8, 2, 4, 8].choose(rng).unwrap();
+                    let disp = rng.gen::<i32>() as i64;
+                    body.push(Instr::Addr {
+                        dst,
+                        base,
+                        index,
+                        scale,
+                        disp,
+                    });
+                    values.push(dst);
+                }
+                80..=84 => {
+                    // Memory loads use constant, in-bounds addresses to keep the harness simple.
+                    let dst = v(next_value);
+                    next_value += 1;
+                    let width = *[Width::W8, Width::W16, Width::W32, Width::W64]
+                        .choose(rng)
+                        .unwrap();
+                    let bytes = width.bytes() as usize;
+                    let addr = rng.gen_range(0..(GUEST_MEM_SIZE - bytes)) as u64;
+                    body.push(Instr::LoadMem {
+                        dst,
+                        addr: Operand::Const(addr),
+                        width,
+                    });
+                    values.push(dst);
+                }
+                85..=89 => {
+                    // Memory stores use constant, in-bounds addresses to keep the harness simple.
+                    if values.is_empty() {
+                        continue;
+                    }
+                    let width = *[Width::W8, Width::W16, Width::W32, Width::W64]
+                        .choose(rng)
+                        .unwrap();
+                    let bytes = width.bytes() as usize;
+                    let addr = rng.gen_range(0..(GUEST_MEM_SIZE - bytes)) as u64;
+                    let src = gen_operand(rng, &values);
+                    body.push(Instr::StoreMem {
+                        addr: Operand::Const(addr),
+                        src,
+                        width,
+                    });
+                }
+                _ => {
+                    if values.is_empty() {
+                        continue;
+                    }
+                    let reg = *ALL_GPRS.choose(rng).unwrap();
+                    let src = gen_operand(rng, &values);
+                    body.push(Instr::StoreReg { reg, src });
+                }
+            }
+        }
+
+        // Add occasional side exits; keep the exit RIP distinct from the trace's entry RIP so we
+        // can disambiguate `Returned` from `SideExit` on the WASM side.
+        if rng.gen_bool(0.25) {
+            let exit_rip = 0x2000u64 + (rng.gen::<u16>() as u64);
+            body.push(Instr::SideExit { exit_rip });
+        }
+
+        TraceIr {
+            prologue: Vec::new(),
+            body,
+            kind: TraceKind::Linear,
+        }
+    }
+
+    fn wasm_exit_to_run_exit(exit_reason: u32, init_rip: u64, next_rip: u64) -> RunExit {
+        match exit_reason {
+            jit_ctx::TRACE_EXIT_REASON_NONE => {
+                if next_rip == init_rip {
+                    RunExit::Returned
+                } else {
+                    RunExit::SideExit { next_rip }
+                }
+            }
+            jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION => RunExit::Invalidate { next_rip },
+            other => panic!("unexpected Tier2 trace exit reason: {other}"),
+        }
+    }
+
+    #[test]
+    fn tier2_trace_wasm_matches_interpreter_on_random_traces() {
+        let env = RuntimeEnv::default();
+        let mut rng = ChaCha8Rng::seed_from_u64(0x5EED);
+
+        // Tier-2 WASM compilation + instantiation is more expensive than pure interpreter checks, so
+        // keep the iteration count modest while still providing broad coverage.
+        for i in 0..75 {
+            let instr_count = rng.gen_range(20..=50);
+            let trace = gen_random_trace(&mut rng, instr_count);
+
+            let mut guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+            rng.fill_bytes(&mut guest_mem_init);
+
+            let init_state = make_random_state(&mut rng);
+            let init_rip = init_state.cpu.rip;
+
+            // ---- Tier-2 interpreter (reference) -------------------------------------------------
+            let mut interp_state = init_state.clone();
+            let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
+            bus.load(0, &guest_mem_init);
+            let expected = run_trace(&trace, &env, &mut bus, &mut interp_state, 1);
+
+            // ---- Optimize + compile to WASM ----------------------------------------------------
+            let mut optimized = trace.clone();
+            let opt = optimize_trace(&mut optimized, &OptConfig::default());
+            let wasm = Tier2WasmCodegen::new().compile_trace(&optimized, &opt.regalloc);
+            validate_wasm(&wasm);
+
+            // ---- Execute the WASM trace via wasmi ----------------------------------------------
+            let (mut store, memory, func) = instantiate_trace(&wasm, HostEnv::default());
+            memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+            let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+            write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+            memory
+                .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+                .unwrap();
+            install_code_version_table(&memory, &mut store, &[]);
+
+            let next_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+            let exit_reason = read_u32_from_memory(
+                &memory,
+                &store,
+                CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+            );
+            let got_exit = wasm_exit_to_run_exit(exit_reason, init_rip, next_rip);
+
+            assert_eq!(
+                expected.exit, got_exit,
+                "exit mismatch on iteration {i}\ntrace: {trace:?}\noptimized: {optimized:?}"
+            );
+
+            // Guest memory.
+            let mut got_guest_mem = vec![0u8; GUEST_MEM_SIZE];
+            memory.read(&store, 0, &mut got_guest_mem).unwrap();
+            assert_eq!(
+                got_guest_mem.as_slice(),
+                bus.mem(),
+                "guest memory mismatch on iteration {i}\ntrace: {trace:?}\noptimized: {optimized:?}"
+            );
+
+            // CPU state.
+            let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+            memory
+                .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
+                .unwrap();
+            let (got_gpr, got_rip, got_rflags) = read_cpu_state(&got_cpu_bytes);
+            assert_eq!(
+                got_gpr, interp_state.cpu.gpr,
+                "gpr mismatch on iteration {i}\ntrace: {trace:?}\noptimized: {optimized:?}"
+            );
+            assert_eq!(
+                got_rip, interp_state.cpu.rip,
+                "rip mismatch on iteration {i}\ntrace: {trace:?}\noptimized: {optimized:?}"
+            );
+            assert_eq!(
+                got_rflags, interp_state.cpu.rflags,
+                "rflags mismatch on iteration {i}\ntrace: {trace:?}\noptimized: {optimized:?}"
+            );
+        }
+    }
+}
