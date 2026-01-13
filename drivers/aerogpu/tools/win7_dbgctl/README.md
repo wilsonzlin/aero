@@ -70,6 +70,8 @@ Minimum supported commands:
   - `AEROGPU_ESCAPE_OP_READ_GPA` to read framebuffer bytes from guest physical memory
   
   Useful for diagnosing pitch/format/fb_gpa bugs **without screen capture / RDP**.
+  Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
+  `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
 
 - `aerogpu_dbgctl --query-cursor` *(alias: `--dump-cursor`)*  
   Dumps cursor MMIO state (`CURSOR_*` registers), including:
