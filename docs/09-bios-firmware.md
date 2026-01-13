@@ -159,9 +159,10 @@ cargo run -p firmware --bin gen_dsdt --locked
 
 ## Current limitations / known gaps
 
-- **SMP / cpu_count > 1:** `aero_machine::Machine` currently enforces `cpu_count = 1`
-  (`MachineConfig::cpu_count`). The ACPI generator can describe multiple CPUs, but AP bring-up (INIT
-  + SIPI, APIC IPI delivery, etc.) is not yet wired end-to-end in the canonical machine.
+- **SMP / multi-vCPU execution:** `MachineConfig::cpu_count` may be set to values `>= 1`, and the BIOS
+  will publish the configured CPU topology via SMBIOS/ACPI (e.g. MADT). However, the canonical
+  `aero_machine::Machine` execution loop is still BSP-only today (no multi-vCPU scheduler / AP bring-up
+  yet), so INIT+SIPI, APIC IPI delivery, and per-vCPU execution are not wired end-to-end.
 
 ---
 

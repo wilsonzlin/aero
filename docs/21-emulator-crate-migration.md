@@ -238,8 +238,8 @@ quietly accreting more responsibilities.
 
 **Intended canonical home**
 
-- Target: `crates/aero-machine` grows beyond `cpu_count=1` by adopting (or re-implementing) the SMP
-  scheduling and APIC-delivery logic behind a stable API.
+- Target: `crates/aero-machine` grows beyond BSP-only execution by adopting (or re-implementing) the
+  SMP scheduling and APIC-delivery logic behind a stable API.
 - If the SMP code needs to be reusable independently of `aero-machine`, consider extracting a
   dedicated `crates/aero-smp` crate and using it from `aero-machine`.
 
@@ -297,4 +297,3 @@ This is intentionally a sequence of small PRs (mirrors the style of the storage 
      - delete the crate, or
      - rename it to make “legacy/compat” explicit (e.g. `aero-emulator-compat`) and keep it out of
        the canonical dependency graph.
-
