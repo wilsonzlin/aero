@@ -697,13 +697,30 @@ static NTSTATUS VirtioInputInterruptsResumeAfterReset(_Inout_ PDEVICE_CONTEXT De
 static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
 {
     PDEVICE_CONTEXT ctx = VirtioInputGetDeviceContext(Device);
+    BOOLEAN emitResetReports;
+
+    /*
+     * Policy: if the HID stack is activated, emit an all-zero report *before*
+     * tearing down the read path so Windows releases any latched key state.
+     *
+     * The reset reports are delivered via the normal report ring/read queues,
+     * so they will safely be dropped if the read queues have already been
+     * stopped (e.g. a concurrent HID deactivate).
+     */
+    emitResetReports = ctx->HidActivated ? TRUE : FALSE;
 
     ctx->VirtioStarted = 0;
+
+    if (emitResetReports) {
+        virtio_input_device_reset_state(&ctx->InputDevice, true);
+    }
+
     ctx->InD0 = FALSE;
     VirtioInputUpdateStatusQActiveState(ctx);
 
     VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_CANCELLED);
     VioInputDrainInputReportRing(ctx);
+    virtio_input_device_reset_state(&ctx->InputDevice, false);
 
     if (ctx->PciDevice.CommonCfg != NULL) {
         VirtioInputInterruptsQuiesceForReset(ctx);
@@ -1790,10 +1807,25 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
     UNREFERENCED_PARAMETER(TargetState);
 
     PDEVICE_CONTEXT deviceContext;
+    BOOLEAN emitResetReports;
 
     deviceContext = VirtioInputGetDeviceContext(Device);
 
     deviceContext->VirtioStarted = 0;
+
+    /*
+     * Policy: if HID has been activated, emit an all-zero report before stopping
+     * the read queues so Windows releases any latched key state during the
+     * transition away from D0.
+     *
+     * This report is sent through the normal read-report path, so it will be
+     * dropped automatically if reads have already been disabled.
+     */
+    emitResetReports = deviceContext->HidActivated ? TRUE : FALSE;
+    if (emitResetReports) {
+        virtio_input_device_reset_state(&deviceContext->InputDevice, true);
+    }
+
     deviceContext->InD0 = FALSE;
 
     VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);

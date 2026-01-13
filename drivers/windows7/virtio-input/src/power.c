@@ -48,6 +48,19 @@ NTSTATUS VirtioInputHidActivateDevice(_In_ WDFDEVICE Device)
 NTSTATUS VirtioInputHidDeactivateDevice(_In_ WDFDEVICE Device)
 {
     PDEVICE_CONTEXT ctx = VirtioInputGetDeviceContext(Device);
+    BOOLEAN emitResetReports;
+
+    /*
+     * If HID is currently active, emit an all-zero report before disabling the
+     * read queues so Windows releases any latched key state ("stuck keys").
+     *
+     * If the read queues are already stopping, the reset report will be safely
+     * dropped by VirtioInputReportArrived() once ReadReportsEnabled is cleared.
+     */
+    emitResetReports = ctx->HidActivated ? TRUE : FALSE;
+    if (emitResetReports && ctx->InD0) {
+        virtio_input_device_reset_state(&ctx->InputDevice, true);
+    }
 
     ctx->HidActivated = FALSE;
     VirtioInputUpdateStatusQActiveState(ctx);

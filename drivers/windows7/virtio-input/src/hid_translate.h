@@ -368,7 +368,7 @@ void hid_translate_set_enabled_reports(struct hid_translate *t, uint8_t enabled_
 /*
  * Clears internal state. If emit_reports is true, emits an all-zero keyboard
  * report (and mouse report) so the OS releases any latched state (prevents
- * "stuck keys" across suspend/focus loss/D0Exit).
+ * "stuck keys" across suspend/focus loss/D0Exit/surprise removal).
  */
 void hid_translate_reset(struct hid_translate *t, bool emit_reports);
 
