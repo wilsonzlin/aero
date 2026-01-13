@@ -107,7 +107,6 @@ fn identify_controller_supports_sgl_data_pointer() {
 
     // Verify the identify payload was written.
     assert_eq!(mem.read_u16(id_buf), 0x1b36);
-    // SGLS at offset 536 advertises basic SGL support.
-    assert_eq!(mem.read_u32(id_buf + 536), 1);
+    // SGLS at offset 536 advertises Data Block + Segment + Last Segment support.
+    assert_eq!(mem.read_u32(id_buf + 536), 0xD);
 }
-

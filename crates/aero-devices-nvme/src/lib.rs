@@ -1426,9 +1426,10 @@ impl NvmeController {
 
         // SGLS (SGL Support) at offset 536 (0x218).
         //
-        // Advertise basic SGL support (Data Block + Segment descriptors). Higher-level features
-        // like keyed SGLs / bit-bucket descriptors are not implemented.
-        data[536..540].copy_from_slice(&1u32.to_le_bytes());
+        // NVMe 1.4: bit 0 = Data Block, bit 2 = Segment, bit 3 = Last Segment.
+        // (Keyed SGLs / bit-bucket descriptors are not implemented.)
+        let sgls: u32 = (1 << 0) | (1 << 2) | (1 << 3);
+        data[536..540].copy_from_slice(&sgls.to_le_bytes());
 
         data
     }
