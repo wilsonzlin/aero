@@ -23,8 +23,8 @@
 #endif
 
 static VOID VioInputSetDeviceKind(_Inout_ PDEVICE_CONTEXT Ctx, _In_ VIOINPUT_DEVICE_KIND Kind);
-static VOID VirtioInputInterruptsQuiesceForReset(_Inout_ PDEVICE_CONTEXT DeviceContext);
-static NTSTATUS VirtioInputInterruptsResumeAfterReset(_Inout_ PDEVICE_CONTEXT DeviceContext);
+static VOID VirtioInputInterruptsQuiesceForReset(_Inout_ PDEVICE_CONTEXT DeviceContext, _In_z_ PCSTR Reason);
+static NTSTATUS VirtioInputInterruptsResumeAfterReset(_Inout_ PDEVICE_CONTEXT DeviceContext, _In_z_ PCSTR Reason);
 
 typedef struct _VIOINPUT_CONFIG_WORKITEM_CONTEXT {
     WDFDEVICE Device;
@@ -882,38 +882,88 @@ static void VirtioInputReportReady(_In_ void *context)
     }
 }
 
-static VOID VirtioInputInterruptsQuiesceForReset(_Inout_ PDEVICE_CONTEXT DeviceContext)
+static VOID VirtioInputInterruptsQuiesceForReset(_Inout_ PDEVICE_CONTEXT DeviceContext, _In_z_ PCSTR Reason)
 {
     NTSTATUS status;
+    LONG resetInProgress;
+    volatile VIRTIO_PCI_COMMON_CFG* commonCfg;
 
-    if (DeviceContext == NULL) {
+    if (DeviceContext == NULL || Reason == NULL) {
         return;
     }
 
-    if (DeviceContext->Interrupts.Mode != VirtioPciInterruptModeMsix) {
+    commonCfg = DeviceContext->PciDevice.CommonCfg;
+    if (DeviceContext->Interrupts.Mode == VirtioPciInterruptModeMsix && commonCfg == NULL) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
+            "%s: interrupts quiesce skipped (CommonCfg NULL)\n",
+            Reason);
         return;
     }
 
-    status = VirtioPciInterruptsQuiesce(&DeviceContext->Interrupts, DeviceContext->PciDevice.CommonCfg);
+    status = VirtioPciInterruptsQuiesce(&DeviceContext->Interrupts, commonCfg);
+    resetInProgress = InterlockedCompareExchange(&DeviceContext->Interrupts.ResetInProgress, 0, 0);
+
+    VIOINPUT_LOG(
+        VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
+        "%s: interrupts quiesce mode=%u status=%!STATUS! resetInProgress=%ld\n",
+        Reason,
+        (ULONG)DeviceContext->Interrupts.Mode,
+        status,
+        resetInProgress);
+
     if (!NT_SUCCESS(status)) {
         VIOINPUT_LOG(
             VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-            "VirtioPciInterruptsQuiesce failed: %!STATUS!\n",
+            "%s: VirtioPciInterruptsQuiesce failed: %!STATUS!\n",
+            Reason,
             status);
     }
 }
 
-static NTSTATUS VirtioInputInterruptsResumeAfterReset(_Inout_ PDEVICE_CONTEXT DeviceContext)
+static NTSTATUS VirtioInputInterruptsResumeAfterReset(_Inout_ PDEVICE_CONTEXT DeviceContext, _In_z_ PCSTR Reason)
 {
+    NTSTATUS status;
+    LONG resetInProgress;
+    volatile VIRTIO_PCI_COMMON_CFG* commonCfg;
+
     if (DeviceContext == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (DeviceContext->Interrupts.Mode != VirtioPciInterruptModeMsix) {
-        return STATUS_SUCCESS;
+    if (Reason == NULL) {
+        return STATUS_INVALID_PARAMETER;
     }
 
-    return VirtioPciInterruptsResume(&DeviceContext->Interrupts, DeviceContext->PciDevice.CommonCfg);
+    commonCfg = DeviceContext->PciDevice.CommonCfg;
+    if (DeviceContext->Interrupts.Mode == VirtioPciInterruptModeMsix && commonCfg == NULL) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "%s: interrupts resume failed (CommonCfg NULL)\n",
+            Reason);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    status = VirtioPciInterruptsResume(&DeviceContext->Interrupts, commonCfg);
+    resetInProgress = InterlockedCompareExchange(&DeviceContext->Interrupts.ResetInProgress, 0, 0);
+
+    VIOINPUT_LOG(
+        VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
+        "%s: interrupts resume mode=%u status=%!STATUS! resetInProgress=%ld\n",
+        Reason,
+        (ULONG)DeviceContext->Interrupts.Mode,
+        status,
+        resetInProgress);
+
+    if (!NT_SUCCESS(status)) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "%s: VirtioPciInterruptsResume failed: %!STATUS!\n",
+            Reason,
+            status);
+    }
+
+    return status;
 }
 
 static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
@@ -955,8 +1005,28 @@ static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
     virtio_input_device_reset_state(&ctx->InputDevice, false);
 
     if (ctx->PciDevice.CommonCfg != NULL) {
-        VirtioInputInterruptsQuiesceForReset(ctx);
+        VirtioInputInterruptsQuiesceForReset(ctx, "SurpriseRemoval");
         VirtioPciResetDevice(&ctx->PciDevice);
+    }
+
+    if (ctx->EventVq != NULL) {
+        if (ctx->Interrupts.QueueLocks != NULL && ctx->Interrupts.QueueCount > 0) {
+            WdfSpinLockAcquire(ctx->Interrupts.QueueLocks[0]);
+            VirtqSplitReset(ctx->EventVq);
+            WdfSpinLockRelease(ctx->Interrupts.QueueLocks[0]);
+        } else {
+            VirtqSplitReset(ctx->EventVq);
+        }
+    }
+
+    if (ctx->StatusQ != NULL) {
+        if (ctx->Interrupts.QueueLocks != NULL && ctx->Interrupts.QueueCount > 1) {
+            WdfSpinLockAcquire(ctx->Interrupts.QueueLocks[1]);
+            VirtioStatusQReset(ctx->StatusQ);
+            WdfSpinLockRelease(ctx->Interrupts.QueueLocks[1]);
+        } else {
+            VirtioStatusQReset(ctx->StatusQ);
+        }
     }
 }
 
@@ -1391,8 +1461,28 @@ NTSTATUS VirtioInputEvtDeviceReleaseHardware(_In_ WDFDEVICE Device, _In_ WDFCMRE
         virtio_input_device_reset_state(&deviceContext->InputDevice, false);
 
         if (deviceContext->PciDevice.CommonCfg != NULL) {
-            VirtioInputInterruptsQuiesceForReset(deviceContext);
+            VirtioInputInterruptsQuiesceForReset(deviceContext, "ReleaseHardware");
             VirtioPciResetDevice(&deviceContext->PciDevice);
+        }
+
+        if (deviceContext->EventVq != NULL) {
+            if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 0) {
+                WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[0]);
+                VirtqSplitReset(deviceContext->EventVq);
+                WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[0]);
+            } else {
+                VirtqSplitReset(deviceContext->EventVq);
+            }
+        }
+
+        if (deviceContext->StatusQ != NULL) {
+            if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 1) {
+                WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[1]);
+                VirtioStatusQReset(deviceContext->StatusQ);
+                WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[1]);
+            } else {
+                VirtioStatusQReset(deviceContext->StatusQ);
+            }
         }
 
         if (deviceContext->StatusQ != NULL) {
@@ -2160,7 +2250,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
 
         (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 1);
 
-        status = VirtioInputInterruptsResumeAfterReset(deviceContext);
+        status = VirtioInputInterruptsResumeAfterReset(deviceContext, "D0Entry");
         if (!NT_SUCCESS(status)) {
             VIOINPUT_LOG(
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
@@ -2230,7 +2320,7 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
     VirtioInputUpdateStatusQActiveState(deviceContext);
 
     if (deviceContext->PciDevice.CommonCfg != NULL) {
-        VirtioInputInterruptsQuiesceForReset(deviceContext);
+        VirtioInputInterruptsQuiesceForReset(deviceContext, "D0Exit");
         VirtioPciResetDevice(&deviceContext->PciDevice);
     }
 
