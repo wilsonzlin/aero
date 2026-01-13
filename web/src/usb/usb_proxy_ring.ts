@@ -107,6 +107,24 @@ function truncateUtf8(bytes: Uint8Array, maxBytes: number): Uint8Array {
   return out;
 }
 
+function isUsbEndpointAddress(value: number): boolean {
+  // A USB endpoint address is a u8 with:
+  // - bit7: direction (IN=1, OUT=0)
+  // - bits4..6: reserved (must be 0)
+  // - bits0..3: endpoint number (1..=15 for non-control endpoints)
+  const u = value >>> 0;
+  if (u !== value || u > 0xff) return false;
+  return (u & 0x70) === 0 && (u & 0x0f) !== 0;
+}
+
+function isUsbInEndpointAddress(value: number): boolean {
+  return isUsbEndpointAddress(value) && (value & 0x80) !== 0;
+}
+
+function isUsbOutEndpointAddress(value: number): boolean {
+  return isUsbEndpointAddress(value) && (value & 0x80) === 0;
+}
+
 export function createUsbProxyRingBuffer(dataCapacityBytes: number): SharedArrayBuffer {
   const cap = dataCapacityBytes >>> 0;
   if (cap === 0) throw new Error("dataCapacityBytes must be > 0");
@@ -142,6 +160,21 @@ export class UsbProxyRing {
   }
 
   pushAction(action: UsbHostAction): boolean {
+    // Producer-side validation: keep the ring robust by refusing to encode records that the
+    // consumer would later treat as corruption (and detach the SAB fast-path).
+    if (action.kind === "controlOut" && action.data.byteLength !== action.setup.wLength) {
+      Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+      return false;
+    }
+    if (action.kind === "bulkIn" && !isUsbInEndpointAddress(action.endpoint)) {
+      Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+      return false;
+    }
+    if (action.kind === "bulkOut" && !isUsbOutEndpointAddress(action.endpoint)) {
+      Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+      return false;
+    }
+
     const kindTag = this.#actionKindToTag(action.kind);
 
     let recordSize = 0;

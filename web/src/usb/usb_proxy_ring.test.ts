@@ -85,9 +85,9 @@ describe("usb/UsbProxyRing", () => {
     const ring = new UsbProxyRing(sab);
 
     // Each bulkIn record is 16 bytes; 3 pushes land at offsets 0,16,32.
-    expect(ring.pushAction({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 })).toBe(true);
-    expect(ring.pushAction({ kind: "bulkIn", id: 2, endpoint: 1, length: 8 })).toBe(true);
-    expect(ring.pushAction({ kind: "bulkIn", id: 3, endpoint: 1, length: 8 })).toBe(true);
+    expect(ring.pushAction({ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 })).toBe(true);
+    expect(ring.pushAction({ kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 })).toBe(true);
+    expect(ring.pushAction({ kind: "bulkIn", id: 3, endpoint: 0x81, length: 8 })).toBe(true);
 
     // Consume 2 records so there is free space at the start, but not enough at the end.
     expect(ring.popAction()?.id).toBe(1);
@@ -108,10 +108,46 @@ describe("usb/UsbProxyRing", () => {
     const ring = new UsbProxyRing(sab);
 
     // bulkIn record is 16 bytes; only one fits in 20-byte ring.
-    expect(ring.pushAction({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 })).toBe(true);
+    expect(ring.pushAction({ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 })).toBe(true);
     expect(ring.dropped()).toBe(0);
 
-    expect(ring.pushAction({ kind: "bulkIn", id: 2, endpoint: 1, length: 8 })).toBe(false);
+    expect(ring.pushAction({ kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 })).toBe(false);
     expect(ring.dropped()).toBe(1);
+  });
+
+  it("drops invalid controlOut payload lengths and remains usable", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    const invalid = {
+      kind: "controlOut",
+      id: 1,
+      setup: { bmRequestType: 0, bRequest: 9, wValue: 1, wIndex: 0, wLength: 2 },
+      data: Uint8Array.of(1, 2, 3),
+    } as const satisfies UsbHostAction;
+
+    expect(ring.pushAction(invalid)).toBe(false);
+    expect(ring.dropped()).toBe(1);
+
+    const valid: UsbHostAction = { kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 };
+    expect(ring.pushAction(valid)).toBe(true);
+    expect(ring.popAction()).toEqual(valid);
+    expect(ring.popAction()).toBeNull();
+  });
+
+  it("drops invalid bulk endpoint addresses and remains usable", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    expect(ring.pushAction({ kind: "bulkIn", id: 1, endpoint: 0x01, length: 8 })).toBe(false);
+    expect(ring.dropped()).toBe(1);
+
+    expect(ring.pushAction({ kind: "bulkOut", id: 2, endpoint: 0x81, data: Uint8Array.of(1) })).toBe(false);
+    expect(ring.dropped()).toBe(2);
+
+    const valid: UsbHostAction = { kind: "bulkIn", id: 3, endpoint: 0x81, length: 8 };
+    expect(ring.pushAction(valid)).toBe(true);
+    expect(ring.popAction()).toEqual(valid);
+    expect(ring.popAction()).toBeNull();
   });
 });
