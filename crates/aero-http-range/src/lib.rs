@@ -398,6 +398,10 @@ mod tests {
             parse_range_header("bytes=").unwrap_err(),
             RangeParseError::InvalidSyntax
         ));
+        assert!(matches!(
+            parse_range_header("bytes=   ").unwrap_err(),
+            RangeParseError::InvalidSyntax
+        ));
 
         // Missing '-'.
         assert!(matches!(
@@ -430,6 +434,10 @@ mod tests {
         // -0 suffix is explicitly invalid.
         assert!(matches!(
             parse_range_header("bytes=-0").unwrap_err(),
+            RangeParseError::InvalidSyntax
+        ));
+        assert!(matches!(
+            parse_range_header("bytes=-0000").unwrap_err(),
             RangeParseError::InvalidSyntax
         ));
     }
@@ -521,6 +529,21 @@ mod tests {
                 end: u64::MAX
             }]
         );
+    }
+
+    #[test]
+    fn dos_guard_rejects_zero_padded_overflowing_u64() {
+        // If the significant (last 20) digits overflow u64, we must still reject,
+        // even if the number is heavily zero-padded.
+        let overflow = "18446744073709551616"; // u64::MAX + 1
+        let n = format!("{}{}", "0".repeat(44), overflow); // 64 digits total
+        assert_eq!(n.len(), 64);
+
+        let header = format!("bytes={n}-{n}");
+        assert!(matches!(
+            parse_range_header(&header).unwrap_err(),
+            RangeParseError::InvalidNumber
+        ));
     }
 
     #[test]
