@@ -1555,6 +1555,7 @@ try {
                 # Guest Tools versions, which can lead to subtle driver binding issues.
                 try {
                     $expected = @{}
+                    $expectedHasTools = $false
                     foreach ($r in $mediaIntegrity.file_results) {
                         if (-not $r -or -not $r.path) { continue }
                         $p = ("" + $r.path).Trim()
@@ -1563,7 +1564,9 @@ try {
                         if ($p.StartsWith("./")) { $p = $p.Substring(2) }
                         while ($p.StartsWith("/")) { $p = $p.Substring(1) }
                         if ($p.Length -eq 0) { continue }
-                        $expected[$p.ToLower()] = $true
+                        $pl = $p.ToLower()
+                        $expected[$pl] = $true
+                        if (-not $expectedHasTools -and $pl.StartsWith("tools/")) { $expectedHasTools = $true }
                     }
                     # manifest.json itself is intentionally treated as expected even if the
                     # manifest's files[] list does not include it.
@@ -1591,8 +1594,9 @@ try {
                         if (-not $rel -or $rel.Length -eq 0) { continue }
                         # tools\ is an optional diagnostics payload; it may be present/absent and may
                         # not be listed in manifest.json depending on packaging mode. Treat it as
-                        # out-of-scope for the mixed-media warning so we don't generate noisy WARNs.
-                        if ($rel.ToLower().StartsWith("tools/")) { continue }
+                        # out-of-scope for the mixed-media warning so we don't generate noisy WARNs,
+                        # unless the manifest explicitly lists tools\ paths.
+                        if ((-not $expectedHasTools) -and ($rel.ToLower().StartsWith("tools/"))) { continue }
                         $diskFiles += $rel
                     }
 
