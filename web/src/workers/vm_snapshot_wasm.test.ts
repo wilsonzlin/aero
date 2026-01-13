@@ -15,6 +15,7 @@ import {
   VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET,
   VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
+  VM_SNAPSHOT_DEVICE_USB_UHCI_KIND_LEGACY,
   VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND,
   parseAeroIoSnapshotVersion,
   resolveVmSnapshotRestoreFromOpfsExport,
@@ -85,7 +86,8 @@ describe("workers/vm_snapshot_wasm", () => {
   it("maps snapshot device kinds/ids for WorkerVmSnapshot", () => {
     // Device id/kind strings must remain stable across releases; snapshots depend on them.
     expect(VM_SNAPSHOT_DEVICE_ID_USB).toBe(12);
-    expect(VM_SNAPSHOT_DEVICE_USB_KIND).toBe("usb.uhci");
+    expect(VM_SNAPSHOT_DEVICE_USB_KIND).toBe("usb");
+    expect(VM_SNAPSHOT_DEVICE_USB_UHCI_KIND_LEGACY).toBe("usb.uhci");
     expect(VM_SNAPSHOT_DEVICE_ID_I8042).toBe(13);
     expect(VM_SNAPSHOT_DEVICE_I8042_KIND).toBe("input.i8042");
     expect(VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA).toBe(18);
@@ -100,6 +102,10 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(VM_SNAPSHOT_DEVICE_NET_STACK_KIND).toBe("net.stack");
 
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_USB_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_USB);
+    // Backwards compatibility: legacy `usb.uhci` kind should still parse as the USB device id.
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_USB_UHCI_KIND_LEGACY)).toBe(VM_SNAPSHOT_DEVICE_ID_USB);
+    // Encoding should always use the canonical kind, even when parsing legacy aliases.
+    expect(vmSnapshotDeviceIdToKind(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_USB_UHCI_KIND_LEGACY)!)).toBe(VM_SNAPSHOT_DEVICE_USB_KIND);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_NET_STACK_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_NET_STACK);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_E1000_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_E1000);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET);

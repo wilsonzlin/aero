@@ -168,7 +168,70 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(stackPolicy).toHaveBeenCalledWith("drop");
 
     // Returned blob kinds should be canonical (not device.<id>).
-    expect(res.devices?.map((d) => d.kind)).toEqual(["usb.uhci", "input.i8042", "audio.hda", "net.e1000", "net.stack"]);
+    expect(res.devices?.map((d) => d.kind)).toEqual(["usb", "input.i8042", "audio.hda", "net.e1000", "net.stack"]);
+  });
+
+  it("restores USB state from legacy usb.uhci kinds", async () => {
+    const usbState = new Uint8Array([0x01, 0x02]);
+
+    const restore = vi.fn(() => ({
+      cpu: new Uint8Array([0xaa]),
+      mmu: new Uint8Array([0xbb]),
+      devices: [{ kind: "usb.uhci", bytes: usbState }],
+    }));
+
+    const api = { vm_snapshot_restore_from_opfs: restore } as unknown as WasmApi;
+    const usbLoad = vi.fn();
+
+    const res = await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbUhciRuntime: { load_state: usbLoad },
+        usbUhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    expect(usbLoad).toHaveBeenCalledWith(usbState);
+    // Return kind should be canonicalized even when restoring legacy aliases.
+    expect(res.devices?.map((d) => d.kind)).toEqual(["usb"]);
+  });
+
+  it("prefers canonical USB kind when both canonical + legacy entries are present", async () => {
+    const canonicalBytes = new Uint8Array([0x10]);
+    const legacyBytes = new Uint8Array([0x20]);
+
+    const restore = vi.fn(() => ({
+      cpu: new Uint8Array([0xaa]),
+      mmu: new Uint8Array([0xbb]),
+      // Put the legacy entry *after* the canonical one to ensure restore precedence is stable.
+      devices: [
+        { kind: "usb", bytes: canonicalBytes },
+        { kind: "usb.uhci", bytes: legacyBytes },
+      ],
+    }));
+
+    const api = { vm_snapshot_restore_from_opfs: restore } as unknown as WasmApi;
+    const usbLoad = vi.fn();
+
+    await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbUhciRuntime: { load_state: usbLoad },
+        usbUhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    expect(usbLoad).toHaveBeenCalledWith(canonicalBytes);
   });
 
   it("restores USB state into xHCI when available", async () => {
@@ -327,7 +390,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(stackLoad).toHaveBeenCalledWith(stackState);
     expect(stackPolicy).toHaveBeenCalledWith("drop");
 
-    expect(res.devices?.map((d) => d.kind)).toEqual(["usb.uhci", "input.i8042", "audio.hda", "net.e1000", "net.stack"]);
+    expect(res.devices?.map((d) => d.kind)).toEqual(["usb", "input.i8042", "audio.hda", "net.e1000", "net.stack"]);
   });
 
   it("warns + ignores net.stack restore blobs when net.stack runtime is unavailable", async () => {
@@ -377,7 +440,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       usbXhciControllerBridge: { save_state: () => xhciBytes },
     });
 
-    expect(usbBlob?.kind).toBe("usb.uhci");
+    expect(usbBlob?.kind).toBe("usb");
     expect(usbBlob?.bytes).toBeInstanceOf(Uint8Array);
 
     const uhciLoad = vi.fn();

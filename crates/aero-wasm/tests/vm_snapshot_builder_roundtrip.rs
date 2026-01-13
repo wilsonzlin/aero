@@ -117,6 +117,7 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
     let net_stack_version = SnapshotVersion::new(1, 2);
     let net_stack_blob = build_net_stack_blob(net_stack_version);
     let devices_js = build_devices_js(&[
+        // Backwards compatibility: legacy kind `usb.uhci` should still parse as `DeviceId::USB`.
         ("usb.uhci", &usb_blob),
         ("input.i8042", &i8042_blob),
         ("audio.hda", &hda_blob),
@@ -318,12 +319,12 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
             "input.i8042",
             "net.e1000",
             "net.stack",
-            "usb.uhci"
+            "usb"
         ],
-        "restored device kinds should match input kinds"
+        "restored device kinds should be canonicalized"
     );
     assert_eq!(
-        devices_by_kind.get("usb.uhci").unwrap(),
+        devices_by_kind.get("usb").unwrap(),
         &usb_blob,
         "USB device bytes should roundtrip"
     );

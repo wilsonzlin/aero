@@ -1,6 +1,12 @@
 import type { WasmApi } from "../runtime/wasm_loader";
 
-export const VM_SNAPSHOT_DEVICE_USB_KIND = "usb.uhci";
+// Canonical VM snapshot device kind for the browser USB stack.
+//
+// This intentionally does *not* encode a specific host/guest controller model (UHCI/xHCI/etc) so
+// snapshots remain controller-agnostic.
+export const VM_SNAPSHOT_DEVICE_USB_KIND = "usb";
+// Legacy kind emitted by older builds for `DeviceId::USB`.
+export const VM_SNAPSHOT_DEVICE_USB_UHCI_KIND_LEGACY = "usb.uhci";
 export const VM_SNAPSHOT_DEVICE_I8042_KIND = "input.i8042";
 export const VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND = "audio.hda";
 export const VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND = "audio.virtio_snd";
@@ -168,7 +174,7 @@ export function vmSnapshotDeviceIdToKind(id: number): string {
 }
 
 export function vmSnapshotDeviceKindToId(kind: string): number | null {
-  if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) return VM_SNAPSHOT_DEVICE_ID_USB;
+  if (kind === VM_SNAPSHOT_DEVICE_USB_KIND || kind === VM_SNAPSHOT_DEVICE_USB_UHCI_KIND_LEGACY) return VM_SNAPSHOT_DEVICE_ID_USB;
   if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) return VM_SNAPSHOT_DEVICE_ID_I8042;
   if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) return VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA;
   if (kind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) return VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND;

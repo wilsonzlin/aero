@@ -226,7 +226,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `CPU_INTERNAL` | `9` | `device.9` | Non-architectural CPU bookkeeping (pending IRQs, etc.) |
 | `BIOS` | `10` | `device.10` | Firmware/BIOS runtime state |
 | `MEMORY` | `11` | `device.11` | Memory-bus glue state (A20, ROM windows, etc.) |
-| `USB` | `12` | `usb.uhci` | Browser USB stack (USB controller state; currently UHCI + optional EHCI blobs) |
+| `USB` | `12` | `usb` | Browser USB stack (USB controller state; currently UHCI + optional EHCI/xHCI blobs; legacy kind `usb.uhci` accepted) |
 | `I8042` | `13` | `input.i8042` | Legacy i8042 PS/2 controller state |
 | `PCI_CFG` | `14` | `device.14` | PCI config ports + bus state (Rust: `PciConfigPorts`, inner `PCPT`; web: JS PCI bus snapshot, inner `PCIB`) |
 | `PCI_INTX_ROUTER` | `15` | `device.15` | PCI INTx routing state (`PciIntxRouter`, inner `INTX`) |
@@ -284,8 +284,8 @@ For the browser USB stack (guest-visible USB controller(s) + runtime/bridge stat
 
 Note (current browser runtime wiring):
 
-- The outer web snapshot `kind` for `DeviceId::USB` remains `usb.uhci` for backward compatibility
-  (see `web/src/workers/vm_snapshot_wasm.ts`).
+- The outer web snapshot `kind` for `DeviceId::USB` is `usb` (legacy kind `usb.uhci` accepted; see
+  `web/src/workers/vm_snapshot_wasm.ts`).
 - Newer snapshots may encode multiple controller blobs inside a single `"AUSB"` container so UHCI
   state can coexist with EHCI/xHCI state:
   - `web/src/workers/usb_snapshot_container.ts` (`USB_SNAPSHOT_TAG_UHCI`, `USB_SNAPSHOT_TAG_EHCI`, `USB_SNAPSHOT_TAG_XHCI`)

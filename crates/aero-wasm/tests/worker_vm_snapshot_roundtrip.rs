@@ -38,7 +38,7 @@ fn worker_vm_snapshot_is_deterministic() {
     vm.add_device_state(aero_snapshot::DeviceId::NET_STACK.0, 1, 0, &[0x01])
         .expect("add_device_state net.stack");
     vm.add_device_state(aero_snapshot::DeviceId::USB.0, 3, 7, &[0xAA, 0xBB, 0xCC])
-        .expect("add_device_state usb.uhci");
+        .expect("add_device_state usb");
     vm.add_device_state(aero_snapshot::DeviceId::E1000.0, 2, 5, &[0x42, 0x43])
         .expect("add_device_state net.e1000");
     vm.add_device_state(0x1234, 9, 9, &[0x99])
@@ -59,7 +59,7 @@ fn worker_vm_snapshot_is_deterministic() {
     vm2.add_device_state(aero_snapshot::DeviceId::E1000.0, 2, 5, &[0x42, 0x43])
         .expect("add_device_state net.e1000 #2");
     vm2.add_device_state(aero_snapshot::DeviceId::USB.0, 3, 7, &[0xAA, 0xBB, 0xCC])
-        .expect("add_device_state usb.uhci #2");
+        .expect("add_device_state usb #2");
     vm2.add_device_state(aero_snapshot::DeviceId::NET_STACK.0, 1, 0, &[0x01])
         .expect("add_device_state net.stack #2");
 

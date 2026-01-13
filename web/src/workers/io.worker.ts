@@ -991,7 +991,6 @@ function resolveNetStackSnapshotBridge(): NetStackSnapshotBridgeLike | null {
   if (typeof candidate !== "object" && typeof candidate !== "function") return null;
   return candidate as NetStackSnapshotBridgeLike;
 }
-
 // Keep broker IDs from overlapping between multiple concurrent USB action sources (UHCI runtime,
 // harness panel, demo driver, etc). The demo uses 1_000_000_000 and the harness uses 2_000_000_000.
 const UHCI_RUNTIME_WEBUSB_ID_BASE = 3_000_000_000;

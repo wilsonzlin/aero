@@ -28,9 +28,9 @@ export type IoWorkerSnapshotRuntimes = Readonly<{
   // Optional USB controller snapshot bridges/runtimes.
   //
   // All controller snapshots are stored under a single outer `DeviceId::USB` entry (kind
-  // `usb.uhci` in the web runtime for historical reasons). When multiple controllers are present
-  // (UHCI+EHCI+xHCI), we wrap their individual blobs in a deterministic container so they can be
-  // snapshotted/restored together.
+  // `usb`; legacy kind `usb.uhci` is accepted for backwards compatibility). When multiple
+  // controllers are present (UHCI+EHCI+xHCI), we wrap their individual blobs in a deterministic
+  // container so they can be snapshotted/restored together.
   usbXhciControllerBridge: unknown | null;
   usbUhciRuntime: unknown | null;
   usbUhciControllerBridge: unknown | null;
@@ -80,10 +80,8 @@ function snapshotDeviceKindForWasm(kind: string): string {
 }
 
 function normalizeRestoredDeviceKind(kind: string): string {
-  if (kind.startsWith(VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID)) {
-    const id = vmSnapshotDeviceKindToId(kind);
-    if (id !== null) return vmSnapshotDeviceIdToKind(id);
-  }
+  const id = vmSnapshotDeviceKindToId(kind);
+  if (id !== null) return vmSnapshotDeviceIdToKind(id);
   return kind;
 }
 
@@ -539,6 +537,16 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
    */
   coordinatorDevices?: VmSnapshotDeviceBlob[];
 }): Promise<void> {
+  // Normalize any device kind aliases in the cached/restored device list.
+  //
+  // In the common case, `restoredDevices` comes from `restoreIoWorkerVmSnapshotFromOpfs` and is
+  // already canonicalized (e.g. legacy `usb.uhci` gets mapped to `usb`). However, be defensive in
+  // case callers pass through raw snapshot device kinds.
+  const restoredDevices: IoWorkerSnapshotDeviceState[] = (opts.restoredDevices ?? []).map((d) => ({
+    kind: normalizeRestoredDeviceKind(d.kind),
+    bytes: d.bytes,
+  }));
+
   // Fresh device blobs produced by this IO worker.
   const freshDevices: IoWorkerSnapshotDeviceState[] = collectIoWorkerSnapshotDeviceStates(opts.runtimes);
 
@@ -555,7 +563,7 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
   }
 
   // USB snapshots are a special case: multiple controller snapshots (UHCI/EHCI/xHCI/...) are
-  // multiplexed into a single `usb.uhci` device blob via `usb_snapshot_container.ts`.
+  // multiplexed into a single `DeviceId::USB` (`usb`) device blob via `usb_snapshot_container.ts`.
   //
   // If we previously restored a USB container that includes controllers not present in the current
   // build (e.g. snapshot taken on a newer build with EHCI/xHCI), preserve those controller blobs
@@ -563,7 +571,7 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
   //
   // This mirrors the top-level "unknown device blob preservation" semantics, but at a sub-blob
   // granularity within the USB container.
-  const cachedUsb = (opts.restoredDevices ?? []).find((d) => d.kind === VM_SNAPSHOT_DEVICE_USB_KIND) ?? null;
+  const cachedUsb = restoredDevices.find((d) => d.kind === VM_SNAPSHOT_DEVICE_USB_KIND) ?? null;
   const freshUsbIndex = freshDevices.findIndex((d) => d.kind === VM_SNAPSHOT_DEVICE_USB_KIND);
   if (cachedUsb && freshUsbIndex >= 0) {
     const freshUsb = freshDevices[freshUsbIndex]!;
@@ -579,7 +587,7 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
   const freshKinds = new Set(freshDevices.map((d) => d.kind));
   const devices: IoWorkerSnapshotDeviceState[] = [];
   const seen = new Set<string>();
-  for (const cached of opts.restoredDevices ?? []) {
+  for (const cached of restoredDevices) {
     if (freshKinds.has(cached.kind)) continue;
     if (seen.has(cached.kind)) continue;
     devices.push(cached);
@@ -664,7 +672,10 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
     const devices: VmSnapshotDeviceBlob[] = [];
     const restoredDevices: IoWorkerSnapshotDeviceState[] = [];
+    // When multiple USB blobs are present (shouldn't happen), prefer the canonical kind over legacy
+    // aliases so restores are deterministic.
     let usbBytes: Uint8Array | null = null;
+    let usbPriority = -1;
     let i8042Bytes: Uint8Array | null = null;
     let hdaBytes: Uint8Array | null = null;
     let virtioSndBytes: Uint8Array | null = null;
@@ -677,14 +688,27 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       if (typeof e.kind !== "string") continue;
       if (!(e.bytes instanceof Uint8Array)) continue;
 
-      let kind = normalizeRestoredDeviceKind(e.kind);
+      const rawKind = e.kind;
+      let kind = normalizeRestoredDeviceKind(rawKind);
       if (kind === VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND && isPciBusSnapshot(e.bytes)) {
         kind = VM_SNAPSHOT_DEVICE_PCI_CFG_KIND;
       }
       devices.push({ kind, bytes: copyU8ToArrayBuffer(e.bytes) });
       restoredDevices.push({ kind, bytes: e.bytes });
 
-      if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.bytes;
+      if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) {
+        // Canonical USB kind should win if present.
+        const nextPriority =
+          rawKind === VM_SNAPSHOT_DEVICE_USB_KIND
+            ? 2
+            : rawKind.startsWith(VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID)
+              ? 1
+              : 0;
+        if (nextPriority > usbPriority) {
+          usbPriority = nextPriority;
+          usbBytes = e.bytes;
+        }
+      }
       if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) virtioSndBytes = e.bytes;
