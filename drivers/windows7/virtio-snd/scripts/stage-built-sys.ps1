@@ -119,6 +119,9 @@ $candidates = @(
 )
 
 if ($candidates.Count -eq 0) {
+  if ($variantNormalized -eq 'debuglogs') {
+    throw "Could not find $srcSysName under -InputDir '$inputDirResolved'. Build the driver first (MSBuild Configuration=DebugLogs)."
+  }
   throw "Could not find $srcSysName under -InputDir '$inputDirResolved'. Build the driver first."
 }
 

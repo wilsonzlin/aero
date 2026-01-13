@@ -10,7 +10,7 @@ This folder is intended to be the **exact directory you point Windows to** durin
 In a finished package, this directory contains the driver package payload:
 
 - One or more driver binaries (built output; copied in manually from the build output):
-  - `aero_virtio_snd.sys` (Aero contract v1 build)
+  - `aero_virtio_snd.sys` (Aero contract v1 build; also used for the DebugLogs/DBG=1 build when staged)
   - `virtiosnd_legacy.sys` (optional transitional/QEMU build)
   - `virtiosnd_ioport.sys` (optional legacy virtio-pci I/O-port build; bring-up only)
 - Installable INF(s):
@@ -30,6 +30,9 @@ In a finished package, this directory contains the driver package payload:
 - `..\scripts\make-cat.cmd` and `..\scripts\sign-driver.cmd` default to the **contract v1** package
   (`aero_virtio_snd.sys` + `aero_virtio_snd.inf`). Pass `legacy` to target the transitional/QEMU package
   (`virtiosnd_legacy.sys` + `aero-virtio-snd-legacy.inf`, service `aeroviosnd_legacy`).
+- The MSBuild DebugLogs configuration outputs `aero_virtio_snd_dbg.sys`, but the canonical INF references
+  `aero_virtio_snd.sys`. Stage it into this folder as the canonical name with:
+  - `powershell -ExecutionPolicy Bypass -File ..\scripts\stage-built-sys.ps1 -Arch <x86|amd64> -Variant debuglogs -InputDir <msbuild-out>`
 - The legacy I/O-port bring-up package (`aero-virtio-snd-ioport.inf`, service `aeroviosnd_ioport`) is opt-in and not currently covered by the helper scripts.
 - The legacy alias INF is checked in as `virtio-snd.inf.disabled` to avoid accidentally shipping/installing **two**
   INFs that match the same HWIDs.
