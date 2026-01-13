@@ -78,9 +78,9 @@ enables the same canonical controller set in the full-system `Machine` integrati
    back to the primary HDD boot path and enters the HDD boot sector with **`DL=0x80`**.
 5. Windows Setup enumerates the **AHCI disk** on **ICH9 AHCI port 0** and installs Windows onto it.
 
-Implementation note (Rust): in `aero_machine`, the Win7 install preset / install flow should set
-the BIOS boot drive to the CD drive number (e.g. `Machine::set_boot_drive(0xE0)`) so firmware boots
-the install ISO first, then switch back to `0x80` for normal HDD boots after installation.
+Implementation note (Rust): in `aero_machine`, this corresponds to configuring the BIOS boot drive
+number (`firmware::bios::BiosConfig::boot_drive`) to the CD drive number (e.g. `0xE0`) so firmware
+boots the install ISO first, then switch back to `0x80` for normal HDD boots after installation.
 
 ### 2) Normal boot (after installation)
 
