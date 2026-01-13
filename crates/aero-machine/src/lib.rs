@@ -13,6 +13,7 @@
 mod guest_time;
 mod shared_disk;
 pub mod virtual_time;
+mod vcpu_init;
 
 pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
 pub use shared_disk::SharedDisk;
