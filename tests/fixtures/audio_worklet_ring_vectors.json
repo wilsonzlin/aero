@@ -1,0 +1,167 @@
+[
+  {
+    "name": "empty buffer (read == write)",
+    "read_idx": 0,
+    "write_idx": 0,
+    "capacity_frames": 8,
+    "expected": {
+      "frames_available": 0,
+      "frames_available_clamped": 0,
+      "frames_free": 8
+    }
+  },
+  {
+    "name": "normal monotonic indices (partially filled)",
+    "read_idx": 0,
+    "write_idx": 3,
+    "capacity_frames": 8,
+    "expected": {
+      "frames_available": 3,
+      "frames_available_clamped": 3,
+      "frames_free": 5
+    }
+  },
+  {
+    "name": "normal monotonic indices (exactly full)",
+    "read_idx": 0,
+    "write_idx": 8,
+    "capacity_frames": 8,
+    "expected": {
+      "frames_available": 8,
+      "frames_available_clamped": 8,
+      "frames_free": 0
+    }
+  },
+  {
+    "name": "available > capacity (clamp to capacity)",
+    "read_idx": 0,
+    "write_idx": 10,
+    "capacity_frames": 8,
+    "expected": {
+      "frames_available": 10,
+      "frames_available_clamped": 8,
+      "frames_free": 0
+    }
+  },
+  {
+    "name": "normal monotonic indices (read advanced)",
+    "read_idx": 5,
+    "write_idx": 9,
+    "capacity_frames": 8,
+    "expected": {
+      "frames_available": 4,
+      "frames_available_clamped": 4,
+      "frames_free": 4
+    }
+  },
+  {
+    "name": "u32 wrap-around (write_idx < read_idx) small delta",
+    "read_idx": 4294967294,
+    "write_idx": 1,
+    "capacity_frames": 4,
+    "expected": {
+      "frames_available": 3,
+      "frames_available_clamped": 3,
+      "frames_free": 1
+    }
+  },
+  {
+    "name": "u32 wrap-around (write_idx < read_idx) exactly full after wrap",
+    "read_idx": 4294967292,
+    "write_idx": 1,
+    "capacity_frames": 5,
+    "expected": {
+      "frames_available": 5,
+      "frames_available_clamped": 5,
+      "frames_free": 0
+    }
+  },
+  {
+    "name": "u32 wrap-around (write_idx < read_idx) delta > capacity (clamp)",
+    "read_idx": 4294967280,
+    "write_idx": 10,
+    "capacity_frames": 8,
+    "expected": {
+      "frames_available": 26,
+      "frames_available_clamped": 8,
+      "frames_free": 0
+    }
+  },
+  {
+    "name": "capacity=1 (empty)",
+    "read_idx": 123,
+    "write_idx": 123,
+    "capacity_frames": 1,
+    "expected": {
+      "frames_available": 0,
+      "frames_available_clamped": 0,
+      "frames_free": 1
+    }
+  },
+  {
+    "name": "capacity=1 (full)",
+    "read_idx": 123,
+    "write_idx": 124,
+    "capacity_frames": 1,
+    "expected": {
+      "frames_available": 1,
+      "frames_available_clamped": 1,
+      "frames_free": 0
+    }
+  },
+  {
+    "name": "capacity=1 (available > capacity clamps)",
+    "read_idx": 123,
+    "write_idx": 125,
+    "capacity_frames": 1,
+    "expected": {
+      "frames_available": 2,
+      "frames_available_clamped": 1,
+      "frames_free": 0
+    }
+  },
+  {
+    "name": "capacity=2 (write_idx < read_idx extreme wrap delta)",
+    "read_idx": 1,
+    "write_idx": 0,
+    "capacity_frames": 2,
+    "expected": {
+      "frames_available": 4294967295,
+      "frames_available_clamped": 2,
+      "frames_free": 0
+    }
+  },
+  {
+    "name": "capacity=2 (partially filled)",
+    "read_idx": 10,
+    "write_idx": 11,
+    "capacity_frames": 2,
+    "expected": {
+      "frames_available": 1,
+      "frames_available_clamped": 1,
+      "frames_free": 1
+    }
+  },
+  {
+    "name": "capacity=2 (exactly full)",
+    "read_idx": 10,
+    "write_idx": 12,
+    "capacity_frames": 2,
+    "expected": {
+      "frames_available": 2,
+      "frames_available_clamped": 2,
+      "frames_free": 0
+    }
+  },
+  {
+    "name": "capacity=3 (normal indices but delta > capacity clamps)",
+    "read_idx": 1000,
+    "write_idx": 1005,
+    "capacity_frames": 3,
+    "expected": {
+      "frames_available": 5,
+      "frames_available_clamped": 3,
+      "frames_free": 0
+    }
+  }
+]

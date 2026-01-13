@@ -547,6 +547,8 @@ dependencies = [
  "firmware",
  "js-sys",
  "memory",
+ "serde",
+ "serde_json",
  "wasm-bindgen",
 ]
 
