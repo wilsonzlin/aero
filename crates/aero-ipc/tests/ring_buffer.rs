@@ -190,3 +190,10 @@ fn ring_buffer_try_pop_capped_drops_oversize_without_allocating_payload_len() {
     assert_eq!(rb.try_pop_capped(1), Ok(vec![0x42]));
     assert_eq!(rb.try_pop_capped(1), Err(PopError::Empty));
 }
+
+#[test]
+fn record_size_saturates_on_overflow() {
+    // `record_size` is used in a handful of places to size rings for a desired payload length. It
+    // should never panic or wrap on extreme inputs.
+    assert_eq!(record_size(usize::MAX), usize::MAX);
+}
