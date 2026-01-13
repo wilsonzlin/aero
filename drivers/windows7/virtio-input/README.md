@@ -344,7 +344,7 @@ pnputil -i -a C:\path\to\aero_virtio_input.inf
 If you are using the deterministic release ZIP produced by `scripts/package-release.ps1`, the extracted folder also includes:
 
 - `INSTALL_CERT.cmd` (optional; installs `aero-virtio-input-test.cer` into `Root` + `TrustedPublisher`; requires elevation)
-- `INSTALL_DRIVER.cmd` (runs `pnputil -i -a aero_virtio_input.inf`)
+- `INSTALL_DRIVER.cmd` (runs `pnputil -i -a aero_virtio_input.inf`; requires elevation)
 
 ## Verifying the driver loaded
 
