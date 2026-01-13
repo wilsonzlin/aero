@@ -113,6 +113,15 @@ impl CodeCache {
         Some(node.handle)
     }
 
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.nodes.clear();
+        self.free_list.clear();
+        self.head = None;
+        self.tail = None;
+        self.current_bytes = 0;
+    }
+
     fn evict_if_needed(&mut self) -> Vec<u64> {
         let mut evicted = Vec::new();
         while self.map.len() > self.max_blocks

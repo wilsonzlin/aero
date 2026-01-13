@@ -188,6 +188,10 @@ impl PageVersionTracker {
     pub fn versions_len(&self) -> usize {
         self.versions.len()
     }
+
+    pub fn reset(&mut self) {
+        self.versions.clear();
+    }
 }
 
 pub struct JitRuntime<B, C> {
@@ -274,6 +278,22 @@ where
 
     pub fn on_guest_write(&mut self, paddr: u64, len: usize) {
         self.page_versions.bump_write(paddr, len);
+    }
+
+    /// Reset all runtime-managed JIT state.
+    ///
+    /// This is intended for embedders that restore a snapshot of guest memory/state or want to
+    /// perform global invalidation without recreating the entire runtime. After calling `reset`,
+    /// previously-compiled blocks and compilation results derived from old page-version snapshots
+    /// will no longer be considered valid.
+    pub fn reset(&mut self) {
+        self.cache.clear();
+        self.profile.reset();
+        self.page_versions.reset();
+        self.stats_reset();
+        if let Some(metrics) = self.metrics_sink.as_deref() {
+            metrics.set_cache_bytes(0, self.config.cache_max_bytes as u64);
+        }
     }
 
     /// Snapshot the current page-version state for a block of guest code.
@@ -701,5 +721,116 @@ mod tests {
 
         assert_eq!(metrics.stale_reject(), 1);
         assert_eq!(metrics.install(), 0);
+    }
+
+    #[test]
+    fn reset_clears_cache_and_hotness_profile() {
+        let entry_rip = 0x1000u64;
+        let config = JitConfig {
+            hot_threshold: 2,
+            cache_max_blocks: 16,
+            ..Default::default()
+        };
+
+        let mut jit = make_runtime(config);
+
+        // Warm the profile and requested set by making the block hot without a compiled handle.
+        assert!(jit.prepare_block(entry_rip).is_none());
+        assert_eq!(jit.hotness(entry_rip), 1);
+        assert!(jit.compile.requests.is_empty());
+
+        assert!(jit.prepare_block(entry_rip).is_none());
+        assert_eq!(jit.hotness(entry_rip), 2);
+        assert_eq!(jit.compile.requests, vec![entry_rip]);
+
+        // Install a compiled block and ensure it is now returned by `prepare_block`.
+        jit.install_block(entry_rip, 0, 0x2000, 16);
+        assert_eq!(jit.cache_len(), 1);
+        assert!(jit.is_compiled(entry_rip));
+        assert_eq!(jit.cache.current_bytes(), 16);
+        assert!(jit.prepare_block(entry_rip).is_some());
+
+        // Reset should behave like a cold start: cache empty, counters zero, and compile requests
+        // can be re-issued even if they were previously requested.
+        assert_ne!(jit.stats_snapshot(), JitRuntimeStats::default());
+        jit.reset();
+        assert_eq!(jit.cache_len(), 0);
+        assert!(!jit.is_compiled(entry_rip));
+        assert_eq!(jit.hotness(entry_rip), 0);
+        assert!(jit.cache.is_empty());
+        assert_eq!(jit.cache.current_bytes(), 0);
+        assert_eq!(jit.stats_snapshot(), JitRuntimeStats::default());
+
+        assert!(jit.prepare_block(entry_rip).is_none());
+        assert_eq!(jit.hotness(entry_rip), 1);
+        assert_eq!(jit.compile.requests, vec![entry_rip]);
+
+        assert!(jit.prepare_block(entry_rip).is_none());
+        assert_eq!(jit.hotness(entry_rip), 2);
+        assert_eq!(jit.compile.requests, vec![entry_rip, entry_rip]);
+    }
+
+    #[test]
+    fn reset_clears_page_versions_and_invalidates_old_snapshots() {
+        let entry_rip = 0x3000u64;
+        let code_paddr = 0x4000u64;
+        let config = JitConfig {
+            hot_threshold: 1,
+            cache_max_blocks: 16,
+            ..Default::default()
+        };
+
+        let mut jit = make_runtime(config);
+
+        // Simulate guest code modification so the page version is non-zero.
+        jit.on_guest_write(code_paddr, 1);
+        let code_page = code_paddr >> PAGE_SHIFT;
+        assert_eq!(jit.page_versions().version(code_page), 1);
+
+        // A handle compiled against the old page-version snapshot should be rejected after reset.
+        let old_meta = jit.snapshot_meta(code_paddr, 1);
+        assert_eq!(old_meta.page_versions.len(), 1);
+        assert_eq!(old_meta.page_versions[0].version, 1);
+
+        jit.reset();
+        assert_eq!(
+            jit.page_versions().version(code_page),
+            0,
+            "reset should restore all pages to version 0"
+        );
+        assert_eq!(jit.page_versions().versions_len(), 0);
+
+        let old_handle = CompiledBlockHandle {
+            entry_rip,
+            table_index: 0,
+            meta: old_meta,
+        };
+        jit.install_handle(old_handle);
+
+        assert_eq!(jit.cache_len(), 0);
+        assert!(!jit.is_compiled(entry_rip));
+        assert_eq!(
+            jit.compile.requests,
+            vec![entry_rip],
+            "stale compilation results must be rejected after reset"
+        );
+    }
+
+    #[test]
+    fn reset_updates_metrics_cache_bytes() {
+        let mut rt = make_runtime(JitConfig {
+            cache_max_bytes: 10,
+            ..Default::default()
+        });
+        let metrics = Arc::new(MockMetricsSink::default());
+        rt.set_metrics_sink(Some(metrics.clone()));
+
+        rt.install_block(0x1000, 0, 0, 6);
+        assert_eq!(metrics.cache_used(), 6);
+        assert_eq!(metrics.cache_capacity(), 10);
+
+        rt.reset();
+        assert_eq!(metrics.cache_used(), 0);
+        assert_eq!(metrics.cache_capacity(), 10);
     }
 }

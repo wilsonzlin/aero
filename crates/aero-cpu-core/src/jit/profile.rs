@@ -143,4 +143,10 @@ impl HotnessProfile {
             },
         );
     }
+
+    pub fn reset(&mut self) {
+        self.clock = 0;
+        self.counters.clear();
+        self.requested.clear();
+    }
 }
