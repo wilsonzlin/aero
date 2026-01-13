@@ -312,6 +312,59 @@ pub enum Sm4Inst {
         a: SrcOperand,
         b: SrcOperand,
     },
+    /// Integer add (wrap-around).
+    IAdd {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Integer subtract (wrap-around).
+    ISub {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Integer multiply (wrap-around).
+    IMul {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Bitwise OR.
+    Or {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Bitwise XOR.
+    Xor {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Bitwise NOT.
+    Not {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    /// Shift left (`a << b`).
+    IShl {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Arithmetic shift right (`a >> b` in `i32` space).
+    IShr {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Logical shift right (`a >> b` in `u32` space).
+    UShr {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
     /// Signed integer minimum: `imin dst, a, b`
     IMin {
         dst: DstOperand,

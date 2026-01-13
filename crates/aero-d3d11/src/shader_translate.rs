@@ -1220,41 +1220,29 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
             }
-            Sm4Inst::And { dst: _, a, b }
-            | Sm4Inst::Add { dst: _, a, b }
-            | Sm4Inst::IAddC {
-                dst_sum: _,
-                dst_carry: _,
-                a,
-                b,
-            }
-            | Sm4Inst::UAddC {
-                dst_sum: _,
-                dst_carry: _,
-                a,
-                b,
-            }
-            | Sm4Inst::ISubC {
-                dst_diff: _,
-                dst_borrow: _,
-                a,
-                b,
-            }
-            | Sm4Inst::USubB {
-                dst_diff: _,
-                dst_borrow: _,
-                a,
-                b,
-            }
+            Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
             | Sm4Inst::Dp3 { dst: _, a, b }
             | Sm4Inst::Dp4 { dst: _, a, b }
             | Sm4Inst::Min { dst: _, a, b }
             | Sm4Inst::Max { dst: _, a, b }
+            | Sm4Inst::IAdd { dst: _, a, b }
+            | Sm4Inst::ISub { dst: _, a, b }
+            | Sm4Inst::IMul { dst: _, a, b }
+            | Sm4Inst::And { dst: _, a, b }
+            | Sm4Inst::Or { dst: _, a, b }
+            | Sm4Inst::Xor { dst: _, a, b }
+            | Sm4Inst::IShl { dst: _, a, b }
+            | Sm4Inst::IShr { dst: _, a, b }
+            | Sm4Inst::UShr { dst: _, a, b }
             | Sm4Inst::IMin { dst: _, a, b }
             | Sm4Inst::IMax { dst: _, a, b }
             | Sm4Inst::UMin { dst: _, a, b }
             | Sm4Inst::UMax { dst: _, a, b }
+            | Sm4Inst::IAddC { a, b, .. }
+            | Sm4Inst::UAddC { a, b, .. }
+            | Sm4Inst::ISubC { a, b, .. }
+            | Sm4Inst::USubB { a, b, .. }
             | Sm4Inst::UDiv {
                 dst_quot: _,
                 dst_rem: _,
@@ -1300,12 +1288,13 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             Sm4Inst::Rcp { dst: _, src }
             | Sm4Inst::Rsq { dst: _, src }
             | Sm4Inst::IAbs { dst: _, src }
+            | Sm4Inst::INeg { dst: _, src }
+            | Sm4Inst::Not { dst: _, src }
             | Sm4Inst::Bfrev { dst: _, src }
             | Sm4Inst::CountBits { dst: _, src }
             | Sm4Inst::FirstbitHi { dst: _, src }
             | Sm4Inst::FirstbitLo { dst: _, src }
-            | Sm4Inst::FirstbitShi { dst: _, src }
-            | Sm4Inst::INeg { dst: _, src } => scan_src_regs(src, &mut scan_reg),
+            | Sm4Inst::FirstbitShi { dst: _, src } => scan_src_regs(src, &mut scan_reg),
             Sm4Inst::Cmp { a, b, .. } => {
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
@@ -2432,32 +2421,7 @@ fn scan_resources(
                 scan_src(a)?;
                 scan_src(b)?;
             }
-            Sm4Inst::And { dst: _, a, b }
-            | Sm4Inst::Add { dst: _, a, b }
-            | Sm4Inst::IAddC {
-                dst_sum: _,
-                dst_carry: _,
-                a,
-                b,
-            }
-            | Sm4Inst::UAddC {
-                dst_sum: _,
-                dst_carry: _,
-                a,
-                b,
-            }
-            | Sm4Inst::ISubC {
-                dst_diff: _,
-                dst_borrow: _,
-                a,
-                b,
-            }
-            | Sm4Inst::USubB {
-                dst_diff: _,
-                dst_borrow: _,
-                a,
-                b,
-            }
+            Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
             | Sm4Inst::Dp3 { dst: _, a, b }
             | Sm4Inst::Dp4 { dst: _, a, b }
@@ -2479,7 +2443,20 @@ fn scan_resources(
                 a,
                 b,
             }
-            | Sm4Inst::Cmp { dst: _, a, b, .. } => {
+            | Sm4Inst::Cmp { dst: _, a, b, .. }
+            | Sm4Inst::IAdd { dst: _, a, b }
+            | Sm4Inst::ISub { dst: _, a, b }
+            | Sm4Inst::IMul { dst: _, a, b }
+            | Sm4Inst::And { dst: _, a, b }
+            | Sm4Inst::Or { dst: _, a, b }
+            | Sm4Inst::Xor { dst: _, a, b }
+            | Sm4Inst::IShl { dst: _, a, b }
+            | Sm4Inst::IShr { dst: _, a, b }
+            | Sm4Inst::UShr { dst: _, a, b }
+            | Sm4Inst::IAddC { a, b, .. }
+            | Sm4Inst::UAddC { a, b, .. }
+            | Sm4Inst::ISubC { a, b, .. }
+            | Sm4Inst::USubB { a, b, .. } => {
                 scan_src(a)?;
                 scan_src(b)?;
             }
@@ -2496,7 +2473,8 @@ fn scan_resources(
             | Sm4Inst::FirstbitHi { dst: _, src }
             | Sm4Inst::FirstbitLo { dst: _, src }
             | Sm4Inst::FirstbitShi { dst: _, src }
-            | Sm4Inst::INeg { dst: _, src } => scan_src(src)?,
+            | Sm4Inst::INeg { dst: _, src }
+            | Sm4Inst::Not { dst: _, src } => scan_src(src)?,
             Sm4Inst::Bfi {
                 dst: _,
                 width,
@@ -2845,13 +2823,21 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
             }
-            Sm4Inst::And { dst, a, b }
-            | Sm4Inst::Add { dst, a, b }
+            Sm4Inst::Add { dst, a, b }
             | Sm4Inst::Mul { dst, a, b }
             | Sm4Inst::Dp3 { dst, a, b }
             | Sm4Inst::Dp4 { dst, a, b }
             | Sm4Inst::Min { dst, a, b }
             | Sm4Inst::Max { dst, a, b }
+            | Sm4Inst::IAdd { dst, a, b }
+            | Sm4Inst::ISub { dst, a, b }
+            | Sm4Inst::IMul { dst, a, b }
+            | Sm4Inst::And { dst, a, b }
+            | Sm4Inst::Or { dst, a, b }
+            | Sm4Inst::Xor { dst, a, b }
+            | Sm4Inst::IShl { dst, a, b }
+            | Sm4Inst::IShr { dst, a, b }
+            | Sm4Inst::UShr { dst, a, b }
             | Sm4Inst::IMin { dst, a, b }
             | Sm4Inst::IMax { dst, a, b }
             | Sm4Inst::UMin { dst, a, b }
@@ -2892,7 +2878,8 @@ fn emit_temp_and_output_decls(
             | Sm4Inst::FirstbitHi { dst, src }
             | Sm4Inst::FirstbitLo { dst, src }
             | Sm4Inst::FirstbitShi { dst, src }
-            | Sm4Inst::INeg { dst, src } => {
+            | Sm4Inst::INeg { dst, src }
+            | Sm4Inst::Not { dst, src } => {
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
             }
@@ -3434,11 +3421,9 @@ fn emit_instructions(
                 emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "utof", ctx)?;
             }
             Sm4Inst::And { dst, a, b } => {
-                let a_vec = emit_src_vec4(a, inst_index, "and", ctx)?;
-                let b_vec = emit_src_vec4(b, inst_index, "and", ctx)?;
-                let rhs = format!(
-                    "bitcast<vec4<f32>>(bitcast<vec4<u32>>({a_vec}) & bitcast<vec4<u32>>({b_vec}))"
-                );
+                let a = emit_src_vec4_u32(a, inst_index, "and", ctx)?;
+                let b = emit_src_vec4_u32(b, inst_index, "and", ctx)?;
+                let rhs = format!("bitcast<vec4<f32>>(({a}) & ({b}))");
                 emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "and", ctx)?;
             }
             Sm4Inst::Add { dst, a, b } => {
@@ -3612,9 +3597,62 @@ fn emit_instructions(
                     dst_rem.mask,
                     r_f_name,
                     inst_index,
-                    "idiv",
-                    ctx,
-                )?;
+                     "idiv",
+                     ctx,
+                 )?;
+            }
+            Sm4Inst::IAdd { dst, a, b } => {
+                let a = emit_src_vec4_i32(a, inst_index, "iadd", ctx)?;
+                let b = emit_src_vec4_i32(b, inst_index, "iadd", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(({a}) + ({b}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "iadd", ctx)?;
+            }
+            Sm4Inst::ISub { dst, a, b } => {
+                let a = emit_src_vec4_i32(a, inst_index, "isub", ctx)?;
+                let b = emit_src_vec4_i32(b, inst_index, "isub", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(({a}) - ({b}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "isub", ctx)?;
+            }
+            Sm4Inst::IMul { dst, a, b } => {
+                let a = emit_src_vec4_i32(a, inst_index, "imul", ctx)?;
+                let b = emit_src_vec4_i32(b, inst_index, "imul", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(({a}) * ({b}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "imul", ctx)?;
+            }
+            Sm4Inst::Or { dst, a, b } => {
+                let a = emit_src_vec4_u32(a, inst_index, "or", ctx)?;
+                let b = emit_src_vec4_u32(b, inst_index, "or", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(({a}) | ({b}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "or", ctx)?;
+            }
+            Sm4Inst::Xor { dst, a, b } => {
+                let a = emit_src_vec4_u32(a, inst_index, "xor", ctx)?;
+                let b = emit_src_vec4_u32(b, inst_index, "xor", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(({a}) ^ ({b}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "xor", ctx)?;
+            }
+            Sm4Inst::Not { dst, src } => {
+                let src = emit_src_vec4_u32(src, inst_index, "not", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(~({src}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "not", ctx)?;
+            }
+            Sm4Inst::IShl { dst, a, b } => {
+                let a = emit_src_vec4_u32(a, inst_index, "ishl", ctx)?;
+                let b = emit_src_vec4_u32(b, inst_index, "ishl", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(({a}) << ({b}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ishl", ctx)?;
+            }
+            Sm4Inst::IShr { dst, a, b } => {
+                let a = emit_src_vec4_i32(a, inst_index, "ishr", ctx)?;
+                let b = emit_src_vec4_u32(b, inst_index, "ishr", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(({a}) >> ({b}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ishr", ctx)?;
+            }
+            Sm4Inst::UShr { dst, a, b } => {
+                let a = emit_src_vec4_u32(a, inst_index, "ushr", ctx)?;
+                let b = emit_src_vec4_u32(b, inst_index, "ushr", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(({a}) >> ({b}))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ushr", ctx)?;
             }
             Sm4Inst::IMin { dst, a, b } => {
                 let a = emit_src_vec4_i32(a, inst_index, "imin", ctx)?;

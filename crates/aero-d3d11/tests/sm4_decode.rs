@@ -1179,6 +1179,195 @@ fn decodes_ld_with_explicit_lod_operand() {
 }
 
 #[test]
+fn decodes_integer_and_bitwise_ops() {
+    let mut body = Vec::<u32>::new();
+
+    // iadd r0, r1, r2
+    let mut iadd = vec![opcode_token(OPCODE_IADD, 1 + 2 + 2 + 2)];
+    iadd.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    iadd.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    iadd.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&iadd);
+
+    // isub r3, r0, r2
+    let mut isub = vec![opcode_token(OPCODE_ISUB, 1 + 2 + 2 + 2)];
+    isub.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
+    isub.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    isub.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&isub);
+
+    // imul r4, r3, r1
+    let mut imul = vec![opcode_token(OPCODE_IMUL, 1 + 2 + 2 + 2)];
+    imul.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    imul.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[3],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    imul.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&imul);
+
+    // and r5, r4, r0
+    let mut and = vec![opcode_token(OPCODE_AND, 1 + 2 + 2 + 2)];
+    and.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 5, WriteMask::XYZW));
+    and.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[4],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    and.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&and);
+
+    // or r6, r4, r0
+    let mut or = vec![opcode_token(OPCODE_OR, 1 + 2 + 2 + 2)];
+    or.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    or.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[4],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    or.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&or);
+
+    // xor r7, r4, r0
+    let mut xor = vec![opcode_token(OPCODE_XOR, 1 + 2 + 2 + 2)];
+    xor.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 7, WriteMask::XYZW));
+    xor.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[4],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    xor.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&xor);
+
+    // not r8, r7
+    let mut not = vec![opcode_token(OPCODE_NOT, 1 + 2 + 2)];
+    not.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 8, WriteMask::XYZW));
+    not.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[7],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&not);
+
+    // ishl r9, r8, r1
+    let mut ishl = vec![opcode_token(OPCODE_ISHL, 1 + 2 + 2 + 2)];
+    ishl.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 9, WriteMask::XYZW));
+    ishl.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[8],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ishl.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&ishl);
+
+    // ishr r10, r8, r1
+    let mut ishr = vec![opcode_token(OPCODE_ISHR, 1 + 2 + 2 + 2)];
+    ishr.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 10, WriteMask::XYZW));
+    ishr.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[8],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ishr.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&ishr);
+
+    // ushr r11, r8, r1
+    let mut ushr = vec![opcode_token(OPCODE_USHR, 1 + 2 + 2 + 2)];
+    ushr.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 11, WriteMask::XYZW));
+    ushr.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[8],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ushr.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&ushr);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("decode");
+
+    assert_eq!(module.instructions.len(), 11);
+    assert!(matches!(module.instructions[0], Sm4Inst::IAdd { .. }));
+    assert!(matches!(module.instructions[1], Sm4Inst::ISub { .. }));
+    assert!(matches!(module.instructions[2], Sm4Inst::IMul { .. }));
+    assert!(matches!(module.instructions[3], Sm4Inst::And { .. }));
+    assert!(matches!(module.instructions[4], Sm4Inst::Or { .. }));
+    assert!(matches!(module.instructions[5], Sm4Inst::Xor { .. }));
+    assert!(matches!(module.instructions[6], Sm4Inst::Not { .. }));
+    assert!(matches!(module.instructions[7], Sm4Inst::IShl { .. }));
+    assert!(matches!(module.instructions[8], Sm4Inst::IShr { .. }));
+    assert!(matches!(module.instructions[9], Sm4Inst::UShr { .. }));
+    assert!(matches!(module.instructions[10], Sm4Inst::Ret));
+}
+
+#[test]
 fn does_not_decode_ld_with_offset_like_trailing_operand_as_explicit_lod() {
     let mut body = Vec::<u32>::new();
 

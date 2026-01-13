@@ -88,6 +88,20 @@ pub const OPCODE_CUSTOMDATA: u32 = 0x1f;
 pub const CUSTOMDATA_CLASS_COMMENT: u32 = 0;
 /// Embedded immediate constant buffer data (`dcl_immediateConstantBuffer { ... }`).
 pub const CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER: u32 = 3;
+// Integer / bitwise ops (subset).
+//
+// NOTE: These numeric IDs match `D3D10_SB_OPCODE_TYPE` / `D3D11_SB_OPCODE_TYPE`
+// from the tokenized DXBC format.
+pub const OPCODE_IADD: u32 = 0x1d;
+pub const OPCODE_ISUB: u32 = 0x1e;
+pub const OPCODE_IMUL: u32 = 0x20;
+pub const OPCODE_AND: u32 = 0x21;
+pub const OPCODE_OR: u32 = 0x22;
+pub const OPCODE_XOR: u32 = 0x23;
+pub const OPCODE_NOT: u32 = 0x24;
+pub const OPCODE_ISHL: u32 = 0x25;
+pub const OPCODE_ISHR: u32 = 0x26;
+pub const OPCODE_USHR: u32 = 0x27;
 
 // ---- Structured control flow ----
 
@@ -308,6 +322,12 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DP4 => Some("dp4"),
         OPCODE_MIN => Some("min"),
         OPCODE_MAX => Some("max"),
+        OPCODE_IADD => Some("iadd"),
+        OPCODE_ISUB => Some("isub"),
+        OPCODE_XOR => Some("xor"),
+        OPCODE_NOT => Some("not"),
+        OPCODE_ISHL => Some("ishl"),
+        OPCODE_ISHR => Some("ishr"),
         OPCODE_IABS => Some("iabs"),
         OPCODE_INEG => Some("ineg"),
         OPCODE_IMIN => Some("imin"),
@@ -369,8 +389,6 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DCL_UAV_STRUCTURED => Some("dcl_uav_structured"),
 
         // ---- Common SM4/SM5 opcodes we don't translate yet (diagnostics only) ----
-        // Integer/bit ops not modeled by the IR yet.
-        30 => Some("iadd"),
         // Resource query.
         75 => Some("resinfo"),
 

@@ -813,6 +813,75 @@ pub fn decode_instruction(
                 b,
             })
         }
+        OPCODE_IADD => {
+            let dst = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::IAdd { dst, a, b })
+        }
+        OPCODE_ISUB => {
+            let dst = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::ISub { dst, a, b })
+        }
+        OPCODE_IMUL => {
+            let dst = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::IMul { dst, a, b })
+        }
+        OPCODE_AND => {
+            let dst = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::And { dst, a, b })
+        }
+        OPCODE_OR => {
+            let dst = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Or { dst, a, b })
+        }
+        OPCODE_XOR => {
+            let dst = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Xor { dst, a, b })
+        }
+        OPCODE_NOT => {
+            let dst = decode_dst(&mut r)?;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Not { dst, src })
+        }
+        OPCODE_ISHL => {
+            let dst = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::IShl { dst, a, b })
+        }
+        OPCODE_ISHR => {
+            let dst = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::IShr { dst, a, b })
+        }
+        OPCODE_USHR => {
+            let dst = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::UShr { dst, a, b })
+        }
         OPCODE_IMIN => {
             let mut dst = decode_dst(&mut r)?;
             dst.saturate = saturate;
