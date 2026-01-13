@@ -124,10 +124,7 @@ impl WgpuBackend {
         }
         .ok_or_else(|| GpuError::Backend("no suitable wgpu adapter found".into()))?;
 
-        let downlevel = adapter.get_downlevel_capabilities();
-        let supports_compute = downlevel
-            .flags
-            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+        let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
         let requested_features = crate::wgpu_features::negotiated_features(&adapter);
         let (device, queue) = adapter
@@ -142,8 +139,8 @@ impl WgpuBackend {
             .await
             .map_err(|err| GpuError::Backend(err.to_string()))?;
 
-        let mut capabilities = GpuCapabilities::from_device(&device);
-        capabilities.supports_compute = supports_compute;
+        let capabilities =
+            GpuCapabilities::from_device(&device).with_downlevel_flags(downlevel_flags);
 
         Ok(Self {
             kind,

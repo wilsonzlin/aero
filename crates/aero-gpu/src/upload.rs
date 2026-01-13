@@ -26,6 +26,11 @@ pub struct GpuCapabilities {
 }
 
 impl GpuCapabilities {
+    /// Returns whether compute pipelines are supported given wgpu downlevel capability flags.
+    pub fn supports_compute_from_downlevel_flags(downlevel_flags: wgpu::DownlevelFlags) -> bool {
+        downlevel_flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+    }
+
     pub fn from_device(device: &wgpu::Device) -> Self {
         let limits = device.limits();
         let features = device.features();
@@ -33,12 +38,29 @@ impl GpuCapabilities {
             min_uniform_buffer_offset_alignment: limits.min_uniform_buffer_offset_alignment,
             min_storage_buffer_offset_alignment: limits.min_storage_buffer_offset_alignment,
             max_buffer_size: limits.max_buffer_size,
-            supports_compute: true,
+            // `wgpu::Device` does not expose downlevel capability flags, so we cannot reliably
+            // determine compute support from the device alone (e.g. WebGL2 has no compute stage).
+            //
+            // Callers that have access to the originating `wgpu::Adapter` should use
+            // `GpuCapabilities::from_device_and_adapter` (or `with_downlevel_flags`) to populate
+            // this correctly.
+            supports_compute: false,
             supports_bc_texture_compression: features
                 .contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
             timestamp_queries_supported: features.contains(wgpu::Features::TIMESTAMP_QUERY)
                 && features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
         }
+    }
+
+    /// Returns a copy of this struct with `supports_compute` populated from wgpu downlevel flags.
+    pub fn with_downlevel_flags(mut self, downlevel_flags: wgpu::DownlevelFlags) -> Self {
+        self.supports_compute = Self::supports_compute_from_downlevel_flags(downlevel_flags);
+        self
+    }
+
+    /// Convenience helper for constructing capabilities when a `wgpu::Adapter` is available.
+    pub fn from_device_and_adapter(device: &wgpu::Device, adapter: &wgpu::Adapter) -> Self {
+        Self::from_device(device).with_downlevel_flags(adapter.get_downlevel_capabilities().flags)
     }
 
     pub fn supports_timestamp_queries(self) -> bool {
@@ -532,6 +554,16 @@ impl UploadRingBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supports_compute_is_derived_from_downlevel_flags() {
+        assert!(!GpuCapabilities::supports_compute_from_downlevel_flags(
+            wgpu::DownlevelFlags::empty()
+        ));
+        assert!(GpuCapabilities::supports_compute_from_downlevel_flags(
+            wgpu::DownlevelFlags::COMPUTE_SHADERS
+        ));
+    }
 
     #[test]
     fn uniform_allocation_size_is_padded_to_16() {
