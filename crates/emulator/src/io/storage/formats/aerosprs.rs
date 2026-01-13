@@ -1,3 +1,12 @@
+//! Legacy Aero sparse disk format v1 (`AEROSPRS`).
+//!
+//! This format predates the canonical `AEROSPAR` sparse format implemented in `crates/aero-storage`
+//! (`aero_storage::AeroSparseDisk`).
+//!
+//! It remains supported in `crates/emulator` for backward compatibility and offline migration, but
+//! is **not** used by the new controller stack. New images should use `AEROSPAR` instead; see:
+//! `docs/20-storage-trait-consolidation.md`.
+
 use crate::io::storage::disk::{ByteStorage, DiskBackend};
 use crate::io::storage::error::{DiskError, DiskResult};
 

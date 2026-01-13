@@ -12,6 +12,8 @@ const AEROSPRS_MAGIC: [u8; 8] = *b"AEROSPRS";
 /// - `AEROSPAR`: current sparse disk format (also used by the wasm32 OPFS backend in
 ///   `crates/aero-opfs`)
 /// - `AEROSPRS`: legacy format (kept for backwards compatibility + migration)
+///
+/// See also: `docs/20-storage-trait-consolidation.md` (authoritative format status/migration notes).
 pub enum SparseDisk<S> {
     Aerospar(AerosparDisk<S>),
     Aerosprs(AerosprsDisk<S>),
