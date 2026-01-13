@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
-
+mod cmd_bios_rom;
 mod cmd_snapshot;
 mod cmd_test_all;
 mod cmd_input;
@@ -42,6 +42,7 @@ fn try_main() -> Result<()> {
     };
 
     match cmd.as_str() {
+        "bios-rom" => cmd_bios_rom::cmd(args.collect()),
         "fixtures" => cmd_fixtures(args.collect()),
         "conformance" => cmd_conformance::cmd(args.collect()),
         "input" => cmd_input::cmd(args.collect()),
@@ -58,6 +59,7 @@ fn help() -> Result<()> {
     println!(
         "\
 Usage:
+  cargo xtask bios-rom [--check]
   cargo xtask fixtures [--check]
   cargo xtask conformance [options]
   cargo xtask input [--e2e] [-- <extra playwright args>]
@@ -69,6 +71,7 @@ Usage:
   cargo xtask web dev|build|preview
 
 Commands:
+  bios-rom   Generate/check the in-repo 64KiB BIOS ROM fixture at `assets/bios.bin`.
   fixtures   Generate tiny, deterministic in-repo fixtures (boot sectors + firmware blobs).
   conformance Run instruction conformance / differential tests (x86_64 unix only).
   input      Run the USB/input-focused test suite (Rust + web; optional Playwright subset).
@@ -150,6 +153,13 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
 
     // BIOS ROM image.
     let bios_rom = firmware::bios::build_bios_rom();
+    if bios_rom.len() != 0x10000 {
+        return Err(format!(
+            "firmware::bios::build_bios_rom() returned {} bytes (expected 65536)",
+            bios_rom.len()
+        )
+        .into());
+    }
     ensure_file(&root.join("assets/bios.bin"), &bios_rom, check)?;
 
     Ok(())

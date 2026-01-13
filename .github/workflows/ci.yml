@@ -238,6 +238,9 @@ jobs:
             echo "cargo xtask bios-rom is not implemented; skipping."
           fi
 
+      - name: Check BIOS ROM fixture is up-to-date
+        run: cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p xtask -- bios-rom --check
+
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
