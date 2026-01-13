@@ -14,7 +14,9 @@ This crate implements an NVMe controller with:
   - I/O: `READ`, `WRITE`, `FLUSH`
 - DMA:
   - PRP1/PRP2 + PRP list support
-  - SGL is **not** supported (returns `INVALID_FIELD`)
+  - Limited SGL support for READ/WRITE:
+    - Data Block descriptors (address + length)
+    - Segment / Last Segment chaining (bounded)
 
 The controller is intentionally implemented against two small traits:
 
