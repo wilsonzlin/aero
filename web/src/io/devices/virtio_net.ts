@@ -31,6 +31,19 @@ export type VirtioNetPciBridgeLike = {
   set_pci_command?(command: number): void;
   irq_level?(): boolean;
   irq_asserted?(): boolean;
+  /**
+   * Best-effort `NET_TX`/`NET_RX` ring backend stats (when exposed by the WASM bridge).
+   */
+  virtio_net_stats?: () =>
+    | {
+        tx_pushed_frames: bigint;
+        tx_dropped_oversize: bigint;
+        tx_dropped_full: bigint;
+        rx_popped_frames: bigint;
+        rx_dropped_oversize: bigint;
+        rx_corrupt: bigint;
+      }
+    | null;
   free(): void;
 };
 

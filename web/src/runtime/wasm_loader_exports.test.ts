@@ -356,6 +356,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(bridge.mmio_read(0, 4)).toBe(0);
     bridge.mmio_write(0, 4, 0);
     bridge.poll?.();
+    bridge.virtio_net_stats?.();
     expect(bridge.irq_asserted?.() ?? false).toBe(false);
     bridge.free();
   });
