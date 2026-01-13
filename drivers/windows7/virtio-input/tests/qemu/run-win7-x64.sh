@@ -12,14 +12,14 @@
 # - Optional `--multifunction` mirrors the Aero contract topology (00:0a.0 + 00:0a.1).
 #
 # Usage:
-#   ./run-win7-x64.sh [--multifunction] [--i8042-off] <disk-image> [-- <extra-qemu-args...>]
+#   ./run-win7-x64.sh [--multifunction] [--i8042-off] <disk-image> [--] [<extra-qemu-args...>]
 #
 set -eu
 
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  run-win7-x64.sh [--multifunction] [--i8042-off] <disk-image> [-- <extra-qemu-args...>]
+  run-win7-x64.sh [--multifunction] [--i8042-off] <disk-image> [--] [<extra-qemu-args...>]
 
 Args:
   <disk-image>     VM disk path (qcow2/vhd/raw/etc). Passed to QEMU as an IDE disk.
@@ -30,9 +30,16 @@ Options:
                    the virtio-input driver is installed, otherwise you may lose input.
   -h, --help       Show this help.
 
+Environment overrides:
+  QEMU_BIN=...         Override qemu-system-x86_64.
+  QEMU_ACCEL=...       Override -machine ...,accel=... (defaults to kvm when available).
+  QEMU_DISK_FORMAT=... Override disk format detection (e.g. qcow2/vpc/raw/...).
+
 Notes:
   - Always includes: disable-legacy=on,x-pci-revision=0x01
   - Prints the exact QEMU command line before exec.
+  - Extra QEMU args may be passed after <disk-image>. The optional '--' separator
+    is supported for clarity.
 EOF
 }
 
