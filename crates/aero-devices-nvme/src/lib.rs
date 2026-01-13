@@ -1272,6 +1272,12 @@ impl NvmeController {
         data[512] = 0x66; // SQE min/max = 2^6 = 64 bytes
         data[513] = 0x44; // CQE min/max = 2^4 = 16 bytes
 
+        // SGLS (SGL Support) at offset 536 (0x218).
+        //
+        // Advertise basic SGL support (Data Block + Segment descriptors). Higher-level features
+        // like keyed SGLs / bit-bucket descriptors are not implemented.
+        data[536..540].copy_from_slice(&1u32.to_le_bytes());
+
         data
     }
 
