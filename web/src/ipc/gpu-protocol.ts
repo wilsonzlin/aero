@@ -162,6 +162,9 @@ export type GpuRuntimeScreenshotRequestMessage = GpuWorkerMessageBase & {
    * Screenshot data is defined as a readback of the *source framebuffer* pixels
    * (deterministic bytes for hashing/tests), not a capture of the presented canvas.
    *
+   * When `true`, the worker will composite the current cursor image over the source
+   * framebuffer in the returned RGBA8 buffer (best-effort).
+   *
    * Default: false (cursor excluded) so screenshot hashing stays deterministic even
    * when the guest is actively moving the hardware cursor.
    */
@@ -284,6 +287,9 @@ export type GpuRuntimeScreenshotResponseMessage = GpuWorkerMessageBase & {
    * Semantics: deterministic readback of the *source framebuffer* content (pre-scaling,
    * pre-sRGB/color-management, etc). This is intentionally not a capture of "what the
    * user sees" on the canvas.
+   *
+   * If requested with `includeCursor: true`, the cursor overlay is composited over
+   * the source framebuffer (best-effort).
    *
    * Buffer is tight-packed: `byteLength === width * height * 4`.
    */
