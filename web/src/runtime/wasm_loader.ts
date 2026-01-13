@@ -1399,25 +1399,10 @@ export interface WasmApi {
         readonly last_tick_produced_frames: number;
         readonly last_tick_written_frames: number;
         readonly last_tick_dropped_frames: number;
-        set_sine_wave(freqHz: number, gain: number): void;
-        tick(frames: number): number;
-        free(): void;
-    };
-
-    VirtioSndPlaybackDemo?: new (
-        ringSab: SharedArrayBuffer,
-        capacityFrames: number,
-        channelCount: number,
-        hostSampleRate: number,
-    ) => {
-        readonly host_sample_rate_hz: number;
-        readonly total_frames_produced: number;
-        readonly total_frames_written: number;
-        readonly total_frames_dropped: number;
-        readonly last_tick_requested_frames: number;
-        readonly last_tick_produced_frames: number;
-        readonly last_tick_written_frames: number;
-        readonly last_tick_dropped_frames: number;
+        /**
+         * Optional helper available in newer demo builds.
+         */
+        set_sine_wave?(freqHz: number, gain: number): void;
         tick(frames: number): number;
         free(): void;
     };
