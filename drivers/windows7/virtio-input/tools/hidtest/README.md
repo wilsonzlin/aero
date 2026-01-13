@@ -48,6 +48,17 @@ From a Visual Studio / Windows SDK command prompt:
 cl /nologo /W4 /D_CRT_SECURE_NO_WARNINGS main.c /link setupapi.lib hid.lib
 ```
 
+Or use the helper script (builds with `cl.exe` and optionally copies the binary into
+a driver package directory for easy transfer into a guest):
+
+```bat
+REM Build into drivers\windows7\virtio-input\tools\hidtest\bin\hidtest.exe
+drivers\windows7\virtio-input\tools\hidtest\build_vs2010.cmd
+
+REM Build and copy into a prebuilt driver package directory:
+drivers\windows7\virtio-input\tools\hidtest\build_vs2010.cmd out\packages\windows7\virtio-input\x64
+```
+
 Or open `hidtest.vcxproj` in Visual Studio (VS2010+).
 
 ## Build (MinGW-w64)
