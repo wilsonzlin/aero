@@ -473,6 +473,17 @@ VOID VirtIoSndInterruptInitialize(PVIRTIOSND_DEVICE_EXTENSION Dx)
      */
     VirtIoSndTopology_ResetJackState();
 
+    /*
+     * Eventq callback lock is used by both the INTx/MSI DPC path and by teardown
+     * (StopHardware). Initialize it here so StopHardware can safely clear the
+     * callback even on the first START_DEVICE, before StartHardware has fully
+     * initialized the transport.
+     */
+    KeInitializeSpinLock(&Dx->EventqLock);
+    Dx->EventqCallback = NULL;
+    Dx->EventqCallbackContext = NULL;
+    Dx->EventqCallbackInFlight = 0;
+
     RtlZeroMemory(&Dx->Intx, sizeof(Dx->Intx));
     RtlZeroMemory(&Dx->InterruptDesc, sizeof(Dx->InterruptDesc));
     Dx->InterruptDescPresent = FALSE;

@@ -965,8 +965,13 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
     Dx->Started = FALSE;
 
     /* Best-effort: disable eventq callbacks during teardown. */
-    Dx->EventqCallback = NULL;
-    Dx->EventqCallbackContext = NULL;
+    {
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Dx->EventqLock, &oldIrql);
+        Dx->EventqCallback = NULL;
+        Dx->EventqCallbackContext = NULL;
+        KeReleaseSpinLock(&Dx->EventqLock, oldIrql);
+    }
 
     cancelStatus = Dx->Removed ? STATUS_DEVICE_REMOVED : STATUS_CANCELLED;
 
