@@ -296,6 +296,9 @@ pub struct MachineConfig {
     ///
     /// The full AeroGPU command execution model is not implemented yet.
     ///
+    /// Machine snapshots preserve the BAR0 register file and the BAR1 VRAM backing store
+    /// deterministically.
+    ///
     /// Requires [`MachineConfig::enable_pc_platform`] and is mutually exclusive with
     /// [`MachineConfig::enable_vga`].
     pub enable_aerogpu: bool,
@@ -2468,7 +2471,179 @@ impl aero_platform::io::PortIoDevice for AeroGpuVgaPortWindow {
 }
 
 // -----------------------------------------------------------------------------
-// PC platform MMIO adapters
+// AeroGPU snapshot encoding (machine-level, non-io-snapshot)
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+struct AeroGpuSnapshotV1 {
+    bar0: crate::aerogpu::AeroGpuMmioSnapshotV1,
+    vram: Vec<u8>,
+}
+
+fn encode_aerogpu_snapshot_v1(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) -> Vec<u8> {
+    // NOTE: The canonical AeroGPU profile exposes 64MiB of BAR1 VRAM, but `aero_snapshot` caps each
+    // outer `DEVICES` entry at 64MiB. To keep snapshots bounded while still preserving the legacy
+    // VGA window + VBE LFB region, we snapshot only the first 16MiB (matches `aero_gpu_vga`'s
+    // default VRAM size).
+    let save_len = vram.vram.len().min(aero_gpu_vga::DEFAULT_VRAM_SIZE);
+    let vram_len_u32: u32 = save_len.try_into().unwrap_or(u32::MAX);
+
+    let regs = bar0.snapshot_v1();
+
+    // Pre-size to avoid reallocating the large VRAM copy.
+    let mut out = Vec::with_capacity(256 + save_len);
+
+    // BAR0 register file is encoded as a fixed little-endian struct (field order below).
+    out.extend_from_slice(&regs.abi_version.to_le_bytes());
+    out.extend_from_slice(&regs.features.to_le_bytes());
+
+    out.extend_from_slice(&regs.ring_gpa.to_le_bytes());
+    out.extend_from_slice(&regs.ring_size_bytes.to_le_bytes());
+    out.extend_from_slice(&regs.ring_control.to_le_bytes());
+
+    out.extend_from_slice(&regs.fence_gpa.to_le_bytes());
+    out.extend_from_slice(&regs.completed_fence.to_le_bytes());
+
+    out.extend_from_slice(&regs.irq_status.to_le_bytes());
+    out.extend_from_slice(&regs.irq_enable.to_le_bytes());
+
+    out.extend_from_slice(&regs.scanout0_enable.to_le_bytes());
+    out.extend_from_slice(&regs.scanout0_width.to_le_bytes());
+    out.extend_from_slice(&regs.scanout0_height.to_le_bytes());
+    out.extend_from_slice(&regs.scanout0_format.to_le_bytes());
+    out.extend_from_slice(&regs.scanout0_pitch_bytes.to_le_bytes());
+    out.extend_from_slice(&regs.scanout0_fb_gpa.to_le_bytes());
+
+    out.extend_from_slice(&regs.scanout0_vblank_seq.to_le_bytes());
+    out.extend_from_slice(&regs.scanout0_vblank_time_ns.to_le_bytes());
+    out.extend_from_slice(&regs.scanout0_vblank_period_ns.to_le_bytes());
+
+    out.extend_from_slice(&regs.cursor_enable.to_le_bytes());
+    out.extend_from_slice(&regs.cursor_x.to_le_bytes());
+    out.extend_from_slice(&regs.cursor_y.to_le_bytes());
+    out.extend_from_slice(&regs.cursor_hot_x.to_le_bytes());
+    out.extend_from_slice(&regs.cursor_hot_y.to_le_bytes());
+    out.extend_from_slice(&regs.cursor_width.to_le_bytes());
+    out.extend_from_slice(&regs.cursor_height.to_le_bytes());
+    out.extend_from_slice(&regs.cursor_format.to_le_bytes());
+    out.extend_from_slice(&regs.cursor_fb_gpa.to_le_bytes());
+    out.extend_from_slice(&regs.cursor_pitch_bytes.to_le_bytes());
+
+    // Host-only WDDM scanout ownership latch.
+    out.push(regs.wddm_scanout_active as u8);
+
+    // VRAM length + bytes.
+    out.extend_from_slice(&vram_len_u32.to_le_bytes());
+    out.extend_from_slice(&vram.vram[..save_len]);
+
+    out
+}
+
+fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
+    fn read_u8(bytes: &[u8], off: &mut usize) -> Option<u8> {
+        let b = *bytes.get(*off)?;
+        *off += 1;
+        Some(b)
+    }
+
+    fn read_u32(bytes: &[u8], off: &mut usize) -> Option<u32> {
+        let end = off.checked_add(4)?;
+        let slice = bytes.get(*off..end)?;
+        *off = end;
+        Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
+    }
+
+    fn read_u64(bytes: &[u8], off: &mut usize) -> Option<u64> {
+        let end = off.checked_add(8)?;
+        let slice = bytes.get(*off..end)?;
+        *off = end;
+        Some(u64::from_le_bytes([
+            slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
+        ]))
+    }
+
+    let mut off = 0usize;
+
+    let abi_version = read_u32(bytes, &mut off)?;
+    let features = read_u64(bytes, &mut off)?;
+
+    let ring_gpa = read_u64(bytes, &mut off)?;
+    let ring_size_bytes = read_u32(bytes, &mut off)?;
+    let ring_control = read_u32(bytes, &mut off)?;
+
+    let fence_gpa = read_u64(bytes, &mut off)?;
+    let completed_fence = read_u64(bytes, &mut off)?;
+
+    let irq_status = read_u32(bytes, &mut off)?;
+    let irq_enable = read_u32(bytes, &mut off)?;
+
+    let scanout0_enable = read_u32(bytes, &mut off)?;
+    let scanout0_width = read_u32(bytes, &mut off)?;
+    let scanout0_height = read_u32(bytes, &mut off)?;
+    let scanout0_format = read_u32(bytes, &mut off)?;
+    let scanout0_pitch_bytes = read_u32(bytes, &mut off)?;
+    let scanout0_fb_gpa = read_u64(bytes, &mut off)?;
+
+    let scanout0_vblank_seq = read_u64(bytes, &mut off)?;
+    let scanout0_vblank_time_ns = read_u64(bytes, &mut off)?;
+    let scanout0_vblank_period_ns = read_u32(bytes, &mut off)?;
+
+    let cursor_enable = read_u32(bytes, &mut off)?;
+    let cursor_x = read_u32(bytes, &mut off)?;
+    let cursor_y = read_u32(bytes, &mut off)?;
+    let cursor_hot_x = read_u32(bytes, &mut off)?;
+    let cursor_hot_y = read_u32(bytes, &mut off)?;
+    let cursor_width = read_u32(bytes, &mut off)?;
+    let cursor_height = read_u32(bytes, &mut off)?;
+    let cursor_format = read_u32(bytes, &mut off)?;
+    let cursor_fb_gpa = read_u64(bytes, &mut off)?;
+    let cursor_pitch_bytes = read_u32(bytes, &mut off)?;
+
+    let wddm_scanout_active = read_u8(bytes, &mut off)? != 0;
+
+    let vram_len = read_u32(bytes, &mut off)? as usize;
+    let end = off.checked_add(vram_len)?;
+    let vram = bytes.get(off..end)?.to_vec();
+    // Forward-compatible: ignore trailing bytes from future versions.
+
+    Some(AeroGpuSnapshotV1 {
+        bar0: crate::aerogpu::AeroGpuMmioSnapshotV1 {
+            abi_version,
+            features,
+            ring_gpa,
+            ring_size_bytes,
+            ring_control,
+            fence_gpa,
+            completed_fence,
+            irq_status,
+            irq_enable,
+            scanout0_enable,
+            scanout0_width,
+            scanout0_height,
+            scanout0_format,
+            scanout0_pitch_bytes,
+            scanout0_fb_gpa,
+            scanout0_vblank_seq,
+            scanout0_vblank_time_ns,
+            scanout0_vblank_period_ns,
+            cursor_enable,
+            cursor_x,
+            cursor_y,
+            cursor_hot_x,
+            cursor_hot_y,
+            cursor_width,
+            cursor_height,
+            cursor_format,
+            cursor_fb_gpa,
+            cursor_pitch_bytes,
+            wddm_scanout_active,
+        },
+        vram,
+    })
+}
+
+// -----------------------------------------------------------------------------
+// PC platform MMIO adapters (LAPIC / IOAPIC / HPET)
 // -----------------------------------------------------------------------------
 struct HpetMmio {
     hpet: Rc<RefCell<hpet::Hpet<ManualClock>>>,
@@ -8161,6 +8336,15 @@ impl snapshot::SnapshotSource for Machine {
             ));
         }
 
+        if let (Some(aerogpu), Some(aerogpu_mmio)) = (&self.aerogpu, &self.aerogpu_mmio) {
+            devices.push(snapshot::DeviceState {
+                id: snapshot::DeviceId::AEROGPU,
+                version: V1,
+                flags: 0,
+                data: encode_aerogpu_snapshot_v1(&aerogpu.borrow(), &aerogpu_mmio.borrow()),
+            });
+        }
+
         // Optional PC platform devices.
         //
         // Note: We snapshot the combined PIC + IOAPIC + LAPIC router state via `PlatformInterrupts`.
@@ -8868,6 +9052,34 @@ impl snapshot::SnapshotTarget for Machine {
                 if io_result.is_err() && state.version == aero_gpu_vga::VgaSnapshotV1::VERSION {
                     if let Ok(vga_snap) = aero_gpu_vga::VgaSnapshotV1::decode(&state.data) {
                         vga.borrow_mut().restore_snapshot_v1(&vga_snap);
+                    }
+                }
+            }
+        }
+
+        if let Some(state) = by_id.remove(&snapshot::DeviceId::AEROGPU) {
+            // When AeroGPU is disabled, ignore any AeroGPU snapshot payloads (config mismatch),
+            // similar to the VGA restore behaviour above.
+            if !self.cfg.enable_aerogpu {
+                self.aerogpu = None;
+                self.aerogpu_mmio = None;
+            } else if state.version == 1 {
+                if let (Some(vram_dev), Some(bar0_dev)) = (&self.aerogpu, &self.aerogpu_mmio) {
+                    if let Some(decoded) = decode_aerogpu_snapshot_v1(&state.data) {
+                        {
+                            let mut dev = vram_dev.borrow_mut();
+                            // Reset unsnapshotted state (e.g. legacy VGA port latches) to a
+                            // deterministic baseline before applying the snapshotted VRAM state.
+                            dev.reset();
+                            let copy_len = decoded.vram.len().min(dev.vram.len());
+                            dev.vram[..copy_len].copy_from_slice(&decoded.vram[..copy_len]);
+                        }
+
+                        {
+                            let mut bar0 = bar0_dev.borrow_mut();
+                            bar0.reset();
+                            bar0.restore_snapshot_v1(&decoded.bar0);
+                        }
                     }
                 }
             }

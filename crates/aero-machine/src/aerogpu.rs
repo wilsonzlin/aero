@@ -385,6 +385,46 @@ pub struct AeroGpuMmioDevice {
     ring_reset_pending: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AeroGpuMmioSnapshotV1 {
+    pub abi_version: u32,
+    pub features: u64,
+
+    pub ring_gpa: u64,
+    pub ring_size_bytes: u32,
+    pub ring_control: u32,
+
+    pub fence_gpa: u64,
+    pub completed_fence: u64,
+
+    pub irq_status: u32,
+    pub irq_enable: u32,
+
+    pub scanout0_enable: u32,
+    pub scanout0_width: u32,
+    pub scanout0_height: u32,
+    pub scanout0_format: u32,
+    pub scanout0_pitch_bytes: u32,
+    pub scanout0_fb_gpa: u64,
+    pub scanout0_vblank_seq: u64,
+    pub scanout0_vblank_time_ns: u64,
+    pub scanout0_vblank_period_ns: u32,
+
+    pub cursor_enable: u32,
+    pub cursor_x: u32,
+    pub cursor_y: u32,
+    pub cursor_hot_x: u32,
+    pub cursor_hot_y: u32,
+    pub cursor_width: u32,
+    pub cursor_height: u32,
+    pub cursor_format: u32,
+    pub cursor_fb_gpa: u64,
+    pub cursor_pitch_bytes: u32,
+
+    /// Host-only latch tracking whether the guest has claimed WDDM scanout ownership.
+    pub wddm_scanout_active: bool,
+}
+
 impl Default for AeroGpuMmioDevice {
     fn default() -> Self {
         // Default vblank pacing is 60Hz.
@@ -643,6 +683,100 @@ impl AeroGpuMmioDevice {
             pitch_bytes: self.scanout0_pitch_bytes,
             fb_gpa: self.scanout0_fb_gpa,
         }
+    }
+
+    pub(crate) fn snapshot_v1(&self) -> AeroGpuMmioSnapshotV1 {
+        AeroGpuMmioSnapshotV1 {
+            abi_version: self.abi_version,
+            features: self.features,
+
+            ring_gpa: self.ring_gpa,
+            ring_size_bytes: self.ring_size_bytes,
+            ring_control: self.ring_control,
+
+            fence_gpa: self.fence_gpa,
+            completed_fence: self.completed_fence,
+
+            irq_status: self.irq_status,
+            irq_enable: self.irq_enable,
+
+            scanout0_enable: self.scanout0_enable as u32,
+            scanout0_width: self.scanout0_width,
+            scanout0_height: self.scanout0_height,
+            scanout0_format: self.scanout0_format,
+            scanout0_pitch_bytes: self.scanout0_pitch_bytes,
+            scanout0_fb_gpa: self.scanout0_fb_gpa,
+            scanout0_vblank_seq: self.scanout0_vblank_seq,
+            scanout0_vblank_time_ns: self.scanout0_vblank_time_ns,
+            scanout0_vblank_period_ns: self.scanout0_vblank_period_ns,
+
+            cursor_enable: self.cursor_enable as u32,
+            cursor_x: self.cursor_x as u32,
+            cursor_y: self.cursor_y as u32,
+            cursor_hot_x: self.cursor_hot_x,
+            cursor_hot_y: self.cursor_hot_y,
+            cursor_width: self.cursor_width,
+            cursor_height: self.cursor_height,
+            cursor_format: self.cursor_format,
+            cursor_fb_gpa: self.cursor_fb_gpa,
+            cursor_pitch_bytes: self.cursor_pitch_bytes,
+
+            wddm_scanout_active: self.wddm_scanout_active,
+        }
+    }
+
+    pub(crate) fn restore_snapshot_v1(&mut self, snap: &AeroGpuMmioSnapshotV1) {
+        self.abi_version = snap.abi_version;
+        self.features = snap.features;
+
+        self.ring_gpa = snap.ring_gpa;
+        self.ring_size_bytes = snap.ring_size_bytes;
+        // RESET is write-only; only restore the ENABLE bit.
+        self.ring_control = snap.ring_control & pci::AEROGPU_RING_CONTROL_ENABLE;
+
+        self.fence_gpa = snap.fence_gpa;
+        self.completed_fence = snap.completed_fence;
+
+        self.irq_status = snap.irq_status;
+        self.irq_enable = snap.irq_enable;
+
+        self.scanout0_enable = snap.scanout0_enable != 0;
+        self.scanout0_width = snap.scanout0_width;
+        self.scanout0_height = snap.scanout0_height;
+        self.scanout0_format = snap.scanout0_format;
+        self.scanout0_pitch_bytes = snap.scanout0_pitch_bytes;
+        self.scanout0_fb_gpa = snap.scanout0_fb_gpa;
+        self.scanout0_vblank_seq = snap.scanout0_vblank_seq;
+        self.scanout0_vblank_time_ns = snap.scanout0_vblank_time_ns;
+        self.scanout0_vblank_period_ns = snap.scanout0_vblank_period_ns;
+
+        // `scanout0_vblank_period_ns` is the guest-visible register, but the device schedules using
+        // the internal u64 `vblank_interval_ns`. This keeps snapshot restore deterministic even if
+        // the period field is clamped.
+        self.vblank_interval_ns = if snap.scanout0_vblank_period_ns == 0 {
+            None
+        } else {
+            Some(u64::from(snap.scanout0_vblank_period_ns))
+        };
+        // Host timebase is not snapshotted; restart vblank scheduling from the next tick.
+        self.next_vblank_ns = None;
+
+        self.wddm_scanout_active = snap.wddm_scanout_active;
+
+        self.cursor_enable = snap.cursor_enable != 0;
+        self.cursor_x = snap.cursor_x as i32;
+        self.cursor_y = snap.cursor_y as i32;
+        self.cursor_hot_x = snap.cursor_hot_x;
+        self.cursor_hot_y = snap.cursor_hot_y;
+        self.cursor_width = snap.cursor_width;
+        self.cursor_height = snap.cursor_height;
+        self.cursor_format = snap.cursor_format;
+        self.cursor_fb_gpa = snap.cursor_fb_gpa;
+        self.cursor_pitch_bytes = snap.cursor_pitch_bytes;
+
+        // Snapshot v1 does not preserve these internal execution latches.
+        self.doorbell_pending = false;
+        self.ring_reset_pending = false;
     }
 
     pub fn tick_vblank(&mut self, now_ns: u64) {
