@@ -137,3 +137,79 @@ describe("RuntimeDiskClient.write", () => {
     client.close();
   });
 });
+
+describe("RuntimeDiskClient.restoreFromSnapshot", () => {
+  it("transfers standalone ArrayBuffer-backed snapshots without copying", async () => {
+    const w = new MockWorker();
+    const client = new RuntimeDiskClient(w as unknown as Worker);
+
+    const buffer = new ArrayBuffer(4);
+    const state = new Uint8Array(buffer);
+    state.set([1, 2, 3, 4]);
+
+    const p = client.restoreFromSnapshot(state);
+
+    expect(w.lastMessage.op).toBe("restoreFromSnapshot");
+    expect(w.lastMessage.payload.state).toBe(state);
+    expect(w.lastTransfer).toHaveLength(1);
+    expect(w.lastTransfer?.[0]).toBe(buffer);
+
+    w.emit({ type: "response", requestId: 1, ok: true, result: { ok: true } });
+    await p;
+    client.close();
+  });
+
+  it("copies SharedArrayBuffer-backed snapshots before transferring", async () => {
+    const w = new MockWorker();
+    const client = new RuntimeDiskClient(w as unknown as Worker);
+
+    const shared = new SharedArrayBuffer(4);
+    const state = new Uint8Array(shared);
+    state.set([5, 6, 7, 8]);
+
+    const p = client.restoreFromSnapshot(state);
+
+    const payloadState = w.lastMessage.payload.state as Uint8Array;
+    expect(payloadState).not.toBe(state);
+    expect(payloadState.buffer).not.toBe(shared);
+    expect(payloadState.buffer instanceof ArrayBuffer).toBe(true);
+    expect(w.lastTransfer).toHaveLength(1);
+    expect(w.lastTransfer?.[0]).toBe(payloadState.buffer);
+
+    w.emit({ type: "response", requestId: 1, ok: true, result: { ok: true } });
+    await p;
+    client.close();
+  });
+
+  it("falls back to copying when direct-transfer restoreFromSnapshot throws DataCloneError", async () => {
+    const w = new MockWorker();
+    w.throwOnNextPostMessage = true;
+    const client = new RuntimeDiskClient(w as unknown as Worker);
+
+    const buffer = new ArrayBuffer(4);
+    const state = new Uint8Array(buffer);
+    state.set([1, 2, 3, 4]);
+
+    const p = client.restoreFromSnapshot(state);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(w.calls).toHaveLength(2);
+    expect(w.calls[0]?.transfer).toHaveLength(1);
+    expect(w.calls[0]?.transfer?.[0]).toBe(buffer);
+
+    const secondMsg = w.calls[1]?.msg as any;
+    const secondTransfer = w.calls[1]?.transfer;
+    expect(secondMsg.requestId).toBe(2);
+    expect(secondMsg.op).toBe("restoreFromSnapshot");
+
+    const payloadState = secondMsg.payload.state as Uint8Array;
+    expect(payloadState).not.toBe(state);
+    expect(secondTransfer).toHaveLength(1);
+    expect(secondTransfer?.[0]).toBe(payloadState.buffer);
+
+    w.emit({ type: "response", requestId: 2, ok: true, result: { ok: true } });
+    await p;
+    client.close();
+  });
+});

@@ -121,7 +121,8 @@ export class RuntimeDiskClient {
           // Some ArrayBuffers (e.g. WebAssembly.Memory.buffer) are non-transferable even though
           // they are not SharedArrayBuffer. If the transfer fails, fall back to copying so the
           // write still succeeds.
-          if (err instanceof DOMException && err.name === "DataCloneError") {
+          const errName = err instanceof DOMException ? err.name : (err as any)?.name;
+          if (errName === "DataCloneError") {
             const buf = data.slice();
             return this.request("write", { handle, lba, data: buf }, [buf.buffer]).then(() => undefined);
           }
@@ -154,6 +155,22 @@ export class RuntimeDiskClient {
   }
 
   restoreFromSnapshot(state: Uint8Array): Promise<void> {
+    // Transfer to avoid copying when possible. Note: the zero-copy path detaches ("neuters") the
+    // caller buffer (same semantics as `write()`).
+    const buffer = state.buffer;
+    if (buffer instanceof ArrayBuffer && state.byteOffset === 0 && state.byteLength === buffer.byteLength) {
+      return this.request("restoreFromSnapshot", { state }, [buffer])
+        .then(() => undefined)
+        .catch((err) => {
+          const errName = err instanceof DOMException ? err.name : (err as any)?.name;
+          if (errName === "DataCloneError") {
+            const buf = state.slice();
+            return this.request("restoreFromSnapshot", { state: buf }, [buf.buffer]).then(() => undefined);
+          }
+          throw err;
+        });
+    }
+
     const buf = state.slice();
     return this.request("restoreFromSnapshot", { state: buf }, [buf.buffer]).then(() => undefined);
   }
