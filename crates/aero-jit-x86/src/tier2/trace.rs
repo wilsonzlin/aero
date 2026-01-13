@@ -151,9 +151,10 @@ impl<'a> TraceBuilder<'a> {
         }
 
         let guards = self.compute_code_version_guards(&trace, entry_rip);
-        trace.ir.prologue.extend(guards.iter().copied());
         if trace.ir.kind == TraceKind::Loop {
             trace.ir.body.splice(0..0, guards);
+        } else {
+            trace.ir.prologue.extend(guards);
         }
 
         Some(trace)

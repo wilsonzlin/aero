@@ -96,3 +96,68 @@ fn trace_builder_guards_all_code_pages_in_trace() {
         .collect();
     assert_eq!(guarded_pages, vec![0, 2]);
 }
+
+#[test]
+fn trace_builder_loop_guards_only_in_body() {
+    let func = Function {
+        entry: BlockId(0),
+        blocks: vec![
+            Block {
+                id: BlockId(0),
+                start_rip: 0, // page 0
+                code_len: 1,
+                instrs: vec![Instr::Nop],
+                term: Terminator::Jump(BlockId(1)),
+            },
+            Block {
+                id: BlockId(1),
+                start_rip: 0x2000, // page 2
+                code_len: 1,
+                instrs: vec![Instr::Nop],
+                term: Terminator::Jump(BlockId(0)),
+            },
+        ],
+    };
+
+    let mut env = RuntimeEnv::default();
+    env.page_versions.set_version(0, 1);
+    env.page_versions.set_version(2, 1);
+
+    let mut profile = ProfileData::default();
+    profile.block_counts.insert(BlockId(0), 10_000);
+    profile.hot_backedges.insert((BlockId(1), BlockId(0)));
+
+    let trace = TraceBuilder::new(
+        &func,
+        &profile,
+        &env.page_versions,
+        TraceConfig {
+            hot_block_threshold: 1000,
+            max_blocks: 8,
+            max_instrs: 256,
+        },
+    )
+    .build_from(BlockId(0))
+    .expect("trace should be hot");
+    assert_eq!(trace.ir.kind, TraceKind::Loop);
+
+    assert!(trace
+        .ir
+        .prologue
+        .iter()
+        .all(|inst| !matches!(inst, Instr::GuardCodeVersion { .. })));
+
+    let guarded_pages_in_body_prefix: Vec<u64> = trace
+        .ir
+        .body
+        .iter()
+        .take_while(|inst| matches!(inst, Instr::GuardCodeVersion { .. }))
+        .filter_map(|inst| match inst {
+            Instr::GuardCodeVersion { page, .. } => Some(*page),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(guarded_pages_in_body_prefix, vec![0, 2]);
+
+    assert_eq!(trace.ir.body[guarded_pages_in_body_prefix.len()], Instr::Nop);
+}
