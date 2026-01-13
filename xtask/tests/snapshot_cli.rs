@@ -656,6 +656,24 @@ fn snapshot_inspect_prints_meta_and_ram_summary() {
 }
 
 #[test]
+fn snapshot_inspect_prints_mmus_summary_for_multi_cpu() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("multi_cpu_mmus.aerosnap");
+    let mut source = MultiCpuSource::new(4096);
+
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CPUS:"))
+        .stdout(predicate::str::contains("MMUS:"));
+}
+
+#[test]
 fn snapshot_inspect_prints_dirty_ram_samples() {
     let tmp = tempfile::tempdir().unwrap();
     let snap = tmp.path().join("dirty_inspect.aerosnap");
@@ -949,8 +967,8 @@ fn snapshot_validate_rejects_duplicate_mmu_sections() {
 fn snapshot_validate_rejects_duplicate_mmus_sections() {
     let tmp = tempfile::tempdir().unwrap();
     let snap = tmp.path().join("dup_mmus.aerosnap");
-
     let mut source = MultiCpuSource::new(4096);
+
     let mut cursor = Cursor::new(Vec::new());
     aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
     let bytes = cursor.into_inner();
@@ -982,9 +1000,7 @@ fn snapshot_validate_rejects_snapshots_with_both_mmu_and_mmus_sections() {
         .args(["snapshot", "validate", snap.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "snapshot contains both MMU and MMUS",
-        ));
+        .stderr(predicate::str::contains("snapshot contains both MMU and MMUS"));
 }
 
 #[test]
