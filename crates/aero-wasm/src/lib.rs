@@ -5202,6 +5202,33 @@ mod reattach_restored_disks_from_opfs_tests {
     }
 
     #[wasm_bindgen_test(async)]
+    async fn reattach_restored_install_media_from_opfs_is_ok_when_opfs_available() {
+        let iso1 = unique_path("reattach-iso1-only", "iso");
+        // ISO for disk_id=1 (install media). Must be a multiple of 2048 bytes.
+        match create_raw_file(&iso1, 2048).await {
+            Ok(()) => {}
+            Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+            Err(DiskError::QuotaExceeded) => return,
+            Err(e) => panic!("create_raw_file({iso1:?}) failed: {e:?}"),
+        }
+
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+
+        // Simulate snapshot restore populating `restored_disk_overlays`.
+        m.inner.restore_disk_overlays(DiskOverlayRefs {
+            disks: vec![DiskOverlayRef {
+                disk_id: aero_machine::Machine::DISK_ID_INSTALL_MEDIA,
+                base_image: iso1.clone(),
+                overlay_image: String::new(),
+            }],
+        });
+
+        m.reattach_restored_disks_from_opfs()
+            .await
+            .expect("reattach should succeed when referenced OPFS ISO exists");
+    }
+
+    #[wasm_bindgen_test(async)]
     async fn reattach_restored_disks_from_opfs_attaches_when_opfs_available() {
         // Creating OPFS sync access handles is worker-only and not universally available in all
         // wasm-bindgen-test runtimes. Skip gracefully when unsupported.
