@@ -145,6 +145,24 @@ fn translates_loop_with_break() {
 }
 
 #[test]
+fn compute_missing_thread_group_size_defaults_to_one() {
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![Sm4Inst::Ret],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("@workgroup_size(1, 1, 1)"));
+}
+
+#[test]
 fn translates_compute_raw_buffer_load_store() {
     let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");

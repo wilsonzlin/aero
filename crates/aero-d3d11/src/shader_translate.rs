@@ -515,7 +515,16 @@ fn translate_cs(
             }
         }
     }
-    let (x, y, z) = thread_group_size.ok_or(ShaderTranslateError::MissingThreadGroupSize)?;
+    let mut used_default_thread_group_size = false;
+    let (x, y, z) = match thread_group_size {
+        Some(size) => size,
+        None => {
+            // `dcl_thread_group` is required for valid DXBC compute shaders, but keep translation
+            // resilient for fuzzed inputs by falling back to the smallest possible workgroup.
+            used_default_thread_group_size = true;
+            (1, 1, 1)
+        }
+    };
     if x == 0 || y == 0 || z == 0 {
         return Err(ShaderTranslateError::InvalidThreadGroupSize { x, y, z });
     }
@@ -575,6 +584,11 @@ fn translate_cs(
     // use it to build pipeline layouts and bind groups. The `protocol_d3d11` runtime supports this
     // by inserting empty groups 0/1 and placing the real compute layout at group 2.
     resources.emit_decls(&mut w, ShaderStage::Compute)?;
+
+    if used_default_thread_group_size {
+        w.line("// NOTE: DXBC is missing dcl_thread_group; defaulting to @workgroup_size(1, 1, 1).");
+        w.line("");
+    }
 
     if !used_sivs.is_empty() {
         w.line("struct CsIn {");
