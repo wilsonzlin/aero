@@ -542,7 +542,7 @@ impl Bios {
 
         // Keep the start offset in-bounds, even if other code left it inconsistent.
         let mut start = self.tty_output_start.min(self.tty_output.len());
-        let len = self.tty_output.len();
+        let mut len = self.tty_output.len();
 
         // Ensure the existing window does not exceed `max` (e.g. restored from an older snapshot).
         let mut window_len = len - start;
@@ -551,17 +551,24 @@ impl Bios {
             window_len = max;
         }
 
-        let new_window_len = window_len + bytes.len();
-        if new_window_len > max {
-            let drop = new_window_len - max;
+        let drop = window_len.saturating_add(bytes.len()).saturating_sub(max);
+        if drop != 0 {
+            // If the discarded prefix would grow too large, compact before appending so we don't
+            // temporarily grow the underlying `Vec` to an oversized allocation (e.g. when callers
+            // append in large chunks).
+            if start.saturating_add(drop) >= max {
+                self.tty_output.copy_within(start.., 0);
+                self.tty_output.truncate(window_len);
+                start = 0;
+                len = window_len;
+            }
             start = start.saturating_add(drop).min(len);
         }
 
         self.tty_output_start = start;
         self.tty_output.extend_from_slice(bytes);
 
-        // Compact once the discarded prefix grows large enough so the backing allocation cannot
-        // grow without bound.
+        // Keep a safety net in case of inconsistent state (e.g. corrupted snapshots).
         if self.tty_output_start >= max {
             let start = self.tty_output_start.min(self.tty_output.len());
             self.tty_output.copy_within(start.., 0);
