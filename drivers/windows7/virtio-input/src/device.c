@@ -143,6 +143,7 @@ static NTSTATUS VioInputReadPciIdentity(_Inout_ PDEVICE_CONTEXT Ctx)
 
     subsysDeviceId = (USHORT)(subsys >> 16);
 
+    Ctx->PciRevisionId = revision;
     Ctx->PciSubsystemDeviceId = subsysDeviceId;
 
     if (revision != 0x01) {
@@ -884,6 +885,8 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
         (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
         deviceContext->DeviceKind = VioInputDeviceKindUnknown;
         deviceContext->PciSubsystemDeviceId = 0;
+        deviceContext->PciRevisionId = 0;
+        (VOID)InterlockedExchange64(&deviceContext->NegotiatedFeatures, 0);
 
         status = VirtioInputReadReportQueuesInitialize(device);
         if (!NT_SUCCESS(status)) {
@@ -989,6 +992,7 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     deviceContext->HardwareReady = FALSE;
     deviceContext->InD0 = FALSE;
     (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
+    (VOID)InterlockedExchange64(&deviceContext->NegotiatedFeatures, 0);
 
     status = VirtioPciModernInit(Device, &deviceContext->PciDevice);
     if (!NT_SUCCESS(status)) {
@@ -1284,6 +1288,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         VirtioPciResetDevice(&deviceContext->PciDevice);
         return status;
     }
+    (VOID)InterlockedExchange64(&deviceContext->NegotiatedFeatures, (LONG64)negotiated);
 
     /*
      * Contract v1: drivers MUST NOT negotiate EVENT_IDX (split-ring event index).

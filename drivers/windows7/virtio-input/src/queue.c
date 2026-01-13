@@ -274,7 +274,7 @@ VOID VirtioInputEvtIoDeviceControl(
         virtioStarted = InterlockedCompareExchange(&devCtx->VirtioStarted, 0, 0);
         snapshot.VirtioStarted = (virtioStarted != 0) ? 1u : 0u;
 
-        negotiatedFeatures = InterlockedCompareExchange64((volatile LONG64*)&devCtx->NegotiatedFeatures, 0, 0);
+        negotiatedFeatures = InterlockedCompareExchange64(&devCtx->NegotiatedFeatures, 0, 0);
         snapshot.NegotiatedFeatures = (UINT64)negotiatedFeatures;
 
         RtlCopyMemory(outState, &snapshot, sizeof(snapshot));

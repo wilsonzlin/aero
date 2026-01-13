@@ -344,6 +344,8 @@ typedef struct _DEVICE_CONTEXT {
     VIRTIO_PCI_MODERN_DEVICE PciDevice;
     volatile UINT16* QueueNotifyAddrCache[VIRTIO_INPUT_QUEUE_COUNT];
     WDFDMAENABLER DmaEnabler;
+    // Cached for IOCTL_VIOINPUT_QUERY_STATE diagnostics.
+    DECLSPEC_ALIGN(8) volatile LONG64 NegotiatedFeatures;
 
     BOOLEAN HardwareReady;
     BOOLEAN InD0;
@@ -355,6 +357,8 @@ typedef struct _DEVICE_CONTEXT {
     volatile LONG VirtioStarted;
     VIOINPUT_DEVICE_KIND DeviceKind;
     USHORT PciSubsystemDeviceId;
+    // Cached for IOCTL_VIOINPUT_QUERY_STATE diagnostics.
+    UCHAR PciRevisionId;
 
     VIRTIO_PCI_INTERRUPTS Interrupts;
 
