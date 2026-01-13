@@ -370,7 +370,7 @@ describe("net/l2Tunnel", () => {
       await vi.advanceTimersByTimeAsync(10);
       await microtask();
 
-      expect(FakeWebSocket.last?.sent.length).toBeGreaterThan(0);
+      expect(FakeWebSocket.last?.sent.length).toBe(1);
       const ping = decodeL2Message(FakeWebSocket.last!.sent[0]!, { maxControlPayload: 0 });
       expect(ping.type).toBe(L2_TUNNEL_TYPE_PING);
       expect(ping.payload.length).toBe(0);
@@ -413,9 +413,19 @@ describe("net/l2Tunnel", () => {
 
       // The client closes when it has been idle for `keepaliveMaxMs * 2` without receiving
       // any inbound traffic. With keepaliveMinMs=keepaliveMaxMs=10, the timeout is 20ms,
-      // checked on each ping tick: at 30ms it becomes > 20ms and closes.
-      await vi.advanceTimersByTimeAsync(31);
+      // checked on each ping tick: it sends PINGs at 10ms and 20ms, then at 30ms it becomes
+      // > 20ms and closes (without sending a third PING).
+      await vi.advanceTimersByTimeAsync(10);
       await microtask();
+      expect(FakeWebSocket.last?.sent.length).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(10);
+      await microtask();
+      expect(FakeWebSocket.last?.sent.length).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(10);
+      await microtask();
+      expect(FakeWebSocket.last?.sent.length).toBe(2);
 
       expect(events.some((ev) => ev.type === "close")).toBe(true);
       const errEv = events.find((ev) => ev.type === "error") as { error?: unknown } | undefined;
