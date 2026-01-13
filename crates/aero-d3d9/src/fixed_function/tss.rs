@@ -68,3 +68,8 @@ impl Default for AlphaTestState {
 pub struct FogState {
     pub enabled: bool,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct LightingState {
+    pub enabled: bool,
+}

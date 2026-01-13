@@ -1,7 +1,9 @@
 use std::fmt::Write;
 
 use super::fvf::{Fvf, FvfLayout, PositionType, TexCoordSize};
-use super::tss::{AlphaTestState, CompareFunc, FogState, TextureArg, TextureOp, TextureStageState};
+use super::tss::{
+    AlphaTestState, CompareFunc, FogState, LightingState, TextureArg, TextureOp, TextureStageState,
+};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -15,6 +17,18 @@ pub struct FixedFunctionGlobals {
     pub fog_color: [f32; 4],
     /// (fog_start, fog_end, _, _).
     pub fog_params: [f32; 4],
+    /// Material diffuse (RGBA).
+    pub material_diffuse: [f32; 4],
+    /// Material ambient (RGBA). This is treated as an ambient contribution in fixed-function
+    /// lighting.
+    pub material_ambient: [f32; 4],
+    /// Directional light direction (xyz). This matches D3D9's `D3DLIGHT9::Direction` convention:
+    /// direction *of* the light rays. The shader uses `-light_dir` in the Lambert dot product.
+    pub light_dir: [f32; 4],
+    /// Directional light diffuse color (RGBA).
+    pub light_color: [f32; 4],
+    /// (lighting_enabled, light0_enabled, _, _).
+    pub lighting_flags: [u32; 4],
 }
 
 impl FixedFunctionGlobals {
@@ -30,6 +44,11 @@ impl FixedFunctionGlobals {
             alpha_test: [0.0, 0.0, 0.0, 0.0],
             fog_color: [0.0, 0.0, 0.0, 0.0],
             fog_params: [0.0, 1.0, 0.0, 0.0],
+            material_diffuse: [1.0, 1.0, 1.0, 1.0],
+            material_ambient: [0.0, 0.0, 0.0, 0.0],
+            light_dir: [0.0, 0.0, -1.0, 0.0],
+            light_color: [1.0, 1.0, 1.0, 1.0],
+            lighting_flags: [0, 0, 0, 0],
         }
     }
 
@@ -53,6 +72,7 @@ pub struct FixedFunctionShaderDesc {
     pub stage0: TextureStageState,
     pub alpha_test: AlphaTestState,
     pub fog: FogState,
+    pub lighting: LightingState,
 }
 
 impl FixedFunctionShaderDesc {
@@ -83,6 +103,7 @@ impl FixedFunctionShaderDesc {
         write_u8(&mut hash, self.alpha_test.func as u8);
 
         write_u8(&mut hash, self.fog.enabled as u8);
+        write_u8(&mut hash, self.lighting.enabled as u8);
 
         hash
     }
@@ -215,11 +236,24 @@ fn generate_vertex_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) -> S
 
     // Diffuse color
     if layout.has_diffuse {
-        wgsl.push_str("  let diffuse = d3dcolor_bgra_to_rgba(input.diffuse);\n");
+        wgsl.push_str("  let base_diffuse = d3dcolor_bgra_to_rgba(input.diffuse);\n");
     } else {
-        wgsl.push_str("  let diffuse = vec4<f32>(1.0, 1.0, 1.0, 1.0);\n");
+        wgsl.push_str("  let base_diffuse = globals.material_diffuse;\n");
     }
-    wgsl.push_str("  out.diffuse = diffuse;\n");
+
+    if desc.lighting.enabled && layout.has_normal && layout.position == PositionType::Xyz {
+        wgsl.push_str("  let n = normalize(input.normal);\n");
+        wgsl.push_str(
+            "  let light_enabled = f32(globals.lighting_flags.y);\n",
+        );
+        wgsl.push_str(
+            "  let lambert = max(dot(n, -globals.light_dir.xyz), 0.0) * light_enabled;\n",
+        );
+        wgsl.push_str("  let lit_rgb = clamp(globals.material_ambient.rgb + (base_diffuse.rgb * globals.light_color.rgb * lambert), vec3<f32>(0.0), vec3<f32>(1.0));\n");
+        wgsl.push_str("  out.diffuse = vec4<f32>(lit_rgb, base_diffuse.a);\n");
+    } else {
+        wgsl.push_str("  out.diffuse = base_diffuse;\n");
+    }
 
     if layout.has_specular {
         wgsl.push_str("  out.specular = d3dcolor_bgra_to_rgba(input.specular);\n");
@@ -397,6 +431,11 @@ struct Globals {
   alpha_test: vec4<f32>,
   fog_color: vec4<f32>,
   fog_params: vec4<f32>,
+  material_diffuse: vec4<f32>,
+  material_ambient: vec4<f32>,
+  light_dir: vec4<f32>,
+  light_color: vec4<f32>,
+  lighting_flags: vec4<u32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
