@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("IO worker does not switch keyboard backend while a key is held (prevents stuck keys)", async ({ page }) => {
+test("IO worker does not switch keyboard input backend while a key is held (prevents stuck keys)", async ({ page }) => {
   test.setTimeout(60_000);
   await page.goto("/", { waitUntil: "load" });
 
@@ -33,8 +33,7 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
 
-    // Keep the guest RAM allocation modest to avoid unnecessary memory pressure when Playwright
-    // runs tests fully-parallel across multiple browsers.
+    // Keep guest RAM modest; the test only needs enough space for the virtio queue.
     const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
     const views = createSharedMemoryViews(segments);
     const status = views.status;
@@ -92,28 +91,27 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
     const sendKeyAPressNoRelease = (): void => {
       const q = new InputEventQueue(8);
       const nowUs = Math.round(performance.now() * 1000) >>> 0;
-      // Include *both* representations (HID usage + PS/2 scancodes). The backend selection logic
-      // tracks "keys held" based on HID usages, while the PS/2 backend consumes scancodes.
-      q.pushKeyScancode(nowUs, 0x1c, 1); // KeyA make
-      q.pushKeyHidUsage(nowUs, 0x04, true); // KeyA pressed
+      // Include both representations: KeyHidUsage drives `keysHeld` tracking; KeyScancode drives PS/2 injection.
+      q.pushKeyScancode(nowUs, 0x1c, 1); // A make
+      q.pushKeyHidUsage(nowUs, 0x04, true); // A pressed
       flushQueue(q);
     };
 
     const sendKeyARelease = (): void => {
       const q = new InputEventQueue(8);
       const nowUs = Math.round(performance.now() * 1000) >>> 0;
-      q.pushKeyScancode(nowUs, 0x1cf0, 2); // KeyA break (0xf0 0x1c)
-      q.pushKeyHidUsage(nowUs, 0x04, false); // KeyA released
+      q.pushKeyScancode(nowUs, 0x1cf0, 2); // A break (0xf0 0x1c)
+      q.pushKeyHidUsage(nowUs, 0x04, false); // A released
       flushQueue(q);
     };
 
     const sendKeyBPressRelease = (): void => {
       const q = new InputEventQueue(16);
       const nowUs = Math.round(performance.now() * 1000) >>> 0;
-      q.pushKeyScancode(nowUs, 0x32, 1); // KeyB make
-      q.pushKeyHidUsage(nowUs, 0x05, true); // KeyB pressed
-      q.pushKeyScancode(nowUs, 0x32f0, 2); // KeyB break (0xf0 0x32)
-      q.pushKeyHidUsage(nowUs, 0x05, false); // KeyB released
+      q.pushKeyScancode(nowUs, 0x32, 1); // B make
+      q.pushKeyHidUsage(nowUs, 0x05, true); // B pressed
+      q.pushKeyScancode(nowUs, 0x32f0, 2); // B break (0xf0 0x32)
+      q.pushKeyHidUsage(nowUs, 0x05, false); // B released
       flushQueue(q);
     };
 
@@ -141,11 +139,6 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
       function pciRead32(io, bus, dev, func, reg) {
         io.portWrite(PCI_ADDR, 4, pciAddr(bus, dev, func, reg));
         return io.portRead(PCI_DATA, 4) >>> 0;
-      }
-
-      function pciWrite32(io, bus, dev, func, reg, value) {
-        io.portWrite(PCI_ADDR, 4, pciAddr(bus, dev, func, reg));
-        io.portWrite(PCI_DATA, 4, value >>> 0);
       }
 
       function pciRead16(io, bus, dev, func, off) {
@@ -299,9 +292,9 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
               throw new Error("Unexpected virtio-input fn0 ID: 0x" + (idFn0 >>> 0).toString(16));
             }
 
-             // Enable PCI memory decoding (bit1) + bus mastering (DMA, bit2).
-             const cmdReg = pciRead16(io, 0, 10, 0, 0x04);
-             pciWrite16(io, 0, 10, 0, 0x04, cmdReg | 0x6);
+            // Enable PCI memory decoding (bit1) + bus mastering (DMA, bit2).
+            const cmdReg = pciRead16(io, 0, 10, 0, 0x04);
+            pciWrite16(io, 0, 10, 0, 0x04, cmdReg | 0x6);
 
             const bar0Lo = pciRead32(io, 0, 10, 0, 0x10);
             const bar0Hi = pciRead32(io, 0, 10, 0, 0x14);
@@ -338,8 +331,7 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
             mmioWriteU64(commonBase + 0x30n, BigInt(used));
             mmioWriteU16(commonBase + 0x1cn, 1); // queue_enable
 
-            // Provide >=4 buffers (virtio-input requirement); provide a few extra so we can observe
-            // both press+release EV_KEY/EV_SYN pairs deterministically.
+            // Provide >=4 buffers. Provide a few extra so we can observe press+release pairs.
             const bufferCount = Math.min(8, queueSize >>> 0);
             for (let i = 0; i < bufferCount; i += 1) {
               const bufAddr = eventBufBase + i * 8;
@@ -370,26 +362,24 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
 
             virtio = { bar0Base, commonBase, notifyBase, desc, avail, used, eventBufBase, queueSize, notifyOff };
 
-            reply(reqId, true, { idFn0, bar0Base: bar0Base.toString(), queueSize, notifyOff, usedIdx: virtioUsedIdx() }, null);
+            reply(reqId, true, { idFn0, usedIdx: virtioUsedIdx(), queueSize }, null);
             return;
           }
 
           if (cmd === "waitForVirtioUsedIdx") {
             if (!virtio) throw new Error("virtio not initialized");
-            const initial = msg.initial >>> 0;
             const target = msg.target >>> 0;
             const timeoutMs = msg.timeoutMs >>> 0;
             const start = nowMs();
             for (;;) {
               const cur = virtioUsedIdx();
               if (cur >= target) {
-                reply(reqId, true, { initial, target, usedIdx: cur }, null);
+                reply(reqId, true, { usedIdx: cur }, null);
                 return;
               }
               if (nowMs() - start > timeoutMs) {
                 throw new Error("Timed out waiting for virtio used.idx >= " + target + " (still " + cur + ")");
               }
-              // Sleep briefly without burning CPU.
               Atomics.wait(sleepI32, 0, 0, 10);
             }
           }
@@ -488,11 +478,14 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
     let keyAPressBytes: number[] = [];
     let keyBWhileHeldBytes: number[] = [];
     let keyAReleaseBytes: number[] = [];
+    let i8042AfterVirtioBytes: number[] = [];
+
+    let virtioIdFn0 = 0;
     let virtioUsedIdxInitial = 0;
     let virtioUsedIdxAfterHold = 0;
+    let virtioUsedIdxAfterRelease = 0;
     let virtioUsedIdxAfter = 0;
     let virtioEvents: Array<{ type: number; code: number; value: number }> = [];
-    let i8042AfterVirtioBytes: number[] = [];
 
     try {
       await waitForAtomic(StatusIndex.IoReady, 1, 10_000);
@@ -509,14 +502,16 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
       await waitForIoInputBatchCounter(batch0, 2000);
       keyAPressBytes = await drainI8042UntilNonEmpty(2000);
 
-      // Bring virtio-input online (DRIVER_OK + eventq provisioning).
-      const virtioInit = (await callCpu("virtioInit", {}, 5000)) as { usedIdx: number };
+      // Bring virtio-input online (DRIVER_OK + eventq provisioning) while KeyA is still held.
+      const virtioInit = (await callCpu("virtioInit", {}, 5000)) as { idFn0: number; usedIdx: number };
+      virtioIdFn0 = virtioInit.idFn0 >>> 0;
       virtioUsedIdxInitial = virtioInit.usedIdx >>> 0;
 
       // ---------------------------------------------------------------------
-      // Phase 2: While KeyA is still held, virtio is OK, but backend must stay PS/2.
-      // KeyB should continue to inject i8042 scancodes (no virtio events).
+      // Phase 2: While KeyA is still held, backend must stay PS/2.
+      // Press+release KeyB and ensure bytes still show up on i8042 and virtio stays idle.
       // ---------------------------------------------------------------------
+      await callCpu("drainI8042", {}, 2000);
       const batch1 = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
       sendKeyBPressRelease();
       await waitForIoInputBatchCounter(batch1, 2000);
@@ -525,33 +520,32 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
       virtioUsedIdxAfterHold = afterHoldVirtio.usedIdx >>> 0;
 
       // ---------------------------------------------------------------------
-      // Phase 3: Release KeyA. This should make it safe to switch to virtio.
+      // Phase 3: Release KeyA. The release should still be delivered via PS/2.
       // ---------------------------------------------------------------------
+      await callCpu("drainI8042", {}, 2000);
       const batch2 = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
       sendKeyARelease();
       await waitForIoInputBatchCounter(batch2, 2000);
       keyAReleaseBytes = await drainI8042UntilNonEmpty(2000);
+      const afterReleaseVirtio = (await callCpu("readVirtioEvents", { maxEvents: 0 }, 2000)) as { usedIdx: number };
+      virtioUsedIdxAfterRelease = afterReleaseVirtio.usedIdx >>> 0;
 
       // ---------------------------------------------------------------------
       // Phase 4: With no keys held, KeyB should now route via virtio-input.
       // i8042 scancode injection must stop, and virtio eventq should advance.
       // ---------------------------------------------------------------------
+      await callCpu("drainI8042", {}, 2000);
       const batch3 = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
       sendKeyBPressRelease();
       await waitForIoInputBatchCounter(batch3, 2000);
 
       const expectedDelta = 4; // EV_KEY + EV_SYN for press, then for release.
-      await callCpu(
-        "waitForVirtioUsedIdx",
-        { initial: virtioUsedIdxInitial, target: virtioUsedIdxInitial + expectedDelta, timeoutMs: 2000 },
-        3000,
-      );
+      await callCpu("waitForVirtioUsedIdx", { target: virtioUsedIdxInitial + expectedDelta, timeoutMs: 2000 }, 3000);
 
-      const virtioRead = (await callCpu(
-        "readVirtioEvents",
-        { maxEvents: virtioUsedIdxInitial + expectedDelta },
-        2000,
-      )) as { usedIdx: number; events: Array<{ event: { type: number; code: number; value: number } }> };
+      const virtioRead = (await callCpu("readVirtioEvents", { maxEvents: virtioUsedIdxInitial + expectedDelta }, 2000)) as {
+        usedIdx: number;
+        events: Array<{ event: { type: number; code: number; value: number } }>;
+      };
       virtioUsedIdxAfter = virtioRead.usedIdx >>> 0;
       virtioEvents = virtioRead.events.slice(virtioUsedIdxInitial, virtioUsedIdxInitial + expectedDelta).map((e) => e.event);
 
@@ -567,13 +561,17 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
       keyAPressBytes,
       keyBWhileHeldBytes,
       keyAReleaseBytes,
+      i8042AfterVirtioBytes,
+      virtioIdFn0,
       virtioUsedIdxInitial,
       virtioUsedIdxAfterHold,
+      virtioUsedIdxAfterRelease,
       virtioUsedIdxAfter,
       virtioEvents,
-      i8042AfterVirtioBytes,
     };
   });
+
+  expect(result.virtioIdFn0 >>> 0).toBe(0x1052_1af4);
 
   // Sanity: we should see i8042 scancodes before virtio is allowed to take over.
   //
@@ -598,8 +596,9 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
     [0xf0, 0x1c], // Set-2
     [0x9e], // Set-1 (translated): 0x1e | 0x80
   ]).toContainEqual(result.keyAReleaseBytes);
+  expect(result.virtioUsedIdxAfterRelease).toBe(result.virtioUsedIdxInitial);
 
-  // After KeyA is released, KeyB should route via virtio and i8042 must stay quiet.
+  // Phase 4: after release, KeyB should route via virtio and i8042 must stay quiet.
   expect(result.i8042AfterVirtioBytes).toEqual([]);
   expect(result.virtioUsedIdxAfter - result.virtioUsedIdxInitial).toBe(4);
   expect(result.virtioEvents).toEqual([
