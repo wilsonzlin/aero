@@ -7691,6 +7691,185 @@ bool TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb() {
   return Check(found_up_vb_upload, "upload_resource targeting UP VB emitted before draw");
 }
 
+bool TestDrawPatchInvalidInfoReturnsInvalidCall() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hVb{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_vb = false;
+
+    ~Cleanup() {
+      if (has_vb && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hVb);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawRectPatch != nullptr, "DrawRectPatch must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawTriPatch != nullptr, "DrawTriPatch must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+  };
+
+  // 16 control points for rect patch (and enough bytes for any invalid NumVertices).
+  Vertex cps[16]{};
+  for (uint32_t i = 0; i < 16; ++i) {
+    cps[i] = {64.0f, 64.0f, 0.5f, 1.0f, 0xFFFFFFFFu};
+  }
+
+  D3D9DDIARG_CREATERESOURCE create_vb{};
+  create_vb.type = 0;
+  create_vb.format = 0;
+  create_vb.width = 0;
+  create_vb.height = 0;
+  create_vb.depth = 0;
+  create_vb.mip_levels = 1;
+  create_vb.usage = 0;
+  create_vb.pool = 0;
+  create_vb.size = sizeof(cps);
+  create_vb.hResource.pDrvPrivate = nullptr;
+  create_vb.pSharedHandle = nullptr;
+  create_vb.pKmdAllocPrivateData = nullptr;
+  create_vb.KmdAllocPrivateDataSize = 0;
+  create_vb.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_vb);
+  if (!Check(hr == S_OK, "CreateResource(control point VB)")) {
+    return false;
+  }
+  cleanup.hVb = create_vb.hResource;
+  cleanup.has_vb = true;
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_vb.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(VB)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, cps, sizeof(cps));
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_vb.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(VB)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, create_vb.hResource, 0, sizeof(Vertex));
+  if (!Check(hr == S_OK, "SetStreamSource")) {
+    return false;
+  }
+
+  float rect_segs[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  D3DRECTPATCH_INFO rect_info{};
+  rect_info.StartVertexOffset = 0;
+  rect_info.NumVertices = 15; // invalid (must be 16)
+  rect_info.Basis = D3DBASIS_BEZIER;
+  rect_info.Degree = D3DDEGREE_CUBIC;
+  D3DDDIARG_DRAWRECTPATCH draw_rect{};
+  draw_rect.Handle = 1;
+  draw_rect.pNumSegs = rect_segs;
+  draw_rect.pRectPatchInfo = &rect_info;
+
+  hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw_rect);
+  if (!Check(hr == kD3DErrInvalidCall, "DrawRectPatch invalid info returns D3DERR_INVALIDCALL")) {
+    return false;
+  }
+
+  float tri_segs[3] = {1.0f, 1.0f, 1.0f};
+  D3DTRIPATCH_INFO tri_info{};
+  tri_info.StartVertexOffset = 0;
+  tri_info.NumVertices = 9; // invalid (must be 10)
+  tri_info.Basis = D3DBASIS_BEZIER;
+  tri_info.Degree = D3DDEGREE_CUBIC;
+  D3DDDIARG_DRAWTRIPATCH draw_tri{};
+  draw_tri.Handle = 2;
+  draw_tri.pNumSegs = tri_segs;
+  draw_tri.pTriPatchInfo = &tri_info;
+
+  hr = cleanup.device_funcs.pfnDrawTriPatch(create_dev.hDevice, &draw_tri);
+  return Check(hr == kD3DErrInvalidCall, "DrawTriPatch invalid info returns D3DERR_INVALIDCALL");
+}
+
 bool TestResetShrinkUnbindsBackbuffer() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -11005,6 +11184,7 @@ int main() {
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices();
   failures += !aerogpu::TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb();
   failures += !aerogpu::TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb();
+  failures += !aerogpu::TestDrawPatchInvalidInfoReturnsInvalidCall();
   failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();
   failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
   failures += !aerogpu::TestPresentBackbufferRotationUndoOnSmallCmdBuffer();
