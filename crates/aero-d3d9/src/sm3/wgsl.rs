@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, WriteMask};
+use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent};
 use crate::sm3::ir::{
     Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
     Stmt,
@@ -135,30 +135,6 @@ fn swizzle_suffix(swz: Swizzle) -> Option<String> {
     };
     let s: String = swz.0.into_iter().map(comp).collect();
     if s == "xyzw" {
-        None
-    } else {
-        Some(format!(".{}", s))
-    }
-}
-
-fn mask_suffix(mask: WriteMask) -> Option<String> {
-    if mask.0 == 0xF {
-        return None;
-    }
-    let mut s = String::new();
-    if mask.contains(SwizzleComponent::X) {
-        s.push('x');
-    }
-    if mask.contains(SwizzleComponent::Y) {
-        s.push('y');
-    }
-    if mask.contains(SwizzleComponent::Z) {
-        s.push('z');
-    }
-    if mask.contains(SwizzleComponent::W) {
-        s.push('w');
-    }
-    if s.is_empty() {
         None
     } else {
         Some(format!(".{}", s))
@@ -1019,16 +995,48 @@ fn emit_float_func2(
 
 fn emit_assign(dst: &Dst, value: String) -> Result<String, WgslError> {
     let dst_name = reg_var_name(&dst.reg)?;
-    if let Some(mask) = mask_suffix(dst.mask) {
-        Ok(format!(
-            "{dst_name}{mask} = ({value}){mask};",
-            dst_name = dst_name,
-            mask = mask,
-            value = value
-        ))
-    } else {
-        Ok(format!("{dst_name} = {value};"))
+    // WGSL does not support assignments to multi-component swizzles (e.g. `v.xy = ...`), so
+    // lower write masks to per-component assignments.
+    //
+    // Note: single-component assignments (`v.x = ...`) are permitted.
+    if dst.mask.0 == 0 {
+        // No components written.
+        return Ok(String::new());
     }
+    if dst.mask.0 == 0xF {
+        return Ok(format!("{dst_name} = {value};"));
+    }
+
+    let mut comps = Vec::new();
+    if dst.mask.contains(SwizzleComponent::X) {
+        comps.push('x');
+    }
+    if dst.mask.contains(SwizzleComponent::Y) {
+        comps.push('y');
+    }
+    if dst.mask.contains(SwizzleComponent::Z) {
+        comps.push('z');
+    }
+    if dst.mask.contains(SwizzleComponent::W) {
+        comps.push('w');
+    }
+
+    if comps.len() == 1 {
+        let c = comps[0];
+        return Ok(format!("{dst_name}.{c} = ({value}).{c};"));
+    }
+
+    // Use a block to create a nested scope so we can reuse the same temporary name for every op.
+    // This keeps codegen simple without needing a global unique-name allocator.
+    let mut out = String::new();
+    out.push_str("{ let _tmp = ");
+    out.push_str(&value);
+    out.push_str("; ");
+    for c in comps {
+        out.push_str(&format!("{dst_name}.{c} = _tmp.{c}; "));
+    }
+    out.push('}');
+    Ok(out)
 }
 
 fn emit_block(
