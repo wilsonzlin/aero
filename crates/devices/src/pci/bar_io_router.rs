@@ -42,6 +42,13 @@ impl PciIoBarRouter {
     where
         H: PciIoBarHandler + 'static,
     {
+        assert!(
+            !self
+                .routes
+                .iter()
+                .any(|r| r.bdf == bdf && r.bar_index == bar_index),
+            "duplicate PCI I/O BAR handler registration for {bdf:?} BAR{bar_index}"
+        );
         self.routes.push(PciIoBarRoute {
             bdf,
             bar_index,
@@ -315,5 +322,20 @@ mod tests {
         assert_eq!(router.io_read(0x1234, 2), 0xFFFF);
         assert_eq!(router.io_read(0x1234, 4), 0xFFFF_FFFF);
     }
-}
 
+    #[test]
+    fn duplicate_registration_panics() {
+        let cfg_ports: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::new()));
+        let mut router = PciIoBarRouter::new(cfg_ports);
+
+        let bdf = PciBdf::new(0, 1, 0);
+        let (handler, _state) = TestIoBar::new(0x20);
+        router.register_handler(bdf, 0, handler);
+
+        let (handler2, _state2) = TestIoBar::new(0x20);
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            router.register_handler(bdf, 0, handler2);
+        }));
+        assert!(err.is_err());
+    }
+}
