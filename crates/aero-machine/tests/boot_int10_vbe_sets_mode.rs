@@ -1,4 +1,5 @@
 use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
+use aero_cpu_core::state::gpr;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -65,6 +66,12 @@ fn assert_vbe_mode_set_and_lfb_visible(vbe_mode_with_flags: u16, expected_res: (
     let mut m = new_deterministic_test_machine(boot);
 
     run_until_halt(&mut m);
+
+    let vbe_status = (m.cpu().gpr[gpr::RAX] & 0xFFFF) as u16;
+    assert_eq!(
+        vbe_status, 0x004F,
+        "VBE set-mode should return AX=0x004F (success)"
+    );
 
     let vga = m.vga().expect("machine should have a VGA device");
     assert_eq!(vga.borrow().get_resolution(), expected_res);
