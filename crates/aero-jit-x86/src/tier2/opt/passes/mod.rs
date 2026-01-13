@@ -7,3 +7,4 @@ pub mod flag_elim;
 pub mod licm;
 pub mod regalloc;
 pub mod strength_reduction;
+pub mod value_compact;

@@ -30,6 +30,10 @@ pub struct OptResult {
 pub fn optimize_trace(trace: &mut TraceIr, cfg: &OptConfig) -> OptResult {
     debug_assert!(trace.validate().is_ok());
 
+    // Compact ValueIds before running other passes so later passes don't allocate based on a sparse
+    // `max(ValueId)`.
+    passes::value_compact::run(trace);
+
     for _ in 0..cfg.max_iters {
         let mut changed = false;
         changed |= passes::addr_simplify::run(trace);
@@ -44,6 +48,10 @@ pub fn optimize_trace(trace: &mut TraceIr, cfg: &OptConfig) -> OptResult {
             break;
         }
     }
+
+    // Some passes (especially DCE) can remove many values, leaving gaps. Compact again so codegen
+    // allocates the minimum number of WASM locals for values.
+    passes::value_compact::run(trace);
 
     debug_assert!(trace.validate().is_ok());
 
