@@ -2759,6 +2759,20 @@ fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError)
     let err_str = err.to_string();
 
     match err {
+        DiskError::InUse => {
+            let extra = "The OPFS file is already in use (another context may have an open sync access handle). Close other tabs/workers or ensure the previous handle is closed before retrying.";
+            Error::new(&format!(
+                "{operation} failed for OPFS path \"{path}\": {err_str}\n{extra}"
+            ))
+            .into()
+        }
+        DiskError::QuotaExceeded => {
+            let extra = "Storage quota exceeded. Free up space or adjust browser/site storage permissions, then retry.";
+            Error::new(&format!(
+                "{operation} failed for OPFS path \"{path}\": {err_str}\n{extra}"
+            ))
+            .into()
+        }
         DiskError::NotSupported(msg) => {
             let extra = if msg.contains("sync access handle") || msg.contains("sync access handles")
             {
@@ -2793,17 +2807,20 @@ fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError)
 #[cfg(target_arch = "wasm32")]
 fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsValue {
     let kind = err.kind();
-    if matches!(
-        kind,
-        std::io::ErrorKind::Unsupported | std::io::ErrorKind::NotConnected
-    ) {
-        let msg = format!(
-            "{operation} failed for OPFS path \"{path}\": {err}\n{}",
-            opfs_worker_hint()
-        );
-        return Error::new(&msg).into();
+    let mut msg = format!("{operation} failed for OPFS path \"{path}\": {err}");
+
+    match kind {
+        std::io::ErrorKind::Unsupported | std::io::ErrorKind::NotConnected => {
+            msg.push('\n');
+            msg.push_str(&opfs_worker_hint());
+        }
+        std::io::ErrorKind::ResourceBusy => {
+            msg.push_str("\nThe OPFS file is already in use (another context may have an open sync access handle). Close it and retry.");
+        }
+        _ => {}
     }
-    JsValue::from_str(&err.to_string())
+
+    Error::new(&msg).into()
 }
 
 #[wasm_bindgen]
