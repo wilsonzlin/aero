@@ -7565,6 +7565,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         return STATUS_INVALID_PARAMETER;
     }
 
+    const BOOLEAN poweredOn =
+        (adapter->Bar0 != NULL) &&
+        ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+
     aerogpu_escape_header* hdr = (aerogpu_escape_header*)pEscape->pPrivateDriverData;
     if (hdr->version != AEROGPU_ESCAPE_VERSION) {
         return STATUS_NOT_SUPPORTED;
@@ -7650,7 +7654,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         ULONGLONG completedFence = adapter->LastCompletedFence;
-        if (adapter->Bar0) {
+        if (poweredOn) {
             completedFence = AeroGpuReadCompletedFence(adapter);
         }
 
@@ -7694,7 +7698,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         ULONGLONG lastCompletedFence = adapter->LastCompletedFence;
-        if (adapter->Bar0) {
+        if (poweredOn) {
             lastCompletedFence = AeroGpuReadCompletedFence(adapter);
         }
 
@@ -7713,7 +7717,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
                 head = adapter->RingHeader->head;
                 tail = adapter->RingHeader->tail;
-            } else if (adapter->Bar0) {
+            } else if (poweredOn) {
                 head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
                 tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
             }
