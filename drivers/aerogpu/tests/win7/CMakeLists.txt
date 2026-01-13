@@ -123,6 +123,11 @@ aerogpu_add_win7_test(scanout_state_sanity
 )
 target_link_libraries(scanout_state_sanity PRIVATE user32 gdi32)
 
+aerogpu_add_win7_test(cursor_state_sanity
+  cursor_state_sanity/main.cpp
+)
+target_link_libraries(cursor_state_sanity PRIVATE user32 gdi32)
+
 aerogpu_add_win7_test(modeset_roundtrip_sanity
   modeset_roundtrip_sanity/main.cpp
 )
