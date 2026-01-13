@@ -1794,11 +1794,11 @@ fn scan_resources(
                 *entry = (*entry).max(*reg_count);
             }
             Sm4Decl::ResourceBuffer { slot, .. } => {
-                validate_slot("texture", *slot, MAX_TEXTURE_SLOTS)?;
+                validate_slot("srv_buffer", *slot, MAX_TEXTURE_SLOTS)?;
                 srv_buffers.insert(*slot);
             }
             Sm4Decl::UavBuffer { slot, .. } => {
-                validate_slot("uav", *slot, MAX_UAV_SLOTS)?;
+                validate_slot("uav_buffer", *slot, MAX_UAV_SLOTS)?;
                 uav_buffers.insert(*slot);
             }
             _ => {}
@@ -1927,7 +1927,7 @@ fn scan_resources(
                 buffer,
             } => {
                 scan_src(addr)?;
-                validate_slot("texture", buffer.slot, MAX_TEXTURE_SLOTS)?;
+                validate_slot("srv_buffer", buffer.slot, MAX_TEXTURE_SLOTS)?;
                 srv_buffers.insert(buffer.slot);
             }
             Sm4Inst::StoreRaw {
@@ -1938,7 +1938,7 @@ fn scan_resources(
             } => {
                 scan_src(addr)?;
                 scan_src(value)?;
-                validate_slot("uav", uav.slot, MAX_UAV_SLOTS)?;
+                validate_slot("uav_buffer", uav.slot, MAX_UAV_SLOTS)?;
                 uav_buffers.insert(uav.slot);
             }
             Sm4Inst::LdStructured {
@@ -1949,7 +1949,7 @@ fn scan_resources(
             } => {
                 scan_src(index)?;
                 scan_src(offset)?;
-                validate_slot("texture", buffer.slot, MAX_TEXTURE_SLOTS)?;
+                validate_slot("srv_buffer", buffer.slot, MAX_TEXTURE_SLOTS)?;
                 srv_buffers.insert(buffer.slot);
             }
             Sm4Inst::StoreStructured {
@@ -1962,7 +1962,7 @@ fn scan_resources(
                 scan_src(index)?;
                 scan_src(offset)?;
                 scan_src(value)?;
-                validate_slot("uav", uav.slot, MAX_UAV_SLOTS)?;
+                validate_slot("uav_buffer", uav.slot, MAX_UAV_SLOTS)?;
                 uav_buffers.insert(uav.slot);
             }
             Sm4Inst::Unknown { .. } => {}
@@ -2959,11 +2959,50 @@ mod tests {
         assert!(matches!(
             err,
             ShaderTranslateError::ResourceSlotOutOfRange {
-                kind: "uav",
+                kind: "uav_buffer",
                 slot,
                 max,
             } if slot == MAX_UAV_SLOTS && max == MAX_UAV_SLOTS - 1
         ));
+    }
+
+    #[test]
+    fn srv_buffer_binding_numbers_use_texture_base_offset() {
+        let max_slot = MAX_TEXTURE_SLOTS - 1;
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::ResourceBuffer {
+                    slot: 0,
+                    stride: 0,
+                    kind: crate::sm4_ir::BufferKind::Raw,
+                },
+                Sm4Decl::ResourceBuffer {
+                    slot: max_slot,
+                    stride: 0,
+                    kind: crate::sm4_ir::BufferKind::Raw,
+                },
+            ],
+            instructions: Vec::new(),
+        };
+
+        let bindings = reflect_resource_bindings(&module).unwrap();
+        let srv_bindings: BTreeMap<u32, Binding> = bindings
+            .into_iter()
+            .filter_map(|b| match b.kind {
+                BindingKind::SrvBuffer { slot } => Some((slot, b)),
+                _ => None,
+            })
+            .collect();
+
+        let b0 = srv_bindings.get(&0).expect("t0 buffer binding");
+        assert_eq!(b0.group, 2);
+        assert_eq!(b0.visibility, wgpu::ShaderStages::COMPUTE);
+        assert_eq!(b0.binding, BINDING_BASE_TEXTURE);
+
+        let bmax = srv_bindings.get(&max_slot).expect("t(max) buffer binding");
+        assert_eq!(bmax.binding, BINDING_BASE_TEXTURE + max_slot);
     }
 
     fn minimal_module(instructions: Vec<Sm4Inst>) -> Sm4Module {
