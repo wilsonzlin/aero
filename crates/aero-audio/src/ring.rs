@@ -156,16 +156,20 @@ impl AudioRingBuffer {
     /// If `out` cannot be resized (allocation failure), this leaves the ring
     /// buffer state unchanged and clears `out`.
     pub fn pop_interleaved_stereo_into(&mut self, frames: usize, out: &mut Vec<f32>) {
-        out.clear();
-
         // Bound output allocation/work: callers may treat `frames` as untrusted.
         let frames = frames.min(MAX_CAPACITY_FRAMES);
         if frames == 0 {
+            out.clear();
             return;
         }
 
         let out_len = frames.saturating_mul(self.channels);
-        if out.try_reserve_exact(out_len).is_err() {
+        // `try_reserve_exact` reserves *additional* elements beyond the current
+        // length. Avoid reserving `out_len` extra when the caller is reusing a
+        // buffer that already has the right size.
+        let additional = out_len.saturating_sub(out.len());
+        if out.try_reserve_exact(additional).is_err() {
+            out.clear();
             return;
         }
         out.resize(out_len, 0.0f32);
@@ -192,6 +196,13 @@ impl AudioRingBuffer {
             }
 
             self.read_frame = (self.read_frame + available) % self.capacity_frames;
+        }
+
+        let available_samples = available * self.channels;
+        if available_samples < out_len {
+            // Underrun: ensure the remainder is zeroed. (The caller may be
+            // reusing an output buffer that contains old samples.)
+            out[available_samples..].fill(0.0);
         }
 
         self.len_frames = self.len_frames.saturating_sub(available);
