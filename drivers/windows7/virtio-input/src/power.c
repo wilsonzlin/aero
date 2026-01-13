@@ -58,12 +58,11 @@ NTSTATUS VirtioInputHidDeactivateDevice(_In_ WDFDEVICE Device)
      * dropped by VirtioInputReportArrived() once ReadReportsEnabled is cleared.
      */
     emitResetReports = ctx->HidActivated ? TRUE : FALSE;
+    ctx->HidActivated = FALSE;
+    VirtioInputUpdateStatusQActiveState(ctx);
     if (emitResetReports && ctx->InD0) {
         virtio_input_device_reset_state(&ctx->InputDevice, true);
     }
-
-    ctx->HidActivated = FALSE;
-    VirtioInputUpdateStatusQActiveState(ctx);
     VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);
     VirtioInputDrainReportRing(ctx);
     virtio_input_device_reset_state(&ctx->InputDevice, false);

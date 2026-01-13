@@ -930,13 +930,18 @@ static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
      */
     emitResetReports = ctx->HidActivated ? TRUE : FALSE;
 
+    ctx->InD0 = FALSE;
     (VOID)InterlockedExchange(&ctx->VirtioStarted, 0);
+    VirtioInputUpdateStatusQActiveState(ctx);
 
+    /*
+     * Emit the release report after clearing InD0 so any in-flight event
+     * processing (interrupt/DPC) will no longer translate additional events
+     * that could re-latch key state after the reset.
+     */
     if (emitResetReports) {
         virtio_input_device_reset_state(&ctx->InputDevice, true);
     }
-    ctx->InD0 = FALSE;
-    VirtioInputUpdateStatusQActiveState(ctx);
 
     VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_CANCELLED);
     VioInputDrainInputReportRing(ctx);
@@ -2182,6 +2187,7 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
     deviceContext = VirtioInputGetDeviceContext(Device);
 
     (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
+    deviceContext->InD0 = FALSE;
 
     /*
      * Policy: if HID has been activated, emit an all-zero report before stopping
@@ -2195,7 +2201,6 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
     if (emitResetReports) {
         virtio_input_device_reset_state(&deviceContext->InputDevice, true);
     }
-    deviceContext->InD0 = FALSE;
 
     VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);
     VioInputDrainInputReportRing(deviceContext);
