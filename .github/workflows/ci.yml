@@ -229,7 +229,7 @@ jobs:
         run: cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p xtask -- fixtures
 
       - name: Ensure fixtures are checked in (determinism)
-        run: git diff --exit-code -- tests/fixtures/boot
+        run: git diff --exit-code
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
