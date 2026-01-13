@@ -5,6 +5,16 @@ use std::fmt;
 pub enum ShaderStage {
     Vertex,
     Pixel,
+    /// D3D11 geometry shader stage.
+    ///
+    /// WebGPU does not expose geometry shaders, but the guest can still update per-stage binding
+    /// tables (textures/samplers/constant buffers) for GS. We track these bindings separately so
+    /// `stage_ex` packets don't accidentally overwrite compute-stage state.
+    Geometry,
+    /// D3D11 hull shader stage (tessellation control).
+    Hull,
+    /// D3D11 domain shader stage (tessellation evaluation).
+    Domain,
     Compute,
 }
 
@@ -18,11 +28,40 @@ impl ShaderStage {
         }
     }
 
+    /// Decode a stage value from a legacy `shader_stage` field plus the `stage_ex` ABI extension.
+    ///
+    /// The base AeroGPU shader stage enum only supports VS/PS/CS. To represent additional D3D11
+    /// stages without breaking older hosts, the command stream encodes:
+    /// - `shader_stage == COMPUTE` (2)
+    /// - `stage_ex != 0` in a packet's reserved field (opcode-specific)
+    ///
+    /// The `stage_ex` value uses DXBC program-type numbering (SM4/5 version token `program_type`):
+    /// - 2 = geometry shader (GS)
+    /// - 3 = hull shader (HS)
+    /// - 4 = domain shader (DS)
+    pub const fn from_aerogpu_u32_with_stage_ex(stage: u32, stage_ex: u32) -> Option<Self> {
+        match stage {
+            0 => Some(Self::Vertex),
+            1 => Some(Self::Pixel),
+            2 => match stage_ex {
+                0 => Some(Self::Compute),
+                2 => Some(Self::Geometry),
+                3 => Some(Self::Hull),
+                4 => Some(Self::Domain),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub const fn as_bind_group_index(self) -> u32 {
         match self {
             Self::Vertex => 0,
             Self::Pixel => 1,
+            // Keep the original ABI ordering (VS=0 PS=1 CS=2). Extended stages share group 3 so we
+            // never exceed WebGPU's max bind group count (4 groups).
             Self::Compute => 2,
+            Self::Geometry | Self::Hull | Self::Domain => 3,
         }
     }
 }
@@ -282,6 +321,9 @@ impl StageBindings {
 pub struct BindingState {
     vertex: StageBindings,
     pixel: StageBindings,
+    geometry: StageBindings,
+    hull: StageBindings,
+    domain: StageBindings,
     compute: StageBindings,
 }
 
@@ -290,6 +332,9 @@ impl BindingState {
         match stage {
             ShaderStage::Vertex => &self.vertex,
             ShaderStage::Pixel => &self.pixel,
+            ShaderStage::Geometry => &self.geometry,
+            ShaderStage::Hull => &self.hull,
+            ShaderStage::Domain => &self.domain,
             ShaderStage::Compute => &self.compute,
         }
     }
@@ -298,6 +343,9 @@ impl BindingState {
         match stage {
             ShaderStage::Vertex => &mut self.vertex,
             ShaderStage::Pixel => &mut self.pixel,
+            ShaderStage::Geometry => &mut self.geometry,
+            ShaderStage::Hull => &mut self.hull,
+            ShaderStage::Domain => &mut self.domain,
             ShaderStage::Compute => &mut self.compute,
         }
     }
@@ -305,6 +353,9 @@ impl BindingState {
     pub fn mark_all_dirty(&mut self) {
         self.vertex.dirty = true;
         self.pixel.dirty = true;
+        self.geometry.dirty = true;
+        self.hull.dirty = true;
+        self.domain.dirty = true;
         self.compute.dirty = true;
     }
 }
@@ -314,6 +365,9 @@ impl fmt::Display for ShaderStage {
         match self {
             ShaderStage::Vertex => write!(f, "vertex"),
             ShaderStage::Pixel => write!(f, "pixel"),
+            ShaderStage::Geometry => write!(f, "geometry"),
+            ShaderStage::Hull => write!(f, "hull"),
+            ShaderStage::Domain => write!(f, "domain"),
             ShaderStage::Compute => write!(f, "compute"),
         }
     }

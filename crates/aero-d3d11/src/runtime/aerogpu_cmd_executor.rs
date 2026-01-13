@@ -955,6 +955,11 @@ impl AerogpuD3d11Executor {
         self.backend
     }
 
+    #[doc(hidden)]
+    pub fn binding_state(&self) -> &BindingState {
+        &self.bindings
+    }
+
     pub fn reset(&mut self) {
         self.resources = AerogpuD3d11Resources::default();
         self.state = AerogpuD3d11State::default();
@@ -2970,6 +2975,7 @@ impl AerogpuD3d11Executor {
                             ShaderStage::Vertex => used_cb_vs.get_mut(slot_usize),
                             ShaderStage::Pixel => used_cb_ps.get_mut(slot_usize),
                             ShaderStage::Compute => used_cb_cs.get_mut(slot_usize),
+                            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => None,
                         };
                         if let Some(entry) = used {
                             *entry = true;
@@ -2982,6 +2988,7 @@ impl AerogpuD3d11Executor {
                             ShaderStage::Vertex => used_textures_vs.get_mut(slot_usize),
                             ShaderStage::Pixel => used_textures_ps.get_mut(slot_usize),
                             ShaderStage::Compute => used_textures_cs.get_mut(slot_usize),
+                            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => None,
                         };
                         if let Some(entry) = used {
                             *entry = true;
@@ -3662,6 +3669,9 @@ impl AerogpuD3d11Executor {
                             ShaderStage::Vertex => &used_textures_vs,
                             ShaderStage::Pixel => &used_textures_ps,
                             ShaderStage::Compute => &used_textures_cs,
+                            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                                &used_textures_cs
+                            }
                         };
                         let slot_usize: usize = slot
                             .try_into()
@@ -3786,6 +3796,9 @@ impl AerogpuD3d11Executor {
                             ShaderStage::Vertex => &used_cb_vs,
                             ShaderStage::Pixel => &used_cb_ps,
                             ShaderStage::Compute => &used_cb_cs,
+                            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                                &used_cb_cs
+                            }
                         };
                         let mut needs_break = false;
                         for i in 0..buffer_count {
@@ -4364,6 +4377,9 @@ impl AerogpuD3d11Executor {
                                 ShaderStage::Vertex => &used_textures_vs,
                                 ShaderStage::Pixel => &used_textures_ps,
                                 ShaderStage::Compute => &used_textures_cs,
+                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                                    &used_textures_cs
+                                }
                             };
                             let slot_usize: usize = slot
                                 .try_into()
@@ -4413,6 +4429,9 @@ impl AerogpuD3d11Executor {
                                     ShaderStage::Vertex => &used_cb_vs,
                                     ShaderStage::Pixel => &used_cb_ps,
                                     ShaderStage::Compute => &used_cb_cs,
+                                    ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                                        &used_cb_cs
+                                    }
                                 };
                                 for i in 0..buffer_count {
                                     let slot =
@@ -4719,6 +4738,9 @@ impl AerogpuD3d11Executor {
                 for stage in [
                     ShaderStage::Vertex,
                     ShaderStage::Pixel,
+                    ShaderStage::Geometry,
+                    ShaderStage::Hull,
+                    ShaderStage::Domain,
                     ShaderStage::Compute,
                 ] {
                     let stage_bindings = self.bindings.stage_mut(stage);
@@ -4760,6 +4782,9 @@ impl AerogpuD3d11Executor {
             for stage in [
                 ShaderStage::Vertex,
                 ShaderStage::Pixel,
+                ShaderStage::Geometry,
+                ShaderStage::Hull,
+                ShaderStage::Domain,
                 ShaderStage::Compute,
             ] {
                 let stage_bindings = self.bindings.stage_mut(stage);
@@ -6399,6 +6424,9 @@ impl AerogpuD3d11Executor {
         let entry_point = match stage {
             ShaderStage::Vertex => "vs_main",
             ShaderStage::Pixel => "fs_main",
+            ShaderStage::Geometry => "gs_main",
+            ShaderStage::Hull => "hs_main",
+            ShaderStage::Domain => "ds_main",
             ShaderStage::Compute => "cs_main",
         };
 
@@ -6577,6 +6605,7 @@ impl AerogpuD3d11Executor {
         let stage_raw = read_u32_le(cmd_bytes, 8)?;
         let slot = read_u32_le(cmd_bytes, 12)?;
         let texture = read_u32_le(cmd_bytes, 16)?;
+        let stage_ex = read_u32_le(cmd_bytes, 20)?;
 
         if slot as usize >= DEFAULT_MAX_TEXTURE_SLOTS {
             bail!(
@@ -6585,8 +6614,9 @@ impl AerogpuD3d11Executor {
             );
         }
 
-        let stage = ShaderStage::from_aerogpu_u32(stage_raw)
-            .ok_or_else(|| anyhow!("SET_TEXTURE: unknown shader stage {stage_raw}"))?;
+        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
+            || anyhow!("SET_TEXTURE: unknown shader stage {stage_raw} (stage_ex={stage_ex})"),
+        )?;
         let texture = if texture == 0 {
             None
         } else {
@@ -6677,6 +6707,9 @@ impl AerogpuD3d11Executor {
         for stage in [
             ShaderStage::Vertex,
             ShaderStage::Pixel,
+            ShaderStage::Geometry,
+            ShaderStage::Hull,
+            ShaderStage::Domain,
             ShaderStage::Compute,
         ] {
             self.bindings
@@ -6697,9 +6730,11 @@ impl AerogpuD3d11Executor {
         let stage_raw = read_u32_le(cmd_bytes, 8)?;
         let start_slot_u32 = read_u32_le(cmd_bytes, 12)?;
         let sampler_count_u32 = read_u32_le(cmd_bytes, 16)?;
+        let stage_ex = read_u32_le(cmd_bytes, 20)?;
 
-        let stage = ShaderStage::from_aerogpu_u32(stage_raw)
-            .ok_or_else(|| anyhow!("SET_SAMPLERS: unknown shader stage {stage_raw}"))?;
+        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
+            || anyhow!("SET_SAMPLERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"),
+        )?;
         let start_slot: u32 = start_slot_u32;
         let sampler_count: usize = sampler_count_u32
             .try_into()
@@ -6751,9 +6786,15 @@ impl AerogpuD3d11Executor {
         let stage_raw = read_u32_le(cmd_bytes, 8)?;
         let start_slot_u32 = read_u32_le(cmd_bytes, 12)?;
         let buffer_count_u32 = read_u32_le(cmd_bytes, 16)?;
+        let stage_ex = read_u32_le(cmd_bytes, 20)?;
 
-        let stage = ShaderStage::from_aerogpu_u32(stage_raw)
-            .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: unknown shader stage {stage_raw}"))?;
+        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
+            || {
+                anyhow!(
+                    "SET_CONSTANT_BUFFERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
+                )
+            },
+        )?;
         let start_slot: u32 = start_slot_u32;
         let buffer_count: usize = buffer_count_u32
             .try_into()
@@ -9223,6 +9264,9 @@ fn legacy_constants_buffer_id(stage: ShaderStage) -> u32 {
             ShaderStage::Vertex => 0,
             ShaderStage::Pixel => 1,
             ShaderStage::Compute => 2,
+            ShaderStage::Geometry => 3,
+            ShaderStage::Hull => 4,
+            ShaderStage::Domain => 5,
         }
 }
 
@@ -9231,6 +9275,7 @@ fn group_index_to_stage(group: u32) -> Result<ShaderStage> {
         0 => Ok(ShaderStage::Vertex),
         1 => Ok(ShaderStage::Pixel),
         2 => Ok(ShaderStage::Compute),
+        3 => Ok(ShaderStage::Geometry),
         other => bail!("unsupported bind group index {other}"),
     }
 }
@@ -9240,6 +9285,9 @@ fn map_pipeline_cache_stage(stage: ShaderStage) -> aero_gpu::pipeline_key::Shade
         ShaderStage::Vertex => aero_gpu::pipeline_key::ShaderStage::Vertex,
         ShaderStage::Pixel => aero_gpu::pipeline_key::ShaderStage::Fragment,
         ShaderStage::Compute => aero_gpu::pipeline_key::ShaderStage::Compute,
+        ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+            unreachable!("pipeline cache shader stage {stage} is not supported by WebGPU")
+        }
     }
 }
 
