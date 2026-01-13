@@ -112,7 +112,10 @@ Minimum supported commands:
 
   Structured export:
   - `--csv <path>` writes a stable, machine-parseable CSV file (header row + one row per trace entry), including `write_index` and `entry_capacity` metadata for wrap-around detection.
-  - `--json <path>` writes a stable, machine-parseable JSON file with top-level ring metadata (`write_index`, `entry_count`, `entry_capacity`) and an `entries` array.
+  - `--json <path>` writes a stable, machine-parseable JSON file with:
+    - top-level `{ "schema_version": 1, "write_index": <u32>, "entry_capacity": <u32>, "entries": [...] }`
+    - one JSON object per entry with all fields from `aerogpu_dbgctl_createallocation_desc`
+    - note: flag fields are encoded as hex strings (e.g. `"0x00000001"`), and 64-bit values are encoded as strings (e.g. `"0x0000000000000000"` / `"4096"`) to avoid JSON integer precision issues in some parsers.
 
 - `aerogpu_dbgctl --dump-vblank`  
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.

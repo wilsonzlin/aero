@@ -1490,8 +1490,8 @@ static bool WriteCreateAllocationJson(const wchar_t *path, const aerogpu_escape_
 
   // Stable, machine-parseable JSON document.
   fprintf(fp, "{\n");
+  fprintf(fp, "  \"schema_version\": 1,\n");
   fprintf(fp, "  \"write_index\": %lu,\n", (unsigned long)q.write_index);
-  fprintf(fp, "  \"entry_count\": %lu,\n", (unsigned long)q.entry_count);
   fprintf(fp, "  \"entry_capacity\": %lu,\n", (unsigned long)q.entry_capacity);
   fprintf(fp, "  \"entries\": [\n");
   for (uint32_t i = 0; i < count; ++i) {
@@ -1507,7 +1507,7 @@ static bool WriteCreateAllocationJson(const wchar_t *path, const aerogpu_escape_
     fprintf(fp, "      \"priv_flags\": \"0x%08lx\",\n", (unsigned long)e.priv_flags);
     fprintf(fp, "      \"pitch_bytes\": %lu,\n", (unsigned long)e.pitch_bytes);
     fprintf(fp, "      \"share_token\": \"0x%016I64x\",\n", (unsigned long long)e.share_token);
-    fprintf(fp, "      \"size_bytes\": %I64u,\n", (unsigned long long)e.size_bytes);
+    fprintf(fp, "      \"size_bytes\": \"%I64u\",\n", (unsigned long long)e.size_bytes);
     fprintf(fp, "      \"flags_in\": \"0x%08lx\",\n", (unsigned long)e.flags_in);
     fprintf(fp, "      \"flags_out\": \"0x%08lx\"\n", (unsigned long)e.flags_out);
     fprintf(fp, "    }%s\n", comma);
