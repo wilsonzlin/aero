@@ -263,6 +263,11 @@ pub const PCI_DEVICE_ID_INTEL_ICH6_HDA: u16 = 0x2668;
 pub const PCI_DEVICE_ID_INTEL_E1000_82540EM: u16 = 0x100e;
 pub const PCI_DEVICE_ID_REALTEK_RTL8139: u16 = 0x8139;
 pub const PCI_DEVICE_ID_QEMU_NVME: u16 = 0x0010;
+/// QEMU xHCI host controller.
+///
+/// We use QEMU's canonical xHCI PCI identity (`1b36:000d`) so modern guests bind their in-box xHCI
+/// drivers without requiring vendor-specific packages.
+pub const PCI_DEVICE_ID_QEMU_XHCI: u16 = 0x000d;
 pub const PCI_DEVICE_ID_AERO_AEROGPU: u16 = 0x0001;
 
 pub const PCI_DEVICE_ID_VIRTIO_NET_TRANSITIONAL: u16 = 0x1000;
@@ -294,6 +299,13 @@ pub const UHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::io(4, 32)];
 /// The architectural register set is small (< 0x100 bytes for typical controllers), but we reserve
 /// a full 4KiB page so BAR alignment and probing behavior match real hardware.
 pub const EHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, 0x1000, false)];
+
+/// Size in bytes of the xHCI MMIO window (BAR0).
+///
+/// Keep this in sync with `XhciPciDevice::MMIO_BAR_SIZE`.
+pub const XHCI_MMIO_BAR_SIZE: u64 = 0x10000;
+
+pub const XHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, XHCI_MMIO_BAR_SIZE, false)];
 
 /// PCI BAR index used for the AHCI ABAR MMIO window on the Intel ICH9 profile.
 pub const AHCI_ABAR_BAR_INDEX: u8 = 5;
@@ -546,6 +558,29 @@ pub const USB_EHCI_ICH9: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &EHCI_BARS,
+    capabilities: &[],
+};
+
+/// USB 3.0 xHCI controller (QEMU-compatible PCI identity).
+///
+/// We intentionally use QEMU's widely-recognized xHCI PCI IDs (`1b36:000d`) so modern guest OSes
+/// bind their generic xHCI drivers by default. Guests still rely primarily on the xHCI class code
+/// (`0c/03/30`), but a realistic VID/DID helps keep enumeration consistent with other virtual
+/// platforms.
+pub const USB_XHCI_QEMU: PciDeviceProfile = PciDeviceProfile {
+    name: "qemu-xhci",
+    // `00:0c.0` is reserved for the transitional VGA/VBE stub; use the next slot by default.
+    bdf: PciBdf::new(0, 0x0d, 0),
+    vendor_id: PCI_VENDOR_ID_REDHAT_QEMU,
+    device_id: PCI_DEVICE_ID_QEMU_XHCI,
+    subsystem_vendor_id: 0,
+    subsystem_id: 0,
+    revision_id: 0,
+    // Serial bus / USB / xHCI.
+    class: PciClassCode::new(0x0c, 0x03, 0x30),
+    header_type: 0x00,
+    interrupt_pin: Some(PciInterruptPin::IntA),
+    bars: &XHCI_BARS,
     capabilities: &[],
 };
 

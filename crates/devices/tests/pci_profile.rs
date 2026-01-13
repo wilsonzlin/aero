@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use aero_devices::pci::capabilities::PCI_CAP_ID_VENDOR_SPECIFIC;
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::*;
+use aero_devices::pci::PciBarDefinition;
 use aero_devices::pci::PciBdf;
 
 #[test]
@@ -236,6 +237,26 @@ fn virtio_bar0_probe_returns_expected_size_mask() {
     // - high dword: 0xffff_ffff (since size < 4GiB)
     assert_eq!(cfg.read(0x10, 4), 0xffff_c004);
     assert_eq!(cfg.read(0x14, 4), 0xffff_ffff);
+}
+
+#[test]
+fn xhci_profile_class_code_and_bar0_definition() {
+    assert_eq!(USB_XHCI_QEMU.class.as_u32(), 0x0c0330);
+    assert_eq!(USB_XHCI_QEMU.vendor_id, PCI_VENDOR_ID_REDHAT_QEMU);
+    assert_eq!(USB_XHCI_QEMU.device_id, PCI_DEVICE_ID_QEMU_XHCI);
+
+    assert_eq!(USB_XHCI_QEMU.bars.len(), 1);
+    assert_eq!(USB_XHCI_QEMU.bars[0].index, 0);
+    assert_eq!(USB_XHCI_QEMU.bars[0].size, XHCI_MMIO_BAR_SIZE);
+
+    let cfg = USB_XHCI_QEMU.build_config_space();
+    assert_eq!(
+        cfg.bar_definition(0),
+        Some(PciBarDefinition::Mmio32 {
+            size: u32::try_from(XHCI_MMIO_BAR_SIZE).expect("xHCI BAR size should fit in u32"),
+            prefetchable: false,
+        })
+    );
 }
 
 #[test]
