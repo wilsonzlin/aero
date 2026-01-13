@@ -59,8 +59,21 @@ fn read_context32_dwords(mem: &mut impl MemoryBus, paddr: u64) -> [u32; CONTEXT_
     out
 }
 
+fn write_context32_dwords(mem: &mut impl MemoryBus, paddr: u64, dwords: &[u32; CONTEXT_DWORDS]) {
+    let mut raw = [0u8; CONTEXT_DWORDS * 4];
+    for (i, dword) in dwords.iter().enumerate() {
+        let off = i * 4;
+        raw[off..off + 4].copy_from_slice(&dword.to_le_bytes());
+    }
+    mem.write_physical(paddr, &raw);
+}
+
 fn read_u64_le(mem: &mut impl MemoryBus, paddr: u64) -> u64 {
     mem.read_u64(paddr)
+}
+
+fn write_u64_le(mem: &mut impl MemoryBus, paddr: u64, value: u64) {
+    mem.write_physical(paddr, &value.to_le_bytes());
 }
 
 /// Iterator over set bits in a 32-bit context flags field.
@@ -98,6 +111,10 @@ impl InputControlContext {
         Self {
             dwords: read_context32_dwords(mem, paddr),
         }
+    }
+
+    pub fn write_to(&self, mem: &mut impl MemoryBus, paddr: u64) {
+        write_context32_dwords(mem, paddr, &self.dwords);
     }
 
     pub fn dword(&self, index: usize) -> u32 {
@@ -176,6 +193,10 @@ impl SlotContext {
         Self {
             dwords: read_context32_dwords(mem, paddr),
         }
+    }
+
+    pub fn write_to(&self, mem: &mut impl MemoryBus, paddr: u64) {
+        write_context32_dwords(mem, paddr, &self.dwords);
     }
 
     pub fn dword(&self, index: usize) -> u32 {
@@ -281,6 +302,10 @@ impl EndpointContext {
         }
     }
 
+    pub fn write_to(&self, mem: &mut impl MemoryBus, paddr: u64) {
+        write_context32_dwords(mem, paddr, &self.dwords);
+    }
+
     pub fn dword(&self, index: usize) -> u32 {
         self.dwords.get(index).copied().unwrap_or(0)
     }
@@ -335,6 +360,14 @@ impl EndpointContext {
         (self.tr_dequeue_pointer_raw() & 0x01) != 0
     }
 
+    /// Set the Transfer Ring Dequeue Pointer + DCS bit.
+    pub fn set_tr_dequeue_pointer(&mut self, ptr: u64, dcs: bool) {
+        let ptr = ptr & !0x0f;
+        let raw = ptr | (dcs as u64);
+        self.dwords[2] = raw as u32;
+        self.dwords[3] = (raw >> 32) as u32;
+    }
+
     /// Lower 32 bits of the raw TR Dequeue Pointer field (DW2).
     pub fn tr_dequeue_ptr_lo(&self) -> u32 {
         self.dwords[2]
@@ -364,6 +397,15 @@ impl InputContext32 {
         InputControlContext::read_from(mem, self.base)
     }
 
+    pub fn write_input_control(
+        &self,
+        mem: &mut impl MemoryBus,
+        ctx: &InputControlContext,
+    ) -> Result<(), ContextError> {
+        ctx.write_to(mem, self.base);
+        Ok(())
+    }
+
     /// Reads the Slot Context (Device Context index 0).
     pub fn slot_context(&self, mem: &mut impl MemoryBus) -> Result<SlotContext, ContextError> {
         let addr = self
@@ -371,6 +413,20 @@ impl InputContext32 {
             .checked_add(CONTEXT_SIZE as u64)
             .ok_or(ContextError::AddressOverflow)?;
         Ok(SlotContext::read_from(mem, addr))
+    }
+
+    /// Writes the Slot Context (Device Context index 0).
+    pub fn write_slot_context(
+        &self,
+        mem: &mut impl MemoryBus,
+        ctx: &SlotContext,
+    ) -> Result<(), ContextError> {
+        let addr = self
+            .base
+            .checked_add(CONTEXT_SIZE as u64)
+            .ok_or(ContextError::AddressOverflow)?;
+        ctx.write_to(mem, addr);
+        Ok(())
     }
 
     /// Reads an Endpoint Context by Device Context index (`1..=31`).
@@ -401,6 +457,28 @@ impl InputContext32 {
             .ok_or(ContextError::AddressOverflow)?;
         Ok(EndpointContext::read_from(mem, addr))
     }
+
+    /// Writes an Endpoint Context by Device Context index (`1..=31`).
+    pub fn write_endpoint_context(
+        &self,
+        mem: &mut impl MemoryBus,
+        device_context_index: u8,
+        ctx: &EndpointContext,
+    ) -> Result<(), ContextError> {
+        if !(1..=31).contains(&device_context_index) {
+            return Err(ContextError::InvalidDeviceContextIndex(device_context_index));
+        }
+
+        // Input Context layout: [Input Control][Slot][EP0][EP1 OUT][EP1 IN]...
+        // => add one context to map from Device Context index to Input Context index.
+        let input_context_index = device_context_index as u64 + 1;
+        let addr = self
+            .base
+            .checked_add(input_context_index * CONTEXT_SIZE as u64)
+            .ok_or(ContextError::AddressOverflow)?;
+        ctx.write_to(mem, addr);
+        Ok(())
+    }
 }
 
 /// Wrapper for an xHCI Device Context in guest memory (32-byte contexts).
@@ -422,6 +500,15 @@ impl DeviceContext32 {
         SlotContext::read_from(mem, self.base)
     }
 
+    pub fn write_slot_context(
+        &self,
+        mem: &mut impl MemoryBus,
+        ctx: &SlotContext,
+    ) -> Result<(), ContextError> {
+        ctx.write_to(mem, self.base);
+        Ok(())
+    }
+
     pub fn endpoint_context(
         &self,
         mem: &mut impl MemoryBus,
@@ -438,6 +525,24 @@ impl DeviceContext32 {
             .checked_add(device_context_index as u64 * CONTEXT_SIZE as u64)
             .ok_or(ContextError::AddressOverflow)?;
         Ok(EndpointContext::read_from(mem, addr))
+    }
+
+    pub fn write_endpoint_context(
+        &self,
+        mem: &mut impl MemoryBus,
+        device_context_index: u8,
+        ctx: &EndpointContext,
+    ) -> Result<(), ContextError> {
+        if !(1..=31).contains(&device_context_index) {
+            return Err(ContextError::InvalidDeviceContextIndex(device_context_index));
+        }
+
+        let addr = self
+            .base
+            .checked_add(device_context_index as u64 * CONTEXT_SIZE as u64)
+            .ok_or(ContextError::AddressOverflow)?;
+        ctx.write_to(mem, addr);
+        Ok(())
     }
 }
 
@@ -478,6 +583,18 @@ impl Dcbaa {
     ) -> Result<u64, ContextError> {
         let addr = self.entry_addr(slot_id)?;
         Ok(read_u64_le(mem, addr))
+    }
+
+    pub fn write_device_context_ptr(
+        &self,
+        mem: &mut impl MemoryBus,
+        slot_id: u8,
+        device_context_ptr: u64,
+    ) -> Result<(), ContextError> {
+        let addr = self.entry_addr(slot_id)?;
+        // Device Context pointers are 64-byte aligned; mask low bits away.
+        write_u64_le(mem, addr, device_context_ptr & !0x3f);
+        Ok(())
     }
 }
 

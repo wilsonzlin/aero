@@ -14,40 +14,24 @@ use util::{Alloc, TestMemory};
 const TRB_LEN: u64 = 0x10;
 
 fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, chain: bool, ioc: bool) -> Trb {
-    let mut dword3 = 0u32;
-    if cycle {
-        dword3 |= 1;
-    }
+    let mut trb = Trb::new(buf_ptr, len & 0x1ffff, 0);
+    trb.set_cycle(cycle);
     if chain {
-        dword3 |= 1 << 4;
+        trb.control |= 1 << 4;
     }
     if ioc {
-        dword3 |= 1 << 5;
+        trb.control |= 1 << 5;
     }
-    dword3 |= (TrbType::Normal as u32) << 10;
-    Trb {
-        dword0: buf_ptr as u32,
-        dword1: (buf_ptr >> 32) as u32,
-        dword2: len & 0x1ffff,
-        dword3,
-    }
+    trb.set_trb_type(TrbType::Normal);
+    trb
 }
 
 fn make_link_trb(target: u64, cycle: bool, toggle_cycle: bool) -> Trb {
-    let mut dword3 = 0u32;
-    if cycle {
-        dword3 |= 1;
-    }
-    if toggle_cycle {
-        dword3 |= 1 << 1;
-    }
-    dword3 |= (TrbType::Link as u32) << 10;
-    Trb {
-        dword0: target as u32,
-        dword1: (target >> 32) as u32,
-        dword2: 0,
-        dword3,
-    }
+    let mut trb = Trb::new(target, 0, 0);
+    trb.set_cycle(cycle);
+    trb.set_trb_type(TrbType::Link);
+    trb.set_link_toggle_cycle(toggle_cycle);
+    trb
 }
 
 #[derive(Clone, Debug)]

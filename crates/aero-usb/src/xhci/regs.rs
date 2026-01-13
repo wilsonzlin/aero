@@ -19,6 +19,8 @@ pub const REG_USBSTS: u64 = 0x44;
 /// Command Ring Control Register (CRCR), 64-bit (low/high dwords).
 pub const REG_CRCR_LO: u64 = 0x58;
 pub const REG_CRCR_HI: u64 = 0x5c;
+pub const REG_DCBAAP_LO: u64 = 0x70;
+pub const REG_DCBAAP_HI: u64 = 0x74;
 
 /// USBCMD bit 0 (Run/Stop).
 pub const USBCMD_RUN: u32 = 1 << 0;

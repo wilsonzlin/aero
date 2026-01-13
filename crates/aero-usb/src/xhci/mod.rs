@@ -12,6 +12,7 @@
 //! - a minimal MMIO register file with basic size/unaligned access support
 //! - a DMA read on the first transition of `USBCMD.RUN` (to validate PCI BME gating in the wrapper)
 //! - a level-triggered `irq_level()` surface (to validate PCI INTx disable gating)
+//! - DCBAAP register storage + controller-local slot allocation (Enable Slot scaffolding)
 //!
 //! Full xHCI semantics (doorbells, command/event rings, device contexts, interrupters, etc) remain
 //! future work.
@@ -26,12 +27,142 @@ pub mod ring;
 pub mod transfer;
 pub mod trb;
 
+use alloc::vec::Vec;
 use crate::MemoryBus;
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
 const DEFAULT_PORT_COUNT: u8 = 2;
+
+use self::context::{EndpointContext, SlotContext};
+use self::ring::RingCursor;
+
+/// xHCI command completion codes (subset).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandCompletionCode {
+    Success,
+    NoSlotsAvailableError,
+    ParameterError,
+    ContextStateError,
+    Unknown(u8),
+}
+
+impl CommandCompletionCode {
+    #[inline]
+    pub const fn from_raw(raw: u8) -> Self {
+        match raw {
+            1 => Self::Success,
+            9 => Self::NoSlotsAvailableError,
+            17 => Self::ParameterError,
+            19 => Self::ContextStateError,
+            other => Self::Unknown(other),
+        }
+    }
+
+    #[inline]
+    pub const fn raw(self) -> u8 {
+        match self {
+            Self::Success => 1,
+            Self::NoSlotsAvailableError => 9,
+            Self::ParameterError => 17,
+            Self::ContextStateError => 19,
+            Self::Unknown(raw) => raw,
+        }
+    }
+}
+
+/// Result of completing an xHCI command.
+///
+/// In hardware this data is typically delivered via a Command Completion Event TRB.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommandCompletion {
+    pub completion_code: CommandCompletionCode,
+    pub slot_id: u8,
+}
+
+impl CommandCompletion {
+    #[inline]
+    pub const fn success(slot_id: u8) -> Self {
+        Self {
+            completion_code: CommandCompletionCode::Success,
+            slot_id,
+        }
+    }
+
+    #[inline]
+    pub const fn failure(code: CommandCompletionCode) -> Self {
+        Self {
+            completion_code: code,
+            slot_id: 0,
+        }
+    }
+}
+
+/// Per-slot state tracked by the controller.
+#[derive(Debug, Clone)]
+pub struct SlotState {
+    enabled: bool,
+    port_id: Option<u8>,
+    device_attached: bool,
+
+    /// Guest physical address of the Device Context structure, as stored in DCBAAP.
+    device_context_ptr: u64,
+
+    /// Shadow context state (mirrors guest memory once Address Device/Configure Endpoint are
+    /// implemented).
+    slot_context: SlotContext,
+    endpoint_contexts: [EndpointContext; 31],
+
+    /// Per-endpoint transfer ring cursors indexed by Endpoint Context ID (1..=31).
+    transfer_rings: [Option<RingCursor>; 31],
+}
+
+impl Default for SlotState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port_id: None,
+            device_attached: false,
+            device_context_ptr: 0,
+            slot_context: SlotContext::default(),
+            endpoint_contexts: [EndpointContext::default(); 31],
+            transfer_rings: [None; 31],
+        }
+    }
+}
+
+impl SlotState {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn port_id(&self) -> Option<u8> {
+        self.port_id
+    }
+
+    pub fn device_attached(&self) -> bool {
+        self.device_attached
+    }
+
+    pub fn device_context_ptr(&self) -> u64 {
+        self.device_context_ptr
+    }
+
+    pub fn slot_context(&self) -> &SlotContext {
+        &self.slot_context
+    }
+
+    pub fn endpoint_context(&self, idx: usize) -> Option<&EndpointContext> {
+        self.endpoint_contexts.get(idx)
+    }
+
+    /// Returns the transfer ring cursor for the given Endpoint Context ID (1..=31).
+    pub fn transfer_ring(&self, endpoint_id: u8) -> Option<RingCursor> {
+        let idx = endpoint_id.checked_sub(1)? as usize;
+        self.transfer_rings.get(idx).copied().flatten()
+    }
+}
 
 /// Minimal xHCI controller model.
 ///
@@ -44,6 +175,8 @@ pub struct XhciController {
     usbcmd: u32,
     usbsts: u32,
     crcr: u64,
+    dcbaap: u64,
+    slots: Vec<SlotState>,
 }
 
 impl Default for XhciController {
@@ -66,12 +199,18 @@ impl XhciController {
 
     pub fn with_port_count(port_count: u8) -> Self {
         assert!(port_count > 0, "xHCI controller must expose at least one port");
+        const DEFAULT_MAX_SLOTS: usize = 32;
+        let slots = core::iter::repeat_with(SlotState::default)
+            .take(DEFAULT_MAX_SLOTS + 1)
+            .collect();
         let mut ctrl = Self {
             port_count,
             ext_caps: Vec::new(),
             usbcmd: 0,
             usbsts: 0,
             crcr: 0,
+            dcbaap: 0,
+            slots,
         };
         ctrl.rebuild_ext_caps();
         ctrl
@@ -79,6 +218,73 @@ impl XhciController {
 
     pub fn mmio_read_u32(&mut self, mem: &mut dyn MemoryBus, offset: u64) -> u32 {
         self.mmio_read(mem, offset, 4)
+    }
+
+    /// Returns the currently configured DCBAAP base (64-byte aligned), if set.
+    pub fn dcbaap(&self) -> Option<u64> {
+        if self.dcbaap == 0 {
+            None
+        } else {
+            Some(self.dcbaap)
+        }
+    }
+
+    /// Store the guest-provided DCBAAP pointer.
+    ///
+    /// The base address is 64-byte aligned; low bits are masked away.
+    pub fn set_dcbaap(&mut self, paddr: u64) {
+        self.dcbaap = paddr & !0x3f;
+    }
+
+    fn dcbaap_entry_paddr(&self, slot_id: u8) -> Option<u64> {
+        let base = self.dcbaap()?;
+        base.checked_add((slot_id as u64).checked_mul(8)?)
+    }
+
+    /// Return the slot state for `slot_id` if the slot is currently enabled.
+    pub fn slot_state(&self, slot_id: u8) -> Option<&SlotState> {
+        let idx = usize::from(slot_id);
+        let state = self.slots.get(idx)?;
+        if state.enabled {
+            Some(state)
+        } else {
+            None
+        }
+    }
+
+    /// Enable a new device slot.
+    ///
+    /// This is the core of handling an Enable Slot Command TRB. It allocates the lowest available
+    /// slot ID and initialises controller-local state.
+    ///
+    /// The method is defensive: missing/zero DCBAAP returns a completion code instead of panicking.
+    pub fn enable_slot(&mut self, mem: &mut impl MemoryBus) -> CommandCompletion {
+        if self.dcbaap().is_none() {
+            return CommandCompletion::failure(CommandCompletionCode::ContextStateError);
+        }
+
+        let slot_id = match (1u8..)
+            .take(self.slots.len().saturating_sub(1))
+            .find(|&id| !self.slots[usize::from(id)].enabled)
+        {
+            Some(id) => id,
+            None => return CommandCompletion::failure(CommandCompletionCode::NoSlotsAvailableError),
+        };
+
+        let Some(entry_addr) = self.dcbaap_entry_paddr(slot_id) else {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        };
+
+        // Initialise DCBAAP entry. This is safe even if the guest already zeroed it.
+        mem.write_physical(entry_addr, &0u64.to_le_bytes());
+
+        let slot = &mut self.slots[usize::from(slot_id)];
+        *slot = SlotState {
+            enabled: true,
+            ..SlotState::default()
+        };
+
+        CommandCompletion::success(slot_id)
     }
 
     pub fn irq_level(&self) -> bool {
@@ -168,6 +374,8 @@ impl XhciController {
             regs::REG_USBSTS => self.usbsts,
             regs::REG_CRCR_LO => (self.crcr & 0xffff_ffff) as u32,
             regs::REG_CRCR_HI => (self.crcr >> 32) as u32,
+            regs::REG_DCBAAP_LO => (self.dcbaap & 0xffff_ffff) as u32,
+            regs::REG_DCBAAP_HI => (self.dcbaap >> 32) as u32,
             _ => 0,
         };
 
@@ -222,6 +430,16 @@ impl XhciController {
                 let hi = merge((self.crcr >> 32) as u32) as u64;
                 self.crcr = (self.crcr & 0x0000_0000_ffff_ffff) | (hi << 32);
             }
+            regs::REG_DCBAAP_LO => {
+                let lo = merge(self.dcbaap as u32) as u64;
+                self.dcbaap = (self.dcbaap & 0xffff_ffff_0000_0000) | lo;
+                self.dcbaap &= !0x3f;
+            }
+            regs::REG_DCBAAP_HI => {
+                let hi = merge((self.dcbaap >> 32) as u32) as u64;
+                self.dcbaap = (self.dcbaap & 0x0000_0000_ffff_ffff) | (hi << 32);
+                self.dcbaap &= !0x3f;
+            }
             _ => {}
         }
     }
@@ -244,12 +462,14 @@ impl IoSnapshot for XhciController {
         const TAG_USBSTS: u16 = 2;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
+        const TAG_DCBAAP: u16 = 5;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.usbcmd);
         w.field_u32(TAG_USBSTS, self.usbsts);
         w.field_u64(TAG_CRCR, self.crcr);
         w.field_u8(TAG_PORT_COUNT, self.port_count);
+        w.field_u64(TAG_DCBAAP, self.dcbaap);
         w.finish()
     }
 
@@ -258,6 +478,7 @@ impl IoSnapshot for XhciController {
         const TAG_USBSTS: u16 = 2;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
+        const TAG_DCBAAP: u16 = 5;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -269,6 +490,14 @@ impl IoSnapshot for XhciController {
             // Clamp invalid snapshots to a sane value rather than panicking.
             self.port_count = v.max(1);
             self.rebuild_ext_caps();
+        }
+        if let Some(v) = r.u64(TAG_DCBAAP)? {
+            self.dcbaap = v & !0x3f;
+        }
+        // Reset slot state; full context snapshotting will be added when a command/event ring model
+        // is implemented.
+        for slot in self.slots.iter_mut() {
+            *slot = SlotState::default();
         }
         Ok(())
     }
