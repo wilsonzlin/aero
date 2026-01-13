@@ -10435,15 +10435,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
     return trace.ret(kD3DErrInvalidCall);
   }
   const uint32_t bpp = bytes_per_pixel(src->format);
-  if (bpp != 4) {
-    return trace.ret(kD3DErrInvalidCall);
-  }
-  if (!src->handle || !dst->handle) {
-    return trace.ret(kD3DErrInvalidCall);
-  }
-  if (dst->backing_alloc_id == 0) {
-    // Writeback requires a guest allocation backing the destination so the host
-    // can populate the systemmem surface bytes.
+  if (bpp != 2 && bpp != 4) {
     return trace.ret(kD3DErrInvalidCall);
   }
 
@@ -10474,27 +10466,96 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
 
     // If the destination is allocation-backed, the host only observes CPU writes
     // when we mark the allocation dirty.
-    if (dst->handle != 0 && dst->backing_alloc_id != 0 && dst->size_bytes) {
+    if (dst->handle != 0 && dst->size_bytes) {
       std::lock_guard<std::mutex> lock(dev->mutex);
 
-      if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
-        return trace.ret(E_OUTOFMEMORY);
+      if (dst->backing_alloc_id != 0) {
+        if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
+          return trace.ret(E_OUTOFMEMORY);
+        }
+        const HRESULT track_hr = track_resource_allocation_locked(dev, dst, /*write=*/false);
+        if (FAILED(track_hr)) {
+          return trace.ret(track_hr);
+        }
+        auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+        if (!cmd) {
+          return trace.ret(E_OUTOFMEMORY);
+        }
+        cmd->resource_handle = dst->handle;
+        cmd->reserved0 = 0;
+        cmd->offset_bytes = 0;
+        cmd->size_bytes = dst->size_bytes;
+      } else {
+        // Host-allocated resources must be updated by embedding raw bytes in the
+        // command stream (UPLOAD_RESOURCE), mirroring the Lock/Unlock writeback
+        // path.
+        if (dst->storage.size() < dst->size_bytes) {
+          return trace.ret(E_FAIL);
+        }
+
+        const uint8_t* src_bytes = dst->storage.data();
+        uint32_t remaining = dst->size_bytes;
+        uint32_t cur_offset = 0;
+        while (remaining) {
+          const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + 1, 4);
+          if (!ensure_cmd_space(dev, min_needed)) {
+            return trace.ret(E_OUTOFMEMORY);
+          }
+
+          // Track allocations so the host can resolve the destination. For
+          // host-allocated surfaces this is a no-op.
+          const HRESULT track_hr = track_resource_allocation_locked(dev, dst, /*write=*/true);
+          if (FAILED(track_hr)) {
+            return trace.ret(track_hr);
+          }
+
+          const size_t avail = dev->cmd.bytes_remaining();
+          size_t chunk = 0;
+          if (avail > sizeof(aerogpu_cmd_upload_resource)) {
+            chunk = std::min<size_t>(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
+          }
+          while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
+            chunk--;
+          }
+          if (!chunk) {
+            submit(dev);
+            continue;
+          }
+
+          auto* cmd = append_with_payload_locked<aerogpu_cmd_upload_resource>(
+              dev, AEROGPU_CMD_UPLOAD_RESOURCE, src_bytes + cur_offset, chunk);
+          if (!cmd) {
+            return trace.ret(E_OUTOFMEMORY);
+          }
+          cmd->resource_handle = dst->handle;
+          cmd->reserved0 = 0;
+          cmd->offset_bytes = cur_offset;
+          cmd->size_bytes = chunk;
+
+          cur_offset += static_cast<uint32_t>(chunk);
+          remaining -= static_cast<uint32_t>(chunk);
+        }
       }
-      const HRESULT track_hr = track_resource_allocation_locked(dev, dst, /*write=*/false);
-      if (FAILED(track_hr)) {
-        return trace.ret(track_hr);
-      }
-      auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      if (!cmd) {
-        return trace.ret(E_OUTOFMEMORY);
-      }
-      cmd->resource_handle = dst->handle;
-      cmd->reserved0 = 0;
-      cmd->offset_bytes = 0;
-      cmd->size_bytes = dst->size_bytes;
     }
 
     return trace.ret(S_OK);
+  }
+
+  // Transfer-supported path: issue a host copy with WRITEBACK_DST so the GPU
+  // texture bytes land in the systemmem surface's backing allocation.
+  if (!src->handle || !dst->handle) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (dst->backing_alloc_id == 0) {
+    // WRITEBACK_DST requires a guest allocation backing the destination so the
+    // host can populate the systemmem surface bytes. When transfer support is
+    // enabled, render target bytes are not guaranteed to be CPU-visible without
+    // an explicit writeback, so do not silently fall back to a CPU copy.
+    static std::once_flag log_once;
+    std::call_once(log_once, [] {
+      logf("aerogpu-d3d9: GetRenderTargetData requires allocation-backed systemmem surface when transfer is enabled\n");
+    });
+    return trace.ret(kD3DErrInvalidCall);
   }
 
   uint64_t fence = 0;

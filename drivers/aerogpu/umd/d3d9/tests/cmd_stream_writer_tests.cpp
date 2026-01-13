@@ -21,7 +21,7 @@
 
 namespace aerogpu {
 
-// aerogpu_d3d9_driver.cpp helper (not part of the public UMD header).
+// aerogpu_d3d9_driver.cpp helpers (not part of the public UMD header).
 uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format);
 
 namespace {
@@ -11253,6 +11253,220 @@ bool TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload() {
 #endif
 }
 
+bool TestGetRenderTargetData16BitEmitsDirtyRangeOrUpload() {
+#if defined(_WIN32)
+  // Portable tests exercise the non-WDK code paths; skip on Windows where this
+  // D3D9 UMD is expected to run against the real WDDM runtime.
+  return true;
+#else
+  constexpr uint32_t kD3dFmtR5G6B5 = 23u;
+  constexpr D3DDDIFORMAT kFmtR5G6B5 = static_cast<D3DDDIFORMAT>(kD3dFmtR5G6B5);
+
+  // This test only runs when the driver enables R5G6B5 support.
+  if (aerogpu::d3d9_format_to_aerogpu(kD3dFmtR5G6B5) == AEROGPU_FORMAT_INVALID) {
+    std::fprintf(stderr, "INFO: skipping GetRenderTargetData 16-bit test (R5G6B5 not enabled)\n");
+    return true;
+  }
+
+  const uint32_t bpp = aerogpu::bytes_per_pixel(kFmtR5G6B5);
+  if (!Check(bpp == 2u, "bytes_per_pixel(R5G6B5) must be 2 when enabled")) {
+    return false;
+  }
+
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnGetRenderTargetData != nullptr, "pfnGetRenderTargetData")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.set_vector();
+  dev->cmd.reset();
+
+  constexpr uint32_t kWidth = 4;
+  constexpr uint32_t kHeight = 4;
+  const uint32_t row_pitch = kWidth * bpp;
+  const uint32_t size_bytes = row_pitch * kHeight;
+
+  Resource src{};
+  src.kind = ResourceKind::Surface;
+  src.handle = 0x1000u;
+  src.format = kFmtR5G6B5;
+  src.width = kWidth;
+  src.height = kHeight;
+  src.depth = 1;
+  src.mip_levels = 1;
+  src.pool = 0;
+  src.size_bytes = size_bytes;
+  src.row_pitch = row_pitch;
+  src.slice_pitch = size_bytes;
+  src.storage.resize(size_bytes);
+  for (uint32_t i = 0; i < size_bytes; ++i) {
+    src.storage[i] = static_cast<uint8_t>(0xA5u ^ static_cast<uint8_t>(i));
+  }
+
+  Resource dst{};
+  dst.kind = ResourceKind::Surface;
+  dst.handle = 0x2000u;
+  dst.format = kFmtR5G6B5;
+  dst.width = kWidth;
+  dst.height = kHeight;
+  dst.depth = 1;
+  dst.mip_levels = 1;
+  dst.pool = 2u; // D3DPOOL_SYSTEMMEM
+  dst.size_bytes = size_bytes;
+  dst.row_pitch = row_pitch;
+  dst.slice_pitch = size_bytes;
+  dst.storage.resize(size_bytes, 0);
+
+  D3DDDI_HRESOURCE hSrc{};
+  hSrc.pDrvPrivate = &src;
+  D3DDDI_HRESOURCE hDst{};
+  hDst.pDrvPrivate = &dst;
+
+  D3D9DDIARG_GETRENDERTARGETDATA args{};
+  args.hSrcResource = hSrc;
+  args.hDstResource = hDst;
+
+  // Case 1: host-allocated destination (backing_alloc_id==0) should emit
+  // UPLOAD_RESOURCE after the CPU fallback copy.
+  dst.backing_alloc_id = 0;
+  dst.wddm_hAllocation = 0;
+  std::memset(dst.storage.data(), 0, dst.storage.size());
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnGetRenderTargetData(create_dev.hDevice, &args);
+  if (!Check(hr == S_OK, "GetRenderTargetData(R5G6B5 host-allocated dst)")) {
+    return false;
+  }
+  if (!Check(dst.storage.size() == src.storage.size(), "dst storage size matches src")) {
+    return false;
+  }
+  if (!Check(std::memcmp(dst.storage.data(), src.storage.data(), dst.storage.size()) == 0,
+             "GetRenderTargetData copied bytes into dst storage")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "GetRenderTargetData(host-allocated) emits UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1, "expected one UPLOAD_RESOURCE packet")) {
+    return false;
+  }
+
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->resource_handle == dst.handle, "UPLOAD_RESOURCE handle matches dst")) {
+    return false;
+  }
+  if (!Check(upload_cmd->offset_bytes == 0, "UPLOAD_RESOURCE offset 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == dst.size_bytes, "UPLOAD_RESOURCE size matches dst size")) {
+    return false;
+  }
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  if (!Check(std::memcmp(payload, src.storage.data(), dst.size_bytes) == 0, "UPLOAD_RESOURCE payload matches src bytes")) {
+    return false;
+  }
+  if (!Check(ValidateStream(buf, len), "command stream validation")) {
+    return false;
+  }
+
+  // Case 2: allocation-backed destination should emit RESOURCE_DIRTY_RANGE (not
+  // UPLOAD_RESOURCE) after the CPU fallback copy.
+  dst.backing_alloc_id = 0x4321u;
+  dst.wddm_hAllocation = 0x1111u;
+  std::memset(dst.storage.data(), 0, dst.storage.size());
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnGetRenderTargetData(create_dev.hDevice, &args);
+  if (!Check(hr == S_OK, "GetRenderTargetData(R5G6B5 alloc-backed dst)")) {
+    return false;
+  }
+  if (!Check(std::memcmp(dst.storage.data(), src.storage.data(), dst.storage.size()) == 0,
+             "GetRenderTargetData copied bytes into alloc-backed dst storage")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  const size_t len2 = dev->cmd.bytes_used();
+
+  if (!Check(CountOpcode(buf, len2, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+             "alloc-backed GetRenderTargetData must not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  const CmdLoc dirty = FindLastOpcode(buf, len2, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty.hdr != nullptr, "GetRenderTargetData(alloc-backed) emits RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(dirty.hdr);
+  if (!Check(dirty_cmd->resource_handle == dst.handle, "dirty_range handle matches dst")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->offset_bytes == 0, "dirty_range offset 0")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->size_bytes == dst.size_bytes, "dirty_range size matches dst size")) {
+    return false;
+  }
+
+  return ValidateStream(buf, len2);
+#endif
+}
+
 bool TestKmdQueryGetScanLineClearsOutputsOnFailure() {
   AerogpuKmdQuery query;
   bool in_vblank = true;
@@ -11349,6 +11563,7 @@ int main() {
   failures += !aerogpu::TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull();
   failures += !aerogpu::TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload();
   failures += !aerogpu::TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload();
+  failures += !aerogpu::TestGetRenderTargetData16BitEmitsDirtyRangeOrUpload();
   failures += !aerogpu::TestKmdQueryGetScanLineClearsOutputsOnFailure();
   return failures ? 1 : 0;
 }
