@@ -1,8 +1,6 @@
-use emulator::devices::vga::vbe;
-
 #[test]
 fn edid_has_valid_header_and_checksum() {
-    let edid = vbe::read_edid(0).expect("missing base EDID");
+    let edid = aero_edid::read_edid(0).expect("missing base EDID");
     assert_eq!(
         &edid[0..8],
         &[0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]
@@ -14,7 +12,7 @@ fn edid_has_valid_header_and_checksum() {
 
 #[test]
 fn edid_includes_1024x768_dtd() {
-    let edid = vbe::read_edid(0).expect("missing base EDID");
+    let edid = aero_edid::read_edid(0).expect("missing base EDID");
     assert_eq!(
         &edid[54..72],
         &[

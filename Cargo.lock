@@ -1855,7 +1855,6 @@ dependencies = [
  "anyhow",
  "criterion",
  "firmware",
- "font8x8",
  "hyper 0.14.32",
  "image",
  "lru",
