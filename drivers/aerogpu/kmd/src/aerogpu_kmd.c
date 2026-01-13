@@ -5463,6 +5463,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         BOOLEAN sentDxgkFault = FALSE;
 
         if ((handled & AEROGPU_IRQ_ERROR) != 0) {
+            InterlockedExchange(&adapter->DeviceErrorLatched, 1);
             const ULONGLONG errorFence = haveCompletedFence ? (ULONGLONG)completedFence32 : adapter->LastCompletedFence;
             AeroGpuAtomicWriteU64(&adapter->LastErrorFence, errorFence);
 
@@ -5667,6 +5668,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 any = TRUE;
 
                 if ((pending & AEROGPU_IRQ_ERROR) != 0) {
+                    InterlockedExchange(&adapter->DeviceErrorLatched, 1);
                     const ULONGLONG completedFence64 = AeroGpuReadCompletedFence(adapter);
                     ULONG completedFence32 = (ULONG)completedFence64;
                     const ULONG lastCompleted32 = (ULONG)adapter->LastCompletedFence;
@@ -6083,7 +6085,155 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
 
 static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /*
+     * dxgkrnl calls DxgkDdiRestartFromTimeout after DxgkDdiResetFromTimeout. The intent is to
+     * restore the device to a known-good state that can accept new submissions without requiring
+     * a full device restart.
+     *
+     * This is a best-effort restart routine; be defensive and tolerate calls when BAR0/ring
+     * state is partially initialised (e.g. during teardown or failed start paths).
+     */
+
+    /* Clear any KMD-side latched "device error" state recorded from IRQ_ERROR. */
+    InterlockedExchange(&adapter->DeviceErrorLatched, 0);
+
+    if (!adapter->Bar0) {
+        return STATUS_SUCCESS;
+    }
+
+    const BOOLEAN haveIrqRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG));
+    const BOOLEAN haveIrqEnable = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG));
+
+    /*
+     * Disable IRQ generation while we repair ring/programming state so ISR/DPC paths never see a
+     * partially-restored configuration.
+     */
+    if (haveIrqRegs) {
+        KIRQL irqIrql;
+        KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, 0);
+        KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
+
+        /* Clear any stale pending status, including AEROGPU_IRQ_ERROR. */
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
+    }
+
+    if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        const BOOLEAN haveRingRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_RING_CONTROL + sizeof(ULONG));
+        const BOOLEAN haveFenceRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_FENCE_GPA_HI + sizeof(ULONG));
+
+        {
+            KIRQL ringIrql;
+            KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+
+            if (adapter->RingVa && adapter->RingSizeBytes >= sizeof(struct aerogpu_ring_header) && adapter->RingEntryCount != 0) {
+                if (!adapter->RingHeader) {
+                    adapter->RingHeader = (struct aerogpu_ring_header*)adapter->RingVa;
+                }
+
+                /*
+                 * Re-initialise the ring header "static" fields in case the device/guest clobbered
+                 * them while wedged. This is safe because the ring has been drained/reset in
+                 * ResetFromTimeout and we are about to resync head/tail.
+                 */
+                adapter->RingHeader->magic = AEROGPU_RING_MAGIC;
+                adapter->RingHeader->abi_version = AEROGPU_ABI_VERSION_U32;
+                adapter->RingHeader->size_bytes = (uint32_t)adapter->RingSizeBytes;
+                adapter->RingHeader->entry_count = (uint32_t)adapter->RingEntryCount;
+                adapter->RingHeader->entry_stride_bytes = (uint32_t)sizeof(struct aerogpu_submit_desc);
+                adapter->RingHeader->flags = 0;
+
+                const ULONG tail = adapter->RingTail;
+                adapter->RingHeader->head = tail;
+                adapter->RingHeader->tail = tail;
+                KeMemoryBarrier();
+            }
+
+            if (haveRingRegs && adapter->RingVa && adapter->RingSizeBytes != 0 && adapter->RingEntryCount != 0) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_LO, adapter->RingPa.LowPart);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_HI, (ULONG)(adapter->RingPa.QuadPart >> 32));
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_SIZE_BYTES, adapter->RingSizeBytes);
+
+                if (haveFenceRegs) {
+                    if (adapter->FencePageVa && ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_FENCE_PAGE) != 0)) {
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, adapter->FencePagePa.LowPart);
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, (ULONG)(adapter->FencePagePa.QuadPart >> 32));
+                    } else {
+                        /* Ensure the device will not DMA to an uninitialised fence page. */
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, 0);
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, 0);
+                    }
+                }
+
+                /* Ensure the ring is enabled post-reset. */
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, AEROGPU_RING_CONTROL_ENABLE);
+            }
+
+            KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+        }
+    } else {
+        /*
+         * Legacy ABI: re-program ring base/size registers in case the device reset cleared them.
+         * Fence interrupts are delivered via legacy INT_STATUS/ACK (no enable mask), but some
+         * legacy device models also expose the newer IRQ_STATUS/ENABLE/ACK block for vblank.
+         */
+        if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_INT_ACK + sizeof(ULONG))) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+        }
+
+        if (adapter->RingVa && adapter->RingEntryCount != 0 &&
+            adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG))) {
+            KIRQL ringIrql;
+            KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, adapter->RingPa.LowPart);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_HI, (ULONG)(adapter->RingPa.QuadPart >> 32));
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, adapter->RingEntryCount);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, adapter->RingTail);
+
+            KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+        }
+    }
+
+    /*
+     * Re-enable interrupt delivery through dxgkrnl (it may have been disabled during TDR).
+     * Do this before unmasking device IRQ generation so any immediately-pending IRQ is handled.
+     */
+    if (adapter->InterruptRegistered && adapter->DxgkInterface.DxgkCbEnableInterrupt) {
+        adapter->DxgkInterface.DxgkCbEnableInterrupt(adapter->StartInfo.hDxgkHandle);
+    }
+
+    /* Restore the device IRQ enable mask to the cached value. */
+    if (haveIrqEnable) {
+        KIRQL irqIrql;
+        KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
+
+        ULONG enable = adapter->IrqEnableMask;
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->InterruptRegistered) {
+            /*
+             * Ensure fence + error IRQs remain enabled post-restart. dxgkrnl may toggle vblank
+             * and fence interrupts through DxgkDdiControlInterrupt; we only force the baseline
+             * bits required for forward progress and diagnostics.
+             */
+            enable |= (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_ERROR);
+        }
+
+        adapter->IrqEnableMask = enable;
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+        KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
+
+        if (haveIrqRegs) {
+            /* Drop any stale pending bits that may have latched while masked. */
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
+        }
+    }
+
     return STATUS_SUCCESS;
 }
 
