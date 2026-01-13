@@ -206,3 +206,37 @@ impl CpuBus for ConformanceBus {
         Err(Exception::Unimplemented("io"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conformance_bus_rejects_port_io() {
+        let mut bus = ConformanceBus {
+            base: 0x1000,
+            mem: vec![0u8; 64],
+        };
+
+        assert_eq!(
+            bus.io_read(0x3f8, 1).unwrap_err(),
+            Exception::Unimplemented("io")
+        );
+        assert_eq!(
+            bus.io_write(0x3f8, 1, 0).unwrap_err(),
+            Exception::Unimplemented("io")
+        );
+    }
+
+    #[test]
+    fn conformance_bus_oob_is_memoryfault() {
+        let mut bus = ConformanceBus {
+            base: 0x1000,
+            mem: vec![0u8; 16],
+        };
+
+        assert_eq!(bus.read_u8(0x0fff).unwrap_err(), Exception::MemoryFault);
+        assert_eq!(bus.read_u8(0x1000 + 16).unwrap_err(), Exception::MemoryFault);
+        assert_eq!(bus.fetch(0x1000 + 8, 15).unwrap_err(), Exception::MemoryFault);
+    }
+}
