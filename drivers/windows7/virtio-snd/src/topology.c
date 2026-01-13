@@ -126,6 +126,53 @@ static const GUID* g_VirtIoSndTopoCategories[] = {
 static volatile LONG g_VirtIoSndTopoVolumeDb[2] = {0, 0}; // per-channel dB value (driver-defined units)
 static volatile LONG g_VirtIoSndTopoMute[2] = {0, 0};     // per-channel mute flag (0/1)
 
+/*
+ * Jack connection state model.
+ *
+ * Exposed via KSPROPERTY_JACK_DESCRIPTION / KSPROPERTY_JACK_DESCRIPTION2.
+ *
+ * Default to "connected" to preserve existing behavior when the device does not
+ * emit virtio-snd jack events.
+ */
+static volatile LONG g_VirtIoSndTopoJackConnected[VIRTIOSND_JACK_ID_COUNT] = {1, 1};
+
+_Use_decl_annotations_
+VOID VirtIoSndTopology_ResetJackState(VOID)
+{
+    ULONG i;
+    for (i = 0; i < RTL_NUMBER_OF(g_VirtIoSndTopoJackConnected); ++i) {
+        (VOID)InterlockedExchange(&g_VirtIoSndTopoJackConnected[i], 1);
+    }
+}
+
+_Use_decl_annotations_
+VOID VirtIoSndTopology_UpdateJackState(ULONG JackId, BOOLEAN IsConnected)
+{
+    LONG v;
+
+    if (JackId >= RTL_NUMBER_OF(g_VirtIoSndTopoJackConnected)) {
+        return;
+    }
+
+    v = IsConnected ? 1 : 0;
+    (VOID)InterlockedExchange(&g_VirtIoSndTopoJackConnected[JackId], v);
+}
+
+_Use_decl_annotations_
+BOOLEAN VirtIoSndTopology_IsJackConnected(ULONG JackId)
+{
+    if (JackId >= RTL_NUMBER_OF(g_VirtIoSndTopoJackConnected)) {
+        /*
+         * Unknown jack IDs are treated as "connected" so that a device that
+         * never sends jack events (or sends events for jacks we do not expose)
+         * does not accidentally make the endpoint appear disconnected.
+         */
+        return TRUE;
+    }
+
+    return (InterlockedCompareExchange(&g_VirtIoSndTopoJackConnected[JackId], 0, 0) != 0) ? TRUE : FALSE;
+}
+
 static BOOLEAN
 VirtIoSndTopoTryGetChannel(_In_ PPCPROPERTY_REQUEST PropertyRequest, _Out_ ULONG* OutChannel)
 {
@@ -408,6 +455,7 @@ VirtIoSndProperty_JackDescription(_In_ PPCPROPERTY_REQUEST PropertyRequest)
     ULONG required;
     KSMULTIPLE_ITEM *item;
     KSJACK_DESCRIPTION *jack;
+    BOOLEAN connected;
 
     if (PropertyRequest == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -447,7 +495,8 @@ VirtIoSndProperty_JackDescription(_In_ PPCPROPERTY_REQUEST PropertyRequest)
     jack = (KSJACK_DESCRIPTION *)(item + 1);
     RtlZeroMemory(jack, sizeof(*jack));
     jack->ChannelMapping = KSAUDIO_SPEAKER_STEREO;
-    jack->IsConnected = TRUE;
+    connected = VirtIoSndTopology_IsJackConnected(VIRTIOSND_JACK_ID_SPEAKER);
+    jack->IsConnected = connected ? TRUE : FALSE;
 
     PropertyRequest->ValueSize = required;
     return STATUS_SUCCESS;
@@ -459,6 +508,7 @@ VirtIoSndProperty_JackDescriptionMono(_In_ PPCPROPERTY_REQUEST PropertyRequest)
     ULONG required;
     KSMULTIPLE_ITEM *item;
     KSJACK_DESCRIPTION *jack;
+    BOOLEAN connected;
 
     if (PropertyRequest == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -498,18 +548,20 @@ VirtIoSndProperty_JackDescriptionMono(_In_ PPCPROPERTY_REQUEST PropertyRequest)
     jack = (KSJACK_DESCRIPTION *)(item + 1);
     RtlZeroMemory(jack, sizeof(*jack));
     jack->ChannelMapping = KSAUDIO_SPEAKER_MONO;
-    jack->IsConnected = TRUE;
+    connected = VirtIoSndTopology_IsJackConnected(VIRTIOSND_JACK_ID_MICROPHONE);
+    jack->IsConnected = connected ? TRUE : FALSE;
 
     PropertyRequest->ValueSize = required;
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS
-VirtIoSndProperty_JackDescription2(_In_ PPCPROPERTY_REQUEST PropertyRequest)
+VirtIoSndProperty_JackDescription2Common(_In_ PPCPROPERTY_REQUEST PropertyRequest, _In_ ULONG JackId)
 {
     ULONG required;
     KSMULTIPLE_ITEM *item;
     KSJACK_DESCRIPTION2 *jack;
+    BOOLEAN connected;
 
     if (PropertyRequest == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -548,9 +600,32 @@ VirtIoSndProperty_JackDescription2(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 
     jack = (KSJACK_DESCRIPTION2 *)(item + 1);
     RtlZeroMemory(jack, sizeof(*jack));
+    connected = VirtIoSndTopology_IsJackConnected(JackId);
+
+    /*
+     * KSJACK_DESCRIPTION2 exposes connection state via DeviceStateInfo.
+     * Prefer the symbolic constant when available, but fall back to bit 0
+     * (the documented "connected" bit) for older WDK environments.
+     */
+#ifndef KSJACK_DEVICE_STATE_CONNECTED
+#define KSJACK_DEVICE_STATE_CONNECTED 0x00000001u
+#endif
+    jack->DeviceStateInfo = connected ? KSJACK_DEVICE_STATE_CONNECTED : 0u;
 
     PropertyRequest->ValueSize = required;
     return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+VirtIoSndProperty_JackDescription2Speaker(_In_ PPCPROPERTY_REQUEST PropertyRequest)
+{
+    return VirtIoSndProperty_JackDescription2Common(PropertyRequest, VIRTIOSND_JACK_ID_SPEAKER);
+}
+
+static NTSTATUS
+VirtIoSndProperty_JackDescription2Mic(_In_ PPCPROPERTY_REQUEST PropertyRequest)
+{
+    return VirtIoSndProperty_JackDescription2Common(PropertyRequest, VIRTIOSND_JACK_ID_MICROPHONE);
 }
 
 static NTSTATUS
@@ -613,13 +688,13 @@ static const PCPROPERTY_ITEM g_VirtIoSndTopoMuteProperties[] = {
 
 static const PCPROPERTY_ITEM g_VirtIoSndTopoJackProperties[] = {
     {KSPROPERTY_JACK_DESCRIPTION, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackDescription},
-    {KSPROPERTY_JACK_DESCRIPTION2, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackDescription2},
+    {KSPROPERTY_JACK_DESCRIPTION2, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackDescription2Speaker},
     {KSPROPERTY_JACK_CONTAINERID, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackContainerId},
 };
 
 static const PCPROPERTY_ITEM g_VirtIoSndTopoJackPropertiesMic[] = {
     {KSPROPERTY_JACK_DESCRIPTION, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackDescriptionMono},
-    {KSPROPERTY_JACK_DESCRIPTION2, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackDescription2},
+    {KSPROPERTY_JACK_DESCRIPTION2, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackDescription2Mic},
     {KSPROPERTY_JACK_CONTAINERID, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackContainerId},
 };
 

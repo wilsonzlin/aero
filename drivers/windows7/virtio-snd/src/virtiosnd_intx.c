@@ -2,6 +2,7 @@
 
 #include <ntddk.h>
 
+#include "topology.h"
 #include "trace.h"
 #include "virtiosnd.h"
 #include "virtiosnd_intx.h"
@@ -120,9 +121,11 @@ static VOID VirtIoSndIntxDrainEventqUsed(
             switch (evt.Kind) {
             case VIRTIO_SND_EVENT_KIND_JACK_CONNECTED:
                 InterlockedIncrement(&dx->EventqStats.JackConnected);
+                VirtIoSndTopology_UpdateJackState(evt.Data, TRUE);
                 break;
             case VIRTIO_SND_EVENT_KIND_JACK_DISCONNECTED:
                 InterlockedIncrement(&dx->EventqStats.JackDisconnected);
+                VirtIoSndTopology_UpdateJackState(evt.Data, FALSE);
                 break;
             case VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED:
                 InterlockedIncrement(&dx->EventqStats.PcmPeriodElapsed);
@@ -286,6 +289,14 @@ VOID VirtIoSndIntxInitialize(PVIRTIOSND_DEVICE_EXTENSION Dx)
     if (Dx == NULL) {
         return;
     }
+
+    /*
+     * Reset topology jack state to the default (connected) at device start.
+     *
+     * If the device never emits jack events, this preserves historical behavior.
+     * If the device does emit events, the first event will update the state.
+     */
+    VirtIoSndTopology_ResetJackState();
 
     RtlZeroMemory(&Dx->Intx, sizeof(Dx->Intx));
     RtlZeroMemory(&Dx->InterruptDesc, sizeof(Dx->InterruptDesc));
