@@ -48,6 +48,18 @@ const (
 	WebRTCUDPDroppedTooManyBindings = "webrtc_udp_dropped_too_many_bindings"
 )
 
+// L2 tunnel bridge (WebRTC DataChannel "l2" <-> backend WS) counters.
+const (
+	L2BridgeDialsTotal              = "l2_bridge_dials_total"
+	L2BridgeDialErrorsTotal         = "l2_bridge_dial_errors_total"
+	L2BridgeMessagesFromClientTotal = "l2_bridge_messages_from_client_total"
+	L2BridgeMessagesToClientTotal   = "l2_bridge_messages_to_client_total"
+	L2BridgeBytesFromClientTotal    = "l2_bridge_bytes_from_client_total"
+	L2BridgeBytesToClientTotal      = "l2_bridge_bytes_to_client_total"
+	L2BridgeDroppedOversizedTotal   = "l2_bridge_dropped_oversized_total"
+	L2BridgeDroppedRateLimitedTotal = "l2_bridge_dropped_rate_limited_total"
+)
+
 // Metrics is a minimal, concurrency-safe counter registry.
 //
 // The production relay is expected to plug into a real metrics backend; this

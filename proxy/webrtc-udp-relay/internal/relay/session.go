@@ -56,6 +56,12 @@ func newSession(id string, cfg config.Config, m *metrics.Metrics, clock ratelimi
 
 func (s *Session) ID() string { return s.id }
 
+// Metrics returns the shared in-process metrics registry used by this session.
+//
+// Callers should treat the returned pointer as read-only aside from invoking
+// concurrency-safe counter methods (Inc/Add/Get/Snapshot).
+func (s *Session) Metrics() *metrics.Metrics { return s.metrics }
+
 // Done is closed when the session is closed (either explicitly or due to hard
 // enforcement mode).
 func (s *Session) Done() <-chan struct{} {
