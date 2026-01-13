@@ -338,13 +338,17 @@ impl XhciController {
     /// Read from the controller's MMIO register space.
     pub fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
         // Treat out-of-range reads as open bus.
-        if offset >= u64::from(Self::MMIO_SIZE) {
-            return match size {
-                1 => 0xff,
-                2 => 0xffff,
-                4 => u32::MAX,
-                _ => 0,
-            };
+        let open_bus = match size {
+            1 => 0xff,
+            2 => 0xffff,
+            4 => u32::MAX,
+            _ => 0,
+        };
+        let Some(end) = offset.checked_add(size as u64) else {
+            return open_bus;
+        };
+        if size == 0 || end > u64::from(Self::MMIO_SIZE) {
+            return open_bus;
         }
 
         let aligned = offset & !3;
@@ -389,7 +393,10 @@ impl XhciController {
 
     /// Write to the controller's MMIO register space.
     pub fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
-        if offset >= u64::from(Self::MMIO_SIZE) {
+        let Some(end) = offset.checked_add(size as u64) else {
+            return;
+        };
+        if size == 0 || end > u64::from(Self::MMIO_SIZE) {
             return;
         }
 
