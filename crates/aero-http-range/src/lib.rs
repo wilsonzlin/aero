@@ -443,6 +443,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_unit_is_case_insensitive_and_requires_equals() {
+        assert_eq!(
+            parse_range_header("ByTeS=0-1").unwrap(),
+            vec![ByteRangeSpec::FromTo { start: 0, end: 1 }]
+        );
+        assert!(matches!(
+            parse_range_header("bytes 0-1").unwrap_err(),
+            RangeParseError::InvalidSyntax
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_missing_suffix_length() {
+        assert!(matches!(
+            parse_range_header("bytes=-").unwrap_err(),
+            RangeParseError::InvalidSyntax
+        ));
+    }
+
+    #[test]
     fn dos_guard_rejects_header_over_max_len() {
         let header = "x".repeat(MAX_RANGE_HEADER_LEN + 1);
         match parse_range_header(&header).unwrap_err() {
@@ -471,6 +491,26 @@ mod tests {
         assert!(matches!(
             parse_range_header(&header).unwrap_err(),
             RangeParseError::InvalidNumber
+        ));
+    }
+
+    #[test]
+    fn dos_guard_rejects_too_many_ranges() {
+        // 1001 ranges of length 1 each (should exceed MAX_RANGE_SPECS==1000).
+        let header = {
+            let mut s = String::from("bytes=");
+            for i in 0..(MAX_RANGE_SPECS as u64 + 1) {
+                if i > 0 {
+                    s.push(',');
+                }
+                s.push_str(&format!("{i}-{i}"));
+            }
+            s
+        };
+
+        assert!(matches!(
+            parse_range_header(&header).unwrap_err(),
+            RangeParseError::TooManyRanges { .. }
         ));
     }
 
@@ -508,6 +548,19 @@ mod tests {
     }
 
     #[test]
+    fn resolve_open_ended_from_resolves_to_end_and_drops_if_start_out_of_bounds() {
+        let specs = [ByteRangeSpec::From { start: 7 }];
+        let resolved = resolve_ranges(&specs, 10, false).unwrap();
+        assert_resolved_eq(&resolved, &[(7, 9)], 10);
+
+        let specs = [ByteRangeSpec::From { start: 10 }];
+        assert!(matches!(
+            resolve_ranges(&specs, 10, false),
+            Err(RangeResolveError::Unsatisfiable)
+        ));
+    }
+
+    #[test]
     fn resolve_coalesce_sorts_and_merges_overlapping_and_adjacent_ranges() {
         // Unsorted, overlapping and adjacent.
         let specs = [
@@ -526,5 +579,29 @@ mod tests {
             assert!(a.start <= b.start);
             assert!(a.end.saturating_add(1) < b.start);
         }
+    }
+
+    #[test]
+    fn rfc_7233_example_ranges() {
+        // RFC 7233 §2.1 examples, resolved against a 10,000-byte representation.
+        let len = 10_000u64;
+
+        for (header, expected) in [
+            ("bytes=0-499", &[(0, 499)][..]),
+            ("bytes=500-999", &[(500, 999)][..]),
+            ("bytes=-500", &[(9500, 9999)][..]),
+            ("bytes=9500-", &[(9500, 9999)][..]),
+            // Common multi-range example.
+            ("bytes=0-0,-1", &[(0, 0), (9999, 9999)][..]),
+        ] {
+            let specs = parse_range_header(header).unwrap();
+            let resolved = resolve_ranges(&specs, len, false).unwrap();
+            assert_resolved_eq(&resolved, expected, len);
+        }
+
+        // Adjacent ranges can be coalesced into a single one.
+        let specs = parse_range_header("bytes=0-499,500-999").unwrap();
+        let resolved = resolve_ranges(&specs, len, true).unwrap();
+        assert_resolved_eq(&resolved, &[(0, 999)], len);
     }
 }
