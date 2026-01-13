@@ -63,6 +63,7 @@ const aerogpu_cmd_hdr* FindLastOpcode(const uint8_t* buf, size_t len, uint32_t o
   return last;
 }
 
+#if !(defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS)
 struct Harness {
   std::vector<uint8_t> last_stream;
   std::vector<HRESULT> errors;
@@ -159,6 +160,7 @@ void DestroyTestDevice(TestDevice* dev) {
   dev->hDevice = {};
   dev->hAdapter = {};
 }
+#endif // !(defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS)
 
 bool TestMultiViewportReportsNotImplAndEmitsFirst() {
   Device dev{};
@@ -570,6 +572,7 @@ bool TestViewportAndScissorDisableEncodesDefaults() {
   return true;
 }
 
+#if !(defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS)
 bool TestPortableUmdMultiViewportReportsNotImplAndEmitsFirst() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev), "InitTestDevice(portable multi-viewport)")) {
@@ -975,6 +978,7 @@ bool TestPortableUmdDisableEncodesDefaultsAndDoesNotReportErrors() {
   DestroyTestDevice(&dev);
   return true;
 }
+#endif // !(defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS)
 
 } // namespace
 
@@ -987,6 +991,7 @@ int main() {
   ok &= TestMultiScissorIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestMultiScissorDisabledExtraDoesNotReportNotImplAndEmitsFirst();
   ok &= TestViewportAndScissorDisableEncodesDefaults();
+#if !(defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS)
   ok &= TestPortableUmdMultiViewportReportsNotImplAndEmitsFirst();
   ok &= TestPortableUmdMultiViewportIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestPortableUmdMultiViewportDisabledExtraDoesNotReportNotImplAndEmitsFirst();
@@ -994,6 +999,7 @@ int main() {
   ok &= TestPortableUmdMultiScissorIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestPortableUmdMultiScissorDisabledExtraDoesNotReportNotImplAndEmitsFirst();
   ok &= TestPortableUmdDisableEncodesDefaultsAndDoesNotReportErrors();
+#endif
   if (!ok) {
     return 1;
   }
