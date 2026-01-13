@@ -73,3 +73,27 @@ func TestSessionManager_EnforcesMaxSessions(t *testing.T) {
 	}
 	s2.Close()
 }
+
+func TestSessionManager_CreateSessionWithKey_RejectsWhenKeyAlreadyActive(t *testing.T) {
+	m := metrics.New()
+	sm := NewSessionManager(config.Config{}, m, nil)
+
+	s1, err := sm.CreateSessionWithKey("sid_test")
+	if err != nil {
+		t.Fatalf("CreateSessionWithKey: %v", err)
+	}
+	t.Cleanup(s1.Close)
+
+	_, err = sm.CreateSessionWithKey("sid_test")
+	if err != ErrSessionAlreadyActive {
+		t.Fatalf("CreateSessionWithKey err=%v, want %v", err, ErrSessionAlreadyActive)
+	}
+
+	// Closing the session should free the stable key for reuse.
+	s1.Close()
+	s2, err := sm.CreateSessionWithKey("sid_test")
+	if err != nil {
+		t.Fatalf("CreateSessionWithKey after Close: %v", err)
+	}
+	s2.Close()
+}

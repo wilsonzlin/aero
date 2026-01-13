@@ -44,10 +44,29 @@ func (a AuthAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthR
 	if err != nil {
 		return AuthResult{}, err
 	}
+
+	res := AuthResult{Credential: cred}
+
+	// For AUTH_MODE=jwt we use the JWT session id (`sid`) as a stable quota key so
+	// clients cannot bypass per-session rate limits by opening many parallel
+	// connections with the same token.
+	if a.mode == config.AuthModeJWT {
+		cv, ok := a.verifier.(auth.ClaimsVerifier)
+		if !ok {
+			return AuthResult{}, errors.New("jwt verifier does not support claims extraction")
+		}
+		claims, err := cv.VerifyAndExtractClaims(cred)
+		if err != nil {
+			return AuthResult{}, err
+		}
+		res.SessionKey = claims.SID
+		return res, nil
+	}
+
 	if err := a.verifier.Verify(cred); err != nil {
 		return AuthResult{}, err
 	}
-	return AuthResult{Credential: cred}, nil
+	return res, nil
 }
 
 func credentialFromHelloAndRequest(mode config.AuthMode, hello *ClientHello, r *http.Request) (string, error) {

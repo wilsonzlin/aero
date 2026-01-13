@@ -211,6 +211,9 @@ Text messages are reserved for control-plane signaling:
   ```
 
   Clients SHOULD wait for this before sending datagrams when auth is enabled.
+  `sessionId` is an opaque, server-generated identifier intended for
+  observability/debugging. It is not the JWT `sid` claim (even when
+  `AUTH_MODE=jwt`).
 
 - Relay → client error:
 
@@ -219,6 +222,10 @@ Text messages are reserved for control-plane signaling:
   ```
 
   The relay then closes the WebSocket connection.
+  Common `code` values:
+  - `unauthorized`: authentication failed or credentials missing.
+  - `too_many_sessions`: server-wide session quota reached.
+  - `session_already_active`: an active session already exists for this JWT `sid` (when `AUTH_MODE=jwt`).
 
 After the connection is ready, the relay expects only **binary** datagram
 frames.

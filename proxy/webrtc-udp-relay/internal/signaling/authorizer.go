@@ -18,6 +18,13 @@ type ClientHello struct {
 // reuse it when dialing other services.
 type AuthResult struct {
 	Credential string
+
+	// SessionKey is an optional, stable identifier for enforcing per-session
+	// quotas/rate limits across multiple connections.
+	//
+	// When AUTH_MODE=jwt, this is the JWT `sid` claim. For other auth modes it is
+	// empty.
+	SessionKey string
 }
 
 type Authorizer interface {

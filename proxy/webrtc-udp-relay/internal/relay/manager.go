@@ -2,6 +2,7 @@ package relay
 
 import (
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
@@ -17,6 +18,14 @@ type SessionManager struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
 }
+
+const (
+	sessionMapKeyRandomPrefix = "id:"
+	sessionMapKeySIDPrefix    = "sid:"
+)
+
+func randomSessionMapKey(id string) string { return sessionMapKeyRandomPrefix + id }
+func sidSessionMapKey(sid string) string   { return sessionMapKeySIDPrefix + sid }
 
 func NewSessionManager(cfg config.Config, m *metrics.Metrics, clock ratelimit.Clock) *SessionManager {
 	if m == nil {
@@ -47,6 +56,7 @@ func (sm *SessionManager) CreateSession() (*Session, error) {
 		if err != nil {
 			return nil, err
 		}
+		mapKey := randomSessionMapKey(id)
 
 		sm.mu.Lock()
 		if sm.cfg.MaxSessions > 0 && len(sm.sessions) >= sm.cfg.MaxSessions {
@@ -54,16 +64,16 @@ func (sm *SessionManager) CreateSession() (*Session, error) {
 			sm.mu.Unlock()
 			return nil, ErrTooManySessions
 		}
-		if _, ok := sm.sessions[id]; ok {
+		if _, ok := sm.sessions[mapKey]; ok {
 			// Extremely unlikely (16 bytes of crypto-random entropy). Try again.
 			sm.mu.Unlock()
 			continue
 		}
 
 		session := newSession(id, sm.cfg, sm.metrics, sm.clock, func() {
-			sm.deleteSession(id)
+			sm.deleteSession(mapKey)
 		})
-		sm.sessions[id] = session
+		sm.sessions[mapKey] = session
 		sm.mu.Unlock()
 		return session, nil
 	}
@@ -75,4 +85,44 @@ func (sm *SessionManager) deleteSession(id string) {
 	sm.mu.Lock()
 	delete(sm.sessions, id)
 	sm.mu.Unlock()
+}
+
+// CreateSessionWithKey creates a new session using key as a stable quota key.
+//
+// When key is non-empty, only one active session may exist for that key at a
+// time. This is used to prevent clients from bypassing per-session rate limits
+// by creating many parallel sessions with the same underlying authorization
+// token (e.g. AUTH_MODE=jwt with stable `sid` claim).
+//
+// The session's public ID (Session.ID) remains a random value; key is used only
+// for quota bookkeeping and uniqueness enforcement.
+func (sm *SessionManager) CreateSessionWithKey(key string) (*Session, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return sm.CreateSession()
+	}
+	mapKey := sidSessionMapKey(key)
+
+	// Allocate a public session identifier for observability/debugging.
+	id, err := newSessionID()
+	if err != nil {
+		return nil, err
+	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if _, ok := sm.sessions[mapKey]; ok {
+		return nil, ErrSessionAlreadyActive
+	}
+	if sm.cfg.MaxSessions > 0 && len(sm.sessions) >= sm.cfg.MaxSessions {
+		sm.metrics.Inc(metrics.DropReasonTooManySessions)
+		return nil, ErrTooManySessions
+	}
+
+	session := newSession(id, sm.cfg, sm.metrics, sm.clock, func() {
+		sm.deleteSession(mapKey)
+	})
+	sm.sessions[mapKey] = session
+	return session, nil
 }

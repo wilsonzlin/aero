@@ -308,7 +308,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := s.authorizer().Authorize(r, nil); err != nil {
+	authRes, err := s.authorizer().Authorize(r, nil)
+	if err != nil {
 		if IsUnauthorized(err) {
 			s.incMetric(metrics.AuthFailure)
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
@@ -318,9 +319,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := s.Sessions.CreateSession()
-	if err == relay.ErrTooManySessions {
+	session, err := s.Sessions.CreateSessionWithKey(authRes.SessionKey)
+	if errors.Is(err, relay.ErrTooManySessions) {
 		writeJSONError(w, http.StatusServiceUnavailable, "too_many_sessions", "too many sessions")
+		return
+	}
+	if errors.Is(err, relay.ErrSessionAlreadyActive) {
+		writeJSONError(w, http.StatusConflict, "session_already_active", "session already active")
 		return
 	}
 	if err != nil {
@@ -419,9 +424,13 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	var relaySession *relay.Session
 	if s.Sessions != nil {
 		var err error
-		relaySession, err = s.Sessions.CreateSession()
-		if err == relay.ErrTooManySessions {
+		relaySession, err = s.Sessions.CreateSessionWithKey(authRes.SessionKey)
+		if errors.Is(err, relay.ErrTooManySessions) {
 			writeJSONError(w, http.StatusServiceUnavailable, "too_many_sessions", "too many sessions")
+			return
+		}
+		if errors.Is(err, relay.ErrSessionAlreadyActive) {
+			writeJSONError(w, http.StatusConflict, "session_already_active", "session already active")
 			return
 		}
 		if err != nil {
@@ -554,10 +563,14 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 	clientOrigin := httpserver.NormalizedOriginFromRequest(r)
 	clientCredential := authRes.Credential
 
-	sessionID, relaySession, err := s.allocateRelaySession()
+	sessionID, relaySession, err := s.allocateRelaySession(authRes.SessionKey)
 	if err != nil {
 		if errors.Is(err, relay.ErrTooManySessions) {
 			writeJSONError(w, http.StatusServiceUnavailable, "too_many_sessions", "too many sessions")
+			return
+		}
+		if errors.Is(err, relay.ErrSessionAlreadyActive) {
+			writeJSONError(w, http.StatusConflict, "session_already_active", "session already active")
 			return
 		}
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
@@ -713,7 +726,7 @@ func (s *Server) checkOrigin(r *http.Request) bool {
 	return origin.IsAllowed(normalizedOrigin, originHost, r.Host, s.AllowedOrigins)
 }
 
-func (s *Server) allocateRelaySession() (string, *relay.Session, error) {
+func (s *Server) allocateRelaySession(sessionKey string) (string, *relay.Session, error) {
 	if s.Sessions == nil {
 		id, err := newSessionID()
 		if err != nil {
@@ -722,7 +735,7 @@ func (s *Server) allocateRelaySession() (string, *relay.Session, error) {
 		return id, nil, nil
 	}
 
-	relaySession, err := s.Sessions.CreateSession()
+	relaySession, err := s.Sessions.CreateSessionWithKey(sessionKey)
 	if err != nil {
 		return "", nil, err
 	}
@@ -822,6 +835,7 @@ type wsSession struct {
 	relaySession *relay.Session
 	origin       string
 	credential   string
+	sessionKey   string
 
 	writeMu sync.Mutex
 
@@ -931,6 +945,7 @@ func (wss *wsSession) run() {
 	} else {
 		authorized = true
 		wss.credential = authRes.Credential
+		wss.sessionKey = authRes.SessionKey
 		wss.startKeepalive()
 	}
 
@@ -996,6 +1011,7 @@ func (wss *wsSession) run() {
 
 			authorized = true
 			wss.credential = authRes.Credential
+			wss.sessionKey = authRes.SessionKey
 			wss.startKeepalive()
 			continue
 		}
@@ -1062,9 +1078,12 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 		return &wsProtocolError{Code: "bad_message", Message: "sdp.type must be \"offer\""}
 	}
 
-	_, relaySession, err := wss.srv.allocateRelaySession()
+	_, relaySession, err := wss.srv.allocateRelaySession(wss.sessionKey)
 	if errors.Is(err, relay.ErrTooManySessions) {
 		return &wsProtocolError{Code: "too_many_sessions", Message: "too many sessions"}
+	}
+	if errors.Is(err, relay.ErrSessionAlreadyActive) {
+		return &wsProtocolError{Code: "session_already_active", Message: "session already active"}
 	}
 	if err != nil {
 		return err

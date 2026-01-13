@@ -187,6 +187,9 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 - `POST /session` → allocate a **short-lived** server-side session reservation (expires after `SESSION_PREALLOC_TTL`) (primarily for quota enforcement; not required by the v1 offer/answer flow) (requires auth when `AUTH_MODE != none`)
 - `GET /webrtc/signal` → WebSocket signaling (trickle ICE) (requires auth when `AUTH_MODE != none`)
 - `POST /webrtc/offer` → HTTP offer → answer (non-trickle ICE fallback) (requires auth when `AUTH_MODE != none`)
+  - The response includes an opaque `sessionId` for observability. When `AUTH_MODE=jwt`,
+    the relay enforces per-session quotas using the JWT `sid` claim internally (not the
+    returned `sessionId`) and rejects concurrent sessions with the same `sid`.
 - `GET /udp` → WebSocket UDP relay fallback (binary datagram frames; see `PROTOCOL.md`) (requires auth when `AUTH_MODE != none`)
   - guarded by the same origin policy as signaling endpoints
 

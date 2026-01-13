@@ -136,9 +136,26 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	authenticated := s.cfg.AuthMode == config.AuthModeNone
+	sessionKey := ""
 	if !authenticated {
 		if cred, err := auth.CredentialFromQuery(s.cfg.AuthMode, r.URL.Query()); err == nil {
-			if err := s.verifier.Verify(cred); err != nil {
+			var verifyErr error
+			if s.cfg.AuthMode == config.AuthModeJWT {
+				cv, ok := s.verifier.(auth.ClaimsVerifier)
+				if !ok {
+					sendErrorAndClose(websocket.CloseInternalServerErr, "internal_error", "invalid auth configuration")
+					return
+				}
+				claims, err := cv.VerifyAndExtractClaims(cred)
+				if err != nil {
+					verifyErr = err
+				} else {
+					sessionKey = claims.SID
+				}
+			} else {
+				verifyErr = s.verifier.Verify(cred)
+			}
+			if verifyErr != nil {
 				incAuthFailure()
 				sendErrorAndClose(websocket.ClosePolicyViolation, "unauthorized", "invalid credentials")
 				return
@@ -202,7 +219,23 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sendErrorAndClose(websocket.ClosePolicyViolation, "unauthorized", "missing credentials")
 			return
 		}
-		if err := s.verifier.Verify(cred); err != nil {
+		var verifyErr error
+		if s.cfg.AuthMode == config.AuthModeJWT {
+			cv, ok := s.verifier.(auth.ClaimsVerifier)
+			if !ok {
+				sendErrorAndClose(websocket.CloseInternalServerErr, "internal_error", "invalid auth configuration")
+				return
+			}
+			claims, err := cv.VerifyAndExtractClaims(cred)
+			if err != nil {
+				verifyErr = err
+			} else {
+				sessionKey = claims.SID
+			}
+		} else {
+			verifyErr = s.verifier.Verify(cred)
+		}
+		if verifyErr != nil {
 			incAuthFailure()
 			sendErrorAndClose(websocket.ClosePolicyViolation, "unauthorized", "invalid credentials")
 			return
@@ -248,9 +281,13 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sessionID := ""
 	if s.sessions != nil {
 		var err error
-		sess, err = s.sessions.CreateSession()
+		sess, err = s.sessions.CreateSessionWithKey(sessionKey)
 		if errors.Is(err, ErrTooManySessions) {
 			sendErrorAndClose(websocket.CloseTryAgainLater, "too_many_sessions", "too many sessions")
+			return
+		}
+		if errors.Is(err, ErrSessionAlreadyActive) {
+			sendErrorAndClose(websocket.CloseTryAgainLater, "session_already_active", "session already active")
 			return
 		}
 		if err != nil {

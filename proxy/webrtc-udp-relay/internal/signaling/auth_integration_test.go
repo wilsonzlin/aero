@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -95,7 +96,7 @@ func startSignalingServer(t *testing.T, cfg config.Config) (*httptest.Server, *m
 	return ts, m
 }
 
-func makeJWT(secret string) string {
+func makeJWT(secret, sid string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 	now := time.Now().Unix()
 	payloadJSON, _ := json.Marshal(struct {
@@ -105,7 +106,7 @@ func makeJWT(secret string) string {
 	}{
 		Iat: now,
 		Exp: now + 60,
-		SID: "sess_test",
+		SID: sid,
 	})
 	payload := base64.RawURLEncoding.EncodeToString(payloadJSON)
 	unsigned := header + "." + payload
@@ -229,7 +230,7 @@ func TestAuth_JWT_WebRTCOffer(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	token := makeJWT(cfg.JWTSecret)
+	token := makeJWT(cfg.JWTSecret, "sess_test")
 	resp = do(token)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("good token status=%d, want %d", resp.StatusCode, http.StatusOK)
@@ -237,6 +238,7 @@ func TestAuth_JWT_WebRTCOffer(t *testing.T) {
 	_ = resp.Body.Close()
 
 	t.Run("valid query apiKey alias", func(t *testing.T) {
+		token := makeJWT(cfg.JWTSecret, "sess_test_2")
 		req, err := http.NewRequest(http.MethodPost, ts.URL+"/webrtc/offer?apiKey="+token, bytes.NewReader(body))
 		if err != nil {
 			t.Fatalf("NewRequest: %v", err)
@@ -252,6 +254,180 @@ func TestAuth_JWT_WebRTCOffer(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("query apiKey alias status=%d, want %d", resp.StatusCode, http.StatusOK)
 		}
+	})
+}
+
+func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:  config.AuthModeJWT,
+		JWTSecret: "supersecret",
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	api := newTestWebRTCAPI(t)
+	offerSDP := newOfferSDP(t, api)
+
+	token := makeJWT(cfg.JWTSecret, "sess_test")
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?token=" + token
+
+	ws1, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial ws1: %v", err)
+	}
+	t.Cleanup(func() { _ = ws1.Close() })
+
+	if err := ws1.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer ws1: %v", err)
+	}
+
+	// Ensure the first offer was processed (and the relay session allocated)
+	// before attempting to create another session with the same JWT sid.
+	_ = ws1.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := ws1.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws1: %v", err)
+	}
+	got, err := signaling.ParseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse ws1: %v", err)
+	}
+	if got.Type != signaling.MessageTypeAnswer {
+		t.Fatalf("unexpected ws1 message: %#v", got)
+	}
+
+	ws2, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial ws2: %v", err)
+	}
+	t.Cleanup(func() { _ = ws2.Close() })
+
+	if err := ws2.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer ws2: %v", err)
+	}
+
+	_ = ws2.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err = ws2.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws2: %v", err)
+	}
+	got, err = signaling.ParseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse ws2: %v", err)
+	}
+	if got.Type != signaling.MessageTypeError || got.Code != "session_already_active" {
+		t.Fatalf("unexpected ws2 message: %#v", got)
+	}
+}
+
+func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:  config.AuthModeJWT,
+		JWTSecret: "supersecret",
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	token := makeJWT(cfg.JWTSecret, "sess_test")
+
+	do := func() *http.Response {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/session", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		return resp
+	}
+
+	resp := do()
+	if resp.StatusCode != http.StatusCreated {
+		defer resp.Body.Close()
+		t.Fatalf("first /session status=%d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if strings.TrimSpace(string(body)) == "" {
+		t.Fatalf("expected non-empty session id, got %q", string(body))
+	}
+
+	resp = do()
+	if resp.StatusCode != http.StatusConflict {
+		defer resp.Body.Close()
+		t.Fatalf("second /session status=%d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+	var errResp struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode error response: %v", err)
+	}
+	resp.Body.Close()
+	if errResp.Code != "session_already_active" {
+		t.Fatalf("error code=%q, want %q", errResp.Code, "session_already_active")
+	}
+}
+
+func TestAuth_SessionEndpoint_AllowsMultipleSessionsForNoneAndAPIKey(t *testing.T) {
+	t.Run("none", func(t *testing.T) {
+		ts, _ := startSignalingServer(t, config.Config{AuthMode: config.AuthModeNone})
+
+		resp, err := http.Post(ts.URL+"/session", "application/json", nil)
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		if resp.StatusCode != http.StatusCreated {
+			resp.Body.Close()
+			t.Fatalf("first /session status=%d, want %d", resp.StatusCode, http.StatusCreated)
+		}
+		resp.Body.Close()
+
+		resp, err = http.Post(ts.URL+"/session", "application/json", nil)
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		if resp.StatusCode != http.StatusCreated {
+			resp.Body.Close()
+			t.Fatalf("second /session status=%d, want %d", resp.StatusCode, http.StatusCreated)
+		}
+		resp.Body.Close()
+	})
+
+	t.Run("api_key", func(t *testing.T) {
+		cfg := config.Config{
+			AuthMode: config.AuthModeAPIKey,
+			APIKey:   "secret",
+		}
+		ts, _ := startSignalingServer(t, cfg)
+
+		do := func() *http.Response {
+			req, err := http.NewRequest(http.MethodPost, ts.URL+"/session", nil)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+			req.Header.Set("X-API-Key", cfg.APIKey)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("Do: %v", err)
+			}
+			return resp
+		}
+
+		resp := do()
+		if resp.StatusCode != http.StatusCreated {
+			resp.Body.Close()
+			t.Fatalf("first /session status=%d, want %d", resp.StatusCode, http.StatusCreated)
+		}
+		resp.Body.Close()
+
+		resp = do()
+		if resp.StatusCode != http.StatusCreated {
+			resp.Body.Close()
+			t.Fatalf("second /session status=%d, want %d", resp.StatusCode, http.StatusCreated)
+		}
+		resp.Body.Close()
 	})
 }
 
@@ -364,7 +540,7 @@ func TestAuth_JWT_Offer(t *testing.T) {
 		t.Fatalf("auth failure metric=%d, want >= 2", got)
 	}
 
-	resp = do(makeJWT(cfg.JWTSecret))
+	resp = do(makeJWT(cfg.JWTSecret, "sess_test"))
 	// We used a dummy SDP, so we expect the relay to reject it with 400. This
 	// confirms auth was accepted and we reached SDP parsing.
 	if resp.StatusCode != http.StatusBadRequest {
@@ -427,7 +603,7 @@ func TestAuth_JWT_WebSocketSignal_QueryParamFallback(t *testing.T) {
 	api := newTestWebRTCAPI(t)
 	offerSDP := newOfferSDP(t, api)
 
-	token := makeJWT(cfg.JWTSecret)
+	token := makeJWT(cfg.JWTSecret, "sess_test")
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?token=" + token
 	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
@@ -504,7 +680,7 @@ func TestAuth_JWT_WebSocketSignal_QueryAPIKeyAlias(t *testing.T) {
 	api := newTestWebRTCAPI(t)
 	offerSDP := newOfferSDP(t, api)
 
-	token := makeJWT(cfg.JWTSecret)
+	token := makeJWT(cfg.JWTSecret, "sess_test")
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?apiKey=" + token
 	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {

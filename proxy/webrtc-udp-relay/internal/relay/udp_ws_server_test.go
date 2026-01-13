@@ -1,6 +1,9 @@
 package relay
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -17,6 +20,27 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
+
+func makeTestJWT(secret, sid string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	now := time.Now().Unix()
+	payloadJSON, _ := json.Marshal(struct {
+		Iat int64  `json:"iat"`
+		Exp int64  `json:"exp"`
+		SID string `json:"sid"`
+	}{
+		Iat: now,
+		Exp: now + 60,
+		SID: sid,
+	})
+	payload := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	unsigned := header + "." + payload
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(unsigned))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return unsigned + "." + sig
+}
 
 func startUDPEchoServer(t *testing.T, network string, ip net.IP) (*net.UDPConn, uint16) {
 	t.Helper()
@@ -198,6 +222,42 @@ func TestUDPWebSocketServer_ReadyIncludesSessionIDWithoutSessionManager(t *testi
 	sessionID, _ := ready["sessionId"].(string)
 	if sessionID == "" {
 		t.Fatalf("expected non-empty sessionId, got %#v", ready["sessionId"])
+	}
+}
+
+func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeJWT,
+		JWTSecret:                "supersecret",
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	token := makeTestJWT(cfg.JWTSecret, "sess_test")
+
+	c1 := dialWS(t, ts.URL, "/udp?token="+token)
+	ready := readWSJSON(t, c1, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+
+	c2 := dialWS(t, ts.URL, "/udp?token="+token)
+	errMsg := readWSJSON(t, c2, 2*time.Second)
+	if errMsg["type"] != "error" || errMsg["code"] != "session_already_active" {
+		t.Fatalf("expected session_already_active error, got %#v", errMsg)
 	}
 }
 

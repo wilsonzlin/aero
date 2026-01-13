@@ -14,6 +14,16 @@ type Verifier interface {
 	Verify(credential string) error
 }
 
+// ClaimsVerifier is an optional extension interface implemented by verifiers
+// that can return structured claims on successful authentication.
+//
+// Today this is only implemented by the JWT verifier, which returns the JWT
+// `sid` claim used as a stable quota/rate-limit key.
+type ClaimsVerifier interface {
+	Verifier
+	VerifyAndExtractClaims(credential string) (JWTClaims, error)
+}
+
 type NoopVerifier struct{}
 
 func (NoopVerifier) Verify(string) error { return nil }
