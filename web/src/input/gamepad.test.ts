@@ -110,6 +110,10 @@ describe("hid_gamepad_report_vectors fixture", () => {
     expect(vectors.length).toBeGreaterThan(0);
     expect(vectors.length).toBeLessThanOrEqual(64);
 
+    const clampHat = (hat: number): number =>
+      Number.isFinite(hat) && hat >= 0 && hat <= GAMEPAD_HAT_NEUTRAL ? (hat | 0) : GAMEPAD_HAT_NEUTRAL;
+    const clampAxis = (axis: number): number => Math.max(-127, Math.min(127, axis | 0)) | 0;
+
     for (const [idx, v] of vectors.entries()) {
       expect(v.bytes, v.name ?? `vector ${idx}`).toHaveLength(8);
       // These vectors are inputs to `packGamepadReport` and intentionally include out-of-range
@@ -144,11 +148,9 @@ describe("hid_gamepad_report_vectors fixture", () => {
       expect(bytes, v.name ?? `vector ${idx}`).toEqual(v.bytes);
 
       const decoded = decodeGamepadReport(packedLo, packedHi);
-      const expectedHat = Number.isFinite(v.hat) && v.hat >= 0 && v.hat <= GAMEPAD_HAT_NEUTRAL ? v.hat : GAMEPAD_HAT_NEUTRAL;
-      const clampAxis = (value: number): number => Math.max(-127, Math.min(127, value | 0)) | 0;
       expect(decoded, v.name ?? `vector ${idx}`).toEqual({
         buttons: v.buttons & 0xffff,
-        hat: expectedHat | 0,
+        hat: clampHat(v.hat),
         x: clampAxis(v.x),
         y: clampAxis(v.y),
         rx: clampAxis(v.rx),
