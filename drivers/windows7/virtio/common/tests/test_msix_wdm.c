@@ -64,6 +64,7 @@ static void test_connect_validation(void)
 {
     VIRTIO_MSIX_WDM msix;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     NTSTATUS status;
 
@@ -72,23 +73,26 @@ static void test_connect_validation(void)
 
     desc = make_msg_desc(1);
 
-    status = VirtioMsixConnect(&dev, NULL, 0, NULL, NULL, NULL, NULL, &msix);
+    status = VirtioMsixConnect(&dev, &pdo, NULL, 0, NULL, NULL, NULL, NULL, &msix);
     assert(status == STATUS_INVALID_PARAMETER);
 
-    status = VirtioMsixConnect(NULL, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    status = VirtioMsixConnect(NULL, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    assert(status == STATUS_INVALID_PARAMETER);
+
+    status = VirtioMsixConnect(&dev, NULL, &desc, 0, NULL, NULL, NULL, NULL, &msix);
     assert(status == STATUS_INVALID_PARAMETER);
 
     desc.Type = 0;
-    status = VirtioMsixConnect(&dev, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
     assert(status == STATUS_INVALID_PARAMETER);
 
     desc = make_msg_desc(1);
     desc.Flags = 0; /* not message-based */
-    status = VirtioMsixConnect(&dev, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
     assert(status == STATUS_NOT_SUPPORTED);
 
     desc = make_msg_desc(0);
-    status = VirtioMsixConnect(&dev, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
     assert(status == STATUS_DEVICE_CONFIGURATION_ERROR);
 
     /* Parameter validation failures must not call through to WDK interrupt routines. */
@@ -100,6 +104,7 @@ static void test_connect_failure_zeroes_state(void)
 {
     VIRTIO_MSIX_WDM msix;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     NTSTATUS status;
 
@@ -111,7 +116,7 @@ static void test_connect_failure_zeroes_state(void)
     memset(&msix, 0xA5, sizeof(msix));
 
     WdkTestSetIoConnectInterruptExStatus(STATUS_INSUFFICIENT_RESOURCES);
-    status = VirtioMsixConnect(&dev, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
     assert(status == STATUS_INSUFFICIENT_RESOURCES);
 
     assert(msix.Initialized == FALSE);
@@ -133,6 +138,7 @@ static void test_connect_disconnect_calls_wdk_routines(void)
 {
     VIRTIO_MSIX_WDM msix;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     NTSTATUS status;
 
@@ -141,7 +147,7 @@ static void test_connect_disconnect_calls_wdk_routines(void)
     WdkTestResetIoConnectInterruptExCount();
     WdkTestResetIoDisconnectInterruptExCount();
 
-    status = VirtioMsixConnect(&dev, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
     assert(status == STATUS_SUCCESS);
     assert(WdkTestGetIoConnectInterruptExCount() == 1);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
@@ -158,6 +164,7 @@ static void test_disconnect_waits_for_inflight_dpc(void)
 {
     VIRTIO_MSIX_WDM msix;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     NTSTATUS status;
 
@@ -165,7 +172,7 @@ static void test_disconnect_waits_for_inflight_dpc(void)
 
     WdkTestResetKeDelayExecutionThreadCount();
 
-    status = VirtioMsixConnect(&dev, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
     assert(status == STATUS_SUCCESS);
 
     /*
@@ -185,6 +192,7 @@ static void test_multivector_mapping(void)
 {
     VIRTIO_MSIX_WDM msix;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     msix_test_ctx_t ctx;
     NTSTATUS status;
@@ -192,7 +200,7 @@ static void test_multivector_mapping(void)
     desc = make_msg_desc(3); /* enough for config + 2 queues */
     RtlZeroMemory(&ctx, sizeof(ctx));
 
-    status = VirtioMsixConnect(&dev, &desc, 2, NULL, evt_config, evt_drain, &ctx, &msix);
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 2, NULL, evt_config, evt_drain, &ctx, &msix);
     assert(status == STATUS_SUCCESS);
     ctx.expected_msix = &msix;
 
@@ -230,6 +238,7 @@ static void test_all_on_0_fallback_drains_all_queues(void)
 {
     VIRTIO_MSIX_WDM msix;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     msix_test_ctx_t ctx;
     NTSTATUS status;
@@ -237,7 +246,7 @@ static void test_all_on_0_fallback_drains_all_queues(void)
     desc = make_msg_desc(1); /* only one vector available */
     RtlZeroMemory(&ctx, sizeof(ctx));
 
-    status = VirtioMsixConnect(&dev, &desc, 2, NULL, evt_config, evt_drain, &ctx, &msix);
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 2, NULL, evt_config, evt_drain, &ctx, &msix);
     assert(status == STATUS_SUCCESS);
     ctx.expected_msix = &msix;
 

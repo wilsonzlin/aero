@@ -57,6 +57,7 @@ static VOID VirtioMsixFreeAllocations(_Inout_ PVIRTIO_MSIX_WDM Msix)
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioMsixConnect(_In_ PDEVICE_OBJECT DeviceObject,
+                           _In_ PDEVICE_OBJECT PhysicalDeviceObject,
                            _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR InterruptDescTranslated,
                            _In_ ULONG QueueCount,
                            _In_opt_ PKSPIN_LOCK CommonCfgLock,
@@ -75,7 +76,7 @@ NTSTATUS VirtioMsixConnect(_In_ PDEVICE_OBJECT DeviceObject,
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (DeviceObject == NULL) {
+    if (DeviceObject == NULL || PhysicalDeviceObject == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -94,6 +95,7 @@ NTSTATUS VirtioMsixConnect(_In_ PDEVICE_OBJECT DeviceObject,
     RtlZeroMemory(Msix, sizeof(*Msix));
 
     Msix->DeviceObject = DeviceObject;
+    Msix->PhysicalDeviceObject = PhysicalDeviceObject;
     Msix->QueueCount = QueueCount;
     Msix->CommonCfgLock = CommonCfgLock;
     Msix->EvtConfigChange = EvtConfigChange;
@@ -173,11 +175,11 @@ NTSTATUS VirtioMsixConnect(_In_ PDEVICE_OBJECT DeviceObject,
 
     RtlZeroMemory(&params, sizeof(params));
     params.Version = CONNECT_MESSAGE_BASED;
-    params.MessageBased.PhysicalDeviceObject = DeviceObject;
+    params.MessageBased.PhysicalDeviceObject = PhysicalDeviceObject;
     params.MessageBased.ServiceRoutine = VirtioMsixIsr;
     params.MessageBased.ServiceContext = Msix;
     params.MessageBased.SpinLock = NULL;
-    params.MessageBased.SynchronizeIrql = 0;
+    params.MessageBased.SynchronizeIrql = (ULONG)InterruptDescTranslated->u.MessageInterrupt.Level;
     params.MessageBased.FloatingSave = FALSE;
     params.MessageBased.MessageCount = usedVectorCount;
     params.MessageBased.MessageInfo = NULL;

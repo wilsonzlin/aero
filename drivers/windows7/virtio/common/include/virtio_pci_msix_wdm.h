@@ -69,8 +69,16 @@ typedef struct _VIRTIO_MSIX_WDM_VECTOR {
 } VIRTIO_MSIX_WDM_VECTOR, *PVIRTIO_MSIX_WDM_VECTOR;
 
 typedef struct _VIRTIO_MSIX_WDM {
-    /* Device object passed to callbacks (typically the FDO). */
+    /*
+     * Device object passed to callbacks (typically the FDO).
+     *
+     * Note: this is distinct from the PhysicalDeviceObject (PDO) required by
+     * IoConnectInterruptEx for message-based interrupts.
+     */
     PDEVICE_OBJECT DeviceObject;
+
+    /* Physical device object (PDO) used for IoConnectInterruptEx. */
+    PDEVICE_OBJECT PhysicalDeviceObject;
 
     ULONG QueueCount;
 
@@ -126,6 +134,7 @@ typedef struct _VIRTIO_MSIX_WDM {
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioMsixConnect(_In_ PDEVICE_OBJECT DeviceObject,
+                           _In_ PDEVICE_OBJECT PhysicalDeviceObject,
                            _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR InterruptDescTranslated,
                            _In_ ULONG QueueCount,
                            _In_opt_ PKSPIN_LOCK CommonCfgLock,
@@ -140,4 +149,3 @@ VOID VirtioMsixDisconnect(_Inout_ PVIRTIO_MSIX_WDM Msix);
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-
