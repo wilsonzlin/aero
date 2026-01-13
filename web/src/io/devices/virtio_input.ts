@@ -61,6 +61,9 @@ const BTN_RIGHT = 0x111;
 const BTN_MIDDLE = 0x112;
 const BTN_SIDE = 0x113;
 const BTN_EXTRA = 0x114;
+const BTN_FORWARD = 0x115;
+const BTN_BACK = 0x116;
+const BTN_TASK = 0x117;
 
 // Linux input key codes used by the browser runtime.
 //
@@ -710,13 +713,13 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   /**
    * Update current mouse button bitmask and emit EV_KEY transitions for changes.
    *
-   * Input batches carry the *current* bitmask (bit0=left, bit1=right, bit2=middle, bit3=side/back, bit4=extra/forward).
+   * Input batches carry the *current* bitmask (bit0..bit7 => buttons 1..8).
    */
   injectMouseButtons(buttonMask: number): void {
     if (this.#destroyed) return;
 
-    const next = buttonMask & 0x1f;
-    const prev = this.#mouseButtons & 0x1f;
+    const next = buttonMask & 0xff;
+    const prev = this.#mouseButtons & 0xff;
     const delta = prev ^ next;
     if (delta === 0) return;
 
@@ -726,6 +729,9 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     if (delta & 0x04) changes.push({ code: BTN_MIDDLE, pressed: (next & 0x04) !== 0 });
     if (delta & 0x08) changes.push({ code: BTN_SIDE, pressed: (next & 0x08) !== 0 });
     if (delta & 0x10) changes.push({ code: BTN_EXTRA, pressed: (next & 0x10) !== 0 });
+    if (delta & 0x20) changes.push({ code: BTN_FORWARD, pressed: (next & 0x20) !== 0 });
+    if (delta & 0x40) changes.push({ code: BTN_BACK, pressed: (next & 0x40) !== 0 });
+    if (delta & 0x80) changes.push({ code: BTN_TASK, pressed: (next & 0x80) !== 0 });
 
     for (const ch of changes) {
       try {

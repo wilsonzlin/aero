@@ -30,8 +30,8 @@ export const InputEventType = {
    * Mouse button state bitmask.
    *
    * Payload:
-    *   a = buttons (bit0=left, bit1=right, bit2=middle, bit3=back, bit4=forward)
-   *   b = unused
+    *   a = buttons (bit0..bit7 = buttons 1..8; DOM MouseEvent.buttons typically uses bit0..bit4)
+    *   b = unused
    */
   MouseButtons: 3,
   /**

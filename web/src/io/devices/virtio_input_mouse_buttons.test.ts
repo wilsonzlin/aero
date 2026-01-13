@@ -38,7 +38,7 @@ describe("io/devices/virtio_input VirtioInputPciFunction.injectMouseButtons", ()
     ]);
   });
 
-  it("masks the input to the low 5 button bits (left/right/middle/side/extra)", () => {
+  it("masks the input to the low 8 button bits (Linux BTN_* 0x110..0x117)", () => {
     const injected: Array<{ code: number; pressed: boolean }> = [];
 
     const dev: VirtioInputPciDeviceLike = {
@@ -60,8 +60,8 @@ describe("io/devices/virtio_input VirtioInputPciFunction.injectMouseButtons", ()
       irqSink: { raiseIrq: () => {}, lowerIrq: () => {} },
     });
 
-    // 0xff should behave like 0x1f.
-    fn.injectMouseButtons(0xff);
+    // 0x1ff should behave like 0xff.
+    fn.injectMouseButtons(0x1ff);
 
     expect(injected).toEqual([
       { code: 0x110, pressed: true }, // BTN_LEFT
@@ -69,6 +69,9 @@ describe("io/devices/virtio_input VirtioInputPciFunction.injectMouseButtons", ()
       { code: 0x112, pressed: true }, // BTN_MIDDLE
       { code: 0x113, pressed: true }, // BTN_SIDE
       { code: 0x114, pressed: true }, // BTN_EXTRA
+      { code: 0x115, pressed: true }, // BTN_FORWARD
+      { code: 0x116, pressed: true }, // BTN_BACK
+      { code: 0x117, pressed: true }, // BTN_TASK
     ]);
   });
 });

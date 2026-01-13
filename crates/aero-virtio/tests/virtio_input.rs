@@ -1,9 +1,9 @@
 use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::input::{
-    VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_EXTRA, BTN_LEFT, BTN_MIDDLE,
-    BTN_RIGHT, BTN_SIDE, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, KEY_F1, KEY_F12, KEY_NUMLOCK,
-    KEY_SCROLLLOCK, LED_CAPSL, LED_NUML, LED_SCROLLL, REL_WHEEL, REL_X, REL_Y,
-    VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+    VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_BACK, BTN_EXTRA, BTN_FORWARD,
+    BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, BTN_TASK, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A,
+    KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, LED_CAPSL, LED_NUML, LED_SCROLLL, REL_WHEEL,
+    REL_X, REL_Y, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -429,6 +429,18 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     );
     assert_ne!(
         key_bits[(BTN_EXTRA / 8) as usize] & (1u8 << (BTN_EXTRA % 8)),
+        0
+    );
+    assert_ne!(
+        key_bits[(BTN_FORWARD / 8) as usize] & (1u8 << (BTN_FORWARD % 8)),
+        0
+    );
+    assert_ne!(
+        key_bits[(BTN_BACK / 8) as usize] & (1u8 << (BTN_BACK % 8)),
+        0
+    );
+    assert_ne!(
+        key_bits[(BTN_TASK / 8) as usize] & (1u8 << (BTN_TASK % 8)),
         0
     );
 
