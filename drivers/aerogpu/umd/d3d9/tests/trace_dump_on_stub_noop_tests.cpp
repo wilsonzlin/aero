@@ -52,9 +52,9 @@ int main() {
     trace.ret(S_OK);
   }
 
-  // Previously-stub-tagged trace IDs should not carry the "(stub)" marker once
-  // they are promoted to normal (non-stub) trace names, so they do not trigger
-  // AEROGPU_D3D9_TRACE_DUMP_ON_STUB.
+  // Trace IDs for real D3D9 UMD entrypoints should not carry the "(stub)"
+  // marker, so they do not trigger AEROGPU_D3D9_TRACE_DUMP_ON_STUB. Stub-tag
+  // behavior is exercised via the trace-only TraceTestStub entrypoint.
   {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceDrawRectPatch, 0x111, 0, 0, 0);
     trace.ret(S_OK);
