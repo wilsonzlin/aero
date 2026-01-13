@@ -230,6 +230,19 @@ mod tests {
     }
 
     #[test]
+    fn decode_i8_mono() {
+        // -128, -1, 0, 127
+        let input = [0x80u8, 0xFFu8, 0x00u8, 0x7Fu8];
+        let mut out = Vec::new();
+        decode_interleaved_to_f32(&input, PcmSampleFormat::I8, 1, &mut out).unwrap();
+        assert_eq!(out.len(), 4);
+        assert!((out[0] - (-1.0)).abs() < 1e-6);
+        assert!((out[1] - (-1.0 / 128.0)).abs() < 1e-6);
+        assert!((out[2] - 0.0).abs() < 1e-6);
+        assert!((out[3] - (127.0 / 128.0)).abs() < 1e-6);
+    }
+
+    #[test]
     fn decode_i16_mono() {
         // -32768, 0, 32767
         let input = [0x00, 0x80, 0x00, 0x00, 0xFF, 0x7F];
@@ -274,6 +287,80 @@ mod tests {
     }
 
     #[test]
+    fn decode_i20_in3() {
+        // -2^19, -1, 0, 2^19-1
+        let input = [
+            0x00, 0x00, 0x08, // 0x08_0000 (sign bit 19 set) => -524288
+            0xFF, 0xFF, 0x0F, // 0x0F_FFFF => -1
+            0x00, 0x00, 0x00, // 0
+            0xFF, 0xFF, 0x07, // 0x07_FFFF => 524287
+        ];
+        let mut out = Vec::new();
+        decode_interleaved_to_f32(&input, PcmSampleFormat::I20In3, 1, &mut out).unwrap();
+        assert_eq!(out.len(), 4);
+        assert!((out[0] - (-1.0)).abs() < 1e-6);
+        assert!((out[1] - (-1.0 / 524_288.0)).abs() < 1e-6);
+        assert!((out[2] - 0.0).abs() < 1e-6);
+        assert!((out[3] - (524_287.0 / 524_288.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn decode_i24_in3() {
+        // -2^23, -1, 0, 2^23-1
+        let input = [
+            0x00, 0x00, 0x80, // 0x80_0000 => -8_388_608
+            0xFF, 0xFF, 0xFF, // 0xFF_FFFF => -1
+            0x00, 0x00, 0x00, // 0
+            0xFF, 0xFF, 0x7F, // 0x7F_FFFF => 8_388_607
+        ];
+        let mut out = Vec::new();
+        decode_interleaved_to_f32(&input, PcmSampleFormat::I24In3, 1, &mut out).unwrap();
+        assert_eq!(out.len(), 4);
+        assert!((out[0] - (-1.0)).abs() < 1e-6);
+        assert!((out[1] - (-1.0 / 8_388_608.0)).abs() < 1e-6);
+        assert!((out[2] - 0.0).abs() < 1e-6);
+        assert!((out[3] - (8_388_607.0 / 8_388_608.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn decode_i24_in3_stereo_interleaving() {
+        // Frame 0: L=-2^23, R=0
+        // Frame 1: L=2^23-1, R=-1
+        let input = [
+            0x00, 0x00, 0x80, // L0 = -8_388_608
+            0x00, 0x00, 0x00, // R0 = 0
+            0xFF, 0xFF, 0x7F, // L1 = 8_388_607
+            0xFF, 0xFF, 0xFF, // R1 = -1
+        ];
+        let mut out = Vec::new();
+        decode_interleaved_to_f32(&input, PcmSampleFormat::I24In3, 2, &mut out).unwrap();
+        assert_eq!(out.len(), 4);
+        assert!((out[0] - (-1.0)).abs() < 1e-6);
+        assert!((out[1] - 0.0).abs() < 1e-6);
+        assert!((out[2] - (8_388_607.0 / 8_388_608.0)).abs() < 1e-6);
+        assert!((out[3] - (-1.0 / 8_388_608.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn decode_i32_mono() {
+        let samples = [i32::MIN, -(1 << 30), 0, 1 << 30, i32::MAX];
+        let mut input = Vec::new();
+        for s in samples {
+            input.extend_from_slice(&s.to_le_bytes());
+        }
+
+        let mut out = Vec::new();
+        decode_interleaved_to_f32(&input, PcmSampleFormat::I32, 1, &mut out).unwrap();
+        assert_eq!(out.len(), samples.len());
+        assert!((out[0] - (-1.0)).abs() < 1e-6);
+        assert!((out[1] - (-0.5)).abs() < 1e-6);
+        assert!((out[2] - 0.0).abs() < 1e-6);
+        assert!((out[3] - 0.5).abs() < 1e-6);
+        // Note: the max positive value may round to 1.0 when converted to `f32`.
+        assert!((out[4] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn decode_f32() {
         let input = [
             0x00, 0x00, 0x00, 0xBF, // -0.5
@@ -283,6 +370,23 @@ mod tests {
         let mut out = Vec::new();
         decode_interleaved_to_f32(&input, PcmSampleFormat::F32, 1, &mut out).unwrap();
         assert_eq!(out, vec![-0.5, 0.0, 0.5]);
+    }
+
+    #[test]
+    fn decode_errors() {
+        let mut out = Vec::new();
+
+        let err = decode_interleaved_to_f32(&[], PcmSampleFormat::I16, 0, &mut out).unwrap_err();
+        assert_eq!(err, PcmError::InvalidChannels);
+
+        let err = decode_interleaved_to_f32(&[0u8; 5], PcmSampleFormat::I24In3, 2, &mut out)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            PcmError::InputLengthNotAligned {
+                expected_multiple: 6
+            }
+        );
     }
 
     #[test]
