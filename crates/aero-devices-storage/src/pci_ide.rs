@@ -1827,4 +1827,16 @@ mod tests {
         assert_eq!(val & (1 << 6), 0, "master present bit should be cleared (active low)");
         assert_eq!(val & (1 << 5), 0, "slave present bit should be cleared (active low)");
     }
+
+    #[test]
+    fn drive_address_floats_bus_high_when_channel_has_no_devices() {
+        let mut ctl = IdeController::new(0xFFF0);
+        assert!(!ctl.primary.drive_present[0]);
+        assert!(!ctl.primary.drive_present[1]);
+
+        let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
+        assert_eq!(ctl.io_read(drive_addr_port, 1) as u8, 0xFF);
+        assert_eq!(ctl.io_read(drive_addr_port, 2) as u16, 0xFFFF);
+        assert_eq!(ctl.io_read(drive_addr_port, 4), 0xFFFF_FFFF);
+    }
 }
