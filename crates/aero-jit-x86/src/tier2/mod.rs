@@ -9,6 +9,7 @@ pub mod ir;
 pub mod opt;
 pub mod profile;
 pub mod trace;
+pub mod verify;
 pub mod wasm_codegen;
 
 pub use builder::{build_function_from_x86, CfgBuildConfig};

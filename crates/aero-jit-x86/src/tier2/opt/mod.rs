@@ -10,6 +10,9 @@ pub mod passes;
 
 pub use passes::regalloc::RegAllocPlan;
 
+#[cfg(debug_assertions)]
+use super::verify::verify_trace;
+
 #[derive(Clone, Debug)]
 pub struct OptConfig {
     /// Maximum fixed-point iterations.
@@ -28,11 +31,22 @@ pub struct OptResult {
 }
 
 pub fn optimize_trace(trace: &mut TraceIr, cfg: &OptConfig) -> OptResult {
-    debug_assert!(trace.validate().is_ok());
+    #[cfg(debug_assertions)]
+    {
+        if let Err(e) = verify_trace(trace) {
+            panic!("Tier-2 IR verification failed (pre-opt): {e}");
+        }
+    }
 
     // Compact ValueIds before running other passes so later passes don't allocate based on a sparse
     // `max(ValueId)`.
     passes::value_compact::run(trace);
+    #[cfg(debug_assertions)]
+    {
+        if let Err(e) = verify_trace(trace) {
+            panic!("Tier-2 IR verification failed (post-value-compact-pre): {e}");
+        }
+    }
 
     for _ in 0..cfg.max_iters {
         let mut changed = false;
@@ -44,6 +58,14 @@ pub fn optimize_trace(trace: &mut TraceIr, cfg: &OptConfig) -> OptResult {
         changed |= passes::strength_reduction::run(trace);
         changed |= passes::cse::run(trace);
         changed |= passes::dce::run(trace);
+
+        #[cfg(debug_assertions)]
+        {
+            if let Err(e) = verify_trace(trace) {
+                panic!("Tier-2 IR verification failed (post-opt-iter): {e}");
+            }
+        }
+
         if !changed {
             break;
         }
@@ -53,8 +75,23 @@ pub fn optimize_trace(trace: &mut TraceIr, cfg: &OptConfig) -> OptResult {
     // allocates the minimum number of WASM locals for values.
     passes::value_compact::run(trace);
 
+    #[cfg(debug_assertions)]
+    {
+        if let Err(e) = verify_trace(trace) {
+            panic!("Tier-2 IR verification failed (post-value-compact-post): {e}");
+        }
+    }
+
     debug_assert!(trace.validate().is_ok());
 
     let regalloc = passes::regalloc::run(trace);
+
+    #[cfg(debug_assertions)]
+    {
+        if let Err(e) = verify_trace(trace) {
+            panic!("Tier-2 IR verification failed (post-regalloc): {e}");
+        }
+    }
+
     OptResult { regalloc }
 }
