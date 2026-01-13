@@ -11,12 +11,13 @@
 //! The controller implementation here is intentionally small; it currently provides:
 //! - a minimal MMIO register file with basic size/unaligned access support
 //! - a DMA read on the first transition of `USBCMD.RUN` (to validate PCI BME gating in the wrapper)
+//! - interrupter 0 event ring delivery (ERST/ERDP/IMAN) with a bounded pre-ERST pending queue
 //! - a level-triggered `irq_level()` surface (to validate PCI INTx disable gating)
 //! - DCBAAP register storage + controller-local slot allocation (Enable Slot scaffolding)
 //! - a minimal runtime interrupter 0 register block + guest event ring producer (ERST-based)
 //!
-//! Full xHCI semantics (doorbells, command/event rings, device contexts, interrupters, etc) remain
-//! future work.
+//! Full xHCI semantics (doorbells, command ring execution, device contexts, multi-interrupter
+//! MSI/MSI-X, etc) remain future work.
 //!
 //! In addition:
 //! - `command_ring` provides a minimal command ring + event ring processor used by unit tests and
@@ -69,7 +70,7 @@ use interrupter::InterrupterRegs;
 // Most PC xHCI controllers expose multiple root ports. Use a reasonably sized default so common
 // guest drivers see a realistic topology without requiring explicit configuration.
 const DEFAULT_PORT_COUNT: u8 = 8;
-const MAX_PENDING_EVENTS: usize = 256;
+const MAX_PENDING_EVENTS: usize = 1024;
 const COMPLETION_CODE_SUCCESS: u8 = 1;
 const MAX_TRBS_PER_TICK: usize = 256;
 const RING_STEP_BUDGET: usize = 64;
@@ -1195,7 +1196,9 @@ impl XhciController {
     /// low 8 bits of `value` contain the endpoint ID (DCI).
     pub fn write_doorbell(&mut self, target: u8, value: u32) {
         if target == 0 {
-            // Doorbell 0 is the command ring; not modelled yet.
+            // Doorbell 0 rings the command ring.
+            let _ = value;
+            self.ring_doorbell0();
             return;
         }
         let endpoint_id = (value & 0xff) as u8;
@@ -1235,11 +1238,9 @@ impl XhciController {
         }
     }
 
+    /// Returns whether the IRQ line for interrupter 0 should be asserted.
     pub fn irq_level(&self) -> bool {
-        // Preserve the skeleton's existing "DMA-on-RUN asserts EINT" behaviour while also exposing
-        // a functional interrupter/event-ring driven interrupt condition.
-        (self.usbsts & regs::USBSTS_EINT) != 0
-            || (self.interrupter0.interrupt_enable() && self.interrupter0.interrupt_pending())
+        self.interrupter0.interrupt_enable() && self.interrupter0.interrupt_pending()
     }
 
     /// Returns true if there are pending event TRBs queued in host memory.
@@ -1456,6 +1457,27 @@ impl XhciController {
         caps
     }
 
+    fn usbsts_read(&self) -> u32 {
+        // Keep derived bits out of the stored `usbsts` field.
+        let mut v = self.usbsts & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
+
+        // HCHalted is derived from USBCMD.RUN.
+        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
+            v |= regs::USBSTS_HCH;
+        }
+
+        // Reflect interrupter pending in USBSTS.EINT for drivers.
+        if self.interrupter0.interrupt_pending() {
+            v |= regs::USBSTS_EINT;
+        }
+
+        if self.host_controller_error {
+            v |= regs::USBSTS_HCE;
+        }
+
+        v
+    }
+
     fn mmio_read_u8(&self, offset: u64) -> u8 {
         let aligned = offset & !3;
         let shift = (offset & 3) * 8;
@@ -1463,22 +1485,6 @@ impl XhciController {
         let port_regs_base = regs::REG_USBCMD + regs::port::PORTREGS_BASE;
         let port_regs_end =
             port_regs_base + u64::from(self.port_count) * regs::port::PORTREGS_STRIDE;
-
-        // Reflect interrupter pending in USBSTS.EINT for drivers.
-        let running = (self.usbcmd & regs::USBCMD_RUN) != 0;
-        let usbsts = self.usbsts
-            | if self.interrupter0.interrupt_pending() {
-                regs::USBSTS_EINT
-            } else {
-                0
-            }
-            | if running { 0 } else { regs::USBSTS_HCHALTED }
-            | if self.host_controller_error {
-                regs::USBSTS_HCE
-            } else {
-                0
-            };
-
         let value32 = match aligned {
             off if off >= port_regs_base && off < port_regs_end => {
                 let rel = off - port_regs_base;
@@ -1516,7 +1522,7 @@ impl XhciController {
             }
 
             regs::REG_USBCMD => self.usbcmd,
-            regs::REG_USBSTS => usbsts,
+            regs::REG_USBSTS => self.usbsts_read(),
             regs::REG_PAGESIZE => regs::PAGESIZE_4K,
             regs::REG_CRCR_LO => (self.crcr & 0xffff_ffff) as u32,
             regs::REG_CRCR_HI => (self.crcr >> 32) as u32,
@@ -1660,6 +1666,10 @@ impl XhciController {
             regs::REG_USBSTS => {
                 // Treat USBSTS as RW1C. Writing 1 clears the bit.
                 let write_val = merge(0);
+                if (write_val & regs::USBSTS_EINT) != 0 {
+                    // Mirrors clearing IMAN.IP; do not drop queued events.
+                    self.interrupter0.set_interrupt_pending(false);
+                }
                 self.usbsts &= !write_val;
                 // Allow acknowledging event interrupts via USBSTS.EINT by also clearing
                 // Interrupter 0's pending bit (IMAN.IP). This is a minimal model of the xHCI
@@ -2078,7 +2088,7 @@ impl XhciController {
         let paddr = self.crcr & !0x3f;
         let mut buf = [0u8; 4];
         mem.read_bytes(paddr, &mut buf);
-        self.usbsts |= regs::USBSTS_EINT;
+        self.interrupter0.set_interrupt_pending(true);
     }
 }
 
@@ -2131,11 +2141,13 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
-        const TAG_PORTS: u16 = 11;
+        const TAG_PORTS: u16 = 12;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.usbcmd);
-        w.field_u32(TAG_USBSTS, self.usbsts);
+        // Store the derived USBSTS view so older snapshots that relied on USBSTS.EINT can still be
+        // mapped back into `IMAN.IP` on restore.
+        w.field_u32(TAG_USBSTS, self.usbsts_read());
         w.field_bool(TAG_HOST_CONTROLLER_ERROR, self.host_controller_error);
         w.field_u64(TAG_CRCR, self.crcr);
         w.field_u8(TAG_PORT_COUNT, self.port_count);
@@ -2165,7 +2177,7 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
-        const TAG_PORTS: u16 = 11;
+        const TAG_PORTS: u16 = 12;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -2185,8 +2197,12 @@ impl IoSnapshot for XhciController {
         }
 
         self.usbcmd = r.u32(TAG_USBCMD)?.unwrap_or(0);
-        self.usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0);
-        self.host_controller_error = r.bool(TAG_HOST_CONTROLLER_ERROR)?.unwrap_or(false);
+        let saved_usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0);
+        // USBSTS.EINT/HCH/HCE are derived bits in the controller model.
+        self.usbsts = saved_usbsts & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
+        self.host_controller_error = r
+            .bool(TAG_HOST_CONTROLLER_ERROR)?
+            .unwrap_or((saved_usbsts & regs::USBSTS_HCE) != 0);
         self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0);
         self.dcbaap = r.u64(TAG_DCBAAP)?.unwrap_or(0) & !0x3f;
         self.sync_command_ring_from_crcr();
@@ -2219,6 +2235,12 @@ impl IoSnapshot for XhciController {
             for (port, rec) in self.ports.iter_mut().zip(port_records.into_iter()) {
                 port.load_snapshot_record(&rec)?;
             }
+        }
+
+        // Preserve older snapshot behaviour where pending interrupts were captured only in
+        // USBSTS.EINT (e.g. the synthetic DMA-on-RUN interrupt).
+        if (saved_usbsts & regs::USBSTS_EINT) != 0 {
+            self.interrupter0.set_interrupt_pending(true);
         }
 
         Ok(())

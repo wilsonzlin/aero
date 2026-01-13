@@ -39,11 +39,14 @@ pub const USBCMD_HCRST: u32 = 1 << 1;
 /// PAGESIZE register value: 4KiB page size supported.
 pub const PAGESIZE_4K: u32 = 1 << 0;
 /// USBSTS bit 0 (Host Controller Halted).
+///
+/// The controller model derives this bit from `USBCMD.RUN` (RUN=0 => halted).
 pub const USBSTS_HCHALTED: u32 = 1 << 0;
+/// Alias for [`USBSTS_HCHALTED`].
+pub const USBSTS_HCH: u32 = USBSTS_HCHALTED;
 /// USBSTS bit 3 (Event Interrupt).
 ///
-/// The full xHCI interrupt model is not implemented yet; the skeleton uses this bit as a generic
-/// level-triggered IRQ pending flag.
+/// The controller models this bit as "interrupt pending", derived from interrupter 0's `IMAN.IP`.
 pub const USBSTS_EINT: u32 = 1 << 3;
 /// USBSTS bit 12 (Host Controller Error).
 ///
@@ -97,6 +100,7 @@ pub mod op {
     pub const USBCMD_HCRST: u32 = 1 << 1;
 
     // USBSTS bits (subset).
+    pub const USBSTS_HCH: u32 = 1 << 0;
     pub const USBSTS_EINT: u32 = 1 << 3;
     pub const USBSTS_HCE: u32 = 1 << 12;
 }

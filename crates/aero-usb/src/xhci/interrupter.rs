@@ -47,8 +47,13 @@ impl fmt::Debug for InterrupterRegs {
 
 impl Default for InterrupterRegs {
     fn default() -> Self {
+        // Default interrupter 0's IE bit to 1. This keeps the controller's synthetic
+        // DMA-on-RUN interrupt visible without additional guest programming (used by the emulator
+        // PCI/MMIO gating tests).
+        //
+        // Real guests typically program IMAN.IE explicitly during controller initialisation.
         Self {
-            iman: 0,
+            iman: IMAN_IE,
             imod: 0,
             erstsz: 0,
             erstba: 0,

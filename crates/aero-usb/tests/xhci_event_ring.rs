@@ -59,6 +59,13 @@ fn event_ring_enqueue_writes_trb_and_sets_interrupt_pending() {
     assert!(xhci.interrupter0().interrupt_pending());
     assert!(xhci.irq_level());
 
+    // IMAN.IE gates IRQ assertion while preserving the pending latch.
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, 0);
+    assert!(xhci.interrupter0().interrupt_pending());
+    assert!(!xhci.irq_level());
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    assert!(xhci.irq_level());
+
     // Verify USBSTS.EINT is W1C and can be used to acknowledge interrupter 0.
     xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
     assert!(!xhci.interrupter0().interrupt_pending());
@@ -70,6 +77,7 @@ fn event_ring_enqueue_writes_trb_and_sets_interrupt_pending() {
     assert!(xhci.interrupter0().interrupt_pending());
     assert!(xhci.irq_level());
 
+    // Verify IMAN.IP is W1C.
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IP | IMAN_IE);
     assert!(!xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
@@ -220,4 +228,92 @@ fn port_status_change_event_is_delivered_into_guest_event_ring() {
 
     assert!(xhci.interrupter0().interrupt_pending());
     assert!(xhci.irq_level());
+}
+
+#[test]
+fn event_ring_cycle_toggles_on_wrap() {
+    let mut mem = TestMemory::new(0x20_000);
+
+    let erstba = 0x1000;
+    let ring_base = 0x4000;
+    // Small ring: 2 TRBs so we can exercise producer wrap + cycle toggle.
+    write_erst_entry(&mut mem, erstba, ring_base, 2);
+
+    let mut xhci = XhciController::new();
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+
+    let mut evt1 = Trb::default();
+    evt1.parameter = 0x1111_1111;
+    evt1.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt1);
+
+    let mut evt2 = Trb::default();
+    evt2.parameter = 0x2222_2222;
+    evt2.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt2);
+
+    xhci.service_event_ring(&mut mem);
+
+    let got1 = Trb::read_from(&mut mem, ring_base);
+    let got2 = Trb::read_from(&mut mem, ring_base + TRB_LEN as u64);
+    assert!(got1.cycle());
+    assert!(got2.cycle());
+
+    // Advance ERDP to the second entry so the ring is no longer full.
+    let erdp = ring_base + TRB_LEN as u64;
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, erdp as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (erdp >> 32) as u32);
+
+    let mut evt3 = Trb::default();
+    evt3.parameter = 0x3333_3333;
+    evt3.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt3);
+    xhci.service_event_ring(&mut mem);
+
+    // Third event wraps to slot 0 with cycle bit toggled (0).
+    let got3 = Trb::read_from(&mut mem, ring_base);
+    assert!(!got3.cycle(), "cycle bit should toggle after producer wrap");
+    assert_eq!(got3.parameter, 0x3333_3333);
+}
+
+#[test]
+fn event_ring_flushes_pending_events_after_erst_programmed() {
+    let mut mem = TestMemory::new(0x20_000);
+
+    let mut xhci = XhciController::new();
+    let mut evt = Trb::default();
+    evt.parameter = 0xdead_beef;
+    evt.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt);
+
+    // Without ERST programming, servicing the ring should not consume the event.
+    xhci.service_event_ring(&mut mem);
+    assert_eq!(xhci.pending_event_count(), 1);
+    assert!(!xhci.interrupter0().interrupt_pending());
+
+    let erstba = 0x1000;
+    let ring_base = 0x6000;
+    write_erst_entry(&mut mem, erstba, ring_base, 4);
+
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+
+    xhci.service_event_ring(&mut mem);
+
+    assert_eq!(xhci.pending_event_count(), 0);
+    assert!(xhci.interrupter0().interrupt_pending());
+    assert!(xhci.irq_level());
+
+    let got = Trb::read_from(&mut mem, ring_base);
+    assert_eq!(got.parameter, 0xdead_beef);
+    assert!(got.cycle());
 }
