@@ -187,6 +187,7 @@ static VOID VioInputSetDeviceKind(_Inout_ PDEVICE_CONTEXT Ctx, _In_ VIOINPUT_DEV
     case VioInputDeviceKindTablet:
         virtio_input_device_set_enabled_reports(&Ctx->InputDevice, HID_TRANSLATE_REPORT_MASK_TABLET);
         break;
+    case VioInputDeviceKindUnknown:
     default:
         virtio_input_device_set_enabled_reports(&Ctx->InputDevice, HID_TRANSLATE_REPORT_MASK_ALL);
         break;
@@ -1589,6 +1590,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         case VioInputDeviceKindTablet:
             kindStr = "tablet";
             break;
+        case VioInputDeviceKindUnknown:
         default:
             kindStr = "unknown";
             break;
@@ -1635,15 +1637,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
 
         expectedProduct = 0;
         switch (deviceContext->DeviceKind) {
-        case VioInputDeviceKindKeyboard:
-            expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_KEYBOARD;
-            break;
-        case VioInputDeviceKindMouse:
-            expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_MOUSE;
-            break;
-        case VioInputDeviceKindTablet:
-            expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_TABLET;
-            break;
+        case VioInputDeviceKindUnknown:
         default:
             /*
              * Allow tablet discovery via ID_DEVIDS even if ID_NAME is not yet
@@ -1653,6 +1647,15 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 VioInputSetDeviceKind(deviceContext, VioInputDeviceKindTablet);
                 expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_TABLET;
             }
+            break;
+        case VioInputDeviceKindKeyboard:
+            expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_KEYBOARD;
+            break;
+        case VioInputDeviceKindMouse:
+            expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_MOUSE;
+            break;
+        case VioInputDeviceKindTablet:
+            expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_TABLET;
             break;
         }
 
