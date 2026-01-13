@@ -178,12 +178,23 @@ See [`docs/backend/01-aero-gateway-api.md`](../docs/backend/01-aero-gateway-api.
 For local development, use `net-proxy/`:
 
 ```bash
-cd net-proxy
-npm install
-npm start
+# From the repo root (npm workspaces)
+npm ci
+
+# Start the proxy (safe-by-default: only allows public/unicast targets)
+npm -w net-proxy run dev
+
+# Or: trusted local dev mode (allows localhost/private ranges for /tcp, /tcp-mux, /udp)
+# AERO_PROXY_OPEN=1 npm -w net-proxy run dev
 ```
 
-This provides a local proxy that the emulator can connect to for testing.
+This provides a local proxy that the emulator (and the browser networking clients under `web/src/net`) can connect to for testing:
+
+- `GET /healthz`
+- `GET|POST /dns-query` and `GET /dns-json` (DNS-over-HTTPS)
+- `WS /tcp`, `WS /tcp-mux`, `WS /udp`
+
+See [`net-proxy/README.md`](../net-proxy/README.md) for full details (allowlist policy, URL formats, and DoH examples).
 
 ---
 
