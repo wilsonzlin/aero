@@ -68,7 +68,13 @@ function Parse-InfInteger([string]$Text) {
   throw ("Unable to parse integer value '{0}'." -f $Text)
 }
 
-function Get-MatchingLines([string[]]$Lines, [string]$Regex) {
+function Split-InfCommaList([string]$Text) {
+  # INF comma-separated lists do not support quoting/escaping in our usage here.
+  $items = @($Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 })
+  return $items
+}
+
+function Get-MatchingLines([System.Collections.IEnumerable]$Lines, [string]$Regex) {
   return @($Lines | Where-Object { $_ -match $Regex })
 }
 
@@ -143,18 +149,51 @@ if ((Get-MatchingLines -Lines $versionLines -Regex '(?i)^CatalogFile\s*=\s*aero_
 # KMDF targeting
 #------------------------------------------------------------------------------
 $expectedKmdfLine = 'KmdfLibraryVersion = 1.9'
-if (-not $sections.ContainsKey('AeroVirtioInput_WdfSect')) {
-  Add-Failure -Failures $failures -Message "Missing required section [AeroVirtioInput_WdfSect] (KMDF settings)."
-}
-$wdfLines = if ($sections.ContainsKey('AeroVirtioInput_WdfSect')) { $sections['AeroVirtioInput_WdfSect'] } else { $lines }
-
-if ((Get-MatchingLines -Lines $wdfLines -Regex '(?i)^KmdfLibraryVersion\s*=\s*1\.9$').Count -eq 0) {
-  $found = Get-MatchingLines -Lines $wdfLines -Regex '(?i)^KmdfLibraryVersion\s*='
-  if ($found.Count -eq 0) {
-    Add-Failure -Failures $failures -Message ("Missing '{0}'. Windows 7 SP1 includes KMDF 1.9 in-box and the INF must declare it." -f $expectedKmdfLine)
+$installWdfSections = @('AeroVirtioInput_Install.NTx86.Wdf', 'AeroVirtioInput_Install.NTamd64.Wdf')
+foreach ($installSect in $installWdfSections) {
+  if (-not $sections.ContainsKey($installSect)) {
+    Add-Failure -Failures $failures -Message ("Missing required section [{0}] (KMDF install section)." -f $installSect)
+    continue
   }
-  else {
-    Add-Failure -Failures $failures -Message ("Expected '{0}', but found: {1}" -f $expectedKmdfLine, ($found -join '; '))
+
+  $installLines = $sections[$installSect]
+  $kmdfServiceLines = Get-MatchingLines -Lines $installLines -Regex '(?i)^KmdfService\s*='
+  if ($kmdfServiceLines.Count -eq 0) {
+    Add-Failure -Failures $failures -Message ("Missing KmdfService directive in [{0}]." -f $installSect)
+    continue
+  }
+
+  $wdfSectNames = @()
+  foreach ($line in $kmdfServiceLines) {
+    if ($line -match '(?i)^KmdfService\s*=\s*[^,]+\s*,\s*(?<sect>[^,\s]+)\s*$') {
+      $wdfSectNames += $Matches['sect'].Trim()
+    }
+    else {
+      Add-Failure -Failures $failures -Message ("Unable to parse KmdfService line in [{0}]: {1}" -f $installSect, $line)
+    }
+  }
+  $wdfSectNames = @($wdfSectNames | Where-Object { $_.Length -gt 0 } | Select-Object -Unique)
+  if ($wdfSectNames.Count -eq 0) {
+    Add-Failure -Failures $failures -Message ("No KMDF Wdf section names could be parsed from [{0}]." -f $installSect)
+    continue
+  }
+
+  foreach ($wdfSect in $wdfSectNames) {
+    if (-not $sections.ContainsKey($wdfSect)) {
+      Add-Failure -Failures $failures -Message ("KMDF Wdf section referenced by [{0}] does not exist: [{1}]." -f $installSect, $wdfSect)
+      continue
+    }
+
+    $wdfLines = $sections[$wdfSect]
+    if ((Get-MatchingLines -Lines $wdfLines -Regex '(?i)^KmdfLibraryVersion\s*=\s*1\.9$').Count -eq 0) {
+      $found = Get-MatchingLines -Lines $wdfLines -Regex '(?i)^KmdfLibraryVersion\s*='
+      if ($found.Count -eq 0) {
+        Add-Failure -Failures $failures -Message ("Missing '{0}' in [{1}]. Windows 7 SP1 includes KMDF 1.9 in-box and the INF must declare it." -f $expectedKmdfLine, $wdfSect)
+      }
+      else {
+        Add-Failure -Failures $failures -Message ("Expected '{0}' in [{1}], but found: {2}" -f $expectedKmdfLine, $wdfSect, ($found -join '; '))
+      }
+    }
   }
 }
 
@@ -241,79 +280,132 @@ foreach ($s in $requiredStrings) {
 #------------------------------------------------------------------------------
 # Interrupt Management (MSI/MSI-X)
 #------------------------------------------------------------------------------
-# Verify the AddReg section contents (ensures removal of the section or one line fails fast).
-$msiSectionName = 'AeroVirtioInput_InterruptManagement_AddReg'
-if (-not $sections.ContainsKey($msiSectionName)) {
-  Add-Failure -Failures $failures -Message ("Missing required section [{0}] (MSI/MSI-X AddReg entries)." -f $msiSectionName)
-}
-$msiLines = if ($sections.ContainsKey($msiSectionName)) { $sections[$msiSectionName] } else { $lines }
-
-# Key creation: HKR, "Interrupt Management",,0x00000010
-if ((Get-MatchingLines -Lines $msiLines -Regex '(?i)^HKR\s*,\s*"Interrupt Management"\s*,\s*,').Count -eq 0) {
-  Add-Failure -Failures $failures -Message 'Missing MSI registry key creation (expected HKR, "Interrupt Management",,0x00000010).'
-}
-
-# Enable MSI: HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
-$msiSupportedLines = Get-MatchingLines -Lines $msiLines -Regex '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MSISupported\s*,'
-if ($msiSupportedLines.Count -eq 0) {
-  Add-Failure -Failures $failures -Message 'Missing MSI enablement (expected HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, ..., 1).'
-}
-else {
-  $parsed = $false
-  foreach ($line in $msiSupportedLines) {
-    if ($line -match '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MSISupported\s*,\s*[^,]*\s*,\s*(?<val>[^,\s]+)\s*$') {
-      $parsed = $true
-      try {
-        $val = Parse-InfInteger -Text $Matches['val']
-        if ($val -ne 1) {
-          Add-Failure -Failures $failures -Message ("MSISupported is {0}, expected 1 (enabled). Line: {1}" -f $val, $line)
-        }
-      }
-      catch {
-        Add-Failure -Failures $failures -Message ("Unable to parse MSISupported value in line: {0}" -f $line)
-      }
-    }
+$installHwSections = @('AeroVirtioInput_Install.NTx86.HW', 'AeroVirtioInput_Install.NTamd64.HW')
+foreach ($installSect in $installHwSections) {
+  if (-not $sections.ContainsKey($installSect)) {
+    Add-Failure -Failures $failures -Message ("Missing required section [{0}] (HW install section)." -f $installSect)
+    continue
   }
-  if (-not $parsed) {
-    Add-Failure -Failures $failures -Message ("Unable to parse MSISupported line(s): {0}" -f ($msiSupportedLines -join '; '))
+
+  $installLines = $sections[$installSect]
+  $addRegLines = Get-MatchingLines -Lines $installLines -Regex '(?i)^AddReg\s*='
+  if ($addRegLines.Count -eq 0) {
+    Add-Failure -Failures $failures -Message ("Missing AddReg directive in [{0}] (MSI settings will not be applied)." -f $installSect)
+    continue
   }
-}
 
-# Request enough messages (>= 3): HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, <n>
-$msgLines = Get-MatchingLines -Lines $msiLines -Regex '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MessageNumberLimit\s*,'
-if ($msgLines.Count -eq 0) {
-  Add-Failure -Failures $failures -Message 'Missing MSI message count request (expected HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, ..., <n>).'
-}
-else {
-  $min = 3
-  $ok = $false
-  $bestVal = $null
-
-  foreach ($line in $msgLines) {
-    if ($line -match '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MessageNumberLimit\s*,\s*[^,]*\s*,\s*(?<val>[^,\s]+)\s*$') {
-      try {
-        $val = Parse-InfInteger -Text $Matches['val']
-        $bestVal = $val
-        if ($val -ge $min) {
-          $ok = $true
-          break
-        }
-      }
-      catch {
-        Add-Failure -Failures $failures -Message ("Unable to parse MessageNumberLimit value in line: {0}" -f $line)
-      }
+  $addRegSections = @()
+  foreach ($line in $addRegLines) {
+    if ($line -match '(?i)^AddReg\s*=\s*(?<list>.+)$') {
+      $addRegSections += Split-InfCommaList -Text $Matches['list']
     }
     else {
-      Add-Failure -Failures $failures -Message ("Unable to parse MessageNumberLimit line: {0}" -f $line)
+      Add-Failure -Failures $failures -Message ("Unable to parse AddReg line in [{0}]: {1}" -f $installSect, $line)
+    }
+  }
+  $addRegSections = @($addRegSections | Where-Object { $_.Length -gt 0 } | Select-Object -Unique)
+  if ($addRegSections.Count -eq 0) {
+    Add-Failure -Failures $failures -Message ("No AddReg section names could be parsed from [{0}]." -f $installSect)
+    continue
+  }
+
+  $msiLines = @()
+  foreach ($regSect in $addRegSections) {
+    if (-not $sections.ContainsKey($regSect)) {
+      Add-Failure -Failures $failures -Message ("AddReg section referenced by [{0}] does not exist: [{1}]." -f $installSect, $regSect)
+      continue
+    }
+    $msiLines += $sections[$regSect]
+  }
+
+  # Key creation: HKR, "Interrupt Management",,0x00000010
+  $imKeyLines = Get-MatchingLines -Lines $msiLines -Regex '(?i)^HKR\s*,\s*"Interrupt Management"\s*,\s*,'
+  if ($imKeyLines.Count -eq 0) {
+    Add-Failure -Failures $failures -Message ("Missing MSI registry key creation in AddReg sections referenced by [{0}] (expected HKR, \"Interrupt Management\",,0x00000010)." -f $installSect)
+  }
+  else {
+    $parsed = $false
+    foreach ($line in $imKeyLines) {
+      if ($line -match '(?i)^HKR\s*,\s*"Interrupt Management"\s*,\s*,\s*(?<flags>[^,\s]+)\s*$') {
+        $parsed = $true
+        try {
+          $flags = Parse-InfInteger -Text $Matches['flags']
+          if (($flags -band 0x10) -eq 0) {
+            Add-Failure -Failures $failures -Message ("Interrupt Management key line does not include 0x10 (key-only) flag. Line: {0}" -f $line)
+          }
+        }
+        catch {
+          Add-Failure -Failures $failures -Message ("Unable to parse Interrupt Management key flags in line: {0}" -f $line)
+        }
+      }
+    }
+    if (-not $parsed) {
+      Add-Failure -Failures $failures -Message ("Unable to parse Interrupt Management key line(s): {0}" -f ($imKeyLines -join '; '))
     }
   }
 
-  if (-not $ok) {
-    if ($bestVal -ne $null) {
-      Add-Failure -Failures $failures -Message ("MessageNumberLimit is {0}, but Aero requires >= {1} (config + at least two queues)." -f $bestVal, $min)
+  # Enable MSI: HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+  $msiSupportedLines = Get-MatchingLines -Lines $msiLines -Regex '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MSISupported\s*,'
+  if ($msiSupportedLines.Count -eq 0) {
+    Add-Failure -Failures $failures -Message ("Missing MSI enablement in AddReg sections referenced by [{0}] (expected HKR, \"Interrupt Management\\MessageSignaledInterruptProperties\", MSISupported, ..., 1)." -f $installSect)
+  }
+  else {
+    $parsed = $false
+    foreach ($line in $msiSupportedLines) {
+      if ($line -match '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MSISupported\s*,\s*[^,]*\s*,\s*(?<val>[^,\s]+)\s*$') {
+        $parsed = $true
+        try {
+          $val = Parse-InfInteger -Text $Matches['val']
+          if ($val -ne 1) {
+            Add-Failure -Failures $failures -Message ("MSISupported is {0}, expected 1 (enabled). Line: {1}" -f $val, $line)
+          }
+        }
+        catch {
+          Add-Failure -Failures $failures -Message ("Unable to parse MSISupported value in line: {0}" -f $line)
+        }
+      }
     }
-    else {
-      Add-Failure -Failures $failures -Message ("MessageNumberLimit is missing/invalid; Aero requires >= {0} (config + at least two queues)." -f $min)
+    if (-not $parsed) {
+      Add-Failure -Failures $failures -Message ("Unable to parse MSISupported line(s): {0}" -f ($msiSupportedLines -join '; '))
+    }
+  }
+
+  # Request enough messages (>= 3): HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, <n>
+  $msgLines = Get-MatchingLines -Lines $msiLines -Regex '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MessageNumberLimit\s*,'
+  if ($msgLines.Count -eq 0) {
+    Add-Failure -Failures $failures -Message ("Missing MSI message count request in AddReg sections referenced by [{0}] (expected HKR, \"Interrupt Management\\MessageSignaledInterruptProperties\", MessageNumberLimit, ..., <n>)." -f $installSect)
+  }
+  else {
+    $min = 3
+    $ok = $false
+    $bestVal = $null
+
+    foreach ($line in $msgLines) {
+      if ($line -match '(?i)^HKR\s*,\s*"Interrupt Management\\\\MessageSignaledInterruptProperties"\s*,\s*MessageNumberLimit\s*,\s*[^,]*\s*,\s*(?<val>[^,\s]+)\s*$') {
+        try {
+          $val = Parse-InfInteger -Text $Matches['val']
+          $bestVal = $val
+          if ($val -ge $min) {
+            $ok = $true
+            break
+          }
+        }
+        catch {
+          Add-Failure -Failures $failures -Message ("Unable to parse MessageNumberLimit value in line: {0}" -f $line)
+        }
+      }
+      else {
+        Add-Failure -Failures $failures -Message ("Unable to parse MessageNumberLimit line: {0}" -f $line)
+      }
+    }
+
+    if (-not $ok) {
+      if ($bestVal -ne $null) {
+        Add-Failure -Failures $failures -Message ("MessageNumberLimit is {0}, but Aero requires >= {1} (config + at least two queues)." -f $bestVal, $min)
+      }
+      else {
+        Add-Failure -Failures $failures -Message ("MessageNumberLimit is missing/invalid; Aero requires >= {0} (config + at least two queues)." -f $min)
+      }
     }
   }
 }
