@@ -290,6 +290,8 @@ typedef struct OPTIONS {
     int ioctl_bad_get_indexed_string;
     int ioctl_bad_get_string_out;
     int ioctl_bad_get_indexed_string_out;
+    int ioctl_bad_get_input_xfer_packet;
+    int ioctl_bad_get_input_report;
     int ioctl_query_counters_short;
     int ioctl_query_state_short;
     int ioctl_get_input_report;
@@ -1317,7 +1319,8 @@ static void print_usage(void)
     wprintf(L"             [--reset-counters]\n");
     wprintf(L"             [--get-log-mask | --set-log-mask 0xMASK]\n");
     wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report |\n");
-    wprintf(L"              --ioctl-bad-read-xfer-packet | --ioctl-bad-read-report]\n");
+    wprintf(L"              --ioctl-bad-read-xfer-packet | --ioctl-bad-read-report |\n");
+    wprintf(L"              --ioctl-bad-get-input-xfer-packet | --ioctl-bad-get-input-report]\n");
     wprintf(L"             [--ioctl-bad-set-output-xfer-packet | --ioctl-bad-set-output-report | --hidd-bad-set-output-report]\n");
     wprintf(L"             [--ioctl-bad-get-report-descriptor | --ioctl-bad-get-collection-descriptor | --ioctl-bad-get-device-descriptor |\n");
     wprintf(L"              --ioctl-bad-get-string | --ioctl-bad-get-indexed-string |\n");
@@ -1367,6 +1370,12 @@ static void print_usage(void)
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
     wprintf(L"  --ioctl-bad-read-report\n");
     wprintf(L"                 Send IOCTL_HID_READ_REPORT with an invalid reportBuffer pointer\n");
+    wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
+    wprintf(L"  --ioctl-bad-get-input-xfer-packet\n");
+    wprintf(L"                 Send IOCTL_HID_GET_INPUT_REPORT with an invalid HID_XFER_PACKET pointer\n");
+    wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
+    wprintf(L"  --ioctl-bad-get-input-report\n");
+    wprintf(L"                 Send IOCTL_HID_GET_INPUT_REPORT with an invalid reportBuffer pointer\n");
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
     wprintf(L"  --ioctl-bad-set-output-xfer-packet\n");
     wprintf(L"                 Send IOCTL_HID_SET_OUTPUT_REPORT with an invalid HID_XFER_PACKET pointer\n");
@@ -3750,6 +3759,74 @@ static int hidd_get_input_report(const SELECTED_DEVICE *dev)
     return 1;
 }
 
+static int ioctl_bad_get_input_xfer_packet(const SELECTED_DEVICE *dev)
+{
+    DWORD bytes = 0;
+    BOOL ok;
+    DWORD err;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return 1;
+    }
+
+    if ((dev->desired_access & GENERIC_READ) == 0) {
+        wprintf(L"Device was not opened with GENERIC_READ; cannot issue IOCTL_HID_GET_INPUT_REPORT\n");
+        return 1;
+    }
+
+    wprintf(L"\nIssuing IOCTL_HID_GET_INPUT_REPORT with invalid HID_XFER_PACKET pointer...\n");
+    ok = DeviceIoControl(dev->handle, IOCTL_HID_GET_INPUT_REPORT, (PVOID)(ULONG_PTR)0x1, 64, NULL, 0, &bytes, NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return 1;
+    }
+
+    err = GetLastError();
+    print_win32_error_w(L"DeviceIoControl(IOCTL_HID_GET_INPUT_REPORT bad HID_XFER_PACKET)", err);
+    return 0;
+}
+
+static int ioctl_bad_get_input_report(const SELECTED_DEVICE *dev)
+{
+    typedef struct HID_XFER_PACKET_MIN {
+        PUCHAR reportBuffer;
+        ULONG reportBufferLen;
+        UCHAR reportId;
+    } HID_XFER_PACKET_MIN;
+
+    BYTE inbuf[64];
+    HID_XFER_PACKET_MIN *pkt;
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return 1;
+    }
+
+    if ((dev->desired_access & GENERIC_READ) == 0) {
+        wprintf(L"Device was not opened with GENERIC_READ; cannot issue IOCTL_HID_GET_INPUT_REPORT\n");
+        return 1;
+    }
+
+    ZeroMemory(inbuf, sizeof(inbuf));
+    pkt = (HID_XFER_PACKET_MIN *)inbuf;
+    pkt->reportId = 1; // keyboard (doesn't matter; invalid buffer fails before ID checks)
+    pkt->reportBufferLen = VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN;
+    pkt->reportBuffer = (PUCHAR)(ULONG_PTR)0x1; // invalid user pointer
+
+    wprintf(L"\nIssuing IOCTL_HID_GET_INPUT_REPORT with invalid reportBuffer=%p...\n", pkt->reportBuffer);
+    ok = DeviceIoControl(dev->handle, IOCTL_HID_GET_INPUT_REPORT, inbuf, (DWORD)sizeof(inbuf), NULL, 0, &bytes, NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return 1;
+    }
+
+    print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_INPUT_REPORT bad reportBuffer)");
+    return 0;
+}
+
 static int ioctl_bad_write_report(const SELECTED_DEVICE *dev)
 {
     typedef struct HID_XFER_PACKET_MIN {
@@ -4439,6 +4516,16 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--ioctl-bad-get-input-xfer-packet") == 0) {
+            opt.ioctl_bad_get_input_xfer_packet = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--ioctl-bad-get-input-report") == 0) {
+            opt.ioctl_bad_get_input_report = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--ioctl-bad-set-output-xfer-packet") == 0) {
             opt.ioctl_bad_set_output_xfer_packet = 1;
             continue;
@@ -4649,7 +4736,8 @@ int wmain(int argc, wchar_t **argv)
     if (opt.selftest &&
         (opt.query_state || opt.list_only || opt.dump_desc || opt.dump_collection_desc || opt.have_vid || opt.have_pid ||
          opt.have_index || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
-         opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report || opt.ioctl_bad_set_output_xfer_packet ||
+         opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report || opt.ioctl_bad_get_input_xfer_packet ||
+         opt.ioctl_bad_get_input_report || opt.ioctl_bad_set_output_xfer_packet ||
          opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_collection_descriptor ||
          opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
          opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.ioctl_query_counters_short ||
@@ -4663,9 +4751,9 @@ int wmain(int argc, wchar_t **argv)
     if (opt.query_state &&
         (opt.selftest || opt.query_counters || opt.query_counters_json || opt.reset_counters || opt.ioctl_query_counters_short ||
          opt.ioctl_query_state_short ||
-         opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.have_led_mask || opt.led_cycle || opt.led_spam ||
-         opt.dump_desc || opt.dump_collection_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
-         opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
+         opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc ||
+         opt.dump_collection_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet ||
+         opt.ioctl_bad_read_report || opt.ioctl_bad_get_input_xfer_packet || opt.ioctl_bad_get_input_report ||
          opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
          opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
          opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
@@ -4704,6 +4792,14 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.have_led_mask && opt.ioctl_bad_read_report) {
         wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-read-report are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.have_led_mask && opt.ioctl_bad_get_input_xfer_packet) {
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-get-input-xfer-packet are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.have_led_mask && opt.ioctl_bad_get_input_report) {
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-get-input-report are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_get_report_descriptor) {
@@ -4758,6 +4854,19 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"IOCTL_HID_READ_REPORT negative tests are mutually exclusive with other negative tests.\n");
         return 2;
     }
+    if (opt.ioctl_bad_get_input_xfer_packet && opt.ioctl_bad_get_input_report) {
+        wprintf(L"--ioctl-bad-get-input-xfer-packet and --ioctl-bad-get-input-report are mutually exclusive.\n");
+        return 2;
+    }
+    if ((opt.ioctl_bad_get_input_xfer_packet || opt.ioctl_bad_get_input_report) &&
+        (opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
+         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
+         opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
+         opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
+         opt.hidd_bad_set_output_report)) {
+        wprintf(L"IOCTL_HID_GET_INPUT_REPORT negative tests are mutually exclusive with other negative tests.\n");
+        return 2;
+    }
     if (opt.ioctl_bad_xfer_packet && opt.hidd_bad_set_output_report) {
         wprintf(L"--ioctl-bad-xfer-packet and --hidd-bad-set-output-report are mutually exclusive.\n");
         return 2;
@@ -4798,7 +4907,8 @@ int wmain(int argc, wchar_t **argv)
          opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
          opt.ioctl_bad_get_indexed_string_out) &&
         (opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
-         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.hidd_bad_set_output_report)) {
+         opt.ioctl_bad_get_input_xfer_packet || opt.ioctl_bad_get_input_report || opt.ioctl_bad_set_output_xfer_packet ||
+         opt.ioctl_bad_set_output_report || opt.hidd_bad_set_output_report)) {
         wprintf(L"Descriptor/string negative tests are mutually exclusive with IOCTL read/write negative tests.\n");
         return 2;
     }
@@ -4851,6 +4961,7 @@ int wmain(int argc, wchar_t **argv)
          opt.ioctl_query_state_short ||
          opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc || opt.dump_collection_desc ||
          opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
+         opt.ioctl_bad_get_input_xfer_packet || opt.ioctl_bad_get_input_report ||
          opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
          opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
          opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
@@ -4871,7 +4982,8 @@ int wmain(int argc, wchar_t **argv)
     if (opt.ioctl_get_input_report &&
         (opt.query_counters || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc || opt.dump_collection_desc ||
          opt.hidd_get_input_report ||
-         opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
+         opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
+         opt.ioctl_bad_get_input_xfer_packet || opt.ioctl_bad_get_input_report || opt.ioctl_bad_set_output_xfer_packet ||
          opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_collection_descriptor ||
          opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
          opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report)) {
@@ -4881,10 +4993,11 @@ int wmain(int argc, wchar_t **argv)
 
     if (opt.hidd_get_input_report &&
         (opt.query_counters || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc || opt.dump_collection_desc ||
-         opt.ioctl_get_input_report || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
-         opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor ||
-         opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
-         opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report)) {
+         opt.ioctl_get_input_report || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet ||
+         opt.ioctl_bad_read_report || opt.ioctl_bad_get_input_xfer_packet || opt.ioctl_bad_get_input_report ||
+         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
+         opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
+         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report)) {
         wprintf(L"--hidd-get-input-report is mutually exclusive with other action/negative-test modes.\n");
         return 2;
     }
@@ -5044,6 +5157,18 @@ int wmain(int argc, wchar_t **argv)
 
     if (opt.ioctl_bad_read_report) {
         int rc = ioctl_bad_read_report(&dev);
+        free_selected_device(&dev);
+        return rc;
+    }
+
+    if (opt.ioctl_bad_get_input_xfer_packet) {
+        int rc = ioctl_bad_get_input_xfer_packet(&dev);
+        free_selected_device(&dev);
+        return rc;
+    }
+
+    if (opt.ioctl_bad_get_input_report) {
+        int rc = ioctl_bad_get_input_report(&dev);
         free_selected_device(&dev);
         return rc;
     }
