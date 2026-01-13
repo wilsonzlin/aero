@@ -19,6 +19,11 @@
  */
 #include "../../../../win7/virtio/virtio-core/include/virtio_spec.h"
 
+/* Virtio spec sentinel for "no MSI-X vector assigned". */
+#ifndef VIRTIO_PCI_MSI_NO_VECTOR
+#define VIRTIO_PCI_MSI_NO_VECTOR ((UINT16)0xFFFFu)
+#endif
+
 typedef struct _VIRTIO_PCI_DEVICE {
     /* Caller-provided BAR0 MMIO mapping. */
     PUCHAR Bar0Va;
@@ -132,7 +137,7 @@ VirtioPciGetQueueNotifyAddress(_Inout_ VIRTIO_PCI_DEVICE *Dev,
                                _In_ USHORT QueueIndex,
                                _Out_ volatile UINT16 **NotifyAddrOut);
 
- VOID VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex);
+VOID VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex);
 
 /*
  * MSI-X helpers.
@@ -161,4 +166,4 @@ NTSTATUS VirtioPciSetQueueMsixVector(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT
 /*
  * Interrupt status (read-to-ack).
  */
- UCHAR VirtioPciReadIsr(_In_ const VIRTIO_PCI_DEVICE *Dev);
+UCHAR VirtioPciReadIsr(_In_ const VIRTIO_PCI_DEVICE *Dev);

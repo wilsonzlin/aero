@@ -52,9 +52,8 @@ typedef struct VIRTIO_PCI_MODERN_MMIO_SIM {
 
     uint32_t device_feature_select;
     uint32_t driver_feature_select;
-    uint16_t queue_select;
-
     uint16_t msix_config;
+    uint16_t queue_select;
 
     uint8_t device_status_read_override;
     uint8_t device_status_read_override_value;

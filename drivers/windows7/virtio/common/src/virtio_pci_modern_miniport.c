@@ -777,8 +777,8 @@ VirtioPciSetConfigMsixVector(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT Vector)
 NTSTATUS
 VirtioPciSetQueueMsixVector(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex, _In_ USHORT Vector)
 {
-    NTSTATUS status;
     KIRQL oldIrql;
+    NTSTATUS status;
     USHORT size;
     USHORT readVector;
 
@@ -791,7 +791,6 @@ VirtioPciSetQueueMsixVector(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueInd
     VirtioPciCommonCfgLock(Dev, &oldIrql);
 
     VirtioPciSelectQueueLocked(Dev, QueueIndex);
-
     size = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_size);
     if (size == 0) {
         status = STATUS_NOT_FOUND;
