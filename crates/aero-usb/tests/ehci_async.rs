@@ -32,6 +32,8 @@ const QTD_TOKEN: u32 = 0x08;
 const QTD_BUF0: u32 = 0x0c;
 
 const QTD_STS_ACTIVE: u32 = 1 << 7;
+const QTD_STS_HALT: u32 = 1 << 6;
+const QTD_STS_XACTERR: u32 = 1 << 3;
 const QTD_IOC: u32 = 1 << 15;
 const QTD_TOTAL_BYTES_SHIFT: u32 = 16;
 
@@ -138,6 +140,27 @@ impl UsbDeviceModel for DummyHsDevice {
             return UsbInResult::Nak;
         }
         UsbInResult::Stall
+    }
+}
+
+#[derive(Clone, Debug)]
+struct NakInDevice;
+
+impl UsbDeviceModel for NakInDevice {
+    fn speed(&self) -> UsbSpeed {
+        UsbSpeed::High
+    }
+
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Ack
+    }
+
+    fn handle_in_transfer(&mut self, _ep: u8, _max_len: usize) -> UsbInResult {
+        UsbInResult::Nak
     }
 }
 
@@ -316,4 +339,99 @@ fn ehci_async_executes_control_and_bulk_transfers() {
     assert_eq!(got, [1, 2, 3, 4]);
 
     assert_ne!(ctrl.mmio_read(REG_USBSTS, 4) & USBSTS_USBINT, 0);
+}
+
+#[test]
+fn ehci_async_missing_device_halts_qtd_and_sets_usberrint() {
+    let mut mem = TestMemory::new(0x20000);
+    let mut ctrl = EhciController::new();
+    // Attach a device but do not enumerate it to the target address (default address remains 0).
+    ctrl.hub_mut().attach(0, Box::new(DummyHsDevice::new(Rc::new(RefCell::new(
+        DummyState::default(),
+    )))));
+
+    ctrl.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    ctrl.mmio_write(REG_USBINTR, 4, USBINTR_USBINT | USBINTR_USBERRINT);
+    ctrl.mmio_write(REG_USBCMD, 4, USBCMD_RS | USBCMD_ASE);
+
+    let mut alloc = Alloc::new(0x1000);
+    let qh_addr = alloc.alloc(0x40, 0x20);
+    let qtd = alloc.alloc(0x20, 0x20);
+    let buf = alloc.alloc(0x1000, 0x1000);
+
+    ctrl.mmio_write(REG_ASYNCLISTADDR, 4, qh_addr);
+
+    write_qtd(
+        &mut mem,
+        qtd,
+        LINK_TERMINATE,
+        qtd_token(PID_IN, 0, true, true),
+        buf,
+    );
+    // Target a non-existent device address.
+    write_qh(&mut mem, qh_addr, qh_ep_char(5, 0, 64), qtd);
+
+    ctrl.mmio_write(REG_USBSTS, 4, USBSTS_USBINT | USBSTS_USBERRINT);
+    ctrl.tick_1ms(&mut mem);
+
+    let tok = mem.read_u32(qtd + QTD_TOKEN);
+    assert_eq!(tok & QTD_STS_ACTIVE, 0, "missing device should clear Active");
+    assert_ne!(tok & QTD_STS_HALT, 0, "missing device should set Halt");
+    assert_ne!(tok & QTD_STS_XACTERR, 0, "missing device should set XactErr");
+
+    let sts = ctrl.mmio_read(REG_USBSTS, 4);
+    assert_ne!(sts & USBSTS_USBERRINT, 0, "USBERRINT should be asserted");
+    assert_ne!(sts & USBSTS_USBINT, 0, "IOC should still assert USBINT");
+    assert!(ctrl.irq_level(), "IRQ should be raised when enabled");
+}
+
+#[test]
+fn ehci_async_nak_leaves_qtd_active_and_no_interrupt() {
+    let mut mem = TestMemory::new(0x20000);
+    let mut ctrl = EhciController::new();
+    ctrl.hub_mut().attach(0, Box::new(NakInDevice));
+
+    ctrl.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    ctrl.mmio_write(REG_USBINTR, 4, USBINTR_USBINT | USBINTR_USBERRINT);
+    ctrl.mmio_write(REG_USBCMD, 4, USBCMD_RS | USBCMD_ASE);
+
+    let mut alloc = Alloc::new(0x1000);
+    let qh_addr = alloc.alloc(0x40, 0x20);
+    let qtd = alloc.alloc(0x20, 0x20);
+    let buf = alloc.alloc(0x1000, 0x1000);
+
+    ctrl.mmio_write(REG_ASYNCLISTADDR, 4, qh_addr);
+
+    write_qtd(
+        &mut mem,
+        qtd,
+        LINK_TERMINATE,
+        qtd_token(PID_IN, 4, true, true),
+        buf,
+    );
+    write_qh(&mut mem, qh_addr, qh_ep_char(0, 1, 64), qtd);
+
+    ctrl.mmio_write(REG_USBSTS, 4, USBSTS_USBINT | USBSTS_USBERRINT);
+    ctrl.tick_1ms(&mut mem);
+
+    let tok = mem.read_u32(qtd + QTD_TOKEN);
+    assert_ne!(tok & QTD_STS_ACTIVE, 0, "NAK should leave qTD active");
+    assert_eq!(
+        (tok >> QTD_TOTAL_BYTES_SHIFT) & 0x7fff,
+        4,
+        "NAK should not consume bytes"
+    );
+
+    let sts = ctrl.mmio_read(REG_USBSTS, 4);
+    assert_eq!(sts & USBSTS_USBINT, 0, "no USBINT without completion");
+    assert_eq!(sts & USBSTS_USBERRINT, 0, "no USBERRINT on NAK");
+    assert!(!ctrl.irq_level(), "no IRQ without asserted status bits");
 }
