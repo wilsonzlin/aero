@@ -322,6 +322,24 @@ function Write-Utf8NoBomFile([string]$Path, [string]$Contents) {
     [System.IO.File]::WriteAllText($Path, $Contents, $script:Utf8NoBom)
 }
 
+function Write-Sha256SumsFile([string]$DirPath) {
+    $files = @(
+        Get-ChildItem -LiteralPath $DirPath -File |
+            Where-Object { $_.Name -ne 'SHA256SUMS' } |
+            Sort-Object -Property Name
+    )
+
+    $lines = @()
+    foreach ($f in $files) {
+        $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $lines += ("{0}  {1}" -f $hash, $f.Name)
+    }
+
+    # Use LF newlines for compatibility with `sha256sum -c` on non-Windows hosts.
+    $contents = (($lines -join "`n") + "`n")
+    Write-Utf8NoBomFile -Path (Join-Path $DirPath 'SHA256SUMS') -Contents $contents
+}
+
 function Package-OneArch(
     [ValidateSet('x86', 'amd64')] [string]$ArchValue,
     [string]$InputDirResolved,
@@ -414,6 +432,8 @@ function Package-OneArch(
 
         $manifestPath = Join-Path $stageDir 'manifest.json'
         Write-Utf8NoBomFile -Path $manifestPath -Contents ($manifest | ConvertTo-Json -Depth 10 -Compress)
+
+        Write-Sha256SumsFile -DirPath $stageDir
 
         $zipName = ("{0}-{1}-{2}-{3}.zip" -f $script:DriverId, $script:TargetOs, $ArchValue, $driverVer.version)
         $zipPath = Join-Path $OutDirResolved $zipName

@@ -11,6 +11,7 @@ This folder documents how to produce a redistributable driver bundle once you ha
 - The matching `*.cat` if present (either next to the INF, or under `-InputDir`)
 - A KMDF coinstaller `WdfCoInstaller*.dll` **if present** (either referenced by the INF, or discovered under `-InputDir`)
 - A `manifest.json` describing file hashes + metadata (driver id, arch, version, etc.)
+- A `SHA256SUMS` file containing SHA-256 for every file in the zip (including `manifest.json`) for easy integrity checks
 
 > Default policy: the Win7 virtio-input driver targets **KMDF 1.9** (in-box on Windows 7 SP1), so no WDF coinstaller
 > is expected or required. The packaging script only includes `WdfCoInstaller*.dll` if you intentionally add one (for
@@ -96,3 +97,16 @@ The script looks for either:
 
 - The script is safe to run before the driver exists: it will emit clear errors if required files (INF/SYS) are missing.
 - The zip includes a `manifest.json` so consumers can verify exactly what was shipped.
+- The zip also includes `SHA256SUMS`, so after extracting you can run:
+  - `sha256sum -c SHA256SUMS` (Linux/macOS, or Windows environments that provide `sha256sum`)
+  - PowerShell (rough equivalent):
+    ```powershell
+    Get-Content .\SHA256SUMS | ForEach-Object {
+      if ($_ -match '^([0-9a-fA-F]{64})\\s\\s(.+)$') {
+        $expected = $matches[1].ToLowerInvariant()
+        $file = $matches[2]
+        $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) { throw "$file: FAILED" }
+      }
+    }
+    ```
