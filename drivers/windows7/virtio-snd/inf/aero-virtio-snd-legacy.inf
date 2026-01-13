@@ -41,6 +41,9 @@ Needs    = KS.Registration, WDMAUDIO.Registration
 CopyFiles = AeroVirtioSndLegacy.CopyFiles
 AddReg    = AeroVirtioSndLegacy.AddReg
 
+[AeroVirtioSndLegacy_Install.NT.HW]
+AddReg = AeroVirtioSndLegacy_InterruptManagement_AddReg
+
 ; Register the KS device interfaces that the Windows audio stack enumerates.
 ; Reference strings match the PortCls subdevice names ("Wave" / "Topology").
 [AeroVirtioSndLegacy_Install.NT.Interfaces]
@@ -107,6 +110,11 @@ HKR,%KSNAME_Topology%,Driver,,virtiosnd_legacy.sys
 
 [AeroVirtioSndLegacy.CopyFiles]
 virtiosnd_legacy.sys
+
+[AeroVirtioSndLegacy_InterruptManagement_AddReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
 
 [AeroVirtioSndLegacy_Install.NT.Services]
 AddService = aeroviosnd_legacy, 0x00000002, AeroVirtioSndLegacy_Service_Inst
