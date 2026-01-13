@@ -405,6 +405,28 @@ Then review:
 - If your QEMU build cannot override revision IDs, the contract package will not bind; use the legacy package or
   upgrade/patch QEMU to expose `REV_01`.
 
+### Bring-up toggles (registry)
+
+The virtio-snd driver exposes a couple of per-device bring-up toggles that can be flipped for diagnostics.
+They live under the device instance’s `Parameters` subkey:
+
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\ForceNullBackend` (`REG_DWORD`)
+  - Default: `0`
+  - Set to `1` to force the silent null backend. This also allows `START_DEVICE` to succeed even if virtio transport bring-up fails, which is useful when debugging QEMU/device-model issues while still exercising the PortCls/WaveRT integration.
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` (`REG_DWORD`)
+  - Default: `0`
+  - Set to `1` to allow polling-only mode when *no usable interrupt* (neither MSI/MSI-X nor INTx) can be wired up. (Modern virtio-pci transport packages only.)
+
+You can find `<DeviceInstancePath>` via **Device Manager → Details → “Device instance path”**.
+
+After changing a toggle, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
+
+Example (elevated `cmd.exe`, replace `<DeviceInstancePath>`):
+
+```cmd
+reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters" /v ForceNullBackend /t REG_DWORD /d 1 /f
+```
+
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound
 
 If the PCI device binds successfully but **no render endpoint** shows up:
