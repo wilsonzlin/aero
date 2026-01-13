@@ -125,6 +125,7 @@ add_executable(virtio_pci_modern_miniport_tests
     test_modern_miniport.c
     ${CMAKE_CURRENT_LIST_DIR}/wdk_stubs/wdk_stubs.c
     ${CMAKE_CURRENT_LIST_DIR}/wdk_stubs/virtio_pci_modern_mmio_sim.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_pci_aero_layout_miniport.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_pci_modern_miniport.c
     ${CMAKE_CURRENT_LIST_DIR}/../../../../win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c
 )

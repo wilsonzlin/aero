@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "virtio_pci_modern_miniport.h"
+#include "virtio_pci_aero_layout_miniport.h"
 
 #include "wdk_stubs/virtio_pci_modern_mmio_sim.h"
 
@@ -33,6 +34,19 @@ enum {
     TEST_DEVICE_CFG_OFF = 0x400,
     TEST_DEVICE_CFG_LEN = 0x40,
     TEST_NOTIFY_OFF_MULT = 4,
+};
+
+enum {
+    AERO_CONTRACT_V1_BAR0_LEN = 0x4000u,
+    AERO_CONTRACT_V1_COMMON_OFF = 0x0000u,
+    AERO_CONTRACT_V1_COMMON_LEN = 0x0100u,
+    AERO_CONTRACT_V1_NOTIFY_OFF = 0x1000u,
+    AERO_CONTRACT_V1_NOTIFY_LEN = 0x0100u,
+    AERO_CONTRACT_V1_ISR_OFF = 0x2000u,
+    AERO_CONTRACT_V1_ISR_LEN = 0x0020u,
+    AERO_CONTRACT_V1_DEVICE_OFF = 0x3000u,
+    AERO_CONTRACT_V1_DEVICE_LEN = 0x0100u,
+    AERO_CONTRACT_V1_NOTIFY_MULT = 4u,
 };
 
 static void cfg_write_le16(uint8_t* cfg, size_t off, uint16_t v)
@@ -178,6 +192,68 @@ static void setup_device(VIRTIO_PCI_DEVICE* dev, uint8_t* bar0, uint8_t pci_cfg[
 
     st = VirtioPciModernMiniportInit(dev, (PUCHAR)bar0, TEST_BAR0_SIZE, pci_cfg, 256);
     assert(st == STATUS_SUCCESS);
+}
+
+static VIRTIO_PCI_DEVICE make_contract_v1_device(void)
+{
+    VIRTIO_PCI_DEVICE dev;
+    memset(&dev, 0, sizeof(dev));
+
+    dev.Bar0Length = AERO_CONTRACT_V1_BAR0_LEN;
+    dev.NotifyOffMultiplier = AERO_CONTRACT_V1_NOTIFY_MULT;
+
+    dev.CommonCfgOffset = AERO_CONTRACT_V1_COMMON_OFF;
+    dev.CommonCfgLength = AERO_CONTRACT_V1_COMMON_LEN;
+
+    dev.NotifyOffset = AERO_CONTRACT_V1_NOTIFY_OFF;
+    dev.NotifyLength = AERO_CONTRACT_V1_NOTIFY_LEN;
+
+    dev.IsrOffset = AERO_CONTRACT_V1_ISR_OFF;
+    dev.IsrLength = AERO_CONTRACT_V1_ISR_LEN;
+
+    dev.DeviceCfgOffset = AERO_CONTRACT_V1_DEVICE_OFF;
+    dev.DeviceCfgLength = AERO_CONTRACT_V1_DEVICE_LEN;
+
+    return dev;
+}
+
+static void test_aero_validate_contract_v1_bar0_layout_exact_layout_ok(void)
+{
+    VIRTIO_PCI_DEVICE dev;
+    dev = make_contract_v1_device();
+    assert(AeroVirtioValidateContractV1Bar0Layout(&dev) == TRUE);
+}
+
+static void test_aero_validate_contract_v1_bar0_layout_bar0_too_small_fails(void)
+{
+    VIRTIO_PCI_DEVICE dev;
+    dev = make_contract_v1_device();
+    dev.Bar0Length = AERO_CONTRACT_V1_BAR0_LEN - 1u;
+    assert(AeroVirtioValidateContractV1Bar0Layout(&dev) == FALSE);
+}
+
+static void test_aero_validate_contract_v1_bar0_layout_notify_multiplier_mismatch_fails(void)
+{
+    VIRTIO_PCI_DEVICE dev;
+    dev = make_contract_v1_device();
+    dev.NotifyOffMultiplier = AERO_CONTRACT_V1_NOTIFY_MULT + 1u;
+    assert(AeroVirtioValidateContractV1Bar0Layout(&dev) == FALSE);
+}
+
+static void test_aero_validate_contract_v1_bar0_layout_region_offset_mismatch_fails(void)
+{
+    VIRTIO_PCI_DEVICE dev;
+    dev = make_contract_v1_device();
+    dev.NotifyOffset = AERO_CONTRACT_V1_NOTIFY_OFF + 4u;
+    assert(AeroVirtioValidateContractV1Bar0Layout(&dev) == FALSE);
+}
+
+static void test_aero_validate_contract_v1_bar0_layout_region_length_too_small_fails(void)
+{
+    VIRTIO_PCI_DEVICE dev;
+    dev = make_contract_v1_device();
+    dev.IsrLength = AERO_CONTRACT_V1_ISR_LEN - 1u;
+    assert(AeroVirtioValidateContractV1Bar0Layout(&dev) == FALSE);
 }
 
 static void test_init_ok(void)
@@ -2710,6 +2786,11 @@ int main(void)
     test_init_invalid_unaligned_cap_ptr_fails();
     test_init_invalid_common_cfg_len_too_small_fails();
     test_init_invalid_64bit_bar_in_last_slot_fails();
+    test_aero_validate_contract_v1_bar0_layout_exact_layout_ok();
+    test_aero_validate_contract_v1_bar0_layout_bar0_too_small_fails();
+    test_aero_validate_contract_v1_bar0_layout_notify_multiplier_mismatch_fails();
+    test_aero_validate_contract_v1_bar0_layout_region_offset_mismatch_fails();
+    test_aero_validate_contract_v1_bar0_layout_region_length_too_small_fails();
     test_read_device_features();
     test_status_helpers();
     test_write_driver_features_direct();
