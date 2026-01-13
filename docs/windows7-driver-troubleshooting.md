@@ -72,11 +72,12 @@ If you need to debug driver install failures, these are the most useful artifact
 
 If you hit a **GPU hang**, **TDR**, or **incorrect rendering** and need to debug what command stream the guest last submitted (without attaching WinDbg), capture the last submission’s binary blobs and decode them on the host.
 
-This produces a small, shareable artifact pair:
+This produces one or more small, shareable artifacts:
 
 - `cmd.bin`: the raw AeroGPU cmd stream for the submission (`cmd_gpa` region).
 - `cmd.bin.alloc_table.bin`: the raw alloc table for the submission (`alloc_table_gpa` region, when present; AGPU only).
   - Tip: you can rename this to `alloc.bin` on the host if you prefer a shorter name.
+- `cmd.bin.txt`: a small text summary (ring index, fence, GPAs/sizes).
 
 ### 1) Guest (Windows 7): dump the last submission
 
@@ -91,6 +92,8 @@ Then copy `C:\cmd.bin` (and `C:\cmd.bin.alloc_table.bin` if present) to the host
 ### 2) Host: decode the submission
 
 From the repo root on the host:
+
+If `cmd.bin.alloc_table.bin` exists, decode the full submission:
 
 ```bash
 cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc cmd.bin.alloc_table.bin

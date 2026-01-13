@@ -83,6 +83,13 @@ Minimum supported commands:
   
   Useful for diagnosing Win7 hardware cursor bring-up (e.g. cursor enabled but off-screen, wrong hot spot, wrong pitch).
 
+- `aerogpu_dbgctl --dump-cursor-bmp C:\cursor.bmp`  
+  Dumps the current cursor framebuffer contents to an **uncompressed 32bpp BMP** using:
+  - `AEROGPU_ESCAPE_OP_QUERY_CURSOR` to discover width/height/format/pitch/fb_gpa
+  - `AEROGPU_ESCAPE_OP_READ_GPA` to read cursor bytes from guest physical memory
+  
+  Useful for diagnosing cursor image/pitch/fb_gpa bugs without relying on host-side captures.
+
 - `aerogpu_dbgctl --read-gpa GPA --size N [--out FILE] [--force]`  
   Reads a **bounded** slice of guest physical memory (GPA) from buffers that the KMD/device tracks (for example: scanout framebuffer,
   cursor framebuffer, ring buffers, and driver-owned DMA buffers for pending submissions).
@@ -183,6 +190,7 @@ aerogpu_dbgctl --dump-scanout-bmp C:\scanout.bmp
 aerogpu_dbgctl --read-gpa 0x12340000 --size 256
 aerogpu_dbgctl --read-gpa 0x12340000 --size 4096 --force --out dump.bin
 aerogpu_dbgctl --query-cursor
+aerogpu_dbgctl --dump-cursor-bmp C:\cursor.bmp
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --watch-ring --ring-id 0 --samples 200 --interval-ms 50
 aerogpu_dbgctl --dump-last-cmd --out last_cmd.bin
@@ -274,9 +282,9 @@ Escape ops used:
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`, `--watch-fence`
 - `AEROGPU_ESCAPE_OP_QUERY_PERF` → `--query-perf`
 - `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` → `--query-scanout`, `--dump-scanout-bmp`
-- `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`
+- `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`, `--dump-cursor-bmp`
 - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`, `--watch-ring`, `--dump-last-cmd`
-- `AEROGPU_ESCAPE_OP_READ_GPA` → `--read-gpa`, `--dump-scanout-bmp`, `--dump-last-cmd`
+- `AEROGPU_ESCAPE_OP_READ_GPA` → `--read-gpa`, `--dump-scanout-bmp`, `--dump-cursor-bmp`, `--dump-last-cmd`
 - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` → `--dump-createalloc`
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
 - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` → `--map-shared-handle`

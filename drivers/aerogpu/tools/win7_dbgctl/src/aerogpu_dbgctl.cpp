@@ -244,7 +244,6 @@ static volatile LONG g_skip_close_adapter = 0;
 // continues to build against older protocol headers.
 #define AEROGPU_ESCAPE_OP_READ_GPA 13u
 #endif
-
 #pragma pack(push, 1)
 typedef struct bmp_file_header {
   uint16_t bfType;      /* "BM" */
@@ -320,6 +319,7 @@ static void PrintUsage() {
            L"  --query-scanout\n"
            L"  --dump-scanout-bmp PATH\n"
            L"  --query-cursor  (alias: --dump-cursor)\n"
+           L"  --dump-cursor-bmp PATH\n"
            L"  --dump-ring\n"
            L"  --dump-last-cmd [--index-from-tail K] --out <path> [--force]\n"
            L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
@@ -1832,6 +1832,13 @@ static NTSTATUS ReadGpa(const D3DKMT_FUNCS *f,
     return st;
   }
 
+  // Defensive validation: if the op is wrong (or the KMD returned a different packet),
+  // don't silently treat whatever happens to be in the buffer as framebuffer bytes.
+  if (io->hdr.op != AEROGPU_ESCAPE_OP_READ_GPA || io->hdr.size != sizeof(*io) ||
+      io->size_bytes != (aerogpu_escape_u32)sizeBytes) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
   const NTSTATUS op = (NTSTATUS)io->status;
   uint32_t copied = io->bytes_copied;
   if (copied > sizeBytes) {
@@ -1841,11 +1848,346 @@ static NTSTATUS ReadGpa(const D3DKMT_FUNCS *f,
     memcpy(dst, io->data, copied);
   }
 
-  // For this helper (used by --dump-scanout-bmp), we expect full reads; treat any truncation as failure.
+  // For this helper (used by --dump-scanout-bmp/--dump-cursor-bmp), we expect full reads; treat any truncation as failure.
   if (NT_SUCCESS(op) && copied != sizeBytes) {
     return STATUS_PARTIAL_COPY;
   }
   return op;
+}
+
+static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
+                                      D3DKMT_HANDLE hAdapter,
+                                      const wchar_t *label,
+                                      uint32_t width,
+                                      uint32_t height,
+                                      uint32_t format,
+                                      uint32_t pitchBytes,
+                                      uint64_t fbGpa,
+                                      const wchar_t *path) {
+  if (!f || !f->Escape || !hAdapter || !label || !path) {
+    return 2;
+  }
+
+  uint32_t srcBpp = 0;
+  switch ((enum aerogpu_format)format) {
+  case AEROGPU_FORMAT_B8G8R8A8_UNORM:
+  case AEROGPU_FORMAT_B8G8R8X8_UNORM:
+  case AEROGPU_FORMAT_R8G8B8A8_UNORM:
+  case AEROGPU_FORMAT_R8G8B8X8_UNORM:
+  case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
+  case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
+  case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
+  case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
+    srcBpp = 4;
+    break;
+  case AEROGPU_FORMAT_B5G6R5_UNORM:
+  case AEROGPU_FORMAT_B5G5R5A1_UNORM:
+    srcBpp = 2;
+    break;
+  default:
+    fwprintf(stderr, L"%s: unsupported format: %S (%lu)\n",
+             label,
+             AerogpuFormatName(format),
+             (unsigned long)format);
+    return 2;
+  }
+
+  // Validate row byte sizes and BMP file size (avoid overflows and surprising huge dumps).
+  uint64_t rowSrcBytes64 = 0;
+  if (!MulU64((uint64_t)width, (uint64_t)srcBpp, &rowSrcBytes64) || rowSrcBytes64 == 0) {
+    fwprintf(stderr, L"%s: invalid width/bpp combination: width=%lu bpp=%lu\n",
+             label,
+             (unsigned long)width,
+             (unsigned long)srcBpp);
+    return 2;
+  }
+  if ((uint64_t)pitchBytes < rowSrcBytes64) {
+    fwprintf(stderr,
+             L"%s: invalid pitch (pitch=%lu < row_bytes=%I64u)\n",
+             label,
+             (unsigned long)pitchBytes,
+             (unsigned long long)rowSrcBytes64);
+    return 2;
+  }
+
+  uint64_t rowOutBytes64 = 0;
+  if (!MulU64((uint64_t)width, 4ull, &rowOutBytes64) || rowOutBytes64 == 0) {
+    fwprintf(stderr, L"%s: invalid width for BMP output: width=%lu\n", label, (unsigned long)width);
+    return 2;
+  }
+  uint64_t imageBytes64 = 0;
+  if (!MulU64(rowOutBytes64, (uint64_t)height, &imageBytes64)) {
+    fwprintf(stderr, L"%s: image size overflow: %lux%lu\n", label, (unsigned long)width, (unsigned long)height);
+    return 2;
+  }
+
+  // Refuse absurdly large dumps (debug tool safety).
+  const uint64_t kMaxImageBytes = 512ull * 1024ull * 1024ull; // 512 MiB
+  if (imageBytes64 > kMaxImageBytes) {
+    fwprintf(stderr,
+             L"%s: refusing to dump %I64u bytes (%lux%lu) to BMP (limit %I64u MiB)\n",
+             label,
+             (unsigned long long)imageBytes64,
+             (unsigned long)width,
+             (unsigned long)height,
+             (unsigned long long)(kMaxImageBytes / (1024ull * 1024ull)));
+    return 2;
+  }
+
+  if (width > 0x7FFFFFFFu || height > 0x7FFFFFFFu) {
+    fwprintf(stderr, L"%s: refusing to dump: width/height exceed BMP limits (%lux%lu)\n",
+             label,
+             (unsigned long)width,
+             (unsigned long)height);
+    return 2;
+  }
+
+  const uint64_t headerBytes64 = (uint64_t)sizeof(bmp_file_header) + (uint64_t)sizeof(bmp_info_header);
+  uint64_t fileBytes64 = 0;
+  if (!AddU64(headerBytes64, imageBytes64, &fileBytes64) || fileBytes64 > 0xFFFFFFFFull) {
+    fwprintf(stderr, L"%s: BMP size overflow: %I64u bytes\n", label, (unsigned long long)fileBytes64);
+    return 2;
+  }
+
+  FILE *fp = NULL;
+  errno_t ferr = _wfopen_s(&fp, path, L"wb");
+  if (ferr != 0 || !fp) {
+    fwprintf(stderr, L"%s: failed to open output file: %s (errno=%d)\n", label, path, (int)ferr);
+    return 2;
+  }
+
+  bmp_file_header fh;
+  ZeroMemory(&fh, sizeof(fh));
+  fh.bfType = 0x4D42u; /* 'BM' */
+  fh.bfSize = (uint32_t)fileBytes64;
+  fh.bfReserved1 = 0;
+  fh.bfReserved2 = 0;
+  fh.bfOffBits = (uint32_t)headerBytes64;
+
+  bmp_info_header ih;
+  ZeroMemory(&ih, sizeof(ih));
+  ih.biSize = sizeof(bmp_info_header);
+  ih.biWidth = (int32_t)width;
+  ih.biHeight = (int32_t)height; /* bottom-up */
+  ih.biPlanes = 1;
+  ih.biBitCount = 32;
+  ih.biCompression = 0; /* BI_RGB */
+  ih.biSizeImage = (uint32_t)imageBytes64;
+  ih.biXPelsPerMeter = 0;
+  ih.biYPelsPerMeter = 0;
+  ih.biClrUsed = 0;
+  ih.biClrImportant = 0;
+
+  if (fwrite(&fh, sizeof(fh), 1, fp) != 1 || fwrite(&ih, sizeof(ih), 1, fp) != 1) {
+    fwprintf(stderr, L"%s: failed to write BMP header to %s\n", label, path);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  const uint64_t sizeMax = (uint64_t)(~(size_t)0);
+  if (rowSrcBytes64 > sizeMax || rowOutBytes64 > sizeMax) {
+    fwprintf(stderr, L"%s: refusing to dump: row buffers exceed addressable size\n", label);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+  const size_t rowSrcBytes = (size_t)rowSrcBytes64;
+  const size_t rowOutBytes = (size_t)rowOutBytes64;
+
+  uint8_t *rowSrc = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, rowSrcBytes);
+  uint8_t *rowOut = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, rowOutBytes);
+  if (!rowSrc || !rowOut) {
+    fwprintf(stderr, L"%s: out of memory allocating row buffers (%Iu, %Iu bytes)\n", label, rowSrcBytes, rowOutBytes);
+    if (rowSrc) HeapFree(GetProcessHeap(), 0, rowSrc);
+    if (rowOut) HeapFree(GetProcessHeap(), 0, rowOut);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  // Escape buffer for READ_GPA: reuse a single buffer to avoid per-chunk allocations.
+  //
+  // Note: AEROGPU_ESCAPE_OP_READ_GPA has a fixed max payload (`AEROGPU_DBGCTL_READ_GPA_MAX_BYTES`).
+  const uint32_t maxReadChunk = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+  const uint32_t escapeBufCap = (uint32_t)sizeof(aerogpu_escape_read_gpa_inout);
+  uint8_t *escapeBuf = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, (size_t)escapeBufCap);
+  if (!escapeBuf) {
+    fwprintf(stderr, L"%s: out of memory allocating escape buffer (%lu bytes)\n", label, (unsigned long)escapeBufCap);
+    HeapFree(GetProcessHeap(), 0, rowSrc);
+    HeapFree(GetProcessHeap(), 0, rowOut);
+    fclose(fp);
+    _wremove(path);
+    return 2;
+  }
+
+  // Dump bottom-up BMP: write last row first.
+  const int32_t h32 = (int32_t)height;
+  for (int32_t y = h32 - 1; y >= 0; --y) {
+    uint64_t rowGpa = 0;
+    uint64_t rowOffset = 0;
+    if (!MulU64((uint64_t)(uint32_t)y, (uint64_t)pitchBytes, &rowOffset) || !AddU64(fbGpa, rowOffset, &rowGpa)) {
+      fwprintf(stderr, L"%s: GPA overflow computing row %ld address\n", label, (long)y);
+      HeapFree(GetProcessHeap(), 0, escapeBuf);
+      HeapFree(GetProcessHeap(), 0, rowSrc);
+      HeapFree(GetProcessHeap(), 0, rowOut);
+      fclose(fp);
+      _wremove(path);
+      return 2;
+    }
+
+    // Read row bytes in bounded chunks.
+    size_t done = 0;
+    while (done < rowSrcBytes) {
+      const uint32_t remaining = (uint32_t)(rowSrcBytes - done);
+      uint32_t chunk = (remaining < maxReadChunk) ? remaining : maxReadChunk;
+
+      uint64_t chunkGpa = 0;
+      if (!AddU64(rowGpa, (uint64_t)done, &chunkGpa)) {
+        fwprintf(stderr, L"%s: GPA overflow computing read offset for row %ld\n", label, (long)y);
+        HeapFree(GetProcessHeap(), 0, escapeBuf);
+        HeapFree(GetProcessHeap(), 0, rowSrc);
+        HeapFree(GetProcessHeap(), 0, rowOut);
+        fclose(fp);
+        _wremove(path);
+        return 2;
+      }
+
+      const NTSTATUS rst = ReadGpa(f, hAdapter, chunkGpa, rowSrc + done, chunk, escapeBuf, escapeBufCap);
+      if (!NT_SUCCESS(rst)) {
+        PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, rst);
+        fwprintf(stderr, L"%s: failed to read row %ld (offset %Iu, size %lu)\n", label, (long)y, done, (unsigned long)chunk);
+        HeapFree(GetProcessHeap(), 0, escapeBuf);
+        HeapFree(GetProcessHeap(), 0, rowSrc);
+        HeapFree(GetProcessHeap(), 0, rowOut);
+        fclose(fp);
+        _wremove(path);
+        return 2;
+      }
+      done += (size_t)chunk;
+    }
+
+    // Convert to 32bpp BMP (BGRA). Preserve alpha when the source format has it.
+    switch ((enum aerogpu_format)format) {
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint8_t *s = rowSrc + (size_t)x * 4u;
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = s[0];
+        d[1] = s[1];
+        d[2] = s[2];
+        d[3] = s[3];
+      }
+      break;
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint8_t *s = rowSrc + (size_t)x * 4u;
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = s[0];
+        d[1] = s[1];
+        d[2] = s[2];
+        d[3] = 0xFFu;
+      }
+      break;
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM:
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint8_t *s = rowSrc + (size_t)x * 4u;
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = s[2];
+        d[1] = s[1];
+        d[2] = s[0];
+        d[3] = s[3];
+      }
+      break;
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM:
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint8_t *s = rowSrc + (size_t)x * 4u;
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = s[2];
+        d[1] = s[1];
+        d[2] = s[0];
+        d[3] = 0xFFu;
+      }
+      break;
+    case AEROGPU_FORMAT_B5G6R5_UNORM: {
+      const uint16_t *src16 = (const uint16_t *)rowSrc;
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint16_t p = src16[x];
+        const uint8_t b5 = (uint8_t)(p & 0x1Fu);
+        const uint8_t g6 = (uint8_t)((p >> 5) & 0x3Fu);
+        const uint8_t r5 = (uint8_t)((p >> 11) & 0x1Fu);
+        const uint8_t b = (uint8_t)((b5 << 3) | (b5 >> 2));
+        const uint8_t g = (uint8_t)((g6 << 2) | (g6 >> 4));
+        const uint8_t r = (uint8_t)((r5 << 3) | (r5 >> 2));
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = b;
+        d[1] = g;
+        d[2] = r;
+        d[3] = 0xFFu;
+      }
+      break;
+    }
+    case AEROGPU_FORMAT_B5G5R5A1_UNORM: {
+      const uint16_t *src16 = (const uint16_t *)rowSrc;
+      for (uint32_t x = 0; x < width; ++x) {
+        const uint16_t p = src16[x];
+        const uint8_t a1 = (uint8_t)((p >> 15) & 0x1u);
+        const uint8_t b5 = (uint8_t)(p & 0x1Fu);
+        const uint8_t g5 = (uint8_t)((p >> 5) & 0x1Fu);
+        const uint8_t r5 = (uint8_t)((p >> 10) & 0x1Fu);
+        const uint8_t b = (uint8_t)((b5 << 3) | (b5 >> 2));
+        const uint8_t g = (uint8_t)((g5 << 3) | (g5 >> 2));
+        const uint8_t r = (uint8_t)((r5 << 3) | (r5 >> 2));
+        uint8_t *d = rowOut + (size_t)x * 4u;
+        d[0] = b;
+        d[1] = g;
+        d[2] = r;
+        d[3] = a1 ? 0xFFu : 0x00u;
+      }
+      break;
+    }
+    default:
+      fwprintf(stderr, L"%s: unsupported format during conversion: %S (%lu)\n",
+               label,
+               AerogpuFormatName(format),
+               (unsigned long)format);
+      HeapFree(GetProcessHeap(), 0, escapeBuf);
+      HeapFree(GetProcessHeap(), 0, rowSrc);
+      HeapFree(GetProcessHeap(), 0, rowOut);
+      fclose(fp);
+      _wremove(path);
+      return 2;
+    }
+
+    if (fwrite(rowOut, 1, rowOutBytes, fp) != rowOutBytes) {
+      fwprintf(stderr, L"%s: failed to write BMP pixel data to %s\n", label, path);
+      HeapFree(GetProcessHeap(), 0, escapeBuf);
+      HeapFree(GetProcessHeap(), 0, rowSrc);
+      HeapFree(GetProcessHeap(), 0, rowOut);
+      fclose(fp);
+      _wremove(path);
+      return 2;
+    }
+  }
+
+  HeapFree(GetProcessHeap(), 0, escapeBuf);
+  HeapFree(GetProcessHeap(), 0, rowSrc);
+  HeapFree(GetProcessHeap(), 0, rowOut);
+  fclose(fp);
+
+  wprintf(L"Wrote %s: %lux%lu format=%S pitch=%lu fb_gpa=0x%I64x -> %s\n",
+          label,
+          (unsigned long)width,
+          (unsigned long)height,
+          AerogpuFormatName(format),
+          (unsigned long)pitchBytes,
+          (unsigned long long)fbGpa,
+          path);
+  return 0;
 }
 
 static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId, const wchar_t *path) {
@@ -1906,309 +2248,65 @@ static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
     return 2;
   }
 
-  uint32_t srcBpp = 0;
-  switch ((enum aerogpu_format)format) {
-  case AEROGPU_FORMAT_B8G8R8A8_UNORM:
-  case AEROGPU_FORMAT_B8G8R8X8_UNORM:
-  case AEROGPU_FORMAT_R8G8B8A8_UNORM:
-  case AEROGPU_FORMAT_R8G8B8X8_UNORM:
-  case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
-  case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
-  case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
-  case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
-    srcBpp = 4;
-    break;
-  case AEROGPU_FORMAT_B5G6R5_UNORM:
-  case AEROGPU_FORMAT_B5G5R5A1_UNORM:
-    srcBpp = 2;
-    break;
-  default:
-    fwprintf(stderr, L"Unsupported scanout format: %S (%lu)\n",
-             AerogpuFormatName(format),
-             (unsigned long)format);
+  wchar_t label[32];
+  swprintf_s(label, sizeof(label) / sizeof(label[0]), L"scanout%lu", (unsigned long)q.vidpn_source_id);
+  return DumpLinearFramebufferToBmp(f, hAdapter, label, width, height, format, pitchBytes, fbGpa, path);
+}
+
+static int DoDumpCursorBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const wchar_t *path) {
+  if (!path || path[0] == 0) {
+    fwprintf(stderr, L"--dump-cursor-bmp requires a non-empty path\n");
+    return 1;
+  }
+
+  aerogpu_escape_query_cursor_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_CURSOR;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    if (st == STATUS_NOT_SUPPORTED) {
+      wprintf(L"Cursor: (not supported)\n");
+      return 2;
+    }
+    PrintNtStatus(L"D3DKMTEscape(query-cursor) failed", f, st);
     return 2;
   }
 
-  // Validate row byte sizes and BMP file size (avoid overflows and surprising huge dumps).
-  uint64_t rowSrcBytes64 = 0;
-  if (!MulU64((uint64_t)width, (uint64_t)srcBpp, &rowSrcBytes64) || rowSrcBytes64 == 0) {
-    fwprintf(stderr, L"Invalid width/bpp combination: width=%lu bpp=%lu\n",
-             (unsigned long)width,
-             (unsigned long)srcBpp);
-    return 2;
+  bool supported = true;
+  if ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+    supported = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
   }
-  uint64_t rowOutBytes64 = 0;
-  if (!MulU64((uint64_t)width, 4ull, &rowOutBytes64) || rowOutBytes64 == 0) {
-    fwprintf(stderr, L"Invalid width for BMP output: width=%lu\n", (unsigned long)width);
-    return 2;
-  }
-  uint64_t imageBytes64 = 0;
-  if (!MulU64(rowOutBytes64, (uint64_t)height, &imageBytes64)) {
-    fwprintf(stderr, L"Image size overflow: %lux%lu\n", (unsigned long)width, (unsigned long)height);
+  if (!supported) {
+    wprintf(L"Cursor: (not supported)\n");
     return 2;
   }
 
-  // Refuse absurdly large dumps (debug tool safety).
-  const uint64_t kMaxImageBytes = 512ull * 1024ull * 1024ull; // 512 MiB
-  if (imageBytes64 > kMaxImageBytes) {
-    fwprintf(stderr,
-             L"Refusing to dump %I64u bytes (%lux%lu) to BMP (limit %I64u MiB)\n",
-             (unsigned long long)imageBytes64,
+  const uint32_t width = (uint32_t)q.width;
+  const uint32_t height = (uint32_t)q.height;
+  const uint32_t format = (uint32_t)q.format;
+  const uint32_t pitchBytes = (uint32_t)q.pitch_bytes;
+  const uint64_t fbGpa = (uint64_t)q.fb_gpa;
+
+  if (width == 0 || height == 0 || pitchBytes == 0) {
+    fwprintf(stderr, L"Cursor: invalid mode (width=%lu height=%lu pitch=%lu)\n",
              (unsigned long)width,
              (unsigned long)height,
-             (unsigned long long)(kMaxImageBytes / (1024ull * 1024ull)));
+             (unsigned long)pitchBytes);
+    fwprintf(stderr, L"Hint: run --query-cursor to inspect cursor MMIO state.\n");
     return 2;
   }
 
-  if (width > 0x7FFFFFFFu || height > 0x7FFFFFFFu) {
-    fwprintf(stderr, L"Refusing to dump: width/height exceed BMP limits (%lux%lu)\n",
-             (unsigned long)width,
-             (unsigned long)height);
+  if (fbGpa == 0) {
+    fwprintf(stderr, L"Cursor: framebuffer GPA is 0; cannot dump cursor.\n");
+    fwprintf(stderr, L"Hint: run --query-cursor to inspect cursor MMIO state.\n");
     return 2;
   }
 
-  const uint64_t headerBytes64 = (uint64_t)sizeof(bmp_file_header) + (uint64_t)sizeof(bmp_info_header);
-  uint64_t fileBytes64 = 0;
-  if (!AddU64(headerBytes64, imageBytes64, &fileBytes64) || fileBytes64 > 0xFFFFFFFFull) {
-    fwprintf(stderr, L"BMP size overflow: %I64u bytes\n", (unsigned long long)fileBytes64);
-    return 2;
-  }
-
-  FILE *fp = NULL;
-  errno_t ferr = _wfopen_s(&fp, path, L"wb");
-  if (ferr != 0 || !fp) {
-    fwprintf(stderr, L"Failed to open output file: %s (errno=%d)\n", path, (int)ferr);
-    return 2;
-  }
-
-  bmp_file_header fh;
-  ZeroMemory(&fh, sizeof(fh));
-  fh.bfType = 0x4D42u; /* 'BM' */
-  fh.bfSize = (uint32_t)fileBytes64;
-  fh.bfReserved1 = 0;
-  fh.bfReserved2 = 0;
-  fh.bfOffBits = (uint32_t)headerBytes64;
-
-  bmp_info_header ih;
-  ZeroMemory(&ih, sizeof(ih));
-  ih.biSize = sizeof(bmp_info_header);
-  ih.biWidth = (int32_t)width;
-  ih.biHeight = (int32_t)height; /* bottom-up */
-  ih.biPlanes = 1;
-  ih.biBitCount = 32;
-  ih.biCompression = 0; /* BI_RGB */
-  ih.biSizeImage = (uint32_t)imageBytes64;
-  ih.biXPelsPerMeter = 0;
-  ih.biYPelsPerMeter = 0;
-  ih.biClrUsed = 0;
-  ih.biClrImportant = 0;
-
-  if (fwrite(&fh, sizeof(fh), 1, fp) != 1 || fwrite(&ih, sizeof(ih), 1, fp) != 1) {
-    fwprintf(stderr, L"Failed to write BMP header to %s\n", path);
-    fclose(fp);
-    _wremove(path);
-    return 2;
-  }
-
-  const uint64_t sizeMax = (uint64_t)(~(size_t)0);
-  if (rowSrcBytes64 > sizeMax || rowOutBytes64 > sizeMax) {
-    fwprintf(stderr, L"Refusing to dump: row buffers exceed addressable size\n");
-    fclose(fp);
-    _wremove(path);
-    return 2;
-  }
-  const size_t rowSrcBytes = (size_t)rowSrcBytes64;
-  const size_t rowOutBytes = (size_t)rowOutBytes64;
-
-  uint8_t *rowSrc = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, rowSrcBytes);
-  uint8_t *rowOut = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, rowOutBytes);
-  if (!rowSrc || !rowOut) {
-    fwprintf(stderr, L"Out of memory allocating row buffers (%Iu, %Iu bytes)\n", rowSrcBytes, rowOutBytes);
-    if (rowSrc) HeapFree(GetProcessHeap(), 0, rowSrc);
-    if (rowOut) HeapFree(GetProcessHeap(), 0, rowOut);
-    fclose(fp);
-    _wremove(path);
-    return 2;
-  }
-
-  // Escape buffer for READ_GPA: reuse a single buffer to avoid per-chunk allocations.
-  uint32_t maxReadChunk = 64u * 1024u;
-  const uint32_t escapeBufCap = (uint32_t)sizeof(aerogpu_escape_read_gpa_inout);
-  uint8_t *escapeBuf = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, (size_t)escapeBufCap);
-  if (!escapeBuf) {
-    fwprintf(stderr, L"Out of memory allocating escape buffer (%lu bytes)\n", (unsigned long)escapeBufCap);
-    HeapFree(GetProcessHeap(), 0, rowSrc);
-    HeapFree(GetProcessHeap(), 0, rowOut);
-    fclose(fp);
-    _wremove(path);
-    return 2;
-  }
-
-  // Dump bottom-up BMP: write last scanout row first.
-  const int32_t h32 = (int32_t)height;
-  for (int32_t y = h32 - 1; y >= 0; --y) {
-    uint64_t rowGpa = 0;
-    uint64_t rowOffset = 0;
-    if (!MulU64((uint64_t)(uint32_t)y, (uint64_t)pitchBytes, &rowOffset) || !AddU64(fbGpa, rowOffset, &rowGpa)) {
-      fwprintf(stderr, L"GPA overflow computing row %ld address\n", (long)y);
-      HeapFree(GetProcessHeap(), 0, escapeBuf);
-      HeapFree(GetProcessHeap(), 0, rowSrc);
-      HeapFree(GetProcessHeap(), 0, rowOut);
-      fclose(fp);
-      _wremove(path);
-      return 2;
-    }
-
-    // Read row bytes in bounded chunks.
-    size_t done = 0;
-    while (done < rowSrcBytes) {
-      const uint32_t remaining = (uint32_t)(rowSrcBytes - done);
-      uint32_t chunk = (remaining < maxReadChunk) ? remaining : maxReadChunk;
-      const uint32_t initialChunk = chunk;
-
-      uint64_t chunkGpa = 0;
-      if (!AddU64(rowGpa, (uint64_t)done, &chunkGpa)) {
-        fwprintf(stderr, L"GPA overflow computing read offset for row %ld\n", (long)y);
-        HeapFree(GetProcessHeap(), 0, escapeBuf);
-        HeapFree(GetProcessHeap(), 0, rowSrc);
-        HeapFree(GetProcessHeap(), 0, rowOut);
-        fclose(fp);
-        _wremove(path);
-        return 2;
-      }
-
-      for (;;) {
-        const NTSTATUS rst = ReadGpa(f, hAdapter, chunkGpa, rowSrc + done, chunk, escapeBuf, escapeBufCap);
-        if (NT_SUCCESS(rst)) {
-          // Good; if we had to reduce the size, keep the smaller chunk size for the rest of the dump.
-          if (chunk < initialChunk) {
-            maxReadChunk = chunk;
-          }
-          done += (size_t)chunk;
-          break;
-        }
-
-        // If the escape path has a smaller max payload than we assumed, adapt by shrinking the chunk.
-        if ((rst == STATUS_INVALID_PARAMETER || rst == STATUS_BUFFER_TOO_SMALL) && chunk > 256u) {
-          chunk /= 2u;
-          if (chunk == 0) {
-            chunk = 1;
-          }
-          continue;
-        }
-
-        PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, rst);
-        fwprintf(stderr, L"Failed to read framebuffer row %ld (offset %Iu, size %lu)\n",
-                 (long)y, done, (unsigned long)chunk);
-        HeapFree(GetProcessHeap(), 0, escapeBuf);
-        HeapFree(GetProcessHeap(), 0, rowSrc);
-        HeapFree(GetProcessHeap(), 0, rowOut);
-        fclose(fp);
-        _wremove(path);
-        return 2;
-      }
-    }
-
-    // Convert to 32bpp BMP (BGRA). We always write alpha=0xFF.
-    switch ((enum aerogpu_format)format) {
-    case AEROGPU_FORMAT_B8G8R8A8_UNORM:
-    case AEROGPU_FORMAT_B8G8R8X8_UNORM:
-    case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
-    case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
-      for (uint32_t x = 0; x < width; ++x) {
-        const uint8_t *s = rowSrc + (size_t)x * 4u;
-        uint8_t *d = rowOut + (size_t)x * 4u;
-        d[0] = s[0];
-        d[1] = s[1];
-        d[2] = s[2];
-        d[3] = 0xFFu;
-      }
-      break;
-    case AEROGPU_FORMAT_R8G8B8A8_UNORM:
-    case AEROGPU_FORMAT_R8G8B8X8_UNORM:
-    case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
-    case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
-      for (uint32_t x = 0; x < width; ++x) {
-        const uint8_t *s = rowSrc + (size_t)x * 4u;
-        uint8_t *d = rowOut + (size_t)x * 4u;
-        d[0] = s[2];
-        d[1] = s[1];
-        d[2] = s[0];
-        d[3] = 0xFFu;
-      }
-      break;
-    case AEROGPU_FORMAT_B5G6R5_UNORM: {
-      const uint16_t *src16 = (const uint16_t *)rowSrc;
-      for (uint32_t x = 0; x < width; ++x) {
-        const uint16_t p = src16[x];
-        const uint8_t b5 = (uint8_t)(p & 0x1Fu);
-        const uint8_t g6 = (uint8_t)((p >> 5) & 0x3Fu);
-        const uint8_t r5 = (uint8_t)((p >> 11) & 0x1Fu);
-        const uint8_t b = (uint8_t)((b5 << 3) | (b5 >> 2));
-        const uint8_t g = (uint8_t)((g6 << 2) | (g6 >> 4));
-        const uint8_t r = (uint8_t)((r5 << 3) | (r5 >> 2));
-        uint8_t *d = rowOut + (size_t)x * 4u;
-        d[0] = b;
-        d[1] = g;
-        d[2] = r;
-        d[3] = 0xFFu;
-      }
-      break;
-    }
-    case AEROGPU_FORMAT_B5G5R5A1_UNORM: {
-      const uint16_t *src16 = (const uint16_t *)rowSrc;
-      for (uint32_t x = 0; x < width; ++x) {
-        const uint16_t p = src16[x];
-        const uint8_t b5 = (uint8_t)(p & 0x1Fu);
-        const uint8_t g5 = (uint8_t)((p >> 5) & 0x1Fu);
-        const uint8_t r5 = (uint8_t)((p >> 10) & 0x1Fu);
-        const uint8_t b = (uint8_t)((b5 << 3) | (b5 >> 2));
-        const uint8_t g = (uint8_t)((g5 << 3) | (g5 >> 2));
-        const uint8_t r = (uint8_t)((r5 << 3) | (r5 >> 2));
-        uint8_t *d = rowOut + (size_t)x * 4u;
-        d[0] = b;
-        d[1] = g;
-        d[2] = r;
-        d[3] = 0xFFu;
-      }
-      break;
-    }
-    default:
-      // Should have been filtered earlier.
-      fwprintf(stderr, L"Unsupported format during conversion: %lu\n", (unsigned long)format);
-      HeapFree(GetProcessHeap(), 0, escapeBuf);
-      HeapFree(GetProcessHeap(), 0, rowSrc);
-      HeapFree(GetProcessHeap(), 0, rowOut);
-      fclose(fp);
-      _wremove(path);
-      return 2;
-    }
-
-    if (fwrite(rowOut, 1, rowOutBytes, fp) != rowOutBytes) {
-      fwprintf(stderr, L"Failed to write BMP pixel data to %s\n", path);
-      HeapFree(GetProcessHeap(), 0, escapeBuf);
-      HeapFree(GetProcessHeap(), 0, rowSrc);
-      HeapFree(GetProcessHeap(), 0, rowOut);
-      fclose(fp);
-      _wremove(path);
-      return 2;
-    }
-  }
-
-  HeapFree(GetProcessHeap(), 0, escapeBuf);
-  HeapFree(GetProcessHeap(), 0, rowSrc);
-  HeapFree(GetProcessHeap(), 0, rowOut);
-  fclose(fp);
-
-  wprintf(L"Wrote scanout%lu: %lux%lu format=%S pitch=%lu fb_gpa=0x%I64x -> %s\n",
-          (unsigned long)q.vidpn_source_id,
-          (unsigned long)width,
-          (unsigned long)height,
-          AerogpuFormatName(format),
-          (unsigned long)pitchBytes,
-          (unsigned long long)fbGpa,
-          path);
-  return 0;
+  return DumpLinearFramebufferToBmp(f, hAdapter, L"cursor", width, height, format, pitchBytes, fbGpa, path);
 }
 
 static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f,
@@ -3709,6 +3807,7 @@ int wmain(int argc, wchar_t **argv) {
   const wchar_t *createAllocCsvPath = NULL;
   const wchar_t *createAllocJsonPath = NULL;
   const wchar_t *dumpScanoutBmpPath = NULL;
+  const wchar_t *dumpCursorBmpPath = NULL;
   uint64_t readGpa = 0;
   uint32_t readGpaSizeBytes = 0;
   const wchar_t *readGpaOutFile = NULL;
@@ -3728,6 +3827,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_SCANOUT,
     CMD_DUMP_SCANOUT_BMP,
     CMD_QUERY_CURSOR,
+    CMD_DUMP_CURSOR_BMP,
     CMD_DUMP_RING,
     CMD_WATCH_RING,
     CMD_DUMP_LAST_CMD,
@@ -4016,6 +4116,18 @@ int wmain(int argc, wchar_t **argv) {
       }
       continue;
     }
+    if (wcscmp(a, L"--dump-cursor-bmp") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--dump-cursor-bmp requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      if (!SetCommand(CMD_DUMP_CURSOR_BMP)) {
+        return 1;
+      }
+      dumpCursorBmpPath = argv[++i];
+      continue;
+    }
     if (wcscmp(a, L"--dump-ring") == 0) {
       if (!SetCommand(CMD_DUMP_RING)) {
         return 1;
@@ -4215,6 +4327,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_QUERY_CURSOR:
     rc = DoQueryCursor(&f, open.hAdapter);
+    break;
+  case CMD_DUMP_CURSOR_BMP:
+    rc = DoDumpCursorBmp(&f, open.hAdapter, dumpCursorBmpPath);
     break;
   case CMD_DUMP_RING:
     rc = DoDumpRing(&f, open.hAdapter, ringId);
