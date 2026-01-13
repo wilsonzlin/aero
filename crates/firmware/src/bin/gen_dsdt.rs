@@ -4,12 +4,15 @@
 //! CI/tests/docs can point to a deterministic regeneration command for the checked-in fixture
 //! (`crates/firmware/acpi/dsdt.aml`), which is used by `scripts/validate-acpi.sh` and drift tests.
 
+use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+const OUTPUT_PATH_REPO_REL: &str = "crates/firmware/acpi/dsdt.aml";
 
 // Preferred regeneration command (covers all deterministic in-repo fixtures).
 const REGEN_CMD: &str = "cargo xtask fixtures";
@@ -42,11 +45,7 @@ impl fmt::Display for Error {
                 action,
                 path,
                 source,
-            } => write!(
-                f,
-                "failed to {action} {}: {source}",
-                path.display()
-            ),
+            } => write!(f, "failed to {action} {}: {source}", path.display()),
             Error::OutOfDate { path } => write!(
                 f,
                 "{} is out of date; regenerate it with: {REGEN_CMD} (or: {REGEN_CMD_ALT})",
@@ -77,7 +76,7 @@ fn run() -> Result<(), Error> {
             return Ok(());
         } else {
             return Err(Error::Usage(format!(
-                "unknown argument {:?}\n\nUsage: gen_dsdt [--check]\n\n- --check: verify crates/firmware/acpi/dsdt.aml is up to date without modifying it",
+                "unknown argument {:?}\n\nUsage: gen_dsdt [--check]\n\n- --check: verify {OUTPUT_PATH_REPO_REL} is up to date without modifying it",
                 arg
             )));
         }
@@ -87,30 +86,34 @@ fn run() -> Result<(), Error> {
     let out_path = dsdt_fixture_path();
 
     if check {
-        return check_dsdt_fixture(&out_path, &generated);
+        check_dsdt_fixture(&out_path, &generated)?;
+        println!(
+            "OK: {OUTPUT_PATH_REPO_REL} matches aero-acpi generator ({} bytes)",
+            generated.len()
+        );
+        return Ok(());
     }
 
     write_atomically(&out_path, &generated)?;
+    println!("Wrote {OUTPUT_PATH_REPO_REL} ({} bytes)", generated.len());
     Ok(())
 }
 
 fn print_usage() {
     println!(
-        "Usage: gen_dsdt [--check]\n\nRegenerates the checked-in ACPI DSDT fixture at crates/firmware/acpi/dsdt.aml.\n\nExamples:\n  {REGEN_CMD}\n  {CHECK_CMD}\n  {REGEN_CMD_ALT}\n  {CHECK_CMD_ALT}"
+        "Usage: gen_dsdt [--check]\n\nRegenerates the checked-in ACPI DSDT fixture at {OUTPUT_PATH_REPO_REL}.\n\nExamples:\n  {REGEN_CMD}\n  {CHECK_CMD}\n  {REGEN_CMD_ALT}\n  {CHECK_CMD_ALT}"
     );
 }
 
 fn generate_dsdt() -> Vec<u8> {
-    let cfg = aero_acpi::AcpiConfig::default();
-    let placement = aero_acpi::AcpiPlacement::default();
-    aero_acpi::AcpiTables::build(&cfg, placement).dsdt
+    // Keep this in sync with `crates/firmware/tests/acpi_tables.rs`.
+    AcpiTables::build(&AcpiConfig::default(), AcpiPlacement::default()).dsdt
 }
 
 fn dsdt_fixture_path() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("acpi");
-    path.push("dsdt.aml");
-    path
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("acpi")
+        .join("dsdt.aml")
 }
 
 fn check_dsdt_fixture(path: &Path, generated: &[u8]) -> Result<(), Error> {
