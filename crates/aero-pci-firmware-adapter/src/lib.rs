@@ -136,6 +136,7 @@ impl firmware::bios::PciConfigSpace for PciBusBiosAdapter<'_> {
 mod tests {
     use super::*;
     use aero_devices::pci::{PciBdf, PciBus, PciConfigSpace, PciInterruptPin};
+    use aero_pci_routing as pci_routing;
     use firmware::bios::{A20Gate, Bios, BiosConfig, FirmwareMemory, InMemoryDisk};
     use memory::{DenseMemory, MapError, PhysicalMemoryBus};
     use std::cell::RefCell;
@@ -248,15 +249,7 @@ mod tests {
     }
 
     fn expected_irq_line(pirq_to_gsi: [u32; 4], device: u8, interrupt_pin: u8) -> u8 {
-        // Must match the firmware BIOS swizzle in `firmware::bios::pci`:
-        //   PIRQ = (device + (pin-1)) mod 4
-        if interrupt_pin == 0 {
-            return 0xFF;
-        }
-        let pin_index = interrupt_pin.wrapping_sub(1) & 0x03;
-        let pirq = device.wrapping_add(pin_index) & 0x03;
-        let gsi = pirq_to_gsi[pirq as usize];
-        u8::try_from(gsi).unwrap_or(0xFF)
+        pci_routing::irq_line_for_intx(pirq_to_gsi, device, interrupt_pin)
     }
 
     fn pci_bus_with_single_dev(bdf: PciBdf, interrupt_pin: PciInterruptPin) -> PciBus {

@@ -10,5 +10,5 @@ firmware = { path = "../firmware" }
 
 [dev-dependencies]
 aero-cpu-core = { path = "../aero-cpu-core" }
+aero-pci-routing = { path = "../aero-pci-routing" }
 memory = { path = "../memory" }
-
