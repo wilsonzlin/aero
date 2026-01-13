@@ -1,10 +1,19 @@
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
+#[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::mem::FlatTestBus;
+#[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_RESERVED1};
+#[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
+#[cfg(not(target_arch = "wasm32"))]
 fn criterion_config() -> Criterion {
     match std::env::var("AERO_BENCH_PROFILE").as_deref() {
         Ok("ci") => Criterion::default()
@@ -21,6 +30,7 @@ fn criterion_config() -> Criterion {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn make_repeated_code(pattern: &[u8], insts: usize) -> Vec<u8> {
     let mut code = Vec::with_capacity(pattern.len() * insts + 16);
     for _ in 0..insts {
@@ -31,6 +41,7 @@ fn make_repeated_code(pattern: &[u8], insts: usize) -> Vec<u8> {
     code
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_tier0_add_rax_rbx(c: &mut Criterion) {
     // add rax, rbx
     const ADD_RAX_RBX: &[u8] = &[0x48, 0x01, 0xD8];
@@ -71,9 +82,11 @@ fn bench_tier0_add_rax_rbx(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group! {
     name = benches;
     config = criterion_config();
     targets = bench_tier0_add_rax_rbx
 }
+#[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);

@@ -1,10 +1,19 @@
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
+#[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
+#[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_RESERVED1};
+#[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
+#[cfg(not(target_arch = "wasm32"))]
 fn criterion_config() -> Criterion {
     match std::env::var("AERO_BENCH_PROFILE").as_deref() {
         Ok("ci") => Criterion::default()
@@ -21,6 +30,7 @@ fn criterion_config() -> Criterion {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_tier0_rep_movsb(c: &mut Criterion) {
     const CODE_ADDR: u64 = 0x0000;
     const SRC_ADDR: u64 = 0x10_000;
@@ -74,10 +84,11 @@ fn bench_tier0_rep_movsb(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group! {
     name = benches;
     config = criterion_config();
     targets = bench_tier0_rep_movsb
 }
+#[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
-
