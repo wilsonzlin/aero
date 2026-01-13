@@ -551,6 +551,7 @@ set AEROGPU_D3D9_TRACE_FILTER=stub
 set AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1
 set AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1
 ```
+This only triggers on entrypoints whose trace names include the explicit `(stub)` marker; if none are stub-tagged in the current build, it will not fire.
 
 * Print:
   * function name,

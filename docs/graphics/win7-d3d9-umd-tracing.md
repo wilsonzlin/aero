@@ -86,6 +86,7 @@ set AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1
 set AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1
 ```
 Note: this relies on the `(stub)` marker in the trace name (`func_name()`); host tests use the trace-only `TraceTestStub` entrypoint to exercise this behavior without depending on real DDI stubs.
+If no traced entrypoints are `(stub)`-tagged in the current build, this trigger will not fire.
 
 ### Dump triggers (on-demand)
 
