@@ -25,6 +25,9 @@ pub enum RingError {
 
     /// Dequeue pointer arithmetic overflowed `u64`.
     AddressOverflow,
+
+    /// Link TRB pointed at an invalid segment base address (e.g. null).
+    InvalidLinkTarget,
 }
 
 /// Result of polling a ring cursor.
@@ -84,7 +87,11 @@ impl RingCursor {
 
             if matches!(trb.trb_type(), TrbType::Link) {
                 // Link TRB parameter contains the next segment pointer; low bits are reserved.
-                self.paddr = trb.link_segment_ptr();
+                let next = trb.link_segment_ptr();
+                if next == 0 {
+                    return RingPoll::Err(RingError::InvalidLinkTarget);
+                }
+                self.paddr = next;
                 if trb.link_toggle_cycle() {
                     self.cycle = !self.cycle;
                 }
@@ -107,4 +114,3 @@ impl RingCursor {
         RingPoll::Err(RingError::StepBudgetExceeded)
     }
 }
-

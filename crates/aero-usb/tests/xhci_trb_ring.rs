@@ -30,6 +30,26 @@ fn trb_pack_unpack_roundtrip() {
 }
 
 #[test]
+fn trb_unknown_type_is_preserved() {
+    let mut trb = Trb::default();
+    trb.set_cycle(true);
+    trb.set_trb_type_raw(0xff); // masked to 0x3f
+    assert_eq!(trb.trb_type_raw(), 0x3f);
+    assert_eq!(trb.trb_type(), TrbType::Unknown(0x3f));
+
+    let bytes = trb.to_bytes();
+    let decoded = Trb::from_bytes(bytes);
+    assert_eq!(decoded.trb_type_raw(), 0x3f);
+    assert_eq!(decoded.trb_type(), TrbType::Unknown(0x3f));
+}
+
+#[test]
+fn ring_cursor_masks_dequeue_pointer_low_bits() {
+    let cur = RingCursor::new(0x1234_u64 | 0xf, true);
+    assert_eq!(cur.dequeue_ptr(), 0x1230);
+}
+
+#[test]
 fn ring_cursor_follows_links_and_toggles_cycle() {
     let mut mem = TestMemory::new(0x10_000);
 
@@ -97,6 +117,53 @@ fn ring_cursor_follows_links_and_toggles_cycle() {
 }
 
 #[test]
+fn ring_cursor_does_not_follow_link_when_cycle_mismatch() {
+    let mut mem = TestMemory::new(0x10_000);
+
+    let seg1: u64 = 0x1000;
+    let seg2: u64 = 0x2000;
+
+    let mut link = Trb::default();
+    link.parameter = seg2;
+    link.set_cycle(false); // mismatch
+    link.set_trb_type(TrbType::Link);
+    link.set_link_toggle_cycle(true);
+    link.write_to(&mut mem, seg1);
+
+    let mut normal = Trb::default();
+    normal.parameter = 0xdead_beef;
+    normal.set_cycle(true);
+    normal.set_trb_type(TrbType::Normal);
+    normal.write_to(&mut mem, seg2);
+
+    let mut cur = RingCursor::new(seg1, true);
+    assert_eq!(cur.poll(&mut mem, 8), RingPoll::NotReady);
+    assert_eq!(cur.dequeue_ptr(), seg1);
+    assert_eq!(cur.cycle_state(), true);
+}
+
+#[test]
+fn ring_cursor_rejects_null_link_target() {
+    let mut mem = TestMemory::new(0x10_000);
+
+    let seg1: u64 = 0x1000;
+
+    let mut link = Trb::default();
+    link.parameter = 0;
+    link.set_cycle(true);
+    link.set_trb_type(TrbType::Link);
+    link.write_to(&mut mem, seg1);
+
+    let mut cur = RingCursor::new(seg1, true);
+    assert_eq!(
+        cur.poll(&mut mem, 8),
+        RingPoll::Err(RingError::InvalidLinkTarget)
+    );
+    assert_eq!(cur.dequeue_ptr(), seg1);
+    assert_eq!(cur.cycle_state(), true);
+}
+
+#[test]
 fn ring_cursor_step_budget_prevents_infinite_link_loops() {
     let mut mem = TestMemory::new(0x10_000);
 
@@ -125,4 +192,3 @@ fn ring_cursor_step_budget_prevents_infinite_link_loops() {
         RingPoll::Err(RingError::StepBudgetExceeded)
     );
 }
-
