@@ -59,37 +59,82 @@ static VOID VirtIoSndSafeRelease(_In_opt_ PUNKNOWN Unknown)
     }
 }
 
-static BOOLEAN VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
+static BOOLEAN VirtIoSndQueryDwordValue(_In_ HANDLE Key, _In_ PCWSTR ValueNameW, _Out_ ULONG* ValueOut)
 {
-    HANDLE key;
     UNICODE_STRING valueName;
     UCHAR buf[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
     PKEY_VALUE_PARTIAL_INFORMATION info;
     ULONG resultLen;
+
+    if (ValueOut != NULL) {
+        *ValueOut = 0;
+    }
+
+    if (Key == NULL || ValueNameW == NULL || ValueOut == NULL) {
+        return FALSE;
+    }
+
+    RtlInitUnicodeString(&valueName, ValueNameW);
+    info = (PKEY_VALUE_PARTIAL_INFORMATION)buf;
+    RtlZeroMemory(buf, sizeof(buf));
+    resultLen = 0;
+
+    if (NT_SUCCESS(ZwQueryValueKey(Key, &valueName, KeyValuePartialInformation, info, sizeof(buf), &resultLen)) &&
+        info->Type == REG_DWORD && info->DataLength >= sizeof(ULONG)) {
+        *ValueOut = *(UNALIGNED const ULONG*)info->Data;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static BOOLEAN VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
+{
+    HANDLE rootKey;
+    HANDLE paramsKey;
+    UNICODE_STRING paramsSubkeyName;
+    OBJECT_ATTRIBUTES oa;
+    ULONG value;
     BOOLEAN forceNullBackend;
 
     forceNullBackend = FALSE;
-    key = NULL;
+    rootKey = NULL;
+    paramsKey = NULL;
+    value = 0;
 
     if (DeviceObject == NULL) {
         return FALSE;
     }
 
-    if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &key)) || key == NULL) {
+    /*
+     * Read ForceNullBackend from the per-device registry key.
+     *
+     * Preferred location (INF creates this by default):
+     *   HKR\Parameters\ForceNullBackend (REG_DWORD)
+     *
+     * Some environments may place the value at the root key returned by
+     * IoOpenDeviceRegistryKey, so check the root first for robustness.
+     */
+    if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &rootKey)) || rootKey == NULL) {
         return FALSE;
     }
 
-    RtlInitUnicodeString(&valueName, L"ForceNullBackend");
-    info = (PKEY_VALUE_PARTIAL_INFORMATION)buf;
-    RtlZeroMemory(buf, sizeof(buf));
-    resultLen = 0;
-
-    if (NT_SUCCESS(ZwQueryValueKey(key, &valueName, KeyValuePartialInformation, info, sizeof(buf), &resultLen)) &&
-        info->Type == REG_DWORD && info->DataLength >= sizeof(ULONG)) {
-        forceNullBackend = (*(UNALIGNED const ULONG*)info->Data) ? TRUE : FALSE;
+    if (VirtIoSndQueryDwordValue(rootKey, L"ForceNullBackend", &value)) {
+        forceNullBackend = value ? TRUE : FALSE;
+        ZwClose(rootKey);
+        return forceNullBackend;
     }
 
-    ZwClose(key);
+    RtlInitUnicodeString(&paramsSubkeyName, L"Parameters");
+    InitializeObjectAttributes(&oa, &paramsSubkeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, rootKey, NULL);
+    if (NT_SUCCESS(ZwOpenKey(&paramsKey, KEY_READ, &oa)) && paramsKey != NULL) {
+        if (VirtIoSndQueryDwordValue(paramsKey, L"ForceNullBackend", &value)) {
+            forceNullBackend = value ? TRUE : FALSE;
+        }
+        ZwClose(paramsKey);
+    }
+
+    ZwClose(rootKey);
     return forceNullBackend;
 }
 
