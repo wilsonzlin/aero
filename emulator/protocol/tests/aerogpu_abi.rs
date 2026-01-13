@@ -3218,6 +3218,26 @@ fn rust_layout_matches_c_headers() {
         "AEROGPU_IRQ_ERROR",
         pci::AEROGPU_IRQ_ERROR as u64,
     );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_ERROR_CODE",
+        pci::AEROGPU_MMIO_REG_ERROR_CODE as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_ERROR_FENCE_LO",
+        pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_ERROR_FENCE_HI",
+        pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_ERROR_COUNT",
+        pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64,
+    );
 
     check_const(
         &mut pci_consts_seen,
