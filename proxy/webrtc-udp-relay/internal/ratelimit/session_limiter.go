@@ -159,12 +159,18 @@ func (l *SessionLimiter) trackDestination(destKey string) bool {
 }
 
 func (l *SessionLimiter) getOrCreateDestBucket(destKey string) *TokenBucket {
+	var (
+		bucket  *TokenBucket
+		onEvict func()
+	)
+
 	l.mu.Lock()
-	defer l.mu.Unlock()
 
 	if entry, ok := l.perDest[destKey]; ok {
 		l.perDestQ.MoveToFront(entry.elem)
-		return entry.bucket
+		bucket = entry.bucket
+		l.mu.Unlock()
+		return bucket
 	}
 
 	if l.maxUDPDestBuckets > 0 && len(l.perDest) >= l.maxUDPDestBuckets {
@@ -173,17 +179,21 @@ func (l *SessionLimiter) getOrCreateDestBucket(destKey string) *TokenBucket {
 			evictKey := elem.Value.(string)
 			l.perDestQ.Remove(elem)
 			delete(l.perDest, evictKey)
-			if l.onUDPDestBucketEvicted != nil {
-				l.onUDPDestBucketEvicted()
-			}
+			onEvict = l.onUDPDestBucketEvicted
 		}
 	}
 
-	bucket := NewTokenBucket(l.clock, l.perDestRate, l.perDestRate)
+	bucket = NewTokenBucket(l.clock, l.perDestRate, l.perDestRate)
 	elem := l.perDestQ.PushFront(destKey)
 	l.perDest[destKey] = &destBucketEntry{
 		bucket: bucket,
 		elem:   elem,
+	}
+
+	l.mu.Unlock()
+
+	if onEvict != nil {
+		onEvict()
 	}
 	return bucket
 }
