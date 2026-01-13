@@ -395,6 +395,29 @@ If E2E tests fail early with errors about `SharedArrayBuffer` or `crossOriginIso
 
 ---
 
+## GPU golden-image tests (Playwright)
+
+The repo includes small deterministic graphics microtests that compare rendered output against committed PNG
+goldens under `tests/golden/`.
+
+Regenerate/update the CPU-generated goldens:
+
+```bash
+npm ci
+npm run generate:goldens
+```
+
+Run the GPU golden tests (Playwright):
+
+```bash
+npm run test:gpu
+```
+
+CI enforces that `npm run generate:goldens` does **not** produce changes under `tests/golden/`. If CI fails with a
+golden diff, rerun the generator locally and commit the updated PNGs.
+
+---
+
 ## COOP/COEP + `crossOriginIsolated` (SharedArrayBuffer / WASM threads)
 
 ### Why this matters
