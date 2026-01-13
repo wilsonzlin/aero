@@ -189,6 +189,9 @@ VOID VirtioInputEvtIoDeviceControl(
     NTSTATUS status = STATUS_INVALID_DEVICE_REQUEST;
     size_t info = 0;
 
+    // InputBufferLength is only used by some DBG/diagnostics-only IOCTLs.
+    UNREFERENCED_PARAMETER(InputBufferLength);
+
     switch (IoControlCode) {
     case IOCTL_VIOINPUT_QUERY_COUNTERS: {
         PUCHAR outBuf;
