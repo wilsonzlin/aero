@@ -154,6 +154,7 @@ C_ASSERT(AEROVBLK_QUEUE_SIZE == 128);
 #define AEROVBLK_INTERRUPT_MODE_INTX 0u
 #define AEROVBLK_INTERRUPT_MODE_MSI 1u
 
+#pragma pack(push, 1)
 typedef struct _AEROVBLK_QUERY_INFO {
     ULONGLONG NegotiatedFeatures;
     USHORT QueueSize;
@@ -162,19 +163,37 @@ typedef struct _AEROVBLK_QUERY_INFO {
     USHORT UsedIdx;
 
     /*
-     * Interrupt observability (virtio-pci modern).
-     *
-     * - InterruptMode reports whether the driver is currently operating in
-     *   legacy INTx mode or using message-signaled interrupts (MSI/MSI-X).
-     * - Msix*Vector report the currently programmed virtio MSI-X vectors.
-     *   A value of 0xFFFF means "no vector assigned" per the virtio spec.
-     */
+      * Interrupt observability (virtio-pci modern).
+      *
+      * - InterruptMode reports whether the driver is currently operating in
+      *   legacy INTx mode or using message-signaled interrupts (MSI/MSI-X).
+      * - Msix*Vector report the currently programmed virtio MSI-X vectors.
+      *   A value of 0xFFFF means "no vector assigned" per the virtio spec.
+      * - MessageCount reports the number of message interrupts assigned by
+      *   StorPort (0 for INTx).
+      *
+      * These fields are appended for backwards compatibility: callers that only
+      * understand the original v1 layout can request/consume just the first 16
+      * bytes (through UsedIdx).
+      */
     ULONG InterruptMode;
     USHORT MsixConfigVector;
     USHORT MsixQueue0Vector;
+    ULONG MessageCount;
+    ULONG Reserved0;
 } AEROVBLK_QUERY_INFO, *PAEROVBLK_QUERY_INFO;
+#pragma pack(pop)
 
-C_ASSERT(sizeof(AEROVBLK_QUERY_INFO) == 24);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, NegotiatedFeatures) == 0x00);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, QueueSize) == 0x08);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, NumFree) == 0x0A);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, AvailIdx) == 0x0C);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, UsedIdx) == 0x0E);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, InterruptMode) == 0x10);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, MsixConfigVector) == 0x14);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, MsixQueue0Vector) == 0x16);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, MessageCount) == 0x18);
+C_ASSERT(sizeof(AEROVBLK_QUERY_INFO) == 0x20);
 
 ULONG AerovblkHwFindAdapter(
     _In_ PVOID deviceExtension,

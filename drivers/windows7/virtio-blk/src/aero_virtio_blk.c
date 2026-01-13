@@ -979,6 +979,10 @@ static VOID AerovblkHandleRequestSense(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt
 static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Inout_ PSCSI_REQUEST_BLOCK srb) {
   PSRB_IO_CONTROL ctrl;
   PAEROVBLK_QUERY_INFO info;
+  AEROVBLK_QUERY_INFO outInfo;
+  ULONG maxPayloadLen;
+  ULONG payloadLen;
+  ULONG copyLen;
   USHORT msixConfig;
   USHORT msixQueue0;
 
@@ -999,39 +1003,53 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     return;
   }
 
-  if (ctrl->Length < sizeof(AEROVBLK_QUERY_INFO) || srb->DataTransferLength < sizeof(SRB_IO_CONTROL) + sizeof(AEROVBLK_QUERY_INFO)) {
+  maxPayloadLen = srb->DataTransferLength - sizeof(SRB_IO_CONTROL);
+  payloadLen = ctrl->Length;
+  if (payloadLen > maxPayloadLen) {
+    payloadLen = maxPayloadLen;
+  }
+
+  /*
+   * Maintain backwards compatibility with callers that only understand the
+   * original v1 layout (through UsedIdx). Callers can request/consume the first
+   * 16 bytes and ignore the newer interrupt fields.
+   */
+  if (payloadLen < FIELD_OFFSET(AEROVBLK_QUERY_INFO, InterruptMode)) {
     ctrl->ReturnCode = (ULONG)STATUS_BUFFER_TOO_SMALL;
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST);
     return;
   }
 
   info = (PAEROVBLK_QUERY_INFO)((PUCHAR)srb->DataBuffer + sizeof(SRB_IO_CONTROL));
-  info->NegotiatedFeatures = devExt->NegotiatedFeatures;
+
+  RtlZeroMemory(&outInfo, sizeof(outInfo));
+  outInfo.NegotiatedFeatures = devExt->NegotiatedFeatures;
   if (devExt->Vq.queue_size != 0 && devExt->Vq.used != NULL) {
-    info->QueueSize = (USHORT)devExt->Vq.queue_size;
-    info->NumFree = (USHORT)devExt->Vq.num_free;
-    info->AvailIdx = (USHORT)devExt->Vq.avail_idx;
-    info->UsedIdx = (USHORT)devExt->Vq.used->idx;
+    outInfo.QueueSize = (USHORT)devExt->Vq.queue_size;
+    outInfo.NumFree = (USHORT)devExt->Vq.num_free;
+    outInfo.AvailIdx = (USHORT)devExt->Vq.avail_idx;
+    outInfo.UsedIdx = (USHORT)devExt->Vq.used->idx;
   } else {
-    info->QueueSize = 0;
-    info->NumFree = 0;
-    info->AvailIdx = 0;
-    info->UsedIdx = 0;
+    outInfo.QueueSize = 0;
+    outInfo.NumFree = 0;
+    outInfo.AvailIdx = 0;
+    outInfo.UsedIdx = 0;
   }
 
   /*
    * Interrupt observability.
    *
-   * Report the currently programmed virtio MSI-X vectors. Per Aero contract v1
-   * semantics, unassigned vectors (0xFFFF) imply the device uses INTx + ISR.
+   * Report the driver-selected interrupt mode (INTx vs MSI/MSI-X) as well as
+   * the currently programmed virtio MSI-X vectors.
    */
-  info->InterruptMode = AEROVBLK_INTERRUPT_MODE_INTX;
-  info->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
-  info->MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
+  outInfo.InterruptMode = devExt->UseMsi ? AEROVBLK_INTERRUPT_MODE_MSI : AEROVBLK_INTERRUPT_MODE_INTX;
+  outInfo.MessageCount = devExt->UseMsi ? (ULONG)devExt->MsiMessageCount : 0;
+  outInfo.MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  outInfo.MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
+  outInfo.Reserved0 = 0;
 
   msixConfig = VIRTIO_PCI_MSI_NO_VECTOR;
   msixQueue0 = VIRTIO_PCI_MSI_NO_VECTOR;
-
   if (devExt->Vdev.CommonCfg != NULL) {
     KIRQL irql;
 
@@ -1043,18 +1061,25 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     msixQueue0 = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector);
     KeMemoryBarrier();
     KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
-
-    info->MsixConfigVector = msixConfig;
-    info->MsixQueue0Vector = msixQueue0;
-
-    if (msixConfig != VIRTIO_PCI_MSI_NO_VECTOR || msixQueue0 != VIRTIO_PCI_MSI_NO_VECTOR) {
-      info->InterruptMode = AEROVBLK_INTERRUPT_MODE_MSI;
-    }
   }
 
+  outInfo.MsixConfigVector = msixConfig;
+  outInfo.MsixQueue0Vector = msixQueue0;
+
+  /* If vectors are assigned, treat the effective mode as MSI/MSI-X. */
+  if (msixConfig != VIRTIO_PCI_MSI_NO_VECTOR || msixQueue0 != VIRTIO_PCI_MSI_NO_VECTOR) {
+    outInfo.InterruptMode = AEROVBLK_INTERRUPT_MODE_MSI;
+  }
+
+  copyLen = payloadLen;
+  if (copyLen > sizeof(outInfo)) {
+    copyLen = sizeof(outInfo);
+  }
+  RtlCopyMemory(info, &outInfo, copyLen);
+
   ctrl->ReturnCode = 0;
-  ctrl->Length = sizeof(AEROVBLK_QUERY_INFO);
-  srb->DataTransferLength = sizeof(SRB_IO_CONTROL) + sizeof(AEROVBLK_QUERY_INFO);
+  ctrl->Length = copyLen;
+  srb->DataTransferLength = sizeof(SRB_IO_CONTROL) + copyLen;
   AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
 }
 

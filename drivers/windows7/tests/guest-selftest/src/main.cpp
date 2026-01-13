@@ -412,6 +412,7 @@ static constexpr ULONG kAerovblkInterruptModeIntx = 0u;
 static constexpr ULONG kAerovblkInterruptModeMsi = 1u;
 static constexpr USHORT kVirtioPciMsiNoVector = 0xFFFFu;
 
+#pragma pack(push, 1)
 struct AEROVBLK_QUERY_INFO {
   ULONGLONG NegotiatedFeatures;
   USHORT QueueSize;
@@ -422,9 +423,26 @@ struct AEROVBLK_QUERY_INFO {
   ULONG InterruptMode;
   USHORT MsixConfigVector;
   USHORT MsixQueue0Vector;
+  ULONG MessageCount;
+  ULONG Reserved0;
 };
+#pragma pack(pop)
 
-static_assert(sizeof(AEROVBLK_QUERY_INFO) == 24, "AEROVBLK_QUERY_INFO size mismatch");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, NegotiatedFeatures) == 0x00, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, QueueSize) == 0x08, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, NumFree) == 0x0A, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, AvailIdx) == 0x0C, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, UsedIdx) == 0x0E, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, InterruptMode) == 0x10, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, MsixConfigVector) == 0x14, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, MsixQueue0Vector) == 0x16, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, MessageCount) == 0x18, "AEROVBLK_QUERY_INFO layout");
+static_assert(sizeof(AEROVBLK_QUERY_INFO) == 0x20, "AEROVBLK_QUERY_INFO size mismatch");
+
+struct AerovblkQueryInfoResult {
+  AEROVBLK_QUERY_INFO info{};
+  size_t returned_len = 0; // Bytes of `info` returned by the driver (variable-length contract).
+};
 
 static std::string VirtioFeaturesToString(ULONGLONG f) {
   char buf[64];
@@ -496,7 +514,7 @@ static HANDLE OpenPhysicalDriveForIoctl(Logger& log, DWORD disk_number) {
   return INVALID_HANDLE_VALUE;
 }
 
-static std::optional<AEROVBLK_QUERY_INFO> QueryAerovblkMiniportInfo(Logger& log, HANDLE hPhysicalDrive) {
+static std::optional<AerovblkQueryInfoResult> QueryAerovblkMiniportInfo(Logger& log, HANDLE hPhysicalDrive) {
   if (hPhysicalDrive == INVALID_HANDLE_VALUE) return std::nullopt;
 
   std::vector<BYTE> buf(sizeof(SRB_IO_CONTROL) + sizeof(AEROVBLK_QUERY_INFO));
@@ -514,8 +532,11 @@ static std::optional<AEROVBLK_QUERY_INFO> QueryAerovblkMiniportInfo(Logger& log,
     log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(AEROVBLK_IOCTL_QUERY) failed err=%lu", GetLastError());
     return std::nullopt;
   }
-  if (bytes < sizeof(SRB_IO_CONTROL) + sizeof(AEROVBLK_QUERY_INFO)) {
-    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned too few bytes=%lu", bytes);
+
+  constexpr size_t kQueryInfoV1Len = offsetof(AEROVBLK_QUERY_INFO, InterruptMode);
+  if (bytes < sizeof(SRB_IO_CONTROL) + kQueryInfoV1Len) {
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned too few bytes=%lu (expected >=%zu)", bytes,
+             sizeof(SRB_IO_CONTROL) + kQueryInfoV1Len);
     return std::nullopt;
   }
 
@@ -524,17 +545,25 @@ static std::optional<AEROVBLK_QUERY_INFO> QueryAerovblkMiniportInfo(Logger& log,
     log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned ReturnCode=0x%08lx", ctrl->ReturnCode);
     return std::nullopt;
   }
-  if (ctrl->Length < sizeof(AEROVBLK_QUERY_INFO)) {
-    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned Length=%lu (expected >=%zu)", ctrl->Length,
-             sizeof(AEROVBLK_QUERY_INFO));
+
+  const size_t payload_bytes = (bytes > sizeof(SRB_IO_CONTROL)) ? (bytes - sizeof(SRB_IO_CONTROL)) : 0;
+  size_t returned_len = std::min<size_t>(payload_bytes, ctrl->Length);
+  if (returned_len < kQueryInfoV1Len) {
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned Length=%lu (expected >=%zu)", ctrl->Length, kQueryInfoV1Len);
     return std::nullopt;
   }
 
-  const auto* info = reinterpret_cast<const AEROVBLK_QUERY_INFO*>(buf.data() + sizeof(SRB_IO_CONTROL));
-  return *info;
+  AerovblkQueryInfoResult out{};
+  out.returned_len = returned_len;
+
+  // Variable-length contract: copy only the bytes the driver reports as valid.
+  memset(&out.info, 0, sizeof(out.info));
+  memcpy(&out.info, buf.data() + sizeof(SRB_IO_CONTROL), std::min(returned_len, sizeof(out.info)));
+  return out;
 }
 
-static bool ValidateAerovblkMiniportInfo(Logger& log, const AEROVBLK_QUERY_INFO& info) {
+static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoResult& res) {
+  const auto& info = res.info;
   const ULONGLONG required_features =
       (1ull << 32) | // VIRTIO_F_VERSION_1
       (1ull << 28) | // VIRTIO_F_RING_INDIRECT_DESC
@@ -557,23 +586,46 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AEROVBLK_QUERY_INFO&
     return false;
   }
 
-  const char* mode_str = "unknown";
-  if (info.InterruptMode == kAerovblkInterruptModeIntx) {
-    mode_str = "INTx";
-  } else if (info.InterruptMode == kAerovblkInterruptModeMsi) {
-    mode_str = "MSI/MSI-X";
+  log.Logf("virtio-blk: miniport query PASS queue_size=%u num_free=%u avail_idx=%u used_idx=%u features=%s",
+           info.QueueSize, info.NumFree, info.AvailIdx, info.UsedIdx,
+           VirtioFeaturesToString(info.NegotiatedFeatures).c_str());
+
+  // Optional interrupt mode diagnostics (variable-length contract).
+  constexpr size_t kIrqModeEnd = offsetof(AEROVBLK_QUERY_INFO, InterruptMode) + sizeof(ULONG);
+  constexpr size_t kMsixCfgEnd = offsetof(AEROVBLK_QUERY_INFO, MsixConfigVector) + sizeof(USHORT);
+  constexpr size_t kMsixQ0End = offsetof(AEROVBLK_QUERY_INFO, MsixQueue0Vector) + sizeof(USHORT);
+  constexpr size_t kMsgCountEnd = offsetof(AEROVBLK_QUERY_INFO, MessageCount) + sizeof(ULONG);
+
+  if (res.returned_len < kIrqModeEnd) {
+    log.Logf("virtio-blk-irq|WARN|missing|returned_len=%zu|expected_min=%zu", res.returned_len, kIrqModeEnd);
+    return true;
   }
 
-  const int msix_cfg_assigned = (info.MsixConfigVector != kVirtioPciMsiNoVector) ? 1 : 0;
-  const int msix_q0_assigned = (info.MsixQueue0Vector != kVirtioPciMsiNoVector) ? 1 : 0;
+  if (res.returned_len < sizeof(AEROVBLK_QUERY_INFO)) {
+    log.Logf("virtio-blk-irq|WARN|query_truncated|returned_len=%zu|expected=%zu", res.returned_len,
+             sizeof(AEROVBLK_QUERY_INFO));
+  }
 
-  log.Logf(
-      "virtio-blk: miniport query PASS queue_size=%u num_free=%u avail_idx=%u used_idx=%u features=%s "
-      "interrupt_mode=%s msix_config=0x%04x msix_queue0=0x%04x msix_config_assigned=%d msix_queue0_assigned=%d",
-      info.QueueSize, info.NumFree, info.AvailIdx, info.UsedIdx,
-      VirtioFeaturesToString(info.NegotiatedFeatures).c_str(), mode_str,
-      static_cast<unsigned>(info.MsixConfigVector), static_cast<unsigned>(info.MsixQueue0Vector),
-      msix_cfg_assigned, msix_q0_assigned);
+  const char* mode = "unknown";
+  if (info.InterruptMode == kAerovblkInterruptModeIntx) {
+    mode = "intx";
+  } else if (info.InterruptMode == kAerovblkInterruptModeMsi) {
+    mode = "msi";
+  }
+
+  const USHORT msix_cfg = (res.returned_len >= kMsixCfgEnd) ? info.MsixConfigVector : kVirtioPciMsiNoVector;
+  const USHORT msix_q0 = (res.returned_len >= kMsixQ0End) ? info.MsixQueue0Vector : kVirtioPciMsiNoVector;
+
+  std::string msg_count = "unknown";
+  if (res.returned_len >= kMsgCountEnd) {
+    msg_count = std::to_string(static_cast<unsigned long>(info.MessageCount));
+  } else {
+    log.Logf("virtio-blk-irq|WARN|missing_message_count|returned_len=%zu|expected_min=%zu", res.returned_len,
+             kMsgCountEnd);
+  }
+
+  log.Logf("virtio-blk-irq|INFO|mode=%s|message_count=%s|msix_config_vector=0x%04x|msix_queue0_vector=0x%04x",
+           mode, msg_count.c_str(), static_cast<unsigned>(msix_cfg), static_cast<unsigned>(msix_q0));
   return true;
 }
 
