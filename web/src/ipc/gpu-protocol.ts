@@ -284,6 +284,8 @@ export type GpuRuntimeScreenshotResponseMessage = GpuWorkerMessageBase & {
    * Semantics: deterministic readback of the *source framebuffer* content (pre-scaling,
    * pre-sRGB/color-management, etc). This is intentionally not a capture of "what the
    * user sees" on the canvas.
+   *
+   * Buffer is tight-packed: `byteLength === width * height * 4`.
    */
   rgba8: ArrayBuffer;
   origin: "top-left";

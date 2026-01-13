@@ -14,6 +14,9 @@ export interface PresenterScreenshot {
    * framebuffer**: the same RGBA8 pixels most recently passed to `present()`
    * (or uploaded into the backend's source texture).
    *
+   * The returned buffer is **tight-packed**: `byteLength === width * height * 4`
+   * and each row is exactly `width * 4` bytes (no per-row padding/stride).
+   *
    * This is intentionally **not** a capture of the on-screen/presented canvas.
    * In particular, callers should not expect the screenshot to include:
    *
