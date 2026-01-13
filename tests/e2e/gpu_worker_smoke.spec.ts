@@ -46,6 +46,12 @@ test("gpu worker smoke: disableWebGpu forces WebGL2 fallback", async ({ page, br
   await page.goto("/web/gpu-worker-smoke.html?disableWebGpu=1", { waitUntil: "load" });
   await waitForReady(page);
 
+  // The worker should emit a structured Init warning event describing the fallback.
+  await page.waitForFunction(() => {
+    const text = document.getElementById("status")?.textContent ?? "";
+    return text.includes("gpu_event warn Init:") && text.includes("GPU backend init fell back from");
+  });
+
   const result = await page.evaluate(() => {
     const api = (window as any).__aeroTest;
     if (!api) throw new Error("__aeroTest missing");
