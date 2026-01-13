@@ -38,7 +38,9 @@ pub struct PcMachineConfig {
     ///
     /// Note: `PcMachine` currently executes only the bootstrap processor (CPU0). Application
     /// processors are not scheduled yet; setting `cpu_count > 1` is intended for SMP firmware/OS
-    /// bring-up experimentation.
+    /// bring-up experimentation and topology validation.
+    ///
+    /// See `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
     pub cpu_count: u8,
     /// Deterministic seed used to generate the SMBIOS Type 1 "System UUID".
     ///

@@ -163,8 +163,12 @@ pub struct MachineConfig {
     ///
     /// Must be >= 1.
     ///
-    /// Note: CPU execution in [`Machine`] is still single-core today, but guests may enumerate the
-    /// configured CPU topology via ACPI (e.g. MADT) for SMP bring-up contract testing.
+    /// Note: CPU execution in [`Machine`] is still BSP-only today; SMP/multi-vCPU scheduling and AP
+    /// bring-up are not implemented yet. `cpu_count > 1` is currently useful for firmware/ACPI
+    /// topology contract testing (for example, validating MADT contents) but does not create
+    /// additional executing cores.
+    ///
+    /// See `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
     pub cpu_count: u8,
     /// Deterministic seed used to generate the SMBIOS Type 1 "System UUID".
     ///
@@ -537,7 +541,10 @@ impl fmt::Display for MachineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MachineError::InvalidCpuCount(count) => {
-                write!(f, "invalid cpu_count {count} (must be >= 1)")
+                write!(
+                    f,
+                    "invalid cpu_count={count}; must be >= 1. Note: SMP/multi-vCPU execution is not implemented yet (BSP-only). See docs/09-bios-firmware.md#smp-boot-bsp--aps and instructions/integration.md"
+                )
             }
             MachineError::InvalidDiskSize(len) => write!(
                 f,

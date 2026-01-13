@@ -7,10 +7,25 @@ fn cpu_count_must_be_non_zero() {
         ..Default::default()
     };
 
-    assert!(matches!(
-        Machine::new(cfg),
-        Err(MachineError::InvalidCpuCount(0))
-    ));
+    let err = match Machine::new(cfg) {
+        Ok(_) => panic!("cpu_count=0 should be rejected"),
+        Err(e) => e,
+    };
+    assert!(matches!(err, MachineError::InvalidCpuCount(0)));
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("cpu_count=0"),
+        "error message must include the configured cpu_count; got: {msg}"
+    );
+    assert!(
+        msg.contains("SMP"),
+        "error message must explain that SMP is not implemented yet; got: {msg}"
+    );
+    assert!(
+        msg.contains("docs/09-bios-firmware.md"),
+        "error message must point to relevant docs; got: {msg}"
+    );
 }
 
 #[test]

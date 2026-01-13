@@ -62,6 +62,7 @@ This is the **coordination hub**. You wire together the work from all other work
   `cpu_count` is **not** forced to 1 anymore: the BIOS will publish CPU topology via **ACPI MADT +
   SMBIOS** for `cpu_count >= 1`, which is useful for SMP bring-up contract testing and topology
   validation even before AP bring-up (INIT/SIPI/IPIs) + multi-vCPU execution land.
+  See [`docs/09-bios-firmware.md#smp-boot-bsp--aps`](../docs/09-bios-firmware.md#smp-boot-bsp--aps).
 - **Virtio MSI-X is implemented in the transport and wired in `aero-pc-platform`, but still incomplete in `aero-machine`**:
   - Transport MSI-X support (table/PBA + vector programming): `crates/aero-virtio/src/pci.rs`.
   - `aero_pc_platform` wires MSI-X delivery via `PcPlatformConfig::enable_virtio_msix`,
