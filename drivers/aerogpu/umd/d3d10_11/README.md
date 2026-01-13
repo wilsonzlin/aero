@@ -27,7 +27,7 @@ This implementation started as “minimum viable triangle”, but it now include
 - Resource updates + readback:
   - `Map`/`Unmap` for buffers and Texture2D subresources (uploads via `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` / `AEROGPU_CMD_UPLOAD_RESOURCE`)
   - Staging readback uses `AEROGPU_CMD_COPY_*` + `AEROGPU_COPY_FLAG_WRITEBACK_DST` when the host exposes `AEROGPU_FEATURE_TRANSFER` (ABI 1.1+)
-- Pipeline state **encoding** into the command stream:
+- Pipeline state **encoding** into the command stream (D3D11 DDI path):
   - `AEROGPU_CMD_SET_BLEND_STATE`, `AEROGPU_CMD_SET_RASTERIZER_STATE`, `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE`
 - Windowed swapchain present (sync interval 0 vs non-zero) via `AEROGPU_CMD_PRESENT`
 
@@ -35,6 +35,7 @@ This implementation started as “minimum viable triangle”, but it now include
 
 - Geometry shaders are **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
 - MRT: the protocol supports up to `AEROGPU_MAX_RENDER_TARGETS` (8), but the D3D10/11 UMD currently only forwards RT0.
+- D3D10/D3D10.1 state binding remains stubbed: `SetBlendState` / `SetRasterizerState` / `SetDepthStencilState` are currently no-op stubs on those DDIs (state is only forwarded on the D3D11 DDI path).
 - Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries enable + masks; it does **not** encode stencil funcs/ops (or separate front/back face state).
 - Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors are mapped to conservative fallbacks.
 
