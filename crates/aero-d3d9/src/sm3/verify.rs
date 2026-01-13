@@ -177,6 +177,14 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             src0,
             src1,
             modifiers,
+        }
+        | IrOp::MatrixMul {
+            dst: _,
+            src0,
+            src1,
+            m: _,
+            n: _,
+            modifiers,
         } => {
             verify_src(src0)?;
             verify_src(src1)?;
@@ -194,7 +202,7 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             verify_src(src_lt)?;
             verify_modifiers(modifiers)?;
         }
-        IrOp::Mad {
+        IrOp::Dp2Add {
             dst: _,
             src0,
             src1,
@@ -206,7 +214,7 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             verify_src(src2)?;
             verify_modifiers(modifiers)?;
         }
-        IrOp::Dp2Add {
+        IrOp::Mad {
             dst: _,
             src0,
             src1,

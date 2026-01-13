@@ -1,6 +1,14 @@
+use std::fs;
+
+use aero_d3d9::dxbc;
 use aero_d3d9::sm3::decode::Opcode;
 use aero_d3d9::sm3::types::ShaderStage;
-use aero_d3d9::sm3::{build_ir, decode_u32_tokens, generate_wgsl, verify_ir};
+use aero_d3d9::sm3::{build_ir, decode_u32_tokens, decode_u8_le_bytes, generate_wgsl, verify_ir};
+
+fn load_fixture(name: &str) -> Vec<u8> {
+    let path = format!("{}/tests/fixtures/dxbc/{name}", env!("CARGO_MANIFEST_DIR"));
+    fs::read(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"))
+}
 
 fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
     let prefix = match stage {
@@ -1323,6 +1331,70 @@ fn wgsl_ps3_vpos_misctype_builtin_compiles() {
         wgsl.contains("@builtin(position) frag_pos: vec4<f32>"),
         "{wgsl}"
     );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_vs2_m4x4_fixture_compiles() {
+    let bytes = load_fixture("vs_2_0_simple.dxbc");
+    let shdr = dxbc::extract_shader_bytecode(&bytes).expect("extract shader bytecode");
+
+    let decoded = decode_u8_le_bytes(shdr).expect("decode");
+    let ir = build_ir(&decoded).expect("build ir");
+    verify_ir(&ir).expect("verify");
+    let wgsl = generate_wgsl(&ir).expect("wgsl").wgsl;
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.contains("@vertex"));
+    assert!(wgsl.contains("dot("));
+}
+
+#[test]
+fn wgsl_dp2add_compiles() {
+    // vs_2_0:
+    //   dcl_position v0
+    //   dp2add r0, v0, c0, c1
+    //   mov oPos, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 2, 0),
+        // dcl_position v0
+        opcode_token(31, 1),
+        dst_token(1, 0, 0xF),
+        // dp2add r0, v0, c0, c1
+        opcode_token(89, 4),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        src_token(2, 0, 0xE4, 0),
+        src_token(2, 1, 0xE4, 0),
+        // mov oPos, r0
+        opcode_token(1, 2),
+        dst_token(4, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("dot("), "{wgsl}");
 
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
     naga::valid::Validator::new(

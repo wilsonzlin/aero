@@ -69,6 +69,10 @@ pub enum Opcode {
     Exp,
     Log,
     M4x4,
+    M4x3,
+    M3x4,
+    M3x3,
+    M3x2,
     Rcp,
     Rsq,
     Frc,
@@ -135,6 +139,10 @@ impl Opcode {
             15 => Self::Log,
             19 => Self::Frc, // 0x13
             20 => Self::M4x4, // 0x14
+            21 => Self::M4x3, // 0x15
+            22 => Self::M3x4, // 0x16
+            23 => Self::M3x3, // 0x17
+            24 => Self::M3x2, // 0x18
             25 => Self::Call,
             27 => Self::Loop,
             28 => Self::Ret,
@@ -191,6 +199,10 @@ impl Opcode {
             Self::Exp => "exp",
             Self::Log => "log",
             Self::M4x4 => "m4x4",
+            Self::M4x3 => "m4x3",
+            Self::M3x4 => "m3x4",
+            Self::M3x3 => "m3x3",
+            Self::M3x2 => "m3x2",
             Self::Rcp => "rcp",
             Self::Rsq => "rsq",
             Self::Frc => "frc",
@@ -891,13 +903,33 @@ fn decode_operands_and_extras(
         | Opcode::Dp3
         | Opcode::Dp4
         | Opcode::Pow
-        | Opcode::M4x4 => {
+        | Opcode::M4x4
+        | Opcode::M4x3
+        | Opcode::M3x4
+        | Opcode::M3x3
+        | Opcode::M3x2 => {
             parse_fixed_operands(
                 opcode,
                 stage,
                 major,
                 operand_tokens,
                 &[OperandKind::Dst, OperandKind::Src, OperandKind::Src],
+                &mut operands,
+            )?;
+        }
+        Opcode::Dp2Add => {
+            // dp2add dst, src0, src1, src2
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[
+                    OperandKind::Dst,
+                    OperandKind::Src,
+                    OperandKind::Src,
+                    OperandKind::Src,
+                ],
                 &mut operands,
             )?;
         }
@@ -934,22 +966,6 @@ fn decode_operands_and_extras(
         }
         Opcode::Lrp => {
             // lrp dst, src0, src1, src2
-            parse_fixed_operands(
-                opcode,
-                stage,
-                major,
-                operand_tokens,
-                &[
-                    OperandKind::Dst,
-                    OperandKind::Src,
-                    OperandKind::Src,
-                    OperandKind::Src,
-                ],
-                &mut operands,
-            )?;
-        }
-        Opcode::Dp2Add => {
-            // dp2add dst, src0, src1, src2
             parse_fixed_operands(
                 opcode,
                 stage,
@@ -1020,6 +1036,11 @@ fn decode_operands_and_extras(
             )?;
         }
         Opcode::Dcl => {
+            // SM2/3 `dcl` is a single-parameter instruction in the executable stream:
+            //   dcl <dst_register>
+            //
+            // The declaration metadata (usage / texture type) is encoded in opcode_token[16..24],
+            // matching `D3DSHADER_DECL_USAGE` / `D3DSHADER_SAMPLER_TEXTURE_TYPE`.
             parse_fixed_operands(
                 opcode,
                 stage,

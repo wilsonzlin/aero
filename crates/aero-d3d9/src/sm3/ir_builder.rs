@@ -318,7 +318,11 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 src1,
                 modifiers,
             })?,
-            Opcode::M4x4 => push_m4x4(&mut stack, inst)?,
+            Opcode::M4x4 => push_matmul(&mut stack, inst, 4, 4)?,
+            Opcode::M4x3 => push_matmul(&mut stack, inst, 4, 3)?,
+            Opcode::M3x4 => push_matmul(&mut stack, inst, 3, 4)?,
+            Opcode::M3x3 => push_matmul(&mut stack, inst, 3, 3)?,
+            Opcode::M3x2 => push_matmul(&mut stack, inst, 3, 2)?,
             Opcode::Rcp => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Rcp {
                 dst,
                 src,
@@ -867,6 +871,26 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             collect_used_input_regs_src(src1, out);
             collect_used_input_regs_modifiers(modifiers, out);
         }
+        IrOp::MatrixMul {
+            dst,
+            src0,
+            src1,
+            n,
+            modifiers,
+            ..
+        } => {
+            collect_used_input_regs_dst(dst, out);
+            collect_used_input_regs_src(src0, out);
+            // Matrix helper ops implicitly read `src1 + column_index` for 0..n.
+            for col in 0..*n {
+                let mut column = src1.clone();
+                if let Some(idx) = column.reg.index.checked_add(u32::from(col)) {
+                    column.reg.index = idx;
+                }
+                collect_used_input_regs_src(&column, out);
+            }
+            collect_used_input_regs_modifiers(modifiers, out);
+        }
         IrOp::Select {
             dst,
             cond,
@@ -880,7 +904,7 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             collect_used_input_regs_src(src_lt, out);
             collect_used_input_regs_modifiers(modifiers, out);
         }
-        IrOp::Mad {
+        IrOp::Dp2Add {
             dst,
             src0,
             src1,
@@ -893,7 +917,7 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             collect_used_input_regs_src(src2, out);
             collect_used_input_regs_modifiers(modifiers, out);
         }
-        IrOp::Dp2Add {
+        IrOp::Mad {
             dst,
             src0,
             src1,
@@ -1130,6 +1154,13 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             modifiers,
             ..
         }
+        | IrOp::MatrixMul {
+            dst,
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
         | IrOp::Pow {
             dst,
             src0,
@@ -1167,20 +1198,14 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             remap_input_regs_in_src(src2, remap);
             remap_input_regs_in_modifiers(modifiers, remap);
         }
-        IrOp::Dp2Add {
+        IrOp::Lrp {
             dst,
             src0,
             src1,
             src2,
             modifiers,
-        } => {
-            remap_input_regs_in_dst(dst, remap);
-            remap_input_regs_in_src(src0, remap);
-            remap_input_regs_in_src(src1, remap);
-            remap_input_regs_in_src(src2, remap);
-            remap_input_regs_in_modifiers(modifiers, remap);
         }
-        IrOp::Lrp {
+        | IrOp::Dp2Add {
             dst,
             src0,
             src1,
@@ -1434,57 +1459,27 @@ where
     push_stmt(stack, Stmt::Op(ctor(dst, src, modifiers)))
 }
 
-fn push_m4x4(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), BuildError> {
-    // `m4x4 dst, v, cN` is equivalent to:
-    //   dp4 dst.x, v, cN
-    //   dp4 dst.y, v, c(N+1)
-    //   dp4 dst.z, v, c(N+2)
-    //   dp4 dst.w, v, c(N+3)
-    //
-    // with each dot replicated across components (the normal dp4 semantics) and written via
-    // per-component masks.
-    let dst_full = extract_dst(inst, 0)?;
-    let v = extract_src(inst, 1)?;
-    let base = extract_src(inst, 2)?;
-
-    if base.reg.file != RegFile::Const {
-        return Err(err(inst, "m4x4 matrix base must be a const register"));
-    }
-
+fn push_matmul(
+    stack: &mut [Frame],
+    inst: &DecodedInstruction,
+    m: u8,
+    n: u8,
+) -> Result<(), BuildError> {
+    let dst = extract_dst(inst, 0)?;
+    let src0 = extract_src(inst, 1)?;
+    let src1 = extract_src(inst, 2)?;
     let modifiers = build_modifiers(inst)?;
-
-    // Emit dp4 ops only for components included in the destination write mask.
-    for (component, mask_bit, offset) in [
-        (crate::sm3::decode::SwizzleComponent::X, 0x1u8, 0u32),
-        (crate::sm3::decode::SwizzleComponent::Y, 0x2u8, 1u32),
-        (crate::sm3::decode::SwizzleComponent::Z, 0x4u8, 2u32),
-        (crate::sm3::decode::SwizzleComponent::W, 0x8u8, 3u32),
-    ] {
-        if !dst_full.mask.contains(component) {
-            continue;
-        }
-        let dst = Dst {
-            reg: dst_full.reg.clone(),
-            mask: crate::sm3::decode::WriteMask(mask_bit),
-        };
-        let mut row = base.clone();
-        row.reg.index = row
-            .reg
-            .index
-            .checked_add(offset)
-            .ok_or_else(|| err(inst, "m4x4 constant register index overflow"))?;
-        push_stmt(
-            stack,
-            Stmt::Op(IrOp::Dp4 {
-                dst,
-                src0: v.clone(),
-                src1: row,
-                modifiers: modifiers.clone(),
-            }),
-        )?;
-    }
-
-    Ok(())
+    push_stmt(
+        stack,
+        Stmt::Op(IrOp::MatrixMul {
+            dst,
+            src0,
+            src1,
+            m,
+            n,
+            modifiers,
+        }),
+    )
 }
 
 fn push_cmpop(

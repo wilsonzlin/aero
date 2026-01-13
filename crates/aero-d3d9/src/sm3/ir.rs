@@ -169,6 +169,22 @@ pub enum IrOp {
         src1: Src,
         modifiers: InstModifiers,
     },
+    /// D3D9 matrix multiply helper ops (`m4x4`, `m4x3`, `m3x4`, `m3x3`, `m3x2`, ...).
+    ///
+    /// `m` is the number of vector components consumed from `src0` (2/3/4) and `n` is the number
+    /// of result components written starting at `dst.x`.
+    ///
+    /// The matrix is sourced from `src1` as `src1 + column_index`, where each register represents
+    /// a column vector. This matches typical SM2/3 compiler output where the matrix lives in
+    /// consecutive constant registers (`cN..cN+n-1`).
+    MatrixMul {
+        dst: Dst,
+        src0: Src,
+        src1: Src,
+        m: u8,
+        n: u8,
+        modifiers: InstModifiers,
+    },
     Rcp {
         dst: Dst,
         src: Src,
@@ -695,6 +711,21 @@ fn format_op(op: &IrOp) -> String {
             format_inst("dp4", modifiers),
             format_dst_src(dst, &[src0.clone(), src1.clone()])
         ),
+        IrOp::MatrixMul {
+            dst,
+            src0,
+            src1,
+            m,
+            n,
+            modifiers,
+        } => {
+            let name = format!("m{}x{}", m, n);
+            format!(
+                "{} {}",
+                format_inst(&name, modifiers),
+                format_dst_src(dst, &[src0.clone(), src1.clone()])
+            )
+        }
         IrOp::Rcp {
             dst,
             src,

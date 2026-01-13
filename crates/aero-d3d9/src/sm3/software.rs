@@ -552,6 +552,7 @@ fn exec_op(
         | IrOp::Dp2Add { dst, modifiers, .. }
         | IrOp::Dp3 { dst, modifiers, .. }
         | IrOp::Dp4 { dst, modifiers, .. }
+        | IrOp::MatrixMul { dst, modifiers, .. }
         | IrOp::Rcp { dst, modifiers, .. }
         | IrOp::Rsq { dst, modifiers, .. }
         | IrOp::Frc { dst, modifiers, .. }
@@ -633,6 +634,66 @@ fn exec_op(
             let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             Vec4::splat(a.dot4(b))
+        }
+        IrOp::MatrixMul {
+            dst,
+            src0,
+            src1,
+            m,
+            n,
+            ..
+        } => {
+            let v = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+
+            let mut dots = [0.0_f32; 4];
+            for col in 0..usize::from(*n) {
+                let mut column = src1.clone();
+                column.reg.index = column.reg.index.saturating_add(col as u32);
+                let mvec = exec_src(&column, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+                dots[col] = match *m {
+                    4 => v.dot4(mvec),
+                    3 => v.dot3(mvec),
+                    2 => v.x * mvec.x + v.y * mvec.y,
+                    _ => 0.0,
+                };
+            }
+
+            let raw = Vec4::new(dots[0], dots[1], dots[2], dots[3]);
+            let modded = apply_result_modifier(raw, modifiers);
+
+            let prev = match dst.reg.file {
+                RegFile::Temp => resolve_reg_index(&dst.reg, temps, addrs, loops, preds)
+                    .and_then(|i| temps.get(i as usize).copied())
+                    .unwrap_or(Vec4::ZERO),
+                RegFile::Addr => resolve_reg_index(&dst.reg, temps, addrs, loops, preds)
+                    .and_then(|i| addrs.get(i as usize).copied())
+                    .unwrap_or(Vec4::ZERO),
+                RegFile::Loop => resolve_reg_index(&dst.reg, temps, addrs, loops, preds)
+                    .and_then(|i| loops.get(i as usize).copied())
+                    .unwrap_or(Vec4::ZERO),
+                RegFile::Predicate => resolve_reg_index(&dst.reg, temps, addrs, loops, preds)
+                    .and_then(|i| preds.get(i as usize).copied())
+                    .unwrap_or(Vec4::ZERO),
+                RegFile::RastOut => *o_pos,
+                RegFile::AttrOut => resolve_reg_index(&dst.reg, temps, addrs, loops, preds)
+                    .and_then(|i| u16::try_from(i).ok())
+                    .and_then(|i| o_attr.get(&i).copied())
+                    .unwrap_or(Vec4::ZERO),
+                RegFile::TexCoordOut => resolve_reg_index(&dst.reg, temps, addrs, loops, preds)
+                    .and_then(|i| u16::try_from(i).ok())
+                    .and_then(|i| o_tex.get(&i).copied())
+                    .unwrap_or(Vec4::ZERO),
+                RegFile::ColorOut => *o_color,
+                _ => Vec4::ZERO,
+            };
+
+            match *n {
+                4 => modded,
+                3 => Vec4::new(modded.x, modded.y, modded.z, prev.w),
+                2 => Vec4::new(modded.x, modded.y, prev.z, prev.w),
+                1 => Vec4::new(modded.x, prev.y, prev.z, prev.w),
+                _ => prev,
+            }
         }
         IrOp::Rcp { src, .. } => {
             let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
@@ -772,7 +833,7 @@ fn exec_op(
         }
     };
 
-    let v = if matches!(op, IrOp::Mova { .. }) {
+    let v = if matches!(op, IrOp::Mova { .. } | IrOp::MatrixMul { .. }) {
         v
     } else {
         apply_result_modifier(v, modifiers)
@@ -1145,6 +1206,24 @@ fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
         } => {
             collect_used_pixel_inputs_src(src0, out);
             collect_used_pixel_inputs_src(src1, out);
+            collect_used_pixel_inputs_modifiers(modifiers, out);
+        }
+        IrOp::MatrixMul {
+            src0,
+            src1,
+            n,
+            modifiers,
+            ..
+        } => {
+            collect_used_pixel_inputs_src(src0, out);
+            // Matrix helper ops implicitly read `src1 + column_index` for 0..n.
+            for col in 0..*n {
+                let mut column = src1.clone();
+                if let Some(idx) = column.reg.index.checked_add(u32::from(col)) {
+                    column.reg.index = idx;
+                }
+                collect_used_pixel_inputs_src(&column, out);
+            }
             collect_used_pixel_inputs_modifiers(modifiers, out);
         }
         IrOp::Select {

@@ -498,6 +498,26 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             collect_src_usage(src2, usage);
             collect_mods_usage(modifiers, usage);
         }
+        IrOp::MatrixMul {
+            dst,
+            src0,
+            src1,
+            n,
+            modifiers,
+            ..
+        } => {
+            collect_dst_usage(dst, usage);
+            collect_src_usage(src0, usage);
+            // Matrix helper ops implicitly read `src1 + column_index` for 0..n.
+            for col in 0..*n {
+                let mut column = src1.clone();
+                if let Some(idx) = column.reg.index.checked_add(u32::from(col)) {
+                    column.reg.index = idx;
+                }
+                collect_src_usage(&column, usage);
+            }
+            collect_mods_usage(modifiers, usage);
+        }
         IrOp::Select {
             dst,
             cond,
@@ -1225,6 +1245,70 @@ fn emit_op_line(
             let e = apply_float_result_modifiers(format!("vec4<f32>({dot})"), modifiers)?;
             emit_assign(dst, e)
         }
+        IrOp::MatrixMul {
+            dst,
+            src0,
+            src1,
+            m,
+            n,
+            modifiers,
+        } => {
+            let (v, vty) = src_expr(src0, f32_defs)?;
+            if vty != ScalarTy::F32 {
+                return Err(err("matrix multiply only supports float vectors in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("matrix multiply destination must be float"));
+            }
+
+            let mut dots = Vec::new();
+            for col in 0..*n {
+                let mut column = src1.clone();
+                column.reg.index = column
+                    .reg
+                    .index
+                    .checked_add(u32::from(col))
+                    .ok_or_else(|| err("matrix multiply constant index overflow"))?;
+                let (mexpr, mty) = src_expr(&column, f32_defs)?;
+                if mty != ScalarTy::F32 {
+                    return Err(err(
+                        "matrix multiply only supports float matrices in WGSL lowering",
+                    ));
+                }
+                let dot = match *m {
+                    4 => format!("dot(({v}), ({mexpr}))"),
+                    3 => format!("dot(({v}).xyz, ({mexpr}).xyz)"),
+                    2 => format!("dot(({v}).xy, ({mexpr}).xy)"),
+                    other => {
+                        return Err(err(format!(
+                            "unsupported matrix multiply operand size m={other}"
+                        )))
+                    }
+                };
+                dots.push(dot);
+            }
+            while dots.len() < 4 {
+                dots.push("0.0".to_owned());
+            }
+            let raw = format!(
+                "vec4<f32>({}, {}, {}, {})",
+                dots[0], dots[1], dots[2], dots[3]
+            );
+            let modded = apply_float_result_modifiers(raw, modifiers)?;
+
+            let dst_name = reg_var_name(&dst.reg)?;
+            let final_vec = match *n {
+                4 => modded,
+                3 => format!("vec4<f32>(({modded}).xyz, ({dst_name}).w)"),
+                2 => format!("vec4<f32>(({modded}).xy, ({dst_name}).z, ({dst_name}).w)"),
+                1 => format!(
+                    "vec4<f32>(({modded}).x, ({dst_name}).y, ({dst_name}).z, ({dst_name}).w)"
+                ),
+                other => return Err(err(format!("unsupported matrix multiply output size n={other}"))),
+            };
+            emit_assign(dst, final_vec)
+        }
         IrOp::SetCmp {
             op,
             dst,
@@ -1720,6 +1804,7 @@ fn op_modifiers(op: &IrOp) -> &InstModifiers {
         | IrOp::Dp2Add { modifiers, .. }
         | IrOp::Dp3 { modifiers, .. }
         | IrOp::Dp4 { modifiers, .. }
+        | IrOp::MatrixMul { modifiers, .. }
         | IrOp::Rcp { modifiers, .. }
         | IrOp::Rsq { modifiers, .. }
         | IrOp::Frc { modifiers, .. }
