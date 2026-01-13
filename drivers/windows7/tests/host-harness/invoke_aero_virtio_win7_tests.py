@@ -962,6 +962,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--with-input-tablet-events",
+        "--with-tablet-events",
         "--with-virtio-input-tablet-events",
         "--require-virtio-input-tablet-events",
         "--enable-virtio-input-tablet-events",

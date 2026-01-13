@@ -7049,7 +7049,8 @@ static void PrintUsage() {
       "  --test-input-events       Run virtio-input end-to-end HID input report test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1)\n"
       "  --test-input-tablet-events Run virtio-input tablet (absolute pointer) HID input report test (optional)\n"
-      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1)\n"
+      "                           (alias: --test-tablet-events)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1)\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
       "  --test-snd-buffer-limits  Run virtio-snd large WASAPI buffer/period stress test (optional)\n"
@@ -7135,7 +7136,7 @@ int wmain(int argc, wchar_t** argv) {
       opt.require_snd = true;
     } else if (arg == L"--test-input-events") {
       opt.test_input_events = true;
-    } else if (arg == L"--test-input-tablet-events") {
+    } else if (arg == L"--test-input-tablet-events" || arg == L"--test-tablet-events") {
       opt.test_input_tablet_events = true;
     } else if (arg == L"--require-snd-capture") {
       opt.require_snd_capture = true;
@@ -7187,7 +7188,9 @@ int wmain(int argc, wchar_t** argv) {
     opt.test_input_events = true;
   }
 
-  if (!opt.test_input_tablet_events && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS")) {
+  if (!opt.test_input_tablet_events &&
+      (EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS") ||
+       EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS"))) {
     opt.test_input_tablet_events = true;
   }
 
