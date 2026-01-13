@@ -433,6 +433,13 @@ impl AerogpuCmdBindShaders {
     pub const SIZE_BYTES: usize = 24;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BindShadersEx {
+    pub gs: AerogpuHandle,
+    pub hs: AerogpuHandle,
+    pub ds: AerogpuHandle,
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetShaderConstantsF {
@@ -1118,6 +1125,20 @@ pub fn decode_cmd_create_shader_dxbc_payload_le(
     packet.decode_create_shader_dxbc_payload_le()
 }
 
+/// Decode BIND_SHADERS and return optional appended `{gs, hs, ds}` handles.
+pub fn decode_cmd_bind_shaders_payload_le(
+    buf: &[u8],
+) -> Result<(AerogpuCmdBindShaders, Option<BindShadersEx>), AerogpuCmdDecodeError> {
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+    let packet = AerogpuCmdPacket {
+        hdr,
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
+    };
+    packet.decode_bind_shaders_payload_le()
+}
+
 /// Decode CREATE_INPUT_LAYOUT and return the blob payload (without padding).
 pub fn decode_cmd_create_input_layout_blob_le(
     buf: &[u8],
@@ -1482,6 +1503,48 @@ impl<'a> AerogpuCmdPacket<'a> {
                 reserved0,
             },
             dxbc_bytes,
+        ))
+    }
+
+    pub fn decode_bind_shaders_payload_le(
+        &self,
+    ) -> Result<(AerogpuCmdBindShaders, Option<BindShadersEx>), AerogpuCmdDecodeError> {
+        if self.opcode != Some(AerogpuCmdOpcode::BindShaders) {
+            return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+                found: self.hdr.opcode,
+                expected: AerogpuCmdOpcode::BindShaders,
+            });
+        }
+        if self.payload.len() < 16 {
+            return Err(AerogpuCmdDecodeError::BufferTooSmall);
+        }
+
+        let vs = u32::from_le_bytes(self.payload[0..4].try_into().unwrap());
+        let ps = u32::from_le_bytes(self.payload[4..8].try_into().unwrap());
+        let cs = u32::from_le_bytes(self.payload[8..12].try_into().unwrap());
+        let reserved0 = u32::from_le_bytes(self.payload[12..16].try_into().unwrap());
+
+        let ex = if self.payload.len() > 16 {
+            // Extended BIND_SHADERS appends `{gs, hs, ds}`.
+            validate_expected_payload_size(28, self.payload)?;
+            Some(BindShadersEx {
+                gs: u32::from_le_bytes(self.payload[16..20].try_into().unwrap()),
+                hs: u32::from_le_bytes(self.payload[20..24].try_into().unwrap()),
+                ds: u32::from_le_bytes(self.payload[24..28].try_into().unwrap()),
+            })
+        } else {
+            None
+        };
+
+        Ok((
+            AerogpuCmdBindShaders {
+                hdr: self.hdr,
+                vs,
+                ps,
+                cs,
+                reserved0,
+            },
+            ex,
         ))
     }
 

@@ -715,6 +715,62 @@ export function decodeCmdCreateShaderDxbcPayloadFromPacket(packet: AerogpuCmdPac
   };
 }
 
+export interface BindShadersEx {
+  gs: AerogpuHandle;
+  hs: AerogpuHandle;
+  ds: AerogpuHandle;
+}
+
+export interface AerogpuCmdBindShadersPayload {
+  vs: AerogpuHandle;
+  ps: AerogpuHandle;
+  cs: AerogpuHandle;
+  reserved0: number;
+  ex?: BindShadersEx;
+}
+
+export function decodeCmdBindShadersPayload(
+  bytes: Uint8Array,
+  packetOffset = 0,
+): AerogpuCmdBindShadersPayload {
+  return decodeCmdBindShadersPayloadFromPacket(decodePacketFromBytes(bytes, packetOffset));
+}
+
+export function decodeCmdBindShadersPayloadFromPacket(packet: AerogpuCmdPacket): AerogpuCmdBindShadersPayload {
+  validatePacketPayloadLen(packet);
+  if (packet.opcode !== AerogpuCmdOpcode.BindShaders) {
+    throw new Error(`Unexpected opcode: 0x${packet.opcode.toString(16)} (expected BIND_SHADERS)`);
+  }
+  if (packet.payload.byteLength < 16) {
+    throw new Error("Buffer too small for BIND_SHADERS payload");
+  }
+
+  const view = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
+  const vs = view.getUint32(0, true);
+  const ps = view.getUint32(4, true);
+  const cs = view.getUint32(8, true);
+  const reserved0 = view.getUint32(12, true);
+
+  if (packet.payload.byteLength <= 16) {
+    return { vs, ps, cs, reserved0 };
+  }
+  if (packet.payload.byteLength < 28) {
+    throw new Error(`BIND_SHADERS packet too small for extended payload (size_bytes=${packet.sizeBytes})`);
+  }
+
+  return {
+    vs,
+    ps,
+    cs,
+    reserved0,
+    ex: {
+      gs: view.getUint32(16, true),
+      hs: view.getUint32(20, true),
+      ds: view.getUint32(24, true),
+    },
+  };
+}
+
 export interface AerogpuCmdCreateInputLayoutBlobPayload {
   inputLayoutHandle: AerogpuHandle;
   blobSizeBytes: number;
