@@ -75,24 +75,25 @@ If you hit a **GPU hang**, **TDR**, or **incorrect rendering** and need to debug
 This produces a small, shareable artifact pair:
 
 - `cmd.bin`: the raw AeroGPU cmd stream for the submission (`cmd_gpa` region).
-- `alloc.bin`: the raw alloc table for the submission (`alloc_table_gpa` region, when present).
+- `cmd.bin.alloc_table.bin`: the raw alloc table for the submission (`alloc_table_gpa` region, when present).
+  - Tip: you can rename this to `alloc.bin` on the host if you prefer a shorter name.
 
 ### 1) Guest (Windows 7): dump the last submission
 
 Run this inside the guest as soon as possible after reproducing:
 
 ```bat
-aerogpu_dbgctl --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
+aerogpu_dbgctl --dump-last-cmd --out C:\cmd.bin
 ```
 
-Then copy `C:\cmd.bin` and `C:\alloc.bin` to the host machine (shared folder, ISO, whatever is convenient).
+Then copy `C:\cmd.bin` (and `C:\cmd.bin.alloc_table.bin` if present) to the host machine (shared folder, ISO, whatever is convenient).
 
 ### 2) Host: decode the submission
 
 From the repo root on the host:
 
 ```bash
-cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc alloc.bin
+cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc cmd.bin.alloc_table.bin
 ```
 
 ### 3) Optional: list opcodes directly (if implemented)
