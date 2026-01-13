@@ -290,3 +290,40 @@ fn jwt_rejects_non_base64url_payload_even_if_signature_matches() {
 
     assert!(verify_hs256_jwt(&token, secret, 0).is_none());
 }
+
+#[test]
+fn session_token_rejects_deeply_nested_json_payload_without_panicking() {
+    let secret = b"unit-test-secret";
+
+    // Stress the JSON parser with very deep nesting. Even with a valid signature, verification
+    // must fail safely (serde_json enforces a recursion limit to avoid stack overflow).
+    let mut payload = String::new();
+    for _ in 0..256 {
+        payload.push('[');
+    }
+    payload.push('0');
+    for _ in 0..256 {
+        payload.push(']');
+    }
+
+    let token = mint_session_token(payload.as_bytes(), secret);
+    assert!(verify_gateway_session_token(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_deeply_nested_json_payload_without_panicking() {
+    let secret = b"unit-test-secret";
+
+    let mut payload = String::new();
+    for _ in 0..256 {
+        payload.push('[');
+    }
+    payload.push('0');
+    for _ in 0..256 {
+        payload.push(']');
+    }
+
+    let header = br#"{"alg":"HS256","typ":"JWT"}"#;
+    let token = mint_hs256_jwt(header, payload.as_bytes(), secret);
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
+}
