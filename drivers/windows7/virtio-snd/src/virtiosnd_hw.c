@@ -1300,6 +1300,12 @@ NTSTATUS VirtIoSndStartHardware(
 
             if (!vectorsOk || (fallbackToVector0 && Dx->MsixAllOnVector0 && !NT_SUCCESS(status))) {
                 VIRTIOSND_TRACE_ERROR("MSI/MSI-X: vector programming failed, falling back to INTx\n");
+                /*
+                 * Clear device-side MSI-X routing before disconnecting the OS
+                 * interrupt objects so the device stops targeting message vectors
+                 * that no longer have an ISR connected.
+                 */
+                VirtIoSndInterruptDisableDeviceVectors(Dx);
                 VirtIoSndInterruptDisconnect(Dx);
             }
         }
