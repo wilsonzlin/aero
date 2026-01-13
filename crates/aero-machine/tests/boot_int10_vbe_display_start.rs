@@ -1,4 +1,4 @@
-use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
+use aero_gpu_vga::{DisplayOutput, PortIO, SVGA_LFB_BASE};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -104,8 +104,19 @@ fn boot_int10_vbe_display_start() {
     let vga = m.vga().expect("machine should have a VGA device");
     assert_eq!(vga.borrow().get_resolution(), (1024, 768));
 
-    vga.borrow_mut().present();
-    // The guest wrote red at (0,0) and green at (1,0), then panned to x=1.
-    // The top-left visible pixel should therefore be green.
-    assert_eq!(vga.borrow().get_framebuffer()[0], 0xFF00_FF00);
+    {
+        // Verify the BIOS VBE display-start state is mirrored into the Bochs VBE_DISPI x/y offset
+        // registers on the VGA device.
+        let mut vga = vga.borrow_mut();
+        vga.port_write(0x01CE, 2, 0x0008);
+        let x_off = vga.port_read(0x01CF, 2) as u16;
+        vga.port_write(0x01CE, 2, 0x0009);
+        let y_off = vga.port_read(0x01CF, 2) as u16;
+        assert_eq!((x_off, y_off), (1, 0));
+
+        vga.present();
+        // The guest wrote red at (0,0) and green at (1,0), then panned to x=1.
+        // The top-left visible pixel should therefore be green.
+        assert_eq!(vga.get_framebuffer()[0], 0xFF00_FF00);
+    }
 }
