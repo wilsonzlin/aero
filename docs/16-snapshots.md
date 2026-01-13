@@ -226,7 +226,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `CPU_INTERNAL` | `9` | `device.9` | Non-architectural CPU bookkeeping (pending IRQs, etc.) |
 | `BIOS` | `10` | `device.10` | Firmware/BIOS runtime state |
 | `MEMORY` | `11` | `device.11` | Memory-bus glue state (A20, ROM windows, etc.) |
-| `USB` | `12` | `usb.uhci` | Browser USB stack (UHCI controller + runtime/bridge state) |
+| `USB` | `12` | `usb.uhci` | Browser USB stack (USB controller state; currently UHCI + optional EHCI blobs) |
 | `I8042` | `13` | `input.i8042` | Legacy i8042 PS/2 controller state |
 | `PCI_CFG` | `14` | `device.14` | PCI config ports + bus state (Rust: `PciConfigPorts`, inner `PCPT`; web: JS PCI bus snapshot, inner `PCIB`) |
 | `PCI_INTX_ROUTER` | `15` | `device.15` | PCI INTx routing state (`PciIntxRouter`, inner `INTX`) |
@@ -272,13 +272,21 @@ Restore behavior: when restoring the `DSKC` wrapper, snapshot consumers should a
 
 #### USB (`DeviceId::USB`)
 
-For the browser USB stack (guest-visible UHCI controller + runtime/bridge state), store a single device entry:
+For the browser USB stack (guest-visible USB controller(s) + runtime/bridge state), store a single device entry:
 
 - Outer `DeviceState.id = DeviceId::USB`
 - `DeviceState.data = aero-io-snapshot` TLV blob produced by the USB stack.
   - Inner `DEVICE_ID` examples: `UHRT` for `UhciRuntime`, `UHCB` for `UhciControllerBridge`, `WUHB` for `WebUsbUhciBridge`.
   - `aero_machine::Machine` snapshots may store `DeviceId::USB` as a small adapter-level wrapper TLV (`USBC`) that nests the guest-visible UHCI PCI device snapshot (`UHCP`) plus host-managed timing accumulator state used for deterministic 1ms ticking.
 - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)` per the `aero_snapshot::io_snapshot_bridge` convention
+
+Note (current browser runtime wiring):
+
+- The outer web snapshot `kind` for `DeviceId::USB` remains `usb.uhci` for backward compatibility
+  (see `web/src/workers/vm_snapshot_wasm.ts`).
+- Newer snapshots may encode multiple controller blobs inside a single `"AUSB"` container so UHCI
+  state can coexist with EHCI state:
+  - `web/src/workers/usb_snapshot_container.ts` (`USB_SNAPSHOT_TAG_UHCI`, `USB_SNAPSHOT_TAG_EHCI`)
 
 Restore note: USB snapshots capture guest-visible controller/runtime state only. Any host-side "action" state (e.g. in-flight WebUSB/WebHID requests) should be treated as reset on restore; the host integration is responsible for resuming action execution post-restore.
 
