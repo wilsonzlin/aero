@@ -67,6 +67,11 @@ pub enum UsbSpeed {
     Full,
     /// USB 1.1 low-speed (1.5Mbps).
     Low,
+    /// USB 2.0 high-speed (480Mbps).
+    ///
+    /// This is primarily used for passthrough/WebUSB devices and xHCI modelling; UHCI itself is
+    /// USB 1.1 and cannot operate at high speed.
+    High,
 }
 
 /// USB control transfer SETUP packet.
