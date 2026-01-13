@@ -23,7 +23,9 @@ mod error_event;
 pub mod guest_memory;
 mod present;
 mod shared_surface;
-#[cfg(feature = "diff-engine")]
+// The diff engine is feature-gated for production use, but we still compile it for unit tests so
+// it doesn't silently bitrot behind the flag.
+#[cfg(any(feature = "diff-engine", test))]
 mod tile_diff;
 
 pub mod frame_source;
