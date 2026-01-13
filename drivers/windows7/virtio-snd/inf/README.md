@@ -45,8 +45,8 @@ The **contract v1** and **transitional/QEMU** virtio-snd INFs create per-device 
   - `0` (default): use virtio backend
   - `1`: force the silent null backend (also allows bring-up without a working virtio transport)
 - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` (`REG_DWORD`)
-  - `0` (default): INTx-strict (fail START_DEVICE if INTx is unavailable)
-  - `1`: allow polling-only mode when INTx cannot be discovered/connected
+  - `0` (default): interrupt-driven (fail `START_DEVICE` if no usable interrupt resource can be discovered/connected — neither MSI/MSI-X nor INTx)
+  - `1`: allow polling-only mode when no usable interrupt can be discovered/connected
 
 The legacy **I/O-port** bring-up package (`aero-virtio-snd-ioport.inf` / `virtiosnd_ioport.sys`) currently creates/uses
 `ForceNullBackend` only.

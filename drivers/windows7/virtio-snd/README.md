@@ -22,11 +22,12 @@ On Windows 7, message-signaled interrupts are typically enabled through INF regi
 
 ```inf
 [AeroVirtioSnd_Install.NT.HW]
-AddReg = AeroVirtioSnd.Interrupts.AddReg
+AddReg = AeroVirtioSnd_InterruptManagement_AddReg
 
-[AeroVirtioSnd.Interrupts.AddReg]
+[AeroVirtioSnd_InterruptManagement_AddReg]
+HKR, "Interrupt Management",,0x00000010
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
-; Optional: request up to N messages (Windows may grant fewer).
+; virtio-snd needs config + 4 queues = 5 vectors; request a little extra for future growth.
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
 ```
 
@@ -318,8 +319,8 @@ For diagnostics / bring-up, the driver exposes per-device registry toggles (**de
   - Default: `0` (use virtio backend; bring-up failures surface as Code 10)
   - Set to `1` to force the silent “null” backend, allowing the PortCls/WaveRT stack to start even if virtio transport bring-up fails.
 - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` (`REG_DWORD`)
-  - Default: `0` (INTx-strict per Aero contract v1; missing/unsupported INTx fails START_DEVICE)
-  - Set to `1` to allow the driver to start when INTx cannot be discovered/connected (for example MSI-only environments). In this mode the driver relies on periodic used-ring polling (driven by the WaveRT period timer DPC).
+  - Default: `0` (interrupt-driven; fail `START_DEVICE` if no usable interrupt resource can be discovered/connected — neither MSI/MSI-X nor INTx)
+  - Set to `1` to allow the driver to start even when no usable interrupt can be wired up. In this mode the driver relies on periodic used-ring polling (driven by the WaveRT period timer DPC).
 
 Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
 
