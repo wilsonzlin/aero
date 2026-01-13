@@ -336,6 +336,61 @@ actual  [{start}..{actual_end}): {}",
     );
 }
 
+fn fmt_ascii(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    for &b in bytes {
+        match b {
+            b' '..=b'~' => out.push(b as char),
+            _ => write!(&mut out, "\\x{b:02x}").expect("write! to String"),
+        }
+    }
+    out
+}
+
+fn assert_ascii_eq(ctx: &str, expected: &str, actual: &str) {
+    if expected == actual {
+        return;
+    }
+
+    let expected = expected.as_bytes();
+    let actual = actual.as_bytes();
+
+    let min = expected.len().min(actual.len());
+    let mut i = 0;
+    while i < min && expected[i] == actual[i] {
+        i += 1;
+    }
+
+    if i == min && expected.len() != actual.len() {
+        panic!(
+            "{ctx}: length mismatch after {} matching bytes (expected {} bytes, got {} bytes)",
+            i,
+            expected.len(),
+            actual.len()
+        );
+    }
+
+    let exp = expected[i];
+    let act = actual[i];
+
+    let window = 32usize;
+    let start = i.saturating_sub(window);
+    let end = (i + window).min(expected.len().max(actual.len()));
+
+    let expected_end = expected.len().min(end);
+    let actual_end = actual.len().min(end);
+
+    panic!(
+        "{ctx}: first mismatch at byte {i} (expected 0x{exp:02x}, got 0x{act:02x})\n\
+expected[{start}..{expected_end}): {}\n\
+actual  [{start}..{actual_end}): {}",
+        fmt_ascii(&expected[start..expected_end]),
+        fmt_ascii(&actual[start..actual_end]),
+    );
+}
+
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> T {
     let raw = fs::read_to_string(path).unwrap_or_else(|err| panic!("read {path:?}: {err}"));
     serde_json::from_str(&raw).unwrap_or_else(|err| panic!("parse {path:?}: {err}"))
@@ -481,7 +536,7 @@ fn auth_token_vectors_do_not_drift() {
             assert_eq!(now_ms, conf.aero_session.now_ms, "{ctx}: nowMs drift");
         }
 
-        assert_eq!(&proto_v.token, &conf_token.token, "{ctx}: token drift");
+        assert_ascii_eq(&format!("{ctx}: token drift"), &conf_token.token, &proto_v.token);
 
         if name == "valid" {
             assert_eq!(
@@ -532,7 +587,7 @@ fn auth_token_vectors_do_not_drift() {
             assert_eq!(now_sec, conf.aero_udp_relay_jwt_hs256.now_unix, "{ctx}: nowUnix drift");
         }
 
-        assert_eq!(&proto_v.token, &conf_token.token, "{ctx}: token drift");
+        assert_ascii_eq(&format!("{ctx}: token drift"), &conf_token.token, &proto_v.token);
 
         if name == "valid" {
             let claims = &conf_token.claims;
