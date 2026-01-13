@@ -189,8 +189,6 @@ VOID VirtioInputEvtIoDeviceControl(
     NTSTATUS status = STATUS_INVALID_DEVICE_REQUEST;
     size_t info = 0;
 
-    UNREFERENCED_PARAMETER(InputBufferLength);
-
     switch (IoControlCode) {
     case IOCTL_VIOINPUT_QUERY_COUNTERS: {
         PUCHAR outBuf;
@@ -289,6 +287,46 @@ VOID VirtioInputEvtIoDeviceControl(
         info = 0;
         break;
     }
+#if VIOINPUT_DIAGNOSTICS
+    case IOCTL_VIOINPUT_GET_LOG_MASK: {
+        ULONG* outMask;
+        size_t outBytes;
+
+        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*outMask), (PVOID *)&outMask, &outBytes);
+        if (!NT_SUCCESS(status)) {
+            break;
+        }
+
+        if (OutputBufferLength < sizeof(*outMask) || outBytes < sizeof(*outMask)) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+
+        *outMask = VioInputLogGetMask();
+        status = STATUS_SUCCESS;
+        info = sizeof(*outMask);
+        break;
+    }
+    case IOCTL_VIOINPUT_SET_LOG_MASK: {
+        ULONG* inMask;
+        size_t inBytes;
+
+        status = WdfRequestRetrieveInputBuffer(Request, sizeof(*inMask), (PVOID *)&inMask, &inBytes);
+        if (!NT_SUCCESS(status)) {
+            break;
+        }
+
+        if (InputBufferLength < sizeof(*inMask) || inBytes < sizeof(*inMask)) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+
+        (VOID)VioInputLogSetMask(*inMask);
+        status = STATUS_SUCCESS;
+        info = 0;
+        break;
+    }
+#endif
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
         info = 0;

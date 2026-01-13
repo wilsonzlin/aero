@@ -87,6 +87,16 @@ BOOLEAN VioInputLogEnabled(_In_ ULONG Mask)
     return (enabled & Mask) != 0;
 }
 
+ULONG VioInputLogGetMask(VOID)
+{
+    return (ULONG)InterlockedCompareExchange((volatile LONG*)&g_VioInputDiagnosticsMask, 0, 0);
+}
+
+ULONG VioInputLogSetMask(_In_ ULONG Mask)
+{
+    return (ULONG)InterlockedExchange((volatile LONG*)&g_VioInputDiagnosticsMask, (LONG)Mask);
+}
+
 VOID VioInputLogPrint(
     _In_ ULONG Mask,
     _In_z_ PCSTR Function,

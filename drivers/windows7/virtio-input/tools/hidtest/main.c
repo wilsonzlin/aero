@@ -141,6 +141,16 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #endif
 
+#ifndef IOCTL_VIOINPUT_GET_LOG_MASK
+#define IOCTL_VIOINPUT_GET_LOG_MASK \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_READ_ACCESS)
+#endif
+
+#ifndef IOCTL_VIOINPUT_SET_LOG_MASK
+#define IOCTL_VIOINPUT_SET_LOG_MASK \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_WRITE_ACCESS)
+#endif
+
 #define VIOINPUT_COUNTERS_VERSION 2
 #define VIOINPUT_STATE_VERSION 1
 
@@ -244,6 +254,8 @@ typedef struct OPTIONS {
     int have_index;
     int have_duration;
     int have_count;
+    int get_log_mask;
+    int have_set_log_mask;
     int have_led_mask;
     int led_via_hidd;
     int have_led_ioctl_set_output;
@@ -274,6 +286,7 @@ typedef struct OPTIONS {
     DWORD index;
     DWORD duration_secs;
     DWORD count;
+    DWORD set_log_mask;
     BYTE led_mask;
     BYTE led_ioctl_set_output_mask;
 } OPTIONS;
@@ -397,6 +410,23 @@ static int parse_u16_hex(const wchar_t *s, USHORT *out)
         return 0;
     }
     *out = (USHORT)v;
+    return 1;
+}
+
+static int parse_u32_hex(const wchar_t *s, DWORD *out)
+{
+    wchar_t *end = NULL;
+    unsigned long v;
+
+    if (s == NULL || out == NULL) {
+        return 0;
+    }
+
+    v = wcstoul(s, &end, 0);
+    if (end == s || *end != L'\0' || v > 0xFFFFFFFFUL) {
+        return 0;
+    }
+    *out = (DWORD)v;
     return 1;
 }
 
@@ -1049,6 +1079,7 @@ static void print_usage(void)
     wprintf(L"             [--counters]\n");
     wprintf(L"             [--counters-json]\n");
     wprintf(L"             [--reset-counters]\n");
+    wprintf(L"             [--get-log-mask | --set-log-mask 0xMASK]\n");
     wprintf(L"             [--led-ioctl-set-output 0x07]\n");
     wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report |\n");
     wprintf(L"              --ioctl-bad-read-xfer-packet | --ioctl-bad-read-report]\n");
@@ -1084,6 +1115,8 @@ static void print_usage(void)
     wprintf(L"  --counters-json Query and print virtio-input driver diagnostic counters as JSON\n");
     wprintf(L"  --reset-counters\n");
     wprintf(L"                 Reset virtio-input driver diagnostic counters (IOCTL_VIOINPUT_RESET_COUNTERS)\n");
+    wprintf(L"  --get-log-mask  Query the current Aero virtio-input diagnostics mask (DBG driver builds only)\n");
+    wprintf(L"  --set-log-mask  Set the current Aero virtio-input diagnostics mask (DBG driver builds only)\n");
     wprintf(L"  --ioctl-bad-xfer-packet\n");
     wprintf(L"                 Send IOCTL_HID_WRITE_REPORT with an invalid HID_XFER_PACKET pointer\n");
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
@@ -3071,6 +3104,49 @@ static int ioctl_get_input_report(const SELECTED_DEVICE *dev)
     return 1;
 }
 
+static int vioinput_get_log_mask(const SELECTED_DEVICE *dev, DWORD *mask_out)
+{
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE || mask_out == NULL) {
+        return 0;
+    }
+
+    *mask_out = 0;
+    ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_GET_LOG_MASK, NULL, 0, mask_out, (DWORD)sizeof(*mask_out), &bytes,
+                         NULL);
+    if (!ok || bytes < sizeof(*mask_out)) {
+        print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_GET_LOG_MASK)");
+        return 0;
+    }
+
+    return 1;
+}
+
+static int vioinput_set_log_mask(const SELECTED_DEVICE *dev, DWORD mask)
+{
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+
+    if ((dev->desired_access & GENERIC_WRITE) == 0) {
+        wprintf(L"Device was not opened with GENERIC_WRITE; cannot set log mask\n");
+        return 0;
+    }
+
+    ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_SET_LOG_MASK, &mask, (DWORD)sizeof(mask), NULL, 0, &bytes, NULL);
+    if (!ok) {
+        print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_SET_LOG_MASK)");
+        return 0;
+    }
+
+    return 1;
+}
+
 static int ioctl_bad_write_report(const SELECTED_DEVICE *dev)
 {
     typedef struct HID_XFER_PACKET_MIN {
@@ -3509,6 +3585,23 @@ int wmain(int argc, wchar_t **argv)
 
         if (wcscmp(argv[i], L"--reset-counters") == 0) {
             opt.reset_counters = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--get-log-mask") == 0) {
+            opt.get_log_mask = 1;
+            continue;
+        }
+
+        if ((wcscmp(argv[i], L"--set-log-mask") == 0) && i + 1 < argc) {
+            DWORD tmp;
+            if (!parse_u32_hex(argv[i + 1], &tmp)) {
+                wprintf(L"Invalid log mask: %ls\n", argv[i + 1]);
+                return 2;
+            }
+            opt.have_set_log_mask = 1;
+            opt.set_log_mask = tmp;
+            i++;
             continue;
         }
 
@@ -3960,6 +4053,25 @@ int wmain(int argc, wchar_t **argv)
         }
 
         print_vioinput_state(&st, bytes);
+        free_selected_device(&dev);
+        return 0;
+    }
+
+    if (opt.have_set_log_mask) {
+        DWORD mask = opt.set_log_mask;
+        wprintf(L"\nSetting virtio-input DiagnosticsMask to 0x%08lX...\n", mask);
+        if (!vioinput_set_log_mask(&dev, mask)) {
+            free_selected_device(&dev);
+            return 1;
+        }
+    }
+    if (opt.get_log_mask || opt.have_set_log_mask) {
+        DWORD mask = 0;
+        if (!vioinput_get_log_mask(&dev, &mask)) {
+            free_selected_device(&dev);
+            return 1;
+        }
+        wprintf(L"virtio-input DiagnosticsMask: 0x%08lX\n", mask);
         free_selected_device(&dev);
         return 0;
     }
