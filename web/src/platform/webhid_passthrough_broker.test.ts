@@ -176,6 +176,81 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     }
   });
 
+  it("zero-pads short inputreport payloads to the expected report size before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [
+            {
+              reportId: 1,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      device.dispatchInputReport(1, new DataView(new Uint8Array([9, 8]).buffer));
+
+      const input = target.posted.find((p) => p.message.type === "hid:inputReport")!.message as any;
+      expect(input.deviceId).toBe(deviceId);
+      expect(input.reportId).toBe(1);
+      expect(Array.from(new Uint8Array(input.data as ArrayBuffer))).toEqual([9, 8, 0, 0]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("hard-caps unknown inputreport payload sizes before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3], 0);
+      device.dispatchInputReport(99, new DataView(huge.buffer));
+
+      const input = target.posted.find((p) => p.message.type === "hid:inputReport")!.message as any;
+      expect(input.deviceId).toBe(deviceId);
+      expect(input.reportId).toBe(99);
+      const bytes = new Uint8Array(input.data as ArrayBuffer);
+      expect(bytes.byteLength).toBe(64);
+      expect(Array.from(bytes.slice(0, 3))).toEqual([1, 2, 3]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("handles hid:sendReport from the worker and detaches cleanly", async () => {
     const device = new FakeHidDevice();
     const target = new TestTarget();

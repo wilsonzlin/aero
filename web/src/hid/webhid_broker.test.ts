@@ -211,6 +211,87 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("zero-pads short inputreport payloads to the expected report size before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      // One input report (ID 1) with 4 bytes of payload (8*4 bits).
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [
+            {
+              reportId: 1,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+      await broker.attachDevice(device as unknown as HIDDevice);
+
+      device.dispatchInputReport(1, Uint8Array.of(9, 8));
+
+      const input = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.inputReport") as
+        | { msg: HidInputReportMessage; transfer?: Transferable[] }
+        | undefined;
+      expect(input).toBeTruthy();
+      expect(input!.msg.reportId).toBe(1);
+      expect(Array.from(input!.msg.data)).toEqual([9, 8, 0, 0]);
+      expect(input!.transfer?.[0]).toBe(input!.msg.data.buffer);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("hard-caps unknown inputreport payload sizes before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      // No input report metadata -> reportId will be treated as unknown.
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+      await broker.attachDevice(device as unknown as HIDDevice);
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3], 0);
+      device.dispatchInputReport(99, huge);
+
+      const input = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.inputReport") as
+        | { msg: HidInputReportMessage; transfer?: Transferable[] }
+        | undefined;
+      expect(input).toBeTruthy();
+      expect(input!.msg.reportId).toBe(99);
+      expect(input!.msg.data.byteLength).toBe(64);
+      expect(Array.from(input!.msg.data.slice(0, 3))).toEqual([1, 2, 3]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("clamps oversized inputreport payloads before writing to the SharedArrayBuffer input report ring", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
