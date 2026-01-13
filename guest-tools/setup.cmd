@@ -262,9 +262,14 @@ popd >nul 2>&1
 exit /b %RC%
 
 :_selftest_inf_addservice
-rem Usage: setup.cmd /_selftest_inf_addservice <inf> <service>
-rem Tip: to exercise UTF-16-without-BOM handling, write the INF as UTF-16LE or UTF-16BE
-rem without a BOM (e.g. in Python: Path('x.inf').write_bytes('...'.encode('utf-16-le'))).
+rem Usage:
+rem   setup.cmd /_selftest_inf_addservice <inf> <service>
+rem   setup.cmd /_selftest_inf_addservice /bomless_utf16le <service>
+rem   setup.cmd /_selftest_inf_addservice /bomless_utf16be <service>
+rem
+rem Tip: to exercise UTF-16-without-BOM handling with an arbitrary fixture INF, write the
+rem INF as UTF-16LE or UTF-16BE without a BOM (e.g. in Python:
+rem   Path('x.inf').write_bytes('...'.encode('utf-16-le'))
 if "%~2"=="" (
   echo ERROR: Missing INF path.
   exit /b 2
@@ -273,8 +278,41 @@ if "%~3"=="" (
   echo ERROR: Missing service name.
   exit /b 2
 )
+if /i "%~2"=="/bomless_utf16le" (
+  call :_selftest_inf_addservice_generated "le" "%~3"
+  exit /b %ERRORLEVEL%
+)
+if /i "%~2"=="/bomless_utf16be" (
+  call :_selftest_inf_addservice_generated "be" "%~3"
+  exit /b %ERRORLEVEL%
+)
 call :inf_contains_addservice "%~2" "%~3"
 exit /b %ERRORLEVEL%
+
+:_selftest_inf_addservice_generated
+setlocal EnableDelayedExpansion
+set "ENC=%~1"
+set "SVC=%~2"
+set "TMP_INF=%TEMP%\aerogt_bomless_inf_%RANDOM%.inf"
+
+set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PWSH%" set "PWSH=powershell.exe"
+
+set "AEROGT_SELFTEST_INF=%TMP_INF%"
+set "AEROGT_SELFTEST_SVC=%SVC%"
+set "AEROGT_SELFTEST_ENC=%ENC%"
+
+rem Generate a minimal INF fixture encoded as UTF-16LE/BE without a BOM.
+"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$path=$env:AEROGT_SELFTEST_INF; $svc=$env:AEROGT_SELFTEST_SVC; $enc=$env:AEROGT_SELFTEST_ENC; $crlf=[char]13+[char]10; $q=[char]34; $lines=@('; UTF-16 INF fixture (no BOM)','[DefaultInstall.NT]',('AddService = ' + $q + $svc + $q + ', 0x00000002, Service_Inst')); $text=[string]::Join($crlf,$lines)+$crlf; $e=if($enc -eq 'be'){[System.Text.Encoding]::BigEndianUnicode}else{[System.Text.Encoding]::Unicode}; [System.IO.File]::WriteAllBytes($path,$e.GetBytes($text)); exit 0" >nul 2>&1
+if errorlevel 1 (
+  del /q "%TMP_INF%" >nul 2>&1
+  endlocal & exit /b 1
+)
+
+call :inf_contains_addservice "%TMP_INF%" "%SVC%"
+set "RC=%ERRORLEVEL%"
+del /q "%TMP_INF%" >nul 2>&1
+endlocal & exit /b %RC%
 
 :_selftest_validate_storage_service_infs
 rem Usage: setup.cmd /_selftest_validate_storage_service_infs <driver_dir> <service>
