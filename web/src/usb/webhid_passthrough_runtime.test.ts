@@ -347,13 +347,14 @@ describe("WebHidPassthroughRuntime", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(device.sendReport).toHaveBeenCalledTimes(1);
-    expect(device.sendReport.mock.calls[0]![0]).toBe(1);
+    const sendReportCalls = device.sendReport.mock.calls as unknown as Array<[number, Uint8Array<ArrayBufferLike>]>;
+    expect(sendReportCalls[0]![0]).toBe(1);
 
     first.resolve(undefined);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(device.sendReport).toHaveBeenCalledTimes(2);
-    expect(device.sendReport.mock.calls[1]![0]).toBe(2);
+    expect(sendReportCalls[1]![0]).toBe(2);
   });
 
   it("cleans up listeners and frees wasm bridge on detach", async () => {

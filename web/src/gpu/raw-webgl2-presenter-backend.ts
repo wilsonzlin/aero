@@ -8,6 +8,12 @@ type DirtyRect = { x: number; y: number; w: number; h: number };
 
 const DEFAULT_CLEAR_COLOR: [number, number, number, number] = [0, 0, 0, 1];
 
+function srgbEncodeChannel(x: number): number {
+  const v = Math.min(1, Math.max(0, x));
+  if (v <= 0.0031308) return v * 12.92;
+  return 1.055 * Math.pow(v, 1.0 / 2.4) - 0.055;
+}
+
 function computeViewport(
   canvasWidthPx: number,
   canvasHeightPx: number,
@@ -573,7 +579,9 @@ export class RawWebGl2Presenter implements Presenter {
       const [r, g, b] = this.opts.clearColor ?? DEFAULT_CLEAR_COLOR;
       gl.viewport(0, 0, canvasW, canvasH);
       // Presentation alpha policy: output is opaque.
-      gl.clearColor(r, g, b, 1);
+      // The blit shader performs manual sRGB encoding (and fixed-function framebuffer sRGB is
+      // disabled), so encode the letterbox clear color too so it appears consistent.
+      gl.clearColor(srgbEncodeChannel(r), srgbEncodeChannel(g), srgbEncodeChannel(b), 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
 
