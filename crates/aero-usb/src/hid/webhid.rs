@@ -282,6 +282,22 @@ fn convert_item(
         item.usages.clone()
     };
 
+    let (string_minimum, string_maximum) = if item.string_minimum == 0 && item.string_maximum == 0
+    {
+        (None, None)
+    } else {
+        (Some(item.string_minimum), Some(item.string_maximum))
+    };
+    let (designator_minimum, designator_maximum) =
+        if item.designator_minimum == 0 && item.designator_maximum == 0 {
+            (None, None)
+        } else {
+            (
+                Some(item.designator_minimum),
+                Some(item.designator_maximum),
+            )
+        };
+
     Ok(report_descriptor::HidReportItem {
         is_array: item.is_array,
         is_absolute: item.is_absolute,
@@ -306,6 +322,12 @@ fn convert_item(
         report_count: item.report_count,
         usage_page: item.usage_page,
         usages,
+        strings: item.strings.clone(),
+        string_minimum,
+        string_maximum,
+        designators: item.designators.clone(),
+        designator_minimum,
+        designator_maximum,
     })
 }
 

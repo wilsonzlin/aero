@@ -59,6 +59,18 @@ pub struct HidReportItem {
     pub report_count: u32,
     pub usage_page: u32,
     pub usages: Vec<u32>,
+    #[serde(default)]
+    pub strings: Vec<u32>,
+    #[serde(default)]
+    pub string_minimum: Option<u32>,
+    #[serde(default)]
+    pub string_maximum: Option<u32>,
+    #[serde(default)]
+    pub designators: Vec<u32>,
+    #[serde(default)]
+    pub designator_minimum: Option<u32>,
+    #[serde(default)]
+    pub designator_maximum: Option<u32>,
 }
 
 impl HidReportItem {
@@ -126,6 +138,12 @@ pub enum HidDescriptorError {
     MultipleUsagePages { existing: u32, new: u32 },
     #[error("usage range is incomplete (must have both Usage Minimum and Usage Maximum)")]
     IncompleteUsageRange,
+    #[error("string range is incomplete (must have both String Minimum and String Maximum)")]
+    IncompleteStringRange,
+    #[error(
+        "designator range is incomplete (must have both Designator Minimum and Designator Maximum)"
+    )]
+    IncompleteDesignatorRange,
     #[error("report id {report_id} is out of range (must be <= 255)")]
     InvalidReportId { report_id: u32 },
     #[error("unitExponent {unit_exponent} is out of range (must be -8..=7)")]
@@ -524,6 +542,12 @@ struct LocalState {
     usages: Vec<u32>,
     usage_minimum: Option<u32>,
     usage_maximum: Option<u32>,
+    strings: Vec<u32>,
+    string_minimum: Option<u32>,
+    string_maximum: Option<u32>,
+    designators: Vec<u32>,
+    designator_minimum: Option<u32>,
+    designator_maximum: Option<u32>,
 }
 
 impl LocalState {
@@ -532,6 +556,12 @@ impl LocalState {
         self.usages.clear();
         self.usage_minimum = None;
         self.usage_maximum = None;
+        self.strings.clear();
+        self.string_minimum = None;
+        self.string_maximum = None;
+        self.designators.clear();
+        self.designator_minimum = None;
+        self.designator_maximum = None;
     }
 
     fn set_usage_page_override(&mut self, page: u32) -> Result<(), HidDescriptorError> {
@@ -705,6 +735,19 @@ pub fn parse_report_descriptor(bytes: &[u8]) -> Result<Vec<HidCollectionInfo>, H
                             _ => return Err(HidDescriptorError::IncompleteUsageRange),
                         };
 
+                        let (string_minimum, string_maximum) =
+                            match (local.string_minimum, local.string_maximum) {
+                                (Some(min), Some(max)) => (Some(min), Some(max)),
+                                (None, None) => (None, None),
+                                _ => return Err(HidDescriptorError::IncompleteStringRange),
+                            };
+                        let (designator_minimum, designator_maximum) =
+                            match (local.designator_minimum, local.designator_maximum) {
+                                (Some(min), Some(max)) => (Some(min), Some(max)),
+                                (None, None) => (None, None),
+                                _ => return Err(HidDescriptorError::IncompleteDesignatorRange),
+                            };
+
                         let item = HidReportItem {
                             is_array,
                             is_absolute,
@@ -726,6 +769,12 @@ pub fn parse_report_descriptor(bytes: &[u8]) -> Result<Vec<HidCollectionInfo>, H
                             report_count: global.report_count,
                             usage_page,
                             usages,
+                            strings: local.strings.clone(),
+                            string_minimum,
+                            string_maximum,
+                            designators: local.designators.clone(),
+                            designator_minimum,
+                            designator_maximum,
                         };
 
                         let current = collection_stack
@@ -851,6 +900,30 @@ pub fn parse_report_descriptor(bytes: &[u8]) -> Result<Vec<HidCollectionInfo>, H
                     2 => {
                         let usage = parse_local_usage(data, global.usage_page, &mut local)?;
                         local.usage_maximum = Some(usage);
+                    }
+                    // Designator Index
+                    3 | 10 => {
+                        local.designators.push(parse_unsigned(data));
+                    }
+                    // Designator Minimum
+                    4 | 11 => {
+                        local.designator_minimum = Some(parse_unsigned(data));
+                    }
+                    // Designator Maximum
+                    5 | 12 => {
+                        local.designator_maximum = Some(parse_unsigned(data));
+                    }
+                    // String Index
+                    7 => {
+                        local.strings.push(parse_unsigned(data));
+                    }
+                    // String Minimum
+                    8 => {
+                        local.string_minimum = Some(parse_unsigned(data));
+                    }
+                    // String Maximum
+                    9 => {
+                        local.string_maximum = Some(parse_unsigned(data));
                     }
                     _ => {
                         return Err(HidDescriptorError::UnsupportedItem { item_type, tag });
@@ -1008,6 +1081,32 @@ fn synthesize_report(
             for &usage in &item.usages {
                 emit_unsigned(out, ItemType::Local, 0, usage)?;
             }
+        }
+
+        match (item.string_minimum, item.string_maximum) {
+            (Some(min), Some(max)) => {
+                emit_unsigned(out, ItemType::Local, 8, min)?;
+                emit_unsigned(out, ItemType::Local, 9, max)?;
+            }
+            (None, None) => {
+                for &string in &item.strings {
+                    emit_unsigned(out, ItemType::Local, 7, string)?;
+                }
+            }
+            _ => return Err(HidDescriptorError::IncompleteStringRange),
+        }
+
+        match (item.designator_minimum, item.designator_maximum) {
+            (Some(min), Some(max)) => {
+                emit_unsigned(out, ItemType::Local, 4, min)?;
+                emit_unsigned(out, ItemType::Local, 5, max)?;
+            }
+            (None, None) => {
+                for &designator in &item.designators {
+                    emit_unsigned(out, ItemType::Local, 3, designator)?;
+                }
+            }
+            _ => return Err(HidDescriptorError::IncompleteDesignatorRange),
         }
 
         let mut flags: u16 = 0;
@@ -1334,6 +1433,55 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_preserves_string_and_designator_locals() {
+        // Descriptor is encoded in the same deterministic order used by the synthesizer so we can
+        // assert byte-for-byte identity after parse -> synth.
+        let desc = [
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x00, // Usage (Undefined)
+            0xA1, 0x01, // Collection (Application)
+            // Item 1: explicit String/Designator indices.
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x15, 0x00, // Logical Minimum (0)
+            0x26, 0xFF, 0x00, // Logical Maximum (255)
+            0x35, 0x00, // Physical Minimum (0)
+            0x45, 0x00, // Physical Maximum (0)
+            0x55, 0x00, // Unit Exponent (0)
+            0x65, 0x00, // Unit (None)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x01, // Report Count (1)
+            0x09, 0x00, // Usage (Undefined)
+            0x79, 0x01, // String Index (1)
+            0x39, 0x02, // Designator Index (2)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            // Item 2: String/Designator ranges.
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x15, 0x00, // Logical Minimum (0)
+            0x26, 0xFF, 0x00, // Logical Maximum (255)
+            0x35, 0x00, // Physical Minimum (0)
+            0x45, 0x00, // Physical Maximum (0)
+            0x55, 0x00, // Unit Exponent (0)
+            0x65, 0x00, // Unit (None)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x01, // Report Count (1)
+            0x19, 0x01, // Usage Minimum (1)
+            0x29, 0x03, // Usage Maximum (3)
+            0x89, 0x10, // String Minimum (0x10)
+            0x99, 0x12, // String Maximum (0x12)
+            0x49, 0x20, // Designator Minimum (0x20)
+            0x59, 0x22, // Designator Maximum (0x22)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            0xC0, // End Collection
+        ];
+
+        let parsed = parse_report_descriptor(&desc).unwrap();
+        let synthesized = synthesize_report_descriptor(&parsed).unwrap();
+        assert_eq!(synthesized, desc);
+        let reparsed = parse_report_descriptor(&synthesized).unwrap();
+        assert_eq!(parsed, reparsed);
+    }
+
+    #[test]
     fn synth_includes_report_id() {
         let collections = vec![HidCollectionInfo {
             usage_page: 0x01,
@@ -1362,6 +1510,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x07,
                     usages: vec![0xe0],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -1407,6 +1561,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0xff00,
                     usages: vec![0x1234],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -1456,6 +1616,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![0x30],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -1501,6 +1667,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -1571,6 +1743,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -1637,6 +1815,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![0x1_0000],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -1676,6 +1860,12 @@ mod tests {
             report_count: MAX_REPORT_COUNT,
             usage_page: 0x01,
             usages: vec![],
+            strings: vec![],
+            string_minimum: None,
+            string_maximum: None,
+            designators: vec![],
+            designator_minimum: None,
+            designator_maximum: None,
         };
 
         let items = vec![item; 258];
@@ -1730,6 +1920,12 @@ mod tests {
                     report_count: 65,
                     usage_page: 0x01,
                     usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -1775,6 +1971,12 @@ mod tests {
                     report_count: 64,
                     usage_page: 0x01,
                     usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -1821,6 +2023,12 @@ mod tests {
                     report_count: 65,
                     usage_page: 0x01,
                     usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             feature_reports: vec![],
@@ -1866,6 +2074,12 @@ mod tests {
                     report_count: 64,
                     usage_page: 0x01,
                     usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             feature_reports: vec![],
@@ -1910,6 +2124,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![1, 2, 3],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -1959,6 +2179,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages,
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -2005,6 +2231,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![0x30],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -2087,6 +2319,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![0x30],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             feature_reports: vec![],
@@ -2134,6 +2372,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![0x30],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             feature_reports: vec![],
@@ -2181,6 +2425,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![0x30],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -2228,6 +2478,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![0x30],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],
@@ -2276,6 +2532,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![0x30],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             feature_reports: vec![],
@@ -2315,6 +2577,12 @@ mod tests {
             report_count,
             usage_page: 0,
             usages: Vec::new(),
+            strings: Vec::new(),
+            string_minimum: None,
+            string_maximum: None,
+            designators: Vec::new(),
+            designator_minimum: None,
+            designator_maximum: None,
         }
     }
 
@@ -2439,6 +2707,12 @@ mod tests {
                     report_count: 1,
                     usage_page: 0x01,
                     usages: vec![0x30],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
                 }],
             }],
             output_reports: vec![],

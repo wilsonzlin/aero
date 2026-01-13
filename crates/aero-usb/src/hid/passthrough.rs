@@ -1765,7 +1765,7 @@ mod tests {
             0x26, 0xff, 0x00, // Logical Maximum (255)
             0x75, 0x08, // Report Size (8)
             0x95, 0x04, // Report Count (4)
-            0x79, 0x01, // String Index (unsupported by parser)
+            0x69, 0x01, // Reserved local item (unsupported by parser)
             0x81, 0x02, // Input (Data,Var,Abs)
             0xc0, // End Collection
         ]
