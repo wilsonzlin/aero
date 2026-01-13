@@ -104,6 +104,29 @@ fn aerogpu_bar_offsets_and_flags_are_stable() {
 }
 
 #[test]
+fn aerogpu_bar_probe_returns_expected_size_masks() {
+    let mut cfg = AEROGPU.build_config_space();
+
+    // Standard PCI BAR size probing: write all 1s, then read back the size mask.
+    cfg.write(0x10, 4, 0xffff_ffff);
+    cfg.write(0x14, 4, 0xffff_ffff);
+
+    // BAR0: 64KiB MMIO32, non-prefetchable.
+    assert_eq!(
+        cfg.read(0x10, 4),
+        (!(AEROGPU_BAR0_SIZE as u32 - 1) & 0xffff_fff0),
+        "AeroGPU BAR0 size probe mismatch"
+    );
+
+    // BAR1: VRAM aperture, prefetchable.
+    assert_eq!(
+        cfg.read(0x14, 4),
+        (!(AEROGPU_VRAM_SIZE as u32 - 1) & 0xffff_fff0) | 0x8,
+        "AeroGPU BAR1 size probe mismatch"
+    );
+}
+
+#[test]
 fn virtio_ids_include_transitional_and_modern_variants() {
     assert_eq!(PCI_VENDOR_ID_VIRTIO, 0x1af4);
 
