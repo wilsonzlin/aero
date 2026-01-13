@@ -806,6 +806,120 @@ static void dump_mouse_report(const BYTE *buf, DWORD len, int assume_report_id)
     wprintf(L"\n");
 }
 
+static void dump_consumer_report(const BYTE *buf, DWORD len, int assume_report_id)
+{
+    DWORD off = 0;
+    BYTE report_id = 0;
+    BYTE bits;
+
+    if (len == 0) {
+        wprintf(L"consumer: <empty>\n");
+        return;
+    }
+
+    // Common layout for this driver:
+    // - Consumer Control (media keys): 1 byte bitmask
+    // - With ReportID: one extra byte at front.
+    if (assume_report_id && len >= 2 && buf[0] != 0) {
+        report_id = buf[0];
+        off = 1;
+    }
+
+    if (len < off + 1) {
+        wprintf(L"consumer: <short> ");
+        dump_hex(buf, len);
+        wprintf(L"\n");
+        return;
+    }
+
+    bits = buf[off];
+
+    if (report_id != 0) {
+        wprintf(L"consumer: id=%u ", report_id);
+    } else {
+        wprintf(L"consumer: ");
+    }
+
+    wprintf(L"bits=0x%02X", bits);
+
+    if (bits != 0) {
+        int first = 1;
+        wprintf(L" [");
+        if (bits & (1u << 0)) {
+            wprintf(L"%smute", first ? L"" : L" ");
+            first = 0;
+        }
+        if (bits & (1u << 1)) {
+            wprintf(L"%svol-", first ? L"" : L" ");
+            first = 0;
+        }
+        if (bits & (1u << 2)) {
+            wprintf(L"%svol+", first ? L"" : L" ");
+            first = 0;
+        }
+        if (bits & (1u << 3)) {
+            wprintf(L"%splay/pause", first ? L"" : L" ");
+            first = 0;
+        }
+        if (bits & (1u << 4)) {
+            wprintf(L"%snext", first ? L"" : L" ");
+            first = 0;
+        }
+        if (bits & (1u << 5)) {
+            wprintf(L"%sprev", first ? L"" : L" ");
+            first = 0;
+        }
+        if (bits & (1u << 6)) {
+            wprintf(L"%sstop", first ? L"" : L" ");
+            first = 0;
+        }
+        wprintf(L"]");
+    }
+
+    wprintf(L"\n");
+}
+
+static void dump_tablet_report(const BYTE *buf, DWORD len, int assume_report_id)
+{
+    DWORD off = 0;
+    BYTE report_id = 0;
+    BYTE buttons;
+    USHORT x;
+    USHORT y;
+
+    if (len == 0) {
+        wprintf(L"tablet: <empty>\n");
+        return;
+    }
+
+    // Driver layout:
+    // - Tablet: 5 bytes (no ReportID) => [btn][x_lo][x_hi][y_lo][y_hi]
+    // - With ReportID: one extra byte at front.
+    if (assume_report_id && len >= 2 && buf[0] != 0) {
+        report_id = buf[0];
+        off = 1;
+    }
+
+    if (len < off + 5) {
+        wprintf(L"tablet: <short> ");
+        dump_hex(buf, len);
+        wprintf(L"\n");
+        return;
+    }
+
+    buttons = buf[off + 0];
+    x = (USHORT)(buf[off + 1] | ((USHORT)buf[off + 2] << 8));
+    y = (USHORT)(buf[off + 3] | ((USHORT)buf[off + 4] << 8));
+
+    if (report_id != 0) {
+        wprintf(L"tablet: id=%u ", report_id);
+    } else {
+        wprintf(L"tablet: ");
+    }
+
+    wprintf(L"buttons=0x%02X x=%u y=%u\n", buttons, (unsigned)x, (unsigned)y);
+}
+
 static int dump_vioinput_counters(const SELECTED_DEVICE *dev)
 {
     BYTE buf[4096];
@@ -2894,6 +3008,10 @@ static void read_reports_loop(const SELECTED_DEVICE *dev, const OPTIONS *opt)
                 dump_keyboard_report(buf, n);
             } else if (buf[0] == 2) {
                 dump_mouse_report(buf, n, 1);
+            } else if (buf[0] == 3) {
+                dump_consumer_report(buf, n, 1);
+            } else if (buf[0] == 4) {
+                dump_tablet_report(buf, n, 1);
             }
         } else {
             if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06) {
