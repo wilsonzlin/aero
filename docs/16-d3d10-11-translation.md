@@ -308,19 +308,22 @@ specific remapping.
 
 #### Bind groups are stage-scoped
 
-Bind groups map 1:1 to D3D11 shader stages:
+Bind groups are stage-scoped and mostly map 1:1 to D3D11 shader stages:
 
 - `@group(0)`: vertex shader (VS) resources
 - `@group(1)`: pixel/fragment shader (PS) resources
 - `@group(2)`: compute shader (CS) resources
+- `@group(3)`: reserved internal group for emulated D3D11 stages (GS/HS/DS) and other helper bindings
 
 Why stage-scoped?
 
 - D3D11 resource bindings are tracked per-stage, and stages can be rebound independently.
 - Using stage-scoped bind groups lets the runtime keep simple shadow-state and caches per stage:
   rebinding VS resources only invalidates/rebuilds `group(0)`, PS only touches `group(1)`, etc.
-- It also keeps pipeline layout assembly straightforward: render pipelines use the VS + PS group
-  layouts (0 and 1), compute pipelines use the CS layout (2).
+- It also keeps pipeline layout assembly straightforward:
+  - Render pipelines use the VS + PS group layouts (0 and 1).
+  - Compute pipelines use the CS layout (2).
+  - Emulation pipelines (GS/HS/DS expansion) may additionally use the reserved internal group (3).
 
 #### Binding numbers use disjoint offset ranges
 
@@ -356,22 +359,21 @@ Examples:
 This keeps bindings stable (derived directly from D3D slot indices) without requiring per-shader
 rebinding logic.
 
-#### Stage extensions (GS/HS/DS) reuse the compute bind group
+#### Stage extensions (GS/HS/DS) use the reserved internal bind group (`@group(3)`)
 
 WebGPU does not expose native **geometry/hull/domain** stages. Aero emulates these stages by
 compiling them to **compute** entry points and inserting compute passes before the final render.
 
-To avoid adding more stage-scoped bind groups (and to stay consistent with
-`crates/aero-d3d11/src/binding_model.rs`), **GS/HS/DS shaders use the existing compute group**:
+To keep the model within WebGPU’s max bind group count (4), and to ensure GS/HS/DS binds never
+trample compute-shader state, Aero reserves a fourth bind group:
 
-- D3D resources referenced by GS/HS/DS (`b#`, `t#`, `s#`) are declared in WGSL at `@group(2)`
-  using the same `@binding` numbers as a normal compute shader.
-- The AeroGPU command stream distinguishes “which D3D stage is being bound” using a small
-  `stage_ex` extension carried in reserved fields of the resource-binding opcodes (see the ABI
-  section below).
-- Internal buffers used for vertex pulling and expansion outputs are **not** placed in the
-  stage-scoped groups; they live in dedicated “internal” bind groups that are only used by the
-  emulation compute pipelines.
+- D3D resources referenced by GS/HS/DS (`b#`, `t#`, `s#`, and optionally `u#`) are declared in WGSL at
+  `@group(3)` using the same `@binding` number scheme (`BINDING_BASE_* + slot`) as other stages.
+- The AeroGPU command stream distinguishes “which D3D stage is being bound” using the `stage_ex`
+  extension carried in reserved fields of the resource-binding opcodes (see the ABI section below).
+- Expansion-specific internal buffers (vertex pulling inputs, scratch outputs, counters, indirect
+  args) also live in `@group(3)`, but occupy a reserved binding-number range that does not overlap
+  the D3D register mappings (see “Internal bindings” below).
 
 #### Only resources used by the shader are emitted/bound
 
@@ -433,12 +435,14 @@ Many AeroGPU binding packets already carry a `shader_stage` plus a trailing `res
 - `AEROGPU_CMD_SET_TEXTURE`
 - `AEROGPU_CMD_SET_SAMPLERS`
 - `AEROGPU_CMD_SET_CONSTANT_BUFFERS`
-- `AEROGPU_CMD_SET_SHADER_CONSTANTS_F`
+- `AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS` (SRV buffers)
+- `AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS` (UAV buffers)
+- `AEROGPU_CMD_SET_SHADER_CONSTANTS_F` (legacy D3D9 constants)
 
-For GS/HS/DS we need to bind D3D resources **per stage**, but the executor’s stable binding model only
-has stage-scoped bind groups for **VS/PS/CS** (`@group(0..2)`). We therefore treat GS/HS/DS as
-“compute-like” stages and route their resource bindings through the existing compute bind group, using
-the trailing reserved field as a small `stage_ex` tag.
+For GS/HS/DS we need to bind D3D resources **per stage**, but the D3D11 executor’s stable binding
+model only has stage-scoped bind groups for **VS/PS/CS** (`@group(0..2)`). We therefore treat GS/HS/DS
+as “compute-like” stages but route their bindings into a reserved internal bind group (`@group(3)`),
+using a small `stage_ex` tag carried in the trailing reserved field.
 
 This is implemented in the emulator-side protocol mirror as `AerogpuShaderStageEx` + helpers
 `encode_stage_ex`/`decode_stage_ex` (see `emulator/protocol/aerogpu/aerogpu_cmd.rs`).
@@ -488,8 +492,11 @@ struct aerogpu_cmd_set_texture {
   - DS resources: `shader_stage = COMPUTE`, `stage_ex = DOMAIN`   (4)
 
 The host maintains separate binding tables for CS vs GS/HS/DS so that compute dispatch and
-graphics-tess/GS pipelines do not trample each other’s bindings, but they all map to WGSL
-`@group(2)` at shader interface level.
+graphics-tess/GS pipelines do not trample each other’s bindings. At the WGSL interface level this
+maps to distinct bind groups:
+
+- CS uses `@group(2)`.
+- GS/HS/DS use `@group(3)`.
 
 #### 1.2) Extended `BIND_SHADERS` packet layout
 
@@ -680,41 +687,49 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 
 GS/HS/DS are compiled as compute entry points but keep the normal D3D binding model:
 
-- D3D resources live in `@group(2)` and use the same binding number scheme as compute shaders:
+- D3D resources live in `@group(3)` (the reserved internal group) and use the same binding number
+  scheme as other stages:
    - `b#` (cbuffers) → `@binding(BINDING_BASE_CBUFFER + slot)`
    - `t#` (SRVs)     → `@binding(BINDING_BASE_TEXTURE + slot)`
    - `s#` (samplers) → `@binding(BINDING_BASE_SAMPLER + slot)`
 - Resource-binding opcodes specify the logical stage via `stage_ex` so the runtime can maintain
-   separate tables for CS vs GS/HS/DS while still using a single `@group(2)` interface.
+   separate tables for CS vs GS/HS/DS (and so the WGSL interface uses distinct groups 2 vs 3).
 
 #### 3.2) Internal bind groups and reserved bindings
 
 Expansion compute pipelines require additional buffers that are not part of the D3D binding model
 (vertex pulling inputs, scratch outputs, counters, indirect args).
 
-These are bound through a dedicated internal bind group to avoid colliding with the stable
-`@group(0..2)` layout. The internal group index is reserved as:
+These are not part of the D3D binding model, so they use a reserved binding-number range within the
+reserved internal group (`@group(3)`) to avoid colliding with D3D register mappings.
 
-- `@group(3)`: **Aero internal expansion bindings** (not visible to guest shaders)
+Let:
 
-Within `@group(3)`, binding numbers are reserved and stable so the runtime can share common helper
-WGSL across VS/GS/HS/DS compute variants:
+- D3D resource bindings occupy:
+  - `@binding(0..BINDING_BASE_TEXTURE)` for cbuffers
+  - `@binding(BINDING_BASE_TEXTURE..BINDING_BASE_SAMPLER)` for SRVs
+  - `@binding(BINDING_BASE_SAMPLER..BINDING_BASE_UAV)` for samplers
+  - `@binding(BINDING_BASE_UAV..BINDING_BASE_UAV + MAX_UAV_SLOTS)` for UAVs
+- Expansion-internal bindings start at `BINDING_BASE_EXPANSION_INTERNAL = 256`.
 
-- `@binding(0)`: `ExpandParams` (uniform/storage; draw parameters + topology info)
-- `@binding(1..=8)`: vertex buffers `vb0..vb7` as read-only storage (after slot compaction)
-- `@binding(9)`: index buffer (read-only storage; absent → bind dummy)
-- `@binding(10)`: `vs_out` (read_write storage)
-- `@binding(11)`: `tess_out_vertices` (read_write storage)
-- `@binding(12)`: `tess_out_indices` (read_write storage)
-- `@binding(13)`: `gs_out_vertices` (read_write storage)
-- `@binding(14)`: `gs_out_indices` (read_write storage)
-- `@binding(15)`: `indirect_args` (read_write storage)
-- `@binding(16)`: `counters` (read_write storage; atomics)
+Within `@group(3)`, the expansion-internal bindings are reserved and stable so the runtime can share
+common helper WGSL across VS/GS/HS/DS compute variants:
+
+- `@binding(256)`: `ExpandParams` (uniform/storage; draw parameters + topology info)
+- `@binding(257..=264)`: vertex buffers `vb0..vb7` as read-only storage (after slot compaction)
+- `@binding(265)`: index buffer (read-only storage; absent → bind dummy)
+- `@binding(266)`: `vs_out` (read_write storage)
+- `@binding(267)`: `tess_out_vertices` (read_write storage)
+- `@binding(268)`: `tess_out_indices` (read_write storage)
+- `@binding(269)`: `gs_out_vertices` (read_write storage)
+- `@binding(270)`: `gs_out_indices` (read_write storage)
+- `@binding(271)`: `indirect_args` (read_write storage)
+- `@binding(272)`: `counters` (read_write storage; atomics)
 
 Note: vertex pulling requires reading the guest’s bound vertex/index buffers from compute. The
 host must therefore create buffers with `AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER` /
 `AEROGPU_RESOURCE_USAGE_INDEX_BUFFER` using WebGPU usages that include `STORAGE` (in addition to
-`VERTEX`/`INDEX`), so they can be bound at `@group(3)` as read-only storage buffers.
+`VERTEX`/`INDEX`), so they can be bound as read-only storage buffers for vertex pulling.
 
 Buffers bound here must be created with the union of the usages required by the consuming stages
 (e.g. `STORAGE | VERTEX` for final vertex output).
