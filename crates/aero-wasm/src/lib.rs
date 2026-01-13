@@ -3545,6 +3545,29 @@ impl Machine {
         Ok(())
     }
 
+    /// Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk,
+    /// reporting create/resize progress via a JS callback.
+    ///
+    /// The callback is invoked with a numeric progress value in `[0.0, 1.0]`.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_opfs_with_progress(
+        &mut self,
+        path: String,
+        create: bool,
+        size_bytes: u64,
+        progress: js_sys::Function,
+    ) -> Result<(), JsValue> {
+        let backend =
+            aero_opfs::OpfsBackend::open_with_progress(&path, create, size_bytes, Some(&progress))
+                .await
+                .map_err(|e| {
+                    opfs_disk_error_to_js("Machine.set_disk_opfs_with_progress", &path, e)
+                })?;
+        self.inner
+            .set_disk_backend(Box::new(backend))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Open an existing OPFS-backed disk image (using the file's current size) and attach it as the
     /// machine's canonical disk.
     ///
