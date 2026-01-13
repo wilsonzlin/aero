@@ -21,3 +21,10 @@ pub(crate) const MAX_D3D9_SHADER_TOKEN_COUNT: usize = MAX_D3D9_SHADER_BYTECODE_B
 /// invalid constant-buffer indexing.
 pub(crate) const MAX_D3D9_SHADER_REGISTER_INDEX: u32 = 255;
 
+/// Maximum number of chunks tolerated in a DXBC container.
+///
+/// DXBC chunk counts are stored in the container header and must be treated as untrusted. The
+/// production D3D9 path only needs the `SHDR`/`SHEX` chunk, and real-world containers typically
+/// contain a small handful of chunks (single digits). This hard cap prevents `Vec::with_capacity`
+/// OOM when parsing corrupted containers.
+pub(crate) const MAX_D3D9_DXBC_CHUNK_COUNT: u32 = 4096;

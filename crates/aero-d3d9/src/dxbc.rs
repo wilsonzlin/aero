@@ -12,6 +12,8 @@ use thiserror::Error;
 #[cfg(feature = "dxbc-robust")]
 pub mod robust;
 
+use crate::shader_limits::MAX_D3D9_DXBC_CHUNK_COUNT;
+
 #[derive(Debug, Error)]
 pub enum DxbcError {
     #[error("{0}")]
@@ -26,6 +28,8 @@ pub enum DxbcError {
     ChunkOutOfBounds,
     #[error("chunk size out of bounds")]
     ChunkSizeOutOfBounds,
+    #[error("DXBC chunk count {count} exceeds maximum {max}")]
+    ChunkCountTooLarge { count: u32, max: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -84,7 +88,25 @@ impl<'a> Container<'a> {
 
         let _one = read_u32_le(bytes, &mut offset)?;
         let total_size = read_u32_le(bytes, &mut offset)?;
-        let chunk_count = read_u32_le(bytes, &mut offset)? as usize;
+        let chunk_count_raw = read_u32_le(bytes, &mut offset)?;
+        if chunk_count_raw > MAX_D3D9_DXBC_CHUNK_COUNT {
+            return Err(DxbcError::ChunkCountTooLarge {
+                count: chunk_count_raw,
+                max: MAX_D3D9_DXBC_CHUNK_COUNT,
+            });
+        }
+        let chunk_count = chunk_count_raw as usize;
+
+        // Ensure the chunk-offset table is present before we allocate based on its declared size.
+        let offset_table_bytes = chunk_count
+            .checked_mul(4)
+            .ok_or(DxbcError::ChunkCountTooLarge {
+                count: chunk_count_raw,
+                max: MAX_D3D9_DXBC_CHUNK_COUNT,
+            })?;
+        if offset + offset_table_bytes > bytes.len() {
+            return Err(DxbcError::BufferTooSmall);
+        }
 
         let mut chunk_offsets = Vec::with_capacity(chunk_count);
         for _ in 0..chunk_count {

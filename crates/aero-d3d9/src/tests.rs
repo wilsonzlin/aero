@@ -783,6 +783,26 @@ fn rejects_oversized_shader_bytecode_sm3_decoder() {
     assert!(err.message.contains("exceeds maximum"), "{}", err);
 }
 
+#[test]
+fn dxbc_container_rejects_excessive_chunk_count() {
+    use crate::shader_limits::MAX_D3D9_DXBC_CHUNK_COUNT;
+
+    // Minimal DXBC header with an absurd chunk count. The parser must reject this without
+    // allocating `Vec` capacity based on the untrusted count.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"DXBC");
+    bytes.extend_from_slice(&[0u8; 16]); // checksum
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // unknown field
+    bytes.extend_from_slice(&32u32.to_le_bytes()); // total size
+    bytes.extend_from_slice(&(MAX_D3D9_DXBC_CHUNK_COUNT + 1).to_le_bytes()); // chunk count
+
+    let err = dxbc::Container::parse(&bytes).unwrap_err();
+    assert!(
+        matches!(err, dxbc::DxbcError::ChunkCountTooLarge { .. }),
+        "{err:?}"
+    );
+}
+
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
