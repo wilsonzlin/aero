@@ -103,14 +103,32 @@ impl AudioRingBuffer {
         if dropped > 0 {
             self.overrun_frames = self.overrun_frames.saturating_add(dropped as u64);
         }
-
-        for frame_idx in 0..frames_to_write {
-            let src = frame_idx * self.channels;
-            let dst_frame = self.write_frame;
-            let dst = dst_frame * self.channels;
-            self.data[dst..dst + self.channels].copy_from_slice(&samples[src..src + self.channels]);
-            self.write_frame = (self.write_frame + 1) % self.capacity_frames;
+        if frames_to_write == 0 {
+            return;
         }
+
+        // Copy in at most two segments: one contiguous chunk to the end of the
+        // backing storage, then (if we wrapped) a second chunk at the start.
+        //
+        // This avoids per-frame copying which shows up in profiles when the ring is
+        // used as an `AudioSink` in unit tests / native builds.
+        let write_pos = self.write_frame;
+        let first_frames = frames_to_write.min(self.capacity_frames - write_pos);
+        let second_frames = frames_to_write - first_frames;
+
+        let cc = self.channels;
+        let first_samples = first_frames * cc;
+        let write_sample_pos = write_pos * cc;
+        self.data[write_sample_pos..write_sample_pos + first_samples]
+            .copy_from_slice(&samples[..first_samples]);
+
+        if second_frames > 0 {
+            let second_samples = second_frames * cc;
+            self.data[..second_samples]
+                .copy_from_slice(&samples[first_samples..first_samples + second_samples]);
+        }
+
+        self.write_frame = (self.write_frame + frames_to_write) % self.capacity_frames;
         self.len_frames = self
             .len_frames
             .saturating_add(frames_to_write)
@@ -136,12 +154,27 @@ impl AudioRingBuffer {
         out.resize(out_len, 0.0f32);
 
         let available = self.len_frames.min(frames);
-        for frame_idx in 0..available {
-            let src_frame = self.read_frame;
-            let src = src_frame * self.channels;
-            let dst = frame_idx * self.channels;
-            out[dst..dst + self.channels].copy_from_slice(&self.data[src..src + self.channels]);
-            self.read_frame = (self.read_frame + 1) % self.capacity_frames;
+        if available > 0 {
+            // Copy in at most two segments: one contiguous chunk from the current
+            // read cursor to the end of the storage, and (if we wrapped) a second
+            // chunk from the start.
+            let read_pos = self.read_frame;
+            let first_frames = available.min(self.capacity_frames - read_pos);
+            let second_frames = available - first_frames;
+
+            let cc = self.channels;
+            let first_samples = first_frames * cc;
+            let read_sample_pos = read_pos * cc;
+            out[..first_samples]
+                .copy_from_slice(&self.data[read_sample_pos..read_sample_pos + first_samples]);
+
+            if second_frames > 0 {
+                let second_samples = second_frames * cc;
+                out[first_samples..first_samples + second_samples]
+                    .copy_from_slice(&self.data[..second_samples]);
+            }
+
+            self.read_frame = (self.read_frame + available) % self.capacity_frames;
         }
 
         self.len_frames = self.len_frames.saturating_sub(available);

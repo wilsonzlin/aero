@@ -89,3 +89,25 @@ fn audio_ring_pop_clamps_absurd_frames_to_avoid_oom() {
     assert_eq!(out.len(), MAX_CAPACITY_FRAMES * 2);
     assert_eq!(ring.telemetry().underrun_frames, MAX_CAPACITY_FRAMES as u64);
 }
+
+#[test]
+fn audio_ring_wraparound_bulk_copy_preserves_order() {
+    // Exercise a push that wraps within a *single call* (two-segment copy) and a
+    // pop that wraps within a single call, asserting that frame order is
+    // preserved end-to-end.
+    let mut ring = AudioRingBuffer::new_stereo(4);
+
+    ring.push_interleaved_stereo(&stereo_frames(&[0.0, 1.0, 2.0]));
+    assert_eq!(ring.pop_interleaved_stereo(2), stereo_frames(&[0.0, 1.0]));
+
+    // The write cursor is near the end; writing 3 frames must wrap and place the
+    // final two frames at the start of the buffer.
+    ring.push_interleaved_stereo(&stereo_frames(&[3.0, 4.0, 5.0]));
+    assert_eq!(ring.telemetry().overrun_frames, 0);
+    assert_eq!(ring.available_frames(), 4);
+
+    // Reading should observe the remaining frame from the first push, then the
+    // wrapped frames from the second push.
+    let out = ring.pop_interleaved_stereo(4);
+    assert_eq!(out, stereo_frames(&[2.0, 3.0, 4.0, 5.0]));
+}
