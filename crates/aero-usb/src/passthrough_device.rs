@@ -238,6 +238,8 @@ fn encode_speed(speed: UsbSpeed) -> u8 {
     match speed {
         UsbSpeed::Full => 0,
         UsbSpeed::Low => 1,
+        // Stable encoding (legacy snapshots used `2` for high-speed before `UsbSpeed::High` was
+        // temporarily removed).
         UsbSpeed::High => 2,
     }
 }
