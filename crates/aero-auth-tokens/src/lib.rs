@@ -31,6 +31,10 @@ fn is_base64url(raw: &str, max_len: usize) -> bool {
     if raw.len() > max_len {
         return false;
     }
+    // Base64url without padding cannot have length mod 4 == 1.
+    if raw.len() % 4 == 1 {
+        return false;
+    }
     raw.as_bytes().iter().all(|b| {
         matches!(
             b,
