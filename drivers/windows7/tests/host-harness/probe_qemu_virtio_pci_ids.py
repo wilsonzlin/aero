@@ -245,6 +245,8 @@ def main() -> int:
             f"virtio-keyboard-pci,disable-legacy=on{rev_arg}",
             "-device",
             f"virtio-mouse-pci,disable-legacy=on{rev_arg}",
+            "-device",
+            f"virtio-tablet-pci,disable-legacy=on{rev_arg}",
         ]
         if args.with_virtio_tablet and "virtio-tablet-pci" in device_help_text:
             qemu_args += [
