@@ -48,6 +48,63 @@ static const uint32_t kAerogpuIrqFence = (1u << 0);
 static const uint32_t kAerogpuIrqScanoutVblank = (1u << 1);
 static const uint32_t kAerogpuIrqError = (1u << 31);
 
+static const char *AerogpuFormatName(uint32_t fmt) {
+  switch (fmt) {
+  case AEROGPU_FORMAT_INVALID:
+    return "Invalid";
+  case AEROGPU_FORMAT_B8G8R8A8_UNORM:
+    return "B8G8R8A8Unorm";
+  case AEROGPU_FORMAT_B8G8R8X8_UNORM:
+    return "B8G8R8X8Unorm";
+  case AEROGPU_FORMAT_R8G8B8A8_UNORM:
+    return "R8G8B8A8Unorm";
+  case AEROGPU_FORMAT_R8G8B8X8_UNORM:
+    return "R8G8B8X8Unorm";
+  case AEROGPU_FORMAT_B5G6R5_UNORM:
+    return "B5G6R5Unorm";
+  case AEROGPU_FORMAT_B5G5R5A1_UNORM:
+    return "B5G5R5A1Unorm";
+  case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
+    return "B8G8R8A8UnormSrgb";
+  case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
+    return "B8G8R8X8UnormSrgb";
+  case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
+    return "R8G8B8A8UnormSrgb";
+  case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
+    return "R8G8B8X8UnormSrgb";
+  case AEROGPU_FORMAT_D24_UNORM_S8_UINT:
+    return "D24UnormS8Uint";
+  case AEROGPU_FORMAT_D32_FLOAT:
+    return "D32Float";
+  case AEROGPU_FORMAT_BC1_RGBA_UNORM:
+    return "BC1RgbaUnorm";
+  case AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB:
+    return "BC1RgbaUnormSrgb";
+  case AEROGPU_FORMAT_BC2_RGBA_UNORM:
+    return "BC2RgbaUnorm";
+  case AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB:
+    return "BC2RgbaUnormSrgb";
+  case AEROGPU_FORMAT_BC3_RGBA_UNORM:
+    return "BC3RgbaUnorm";
+  case AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB:
+    return "BC3RgbaUnormSrgb";
+  case AEROGPU_FORMAT_BC7_RGBA_UNORM:
+    return "BC7RgbaUnorm";
+  case AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB:
+    return "BC7RgbaUnormSrgb";
+  default:
+    break;
+  }
+
+  // Avoid returning a pointer to a single static buffer; dbgctl may call this
+  // helper multiple times in a single print statement.
+  static __declspec(thread) char buf[4][32];
+  static __declspec(thread) uint32_t buf_index = 0;
+  char *out = buf[buf_index++ & 3u];
+  sprintf_s(out, sizeof(buf[0]), "unknown(%lu)", (unsigned long)fmt);
+  return out;
+}
+
 typedef struct D3DKMT_OPENADAPTERFROMHDC {
   HDC hDc;
   D3DKMT_HANDLE hAdapter;
@@ -666,19 +723,19 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     }
 
     wprintf(L"Scanout0:\n");
-    wprintf(L"  cached: enable=%lu width=%lu height=%lu format=%lu pitch=%lu\n",
+    wprintf(L"  cached: enable=%lu width=%lu height=%lu format=%S pitch=%lu\n",
             (unsigned long)qs.cached_enable,
             (unsigned long)qs.cached_width,
             (unsigned long)qs.cached_height,
-            (unsigned long)qs.cached_format,
+            AerogpuFormatName(qs.cached_format),
             (unsigned long)qs.cached_pitch_bytes);
-    wprintf(L"  mmio:   enable=%lu width=%lu height=%lu format=%lu pitch=%lu fb_gpa=0x%I64x\n",
+    wprintf(L"  mmio:   enable=%lu width=%lu height=%lu format=%S pitch=%lu fb_gpa=0x%I64x\n",
             (unsigned long)qs.mmio_enable,
             (unsigned long)qs.mmio_width,
             (unsigned long)qs.mmio_height,
-            (unsigned long)qs.mmio_format,
-             (unsigned long)qs.mmio_pitch_bytes,
-             (unsigned long long)qs.mmio_fb_gpa);
+            AerogpuFormatName(qs.mmio_format),
+            (unsigned long)qs.mmio_pitch_bytes,
+            (unsigned long long)qs.mmio_fb_gpa);
   };
 
   const auto DumpCursorSummary = [&]() {
@@ -705,7 +762,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 
     const int32_t x = (int32_t)qc.x;
     const int32_t y = (int32_t)qc.y;
-    wprintf(L"Cursor: enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%lu pitch=%lu fb_gpa=0x%I64x\n",
+    wprintf(L"Cursor: enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%S pitch=%lu fb_gpa=0x%I64x\n",
             (unsigned long)qc.enable,
             (long)x,
             (long)y,
@@ -713,7 +770,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long)qc.hot_y,
             (unsigned long)qc.width,
             (unsigned long)qc.height,
-            (unsigned long)qc.format,
+            AerogpuFormatName(qc.format),
             (unsigned long)qc.pitch_bytes,
             (unsigned long long)qc.fb_gpa);
   };
@@ -946,17 +1003,17 @@ static int DoQueryScanout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
   }
 
   wprintf(L"Scanout%lu:\n", (unsigned long)q.vidpn_source_id);
-  wprintf(L"  cached: enable=%lu width=%lu height=%lu format=%lu pitch=%lu\n",
+  wprintf(L"  cached: enable=%lu width=%lu height=%lu format=%S pitch=%lu\n",
           (unsigned long)q.cached_enable,
           (unsigned long)q.cached_width,
           (unsigned long)q.cached_height,
-          (unsigned long)q.cached_format,
+          AerogpuFormatName(q.cached_format),
           (unsigned long)q.cached_pitch_bytes);
-  wprintf(L"  mmio:   enable=%lu width=%lu height=%lu format=%lu pitch=%lu fb_gpa=0x%I64x\n",
+  wprintf(L"  mmio:   enable=%lu width=%lu height=%lu format=%S pitch=%lu fb_gpa=0x%I64x\n",
           (unsigned long)q.mmio_enable,
           (unsigned long)q.mmio_width,
           (unsigned long)q.mmio_height,
-          (unsigned long)q.mmio_format,
+          AerogpuFormatName(q.mmio_format),
           (unsigned long)q.mmio_pitch_bytes,
            (unsigned long long)q.mmio_fb_gpa);
   return 0;
@@ -992,7 +1049,7 @@ static int DoQueryCursor(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 
   const int32_t x = (int32_t)q.x;
   const int32_t y = (int32_t)q.y;
-  wprintf(L"Cursor: enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%lu pitch=%lu fb_gpa=0x%I64x\n",
+  wprintf(L"Cursor: enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%S pitch=%lu fb_gpa=0x%I64x\n",
           (unsigned long)q.enable,
           (long)x,
           (long)y,
@@ -1000,7 +1057,7 @@ static int DoQueryCursor(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long)q.hot_y,
           (unsigned long)q.width,
           (unsigned long)q.height,
-          (unsigned long)q.format,
+          AerogpuFormatName(q.format),
           (unsigned long)q.pitch_bytes,
           (unsigned long long)q.fb_gpa);
   return 0;
