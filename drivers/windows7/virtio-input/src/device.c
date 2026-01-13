@@ -1304,6 +1304,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         CHAR name[129];
         UCHAR size;
         VIOINPUT_DEVICE_KIND kind;
+        VIOINPUT_DEVICE_KIND subsysKind;
         PCSTR kindStr;
 
         RtlZeroMemory(name, sizeof(name));
@@ -1375,6 +1376,34 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 "virtio-input device kind unknown (ID_NAME=%s, compat=%u)\n",
                 name,
                 compatDeviceKind ? 1u : 0u);
+            VirtioPciResetDevice(&deviceContext->PciDevice);
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        subsysKind = VioInputDeviceKindUnknown;
+        if (deviceContext->PciSubsystemDeviceId == VIOINPUT_PCI_SUBSYSTEM_ID_KEYBOARD) {
+            subsysKind = VioInputDeviceKindKeyboard;
+        } else if (deviceContext->PciSubsystemDeviceId == VIOINPUT_PCI_SUBSYSTEM_ID_MOUSE) {
+            subsysKind = VioInputDeviceKindMouse;
+        }
+
+        /*
+         * Contract v1 cross-check: if the PCI subsystem device ID indicates a
+         * specific kind (keyboard/mouse), it must agree with the kind inferred
+         * from ID_NAME (or compat-mode heuristics, if enabled).
+         *
+         * If the subsystem ID is unknown (0 or other), allow ID_NAME to decide.
+         */
+        if (subsysKind != VioInputDeviceKindUnknown && subsysKind != kind) {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "virtio-input kind mismatch: ID_NAME='%s' implies %s but PCI subsystem device ID is 0x%04X (%s)\n",
+                name,
+                (kind == VioInputDeviceKindKeyboard) ? "keyboard" : (kind == VioInputDeviceKindMouse) ? "mouse"
+                                                                                                      : (kind == VioInputDeviceKindTablet) ? "tablet"
+                                                                                                                                            : "unknown",
+                (ULONG)deviceContext->PciSubsystemDeviceId,
+                (subsysKind == VioInputDeviceKindKeyboard) ? "keyboard" : "mouse");
             VirtioPciResetDevice(&deviceContext->PciDevice);
             return STATUS_NOT_SUPPORTED;
         }

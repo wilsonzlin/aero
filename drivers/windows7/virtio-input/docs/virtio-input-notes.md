@@ -63,6 +63,9 @@ The in-tree Windows 7 virtio-input driver is **strict by default** (Aero contrac
   - `Aero Virtio Keyboard`
   - `Aero Virtio Mouse`
 - If the name is not recognized, the driver fails start (Code 10) rather than guessing.
+- If the PCI **Subsystem Device ID** indicates a contract kind (`0x0010` keyboard, `0x0011` mouse),
+  it is cross-checked against `ID_NAME` and mismatches fail start (Code 10). Unknown subsystem IDs
+  (`0` or other values) are allowed.
 
 This keeps the contract deterministic, but it means QEMU virtio-input devices (which usually report names like `QEMU Virtio Keyboard`) won’t start unless compatibility mode is enabled.
 
