@@ -49,6 +49,10 @@ name = "tier0_rep_movsb"
 harness = false
 
 [[bench]]
+name = "tier0_throughput"
+harness = false
+
+[[bench]]
 name = "jit_bookkeeping"
 harness = false
 
