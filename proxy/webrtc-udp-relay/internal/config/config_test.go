@@ -142,6 +142,18 @@ func TestMaxUDPDestBuckets_EnvOverride(t *testing.T) {
 	}
 }
 
+func TestMaxUDPDestBuckets_DefaultsToMaxUniqueDestinations_Flag(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey: "secret",
+	}), []string{"--max-unique-destinations-per-session", "123"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxUDPDestBucketsPerSession != 123 {
+		t.Fatalf("MaxUDPDestBucketsPerSession=%d, want %d", cfg.MaxUDPDestBucketsPerSession, 123)
+	}
+}
+
 func TestSessionPreallocTTL_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
 		EnvAPIKey:             "secret",
