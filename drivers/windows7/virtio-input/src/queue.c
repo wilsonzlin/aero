@@ -102,12 +102,13 @@ VOID VirtioInputEvtIoInternalDeviceControl(
 
     VIOINPUT_LOG(
         VIOINPUT_LOG_IOCTL,
-        "IOCTL %s (0x%08X) in=%Iu out=%Iu ring=%ld pending=%ld\n",
+        "IOCTL %s (0x%08X) in=%Iu out=%Iu txRing=%ld pendingRing=%ld readQ=%ld\n",
         name,
         IoControlCode,
         InputBufferLength,
         OutputBufferLength,
         devCtx->Counters.ReportRingDepth,
+        devCtx->Counters.PendingRingDepth,
         devCtx->Counters.ReadReportQueueDepth);
 
     switch (IoControlCode) {

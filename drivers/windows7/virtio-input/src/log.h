@@ -60,7 +60,11 @@
 #define IOCTL_VIOINPUT_RESET_COUNTERS \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
-#define VIOINPUT_COUNTERS_VERSION 1
+/*
+ * VIOINPUT_COUNTERS is a user-mode visible struct (queried via
+ * IOCTL_VIOINPUT_QUERY_COUNTERS). It must be append-only to preserve ABI.
+ */
+#define VIOINPUT_COUNTERS_VERSION 2
 #define VIOINPUT_STATE_VERSION 1
 
 /*
@@ -108,7 +112,10 @@ typedef struct _VIOINPUT_COUNTERS {
     volatile LONG ReadReportQueueDepth;
     volatile LONG ReadReportQueueMaxDepth;
 
-    // Translated HID reports buffered while there are no pending READ_REPORT IRPs.
+    // Translation-layer report ring (virtio_input_device.report_ring).
+    // This is an internal buffering layer between virtio event processing and
+    // READ_REPORT handling. It is NOT the primary "buffered while no pending
+    // READ_REPORT IRPs" queue (see PendingRing* below).
     volatile LONG ReportRingDepth;
     volatile LONG ReportRingMaxDepth;
     volatile LONG ReportRingDrops;
@@ -127,6 +134,12 @@ typedef struct _VIOINPUT_COUNTERS {
 
     // Statusq writes dropped when StatusQDropOnFull is enabled (e.g. keyboard LEDs).
     volatile LONG VirtioStatusDrops;
+    // Pending READ_REPORT buffering (DEVICE_CONTEXT.PendingReportRing[]).
+    // This is the main queue that accumulates reports when HIDCLASS is not
+    // issuing IOCTL_HID_READ_REPORT requests fast enough.
+    volatile LONG PendingRingDepth;        // Sum across report IDs.
+    volatile LONG PendingRingMaxDepth;
+    volatile LONG PendingRingDrops;        // Oldest report dropped on ring full.
 } VIOINPUT_COUNTERS, *PVIOINPUT_COUNTERS;
 
 typedef struct _VIOINPUT_STATE {

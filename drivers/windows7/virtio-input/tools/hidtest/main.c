@@ -141,7 +141,7 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #endif
 
-#define VIOINPUT_COUNTERS_VERSION 1
+#define VIOINPUT_COUNTERS_VERSION 2
 #define VIOINPUT_STATE_VERSION 1
 
 typedef struct VIOINPUT_COUNTERS_V1_MIN {
@@ -193,6 +193,10 @@ typedef struct _VIOINPUT_COUNTERS {
     LONG VirtioQueueMaxDepth;
 
     LONG VirtioStatusDrops;
+
+    LONG PendingRingDepth;
+    LONG PendingRingMaxDepth;
+    LONG PendingRingDrops;
 } VIOINPUT_COUNTERS;
 
 typedef struct VIOINPUT_STATE {
@@ -871,11 +875,16 @@ static int dump_vioinput_counters(const SELECTED_DEVICE *dev)
     DUMP_LONG_FIELD(ReadReportQueueDepth);
     DUMP_LONG_FIELD(ReadReportQueueMaxDepth);
 
-    wprintf(L"\n  -- Report ring buffering --\n");
+    wprintf(L"\n  -- Translator report ring buffering (virtio_input_device.report_ring) --\n");
     DUMP_LONG_FIELD(ReportRingDepth);
     DUMP_LONG_FIELD(ReportRingMaxDepth);
     DUMP_LONG_FIELD(ReportRingDrops);
     DUMP_LONG_FIELD(ReportRingOverruns);
+
+    wprintf(L"\n  -- Pending READ_REPORT buffering (PendingReportRing[]) --\n");
+    DUMP_LONG_FIELD(PendingRingDepth);
+    DUMP_LONG_FIELD(PendingRingMaxDepth);
+    DUMP_LONG_FIELD(PendingRingDrops);
 
     wprintf(L"\n  -- Virtqueue / interrupt side --\n");
     DUMP_LONG_FIELD(VirtioInterrupts);
@@ -1011,7 +1020,10 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     JSON_LONG_FIELD(VirtioEventOverruns, 0);
     JSON_LONG_FIELD(VirtioQueueDepth, 0);
     JSON_LONG_FIELD(VirtioQueueMaxDepth, 0);
-    JSON_LONG_FIELD(VirtioStatusDrops, 1);
+    JSON_LONG_FIELD(VirtioStatusDrops, 0);
+    JSON_LONG_FIELD(PendingRingDepth, 0);
+    JSON_LONG_FIELD(PendingRingMaxDepth, 0);
+    JSON_LONG_FIELD(PendingRingDrops, 1);
 
     wprintf(L"}\n");
 

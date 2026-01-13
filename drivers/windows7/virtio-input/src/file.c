@@ -221,7 +221,7 @@ static VOID VirtioInputEvtFileCleanup(_In_ WDFFILEOBJECT FileObject)
             VioInputCounterDec(&devCtx->Counters.ReadReportQueueDepth);
             VIOINPUT_LOG(
                 VIOINPUT_LOG_QUEUE,
-                "READ_REPORT cancelled (file cleanup): pending=%ld\n",
+                "READ_REPORT cancelled (file cleanup): readQ=%ld\n",
                 devCtx->Counters.ReadReportQueueDepth);
 
             WdfRequestComplete(request, STATUS_CANCELLED);

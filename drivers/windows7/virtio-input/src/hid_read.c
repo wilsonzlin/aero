@@ -10,6 +10,27 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIRTIO_INPUT_READ_REQUEST_CONTEXT, VirtioInpu
 
 static EVT_WDF_OBJECT_CONTEXT_CLEANUP VirtioInputEvtReadRequestContextCleanup;
 
+static __forceinline LONG VirtioInputPendingRingTotalDepthLocked(_In_ const DEVICE_CONTEXT* DevCtx)
+{
+    LONG total;
+    UCHAR i;
+
+    total = 0;
+    for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; ++i) {
+        total += (LONG)DevCtx->PendingReportRing[i].count;
+    }
+    return total;
+}
+
+static __forceinline VOID VirtioInputPendingRingUpdateCountersLocked(_Inout_ PDEVICE_CONTEXT DevCtx)
+{
+    LONG depth;
+
+    depth = VirtioInputPendingRingTotalDepthLocked(DevCtx);
+    VioInputCounterSet(&DevCtx->Counters.PendingRingDepth, depth);
+    VioInputCounterMaxUpdate(&DevCtx->Counters.PendingRingMaxDepth, depth);
+}
+
 static VOID VirtioInputEvtIoCanceledOnReadQueue(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request)
 {
     WDFDEVICE device = WdfIoQueueGetDevice(Queue);
@@ -20,9 +41,10 @@ static VOID VirtioInputEvtIoCanceledOnReadQueue(_In_ WDFQUEUE Queue, _In_ WDFREQ
 
     VIOINPUT_LOG(
         VIOINPUT_LOG_QUEUE,
-        "READ_REPORT cancelled: status=%!STATUS! bytes=0 ring=%ld pending=%ld\n",
+        "READ_REPORT cancelled: status=%!STATUS! bytes=0 txRing=%ld pendingRing=%ld readQ=%ld\n",
         STATUS_CANCELLED,
         devCtx->Counters.ReportRingDepth,
+        devCtx->Counters.PendingRingDepth,
         devCtx->Counters.ReadReportQueueDepth);
 
     WdfRequestComplete(Request, STATUS_CANCELLED);
@@ -36,18 +58,23 @@ static VOID VirtioInputPendingRingInit(_Inout_ struct virtio_input_report_ring *
 }
 
 static VOID VirtioInputPendingRingPush(
+    _Inout_ PDEVICE_CONTEXT DevCtx,
     _Inout_ struct virtio_input_report_ring *ring,
     _In_reads_bytes_(ReportSize) const VOID *Report,
     _In_ size_t ReportSize
 )
 {
+    BOOLEAN dropped;
+
     if (ReportSize == 0 || ReportSize > VIRTIO_INPUT_REPORT_MAX_SIZE) {
         return;
     }
 
+    dropped = FALSE;
     if (ring->count == VIRTIO_INPUT_REPORT_RING_CAPACITY) {
         ring->tail = (ring->tail + 1u) % VIRTIO_INPUT_REPORT_RING_CAPACITY;
         ring->count--;
+        dropped = TRUE;
     }
 
     {
@@ -58,9 +85,18 @@ static VOID VirtioInputPendingRingPush(
 
     ring->head = (ring->head + 1u) % VIRTIO_INPUT_REPORT_RING_CAPACITY;
     ring->count++;
+
+    if (dropped) {
+        VioInputCounterInc(&DevCtx->Counters.PendingRingDrops);
+    }
+    VirtioInputPendingRingUpdateCountersLocked(DevCtx);
 }
 
-static BOOLEAN VirtioInputPendingRingPop(_Inout_ struct virtio_input_report_ring *ring, _Out_ struct virtio_input_report *out)
+static BOOLEAN VirtioInputPendingRingPop(
+    _Inout_ PDEVICE_CONTEXT DevCtx,
+    _Inout_ struct virtio_input_report_ring *ring,
+    _Out_ struct virtio_input_report *out
+)
 {
     if (ring->count == 0) {
         return FALSE;
@@ -69,6 +105,7 @@ static BOOLEAN VirtioInputPendingRingPop(_Inout_ struct virtio_input_report_ring
     *out = ring->reports[ring->tail];
     ring->tail = (ring->tail + 1u) % VIRTIO_INPUT_REPORT_RING_CAPACITY;
     ring->count--;
+    VirtioInputPendingRingUpdateCountersLocked(DevCtx);
     return TRUE;
 }
 
@@ -286,7 +323,7 @@ static VOID VirtioInputDrainReadRequestsForReportId(_In_ WDFDEVICE Device, _In_ 
             break;
         }
 
-        haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[ReportId], &report);
+        haveReport = VirtioInputPendingRingPop(devCtx, &devCtx->PendingReportRing[ReportId], &report);
 
         WdfSpinLockRelease(devCtx->ReadReportLock);
 
@@ -304,7 +341,7 @@ static VOID VirtioInputDrainReadRequestsForReportId(_In_ WDFDEVICE Device, _In_ 
 
         VIOINPUT_LOG(
             VIOINPUT_LOG_QUEUE,
-            "READ_REPORT complete(%s): reportId=%u status=%!STATUS! bytes=%Iu pending=%ld\n",
+            "READ_REPORT complete(%s): reportId=%u status=%!STATUS! bytes=%Iu readQ=%ld\n",
             fromAny ? "any" : "id",
             (ULONG)ReportId,
             status,
@@ -352,6 +389,7 @@ NTSTATUS VirtioInputReadReportQueuesInitialize(_In_ WDFDEVICE Device)
         devCtx->InputReportSeq[i] = 0;
         devCtx->LastGetInputReportSeqNoFile[i] = 0;
     }
+    VirtioInputPendingRingUpdateCountersLocked(devCtx);
 
     WDF_OBJECT_ATTRIBUTES_INIT(&queueAttributes);
     queueAttributes.ParentObject = Device;
@@ -390,6 +428,7 @@ VOID VirtioInputReadReportQueuesStart(_In_ WDFDEVICE Device)
         devCtx->InputReportSeq[i] = 0;
         devCtx->LastGetInputReportSeqNoFile[i] = 0;
     }
+    VirtioInputPendingRingUpdateCountersLocked(devCtx);
     WdfSpinLockRelease(devCtx->ReadReportLock);
 
     WdfWaitLockRelease(devCtx->ReadReportWaitLock);
@@ -413,6 +452,7 @@ VOID VirtioInputReadReportQueuesStopAndFlush(_In_ WDFDEVICE Device, _In_ NTSTATU
         devCtx->InputReportSeq[i] = 0;
         devCtx->LastGetInputReportSeqNoFile[i] = 0;
     }
+    VirtioInputPendingRingUpdateCountersLocked(devCtx);
     WdfSpinLockRelease(devCtx->ReadReportLock);
 
     for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
@@ -423,7 +463,7 @@ VOID VirtioInputReadReportQueuesStopAndFlush(_In_ WDFDEVICE Device, _In_ NTSTATU
 
             VIOINPUT_LOG(
                 VIOINPUT_LOG_QUEUE,
-                "READ_REPORT cancelled (stop): status=%!STATUS! pending=%ld\n",
+                "READ_REPORT cancelled (stop): status=%!STATUS! readQ=%ld\n",
                 CompletionStatus,
                 devCtx->Counters.ReadReportQueueDepth);
 
@@ -482,7 +522,7 @@ NTSTATUS VirtioInputReportArrived(
     devCtx->LastInputReportValid[ReportId] = TRUE;
     RtlCopyMemory(devCtx->LastInputReport[ReportId], Report, ReportSize);
 
-    VirtioInputPendingRingPush(&devCtx->PendingReportRing[ReportId], Report, ReportSize);
+    VirtioInputPendingRingPush(devCtx, &devCtx->PendingReportRing[ReportId], Report, ReportSize);
     WdfSpinLockRelease(devCtx->ReadReportLock);
 
     VirtioInputDrainReadRequestsForReportId(Device, ReportId);
@@ -667,26 +707,26 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
         WdfSpinLockAcquire(devCtx->ReadReportLock);
         if (devCtx->DeviceKind == VioInputDeviceKindKeyboard) {
             if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_KEYBOARD].count != 0) {
-                haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_KEYBOARD], &report);
+                haveReport = VirtioInputPendingRingPop(devCtx, &devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_KEYBOARD], &report);
             } else if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_CONSUMER].count != 0) {
-                haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_CONSUMER], &report);
+                haveReport = VirtioInputPendingRingPop(devCtx, &devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_CONSUMER], &report);
             }
         } else if (devCtx->DeviceKind == VioInputDeviceKindMouse) {
             if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_MOUSE].count != 0) {
-                haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_MOUSE], &report);
+                haveReport = VirtioInputPendingRingPop(devCtx, &devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_MOUSE], &report);
             }
         } else if (devCtx->DeviceKind == VioInputDeviceKindTablet) {
             if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_TABLET].count != 0) {
-                haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_TABLET], &report);
+                haveReport = VirtioInputPendingRingPop(devCtx, &devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_TABLET], &report);
             }
         } else if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_KEYBOARD].count != 0) {
-            haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_KEYBOARD], &report);
+            haveReport = VirtioInputPendingRingPop(devCtx, &devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_KEYBOARD], &report);
         } else if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_CONSUMER].count != 0) {
-            haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_CONSUMER], &report);
+            haveReport = VirtioInputPendingRingPop(devCtx, &devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_CONSUMER], &report);
         } else if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_MOUSE].count != 0) {
-            haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_MOUSE], &report);
+            haveReport = VirtioInputPendingRingPop(devCtx, &devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_MOUSE], &report);
         } else if (devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_TABLET].count != 0) {
-            haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_TABLET], &report);
+            haveReport = VirtioInputPendingRingPop(devCtx, &devCtx->PendingReportRing[VIRTIO_INPUT_REPORT_ID_TABLET], &report);
         }
         WdfSpinLockRelease(devCtx->ReadReportLock);
 
@@ -699,7 +739,7 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
             VioInputCounterInc(&devCtx->Counters.ReadReportCompleted);
             VIOINPUT_LOG(
                 VIOINPUT_LOG_QUEUE,
-                "READ_REPORT complete(pending): reportId=%u status=%!STATUS! bytes=%Iu pending=%ld\n",
+                "READ_REPORT complete(pending): reportId=%u status=%!STATUS! bytes=%Iu readQ=%ld\n",
                 (ULONG)report.data[0],
                 status,
                 bytesWritten,
@@ -722,9 +762,10 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
         VioInputCounterMaxUpdate(&devCtx->Counters.ReadReportQueueMaxDepth, devCtx->Counters.ReadReportQueueDepth);
         VIOINPUT_LOG(
             VIOINPUT_LOG_QUEUE,
-            "READ_REPORT pended(any): pending=%ld ring=%ld\n",
+            "READ_REPORT pended(any): readQ=%ld txRing=%ld pendingRing=%ld\n",
             devCtx->Counters.ReadReportQueueDepth,
-            devCtx->Counters.ReportRingDepth);
+            devCtx->Counters.ReportRingDepth,
+            devCtx->Counters.PendingRingDepth);
 
         WdfWaitLockRelease(devCtx->ReadReportWaitLock);
 
@@ -744,7 +785,7 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
         bytesWritten = 0;
 
         WdfSpinLockAcquire(devCtx->ReadReportLock);
-        haveReport = VirtioInputPendingRingPop(&devCtx->PendingReportRing[reportId], &report);
+        haveReport = VirtioInputPendingRingPop(devCtx, &devCtx->PendingReportRing[reportId], &report);
         WdfSpinLockRelease(devCtx->ReadReportLock);
 
         if (haveReport) {
@@ -756,7 +797,7 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
             VioInputCounterInc(&devCtx->Counters.ReadReportCompleted);
             VIOINPUT_LOG(
                 VIOINPUT_LOG_QUEUE,
-                "READ_REPORT complete(pending): reportId=%u status=%!STATUS! bytes=%Iu pending=%ld\n",
+                "READ_REPORT complete(pending): reportId=%u status=%!STATUS! bytes=%Iu readQ=%ld\n",
                 (ULONG)reportId,
                 status,
                 bytesWritten,
@@ -783,10 +824,11 @@ NTSTATUS VirtioInputHandleHidReadReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Req
         VioInputCounterMaxUpdate(&devCtx->Counters.ReadReportQueueMaxDepth, devCtx->Counters.ReadReportQueueDepth);
         VIOINPUT_LOG(
             VIOINPUT_LOG_QUEUE,
-            "READ_REPORT pended: reportId=%u pending=%ld ring=%ld\n",
+            "READ_REPORT pended: reportId=%u readQ=%ld txRing=%ld pendingRing=%ld\n",
             (ULONG)reportId,
             devCtx->Counters.ReadReportQueueDepth,
-            devCtx->Counters.ReportRingDepth);
+            devCtx->Counters.ReportRingDepth,
+            devCtx->Counters.PendingRingDepth);
 
         WdfWaitLockRelease(devCtx->ReadReportWaitLock);
 

@@ -845,9 +845,10 @@ static void VirtioInputReportReady(_In_ void *context)
 
     VIOINPUT_LOG(
         VIOINPUT_LOG_VIRTQ,
-        "report ready: virtioEvents=%ld ring=%ld pending=%ld drops=%ld overruns=%ld\n",
+        "report ready: virtioEvents=%ld txRing=%ld pendingRing=%ld readQ=%ld eventDrops=%ld overruns=%ld\n",
         deviceContext->Counters.VirtioEvents,
         deviceContext->Counters.ReportRingDepth,
+        deviceContext->Counters.PendingRingDepth,
         deviceContext->Counters.ReadReportQueueDepth,
         deviceContext->Counters.VirtioEventDrops,
         deviceContext->Counters.VirtioEventOverruns);
@@ -872,9 +873,10 @@ static void VirtioInputReportReady(_In_ void *context)
     if (drained != 0) {
         VIOINPUT_LOG(
             VIOINPUT_LOG_VIRTQ,
-            "report ready drained=%lu ring=%ld pending=%ld\n",
+            "report ready drained=%lu txRing=%ld pendingRing=%ld readQ=%ld\n",
             drained,
             deviceContext->Counters.ReportRingDepth,
+            deviceContext->Counters.PendingRingDepth,
             deviceContext->Counters.ReadReportQueueDepth);
     }
 }

@@ -271,11 +271,20 @@ Dump the raw bytes returned by `IOCTL_HID_GET_COLLECTION_DESCRIPTOR`:
 hidtest.exe --dump-collection-desc
 ```
 
-Query virtio-input driver diagnostic counters (IOCTL_VIOINPUT_QUERY_COUNTERS):
+Poll virtio-input diagnostics counters (IOCTL_VIOINPUT_QUERY_COUNTERS; does **not** issue `ReadFile` / `IOCTL_HID_READ_REPORT`):
 
 ```bat
 hidtest.exe --counters
 ```
+
+This prints a snapshot including:
+
+- `txRing`: translation-layer ring (`virtio_input_device.report_ring`) + its `drops/overruns`
+- `pendingRing`: READ_REPORT backlog (`DEVICE_CONTEXT.PendingReportRing[]`) + its `drops`
+- `readQ`: current/max pending `IOCTL_HID_READ_REPORT` IRPs
+
+When you generate input with no pending reads, `pendingRing` should grow. If you flood input faster than you read it,
+`pendingRing drops` should increase.
 
 Query virtio-input driver diagnostic counters in JSON form:
 
