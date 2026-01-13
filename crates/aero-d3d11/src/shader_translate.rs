@@ -778,12 +778,12 @@ impl ComputeSysValue {
             | ComputeSysValue::GroupId => {
                 let field = format!("input.{}", self.wgsl_field_name());
                 format!(
-                    "vec4<f32>(f32({field}.x), f32({field}.y), f32({field}.z), 1.0)"
+                    "vec4<f32>(bitcast<f32>({field}.x), bitcast<f32>({field}.y), bitcast<f32>({field}.z), 1.0)"
                 )
             }
             ComputeSysValue::GroupIndex => {
                 let field = format!("input.{}", self.wgsl_field_name());
-                format!("vec4<f32>(f32({field}), 0.0, 0.0, 1.0)")
+                format!("vec4<f32>(bitcast<f32>({field}), 0.0, 0.0, 1.0)")
             }
         }
     }
@@ -3339,13 +3339,13 @@ mod tests {
         assert!(translated.wgsl.contains("@builtin(global_invocation_id)"));
         assert!(translated
             .wgsl
-            .contains("f32(input.global_invocation_id.x)"));
+            .contains("bitcast<f32>(input.global_invocation_id.x)"));
         assert!(translated
             .wgsl
-            .contains("f32(input.global_invocation_id.y)"));
+            .contains("bitcast<f32>(input.global_invocation_id.y)"));
         assert!(translated
             .wgsl
-            .contains("f32(input.global_invocation_id.z)"));
+            .contains("bitcast<f32>(input.global_invocation_id.z)"));
     }
 
     #[test]
@@ -3401,13 +3401,13 @@ mod tests {
         assert!(translated.wgsl.contains("@builtin(local_invocation_id)"));
         assert!(translated
             .wgsl
-            .contains("f32(input.local_invocation_id.x)"));
+            .contains("bitcast<f32>(input.local_invocation_id.x)"));
         assert!(translated
             .wgsl
-            .contains("f32(input.local_invocation_id.y)"));
+            .contains("bitcast<f32>(input.local_invocation_id.y)"));
         assert!(translated
             .wgsl
-            .contains("f32(input.local_invocation_id.z)"));
+            .contains("bitcast<f32>(input.local_invocation_id.z)"));
     }
 
     #[test]
@@ -3468,9 +3468,15 @@ mod tests {
         assert_wgsl_validates(&translated.wgsl);
         assert!(translated.wgsl.contains("@builtin(workgroup_id)"));
         assert!(!translated.wgsl.contains("@builtin(global_invocation_id)"));
-        assert!(translated.wgsl.contains("f32(input.workgroup_id.x)"));
-        assert!(translated.wgsl.contains("f32(input.workgroup_id.y)"));
-        assert!(translated.wgsl.contains("f32(input.workgroup_id.z)"));
+        assert!(translated
+            .wgsl
+            .contains("bitcast<f32>(input.workgroup_id.x)"));
+        assert!(translated
+            .wgsl
+            .contains("bitcast<f32>(input.workgroup_id.y)"));
+        assert!(translated
+            .wgsl
+            .contains("bitcast<f32>(input.workgroup_id.z)"));
     }
 
     #[test]
@@ -3528,7 +3534,7 @@ mod tests {
             .contains("@builtin(local_invocation_index)"));
         assert!(translated
             .wgsl
-            .contains("f32(input.local_invocation_index)"));
+            .contains("bitcast<f32>(input.local_invocation_index)"));
     }
 
     #[test]
