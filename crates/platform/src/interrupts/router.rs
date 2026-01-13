@@ -102,7 +102,7 @@ pub struct PlatformInterrupts {
 
     pic: Pic8259,
     ioapic: Arc<Mutex<IoApic>>,
-    lapic: Arc<LocalApic>,
+    lapics: Vec<Arc<LocalApic>>,
     lapic_clock: Arc<AtomicClock>,
     apic_enabled: Arc<AtomicBool>,
 
@@ -177,6 +177,11 @@ impl PortIoDevice for ImcrPort {
 
 impl PlatformInterrupts {
     pub fn new() -> Self {
+        Self::new_with_cpu_count(1)
+    }
+
+    pub fn new_with_cpu_count(cpu_count: u8) -> Self {
+        let cpu_count = cpu_count.max(1);
         let mut isa_irq_to_gsi = [0u32; 16];
         for (idx, slot) in isa_irq_to_gsi.iter_mut().enumerate() {
             *slot = idx as u32;
@@ -190,23 +195,29 @@ impl PlatformInterrupts {
         isa_irq_to_gsi[0] = 2;
 
         let lapic_clock = Arc::new(AtomicClock::default());
-        let lapic = Arc::new(LocalApic::with_clock(lapic_clock.clone(), 0));
-        // Keep the LAPIC enabled for platform-level interrupt injection (tests and early bring-up).
-        lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
+        let mut lapics = Vec::with_capacity(cpu_count as usize);
+        for apic_id in 0..cpu_count {
+            let lapic = Arc::new(LocalApic::with_clock(lapic_clock.clone(), apic_id));
+            // Keep LAPICs enabled for platform-level interrupt injection (tests and early bring-up).
+            lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
+            lapics.push(lapic);
+        }
 
         let apic_enabled = Arc::new(AtomicBool::new(false));
         let sink: Arc<dyn LapicInterruptSink> = Arc::new(RoutedLapicSink {
-            lapic: lapic.clone(),
+            lapic: lapics[0].clone(),
             apic_enabled: apic_enabled.clone(),
         });
 
         let ioapic = Arc::new(Mutex::new(IoApic::new(IoApicId(0), sink)));
 
         // Wire LAPIC EOI -> IOAPIC Remote-IRR handling.
-        let ioapic_for_eoi = ioapic.clone();
-        lapic.register_eoi_notifier(Arc::new(move |vector| {
-            ioapic_for_eoi.lock().unwrap().notify_eoi(vector);
-        }));
+        for lapic in &lapics {
+            let ioapic_for_eoi = ioapic.clone();
+            lapic.register_eoi_notifier(Arc::new(move |vector| {
+                ioapic_for_eoi.lock().unwrap().notify_eoi(vector);
+            }));
+        }
 
         let num_gsis = ioapic.lock().unwrap().num_redirection_entries();
 
@@ -231,7 +242,7 @@ impl PlatformInterrupts {
 
             pic,
             ioapic,
-            lapic,
+            lapics,
             lapic_clock,
             apic_enabled,
 
@@ -245,8 +256,9 @@ impl PlatformInterrupts {
         // Preserve the shared IRQ line generation counter so existing `PlatformIrqLine` handles
         // observe the reset and invalidate their cached level.
         let gen = self.irq_line_generation.clone();
+        let cpu_count = u8::try_from(self.lapics.len()).unwrap_or(u8::MAX).max(1);
         gen.fetch_add(1, Ordering::SeqCst);
-        *self = Self::new();
+        *self = Self::new_with_cpu_count(cpu_count);
         self.irq_line_generation = gen;
     }
 
@@ -377,16 +389,18 @@ impl PlatformInterrupts {
     }
 
     pub fn lapic_mmio_read(&self, offset: u64, data: &mut [u8]) {
-        self.lapic.mmio_read(offset, data);
+        self.lapics[0].mmio_read(offset, data);
     }
 
     pub fn lapic_mmio_write(&self, offset: u64, data: &[u8]) {
-        self.lapic.mmio_write(offset, data);
+        self.lapics[0].mmio_write(offset, data);
     }
 
     pub fn tick(&self, delta_ns: u64) {
         self.lapic_clock.advance_ns(delta_ns);
-        self.lapic.poll();
+        for lapic in &self.lapics {
+            lapic.poll();
+        }
     }
 
     /// Emulates the Interrupt Mode Configuration Register (IMCR).
@@ -440,11 +454,22 @@ impl PlatformInterrupts {
     }
 
     pub(crate) fn lapic_apic_id(&self) -> u8 {
-        self.lapic.apic_id()
+        self.lapics[0].apic_id()
     }
 
     pub(crate) fn lapic_inject_fixed(&self, vector: u8) {
-        self.lapic.inject_fixed_interrupt(vector);
+        self.lapics[0].inject_fixed_interrupt(vector);
+    }
+
+    /// Reset a specific LAPIC's internal state back to its power-on baseline.
+    ///
+    /// This is used by machine-level INIT IPI delivery to reset the target vCPU's local APIC.
+    /// If `apic_id` does not correspond to any known LAPIC, this is a no-op.
+    pub fn reset_lapic(&self, apic_id: u8) {
+        let Some(lapic) = self.lapics.iter().find(|lapic| lapic.apic_id() == apic_id) else {
+            return;
+        };
+        lapic.reset_state(apic_id);
     }
 
     fn set_gsi_level_internal(&mut self, gsi: u32, level: bool) {
@@ -518,7 +543,7 @@ impl InterruptController for PlatformInterrupts {
     fn get_pending(&self) -> Option<u8> {
         match self.mode {
             PlatformInterruptMode::LegacyPic => self.pic.get_pending_vector(),
-            PlatformInterruptMode::Apic => self.lapic.get_pending_vector(),
+            PlatformInterruptMode::Apic => self.lapics[0].get_pending_vector(),
         }
     }
 
@@ -526,7 +551,7 @@ impl InterruptController for PlatformInterrupts {
         match self.mode {
             PlatformInterruptMode::LegacyPic => self.pic.acknowledge(vector),
             PlatformInterruptMode::Apic => {
-                let _ = self.lapic.ack(vector);
+                let _ = self.lapics[0].ack(vector);
             }
         }
     }
@@ -536,7 +561,7 @@ impl InterruptController for PlatformInterrupts {
             PlatformInterruptMode::LegacyPic => self.pic.eoi(vector),
             PlatformInterruptMode::Apic => {
                 let _ = vector;
-                self.lapic.eoi();
+                self.lapics[0].eoi();
             }
         }
     }
@@ -584,7 +609,7 @@ impl IoSnapshot for PlatformInterrupts {
 
         w.field_bytes(TAG_PIC, self.pic.save_state());
         w.field_bytes(TAG_IOAPIC, self.ioapic.lock().unwrap().save_state());
-        w.field_bytes(TAG_LAPIC, self.lapic.save_state());
+        w.field_bytes(TAG_LAPIC, self.lapics[0].save_state());
 
         w.finish()
     }
@@ -679,7 +704,7 @@ impl IoSnapshot for PlatformInterrupts {
             self.ioapic.lock().unwrap().load_state(buf)?;
         }
         if let Some(buf) = r.bytes(TAG_LAPIC) {
-            self.lapic.restore_state(buf)?;
+            self.lapics[0].restore_state(buf)?;
         }
 
         let num_gsis = self.ioapic.lock().unwrap().num_redirection_entries();
@@ -880,5 +905,26 @@ mod tests {
         // One-shot timer should not re-fire.
         ints.tick(100);
         assert_eq!(ints.get_pending(), None);
+    }
+
+    #[test]
+    fn reset_lapic_clears_only_target_lapic_state() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // Inject distinct fixed interrupts into LAPIC0 and LAPIC1.
+        ints.lapics[0].inject_fixed_interrupt(0x40);
+        ints.lapics[1].inject_fixed_interrupt(0x41);
+
+        assert!(ints.lapics[0].is_pending(0x40));
+        assert!(ints.lapics[1].is_pending(0x41));
+
+        ints.reset_lapic(1);
+
+        // LAPIC1 should have been cleared.
+        assert!(!ints.lapics[1].is_pending(0x41));
+
+        // LAPIC0 should be unaffected.
+        assert!(ints.lapics[0].is_pending(0x40));
     }
 }

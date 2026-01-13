@@ -472,6 +472,16 @@ impl LocalApic {
         state.ack(vector)
     }
 
+    /// Reset the LAPIC register state back to its power-on baseline.
+    ///
+    /// This is intended for modeling INIT IPI delivery.
+    ///
+    /// Note: Any registered EOI notifiers are preserved so IOAPIC Remote-IRR wiring continues to
+    /// function across LAPIC resets.
+    pub fn reset_state(&self, apic_id: u8) {
+        *self.state.lock().unwrap() = LapicState::new(apic_id);
+    }
+
     pub fn eoi(&self) {
         let now = self.clock.now_ns();
         let vector = {
