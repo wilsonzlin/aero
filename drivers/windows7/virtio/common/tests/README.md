@@ -15,6 +15,8 @@ Notable targets:
 - `virtio_common_tests`: split ring + legacy transport tests (pure portable C).
 - `virtio_intx_wdm_tests`: unit tests for the WDM INTx helper
   (`virtio_pci_intx_wdm.c`) using a minimal `wdk_stubs/ntddk.h`.
+- `virtio_msix_wdm_tests`: unit tests for the WDM MSI/MSI-X helper
+  (`virtio_pci_msix_wdm.c`) using a minimal message-interrupt simulation in `wdk_stubs/`.
 - `virtio_pci_modern_miniport_tests`: unit tests for the Win7 miniport-style
   virtio-pci modern transport helper (`virtio_pci_modern_miniport.c`) using a
   tiny BAR0 MMIO simulator and WDK stubs.
@@ -45,4 +47,3 @@ This repository contains multiple `ntddk.h` stubs for different test suites, so
 each CMake test target must ensure its intended stub directory is first on the
 include path (the test targets in this directory use
 `target_include_directories(... BEFORE ...)`).
-

@@ -30,6 +30,7 @@ This directory also provides shared helpers often used alongside either
 transport:
 
 - `virtio_pci_intx_wdm.*` — WDM INTx ISR read-to-ack + DPC dispatch
+- `virtio_pci_msix_wdm.*` — WDM MSI/MSI-X message interrupt ISR + per-vector DPC dispatch
 - `virtio_pci_contract.*` — AERO-W7-VIRTIO v1 PCI identity validation helpers
 
 ## Aero contract v1 (AERO-W7-VIRTIO)
@@ -91,9 +92,12 @@ is retained only for compatibility/testing with transitional/QEMU devices.
     - queue programming via `queue_desc/queue_avail/queue_used` + `queue_enable`
     - notify doorbells + ISR read-to-ack
 - `include/virtio_pci_intx_wdm.h` + `src/virtio_pci_intx_wdm.c`
-  - Shared WDM INTx ISR + DPC helper for virtio-pci devices (ISR read-to-ack, then DPC dispatch).
+   - Shared WDM INTx ISR + DPC helper for virtio-pci devices (ISR read-to-ack, then DPC dispatch).
+- `include/virtio_pci_msix_wdm.h` + `src/virtio_pci_msix_wdm.c`
+   - Shared WDM MSI/MSI-X interrupt helper for virtio-pci modern devices (message-based interrupts via `IoConnectInterruptEx`).
+   - Provides a reusable ISR + per-vector DPC dispatch layer with a virtio-friendly vector/queue mapping policy.
 - `include/virtio_pci_contract.h` + `src/virtio_pci_contract.c`
-  - Optional PCI identity validation helpers (AERO-W7-VIRTIO contract checks).
+   - Optional PCI identity validation helpers (AERO-W7-VIRTIO contract checks).
 - `include/virtio_pci_legacy.h` + `src/virtio_pci_legacy.c`
   - Legacy/transitional virtio-pci transport (virtio 0.9 I/O-port register set).
 - `include/virtqueue_split_legacy.h` + `src/virtqueue_split_legacy.c`
