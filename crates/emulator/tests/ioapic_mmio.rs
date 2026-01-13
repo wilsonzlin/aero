@@ -4,9 +4,11 @@ use aero_devices::apic::{
     IoApic, IoApicId, LocalApic, IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE,
     LAPIC_MMIO_SIZE,
 };
+use aero_platform::address_filter::AddressFilter;
+use aero_platform::memory::MemoryBus;
+use aero_platform::ChipsetState;
 use emulator::devices::ioapic::IoApicMmio;
 use emulator::devices::lapic::LapicMmio;
-use emulator::memory_bus::MemoryBus;
 use memory::bus::MemoryBus as _;
 use memory::DenseMemory;
 
@@ -17,18 +19,20 @@ fn write_u32(bus: &mut MemoryBus, paddr: u64, value: u32) {
 #[test]
 fn ioapic_mmio_programming_via_system_bus() {
     let ram = DenseMemory::new(0x4000).unwrap();
-    let mut bus = MemoryBus::new(Box::new(ram));
+    let chipset = ChipsetState::new(true);
+    let filter = AddressFilter::new(chipset.a20());
+    let mut bus = MemoryBus::with_ram(filter, Box::new(ram));
 
     let lapic = Arc::new(LocalApic::new(0));
     let ioapic = Arc::new(Mutex::new(IoApic::new(IoApicId(0), lapic.clone())));
 
-    bus.add_mmio_region(
+    bus.map_mmio(
         LAPIC_MMIO_BASE,
         LAPIC_MMIO_SIZE,
         Box::new(LapicMmio::new(lapic.clone())),
     )
     .unwrap();
-    bus.add_mmio_region(
+    bus.map_mmio(
         IOAPIC_MMIO_BASE,
         IOAPIC_MMIO_SIZE,
         Box::new(IoApicMmio::new(ioapic.clone())),

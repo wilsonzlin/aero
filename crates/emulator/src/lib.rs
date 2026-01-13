@@ -42,5 +42,4 @@ pub mod gpu_worker;
 pub mod in_capture;
 pub mod io;
 pub mod machine;
-pub mod memory_bus;
 pub mod smp;
