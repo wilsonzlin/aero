@@ -60,7 +60,14 @@ export class WebSocketTcpProxyClient {
       }
     };
     ws.onerror = (err) => this.sink({ type: "error", connectionId, error: err });
-    ws.onclose = () => this.sink({ type: "closed", connectionId });
+    ws.onclose = () => {
+      // `connectionId` may be reused after a close; ensure we only remove the
+      // current socket (and not a newer one that reconnected).
+      if (this.sockets.get(connectionId) === ws) {
+        this.sockets.delete(connectionId);
+      }
+      this.sink({ type: "closed", connectionId });
+    };
 
     this.sockets.set(connectionId, ws);
   }

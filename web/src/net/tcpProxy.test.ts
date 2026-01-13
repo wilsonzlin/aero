@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WebSocketTcpProxyClient } from "./tcpProxy";
+import { type TcpProxyEvent, WebSocketTcpProxyClient } from "./tcpProxy";
 
 class FakeWebSocket {
   static readonly CONNECTING = 0;
@@ -7,6 +7,7 @@ class FakeWebSocket {
   static readonly CLOSING = 2;
   static readonly CLOSED = 3;
 
+  static readonly instances: FakeWebSocket[] = [];
   static last: FakeWebSocket | null = null;
 
   readonly url: string;
@@ -21,6 +22,7 @@ class FakeWebSocket {
   constructor(url: string) {
     this.url = url;
     FakeWebSocket.last = this;
+    FakeWebSocket.instances.push(this);
   }
 
   send(): void {}
@@ -158,6 +160,46 @@ describe("WebSocketTcpProxyClient URL normalization", () => {
       else g.WebSocket = originalWebSocket;
       if (originalLocation === undefined) delete (g as { location?: unknown }).location;
       else (g as { location?: unknown }).location = originalLocation;
+    }
+  });
+});
+
+describe("WebSocketTcpProxyClient lifecycle", () => {
+  it("removes sockets from the internal map on remote close and allows reconnect", () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const originalWebSocket = g.WebSocket;
+    g.WebSocket = FakeWebSocket;
+
+    try {
+      // Reset global FakeWebSocket state for this test.
+      FakeWebSocket.instances.length = 0;
+      FakeWebSocket.last = null;
+
+      const events: TcpProxyEvent[] = [];
+      const client = new WebSocketTcpProxyClient("https://gateway.example.com/base", (evt) => events.push(evt));
+
+      client.connect(1, "127.0.0.1", 1234);
+      const first = FakeWebSocket.last;
+      expect(first).not.toBeNull();
+
+      // Simulate remote close (i.e. without calling client.close()).
+      first!.onclose?.({} as CloseEvent);
+
+      // Should be able to reconnect using the same connection ID.
+      client.connect(1, "127.0.0.1", 1234);
+      const second = FakeWebSocket.last;
+      expect(second).not.toBeNull();
+      expect(second).not.toBe(first);
+
+      // Ensure URL is the same for both sockets (and still correct).
+      expect(new URL(second!.url).toString()).toBe(new URL(first!.url).toString());
+      expect(new URL(second!.url).pathname).toBe("/base/tcp");
+
+      expect(events).toContainEqual({ type: "closed", connectionId: 1 });
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    } finally {
+      if (originalWebSocket === undefined) delete g.WebSocket;
+      else g.WebSocket = originalWebSocket;
     }
   });
 });
