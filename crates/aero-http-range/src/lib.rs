@@ -320,3 +320,211 @@ fn coalesce_sorted(mut ranges: Vec<ResolvedByteRange>) -> Vec<ResolvedByteRange>
     out.push(cur);
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_resolved_invariants(ranges: &[ResolvedByteRange], len: u64) {
+        assert!(len > 0, "len must be > 0 for resolved ranges");
+        assert!(!ranges.is_empty(), "resolved ranges must not be empty");
+        for r in ranges {
+            assert!(
+                r.start <= r.end,
+                "resolved range start must be <= end: {r:?}"
+            );
+            assert!(r.end < len, "resolved range end must be < len: {r:?}");
+            let expected_len = r.end - r.start + 1;
+            assert_eq!(r.len(), expected_len, "resolved range len mismatch: {r:?}");
+            assert!(r.len() > 0, "resolved range len must be non-zero: {r:?}");
+        }
+    }
+
+    fn assert_resolved_eq(ranges: &[ResolvedByteRange], expected: &[(u64, u64)], len: u64) {
+        let expected = expected
+            .iter()
+            .map(|&(start, end)| ResolvedByteRange { start, end })
+            .collect::<Vec<_>>();
+        assert_eq!(ranges, expected);
+        assert_resolved_invariants(ranges, len);
+    }
+
+    #[test]
+    fn parse_valid_single_range_forms() {
+        assert_eq!(
+            parse_range_header("bytes=0-0").unwrap(),
+            vec![ByteRangeSpec::FromTo { start: 0, end: 0 }]
+        );
+        assert_eq!(
+            parse_range_header("bytes=0-99").unwrap(),
+            vec![ByteRangeSpec::FromTo { start: 0, end: 99 }]
+        );
+        assert_eq!(
+            parse_range_header("bytes=100-").unwrap(),
+            vec![ByteRangeSpec::From { start: 100 }]
+        );
+        assert_eq!(
+            parse_range_header("bytes=-1").unwrap(),
+            vec![ByteRangeSpec::Suffix { len: 1 }]
+        );
+        assert_eq!(
+            parse_range_header("bytes=-500").unwrap(),
+            vec![ByteRangeSpec::Suffix { len: 500 }]
+        );
+    }
+
+    #[test]
+    fn parse_valid_multi_range_whitespace_tolerant() {
+        assert_eq!(
+            parse_range_header("bytes=0-0, 2-3").unwrap(),
+            vec![
+                ByteRangeSpec::FromTo { start: 0, end: 0 },
+                ByteRangeSpec::FromTo { start: 2, end: 3 }
+            ]
+        );
+        assert_eq!(
+            parse_range_header("bytes = 0-1 , 4-5").unwrap(),
+            vec![
+                ByteRangeSpec::FromTo { start: 0, end: 1 },
+                ByteRangeSpec::FromTo { start: 4, end: 5 }
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_invalid_syntax_and_number_cases() {
+        // Empty rest.
+        assert!(matches!(
+            parse_range_header("bytes=").unwrap_err(),
+            RangeParseError::InvalidSyntax
+        ));
+
+        // Missing '-'.
+        assert!(matches!(
+            parse_range_header("bytes=0").unwrap_err(),
+            RangeParseError::InvalidSyntax
+        ));
+
+        // Extra commas / empty specs.
+        for header in ["bytes=0-1,", "bytes=,0-1", "bytes=0-1,,2-3"] {
+            assert!(
+                matches!(parse_range_header(header).unwrap_err(), RangeParseError::InvalidSyntax),
+                "expected InvalidSyntax for {header:?}"
+            );
+        }
+
+        // Non-digit numbers.
+        for header in ["bytes=a-1", "bytes=0-a"] {
+            assert!(
+                matches!(parse_range_header(header).unwrap_err(), RangeParseError::InvalidNumber),
+                "expected InvalidNumber for {header:?}"
+            );
+        }
+
+        // end < start.
+        assert!(matches!(
+            parse_range_header("bytes=5-3").unwrap_err(),
+            RangeParseError::InvalidSyntax
+        ));
+
+        // -0 suffix is explicitly invalid.
+        assert!(matches!(
+            parse_range_header("bytes=-0").unwrap_err(),
+            RangeParseError::InvalidSyntax
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_unsupported_unit() {
+        assert!(matches!(
+            parse_range_header("items=0-1").unwrap_err(),
+            RangeParseError::UnsupportedUnit
+        ));
+    }
+
+    #[test]
+    fn dos_guard_rejects_header_over_max_len() {
+        let header = "x".repeat(MAX_RANGE_HEADER_LEN + 1);
+        match parse_range_header(&header).unwrap_err() {
+            RangeParseError::HeaderTooLarge { len, max } => {
+                assert_eq!(len, MAX_RANGE_HEADER_LEN + 1);
+                assert_eq!(max, MAX_RANGE_HEADER_LEN);
+            }
+            other => panic!("expected HeaderTooLarge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dos_guard_rejects_very_long_integers_and_non_zero_prefix_overflow() {
+        // parse_u64_decimal should reject numbers longer than its own scan cap.
+        let too_long = "9".repeat(65);
+        let header = format!("bytes={too_long}-{too_long}");
+        assert!(matches!(
+            parse_range_header(&header).unwrap_err(),
+            RangeParseError::InvalidNumber
+        ));
+
+        // >20 digits with a non-zero prefix should be rejected without attempting to
+        // parse into u64.
+        let overflow_digits = format!("1{}", "0".repeat(20)); // 21 digits
+        let header = format!("bytes={overflow_digits}-{overflow_digits}");
+        assert!(matches!(
+            parse_range_header(&header).unwrap_err(),
+            RangeParseError::InvalidNumber
+        ));
+    }
+
+    #[test]
+    fn resolve_len_zero_is_unsatisfiable() {
+        let specs = parse_range_header("bytes=0-0").unwrap();
+        assert!(matches!(
+            resolve_ranges(&specs, 0, false),
+            Err(RangeResolveError::Unsatisfiable)
+        ));
+    }
+
+    #[test]
+    fn resolve_drops_out_of_bounds_and_errors_when_none_remain() {
+        let specs = parse_range_header("bytes=0-0,20-30").unwrap();
+        let resolved = resolve_ranges(&specs, 10, false).unwrap();
+        assert_resolved_eq(&resolved, &[(0, 0)], 10);
+
+        let specs = parse_range_header("bytes=20-30").unwrap();
+        assert!(matches!(
+            resolve_ranges(&specs, 10, false),
+            Err(RangeResolveError::Unsatisfiable)
+        ));
+    }
+
+    #[test]
+    fn resolve_clamps_end_and_suffix_longer_than_resource_is_full_range() {
+        let specs = [ByteRangeSpec::FromTo { start: 5, end: 100 }];
+        let resolved = resolve_ranges(&specs, 10, false).unwrap();
+        assert_resolved_eq(&resolved, &[(5, 9)], 10);
+
+        let specs = [ByteRangeSpec::Suffix { len: 500 }];
+        let resolved = resolve_ranges(&specs, 10, false).unwrap();
+        assert_resolved_eq(&resolved, &[(0, 9)], 10);
+    }
+
+    #[test]
+    fn resolve_coalesce_sorts_and_merges_overlapping_and_adjacent_ranges() {
+        // Unsorted, overlapping and adjacent.
+        let specs = [
+            ByteRangeSpec::FromTo { start: 5, end: 6 },
+            ByteRangeSpec::FromTo { start: 0, end: 2 },
+            ByteRangeSpec::FromTo { start: 2, end: 4 },
+            ByteRangeSpec::FromTo { start: 10, end: 12 },
+        ];
+        let resolved = resolve_ranges(&specs, 20, true).unwrap();
+        assert_resolved_eq(&resolved, &[(0, 6), (10, 12)], 20);
+
+        // Coalesced ranges must be strictly separated by at least 1 byte.
+        for pair in resolved.windows(2) {
+            let a = pair[0];
+            let b = pair[1];
+            assert!(a.start <= b.start);
+            assert!(a.end.saturating_add(1) < b.start);
+        }
+    }
+}

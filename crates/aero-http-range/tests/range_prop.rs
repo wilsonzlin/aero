@@ -73,9 +73,11 @@ proptest! {
                 // Invariants per-range.
                 for r in &ranges {
                     prop_assert!(r.start <= r.end);
-                    if len > 0 {
-                        prop_assert!(r.end < len);
-                    }
+                    prop_assert!(len > 0);
+                    prop_assert!(r.end < len);
+                    let expected_len = r.end - r.start + 1;
+                    prop_assert_eq!(r.len(), expected_len);
+                    prop_assert!(r.len() > 0);
                 }
 
                 // Sorted & non-overlapping when coalescing enabled.
@@ -83,7 +85,8 @@ proptest! {
                     let a = pair[0];
                     let b = pair[1];
                     prop_assert!(a.start <= b.start);
-                    prop_assert!(a.end < b.start);
+                    // Coalescing should remove overlaps *and* adjacency.
+                    prop_assert!(a.end.saturating_add(1) < b.start);
                 }
 
                 // Total length equals sum(end-start+1).
