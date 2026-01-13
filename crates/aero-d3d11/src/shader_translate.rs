@@ -853,6 +853,10 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             | Sm4Inst::Dp4 { dst: _, a, b }
             | Sm4Inst::Min { dst: _, a, b }
             | Sm4Inst::Max { dst: _, a, b }
+            | Sm4Inst::IMin { dst: _, a, b }
+            | Sm4Inst::IMax { dst: _, a, b }
+            | Sm4Inst::UMin { dst: _, a, b }
+            | Sm4Inst::UMax { dst: _, a, b }
             | Sm4Inst::UDiv {
                 dst_quot: _,
                 dst_rem: _,
@@ -873,35 +877,10 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(b, &mut scan_reg);
                 scan_src_regs(c, &mut scan_reg);
             }
-            Sm4Inst::Bfi {
-                dst: _,
-                width,
-                offset,
-                insert,
-                base,
-            } => {
-                scan_src_regs(width, &mut scan_reg);
-                scan_src_regs(offset, &mut scan_reg);
-                scan_src_regs(insert, &mut scan_reg);
-                scan_src_regs(base, &mut scan_reg);
-            }
-            Sm4Inst::Ubfe {
-                dst: _,
-                width,
-                offset,
-                src,
-            }
-            | Sm4Inst::Ibfe {
-                dst: _,
-                width,
-                offset,
-                src,
-            } => {
-                scan_src_regs(width, &mut scan_reg);
-                scan_src_regs(offset, &mut scan_reg);
-                scan_src_regs(src, &mut scan_reg);
-            }
-            Sm4Inst::Rcp { dst: _, src } | Sm4Inst::Rsq { dst: _, src } => {
+            Sm4Inst::Rcp { dst: _, src }
+            | Sm4Inst::Rsq { dst: _, src }
+            | Sm4Inst::IAbs { dst: _, src }
+            | Sm4Inst::INeg { dst: _, src } => {
                 scan_src_regs(src, &mut scan_reg)
             }
             Sm4Inst::Bfi {
@@ -1692,8 +1671,10 @@ fn apply_modifier_u32(expr: String, modifier: OperandModifier) -> String {
     match modifier {
         OperandModifier::None => expr,
         // WGSL does not support unary negation on `u32`. DXBC operand modifiers are defined over
-        // raw 32-bit values, so model `-x` as wrapping subtraction.
-        OperandModifier::Neg | OperandModifier::AbsNeg => format!("(0u - ({expr}))"),
+        // raw 32-bit values, so model `-x` as wrapping subtraction from 0.
+        //
+        // Note: This helper is currently used for `vec4<u32>` operands.
+        OperandModifier::Neg | OperandModifier::AbsNeg => format!("vec4<u32>(0u) - ({expr})"),
         // `abs` is a no-op for unsigned integers.
         OperandModifier::Abs => expr,
     }
@@ -1914,6 +1895,10 @@ fn scan_resources(
             | Sm4Inst::Dp4 { dst: _, a, b }
             | Sm4Inst::Min { dst: _, a, b }
             | Sm4Inst::Max { dst: _, a, b }
+            | Sm4Inst::IMin { dst: _, a, b }
+            | Sm4Inst::IMax { dst: _, a, b }
+            | Sm4Inst::UMin { dst: _, a, b }
+            | Sm4Inst::UMax { dst: _, a, b }
             | Sm4Inst::UDiv {
                 dst_quot: _,
                 dst_rem: _,
@@ -1934,7 +1919,10 @@ fn scan_resources(
                 scan_src(b)?;
                 scan_src(c)?;
             }
-            Sm4Inst::Rcp { dst: _, src } | Sm4Inst::Rsq { dst: _, src } => scan_src(src)?,
+            Sm4Inst::Rcp { dst: _, src }
+            | Sm4Inst::Rsq { dst: _, src }
+            | Sm4Inst::IAbs { dst: _, src }
+            | Sm4Inst::INeg { dst: _, src } => scan_src(src)?,
             Sm4Inst::Bfi {
                 dst: _,
                 width,
@@ -2137,7 +2125,11 @@ fn emit_temp_and_output_decls(
             | Sm4Inst::Dp3 { dst, a, b }
             | Sm4Inst::Dp4 { dst, a, b }
             | Sm4Inst::Min { dst, a, b }
-            | Sm4Inst::Max { dst, a, b } => {
+            | Sm4Inst::Max { dst, a, b }
+            | Sm4Inst::IMin { dst, a, b }
+            | Sm4Inst::IMax { dst, a, b }
+            | Sm4Inst::UMin { dst, a, b }
+            | Sm4Inst::UMax { dst, a, b } => {
                 scan_reg(dst.reg);
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
@@ -2165,7 +2157,10 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(b, &mut scan_reg);
                 scan_src_regs(c, &mut scan_reg);
             }
-            Sm4Inst::Rcp { dst, src } | Sm4Inst::Rsq { dst, src } => {
+            Sm4Inst::Rcp { dst, src }
+            | Sm4Inst::Rsq { dst, src }
+            | Sm4Inst::IAbs { dst, src }
+            | Sm4Inst::INeg { dst, src } => {
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
             }
@@ -2788,6 +2783,40 @@ fn emit_instructions(
                     "idiv",
                     ctx,
                 )?;
+            }
+            Sm4Inst::IMin { dst, a, b } => {
+                let a = emit_src_vec4_i32(a, inst_index, "imin", ctx)?;
+                let b = emit_src_vec4_i32(b, inst_index, "imin", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(vec4<u32>(min(({a}), ({b}))))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "imin", ctx)?;
+            }
+            Sm4Inst::IMax { dst, a, b } => {
+                let a = emit_src_vec4_i32(a, inst_index, "imax", ctx)?;
+                let b = emit_src_vec4_i32(b, inst_index, "imax", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(vec4<u32>(max(({a}), ({b}))))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "imax", ctx)?;
+            }
+            Sm4Inst::UMin { dst, a, b } => {
+                let a = emit_src_vec4_u32(a, inst_index, "umin", ctx)?;
+                let b = emit_src_vec4_u32(b, inst_index, "umin", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(min(({a}), ({b})))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "umin", ctx)?;
+            }
+            Sm4Inst::UMax { dst, a, b } => {
+                let a = emit_src_vec4_u32(a, inst_index, "umax", ctx)?;
+                let b = emit_src_vec4_u32(b, inst_index, "umax", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(max(({a}), ({b})))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "umax", ctx)?;
+            }
+            Sm4Inst::IAbs { dst, src } => {
+                let src = emit_src_vec4_i32(src, inst_index, "iabs", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(vec4<u32>(abs({src})))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "iabs", ctx)?;
+            }
+            Sm4Inst::INeg { dst, src } => {
+                let src = emit_src_vec4_i32(src, inst_index, "ineg", ctx)?;
+                let expr = format!("bitcast<vec4<f32>>(vec4<u32>(-({src})))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ineg", ctx)?;
             }
             Sm4Inst::Rcp { dst, src } => {
                 let src = emit_src_vec4(src, inst_index, "rcp", ctx)?;

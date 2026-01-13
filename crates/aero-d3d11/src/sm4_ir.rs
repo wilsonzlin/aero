@@ -219,6 +219,40 @@ pub enum Sm4Inst {
         a: SrcOperand,
         b: SrcOperand,
     },
+    /// Signed integer minimum: `imin dst, a, b`
+    IMin {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Signed integer maximum: `imax dst, a, b`
+    IMax {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Unsigned integer minimum: `umin dst, a, b`
+    UMin {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Unsigned integer maximum: `umax dst, a, b`
+    UMax {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Signed integer absolute value: `iabs dst, src`
+    IAbs {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    /// Signed integer negation: `ineg dst, src`
+    INeg {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
     /// Unsigned integer division.
     ///
     /// DXBC encodes `udiv` with two destination operands:

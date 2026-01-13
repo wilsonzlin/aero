@@ -665,6 +665,52 @@ pub fn decode_instruction(
                 b,
             })
         }
+        OPCODE_IMIN => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::IMin { dst, a, b })
+        }
+        OPCODE_IMAX => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::IMax { dst, a, b })
+        }
+        OPCODE_UMIN => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::UMin { dst, a, b })
+        }
+        OPCODE_UMAX => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::UMax { dst, a, b })
+        }
+        OPCODE_IABS => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::IAbs { dst, src })
+        }
+        OPCODE_INEG => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::INeg { dst, src })
+        }
         OPCODE_RCP => {
             let mut dst = decode_dst(&mut r)?;
             dst.saturate = saturate;

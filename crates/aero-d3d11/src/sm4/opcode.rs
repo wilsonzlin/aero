@@ -42,6 +42,14 @@ pub const OPCODE_IF: u32 = 0x28;
 pub const OPCODE_ELSE: u32 = 0x29;
 pub const OPCODE_ENDIF: u32 = 0x2a;
 
+// ---- Integer arithmetic ----
+pub const OPCODE_IABS: u32 = 0x61;
+pub const OPCODE_INEG: u32 = 0x62;
+pub const OPCODE_IMIN: u32 = 0x63;
+pub const OPCODE_IMAX: u32 = 0x64;
+pub const OPCODE_UMIN: u32 = 0x65;
+pub const OPCODE_UMAX: u32 = 0x66;
+
 /// `bfi` (bitfield insert).
 pub const OPCODE_BFI: u32 = 0x67;
 /// `ubfe` (unsigned bitfield extract).
