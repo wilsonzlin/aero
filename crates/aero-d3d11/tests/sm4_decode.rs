@@ -1283,6 +1283,28 @@ fn decodes_sm5_compute_thread_group_and_raw_uav_ops() {
 }
 
 #[test]
+fn rejects_truncated_sm5_thread_group_decl() {
+    // `dcl_thread_group` has a fixed length of 4 DWORDs (opcode + x,y,z). Ensure the decoder
+    // rejects token streams that end early instead of panicking.
+    let body = [opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 8, 8];
+
+    let tokens = make_sm5_program_tokens(5, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+
+    let err = decode_program(&program).expect_err("decode should fail");
+    assert_eq!(err.at_dword, 2);
+    assert!(matches!(
+        err.kind,
+        aero_d3d11::sm4::decode::Sm4DecodeErrorKind::InstructionOutOfBounds {
+            start: 2,
+            len: 4,
+            available: 5
+        }
+    ));
+}
+
+#[test]
 fn decodes_ld_raw() {
     let mut body = Vec::<u32>::new();
 
