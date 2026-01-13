@@ -232,6 +232,35 @@ mod wasm {
         get_directory.is_function()
     }
 
+    /// Returns `true` if the current JS environment supports the boot-critical OPFS synchronous
+    /// access-handle API (`FileSystemFileHandle.createSyncAccessHandle`).
+    ///
+    /// This is a cheap, synchronous feature probe intended for host-side preflight/UI messaging.
+    /// It does **not** attempt to create/open any OPFS handles.
+    pub fn opfs_sync_access_supported() -> bool {
+        if !is_opfs_supported() {
+            return false;
+        }
+        if !is_worker_scope() {
+            return false;
+        }
+
+        // The most reliable indicator is the presence of `createSyncAccessHandle` on the
+        // `FileSystemFileHandle` prototype. Checking the prototype avoids needing to open/create an
+        // OPFS file just to probe capability.
+        let global = js_sys::global();
+        let ctor = Reflect::get(&global, &JsValue::from_str("FileSystemFileHandle")).ok();
+        let Some(ctor) = ctor else {
+            return false;
+        };
+        let proto = Reflect::get(&ctor, &JsValue::from_str("prototype")).ok();
+        let Some(proto) = proto else {
+            return false;
+        };
+
+        Reflect::has(&proto, &JsValue::from_str("createSyncAccessHandle")).unwrap_or(false)
+    }
+
     pub async fn get_root_dir() -> Result<FileSystemDirectoryHandle, DiskError> {
         if !is_opfs_supported() {
             return Err(DiskError::NotSupported(
@@ -440,6 +469,10 @@ mod native {
     }
 
     pub fn is_opfs_supported() -> bool {
+        false
+    }
+
+    pub fn opfs_sync_access_supported() -> bool {
         false
     }
 

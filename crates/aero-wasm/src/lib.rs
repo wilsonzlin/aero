@@ -203,6 +203,42 @@ pub fn version() -> u32 {
 }
 
 // -------------------------------------------------------------------------------------------------
+// Browser storage capability probes
+// -------------------------------------------------------------------------------------------------
+
+/// Return cheap, synchronous feature probes for browser persistence backends.
+///
+/// The JS host can call this before attempting OPFS-backed disk/ISO attachment to surface clearer
+/// diagnostics (e.g. "OPFS unavailable" vs "sync access handles require a worker").
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn storage_capabilities() -> JsValue {
+    let obj = Object::new();
+
+    let opfs_supported = aero_opfs::platform::storage::opfs::is_opfs_supported();
+    let opfs_sync_supported = aero_opfs::platform::storage::opfs::opfs_sync_access_supported();
+    let is_worker_scope = aero_opfs::platform::storage::opfs::is_worker_scope();
+
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("opfsSupported"),
+        &JsValue::from_bool(opfs_supported),
+    );
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("opfsSyncAccessSupported"),
+        &JsValue::from_bool(opfs_sync_supported),
+    );
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("isWorkerScope"),
+        &JsValue::from_bool(is_worker_scope),
+    );
+
+    obj.into()
+}
+
+// -------------------------------------------------------------------------------------------------
 // Tier-1 JIT ABI constants (browser integration)
 // -------------------------------------------------------------------------------------------------
 
