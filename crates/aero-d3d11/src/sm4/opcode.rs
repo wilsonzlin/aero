@@ -67,6 +67,11 @@ pub const OPCODE_IDIV: u32 = 0x3d;
 pub const OPCODE_IF: u32 = 0x28;
 pub const OPCODE_ELSE: u32 = 0x29;
 pub const OPCODE_ENDIF: u32 = 0x2a;
+///
+/// SM4/SM5 encode compare-based `ifc` via the `OPCODE_IF` opcode with a non-boolean
+/// instruction-test value in the opcode token. This alias exists for readability when
+/// constructing synthetic token streams.
+pub const OPCODE_IFC: u32 = OPCODE_IF;
 
 /// `setp` (set predicate register).
 ///
@@ -133,6 +138,8 @@ pub const OPCODE_USHR: u32 = 0x73;
 
 /// `break` (structured break out of `loop`/`switch`).
 pub const OPCODE_BREAK: u32 = 0x2d;
+/// `breakc` (structured conditional break).
+pub const OPCODE_BREAKC: u32 = 0x2e;
 /// `loop` (begin structured loop).
 ///
 /// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_LOOP`.
@@ -145,6 +152,8 @@ pub const OPCODE_ENDLOOP: u32 = 0x30;
 ///
 /// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_CONTINUE`.
 pub const OPCODE_CONTINUE: u32 = 0x31;
+/// `continuec` (structured conditional continue).
+pub const OPCODE_CONTINUEC: u32 = 0x32;
 /// `switch` (structured switch statement).
 pub const OPCODE_SWITCH: u32 = 0x35;
 /// `case` (case label within a `switch`).
@@ -174,7 +183,6 @@ pub const OPCODE_FTOI: u32 = 0x18;
 pub const OPCODE_FTOU: u32 = 0x19;
 pub const OPCODE_ITOF: u32 = 0x1a;
 pub const OPCODE_UTOF: u32 = 0x1b;
-
 pub const OPCODE_RET: u32 = 0x3e;
 
 // Geometry shader stream emission / cutting.
@@ -331,9 +339,14 @@ pub const OPCODE_DCL_UAV_STRUCTURED: u32 = 0x208;
 
 // ---- Opcode token bitfields ----
 //
-// Certain control-flow opcodes (e.g. `if`) encode a "test boolean" (zero vs non-zero) in the
-// opcode token itself rather than using distinct opcode IDs for `if_z`/`if_nz`.
-pub const OPCODE_TEST_BOOLEAN_SHIFT: u32 = 24;
+// Control-flow opcodes encode an "instruction test" in the opcode token:
+// - `if` uses the low 2 bits (zero/non-zero)
+// - compare-based flow control (`ifc`/`breakc`/`continuec`) uses the full 3-bit test value
+pub const OPCODE_TEST_SHIFT: u32 = 24;
+pub const OPCODE_TEST_MASK: u32 = 0x7;
+
+// Backwards-compatible alias used by existing `if` tests/encoding.
+pub const OPCODE_TEST_BOOLEAN_SHIFT: u32 = OPCODE_TEST_SHIFT;
 pub const OPCODE_TEST_BOOLEAN_MASK: u32 = 0x3;
 
 // `setp` comparison op field (opcode-token control bits).

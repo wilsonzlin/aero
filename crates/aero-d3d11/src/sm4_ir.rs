@@ -263,12 +263,33 @@ pub enum Sm4Inst {
         cond: SrcOperand,
         test: Sm4TestBool,
     },
+    /// Compare-based structured `if` (`ifc_*`).
+    ///
+    /// `a` and `b` are scalar operands (but still carried as `vec4` in our untyped register
+    /// model).
+    IfC {
+        op: Sm4CmpOp,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
     Else,
     EndIf,
     /// Begin a `loop` block.
     Loop,
     /// `endloop` token for the innermost open `loop`.
     EndLoop,
+    /// `breakc <op> a, b` (break if comparison is true).
+    BreakC {
+        op: Sm4CmpOp,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// `continuec <op> a, b` (continue if comparison is true).
+    ContinueC {
+        op: Sm4CmpOp,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
     Mov {
         dst: DstOperand,
         src: SrcOperand,

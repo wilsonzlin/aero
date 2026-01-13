@@ -1330,12 +1330,19 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
 
         match inst {
             Sm4Inst::If { cond, .. } => scan_src_regs(cond, &mut scan_reg),
+            Sm4Inst::IfC { a, b, .. }
+            | Sm4Inst::BreakC { a, b, .. }
+            | Sm4Inst::ContinueC { a, b, .. } => {
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+            }
             Sm4Inst::Discard { cond, .. } => scan_src_regs(cond, &mut scan_reg),
             Sm4Inst::Clip { src } => scan_src_regs(src, &mut scan_reg),
             Sm4Inst::Else
             | Sm4Inst::EndIf
             | Sm4Inst::Loop
             | Sm4Inst::EndLoop
+            | Sm4Inst::Break
             | Sm4Inst::Continue => {}
             Sm4Inst::Mov { dst: _, src }
             | Sm4Inst::Itof { dst: _, src }
@@ -1496,7 +1503,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(value, &mut scan_reg);
             }
             Sm4Inst::Switch { selector } => scan_src_regs(selector, &mut scan_reg),
-            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {}
             Sm4Inst::Emit { .. }
             | Sm4Inst::Cut { .. }
             | Sm4Inst::EmitThenCut { .. }
@@ -1539,6 +1546,12 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
 
         match inst {
             Sm4Inst::If { cond, .. } => scan_src(cond),
+            Sm4Inst::IfC { a, b, .. }
+            | Sm4Inst::BreakC { a, b, .. }
+            | Sm4Inst::ContinueC { a, b, .. } => {
+                scan_src(a);
+                scan_src(b);
+            }
             Sm4Inst::Discard { cond, .. } => scan_src(cond),
             Sm4Inst::Else
             | Sm4Inst::EndIf
@@ -2858,12 +2871,19 @@ fn scan_resources(
 
         match inst {
             Sm4Inst::If { cond, .. } => scan_src(cond)?,
+            Sm4Inst::IfC { a, b, .. }
+            | Sm4Inst::BreakC { a, b, .. }
+            | Sm4Inst::ContinueC { a, b, .. } => {
+                scan_src(a)?;
+                scan_src(b)?;
+            }
             Sm4Inst::Discard { cond, .. } => scan_src(cond)?,
             Sm4Inst::Clip { src } => scan_src(src)?,
             Sm4Inst::Else
             | Sm4Inst::EndIf
             | Sm4Inst::Loop
             | Sm4Inst::EndLoop
+            | Sm4Inst::Break
             | Sm4Inst::Continue => {}
             Sm4Inst::Mov { dst: _, src } => scan_src(src)?,
             Sm4Inst::Movc { dst: _, cond, a, b } => {
@@ -3122,7 +3142,7 @@ fn scan_resources(
             Sm4Inst::Switch { selector } => {
                 scan_src(selector)?;
             }
-            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {}
             Sm4Inst::BufInfoRaw { dst: _, buffer }
             | Sm4Inst::BufInfoStructured { dst: _, buffer, .. } => {
                 validate_slot("srv_buffer", buffer.slot, MAX_TEXTURE_SLOTS)?;
@@ -3338,6 +3358,12 @@ fn emit_temp_and_output_decls(
             Sm4Inst::If { cond, .. } => {
                 scan_src_regs(cond, &mut scan_reg);
             }
+            Sm4Inst::IfC { a, b, .. }
+            | Sm4Inst::BreakC { a, b, .. }
+            | Sm4Inst::ContinueC { a, b, .. } => {
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+            }
             Sm4Inst::Discard { cond, .. } => {
                 scan_src_regs(cond, &mut scan_reg);
             }
@@ -3348,6 +3374,7 @@ fn emit_temp_and_output_decls(
             | Sm4Inst::EndIf
             | Sm4Inst::Loop
             | Sm4Inst::EndLoop
+            | Sm4Inst::Break
             | Sm4Inst::Continue => {}
             Sm4Inst::Mov { dst, src } => {
                 scan_reg(dst.reg);
@@ -3605,7 +3632,7 @@ fn emit_temp_and_output_decls(
             Sm4Inst::Switch { selector } => {
                 scan_src_regs(selector, &mut scan_reg);
             }
-            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {}
             Sm4Inst::BufInfoRaw { dst, .. }
             | Sm4Inst::BufInfoStructured { dst, .. }
             | Sm4Inst::BufInfoRawUav { dst, .. }
@@ -3920,6 +3947,48 @@ fn emit_instructions(
             }
         };
 
+        let emit_cmp = |op: Sm4CmpOp,
+                        a: &crate::sm4_ir::SrcOperand,
+                        b: &crate::sm4_ir::SrcOperand,
+                        opcode: &'static str|
+         -> Result<String, ShaderTranslateError> {
+            // SM4/SM5 compare-based flow control (`ifc`/`breakc`/`continuec`) compares operands as
+            // floats. The operand register file is untyped in DXBC, but these instructions are
+            // specified as floating-point comparisons in the D3D10/11 tokenized-program format.
+            //
+            // Note: integer comparisons in real DXBC are typically expressed via integer compare
+            // ops (`ieq`/`ilt`/...) + `if_nz`; this translator does not implement those yet.
+            //
+            // `Sm4CmpOp` is shared with `setp`, which has unsigned variants. Those are not expected
+            // to appear for `ifc`/`breakc`/`continuec`, but we still handle them for robustness.
+            let unsigned = matches!(
+                op,
+                Sm4CmpOp::EqU | Sm4CmpOp::NeU | Sm4CmpOp::LtU | Sm4CmpOp::GeU | Sm4CmpOp::LeU
+                    | Sm4CmpOp::GtU
+            );
+            let a = if unsigned {
+                emit_src_vec4_u32(a, inst_index, opcode, ctx)?
+            } else {
+                emit_src_vec4(a, inst_index, opcode, ctx)?
+            };
+            let b = if unsigned {
+                emit_src_vec4_u32(b, inst_index, opcode, ctx)?
+            } else {
+                emit_src_vec4(b, inst_index, opcode, ctx)?
+            };
+            let a = format!("({a}).x");
+            let b = format!("({b}).x");
+            let op_str = match op {
+                Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
+                Sm4CmpOp::Ne | Sm4CmpOp::NeU => "!=",
+                Sm4CmpOp::Lt | Sm4CmpOp::LtU => "<",
+                Sm4CmpOp::Le | Sm4CmpOp::LeU => "<=",
+                Sm4CmpOp::Gt | Sm4CmpOp::GtU => ">",
+                Sm4CmpOp::Ge | Sm4CmpOp::GeU => ">=",
+            };
+            Ok(format!("{a} {op_str} {b}"))
+        };
+
         match inst {
             Sm4Inst::Switch { selector } => {
                 // Integer instructions consume raw integer bits from the untyped register file.
@@ -3959,6 +4028,7 @@ fn emit_instructions(
                 }
                 w.line("continue;");
             }
+            // ---- Structured control flow ----
             Sm4Inst::If { cond, test } => {
                 let cond_vec = emit_src_vec4(cond, inst_index, "if", ctx)?;
                 let cond_scalar = format!("({cond_vec}).x");
@@ -3972,6 +4042,12 @@ fn emit_instructions(
                     crate::sm4_ir::Sm4TestBool::NonZero => format!("{cond_bits} != 0u"),
                 };
                 w.line(&format!("if ({expr}) {{"));
+                w.indent();
+                blocks.push(BlockKind::If { has_else: false });
+            }
+            Sm4Inst::IfC { op, a, b } => {
+                let cond = emit_cmp(*op, a, b, "ifc")?;
+                w.line(&format!("if ({cond}) {{"));
                 w.indent();
                 blocks.push(BlockKind::If { has_else: false });
             }
@@ -4055,6 +4131,44 @@ fn emit_instructions(
                     });
                 }
             },
+            Sm4Inst::BreakC { op, a, b } => {
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_loop {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: blocks
+                            .last()
+                            .map(|b| b.describe())
+                            .unwrap_or_else(|| "none".to_owned()),
+                    });
+                }
+                let cond = emit_cmp(*op, a, b, "breakc")?;
+                w.line(&format!("if ({cond}) {{"));
+                w.indent();
+                w.line("break;");
+                w.dedent();
+                w.line("}");
+            }
+            Sm4Inst::ContinueC { op, a, b } => {
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_loop {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: blocks
+                            .last()
+                            .map(|b| b.describe())
+                            .unwrap_or_else(|| "none".to_owned()),
+                    });
+                }
+                let cond = emit_cmp(*op, a, b, "continuec")?;
+                w.line(&format!("if ({cond}) {{"));
+                w.indent();
+                w.line("continue;");
+                w.dedent();
+                w.line("}");
+            }
             Sm4Inst::Predicated { pred, inner } => {
                 match inner.as_ref() {
                     Sm4Inst::If { .. } => {

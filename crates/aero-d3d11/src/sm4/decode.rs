@@ -701,19 +701,40 @@ pub fn decode_instruction(
 
     let inst = match opcode {
         OPCODE_IF => {
-            let test_raw = (opcode_token >> OPCODE_TEST_BOOLEAN_SHIFT) & OPCODE_TEST_BOOLEAN_MASK;
-            let test = match test_raw {
-                0 => Some(Sm4TestBool::Zero),
-                1 => Some(Sm4TestBool::NonZero),
-                _ => None,
-            };
-
-            if let Some(test) = test {
-                let cond = decode_src(&mut r)?;
-                r.expect_eof()?;
-                Ok(Sm4Inst::If { cond, test })
-            } else {
-                Ok(Sm4Inst::Unknown { opcode })
+            // `if` and `ifc` share the same opcode ID (`OPCODE_IF`); the opcode token's "instruction
+            // test" field differentiates them.
+            //
+            // - 0/1: `if_z` / `if_nz`
+            // - 2..=7: `ifc_*` with an in-token comparison operator.
+            let test_raw = (opcode_token >> OPCODE_TEST_SHIFT) & OPCODE_TEST_MASK;
+            match test_raw {
+                0 => {
+                    let cond = decode_src(&mut r)?;
+                    r.expect_eof()?;
+                    Ok(Sm4Inst::If {
+                        cond,
+                        test: Sm4TestBool::Zero,
+                    })
+                }
+                1 => {
+                    let cond = decode_src(&mut r)?;
+                    r.expect_eof()?;
+                    Ok(Sm4Inst::If {
+                        cond,
+                        test: Sm4TestBool::NonZero,
+                    })
+                }
+                2..=7 => {
+                    if let Some(op) = decode_cmp_op(opcode_token) {
+                        let a = decode_src(&mut r)?;
+                        let b = decode_src(&mut r)?;
+                        r.expect_eof()?;
+                        Ok(Sm4Inst::IfC { op, a, b })
+                    } else {
+                        Ok(Sm4Inst::Unknown { opcode })
+                    }
+                }
+                _ => Ok(Sm4Inst::Unknown { opcode }),
             }
         }
         OPCODE_ELSE => {
@@ -724,6 +745,8 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::EndIf)
         }
+
+        // ---- ALU / resource ops ----
         OPCODE_MOV => {
             let mut dst = decode_dst(&mut r)?;
             dst.saturate = saturate;
@@ -1168,9 +1191,37 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Break)
         }
+        OPCODE_BREAKC => {
+            if let Some(op) = decode_cmp_op(opcode_token) {
+                let a = decode_src(&mut r)?;
+                let b = decode_src(&mut r)?;
+                r.expect_eof()?;
+                Ok(Sm4Inst::BreakC { op, a, b })
+            } else {
+                Ok(Sm4Inst::Unknown { opcode })
+            }
+        }
+        OPCODE_LOOP => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::Loop)
+        }
+        OPCODE_ENDLOOP => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::EndLoop)
+        }
         OPCODE_CONTINUE => {
             r.expect_eof()?;
             Ok(Sm4Inst::Continue)
+        }
+        OPCODE_CONTINUEC => {
+            if let Some(op) = decode_cmp_op(opcode_token) {
+                let a = decode_src(&mut r)?;
+                let b = decode_src(&mut r)?;
+                r.expect_eof()?;
+                Ok(Sm4Inst::ContinueC { op, a, b })
+            } else {
+                Ok(Sm4Inst::Unknown { opcode })
+            }
         }
         OPCODE_BFREV => {
             let mut dst = decode_dst(&mut r)?;
@@ -1512,6 +1563,24 @@ fn decode_int_mad_single(signed: bool, r: &mut InstrReader<'_>) -> Result<Sm4Ins
             c,
         }
     })
+}
+
+fn decode_cmp_op(opcode_token: u32) -> Option<Sm4CmpOp> {
+    // SM4/SM5 compare-based flow-control opcodes encode the comparison operator in the opcode
+    // token's "instruction test" field.
+    //
+    // Per the D3D10/11 tokenized-program format, the field uses the `D3D10_SB_INSTRUCTION_TEST`
+    // encoding (values are 0..=7).
+    let test = ((opcode_token >> OPCODE_TEST_SHIFT) & OPCODE_TEST_MASK) as u8;
+    match test {
+        2 => Some(Sm4CmpOp::Eq),
+        3 => Some(Sm4CmpOp::Ne),
+        4 => Some(Sm4CmpOp::Gt),
+        5 => Some(Sm4CmpOp::Ge),
+        6 => Some(Sm4CmpOp::Lt),
+        7 => Some(Sm4CmpOp::Le),
+        _ => None,
+    }
 }
 
 fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {

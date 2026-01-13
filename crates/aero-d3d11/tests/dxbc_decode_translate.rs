@@ -2,7 +2,8 @@ use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, CmpOp, CmpType, DxbcFile, DxbcSignature,
     DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel,
-    ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, Sm4TestBool, SrcKind,
+    ShaderSignatures, ShaderStage, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, Sm4TestBool,
+    SrcKind,
     SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
@@ -69,9 +70,7 @@ fn opcode_token(opcode: u32, len: u32) -> u32 {
 }
 
 fn opcode_token_with_test(opcode: u32, len: u32, test: u32) -> u32 {
-    opcode
-        | (len << OPCODE_LEN_SHIFT)
-        | ((test & OPCODE_TEST_BOOLEAN_MASK) << OPCODE_TEST_BOOLEAN_SHIFT)
+    opcode | (len << OPCODE_LEN_SHIFT) | ((test & OPCODE_TEST_MASK) << OPCODE_TEST_SHIFT)
 }
 
 fn opcode_token_with_sat(opcode: u32, len_without_ext: u32) -> Vec<u32> {
@@ -140,21 +139,6 @@ fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle) -> Vec<u32> {
     out
 }
 
-fn assert_wgsl_parses(wgsl: &str) {
-    naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
-}
-
-fn assert_wgsl_validates(wgsl: &str) {
-    let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
-    let mut validator = naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::all(),
-    );
-    validator
-        .validate(&module)
-        .expect("generated WGSL failed to validate");
-}
-
 fn imm32_vec4(values: [u32; 4]) -> Vec<u32> {
     let mut out = Vec::with_capacity(1 + 4);
     out.push(operand_token(
@@ -181,6 +165,21 @@ fn imm32_scalar(value: u32) -> Vec<u32> {
         ),
         value,
     ]
+}
+
+fn assert_wgsl_parses(wgsl: &str) {
+    naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+}
+
+fn assert_wgsl_validates(wgsl: &str) {
+    let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    validator
+        .validate(&module)
+        .expect("generated WGSL failed to validate");
 }
 
 #[test]
@@ -1429,6 +1428,157 @@ fn decodes_and_translates_usubb_shader_from_dxbc() {
     assert!(
         translated.wgsl.contains("let usubb_borrow_0"),
         "expected usubb borrow logic in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_ifc_with_else() {
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // ifc lt, l(0.0), l(1.0)
+    let a = imm32_scalar(0.0f32.to_bits());
+    let b = imm32_scalar(1.0f32.to_bits());
+    body.push(opcode_token_with_test(
+        OPCODE_IFC,
+        (1 + a.len() as u32 + b.len() as u32) as u32,
+        6, // `lt` in D3D10_SB_INSTRUCTION_TEST encoding.
+    ));
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    // mov o0, l(1.0, 0.0, 0.0, 1.0)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + red.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&red);
+
+    // else
+    body.push(opcode_token(OPCODE_ELSE, 1));
+
+    // mov o0, l(0.0, 1.0, 0.0, 1.0)
+    let green = imm32_vec4([
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + green.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&green);
+
+    // endif
+    body.push(opcode_token(OPCODE_ENDIF, 1));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(matches!(
+        module.instructions.first(),
+        Some(Sm4Inst::IfC { op: Sm4CmpOp::Lt, .. })
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("if (") && translated.wgsl.contains("} else {"),
+        "expected if/else in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_breakc_in_loop() {
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // loop
+    body.push(opcode_token(OPCODE_LOOP, 1));
+
+    // breakc eq, l(0.0), l(0.0)
+    let a = imm32_scalar(0.0f32.to_bits());
+    let b = imm32_scalar(0.0f32.to_bits());
+    body.push(opcode_token_with_test(
+        OPCODE_BREAKC,
+        (1 + a.len() as u32 + b.len() as u32) as u32,
+        2, // `eq` in D3D10_SB_INSTRUCTION_TEST encoding.
+    ));
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    // endloop
+    body.push(opcode_token(OPCODE_ENDLOOP, 1));
+
+    // mov o0, l(0.0, 0.0, 0.0, 1.0)
+    let out = imm32_vec4([
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + out.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&out);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::BreakC { .. })));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("loop {") && translated.wgsl.contains("break;"),
+        "expected loop+break in WGSL:\n{}",
         translated.wgsl
     );
 }
