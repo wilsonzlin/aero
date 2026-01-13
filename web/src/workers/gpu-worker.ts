@@ -2502,6 +2502,13 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
           const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
 
+          // Screenshot contract note:
+          // The worker-level screenshot API is used for deterministic hashing in tests, so it is
+          // defined in terms of the *source framebuffer* bytes (pre-scaling / pre-color-space).
+          //
+          // For the wgpu WebGL2 presenter presenting a shared framebuffer, we can satisfy that
+          // contract more directly (and deterministically) by copying out of the shared buffer,
+          // avoiding any ambiguity around "presented output" readback.
           const tryPostWebgl2WgpuFramebufferScreenshot = (): boolean => {
             if (!presenter || presenter.backend !== "webgl2_wgpu") return false;
             if (aerogpuLastOutputSource !== "framebuffer") return false;
@@ -2630,6 +2637,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             }
 
             const prevCursorRenderEnabled = cursorRenderEnabled;
+            // Some presenter backends (notably the raw WebGL2 path) implement screenshot by
+            // readback of the *presented* framebuffer where cursor compositing happens. For
+            // cursor-less screenshots we temporarily disable cursor rendering so the result is
+            // deterministic and matches the source-framebuffer-oriented screenshot contract.
             const needsCursorDisabledForScreenshot = !includeCursor && presenter.backend !== "webgpu";
             if (needsCursorDisabledForScreenshot) {
               cursorRenderEnabled = false;
@@ -2640,8 +2651,9 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               const shot = await presenter.screenshot();
               let pixels = shot.pixels;
 
-              // WebGPU screenshots read back the source texture only, so cursor composition
-              // must be applied explicitly when requested.
+              // WebGPU and the wgpu WebGL2 backend read back the *source texture* only (not the
+              // presented/canvas output), so cursor composition must be applied explicitly when
+              // requested.
               if (includeCursor && presenter.backend === "webgpu") {
                 try {
                   const out = new Uint8Array(pixels);

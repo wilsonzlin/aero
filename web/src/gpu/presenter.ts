@@ -7,6 +7,29 @@ export interface PresenterScreenshot {
   /**
    * RGBA8 pixel bytes in row-major order with a top-left origin
    * (i.e. the first row is the top scanline).
+   *
+   * ## Semantics: source framebuffer readback (NOT presented output)
+   *
+   * `Presenter.screenshot()` is defined as a readback of the presenter's **source
+   * framebuffer**: the same RGBA8 pixels most recently passed to `present()`
+   * (or uploaded into the backend's source texture).
+   *
+   * This is intentionally **not** a capture of the on-screen/presented canvas.
+   * In particular, callers should not expect the screenshot to include:
+   *
+   * - scaling / filtering / integer-fit logic
+   * - letterboxing / clearColor
+   * - `outputWidth`/`outputHeight` or `devicePixelRatio` sizing
+   * - sRGB encode / browser color management
+   * - cursor composition or other overlays
+   *
+   * Hash-based tests rely on this contract being deterministic and matching the
+   * source bytes. If a "what the user sees" capture is needed, add a separate
+   * API for **presented output** readback instead of changing this one.
+   *
+   * Note: some legacy implementations (e.g. `webgl2_raw`) may currently read back
+   * the default framebuffer. Treat those results as best-effort/debug-only until
+   * the backend is aligned with the source-framebuffer contract above.
    */
   pixels: ArrayBuffer;
 }
