@@ -73,6 +73,8 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 	if err != nil {
 		return nil, err
 	}
+
+	maxMessageBytes := configuredSCTPMaxMessageSize(api)
 	s := &Session{
 		pc:                         pc,
 		relayCfg:                   relayCfg,
@@ -173,7 +175,11 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			}
 
 			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-				if s.maxDataChannelMessageBytes > 0 && len(msg.Data) > s.maxDataChannelMessageBytes {
+				effectiveMax := s.maxDataChannelMessageBytes
+				if effectiveMax <= 0 {
+					effectiveMax = maxMessageBytes
+				}
+				if effectiveMax > 0 && len(msg.Data) > effectiveMax {
 					var sessionID any
 					if s.quota != nil {
 						sessionID = s.quota.ID()
@@ -181,7 +187,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 					slog.Warn("udp datachannel message too large",
 						"session_id", sessionID,
 						"msg_bytes", len(msg.Data),
-						"max_bytes", s.maxDataChannelMessageBytes,
+						"max_bytes", effectiveMax,
 					)
 					// Close asynchronously so we never block a pion callback on teardown.
 					go func() { _ = s.Close() }()
@@ -299,7 +305,11 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 
 			maxL2MessageBytes := dialCfg.MaxMessageBytes
 			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-				if s.maxDataChannelMessageBytes > 0 && len(msg.Data) > s.maxDataChannelMessageBytes {
+				effectiveMax := s.maxDataChannelMessageBytes
+				if effectiveMax <= 0 {
+					effectiveMax = maxMessageBytes
+				}
+				if effectiveMax > 0 && len(msg.Data) > effectiveMax {
 					var sessionID any
 					if s.quota != nil {
 						sessionID = s.quota.ID()
@@ -307,7 +317,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 					slog.Warn("l2 datachannel message too large",
 						"session_id", sessionID,
 						"msg_bytes", len(msg.Data),
-						"max_bytes", s.maxDataChannelMessageBytes,
+						"max_bytes", effectiveMax,
 					)
 					// Close asynchronously so we never block a pion callback on teardown.
 					go func() { _ = s.Close() }()
