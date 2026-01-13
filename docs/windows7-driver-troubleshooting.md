@@ -718,8 +718,11 @@ reg add "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08
 
 Quick validation:
 
-- Run `drivers\\aerogpu\\tests\\win7\\bin\\segment_budget_sanity.exe` to confirm the updated `NonLocalMemorySize` is visible
-  from user mode (it queries `D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE)` and prints the segment budget in MiB).
+- If you have the guest-side AeroGPU validation suite available, run `drivers\\aerogpu\\tests\\win7\\bin\\segment_budget_sanity.exe`
+  to confirm the updated `NonLocalMemorySize` is visible from user mode (it queries `D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE)`
+  and prints the segment budget in MiB).
+- Re-run `verify.cmd` and check `C:\AeroGuestTools\report.txt` / `report.json` for the AeroGPU `NonLocalMemorySizeMB` value
+  (to confirm the override is present and what value is configured).
 
 If you need to revert, delete the value:
 
