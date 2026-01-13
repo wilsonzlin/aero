@@ -647,3 +647,159 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     mem.read(in_buf as u32, &mut got);
     assert_eq!(got, in_payload);
 }
+
+#[test]
+fn xhci_transfer_executor_bulk_in_naks_until_webusb_completion() {
+    use aero_usb::xhci::transfer::{
+        write_trb, CompletionCode, Trb as XferTrb, TrbType as XferTrbType, XhciTransferExecutor,
+    };
+
+    fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, ioc: bool) -> XferTrb {
+        let mut trb = XferTrb::new(buf_ptr, len & XferTrb::STATUS_TRANSFER_LEN_MASK, 0);
+        trb.set_cycle(cycle);
+        trb.set_trb_type(XferTrbType::Normal);
+        if ioc {
+            trb.control |= XferTrb::CONTROL_IOC_BIT;
+        }
+        trb
+    }
+
+    const RING_BASE: u64 = 0x1000;
+    const DATA_BUF: u64 = 0x2000;
+
+    let dev = UsbWebUsbPassthroughDevice::new();
+    let mut exec = XhciTransferExecutor::new(Box::new(dev.clone()));
+    exec.add_endpoint(0x81, RING_BASE);
+
+    let mut mem = TestMemory::new(0x10000);
+    write_trb(&mut mem, RING_BASE, make_normal_trb(DATA_BUF, 8, true, true));
+
+    // Tick #1: TD is pending (NAK) and queues a single host action.
+    exec.tick_1ms(&mut mem);
+    assert!(exec.take_events().is_empty());
+    assert_eq!(
+        exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        RING_BASE,
+        "dequeue pointer must not advance while TD is pending"
+    );
+
+    let mut actions = dev.drain_actions();
+    assert_eq!(actions.len(), 1);
+    let (id, endpoint, length) = match actions.pop().unwrap() {
+        UsbHostAction::BulkIn {
+            id,
+            endpoint,
+            length,
+        } => (id, endpoint, length),
+        other => panic!("unexpected action: {other:?}"),
+    };
+    assert_eq!(endpoint, 0x81);
+    assert_eq!(length, 8);
+
+    // Tick #2 without completion: still pending and no duplicate action.
+    exec.tick_1ms(&mut mem);
+    assert!(dev.drain_actions().is_empty());
+    assert!(exec.take_events().is_empty());
+    assert_eq!(exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr, RING_BASE);
+
+    // Provide completion.
+    let payload = [0u8, 1, 2, 3, 4, 5, 6, 7];
+    dev.push_completion(UsbHostCompletion::BulkIn {
+        id,
+        result: UsbHostCompletionIn::Success {
+            data: payload.to_vec(),
+        },
+    });
+
+    exec.tick_1ms(&mut mem);
+    let events = exec.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].ep_addr, 0x81);
+    assert_eq!(events[0].completion_code, CompletionCode::Success);
+    assert_eq!(events[0].residual, 0);
+    assert_eq!(
+        exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        RING_BASE + 16,
+        "completion should advance past the Normal TRB"
+    );
+
+    let mut got = [0u8; 8];
+    mem.read(DATA_BUF as u32, &mut got);
+    assert_eq!(got, payload);
+}
+
+#[test]
+fn xhci_transfer_executor_bulk_out_naks_until_webusb_completion() {
+    use aero_usb::xhci::transfer::{
+        write_trb, CompletionCode, Trb as XferTrb, TrbType as XferTrbType, XhciTransferExecutor,
+    };
+
+    fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, ioc: bool) -> XferTrb {
+        let mut trb = XferTrb::new(buf_ptr, len & XferTrb::STATUS_TRANSFER_LEN_MASK, 0);
+        trb.set_cycle(cycle);
+        trb.set_trb_type(XferTrbType::Normal);
+        if ioc {
+            trb.control |= XferTrb::CONTROL_IOC_BIT;
+        }
+        trb
+    }
+
+    const RING_BASE: u64 = 0x3000;
+    const DATA_BUF: u64 = 0x4000;
+
+    let dev = UsbWebUsbPassthroughDevice::new();
+    let mut exec = XhciTransferExecutor::new(Box::new(dev.clone()));
+    exec.add_endpoint(0x01, RING_BASE);
+
+    let mut mem = TestMemory::new(0x10000);
+    let payload = [0xAAu8, 0xBB, 0xCC, 0xDD];
+    mem.write(DATA_BUF as u32, &payload);
+    write_trb(
+        &mut mem,
+        RING_BASE,
+        make_normal_trb(DATA_BUF, payload.len() as u32, true, true),
+    );
+
+    // Tick #1: TD is pending (NAK) and queues a single host action.
+    exec.tick_1ms(&mut mem);
+    assert!(exec.take_events().is_empty());
+    assert_eq!(
+        exec.endpoint_state(0x01).unwrap().ring.dequeue_ptr,
+        RING_BASE,
+        "dequeue pointer must not advance while TD is pending"
+    );
+
+    let mut actions = dev.drain_actions();
+    assert_eq!(actions.len(), 1);
+    let (id, endpoint, data) = match actions.pop().unwrap() {
+        UsbHostAction::BulkOut { id, endpoint, data } => (id, endpoint, data),
+        other => panic!("unexpected action: {other:?}"),
+    };
+    assert_eq!(endpoint, 0x01);
+    assert_eq!(data.as_slice(), payload.as_slice());
+
+    // Tick #2 without completion: still pending and no duplicate action.
+    exec.tick_1ms(&mut mem);
+    assert!(dev.drain_actions().is_empty());
+    assert!(exec.take_events().is_empty());
+    assert_eq!(exec.endpoint_state(0x01).unwrap().ring.dequeue_ptr, RING_BASE);
+
+    dev.push_completion(UsbHostCompletion::BulkOut {
+        id,
+        result: UsbHostCompletionOut::Success {
+            bytes_written: payload.len() as u32,
+        },
+    });
+
+    exec.tick_1ms(&mut mem);
+    let events = exec.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].ep_addr, 0x01);
+    assert_eq!(events[0].completion_code, CompletionCode::Success);
+    assert_eq!(events[0].residual, 0);
+    assert_eq!(
+        exec.endpoint_state(0x01).unwrap().ring.dequeue_ptr,
+        RING_BASE + 16,
+        "completion should advance past the Normal TRB"
+    );
+}
