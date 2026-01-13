@@ -40,6 +40,28 @@ pub const OPCODE_SAMPLE_L: u32 = 0x46;
 /// `ld` (Resource load; used by `Texture2D.Load`).
 pub const OPCODE_LD: u32 = 0x4c;
 
+/// `ld_raw` (raw buffer load; `ByteAddressBuffer.Load*`).
+///
+/// Upstream: `D3D11_SB_OPCODE_LD_RAW`.
+pub const OPCODE_LD_RAW: u32 = 0x53;
+/// `ld_structured` (structured buffer load; `StructuredBuffer.Load`).
+///
+/// Upstream: `D3D11_SB_OPCODE_LD_STRUCTURED`.
+pub const OPCODE_LD_STRUCTURED: u32 = 0x54;
+/// `store_raw` (raw buffer store; `RWByteAddressBuffer.Store*`).
+///
+/// Upstream: `D3D11_SB_OPCODE_STORE_RAW`.
+pub const OPCODE_STORE_RAW: u32 = 0x56;
+/// `store_structured` (structured buffer store; `RWStructuredBuffer.Store`).
+///
+/// Upstream: `D3D11_SB_OPCODE_STORE_STRUCTURED`.
+pub const OPCODE_STORE_STRUCTURED: u32 = 0x57;
+
+/// `dcl_thread_group` declaration.
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_THREAD_GROUP`.
+pub const OPCODE_DCL_THREAD_GROUP: u32 = 0x11f;
+
 // ---- Operand token bitfields ----
 
 pub const OPERAND_NUM_COMPONENTS_MASK: u32 = 0x3;
@@ -66,6 +88,10 @@ pub const OPERAND_TYPE_IMMEDIATE32: u32 = 4;
 pub const OPERAND_TYPE_SAMPLER: u32 = 6;
 pub const OPERAND_TYPE_RESOURCE: u32 = 7;
 pub const OPERAND_TYPE_CONSTANT_BUFFER: u32 = 8;
+/// Unordered access view (u#).
+///
+/// Upstream: `D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW`.
+pub const OPERAND_TYPE_UNORDERED_ACCESS_VIEW: u32 = 30;
 
 // Index dimensions (subset of `D3D10_SB_OPERAND_INDEX_DIMENSION`).
 pub const OPERAND_INDEX_DIMENSION_0D: u32 = 0;

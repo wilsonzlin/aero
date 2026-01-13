@@ -73,7 +73,7 @@ fn reg_dst(ty: u32, idx: u32, mask: WriteMask) -> Vec<u32> {
 fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle, modifier: OperandModifier) -> Vec<u32> {
     let needs_ext = !matches!(modifier, OperandModifier::None);
     let num_components = match ty {
-        OPERAND_TYPE_SAMPLER | OPERAND_TYPE_RESOURCE => 0,
+        OPERAND_TYPE_SAMPLER | OPERAND_TYPE_RESOURCE | OPERAND_TYPE_UNORDERED_ACCESS_VIEW => 0,
         _ => 2,
     };
     let selection_mode = if num_components == 0 {
@@ -955,4 +955,95 @@ fn does_not_decode_ld_with_offset_like_trailing_operand_as_explicit_lod() {
         module.instructions[0],
         Sm4Inst::Unknown { opcode: OPCODE_LD }
     ));
+}
+
+#[test]
+fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
+    // These constants are used by upcoming compute/UAV decoding work. Keep this test in sync with
+    // `d3d11tokenizedprogramformat.h` (`D3D11_SB_*` enums).
+    assert_eq!(OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 30);
+    assert_eq!(OPCODE_DCL_THREAD_GROUP, 0x11f);
+    assert_eq!(OPCODE_LD_RAW, 0x53);
+    assert_eq!(OPCODE_LD_STRUCTURED, 0x54);
+    assert_eq!(OPCODE_STORE_RAW, 0x56);
+    assert_eq!(OPCODE_STORE_STRUCTURED, 0x57);
+}
+
+#[test]
+fn decodes_sm5_compute_thread_group_and_raw_uav_ops_as_unknown() {
+    // Build a minimal compute shader that declares a thread-group size and uses raw load/store.
+    //
+    // The SM4/5 decoder does not model these operations yet, but it must be able to *skip* them
+    // without crashing so that later stages (e.g. reflection) can still run.
+    const DCL_THREAD_GROUP: u32 = 0x11f;
+    const LD_RAW: u32 = 0x53;
+    const STORE_RAW: u32 = 0x56;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_thread_group 8, 8, 1
+    body.extend_from_slice(&[opcode_token(DCL_THREAD_GROUP, 4), 8, 8, 1]);
+
+    // ld_raw r0, l(0), t0
+    let addr = imm32_scalar(0);
+    let mut ld_raw = vec![opcode_token(LD_RAW, (1 + 2 + addr.len() + 2) as u32)];
+    ld_raw.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ld_raw.extend_from_slice(&addr);
+    ld_raw.extend_from_slice(&reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&ld_raw);
+
+    // store_raw u0, l(0), r0
+    // (Operand order isn't validated by the current decoder; the first operand is enough to
+    // exercise `OPERAND_TYPE_UNORDERED_ACCESS_VIEW`.)
+    let uav = reg_src(
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let addr = imm32_scalar(0);
+    let val = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut store_raw = vec![opcode_token(
+        STORE_RAW,
+        (1 + uav.len() + addr.len() + val.len()) as u32,
+    )];
+    store_raw.extend_from_slice(&uav);
+    store_raw.extend_from_slice(&addr);
+    store_raw.extend_from_slice(&val);
+    body.extend_from_slice(&store_raw);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 5 is compute shader.
+    let tokens = make_sm5_program_tokens(5, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
+
+    let module = program.decode().expect("decode");
+    assert_eq!(module.stage, aero_d3d11::ShaderStage::Compute);
+
+    assert!(module
+        .decls
+        .iter()
+        .any(|d| matches!(d, Sm4Decl::Unknown { opcode } if *opcode == OPCODE_DCL_THREAD_GROUP)));
+
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::Unknown { opcode } if *opcode == OPCODE_LD_RAW)));
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::Unknown { opcode } if *opcode == OPCODE_STORE_RAW)));
 }
