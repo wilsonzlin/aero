@@ -68,8 +68,7 @@ VirtioSndStatusToString(_In_ ULONG virtio_status)
 }
 
 _Use_decl_annotations_
-NTSTATUS
-VirtioSndParseEvent(const void* Buffer, ULONG BufferLen, VIRTIO_SND_EVENT_PARSED* OutEvent)
+NTSTATUS VirtioSndParseEvent(const void* Buffer, ULONG BufferLen, VIRTIO_SND_EVENT_PARSED* OutEvent)
 {
     VIRTIO_SND_EVENT evt;
 

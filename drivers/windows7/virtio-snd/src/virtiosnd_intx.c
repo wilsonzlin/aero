@@ -56,6 +56,30 @@ static __forceinline BOOLEAN VirtIoSndIntxIsSharedInterrupt(_In_ const CM_PARTIA
     return (Desc->ShareDisposition == 3) ? TRUE : FALSE;
 }
 
+static __forceinline BOOLEAN VirtIoSndShouldLogRareCounter(_In_ LONG Count)
+{
+    ULONG u;
+
+    /*
+     * Log the first few occurrences, then exponentially back off (powers of two).
+     *
+     * This is used to keep eventq debug logging from spamming (e.g. if a future
+     * device model emits high-rate PCM_PERIOD_ELAPSED notifications), while still
+     * providing enough visibility for debugging.
+     */
+    if (Count <= 4) {
+        return TRUE;
+    }
+
+    /* Handle negative/overflowed counters defensively. */
+    if (Count < 0) {
+        return TRUE;
+    }
+
+    u = (ULONG)Count;
+    return ((u & (u - 1u)) == 0u) ? TRUE : FALSE;
+}
+
 static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cookie, _In_ UINT32 UsedLen, _In_opt_ void *Context)
 {
     static volatile LONG s_eventqErrorLog;
@@ -180,9 +204,18 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
      * Best-effort parse/log. Never let parsing affect reposting; starving eventq
      * would make it impossible for a device to deliver future events.
      */
-    if (UsedLen >= (UINT32)sizeof(VIRTIO_SND_EVENT)) {
-        const UINT32 cappedLen = (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) ? (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE : UsedLen;
+    if (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) {
+        /*
+         * UsedLen must not exceed the posted writable capacity. Treat it as a
+         * malformed completion and ignore the payload (it may be corrupted).
+         *
+         * We still recycle the buffer below to keep eventq running.
+         */
+    } else if (UsedLen >= (UINT32)sizeof(VIRTIO_SND_EVENT)) {
+        const UINT32 cappedLen = UsedLen; /* already validated against buffer size */
         VIRTIO_SND_EVENT_PARSED evt;
+        BOOLEAN logEvent;
+        LONG eventCount;
 
         /* Ensure device DMA writes are visible before inspecting the buffer. */
         KeMemoryBarrier();
@@ -194,45 +227,55 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
             evtData = evt.Data;
             InterlockedIncrement(&dx->EventqStats.Parsed);
 
+            logEvent = TRUE;
+            eventCount = 0;
+
             switch (evt.Kind) {
             case VIRTIO_SND_EVENT_KIND_JACK_CONNECTED:
-                InterlockedIncrement(&dx->EventqStats.JackConnected);
+                eventCount = InterlockedIncrement(&dx->EventqStats.JackConnected);
                 VirtIoSndTopology_UpdateJackState(evt.Data, TRUE);
                 break;
             case VIRTIO_SND_EVENT_KIND_JACK_DISCONNECTED:
-                InterlockedIncrement(&dx->EventqStats.JackDisconnected);
+                eventCount = InterlockedIncrement(&dx->EventqStats.JackDisconnected);
                 VirtIoSndTopology_UpdateJackState(evt.Data, FALSE);
                 break;
             case VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED:
-                InterlockedIncrement(&dx->EventqStats.PcmPeriodElapsed);
+                eventCount = InterlockedIncrement(&dx->EventqStats.PcmPeriodElapsed);
+                /* PCM period notifications may be high rate; log at a low rate. */
+                logEvent = VirtIoSndShouldLogRareCounter(eventCount);
                 break;
             case VIRTIO_SND_EVENT_KIND_PCM_XRUN:
-                InterlockedIncrement(&dx->EventqStats.PcmXrun);
+                eventCount = InterlockedIncrement(&dx->EventqStats.PcmXrun);
                 break;
             case VIRTIO_SND_EVENT_KIND_CTL_NOTIFY:
-                InterlockedIncrement(&dx->EventqStats.CtlNotify);
+                eventCount = InterlockedIncrement(&dx->EventqStats.CtlNotify);
                 break;
             default:
-                InterlockedIncrement(&dx->EventqStats.UnknownType);
+                eventCount = InterlockedIncrement(&dx->EventqStats.UnknownType);
+                /* Unknown types are logged at a low rate to avoid log spam. */
+                logEvent = VirtIoSndShouldLogRareCounter(eventCount);
                 break;
             }
 
-            VIRTIOSND_TRACE(
-                "eventq: %s (0x%08lX) data=0x%08lX len=%lu\n",
-                VirtioSndEventTypeToString(evt.Type),
-                evt.Type,
-                evt.Data,
-                (ULONG)UsedLen);
-
-            /*
-             * If the device wrote more than the standard header, treat it as
-             * future extension bytes and ignore them.
-             */
-            if (cappedLen > (UINT32)sizeof(VIRTIO_SND_EVENT)) {
+            if (logEvent) {
                 VIRTIOSND_TRACE(
-                    "eventq: extra payload bytes (%lu > %Iu) ignored\n",
-                    (ULONG)cappedLen,
-                    sizeof(VIRTIO_SND_EVENT));
+                    "eventq: %s (0x%08lX) data=0x%08lX len=%lu count=%ld\n",
+                    VirtioSndEventTypeToString(evt.Type),
+                    evt.Type,
+                    evt.Data,
+                    (ULONG)UsedLen,
+                    eventCount);
+
+                /*
+                 * If the device wrote more than the standard header, treat it as
+                 * future extension bytes and ignore them.
+                 */
+                if (cappedLen > (UINT32)sizeof(VIRTIO_SND_EVENT)) {
+                    VIRTIOSND_TRACE(
+                        "eventq: extra payload bytes (%lu > %Iu) ignored\n",
+                        (ULONG)cappedLen,
+                        sizeof(VIRTIO_SND_EVENT));
+                }
             }
         } else {
             if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {

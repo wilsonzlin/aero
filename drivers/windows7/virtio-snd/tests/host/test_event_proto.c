@@ -98,6 +98,29 @@ static void test_parse_known_event_types(void)
     }
 }
 
+static void test_parse_trailing_bytes_are_ignored(void)
+{
+    VIRTIO_SND_EVENT_PARSED out;
+    NTSTATUS status;
+
+    /*
+     * Devices may legally complete event buffers with extra trailing bytes.
+     * The parser only inspects the fixed-size header.
+     */
+    {
+        const uint8_t buf[] = {
+            0x00, 0x11, 0x00, 0x00, /* type = PCM_PERIOD_ELAPSED */
+            0x02, 0x00, 0x00, 0x00, /* data = 2 */
+            0xAA, 0xBB, 0xCC, 0xDD, /* extra bytes */
+        };
+        status = VirtioSndParseEvent(buf, (ULONG)sizeof(buf), &out);
+        TEST_ASSERT(status == STATUS_SUCCESS);
+        TEST_ASSERT(out.Kind == VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED);
+        TEST_ASSERT_EQ_U32(out.Type, VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED);
+        TEST_ASSERT_EQ_U32(out.Data, 2u);
+    }
+}
+
 static void test_parse_short_buffers_are_rejected_safely(void)
 {
     VIRTIO_SND_EVENT_PARSED out;
@@ -162,6 +185,7 @@ int main(void)
 {
     test_event_struct_packing_and_endianness();
     test_parse_known_event_types();
+    test_parse_trailing_bytes_are_ignored();
     test_parse_short_buffers_are_rejected_safely();
     test_parse_unknown_event_is_tolerated();
     test_parse_unaligned_buffer();
@@ -169,4 +193,3 @@ int main(void)
     printf("virtiosnd_event_proto_tests: PASS\n");
     return 0;
 }
-
