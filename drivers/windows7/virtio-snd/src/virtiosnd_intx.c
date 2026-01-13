@@ -248,6 +248,8 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
                 break;
             case VIRTIO_SND_EVENT_KIND_PCM_XRUN:
                 eventCount = InterlockedIncrement(&dx->EventqStats.PcmXrun);
+                /* XRUNs can be spammed by misbehaving devices; avoid log spam. */
+                logEvent = VirtIoSndShouldLogRareCounter(eventCount);
                 break;
             case VIRTIO_SND_EVENT_KIND_CTL_NOTIFY:
                 eventCount = InterlockedIncrement(&dx->EventqStats.CtlNotify);
