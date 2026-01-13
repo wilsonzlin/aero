@@ -445,6 +445,21 @@ HTTP endpoints accept credentials via:
 
 For WebSocket authentication, see "WebSocket signaling (trickle ICE)" below.
 
+#### Concurrent sessions (JWT `sid`)
+
+When `AUTH_MODE=jwt`, the relay uses the JWT `sid` claim as the per-session quota
+key and currently enforces **at most one active relay session per `sid` at a
+time**.
+
+If another session already exists for the same `sid`, attempts to create a new
+session are rejected with `session_already_active`:
+
+- **WebSocket signaling (`GET /webrtc/signal`)**: `{ "type":"error", "code":"session_already_active", "message":"..." }`, then the relay closes the WebSocket.
+- **HTTP signaling endpoints (`POST /webrtc/offer`, `POST /offer`, `POST /session`)**: `409 Conflict` with `{ "code":"session_already_active", "message":"..." }`.
+
+This is a behavior/compatibility contract of the current implementation and may
+change in the future.
+
 ### POST /offer (v1, versioned JSON, non-trickle ICE)
 
 Client → relay:
@@ -618,6 +633,7 @@ Error `code` values are currently best-effort and intended for debugging:
 - `unexpected_message` (invalid ordering such as candidate-before-offer)
 - `unauthorized` (authentication required / invalid credentials)
 - `too_many_sessions`
+- `session_already_active` (an active session already exists for this JWT `sid` when `AUTH_MODE=jwt`)
 - `rate_limited`
 - `internal_error`
 

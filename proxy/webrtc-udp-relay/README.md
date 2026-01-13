@@ -190,10 +190,11 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 - `POST /webrtc/offer` → HTTP offer → answer (non-trickle ICE fallback) (requires auth when `AUTH_MODE != none`)
   - The response includes an opaque `sessionId` for observability. When `AUTH_MODE=jwt`,
     the relay enforces per-session quotas using the JWT `sid` claim internally (not the
-    returned `sessionId`) and rejects concurrent sessions with the same `sid`.
+    returned `sessionId`) and rejects concurrent sessions with the same `sid` with
+    `409 Conflict` (`code: "session_already_active"`).
 - `GET /udp` → WebSocket UDP relay fallback (binary datagram frames; see `PROTOCOL.md`) (requires auth when `AUTH_MODE != none`)
   - guarded by the same origin policy as signaling endpoints
-
+ 
 ## L2 tunnel bridging (optional)
 
 The relay can also bridge a WebRTC DataChannel labeled `l2` to a backend WebSocket
@@ -522,6 +523,12 @@ To prevent resource exhaustion:
 - Incoming WebSocket control messages (e.g. signaling, `/udp` auth) are limited by:
   - `MAX_SIGNALING_MESSAGE_BYTES` (default: `65536`)
   - `MAX_SIGNALING_MESSAGES_PER_SECOND` (default: `50`)
+
+When `AUTH_MODE=jwt`, the relay currently enforces **at most one active relay
+session per JWT `sid` at a time**. A concurrent attempt will fail with
+`session_already_active` (`409 Conflict` on HTTP endpoints, or a WebSocket
+`{type:"error"}` message). Clients should close the old session (PeerConnection
+or `/udp` WebSocket) and retry once it is torn down.
 
 Violations close the WebSocket connection with an error.
 

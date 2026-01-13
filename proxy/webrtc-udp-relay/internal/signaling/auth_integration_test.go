@@ -370,6 +370,109 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint(t *testin
 	}
 }
 
+func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:  config.AuthModeJWT,
+		JWTSecret: "supersecret",
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	token := makeJWT(cfg.JWTSecret, "sess_test")
+
+	// Create an active session (via preallocation) so offer endpoints must reject
+	// concurrent session creation with the same JWT sid.
+	{
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/session", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		if resp.StatusCode != http.StatusCreated {
+			defer resp.Body.Close()
+			t.Fatalf("prealloc /session status=%d, want %d", resp.StatusCode, http.StatusCreated)
+		}
+		resp.Body.Close()
+	}
+
+	type errResp struct {
+		Code string `json:"code"`
+	}
+
+	t.Run("POST /webrtc/offer", func(t *testing.T) {
+		body, err := json.Marshal(map[string]any{
+			"sdp": signaling.SDP{Type: "offer", SDP: "v=0"},
+		})
+		if err != nil {
+			t.Fatalf("marshal offer: %v", err)
+		}
+
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/webrtc/offer", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("/webrtc/offer status=%d, want %d", resp.StatusCode, http.StatusConflict)
+		}
+		var got errResp
+		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+			t.Fatalf("decode error response: %v", err)
+		}
+		if got.Code != "session_already_active" {
+			t.Fatalf("error code=%q, want %q", got.Code, "session_already_active")
+		}
+	})
+
+	t.Run("POST /offer", func(t *testing.T) {
+		body, err := json.Marshal(signaling.OfferRequest{
+			Version: signaling.Version1,
+			Offer: signaling.SessionDescription{
+				Type: "offer",
+				SDP:  "v=0",
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal offer: %v", err)
+		}
+
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/offer", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("/offer status=%d, want %d", resp.StatusCode, http.StatusConflict)
+		}
+		var got errResp
+		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+			t.Fatalf("decode error response: %v", err)
+		}
+		if got.Code != "session_already_active" {
+			t.Fatalf("error code=%q, want %q", got.Code, "session_already_active")
+		}
+	})
+}
+
 func TestAuth_SessionEndpoint_AllowsMultipleSessionsForNoneAndAPIKey(t *testing.T) {
 	t.Run("none", func(t *testing.T) {
 		ts, _ := startSignalingServer(t, config.Config{AuthMode: config.AuthModeNone})
