@@ -732,6 +732,14 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
         });
         const apiKeyAuthStatus = apiKeyAuth.status;
 
+        const authHeaderAPIKeyAuthStatus = (
+          await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
+            headers: {
+              Authorization: `ApiKey ${token}`,
+            },
+          })
+        ).status;
+
         const queryTokenAuthStatus = (
           await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice?token=${encodeURIComponent(token)}`)
         ).status;
@@ -886,7 +894,16 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
 
         ws.close();
         pc.close();
-        return { unauthStatus, invalidAuthStatus, apiKeyAuthStatus, queryTokenAuthStatus, queryAPIKeyAuthStatus, authStatus, echoedText };
+        return {
+          unauthStatus,
+          invalidAuthStatus,
+          apiKeyAuthStatus,
+          authHeaderAPIKeyAuthStatus,
+          queryTokenAuthStatus,
+          queryAPIKeyAuthStatus,
+          authStatus,
+          echoedText,
+        };
       },
       { relayPort: relay.port, echoPort: echo.port, token, invalidToken },
     );
@@ -894,6 +911,7 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
     expect(res.unauthStatus).toBe(401);
     expect(res.invalidAuthStatus).toBe(401);
     expect(res.apiKeyAuthStatus).toBe(200);
+    expect(res.authHeaderAPIKeyAuthStatus).toBe(200);
     expect(res.queryTokenAuthStatus).toBe(200);
     expect(res.queryAPIKeyAuthStatus).toBe(200);
     expect(res.authStatus).toBe(200);
