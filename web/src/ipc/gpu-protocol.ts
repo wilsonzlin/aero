@@ -159,6 +159,9 @@ export type GpuRuntimeScreenshotRequestMessage = GpuWorkerMessageBase & {
   /**
    * Whether the screenshot should include the cursor overlay.
    *
+   * Screenshot data is defined as a readback of the *source framebuffer* pixels
+   * (deterministic bytes for hashing/tests), not a capture of the presented canvas.
+   *
    * Default: false (cursor excluded) so screenshot hashing stays deterministic even
    * when the guest is actively moving the hardware cursor.
    */
