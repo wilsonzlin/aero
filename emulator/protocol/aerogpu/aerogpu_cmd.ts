@@ -228,10 +228,13 @@ export const AerogpuCmdOpcode = {
   DestroySampler: 0x521,
   SetSamplers: 0x522,
   SetConstantBuffers: 0x523,
+  SetShaderResourceBuffers: 0x524,
+  SetUnorderedAccessBuffers: 0x525,
 
   Clear: 0x600,
   Draw: 0x601,
   DrawIndexed: 0x602,
+  Dispatch: 0x603,
 
   Present: 0x700,
   PresentEx: 0x701,
@@ -477,6 +480,7 @@ export const AEROGPU_RESOURCE_USAGE_TEXTURE = 1 << 3;
 export const AEROGPU_RESOURCE_USAGE_RENDER_TARGET = 1 << 4;
 export const AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL = 1 << 5;
 export const AEROGPU_RESOURCE_USAGE_SCANOUT = 1 << 6;
+export const AEROGPU_RESOURCE_USAGE_STORAGE = 1 << 7;
 
 export const AEROGPU_COPY_FLAG_NONE = 0;
 export const AEROGPU_COPY_FLAG_WRITEBACK_DST = 1 << 0;
@@ -552,9 +556,14 @@ export const AEROGPU_CMD_DESTROY_SAMPLER_SIZE = 16;
 export const AEROGPU_CMD_SET_SAMPLERS_SIZE = 24;
 export const AEROGPU_CONSTANT_BUFFER_BINDING_SIZE = 16;
 export const AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE = 24;
+export const AEROGPU_SHADER_RESOURCE_BUFFER_BINDING_SIZE = 16;
+export const AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE = 24;
+export const AEROGPU_UNORDERED_ACCESS_BUFFER_BINDING_SIZE = 16;
+export const AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE = 24;
 export const AEROGPU_CMD_CLEAR_SIZE = 36;
 export const AEROGPU_CMD_DRAW_SIZE = 24;
 export const AEROGPU_CMD_DRAW_INDEXED_SIZE = 28;
+export const AEROGPU_CMD_DISPATCH_SIZE = 24;
 export const AEROGPU_CMD_PRESENT_SIZE = 16;
 export const AEROGPU_CMD_PRESENT_EX_SIZE = 24;
 export const AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE = 24;
@@ -571,6 +580,19 @@ export interface AerogpuConstantBufferBinding {
   buffer: AerogpuHandle;
   offsetBytes: number;
   sizeBytes: number;
+}
+
+export interface AerogpuShaderResourceBufferBinding {
+  buffer: AerogpuHandle;
+  offsetBytes: number;
+  sizeBytes: number;
+}
+
+export interface AerogpuUnorderedAccessBufferBinding {
+  buffer: AerogpuHandle;
+  offsetBytes: number;
+  sizeBytes: number;
+  initialCount: number;
 }
 
 function isPowerOfTwo(v: number): boolean {
@@ -1024,6 +1046,130 @@ export function decodeCmdSetConstantBuffersPayloadFromPacket(
     shaderStage,
     startSlot,
     bufferCount,
+    reserved0,
+    bindings: new DataView(
+      packet.payload.buffer,
+      packet.payload.byteOffset + bindingsStart,
+      Number(bindingsSizeBig),
+    ),
+  };
+}
+
+export interface AerogpuCmdSetShaderResourceBuffersPayload {
+  shaderStage: number;
+  startSlot: number;
+  bufferCount: number;
+  reserved0: number;
+  /**
+   * View of `aerogpu_shader_resource_buffer_binding bindings[buffer_count]`.
+   *
+   * Each element is 16 bytes: `{buffer:u32, offset_bytes:u32, size_bytes:u32, reserved0:u32}`.
+   */
+  bindings: DataView;
+}
+
+export function decodeCmdSetShaderResourceBuffersPayload(
+  bytes: Uint8Array,
+  packetOffset = 0,
+): AerogpuCmdSetShaderResourceBuffersPayload {
+  return decodeCmdSetShaderResourceBuffersPayloadFromPacket(decodePacketFromBytes(bytes, packetOffset));
+}
+
+export function decodeCmdSetShaderResourceBuffersPayloadFromPacket(
+  packet: AerogpuCmdPacket,
+): AerogpuCmdSetShaderResourceBuffersPayload {
+  validatePacketPayloadLen(packet);
+  if (packet.opcode !== AerogpuCmdOpcode.SetShaderResourceBuffers) {
+    throw new Error(
+      `Unexpected opcode: 0x${packet.opcode.toString(16)} (expected SET_SHADER_RESOURCE_BUFFERS)`,
+    );
+  }
+  if (packet.payload.byteLength < 16) {
+    throw new Error("Buffer too small for SET_SHADER_RESOURCE_BUFFERS payload");
+  }
+
+  const view = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
+  const shaderStage = view.getUint32(0, true);
+  const startSlot = view.getUint32(4, true);
+  const bufferCount = view.getUint32(8, true);
+  const reserved0 = view.getUint32(12, true);
+
+  const bindingsSizeBig = BigInt(bufferCount) * 16n;
+  const bindingsStart = 16;
+  const bindingsEndBig = BigInt(bindingsStart) + bindingsSizeBig;
+  if (bindingsEndBig > BigInt(packet.payload.byteLength)) {
+    throw new Error(`SET_SHADER_RESOURCE_BUFFERS packet too small for buffer_count=${bufferCount}`);
+  }
+  if (bindingsSizeBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`SET_SHADER_RESOURCE_BUFFERS bindings too large: buffer_count=${bufferCount}`);
+  }
+
+  return {
+    shaderStage,
+    startSlot,
+    bufferCount,
+    reserved0,
+    bindings: new DataView(
+      packet.payload.buffer,
+      packet.payload.byteOffset + bindingsStart,
+      Number(bindingsSizeBig),
+    ),
+  };
+}
+
+export interface AerogpuCmdSetUnorderedAccessBuffersPayload {
+  shaderStage: number;
+  startSlot: number;
+  uavCount: number;
+  reserved0: number;
+  /**
+   * View of `aerogpu_unordered_access_buffer_binding bindings[uav_count]`.
+   *
+   * Each element is 16 bytes: `{buffer:u32, offset_bytes:u32, size_bytes:u32, initial_count:u32}`.
+   */
+  bindings: DataView;
+}
+
+export function decodeCmdSetUnorderedAccessBuffersPayload(
+  bytes: Uint8Array,
+  packetOffset = 0,
+): AerogpuCmdSetUnorderedAccessBuffersPayload {
+  return decodeCmdSetUnorderedAccessBuffersPayloadFromPacket(decodePacketFromBytes(bytes, packetOffset));
+}
+
+export function decodeCmdSetUnorderedAccessBuffersPayloadFromPacket(
+  packet: AerogpuCmdPacket,
+): AerogpuCmdSetUnorderedAccessBuffersPayload {
+  validatePacketPayloadLen(packet);
+  if (packet.opcode !== AerogpuCmdOpcode.SetUnorderedAccessBuffers) {
+    throw new Error(
+      `Unexpected opcode: 0x${packet.opcode.toString(16)} (expected SET_UNORDERED_ACCESS_BUFFERS)`,
+    );
+  }
+  if (packet.payload.byteLength < 16) {
+    throw new Error("Buffer too small for SET_UNORDERED_ACCESS_BUFFERS payload");
+  }
+
+  const view = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
+  const shaderStage = view.getUint32(0, true);
+  const startSlot = view.getUint32(4, true);
+  const uavCount = view.getUint32(8, true);
+  const reserved0 = view.getUint32(12, true);
+
+  const bindingsSizeBig = BigInt(uavCount) * 16n;
+  const bindingsStart = 16;
+  const bindingsEndBig = BigInt(bindingsStart) + bindingsSizeBig;
+  if (bindingsEndBig > BigInt(packet.payload.byteLength)) {
+    throw new Error(`SET_UNORDERED_ACCESS_BUFFERS packet too small for uav_count=${uavCount}`);
+  }
+  if (bindingsSizeBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`SET_UNORDERED_ACCESS_BUFFERS bindings too large: uav_count=${uavCount}`);
+  }
+
+  return {
+    shaderStage,
+    startSlot,
+    uavCount,
     reserved0,
     bindings: new DataView(
       packet.payload.buffer,
@@ -1598,6 +1744,45 @@ export class AerogpuCmdWriter {
     }
   }
 
+  setShaderResourceBuffers(
+    shaderStage: AerogpuShaderStage,
+    startSlot: number,
+    bindings: readonly AerogpuShaderResourceBufferBinding[],
+  ): void {
+    const unpadded = AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + bindings.length * 16;
+    const base = this.appendRaw(AerogpuCmdOpcode.SetShaderResourceBuffers, unpadded);
+    this.view.setUint32(base + 8, shaderStage, true);
+    this.view.setUint32(base + 12, startSlot, true);
+    this.view.setUint32(base + 16, bindings.length, true);
+    for (let i = 0; i < bindings.length; i++) {
+      const b = bindings[i];
+      const off = base + AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + i * 16;
+      this.view.setUint32(off + 0, b.buffer, true);
+      this.view.setUint32(off + 4, b.offsetBytes, true);
+      this.view.setUint32(off + 8, b.sizeBytes, true);
+    }
+  }
+
+  setUnorderedAccessBuffers(
+    shaderStage: AerogpuShaderStage,
+    startSlot: number,
+    bindings: readonly AerogpuUnorderedAccessBufferBinding[],
+  ): void {
+    const unpadded = AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE + bindings.length * 16;
+    const base = this.appendRaw(AerogpuCmdOpcode.SetUnorderedAccessBuffers, unpadded);
+    this.view.setUint32(base + 8, shaderStage, true);
+    this.view.setUint32(base + 12, startSlot, true);
+    this.view.setUint32(base + 16, bindings.length, true);
+    for (let i = 0; i < bindings.length; i++) {
+      const b = bindings[i];
+      const off = base + AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE + i * 16;
+      this.view.setUint32(off + 0, b.buffer, true);
+      this.view.setUint32(off + 4, b.offsetBytes, true);
+      this.view.setUint32(off + 8, b.sizeBytes, true);
+      this.view.setUint32(off + 12, b.initialCount, true);
+    }
+  }
+
   setRenderState(state: number, value: number): void {
     const base = this.appendRaw(AerogpuCmdOpcode.SetRenderState, AEROGPU_CMD_SET_RENDER_STATE_SIZE);
     this.view.setUint32(base + 8, state, true);
@@ -1635,6 +1820,13 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 16, firstIndex, true);
     this.view.setInt32(base + 20, baseVertex, true);
     this.view.setUint32(base + 24, firstInstance, true);
+  }
+
+  dispatch(groupCountX: number, groupCountY: number, groupCountZ: number): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.Dispatch, AEROGPU_CMD_DISPATCH_SIZE);
+    this.view.setUint32(base + 8, groupCountX, true);
+    this.view.setUint32(base + 12, groupCountY, true);
+    this.view.setUint32(base + 16, groupCountZ, true);
   }
 
   present(scanoutId: number, flags: number): void {

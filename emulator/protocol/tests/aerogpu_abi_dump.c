@@ -55,9 +55,14 @@ int main(void) {
   PRINT_SIZE("aerogpu_cmd_set_samplers", struct aerogpu_cmd_set_samplers);
   PRINT_SIZE("aerogpu_constant_buffer_binding", struct aerogpu_constant_buffer_binding);
   PRINT_SIZE("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers);
+  PRINT_SIZE("aerogpu_shader_resource_buffer_binding", struct aerogpu_shader_resource_buffer_binding);
+  PRINT_SIZE("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers);
+  PRINT_SIZE("aerogpu_unordered_access_buffer_binding", struct aerogpu_unordered_access_buffer_binding);
+  PRINT_SIZE("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers);
   PRINT_SIZE("aerogpu_cmd_clear", struct aerogpu_cmd_clear);
   PRINT_SIZE("aerogpu_cmd_draw", struct aerogpu_cmd_draw);
   PRINT_SIZE("aerogpu_cmd_draw_indexed", struct aerogpu_cmd_draw_indexed);
+  PRINT_SIZE("aerogpu_cmd_dispatch", struct aerogpu_cmd_dispatch);
   PRINT_SIZE("aerogpu_cmd_present", struct aerogpu_cmd_present);
   PRINT_SIZE("aerogpu_cmd_present_ex", struct aerogpu_cmd_present_ex);
   PRINT_SIZE("aerogpu_cmd_export_shared_surface", struct aerogpu_cmd_export_shared_surface);
@@ -116,6 +121,8 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_set_shader_constants_f", struct aerogpu_cmd_set_shader_constants_f, vec4_count);
   PRINT_OFF("aerogpu_cmd_create_input_layout", struct aerogpu_cmd_create_input_layout, blob_size_bytes);
   PRINT_OFF("aerogpu_cmd_set_vertex_buffers", struct aerogpu_cmd_set_vertex_buffers, buffer_count);
+  PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, buffer_count);
+  PRINT_OFF("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers, uav_count);
   PRINT_OFF("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource, offset_bytes);
   PRINT_OFF("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource, size_bytes);
 
@@ -331,6 +338,28 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers, buffer_count);
   PRINT_OFF("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers, reserved0);
 
+  PRINT_OFF("aerogpu_shader_resource_buffer_binding", struct aerogpu_shader_resource_buffer_binding, buffer);
+  PRINT_OFF("aerogpu_shader_resource_buffer_binding", struct aerogpu_shader_resource_buffer_binding, offset_bytes);
+  PRINT_OFF("aerogpu_shader_resource_buffer_binding", struct aerogpu_shader_resource_buffer_binding, size_bytes);
+  PRINT_OFF("aerogpu_shader_resource_buffer_binding", struct aerogpu_shader_resource_buffer_binding, reserved0);
+
+  PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, hdr);
+  PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, shader_stage);
+  PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, start_slot);
+  PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, buffer_count);
+  PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, reserved0);
+
+  PRINT_OFF("aerogpu_unordered_access_buffer_binding", struct aerogpu_unordered_access_buffer_binding, buffer);
+  PRINT_OFF("aerogpu_unordered_access_buffer_binding", struct aerogpu_unordered_access_buffer_binding, offset_bytes);
+  PRINT_OFF("aerogpu_unordered_access_buffer_binding", struct aerogpu_unordered_access_buffer_binding, size_bytes);
+  PRINT_OFF("aerogpu_unordered_access_buffer_binding", struct aerogpu_unordered_access_buffer_binding, initial_count);
+
+  PRINT_OFF("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers, hdr);
+  PRINT_OFF("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers, shader_stage);
+  PRINT_OFF("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers, start_slot);
+  PRINT_OFF("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers, uav_count);
+  PRINT_OFF("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers, reserved0);
+
   PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, hdr);
   PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, state);
   PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, value);
@@ -372,6 +401,12 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_draw_indexed", struct aerogpu_cmd_draw_indexed, first_index);
   PRINT_OFF("aerogpu_cmd_draw_indexed", struct aerogpu_cmd_draw_indexed, base_vertex);
   PRINT_OFF("aerogpu_cmd_draw_indexed", struct aerogpu_cmd_draw_indexed, first_instance);
+
+  PRINT_OFF("aerogpu_cmd_dispatch", struct aerogpu_cmd_dispatch, hdr);
+  PRINT_OFF("aerogpu_cmd_dispatch", struct aerogpu_cmd_dispatch, group_count_x);
+  PRINT_OFF("aerogpu_cmd_dispatch", struct aerogpu_cmd_dispatch, group_count_y);
+  PRINT_OFF("aerogpu_cmd_dispatch", struct aerogpu_cmd_dispatch, group_count_z);
+  PRINT_OFF("aerogpu_cmd_dispatch", struct aerogpu_cmd_dispatch, reserved0);
 
   PRINT_OFF("aerogpu_cmd_present", struct aerogpu_cmd_present, hdr);
   PRINT_OFF("aerogpu_cmd_present", struct aerogpu_cmd_present, scanout_id);
@@ -617,6 +652,7 @@ int main(void) {
   PRINT_CONST(AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
   PRINT_CONST(AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL);
   PRINT_CONST(AEROGPU_RESOURCE_USAGE_SCANOUT);
+  PRINT_CONST(AEROGPU_RESOURCE_USAGE_STORAGE);
 
   PRINT_CONST(AEROGPU_COPY_FLAG_NONE);
   PRINT_CONST(AEROGPU_COPY_FLAG_WRITEBACK_DST);
@@ -655,9 +691,12 @@ int main(void) {
   PRINT_CONST(AEROGPU_CMD_DESTROY_SAMPLER);
   PRINT_CONST(AEROGPU_CMD_SET_SAMPLERS);
   PRINT_CONST(AEROGPU_CMD_SET_CONSTANT_BUFFERS);
+  PRINT_CONST(AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS);
+  PRINT_CONST(AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS);
   PRINT_CONST(AEROGPU_CMD_CLEAR);
   PRINT_CONST(AEROGPU_CMD_DRAW);
   PRINT_CONST(AEROGPU_CMD_DRAW_INDEXED);
+  PRINT_CONST(AEROGPU_CMD_DISPATCH);
   PRINT_CONST(AEROGPU_CMD_PRESENT);
   PRINT_CONST(AEROGPU_CMD_PRESENT_EX);
   PRINT_CONST(AEROGPU_CMD_EXPORT_SHARED_SURFACE);

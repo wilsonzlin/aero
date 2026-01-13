@@ -125,11 +125,14 @@ enum aerogpu_cmd_opcode {
   AEROGPU_CMD_DESTROY_SAMPLER = 0x521,
   AEROGPU_CMD_SET_SAMPLERS = 0x522,
   AEROGPU_CMD_SET_CONSTANT_BUFFERS = 0x523,
+  AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS = 0x524,
+  AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS = 0x525,
 
   /* Drawing */
   AEROGPU_CMD_CLEAR = 0x600,
   AEROGPU_CMD_DRAW = 0x601,
   AEROGPU_CMD_DRAW_INDEXED = 0x602,
+  AEROGPU_CMD_DISPATCH = 0x603,
 
   /* Presentation */
   AEROGPU_CMD_PRESENT = 0x700,
@@ -193,6 +196,8 @@ enum aerogpu_resource_usage_flags {
   AEROGPU_RESOURCE_USAGE_RENDER_TARGET = (1u << 4),
   AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL = (1u << 5),
   AEROGPU_RESOURCE_USAGE_SCANOUT = (1u << 6),
+  /* WebGPU STORAGE / STORAGE_BINDING usage. */
+  AEROGPU_RESOURCE_USAGE_STORAGE = (1u << 7),
 };
 
 /*
@@ -882,6 +887,72 @@ struct aerogpu_cmd_set_constant_buffers {
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_constant_buffers) == 24);
 
+/*
+ * Shader resource buffer binding entry for SET_SHADER_RESOURCE_BUFFERS.
+ */
+#pragma pack(push, 1)
+struct aerogpu_shader_resource_buffer_binding {
+  aerogpu_handle_t buffer; /* 0 = unbound */
+  uint32_t offset_bytes;
+  uint32_t size_bytes;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_shader_resource_buffer_binding) == 16);
+
+/*
+ * SET_SHADER_RESOURCE_BUFFERS:
+ *
+ * Payload format:
+ *   struct aerogpu_cmd_set_shader_resource_buffers
+ *   struct aerogpu_shader_resource_buffer_binding bindings[buffer_count]
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_shader_resource_buffers {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS */
+  uint32_t shader_stage; /* enum aerogpu_shader_stage */
+  uint32_t start_slot;
+  uint32_t buffer_count;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_resource_buffers) == 24);
+
+/*
+ * Unordered access buffer binding entry for SET_UNORDERED_ACCESS_BUFFERS.
+ */
+#pragma pack(push, 1)
+struct aerogpu_unordered_access_buffer_binding {
+  aerogpu_handle_t buffer; /* 0 = unbound */
+  uint32_t offset_bytes;
+  uint32_t size_bytes;
+  uint32_t initial_count; /* reserved for now */
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_unordered_access_buffer_binding) == 16);
+
+/*
+ * SET_UNORDERED_ACCESS_BUFFERS:
+ *
+ * Payload format:
+ *   struct aerogpu_cmd_set_unordered_access_buffers
+ *   struct aerogpu_unordered_access_buffer_binding bindings[uav_count]
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_unordered_access_buffers {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS */
+  uint32_t shader_stage; /* enum aerogpu_shader_stage */
+  uint32_t start_slot;
+  uint32_t uav_count;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_unordered_access_buffers) == 24);
+
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_render_state {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_RENDER_STATE */
@@ -936,6 +1007,18 @@ struct aerogpu_cmd_draw_indexed {
 #pragma pack(pop)
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_draw_indexed) == 28);
+
+#pragma pack(push, 1)
+struct aerogpu_cmd_dispatch {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_DISPATCH */
+  uint32_t group_count_x;
+  uint32_t group_count_y;
+  uint32_t group_count_z;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_dispatch) == 24);
 
 /* ------------------------------ Presentation ----------------------------- */
 

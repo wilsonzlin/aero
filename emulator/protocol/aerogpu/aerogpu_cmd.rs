@@ -83,10 +83,13 @@ pub enum AerogpuCmdOpcode {
     DestroySampler = 0x521,
     SetSamplers = 0x522,
     SetConstantBuffers = 0x523,
+    SetShaderResourceBuffers = 0x524,
+    SetUnorderedAccessBuffers = 0x525,
 
     Clear = 0x600,
     Draw = 0x601,
     DrawIndexed = 0x602,
+    Dispatch = 0x603,
 
     Present = 0x700,
     PresentEx = 0x701,
@@ -133,9 +136,12 @@ impl AerogpuCmdOpcode {
             0x521 => Some(Self::DestroySampler),
             0x522 => Some(Self::SetSamplers),
             0x523 => Some(Self::SetConstantBuffers),
+            0x524 => Some(Self::SetShaderResourceBuffers),
+            0x525 => Some(Self::SetUnorderedAccessBuffers),
             0x600 => Some(Self::Clear),
             0x601 => Some(Self::Draw),
             0x602 => Some(Self::DrawIndexed),
+            0x603 => Some(Self::Dispatch),
             0x700 => Some(Self::Present),
             0x701 => Some(Self::PresentEx),
             0x710 => Some(Self::ExportSharedSurface),
@@ -265,6 +271,7 @@ pub const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = 1u32 << 3;
 pub const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1u32 << 4;
 pub const AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL: u32 = 1u32 << 5;
 pub const AEROGPU_RESOURCE_USAGE_SCANOUT: u32 = 1u32 << 6;
+pub const AEROGPU_RESOURCE_USAGE_STORAGE: u32 = 1u32 << 7;
 
 pub const AEROGPU_COPY_FLAG_NONE: u32 = 0;
 pub const AEROGPU_COPY_FLAG_WRITEBACK_DST: u32 = 1u32 << 0;
@@ -875,6 +882,60 @@ impl AerogpuCmdSetConstantBuffers {
     pub const SIZE_BYTES: usize = 24;
 }
 
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuShaderResourceBufferBinding {
+    pub buffer: AerogpuHandle,
+    pub offset_bytes: u32,
+    pub size_bytes: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuShaderResourceBufferBinding {
+    pub const SIZE_BYTES: usize = 16;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetShaderResourceBuffers {
+    pub hdr: AerogpuCmdHdr,
+    pub shader_stage: u32,
+    pub start_slot: u32,
+    pub buffer_count: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdSetShaderResourceBuffers {
+    pub const SIZE_BYTES: usize = 24;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuUnorderedAccessBufferBinding {
+    pub buffer: AerogpuHandle,
+    pub offset_bytes: u32,
+    pub size_bytes: u32,
+    pub initial_count: u32,
+}
+
+impl AerogpuUnorderedAccessBufferBinding {
+    pub const SIZE_BYTES: usize = 16;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetUnorderedAccessBuffers {
+    pub hdr: AerogpuCmdHdr,
+    pub shader_stage: u32,
+    pub start_slot: u32,
+    pub uav_count: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdSetUnorderedAccessBuffers {
+    pub const SIZE_BYTES: usize = 24;
+}
+
 /* -------------------------------- Drawing -------------------------------- */
 
 pub const AEROGPU_CLEAR_COLOR: u32 = 1u32 << 0;
@@ -922,6 +983,20 @@ pub struct AerogpuCmdDrawIndexed {
 
 impl AerogpuCmdDrawIndexed {
     pub const SIZE_BYTES: usize = 28;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdDispatch {
+    pub hdr: AerogpuCmdHdr,
+    pub group_count_x: u32,
+    pub group_count_y: u32,
+    pub group_count_z: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdDispatch {
+    pub const SIZE_BYTES: usize = 24;
 }
 
 /* ------------------------------ Presentation ------------------------------ */
@@ -1326,6 +1401,46 @@ pub fn decode_cmd_set_constant_buffers_bindings_le(
         payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
     };
     packet.decode_set_constant_buffers_payload_le()
+}
+
+/// Decode SET_SHADER_RESOURCE_BUFFERS and parse the trailing `aerogpu_shader_resource_buffer_binding[]`.
+pub fn decode_cmd_set_shader_resource_buffers_bindings_le(
+    buf: &[u8],
+) -> Result<
+    (
+        AerogpuCmdSetShaderResourceBuffers,
+        &[AerogpuShaderResourceBufferBinding],
+    ),
+    AerogpuCmdDecodeError,
+> {
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+    let packet = AerogpuCmdPacket {
+        hdr,
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
+    };
+    packet.decode_set_shader_resource_buffers_payload_le()
+}
+
+/// Decode SET_UNORDERED_ACCESS_BUFFERS and parse the trailing `aerogpu_unordered_access_buffer_binding[]`.
+pub fn decode_cmd_set_unordered_access_buffers_bindings_le(
+    buf: &[u8],
+) -> Result<
+    (
+        AerogpuCmdSetUnorderedAccessBuffers,
+        &[AerogpuUnorderedAccessBufferBinding],
+    ),
+    AerogpuCmdDecodeError,
+> {
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+    let packet = AerogpuCmdPacket {
+        hdr,
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
+    };
+    packet.decode_set_unordered_access_buffers_payload_le()
 }
 
 #[derive(Clone, Copy)]
@@ -1765,6 +1880,118 @@ impl<'a> AerogpuCmdPacket<'a> {
                 shader_stage,
                 start_slot,
                 buffer_count,
+                reserved0,
+            },
+            bindings,
+        ))
+    }
+
+    pub fn decode_set_shader_resource_buffers_payload_le(
+        &self,
+    ) -> Result<
+        (
+            AerogpuCmdSetShaderResourceBuffers,
+            &'a [AerogpuShaderResourceBufferBinding],
+        ),
+        AerogpuCmdDecodeError,
+    > {
+        if self.opcode != Some(AerogpuCmdOpcode::SetShaderResourceBuffers) {
+            return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+                found: self.hdr.opcode,
+                expected: AerogpuCmdOpcode::SetShaderResourceBuffers,
+            });
+        }
+        if self.payload.len() < 16 {
+            return Err(AerogpuCmdDecodeError::BufferTooSmall);
+        }
+
+        let shader_stage = u32::from_le_bytes(self.payload[0..4].try_into().unwrap());
+        let start_slot = u32::from_le_bytes(self.payload[4..8].try_into().unwrap());
+        let buffer_count = u32::from_le_bytes(self.payload[8..12].try_into().unwrap());
+        let reserved0 = u32::from_le_bytes(self.payload[12..16].try_into().unwrap());
+
+        let buffer_count_usize = buffer_count as usize;
+        let binding_bytes_len = buffer_count_usize
+            .checked_mul(core::mem::size_of::<AerogpuShaderResourceBufferBinding>())
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
+        let binding_end = 16usize
+            .checked_add(binding_bytes_len)
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
+        if binding_end > self.payload.len() {
+            return Err(AerogpuCmdDecodeError::BadSizeBytes {
+                found: self.hdr.size_bytes,
+            });
+        }
+
+        let binding_bytes = &self.payload[16..binding_end];
+        let (prefix, bindings, suffix) =
+            unsafe { binding_bytes.align_to::<AerogpuShaderResourceBufferBinding>() };
+        if !prefix.is_empty() || !suffix.is_empty() || bindings.len() != buffer_count_usize {
+            return Err(AerogpuCmdDecodeError::CountOverflow);
+        }
+
+        Ok((
+            AerogpuCmdSetShaderResourceBuffers {
+                hdr: self.hdr,
+                shader_stage,
+                start_slot,
+                buffer_count,
+                reserved0,
+            },
+            bindings,
+        ))
+    }
+
+    pub fn decode_set_unordered_access_buffers_payload_le(
+        &self,
+    ) -> Result<
+        (
+            AerogpuCmdSetUnorderedAccessBuffers,
+            &'a [AerogpuUnorderedAccessBufferBinding],
+        ),
+        AerogpuCmdDecodeError,
+    > {
+        if self.opcode != Some(AerogpuCmdOpcode::SetUnorderedAccessBuffers) {
+            return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+                found: self.hdr.opcode,
+                expected: AerogpuCmdOpcode::SetUnorderedAccessBuffers,
+            });
+        }
+        if self.payload.len() < 16 {
+            return Err(AerogpuCmdDecodeError::BufferTooSmall);
+        }
+
+        let shader_stage = u32::from_le_bytes(self.payload[0..4].try_into().unwrap());
+        let start_slot = u32::from_le_bytes(self.payload[4..8].try_into().unwrap());
+        let uav_count = u32::from_le_bytes(self.payload[8..12].try_into().unwrap());
+        let reserved0 = u32::from_le_bytes(self.payload[12..16].try_into().unwrap());
+
+        let uav_count_usize = uav_count as usize;
+        let binding_bytes_len = uav_count_usize
+            .checked_mul(core::mem::size_of::<AerogpuUnorderedAccessBufferBinding>())
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
+        let binding_end = 16usize
+            .checked_add(binding_bytes_len)
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
+        if binding_end > self.payload.len() {
+            return Err(AerogpuCmdDecodeError::BadSizeBytes {
+                found: self.hdr.size_bytes,
+            });
+        }
+
+        let binding_bytes = &self.payload[16..binding_end];
+        let (prefix, bindings, suffix) =
+            unsafe { binding_bytes.align_to::<AerogpuUnorderedAccessBufferBinding>() };
+        if !prefix.is_empty() || !suffix.is_empty() || bindings.len() != uav_count_usize {
+            return Err(AerogpuCmdDecodeError::CountOverflow);
+        }
+
+        Ok((
+            AerogpuCmdSetUnorderedAccessBuffers {
+                hdr: self.hdr,
+                shader_stage,
+                start_slot,
+                uav_count,
                 reserved0,
             },
             bindings,

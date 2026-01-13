@@ -9,18 +9,20 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout, AerogpuCmdCreateSampler,
     AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout,
     AerogpuCmdDestroyResource, AerogpuCmdDestroySampler, AerogpuCmdDestroyShader, AerogpuCmdDraw,
-    AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdHdr,
-    AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx,
+    AerogpuCmdDispatch, AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush,
+    AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent,
+    AerogpuCmdPresentEx,
     AerogpuCmdReleaseSharedSurface, AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState,
     AerogpuCmdSetConstantBuffers, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
     AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState,
     AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
     AerogpuCmdSetSamplers, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
-    AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
-    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
-    AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuDepthStencilState, AerogpuFillMode,
-    AerogpuIndexFormat, AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi,
-    AerogpuPrimitiveTopology, AerogpuRasterizerState, AerogpuShaderStage,
+    AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers,
+    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader,
+    AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuConstantBufferBinding, AerogpuCullMode,
+    AerogpuDepthStencilState, AerogpuFillMode, AerogpuIndexFormat, AerogpuInputLayoutBlobHeader,
+    AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology, AerogpuRasterizerState,
+    AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuUnorderedAccessBufferBinding,
     AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
     AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_NONE, AEROGPU_COPY_FLAG_WRITEBACK_DST,
     AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
@@ -28,7 +30,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
     AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_STORAGE, AEROGPU_RESOURCE_USAGE_TEXTURE,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
@@ -650,9 +652,26 @@ fn rust_layout_matches_c_headers() {
         AerogpuCmdSetConstantBuffers,
         "aerogpu_cmd_set_constant_buffers"
     );
+    assert_size!(
+        AerogpuShaderResourceBufferBinding,
+        "aerogpu_shader_resource_buffer_binding"
+    );
+    assert_cmd_size!(
+        AerogpuCmdSetShaderResourceBuffers,
+        "aerogpu_cmd_set_shader_resource_buffers"
+    );
+    assert_size!(
+        AerogpuUnorderedAccessBufferBinding,
+        "aerogpu_unordered_access_buffer_binding"
+    );
+    assert_cmd_size!(
+        AerogpuCmdSetUnorderedAccessBuffers,
+        "aerogpu_cmd_set_unordered_access_buffers"
+    );
     assert_cmd_size!(AerogpuCmdClear, "aerogpu_cmd_clear");
     assert_cmd_size!(AerogpuCmdDraw, "aerogpu_cmd_draw");
     assert_cmd_size!(AerogpuCmdDrawIndexed, "aerogpu_cmd_draw_indexed");
+    assert_cmd_size!(AerogpuCmdDispatch, "aerogpu_cmd_dispatch");
     assert_cmd_size!(AerogpuCmdPresent, "aerogpu_cmd_present");
     assert_cmd_size!(AerogpuCmdPresentEx, "aerogpu_cmd_present_ex");
     assert_cmd_size!(
@@ -726,6 +745,8 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_rasterizer_state".to_string(),
         "aerogpu_vertex_buffer_binding".to_string(),
         "aerogpu_constant_buffer_binding".to_string(),
+        "aerogpu_shader_resource_buffer_binding".to_string(),
+        "aerogpu_unordered_access_buffer_binding".to_string(),
     ];
     cmd_struct_defs_seen.extend(cmd_structs_seen.clone());
     assert_name_set_eq(
@@ -1941,6 +1962,114 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
+    assert_off!(
+        AerogpuShaderResourceBufferBinding,
+        buffer,
+        "aerogpu_shader_resource_buffer_binding",
+        "buffer"
+    );
+    assert_off!(
+        AerogpuShaderResourceBufferBinding,
+        offset_bytes,
+        "aerogpu_shader_resource_buffer_binding",
+        "offset_bytes"
+    );
+    assert_off!(
+        AerogpuShaderResourceBufferBinding,
+        size_bytes,
+        "aerogpu_shader_resource_buffer_binding",
+        "size_bytes"
+    );
+    assert_off!(
+        AerogpuShaderResourceBufferBinding,
+        reserved0,
+        "aerogpu_shader_resource_buffer_binding",
+        "reserved0"
+    );
+
+    assert_cmd_hdr_off!(
+        AerogpuCmdSetShaderResourceBuffers,
+        "aerogpu_cmd_set_shader_resource_buffers"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderResourceBuffers,
+        shader_stage,
+        "aerogpu_cmd_set_shader_resource_buffers",
+        "shader_stage"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderResourceBuffers,
+        start_slot,
+        "aerogpu_cmd_set_shader_resource_buffers",
+        "start_slot"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderResourceBuffers,
+        buffer_count,
+        "aerogpu_cmd_set_shader_resource_buffers",
+        "buffer_count"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderResourceBuffers,
+        reserved0,
+        "aerogpu_cmd_set_shader_resource_buffers",
+        "reserved0"
+    );
+
+    assert_off!(
+        AerogpuUnorderedAccessBufferBinding,
+        buffer,
+        "aerogpu_unordered_access_buffer_binding",
+        "buffer"
+    );
+    assert_off!(
+        AerogpuUnorderedAccessBufferBinding,
+        offset_bytes,
+        "aerogpu_unordered_access_buffer_binding",
+        "offset_bytes"
+    );
+    assert_off!(
+        AerogpuUnorderedAccessBufferBinding,
+        size_bytes,
+        "aerogpu_unordered_access_buffer_binding",
+        "size_bytes"
+    );
+    assert_off!(
+        AerogpuUnorderedAccessBufferBinding,
+        initial_count,
+        "aerogpu_unordered_access_buffer_binding",
+        "initial_count"
+    );
+
+    assert_cmd_hdr_off!(
+        AerogpuCmdSetUnorderedAccessBuffers,
+        "aerogpu_cmd_set_unordered_access_buffers"
+    );
+    assert_off!(
+        AerogpuCmdSetUnorderedAccessBuffers,
+        shader_stage,
+        "aerogpu_cmd_set_unordered_access_buffers",
+        "shader_stage"
+    );
+    assert_off!(
+        AerogpuCmdSetUnorderedAccessBuffers,
+        start_slot,
+        "aerogpu_cmd_set_unordered_access_buffers",
+        "start_slot"
+    );
+    assert_off!(
+        AerogpuCmdSetUnorderedAccessBuffers,
+        uav_count,
+        "aerogpu_cmd_set_unordered_access_buffers",
+        "uav_count"
+    );
+    assert_off!(
+        AerogpuCmdSetUnorderedAccessBuffers,
+        reserved0,
+        "aerogpu_cmd_set_unordered_access_buffers",
+        "reserved0"
+    );
+
     assert_cmd_hdr_off!(AerogpuCmdSetRenderState, "aerogpu_cmd_set_render_state");
     assert_off!(
         AerogpuCmdSetRenderState,
@@ -2136,6 +2265,32 @@ fn rust_layout_matches_c_headers() {
         first_instance,
         "aerogpu_cmd_draw_indexed",
         "first_instance"
+    );
+
+    assert_cmd_hdr_off!(AerogpuCmdDispatch, "aerogpu_cmd_dispatch");
+    assert_off!(
+        AerogpuCmdDispatch,
+        group_count_x,
+        "aerogpu_cmd_dispatch",
+        "group_count_x"
+    );
+    assert_off!(
+        AerogpuCmdDispatch,
+        group_count_y,
+        "aerogpu_cmd_dispatch",
+        "group_count_y"
+    );
+    assert_off!(
+        AerogpuCmdDispatch,
+        group_count_z,
+        "aerogpu_cmd_dispatch",
+        "group_count_z"
+    );
+    assert_off!(
+        AerogpuCmdDispatch,
+        reserved0,
+        "aerogpu_cmd_dispatch",
+        "reserved0"
     );
 
     assert_cmd_hdr_off!(AerogpuCmdPresent, "aerogpu_cmd_present");
@@ -3305,6 +3460,11 @@ fn rust_layout_matches_c_headers() {
         &mut cmd_consts_seen,
         "AEROGPU_RESOURCE_USAGE_SCANOUT",
         AEROGPU_RESOURCE_USAGE_SCANOUT as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_RESOURCE_USAGE_STORAGE",
+        AEROGPU_RESOURCE_USAGE_STORAGE as u64,
     );
 
     check_const(
