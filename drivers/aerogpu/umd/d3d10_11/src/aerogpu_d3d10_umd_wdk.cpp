@@ -3338,6 +3338,13 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     }
   }
 
+  // The Win7 D3D10 runtime validates MapFlags and will reject unknown bits
+  // before calling into the driver. Mirror this behavior for robustness (and to
+  // match the portable tests).
+  if ((map_flags_u & ~kD3DMapFlagDoNotWait) != 0) {
+    return E_INVALIDARG;
+  }
+
   bool want_write = false;
   switch (map_type_u) {
     case kD3DMapRead:
@@ -3353,9 +3360,51 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   }
 
   const bool want_read = (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite);
+
+  // Enforce D3D10 usage/CPU-access rules (matches Win7 runtime expectations).
+  const uint32_t cpu_read = static_cast<uint32_t>(D3D10_CPU_ACCESS_READ);
+  const uint32_t cpu_write = static_cast<uint32_t>(D3D10_CPU_ACCESS_WRITE);
+  switch (res->usage) {
+    case static_cast<uint32_t>(D3D10_USAGE_DYNAMIC):
+      if (map_type_u != kD3DMapWriteDiscard && map_type_u != kD3DMapWriteNoOverwrite) {
+        return E_INVALIDARG;
+      }
+      break;
+    case static_cast<uint32_t>(D3D10_USAGE_STAGING): {
+      const uint32_t access_mask = cpu_read | cpu_write;
+      const uint32_t access = res->cpu_access_flags & access_mask;
+      if (access == cpu_read) {
+        if (map_type_u != kD3DMapRead) {
+          return E_INVALIDARG;
+        }
+      } else if (access == cpu_write) {
+        if (map_type_u != kD3DMapWrite) {
+          return E_INVALIDARG;
+        }
+      } else if (access == access_mask) {
+        if (map_type_u != kD3DMapRead && map_type_u != kD3DMapWrite && map_type_u != kD3DMapReadWrite) {
+          return E_INVALIDARG;
+        }
+      } else {
+        return E_INVALIDARG;
+      }
+      break;
+    }
+    default:
+      // DEFAULT / IMMUTABLE resources are not mappable via D3D10 Map.
+      return E_INVALIDARG;
+  }
+
+  if (want_read && !(res->cpu_access_flags & cpu_read)) {
+    return E_INVALIDARG;
+  }
+  if (want_write && !(res->cpu_access_flags & cpu_write)) {
+    return E_INVALIDARG;
+  }
+
   // Only apply implicit synchronization for staging-style resources. For D3D10
   // this maps to resources with no bind flags (typical staging readback).
-  if (want_read && res->bind_flags == 0) {
+  if (want_read && res->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING)) {
     if (!dev->cmd.empty()) {
       HRESULT submit_hr = S_OK;
       submit_locked(dev, /*want_present=*/false, &submit_hr);
@@ -3438,7 +3487,8 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     return E_OUTOFMEMORY;
   }
 
-  const bool allow_storage_map = (res->backing_alloc_id == 0) && !(want_read && res->bind_flags == 0);
+  const bool allow_storage_map =
+      (res->backing_alloc_id == 0) && !(want_read && res->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING));
   const auto map_storage = [&]() -> HRESULT {
     res->mapped = true;
     res->mapped_write = want_write;
@@ -3687,7 +3737,7 @@ void APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UNMAP* pUnmap) {
   }
 
   if (!res->mapped) {
-    SetError(hDevice, E_FAIL);
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
   if (subresource != res->mapped_subresource) {
@@ -3753,15 +3803,18 @@ HRESULT APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
 template <typename = void>
 void APIENTRY StagingResourceUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, UINT subresource) {
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
   if (!dev || !res) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (!res->mapped || static_cast<uint32_t>(subresource) != res->mapped_subresource) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
   unmap_resource_locked(hDevice, dev, res, static_cast<uint32_t>(subresource));
@@ -3834,15 +3887,18 @@ HRESULT APIENTRY DynamicIABufferMapNoOverwrite(D3D10DDI_HDEVICE hDevice, D3D10DD
 template <typename = void>
 void APIENTRY DynamicIABufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
   if (!dev || !res) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (!res->mapped || res->mapped_subresource != 0) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
   unmap_resource_locked(hDevice, dev, res, /*subresource=*/0);
@@ -3882,15 +3938,18 @@ HRESULT APIENTRY DynamicConstantBufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10
 template <typename = void>
 void APIENTRY DynamicConstantBufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
   if (!dev || !res) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (!res->mapped || res->mapped_subresource != 0) {
+    SetError(hDevice, E_INVALIDARG);
     return;
   }
   unmap_resource_locked(hDevice, dev, res, /*subresource=*/0);

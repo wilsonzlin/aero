@@ -1669,6 +1669,34 @@ bool TestMapUsageValidation() {
   return true;
 }
 
+bool TestMapCpuAccessValidation() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(cpu access validation)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_WRITE, &buf), "CreateStagingBuffer")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  const HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                             buf.hResource,
+                                             /*subresource=*/0,
+                                             AEROGPU_DDI_MAP_READ,
+                                             /*map_flags=*/0,
+                                             &mapped);
+  if (!Check(hr == E_INVALIDARG, "Map(READ) on WRITE-only staging resource should fail")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestMapFlagsValidation() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(map flags)")) {
@@ -1916,6 +1944,109 @@ bool TestDynamicMapFlagsValidation() {
   }
 
   dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestDynamicMapTypeValidation() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(dynamic map type)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/32,
+                          AEROGPU_D3D11_USAGE_DYNAMIC,
+                          kD3D11BindVertexBuffer,
+                          AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                          &buf),
+             "CreateBuffer(dynamic VB)")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                       buf.hResource,
+                                       /*subresource=*/0,
+                                       AEROGPU_DDI_MAP_WRITE,
+                                       /*map_flags=*/0,
+                                       &mapped);
+  if (!Check(hr == E_INVALIDARG, "Map(WRITE) on DYNAMIC resource should fail")) {
+    return false;
+  }
+
+  mapped = {};
+  hr = dev.device_funcs.pfnMap(dev.hDevice,
+                               buf.hResource,
+                               /*subresource=*/0,
+                               AEROGPU_DDI_MAP_READ,
+                               /*map_flags=*/0,
+                               &mapped);
+  if (!Check(hr == E_INVALIDARG, "Map(READ) on DYNAMIC resource should fail")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestMapDefaultImmutableRejected() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(map default/immutable)")) {
+    return false;
+  }
+
+  TestResource def_buf{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/16,
+                          AEROGPU_D3D11_USAGE_DEFAULT,
+                          kD3D11BindVertexBuffer,
+                          /*cpu_access_flags=*/0,
+                          &def_buf),
+             "CreateBuffer(default)")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                       def_buf.hResource,
+                                       /*subresource=*/0,
+                                       AEROGPU_DDI_MAP_WRITE,
+                                       /*map_flags=*/0,
+                                       &mapped);
+  if (!Check(hr == E_INVALIDARG, "Map on DEFAULT resource should fail")) {
+    return false;
+  }
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, def_buf.hResource);
+
+  const uint8_t init_bytes[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+  TestResource imm_buf{};
+  if (!Check(CreateBufferWithInitialData(&dev,
+                                         /*byte_width=*/sizeof(init_bytes),
+                                         AEROGPU_D3D11_USAGE_IMMUTABLE,
+                                         kD3D11BindVertexBuffer,
+                                         /*cpu_access_flags=*/0,
+                                         init_bytes,
+                                         &imm_buf),
+             "CreateBufferWithInitialData(immutable)")) {
+    return false;
+  }
+  mapped = {};
+  hr = dev.device_funcs.pfnMap(dev.hDevice,
+                               imm_buf.hResource,
+                               /*subresource=*/0,
+                               AEROGPU_DDI_MAP_READ,
+                               /*map_flags=*/0,
+                               &mapped);
+  if (!Check(hr == E_INVALIDARG, "Map on IMMUTABLE resource should fail")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, imm_buf.hResource);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
@@ -6756,11 +6887,14 @@ int main() {
   ok &= TestGuestBackedTextureUnmapDirtyRange();
   ok &= TestGuestBackedBcTextureUnmapDirtyRange();
   ok &= TestMapUsageValidation();
+  ok &= TestMapCpuAccessValidation();
   ok &= TestMapFlagsValidation();
   ok &= TestMapDoNotWaitReportsStillDrawing();
   ok &= TestMapBlockingWaitUsesInfiniteTimeout();
   ok &= TestInvalidUnmapReportsError();
   ok &= TestDynamicMapFlagsValidation();
+  ok &= TestDynamicMapTypeValidation();
+  ok &= TestMapDefaultImmutableRejected();
   ok &= TestHostOwnedDynamicIABufferUploads();
   ok &= TestGuestBackedDynamicIABufferDirtyRange();
   ok &= TestDynamicBufferUsageValidation();
