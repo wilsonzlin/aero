@@ -45,7 +45,19 @@
 #define VIRTIO_CORE_PRINT(...) \
     DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "[virtio-core] " __VA_ARGS__)
 #else
+/*
+ * When diagnostics are compiled out, still "use" the macro arguments so builds
+ * with /W4 + /WX don't fail on unreferenced locals/parameters that are only
+ * present for logging.
+ *
+ * __noop is supported by MSVC and clang-cl; it discards its arguments without
+ * evaluating them or emitting code.
+ */
+#if defined(_MSC_VER) || defined(__clang__)
+#define VIRTIO_CORE_PRINT(...) __noop(__VA_ARGS__)
+#else
 #define VIRTIO_CORE_PRINT(...) ((void)0)
+#endif
 #endif
 
 typedef struct _VIRTIO_PCI_BAR {
