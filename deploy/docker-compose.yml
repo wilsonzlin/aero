@@ -165,7 +165,7 @@ services:
 
   # L2 tunnel proxy (WebSocket).
   #
-  # Receives Ethernet frames over WebSocket upgrades at /l2 and provides a
+  # Receives Ethernet frames over WebSocket upgrades at /l2 (legacy alias: /eth) and provides a
   # server-side network stack / egress policy for the VM.
   aero-l2-proxy:
     image: ${AERO_L2_PROXY_IMAGE:-aero-l2-proxy:dev}
