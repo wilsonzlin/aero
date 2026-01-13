@@ -2200,7 +2200,6 @@ fn translates_udiv_and_idiv_to_integer_division_and_modulo() {
         swizzle: Swizzle::XYZW,
         modifier: OperandModifier::None,
     };
-
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
         model: ShaderModel { major: 5, minor: 0 },
@@ -2502,5 +2501,69 @@ fn translates_unsigned_integer_compare_to_predicate_mask() {
         translated.wgsl.contains("bitcast<vec4<f32>>"),
         "expected predicate mask stored as vec4<f32> bitcast:\n{}",
         translated.wgsl
+    );
+}
+
+#[test]
+fn translates_atomic_add_uav_buffer() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            // atomicAdd(u0[0], 1) -> r0.x (original value)
+            Sm4Inst::AtomicAdd {
+                dst: Some(dst(RegFile::Temp, 0, WriteMask::X)),
+                uav: UavRef { slot: 0 },
+                addr: src_imm([0.0, 0.0, 0.0, 0.0]),
+                value: src_imm([1.0, 1.0, 1.0, 1.0]),
+            },
+            // Discarded atomicAdd(u0[0], 1).
+            Sm4Inst::AtomicAdd {
+                dst: None,
+                uav: UavRef { slot: 0 },
+                addr: src_imm([0.0, 0.0, 0.0, 0.0]),
+                value: src_imm([1.0, 1.0, 1.0, 1.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("atomicAdd"),
+        "expected atomicAdd call in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains(&format!(
+            "@group(1) @binding({BINDING_BASE_UAV}) var<storage, read_write> u0: AeroStorageBufferAtomicU32;"
+        )),
+        "expected u0 storage buffer binding declaration:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<f32>(atomic_old_0)"),
+        "expected atomic return value to be written via bitcast:\n{}",
+        translated.wgsl
+    );
+
+    assert!(
+        translated
+            .reflection
+            .bindings
+            .iter()
+            .any(|b| matches!(b.kind, BindingKind::UavBuffer { slot: 0 })),
+        "expected reflection to include u0 binding"
     );
 }

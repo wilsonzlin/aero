@@ -1968,6 +1968,7 @@ fn decodes_integer_minmax_abs_neg_ops() {
 fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     // These constants are used by upcoming compute/UAV decoding work. Keep this test in sync with
     // `d3d11tokenizedprogramformat.h` (`D3D11_SB_*` enums).
+    assert_eq!(OPERAND_TYPE_NULL, 13);
     assert_eq!(OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 30);
     // Integer arithmetic opcodes.
     assert_eq!(OPCODE_IABS, 0x61);
@@ -2089,6 +2090,55 @@ fn rejects_sm5_thread_group_decl_with_too_small_declared_len() {
         err.kind,
         aero_d3d11::sm4::decode::Sm4DecodeErrorKind::UnexpectedEof { .. }
     ));
+}
+
+#[test]
+fn decodes_atomic_add_via_structural_fallback() {
+    // Pick an opcode that is not otherwise recognized by the decoder and rely on the structural
+    // decoding path.
+    const OPCODE_UNKNOWN_ATOMIC_IADD: u32 = 0x60;
+
+    let mut body = Vec::<u32>::new();
+
+    // atomic_iadd r0.x, u0, l(0), l(1)
+    let dst0 = reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::X);
+    let uav0 = uav_operand(0, WriteMask::XYZW);
+    let addr = imm32_scalar(0);
+    let value = imm32_scalar(1);
+    let mut inst = vec![opcode_token(
+        OPCODE_UNKNOWN_ATOMIC_IADD,
+        (1 + dst0.len() + uav0.len() + addr.len() + value.len()) as u32,
+    )];
+    inst.extend_from_slice(&dst0);
+    inst.extend_from_slice(&uav0);
+    inst.extend_from_slice(&addr);
+    inst.extend_from_slice(&value);
+    body.extend_from_slice(&inst);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::AtomicAdd {
+            dst: Some(dst(RegFile::Temp, 0, WriteMask::X)),
+            uav: UavRef { slot: 0 },
+            addr: SrcOperand {
+                kind: SrcKind::ImmediateF32([0, 0, 0, 0]),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            value: SrcOperand {
+                kind: SrcKind::ImmediateF32([1, 1, 1, 1]),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
 }
 
 #[test]

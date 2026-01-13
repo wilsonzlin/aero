@@ -284,6 +284,8 @@ pub const OPERAND_TYPE_CONSTANT_BUFFER: u32 = 8;
 ///
 /// Upstream: `D3D10_SB_OPERAND_TYPE_OUTPUT_DEPTH`.
 pub const OPERAND_TYPE_OUTPUT_DEPTH: u32 = 12;
+/// Null register (used to discard results, e.g. `atomic_* null, ...`).
+pub const OPERAND_TYPE_NULL: u32 = 13;
 /// Unordered access view (u#).
 ///
 /// Upstream: `D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW`.

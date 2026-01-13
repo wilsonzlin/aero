@@ -1162,6 +1162,10 @@ pub fn decode_instruction(
             if let Some(ld_uav_raw) = try_decode_ld_uav_raw_like(saturate, inst_toks, at)? {
                 return Ok(ld_uav_raw);
             }
+            // Structural fallback for atomic add on UAV buffers (`InterlockedAdd`).
+            if let Some(atomic) = try_decode_atomic_add_like(saturate, inst_toks, at)? {
+                return Ok(atomic);
+            }
             Ok(Sm4Inst::Unknown { opcode: other })
         }
     }
@@ -1711,9 +1715,45 @@ fn try_decode_ld_uav_raw_like(
         Ok(v) => v,
         Err(_) => return Ok(None),
     };
-
     if r.is_eof() {
         return Ok(Some(Sm4Inst::LdUavRaw { dst, addr, uav }));
+    }
+
+    Ok(None)
+}
+
+fn try_decode_atomic_add_like(
+    _saturate: bool,
+    inst_toks: &[u32],
+    at: usize,
+) -> Result<Option<Sm4Inst>, Sm4DecodeError> {
+    let mut r = InstrReader::new(inst_toks, at);
+    let opcode_token = r.read_u32()?;
+    let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
+
+    let dst = match decode_atomic_dst(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let (uav, _mask) = match decode_uav_ref(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let addr = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let value = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    if r.is_eof() {
+        return Ok(Some(Sm4Inst::AtomicAdd {
+            dst,
+            uav,
+            addr,
+            value,
+        }));
     }
 
     Ok(None)
@@ -1962,6 +2002,42 @@ fn decode_uav_ref(r: &mut InstrReader<'_>) -> Result<(UavRef, WriteMask), Sm4Dec
         _ => WriteMask::XYZW,
     };
     Ok((UavRef { slot }, mask))
+}
+
+fn decode_atomic_dst(r: &mut InstrReader<'_>) -> Result<Option<DstOperand>, Sm4DecodeError> {
+    let op = decode_raw_operand(r)?;
+    if op.imm32.is_some() {
+        return Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperand("destination cannot be immediate"),
+        });
+    }
+
+    if op.ty == OPERAND_TYPE_NULL {
+        return Ok(None);
+    }
+
+    let (file, index) = match op.ty {
+        OPERAND_TYPE_TEMP => (RegFile::Temp, one_index(op.ty, &op.indices, r.base_at)?),
+        OPERAND_TYPE_OUTPUT => (RegFile::Output, one_index(op.ty, &op.indices, r.base_at)?),
+        other => {
+            return Err(Sm4DecodeError {
+                at_dword: r.base_at + r.pos.saturating_sub(1),
+                kind: Sm4DecodeErrorKind::UnsupportedOperandType { ty: other },
+            })
+        }
+    };
+
+    let mask = match op.selection_mode {
+        OPERAND_SEL_MASK => WriteMask((op.component_sel & 0xF) as u8),
+        _ => WriteMask::XYZW,
+    };
+
+    Ok(Some(DstOperand {
+        reg: RegisterRef { file, index },
+        mask,
+        saturate: false,
+    }))
 }
 
 fn one_index(ty: u32, indices: &[u32], at: usize) -> Result<u32, Sm4DecodeError> {

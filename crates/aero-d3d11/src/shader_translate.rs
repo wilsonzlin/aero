@@ -145,6 +145,9 @@ pub enum ShaderTranslateError {
         reason: &'static str,
     },
     PixelShaderMissingColorOutputs,
+    UavMixedAtomicAndNonAtomicAccess {
+        slot: u32,
+    },
     MissingThreadGroupSize,
     InvalidThreadGroupSize {
         x: u32,
@@ -252,6 +255,10 @@ impl fmt::Display for ShaderTranslateError {
                     "pixel shader output signature declares no render-target outputs (SV_Target0..7 or legacy COLOR0..7)"
                 )
             }
+            ShaderTranslateError::UavMixedAtomicAndNonAtomicAccess { slot } => write!(
+                f,
+                "uav slot {slot} is used with both atomic and non-atomic operations; this translator currently requires UAV buffers to be either fully atomic (declared as array<atomic<u32>>) or fully non-atomic"
+            ),
             ShaderTranslateError::InvalidThreadGroupSize { x, y, z } => write!(
                 f,
                 "compute shader has invalid thread group size ({x}, {y}, {z})"
@@ -1347,6 +1354,10 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(value, &mut scan_reg);
             }
             Sm4Inst::WorkgroupBarrier => {}
+            Sm4Inst::AtomicAdd { addr, value, .. } => {
+                scan_src_regs(addr, &mut scan_reg);
+                scan_src_regs(value, &mut scan_reg);
+            }
             Sm4Inst::Switch { selector } => scan_src_regs(selector, &mut scan_reg),
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
             Sm4Inst::Emit { .. }
@@ -2242,6 +2253,7 @@ struct ResourceUsage {
     srv_buffers: BTreeSet<u32>,
     samplers: BTreeSet<u32>,
     uav_buffers: BTreeSet<u32>,
+    uavs_atomic: BTreeSet<u32>,
 }
 
 impl ResourceUsage {
@@ -2343,10 +2355,21 @@ impl ResourceUsage {
         if !self.textures.is_empty() || !self.srv_buffers.is_empty() {
             w.line("");
         }
-        if !self.srv_buffers.is_empty() || !self.uav_buffers.is_empty() {
+        let needs_u32_struct = !self.srv_buffers.is_empty()
+            || self
+                .uav_buffers
+                .iter()
+                .any(|slot| !self.uavs_atomic.contains(slot));
+        let needs_atomic_struct = !self.uavs_atomic.is_empty();
+        if needs_u32_struct || needs_atomic_struct {
             // WGSL requires storage buffers to have a `struct` as the top-level type; arrays
             // cannot be declared directly as a `var<storage>`.
-            w.line("struct AeroStorageBufferU32 { data: array<u32> };");
+            if needs_u32_struct {
+                w.line("struct AeroStorageBufferU32 { data: array<u32> };");
+            }
+            if needs_atomic_struct {
+                w.line("struct AeroStorageBufferAtomicU32 { data: array<atomic<u32>> };");
+            }
             w.line("");
         }
         for &slot in &self.srv_buffers {
@@ -2368,10 +2391,17 @@ impl ResourceUsage {
             w.line("");
         }
         for &slot in &self.uav_buffers {
-            w.line(&format!(
-                "@group({group}) @binding({}) var<storage, read_write> u{slot}: AeroStorageBufferU32;",
-                BINDING_BASE_UAV + slot
-            ));
+            if self.uavs_atomic.contains(&slot) {
+                w.line(&format!(
+                    "@group({group}) @binding({}) var<storage, read_write> u{slot}: AeroStorageBufferAtomicU32;",
+                    BINDING_BASE_UAV + slot
+                ));
+            } else {
+                w.line(&format!(
+                    "@group({group}) @binding({}) var<storage, read_write> u{slot}: AeroStorageBufferU32;",
+                    BINDING_BASE_UAV + slot
+                ));
+            }
         }
         if !self.uav_buffers.is_empty() {
             w.line("");
@@ -2403,6 +2433,8 @@ fn scan_resources(
     let mut srv_buffers = BTreeSet::new();
     let mut samplers = BTreeSet::new();
     let mut uav_buffers = BTreeSet::new();
+    let mut uavs_atomic = BTreeSet::new();
+    let mut uavs_non_atomic_used = BTreeSet::new();
     let mut declared_cbuffer_sizes: BTreeMap<u32, u32> = BTreeMap::new();
 
     for decl in &module.decls {
@@ -2584,6 +2616,12 @@ fn scan_resources(
                 scan_src(value)?;
                 validate_slot("uav_buffer", uav.slot, MAX_UAV_SLOTS)?;
                 uav_buffers.insert(uav.slot);
+                if uavs_atomic.contains(&uav.slot) {
+                    return Err(ShaderTranslateError::UavMixedAtomicAndNonAtomicAccess {
+                        slot: uav.slot,
+                    });
+                }
+                uavs_non_atomic_used.insert(uav.slot);
             }
             Sm4Inst::LdStructured {
                 dst: _,
@@ -2608,6 +2646,29 @@ fn scan_resources(
                 scan_src(value)?;
                 validate_slot("uav_buffer", uav.slot, MAX_UAV_SLOTS)?;
                 uav_buffers.insert(uav.slot);
+                if uavs_atomic.contains(&uav.slot) {
+                    return Err(ShaderTranslateError::UavMixedAtomicAndNonAtomicAccess {
+                        slot: uav.slot,
+                    });
+                }
+                uavs_non_atomic_used.insert(uav.slot);
+            }
+            Sm4Inst::AtomicAdd {
+                dst: _,
+                uav,
+                addr,
+                value,
+            } => {
+                scan_src(addr)?;
+                scan_src(value)?;
+                validate_slot("uav_buffer", uav.slot, MAX_UAV_SLOTS)?;
+                uav_buffers.insert(uav.slot);
+                if uavs_non_atomic_used.contains(&uav.slot) {
+                    return Err(ShaderTranslateError::UavMixedAtomicAndNonAtomicAccess {
+                        slot: uav.slot,
+                    });
+                }
+                uavs_atomic.insert(uav.slot);
             }
             Sm4Inst::WorkgroupBarrier => {}
             Sm4Inst::Switch { selector } => {
@@ -2758,6 +2819,7 @@ fn scan_resources(
         srv_buffers,
         samplers,
         uav_buffers,
+        uavs_atomic,
     })
 }
 
@@ -2987,6 +3049,18 @@ fn emit_temp_and_output_decls(
             } => {
                 scan_src_regs(index, &mut scan_reg);
                 scan_src_regs(offset, &mut scan_reg);
+                scan_src_regs(value, &mut scan_reg);
+            }
+            Sm4Inst::AtomicAdd {
+                dst,
+                uav: _,
+                addr,
+                value,
+            } => {
+                if let Some(dst) = dst {
+                    scan_reg(dst.reg);
+                }
+                scan_src_regs(addr, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
             }
             Sm4Inst::WorkgroupBarrier => {}
@@ -4250,6 +4324,28 @@ fn emit_instructions(
                 let expr = maybe_saturate(dst, f_name);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld_uav_raw", ctx)?;
             }
+            Sm4Inst::AtomicAdd {
+                dst,
+                uav,
+                addr,
+                value,
+            } => {
+                let addr_u32 = emit_src_scalar_u32(addr, inst_index, "atomic_add", ctx)?;
+                let value_u32 = emit_src_scalar_u32(value, inst_index, "atomic_add", ctx)?;
+                let ptr = format!("&u{}.data[{addr_u32}]", uav.slot);
+
+                match dst {
+                    Some(dst) => {
+                        let tmp = format!("atomic_old_{inst_index}");
+                        w.line(&format!("let {tmp}: u32 = atomicAdd({ptr}, {value_u32});"));
+                        let expr = format!("vec4<f32>(bitcast<f32>({tmp}))");
+                        emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "atomic_add", ctx)?;
+                    }
+                    None => {
+                        w.line(&format!("atomicAdd({ptr}, {value_u32});"));
+                    }
+                }
+            }
             Sm4Inst::Unknown { opcode } => {
                 let opcode = opcode_name(*opcode)
                     .map(str::to_owned)
@@ -4589,6 +4685,18 @@ fn emit_sub_with_borrow(
     Ok(())
 }
 
+fn emit_src_scalar_u32(
+    src: &crate::sm4_ir::SrcOperand,
+    inst_index: usize,
+    opcode: &'static str,
+    ctx: &EmitCtx<'_>,
+) -> Result<String, ShaderTranslateError> {
+    Ok(format!(
+        "({}).x",
+        emit_src_vec4_u32_int(src, inst_index, opcode, ctx)?
+    ))
+}
+
 fn emit_write_masked(
     w: &mut WgslWriter,
     dst: RegisterRef,
@@ -4850,6 +4958,7 @@ mod tests {
             srv_buffers: BTreeSet::new(),
             samplers: BTreeSet::new(),
             uav_buffers,
+            uavs_atomic: BTreeSet::new(),
         };
 
         let bindings = usage.bindings(ShaderStage::Compute);
@@ -5404,6 +5513,7 @@ mod tests {
             srv_buffers: BTreeSet::new(),
             samplers: BTreeSet::new(),
             uav_buffers: BTreeSet::new(),
+            uavs_atomic: BTreeSet::new(),
         };
         let ctx = EmitCtx {
             stage: ShaderStage::Pixel,

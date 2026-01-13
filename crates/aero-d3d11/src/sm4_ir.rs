@@ -600,6 +600,19 @@ pub enum Sm4Inst {
     /// This corresponds to HLSL intrinsics such as `GroupMemoryBarrierWithGroupSync()` and
     /// `DeviceMemoryBarrierWithGroupSync()`.
     WorkgroupBarrier,
+    /// Atomic add on a UAV buffer word address (SM5 `InterlockedAdd` family).
+    ///
+    /// This models the subset needed for `RWByteAddressBuffer` / `RWStructuredBuffer<uint>`
+    /// patterns where the UAV is treated as an array of 32-bit words.
+    ///
+    /// If `dst` is `None`, the returned original value is discarded (DXBC typically encodes this
+    /// via a `null` destination operand).
+    AtomicAdd {
+        dst: Option<DstOperand>,
+        uav: UavRef,
+        addr: SrcOperand,
+        value: SrcOperand,
+    },
     /// A decoded instruction that the IR producer does not model yet.
     ///
     /// This allows the WGSL backend to fail with a precise opcode + instruction
