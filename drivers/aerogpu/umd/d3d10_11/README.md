@@ -37,7 +37,7 @@ This implementation started as “minimum viable triangle”, but it now include
 
 - Geometry shaders are **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
 - MRT: the protocol supports up to `AEROGPU_MAX_RENDER_TARGETS` (8), but the D3D10/11 UMD currently only forwards RT0.
-- D3D10/D3D10.1 state binding remains stubbed: `SetBlendState` / `SetRasterizerState` / `SetDepthStencilState` are currently no-op stubs on those DDIs (state is only forwarded on the D3D11 DDI path).
+- D3D10/D3D10.1 state binding remains stubbed in the Win7 WDK builds: `SetBlendState` / `SetRasterizerState` / `SetDepthStencilState` are currently no-op stubs on those DDIs (state is only forwarded on the D3D11 DDI path).
 - Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries enable + masks; it does **not** encode stencil funcs/ops (or separate front/back face state).
 - Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors are mapped to conservative fallbacks.
 
@@ -45,7 +45,7 @@ Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDA
 
 Host-side unit tests that exercise Map/Unmap and the newer resource/layout behavior live in:
 
-- `drivers/aerogpu/umd/d3d10_11/tests/map_unmap_tests.cpp` (CMake target: `aerogpu_d3d10_11_map_unmap_tests`)
+- `drivers/aerogpu/umd/d3d10_11/tests/map_unmap_tests.cpp` (CMake target: `aerogpu_d3d10_11_map_unmap_tests`) covers Map/Unmap upload + staging readback, including mip/array layout (`TestGuestBackedTexture2DMipArray*`) and BC format paths (`Test*BcTexture*`).
 - Command-stream/host validation for B5 formats, MRT, and state packets lives under `crates/aero-gpu/tests/`
   (for example: `aerogpu_d3d9_16bit_formats.rs`, `aerogpu_d3d9_clear_scissor.rs`, `aerogpu_d3d9_cmd_stream_state.rs`).
 
