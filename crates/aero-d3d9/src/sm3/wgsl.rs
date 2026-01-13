@@ -213,7 +213,10 @@ fn collect_reg_usage(block: &Block, usage: &mut RegUsage) {
 
 fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
     match op {
-        IrOp::Mov { dst, src, .. } | IrOp::Rcp { dst, src, .. } | IrOp::Rsq { dst, src, .. } => {
+        IrOp::Mov { dst, src, .. }
+        | IrOp::Rcp { dst, src, .. }
+        | IrOp::Rsq { dst, src, .. }
+        | IrOp::Frc { dst, src, .. } => {
             collect_dst_usage(dst, usage);
             collect_src_usage(src, usage);
         }
@@ -224,10 +227,22 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
         | IrOp::Max { dst, src0, src1, .. }
         | IrOp::Dp3 { dst, src0, src1, .. }
         | IrOp::Dp4 { dst, src0, src1, .. }
-        | IrOp::Cmp { dst, src0, src1, .. } => {
+        | IrOp::SetCmp { dst, src0, src1, .. } => {
             collect_dst_usage(dst, usage);
             collect_src_usage(src0, usage);
             collect_src_usage(src1, usage);
+        }
+        IrOp::Select {
+            dst,
+            cond,
+            src_ge,
+            src_lt,
+            ..
+        } => {
+            collect_dst_usage(dst, usage);
+            collect_src_usage(cond, usage);
+            collect_src_usage(src_ge, usage);
+            collect_src_usage(src_lt, usage);
         }
         IrOp::Mad {
             dst,
@@ -482,6 +497,18 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             let e = apply_float_result_modifiers(format!("inverseSqrt({s})"), modifiers)?;
             emit_assign(dst, e)
         }
+        IrOp::Frc { dst, src, modifiers } => {
+            let (s, ty) = src_expr(src)?;
+            if ty != ScalarTy::F32 {
+                return Err(err("frc only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("frc destination must be float"));
+            }
+            let e = apply_float_result_modifiers(format!("fract({s})"), modifiers)?;
+            emit_assign(dst, e)
+        }
         IrOp::Dp3 { dst, src0, src1, modifiers } => {
             let (a, aty) = src_expr(src0)?;
             let (b, bty) = src_expr(src1)?;
@@ -510,7 +537,7 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             let e = apply_float_result_modifiers(format!("vec4<f32>({dot})"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Cmp {
+        IrOp::SetCmp {
             op,
             dst,
             src0,
@@ -518,17 +545,53 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             modifiers,
         } => {
             // `sge/slt/seq/sne`-style compare producing float mask: 1.0/0.0.
-            let cond = cond_expr(&Cond::Compare {
-                op: *op,
-                src0: src0.clone(),
-                src1: src1.clone(),
-            })?;
+            let (a, aty) = src_expr(src0)?;
+            let (b, bty) = src_expr(src1)?;
+            if aty != bty {
+                return Err(err("comparison between mismatched types"));
+            }
+            if aty != ScalarTy::F32 {
+                return Err(err("setcmp only supports float sources in WGSL lowering"));
+            }
+            let op_str = match op {
+                CompareOp::Gt => ">",
+                CompareOp::Ge => ">=",
+                CompareOp::Eq => "==",
+                CompareOp::Ne => "!=",
+                CompareOp::Lt => "<",
+                CompareOp::Le => "<=",
+                CompareOp::Unknown(_) => return Err(err("unknown comparison op")),
+            };
             let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
             if dst_ty != ScalarTy::F32 {
                 return Err(err("cmp destination must be float"));
             }
             let e = apply_float_result_modifiers(
-                format!("select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<bool>({cond}))"),
+                format!("select(vec4<f32>(0.0), vec4<f32>(1.0), ({a} {op_str} {b}))"),
+                modifiers,
+            )?;
+            emit_assign(dst, e)
+        }
+        IrOp::Select {
+            dst,
+            cond,
+            src_ge,
+            src_lt,
+            modifiers,
+        } => {
+            let (cond_e, cond_ty) = src_expr(cond)?;
+            let (a, aty) = src_expr(src_ge)?;
+            let (b, bty) = src_expr(src_lt)?;
+            if cond_ty != ScalarTy::F32 || aty != ScalarTy::F32 || bty != ScalarTy::F32 {
+                return Err(err("select only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("select destination must be float"));
+            }
+            // D3D9 `cmp`: per-component select `cond >= 0 ? src_ge : src_lt`.
+            let e = apply_float_result_modifiers(
+                format!("select({b}, {a}, ({cond_e} >= vec4<f32>(0.0)))"),
                 modifiers,
             )?;
             emit_assign(dst, e)

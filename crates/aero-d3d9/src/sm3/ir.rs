@@ -135,6 +135,11 @@ pub enum IrOp {
         src: Src,
         modifiers: InstModifiers,
     },
+    Frc {
+        dst: Dst,
+        src: Src,
+        modifiers: InstModifiers,
+    },
     Min {
         dst: Dst,
         src0: Src,
@@ -147,11 +152,20 @@ pub enum IrOp {
         src1: Src,
         modifiers: InstModifiers,
     },
-    Cmp {
+    /// Set-on-compare (`sge`, `slt`, `seq`, `sne`, and `setp`).
+    SetCmp {
         op: CompareOp,
         dst: Dst,
         src0: Src,
         src1: Src,
+        modifiers: InstModifiers,
+    },
+    /// D3D9 `cmp`: per-component select `dst = (cond >= 0) ? src_ge : src_lt`.
+    Select {
+        dst: Dst,
+        cond: Src,
+        src_ge: Src,
+        src_lt: Src,
         modifiers: InstModifiers,
     },
     TexSample {
@@ -543,6 +557,15 @@ fn format_op(op: &IrOp) -> String {
             format_inst("rsq", modifiers),
             format_dst_src(dst, std::slice::from_ref(src))
         ),
+        IrOp::Frc {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("frc", modifiers),
+            format_dst_src(dst, std::slice::from_ref(src))
+        ),
         IrOp::Min {
             dst,
             src0,
@@ -563,7 +586,7 @@ fn format_op(op: &IrOp) -> String {
             format_inst("max", modifiers),
             format_dst_src(dst, &[src0.clone(), src1.clone()])
         ),
-        IrOp::Cmp {
+        IrOp::SetCmp {
             op,
             dst,
             src0,
@@ -586,6 +609,18 @@ fn format_op(op: &IrOp) -> String {
                 format_srcs(&[src0.clone(), src1.clone()])
             )
         }
+        IrOp::Select {
+            dst,
+            cond,
+            src_ge,
+            src_lt,
+            modifiers,
+        } => format!(
+            "{} {} {}",
+            format_inst("cmp", modifiers),
+            format_dst(dst),
+            format_srcs(&[cond.clone(), src_ge.clone(), src_lt.clone()])
+        ),
         IrOp::TexSample {
             kind,
             dst,

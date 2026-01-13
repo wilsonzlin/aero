@@ -217,6 +217,11 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 src,
                 modifiers,
             })?,
+            Opcode::Frc => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Frc {
+                dst,
+                src,
+                modifiers,
+            })?,
             Opcode::Min => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Min {
                 dst,
                 src0,
@@ -236,6 +241,25 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
             Opcode::Sne => push_cmpop(&mut stack, inst, CompareOp::Ne)?,
 
             Opcode::Setp => push_setp(&mut stack, inst)?,
+
+            Opcode::Cmp => {
+                // D3D9 `cmp`: dst, cond, src_ge, src_lt
+                let dst = extract_dst(inst, 0)?;
+                let cond = extract_src(inst, 1)?;
+                let src_ge = extract_src(inst, 2)?;
+                let src_lt = extract_src(inst, 3)?;
+                let modifiers = build_modifiers(inst)?;
+                push_stmt(
+                    &mut stack,
+                    Stmt::Op(IrOp::Select {
+                        dst,
+                        cond,
+                        src_ge,
+                        src_lt,
+                        modifiers,
+                    }),
+                )?;
+            }
 
             Opcode::Tex => push_texld(&mut stack, inst)?,
             Opcode::TexLdl => push_texldl(&mut stack, inst)?,
@@ -567,7 +591,7 @@ fn push_cmpop(
     let modifiers = build_modifiers(inst)?;
     push_stmt(
         stack,
-        Stmt::Op(IrOp::Cmp {
+        Stmt::Op(IrOp::SetCmp {
             op,
             dst,
             src0,
@@ -592,7 +616,7 @@ fn push_setp(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), Build
     let modifiers = build_modifiers(inst)?;
     push_stmt(
         stack,
-        Stmt::Op(IrOp::Cmp {
+        Stmt::Op(IrOp::SetCmp {
             op,
             dst,
             src0,

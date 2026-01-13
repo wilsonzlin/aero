@@ -58,6 +58,11 @@ fn verify_op(op: &IrOp) -> Result<(), VerifyError> {
             dst: _,
             src,
             modifiers,
+        }
+        | IrOp::Frc {
+            dst: _,
+            src,
+            modifiers,
         } => {
             verify_src(src)?;
             verify_modifiers(modifiers)?;
@@ -104,7 +109,7 @@ fn verify_op(op: &IrOp) -> Result<(), VerifyError> {
             src1,
             modifiers,
         }
-        | IrOp::Cmp {
+        | IrOp::SetCmp {
             op: _,
             dst: _,
             src0,
@@ -113,6 +118,18 @@ fn verify_op(op: &IrOp) -> Result<(), VerifyError> {
         } => {
             verify_src(src0)?;
             verify_src(src1)?;
+            verify_modifiers(modifiers)?;
+        }
+        IrOp::Select {
+            dst: _,
+            cond,
+            src_ge,
+            src_lt,
+            modifiers,
+        } => {
+            verify_src(cond)?;
+            verify_src(src_ge)?;
+            verify_src(src_lt)?;
             verify_modifiers(modifiers)?;
         }
         IrOp::Mad {

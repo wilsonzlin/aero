@@ -1,3 +1,4 @@
+use aero_d3d9::sm3::decode::Opcode;
 use aero_d3d9::sm3::types::ShaderStage;
 use aero_d3d9::sm3::{build_ir, decode_u32_tokens, generate_wgsl, verify_ir};
 
@@ -152,3 +153,65 @@ fn wgsl_defi_loop_breakc_compiles() {
     assert!(wgsl.contains("loop {"));
 }
 
+#[test]
+fn wgsl_frc_cmp_compiles() {
+    // ps_2_0:
+    //   def c0, 1.25, -2.5, 3.0, -4.0
+    //   def c1, 0.0, 0.0, 0.0, 1.0
+    //   frc r0, c0
+    //   cmp r1, c0, r0, c1
+    //   mov oC0, r1
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 2, 0),
+        // def c0, 1.25, -2.5, 3.0, -4.0
+        opcode_token(81, 5),
+        dst_token(2, 0, 0xF),
+        0x3FA0_0000, // 1.25
+        0xC020_0000, // -2.5
+        0x4040_0000, // 3.0
+        0xC080_0000, // -4.0
+        // def c1, 0, 0, 0, 1
+        opcode_token(81, 5),
+        dst_token(2, 1, 0xF),
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        0x3F80_0000,
+        // frc r0, c0
+        opcode_token(0x0013, 2),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        // cmp r1, c0, r0, c1
+        opcode_token(0x0058, 4),
+        dst_token(0, 1, 0xF),
+        src_token(2, 0, 0xE4, 0), // cond
+        src_token(0, 0, 0xE4, 0), // src_ge
+        src_token(2, 1, 0xE4, 0), // src_lt
+        // mov oC0, r1
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 1, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Frc));
+    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Cmp));
+
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("fract("), "{wgsl}");
+    assert!(wgsl.contains("select("), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}

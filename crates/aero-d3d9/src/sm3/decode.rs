@@ -59,12 +59,15 @@ pub enum Opcode {
     Dp4,
     Rcp,
     Rsq,
+    Frc,
     Min,
     Max,
     Sge,
     Slt,
     Seq,
     Sne,
+    /// D3D9 `cmp`: per-component select `dst = (src0 >= 0) ? src1 : src2`.
+    Cmp,
     If,
     Ifc,
     Else,
@@ -106,6 +109,7 @@ impl Opcode {
             11 => Self::Max,
             12 => Self::Slt,
             13 => Self::Sge,
+            19 => Self::Frc, // 0x13
             25 => Self::Call,
             27 => Self::Loop,
             28 => Self::Ret,
@@ -130,6 +134,7 @@ impl Opcode {
             // else is treated as `Unknown`.
             84 => Self::Seq, // 0x54
             85 => Self::Sne, // 0x55
+            88 => Self::Cmp, // 0x58
             0xFFFE => Self::Comment,
             0xFFFF => Self::End,
             other => Self::Unknown(other),
@@ -148,12 +153,14 @@ impl Opcode {
             Self::Dp4 => "dp4",
             Self::Rcp => "rcp",
             Self::Rsq => "rsq",
+            Self::Frc => "frc",
             Self::Min => "min",
             Self::Max => "max",
             Self::Sge => "sge",
             Self::Slt => "slt",
             Self::Seq => "seq",
             Self::Sne => "sne",
+            Self::Cmp => "cmp",
             Self::If => "if",
             Self::Ifc => "ifc",
             Self::Else => "else",
@@ -706,6 +713,16 @@ fn decode_operands_and_extras(
                 &mut operands,
             )?;
         }
+        Opcode::Frc => {
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[OperandKind::Dst, OperandKind::Src],
+                &mut operands,
+            )?;
+        }
         Opcode::Add
         | Opcode::Sub
         | Opcode::Mul
@@ -727,6 +744,22 @@ fn decode_operands_and_extras(
             )?;
         }
         Opcode::Mad => {
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[
+                    OperandKind::Dst,
+                    OperandKind::Src,
+                    OperandKind::Src,
+                    OperandKind::Src,
+                ],
+                &mut operands,
+            )?;
+        }
+        Opcode::Cmp => {
+            // D3D9 `cmp`: dst, src0, src1, src2.
             parse_fixed_operands(
                 opcode,
                 stage,
