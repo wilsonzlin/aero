@@ -159,6 +159,15 @@ Expected outcome:
 - Windows should use the **Microsoft** inbox driver stack automatically.
 - `Control Panel → Sound` should show at least one **Playback** device and at least one **Recording** device (names may vary, but should map to the HDA device).
 
+Artifacts (for regression tracking):
+
+- Capture a screenshot of **Device Manager** showing:
+  - `High Definition Audio Controller`
+  - `High Definition Audio Device`
+  - (Optional) the Driver tab showing Provider=`Microsoft`
+- If running via the Aero web UI, prefer using the **Workers** panel button **“Save screenshot (png)”** (exports the guest framebuffer).
+  Otherwise use a normal OS screenshot.
+
 ---
 
 ## 3) Playback test (system sounds / WAV)
@@ -193,6 +202,11 @@ Expected outcome:
 - You hear the test sound on the host speakers/headphones.
 - Windows shows playback activity (level meter/volume mixer).
   - If you don’t see the green level meter move, check **Volume Mixer** and make sure the app/device is not muted.
+
+Artifacts (for regression tracking):
+
+- Capture a screenshot of `mmsys.cpl` → **Playback** tab (showing the default device).
+  - Prefer the Aero UI **Workers → “Save screenshot (png)”** button when available.
 
 ### 3.2 Observe host-side metrics (AudioWorklet ring buffer)
 
@@ -294,6 +308,11 @@ In Windows 7:
 Optional end-to-end verification (more obvious than a level meter):
 
 - Launch **Sound Recorder** in Windows, record ~3 seconds, and play it back.
+
+Artifacts (for regression tracking):
+
+- Capture a screenshot of `mmsys.cpl` → **Recording** tab (showing the mic device and level meter).
+  - Prefer the Aero UI **Workers → “Save screenshot (png)”** button when available.
 
 ---
 

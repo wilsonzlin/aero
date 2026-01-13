@@ -54,7 +54,14 @@ import { type JitWorkerResponse } from "./workers/jit_protocol";
 import { JitWorkerClient } from "./workers/jit_worker_client";
 import { DemoVmWorkerClient } from "./workers/demo_vm_worker_client";
 import { openRingByKind } from "./ipc/ipc";
-import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./ipc/gpu-protocol";
+import {
+  FRAME_SEQ_INDEX,
+  FRAME_STATUS_INDEX,
+  GPU_PROTOCOL_NAME,
+  GPU_PROTOCOL_VERSION,
+  isGpuWorkerMessageBase,
+  type GpuRuntimeScreenshotResponseMessage,
+} from "./ipc/gpu-protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./ipc/shared-layout";
 import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
@@ -570,6 +577,43 @@ function downloadFile(file: Blob, filename: string): void {
   // Safari can cancel the download if the object URL is revoked synchronously.
   const timer = window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   (timer as unknown as { unref?: () => void }).unref?.();
+}
+
+async function rgba8ToPngBlob(width: number, height: number, rgba8: Uint8Array): Promise<Blob> {
+  const expectedBytes = width * height * 4;
+  if (rgba8.byteLength !== expectedBytes) {
+    throw new Error(`Invalid RGBA8 screenshot buffer size: got ${rgba8.byteLength}, expected ${expectedBytes}`);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) {
+    throw new Error("2D canvas context unavailable; cannot encode screenshot.");
+  }
+
+  // `ImageData` does not accept SharedArrayBuffer-backed views. While GPU-worker
+  // screenshots are expected to arrive as ArrayBuffer, defensively clone when
+  // necessary so this helper is safe for any caller.
+  const arrayBufferBacked = ensureArrayBufferBacked(rgba8);
+  const clamped = new Uint8ClampedArray(
+    arrayBufferBacked.buffer,
+    arrayBufferBacked.byteOffset,
+    arrayBufferBacked.byteLength,
+  );
+  ctx.putImageData(new ImageData(clamped, width, height), 0, 0);
+
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Failed to encode screenshot as PNG (canvas.toBlob returned null)."));
+      },
+      "image/png",
+      1.0,
+    );
+  });
 }
 
 function renderMachinePanel(): HTMLElement {
@@ -4684,6 +4728,76 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     },
   }) as HTMLButtonElement;
 
+  const screenshotLine = el("div", { class: "mono", text: "" });
+  let screenshotInFlight = false;
+  let screenshotRequestId = 1;
+  const screenshotButton = el("button", {
+    text: "Save screenshot (png)",
+    onclick: async () => {
+      error.textContent = "";
+      screenshotInFlight = true;
+      update();
+      screenshotLine.textContent = "screenshot: capturing…";
+
+      try {
+        const gpuWorker = workerCoordinator.getWorker("gpu");
+        if (!gpuWorker) {
+          throw new Error("GPU worker is not running; start workers before taking a screenshot.");
+        }
+
+        const requestId = screenshotRequestId++;
+        const response = await new Promise<GpuRuntimeScreenshotResponseMessage>((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            cleanup();
+            reject(new Error("Timed out waiting for GPU screenshot response."));
+          }, 8000);
+          (timeout as unknown as { unref?: () => void }).unref?.();
+
+          const onMessage = (ev: MessageEvent<unknown>) => {
+            const msg = ev.data;
+            if (!isGpuWorkerMessageBase(msg)) return;
+            const typed = msg as GpuRuntimeScreenshotResponseMessage;
+            if (typed.type !== "screenshot") return;
+            if (typed.requestId !== requestId) return;
+            if (!(typed.rgba8 instanceof ArrayBuffer)) return;
+            cleanup();
+            resolve(typed);
+          };
+
+          const cleanup = () => {
+            window.clearTimeout(timeout);
+            gpuWorker.removeEventListener("message", onMessage);
+          };
+
+          gpuWorker.addEventListener("message", onMessage);
+          gpuWorker.postMessage({
+            protocol: GPU_PROTOCOL_NAME,
+            protocolVersion: GPU_PROTOCOL_VERSION,
+            type: "screenshot",
+            requestId,
+            // Exclude the cursor by default; the guest typically uses a hardware cursor,
+            // which is not part of the deterministic framebuffer bytes.
+            includeCursor: false,
+          });
+        });
+
+        const ts = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
+        const filename = `aero-screenshot-${response.width}x${response.height}-${ts}.png`;
+        const rgba8 = new Uint8Array(response.rgba8);
+        const blob = await rgba8ToPngBlob(response.width, response.height, rgba8);
+        downloadFile(blob, filename);
+
+        screenshotLine.textContent = `screenshot: saved → ${filename}`;
+      } catch (err) {
+        screenshotLine.textContent = "screenshot: failed";
+        error.textContent = err instanceof Error ? err.message : String(err);
+      } finally {
+        screenshotInFlight = false;
+        update();
+      }
+    },
+  }) as HTMLButtonElement;
+
   const jitDemoLine = el("div", { class: "mono", text: "jit: (idle)" });
   const jitDemoError = el("pre", { text: "" });
 
@@ -5058,6 +5172,16 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       snapshotLine.textContent = `snapshot: path=${VM_SNAPSHOT_PATH}`;
     }
 
+    const screenshotReady = statuses.gpu.state === "ready";
+    screenshotButton.disabled = !screenshotReady || screenshotInFlight;
+    if (!screenshotReady) {
+      // Avoid clobbering a recent "saved" message while the GPU worker is still
+      // running; only overwrite the line when the worker is unavailable.
+      screenshotLine.textContent = "screenshot: unavailable (GPU worker not ready)";
+    } else if (!screenshotInFlight && !screenshotLine.textContent) {
+      screenshotLine.textContent = "screenshot: ready";
+    }
+
     const vmState = workerCoordinator.getVmState();
     const pendingRestart = workerCoordinator.getPendingFullRestart();
     vmStateLine.textContent = pendingRestart
@@ -5279,8 +5403,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       forceJitCspBlock,
       forceJitCspLabel,
     ),
-    el("div", { class: "row" }, snapshotSaveButton, snapshotLoadButton),
+    el("div", { class: "row" }, snapshotSaveButton, snapshotLoadButton, screenshotButton),
     snapshotLine,
+    screenshotLine,
     vgaCanvasRow,
     vgaInfoLine,
     vmStateLine,
