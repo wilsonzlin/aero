@@ -1016,7 +1016,7 @@ mod tests {
     #[test]
     fn truncate_redactor_truncates_each_record_type() {
         let tracer = NetTracer::new(NetTraceConfig {
-            max_bytes: DEFAULT_MAX_BYTES,
+            max_bytes: 1024,
             capture_ethernet: true,
             capture_tcp_proxy: true,
             capture_udp_proxy: true,
@@ -1025,7 +1025,6 @@ mod tests {
                 max_tcp_proxy_bytes: 3,
                 max_udp_proxy_bytes: 2,
             })),
-            max_bytes: 1024,
         });
         tracer.enable();
 
@@ -1088,12 +1087,11 @@ mod tests {
         }
 
         let tracer = NetTracer::new(NetTraceConfig {
-            max_bytes: DEFAULT_MAX_BYTES,
+            max_bytes: 1024,
             capture_ethernet: true,
             capture_tcp_proxy: true,
             capture_udp_proxy: true,
             redactor: Some(Arc::new(DropAll)),
-            max_bytes: 1024,
         });
         tracer.enable();
 
