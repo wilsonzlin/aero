@@ -88,12 +88,59 @@ bool TestBindTwoRtvsEmitsTwoColorHandles() {
   return true;
 }
 
+bool TestGapNormalizationDropsLaterRtvs() {
+  Device dev{};
+
+  Resource res0{};
+  res0.handle = 2001;
+  Resource res1{};
+  res1.handle = 2002;
+
+  RenderTargetView rtv0{};
+  rtv0.texture = res0.handle;
+  rtv0.resource = &res0;
+  RenderTargetView rtv1{};
+  rtv1.texture = res1.handle;
+  rtv1.resource = &res1;
+
+  const RenderTargetView* rtvs[2] = {&rtv0, &rtv1};
+  SetRenderTargetsStateLocked(&dev, /*num_rtvs=*/2, rtvs, /*dsv=*/nullptr);
+
+  // Simulate SRV aliasing unbinding slot 0 while slot 1 is still bound, which
+  // would produce an unsupported SET_RENDER_TARGETS gap without normalization.
+  dev.current_rtvs[0] = 0;
+  dev.current_rtv_resources[0] = nullptr;
+  NormalizeRenderTargetsNoGapsLocked(&dev);
+
+  if (!Check(EmitSetRenderTargetsCmdFromStateLocked(&dev), "EmitSetRenderTargetsCmdFromStateLocked(gap)")) {
+    return false;
+  }
+  dev.cmd.finalize();
+
+  const uint8_t* bytes = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+  const auto* cmd = FindLastSetRenderTargets(bytes, len);
+  if (!Check(cmd != nullptr, "SET_RENDER_TARGETS packet must exist (gap)")) {
+    return false;
+  }
+
+  if (!Check(cmd->color_count == 0, "gap normalization should drop all RTVs (color_count==0)")) {
+    return false;
+  }
+  if (!Check(cmd->colors[0] == 0 && cmd->colors[1] == 0, "gap normalization clears colors[]")) {
+    return false;
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
   if (!TestBindTwoRtvsEmitsTwoColorHandles()) {
     return 1;
   }
+  if (!TestGapNormalizationDropsLaterRtvs()) {
+    return 1;
+  }
   return 0;
 }
-
