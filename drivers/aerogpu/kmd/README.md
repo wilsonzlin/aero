@@ -2,6 +2,32 @@
 
 This directory contains a **minimal** WDDM 1.1 display miniport driver for Windows 7 SP1 (x86/x64). The design goal is bring-up: bind to the AeroGPU PCI device, perform a single-head VidPN modeset, expose a simple system-memory-only segment, and forward render/present submissions to the emulator via the canonical AeroGPU MMIO + ring ABI.
 
+## Display modes (VidPN)
+
+The Win7 AeroGPU KMD exposes a small, deterministic set of common **60 Hz progressive** modes (single source/target, `X8R8G8B8` / `B8G8R8X8` scanout):
+
+- 800×600
+- 1024×768
+- 1280×720
+- 1280×800
+- 1366×768
+- 1600×900
+- 1920×1080 *(EDID preferred mode)*
+
+### Optional registry overrides (bring-up safety)
+
+Registry path (service key parameters):
+
+`HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters`
+
+All values are `REG_DWORD` (0 or missing means “unset”):
+
+- `PreferredWidth` + `PreferredHeight`
+  - Forces the preferred/default mode used by the driver when constructing mode lists.
+  - **Both must be set** (otherwise ignored).
+- `MaxWidth` and/or `MaxHeight`
+  - Caps the maximum mode exposed to Windows (useful to avoid large primary allocations during early bring-up).
+
 ## Layout
 
 ```

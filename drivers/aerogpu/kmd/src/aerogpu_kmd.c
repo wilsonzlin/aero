@@ -128,6 +128,21 @@ static BOOLEAN AeroGpuTryParseEdidPreferredMode(_In_reads_bytes_(128) const UCHA
     *Width = 0;
     *Height = 0;
 
+    /* Validate base EDID header. */
+    static const UCHAR kEdidHeader[8] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
+    if (RtlCompareMemory(Edid, kEdidHeader, sizeof(kEdidHeader)) != sizeof(kEdidHeader)) {
+        return FALSE;
+    }
+
+    /* Validate checksum: sum of 128 bytes must be 0 mod 256. */
+    UCHAR sum = 0;
+    for (ULONG i = 0; i < 128; ++i) {
+        sum = (UCHAR)(sum + Edid[i]);
+    }
+    if (sum != 0) {
+        return FALSE;
+    }
+
     /*
      * Base EDID block detailed timing descriptor #1 begins at offset 54.
      * See VESA EDID 1.3/1.4: byte layout for detailed timing descriptors.
@@ -149,6 +164,276 @@ static BOOLEAN AeroGpuTryParseEdidPreferredMode(_In_reads_bytes_(128) const UCHA
     *Width = hActive;
     *Height = vActive;
     return TRUE;
+}
+
+/* ---- Display mode list helpers ----------------------------------------- */
+
+typedef struct _AEROGPU_DISPLAY_MODE {
+    ULONG Width;
+    ULONG Height;
+} AEROGPU_DISPLAY_MODE;
+
+/*
+ * Registry-configurable display mode overrides.
+ *
+ * These are loaded once in DriverEntry from the miniport service key and applied
+ * to VidPN mode enumeration and the initial cached scanout mode.
+ *
+ * All values are optional (0 means "unset").
+ */
+typedef struct _AEROGPU_DISPLAY_MODE_CONFIG {
+    ULONG PreferredWidth;
+    ULONG PreferredHeight;
+    ULONG MaxWidth;
+    ULONG MaxHeight;
+} AEROGPU_DISPLAY_MODE_CONFIG;
+
+static AEROGPU_DISPLAY_MODE_CONFIG g_AeroGpuDisplayModeConfig = {0, 0, 0, 0};
+
+static __forceinline BOOLEAN AeroGpuModeWithinMax(_In_ ULONG Width, _In_ ULONG Height)
+{
+    if (Width == 0 || Height == 0) {
+        return FALSE;
+    }
+    if (Width > 16384u || Height > 16384u) {
+        return FALSE;
+    }
+    if (g_AeroGpuDisplayModeConfig.MaxWidth != 0 && Width > g_AeroGpuDisplayModeConfig.MaxWidth) {
+        return FALSE;
+    }
+    if (g_AeroGpuDisplayModeConfig.MaxHeight != 0 && Height > g_AeroGpuDisplayModeConfig.MaxHeight) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOLEAN AeroGpuModeListContains(_In_reads_(Count) const AEROGPU_DISPLAY_MODE* Modes, _In_ UINT Count, _In_ ULONG Width, _In_ ULONG Height)
+{
+    for (UINT i = 0; i < Count; ++i) {
+        if (Modes[i].Width == Width && Modes[i].Height == Height) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static VOID AeroGpuModeListAddUnique(_Inout_updates_(Capacity) AEROGPU_DISPLAY_MODE* Modes,
+                                    _Inout_ UINT* Count,
+                                    _In_ UINT Capacity,
+                                    _In_ ULONG Width,
+                                    _In_ ULONG Height)
+{
+    if (!Modes || !Count) {
+        return;
+    }
+    if (*Count >= Capacity) {
+        return;
+    }
+    if (!AeroGpuModeWithinMax(Width, Height)) {
+        return;
+    }
+    if (AeroGpuModeListContains(Modes, *Count, Width, Height)) {
+        return;
+    }
+
+    Modes[*Count].Width = Width;
+    Modes[*Count].Height = Height;
+    (*Count)++;
+}
+
+static UINT AeroGpuBuildModeList(_Out_writes_(Capacity) AEROGPU_DISPLAY_MODE* Modes, _In_ UINT Capacity)
+{
+    if (!Modes || Capacity == 0) {
+        return 0;
+    }
+
+    UINT count = 0;
+
+    /* Preferred mode: registry override -> EDID -> fallback. */
+    ULONG prefW = 0;
+    ULONG prefH = 0;
+
+    if (g_AeroGpuDisplayModeConfig.PreferredWidth != 0 && g_AeroGpuDisplayModeConfig.PreferredHeight != 0) {
+        prefW = g_AeroGpuDisplayModeConfig.PreferredWidth;
+        prefH = g_AeroGpuDisplayModeConfig.PreferredHeight;
+    } else {
+        (void)AeroGpuTryParseEdidPreferredMode(g_AeroGpuEdid, &prefW, &prefH);
+    }
+
+    if (prefW != 0 && prefH != 0) {
+        AeroGpuModeListAddUnique(Modes, &count, Capacity, prefW, prefH);
+    }
+
+    /*
+     * Curated fallback list (all modes treated as 60 Hz, progressive).
+     *
+     * Keep this small/deterministic for Win7 bring-up stability.
+     */
+    static const AEROGPU_DISPLAY_MODE kFallback[] = {
+        {800, 600},
+        {1024, 768},
+        {1280, 720},
+        {1280, 800},
+        {1366, 768},
+        {1600, 900},
+        {1920, 1080},
+    };
+
+    for (UINT i = 0; i < (UINT)(sizeof(kFallback) / sizeof(kFallback[0])); ++i) {
+        AeroGpuModeListAddUnique(Modes, &count, Capacity, kFallback[i].Width, kFallback[i].Height);
+    }
+
+    /*
+     * Always keep a known-good conservative mode available unless explicitly
+     * filtered out by a max-resolution cap.
+     */
+    if (count == 0) {
+        AeroGpuModeListAddUnique(Modes, &count, Capacity, 1024, 768);
+    }
+
+    return count;
+}
+
+static BOOLEAN AeroGpuSafeAlignUpU32(_In_ ULONG Value, _In_ ULONG Alignment, _Out_ ULONG* Out)
+{
+    if (!Out) {
+        return FALSE;
+    }
+    *Out = 0;
+
+    if (Alignment == 0) {
+        return FALSE;
+    }
+    const ULONG mask = Alignment - 1;
+    if ((Alignment & mask) != 0) {
+        return FALSE;
+    }
+
+    if (Value > (0xFFFFFFFFu - mask)) {
+        return FALSE;
+    }
+    *Out = (Value + mask) & ~mask;
+    return TRUE;
+}
+
+static BOOLEAN AeroGpuComputeDefaultPitchBytes(_In_ ULONG Width, _Out_ ULONG* PitchBytes)
+{
+    if (!PitchBytes) {
+        return FALSE;
+    }
+    *PitchBytes = 0;
+
+    if (Width == 0 || Width > (0xFFFFFFFFu / 4u)) {
+        return FALSE;
+    }
+
+    const ULONG rowBytes = Width * 4u;
+
+    /*
+     * Align pitch conservatively. Many Windows display paths assume the primary
+     * pitch is at least DWORD-aligned; we align further to 256B to avoid
+     * pathological unaligned pitches.
+     */
+    ULONG pitch = 0;
+    if (!AeroGpuSafeAlignUpU32(rowBytes, 256u, &pitch)) {
+        /* Fallback: at least 4-byte alignment. */
+        if (!AeroGpuSafeAlignUpU32(rowBytes, 4u, &pitch)) {
+            return FALSE;
+        }
+    }
+
+    *PitchBytes = pitch;
+    return TRUE;
+}
+
+static VOID AeroGpuLoadDisplayModeConfigFromRegistry(_In_opt_ PUNICODE_STRING RegistryPath)
+{
+    g_AeroGpuDisplayModeConfig.PreferredWidth = 0;
+    g_AeroGpuDisplayModeConfig.PreferredHeight = 0;
+    g_AeroGpuDisplayModeConfig.MaxWidth = 0;
+    g_AeroGpuDisplayModeConfig.MaxHeight = 0;
+
+    if (!RegistryPath || !RegistryPath->Buffer || RegistryPath->Length == 0) {
+        return;
+    }
+
+    /*
+     * We read from the service key's `Parameters` subkey:
+     *   HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters
+     */
+    static const WCHAR kSuffix[] = L"\\Parameters";
+    const USHORT suffixBytes = (USHORT)sizeof(kSuffix); /* includes NUL */
+
+    const USHORT baseBytes = RegistryPath->Length;
+    const USHORT allocBytes = (USHORT)(baseBytes + suffixBytes);
+
+    PWCHAR path = (PWCHAR)ExAllocatePoolWithTag(PagedPool, allocBytes, AEROGPU_POOL_TAG);
+    if (!path) {
+        return;
+    }
+
+    RtlCopyMemory(path, RegistryPath->Buffer, baseBytes);
+    RtlCopyMemory((PUCHAR)path + baseBytes, kSuffix, suffixBytes);
+
+    ULONG prefW = 0;
+    ULONG prefH = 0;
+    ULONG maxW = 0;
+    ULONG maxH = 0;
+
+    RTL_QUERY_REGISTRY_TABLE table[5];
+    RtlZeroMemory(table, sizeof(table));
+
+    table[0].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    table[0].Name = L"PreferredWidth";
+    table[0].EntryContext = &prefW;
+
+    table[1].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    table[1].Name = L"PreferredHeight";
+    table[1].EntryContext = &prefH;
+
+    table[2].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    table[2].Name = L"MaxWidth";
+    table[2].EntryContext = &maxW;
+
+    table[3].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    table[3].Name = L"MaxHeight";
+    table[3].EntryContext = &maxH;
+
+    (void)RtlQueryRegistryValues(RTL_QUERY_REGISTRY_ABSOLUTE, path, table, NULL, NULL);
+
+    ExFreePoolWithTag(path, AEROGPU_POOL_TAG);
+
+    /* Sanitize: treat partial preferred overrides as unset. */
+    if (prefW == 0 || prefH == 0) {
+        prefW = 0;
+        prefH = 0;
+    }
+
+    /*
+     * Apply basic plausibility limits (avoid absurd allocations on bring-up).
+     * 16384 is well above any mode we expose today.
+     */
+    if (prefW > 16384u || prefH > 16384u) {
+        prefW = 0;
+        prefH = 0;
+    }
+    if (maxW > 16384u) {
+        maxW = 0;
+    }
+    if (maxH > 16384u) {
+        maxH = 0;
+    }
+
+    g_AeroGpuDisplayModeConfig.PreferredWidth = prefW;
+    g_AeroGpuDisplayModeConfig.PreferredHeight = prefH;
+    g_AeroGpuDisplayModeConfig.MaxWidth = maxW;
+    g_AeroGpuDisplayModeConfig.MaxHeight = maxH;
+
+#if DBG
+    if (prefW != 0 || prefH != 0 || maxW != 0 || maxH != 0) {
+        AEROGPU_LOG("display config: Preferred=%lux%lu Max=%lux%lu", prefW, prefH, maxW, maxH);
+    }
+#endif
 }
 
 /* ---- DMA buffer private data plumbing ---------------------------------- */
@@ -1570,13 +1855,17 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
      * checks to fail in real Win7 guests).
      */
     {
-        ULONG w = 0;
-        ULONG h = 0;
-        if (AeroGpuTryParseEdidPreferredMode(g_AeroGpuEdid, &w, &h)) {
-            adapter->CurrentWidth = w;
-            adapter->CurrentHeight = h;
-            if (w != 0 && w <= (0xFFFFFFFFu / 4u)) {
-                adapter->CurrentPitch = w * 4u;
+        AEROGPU_DISPLAY_MODE modes[16];
+        const UINT modeCount = AeroGpuBuildModeList(modes, (UINT)(sizeof(modes) / sizeof(modes[0])));
+        if (modeCount != 0) {
+            adapter->CurrentWidth = modes[0].Width;
+            adapter->CurrentHeight = modes[0].Height;
+
+            ULONG pitch = 0;
+            if (AeroGpuComputeDefaultPitchBytes(adapter->CurrentWidth, &pitch)) {
+                adapter->CurrentPitch = pitch;
+            } else if (adapter->CurrentWidth != 0 && adapter->CurrentWidth <= (0xFFFFFFFFu / 4u)) {
+                adapter->CurrentPitch = adapter->CurrentWidth * 4u;
             }
         }
     }
@@ -2648,10 +2937,162 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hA
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAdapter,
-                                                          _Inout_ DXGKARG_ENUMVIDPNCOFUNCMODALITY* pEnum)
+                                                           _Inout_ DXGKARG_ENUMVIDPNCOFUNCMODALITY* pEnum)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
-    UNREFERENCED_PARAMETER(pEnum);
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter || !pEnum) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!adapter->DxgkInterface.DxgkCbQueryVidPnInterface || !pEnum->hFunctionalVidPn) {
+        /* Keep bring-up tolerant: accept even if we can't introspect/populate the VidPN. */
+        return STATUS_SUCCESS;
+    }
+
+    DXGK_VIDPN_INTERFACE vidpn;
+    RtlZeroMemory(&vidpn, sizeof(vidpn));
+
+    NTSTATUS status =
+        adapter->DxgkInterface.DxgkCbQueryVidPnInterface(adapter->StartInfo.hDxgkHandle, pEnum->hFunctionalVidPn, &vidpn);
+    if (!NT_SUCCESS(status)) {
+        return STATUS_SUCCESS;
+    }
+
+    if (!vidpn.pfnCreateNewSourceModeSet || !vidpn.pfnAssignSourceModeSet || !vidpn.pfnGetSourceModeSetInterface ||
+        !vidpn.pfnReleaseSourceModeSet || !vidpn.pfnCreateNewTargetModeSet || !vidpn.pfnAssignTargetModeSet ||
+        !vidpn.pfnGetTargetModeSetInterface || !vidpn.pfnReleaseTargetModeSet) {
+        return STATUS_SUCCESS;
+    }
+
+    AEROGPU_DISPLAY_MODE modes[16];
+    UINT modeCount = AeroGpuBuildModeList(modes, (UINT)(sizeof(modes) / sizeof(modes[0])));
+
+    /* Preserve pinned source mode (if any), so dxgkrnl can keep its selection stable across enumeration calls. */
+    {
+        ULONG pinnedW = 0;
+        ULONG pinnedH = 0;
+
+        if (vidpn.pfnGetSourceModeSet && modeCount < (UINT)(sizeof(modes) / sizeof(modes[0]))) {
+            D3DKMDT_HVIDPNSOURCEMODESET hExisting = 0;
+            NTSTATUS st2 = vidpn.pfnGetSourceModeSet(pEnum->hFunctionalVidPn, AEROGPU_VIDPN_SOURCE_ID, &hExisting);
+            if (NT_SUCCESS(st2) && hExisting) {
+                DXGK_VIDPNSOURCEMODESET_INTERFACE smsExisting;
+                RtlZeroMemory(&smsExisting, sizeof(smsExisting));
+                st2 = vidpn.pfnGetSourceModeSetInterface(pEnum->hFunctionalVidPn, hExisting, &smsExisting);
+                if (NT_SUCCESS(st2) && smsExisting.pfnAcquirePinnedModeInfo && smsExisting.pfnReleaseModeInfo) {
+                    const D3DKMDT_VIDPN_SOURCE_MODE* pinned = NULL;
+                    st2 = smsExisting.pfnAcquirePinnedModeInfo(hExisting, &pinned);
+                    if (NT_SUCCESS(st2) && pinned && pinned->Type == D3DKMDT_RMT_GRAPHICS) {
+                        pinnedW = pinned->Format.Graphics.PrimSurfSize.cx;
+                        pinnedH = pinned->Format.Graphics.PrimSurfSize.cy;
+                    }
+                    if (pinned) {
+                        smsExisting.pfnReleaseModeInfo(hExisting, pinned);
+                    }
+                }
+                vidpn.pfnReleaseSourceModeSet(pEnum->hFunctionalVidPn, hExisting);
+            }
+        }
+
+        if (pinnedW != 0 && pinnedH != 0) {
+            AeroGpuModeListAddUnique(modes, &modeCount, (UINT)(sizeof(modes) / sizeof(modes[0])), pinnedW, pinnedH);
+        }
+    }
+
+    /* Create and assign a fresh source mode set. */
+    {
+        D3DKMDT_HVIDPNSOURCEMODESET hSourceModeSet = 0;
+        status = vidpn.pfnCreateNewSourceModeSet(pEnum->hFunctionalVidPn, AEROGPU_VIDPN_SOURCE_ID, &hSourceModeSet);
+        if (NT_SUCCESS(status) && hSourceModeSet) {
+            DXGK_VIDPNSOURCEMODESET_INTERFACE sms;
+            RtlZeroMemory(&sms, sizeof(sms));
+            status = vidpn.pfnGetSourceModeSetInterface(pEnum->hFunctionalVidPn, hSourceModeSet, &sms);
+            if (NT_SUCCESS(status) && sms.pfnCreateNewModeInfo && sms.pfnAddMode && sms.pfnReleaseModeInfo) {
+                for (UINT i = 0; i < modeCount; ++i) {
+                    const ULONG w = modes[i].Width;
+                    const ULONG h = modes[i].Height;
+                    if (w == 0 || h == 0) {
+                        continue;
+                    }
+
+                    D3DKMDT_VIDPN_SOURCE_MODE* modeInfo = NULL;
+                    NTSTATUS st2 = sms.pfnCreateNewModeInfo(hSourceModeSet, &modeInfo);
+                    if (!NT_SUCCESS(st2) || !modeInfo) {
+                        continue;
+                    }
+
+                    RtlZeroMemory(modeInfo, sizeof(*modeInfo));
+                    modeInfo->Type = D3DKMDT_RMT_GRAPHICS;
+                    modeInfo->Format.Graphics.PrimSurfSize.cx = w;
+                    modeInfo->Format.Graphics.PrimSurfSize.cy = h;
+                    modeInfo->Format.Graphics.PixelFormat = D3DDDIFMT_X8R8G8B8;
+
+                    st2 = sms.pfnAddMode(hSourceModeSet, modeInfo);
+                    sms.pfnReleaseModeInfo(hSourceModeSet, modeInfo);
+                    if (!NT_SUCCESS(st2)) {
+                        /* Ignore add failures to keep bring-up tolerant. */
+                    }
+                }
+            }
+
+            (void)vidpn.pfnAssignSourceModeSet(pEnum->hFunctionalVidPn, AEROGPU_VIDPN_SOURCE_ID, hSourceModeSet);
+            vidpn.pfnReleaseSourceModeSet(pEnum->hFunctionalVidPn, hSourceModeSet);
+        }
+    }
+
+    /* Create and assign a fresh target mode set (60 Hz only). */
+    {
+        D3DKMDT_HVIDPNTARGETMODESET hTargetModeSet = 0;
+        status = vidpn.pfnCreateNewTargetModeSet(pEnum->hFunctionalVidPn, AEROGPU_VIDPN_TARGET_ID, &hTargetModeSet);
+        if (NT_SUCCESS(status) && hTargetModeSet) {
+            DXGK_VIDPNTARGETMODESET_INTERFACE tms;
+            RtlZeroMemory(&tms, sizeof(tms));
+            status = vidpn.pfnGetTargetModeSetInterface(pEnum->hFunctionalVidPn, hTargetModeSet, &tms);
+            if (NT_SUCCESS(status) && tms.pfnCreateNewModeInfo && tms.pfnAddMode && tms.pfnReleaseModeInfo) {
+                for (UINT i = 0; i < modeCount; ++i) {
+                    const ULONG w = modes[i].Width;
+                    const ULONG h = modes[i].Height;
+                    if (w == 0 || h == 0) {
+                        continue;
+                    }
+
+                    D3DKMDT_VIDPN_TARGET_MODE* modeInfo = NULL;
+                    NTSTATUS st2 = tms.pfnCreateNewModeInfo(hTargetModeSet, &modeInfo);
+                    if (!NT_SUCCESS(st2) || !modeInfo) {
+                        continue;
+                    }
+
+                    RtlZeroMemory(modeInfo, sizeof(*modeInfo));
+                    modeInfo->VideoSignalInfo.VideoStandard = D3DKMDT_VSS_OTHER;
+                    modeInfo->VideoSignalInfo.ActiveSize.cx = w;
+                    modeInfo->VideoSignalInfo.ActiveSize.cy = h;
+                    modeInfo->VideoSignalInfo.TotalSize = modeInfo->VideoSignalInfo.ActiveSize;
+                    modeInfo->VideoSignalInfo.VSyncFreq.Numerator = 60;
+                    modeInfo->VideoSignalInfo.VSyncFreq.Denominator = 1;
+                    modeInfo->VideoSignalInfo.HSyncFreq.Numerator = 60 * h;
+                    modeInfo->VideoSignalInfo.HSyncFreq.Denominator = 1;
+                    {
+                        ULONGLONG pixelRate = (ULONGLONG)60ull * (ULONGLONG)w * (ULONGLONG)h;
+                        if (pixelRate > (ULONGLONG)0xFFFFFFFFu) {
+                            pixelRate = 0;
+                        }
+                        modeInfo->VideoSignalInfo.PixelRate = (ULONG)pixelRate;
+                    }
+                    modeInfo->VideoSignalInfo.ScanLineOrdering = D3DKMDT_VSSLO_PROGRESSIVE;
+
+                    st2 = tms.pfnAddMode(hTargetModeSet, modeInfo);
+                    tms.pfnReleaseModeInfo(hTargetModeSet, modeInfo);
+                    if (!NT_SUCCESS(st2)) {
+                        /* Ignore add failures to keep bring-up tolerant. */
+                    }
+                }
+            }
+
+            (void)vidpn.pfnAssignTargetModeSet(pEnum->hFunctionalVidPn, AEROGPU_VIDPN_TARGET_ID, hTargetModeSet);
+            vidpn.pfnReleaseTargetModeSet(pEnum->hFunctionalVidPn, hTargetModeSet);
+        }
+    }
+
     return STATUS_SUCCESS;
 }
 
@@ -2713,7 +3154,14 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
     const ULONG width = pinned->Format.Graphics.PrimSurfSize.cx;
     const ULONG height = pinned->Format.Graphics.PrimSurfSize.cy;
 
-    if (width == 0 || height == 0 || width > (0xFFFFFFFFu / 4u)) {
+    if (width == 0 || height == 0 || width > 16384u || height > 16384u || width > (0xFFFFFFFFu / 4u)) {
+        sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
+        vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
+        return STATUS_SUCCESS;
+    }
+
+    if (!AeroGpuModeWithinMax(width, height)) {
+        /* Respect max-resolution caps for bring-up safety. */
         sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
         vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
         return STATUS_SUCCESS;
@@ -2721,7 +3169,15 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
 
     adapter->CurrentWidth = width;
     adapter->CurrentHeight = height;
-    adapter->CurrentPitch = width * 4u;
+
+    {
+        ULONG pitch = 0;
+        if (AeroGpuComputeDefaultPitchBytes(width, &pitch)) {
+            adapter->CurrentPitch = pitch;
+        } else {
+            adapter->CurrentPitch = width * 4u;
+        }
+    }
     adapter->CurrentFormat = AEROGPU_FORMAT_B8G8R8X8_UNORM;
 
     sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
@@ -2741,7 +3197,22 @@ static NTSTATUS APIENTRY AeroGpuDdiSetVidPnSourceAddress(_In_ const HANDLE hAdap
         return STATUS_INVALID_PARAMETER;
     }
 
-    adapter->CurrentPitch = pSetAddress->PrimaryPitch;
+    ULONG pitch = pSetAddress->PrimaryPitch;
+    if (pitch == 0) {
+        ULONG computed = 0;
+        if (AeroGpuComputeDefaultPitchBytes(adapter->CurrentWidth, &computed)) {
+            pitch = computed;
+        }
+    }
+
+    if (adapter->CurrentWidth != 0 && adapter->CurrentWidth <= (0xFFFFFFFFu / 4u)) {
+        const ULONG rowBytes = adapter->CurrentWidth * 4u;
+        if (pitch != 0 && pitch < rowBytes) {
+            pitch = rowBytes;
+        }
+    }
+
+    adapter->CurrentPitch = pitch;
 
     PHYSICAL_ADDRESS fb;
     fb.QuadPart = pSetAddress->PrimaryAddress.QuadPart;
@@ -2962,7 +3433,23 @@ static NTSTATUS APIENTRY AeroGpuDdiGetStandardAllocationDriverData(_In_ const HA
 
     switch (pData->StandardAllocationType) {
     case StandardAllocationTypePrimary: {
-        info->Size = (SIZE_T)adapter->CurrentPitch * (SIZE_T)adapter->CurrentHeight;
+        ULONG pitch = adapter->CurrentPitch;
+        ULONG height = adapter->CurrentHeight;
+        if (pitch == 0 && AeroGpuComputeDefaultPitchBytes(adapter->CurrentWidth, &pitch)) {
+            /* Keep the cached state internally consistent for callers that query before a modeset. */
+            adapter->CurrentPitch = pitch;
+        }
+        if (height == 0) {
+            height = 1;
+        }
+
+        const ULONGLONG size64 = (ULONGLONG)pitch * (ULONGLONG)height;
+        const ULONGLONG maxSize = (ULONGLONG)(SIZE_T)~(SIZE_T)0;
+        if (size64 == 0 || size64 > maxSize) {
+            return STATUS_INTEGER_OVERFLOW;
+        }
+
+        info->Size = (SIZE_T)size64;
         info->Alignment = 0;
         info->SegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
         info->Flags.Value = 0;
@@ -6091,6 +6578,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
 NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING RegistryPath)
 {
+    AeroGpuLoadDisplayModeConfigFromRegistry(RegistryPath);
+
     DXGK_INITIALIZATION_DATA init;
     RtlZeroMemory(&init, sizeof(init));
     init.Version = DXGKDDI_INTERFACE_VERSION_WDDM1_1;
