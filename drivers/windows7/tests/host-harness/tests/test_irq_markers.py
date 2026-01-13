@@ -82,6 +82,12 @@ class VirtioIrqMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ_DIAG|WARN|msg=msix disabled by policy",
         )
 
+    def test_no_output_when_no_irq_markers(self) -> None:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.harness._emit_virtio_irq_host_markers(b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n")
+        self.assertEqual(buf.getvalue().strip(), "")
+
 
 if __name__ == "__main__":
     unittest.main()
