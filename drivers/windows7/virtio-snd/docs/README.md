@@ -85,6 +85,16 @@ Virtqueues (indices and sizes):
 `AERO-W7-VIRTIO` v1 requires the device/driver pair to work correctly with **PCI INTx** + the virtio ISR status register (read-to-ack).
 The contract also permits **MSI-X** as an optional enhancement; Windows reports both MSI and MSI-X as “message-signaled interrupts”.
 
+Current state of the in-tree virtio-snd driver package:
+
+- The shipped virtio-snd build uses **INTx** (it does not connect message interrupt resources).
+- It also programs virtio MSI-X routing registers (`msix_config`, `queue_msix_vector`) to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) during bring-up.
+
+Implication: **do not enable MSI/MSI-X in the INF for virtio-snd yet** unless you also update the driver to program virtio MSI-X vectors. If Windows assigns only message interrupts, the driver will either:
+
+- fail `START_DEVICE` (default strict behavior), or
+- if `AllowPollingOnly=1` is set under `HKR\\Parameters`, continue in polling-only mode (reduced interrupt-driven behavior).
+
 #### INF registry keys (Windows 7 MSI opt-in)
 
 On Windows 7, MSI/MSI-X is typically enabled via INF `HKR` settings under:
@@ -111,7 +121,7 @@ Notes:
 
 #### Expected vector mapping
 
-When MSI-X is active and Windows grants enough messages, the expected mapping is:
+When MSI-X support is implemented and Windows grants enough messages, the expected mapping is:
 
 - **Vector/message 0:** virtio **config** interrupt (`common_cfg.msix_config`)
 - **Vector/message 1..4:** queues 0..3 (`controlq`, `eventq`, `txq`, `rxq`)
