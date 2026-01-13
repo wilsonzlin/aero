@@ -135,6 +135,12 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
     LIST_ENTRY FreeRequestList;
     ULONG FreeRequestCount;
 
+    volatile LONG AbortSrbCount;
+    volatile LONG ResetDeviceSrbCount;
+    volatile LONG ResetBusSrbCount;
+    volatile LONG PnpSrbCount;
+    volatile LONG IoctlResetCount;
+
     BOOLEAN Removed;
     SENSE_DATA LastSense;
 } AEROVBLK_DEVICE_EXTENSION, *PAEROVBLK_DEVICE_EXTENSION;
@@ -143,6 +149,7 @@ C_ASSERT(AEROVBLK_QUEUE_SIZE == 128);
 
 #define AEROVBLK_SRBIO_SIG "AEROVBLK"
 #define AEROVBLK_IOCTL_QUERY 0x8000A001u
+#define AEROVBLK_IOCTL_FORCE_RESET 0x8000A002u
 
 /*
  * AEROVBLK_QUERY_INFO.InterruptMode values.
@@ -181,6 +188,18 @@ typedef struct _AEROVBLK_QUERY_INFO {
     USHORT MsixQueue0Vector;
     ULONG MessageCount;
     ULONG Reserved0;
+
+    /*
+     * SRB function counters (appended).
+     *
+     * These are used to validate StorPort timeout recovery paths and debug
+     * real-world storage stack behaviour.
+     */
+    ULONG AbortSrbCount;
+    ULONG ResetDeviceSrbCount;
+    ULONG ResetBusSrbCount;
+    ULONG PnpSrbCount;
+    ULONG IoctlResetCount;
 } AEROVBLK_QUERY_INFO, *PAEROVBLK_QUERY_INFO;
 #pragma pack(pop)
 
@@ -193,7 +212,13 @@ C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, InterruptMode) == 0x10);
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, MsixConfigVector) == 0x14);
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, MsixQueue0Vector) == 0x16);
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, MessageCount) == 0x18);
-C_ASSERT(sizeof(AEROVBLK_QUERY_INFO) == 0x20);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, Reserved0) == 0x1C);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, AbortSrbCount) == 0x20);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, ResetDeviceSrbCount) == 0x24);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, ResetBusSrbCount) == 0x28);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, PnpSrbCount) == 0x2C);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, IoctlResetCount) == 0x30);
+C_ASSERT(sizeof(AEROVBLK_QUERY_INFO) == 0x34);
 
 ULONG AerovblkHwFindAdapter(
     _In_ PVOID deviceExtension,

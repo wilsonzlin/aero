@@ -42,6 +42,12 @@
 #include <string>
 #include <vector>
 
+#ifndef STATUS_NOT_SUPPORTED
+// Some Windows 7 SDK environments don't expose NTSTATUS codes in the default
+// include set. Define the minimal constant we need for miniport IOCTL probing.
+#define STATUS_NOT_SUPPORTED static_cast<ULONG>(0xC00000BBu)
+#endif
+
 namespace {
 
 struct Options {
@@ -422,6 +428,7 @@ struct StorageIdStrings {
 // Userspace mirror of `drivers/windows7/virtio-blk/include/aero_virtio_blk.h` IOCTL contract.
 static constexpr const char kAerovblkSrbIoSig[8] = {'A', 'E', 'R', 'O', 'V', 'B', 'L', 'K'};
 static constexpr ULONG kAerovblkIoctlQuery = 0x8000A001u;
+static constexpr ULONG kAerovblkIoctlForceReset = 0x8000A002u;
 static constexpr ULONG kAerovblkInterruptModeIntx = 0u;
 static constexpr ULONG kAerovblkInterruptModeMsi = 1u;
 static constexpr USHORT kVirtioPciMsiNoVector = 0xFFFFu;
@@ -439,6 +446,12 @@ struct AEROVBLK_QUERY_INFO {
   USHORT MsixQueue0Vector;
   ULONG MessageCount;
   ULONG Reserved0;
+
+  ULONG AbortSrbCount;
+  ULONG ResetDeviceSrbCount;
+  ULONG ResetBusSrbCount;
+  ULONG PnpSrbCount;
+  ULONG IoctlResetCount;
 };
 #pragma pack(pop)
 
@@ -451,7 +464,13 @@ static_assert(offsetof(AEROVBLK_QUERY_INFO, InterruptMode) == 0x10, "AEROVBLK_QU
 static_assert(offsetof(AEROVBLK_QUERY_INFO, MsixConfigVector) == 0x14, "AEROVBLK_QUERY_INFO layout");
 static_assert(offsetof(AEROVBLK_QUERY_INFO, MsixQueue0Vector) == 0x16, "AEROVBLK_QUERY_INFO layout");
 static_assert(offsetof(AEROVBLK_QUERY_INFO, MessageCount) == 0x18, "AEROVBLK_QUERY_INFO layout");
-static_assert(sizeof(AEROVBLK_QUERY_INFO) == 0x20, "AEROVBLK_QUERY_INFO size mismatch");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, Reserved0) == 0x1C, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, AbortSrbCount) == 0x20, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, ResetDeviceSrbCount) == 0x24, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, ResetBusSrbCount) == 0x28, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, PnpSrbCount) == 0x2C, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, IoctlResetCount) == 0x30, "AEROVBLK_QUERY_INFO layout");
+static_assert(sizeof(AEROVBLK_QUERY_INFO) == 0x34, "AEROVBLK_QUERY_INFO size mismatch");
 
 struct AerovblkQueryInfoResult {
   AEROVBLK_QUERY_INFO info{};
@@ -576,6 +595,45 @@ static std::optional<AerovblkQueryInfoResult> QueryAerovblkMiniportInfo(Logger& 
   return out;
 }
 
+static bool ForceAerovblkMiniportReset(Logger& log, HANDLE hPhysicalDrive, bool* out_performed) {
+  if (out_performed) *out_performed = false;
+  if (hPhysicalDrive == INVALID_HANDLE_VALUE) return false;
+
+  std::vector<BYTE> buf(sizeof(SRB_IO_CONTROL));
+  auto* ctrl = reinterpret_cast<SRB_IO_CONTROL*>(buf.data());
+  ctrl->HeaderLength = sizeof(SRB_IO_CONTROL);
+  memcpy(ctrl->Signature, kAerovblkSrbIoSig, sizeof(ctrl->Signature));
+  ctrl->Timeout = 30;
+  ctrl->ControlCode = kAerovblkIoctlForceReset;
+  ctrl->ReturnCode = 0;
+  ctrl->Length = 0;
+
+  DWORD bytes = 0;
+  if (!DeviceIoControl(hPhysicalDrive, IOCTL_SCSI_MINIPORT, buf.data(), static_cast<DWORD>(buf.size()),
+                       buf.data(), static_cast<DWORD>(buf.size()), &bytes, nullptr)) {
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(AEROVBLK_IOCTL_FORCE_RESET) failed err=%lu", GetLastError());
+    return false;
+  }
+  if (bytes < sizeof(SRB_IO_CONTROL)) {
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(force reset) returned too few bytes=%lu", bytes);
+    return false;
+  }
+
+  ctrl = reinterpret_cast<SRB_IO_CONTROL*>(buf.data());
+  if (ctrl->ReturnCode == static_cast<ULONG>(STATUS_NOT_SUPPORTED)) {
+    log.LogLine("virtio-blk: miniport force reset SKIP (STATUS_NOT_SUPPORTED)");
+    return true;
+  }
+  if (ctrl->ReturnCode != 0) {
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(force reset) ReturnCode=0x%08lx", ctrl->ReturnCode);
+    return false;
+  }
+
+  log.LogLine("virtio-blk: miniport force reset ok");
+  if (out_performed) *out_performed = true;
+  return true;
+}
+
 static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoResult& res) {
   const auto& info = res.info;
   const ULONGLONG required_features =
@@ -600,9 +658,23 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoRes
     return false;
   }
 
-  log.Logf("virtio-blk: miniport query PASS queue_size=%u num_free=%u avail_idx=%u used_idx=%u features=%s",
+  constexpr size_t kCountersEnd = offsetof(AEROVBLK_QUERY_INFO, IoctlResetCount) + sizeof(ULONG);
+  const bool have_counters = res.returned_len >= kCountersEnd;
+  const unsigned long abort_count = have_counters ? static_cast<unsigned long>(info.AbortSrbCount) : 0;
+  const unsigned long reset_dev_count = have_counters ? static_cast<unsigned long>(info.ResetDeviceSrbCount) : 0;
+  const unsigned long reset_bus_count = have_counters ? static_cast<unsigned long>(info.ResetBusSrbCount) : 0;
+  const unsigned long pnp_count = have_counters ? static_cast<unsigned long>(info.PnpSrbCount) : 0;
+  const unsigned long ioctl_reset_count = have_counters ? static_cast<unsigned long>(info.IoctlResetCount) : 0;
+
+  log.Logf("virtio-blk: miniport query PASS queue_size=%u num_free=%u avail_idx=%u used_idx=%u features=%s abort=%lu reset_dev=%lu reset_bus=%lu pnp=%lu ioctl_reset=%lu",
            info.QueueSize, info.NumFree, info.AvailIdx, info.UsedIdx,
-           VirtioFeaturesToString(info.NegotiatedFeatures).c_str());
+           VirtioFeaturesToString(info.NegotiatedFeatures).c_str(),
+           abort_count, reset_dev_count, reset_bus_count, pnp_count, ioctl_reset_count);
+
+  if (!have_counters) {
+    log.Logf("virtio-blk: miniport query WARN (counters not reported; returned_len=%zu expected_min=%zu)",
+             res.returned_len, kCountersEnd);
+  }
 
   // Optional interrupt mode diagnostics (variable-length contract).
   constexpr size_t kIrqModeEnd = offsetof(AEROVBLK_QUERY_INFO, InterruptMode) + sizeof(ULONG);
@@ -2121,6 +2193,41 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
           log.Logf("virtio-blk: miniport query FAIL (expected MSI/MSI-X, got InterruptMode=%lu)",
                    static_cast<unsigned long>(info->info.InterruptMode));
           query_ok = false;
+        }
+      }
+    }
+
+    // Debug/robustness: force a miniport reset and confirm the adapter still answers queries.
+    if (info.has_value()) {
+      bool did_reset = false;
+      if (!ForceAerovblkMiniportReset(log, pd, &did_reset)) {
+        log.LogLine("virtio-blk: miniport force reset FAIL");
+        CloseHandle(pd);
+        return false;
+      }
+      if (did_reset) {
+        const auto info2 = QueryAerovblkMiniportInfo(log, pd);
+        if (!info2.has_value()) {
+          log.LogLine("virtio-blk: miniport query after reset FAIL");
+          CloseHandle(pd);
+          return false;
+        }
+        if (!ValidateAerovblkMiniportInfo(log, *info2)) {
+          CloseHandle(pd);
+          return false;
+        }
+        constexpr size_t kCountersEnd = offsetof(AEROVBLK_QUERY_INFO, IoctlResetCount) + sizeof(ULONG);
+        if (info->returned_len >= kCountersEnd && info2->returned_len >= kCountersEnd) {
+          if (info2->info.IoctlResetCount < info->info.IoctlResetCount + 1) {
+            log.Logf("virtio-blk: miniport reset counter did not increment (before=%lu after=%lu)",
+                     static_cast<unsigned long>(info->info.IoctlResetCount),
+                     static_cast<unsigned long>(info2->info.IoctlResetCount));
+            CloseHandle(pd);
+            return false;
+          }
+        } else {
+          log.Logf("virtio-blk: miniport reset counter SKIP (counters not reported; before_len=%zu after_len=%zu)",
+                   info->returned_len, info2->returned_len);
         }
       }
     }

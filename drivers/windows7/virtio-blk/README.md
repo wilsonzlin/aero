@@ -148,8 +148,12 @@ The driver supports a minimal `IOCTL_SCSI_MINIPORT` query:
 - `SRB_IO_CONTROL.Signature = "AEROVBLK"`
 - `SRB_IO_CONTROL.ControlCode = 0x8000A001`
 
-Returns `AEROVBLK_QUERY_INFO` (negotiated features + queue stats + interrupt mode/MSI-X vectors).
+Returns `AEROVBLK_QUERY_INFO` (negotiated features + queue stats + interrupt mode/MSI-X vectors + abort/reset counters).
 
 The output struct is **variable-length** for backwards compatibility: callers that only
 understand the original v1 layout can request/consume just the first 16 bytes (through
 `UsedIdx`).
+
+For robustness testing, the driver also supports a reset trigger IOCTL:
+
+- `SRB_IO_CONTROL.ControlCode = 0x8000A002` (force a device/queue reset)

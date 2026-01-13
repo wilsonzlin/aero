@@ -244,7 +244,7 @@ static VOID AerovblkAbortOutstandingRequestsLocked(_Inout_ PAEROVBLK_DEVICE_EXTE
 
     ctx->Srb = NULL;
     AerovblkSetSense(devExt, srb, SCSI_SENSE_ABORTED_COMMAND, 0x00, 0x00);
-    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ABORTED | SRB_STATUS_AUTOSENSE_VALID);
   }
 
   AerovblkResetRequestContextsLocked(devExt);
@@ -997,90 +997,123 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     return;
   }
 
-  if (ctrl->ControlCode != AEROVBLK_IOCTL_QUERY) {
-    ctrl->ReturnCode = (ULONG)STATUS_NOT_SUPPORTED;
-    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST);
+  if (ctrl->ControlCode == AEROVBLK_IOCTL_QUERY) {
+    maxPayloadLen = srb->DataTransferLength - sizeof(SRB_IO_CONTROL);
+    payloadLen = ctrl->Length;
+    if (payloadLen > maxPayloadLen) {
+      payloadLen = maxPayloadLen;
+    }
+
+    /*
+     * Maintain backwards compatibility with callers that only understand the
+     * original v1 layout (through UsedIdx). Callers can request/consume the first
+     * 16 bytes and ignore the newer appended fields.
+     */
+    if (payloadLen < FIELD_OFFSET(AEROVBLK_QUERY_INFO, InterruptMode)) {
+      ctrl->ReturnCode = (ULONG)STATUS_BUFFER_TOO_SMALL;
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST);
+      return;
+    }
+
+    info = (PAEROVBLK_QUERY_INFO)((PUCHAR)srb->DataBuffer + sizeof(SRB_IO_CONTROL));
+
+    RtlZeroMemory(&outInfo, sizeof(outInfo));
+    outInfo.NegotiatedFeatures = devExt->NegotiatedFeatures;
+    if (devExt->Vq.queue_size != 0 && devExt->Vq.used != NULL) {
+      outInfo.QueueSize = (USHORT)devExt->Vq.queue_size;
+      outInfo.NumFree = (USHORT)devExt->Vq.num_free;
+      outInfo.AvailIdx = (USHORT)devExt->Vq.avail_idx;
+      outInfo.UsedIdx = (USHORT)devExt->Vq.used->idx;
+    } else {
+      outInfo.QueueSize = 0;
+      outInfo.NumFree = 0;
+      outInfo.AvailIdx = 0;
+      outInfo.UsedIdx = 0;
+    }
+
+    /*
+     * Interrupt observability.
+     *
+     * Report the driver-selected interrupt mode (INTx vs MSI/MSI-X) as well as
+     * the currently programmed virtio MSI-X vectors.
+     */
+    outInfo.InterruptMode = devExt->UseMsi ? AEROVBLK_INTERRUPT_MODE_MSI : AEROVBLK_INTERRUPT_MODE_INTX;
+    outInfo.MessageCount = devExt->UseMsi ? (ULONG)devExt->MsiMessageCount : 0;
+    outInfo.MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+    outInfo.MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
+    outInfo.Reserved0 = 0;
+
+    msixConfig = VIRTIO_PCI_MSI_NO_VECTOR;
+    msixQueue0 = VIRTIO_PCI_MSI_NO_VECTOR;
+    if (devExt->Vdev.CommonCfg != NULL) {
+      KIRQL irql;
+
+      msixConfig = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config);
+
+      KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
+      WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
+      KeMemoryBarrier();
+      msixQueue0 = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector);
+      KeMemoryBarrier();
+      KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
+    }
+
+    outInfo.MsixConfigVector = msixConfig;
+    outInfo.MsixQueue0Vector = msixQueue0;
+
+    /* If vectors are assigned, treat the effective mode as MSI/MSI-X. */
+    if (msixConfig != VIRTIO_PCI_MSI_NO_VECTOR || msixQueue0 != VIRTIO_PCI_MSI_NO_VECTOR) {
+      outInfo.InterruptMode = AEROVBLK_INTERRUPT_MODE_MSI;
+    }
+
+    outInfo.AbortSrbCount = (ULONG)devExt->AbortSrbCount;
+    outInfo.ResetDeviceSrbCount = (ULONG)devExt->ResetDeviceSrbCount;
+    outInfo.ResetBusSrbCount = (ULONG)devExt->ResetBusSrbCount;
+    outInfo.PnpSrbCount = (ULONG)devExt->PnpSrbCount;
+    outInfo.IoctlResetCount = (ULONG)devExt->IoctlResetCount;
+
+    copyLen = payloadLen;
+    if (copyLen > sizeof(outInfo)) {
+      copyLen = sizeof(outInfo);
+    }
+    RtlCopyMemory(info, &outInfo, copyLen);
+
+    ctrl->ReturnCode = 0;
+    ctrl->Length = copyLen;
+    srb->DataTransferLength = sizeof(SRB_IO_CONTROL) + copyLen;
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
     return;
   }
 
-  maxPayloadLen = srb->DataTransferLength - sizeof(SRB_IO_CONTROL);
-  payloadLen = ctrl->Length;
-  if (payloadLen > maxPayloadLen) {
-    payloadLen = maxPayloadLen;
-  }
+  if (ctrl->ControlCode == AEROVBLK_IOCTL_FORCE_RESET) {
+    InterlockedIncrement(&devExt->IoctlResetCount);
 
-  /*
-   * Maintain backwards compatibility with callers that only understand the
-   * original v1 layout (through UsedIdx). Callers can request/consume the first
-   * 16 bytes and ignore the newer interrupt fields.
-   */
-  if (payloadLen < FIELD_OFFSET(AEROVBLK_QUERY_INFO, InterruptMode)) {
-    ctrl->ReturnCode = (ULONG)STATUS_BUFFER_TOO_SMALL;
-    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST);
+    ctrl->ReturnCode = 0;
+    ctrl->Length = 0;
+    srb->DataTransferLength = sizeof(SRB_IO_CONTROL);
+
+    if (devExt->Removed) {
+      /*
+       * When the adapter is stopped/removed, do not attempt to reinitialize the
+       * device. Treat this as a no-op success so a debug tool can probe the
+       * interface without reviving the adapter.
+       */
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+      return;
+    }
+
+    if (!AerovblkDeviceBringUp(devExt, FALSE)) {
+      ctrl->ReturnCode = (ULONG)STATUS_UNSUCCESSFUL;
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+      return;
+    }
+
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
     return;
   }
 
-  info = (PAEROVBLK_QUERY_INFO)((PUCHAR)srb->DataBuffer + sizeof(SRB_IO_CONTROL));
-
-  RtlZeroMemory(&outInfo, sizeof(outInfo));
-  outInfo.NegotiatedFeatures = devExt->NegotiatedFeatures;
-  if (devExt->Vq.queue_size != 0 && devExt->Vq.used != NULL) {
-    outInfo.QueueSize = (USHORT)devExt->Vq.queue_size;
-    outInfo.NumFree = (USHORT)devExt->Vq.num_free;
-    outInfo.AvailIdx = (USHORT)devExt->Vq.avail_idx;
-    outInfo.UsedIdx = (USHORT)devExt->Vq.used->idx;
-  } else {
-    outInfo.QueueSize = 0;
-    outInfo.NumFree = 0;
-    outInfo.AvailIdx = 0;
-    outInfo.UsedIdx = 0;
-  }
-
-  /*
-   * Interrupt observability.
-   *
-   * Report the driver-selected interrupt mode (INTx vs MSI/MSI-X) as well as
-   * the currently programmed virtio MSI-X vectors.
-   */
-  outInfo.InterruptMode = devExt->UseMsi ? AEROVBLK_INTERRUPT_MODE_MSI : AEROVBLK_INTERRUPT_MODE_INTX;
-  outInfo.MessageCount = devExt->UseMsi ? (ULONG)devExt->MsiMessageCount : 0;
-  outInfo.MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
-  outInfo.MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
-  outInfo.Reserved0 = 0;
-
-  msixConfig = VIRTIO_PCI_MSI_NO_VECTOR;
-  msixQueue0 = VIRTIO_PCI_MSI_NO_VECTOR;
-  if (devExt->Vdev.CommonCfg != NULL) {
-    KIRQL irql;
-
-    msixConfig = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config);
-
-    KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
-    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
-    KeMemoryBarrier();
-    msixQueue0 = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector);
-    KeMemoryBarrier();
-    KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
-  }
-
-  outInfo.MsixConfigVector = msixConfig;
-  outInfo.MsixQueue0Vector = msixQueue0;
-
-  /* If vectors are assigned, treat the effective mode as MSI/MSI-X. */
-  if (msixConfig != VIRTIO_PCI_MSI_NO_VECTOR || msixQueue0 != VIRTIO_PCI_MSI_NO_VECTOR) {
-    outInfo.InterruptMode = AEROVBLK_INTERRUPT_MODE_MSI;
-  }
-
-  copyLen = payloadLen;
-  if (copyLen > sizeof(outInfo)) {
-    copyLen = sizeof(outInfo);
-  }
-  RtlCopyMemory(info, &outInfo, copyLen);
-
-  ctrl->ReturnCode = 0;
-  ctrl->Length = copyLen;
-  srb->DataTransferLength = sizeof(SRB_IO_CONTROL) + copyLen;
-  AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+  ctrl->ReturnCode = (ULONG)STATUS_NOT_SUPPORTED;
+  AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST);
 }
 
 static VOID AerovblkHandleUnsupported(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Inout_ PSCSI_REQUEST_BLOCK srb) {
@@ -1498,6 +1531,85 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
   UCHAR op;
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
+
+  /*
+   * StorPort can issue management SRBs (abort/reset/PnP) with varying addressing
+   * fields depending on the adapter stack. Handle these first, before enforcing
+   * our single-LUN addressing model.
+   */
+  switch (srb->Function) {
+  case SRB_FUNCTION_ABORT_COMMAND:
+#ifdef SRB_FUNCTION_TERMINATE_IO
+  /*
+   * Some StorPort stacks use TERMINATE_IO rather than ABORT_COMMAND for timeout
+   * recovery. Treat it equivalently.
+   */
+  case SRB_FUNCTION_TERMINATE_IO:
+#endif
+  {
+    InterlockedIncrement(&devExt->AbortSrbCount);
+
+    if (!devExt->Removed) {
+      /*
+       * We cannot reliably "cancel" a virtio-blk request without stopping DMA
+       * because the virtqueue implementation does not support removing an
+       * in-flight descriptor chain. Treat abort as a request to reset the
+       * device/queue and complete all outstanding SRBs deterministically.
+       */
+      if (!AerovblkDeviceBringUp(devExt, FALSE)) {
+        AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+        return TRUE;
+      }
+    } else {
+      STOR_LOCK_HANDLE lock;
+      StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+      AerovblkAbortOutstandingRequestsLocked(devExt);
+      if (devExt->Vq.queue_size != 0) {
+        AerovblkResetVirtqueueLocked(devExt);
+      }
+      StorPortReleaseSpinLock(devExt, &lock);
+    }
+
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+  }
+
+  case SRB_FUNCTION_RESET_DEVICE:
+#ifdef SRB_FUNCTION_RESET_LOGICAL_UNIT
+  /*
+   * Treat LUN reset as a device reset since this miniport only exposes a
+   * single LUN.
+   */
+  case SRB_FUNCTION_RESET_LOGICAL_UNIT:
+#endif
+  {
+    InterlockedIncrement(&devExt->ResetDeviceSrbCount);
+    if (!devExt->Removed && !AerovblkDeviceBringUp(devExt, FALSE)) {
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+      return TRUE;
+    }
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+  }
+
+  case SRB_FUNCTION_RESET_BUS: {
+    InterlockedIncrement(&devExt->ResetBusSrbCount);
+    if (!devExt->Removed && !AerovblkDeviceBringUp(devExt, FALSE)) {
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+      return TRUE;
+    }
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+  }
+
+  case SRB_FUNCTION_PNP:
+    InterlockedIncrement(&devExt->PnpSrbCount);
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+
+  default:
+    break;
+  }
 
   if (srb->PathId != 0 || srb->TargetId != 0 || srb->Lun != 0) {
     AerovblkHandleUnsupported(devExt, srb);
