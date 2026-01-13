@@ -1170,4 +1170,52 @@ mod tests {
         let err = dev.snapshot_load(&bytes).unwrap_err();
         assert_invalid_field_encoding(err);
     }
+
+    #[test]
+    fn snapshot_save_is_deterministic_independent_of_hashmap_order() {
+        let mut dev_a = UsbPassthroughDevice::new();
+        let mut dev_b = UsbPassthroughDevice::new();
+
+        // Create identical in-flight endpoints so both devices allocate the same IDs.
+        assert_eq!(dev_a.handle_in_transfer(0x81, 8), UsbInResult::Nak);
+        assert_eq!(dev_a.handle_in_transfer(0x82, 8), UsbInResult::Nak);
+        assert_eq!(dev_b.handle_in_transfer(0x81, 8), UsbInResult::Nak);
+        assert_eq!(dev_b.handle_in_transfer(0x82, 8), UsbInResult::Nak);
+
+        let id1_a = dev_a.ep_inflight.get(&0x81).expect("ep 0x81 inflight").id;
+        let id2_a = dev_a.ep_inflight.get(&0x82).expect("ep 0x82 inflight").id;
+        let id1_b = dev_b.ep_inflight.get(&0x81).expect("ep 0x81 inflight").id;
+        let id2_b = dev_b.ep_inflight.get(&0x82).expect("ep 0x82 inflight").id;
+        assert_eq!((id1_a, id2_a), (id1_b, id2_b));
+
+        // Push completions in opposite orders; this exercises the completion HashMap ordering.
+        dev_a.push_completion(UsbHostCompletion::BulkIn {
+            id: id1_a,
+            result: UsbHostCompletionIn::Success { data: vec![1] },
+        });
+        dev_a.push_completion(UsbHostCompletion::BulkIn {
+            id: id2_a,
+            result: UsbHostCompletionIn::Success { data: vec![2, 3] },
+        });
+
+        dev_b.push_completion(UsbHostCompletion::BulkIn {
+            id: id2_b,
+            result: UsbHostCompletionIn::Success { data: vec![2, 3] },
+        });
+        dev_b.push_completion(UsbHostCompletion::BulkIn {
+            id: id1_b,
+            result: UsbHostCompletionIn::Success { data: vec![1] },
+        });
+
+        // Also ensure the endpoint-inflight HashMap sees a different insertion order while
+        // preserving identical logical state (same keys + values).
+        let ep1 = dev_b.ep_inflight.remove(&0x81).expect("ep 0x81 inflight");
+        let ep2 = dev_b.ep_inflight.remove(&0x82).expect("ep 0x82 inflight");
+        dev_b.ep_inflight.insert(0x82, ep2);
+        dev_b.ep_inflight.insert(0x81, ep1);
+
+        let snap_a = dev_a.snapshot_save();
+        let snap_b = dev_b.snapshot_save();
+        assert_eq!(snap_a, snap_b);
+    }
 }
