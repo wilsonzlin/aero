@@ -38,6 +38,7 @@
 
 pub mod descriptor_fixups;
 pub mod device;
+pub mod ehci;
 pub mod hid;
 pub mod hub;
 pub mod memory;
