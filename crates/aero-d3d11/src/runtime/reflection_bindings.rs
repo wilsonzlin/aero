@@ -807,18 +807,17 @@ mod tests {
             let mut layout_cache = BindGroupLayoutCache::new();
 
             let empty: Vec<crate::Binding> = Vec::new();
-            let internal = vec![crate::Binding {
+            let gs = vec![crate::Binding {
                 group: 3,
                 binding: BINDING_BASE_TEXTURE,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::COMPUTE,
                 kind: crate::BindingKind::Texture2D { slot: 0 },
             }];
 
-            let info = build_pipeline_bindings_info_with_max_group(
+            let info = build_pipeline_bindings_info(
                 device,
                 &mut layout_cache,
-                3,
-                [empty.as_slice(), internal.as_slice()],
+                [empty.as_slice(), gs.as_slice()],
             )
             .unwrap();
 
@@ -838,13 +837,16 @@ mod tests {
                 Arc::ptr_eq(&info.group_layouts[0].layout, &info.group_layouts[2].layout),
                 "expected group0/group2 empty layouts to be reused"
             );
+            assert!(
+                Arc::ptr_eq(&info.group_layouts[1].layout, &info.group_layouts[2].layout),
+                "expected group1/group2 empty layouts to be reused"
+            );
+            assert_eq!(info.group_layouts[0].hash, info.group_layouts[1].hash);
+            assert_eq!(info.group_layouts[1].hash, info.group_layouts[2].hash);
 
             assert_eq!(info.layout_key.bind_group_layout_hashes.len(), 4);
             for (idx, layout) in info.group_layouts.iter().enumerate() {
-                assert_eq!(
-                    info.layout_key.bind_group_layout_hashes[idx], layout.hash,
-                    "PipelineLayoutKey should include group {idx} layout hash"
-                );
+                assert_eq!(info.layout_key.bind_group_layout_hashes[idx], layout.hash);
             }
         });
     }
@@ -1021,6 +1023,575 @@ mod tests {
             assert!(
                 err.contains("exceeds device limit"),
                 "unexpected error: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn gs_group3_constant_buffer_updates_affect_compute_emulation_output() {
+        const TEX_W: u32 = 64;
+        const TEX_H: u32 = 64;
+        const BYTES_PER_ROW: u32 = TEX_W * 4; // 64 * 4 = 256 (COPY_BYTES_PER_ROW_ALIGNMENT)
+
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let queue = rt.queue();
+
+            // Build stage-scoped bind group layouts via the same reflection-driven path the D3D11
+            // executor uses. The geometry stage is emulated via a compute shader, but its slot
+            // space still lives in its own bind group (@group(3)).
+            let mut layout_cache = BindGroupLayoutCache::new();
+            let vs_bindings = vec![crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_CBUFFER,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::ConstantBuffer {
+                    slot: 0,
+                    reg_count: 1,
+                },
+            }];
+            let gs_bindings = vec![crate::Binding {
+                group: 3,
+                binding: BINDING_BASE_CBUFFER,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::ConstantBuffer {
+                    slot: 0,
+                    reg_count: 1,
+                },
+            }];
+
+            let info = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [vs_bindings.as_slice(), gs_bindings.as_slice()],
+            )
+            .expect("build pipeline bindings info");
+            assert_eq!(
+                info.group_layouts.len(),
+                4,
+                "expected group layouts for groups 0..=3"
+            );
+
+            // Internal GS emulation buffers use a dedicated bind group to avoid colliding with D3D
+            // slot-derived bindings.
+            let internal_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("gs emulation internal bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+            let mut layout_refs: Vec<&wgpu::BindGroupLayout> = info
+                .group_layouts
+                .iter()
+                .map(|l| l.layout.as_ref())
+                .collect();
+            layout_refs.push(&internal_layout);
+
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("gs emulation pipeline layout"),
+                bind_group_layouts: &layout_refs,
+                push_constant_ranges: &[],
+            });
+
+            let compute_wgsl = r#"
+struct Cb0 { regs: array<vec4<u32>, 1> };
+
+@group(0) @binding(0) var<uniform> vs_cb0: Cb0;
+@group(3) @binding(0) var<uniform> gs_cb0: Cb0;
+
+struct Vertex {
+  pos: vec2<f32>,
+  // 8 bytes padding so `color` is 16-byte aligned.
+  _pad0: vec2<f32>,
+  color: vec4<f32>,
+};
+
+@group(4) @binding(0) var<storage, read_write> out_vertices: array<Vertex>;
+
+fn base_pos(i: u32) -> vec2<f32> {
+  if (i == 0u) { return vec2<f32>(-0.5, -0.5); }
+  if (i == 1u) { return vec2<f32>( 0.0,  0.5); }
+  return vec2<f32>( 0.5, -0.5);
+}
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i = id.x;
+  if (i >= 3u) { return; }
+
+  // Read GS constant buffer as raw u32 bits (mirrors `shader_translate` output).
+  let off = vec2<f32>(
+    bitcast<f32>(gs_cb0.regs[0].x),
+    bitcast<f32>(gs_cb0.regs[0].y)
+  );
+
+  out_vertices[i].pos = base_pos(i) + off;
+  out_vertices[i]._pad0 = vec2<f32>(0.0, 0.0);
+  out_vertices[i].color = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+
+  // Touch the VS cbuffer so the binding is considered live (it is otherwise unused here).
+  _ = vs_cb0.regs[0].x;
+}
+"#;
+
+            let compute_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("gs emulation compute module"),
+                source: wgpu::ShaderSource::Wgsl(compute_wgsl.into()),
+            });
+            let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("gs emulation compute pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &compute_module,
+                entry_point: "cs_main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            });
+
+            let render_wgsl = r#"
+struct VsIn {
+  @location(0) pos: vec2<f32>,
+  @location(1) color: vec4<f32>,
+};
+
+struct VsOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) color: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VsIn) -> VsOut {
+  var out: VsOut;
+  out.pos = vec4<f32>(input.pos, 0.0, 1.0);
+  out.color = input.color;
+  return out;
+}
+
+@fragment
+fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
+  return color;
+}
+"#;
+            let render_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("gs emulation render module"),
+                source: wgpu::ShaderSource::Wgsl(render_wgsl.into()),
+            });
+            let render_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("gs emulation render pipeline layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+            let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("gs emulation render pipeline"),
+                layout: Some(&render_layout),
+                vertex: wgpu::VertexState {
+                    module: &render_module,
+                    entry_point: "vs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: 32,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x2,
+                                offset: 0,
+                                shader_location: 0,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 16,
+                                shader_location: 1,
+                            },
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &render_module,
+                    entry_point: "fs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
+
+            let vs_cb0_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gs emulation vs cb0"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let gs_cb0_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gs emulation gs cb0"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&vs_cb0_buffer, 0, &[0u8; 16]);
+            queue.write_buffer(&gs_cb0_buffer, 0, &[0u8; 16]);
+
+            // The executor normally provides these dummy resources for unbound slots.
+            let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gs emulation dummy uniform"),
+                size: 256,
+                usage: wgpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
+            let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gs emulation dummy storage"),
+                size: 256,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("gs emulation dummy texture"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let dummy_texture_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let mut sampler_cache = SamplerCache::new();
+            let default_sampler = sampler_cache.get_or_create(
+                device,
+                &wgpu::SamplerDescriptor {
+                    label: Some("gs emulation default sampler"),
+                    address_mode_u: wgpu::AddressMode::ClampToEdge,
+                    address_mode_v: wgpu::AddressMode::ClampToEdge,
+                    address_mode_w: wgpu::AddressMode::ClampToEdge,
+                    mag_filter: wgpu::FilterMode::Nearest,
+                    min_filter: wgpu::FilterMode::Nearest,
+                    mipmap_filter: wgpu::FilterMode::Nearest,
+                    ..Default::default()
+                },
+            );
+
+            struct UniformProvider<'a> {
+                id: BufferId,
+                buffer: &'a wgpu::Buffer,
+                dummy_uniform: &'a wgpu::Buffer,
+                dummy_storage: &'a wgpu::Buffer,
+                dummy_texture_view: &'a wgpu::TextureView,
+                default_sampler: &'a CachedSampler,
+            }
+
+            impl BindGroupResourceProvider for UniformProvider<'_> {
+                fn constant_buffer(&self, slot: u32) -> Option<BufferBinding<'_>> {
+                    if slot != 0 {
+                        return None;
+                    }
+                    Some(BufferBinding {
+                        id: self.id,
+                        buffer: self.buffer,
+                        offset: 0,
+                        size: None,
+                        total_size: 16,
+                    })
+                }
+
+                fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
+                    None
+                }
+
+                fn texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
+                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                    None
+                }
+
+                fn dummy_uniform(&self) -> &wgpu::Buffer {
+                    self.dummy_uniform
+                }
+
+                fn dummy_storage(&self) -> &wgpu::Buffer {
+                    self.dummy_storage
+                }
+
+                fn dummy_texture_view(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view
+                }
+
+                fn default_sampler(&self) -> &CachedSampler {
+                    self.default_sampler
+                }
+            }
+
+            let vs_provider = UniformProvider {
+                id: BufferId(1),
+                buffer: &vs_cb0_buffer,
+                dummy_uniform: &dummy_uniform,
+                dummy_storage: &dummy_storage,
+                dummy_texture_view: &dummy_texture_view,
+                default_sampler: &default_sampler,
+            };
+            let gs_provider = UniformProvider {
+                id: BufferId(2),
+                buffer: &gs_cb0_buffer,
+                dummy_uniform: &dummy_uniform,
+                dummy_storage: &dummy_storage,
+                dummy_texture_view: &dummy_texture_view,
+                default_sampler: &default_sampler,
+            };
+
+            let mut bind_group_cache = BindGroupCache::new(32);
+            let bg0 = build_bind_group(
+                device,
+                &mut bind_group_cache,
+                &info.group_layouts[0],
+                &info.group_bindings[0],
+                &vs_provider,
+            )
+            .expect("build group0 bind group");
+            let bg3 = build_bind_group(
+                device,
+                &mut bind_group_cache,
+                &info.group_layouts[3],
+                &info.group_bindings[3],
+                &gs_provider,
+            )
+            .expect("build group3 bind group");
+
+            // Empty groups still appear in the pipeline layout; create empty bind groups so we can
+            // bind every group index consistently.
+            let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gs emulation empty bind group"),
+                layout: info
+                    .group_layouts
+                    .get(1)
+                    .expect("group1 layout exists")
+                    .layout
+                    .as_ref(),
+                entries: &[],
+            });
+
+            let out_vertices = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gs emulation vertices"),
+                size: 32 * 3,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            });
+            let internal_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gs emulation internal bind group"),
+                layout: &internal_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: out_vertices.as_entire_binding(),
+                }],
+            });
+
+            let output_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("gs emulation output texture"),
+                size: wgpu::Extent3d {
+                    width: TEX_W,
+                    height: TEX_H,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let output_view = output_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+            async fn readback_rgba8(
+                device: &wgpu::Device,
+                queue: &wgpu::Queue,
+                texture: &wgpu::Texture,
+            ) -> Vec<u8> {
+                let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("gs emulation readback buffer"),
+                    size: (BYTES_PER_ROW as u64) * (TEX_H as u64),
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+
+                let mut encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("gs emulation readback encoder"),
+                    });
+                encoder.copy_texture_to_buffer(
+                    wgpu::ImageCopyTexture {
+                        texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::ImageCopyBuffer {
+                        buffer: &staging,
+                        layout: wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(BYTES_PER_ROW),
+                            rows_per_image: Some(TEX_H),
+                        },
+                    },
+                    wgpu::Extent3d {
+                        width: TEX_W,
+                        height: TEX_H,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                queue.submit([encoder.finish()]);
+
+                let slice = staging.slice(..);
+                let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+                slice.map_async(wgpu::MapMode::Read, move |v| {
+                    sender.send(v).ok();
+                });
+                #[cfg(not(target_arch = "wasm32"))]
+                device.poll(wgpu::Maintain::Wait);
+                #[cfg(target_arch = "wasm32")]
+                device.poll(wgpu::Maintain::Poll);
+                receiver.receive().await.unwrap().unwrap();
+
+                let data = slice.get_mapped_range().to_vec();
+                staging.unmap();
+                data
+            }
+
+            async fn draw_and_sample(
+                device: &wgpu::Device,
+                queue: &wgpu::Queue,
+                gs_cb0_buffer: &wgpu::Buffer,
+                compute_pipeline: &wgpu::ComputePipeline,
+                bg0: &wgpu::BindGroup,
+                bg3: &wgpu::BindGroup,
+                empty_bg: &wgpu::BindGroup,
+                internal_bg: &wgpu::BindGroup,
+                render_pipeline: &wgpu::RenderPipeline,
+                out_vertices: &wgpu::Buffer,
+                output_tex: &wgpu::Texture,
+                output_view: &wgpu::TextureView,
+                offset_x: f32,
+            ) -> [u8; 4] {
+                // Write GS offset into cb0[0].xy.
+                let mut bytes = [0u8; 16];
+                bytes[0..4].copy_from_slice(&offset_x.to_bits().to_le_bytes());
+                bytes[4..8].copy_from_slice(&0f32.to_bits().to_le_bytes());
+                queue.write_buffer(gs_cb0_buffer, 0, &bytes);
+
+                let mut encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("gs emulation encoder"),
+                    });
+
+                {
+                    let mut pass =
+                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("gs emulation compute pass"),
+                            timestamp_writes: None,
+                        });
+                    pass.set_pipeline(compute_pipeline);
+                    pass.set_bind_group(0, bg0, &[]);
+                    pass.set_bind_group(1, empty_bg, &[]);
+                    pass.set_bind_group(2, empty_bg, &[]);
+                    pass.set_bind_group(3, bg3, &[]);
+                    pass.set_bind_group(4, internal_bg, &[]);
+                    pass.dispatch_workgroups(3, 1, 1);
+                }
+
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("gs emulation render pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: output_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(render_pipeline);
+                    pass.set_vertex_buffer(0, out_vertices.slice(..));
+                    pass.draw(0..3, 0..1);
+                }
+
+                queue.submit([encoder.finish()]);
+
+                let data = readback_rgba8(device, queue, output_tex).await;
+                let x = (TEX_W / 2) as usize;
+                let y = (TEX_H / 2) as usize;
+                let idx = y * (BYTES_PER_ROW as usize) + x * 4;
+                [data[idx], data[idx + 1], data[idx + 2], data[idx + 3]]
+            }
+
+            let center_a = draw_and_sample(
+                device,
+                queue,
+                &gs_cb0_buffer,
+                &compute_pipeline,
+                bg0.as_ref(),
+                bg3.as_ref(),
+                &empty_bg,
+                &internal_bg,
+                &render_pipeline,
+                &out_vertices,
+                &output_tex,
+                &output_view,
+                0.0,
+            )
+            .await;
+            let center_b = draw_and_sample(
+                device,
+                queue,
+                &gs_cb0_buffer,
+                &compute_pipeline,
+                bg0.as_ref(),
+                bg3.as_ref(),
+                &empty_bg,
+                &internal_bg,
+                &render_pipeline,
+                &out_vertices,
+                &output_tex,
+                &output_view,
+                2.0,
+            )
+            .await;
+
+            assert!(
+                center_a[0] > 200 && center_a[1] < 50 && center_a[2] < 50,
+                "expected first draw to be red-ish, got {center_a:?}"
+            );
+            assert!(
+                center_b[0] < 50 && center_b[1] < 50 && center_b[2] < 50,
+                "expected second draw to be black-ish after cbuffer update, got {center_b:?}"
             );
         });
     }

@@ -1118,6 +1118,7 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
+            ShaderStage::Geometry,
         ] {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("aerogpu_cmd legacy constants buffer"),
@@ -1141,6 +1142,7 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
+            ShaderStage::Geometry,
         ] {
             bindings.stage_mut(stage).set_constant_buffer(
                 0,
@@ -1332,6 +1334,7 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
+            ShaderStage::Geometry,
         ] {
             self.bindings.stage_mut(stage).set_constant_buffer(
                 0,
@@ -5860,6 +5863,7 @@ impl AerogpuD3d11Executor {
                     ShaderStage::Hull,
                     ShaderStage::Domain,
                     ShaderStage::Compute,
+                    ShaderStage::Geometry,
                 ] {
                     let stage_bindings = self.bindings.stage_mut(stage);
                     stage_bindings.clear_texture_handle(underlying);
@@ -5908,6 +5912,7 @@ impl AerogpuD3d11Executor {
                 ShaderStage::Hull,
                 ShaderStage::Domain,
                 ShaderStage::Compute,
+                ShaderStage::Geometry,
             ] {
                 let stage_bindings = self.bindings.stage_mut(stage);
                 stage_bindings.clear_texture_handle(handle);
@@ -7644,10 +7649,9 @@ impl AerogpuD3d11Executor {
         let entry_point = match stage {
             ShaderStage::Vertex => "vs_main",
             ShaderStage::Pixel => "fs_main",
-            ShaderStage::Geometry => "gs_main",
-            ShaderStage::Hull => "hs_main",
-            ShaderStage::Domain => "ds_main",
             ShaderStage::Compute => "cs_main",
+            // Geometry/tessellation stages are emulated via compute.
+            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => "cs_main",
         };
 
         let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
@@ -7948,6 +7952,7 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
+            ShaderStage::Geometry,
         ] {
             self.bindings
                 .stage_mut(stage)
@@ -11287,8 +11292,9 @@ fn map_pipeline_cache_stage(stage: ShaderStage) -> aero_gpu::pipeline_key::Shade
         ShaderStage::Vertex => aero_gpu::pipeline_key::ShaderStage::Vertex,
         ShaderStage::Pixel => aero_gpu::pipeline_key::ShaderStage::Fragment,
         ShaderStage::Compute => aero_gpu::pipeline_key::ShaderStage::Compute,
+        // Geometry/tessellation stages are lowered/emulated via compute.
         ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
-            unreachable!("pipeline cache shader stage {stage} is not supported by WebGPU")
+            aero_gpu::pipeline_key::ShaderStage::Compute
         }
     }
 }

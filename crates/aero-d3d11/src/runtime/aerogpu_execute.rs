@@ -273,6 +273,10 @@ impl AerogpuCmdRuntime {
         &self.device
     }
 
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
     pub fn supports_indirect_execution(&self) -> bool {
         self.supports_indirect_execution
     }

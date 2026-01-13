@@ -278,9 +278,9 @@ pub fn translate_sm4_module_to_wgsl(
 /// Scans a decoded SM4/SM5 module and produces bind group layout entries for the
 /// module's declared shader stage.
 ///
-/// Note: The signature-driven binding model reserves:
+/// Note: The binding model reserves:
 /// - `@group(2)` for compute resources
-/// - `@group(3)` for geometry resources
+/// - `@group(3)` for geometry shader resources (used by compute-emulated GS)
 pub fn reflect_resource_bindings(module: &Sm4Module) -> Result<Vec<Binding>, ShaderTranslateError> {
     Ok(scan_resources(module, None)?.bindings(module.stage))
 }

@@ -24,6 +24,7 @@ impl ShaderStage {
             0 => Some(Self::Vertex),
             1 => Some(Self::Pixel),
             2 => Some(Self::Compute),
+            3 => Some(Self::Geometry),
             _ => None,
         }
     }

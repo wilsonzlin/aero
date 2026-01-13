@@ -5,7 +5,7 @@
 //! - `@group(0)` = vertex shader stage resources
 //! - `@group(1)` = pixel shader stage resources
 //! - `@group(2)` = compute shader stage resources
-//! - `@group(3)` = geometry shader stage resources
+//! - `@group(3)` = geometry shader stage resources (used by compute-emulated GS)
 //!
 //! Internal translation/emulation passes may reserve additional bind groups. For example,
 //! compute-side vertex pulling uses `@group(3)` (see `runtime::vertex_pulling`).
