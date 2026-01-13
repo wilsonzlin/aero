@@ -787,8 +787,14 @@ struct Device {
   std::vector<Resource*> pending_staging_writes;
 
   // Cached state (shared for the initial immediate-context-only implementation).
-  aerogpu_handle_t current_rtv = 0;
-  Resource* current_rtv_resource = nullptr;
+  // Render targets (D3D11 OM). D3D11 supports up to 8 render-target slots.
+  //
+  // `current_rtv_count` tracks the number of slots bound (0..AEROGPU_MAX_RENDER_TARGETS).
+  // Individual slots within the range may be null (handle==0), matching D3D11's
+  // OMSetRenderTargets semantics.
+  uint32_t current_rtv_count = 0;
+  std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS> current_rtvs{};
+  std::array<Resource*, AEROGPU_MAX_RENDER_TARGETS> current_rtv_resources{};
   aerogpu_handle_t current_dsv = 0;
   Resource* current_dsv_resource = nullptr;
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_vs_srvs{};
@@ -861,6 +867,63 @@ struct Device {
     destroy_cookie = 0;
   }
 };
+
+// Updates the device's cached OM render target bindings (RTVs/DSV) from view
+// objects. This is WDK-independent so it can be shared by both the WDK and
+// repo-local ("portable") builds.
+//
+// Notes:
+// - `num_rtvs` is clamped to AEROGPU_MAX_RENDER_TARGETS.
+// - Slots within `[0, current_rtv_count)` may be null (handle==0).
+// - Slots >= current_rtv_count are cleared to 0/nullptr.
+inline void SetRenderTargetsStateLocked(Device* dev,
+                                        uint32_t num_rtvs,
+                                        const RenderTargetView* const* rtvs,
+                                        const DepthStencilView* dsv) {
+  if (!dev) {
+    return;
+  }
+
+  const uint32_t count = std::min<uint32_t>(num_rtvs, AEROGPU_MAX_RENDER_TARGETS);
+  dev->current_rtv_count = count;
+  dev->current_rtvs.fill(0);
+  dev->current_rtv_resources.fill(nullptr);
+
+  for (uint32_t i = 0; i < count; ++i) {
+    const RenderTargetView* view = (rtvs != nullptr) ? rtvs[i] : nullptr;
+    Resource* res = view ? view->resource : nullptr;
+    dev->current_rtv_resources[i] = res;
+    dev->current_rtvs[i] = res ? res->handle : (view ? view->texture : 0);
+  }
+
+  if (dsv) {
+    dev->current_dsv_resource = dsv->resource;
+    dev->current_dsv = dev->current_dsv_resource ? dev->current_dsv_resource->handle : dsv->texture;
+  } else {
+    dev->current_dsv = 0;
+    dev->current_dsv_resource = nullptr;
+  }
+}
+
+// Emits an AEROGPU_CMD_SET_RENDER_TARGETS packet based on the device's current
+// cached RTV/DSV state. Returns false if the command could not be appended.
+inline bool EmitSetRenderTargetsCmdFromStateLocked(Device* dev) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!cmd) {
+    return false;
+  }
+
+  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  cmd->color_count = count;
+  cmd->depth_stencil = dev->current_dsv;
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    cmd->colors[i] = (i < count) ? dev->current_rtvs[i] : 0;
+  }
+  return true;
+}
 
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {

@@ -883,7 +883,10 @@ static void TrackBoundTargetsForSubmitLocked(Device* dev) {
   if (!dev) {
     return;
   }
-  TrackWddmAllocForSubmitLocked(dev, dev->current_rtv_resource);
+  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, static_cast<uint32_t>(dev->current_rtv_resources.size()));
+  for (uint32_t i = 0; i < count; ++i) {
+    TrackWddmAllocForSubmitLocked(dev, dev->current_rtv_resources[i]);
+  }
   TrackWddmAllocForSubmitLocked(dev, dev->current_dsv_resource);
 }
 
@@ -1276,18 +1279,9 @@ static void EmitSetRenderTargetsLocked(Device* dev) {
   if (!dev) {
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  if (!cmd) {
+  if (!EmitSetRenderTargetsCmdFromStateLocked(dev)) {
     SetError(dev, E_OUTOFMEMORY);
     return;
-  }
-  cmd->color_count = dev->current_rtv ? 1u : 0u;
-  cmd->depth_stencil = dev->current_dsv;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-    cmd->colors[i] = 0;
-  }
-  if (dev->current_rtv) {
-    cmd->colors[0] = dev->current_rtv;
   }
 }
 
@@ -1296,10 +1290,13 @@ static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resour
     return;
   }
   bool changed = false;
-  if (dev->current_rtv == resource) {
-    dev->current_rtv = 0;
-    dev->current_rtv_resource = nullptr;
-    changed = true;
+  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  for (uint32_t i = 0; i < count; ++i) {
+    if (dev->current_rtvs[i] == resource) {
+      dev->current_rtvs[i] = 0;
+      dev->current_rtv_resources[i] = nullptr;
+      changed = true;
+    }
   }
   if (dev->current_dsv == resource) {
     dev->current_dsv = 0;
@@ -5077,8 +5074,9 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   std::memset(dev->vs_samplers, 0, sizeof(dev->vs_samplers));
   std::memset(dev->ps_samplers, 0, sizeof(dev->ps_samplers));
 
-  dev->current_rtv = 0;
-  dev->current_rtv_resource = nullptr;
+  dev->current_rtv_count = 0;
+  dev->current_rtvs.fill(0);
+  dev->current_rtv_resources.fill(nullptr);
   dev->current_dsv = 0;
   dev->current_dsv_resource = nullptr;
   dev->current_vs_srvs.fill(nullptr);
@@ -5149,24 +5147,22 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_rtv = 0;
-  dev->current_rtv_resource = nullptr;
-  if (NumViews && phRtvs && phRtvs[0].pDrvPrivate) {
-    auto* rtv = FromHandle<D3D11DDI_HRENDERTARGETVIEW, RenderTargetView>(phRtvs[0]);
-    dev->current_rtv_resource = rtv ? rtv->resource : nullptr;
-    dev->current_rtv = dev->current_rtv_resource ? dev->current_rtv_resource->handle : (rtv ? rtv->texture : 0);
-  }
-  if (hDsv.pDrvPrivate) {
-    auto* dsv = FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hDsv);
-    dev->current_dsv_resource = dsv ? dsv->resource : nullptr;
-    dev->current_dsv = dev->current_dsv_resource ? dev->current_dsv_resource->handle : (dsv ? dsv->texture : 0);
-  } else {
-    dev->current_dsv = 0;
-    dev->current_dsv_resource = nullptr;
+  std::array<const RenderTargetView*, AEROGPU_MAX_RENDER_TARGETS> rtvs{};
+  const uint32_t rtv_count = std::min<uint32_t>(NumViews, AEROGPU_MAX_RENDER_TARGETS);
+  for (uint32_t i = 0; i < rtv_count; ++i) {
+    if (phRtvs && phRtvs[i].pDrvPrivate) {
+      rtvs[i] = FromHandle<D3D11DDI_HRENDERTARGETVIEW, RenderTargetView>(phRtvs[i]);
+    }
   }
 
+  const DepthStencilView* dsv = hDsv.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hDsv) : nullptr;
+  SetRenderTargetsStateLocked(dev, NumViews, rtvs.data(), dsv);
+
   // Auto-unbind SRVs that alias the newly bound render targets/depth buffer.
-  UnbindResourceFromSrvsLocked(dev, dev->current_rtv);
+  const uint32_t bound_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  for (uint32_t i = 0; i < bound_count; ++i) {
+    UnbindResourceFromSrvsLocked(dev, dev->current_rtvs[i]);
+  }
   UnbindResourceFromSrvsLocked(dev, dev->current_dsv);
 
   EmitSetRenderTargetsLocked(dev);
@@ -6084,7 +6080,7 @@ static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_
   if (!dev) {
     return;
   }
-  Resource* rt = dev->current_rtv_resource;
+  Resource* rt = (dev->current_rtv_count != 0) ? dev->current_rtv_resources[0] : nullptr;
   Resource* vb = dev->current_vb;
   if (!rt || !vb || rt->kind != ResourceKind::Texture2D || vb->kind != ResourceKind::Buffer) {
     return;
@@ -6167,7 +6163,7 @@ static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT 
   if (!dev) {
     return;
   }
-  Resource* rt = dev->current_rtv_resource;
+  Resource* rt = (dev->current_rtv_count != 0) ? dev->current_rtv_resources[0] : nullptr;
   Resource* vb = dev->current_vb;
   Resource* ib = dev->current_ib;
   if (!rt || !vb || !ib || rt->kind != ResourceKind::Texture2D || vb->kind != ResourceKind::Buffer ||
@@ -6310,7 +6306,7 @@ void AEROGPU_APIENTRY ClearRenderTargetView11(D3D11DDI_HDEVICECONTEXT hCtx,
     rt = view ? view->resource : nullptr;
   }
   if (!rt) {
-    rt = dev->current_rtv_resource;
+    rt = (dev->current_rtv_count != 0) ? dev->current_rtv_resources[0] : nullptr;
   }
   SoftwareClearTexture2D(rt, rgba);
   TrackBoundTargetsForSubmitLocked(dev);
@@ -8119,11 +8115,26 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   }
   put_identity(resources[numResources - 1], std::move(saved));
 
-  const bool needs_rebind =
-      dev->current_rtv_resource &&
-      (std::find(resources.begin(), resources.end(), dev->current_rtv_resource) != resources.end());
+  bool needs_rebind = false;
+  const uint32_t bound_rtv_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  for (uint32_t i = 0; i < bound_rtv_count; ++i) {
+    Resource* rtv_res = dev->current_rtv_resources[i];
+    if (!rtv_res) {
+      continue;
+    }
+    if (std::find(resources.begin(), resources.end(), rtv_res) != resources.end()) {
+      needs_rebind = true;
+      break;
+    }
+  }
   if (needs_rebind) {
-    const aerogpu_handle_t new_rtv = dev->current_rtv_resource ? dev->current_rtv_resource->handle : 0;
+    std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS> new_rtvs = dev->current_rtvs;
+    for (uint32_t i = 0; i < bound_rtv_count; ++i) {
+      if (dev->current_rtv_resources[i]) {
+        new_rtvs[i] = dev->current_rtv_resources[i]->handle;
+      }
+    }
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
     if (!cmd) {
       // Undo the rotation (rotate right by one).
@@ -8136,14 +8147,15 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
       return;
     }
 
-    dev->current_rtv = new_rtv;
-    cmd->color_count = new_rtv ? 1u : 0u;
+    // Update the cached handles only after we've successfully appended the
+    // rebind packet. If we fail to append (OOM), we roll back the rotation and
+    // must keep the previous handles intact.
+    dev->current_rtvs = new_rtvs;
+
+    cmd->color_count = bound_rtv_count;
     cmd->depth_stencil = dev->current_dsv;
-    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-      cmd->colors[i] = 0;
-    }
-    if (new_rtv) {
-      cmd->colors[0] = new_rtv;
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+      cmd->colors[i] = (i < bound_rtv_count) ? new_rtvs[i] : 0;
     }
   }
 
