@@ -213,11 +213,11 @@ mod tests {
         let mk = |vs: ShaderHash, ps: ShaderHash| PipelineKey {
             vertex_shader: vs,
             fragment_shader: ps,
-            color_targets: vec![ColorTargetKey {
+            color_targets: vec![Some(ColorTargetKey {
                 format: wgpu::TextureFormat::Rgba8Unorm,
                 blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
-            }],
+            })],
             depth_stencil: None,
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             cull_mode: None,

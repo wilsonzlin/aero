@@ -27,7 +27,7 @@ fn end_cmd(stream: &mut [u8], start: usize) {
 }
 
 #[test]
-fn aerogpu_cmd_set_render_targets_rejects_gaps() {
+fn aerogpu_cmd_set_render_targets_accepts_gaps() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
@@ -63,9 +63,7 @@ fn aerogpu_cmd_set_render_targets_rejects_gaps() {
             .copy_from_slice(&total_size.to_le_bytes());
 
         let mut guest_mem = VecGuestMemory::new(0);
-        let err = exec
-            .execute_cmd_stream(&stream, None, &mut guest_mem)
-            .expect_err("expected SET_RENDER_TARGETS gap to error");
-        assert!(err.to_string().contains("gaps are not supported"));
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("expected SET_RENDER_TARGETS gap to be accepted");
     });
 }

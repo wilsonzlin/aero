@@ -116,11 +116,11 @@ fn render_pipeline_is_cached() {
     let key = RenderPipelineKey {
         vertex_shader: vs_hash,
         fragment_shader: fs_hash,
-        color_targets: vec![ColorTargetKey {
+        color_targets: vec![Some(ColorTargetKey {
             format: wgpu::TextureFormat::Rgba8Unorm,
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
-        }],
+        })],
         depth_stencil: None,
         primitive_topology: wgpu::PrimitiveTopology::TriangleList,
         cull_mode: None,

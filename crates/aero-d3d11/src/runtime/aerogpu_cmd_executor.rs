@@ -775,7 +775,14 @@ struct AerogpuD3d11Resources {
 
 #[derive(Debug)]
 struct AerogpuD3d11State {
-    render_targets: Vec<u32>,
+    /// Render target texture handles by D3D11 slot index.
+    ///
+    /// D3D11 allows "gaps" in the RTV array (e.g. `[NULL, RT1]`). WebGPU models this with
+    /// `Option` entries in the `FragmentState.targets` / `RenderPassDescriptor.color_attachments`
+    /// arrays.
+    ///
+    /// The length is `color_count` from `SET_RENDER_TARGETS` (up to 8).
+    render_targets: Vec<Option<u32>>,
     depth_stencil: Option<u32>,
     viewport: Option<Viewport>,
     scissor: Option<Scissor>,
@@ -2213,7 +2220,8 @@ impl AerogpuD3d11Executor {
         guest_mem: &mut dyn GuestMemory,
         report: &mut ExecuteReport,
     ) -> Result<()> {
-        if self.state.render_targets.is_empty() {
+        let has_color_targets = self.state.render_targets.iter().any(|rt| rt.is_some());
+        if !has_color_targets {
             bail!("aerogpu_cmd: draw without bound render target");
         }
 
@@ -2264,7 +2272,7 @@ impl AerogpuD3d11Executor {
         // Upload any dirty render targets/depth-stencil attachments before starting the passes.
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
-        for &handle in &render_targets {
+        for &handle in render_targets.iter().flatten() {
             self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
         }
         if let Some(handle) = depth_stencil {
@@ -2291,7 +2299,7 @@ impl AerogpuD3d11Executor {
         // The upcoming render pass will write to bound targets. Invalidate any CPU shadow copies
         // so that later partial `UPLOAD_RESOURCE` operations don't accidentally overwrite
         // GPU-produced contents.
-        for &handle in &render_targets {
+        for &handle in render_targets.iter().flatten() {
             if let Some(tex) = self.resources.textures.get_mut(&handle) {
                 tex.host_shadow = None;
                 tex.guest_backing_is_current = false;
@@ -2632,7 +2640,9 @@ impl AerogpuD3d11Executor {
         let rt_dims = self
             .state
             .render_targets
-            .first()
+            .iter()
+            .flatten()
+            .next()
             .and_then(|rt| self.resources.textures.get(rt))
             .map(|tex| (tex.desc.width, tex.desc.height));
 
@@ -2724,7 +2734,7 @@ impl AerogpuD3d11Executor {
             }
         }
 
-        for &handle in &render_targets {
+        for &handle in render_targets.iter().flatten() {
             self.encoder_used_textures.insert(handle);
         }
         if let Some(handle) = depth_stencil {
@@ -2799,13 +2809,13 @@ impl AerogpuD3d11Executor {
         guest_mem: &mut dyn GuestMemory,
         report: &mut ExecuteReport,
     ) -> Result<()> {
-        if self.state.render_targets.is_empty() && self.state.depth_stencil.is_none() {
+        let has_color_targets = self.state.render_targets.iter().any(|rt| rt.is_some());
+        if !has_color_targets && self.state.depth_stencil.is_none() {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
 
-        let depth_only_pass =
-            self.state.render_targets.is_empty() && self.state.depth_stencil.is_some();
-
+        let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
+ 
         // Some D3D11 primitive topologies (patchlists + adjacency) cannot be expressed in WebGPU
         // render pipelines. Accept them in `SET_PRIMITIVE_TOPOLOGY` so the command stream can carry
         // the original D3D11 value, but reject attempts to draw through the non-emulated path.
@@ -2815,7 +2825,7 @@ impl AerogpuD3d11Executor {
 
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
-        for &handle in &render_targets {
+        for &handle in render_targets.iter().flatten() {
             self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
         }
         if let Some(handle) = depth_stencil {
@@ -2840,7 +2850,7 @@ impl AerogpuD3d11Executor {
         // The upcoming render pass will write to bound targets. Invalidate any CPU shadow copies so
         // that later partial `UPLOAD_RESOURCE` operations don't accidentally overwrite GPU-produced
         // contents.
-        for &handle in &render_targets {
+        for &handle in render_targets.iter().flatten() {
             if let Some(tex) = self.resources.textures.get_mut(&handle) {
                 tex.host_shadow = None;
                 tex.guest_backing_is_current = false;
@@ -2942,19 +2952,23 @@ impl AerogpuD3d11Executor {
 
         // Create local texture views so we can continue mutating `self` while the render pass is
         // active.
-        let mut color_views: Vec<wgpu::TextureView> = Vec::with_capacity(
+        let mut color_views: Vec<Option<wgpu::TextureView>> = Vec::with_capacity(
             self.state.render_targets.len() + usize::from(depth_only_pass),
         );
         for &tex_id in &self.state.render_targets {
+            let Some(tex_id) = tex_id else {
+                color_views.push(None);
+                continue;
+            };
             let tex = self
                 .resources
                 .textures
                 .get(&tex_id)
                 .ok_or_else(|| anyhow!("unknown render target texture {tex_id}"))?;
-            color_views.push(
+            color_views.push(Some(
                 tex.texture
                     .create_view(&wgpu::TextureViewDescriptor::default()),
-            );
+            ));
         }
         if depth_only_pass {
             let ds_id = self
@@ -2969,7 +2983,7 @@ impl AerogpuD3d11Executor {
                     .ok_or_else(|| anyhow!("unknown depth stencil texture {ds_id}"))?;
                 (tex.desc.width, tex.desc.height)
             };
-            color_views.push(self.depth_only_dummy_color_view(ds_w, ds_h));
+            color_views.push(Some(self.depth_only_dummy_color_view(ds_w, ds_h)));
         }
         let depth_stencil_view: Option<(wgpu::TextureView, wgpu::TextureFormat)> =
             if let Some(ds_id) = self.state.depth_stencil {
@@ -2990,6 +3004,10 @@ impl AerogpuD3d11Executor {
         let mut color_attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> =
             Vec::with_capacity(color_views.len());
         for (idx, view) in color_views.iter().enumerate() {
+            let Some(view) = view.as_ref() else {
+                color_attachments.push(None);
+                continue;
+            };
             let is_dummy = depth_only_pass && idx == render_targets.len();
             let load = if is_dummy {
                 wgpu::LoadOp::Clear(wgpu::Color::BLACK)
@@ -3038,7 +3056,9 @@ impl AerogpuD3d11Executor {
         let rt_dims = self
             .state
             .render_targets
-            .first()
+            .iter()
+            .flatten()
+            .next()
             .and_then(|rt| self.resources.textures.get(rt))
             .map(|tex| (tex.desc.width, tex.desc.height))
             .or_else(|| {
@@ -3219,7 +3239,7 @@ impl AerogpuD3d11Executor {
         // `SET_SHADER_CONSTANTS_F` via `queue.write_buffer` without reordering it ahead of the
         // earlier draw commands.
         let mut legacy_constants_used = [false; 3];
-        for &handle in &render_targets {
+        for &handle in render_targets.iter().flatten() {
             self.encoder_used_textures.insert(handle);
         }
         if let Some(handle) = depth_stencil {
@@ -3361,28 +3381,26 @@ impl AerogpuD3d11Executor {
                 }
 
                 let mut colors = Vec::with_capacity(color_count);
-                let mut seen_gap = false;
-                let mut invalid_gap = false;
                 for i in 0..color_count {
                     let tex_id = read_u32_le(cmd_bytes, 16 + i * 4)?;
-                    if tex_id == 0 {
-                        seen_gap = true;
-                        continue;
-                    }
-                    if seen_gap {
-                        invalid_gap = true;
-                        break;
-                    }
+                    let tex_id = if tex_id == 0 {
+                        None
+                    } else {
+                        Some(
+                            self.shared_surfaces
+                                .resolve_cmd_handle(tex_id, "SET_RENDER_TARGETS")?,
+                        )
+                    };
                     colors.push(tex_id);
-                }
-                if invalid_gap {
-                    break;
                 }
 
                 let depth_stencil = if depth_stencil == 0 {
                     None
                 } else {
-                    Some(depth_stencil)
+                    Some(
+                        self.shared_surfaces
+                            .resolve_cmd_handle(depth_stencil, "SET_RENDER_TARGETS")?,
+                    )
                 };
 
                 // Render targets cannot be changed inside a render pass; allow no-ops so redundant
@@ -3467,7 +3485,10 @@ impl AerogpuD3d11Executor {
                     .resolve_handle(read_u32_le(cmd_bytes, 8)?);
                 let mut needs_break = false;
 
-                if render_targets.contains(&handle) || depth_stencil.is_some_and(|ds| ds == handle)
+                if render_targets
+                    .iter()
+                    .any(|rt| rt.is_some_and(|rt| rt == handle))
+                    || depth_stencil.is_some_and(|ds| ds == handle)
                 {
                     needs_break = true;
                 }
@@ -3610,7 +3631,9 @@ impl AerogpuD3d11Executor {
                     .get(&handle)
                     .and_then(|tex| tex.backing);
                 if !needs_break && texture_backing.is_some() {
-                    if render_targets.contains(&handle)
+                    if render_targets
+                        .iter()
+                        .any(|rt| rt.is_some_and(|rt| rt == handle))
                         || depth_stencil.is_some_and(|ds| ds == handle)
                     {
                         needs_break = true;
@@ -4956,7 +4979,11 @@ impl AerogpuD3d11Executor {
                 self.encoder_used_textures.remove(&underlying);
 
                 // Clean up bindings in state.
-                self.state.render_targets.retain(|&rt| rt != underlying);
+                for rt in &mut self.state.render_targets {
+                    if rt.is_some_and(|rt| rt == underlying) {
+                        *rt = None;
+                    }
+                }
                 if self.state.depth_stencil == Some(underlying) {
                     self.state.depth_stencil = None;
                 }
@@ -5004,7 +5031,11 @@ impl AerogpuD3d11Executor {
             self.encoder_used_buffers.remove(&handle);
             self.encoder_used_textures.remove(&handle);
 
-            self.state.render_targets.retain(|&rt| rt != handle);
+            for rt in &mut self.state.render_targets {
+                if rt.is_some_and(|rt| rt == handle) {
+                    *rt = None;
+                }
+            }
             if self.state.depth_stencil == Some(handle) {
                 self.state.depth_stencil = None;
             }
@@ -7148,20 +7179,17 @@ impl AerogpuD3d11Executor {
             bail!("SET_RENDER_TARGETS: color_count out of range: {color_count}");
         }
         let mut colors = Vec::with_capacity(color_count);
-        let mut seen_gap = false;
         for i in 0..color_count {
             let tex_id = read_u32_le(cmd_bytes, 16 + i * 4)?;
-            if tex_id == 0 {
-                seen_gap = true;
-                continue;
-            }
-            if seen_gap {
-                bail!("SET_RENDER_TARGETS: render target slot {i} is set after an earlier slot was unbound (gaps are not supported yet)");
-            }
-            colors.push(
-                self.shared_surfaces
-                    .resolve_cmd_handle(tex_id, "SET_RENDER_TARGETS")?,
-            );
+            let tex_id = if tex_id == 0 {
+                None
+            } else {
+                Some(
+                    self.shared_surfaces
+                        .resolve_cmd_handle(tex_id, "SET_RENDER_TARGETS")?,
+                )
+            };
+            colors.push(tex_id);
         }
         self.state.render_targets = colors;
         self.state.depth_stencil = if depth_stencil == 0 {
@@ -7475,7 +7503,9 @@ impl AerogpuD3d11Executor {
         if cmd_bytes.len() < 36 {
             bail!("CLEAR: expected at least 36 bytes, got {}", cmd_bytes.len());
         }
-        if self.state.render_targets.is_empty() && self.state.depth_stencil.is_none() {
+        if self.state.render_targets.iter().all(|rt| rt.is_none())
+            && self.state.depth_stencil.is_none()
+        {
             // Nothing bound; treat as no-op for robustness.
             return Ok(());
         }
@@ -7489,14 +7519,14 @@ impl AerogpuD3d11Executor {
 
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
-        for &handle in &render_targets {
+        for &handle in render_targets.iter().flatten() {
             self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
         }
         if let Some(handle) = depth_stencil {
             self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
         }
 
-        for &handle in &render_targets {
+        for &handle in render_targets.iter().flatten() {
             self.encoder_used_textures.insert(handle);
         }
         if let Some(handle) = depth_stencil {
@@ -7514,7 +7544,7 @@ impl AerogpuD3d11Executor {
 
         // Clear writes modify the underlying textures; invalidate any CPU shadows.
         if flags & AEROGPU_CLEAR_COLOR != 0 {
-            for &handle in &render_targets {
+            for &handle in render_targets.iter().flatten() {
                 if let Some(tex) = self.resources.textures.get_mut(&handle) {
                     tex.host_shadow = None;
                     tex.guest_backing_is_current = false;
@@ -7537,9 +7567,9 @@ impl AerogpuD3d11Executor {
         if flags & AEROGPU_CLEAR_COLOR != 0 {
             for (idx, att) in color_attachments.iter_mut().enumerate() {
                 if let Some(att) = att.as_mut() {
-                    let rt_handle = *render_targets
-                        .get(idx)
-                        .ok_or_else(|| anyhow!("CLEAR: render target list out of bounds"))?;
+                    let Some(rt_handle) = render_targets.get(idx).copied().flatten() else {
+                        bail!("CLEAR: render target slot {idx} is unbound");
+                    };
                     let rt_tex = self.resources.textures.get(&rt_handle).ok_or_else(|| {
                         anyhow!("CLEAR: unknown render target texture {rt_handle}")
                     })?;
@@ -7599,7 +7629,9 @@ impl AerogpuD3d11Executor {
         let presented_render_target = self
             .state
             .render_targets
-            .first()
+            .iter()
+            .flatten()
+            .next()
             .copied()
             .map(|h| self.shared_surfaces.resolve_handle(h));
         report.presents.push(PresentEvent {
@@ -7632,7 +7664,9 @@ impl AerogpuD3d11Executor {
         let presented_render_target = self
             .state
             .render_targets
-            .first()
+            .iter()
+            .flatten()
+            .next()
             .copied()
             .map(|h| self.shared_surfaces.resolve_handle(h));
         report.presents.push(PresentEvent {
@@ -8593,6 +8627,10 @@ fn build_render_pass_attachments<'a>(
 )> {
     let mut color_attachments = Vec::with_capacity(state.render_targets.len());
     for &tex_id in &state.render_targets {
+        let Some(tex_id) = tex_id else {
+            color_attachments.push(None);
+            continue;
+        };
         let tex = resources
             .textures
             .get(&tex_id)
@@ -8954,7 +8992,8 @@ fn get_or_create_render_pipeline_for_state<'a>(
         &vs_input_signature,
     )?;
 
-    let depth_only_pass = state.render_targets.is_empty() && state.depth_stencil.is_some();
+    let depth_only_pass = state.render_targets.iter().all(|rt| rt.is_none())
+        && state.depth_stencil.is_some();
 
     let mut color_targets = if depth_only_pass {
         Vec::with_capacity(1)
@@ -8977,14 +9016,19 @@ fn get_or_create_render_pipeline_for_state<'a>(
             blend: None,
             write_mask: wgpu::ColorWrites::empty(),
         };
-        color_targets.push(ColorTargetKey {
+        color_targets.push(Some(ColorTargetKey {
             format: ct.format,
             blend: None,
             write_mask: ct.write_mask,
-        });
+        }));
         color_target_states.push(Some(ct));
     } else {
         for &rt in &state.render_targets {
+            let Some(rt) = rt else {
+                color_targets.push(None);
+                color_target_states.push(None);
+                continue;
+            };
             let tex = resources
                 .textures
                 .get(&rt)
@@ -9001,11 +9045,11 @@ fn get_or_create_render_pipeline_for_state<'a>(
                 blend: state.blend,
                 write_mask,
             };
-            color_targets.push(ColorTargetKey {
+            color_targets.push(Some(ColorTargetKey {
                 format: ct.format,
                 blend: ct.blend.map(Into::into),
                 write_mask: ct.write_mask,
-            });
+            }));
             color_target_states.push(Some(ct));
         }
     }
@@ -9237,9 +9281,14 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
     let vb_layout = vertex_buffer.as_wgpu();
     let vb_key: aero_gpu::pipeline_key::VertexBufferLayoutKey = (&vb_layout).into();
 
-    let mut color_targets = Vec::with_capacity(state.render_targets.len());
+    let mut color_targets: Vec<Option<ColorTargetKey>> = Vec::with_capacity(state.render_targets.len());
     let mut color_target_states = Vec::with_capacity(state.render_targets.len());
     for &rt in &state.render_targets {
+        let Some(rt) = rt else {
+            color_targets.push(None);
+            color_target_states.push(None);
+            continue;
+        };
         let tex = resources
             .textures
             .get(&rt)
@@ -9253,11 +9302,11 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
             blend: state.blend,
             write_mask,
         };
-        color_targets.push(ColorTargetKey {
+        color_targets.push(Some(ColorTargetKey {
             format: ct.format,
             blend: ct.blend.map(Into::into),
             write_mask: ct.write_mask,
-        });
+        }));
         color_target_states.push(Some(ct));
     }
 

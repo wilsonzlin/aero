@@ -858,10 +858,14 @@ impl AerogpuCmdRuntime {
         let blend = self.state.blend_state;
         let mut color_target_states: Vec<Option<wgpu::ColorTargetState>> = Vec::new();
         for ct in &key.color_targets {
+            let Some(ct) = ct else {
+                color_target_states.push(None);
+                continue;
+            };
             color_target_states.push(Some(wgpu::ColorTargetState {
                 format: ct.format,
                 blend: blend.blend,
-                write_mask: blend.write_mask,
+                write_mask: ct.write_mask,
             }));
         }
 
@@ -1333,7 +1337,7 @@ fn build_vertex_state(
 
 type ColorAttachments<'a> = (
     Vec<Option<wgpu::RenderPassColorAttachment<'a>>>,
-    Vec<ColorTargetKey>,
+    Vec<Option<ColorTargetKey>>,
     Option<(u32, u32)>,
 );
 
@@ -1341,19 +1345,27 @@ fn build_color_attachments<'a>(
     resources: &'a AerogpuResources,
     state: &D3D11ShadowState,
 ) -> Result<ColorAttachments<'a>> {
-    let mut attachments = Vec::new();
-    let mut keys = Vec::new();
+    // WebGPU requires the render pass color attachments slice length to match the pipeline's
+    // `FragmentState.targets` length. Preserve the D3D11 slot indices by including gaps, but trim
+    // trailing `None` entries so we don't force a fixed length of 8.
+    let mut last_slot: Option<usize> = None;
+    for (slot, handle) in state.render_targets.colors.iter().enumerate() {
+        if handle.is_some() {
+            last_slot = Some(slot);
+        }
+    }
+    let len = last_slot.map(|v| v + 1).unwrap_or(0);
+
+    let mut attachments = Vec::with_capacity(len);
+    let mut keys = Vec::with_capacity(len);
 
     let mut size: Option<(u32, u32)> = None;
-    let mut seen_gap = false;
-    for (slot, handle) in state.render_targets.colors.iter().enumerate() {
+    for handle in state.render_targets.colors.iter().take(len) {
         let Some(handle) = handle else {
-            seen_gap = true;
+            attachments.push(None);
+            keys.push(None);
             continue;
         };
-        if seen_gap {
-            bail!("render target slot {slot} is set after an earlier slot was unbound (gaps are not supported yet)");
-        }
 
         let tex = resources
             .textures
@@ -1387,11 +1399,11 @@ fn build_color_attachments<'a>(
             },
         }));
 
-        keys.push(ColorTargetKey {
+        keys.push(Some(ColorTargetKey {
             format: tex.desc.format,
             blend: state.blend_state.blend.map(Into::into),
             write_mask: state.blend_state.write_mask,
-        });
+        }));
     }
 
     Ok((attachments, keys, size))

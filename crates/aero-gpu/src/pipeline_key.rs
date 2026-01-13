@@ -214,7 +214,7 @@ pub struct RenderPipelineKey {
     pub vertex_shader: ShaderHash,
     pub fragment_shader: ShaderHash,
 
-    pub color_targets: Vec<ColorTargetKey>,
+    pub color_targets: Vec<Option<ColorTargetKey>>,
     pub depth_stencil: Option<DepthStencilKey>,
 
     pub primitive_topology: wgpu::PrimitiveTopology,
@@ -244,11 +244,11 @@ mod tests {
         let k1 = RenderPipelineKey {
             vertex_shader: 1,
             fragment_shader: 2,
-            color_targets: vec![ColorTargetKey {
+            color_targets: vec![Some(ColorTargetKey {
                 format: wgpu::TextureFormat::Rgba8Unorm,
                 blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
-            }],
+            })],
             depth_stencil: None,
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             cull_mode: Some(wgpu::Face::Back),
@@ -274,5 +274,18 @@ mod tests {
         let mut k4 = k1.clone();
         k4.front_face = wgpu::FrontFace::Cw;
         assert_ne!(k1, k4);
+
+        // Gaps in the color-target array must be part of the cache key, since they change the
+        // render pipeline's fragment output interface.
+        let mut k5 = k1.clone();
+        k5.color_targets = vec![
+            None,
+            Some(ColorTargetKey {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            }),
+        ];
+        assert_ne!(k1, k5);
     }
 }
