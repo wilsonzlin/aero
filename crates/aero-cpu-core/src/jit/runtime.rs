@@ -12,6 +12,23 @@ pub struct JitConfig {
     pub cache_max_bytes: usize,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct JitRuntimeStats {
+    pub cache_lookup_hit_total: u64,
+    pub cache_lookup_miss_total: u64,
+    /// Total number of `CompileRequestSink::request_compile` calls issued by the runtime.
+    pub compile_requests_total: u64,
+    pub blocks_installed_total: u64,
+    /// Number of blocks evicted as a result of `CodeCache::insert` capacity pressure.
+    pub blocks_evicted_total: u64,
+    /// Number of blocks invalidated (explicitly via `invalidate_block` or implicitly due to stale
+    /// page-version checks).
+    pub blocks_invalidated_total: u64,
+    /// Number of compilation results rejected because their page-version snapshots were stale at
+    /// install time.
+    pub stale_install_rejected_total: u64,
+}
+
 impl Default for JitConfig {
     fn default() -> Self {
         Self {
@@ -119,6 +136,7 @@ impl PageVersionTracker {
 
 pub struct JitRuntime<B, C> {
     config: JitConfig,
+    stats: JitRuntimeStats,
     backend: B,
     compile: C,
     cache: CodeCache,
@@ -136,6 +154,7 @@ where
         let profile = HotnessProfile::new(config.hot_threshold);
         Self {
             config,
+            stats: JitRuntimeStats::default(),
             backend,
             compile,
             cache,
@@ -146,6 +165,15 @@ where
 
     pub fn config(&self) -> &JitConfig {
         &self.config
+    }
+
+    #[inline]
+    pub fn stats_snapshot(&self) -> JitRuntimeStats {
+        self.stats
+    }
+
+    pub fn stats_reset(&mut self) {
+        self.stats = JitRuntimeStats::default();
     }
 
     pub fn cache_len(&self) -> usize {
@@ -190,6 +218,8 @@ where
     /// compilation request is issued for the same entry RIP.
     pub fn install_handle(&mut self, handle: CompiledBlockHandle) -> Vec<u64> {
         if !self.is_block_valid(&handle) {
+            self.stats.stale_install_rejected_total =
+                self.stats.stale_install_rejected_total.saturating_add(1);
             // A background compilation result can arrive after the guest has modified the code.
             // Installing such a block would be incorrect; reject it and request recompilation.
             let entry_rip = handle.entry_rip;
@@ -202,16 +232,27 @@ where
 
                 // Existing block is also stale; drop it so we don't keep probing it on every
                 // execution attempt.
-                self.cache.remove(entry_rip);
+                if self.cache.remove(entry_rip).is_some() {
+                    self.stats.blocks_invalidated_total =
+                        self.stats.blocks_invalidated_total.saturating_add(1);
+                }
                 self.profile.clear_requested(entry_rip);
             }
 
             self.profile.mark_requested(entry_rip);
+            self.stats.compile_requests_total =
+                self.stats.compile_requests_total.saturating_add(1);
             self.compile.request_compile(entry_rip);
             return Vec::new();
         }
 
+        self.stats.blocks_installed_total = self.stats.blocks_installed_total.saturating_add(1);
         let evicted = self.cache.insert(handle);
+        let evicted_count = u64::try_from(evicted.len()).unwrap_or(u64::MAX);
+        self.stats.blocks_evicted_total = self
+            .stats
+            .blocks_evicted_total
+            .saturating_add(evicted_count);
         for rip in &evicted {
             self.profile.clear_requested(*rip);
         }
@@ -234,6 +275,8 @@ where
 
     pub fn invalidate_block(&mut self, entry_rip: u64) -> bool {
         if self.cache.remove(entry_rip).is_some() {
+            self.stats.blocks_invalidated_total =
+                self.stats.blocks_invalidated_total.saturating_add(1);
             self.profile.clear_requested(entry_rip);
             return true;
         }
@@ -248,16 +291,31 @@ where
         let mut handle = self.cache.get_cloned(entry_rip);
         if let Some(ref h) = handle {
             if !self.is_block_valid(h) {
-                self.cache.remove(entry_rip);
+                if self.cache.remove(entry_rip).is_some() {
+                    self.stats.blocks_invalidated_total =
+                        self.stats.blocks_invalidated_total.saturating_add(1);
+                }
                 self.profile.clear_requested(entry_rip);
                 self.profile.mark_requested(entry_rip);
+                self.stats.compile_requests_total =
+                    self.stats.compile_requests_total.saturating_add(1);
                 self.compile.request_compile(entry_rip);
                 handle = None;
             }
         }
 
+        if handle.is_some() {
+            self.stats.cache_lookup_hit_total =
+                self.stats.cache_lookup_hit_total.saturating_add(1);
+        } else {
+            self.stats.cache_lookup_miss_total =
+                self.stats.cache_lookup_miss_total.saturating_add(1);
+        }
+
         let has_compiled = handle.is_some();
         if self.profile.record_hit(entry_rip, has_compiled) {
+            self.stats.compile_requests_total =
+                self.stats.compile_requests_total.saturating_add(1);
             self.compile.request_compile(entry_rip);
         }
 
