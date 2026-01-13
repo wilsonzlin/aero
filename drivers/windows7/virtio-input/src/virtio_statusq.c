@@ -136,10 +136,13 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
     VIRTQ_SG sg;
     UINT16 head;
     NTSTATUS status;
+    PDEVICE_CONTEXT devCtx;
 
     if (Q == NULL || Q->PciDevice == NULL || Q->Vq == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+
+    devCtx = (Q->Device != NULL) ? VirtioInputGetDeviceContext(Q->Device) : NULL;
 
     if (!Q->Active || !Q->PendingValid) {
         return STATUS_SUCCESS;
@@ -147,6 +150,9 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
 
     idx = VirtioStatusQPopFreeTxBuffer(Q);
     if (idx == VIRTQ_SPLIT_NO_DESC) {
+        if (devCtx != NULL) {
+            VioInputCounterInc(&devCtx->Counters.StatusQFull);
+        }
         if (Q->DropOnFull) {
             VIOINPUT_LOG(
                 VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
@@ -154,6 +160,9 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
                 (ULONG)Q->PendingLedBitfield);
             VirtioStatusQCountDrop(Q);
             Q->PendingValid = FALSE;
+            if (devCtx != NULL) {
+                VioInputCounterInc(&devCtx->Counters.LedWritesDropped);
+            }
         }
         return STATUS_SUCCESS;
     }
@@ -180,6 +189,9 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
                 (ULONG)Q->PendingLedBitfield);
             VirtioStatusQCountDrop(Q);
             Q->PendingValid = FALSE;
+            if (devCtx != NULL) {
+                VioInputCounterInc(&devCtx->Counters.LedWritesDropped);
+            }
         }
         return STATUS_SUCCESS;
     }
@@ -189,6 +201,11 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
     VirtqSplitPublish(Q->Vq, head);
     VirtioPciNotifyQueue(Q->PciDevice, Q->QueueIndex);
     VirtqSplitKickCommit(Q->Vq);
+
+    if (devCtx != NULL) {
+        VioInputCounterInc(&devCtx->Counters.StatusQSubmits);
+        VioInputCounterInc(&devCtx->Counters.LedWritesSubmitted);
+    }
 
     VirtioStatusQUpdateDepthCounter(Q);
     return STATUS_SUCCESS;
@@ -414,11 +431,18 @@ VirtioStatusQSetDropOnFull(_In_ PVIRTIO_STATUSQ StatusQ, _In_ BOOLEAN DropOnFull
 NTSTATUS
 VirtioStatusQWriteKeyboardLedReport(_In_ PVIRTIO_STATUSQ StatusQ, _In_ UCHAR LedBitfield)
 {
+    PDEVICE_CONTEXT devCtx;
+
     if (StatusQ == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
+    devCtx = (StatusQ->Device != NULL) ? VirtioInputGetDeviceContext(StatusQ->Device) : NULL;
+
     if (!StatusQ->Active) {
+        if (devCtx != NULL) {
+            VioInputCounterInc(&devCtx->Counters.LedWritesDropped);
+        }
         return STATUS_DEVICE_NOT_READY;
     }
 
@@ -433,11 +457,14 @@ VirtioStatusQProcessUsedBuffers(_In_ PVIRTIO_STATUSQ StatusQ)
     PVIRTIO_STATUSQ q;
     void* cookie;
     UINT32 len;
+    PDEVICE_CONTEXT devCtx;
 
     q = StatusQ;
     if (q == NULL || q->Vq == NULL) {
         return;
     }
+
+    devCtx = (q->Device != NULL) ? VirtioInputGetDeviceContext(q->Device) : NULL;
 
     for (;;) {
         NTSTATUS status;
@@ -452,6 +479,10 @@ VirtioStatusQProcessUsedBuffers(_In_ PVIRTIO_STATUSQ StatusQ)
         if (!NT_SUCCESS(status)) {
             VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "statusq VirtqSplitGetUsed failed: %!STATUS!\n", status);
             break;
+        }
+
+        if (devCtx != NULL) {
+            VioInputCounterInc(&devCtx->Counters.StatusQCompletions);
         }
 
         UNREFERENCED_PARAMETER(len);

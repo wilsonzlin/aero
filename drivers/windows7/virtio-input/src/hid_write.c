@@ -247,6 +247,8 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
         return STATUS_SUCCESS;
     }
 
+    VioInputCounterInc(&ctx->Counters.LedWritesRequested);
+
     if (ctx->StatusQ != NULL) {
         if (ctx->Interrupts.QueueLocks != NULL && ctx->Interrupts.QueueCount > 1) {
             WdfSpinLockAcquire(ctx->Interrupts.QueueLocks[1]);
@@ -268,6 +270,7 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
                 status);
         }
     } else {
+        VioInputCounterInc(&ctx->Counters.LedWritesDropped);
         VIOINPUT_LOG(
             VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_IOCTL,
             "%s dropping LED report (no StatusQ): leds=0x%02X\n",

@@ -151,8 +151,7 @@
 #define IOCTL_VIOINPUT_SET_LOG_MASK \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_WRITE_ACCESS)
 #endif
-
-#define VIOINPUT_COUNTERS_VERSION 2
+#define VIOINPUT_COUNTERS_VERSION 3
 #define VIOINPUT_STATE_VERSION 1
 
 typedef struct VIOINPUT_COUNTERS_V1_MIN {
@@ -204,10 +203,16 @@ typedef struct _VIOINPUT_COUNTERS {
     LONG VirtioQueueMaxDepth;
 
     LONG VirtioStatusDrops;
-
     LONG PendingRingDepth;
     LONG PendingRingMaxDepth;
     LONG PendingRingDrops;
+    LONG LedWritesRequested;
+    LONG LedWritesSubmitted;
+    LONG LedWritesDropped;
+
+    LONG StatusQSubmits;
+    LONG StatusQCompletions;
+    LONG StatusQFull;
 } VIOINPUT_COUNTERS;
 
 typedef struct VIOINPUT_STATE {
@@ -1042,6 +1047,14 @@ static int dump_vioinput_counters(const SELECTED_DEVICE *dev)
     DUMP_LONG_FIELD(VirtioQueueMaxDepth);
     DUMP_LONG_FIELD(VirtioStatusDrops);
 
+    wprintf(L"\n  -- statusq / keyboard LEDs --\n");
+    DUMP_LONG_FIELD(LedWritesRequested);
+    DUMP_LONG_FIELD(LedWritesSubmitted);
+    DUMP_LONG_FIELD(LedWritesDropped);
+    DUMP_LONG_FIELD(StatusQSubmits);
+    DUMP_LONG_FIELD(StatusQCompletions);
+    DUMP_LONG_FIELD(StatusQFull);
+
 #undef DUMP_LONG_FIELD
 #undef VIOINPUT_WIDEN
 #undef VIOINPUT_WIDEN2
@@ -1169,7 +1182,13 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     JSON_LONG_FIELD(VirtioStatusDrops, 0);
     JSON_LONG_FIELD(PendingRingDepth, 0);
     JSON_LONG_FIELD(PendingRingMaxDepth, 0);
-    JSON_LONG_FIELD(PendingRingDrops, 1);
+    JSON_LONG_FIELD(PendingRingDrops, 0);
+    JSON_LONG_FIELD(LedWritesRequested, 0);
+    JSON_LONG_FIELD(LedWritesSubmitted, 0);
+    JSON_LONG_FIELD(LedWritesDropped, 0);
+    JSON_LONG_FIELD(StatusQSubmits, 0);
+    JSON_LONG_FIELD(StatusQCompletions, 0);
+    JSON_LONG_FIELD(StatusQFull, 1);
 
     wprintf(L"}\n");
 

@@ -215,6 +215,14 @@ VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
 
     InterlockedExchange(&Counters->PendingRingMaxDepth, pendingDepth);
     InterlockedExchange(&Counters->PendingRingDrops, 0);
+
+    InterlockedExchange(&Counters->LedWritesRequested, 0);
+    InterlockedExchange(&Counters->LedWritesSubmitted, 0);
+    InterlockedExchange(&Counters->LedWritesDropped, 0);
+
+    InterlockedExchange(&Counters->StatusQSubmits, 0);
+    InterlockedExchange(&Counters->StatusQCompletions, 0);
+    InterlockedExchange(&Counters->StatusQFull, 0);
 }
 
 PCSTR VioInputHidIoctlToString(_In_ ULONG IoControlCode)

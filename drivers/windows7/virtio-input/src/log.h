@@ -71,7 +71,7 @@
  * VIOINPUT_COUNTERS is a user-mode visible struct (queried via
  * IOCTL_VIOINPUT_QUERY_COUNTERS). It must be append-only to preserve ABI.
  */
-#define VIOINPUT_COUNTERS_VERSION 2
+#define VIOINPUT_COUNTERS_VERSION 3
 #define VIOINPUT_STATE_VERSION 1
 
 /*
@@ -147,6 +147,16 @@ typedef struct _VIOINPUT_COUNTERS {
     volatile LONG PendingRingDepth;        // Sum across report IDs.
     volatile LONG PendingRingMaxDepth;
     volatile LONG PendingRingDrops;        // Oldest report dropped on ring full.
+
+    // Keyboard LED output reports (HID write -> statusq).
+    volatile LONG LedWritesRequested;
+    volatile LONG LedWritesSubmitted;
+    volatile LONG LedWritesDropped;
+
+    // statusq activity (driver -> device).
+    volatile LONG StatusQSubmits;
+    volatile LONG StatusQCompletions;
+    volatile LONG StatusQFull;
 } VIOINPUT_COUNTERS, *PVIOINPUT_COUNTERS;
 
 typedef struct _VIOINPUT_STATE {
