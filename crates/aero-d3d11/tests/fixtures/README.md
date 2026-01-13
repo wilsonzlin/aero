@@ -42,6 +42,15 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `ps_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
   * Behavior: `ld o0, l(0,0,0,0), t0`, `ret`
+* `gs_emit_triangle.dxbc`
+  * Shader model: `gs_4_0`
+  * Chunks: `ISGN`, `OSGN`, `SHDR`
+  * Decl section includes GS-specific declarations:
+    * `dcl_input_primitive` (triangle)
+    * `dcl_output_topology` (triangle strip)
+    * `dcl_max_output_vertex_count` (3)
+  * Behavior: writes a few immediate positions/colors to output registers, then
+    `emit` ×3, `cut`, `ret`
 * `cs_store_uav_raw.dxbc`
   * Shader model: `cs_5_0`
   * Chunks: `SHEX`

@@ -11174,6 +11174,47 @@ struct BuiltVertexState {
     wgpu_slot_to_d3d_slot: Vec<u32>,
 }
 
+fn wgsl_gs_passthrough_vertex_shader(varying_locations: &BTreeSet<u32>) -> Result<String> {
+    // Pick a vertex attribute location for the clip-space position that does not collide with the
+    // varyings expected by the pixel shader.
+    let mut pos_location: u32 = 0;
+    while varying_locations.contains(&pos_location) {
+        pos_location = pos_location
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("GS passthrough VS: ran out of @location values"))?;
+    }
+
+    let mut out = String::new();
+
+    out.push_str("struct VsIn {\n");
+    out.push_str(&format!(
+        "    @location({pos_location}) pos: vec4<f32>,\n"
+    ));
+    for &loc in varying_locations {
+        out.push_str(&format!("    @location({loc}) v{loc}: vec4<f32>,\n"));
+    }
+    out.push_str("};\n\n");
+
+    out.push_str("struct VsOut {\n");
+    out.push_str("    @builtin(position) pos: vec4<f32>,\n");
+    for &loc in varying_locations {
+        out.push_str(&format!("    @location({loc}) o{loc}: vec4<f32>,\n"));
+    }
+    out.push_str("};\n\n");
+
+    out.push_str("@vertex\n");
+    out.push_str("fn vs_main(input: VsIn) -> VsOut {\n");
+    out.push_str("    var out: VsOut;\n");
+    out.push_str("    out.pos = input.pos;\n");
+    for &loc in varying_locations {
+        out.push_str(&format!("    out.o{loc} = input.v{loc};\n"));
+    }
+    out.push_str("    return out;\n");
+    out.push_str("}\n");
+
+    Ok(out)
+}
+
 fn wgsl_depth_clamp_variant(wgsl: &str) -> String {
     // WebGPU requires `PrimitiveState::unclipped_depth` to implement depth clamp, but that feature
     // is optional. As a backend-agnostic fallback we rewrite the VS to clamp the clip-space z

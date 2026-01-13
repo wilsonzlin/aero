@@ -261,3 +261,48 @@ fn parses_and_translates_sm4_ps_ld_fixture() {
         .iter()
         .any(|b| matches!(b.kind, BindingKind::Sampler { .. })));
 }
+
+#[test]
+fn parses_and_decodes_sm4_gs_emit_triangle_fixture() {
+    let bytes = load_fixture("gs_emit_triangle.dxbc");
+    let dxbc = DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
+
+    assert!(dxbc.get_chunk(FOURCC_ISGN).is_some(), "missing ISGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_OSGN).is_some(), "missing OSGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_SHDR).is_some(), "missing SHDR chunk");
+
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse failed");
+    assert_eq!(program.stage, ShaderStage::Geometry);
+    assert_eq!(program.model.major, 4);
+
+    let module = decode_program(&program).expect("SM4 decode failed");
+    assert_eq!(module.stage, ShaderStage::Geometry);
+    assert!(
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::GsMaxOutputVertexCount { .. })),
+        "expected decoded GS maxvertexcount declaration"
+    );
+    assert!(
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::GsOutputTopology { .. })),
+        "expected decoded GS output topology declaration"
+    );
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Emit { .. })),
+        "expected emit instruction"
+    );
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Cut { .. })),
+        "expected cut instruction"
+    );
+}
