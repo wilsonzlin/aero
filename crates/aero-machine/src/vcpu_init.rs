@@ -36,7 +36,9 @@ fn init_real_mode_segment_registers(state: &mut CpuState) {
 pub(crate) fn reset_ap_vcpu_to_init_state(cpu: &mut CpuCore) {
     let preserved_tsc = cpu.state.msr.tsc;
     let preserved_tsc_aux = cpu.state.msr.tsc_aux;
-    let preserved_apic_base = cpu.state.msr.apic_base;
+    // The BSP bit in IA32_APIC_BASE is fixed per-CPU on real hardware (set only on the BSP).
+    // When initializing an *AP* we always clear it, even if the caller forgot to.
+    let preserved_apic_base = cpu.state.msr.apic_base & !(1 << 8);
     let preserved_a20 = cpu.state.a20_enabled;
 
     let mut state = CpuState::new(CpuMode::Real);
@@ -108,5 +110,55 @@ mod tests {
         assert_ne!(cpu.state.rflags() & RFLAGS_RESERVED1, 0);
         assert!(!cpu.state.halted);
         assert_eq!(cpu.state.take_pending_bios_int(), None);
+    }
+
+    #[test]
+    fn smp_init_resets_ap_to_clean_real_mode_baseline() {
+        let mut cpu = CpuCore::new(CpuMode::Long);
+
+        // Dirty the state so we can verify the reset cleans it up.
+        cpu.state.mode = CpuMode::Long;
+        cpu.state.segments.cs.selector = 0x33;
+        cpu.state.segments.cs.base = 0x1234_5678;
+        cpu.state.segments.cs.limit = 0;
+        cpu.state.segments.cs.access = 0xFFFF_FFFF;
+        cpu.state.halted = true;
+        cpu.state.set_pending_bios_int(0x10);
+        cpu.pending.inject_external_interrupt(0x40);
+
+        cpu.state.msr.tsc = 0x1122_3344_5566_7788;
+        cpu.state.msr.apic_base = 0xFEE0_0000 | (1 << 11) | (1 << 8); // BSP bit set (should clear)
+
+        reset_ap_vcpu_to_init_state(&mut cpu);
+
+        assert_eq!(cpu.state.mode, CpuMode::Real);
+        assert_eq!(cpu.state.get_ip(), 0);
+        assert_ne!(cpu.state.rflags() & RFLAGS_RESERVED1, 0);
+        assert!(!cpu.state.halted);
+        assert_eq!(cpu.state.take_pending_bios_int(), None);
+        assert!(cpu.pending.external_interrupts.is_empty());
+
+        assert_eq!(cpu.state.segments.cs.selector, 0);
+        assert_eq!(cpu.state.segments.cs.base, 0);
+        assert_eq!(cpu.state.segments.cs.limit, 0xFFFF);
+        assert_eq!(cpu.state.segments.cs.access, REAL_MODE_CODE_ACCESS);
+
+        for seg in [
+            &cpu.state.segments.ds,
+            &cpu.state.segments.es,
+            &cpu.state.segments.ss,
+            &cpu.state.segments.fs,
+            &cpu.state.segments.gs,
+        ] {
+            assert_eq!(seg.selector, 0);
+            assert_eq!(seg.base, 0);
+            assert_eq!(seg.limit, 0xFFFF);
+            assert_eq!(seg.access, REAL_MODE_DATA_ACCESS);
+        }
+
+        // BSP bit must be clear for an AP.
+        assert_eq!(cpu.state.msr.apic_base & (1 << 8), 0);
+        assert_eq!(cpu.state.msr.tsc, 0x1122_3344_5566_7788);
+        assert_eq!(cpu.time.read_tsc(), cpu.state.msr.tsc);
     }
 }
