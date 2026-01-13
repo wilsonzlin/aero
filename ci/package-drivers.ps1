@@ -782,7 +782,8 @@ function New-IsoFromFolder {
     param(
         [Parameter(Mandatory = $true)][string] $Folder,
         [Parameter(Mandatory = $true)][string] $IsoPath,
-        [Parameter(Mandatory = $true)][string] $VolumeLabel
+        [Parameter(Mandatory = $true)][string] $VolumeLabel,
+        [Nullable[long]] $SourceDateEpoch
     )
 
     if (Test-Path $IsoPath) {
@@ -800,7 +801,9 @@ function New-IsoFromFolder {
         }
 
         $sourceDateEpoch = 0
-        if (-not [string]::IsNullOrWhiteSpace($env:SOURCE_DATE_EPOCH)) {
+        if ($null -ne $SourceDateEpoch) {
+            $sourceDateEpoch = [int64] $SourceDateEpoch
+        } elseif (-not [string]::IsNullOrWhiteSpace($env:SOURCE_DATE_EPOCH)) {
             try {
                 $sourceDateEpoch = [int64] $env:SOURCE_DATE_EPOCH
             } catch {
@@ -1014,6 +1017,7 @@ function Invoke-PackageDrivers {
         $Version = Get-VersionString
     }
 
+    $sourceDateEpoch = Get-DefaultSourceDateEpoch -RepoRoot $repoRootResolved
     $zipTimestamp = Get-DeterministicZipTimestamp -RepoRoot $repoRootResolved
 
     $envVal = $env:AERO_MAKE_FAT_IMAGE
@@ -1052,7 +1056,7 @@ function Invoke-PackageDrivers {
 
     $shouldWriteManifests = -not $NoManifest
     $buildId = $null
-    $epoch = 0
+    $epoch = $sourceDateEpoch
     $manifestFilesX86 = $null
     $manifestFilesX64 = $null
     $manifestFilesBundle = $null
@@ -1062,22 +1066,21 @@ function Invoke-PackageDrivers {
     $manifestBundle = $null
     $manifestIso = $null
 
-    if ($shouldWriteManifests) {
-        $manifestX86 = [System.IO.Path]::ChangeExtension($zipX86, "manifest.json")
-        $manifestX64 = [System.IO.Path]::ChangeExtension($zipX64, "manifest.json")
-        $manifestBundle = [System.IO.Path]::ChangeExtension($zipBundle, "manifest.json")
-        if (-not $NoIso) {
-            $manifestIso = [System.IO.Path]::ChangeExtension($isoBundle, "manifest.json")
+        if ($shouldWriteManifests) {
+            $manifestX86 = [System.IO.Path]::ChangeExtension($zipX86, "manifest.json")
+            $manifestX64 = [System.IO.Path]::ChangeExtension($zipX64, "manifest.json")
+            $manifestBundle = [System.IO.Path]::ChangeExtension($zipBundle, "manifest.json")
+            if (-not $NoIso) {
+                $manifestIso = [System.IO.Path]::ChangeExtension($isoBundle, "manifest.json")
+            }
+
+            $buildId = Get-BuildIdString
+
+            # Enumerate and hash staged files BEFORE archiving; these entries must match the staged bytes.
+            $manifestFilesX86 = Get-ManifestFileEntries -Root $stageX86
+            $manifestFilesX64 = Get-ManifestFileEntries -Root $stageX64
+            $manifestFilesBundle = Get-ManifestFileEntries -Root $stageBundle
         }
-
-        $buildId = Get-BuildIdString
-        $epoch = Get-DefaultSourceDateEpoch -RepoRoot $repoRootResolved
-
-        # Enumerate and hash staged files BEFORE archiving; these entries must match the staged bytes.
-        $manifestFilesX86 = Get-ManifestFileEntries -Root $stageX86
-        $manifestFilesX64 = Get-ManifestFileEntries -Root $stageX64
-        $manifestFilesBundle = Get-ManifestFileEntries -Root $stageBundle
-    }
 
     $success = $false
     try {
@@ -1090,7 +1093,7 @@ function Invoke-PackageDrivers {
             if ($label.Length -gt 32) {
                 $label = $label.Substring(0, 32)
             }
-            New-IsoFromFolder -Folder $stageBundle -IsoPath $isoBundle -VolumeLabel $label
+            New-IsoFromFolder -Folder $stageBundle -IsoPath $isoBundle -VolumeLabel $label -SourceDateEpoch $epoch
         }
 
         if ($shouldMakeFatImage) {
