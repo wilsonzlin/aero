@@ -99,6 +99,13 @@ const (
 	DefaultUDPReadBufferBytes        = DefaultMaxDatagramPayloadBytes + 1
 	DefaultMaxAllowedRemotesPerBinding = 1024
 	DefaultL2MaxMessageBytes         = 4096
+	// DefaultWebRTCDataChannelMaxMessageOverheadBytes is added on top of the
+	// protocol-derived minimum when computing the effective default for
+	// WebRTC_DATACHANNEL_MAX_MESSAGE_BYTES.
+	DefaultWebRTCDataChannelMaxMessageOverheadBytes = 256
+	// DefaultWebRTCSCTPMaxReceiveBufferBytes caps the SCTP receive buffer used by
+	// pion (applies before application-level message decoding).
+	DefaultWebRTCSCTPMaxReceiveBufferBytes = 1 << 20 // 1MiB
 
 	DefaultAuthMode AuthMode = AuthModeAPIKey
 
@@ -124,6 +131,13 @@ const (
 
 	EnvWebRTCUDPListenIP     = "WEBRTC_UDP_LISTEN_IP"
 	DefaultWebRTCUDPListenIP = "0.0.0.0"
+
+	// WebRTC DataChannel DoS hardening.
+	//
+	// These settings cap inbound SCTP/DataChannel message allocation in pion
+	// before DataChannel.OnMessage handlers run.
+	EnvWebRTCDataChannelMaxMessageBytes = "WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES"
+	EnvWebRTCSCTPMaxReceiveBufferBytes  = "WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES"
 )
 
 const (
@@ -134,6 +148,9 @@ const (
 	FlagWebRTCNAT1To1IPCandidateType = "webrtc-nat-1to1-ip-candidate-type"
 
 	FlagWebRTCUDPListenIP = "webrtc-udp-listen-ip"
+
+	FlagWebRTCDataChannelMaxMessageBytes = "webrtc-datachannel-max-message-bytes"
+	FlagWebRTCSCTPMaxReceiveBufferBytes  = "webrtc-sctp-max-receive-buffer-bytes"
 )
 
 // RecommendedWebRTCUDPPortRangeSize is an intentionally conservative minimum.
@@ -252,6 +269,18 @@ type Config struct {
 	// WebRTCUDPListenIP restricts which local interface address ICE will bind UDP
 	// sockets to. 0.0.0.0 means "use library default" (typically all interfaces).
 	WebRTCUDPListenIP net.IP
+
+	// WebRTCDataChannelMaxMessageBytes caps the maximum size of any inbound SCTP
+	// user message (i.e. an incoming DataChannel message) that pion will accept.
+	//
+	// This limit is enforced inside pion/SCTP before DataChannel.OnMessage runs,
+	// mitigating peers attempting to force the relay to allocate multi-megabyte
+	// messages.
+	WebRTCDataChannelMaxMessageBytes int
+
+	// WebRTCSCTPMaxReceiveBufferBytes caps the SCTP receive buffer size used by
+	// pion for a single association.
+	WebRTCSCTPMaxReceiveBufferBytes int
 
 	// Quotas/rate limiting.
 	//
@@ -420,6 +449,14 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		l2BackendAuthForwardModeStr = strings.TrimSpace(envAuthForwardMode)
 	}
 	l2MaxMessageBytes, err := envIntOrDefault(lookup, EnvL2MaxMessageBytes, DefaultL2MaxMessageBytes)
+	if err != nil {
+		return Config{}, err
+	}
+	webrtcDataChannelMaxMessageBytes, err := envIntOrDefault(lookup, EnvWebRTCDataChannelMaxMessageBytes, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	webrtcSCTPMaxReceiveBufferBytes, err := envIntOrDefault(lookup, EnvWebRTCSCTPMaxReceiveBufferBytes, 0)
 	if err != nil {
 		return Config{}, err
 	}
@@ -617,6 +654,8 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.StringVar(&webrtcUDPListenIPStr, FlagWebRTCUDPListenIP, webrtcUDPListenIPStr, "Local listen IP for WebRTC ICE UDP sockets (env "+EnvWebRTCUDPListenIP+")")
 	fs.StringVar(&webrtcNAT1To1IPsStr, FlagWebRTCNAT1To1IPs, webrtcNAT1To1IPsStr, "Comma-separated public IPs to advertise for WebRTC ICE (env "+EnvWebRTCNAT1To1IPs+")")
 	fs.StringVar(&webrtcNAT1To1CandidateTypeStr, FlagWebRTCNAT1To1IPCandidateType, webrtcNAT1To1CandidateTypeStr, "Candidate type for NAT 1:1 IPs: host or srflx (env "+EnvWebRTCNAT1To1IPCandidateType+")")
+	fs.IntVar(&webrtcDataChannelMaxMessageBytes, FlagWebRTCDataChannelMaxMessageBytes, webrtcDataChannelMaxMessageBytes, "Max inbound WebRTC DataChannel message size in bytes (0 = auto; env "+EnvWebRTCDataChannelMaxMessageBytes+")")
+	fs.IntVar(&webrtcSCTPMaxReceiveBufferBytes, FlagWebRTCSCTPMaxReceiveBufferBytes, webrtcSCTPMaxReceiveBufferBytes, "Max SCTP receive buffer size in bytes (0 = auto; env "+EnvWebRTCSCTPMaxReceiveBufferBytes+")")
 
 	fs.IntVar(&maxSessions, "max-sessions", maxSessions, "Maximum concurrent sessions (0 = unlimited)")
 	fs.IntVar(&maxUDPPpsPerSession, "max-udp-pps-per-session", maxUDPPpsPerSession, "Outbound UDP packets/sec per session (0 = unlimited)")
@@ -741,6 +780,49 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if l2MaxMessageBytes <= 0 {
 		return Config{}, fmt.Errorf("%s/--l2-max-message-bytes must be > 0", EnvL2MaxMessageBytes)
+	}
+	if webrtcDataChannelMaxMessageBytes < 0 {
+		return Config{}, fmt.Errorf("%s/--%s must be >= 0 (0 = auto)", EnvWebRTCDataChannelMaxMessageBytes, FlagWebRTCDataChannelMaxMessageBytes)
+	}
+	if webrtcSCTPMaxReceiveBufferBytes < 0 {
+		return Config{}, fmt.Errorf("%s/--%s must be >= 0 (0 = auto)", EnvWebRTCSCTPMaxReceiveBufferBytes, FlagWebRTCSCTPMaxReceiveBufferBytes)
+	}
+
+	// Derive WebRTC DataChannel size limits if not explicitly configured.
+	//
+	// These values are fed into pion's SettingEngine to enforce an allocation
+	// cap before DataChannel.OnMessage handlers run.
+	minDCMax := minWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBytes)
+	effectiveDCMax := webrtcDataChannelMaxMessageBytes
+	if effectiveDCMax == 0 {
+		effectiveDCMax = defaultWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBytes)
+	}
+	if effectiveDCMax <= 0 {
+		return Config{}, fmt.Errorf("%s/--%s must be > 0", EnvWebRTCDataChannelMaxMessageBytes, FlagWebRTCDataChannelMaxMessageBytes)
+	}
+	if effectiveDCMax < minDCMax {
+		return Config{}, fmt.Errorf("%s/--%s must be >= %d (max of MAX_DATAGRAM_PAYLOAD_BYTES+%d and L2_MAX_MESSAGE_BYTES)",
+			EnvWebRTCDataChannelMaxMessageBytes,
+			FlagWebRTCDataChannelMaxMessageBytes,
+			minDCMax,
+			webrtcDataChannelUDPFrameOverheadBytes,
+		)
+	}
+
+	effectiveSCTPRecvBuf := webrtcSCTPMaxReceiveBufferBytes
+	if effectiveSCTPRecvBuf == 0 {
+		effectiveSCTPRecvBuf = defaultWebRTCSCTPMaxReceiveBufferBytes(effectiveDCMax)
+	}
+	if effectiveSCTPRecvBuf <= 0 {
+		return Config{}, fmt.Errorf("%s/--%s must be > 0", EnvWebRTCSCTPMaxReceiveBufferBytes, FlagWebRTCSCTPMaxReceiveBufferBytes)
+	}
+	if effectiveSCTPRecvBuf < effectiveDCMax {
+		return Config{}, fmt.Errorf("%s/--%s must be >= %d (must be >= %s)",
+			EnvWebRTCSCTPMaxReceiveBufferBytes,
+			FlagWebRTCSCTPMaxReceiveBufferBytes,
+			effectiveDCMax,
+			EnvWebRTCDataChannelMaxMessageBytes,
+		)
 	}
 	if maxUDPBindingsPerSession <= 0 {
 		return Config{}, fmt.Errorf("%s/--max-udp-bindings-per-session must be > 0", EnvMaxUDPBindingsPerSession)
@@ -940,6 +1022,8 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		WebRTCUDPListenIP:            webrtcUDPListenIP,
 		WebRTCNAT1To1IPs:             webrtcNAT1To1IPs,
 		WebRTCNAT1To1IPCandidateType: webrtcNAT1To1CandidateType,
+		WebRTCDataChannelMaxMessageBytes: effectiveDCMax,
+		WebRTCSCTPMaxReceiveBufferBytes:  effectiveSCTPRecvBuf,
 
 		MaxSessions:                     maxSessions,
 		MaxUDPPpsPerSession:             maxUDPPpsPerSession,

@@ -39,6 +39,14 @@ func TestDefaultsDev(t *testing.T) {
 	if len(cfg.WebRTCNAT1To1IPs) != 0 {
 		t.Fatalf("expected WebRTCNAT1To1IPs empty, got %v", cfg.WebRTCNAT1To1IPs)
 	}
+	wantDCMax := defaultWebRTCDataChannelMaxMessageBytes(DefaultMaxDatagramPayloadBytes, DefaultL2MaxMessageBytes)
+	if cfg.WebRTCDataChannelMaxMessageBytes != wantDCMax {
+		t.Fatalf("WebRTCDataChannelMaxMessageBytes=%d, want %d", cfg.WebRTCDataChannelMaxMessageBytes, wantDCMax)
+	}
+	wantSCTPBuf := defaultWebRTCSCTPMaxReceiveBufferBytes(wantDCMax)
+	if cfg.WebRTCSCTPMaxReceiveBufferBytes != wantSCTPBuf {
+		t.Fatalf("WebRTCSCTPMaxReceiveBufferBytes=%d, want %d", cfg.WebRTCSCTPMaxReceiveBufferBytes, wantSCTPBuf)
+	}
 	if cfg.UDPBindingIdleTimeout != DefaultUDPBindingIdleTimeout {
 		t.Fatalf("UDPBindingIdleTimeout=%v, want %v", cfg.UDPBindingIdleTimeout, DefaultUDPBindingIdleTimeout)
 	}
@@ -147,6 +155,51 @@ func TestWebSocketTimeouts_EnvOverride(t *testing.T) {
 	}
 	if cfg.UDPWSPingInterval != 4*time.Second {
 		t.Fatalf("UDPWSPingInterval=%v, want %v", cfg.UDPWSPingInterval, 4*time.Second)
+	}
+}
+
+func TestWebRTCDataChannelMaxMessageBytes_AutoDerivesFromRelayLimits(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                "secret",
+		EnvMaxDatagramPayloadBytes: "1400",
+		EnvL2MaxMessageBytes:       "2048",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	wantMin := max(1400+webrtcDataChannelUDPFrameOverheadBytes, 2048)
+	want := wantMin + DefaultWebRTCDataChannelMaxMessageOverheadBytes
+	if cfg.WebRTCDataChannelMaxMessageBytes != want {
+		t.Fatalf("WebRTCDataChannelMaxMessageBytes=%d, want %d", cfg.WebRTCDataChannelMaxMessageBytes, want)
+	}
+}
+
+func TestWebRTCDataChannelMaxMessageBytes_EnvOverride_TooSmall(t *testing.T) {
+	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                         "secret",
+		EnvL2MaxMessageBytes:              "4096",
+		EnvWebRTCDataChannelMaxMessageBytes: "1024",
+	}), nil)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+}
+
+func TestWebRTCSCTPMaxReceiveBufferBytes_EnvOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                        "secret",
+		EnvWebRTCDataChannelMaxMessageBytes: "4096",
+		EnvWebRTCSCTPMaxReceiveBufferBytes:  "8192",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.WebRTCDataChannelMaxMessageBytes != 4096 {
+		t.Fatalf("WebRTCDataChannelMaxMessageBytes=%d, want %d", cfg.WebRTCDataChannelMaxMessageBytes, 4096)
+	}
+	if cfg.WebRTCSCTPMaxReceiveBufferBytes != 8192 {
+		t.Fatalf("WebRTCSCTPMaxReceiveBufferBytes=%d, want %d", cfg.WebRTCSCTPMaxReceiveBufferBytes, 8192)
 	}
 }
 

@@ -82,6 +82,15 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			s.r = r
 			s.mu.Unlock()
 
+			dc.OnError(func(err error) {
+				var sessionID any
+				if s.quota != nil {
+					sessionID = s.quota.ID()
+				}
+				slog.Warn("udp datachannel error", "session_id", sessionID, "err", err)
+				// Close asynchronously so we never block a pion callback on teardown.
+				go func() { _ = s.Close() }()
+			})
 			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 				if msg.IsString {
 					return
@@ -156,6 +165,15 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			s.l2 = b
 			s.mu.Unlock()
 
+			dc.OnError(func(err error) {
+				var sessionID any
+				if s.quota != nil {
+					sessionID = s.quota.ID()
+				}
+				slog.Warn("l2 datachannel error", "session_id", sessionID, "err", err)
+				// Close asynchronously so we never block a pion callback on teardown.
+				go func() { _ = s.Close() }()
+			})
 			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 				if msg.IsString {
 					return

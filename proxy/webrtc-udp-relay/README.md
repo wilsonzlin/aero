@@ -506,6 +506,9 @@ The container + client integration uses the following environment variables and 
 - `WEBRTC_UDP_LISTEN_IP`: local IP address to bind ICE UDP sockets to (default `0.0.0.0`, meaning "use library defaults / all interfaces").
 - `WEBRTC_NAT_1TO1_IPS`: comma-separated public IPs to advertise for ICE when the relay is behind NAT.
 - `WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE`: `host` or `srflx` (default: `host`).
+- WebRTC DataChannel hardening (pion/SCTP caps; mitigate oversized message DoS):
+  - `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (default: derived from `MAX_DATAGRAM_PAYLOAD_BYTES` and `L2_MAX_MESSAGE_BYTES`)
+  - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (default: `1048576`; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES`)
 - `AERO_ICE_SERVERS_JSON`: JSON string describing ICE servers that the relay advertises to clients.
   - Flag: `--ice-servers-json`
   - For the `with-turn` profile, `docker-compose.yml` sets this automatically to point at the
@@ -527,6 +530,24 @@ Equivalent flags:
 - `--webrtc-udp-listen-ip`
 - `--webrtc-nat-1to1-ips`
 - `--webrtc-nat-1to1-ip-candidate-type`
+- `--webrtc-datachannel-max-message-bytes`
+- `--webrtc-sctp-max-receive-buffer-bytes`
+
+#### DataChannel hardening (oversized message DoS)
+
+The relay enforces `MAX_DATAGRAM_PAYLOAD_BYTES` and `L2_MAX_MESSAGE_BYTES` in its application-level frame
+decoders, but malicious peers can attempt to send extremely large WebRTC DataChannel messages that may be
+fully buffered by pion before `DataChannel.OnMessage` is invoked.
+
+To mitigate this, the relay configures hard caps in pion's `SettingEngine`:
+
+- `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` / `--webrtc-datachannel-max-message-bytes` (0 = auto):
+  maximum inbound DataChannel message size. The default is computed as:
+  `max(MAX_DATAGRAM_PAYLOAD_BYTES + 24, L2_MAX_MESSAGE_BYTES) + 256`.
+- `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` / `--webrtc-sctp-max-receive-buffer-bytes` (0 = auto):
+  SCTP receive buffer cap (must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES`).
+
+If a peer violates these limits, pion reports an SCTP/DataChannel error and the relay closes the session.
 
 #### Example: behind NAT (private IP + known public IP)
 
