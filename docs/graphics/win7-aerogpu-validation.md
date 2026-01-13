@@ -420,7 +420,7 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 
 ## 5) Debug playbook (with `aerogpu_dbgctl`)
 
-`aerogpu_dbgctl` is assumed to be a small command-line tool shipped with the driver package that talks to the AeroGPU KMD via an IOCTL “debug/escape” channel.
+`aerogpu_dbgctl` is assumed to be a small command-line tool shipped with the driver package that talks to the AeroGPU KMD via a **driver-private escape** path (`DxgkDdiEscape` via `D3DKMTEscape`).
 
 ### 5.1 Typical workflow
 
