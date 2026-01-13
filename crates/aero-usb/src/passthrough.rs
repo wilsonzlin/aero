@@ -1083,4 +1083,91 @@ mod tests {
             ControlResponse::Data(vec![9, 8, 7, 6])
         );
     }
+
+    fn assert_invalid_field_encoding(err: SnapshotError) {
+        assert!(
+            matches!(err, SnapshotError::InvalidFieldEncoding(_)),
+            "expected InvalidFieldEncoding, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn snapshot_load_rejects_action_count_over_limit() {
+        // Intentionally truncate the snapshot after `action_count`. Without the guard, this would
+        // attempt to decode 1025 actions and hit UnexpectedEof.
+        let bytes = Encoder::new().u32(1).u32(1025).finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_completion_count_over_limit() {
+        // Intentionally truncate the snapshot after `completion_count`. Without the guard, this
+        // would attempt to decode 1025 completions and hit UnexpectedEof.
+        let bytes = Encoder::new().u32(1).u32(0).u32(1025).finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_ep_inflight_count_over_limit() {
+        // Intentionally truncate the snapshot after `ep_count`. Without the guard, this would
+        // attempt to decode 65 endpoint entries and hit UnexpectedEof.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(false)
+            .u32(65)
+            .finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_action_payload_over_limit_before_reading_bytes() {
+        // Intentionally truncate the snapshot after the oversized action payload length.
+        // If the implementation tried to read the payload, we'd get UnexpectedEof instead of an
+        // InvalidFieldEncoding bounds-check error.
+        const MAX_DATA_BYTES: u32 = 4 * 1024 * 1024;
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1)
+            .u8(2) // ControlOut
+            .u32(1) // action id
+            // SetupPacket
+            .u8(0)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            // data length
+            .u32(MAX_DATA_BYTES + 1)
+            .finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_completion_error_message_over_limit_before_reading_bytes() {
+        // Intentionally truncate the snapshot after the oversized error length.
+        // If the implementation tried to read the message bytes, we'd get UnexpectedEof instead of
+        // an InvalidFieldEncoding bounds-check error.
+        const MAX_ERROR_BYTES: u32 = 16 * 1024;
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(1)
+            .u32(1) // completion id
+            .u8(4) // Error
+            .u32(MAX_ERROR_BYTES + 1)
+            .finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
 }
