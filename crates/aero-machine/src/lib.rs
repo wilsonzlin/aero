@@ -57,7 +57,7 @@ use aero_devices::usb::uhci::UhciPciDevice;
 pub use aero_devices_input::Ps2MouseButton;
 use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::ata::AtaDrive;
-use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
+use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend, VirtualDiskIsoBackend};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_gpu_vga::{DisplayOutput as _, PortIO as _, VgaDevice};
@@ -2755,6 +2755,25 @@ impl Machine {
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
     ) -> std::io::Result<()> {
         self.attach_ide_secondary_master_atapi(AtapiCdrom::new_from_virtual_disk(disk)?);
+        Ok(())
+    }
+
+    /// Re-attach a disk image as an ISO backend to the IDE secondary master ATAPI device without
+    /// changing guest-visible media state.
+    ///
+    /// This is intended for snapshot restore flows: snapshot restore keeps the ATAPI device's
+    /// internal tray/media state but drops the host-side ISO backend.
+    ///
+    /// If the IDE controller is not present, this is a no-op and returns `Ok(())`.
+    pub fn attach_ide_secondary_master_iso_for_restore(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> std::io::Result<()> {
+        if self.ide.is_none() {
+            return Ok(());
+        }
+        let backend = Box::new(VirtualDiskIsoBackend::new(disk)?);
+        self.attach_ide_secondary_master_atapi_backend_for_restore(backend);
         Ok(())
     }
 
