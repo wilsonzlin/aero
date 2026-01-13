@@ -2094,6 +2094,31 @@ impl Machine {
         &mut self.cpu.state
     }
 
+    /// Guest physical address of the ACPI Root System Description Pointer (RSDP), if published.
+    ///
+    /// The firmware builds ACPI tables during POST/reset when ACPI is enabled in the BIOS
+    /// configuration and writes the RSDP into guest memory. Higher-level runtimes can use this
+    /// address to locate the rest of the ACPI table hierarchy without re-scanning the BIOS/EBDA
+    /// regions.
+    ///
+    /// Returns `None` if ACPI table generation was disabled for the current firmware configuration
+    /// (or if firmware POST has not run yet).
+    pub fn acpi_rsdp_addr(&self) -> Option<u64> {
+        self.bios.rsdp_addr()
+    }
+
+    /// Guest physical address of the SMBIOS Entry Point Structure (EPS), if published.
+    ///
+    /// The firmware builds SMBIOS tables during POST/reset and publishes an SMBIOS EPS in guest
+    /// memory so guests can discover the DMI/SMBIOS structures. This method exposes the published
+    /// EPS address directly.
+    ///
+    /// Returns `None` if SMBIOS table generation was disabled for the current firmware
+    /// configuration (or if firmware POST has not run yet).
+    pub fn smbios_eps_addr(&self) -> Option<u32> {
+        self.bios.smbios_eps_addr()
+    }
+
     /// Replace the attached disk image.
     pub fn set_disk_image(&mut self, bytes: Vec<u8>) -> Result<(), MachineError> {
         self.disk.set_bytes(bytes)?;

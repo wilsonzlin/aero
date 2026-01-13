@@ -1,0 +1,28 @@
+use aero_machine::{Machine, MachineConfig};
+
+fn boot_sector() -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
+#[test]
+fn exposes_acpi_rsdp_and_smbios_eps_addresses() {
+    let mut m = Machine::new(MachineConfig::default()).unwrap();
+    m.set_disk_image(boot_sector().to_vec()).unwrap();
+    m.reset();
+
+    let rsdp_addr = m
+        .acpi_rsdp_addr()
+        .expect("ACPI is enabled by default; expected an RSDP address");
+    let rsdp_sig = m.read_physical_bytes(rsdp_addr, 8);
+    assert_eq!(&rsdp_sig[..], b"RSD PTR ");
+
+    let eps_addr = m
+        .smbios_eps_addr()
+        .expect("expected SMBIOS EPS address after firmware POST") as u64;
+    let eps_sig = m.read_physical_bytes(eps_addr, 4);
+    assert_eq!(&eps_sig[..], b"_SM_");
+}
+
