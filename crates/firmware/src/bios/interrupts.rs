@@ -266,49 +266,28 @@ fn handle_int19(
     // - pop IP, CS, FLAGS from SS:SP
     // - clear the BIOS hypercall marker (`pending_bios_int_valid`)
     //
-    // After IRET, the CPU will begin executing the boot sector at 0000:7C00 with SS:SP reset to
-    // 0000:7C00 (matching POST's boot handoff).
-    const BOOT_ADDR: u64 = 0x7C00;
     const STACK_AFTER_IRET: u16 = 0x7C00;
     const STACK_BEFORE_IRET: u16 = STACK_AFTER_IRET.wrapping_sub(6);
 
-    let mut sector = [0u8; 512];
-    match disk.read_sector(0, &mut sector) {
-        Ok(()) => {}
-        Err(_) => {
-            bios.bios_panic(cpu, bus, "Disk read error");
+    // Load the configured boot device (MBR or El Torito CD) into RAM and initialize registers,
+    // matching POST's boot conventions.
+    let (entry_cs, entry_ip) = match bios.boot_from_configured_device(cpu, bus, disk) {
+        Ok(v) => v,
+        Err(msg) => {
+            bios.bios_panic(cpu, bus, msg);
             return;
         }
-    }
-    if sector[510] != 0x55 || sector[511] != 0xAA {
-        bios.bios_panic(cpu, bus, "Invalid boot signature");
-        return;
-    }
-
-    bus.write_physical(BOOT_ADDR, &sector);
-
-    // Register setup per BIOS conventions (matches `Bios::boot`).
-    cpu.gpr[gpr::RAX] = 0;
-    cpu.gpr[gpr::RBX] = 0;
-    cpu.gpr[gpr::RCX] = 0;
-    cpu.gpr[gpr::RDX] = bios.config.boot_drive as u64; // DL
-    cpu.gpr[gpr::RSI] = 0;
-    cpu.gpr[gpr::RDI] = 0;
-    cpu.gpr[gpr::RBP] = 0;
+    };
 
     // Use a clean 0000:7C00 stack. We must set SP to 7BFA so the following IRET lands with
     // SP=7C00.
     set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
     cpu.gpr[gpr::RSP] = STACK_BEFORE_IRET as u64;
 
-    // Data segments: most boot sectors expect DS=ES=0.
-    set_real_mode_seg(&mut cpu.segments.ds, 0x0000);
-    set_real_mode_seg(&mut cpu.segments.es, 0x0000);
-
     // Build the synthetic IRET frame: IP, CS, FLAGS (word each).
     let frame_base = cpu.apply_a20(cpu.segments.ss.base.wrapping_add(STACK_BEFORE_IRET as u64));
-    bus.write_u16(frame_base, BOOT_ADDR as u16); // IP
-    bus.write_u16(frame_base + 2, 0x0000); // CS
+    bus.write_u16(frame_base, entry_ip); // IP
+    bus.write_u16(frame_base + 2, entry_cs); // CS
     bus.write_u16(frame_base + 4, 0x0202); // IF=1 + reserved bit 1
 
     cpu.rflags &= !FLAG_CF;

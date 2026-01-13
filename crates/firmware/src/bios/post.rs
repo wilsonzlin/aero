@@ -122,61 +122,96 @@ impl Bios {
         }
     }
 
+    /// Load the configured boot device into memory and initialize the real-mode CPU state
+    /// (registers, data segments, stack) to match common BIOS boot conventions.
+    ///
+    /// This helper is shared by:
+    /// - POST boot (direct jump), and
+    /// - INT 19h bootstrap reload (via a synthetic IRET frame).
+    ///
+    /// Returns the boot entry point as a real-mode `CS:IP` pair.
+    pub(super) fn boot_from_configured_device(
+        &mut self,
+        cpu: &mut CpuState,
+        bus: &mut dyn BiosBus,
+        disk: &mut dyn BlockDevice,
+    ) -> Result<(u16, u16), &'static str> {
+        let boot_drive = self.config.boot_drive;
+
+        let (entry_cs, entry_ip) = if (0xE0..=0xEF).contains(&boot_drive) {
+            self.load_eltorito_cd_boot_image(bus, disk)?
+        } else {
+            self.load_mbr_boot_sector(bus, disk)?
+        };
+
+        // Register setup per BIOS conventions.
+        cpu.gpr[gpr::RAX] = 0;
+        cpu.gpr[gpr::RBX] = 0;
+        cpu.gpr[gpr::RCX] = 0;
+        cpu.gpr[gpr::RDX] = boot_drive as u64; // DL
+        cpu.gpr[gpr::RSI] = 0;
+        cpu.gpr[gpr::RDI] = 0;
+        cpu.gpr[gpr::RBP] = 0;
+
+        // Use a clean 0000:7C00 stack, matching typical BIOS boot handoff.
+        cpu.gpr[gpr::RSP] = 0x7C00;
+        set_real_mode_seg(&mut cpu.segments.ds, 0x0000);
+        set_real_mode_seg(&mut cpu.segments.es, 0x0000);
+        set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
+
+        Ok((entry_cs, entry_ip))
+    }
+
     fn boot(
         &mut self,
         cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
     ) -> Result<(), &'static str> {
-        if (0xE0..=0xEF).contains(&self.config.boot_drive) {
-            return self.boot_eltorito(cpu, bus, disk);
-        }
+        let (entry_cs, entry_ip) = self.boot_from_configured_device(cpu, bus, disk)?;
 
-        self.boot_mbr(cpu, bus, disk)
+        // Transfer control to the loaded boot image.
+        set_real_mode_seg(&mut cpu.segments.cs, entry_cs);
+        cpu.set_rip(entry_ip as u64);
+
+        Ok(())
     }
 
-    fn boot_mbr(
-        &mut self,
-        cpu: &mut CpuState,
+    fn load_mbr_boot_sector(
+        &self,
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(u16, u16), &'static str> {
         let mut sector = [0u8; 512];
         disk.read_sector(0, &mut sector)
             .map_err(|_| "Disk read error")?;
 
-        if sector[510] == 0x55 && sector[511] == 0xAA {
-            bus.write_physical(0x7C00, &sector);
-
-            // Register setup per BIOS conventions.
-            cpu.gpr[gpr::RAX] = 0;
-            cpu.gpr[gpr::RBX] = 0;
-            cpu.gpr[gpr::RCX] = 0;
-            cpu.gpr[gpr::RDX] = self.config.boot_drive as u64; // DL
-            cpu.gpr[gpr::RSI] = 0;
-            cpu.gpr[gpr::RDI] = 0;
-            cpu.gpr[gpr::RBP] = 0;
-            cpu.gpr[gpr::RSP] = 0x7C00;
-
-            set_real_mode_seg(&mut cpu.segments.cs, 0x0000);
-            set_real_mode_seg(&mut cpu.segments.ds, 0x0000);
-            set_real_mode_seg(&mut cpu.segments.es, 0x0000);
-            set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
-            cpu.set_rip(0x7C00);
-            return Ok(());
+        if sector[510] != 0x55 || sector[511] != 0xAA {
+            return Err("Invalid boot signature");
         }
 
-        Err("Invalid boot signature")
+        bus.write_physical(0x7C00, &sector);
+        Ok((0x0000, 0x7C00))
     }
 
-    fn boot_eltorito(
+    fn load_eltorito_cd_boot_image(
         &mut self,
-        cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(u16, u16), &'static str> {
         let parsed = eltorito::parse_boot_image(disk)?;
         let entry = parsed.image;
+        let start_lba = u64::from(entry.load_rba)
+            .checked_mul(4)
+            .ok_or("El Torito boot image load past end-of-image")?;
+        let count = u64::from(entry.sector_count);
+        let dst = (u64::from(entry.load_segment)) << 4;
+        for i in 0..count {
+            let mut buf = [0u8; 512];
+            disk.read_sector(start_lba + i, &mut buf)
+                .map_err(|_| "Disk read error")?;
+            bus.write_physical(dst + i * 512, &buf);
+        }
 
         // Cache boot metadata for INT 13h AH=4Bh ("El Torito disk emulation services").
         //
@@ -186,48 +221,13 @@ impl Bios {
             media_type: ElToritoBootMediaType::NoEmulation,
             boot_drive: self.config.boot_drive,
             controller_index: 0,
+            boot_catalog_lba: Some(entry.boot_catalog_lba),
             boot_image_lba: Some(entry.load_rba),
             load_segment: Some(entry.load_segment),
             sector_count: Some(entry.sector_count),
-            boot_catalog_lba: Some(entry.boot_catalog_lba),
         });
 
-        let start_lba = u64::from(entry.load_rba)
-            .checked_mul(4)
-            .ok_or("El Torito boot image load past end-of-image")?;
-        let count = u64::from(entry.sector_count);
-        let end_lba = start_lba
-            .checked_add(count)
-            .ok_or("El Torito boot image load past end-of-image")?;
-        if end_lba > disk.size_in_sectors() {
-            return Err("El Torito boot image load past end-of-image");
-        }
-
-        let dst = (u64::from(entry.load_segment)) << 4;
-        for i in 0..count {
-            let mut buf = [0u8; 512];
-            disk.read_sector(start_lba + i, &mut buf)
-                .map_err(|_| "Disk read error")?;
-            bus.write_physical(dst + i * 512, &buf);
-        }
-
-        // Register setup per BIOS conventions (matches the MBR boot path, except CS:IP).
-        cpu.gpr[gpr::RAX] = 0;
-        cpu.gpr[gpr::RBX] = 0;
-        cpu.gpr[gpr::RCX] = 0;
-        cpu.gpr[gpr::RDX] = self.config.boot_drive as u64; // DL
-        cpu.gpr[gpr::RSI] = 0;
-        cpu.gpr[gpr::RDI] = 0;
-        cpu.gpr[gpr::RBP] = 0;
-        cpu.gpr[gpr::RSP] = 0x7C00;
-
-        set_real_mode_seg(&mut cpu.segments.cs, entry.load_segment);
-        set_real_mode_seg(&mut cpu.segments.ds, 0x0000);
-        set_real_mode_seg(&mut cpu.segments.es, 0x0000);
-        set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
-        cpu.set_rip(0x0000);
-
-        Ok(())
+        Ok((entry.load_segment, 0x0000))
     }
 
     fn bios_diag(&mut self, bus: &mut dyn BiosBus, msg: &str) {
