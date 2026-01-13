@@ -49,11 +49,13 @@ This is the **coordination hub**. You wire together the work from all other work
 
 ### Known major gaps / limitations (please don’t rediscover these)
 
-- **No SMP yet (single-vCPU only)**:
-  `aero_machine::Machine` rejects `cpu_count != 1` (`crates/aero-machine/src/lib.rs::Machine::new`),
-  and `aero_machine::pc::PcMachine` does the same (`crates/aero-machine/src/pc.rs`).
-  The underlying PC platform wiring (`aero_pc_platform::PcPlatform`) is also implicitly single-vCPU
-  today (no AP bring-up/scheduling), so “enable SMP” is more than removing a guard.
+- **No SMP scheduler yet (BSP-only execution)**:
+  The canonical integration loops (`aero_machine::Machine` / `aero_machine::pc::PcMachine`) still
+  execute only the BSP, and the underlying PC platform wiring (`aero_pc_platform::PcPlatform`) is
+  still BSP-centric (no AP bring-up/scheduling), so “enable SMP” is more than a config change.
+  `cpu_count` is **not** forced to 1 anymore: the BIOS will publish SMBIOS/ACPI topology (e.g. MADT)
+  for `cpu_count >= 1`, which is useful for SMP bring-up contract testing and topology validation
+  even before multi-vCPU execution lands.
 - **Virtio MSI-X is implemented but not wired in the canonical machine/platform**:
   `aero-virtio` implements MSI-X in the virtio-pci transport (`crates/aero-virtio/src/pci.rs`), but
   the canonical integration layers currently use a `NoopVirtioInterruptSink` and only support
@@ -149,7 +151,7 @@ relevant crates/tests.
 | DM-001 | PIC (8259A) | Implemented | P0 | None | Medium | `crates/devices/src/pic8259.rs` |
 | DM-002 | PIT (8254) | Implemented | P0 | None | Medium | `crates/devices/src/pit8254.rs` |
 | DM-003 | CMOS/RTC | Implemented | P0 | None | Medium | `crates/devices/src/rtc_cmos.rs` |
-| DM-004 | Local APIC | Implemented (single-vCPU use) | P0 | None | High | `crates/platform/src/interrupts/*`, MMIO adapters in `crates/aero-machine/src/lib.rs` |
+| DM-004 | Local APIC | Implemented (multi-LAPIC topology; BSP-centric delivery) | P0 | None | High | `crates/platform/src/interrupts/*`, MMIO adapters in `crates/aero-machine/src/lib.rs` |
 | DM-005 | I/O APIC | Implemented | P0 | DM-004 | High | `crates/platform/src/interrupts/*`, MMIO adapters in `crates/aero-machine/src/lib.rs` |
 | DM-006 | HPET | Implemented | P0 | None | Medium | `crates/devices/src/hpet.rs` |
 | DM-007 | PCI configuration space | Implemented | P0 | None | High | `crates/devices/src/pci/*` |
@@ -176,7 +178,7 @@ relevant crates/tests.
 
 | ID | Task | Priority | Complexity | Notes / entry points |
 |----|------|----------|------------|----------------------|
-| MP-001 | SMP: allow `cpu_count > 1` in `aero_machine::Machine` / `PcMachine` | P0 | Very High | Remove `cpu_count != 1` guard (`crates/aero-machine/src/lib.rs`, `crates/aero-machine/src/pc.rs`), then implement multi-vCPU scheduling + LAPIC/IPI delivery + ACPI MADT updates. |
+| MP-001 | SMP: run multiple vCPUs (scheduler + AP bring-up) | P0 | Very High | `cpu_count > 1` is already accepted and published via SMBIOS/ACPI, but the canonical machine loops still execute only the BSP. Remaining work is multi-vCPU scheduling/execution + per-vCPU interrupt delivery/IPI plumbing and snapshot/time integration. |
 | MP-002 | MSI/MSI-X plumbing in canonical PCI integration | P1 | High | `aero_platform::interrupts::msi::MsiMessage` exists; the missing piece is routing PCI MSI/MSI-X config + message delivery through the canonical `PlatformInterrupts` used by `Machine`/`PcPlatform`. |
 | MP-003 | NVMe MSI/MSI-X (if/when desired) | P2 | High | Intentionally omitted today (see `crates/aero-devices-nvme/README.md`). Do not start without agreement on scope. |
 
