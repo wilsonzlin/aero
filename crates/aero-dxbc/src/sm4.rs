@@ -119,7 +119,13 @@ impl Sm4Program {
         let (stage, model) = decode_version_token(version);
 
         // Convert the declared token range to u32 tokens (little-endian).
-        let mut tokens = Vec::with_capacity(declared_len);
+        //
+        // Use `try_reserve_exact` so extremely large/corrupt shader blobs don't abort the process
+        // via an OOM allocation failure.
+        let mut tokens = Vec::new();
+        tokens
+            .try_reserve_exact(declared_len)
+            .map_err(|_| Sm4Error::TokenStreamTooLarge { dwords: declared_len })?;
         for chunk in bytes.chunks_exact(4).take(declared_len) {
             tokens.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
         }
@@ -184,6 +190,14 @@ pub enum Sm4Error {
         /// Available DWORDs in the token stream.
         available: usize,
     },
+    /// The token stream is too large to allocate.
+    ///
+    /// This can occur either due to an internal capacity overflow or due to the
+    /// allocator refusing the request (e.g. OOM).
+    TokenStreamTooLarge {
+        /// Declared length in DWORDs.
+        dwords: usize,
+    },
 }
 
 impl From<DxbcError> for Sm4Error {
@@ -213,6 +227,9 @@ impl fmt::Display for Sm4Error {
                 f,
                 "shader bytecode declares {declared} dwords but only {available} provided"
             ),
+            Sm4Error::TokenStreamTooLarge { dwords } => {
+                write!(f, "shader bytecode token stream {dwords} dwords is too large to allocate")
+            }
         }
     }
 }
