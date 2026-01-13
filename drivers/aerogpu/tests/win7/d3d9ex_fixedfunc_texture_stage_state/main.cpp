@@ -11,6 +11,8 @@ struct Vertex {
   float z;
   float rhw;
   DWORD color;
+  float u;
+  float v;
 };
 
 static void DumpBytesToFile(const char* test_name,
@@ -68,15 +70,15 @@ static void DumpTightBgra32(const char* test_name,
   DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
 }
 
-static HRESULT CreateSolidTexture(IDirect3DDevice9Ex* dev, D3DCOLOR argb, IDirect3DTexture9** out_tex) {
+static HRESULT CreateTestTexture2x2(IDirect3DDevice9Ex* dev, IDirect3DTexture9** out_tex) {
   if (!dev || !out_tex) {
     return E_INVALIDARG;
   }
 
-  // Stage through a systemmem texture so the copy path works even when the default-pool texture
-  // is guest-backed.
+  // Stage through a systemmem texture so UpdateTexture works even when the
+  // default-pool texture is guest-backed.
   ComPtr<IDirect3DTexture9> sys_tex;
-  HRESULT hr = dev->CreateTexture(1, 1, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, sys_tex.put(), NULL);
+  HRESULT hr = dev->CreateTexture(2, 2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, sys_tex.put(), NULL);
   if (FAILED(hr)) {
     return hr;
   }
@@ -87,11 +89,25 @@ static HRESULT CreateSolidTexture(IDirect3DDevice9Ex* dev, D3DCOLOR argb, IDirec
   if (FAILED(hr)) {
     return hr;
   }
-  *(D3DCOLOR*)lr.pBits = argb;
+
+  // Distinct colors; we sample the bottom-right texel (blue).
+  const D3DCOLOR kRed = 0xFFFF0000u;
+  const D3DCOLOR kGreen = 0xFF00FF00u;
+  const D3DCOLOR kMagenta = 0xFFFF00FFu;
+  const D3DCOLOR kBlue = 0xFF0000FFu;
+
+  uint8_t* base = (uint8_t*)lr.pBits;
+  D3DCOLOR* row0 = (D3DCOLOR*)base;
+  D3DCOLOR* row1 = (D3DCOLOR*)(base + lr.Pitch);
+  row0[0] = kRed;
+  row0[1] = kGreen;
+  row1[0] = kMagenta;
+  row1[1] = kBlue;
+
   sys_tex->UnlockRect(0);
 
   ComPtr<IDirect3DTexture9> gpu_tex;
-  hr = dev->CreateTexture(1, 1, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, gpu_tex.put(), NULL);
+  hr = dev->CreateTexture(2, 2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, gpu_tex.put(), NULL);
   if (FAILED(hr)) {
     return hr;
   }
@@ -128,7 +144,7 @@ static HRESULT DrawTriangleAndReadPixels(const char* test_name,
     return hr;
   }
 
-  hr = dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+  hr = dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1);
   if (FAILED(hr)) {
     dev->EndScene();
     return hr;
@@ -312,8 +328,9 @@ static int RunD3D9ExFixedFuncTextureStageState(int argc, char** argv) {
   dev->SetRenderState(D3DRS_LIGHTING, FALSE);
   dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
   dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+  dev->SetRenderState(D3DRS_ZENABLE, FALSE);
 
-  // Diffuse red * texture blue = black.
+  // Diffuse red * (blue texel) = black.
   const DWORD kDiffuseRed = D3DCOLOR_XRGB(255, 0, 0);
   const DWORD kClearGreen = D3DCOLOR_XRGB(0, 255, 0);
   const DWORD kTexBlue = D3DCOLOR_ARGB(255, 0, 0, 255);
@@ -325,26 +342,37 @@ static int RunD3D9ExFixedFuncTextureStageState(int argc, char** argv) {
   verts[0].z = 0.5f;
   verts[0].rhw = 1.0f;
   verts[0].color = kDiffuseRed;
+  verts[0].u = 0.75f;
+  verts[0].v = 0.75f;
   verts[1].x = (float)kWidth * 0.75f;
   verts[1].y = (float)kHeight * 0.25f;
   verts[1].z = 0.5f;
   verts[1].rhw = 1.0f;
   verts[1].color = kDiffuseRed;
+  verts[1].u = 0.75f;
+  verts[1].v = 0.75f;
   verts[2].x = (float)kWidth * 0.5f;
   verts[2].y = (float)kHeight * 0.75f;
   verts[2].z = 0.5f;
   verts[2].rhw = 1.0f;
   verts[2].color = kDiffuseRed;
+  verts[2].u = 0.75f;
+  verts[2].v = 0.75f;
 
   ComPtr<IDirect3DTexture9> tex0;
-  hr = CreateSolidTexture(dev.get(), kTexBlue, tex0.put());
+  hr = CreateTestTexture2x2(dev.get(), tex0.put());
   if (FAILED(hr)) {
-    return reporter.FailHresult("CreateSolidTexture", hr);
+    return reporter.FailHresult("CreateTestTexture2x2", hr);
   }
   hr = dev->SetTexture(0, tex0.get());
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTexture(0)", hr);
   }
+  dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+  dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+  dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+  dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+  dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
 
   auto run_phase = [&](const char* phase_name, D3DCOLOR expected_center) -> int {
     D3DCOLOR center = 0;
@@ -437,4 +465,3 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
-
