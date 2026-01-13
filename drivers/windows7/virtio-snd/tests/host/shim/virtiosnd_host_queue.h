@@ -19,6 +19,9 @@ typedef struct _VIRTIOSND_HOST_QUEUE_USED {
     UINT32 UsedLen;
 } VIRTIOSND_HOST_QUEUE_USED;
 
+typedef struct _VIRTIOSND_HOST_QUEUE VIRTIOSND_HOST_QUEUE;
+typedef void (*VIRTIOSND_HOST_QUEUE_ON_KICK)(_Inout_ VIRTIOSND_HOST_QUEUE* Q);
+
 typedef struct _VIRTIOSND_HOST_QUEUE {
     VIRTIOSND_QUEUE Queue; /* Public-facing queue wrapper (Ops + Ctx). */
 
@@ -39,6 +42,9 @@ typedef struct _VIRTIOSND_HOST_QUEUE {
     ULONG KickCalls;
     ULONG DisableInterruptCalls;
     ULONG EnableInterruptCalls;
+
+    /* Optional hook invoked from the Kick() op (test helper). */
+    VIRTIOSND_HOST_QUEUE_ON_KICK OnKick;
 } VIRTIOSND_HOST_QUEUE;
 
 void VirtioSndHostQueueInit(_Out_ VIRTIOSND_HOST_QUEUE* Q, _In_ USHORT Capacity);
@@ -51,4 +57,3 @@ void VirtioSndHostQueueReset(_Inout_ VIRTIOSND_HOST_QUEUE* Q);
  * buffers before the completion is injected.
  */
 void VirtioSndHostQueuePushUsed(_Inout_ VIRTIOSND_HOST_QUEUE* Q, _In_opt_ void* Cookie, _In_ UINT32 UsedLen);
-

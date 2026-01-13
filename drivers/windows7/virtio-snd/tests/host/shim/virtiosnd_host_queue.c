@@ -72,6 +72,9 @@ static VOID HostQueueKick(_In_ void* ctx)
         return;
     }
     q->KickCalls++;
+    if (q->OnKick != NULL) {
+        q->OnKick(q);
+    }
 }
 
 static VOID HostQueueDisableInterrupts(_In_ void* ctx)
