@@ -23,6 +23,19 @@ Optional legacy filename alias:
 
 ## Notes
 
+### Static INF validation (`verify-inf.ps1`)
+
+`..\scripts\verify-inf.ps1` performs a lightweight, regex-based validation of
+`aero_virtio_input.inf` to ensure it continues to match Aero's packaging/contract
+expectations (HID class, catalog filename, KMDF version, required contract v1 HWIDs,
+and MSI interrupt settings).
+
+Run it from any PowerShell prompt:
+
+```powershell
+..\scripts\verify-inf.ps1
+```
+
 ### Catalog generation (`Inf2Cat`)
 
 `Inf2Cat` hashes every file referenced by the INF. That means:
