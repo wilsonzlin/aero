@@ -697,6 +697,13 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
 }
 static VOID AeroGpuProgramScanout(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ PHYSICAL_ADDRESS FbPa)
 {
+    if (!Adapter || !Adapter->Bar0) {
+        return;
+    }
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) != DxgkDevicePowerStateD0) {
+        return;
+    }
+
     const ULONG enable = Adapter->SourceVisible ? 1u : 0u;
 
     if (Adapter->UsingNewAbi || Adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
@@ -731,6 +738,9 @@ static VOID AeroGpuProgramScanout(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ PHYSICA
 static VOID AeroGpuSetScanoutEnable(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG Enable)
 {
     if (!Adapter->Bar0) {
+        return;
+    }
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) != DxgkDevicePowerStateD0) {
         return;
     }
 
@@ -853,6 +863,9 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
                                             _In_ ULONG DescSize,
                                             _In_ PHYSICAL_ADDRESS DescPa)
 {
+    if (InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+        return STATUS_DEVICE_NOT_READY;
+    }
     if (!Adapter->RingVa || !Adapter->Bar0) {
         return STATUS_DEVICE_NOT_READY;
     }
@@ -890,9 +903,12 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
                                         _In_ ULONG CmdSizeBytes,
                                         _In_ uint64_t AllocTableGpa,
                                         _In_ uint32_t AllocTableSizeBytes,
-                                        _In_ ULONGLONG SignalFence,
-                                        _Out_opt_ ULONG* RingTailAfterOut)
+                                         _In_ ULONGLONG SignalFence,
+                                         _Out_opt_ ULONG* RingTailAfterOut)
 {
+    if (InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+        return STATUS_DEVICE_NOT_READY;
+    }
     if (!Adapter->RingVa || !Adapter->RingHeader || !Adapter->Bar0 || Adapter->RingEntryCount == 0) {
         return STATUS_DEVICE_NOT_READY;
     }
@@ -1686,6 +1702,10 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
+    /* StartDevice implies the adapter is entering D0. Keep submissions blocked until init completes. */
+    InterlockedExchange(&adapter->DevicePowerState, (LONG)DxgkDevicePowerStateD0);
+    InterlockedExchange(&adapter->AcceptingSubmissions, 0);
+
     const ULONG magic = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_MAGIC);
     ULONG abiVersion = 0;
     ULONGLONG features = 0;
@@ -1952,9 +1972,11 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     {
         PHYSICAL_ADDRESS zero;
         zero.QuadPart = 0;
+        adapter->CurrentScanoutFbPa = zero;
         AeroGpuProgramScanout(adapter, zero);
     }
 
+    InterlockedExchange(&adapter->AcceptingSubmissions, 1);
     return STATUS_SUCCESS;
 }
 
@@ -1966,6 +1988,8 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
     }
 
     AEROGPU_LOG0("StopDevice");
+    InterlockedExchange(&adapter->AcceptingSubmissions, 0);
+    InterlockedExchange(&adapter->DevicePowerState, (LONG)DxgkDevicePowerStateD3);
 
     if (adapter->Bar0) {
         /*
@@ -2050,6 +2074,212 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
         MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
         adapter->Bar0 = NULL;
         adapter->Bar0Length = 0;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
+                                                 _In_ DXGK_DEVICE_POWER_STATE DevicePowerState,
+                                                 _In_ ULONG HwWakeupEnable)
+{
+    UNREFERENCED_PARAMETER(HwWakeupEnable);
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const DXGK_DEVICE_POWER_STATE oldState =
+        (DXGK_DEVICE_POWER_STATE)InterlockedExchange(&adapter->DevicePowerState, (LONG)DevicePowerState);
+
+    if (DevicePowerState == DxgkDevicePowerStateD0) {
+        /* Block submissions while restoring state. */
+        InterlockedExchange(&adapter->AcceptingSubmissions, 0);
+
+        if (!adapter->Bar0) {
+            /* Early init / teardown: nothing to restore yet. */
+            return STATUS_SUCCESS;
+        }
+
+        /*
+         * Disable IRQs before resetting ring state to avoid racing ISR/DPC paths
+         * with partially-restored bookkeeping.
+         */
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+            KIRQL irqIrql;
+            KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, 0);
+            KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
+        }
+
+        /*
+         * If we are resuming from a non-D0 state, assume the virtual device may
+         * have lost state. Do a best-effort "virtual reset":
+         *   - treat all in-flight work as completed to avoid dxgkrnl stalls
+         *   - reprogram ring/IRQ/fence-page MMIO state
+         */
+        if (oldState != DxgkDevicePowerStateD0) {
+            LIST_ENTRY pendingToFree;
+            InitializeListHead(&pendingToFree);
+            LIST_ENTRY internalToFree;
+            InitializeListHead(&internalToFree);
+
+            ULONGLONG completedFence = 0;
+
+            {
+                KIRQL pendingIrql;
+                KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
+
+                completedFence = adapter->LastSubmittedFence;
+                adapter->LastCompletedFence = completedFence;
+
+                if (adapter->Bar0) {
+                    KIRQL ringIrql;
+                    KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+
+                    if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                        if (adapter->RingHeader) {
+                            const ULONG tail = adapter->RingTail;
+                            adapter->RingHeader->head = tail;
+                            adapter->RingHeader->tail = tail;
+                            KeMemoryBarrier();
+                        }
+
+                        /*
+                         * Re-program the ring + optional fence page addresses in
+                         * case the device reset them while powered down.
+                         */
+                        const BOOLEAN haveRing =
+                            (adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0) ? TRUE : FALSE;
+                        if (haveRing) {
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_LO, adapter->RingPa.LowPart);
+                            AeroGpuWriteRegU32(adapter,
+                                               AEROGPU_MMIO_REG_RING_GPA_HI,
+                                               (ULONG)(adapter->RingPa.QuadPart >> 32));
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_SIZE_BYTES, adapter->RingSizeBytes);
+                        }
+
+                        if (adapter->FencePageVa && (adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_FENCE_PAGE)) {
+                            adapter->FencePageVa->completed_fence = 0;
+                            KeMemoryBarrier();
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, adapter->FencePagePa.LowPart);
+                            AeroGpuWriteRegU32(adapter,
+                                               AEROGPU_MMIO_REG_FENCE_GPA_HI,
+                                               (ULONG)(adapter->FencePagePa.QuadPart >> 32));
+                        } else {
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, 0);
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, 0);
+                        }
+
+                        if (haveRing) {
+                            AeroGpuWriteRegU32(adapter,
+                                               AEROGPU_MMIO_REG_RING_CONTROL,
+                                               AEROGPU_RING_CONTROL_ENABLE | AEROGPU_RING_CONTROL_RESET);
+                        }
+                    } else {
+                        if (adapter->RingVa && adapter->RingEntryCount != 0) {
+                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, adapter->RingPa.LowPart);
+                            AeroGpuWriteRegU32(adapter,
+                                               AEROGPU_LEGACY_REG_RING_BASE_HI,
+                                               (ULONG)(adapter->RingPa.QuadPart >> 32));
+                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, adapter->RingEntryCount);
+                        }
+                        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
+                        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
+                        adapter->RingTail = 0;
+                        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+                    }
+
+                    KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+                }
+
+                while (!IsListEmpty(&adapter->PendingSubmissions)) {
+                    InsertTailList(&pendingToFree, RemoveHeadList(&adapter->PendingSubmissions));
+                }
+                while (!IsListEmpty(&adapter->PendingInternalSubmissions)) {
+                    InsertTailList(&internalToFree, RemoveHeadList(&adapter->PendingInternalSubmissions));
+                }
+
+                KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
+            }
+
+            if (adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
+                DXGKARGCB_NOTIFY_INTERRUPT notify;
+                RtlZeroMemory(&notify, sizeof(notify));
+                notify.InterruptType = DXGK_INTERRUPT_TYPE_DMA_COMPLETED;
+                notify.DmaCompleted.SubmissionFenceId = (ULONG)completedFence;
+                notify.DmaCompleted.NodeOrdinal = AEROGPU_NODE_ORDINAL;
+                notify.DmaCompleted.EngineOrdinal = AEROGPU_ENGINE_ORDINAL;
+                adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+            }
+
+            if (adapter->DxgkInterface.DxgkCbQueueDpcForIsr) {
+                adapter->DxgkInterface.DxgkCbQueueDpcForIsr(adapter->StartInfo.hDxgkHandle);
+            }
+
+            while (!IsListEmpty(&pendingToFree)) {
+                PLIST_ENTRY entry = RemoveHeadList(&pendingToFree);
+                AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
+                AeroGpuFreeContiguousNonCached(sub->AllocTableVa, (SIZE_T)sub->AllocTableSizeBytes);
+                AeroGpuFreeContiguousNonCached(sub->DmaCopyVa, sub->DmaCopySize);
+                AeroGpuFreeContiguousNonCached(sub->DescVa, sub->DescSize);
+                ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+            }
+            while (!IsListEmpty(&internalToFree)) {
+                PLIST_ENTRY entry = RemoveHeadList(&internalToFree);
+                AEROGPU_PENDING_INTERNAL_SUBMISSION* sub =
+                    CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
+                AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
+                ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+            }
+        }
+
+        /* Reset vblank tracking so GetScanLine doesn't consume stale timestamps across resume. */
+        InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankSeq, 0);
+        InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankTimeNs, 0);
+        InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankInterruptTime100ns, 0);
+        adapter->VblankPeriodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+
+        /* Re-apply scanout configuration (best-effort; modeset may arrive later). */
+        AeroGpuProgramScanout(adapter, adapter->CurrentScanoutFbPa);
+
+        /* Restore IRQ enable mask (if supported). */
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
+            KIRQL irqIrql;
+            KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
+            const ULONG enable = adapter->InterruptRegistered ? adapter->IrqEnableMask : 0;
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+            KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
+        }
+
+        if (adapter->Bar0 && adapter->RingVa && adapter->RingEntryCount != 0 &&
+            (adapter->AbiKind != AEROGPU_ABI_KIND_V1 || adapter->RingHeader != NULL)) {
+            InterlockedExchange(&adapter->AcceptingSubmissions, 1);
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    /* Transition away from D0: disable device IRQ generation and block submits. */
+    InterlockedExchange(&adapter->AcceptingSubmissions, 0);
+
+    if (!adapter->Bar0) {
+        return STATUS_SUCCESS;
+    }
+
+    if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+        KIRQL irqIrql;
+        KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, 0);
+        KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
+    }
+    if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
+        /* Legacy fence interrupts are acknowledged via INT_ACK. */
+        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+    } else {
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
     }
 
     return STATUS_SUCCESS;
@@ -2515,6 +2745,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetVidPnSourceAddress(_In_ const HANDLE hAdap
 
     PHYSICAL_ADDRESS fb;
     fb.QuadPart = pSetAddress->PrimaryAddress.QuadPart;
+    adapter->CurrentScanoutFbPa = fb;
     AeroGpuProgramScanout(adapter, fb);
 
     return STATUS_SUCCESS;
@@ -2579,6 +2810,7 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
     ULONGLONG periodNs = adapter->VblankPeriodNs ? (ULONGLONG)adapter->VblankPeriodNs : (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
     BOOLEAN haveVblankRegs = FALSE;
     if (adapter->Bar0 && adapter->SupportsVblank &&
+        (DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0 &&
         adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
         const ULONG mmioPeriod = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
         if (mmioPeriod != 0) {
@@ -4376,6 +4608,9 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
         return STATUS_SUCCESS;
     }
 
+    const BOOLEAN poweredOn =
+        ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+
     /* Fence/DMA completion interrupt gating. */
     if (InterruptType == DXGK_INTERRUPT_TYPE_DMA_COMPLETED) {
         if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
@@ -4392,9 +4627,11 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                 enable &= ~AEROGPU_IRQ_FENCE;
             }
             adapter->IrqEnableMask = enable;
-            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
-            if (!EnableInterrupt) {
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_FENCE);
+            if (poweredOn) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+                if (!EnableInterrupt) {
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_FENCE);
+                }
             }
             KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
         }
@@ -4446,7 +4683,9 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
              * EnableInterrupt repeatedly.
              */
             if (EnableInterrupt && (enable & AEROGPU_IRQ_SCANOUT_VBLANK) == 0) {
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+                if (poweredOn) {
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+                }
             }
 
             if (EnableInterrupt) {
@@ -4455,11 +4694,15 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                 enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
             }
             adapter->IrqEnableMask = enable;
-            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+            if (poweredOn) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+            }
 
             /* Be robust against stale pending bits when disabling. */
             if (!EnableInterrupt) {
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+                if (poweredOn) {
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+                }
             }
 
             KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
@@ -5855,6 +6098,7 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
     init.DxgkDdiAddDevice = AeroGpuDdiAddDevice;
     init.DxgkDdiStartDevice = AeroGpuDdiStartDevice;
     init.DxgkDdiStopDevice = AeroGpuDdiStopDevice;
+    init.DxgkDdiSetPowerState = AeroGpuDdiSetPowerState;
     init.DxgkDdiRemoveDevice = AeroGpuDdiRemoveDevice;
     init.DxgkDdiUnload = AeroGpuDdiUnload;
 

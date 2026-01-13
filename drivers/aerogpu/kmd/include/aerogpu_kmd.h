@@ -175,6 +175,19 @@ typedef struct _AEROGPU_ADAPTER {
     DXGKRNL_INTERFACE DxgkInterface;
     BOOLEAN InterruptRegistered; /* True once DxgkCbRegisterInterrupt succeeds. */
 
+    /*
+     * WDDM power state tracking.
+     *
+     * Dxgkrnl may transition the adapter between D0 and non-D0 states without
+     * tearing down the device (StopDevice/StartDevice), e.g. during guest
+     * sleep/hibernate or PnP disable/enable.
+     *
+     * Use a simple atomic "ready" gate for submission paths so we never touch
+     * the ring/MMIO while powered down.
+     */
+    volatile LONG DevicePowerState;      /* DXGK_DEVICE_POWER_STATE */
+    volatile LONG AcceptingSubmissions;  /* 1 when D0 + ring is initialized */
+
     PUCHAR Bar0;
     ULONG Bar0Length;
 
@@ -244,6 +257,7 @@ typedef struct _AEROGPU_ADAPTER {
     ULONG CurrentHeight;
     ULONG CurrentPitch;
     ULONG CurrentFormat; /* enum aerogpu_format */
+    PHYSICAL_ADDRESS CurrentScanoutFbPa;
     BOOLEAN SourceVisible;
     BOOLEAN UsingNewAbi;
 

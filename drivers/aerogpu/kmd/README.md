@@ -151,6 +151,33 @@ This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` ca
 - If vblank timing registers are not available, the driver falls back to a synthetic cadence based on
   `KeQueryInterruptTime()` (to avoid apps busy-waiting forever).
 
+## Power management (`DxgkDdiSetPowerState`)
+
+The KMD implements a minimal WDDM 1.1 `DxgkDdiSetPowerState` callback to improve robustness across adapter
+power transitions (guest sleep/hibernate and PnP disable/enable).
+
+Semantics:
+
+- **Transition away from D0** (to any non-D0 state):
+  - Block new ring submissions (the KMD will return `STATUS_DEVICE_NOT_READY` from ring push paths).
+  - Disable the versioned IRQ block when present:
+    - `AEROGPU_MMIO_REG_IRQ_ENABLE = 0`
+    - acknowledge any pending bits via `AEROGPU_MMIO_REG_IRQ_ACK`.
+  - On legacy devices, also acknowledge any pending fence interrupts via `INT_ACK` (legacy fence IRQ path).
+
+- **Transition to D0**:
+  - Block submissions while restoring state.
+  - If resuming from non-D0, perform a best-effort **virtual reset**:
+    - treat all in-flight work as completed (`LastCompletedFence = LastSubmittedFence`) and notify dxgkrnl,
+    - reset ring pointers and reprogram ring/MMIO state (including `RING_CONTROL RESET` on the versioned ABI),
+    - reprogram the optional fence page GPA when present.
+  - Reset cached vblank timing state so scanline/vblank pacing does not consume stale timestamps across resume.
+  - Restore the last programmed scanout configuration (best-effort; a full modeset may arrive later).
+  - Restore `IRQ_ENABLE` to the cached enable mask when an ISR has been registered.
+
+This power callback is intentionally minimal: it prioritizes avoiding stuck IRQ/vblank state after resume over
+preserving in-flight rendering across a power cycle.
+
 ## Stable `alloc_id` / `share_token` (shared allocations)
 
 To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, AeroGPU relies on stable identifiers:
