@@ -9,6 +9,9 @@ Usage: $(basename "$0") [--host-only] [--clean] [--build-dir <dir>]
 
 Configure, build, and run the virtio-snd host-buildable unit tests.
 
+On Windows, use the PowerShell equivalent:
+  pwsh -NoProfile -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/run-host-tests.ps1
+
 Defaults:
   (full suite)   --build-dir out/virtiosnd-tests        (relative to the repo root)
   (--host-only)  --build-dir out/virtiosnd-host-tests   (relative to the repo root)
