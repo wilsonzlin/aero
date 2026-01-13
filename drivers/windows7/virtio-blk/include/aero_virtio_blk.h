@@ -101,6 +101,21 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
     VIRTIO_PCI_DEVICE Vdev;
     volatile UINT16* QueueNotifyAddrCache[1];
 
+    /*
+     * Interrupt mode selected by StorPort/PnP.
+     *
+     * When Windows assigns message-signaled interrupts (MSI/MSI-X), StorPort
+     * invokes the miniport's HwMSInterruptRoutine and provides the message ID.
+     * In that mode we must program virtio MSI-X vector routing (msix_config /
+     * queue_msix_vector) and must not rely on the virtio ISR status byte.
+     *
+     * When message-signaled interrupts are not available, we fall back to INTx
+     * (shared line) semantics and use the virtio ISR status byte as the
+     * read-to-ack mechanism.
+     */
+    BOOLEAN UseMsi;
+    USHORT MsiMessageCount;
+
     virtio_os_ops_t VirtioOps;
     virtio_os_storport_ctx_t VirtioOpsCtx;
 
@@ -172,6 +187,7 @@ ULONG AerovblkHwFindAdapter(
 BOOLEAN AerovblkHwInitialize(_In_ PVOID deviceExtension);
 BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOCK srb);
 BOOLEAN AerovblkHwInterrupt(_In_ PVOID deviceExtension);
+BOOLEAN AerovblkHwMSInterrupt(_In_ PVOID deviceExtension, _In_ ULONG messageId);
 BOOLEAN AerovblkHwResetBus(_In_ PVOID deviceExtension, _In_ ULONG pathId);
 
 SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(

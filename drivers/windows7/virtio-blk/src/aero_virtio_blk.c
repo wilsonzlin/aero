@@ -4,6 +4,127 @@
 
 static VOID AerovblkCompleteSrb(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR srbStatus);
 
+static VOID AerovblkCaptureInterruptMode(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  PIO_INTERRUPT_MESSAGE_INFO msgInfo;
+  ULONG msgCount;
+
+  if (devExt == NULL) {
+    return;
+  }
+
+  devExt->UseMsi = FALSE;
+  devExt->MsiMessageCount = 0;
+
+  /*
+   * StorPort exposes message-signaled interrupt assignments via
+   * StorPortGetMessageInterruptInformation(). When the device is configured for
+   * MSI/MSI-X, this returns an IO_INTERRUPT_MESSAGE_INFO describing the
+   * connected message interrupts, including MessageCount.
+   *
+   * When running on INTx, the call returns NULL (or a structure with
+   * MessageCount==0 depending on WDK/OS version). Treat both as INTx.
+   */
+  msgInfo = StorPortGetMessageInterruptInformation(devExt);
+  if (msgInfo == NULL) {
+    return;
+  }
+
+  msgCount = msgInfo->MessageCount;
+  if (msgCount == 0) {
+    return;
+  }
+
+  if (msgCount > 0xFFFFu) {
+    msgCount = 0xFFFFu;
+  }
+
+  devExt->UseMsi = TRUE;
+  devExt->MsiMessageCount = (USHORT)msgCount;
+}
+
+static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  USHORT configVec;
+  USHORT queueVec;
+  USHORT readback;
+  KIRQL irql;
+
+  if (devExt == NULL || devExt->Vdev.CommonCfg == NULL) {
+    return FALSE;
+  }
+
+  if (!devExt->UseMsi) {
+    /*
+     * INTx path: ensure MSI-X vectors are unassigned so the device must fall
+     * back to INTx + ISR semantics even if MSI-X is present/enabled.
+     */
+    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
+    KeMemoryBarrier();
+
+    KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
+    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
+    KeMemoryBarrier();
+    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector, VIRTIO_PCI_MSI_NO_VECTOR);
+    KeMemoryBarrier();
+    KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
+    return TRUE;
+  }
+
+  /*
+   * MSI/MSI-X path:
+   *  - config vector: 0
+   *  - queue0 vector: 1 if we have >= 2 messages, else share vector 0.
+   *
+   * The message IDs that StorPort delivers to HwMSInterruptRoutine map to the
+   * MSI-X table entry indices that virtio expects in msix_config /
+   * queue_msix_vector.
+   */
+  configVec = 0;
+  queueVec = (devExt->MsiMessageCount >= 2u) ? 1u : 0u;
+
+  WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config, configVec);
+  KeMemoryBarrier();
+  readback = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config);
+  if (readback == VIRTIO_PCI_MSI_NO_VECTOR || readback != configVec) {
+    return FALSE;
+  }
+
+  KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
+  WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
+  KeMemoryBarrier();
+  WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector, queueVec);
+  KeMemoryBarrier();
+  readback = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector);
+  KeMemoryBarrier();
+  KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
+
+  if (readback == VIRTIO_PCI_MSI_NO_VECTOR || readback != queueVec) {
+    /*
+     * If programming vector 1 failed, fall back to vector 0 mapping so the
+     * device can still interrupt via message 0.
+     */
+    if (queueVec != 0) {
+      queueVec = 0;
+
+      KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
+      WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
+      KeMemoryBarrier();
+      WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector, queueVec);
+      KeMemoryBarrier();
+      readback = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector);
+      KeMemoryBarrier();
+      KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
+
+      if (readback == VIRTIO_PCI_MSI_NO_VECTOR || readback != queueVec) {
+        return FALSE;
+      }
+    } else {
+      return FALSE;
+    }
+  }
+
+  return TRUE;
+}
+
 static VOID AerovblkSetSense(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR senseKey, _In_ UCHAR asc,
                              _In_ UCHAR ascq) {
   SENSE_DATA sense;
@@ -418,8 +539,9 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
     return FALSE;
   }
 
-  /* Disable MSI-X config vector (INTx required by contract v1). */
-  WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
+  if (!AerovblkProgramMsixVectors(devExt)) {
+    goto FailDevice;
+  }
 
   devExt->NegotiatedFeatures = negotiated;
   devExt->SupportsIndirect = (negotiated & AEROVBLK_FEATURE_RING_INDIRECT_DESC) ? TRUE : FALSE;
@@ -477,22 +599,6 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
     goto FailDevice;
   }
   devExt->QueueNotifyAddrCache[0] = notifyAddr;
-
-  /*
-   * Contract v1 requires INTx and only permits MSI-X as an optional enhancement.
-   * Disable (unassign) the queue MSI-X vector so the device must fall back to
-   * INTx + ISR semantics even if MSI-X is present/enabled.
-   */
-  {
-    KIRQL irql;
-
-    KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
-    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
-    KeMemoryBarrier();
-    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector, VIRTIO_PCI_MSI_NO_VECTOR);
-    KeMemoryBarrier();
-    KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
-  }
 
   descPa = devExt->RingDma.paddr + (UINT64)((PUCHAR)devExt->Vq.desc - (PUCHAR)devExt->RingDma.vaddr);
   availPa = devExt->RingDma.paddr + (UINT64)((PUCHAR)devExt->Vq.avail - (PUCHAR)devExt->RingDma.vaddr);
@@ -968,6 +1074,7 @@ ULONG DriverEntry(_In_ PDRIVER_OBJECT driverObject, _In_ PUNICODE_STRING registr
   initData.HwInitialize = AerovblkHwInitialize;
   initData.HwStartIo = AerovblkHwStartIo;
   initData.HwInterrupt = AerovblkHwInterrupt;
+  initData.HwMSInterruptRoutine = AerovblkHwMSInterrupt;
   initData.HwResetBus = AerovblkHwResetBus;
   initData.HwAdapterControl = AerovblkHwAdapterControl;
   initData.NumberOfAccessRanges = 1;
@@ -1178,6 +1285,9 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   configInfo->MaximumTransferLength = maxTransfer;
   configInfo->NumberOfPhysicalBreaks = maxPhysBreaks;
 
+  /* Capture whether StorPort assigned message-signaled interrupts (MSI/MSI-X). */
+  AerovblkCaptureInterruptMode(devExt);
+
   return SP_RETURN_FOUND;
 }
 
@@ -1185,6 +1295,7 @@ BOOLEAN AerovblkHwInitialize(_In_ PVOID deviceExtension) {
   PAEROVBLK_DEVICE_EXTENSION devExt;
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
+  AerovblkCaptureInterruptMode(devExt);
   return AerovblkDeviceBringUp(devExt, TRUE);
 }
 
@@ -1261,20 +1372,78 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
   }
 }
 
-BOOLEAN AerovblkHwInterrupt(_In_ PVOID deviceExtension) {
-  PAEROVBLK_DEVICE_EXTENSION devExt;
-  UCHAR isr;
-  STOR_LOCK_HANDLE lock;
+static VOID AerovblkDrainCompletionsLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
   PVOID ctxPtr;
   uint32_t usedLen;
   PAEROVBLK_REQUEST_CONTEXT ctx;
   PSCSI_REQUEST_BLOCK srb;
   UCHAR statusByte;
 
+  if (devExt == NULL) {
+    return;
+  }
+
+  if (devExt->Vq.queue_size == 0) {
+    return;
+  }
+
+  for (;;) {
+    ctxPtr = NULL;
+    if (virtqueue_split_pop_used(&devExt->Vq, &ctxPtr, &usedLen) == VIRTIO_FALSE) {
+      break;
+    }
+
+    UNREFERENCED_PARAMETER(usedLen);
+
+    ctx = (PAEROVBLK_REQUEST_CONTEXT)ctxPtr;
+    if (ctx == NULL) {
+      continue;
+    }
+
+    srb = ctx->Srb;
+    ctx->Srb = NULL;
+
+    InsertTailList(&devExt->FreeRequestList, &ctx->Link);
+    devExt->FreeRequestCount++;
+
+    if (srb == NULL) {
+      continue;
+    }
+
+    statusByte = *ctx->StatusByte;
+    if (statusByte == VIRTIO_BLK_S_OK) {
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+      continue;
+    }
+
+    if (statusByte == VIRTIO_BLK_S_UNSUPP) {
+      AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x20, 0x00);
+    } else {
+      AerovblkSetSense(devExt, srb, SCSI_SENSE_MEDIUM_ERROR, ctx->IsWrite ? 0x0C : 0x11, 0x00);
+    }
+
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
+  }
+}
+
+static __forceinline BOOLEAN AerovblkServiceInterrupt(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  STOR_LOCK_HANDLE lock;
+
+  StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+  AerovblkDrainCompletionsLocked(devExt);
+  StorPortReleaseSpinLock(devExt, &lock);
+  StorPortNotification(NextRequest, devExt, NULL);
+  return TRUE;
+}
+
+BOOLEAN AerovblkHwInterrupt(_In_ PVOID deviceExtension) {
+  PAEROVBLK_DEVICE_EXTENSION devExt;
+  UCHAR isr;
+
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
 
   /*
-   * Modern virtio-pci ISR byte (BAR0 + 0x2000). Read-to-ack.
+   * INTx path: modern virtio-pci ISR byte (BAR0 + 0x2000). Read-to-ack.
    * Return FALSE if 0 for shared interrupt line safety.
    */
   isr = VirtioPciReadIsr(&devExt->Vdev);
@@ -1282,51 +1451,21 @@ BOOLEAN AerovblkHwInterrupt(_In_ PVOID deviceExtension) {
     return FALSE;
   }
 
-  StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+  return AerovblkServiceInterrupt(devExt);
+}
 
-  if (devExt->Vq.queue_size != 0) {
-    for (;;) {
-      ctxPtr = NULL;
-      if (virtqueue_split_pop_used(&devExt->Vq, &ctxPtr, &usedLen) == VIRTIO_FALSE) {
-        break;
-      }
+BOOLEAN AerovblkHwMSInterrupt(_In_ PVOID deviceExtension, _In_ ULONG messageId) {
+  PAEROVBLK_DEVICE_EXTENSION devExt;
 
-      UNREFERENCED_PARAMETER(usedLen);
+  UNREFERENCED_PARAMETER(messageId);
 
-      ctx = (PAEROVBLK_REQUEST_CONTEXT)ctxPtr;
-      if (ctx == NULL) {
-        continue;
-      }
+  devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
 
-      srb = ctx->Srb;
-      ctx->Srb = NULL;
-
-      InsertTailList(&devExt->FreeRequestList, &ctx->Link);
-      devExt->FreeRequestCount++;
-
-      if (srb == NULL) {
-        continue;
-      }
-
-      statusByte = *ctx->StatusByte;
-      if (statusByte == VIRTIO_BLK_S_OK) {
-        AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
-        continue;
-      }
-
-      if (statusByte == VIRTIO_BLK_S_UNSUPP) {
-        AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x20, 0x00);
-      } else {
-        AerovblkSetSense(devExt, srb, SCSI_SENSE_MEDIUM_ERROR, ctx->IsWrite ? 0x0C : 0x11, 0x00);
-      }
-
-      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
-    }
-  }
-
-  StorPortReleaseSpinLock(devExt, &lock);
-  StorPortNotification(NextRequest, devExt, NULL);
-  return TRUE;
+  /*
+   * MSI/MSI-X path: message interrupts are non-shared; do not rely on the
+   * virtio ISR status byte (it may read as 0). Always service the virtqueue.
+   */
+  return AerovblkServiceInterrupt(devExt);
 }
 
 BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOCK srb) {

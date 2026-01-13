@@ -27,6 +27,16 @@ aero_virtio_blk.sys = 1
 [AeroVirtioBlk_Inst]
 CopyFiles = AeroVirtioBlk_CopyFiles
 
+[AeroVirtioBlk_Inst.HW]
+AddReg = AeroVirtioBlk_Inst_HW_AddReg
+
+[AeroVirtioBlk_Inst_HW_AddReg]
+; Opt-in to message-signaled interrupts (MSI/MSI-X). Windows may grant fewer
+; messages than requested; the driver must handle that at runtime.
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\MessageSignaledInterruptProperties", "MSISupported", 0x00010001, 1
+HKR, "Interrupt Management\MessageSignaledInterruptProperties", "MessageNumberLimit", 0x00010001, 4
+
 [AeroVirtioBlk_CopyFiles]
 aero_virtio_blk.sys
 

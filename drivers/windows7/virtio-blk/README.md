@@ -16,6 +16,15 @@
   - `virtio_pci_modern_miniport.{c,h}` (miniport modern transport shim)
   - `virtqueue_split_legacy.{c,h}` (split ring implementation)
 
+## Interrupts (INTx vs MSI/MSI-X)
+
+The miniport supports both:
+
+- **INTx (line-based)** — legacy virtio-pci interrupt semantics using the ISR status byte (read-to-ack).
+- **MSI/MSI-X (message-signaled)** — when Windows assigns message interrupts, the driver programs the virtio MSI-X routing registers (`msix_config` / `queue_msix_vector`) and services completions without relying on ISR status.
+
+On Windows 7, message-signaled interrupts are opt-in via INF; `inf/aero_virtio_blk.inf` requests MSI/MSI-X and falls back to INTx automatically when MSI isn't available.
+
 ## Files
 
 - `src/aero_virtio_blk.c` – StorPort miniport driver implementation.
