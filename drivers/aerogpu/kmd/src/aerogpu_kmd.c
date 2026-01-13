@@ -7697,7 +7697,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         uint32_t magic = 0;
         uint32_t version = 0;
         uint64_t features = 0;
-        if (adapter->Bar0) {
+        if (poweredOn) {
             magic = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_MAGIC);
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
                 version = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
@@ -7720,6 +7720,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     }
                 }
             }
+        } else {
+            /* Return last-known values without touching MMIO while powered down. */
+            magic = (uint32_t)adapter->DeviceMmioMagic;
+            version = (uint32_t)adapter->DeviceAbiVersion;
+            features = (uint64_t)adapter->DeviceFeatures;
         }
 
         out->detected_mmio_magic = magic;
@@ -7741,6 +7746,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.reserved0 = 0;
         if (!adapter->Bar0) {
             out->mmio_version = 0;
+        } else if (!poweredOn) {
+            out->mmio_version = adapter->DeviceAbiVersion;
         } else if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
             out->mmio_version = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
         } else {
