@@ -167,6 +167,40 @@ incremental migration. When a legacy device advertises `AEROGPU_FEATURE_VBLANK`,
 delivery via the versioned `IRQ_*` block; **legacy fence/DMA completion interrupts remain on legacy
 `INT_STATUS`/`INT_ACK`.**
 
+## VidPN / mode selection (single monitor)
+
+The Win7 AeroGPU KMD is intentionally conservative: it exposes a **single-head** display pipeline and prunes
+VidPN proposals so Windows cannot select unsupported topologies, transforms, or pixel formats.
+
+**Topology invariants**
+
+* Exactly one VidPN source: `SourceId = 0`
+* Exactly one target: `TargetId = 0`
+* Exactly one present path: `0 → 0`
+* No scaling (`VPPS_IDENTITY`) and no rotation (`VPPR_IDENTITY`)
+
+**Format invariants**
+
+The scanout path is 32bpp BGRA/XRGB-like. The KMD only claims support for formats that match the
+existing `CommitVidPn` + `SetVidPnSourceAddress` behavior (4 bytes per pixel; pitch is treated as
+`>= width*4` and may be aligned up):
+
+* `D3DDDIFMT_X8R8G8B8`
+* `D3DDDIFMT_A8R8G8B8` (byte-layout compatible; alpha is ignored by scanout)
+
+**Mode list**
+
+`DxgkDdiRecommendMonitorModes` and `DxgkDdiEnumVidPnCofuncModality` restrict Windows to a small, stable set of
+progressive ~60Hz modes derived from:
+
+1. a preferred mode (`PreferredWidth`/`PreferredHeight` registry override → EDID preferred timing → fallback), plus
+2. a built-in curated list (currently 800×600, 1024×768, 1280×720, 1280×800, 1366×768, 1600×900, 1920×1080).
+
+An optional `MaxWidth`/`MaxHeight` registry cap filters out larger modes to keep primary allocation sizes under
+control on constrained guests.
+
+This keeps Display Settings deterministic and avoids modes that the emulator scanout path does not support.
+
 ## Scanline / raster status (`DxgkDdiGetScanLine`)
 
 The KMD implements `DxgkDdiGetScanLine` when the device advertises `AEROGPU_FEATURE_VBLANK` and

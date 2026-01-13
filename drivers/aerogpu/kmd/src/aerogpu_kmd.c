@@ -4383,37 +4383,47 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hA
     for (UINT i = 0; i < modeCount; ++i) {
         const ULONG w = modes[i].Width;
         const ULONG h = modes[i].Height;
-        if (w == 0 || h == 0) {
+        if (!AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
             continue;
         }
 
-        D3DKMDT_VIDPN_SOURCE_MODE* modeInfo = NULL;
-        NTSTATUS st2 = sms.pfnCreateNewModeInfo(hSourceModeSet, &modeInfo);
-        if (!NT_SUCCESS(st2) || !modeInfo) {
-            continue;
-        }
-
-        RtlZeroMemory(modeInfo, sizeof(*modeInfo));
-        modeInfo->Type = D3DKMDT_RMT_GRAPHICS;
-        modeInfo->Format.Graphics.PrimSurfSize.cx = w;
-        modeInfo->Format.Graphics.PrimSurfSize.cy = h;
-        modeInfo->Format.Graphics.VisibleRegionSize.cx = w;
-        modeInfo->Format.Graphics.VisibleRegionSize.cy = h;
         {
             ULONG pitch = 0;
             if (!AeroGpuComputeDefaultPitchBytes(w, &pitch)) {
                 pitch = w * 4u;
             }
-            modeInfo->Format.Graphics.Stride = (LONG)pitch;
-        }
-        modeInfo->Format.Graphics.PixelFormat = D3DDDIFMT_X8R8G8B8;
+            const LONG stride = (LONG)pitch;
 
-        st2 = sms.pfnAddMode(hSourceModeSet, modeInfo);
-        if (NT_SUCCESS(st2) && sms.pfnPinMode && w == pinW && h == pinH) {
-            (void)sms.pfnPinMode(hSourceModeSet, modeInfo);
+            const D3DDDIFORMAT fmts[] = {D3DDDIFMT_X8R8G8B8, D3DDDIFMT_A8R8G8B8};
+            for (UINT fi = 0; fi < (UINT)(sizeof(fmts) / sizeof(fmts[0])); ++fi) {
+                if (!AeroGpuIsSupportedVidPnPixelFormat(fmts[fi])) {
+                    continue;
+                }
+
+                D3DKMDT_VIDPN_SOURCE_MODE* modeInfo = NULL;
+                NTSTATUS st2 = sms.pfnCreateNewModeInfo(hSourceModeSet, &modeInfo);
+                if (!NT_SUCCESS(st2) || !modeInfo) {
+                    continue;
+                }
+
+                RtlZeroMemory(modeInfo, sizeof(*modeInfo));
+                modeInfo->Type = D3DKMDT_RMT_GRAPHICS;
+                modeInfo->Format.Graphics.PrimSurfSize.cx = w;
+                modeInfo->Format.Graphics.PrimSurfSize.cy = h;
+                modeInfo->Format.Graphics.VisibleRegionSize.cx = w;
+                modeInfo->Format.Graphics.VisibleRegionSize.cy = h;
+                modeInfo->Format.Graphics.Stride = stride;
+                modeInfo->Format.Graphics.PixelFormat = fmts[fi];
+
+                st2 = sms.pfnAddMode(hSourceModeSet, modeInfo);
+                if (NT_SUCCESS(st2) && sms.pfnPinMode && w == pinW && h == pinH && fmts[fi] == D3DDDIFMT_X8R8G8B8) {
+                    (void)sms.pfnPinMode(hSourceModeSet, modeInfo);
+                }
+
+                sms.pfnReleaseModeInfo(hSourceModeSet, modeInfo);
+            }
         }
 
-        sms.pfnReleaseModeInfo(hSourceModeSet, modeInfo);
     }
 
     status = vidpn.pfnAssignSourceModeSet(pRecommend->hFunctionalVidPn, AEROGPU_VIDPN_SOURCE_ID, hSourceModeSet);
@@ -4438,7 +4448,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hA
     for (UINT i = 0; i < modeCount; ++i) {
         const ULONG w = modes[i].Width;
         const ULONG h = modes[i].Height;
-        if (w == 0 || h == 0) {
+        if (!AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
             continue;
         }
 
@@ -4686,38 +4696,47 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
                 for (UINT i = 0; i < modeCount; ++i) {
                     const ULONG w = modes[i].Width;
                     const ULONG h = modes[i].Height;
-                    if (w == 0 || h == 0) {
+                    if (!AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
                         continue;
                     }
 
-                    D3DKMDT_VIDPN_SOURCE_MODE* modeInfo = NULL;
-                    NTSTATUS st2 = sms.pfnCreateNewModeInfo(hSourceModeSet, &modeInfo);
-                    if (!NT_SUCCESS(st2) || !modeInfo) {
-                        continue;
-                    }
-
-                    RtlZeroMemory(modeInfo, sizeof(*modeInfo));
-                    modeInfo->Type = D3DKMDT_RMT_GRAPHICS;
-                    modeInfo->Format.Graphics.PrimSurfSize.cx = w;
-                    modeInfo->Format.Graphics.PrimSurfSize.cy = h;
-                    modeInfo->Format.Graphics.VisibleRegionSize.cx = w;
-                    modeInfo->Format.Graphics.VisibleRegionSize.cy = h;
                     {
                         ULONG pitch = 0;
                         if (!AeroGpuComputeDefaultPitchBytes(w, &pitch)) {
                             pitch = w * 4u;
                         }
-                        modeInfo->Format.Graphics.Stride = (LONG)pitch;
-                    }
-                    modeInfo->Format.Graphics.PixelFormat = D3DDDIFMT_X8R8G8B8;
+                        const LONG stride = (LONG)pitch;
 
-                    st2 = sms.pfnAddMode(hSourceModeSet, modeInfo);
-                    if (NT_SUCCESS(st2) && sms.pfnPinMode && w == pinW && h == pinH) {
-                        (void)sms.pfnPinMode(hSourceModeSet, modeInfo);
-                    }
-                    sms.pfnReleaseModeInfo(hSourceModeSet, modeInfo);
-                    if (!NT_SUCCESS(st2)) {
-                        /* Ignore add failures to keep bring-up tolerant. */
+                        const D3DDDIFORMAT fmts[] = {D3DDDIFMT_X8R8G8B8, D3DDDIFMT_A8R8G8B8};
+                        for (UINT fi = 0; fi < (UINT)(sizeof(fmts) / sizeof(fmts[0])); ++fi) {
+                            if (!AeroGpuIsSupportedVidPnPixelFormat(fmts[fi])) {
+                                continue;
+                            }
+
+                            D3DKMDT_VIDPN_SOURCE_MODE* modeInfo = NULL;
+                            NTSTATUS st2 = sms.pfnCreateNewModeInfo(hSourceModeSet, &modeInfo);
+                            if (!NT_SUCCESS(st2) || !modeInfo) {
+                                continue;
+                            }
+
+                            RtlZeroMemory(modeInfo, sizeof(*modeInfo));
+                            modeInfo->Type = D3DKMDT_RMT_GRAPHICS;
+                            modeInfo->Format.Graphics.PrimSurfSize.cx = w;
+                            modeInfo->Format.Graphics.PrimSurfSize.cy = h;
+                            modeInfo->Format.Graphics.VisibleRegionSize.cx = w;
+                            modeInfo->Format.Graphics.VisibleRegionSize.cy = h;
+                            modeInfo->Format.Graphics.Stride = stride;
+                            modeInfo->Format.Graphics.PixelFormat = fmts[fi];
+
+                            st2 = sms.pfnAddMode(hSourceModeSet, modeInfo);
+                            if (NT_SUCCESS(st2) && sms.pfnPinMode && w == pinW && h == pinH && fmts[fi] == D3DDDIFMT_X8R8G8B8) {
+                                (void)sms.pfnPinMode(hSourceModeSet, modeInfo);
+                            }
+                            sms.pfnReleaseModeInfo(hSourceModeSet, modeInfo);
+                            if (!NT_SUCCESS(st2)) {
+                                /* Ignore add failures to keep bring-up tolerant. */
+                            }
+                        }
                     }
                 }
             }
@@ -4741,7 +4760,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
                 for (UINT i = 0; i < modeCount; ++i) {
                     const ULONG w = modes[i].Width;
                     const ULONG h = modes[i].Height;
-                    if (w == 0 || h == 0) {
+                    if (!AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
                         continue;
                     }
 
