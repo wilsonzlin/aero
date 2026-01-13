@@ -77,7 +77,7 @@ To support both WDDM and legacy/VBE:
 | BAR | Type | Size | Purpose |
 |-----|------|------|---------|
 | BAR0 | MMIO | 64KB | AeroGPU control registers (incl. WDDM scanout regs) |
-| BAR1 | Prefetchable MMIO | implementation-defined | Dedicated VRAM aperture (contains legacy VGA window + VBE LFB + optional “VRAM allocations”) |
+| BAR1 | Prefetchable MMIO | 64MiB (canonical profile) | Dedicated VRAM aperture (contains legacy VGA window + VBE LFB + optional “VRAM allocations”) |
 
 The emulator BIOS assigns BAR addresses within the reserved below-4 GiB PCI/MMIO hole
 (`0xC000_0000..0x1_0000_0000`). The current BAR allocator places device MMIO BARs starting at

@@ -556,10 +556,15 @@ device memory: the emulator should register an `MmioRegion` for the **legacy VGA
 implemented by `aero_gpu_vga`; long-term owned by AeroGPU), so BIOS/bootloader/Windows writes to
 `0xB8000` (text mode) are visible on the canvas.
 
-Separately, VBE graphics modes use a linear framebuffer (LFB) at a different physical address
-(currently fixed at `0xE000_0000` by `aero_gpu_vga`). When the PC platform is enabled, the canonical
-machine routes this fixed LFB through the PCI MMIO router via a minimal PCI VGA stub (`00:0c.0`,
-`1234:1111`) so the LFB is reachable via PCI MMIO.
+Separately, VBE graphics modes use a linear framebuffer (LFB) at a different physical address:
+
+- With the transitional standalone VGA/VBE path (`MachineConfig::enable_vga=true`), the LFB is
+  fixed at `0xE000_0000` by `aero_gpu_vga` (`SVGA_LFB_BASE`). When the PC platform is enabled, the
+  canonical machine routes this fixed LFB through the PCI MMIO router via a minimal PCI VGA stub
+  (`00:0c.0`, `1234:1111`) so the LFB is reachable via PCI MMIO.
+- In the intended AeroGPU-owned VGA/VBE path (`MachineConfig::enable_aerogpu=true`), the firmware
+  VBE mode-info `PhysBasePtr` is derived from AeroGPU BAR1:
+  `PhysBasePtr = BAR1_BASE + 0x20000`.
 
 See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)
 and [AeroGPU PCI identity](./abi/aerogpu-pci-identity.md) (AeroGPU vs transitional VGA stub).

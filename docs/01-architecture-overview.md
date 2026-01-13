@@ -231,8 +231,12 @@ requires a segmented/sparse host backing model (or wasm `memory64`).
 
 Note on boot display vs AeroGPU:
 
-- Today, the canonical `aero_machine::Machine` implements these VGA/VBE legacy ports using the
-  standalone `aero_gpu_vga` device model (boot display).
+- With `MachineConfig::enable_vga=true`, the canonical `aero_machine::Machine` implements these
+  VGA/VBE legacy ports using the standalone `aero_gpu_vga` device model (boot display), plus a
+  minimal PCI VGA stub at `00:0c.0` for VBE LFB routing.
+- With `MachineConfig::enable_aerogpu=true`, the canonical machine exposes the AeroGPU PCI identity
+  (`A3A0:0001`) at `00:07.0` (PCI config-space exposure) with the canonical BAR layout (BAR0 regs +
+  BAR1 VRAM aperture) for stable Windows driver binding.
 - The long-term plan is for the AeroGPU WDDM device (`PCI\\VEN_A3A0&DEV_0001`) to also provide
   VGA/VBE compatibility; see:
   - [`abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md)

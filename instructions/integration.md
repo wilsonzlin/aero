@@ -281,8 +281,8 @@ assign any other device to `00:02.0`.
 
 ### Note on VGA / display today
 
-The canonical `aero_machine::Machine` currently uses `aero_gpu_vga` (VGA + Bochs VBE_DISPI) for
-boot display:
+With `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`), the canonical
+`aero_machine::Machine` uses `aero_gpu_vga` (VGA + Bochs VBE_DISPI) for boot display:
 
 * Legacy VGA ports: `0x3B0..0x3DF` (includes both mono and color decode ranges; common subset `0x3C0..0x3DF`)
 * VBE ports: `0x01CE/0x01CF`
@@ -296,6 +296,12 @@ This PCI stub is intentionally *not* at `00:07.0`: that BDF is reserved for the 
 WDDM device identity (`PCI\VEN_A3A0&DEV_0001`; see
 [`docs/abi/aerogpu-pci-identity.md`](../docs/abi/aerogpu-pci-identity.md) and
 [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md)).
+
+With `MachineConfig::enable_aerogpu=true` (and `enable_vga=false`), the canonical machine exposes
+the AeroGPU PCI identity (`A3A0:0001`) at `00:07.0` with the canonical BAR layout (BAR0 regs + BAR1
+VRAM aperture) for stable Windows driver binding and enumeration. In `aero_machine` today this is
+PCI config-space exposure only (the full AeroGPU device model + boot display path are integrated
+separately). In this mode the transitional VGA PCI stub (`00:0c.0`) is not installed.
 
 The transitional VGA/VBE path is a boot-display stepping stone and does **not** implement the full
 AeroGPU WDDM MMIO/ring protocol.
