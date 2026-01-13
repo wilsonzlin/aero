@@ -47,12 +47,16 @@ static DWORD WINAPI ChangeDisplaySettingsThreadProc(LPVOID param) {
 static bool ChangeDisplaySettingsExWithTimeout(const DEVMODEW& target,
                                                DWORD timeout_ms,
                                                LONG* out_result,
+                                               bool* out_timed_out,
                                                std::string* err) {
   if (err) {
     err->clear();
   }
   if (out_result) {
     *out_result = DISP_CHANGE_FAILED;
+  }
+  if (out_timed_out) {
+    *out_timed_out = false;
   }
 
   ChangeDisplaySettingsCtx* ctx = new ChangeDisplaySettingsCtx();
@@ -82,6 +86,9 @@ static bool ChangeDisplaySettingsExWithTimeout(const DEVMODEW& target,
   CloseHandle(thread);
   if (err) {
     if (w == WAIT_TIMEOUT) {
+      if (out_timed_out) {
+        *out_timed_out = true;
+      }
       *err = aerogpu_test::FormatString("ChangeDisplaySettingsExW timed out after %lu ms", (unsigned long)timeout_ms);
     } else {
       *err = "WaitForSingleObject(ChangeDisplaySettingsExW) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
@@ -300,16 +307,26 @@ static bool FindAlternateDesktopMode(const DEVMODEW& current, DEVMODEW* out, std
   return false;
 }
 
-static bool ApplyDisplayModeAndWait(const DEVMODEW& target, DWORD timeout_ms, std::string* err) {
+static bool ApplyDisplayModeAndWaitEx(const DEVMODEW& target,
+                                      DWORD timeout_ms,
+                                      bool* out_change_timed_out,
+                                      std::string* err) {
   if (err) {
     err->clear();
+  }
+  if (out_change_timed_out) {
+    *out_change_timed_out = false;
   }
 
   DEVMODEW dm = target;  // ChangeDisplaySettingsExW takes a non-const pointer.
   const DWORD start = GetTickCount();
   LONG r = DISP_CHANGE_FAILED;
   std::string change_err;
-  if (!ChangeDisplaySettingsExWithTimeout(dm, timeout_ms, &r, &change_err)) {
+  bool change_timed_out = false;
+  if (!ChangeDisplaySettingsExWithTimeout(dm, timeout_ms, &r, &change_timed_out, &change_err)) {
+    if (out_change_timed_out) {
+      *out_change_timed_out = change_timed_out;
+    }
     if (err) {
       *err = change_err;
     }
@@ -445,6 +462,10 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
   return false;
 }
 
+static bool ApplyDisplayModeAndWait(const DEVMODEW& target, DWORD timeout_ms, std::string* err) {
+  return ApplyDisplayModeAndWaitEx(target, timeout_ms, NULL, err);
+}
+
 struct ScopedModeRestore {
   DEVMODEW original;
   bool armed;
@@ -459,7 +480,13 @@ struct ScopedModeRestore {
       return true;
     }
     std::string tmp;
-    if (!ApplyDisplayModeAndWait(original, 5000, &tmp)) {
+    bool timed_out = false;
+    if (!ApplyDisplayModeAndWaitEx(original, 5000, &timed_out, &tmp)) {
+      // If the restore attempt itself timed out (call didn't return), avoid retrying in a destructor
+      // while the timed-out worker thread may still be executing.
+      if (timed_out) {
+        armed = false;
+      }
       if (err) {
         *err = tmp;
       }
@@ -475,7 +502,8 @@ struct ScopedModeRestore {
     }
     // Best-effort only (cannot change the test result from a destructor).
     std::string tmp;
-    (void)ApplyDisplayModeAndWait(original, 5000, &tmp);
+    bool timed_out = false;
+    (void)ApplyDisplayModeAndWaitEx(original, 5000, &timed_out, &tmp);
   }
 };
 
@@ -556,11 +584,17 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   restore.Arm();
 
   std::string apply_err;
-  if (!ApplyDisplayModeAndWait(alternate, 5000, &apply_err)) {
-    // Best-effort restore: the mode change may have partially applied even if we timed out waiting
-    // for GetSystemMetrics() to update.
-    std::string restore_err;
-    (void)restore.RestoreNow(&restore_err);
+  bool modeset_timed_out = false;
+  if (!ApplyDisplayModeAndWaitEx(alternate, 5000, &modeset_timed_out, &apply_err)) {
+    if (!modeset_timed_out) {
+      // Best-effort restore: the mode change may have partially applied even if we timed out waiting
+      // for GetSystemMetrics() to update.
+      std::string restore_err;
+      (void)restore.RestoreNow(&restore_err);
+    } else {
+      // Avoid spawning a second concurrent mode-set while the timed-out worker thread may still be running.
+      restore.Disarm();
+    }
     aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
     return reporter.Fail("%s", apply_err.c_str());
@@ -598,7 +632,12 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   }
 
   // Switch back to the original mode and validate scanout again.
-  if (!ApplyDisplayModeAndWait(original, 5000, &apply_err)) {
+  bool restore_timed_out = false;
+  if (!ApplyDisplayModeAndWaitEx(original, 5000, &restore_timed_out, &apply_err)) {
+    if (restore_timed_out) {
+      // Avoid retrying in a destructor while the timed-out worker thread may still be executing.
+      restore.Disarm();
+    }
     aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
     return reporter.Fail("failed to restore original mode: %s", apply_err.c_str());
