@@ -41,6 +41,8 @@ export type WebHidInputReportRingStats = Readonly<{
   fallback: number;
 }>;
 
+type HidDeviceSendTask = () => Promise<void>;
+
 function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boolean {
   const stack = [...collections];
   while (stack.length) {
@@ -79,6 +81,13 @@ export class WebHidBroker {
   #nextDeviceId = 1;
   readonly #deviceIdByDevice = new Map<HIDDevice, number>();
   readonly #deviceById = new Map<number, HIDDevice>();
+
+  // The IO worker can request output/feature reports via both `hid.sendReport` structured messages
+  // and the SharedArrayBuffer output ring. Chromium's WebHID implementation expects report sends to
+  // be serialized per device, so maintain an explicit FIFO per `deviceId` so reports are executed
+  // in guest order without stalling other devices.
+  readonly #pendingDeviceSends = new Map<number, HidDeviceSendTask[]>();
+  readonly #runningDeviceSends = new Set<number>();
 
   readonly #attachedToWorker = new Set<number>();
   readonly #inputReportListeners = new Map<number, (event: HIDInputReportEvent) => void>();
@@ -184,7 +193,7 @@ export class WebHidBroker {
     const onMessage: EventListener = (ev) => {
       const data = (ev as MessageEvent<unknown>).data;
       if (isHidSendReportMessage(data)) {
-        void this.#handleSendReportRequest(data);
+        this.#handleSendReportRequest(data);
         return;
       }
 
@@ -229,7 +238,7 @@ export class WebHidBroker {
     // Remove input listeners so devices are no longer forwarded to a new worker
     // without an explicit user action.
     for (const deviceId of this.#attachedToWorker) {
-      void this.#unbridgeDevice(deviceId, { sendDetach: false });
+      this.#unbridgeDevice(deviceId, { sendDetach: false });
     }
     this.#attachedToWorker.clear();
 
@@ -296,6 +305,51 @@ export class WebHidBroker {
     this.#outputRing = null;
   }
 
+  #enqueueDeviceSend(deviceId: number, task: HidDeviceSendTask): void {
+    let queue = this.#pendingDeviceSends.get(deviceId);
+    if (!queue) {
+      queue = [];
+      this.#pendingDeviceSends.set(deviceId, queue);
+    }
+    queue.push(task);
+    if (this.#runningDeviceSends.has(deviceId)) return;
+    this.#runningDeviceSends.add(deviceId);
+    void this.#runDeviceSendQueue(deviceId);
+  }
+
+  #dequeueDeviceSend(deviceId: number): HidDeviceSendTask | null {
+    const queue = this.#pendingDeviceSends.get(deviceId);
+    if (!queue || queue.length === 0) return null;
+    const task = queue.shift()!;
+    if (queue.length === 0) {
+      // Avoid leaking per-device arrays once all work is drained.
+      this.#pendingDeviceSends.delete(deviceId);
+    }
+    return task;
+  }
+
+  async #runDeviceSendQueue(deviceId: number): Promise<void> {
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        // Intentionally fetch the next task via a helper so the queue array is not retained across
+        // `await` points. This allows `detach` to drop pending tasks and release memory even if an
+        // in-flight `sendReport` Promise never resolves.
+        const task = this.#dequeueDeviceSend(deviceId);
+        if (!task) break;
+        try {
+          await task();
+        } catch (err) {
+          // Individual tasks should already handle/report errors, but ensure we never stop draining.
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[webhid] Unhandled HID send task error deviceId=${deviceId}: ${message}`);
+        }
+      }
+    } finally {
+      this.#runningDeviceSends.delete(deviceId);
+    }
+  }
+
   #drainOutputRing(): void {
     const ring = this.#outputRing;
     if (!ring) return;
@@ -308,19 +362,22 @@ export class WebHidBroker {
       const deviceId = rec.deviceId >>> 0;
       if (!this.#attachedToWorker.has(deviceId)) continue;
 
-      const device = this.#deviceById.get(deviceId);
-      if (!device) continue;
-
       const data = ensureArrayBufferBacked(rec.payload);
-      const promise =
-        rec.reportType === HidRingReportType.Feature
-          ? device.sendFeatureReport(rec.reportId, data)
-          : device.sendReport(rec.reportId, data);
-      void promise.catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(
-          `[webhid] Failed to send ${rec.reportType === HidRingReportType.Feature ? "feature" : "output"} reportId=${rec.reportId} deviceId=${deviceId}: ${message}`,
-        );
+      const reportType = rec.reportType === HidRingReportType.Feature ? "feature" : "output";
+      const reportId = rec.reportId >>> 0;
+      this.#enqueueDeviceSend(deviceId, async () => {
+        const device = this.#deviceById.get(deviceId);
+        if (!device) return;
+        try {
+          if (reportType === "output") {
+            await device.sendReport(reportId, data);
+          } else {
+            await device.sendFeatureReport(reportId, data);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
+        }
       });
     }
   }
@@ -465,7 +522,11 @@ export class WebHidBroker {
       }
 
       // Ensure we don't leak manager-side guest paths / open handles when attaching fails.
-      await this.#unbridgeDevice(deviceId, { sendDetach: false }).catch(() => undefined);
+      try {
+        this.#unbridgeDevice(deviceId, { sendDetach: false });
+      } catch {
+        // ignore
+      }
       this.#attachedToWorker.delete(deviceId);
       this.#emit();
       await this.manager.detachDevice(device).catch(() => undefined);
@@ -477,7 +538,7 @@ export class WebHidBroker {
   async detachDevice(device: HIDDevice): Promise<void> {
     const deviceId = this.#deviceIdByDevice.get(device);
     if (deviceId !== undefined) {
-      await this.#unbridgeDevice(deviceId, { sendDetach: true });
+      this.#unbridgeDevice(deviceId, { sendDetach: true });
       this.#attachedToWorker.delete(deviceId);
       this.#emit();
     }
@@ -490,13 +551,13 @@ export class WebHidBroker {
     if (deviceId === undefined) return;
 
     if (this.#attachedToWorker.has(deviceId)) {
-      await this.#unbridgeDevice(deviceId, { sendDetach: true });
+      this.#unbridgeDevice(deviceId, { sendDetach: true });
       this.#attachedToWorker.delete(deviceId);
       this.#emit();
     }
   }
 
-  async #unbridgeDevice(deviceId: number, options: { sendDetach: boolean }): Promise<void> {
+  #unbridgeDevice(deviceId: number, options: { sendDetach: boolean }): void {
     const device = this.#deviceById.get(deviceId);
     const listener = this.#inputReportListeners.get(deviceId);
     if (device && listener) {
@@ -508,6 +569,7 @@ export class WebHidBroker {
     }
     this.#inputReportListeners.delete(deviceId);
     this.#lastInputReportInfo.delete(deviceId);
+    this.#pendingDeviceSends.delete(deviceId);
 
     if (options.sendDetach && this.#workerPort) {
       const detachMsg: HidDetachMessage = { type: "hid.detach", deviceId };
@@ -525,29 +587,35 @@ export class WebHidBroker {
     (this.#inputReportEmitTimer as unknown as { unref?: () => void }).unref?.();
   }
 
-  async #handleSendReportRequest(msg: HidSendReportMessage): Promise<void> {
+  #handleSendReportRequest(msg: HidSendReportMessage): void {
     if (!this.#attachedToWorker.has(msg.deviceId)) {
       console.warn(`[webhid] sendReport for detached deviceId=${msg.deviceId}`);
       return;
     }
 
-    const device = this.#deviceById.get(msg.deviceId);
-    if (!device) {
+    if (!this.#deviceById.has(msg.deviceId)) {
       console.warn(`[webhid] sendReport for unknown deviceId=${msg.deviceId}`);
       return;
     }
 
-    try {
-      const data = ensureArrayBufferBacked(msg.data);
-      if (msg.reportType === "output") {
-        await device.sendReport(msg.reportId, data);
-      } else {
-        await device.sendFeatureReport(msg.reportId, data);
+    const deviceId = msg.deviceId >>> 0;
+    const reportType = msg.reportType;
+    const reportId = msg.reportId >>> 0;
+    const data = ensureArrayBufferBacked(msg.data);
+    this.#enqueueDeviceSend(deviceId, async () => {
+      const device = this.#deviceById.get(deviceId);
+      if (!device) return;
+      try {
+        if (reportType === "output") {
+          await device.sendReport(reportId, data);
+        } else {
+          await device.sendFeatureReport(reportId, data);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[webhid] Failed to send ${msg.reportType} reportId=${msg.reportId} deviceId=${msg.deviceId}: ${message}`);
-    }
+    });
   }
 
   #postToWorker(worker: MessagePort | Worker, msg: HidProxyMessage, transfer?: Transferable[]): void {

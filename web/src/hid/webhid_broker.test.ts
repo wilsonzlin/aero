@@ -12,6 +12,16 @@ import type { HidAttachMessage, HidInputReportMessage } from "./hid_proxy_protoc
 
 type FakeListener = (ev: MessageEvent<unknown>) => void;
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 class FakePort {
   readonly posted: Array<{ msg: unknown; transfer?: Transferable[] }> = [];
   private readonly listeners: FakeListener[] = [];
@@ -336,6 +346,101 @@ describe("hid/WebHidBroker", () => {
 
     expect(device.sendReport).toHaveBeenCalledWith(7, Uint8Array.of(9));
     expect(device.sendFeatureReport).toHaveBeenCalledWith(8, Uint8Array.of(10));
+  });
+
+  it("executes output/feature reports sequentially per device across message and ring delivery paths", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+    const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+    const device = new FakeHidDevice();
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    // First report via structured postMessage.
+    port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+    expect(device.sendFeatureReport).toHaveBeenCalledTimes(0);
+
+    // Second report via SAB ring: must not be invoked until the first resolves.
+    outputRing.push(id, HidReportType.Feature, 2, Uint8Array.of(2));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(device.sendFeatureReport).toHaveBeenCalledTimes(0);
+
+    first.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(device.sendFeatureReport).toHaveBeenCalledTimes(1);
+    expect(device.sendFeatureReport).toHaveBeenCalledWith(2, Uint8Array.of(2));
+
+    broker.destroy();
+  });
+
+  it("does not serialize report sends across devices", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const deviceA = new FakeHidDevice();
+    const deviceB = new FakeHidDevice();
+    const holdA = deferred<void>();
+    deviceA.sendReport.mockImplementationOnce(() => holdA.promise);
+
+    const idA = await broker.attachDevice(deviceA as unknown as HIDDevice);
+    const idB = await broker.attachDevice(deviceB as unknown as HIDDevice);
+
+    port.emit({ type: "hid.sendReport", deviceId: idA, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+    port.emit({ type: "hid.sendReport", deviceId: idB, reportType: "output", reportId: 2, data: Uint8Array.of(2) });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(deviceA.sendReport).toHaveBeenCalledTimes(1);
+    expect(deviceB.sendReport).toHaveBeenCalledTimes(1);
+
+    holdA.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 0));
+    broker.destroy();
+  });
+
+  it("continues draining the per-device send queue after a sendReport failure", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      device.sendReport.mockImplementationOnce(async () => {
+        throw new Error("nope");
+      });
+      device.sendReport.mockImplementationOnce(async () => {});
+
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 2, data: Uint8Array.of(2) });
+
+      await new Promise((r) => setTimeout(r, 0));
+      expect(device.sendReport).toHaveBeenCalledTimes(2);
+      expect(device.sendReport).toHaveBeenNthCalledWith(1, 1, Uint8Array.of(1));
+      expect(device.sendReport).toHaveBeenNthCalledWith(2, 2, Uint8Array.of(2));
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not auto-attach devices when the worker port is replaced", async () => {
