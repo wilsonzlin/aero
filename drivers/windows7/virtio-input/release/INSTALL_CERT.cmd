@@ -8,14 +8,17 @@ echo === Aero virtio-input (Windows 7) certificate install ===
 echo.
 
 rem Best-effort elevation check. This intentionally refuses to run when not elevated.
-net session >nul 2>&1
-if not "%errorlevel%"=="0" (
-  echo ERROR: This script must be run as Administrator.
-  echo.
-  echo Right-click INSTALL_CERT.cmd and select "Run as administrator",
-  echo or run it from an elevated Command Prompt.
-  exit /b 1
-)
+net session >nul 2>&1 && goto :elevated
+fltmc >nul 2>&1 && goto :elevated
+fsutil dirty query %systemdrive% >nul 2>&1 && goto :elevated
+
+echo ERROR: This script must be run as Administrator.
+echo.
+echo Right-click INSTALL_CERT.cmd and select "Run as administrator",
+echo or run it from an elevated Command Prompt.
+exit /b 1
+
+:elevated
 
 if not exist "aero-virtio-input-test.cer" (
   echo ERROR: aero-virtio-input-test.cer was not found in:
