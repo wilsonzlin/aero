@@ -764,17 +764,12 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);
             }
-            Sm4Inst::LdRaw { dst: _, addr, .. } => scan_src_regs(addr, &mut scan_reg),
+            Sm4Inst::LdRaw { addr, .. } => scan_src_regs(addr, &mut scan_reg),
             Sm4Inst::StoreRaw { addr, value, .. } => {
                 scan_src_regs(addr, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
             }
-            Sm4Inst::LdStructured {
-                dst: _,
-                index,
-                offset,
-                ..
-            } => {
+            Sm4Inst::LdStructured { index, offset, .. } => {
                 scan_src_regs(index, &mut scan_reg);
                 scan_src_regs(offset, &mut scan_reg);
             }
