@@ -952,12 +952,13 @@ function Invoke-PackageDrivers {
         }
 
         if ($shouldWriteManifests) {
-            Write-IntegrityManifest -ManifestPath $manifestX86 -PackageName ([System.IO.Path]::GetFileNameWithoutExtension($zipX86)) -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesX86
-            Write-IntegrityManifest -ManifestPath $manifestX64 -PackageName ([System.IO.Path]::GetFileNameWithoutExtension($zipX64)) -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesX64
-            Write-IntegrityManifest -ManifestPath $manifestBundle -PackageName ([System.IO.Path]::GetFileNameWithoutExtension($zipBundle)) -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesBundle
+            # Keep package.name stable across releases; version is encoded separately.
+            Write-IntegrityManifest -ManifestPath $manifestX86 -PackageName "AeroVirtIO-Win7-x86" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesX86
+            Write-IntegrityManifest -ManifestPath $manifestX64 -PackageName "AeroVirtIO-Win7-x64" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesX64
+            Write-IntegrityManifest -ManifestPath $manifestBundle -PackageName "AeroVirtIO-Win7-bundle" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesBundle
 
             if (-not $NoIso) {
-                Write-IntegrityManifest -ManifestPath $manifestIso -PackageName ([System.IO.Path]::GetFileNameWithoutExtension($isoBundle)) -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesBundle
+                Write-IntegrityManifest -ManifestPath $manifestIso -PackageName "AeroVirtIO-Win7" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesBundle
             }
         }
         $success = $true
