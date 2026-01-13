@@ -14,17 +14,19 @@ export type IoHidInputRingDrainResult = Readonly<{
 export function drainIoHidInputRing(
   ring: RingBuffer,
   onReport: (msg: HidInputReportMessage) => void,
-  opts: { maxRecords?: number; maxBytes?: number } = {},
+  opts: { maxRecords?: number; maxBytes?: number; throwOnCorrupt?: boolean } = {},
 ): IoHidInputRingDrainResult {
   const maxRecords = Math.max(0, opts.maxRecords ?? IO_HID_INPUT_RING_MAX_RECORDS_PER_TICK);
   const maxBytes = Math.max(0, opts.maxBytes ?? IO_HID_INPUT_RING_MAX_BYTES_PER_TICK);
+  const throwOnCorrupt = opts.throwOnCorrupt === true;
+  const consumeNext = throwOnCorrupt ? ring.consumeNextOrThrow.bind(ring) : ring.consumeNext.bind(ring);
 
   let forwarded = 0;
   let invalid = 0;
   let bytes = 0;
 
   while (forwarded + invalid < maxRecords && bytes < maxBytes) {
-    const consumed = ring.consumeNext((payload) => {
+    const consumed = consumeNext((payload) => {
       bytes += payload.byteLength;
 
       const record = decodeHidInputReportRingRecord(payload);

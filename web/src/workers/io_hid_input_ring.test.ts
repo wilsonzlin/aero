@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { encodeHidInputReportRingRecord } from "../hid/hid_input_report_ring";
 import { createIpcBuffer, openRingByKind } from "../ipc/ipc";
+import { ringCtrl } from "../ipc/layout";
 import type { HidInputReportMessage } from "../hid/hid_proxy_protocol";
 import { drainIoHidInputRing } from "./io_hid_input_ring";
 
@@ -137,5 +138,19 @@ describe("workers/io_hid_input_ring", () => {
     expect(res.invalid).toBe(1);
     expect(received.map((m) => m.reportId)).toEqual([2]);
     expect(ring.tryPop()).toBeNull();
+  });
+
+  it("throws when the ring buffer record header is corrupted and throwOnCorrupt is enabled", () => {
+    const kind = 1;
+    const init = createIpcBuffer([{ kind, capacityBytes: 4096 }]);
+    const ring = openRingByKind(init.buffer, kind);
+
+    ring.tryPush(encodeHidInputReportRingRecord({ deviceId: 1, reportId: 1, tsMs: 0, data: Uint8Array.of(1) }));
+
+    // Corrupt the length prefix stored by the ring buffer (not the inner HID record).
+    const base = init.queues[0]!.offsetBytes + ringCtrl.BYTES;
+    new DataView(init.buffer, base, 4).setUint32(0, 0xffff_ffff, true);
+
+    expect(() => drainIoHidInputRing(ring, () => {}, { throwOnCorrupt: true })).toThrow(/RingBuffer corrupted/i);
   });
 });

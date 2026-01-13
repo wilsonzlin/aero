@@ -23,6 +23,10 @@ function u32(n: number): number {
   return n >>> 0;
 }
 
+function ringBufferCorruption(message: string): Error {
+  return new Error(`RingBuffer corrupted (${message}).`);
+}
+
 type AtomicsWaitAsyncResult =
   | { async: false; value: AtomicsWaitResult }
   | { async: true; value: Promise<AtomicsWaitResult> };
@@ -298,6 +302,54 @@ export class RingBuffer {
 
       const total = alignUp(4 + len, RECORD_ALIGN);
       if (total > remaining) return false; // corruption
+
+      const payloadStart = headIndex + 4;
+      const payloadEnd = payloadStart + len;
+      const payload = this.data.subarray(payloadStart, payloadEnd);
+      consumer(payload);
+
+      Atomics.store(this.ctrl, ringCtrl.HEAD, u32(head + total) | 0);
+      Atomics.notify(this.ctrl, ringCtrl.HEAD, 1);
+      return true;
+    }
+  }
+
+  /**
+   * Like {@link RingBuffer.consumeNext}, but throws when corruption is detected.
+   *
+   * This is useful for background drain loops that must be able to fall back to an
+   * alternate transport when the ring becomes unreadable (e.g. due to memory
+   * corruption).
+   */
+  consumeNextOrThrow(consumer: (payload: Uint8Array) => void): boolean {
+    for (;;) {
+      const head = u32(Atomics.load(this.ctrl, ringCtrl.HEAD));
+      const tail = u32(Atomics.load(this.ctrl, ringCtrl.TAIL_COMMIT));
+      if (head === tail) return false;
+
+      const used = u32(tail - head);
+      if (used > this.cap) throw ringBufferCorruption("tail/head out of range");
+
+      const headIndex = head % this.cap;
+      const remaining = this.cap - headIndex;
+      if (remaining < 4) {
+        if (used < remaining) throw ringBufferCorruption("tail inside wrap padding");
+        Atomics.store(this.ctrl, ringCtrl.HEAD, u32(head + remaining) | 0);
+        Atomics.notify(this.ctrl, ringCtrl.HEAD, 1);
+        continue;
+      }
+
+      const len = this.view.getUint32(headIndex, true);
+      if (len === WRAP_MARKER) {
+        if (used < remaining) throw ringBufferCorruption("wrap marker exceeds available bytes");
+        Atomics.store(this.ctrl, ringCtrl.HEAD, u32(head + remaining) | 0);
+        Atomics.notify(this.ctrl, ringCtrl.HEAD, 1);
+        continue;
+      }
+
+      const total = alignUp(4 + len, RECORD_ALIGN);
+      if (total > remaining) throw ringBufferCorruption("record straddles wrap boundary");
+      if (total > used) throw ringBufferCorruption("record exceeds available bytes");
 
       const payloadStart = headIndex + 4;
       const payloadEnd = payloadStart + len;

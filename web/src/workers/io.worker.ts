@@ -4467,19 +4467,24 @@ function startIoIpcServer(): void {
       }
       const proxyRing = hidProxyInputRing;
       if (proxyRing) {
-        const res = drainIoHidInputRing(proxyRing, (msg) => hidGuest.inputReport(msg));
-        if (res.forwarded > 0) {
-          Atomics.add(status, StatusIndex.IoHidInputReportCounter, res.forwarded);
-        }
-        if (res.invalid > 0) {
-          Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, res.invalid);
-        }
-        hidProxyInputRingForwarded += res.forwarded;
-        hidProxyInputRingInvalid += res.invalid;
-        if (import.meta.env.DEV && (res.forwarded > 0 || res.invalid > 0) && (hidProxyInputRingForwarded & 0xff) === 0) {
-          console.debug(
-            `[io.worker] hid.ring.init drained forwarded=${hidProxyInputRingForwarded} invalid=${hidProxyInputRingInvalid}`,
-          );
+        try {
+          const res = drainIoHidInputRing(proxyRing, (msg) => hidGuest.inputReport(msg), { throwOnCorrupt: true });
+          if (res.forwarded > 0) {
+            Atomics.add(status, StatusIndex.IoHidInputReportCounter, res.forwarded);
+          }
+          if (res.invalid > 0) {
+            Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, res.invalid);
+          }
+          hidProxyInputRingForwarded += res.forwarded;
+          hidProxyInputRingInvalid += res.invalid;
+          if (import.meta.env.DEV && (res.forwarded > 0 || res.invalid > 0) && (hidProxyInputRingForwarded & 0xff) === 0) {
+            console.debug(
+              `[io.worker] hid.ring.init drained forwarded=${hidProxyInputRingForwarded} invalid=${hidProxyInputRingInvalid}`,
+            );
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          detachHidRings(`HID proxy rings disabled: ${message}`);
         }
       }
       mgr.tick(vmNowMs);
