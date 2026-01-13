@@ -1,6 +1,8 @@
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
-use aero_devices::pci::{PciBarKind, PciBarRange, PciBdf};
-use aero_pc_constants::{PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_SIZE, PCIE_ECAM_START_BUS};
+use aero_devices::pci::{PciBarKind, PciBarRange, PciBdf, PciResourceAllocatorConfig};
+use aero_pc_constants::{
+    PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_SIZE, PCIE_ECAM_START_BUS,
+};
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,6 +281,23 @@ fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
     let ecam_start = PCIE_ECAM_BASE;
     let ecam_end = ecam_start + PCIE_ECAM_SIZE;
 
+    // Ensure the allocator's entire MMIO aperture is contained within the ACPI-declared windows.
+    // This makes the test fail if `PciResourceAllocatorConfig::default()` drifts outside `_CRS`,
+    // even if the current set of devices doesn't allocate enough BAR space to hit the edges.
+    let alloc_cfg = PciResourceAllocatorConfig::default();
+    let alloc_start = alloc_cfg.mmio_base;
+    let alloc_end = alloc_start
+        .checked_add(alloc_cfg.mmio_size)
+        .expect("allocator MMIO window overflow");
+    assert!(
+        mmio_windows.iter().any(|w| w.contains(alloc_start, alloc_end)),
+        "PciResourceAllocatorConfig::default() MMIO window is not fully contained in any ACPI PCI0._CRS MMIO window: allocator=[0x{alloc_start:x}..0x{alloc_end:x}) windows={mmio_windows:?}",
+    );
+    assert!(
+        !ranges_overlap(alloc_start, alloc_end, ecam_start, ecam_end),
+        "PciResourceAllocatorConfig::default() MMIO window overlaps ECAM: allocator=[0x{alloc_start:x}..0x{alloc_end:x}) ecam=[0x{ecam_start:x}..0x{ecam_end:x})",
+    );
+
     for (bdf, bar, range) in mmio_bars {
         let start = range.base;
         let end = range
@@ -303,4 +322,3 @@ fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
         );
     }
 }
-
