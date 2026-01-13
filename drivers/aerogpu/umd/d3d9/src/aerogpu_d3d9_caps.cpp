@@ -260,9 +260,10 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 
   out->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
 
-  // Mipmapped textures (multi-subresource layouts) are not supported yet on the
-  // Win7/WDDM path (see CreateResource restrictions in aerogpu_d3d9_driver.cpp),
-  // so keep filtering caps to min/mag only.
+  // Keep mipmap-related caps disabled for now. The Win7/WDDM path has additional
+  // restrictions around multi-subresource resources (see CreateResource logic in
+  // aerogpu_d3d9_driver.cpp) and mipmapped filtering is not exercised by the
+  // DWM/compositor workload.
   out->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
                            D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
 
@@ -361,10 +362,10 @@ void log_caps_once(const D3DCAPS9& caps) {
   logf("aerogpu-d3d9: caps texfilt: TextureFilterCaps=0x%08lX StretchRectFilterCaps=0x%08lX\n",
        (unsigned long)caps.TextureFilterCaps,
        (unsigned long)caps.StretchRectFilterCaps);
-  logf("aerogpu-d3d9: caps blend: SrcBlendCaps=0x%08lX DestBlendCaps=0x%08lX StretchRectFilterCaps=0x%08lX\n",
+  logf("aerogpu-d3d9: caps blend: SrcBlendCaps=0x%08lX DestBlendCaps=0x%08lX BlendOpCaps=0x%08lX\n",
        (unsigned long)caps.SrcBlendCaps,
        (unsigned long)caps.DestBlendCaps,
-       (unsigned long)caps.StretchRectFilterCaps);
+       (unsigned long)caps.BlendOpCaps);
 }
 
 void fill_adapter_identifier(D3DADAPTER_IDENTIFIER9* out) {
