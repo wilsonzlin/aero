@@ -288,6 +288,19 @@ Semantics:
     blocks), and the transfer size is `count * 2048` bytes.
 * Error handling must set `CF=1` and return an INT 13h status code in `AH`.
 
+#### Sector-size rule (HDD vs CD-ROM)
+
+In Aero, the “sector” unit for the DAP depends on the drive class:
+
+* **HDD (`DL=0x80..=0xDF`)**: DAP `count`/`lba` are in **512-byte sectors** (standard EDD behavior).
+* **CD-ROM (`DL=0xE0..=0xEF`)**: DAP `count`/`lba` are in **2048-byte sectors**.
+  * Internally our BIOS reads from a 512-byte-sector [`BlockDevice`] and converts:
+    * `lba512 = lba2048 * 4`
+    * `count512 = count2048 * 4`
+
+This matches the `AH=48h` “bytes per sector” value for the drive (see below) and is required for
+Windows install-media bootloaders that read from CD-ROM via EDD.
+
 ### 6.3 AH=48h — Extended get drive parameters
 
 Inputs:
@@ -335,6 +348,11 @@ Supported subfunctions (in `AL`):
 | `0x0C` | 2 | load segment | Real-mode segment (or `0`) |
 | `0x0E` | 2 | sector count | Number of **512-byte** sectors loaded for the initial image |
 | `0x10` | 3 | reserved | Zero |
+
+In Aero:
+
+* HDD (`DL=0x80..=0xDF`) reports **512 bytes/sector** and `total_sectors` in 512-byte units.
+* CD-ROM (`DL=0xE0..=0xEF`) reports **2048 bytes/sector** and `total_sectors` in 2048-byte units.
 
 ---
 

@@ -222,7 +222,6 @@ fn parse_boot_entry(entry: &[u8]) -> Result<BootImageInfo, &'static str> {
     } else {
         load_segment
     };
-
     let sector_count = u16::from_le_bytes(entry[6..8].try_into().unwrap());
     let sector_count = if sector_count == 0 {
         DEFAULT_SECTOR_COUNT
