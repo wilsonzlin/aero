@@ -670,6 +670,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
         buttonsMaskAfterBtnUp,
         phase4MoveVirtio,
         backendAfterMoveVirtio,
+        mouseBackendSwitchCounter: Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0,
       };
     } finally {
       cpuWorker.terminate();
@@ -717,4 +718,6 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     { type_: 2, code: 1, value: -result.dyPs2 },
     { type_: 0, code: 0, value: 0 },
   ]);
+
+  expect(result.mouseBackendSwitchCounter).toBe(1);
 });

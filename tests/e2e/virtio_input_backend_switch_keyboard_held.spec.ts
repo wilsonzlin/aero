@@ -568,6 +568,7 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
       virtioUsedIdxAfterRelease,
       virtioUsedIdxAfter,
       virtioEvents,
+      keyboardBackendSwitchCounter: Atomics.load(status, StatusIndex.IoKeyboardBackendSwitchCounter) >>> 0,
     };
   });
 
@@ -607,4 +608,6 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
     { type: 1, code: 48, value: 0 },
     { type: 0, code: 0, value: 0 },
   ]);
+
+  expect(result.keyboardBackendSwitchCounter).toBe(1);
 });
