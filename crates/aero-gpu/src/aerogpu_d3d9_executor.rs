@@ -350,9 +350,18 @@ struct Shader {
 /// This is intentionally minimal: it includes only the fields the D3D9 executor needs to bind
 /// vertex inputs and select the correct entry point without re-parsing DXBC on cache hit.
 #[cfg(target_arch = "wasm32")]
+const PERSISTENT_SHADER_REFLECTION_SCHEMA_VERSION: u32 = 1;
+
+#[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistentShaderReflection {
+    /// Version of this Rust-side reflection JSON schema.
+    ///
+    /// This is validated on cache hit to ensure older persisted blobs (from previous executor
+    /// versions) are treated as stale/corrupt and trigger an invalidate+retranslate cycle.
+    #[serde(default)]
+    schema_version: u32,
     stage: PersistentShaderStage,
     entry_point: String,
     uses_semantic_locations: bool,
@@ -2096,6 +2105,7 @@ impl AerogpuD3d9Executor {
                     }
 
                     let reflection = PersistentShaderReflection {
+                        schema_version: PERSISTENT_SHADER_REFLECTION_SCHEMA_VERSION,
                         stage: PersistentShaderStage::from_stage(ir.version.stage),
                         entry_point: wgsl.entry_point.to_string(),
                         uses_semantic_locations: ir.uses_semantic_locations,
@@ -2150,6 +2160,31 @@ impl AerogpuD3d9Executor {
                     );
                 }
             };
+
+            if reflection.schema_version != PERSISTENT_SHADER_REFLECTION_SCHEMA_VERSION {
+                debug!(
+                    shader_handle,
+                    schema_version = reflection.schema_version,
+                    expected = PERSISTENT_SHADER_REFLECTION_SCHEMA_VERSION,
+                    "cached shader reflection schema version is unsupported; invalidating and retranslating"
+                );
+                if !invalidated_once {
+                    invalidated_once = true;
+                    let _ = self
+                        .persistent_shader_cache
+                        .invalidate(dxbc_bytes, flags.clone())
+                        .await;
+                    self.stats.set_d3d9_shader_cache_disabled(
+                        self.persistent_shader_cache.is_persistent_disabled(),
+                    );
+                    continue;
+                }
+                return self.create_shader_dxbc_in_memory(
+                    shader_handle,
+                    expected_stage,
+                    dxbc_bytes,
+                );
+            }
 
             let bytecode_stage = reflection.stage.to_stage();
             if expected_stage != bytecode_stage {
