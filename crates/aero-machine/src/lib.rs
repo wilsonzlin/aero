@@ -623,7 +623,13 @@ pub struct MachineConfig {
     /// This is the foundation required by `docs/16-aerogpu-vga-vesa-compat.md` for
     /// firmware/bootloader compatibility and for the guest WDDM driver to claim scanout.
     ///
-    /// The full AeroGPU command execution model is not implemented yet.
+    /// Note: The full AeroGPU command execution model is not implemented yet. Today this flag
+    /// provides:
+    /// - BAR1-backed VRAM plus minimal legacy VGA decode,
+    /// - minimal BAR0 ring/fence transport (no-op command execution) so the in-tree Win7 KMD can
+    ///   initialize without stalling, and
+    /// - deterministic vblank timing registers and IRQ plumbing so guest timing and
+    ///   snapshot/restore are stable and reproducible.
     ///
     /// Machine snapshots preserve the BAR0 register file and the BAR1 VRAM backing store
     /// deterministically.
@@ -2469,7 +2475,6 @@ impl PciDevice for VgaPciConfigDevice {
         &mut self.cfg
     }
 }
-
 // -----------------------------------------------------------------------------
 // AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
 // -----------------------------------------------------------------------------
@@ -2931,6 +2936,156 @@ impl AeroGpuDevice {
     }
 }
 
+impl IoSnapshot for AeroGpuDevice {
+    const DEVICE_ID: [u8; 4] = *b"AGPU";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_VRAM: u16 = 100;
+        const TAG_VBE_MODE_ACTIVE: u16 = 130;
+        const TAG_VBE_BANK: u16 = 131;
+
+        const TAG_VGA_MISC_OUTPUT: u16 = 101;
+        const TAG_VGA_SEQ_INDEX: u16 = 102;
+        const TAG_VGA_SEQ_REGS: u16 = 103;
+        const TAG_VGA_GC_INDEX: u16 = 104;
+        const TAG_VGA_GC_REGS: u16 = 105;
+        const TAG_VGA_CRTC_INDEX: u16 = 106;
+        const TAG_VGA_CRTC_REGS: u16 = 107;
+        const TAG_VGA_ATTR_INDEX: u16 = 108;
+        const TAG_VGA_ATTR_REGS: u16 = 109;
+        const TAG_VGA_ATTR_FLIP_FLOP: u16 = 110;
+
+        const TAG_VGA_PEL_MASK: u16 = 120;
+        const TAG_VGA_DAC_WRITE_INDEX: u16 = 121;
+        const TAG_VGA_DAC_WRITE_SUBINDEX: u16 = 122;
+        const TAG_VGA_DAC_WRITE_LATCH: u16 = 123;
+        const TAG_VGA_DAC_READ_INDEX: u16 = 124;
+        const TAG_VGA_DAC_READ_SUBINDEX: u16 = 125;
+        const TAG_VGA_DAC_PALETTE: u16 = 126;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        // Note: AeroGPU exposes a large VRAM aperture (64MiB) via BAR1, but `aero-snapshot` bounds
+        // individual device entries to 64MiB. Persist only the legacy VGA compatibility window
+        // (`0xA0000..0xC0000` alias) so full-machine snapshots remain representable.
+        let vram_len = LEGACY_VGA_WINDOW_SIZE.min(self.vram.len());
+        w.field_bytes(TAG_VRAM, self.vram[..vram_len].to_vec());
+
+        w.field_bool(TAG_VBE_MODE_ACTIVE, self.vbe_mode_active);
+        w.field_u32(TAG_VBE_BANK, u32::from(self.vbe_bank));
+
+        w.field_u8(TAG_VGA_MISC_OUTPUT, self.misc_output);
+        w.field_u8(TAG_VGA_SEQ_INDEX, self.seq_index);
+        w.field_bytes(TAG_VGA_SEQ_REGS, self.seq_regs.to_vec());
+        w.field_u8(TAG_VGA_GC_INDEX, self.gc_index);
+        w.field_bytes(TAG_VGA_GC_REGS, self.gc_regs.to_vec());
+        w.field_u8(TAG_VGA_CRTC_INDEX, self.crtc_index);
+        w.field_bytes(TAG_VGA_CRTC_REGS, self.crtc_regs.to_vec());
+        w.field_u8(TAG_VGA_ATTR_INDEX, self.attr_index);
+        w.field_bytes(TAG_VGA_ATTR_REGS, self.attr_regs.to_vec());
+        w.field_bool(TAG_VGA_ATTR_FLIP_FLOP, self.attr_flip_flop);
+
+        w.field_u8(TAG_VGA_PEL_MASK, self.pel_mask);
+        w.field_u8(TAG_VGA_DAC_WRITE_INDEX, self.dac_write_index);
+        w.field_u8(TAG_VGA_DAC_WRITE_SUBINDEX, self.dac_write_subindex);
+        w.field_bytes(TAG_VGA_DAC_WRITE_LATCH, self.dac_write_latch.to_vec());
+        w.field_u8(TAG_VGA_DAC_READ_INDEX, self.dac_read_index);
+        w.field_u8(TAG_VGA_DAC_READ_SUBINDEX, self.dac_read_subindex);
+
+        let mut palette = Vec::with_capacity(256 * 3);
+        for rgb in &self.dac_palette {
+            palette.extend_from_slice(rgb);
+        }
+        w.field_bytes(TAG_VGA_DAC_PALETTE, palette);
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> IoSnapshotResult<()> {
+        const TAG_VRAM: u16 = 100;
+        const TAG_VBE_MODE_ACTIVE: u16 = 130;
+        const TAG_VBE_BANK: u16 = 131;
+
+        const TAG_VGA_MISC_OUTPUT: u16 = 101;
+        const TAG_VGA_SEQ_INDEX: u16 = 102;
+        const TAG_VGA_SEQ_REGS: u16 = 103;
+        const TAG_VGA_GC_INDEX: u16 = 104;
+        const TAG_VGA_GC_REGS: u16 = 105;
+        const TAG_VGA_CRTC_INDEX: u16 = 106;
+        const TAG_VGA_CRTC_REGS: u16 = 107;
+        const TAG_VGA_ATTR_INDEX: u16 = 108;
+        const TAG_VGA_ATTR_REGS: u16 = 109;
+        const TAG_VGA_ATTR_FLIP_FLOP: u16 = 110;
+
+        const TAG_VGA_PEL_MASK: u16 = 120;
+        const TAG_VGA_DAC_WRITE_INDEX: u16 = 121;
+        const TAG_VGA_DAC_WRITE_SUBINDEX: u16 = 122;
+        const TAG_VGA_DAC_WRITE_LATCH: u16 = 123;
+        const TAG_VGA_DAC_READ_INDEX: u16 = 124;
+        const TAG_VGA_DAC_READ_SUBINDEX: u16 = 125;
+        const TAG_VGA_DAC_PALETTE: u16 = 126;
+
+        let r = IoSnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        self.reset();
+
+        if let Some(vram) = r.bytes(TAG_VRAM) {
+            let cap = LEGACY_VGA_WINDOW_SIZE.min(self.vram.len());
+            let len = vram.len().min(cap);
+            self.vram[..len].copy_from_slice(&vram[..len]);
+        }
+
+        self.vbe_mode_active = r.bool(TAG_VBE_MODE_ACTIVE)?.unwrap_or(false);
+        self.vbe_bank = r.u32(TAG_VBE_BANK)?.unwrap_or(0).min(u32::from(u16::MAX)) as u16;
+
+        self.misc_output = r.u8(TAG_VGA_MISC_OUTPUT)?.unwrap_or(0);
+        self.seq_index = r.u8(TAG_VGA_SEQ_INDEX)?.unwrap_or(0);
+        if let Some(seq_regs) = r.bytes(TAG_VGA_SEQ_REGS) {
+            let len = seq_regs.len().min(self.seq_regs.len());
+            self.seq_regs[..len].copy_from_slice(&seq_regs[..len]);
+        }
+        self.gc_index = r.u8(TAG_VGA_GC_INDEX)?.unwrap_or(0);
+        if let Some(gc_regs) = r.bytes(TAG_VGA_GC_REGS) {
+            let len = gc_regs.len().min(self.gc_regs.len());
+            self.gc_regs[..len].copy_from_slice(&gc_regs[..len]);
+        }
+        self.crtc_index = r.u8(TAG_VGA_CRTC_INDEX)?.unwrap_or(0);
+        if let Some(crtc_regs) = r.bytes(TAG_VGA_CRTC_REGS) {
+            let len = crtc_regs.len().min(self.crtc_regs.len());
+            self.crtc_regs[..len].copy_from_slice(&crtc_regs[..len]);
+        }
+        self.attr_index = r.u8(TAG_VGA_ATTR_INDEX)?.unwrap_or(0);
+        if let Some(attr_regs) = r.bytes(TAG_VGA_ATTR_REGS) {
+            let len = attr_regs.len().min(self.attr_regs.len());
+            self.attr_regs[..len].copy_from_slice(&attr_regs[..len]);
+        }
+        self.attr_flip_flop = r.bool(TAG_VGA_ATTR_FLIP_FLOP)?.unwrap_or(false);
+
+        self.pel_mask = r.u8(TAG_VGA_PEL_MASK)?.unwrap_or(0xFF);
+        self.dac_write_index = r.u8(TAG_VGA_DAC_WRITE_INDEX)?.unwrap_or(0);
+        self.dac_write_subindex = r.u8(TAG_VGA_DAC_WRITE_SUBINDEX)?.unwrap_or(0);
+        if let Some(latch) = r.bytes(TAG_VGA_DAC_WRITE_LATCH) {
+            let len = latch.len().min(self.dac_write_latch.len());
+            self.dac_write_latch[..len].copy_from_slice(&latch[..len]);
+        }
+        self.dac_read_index = r.u8(TAG_VGA_DAC_READ_INDEX)?.unwrap_or(0);
+        self.dac_read_subindex = r.u8(TAG_VGA_DAC_READ_SUBINDEX)?.unwrap_or(0);
+
+        if let Some(palette) = r.bytes(TAG_VGA_DAC_PALETTE) {
+            for (i, chunk) in palette.chunks(3).enumerate().take(self.dac_palette.len()) {
+                let mut rgb = [0u8; 3];
+                let len = chunk.len().min(3);
+                rgb[..len].copy_from_slice(&chunk[..len]);
+                self.dac_palette[i] = rgb;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 struct AeroGpuBar1Mmio {
     dev: Rc<RefCell<AeroGpuDevice>>,
 }
@@ -3193,6 +3348,9 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     out.push(vram.crtc_index);
     out.extend_from_slice(&vram.crtc_regs);
 
+    // Deterministic timebase. Stored as trailing fields so older decoders can ignore them.
+    out.extend_from_slice(&regs.now_ns.to_le_bytes());
+    out.extend_from_slice(&regs.next_vblank_ns.unwrap_or(0).to_le_bytes());
     out
 }
 
@@ -3261,12 +3419,12 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
     let vram_len = read_u32(bytes, &mut off)? as usize;
     let end = off.checked_add(vram_len)?;
     let vram = bytes.get(off..end)?.to_vec();
+    off = end;
 
     // Trailing BAR0 error payload (ABI 1.3+). This was added after the initial snapshot v1 format,
     // so treat it as optional and default to zero when absent.
-    off = end;
     let mut has_error_payload = false;
-    let (error_code, error_fence, error_count) = if bytes.len() >= end.saturating_add(16) {
+    let (error_code, error_fence, error_count) = if bytes.len() >= off.saturating_add(16) {
         has_error_payload = true;
         let error_code = read_u32(bytes, &mut off).unwrap_or(0);
         let error_fence = read_u64(bytes, &mut off).unwrap_or(0);
@@ -3316,17 +3474,31 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
                     *entry = [pal_bytes[base], pal_bytes[base + 1], pal_bytes[base + 2]];
                 }
             }
+            off = off.saturating_add(TOTAL_LEN);
             Some(AeroGpuVgaDacSnapshotV1 { pel_mask, palette })
         } else {
             None
         }
     };
+
+    // Forward-compatible: older snapshots do not have these trailing fields.
+    let now_ns = read_u64(bytes, &mut off).unwrap_or(scanout0_vblank_time_ns);
+    let next_raw = read_u64(bytes, &mut off).unwrap_or(0);
+    let mut next_vblank_ns = if next_raw == 0 { None } else { Some(next_raw) };
+    if next_vblank_ns.is_none() && scanout0_enable != 0 {
+        let period_ns = u64::from(scanout0_vblank_period_ns);
+        if period_ns != 0 {
+            next_vblank_ns = Some(scanout0_vblank_time_ns.saturating_add(period_ns));
+        }
+    }
     // Forward-compatible: ignore trailing bytes from future versions.
 
     Some(AeroGpuSnapshotV1 {
         bar0: crate::aerogpu::AeroGpuMmioSnapshotV1 {
             abi_version,
             features,
+            now_ns,
+            next_vblank_ns,
             ring_gpa,
             ring_size_bytes,
             ring_control,
@@ -3605,12 +3777,24 @@ fn apply_aerogpu_snapshot_v2(
 
         break;
     }
+    // Trailing deterministic vblank timebase (added after the error/DAC payloads).
+    let now_ns = read_u64(bytes, &mut off).unwrap_or(scanout0_vblank_time_ns);
+    let next_raw = read_u64(bytes, &mut off).unwrap_or(0);
+    let mut next_vblank_ns = if next_raw == 0 { None } else { Some(next_raw) };
+    if next_vblank_ns.is_none() && scanout0_enable != 0 {
+        let period_ns = u64::from(scanout0_vblank_period_ns);
+        if period_ns != 0 {
+            next_vblank_ns = Some(scanout0_vblank_time_ns.saturating_add(period_ns));
+        }
+    }
     // Forward-compatible: ignore trailing bytes from future versions (including unknown tags).
 
     bar0.reset();
     bar0.restore_snapshot_v1(&crate::aerogpu::AeroGpuMmioSnapshotV1 {
         abi_version,
         features,
+        now_ns,
+        next_vblank_ns,
         ring_gpa,
         ring_size_bytes,
         ring_control,
@@ -6739,16 +6923,9 @@ impl Machine {
             vga.borrow_mut().tick(delta_ns);
         }
 
-        // AeroGPU vblank scheduling is driven by the deterministic platform clock. Tick once at the
-        // pre-advance time so a newly-enabled scanout can establish its next-vblank deadline, then
-        // tick again after the clock jump to catch up.
-        self.process_aerogpu();
-
         if let Some(clock) = &self.platform_clock {
             clock.advance_ns(delta_ns);
         }
-
-        self.process_aerogpu();
 
         if let Some(acpi_pm) = &self.acpi_pm {
             acpi_pm.borrow_mut().tick(delta_ns);
@@ -6770,6 +6947,10 @@ impl Machine {
             let mut hpet = hpet.borrow_mut();
             let mut interrupts = interrupts.borrow_mut();
             hpet.poll(&mut *interrupts);
+        }
+
+        if let Some(aerogpu_mmio) = self.aerogpu_mmio.as_ref() {
+            aerogpu_mmio.borrow_mut().tick(delta_ns, &mut self.mem);
         }
 
         if let Some(uhci) = self.uhci.as_ref() {
@@ -7020,6 +7201,33 @@ impl Machine {
                 let mut level = e1000.borrow().irq_level();
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
+            // AeroGPU legacy INTx (level-triggered).
+            if let Some(aerogpu) = &self.aerogpu_mmio {
+                let bdf: PciBdf = aero_devices::pci::profile::AEROGPU.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let command = self
+                    .pci_cfg
+                    .as_ref()
+                    .and_then(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                    })
+                    .unwrap_or(0);
+
+                let mut level = aerogpu.borrow().irq_level();
+
+                // Gate on COMMAND.INTX_DISABLE (bit 10).
                 if (command & (1 << 10)) != 0 {
                     level = false;
                 }
@@ -7340,15 +7548,6 @@ impl Machine {
                         (command, bar0_base, bar1_base)
                     })
                     .unwrap_or((0, 0, 0));
-
-                // Tick vblank scheduling based on the deterministic platform clock so tests do not
-                // depend on wall clock time.
-                let clock_ns = self
-                    .platform_clock
-                    .as_ref()
-                    .map(aero_interrupts::clock::Clock::now_ns)
-                    .unwrap_or(0);
-
                 let mut level = {
                     let mut dev = aerogpu.borrow_mut();
                     // Keep the AeroGPU model's internal PCI config image coherent with the
@@ -7360,7 +7559,6 @@ impl Machine {
                         aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
                         bar1_base,
                     );
-                    dev.tick_vblank(clock_ns);
                     dev.irq_level()
                 };
 
@@ -9375,6 +9573,7 @@ impl Machine {
             if !use_legacy_vga {
                 self.vga = None;
             }
+            self.aerogpu = None;
             self.ahci = None;
             self.nvme = None;
             self.virtio_net = None;
@@ -9743,9 +9942,7 @@ impl Machine {
     /// -> advance head -> update completed fence + fence page) to make forward progress during
     /// `StartDevice` and early submission.
     pub fn process_aerogpu(&mut self) {
-        let (Some(aerogpu), Some(pci_cfg), Some(_clock)) =
-            (&self.aerogpu_mmio, &self.pci_cfg, &self.platform_clock)
-        else {
+        let (Some(aerogpu), Some(pci_cfg)) = (&self.aerogpu_mmio, &self.pci_cfg) else {
             return;
         };
 

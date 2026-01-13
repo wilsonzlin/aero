@@ -2,7 +2,7 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use aero_devices::clock::{Clock, ManualClock};
+use aero_devices::clock::ManualClock;
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
 use aero_devices_gpu::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
 use aero_devices_gpu::ring::{
@@ -426,6 +426,19 @@ pub struct AeroGpuMmioDevice {
     supported_features: u64,
 
     clock: Option<ManualClock>,
+    // ---------------------------------------------------------------------
+    // Deterministic vblank timing (BAR0)
+    // ---------------------------------------------------------------------
+    /// Deterministic time base (nanoseconds since device reset).
+    now_ns: u64,
+    /// Internal vblank interval used for scheduling (nanoseconds).
+    ///
+    /// This mirrors the upstream emulator model's `vblank_interval_ns`, but is advanced using the
+    /// device's deterministic `now_ns` instead of wall clock time so vblank behavior is stable
+    /// across runs and snapshot/restore.
+    vblank_interval_ns: Option<u64>,
+    /// Next scheduled vblank tick timestamp (nanoseconds since device reset).
+    next_vblank_ns: Option<u64>,
 
     ring_gpa: u64,
     ring_size_bytes: u32,
@@ -461,8 +474,6 @@ pub struct AeroGpuMmioDevice {
     scanout0_vblank_seq: u64,
     scanout0_vblank_time_ns: u64,
     scanout0_vblank_period_ns: u32,
-    vblank_interval_ns: Option<u64>,
-    next_vblank_ns: Option<u64>,
     wddm_scanout_active: bool,
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     scanout0_dirty: bool,
@@ -513,6 +524,9 @@ pub struct AeroGpuMmioDevice {
 pub(crate) struct AeroGpuMmioSnapshotV1 {
     pub abi_version: u32,
     pub features: u64,
+
+    pub now_ns: u64,
+    pub next_vblank_ns: Option<u64>,
 
     pub ring_gpa: u64,
     pub ring_size_bytes: u32,
@@ -576,6 +590,9 @@ impl Default for AeroGpuMmioDevice {
             supported_features: supported_features(),
 
             clock: None,
+            now_ns: 0,
+            vblank_interval_ns: Some(vblank_period_ns),
+            next_vblank_ns: None,
 
             ring_gpa: 0,
             ring_size_bytes: 0,
@@ -601,8 +618,6 @@ impl Default for AeroGpuMmioDevice {
             scanout0_vblank_seq: 0,
             scanout0_vblank_time_ns: 0,
             scanout0_vblank_period_ns,
-            vblank_interval_ns: Some(vblank_period_ns),
-            next_vblank_ns: None,
             wddm_scanout_active: false,
             #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
             scanout0_dirty: false,
@@ -1037,6 +1052,9 @@ impl AeroGpuMmioDevice {
             abi_version: self.abi_version,
             features: self.supported_features,
 
+            now_ns: self.now_ns,
+            next_vblank_ns: self.next_vblank_ns,
+
             ring_gpa: self.ring_gpa,
             ring_size_bytes: self.ring_size_bytes,
             ring_control: self.ring_control,
@@ -1121,8 +1139,9 @@ impl AeroGpuMmioDevice {
         } else {
             Some(u64::from(snap.scanout0_vblank_period_ns))
         };
-        // Host timebase is not snapshotted; restart vblank scheduling from the next tick.
-        self.next_vblank_ns = None;
+
+        self.now_ns = snap.now_ns;
+        self.next_vblank_ns = snap.next_vblank_ns;
 
         self.wddm_scanout_active = snap.wddm_scanout_active;
 
@@ -1161,6 +1180,12 @@ impl AeroGpuMmioDevice {
     }
 
     pub fn tick_vblank(&mut self, now_ns: u64) {
+        if now_ns < self.now_ns {
+            return;
+        }
+
+        self.now_ns = now_ns;
+
         let Some(interval_ns) = self.vblank_interval_ns else {
             return;
         };
@@ -1196,8 +1221,8 @@ impl AeroGpuMmioDevice {
             self.scanout0_vblank_seq = self.scanout0_vblank_seq.wrapping_add(1);
             self.scanout0_vblank_time_ns = next;
 
-            // Only latch the vblank IRQ status bit while the guest has it enabled.
-            // This prevents an immediate "stale" interrupt on re-enable.
+            // Only latch the vblank IRQ cause bit when it is enabled. This avoids immediate "stale"
+            // interrupts when a guest re-enables vblank delivery.
             if (self.irq_enable & pci::AEROGPU_IRQ_SCANOUT_VBLANK) != 0 {
                 self.irq_status |= pci::AEROGPU_IRQ_SCANOUT_VBLANK;
             }
@@ -1205,7 +1230,7 @@ impl AeroGpuMmioDevice {
             self.process_pending_fences_on_vblank();
 
             next = next.saturating_add(interval_ns);
-            ticks += 1;
+            ticks = ticks.saturating_add(1);
 
             // Avoid unbounded catch-up work if the host stalls for a very long time.
             if ticks >= 1024 {
@@ -1220,6 +1245,13 @@ impl AeroGpuMmioDevice {
         }
 
         self.next_vblank_ns = Some(next);
+    }
+
+    pub fn tick(&mut self, delta_ns: u64, _mem: &mut dyn MemoryBus) {
+        if delta_ns == 0 {
+            return;
+        }
+        self.tick_vblank(self.now_ns.saturating_add(delta_ns));
     }
 
     pub(crate) fn cursor_snapshot(&self) -> AeroGpuCursorConfig {
@@ -1249,9 +1281,7 @@ impl AeroGpuMmioDevice {
         // Preserve the emulator device model ordering: keep the vblank clock caught up to "now"
         // before processing newly-submitted work, so vsync pacing can't complete on an already-
         // elapsed vblank edge.
-        if let Some(clock) = &self.clock {
-            self.tick_vblank(clock.now_ns());
-        }
+        self.tick_vblank(self.now_ns);
 
         // Ring control RESET is an MMIO write-side effect, but touching the ring header requires
         // DMA; perform the actual memory update from the machine's device tick path when bus
@@ -1824,9 +1854,7 @@ impl AeroGpuMmioDevice {
                 let enabling_vblank = (value & pci::AEROGPU_IRQ_SCANOUT_VBLANK) != 0
                     && (self.irq_enable & pci::AEROGPU_IRQ_SCANOUT_VBLANK) == 0;
                 if enabling_vblank {
-                    if let Some(clock) = &self.clock {
-                        self.tick_vblank(clock.now_ns());
-                    }
+                    self.tick_vblank(self.now_ns);
                 }
 
                 self.irq_enable = value;
@@ -1853,7 +1881,8 @@ impl AeroGpuMmioDevice {
                 // should blank presentation but must *not* release WDDM ownership (legacy scanout
                 // stays suppressed until device reset).
                 if self.scanout0_enable && !new_enable {
-                    // Disabling scanout stops vblank scheduling and flushes any vsync-paced fences.
+                    // Disabling scanout stops vblank scheduling, drops any pending vblank IRQ, and
+                    // flushes any vsync-paced fences.
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
                     // Do not leave any vsync-paced fences blocked forever once scanout is disabled.
@@ -1861,6 +1890,12 @@ impl AeroGpuMmioDevice {
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
+                }
+
+                if !self.scanout0_enable && new_enable {
+                    if let Some(interval_ns) = self.vblank_interval_ns {
+                        self.next_vblank_ns = Some(self.now_ns.saturating_add(interval_ns));
+                    }
                 }
                 self.scanout0_enable = new_enable;
                 #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
