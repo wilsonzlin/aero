@@ -85,7 +85,7 @@ Level-triggered devices assert their interrupt line while an interrupt condition
 
 Example:
 
-- **PCI INTx** devices (e.g. UHCI): INTx is a shared, wired-OR, *level-triggered* signal in PCI.
+- **PCI INTx** devices (e.g. UHCI/EHCI/xHCI): INTx is a shared, wired-OR, *level-triggered* signal in PCI.
 
 ## Worker transport (`irqRaise` / `irqLower`)
 

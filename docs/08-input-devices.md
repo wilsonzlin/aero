@@ -174,7 +174,7 @@ For the canonical USB stack selection for the browser runtime, see [ADR 0015](./
 ## IRQ semantics (browser runtime)
 
 Input devices ultimately notify the guest via IRQ lines (IRQ1/IRQ12 for PS/2,
-PCI INTx for UHCI, etc). In the browser runtime these are delivered as
+PCI INTx for USB host controllers like UHCI/EHCI/xHCI, etc). In the browser runtime these are delivered as
 refcounted *line level* transitions (`raiseIrq` / `lowerIrq`). Edge-triggered
 sources are represented as explicit pulses (0→1→0).
 
