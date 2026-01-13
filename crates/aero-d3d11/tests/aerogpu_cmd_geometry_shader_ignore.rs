@@ -1,6 +1,7 @@
 mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+use aero_d3d11::runtime::bindings::ShaderStage;
 use aero_d3d11::FourCC;
 use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::guest_memory::VecGuestMemory;
@@ -46,17 +47,37 @@ fn aerogpu_cmd_accepts_geometry_shader_stage_ex_plumbing() {
         let gs_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm4_program_chunk(2))]);
 
         let mut writer = AerogpuCmdWriter::new();
-        // New protocol semantics:
-        // - `CREATE_SHADER_DXBC` can encode an extended D3D11 stage in `reserved0` (`stage_ex`).
-        // - `BIND_SHADERS` stores the GS handle in `reserved0` when non-zero (`bind_shaders_with_gs`).
+        // Encode GS creation and binding updates using the "stage_ex" ABI extension so we exercise
+        // the extended-stage plumbing even on older hosts.
         writer.create_shader_dxbc_ex(1, AerogpuShaderStageEx::Geometry, &gs_dxbc);
+        // Ensure geometry-stage bindings are accepted (even though WebGPU has no GS stage).
         writer.bind_shaders_with_gs(0, 1, 0, 0);
-        writer.destroy_shader(1);
+        writer.set_texture_ex(AerogpuShaderStageEx::Geometry, 0, 0);
+        writer.set_shader_constants_f_ex(AerogpuShaderStageEx::Geometry, 0, &[1.0, 2.0, 3.0, 4.0]);
         let stream = writer.finish();
 
         let mut guest_mem = VecGuestMemory::new(0);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
-            .expect("geometry shader stage_ex creation/binding should be accepted");
+            .expect("create shader stream should execute");
+        assert_eq!(
+            exec.shader_stage(1),
+            Some(ShaderStage::Geometry),
+            "geometry shader should be accepted and stored"
+        );
+        assert_eq!(
+            exec.shader_entry_point(1).expect("shader should exist"),
+            "gs_main"
+        );
+
+        assert_eq!(exec.bound_shader_handles().gs, Some(1));
+
+        // Destroying a GS handle should also be accepted (whether or not GS execution is supported).
+        let mut writer = AerogpuCmdWriter::new();
+        writer.destroy_shader(1);
+        let stream = writer.finish();
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("destroy shader should succeed");
+        assert_eq!(exec.shader_stage(1), None);
     });
 }
 

@@ -395,6 +395,16 @@ pub struct PresentEvent {
     pub presented_render_target: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundShaderHandles {
+    pub vs: Option<u32>,
+    pub ps: Option<u32>,
+    pub gs: Option<u32>,
+    pub hs: Option<u32>,
+    pub ds: Option<u32>,
+    pub cs: Option<u32>,
+}
+
 /// Shared surface bookkeeping for `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
 ///
 /// This is the host-side equivalent of the Win7 KMD/UMD shared-resource protocol:
@@ -1499,6 +1509,23 @@ impl AerogpuD3d11Executor {
 
     pub fn capabilities(&self) -> &GpuCapabilities {
         &self.caps
+    }
+
+    #[doc(hidden)]
+    pub fn bound_shader_handles(&self) -> BoundShaderHandles {
+        BoundShaderHandles {
+            vs: self.state.vs,
+            ps: self.state.ps,
+            gs: self.state.gs,
+            hs: self.state.hs,
+            ds: self.state.ds,
+            cs: self.state.cs,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn shader_stage(&self, shader_id: u32) -> Option<ShaderStage> {
+        self.resources.shaders.get(&shader_id).map(|s| s.stage)
     }
 
     #[doc(hidden)]
@@ -6042,6 +6069,7 @@ impl AerogpuD3d11Executor {
                     let stage_raw = read_u32_le(cmd_bytes, 8)?;
                     let start_register = read_u32_le(cmd_bytes, 12)?;
                     let vec4_count = read_u32_le(cmd_bytes, 16)? as usize;
+                    let stage_ex = read_u32_le(cmd_bytes, 20)?;
                     let byte_len = vec4_count
                         .checked_mul(16)
                         .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: byte_len overflow"))?;
@@ -6056,7 +6084,6 @@ impl AerogpuD3d11Executor {
                     }
                     let data = &cmd_bytes[24..24 + byte_len];
 
-                    let stage_ex = read_u32_le(cmd_bytes, 20)?;
                     let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
                         .ok_or_else(|| {
                             anyhow!(
@@ -8489,22 +8516,6 @@ impl AerogpuD3d11Executor {
             crate::ShaderStage::Domain => ShaderStage::Domain,
             other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
         };
-
-        // Geometry shaders are representable in the legacy `AerogpuShaderStage` enum, but the
-        // WebGPU-backed executor does not support them directly.
-        //
-        // Geometry/tessellation shaders are instead forwarded through the `stage_ex` ABI extension
-        // (stage=COMPUTE + reserved0=stage_ex).
-        if stage_raw == AerogpuShaderStage::Geometry as u32 {
-            if parsed_stage != ShaderStage::Geometry {
-                bail!(
-                    "CREATE_SHADER_DXBC: stage mismatch (cmd=Geometry, dxbc={parsed_stage:?})"
-                );
-            }
-            // Accept the create to keep the command stream robust, but ignore the shader since it
-            // can never be executed by the WebGPU backend.
-            return Ok(());
-        }
 
         let stage =
             ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
