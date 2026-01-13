@@ -8,6 +8,7 @@
 #include "virtio_pci_intx_wdm.h"
 #include "virtio_pci_modern_transport.h"
 #include "virtiosnd_control.h"
+#include "virtiosnd_jack.h"
 #include "virtiosnd_queue_split.h"
 #include "virtiosnd_tx.h"
 #include "virtiosnd_rx.h"
@@ -249,6 +250,9 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     WORK_QUEUE_ITEM PcmXrunWorkItem;
     volatile LONG PcmXrunWorkQueued;
     volatile LONG PcmXrunPendingMask;
+
+    /* Jack state reflected through the PortCls topology miniport. */
+    VIRTIOSND_JACK_STATE JackState;
 
     BOOLEAN Started;
     BOOLEAN Removed;

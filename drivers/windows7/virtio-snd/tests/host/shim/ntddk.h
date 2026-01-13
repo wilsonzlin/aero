@@ -16,4 +16,3 @@
  * continues to work with the existing include paths.
  */
 #include "../../ntddk.h"
-

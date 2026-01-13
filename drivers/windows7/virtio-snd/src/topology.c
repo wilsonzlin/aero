@@ -2,9 +2,11 @@
 
 #include <ntddk.h>
 
+#include "adapter_context.h"
 #include "portcls_compat.h"
 #include "topology.h"
 #include "trace.h"
+#include "virtiosnd_jack.h"
 #if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
 #include "aero_virtio_snd_ioport.h"
 #else
@@ -33,6 +35,7 @@
 typedef struct _VIRTIOSND_TOPOLOGY_MINIPORT {
     IMiniportTopology Interface;
     LONG RefCount;
+    VIRTIOSND_PORTCLS_DX Dx;
 } VIRTIOSND_TOPOLOGY_MINIPORT, *PVIRTIOSND_TOPOLOGY_MINIPORT;
 
 static ULONG STDMETHODCALLTYPE VirtIoSndTopologyMiniport_AddRef(_In_ IMiniportTopology *This);
@@ -93,13 +96,22 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndTopologyMiniport_Init(
     _Outptr_opt_result_maybenull_ PSERVICEGROUP *ServiceGroup
     )
 {
-    UNREFERENCED_PARAMETER(This);
-    UNREFERENCED_PARAMETER(UnknownAdapter);
     UNREFERENCED_PARAMETER(ResourceList);
     UNREFERENCED_PARAMETER(Port);
 
     if (ServiceGroup != NULL) {
         *ServiceGroup = NULL;
+    }
+
+    /*
+     * Cache the device extension pointer so jack properties can reflect
+     * virtio-snd eventq JACK notifications.
+     */
+    if (This != NULL) {
+        PVIRTIOSND_TOPOLOGY_MINIPORT miniport = VirtIoSndTopologyMiniportFromInterface(This);
+        if (miniport != NULL) {
+            miniport->Dx = VirtIoSndAdapterContext_Lookup(UnknownAdapter, NULL);
+        }
     }
 
     return STATUS_SUCCESS;

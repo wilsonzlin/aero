@@ -43,6 +43,7 @@ SOURCES= \
     virtiosnd_rx.c \
     virtiosnd_hw.c \
     virtiosnd_intx.c \
+    virtiosnd_jack.c \
     virtiosnd_sg.c \
     virtiosnd_sg_core.c \
     virtiosnd_sg_tx.c \

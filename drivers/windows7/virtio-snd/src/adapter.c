@@ -434,6 +434,14 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
     dx->Self = DeviceObject;
     dx->Removed = FALSE;
 
+    /*
+     * Initialize jack state before miniports query KSPROPERTY_JACK_DESCRIPTION.
+     *
+     * Default to "connected" so behaviour matches the previous static topology
+     * when the device never emits jack events.
+     */
+    VirtIoSndJackStateInit(&dx->JackState);
+
     /* Initialize interrupt state before any best-effort StopHardware calls. */
     VirtIoSndInterruptInitialize(dx);
 
