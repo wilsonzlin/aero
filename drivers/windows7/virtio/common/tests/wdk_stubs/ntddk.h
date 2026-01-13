@@ -127,6 +127,14 @@ typedef struct _DEVICE_OBJECT {
 #endif
 #endif
 
+/* Pool allocations (sufficient for host tests). */
+typedef enum _POOL_TYPE {
+    NonPagedPool = 0,
+} POOL_TYPE;
+
+PVOID ExAllocatePoolWithTag(_In_ POOL_TYPE PoolType, _In_ size_t NumberOfBytes, _In_ ULONG Tag);
+VOID ExFreePoolWithTag(_In_ PVOID P, _In_ ULONG Tag);
+
 /*
  * MMIO hook layer.
  *
@@ -304,6 +312,9 @@ typedef struct _KINTERRUPT KINTERRUPT, *PKINTERRUPT;
 
 typedef BOOLEAN (*PKSERVICE_ROUTINE)(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext);
 
+/* Message-signaled interrupt service routine. */
+typedef BOOLEAN (*PKMESSAGE_SERVICE_ROUTINE)(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext, _In_ ULONG MessageId);
+
 /* KDPC */
 typedef struct _KDPC KDPC, *PKDPC;
 
@@ -327,6 +338,7 @@ typedef enum _KINTERRUPT_MODE {
 
 struct _KINTERRUPT {
     PKSERVICE_ROUTINE ServiceRoutine;
+    PKMESSAGE_SERVICE_ROUTINE MessageServiceRoutine;
     PVOID ServiceContext;
     ULONG Vector;
     KIRQL Irql;
@@ -347,6 +359,13 @@ typedef struct _CM_PARTIAL_RESOURCE_DESCRIPTOR {
             ULONG Level;
             ULONG Affinity;
         } Interrupt;
+        struct {
+            ULONG Vector;
+            ULONG Level;
+            ULONG Affinity;
+            USHORT MessageCount;
+            USHORT Reserved;
+        } MessageInterrupt;
     } u;
 } CM_PARTIAL_RESOURCE_DESCRIPTOR, *PCM_PARTIAL_RESOURCE_DESCRIPTOR;
 
@@ -364,6 +383,54 @@ NTSTATUS IoConnectInterrupt(_Out_ PKINTERRUPT* InterruptObject,
                             _In_ BOOLEAN FloatingSave);
 
 VOID IoDisconnectInterrupt(_In_ PKINTERRUPT InterruptObject);
+
+/*
+ * Message-signaled interrupts (IoConnectInterruptEx).
+ */
+typedef enum _IO_CONNECT_INTERRUPT_VERSION {
+    CONNECT_FULLY_SPECIFIED = 0,
+    CONNECT_LINE_BASED = 1,
+    CONNECT_MESSAGE_BASED = 2,
+} IO_CONNECT_INTERRUPT_VERSION;
+
+typedef struct _IO_INTERRUPT_MESSAGE_INFO_ENTRY {
+    PKINTERRUPT InterruptObject;
+    ULONG MessageData;
+} IO_INTERRUPT_MESSAGE_INFO_ENTRY, *PIO_INTERRUPT_MESSAGE_INFO_ENTRY;
+
+typedef struct _IO_INTERRUPT_MESSAGE_INFO {
+    ULONG MessageCount;
+    IO_INTERRUPT_MESSAGE_INFO_ENTRY MessageInfo[1];
+} IO_INTERRUPT_MESSAGE_INFO, *PIO_INTERRUPT_MESSAGE_INFO;
+
+typedef struct _IO_CONNECT_INTERRUPT_PARAMETERS {
+    IO_CONNECT_INTERRUPT_VERSION Version;
+    union {
+        struct {
+            PDEVICE_OBJECT PhysicalDeviceObject;
+            PKMESSAGE_SERVICE_ROUTINE ServiceRoutine;
+            PVOID ServiceContext;
+            PKSPIN_LOCK SpinLock;
+            ULONG SynchronizeIrql;
+            BOOLEAN FloatingSave;
+            ULONG MessageCount;
+            PIO_INTERRUPT_MESSAGE_INFO MessageInfo;
+            PVOID ConnectionContext;
+        } MessageBased;
+    };
+} IO_CONNECT_INTERRUPT_PARAMETERS, *PIO_CONNECT_INTERRUPT_PARAMETERS;
+
+typedef struct _IO_DISCONNECT_INTERRUPT_PARAMETERS {
+    IO_CONNECT_INTERRUPT_VERSION Version;
+    union {
+        struct {
+            PVOID ConnectionContext;
+        } MessageBased;
+    };
+} IO_DISCONNECT_INTERRUPT_PARAMETERS, *PIO_DISCONNECT_INTERRUPT_PARAMETERS;
+
+NTSTATUS IoConnectInterruptEx(_Inout_ PIO_CONNECT_INTERRUPT_PARAMETERS Parameters);
+VOID IoDisconnectInterruptEx(_In_ PIO_DISCONNECT_INTERRUPT_PARAMETERS Parameters);
 
 VOID KeInitializeDpc(_Out_ PKDPC Dpc, _In_ PKDEFERRED_ROUTINE DeferredRoutine, _In_opt_ PVOID DeferredContext);
 BOOLEAN KeInsertQueueDpc(_Inout_ PKDPC Dpc, _In_opt_ PVOID SystemArgument1, _In_opt_ PVOID SystemArgument2);
@@ -392,10 +459,12 @@ ULONG DbgPrintEx(_In_ ULONG ComponentId, _In_ ULONG Level, _In_ const char* Form
  * "hardware" events.
  */
 BOOLEAN WdkTestTriggerInterrupt(_In_ PKINTERRUPT InterruptObject);
+BOOLEAN WdkTestTriggerMessageInterrupt(_In_ PIO_INTERRUPT_MESSAGE_INFO MessageInfo, _In_ ULONG MessageId);
 BOOLEAN WdkTestRunQueuedDpc(_Inout_ PKDPC Dpc);
 
 /* Test-only hooks for injecting stub failures. */
 VOID WdkTestSetIoConnectInterruptStatus(_In_ NTSTATUS Status);
+VOID WdkTestSetIoConnectInterruptExStatus(_In_ NTSTATUS Status);
 
 /* Test-only hooks for controlling IRQL and observing debug output. */
 VOID WdkTestSetCurrentIrql(_In_ KIRQL Irql);
@@ -412,6 +481,11 @@ ULONG WdkTestGetIoConnectInterruptCount(VOID);
 VOID WdkTestResetIoConnectInterruptCount(VOID);
 ULONG WdkTestGetIoDisconnectInterruptCount(VOID);
 VOID WdkTestResetIoDisconnectInterruptCount(VOID);
+
+ULONG WdkTestGetIoConnectInterruptExCount(VOID);
+VOID WdkTestResetIoConnectInterruptExCount(VOID);
+ULONG WdkTestGetIoDisconnectInterruptExCount(VOID);
+VOID WdkTestResetIoDisconnectInterruptExCount(VOID);
 
 ULONG WdkTestGetKeInsertQueueDpcCount(VOID);
 ULONG WdkTestGetKeInsertQueueDpcSuccessCount(VOID);

@@ -82,6 +82,25 @@ set_target_properties(virtio_intx_wdm_tests PROPERTIES
 
 add_test(NAME virtio_intx_wdm_tests COMMAND virtio_intx_wdm_tests)
 
+add_executable(virtio_msix_wdm_tests
+    test_msix_wdm.c
+    ${CMAKE_CURRENT_LIST_DIR}/wdk_stubs/wdk_stubs.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_pci_msix_wdm.c
+)
+
+target_include_directories(virtio_msix_wdm_tests BEFORE PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/wdk_stubs
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+set_target_properties(virtio_msix_wdm_tests PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED YES
+)
+
+add_test(NAME virtio_msix_wdm_tests COMMAND virtio_msix_wdm_tests)
+
 add_executable(virtio_pci_modern_miniport_tests
     test_modern_miniport.c
     ${CMAKE_CURRENT_LIST_DIR}/wdk_stubs/wdk_stubs.c
