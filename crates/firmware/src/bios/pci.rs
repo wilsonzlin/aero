@@ -229,4 +229,59 @@ mod tests {
         assert!(seen.contains(&(0, 1, 0, 11)));
         assert!(seen.contains(&(0, 2, 0, 11)));
     }
+
+    #[test]
+    fn enumerate_pci_scans_all_functions_when_multifunction_bit_set() {
+        let mut pci = TestPciCfg::new();
+        let dev = 5;
+
+        // Present function 0 with the multifunction bit set, and also populate function 1.
+        pci.add_dev(0, dev, 0, 0x1234, 0x1111, 1);
+        pci.add_dev(0, dev, 1, 0x1234, 0x2222, 1);
+        pci.dev_mut(0, dev, 0).unwrap().header = 0x80u32 << 16;
+
+        let mut bios = Bios::new(BiosConfig {
+            enable_acpi: false,
+            ..BiosConfig::default()
+        });
+        bios.enumerate_pci(&mut pci);
+
+        let funcs = bios
+            .pci_devices()
+            .iter()
+            .filter(|d| d.bus == 0 && d.device == dev)
+            .map(|d| d.function)
+            .collect::<Vec<_>>();
+        assert_eq!(funcs, vec![0, 1]);
+    }
+
+    #[test]
+    fn enumerate_pci_does_not_scan_additional_functions_when_multifunction_bit_clear() {
+        let mut pci = TestPciCfg::new();
+        let dev = 6;
+
+        // Present function 0 with the multifunction bit clear, but also populate function 1.
+        // BIOS enumeration should stop after function 0 and never touch function 1.
+        pci.add_dev(0, dev, 0, 0x1234, 0x1111, 1);
+        pci.add_dev(0, dev, 1, 0x1234, 0x2222, 1);
+        pci.dev_mut(0, dev, 0).unwrap().header = 0x00u32 << 16;
+
+        let mut bios = Bios::new(BiosConfig {
+            enable_acpi: false,
+            ..BiosConfig::default()
+        });
+        bios.enumerate_pci(&mut pci);
+
+        let funcs = bios
+            .pci_devices()
+            .iter()
+            .filter(|d| d.bus == 0 && d.device == dev)
+            .map(|d| d.function)
+            .collect::<Vec<_>>();
+        assert_eq!(funcs, vec![0]);
+
+        // Since fn1 wasn't scanned, it shouldn't have had its Interrupt Line programmed.
+        let fn1 = pci.dev_mut(0, dev, 1).unwrap();
+        assert_eq!(fn1.reg_3c & 0xFF, 0);
+    }
 }
