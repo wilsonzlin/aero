@@ -629,6 +629,19 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoRes
   return true;
 }
 
+static const char* AerovblkIrqModeForMarker(const AEROVBLK_QUERY_INFO& info) {
+  if (info.InterruptMode == kAerovblkInterruptModeIntx) return "intx";
+  if (info.InterruptMode == kAerovblkInterruptModeMsi) {
+    // `InterruptMode` intentionally conflates MSI + MSI-X. If any virtio MSI-X vectors are assigned,
+    // treat this as MSI-X for logging purposes.
+    if (info.MsixConfigVector != kVirtioPciMsiNoVector || info.MsixQueue0Vector != kVirtioPciMsiNoVector) {
+      return "msix";
+    }
+    return "msi";
+  }
+  return "unknown";
+}
+
 static std::vector<std::wstring> GetDevicePropertyMultiSz(HDEVINFO devinfo, SP_DEVINFO_DATA* dev,
                                                           DWORD property) {
   DWORD reg_type = 0;
@@ -2025,7 +2038,9 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
   return true;
 }
 
-static bool VirtioBlkTest(Logger& log, const Options& opt) {
+static bool VirtioBlkTest(Logger& log, const Options& opt,
+                          std::optional<AEROVBLK_QUERY_INFO>* miniport_info_out = nullptr) {
+  if (miniport_info_out) miniport_info_out->reset();
   const auto disks = DetectVirtioDiskNumbers(log);
   if (disks.empty()) {
     log.LogLine("virtio-blk: no virtio disk devices detected");
@@ -2084,6 +2099,7 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
     if (!info.has_value()) {
       log.LogLine("virtio-blk: miniport query FAIL (IOCTL_SCSI_MINIPORT query failed)");
     } else {
+      if (miniport_info_out) *miniport_info_out = *info;
       query_ok = ValidateAerovblkMiniportInfo(log, *info);
       if (query_ok && opt.expect_blk_msi && info->InterruptMode != kAerovblkInterruptModeMsi) {
         log.Logf("virtio-blk: miniport query FAIL (expected MSI/MSI-X, got InterruptMode=%lu)",
@@ -6724,8 +6740,18 @@ int wmain(int argc, wchar_t** argv) {
 
   bool all_ok = true;
 
-  const bool blk_ok = VirtioBlkTest(log, opt);
-  log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
+  std::optional<AEROVBLK_QUERY_INFO> blk_miniport_info;
+  const bool blk_ok = VirtioBlkTest(log, opt, &blk_miniport_info);
+  if (blk_miniport_info.has_value()) {
+    log.Logf(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s|irq_mode=%s|msix_config_vector=0x%04x|"
+        "msix_queue_vector=0x%04x",
+        blk_ok ? "PASS" : "FAIL", AerovblkIrqModeForMarker(*blk_miniport_info),
+        static_cast<unsigned>(blk_miniport_info->MsixConfigVector),
+        static_cast<unsigned>(blk_miniport_info->MsixQueue0Vector));
+  } else {
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
+  }
   EmitVirtioIrqMarker(log, "virtio-blk", {L"PCI\\VEN_1AF4&DEV_1042"});
   all_ok = all_ok && blk_ok;
 
