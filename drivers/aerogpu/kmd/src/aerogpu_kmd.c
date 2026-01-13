@@ -6712,12 +6712,16 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
     InterlockedIncrement64(&adapter->PerfResetFromTimeoutCount);
     InterlockedExchange64(&adapter->PerfLastResetTime100ns, (LONGLONG)KeQueryInterruptTime());
 
+    const BOOLEAN poweredOn =
+        (adapter->Bar0 != NULL) &&
+        ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+
     /*
      * Keep recovery simple: clear the ring pointers and treat all in-flight
      * work as completed to unblock dxgkrnl. A well-behaved emulator should not
      * require this path under normal usage.
      */
-    if (adapter->Bar0 && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+    if (poweredOn && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
         /*
          * Disable IRQs while resetting ring state so we don't race ISR/DPC paths
          * with partially-reset bookkeeping.
@@ -6746,7 +6750,7 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
         completedFence = adapter->LastSubmittedFence;
         adapter->LastCompletedFence = completedFence;
 
-        if (adapter->Bar0) {
+        if (adapter->RingVa) {
             KIRQL ringIrql;
             KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
 
@@ -6758,14 +6762,18 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
                     KeMemoryBarrier();
                 }
 
-                AeroGpuWriteRegU32(adapter,
-                                   AEROGPU_MMIO_REG_RING_CONTROL,
-                                   AEROGPU_RING_CONTROL_ENABLE | AEROGPU_RING_CONTROL_RESET);
+                if (poweredOn) {
+                    AeroGpuWriteRegU32(adapter,
+                                       AEROGPU_MMIO_REG_RING_CONTROL,
+                                       AEROGPU_RING_CONTROL_ENABLE | AEROGPU_RING_CONTROL_RESET);
+                }
             } else {
-                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
-                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
                 adapter->RingTail = 0;
-                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+                if (poweredOn) {
+                    AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
+                    AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
+                    AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+                }
             }
 
             KeReleaseSpinLock(&adapter->RingLock, ringIrql);
@@ -6786,7 +6794,7 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
         KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
     }
 
-    if (adapter->Bar0 && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
+    if (poweredOn && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
         KIRQL irqIrql;
         KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->IrqEnableMask);
