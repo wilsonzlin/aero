@@ -90,6 +90,23 @@ func TestMaxDatagramPayloadBytes_EnvOverride(t *testing.T) {
 	if cfg.MaxDatagramPayloadBytes != 1400 {
 		t.Fatalf("MaxDatagramPayloadBytes=%d, want %d", cfg.MaxDatagramPayloadBytes, 1400)
 	}
+	if cfg.UDPReadBufferBytes != 1401 {
+		t.Fatalf("UDPReadBufferBytes=%d, want %d (max payload + 1)", cfg.UDPReadBufferBytes, 1401)
+	}
+}
+
+func TestUDPReadBufferBytes_RequiresMaxDatagramPayloadBytesPlusOne(t *testing.T) {
+	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                  "secret",
+		EnvUDPReadBufferBytes:      "1200",
+		EnvMaxDatagramPayloadBytes: "1200",
+	}), nil)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), EnvUDPReadBufferBytes) {
+		t.Fatalf("err=%v, expected mention of %s", err, EnvUDPReadBufferBytes)
+	}
 }
 
 func TestDefaultsProdWhenModeFlagSet(t *testing.T) {

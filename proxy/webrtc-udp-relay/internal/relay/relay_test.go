@@ -208,6 +208,74 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 	}
 }
 
+func TestUdpPortBinding_DropsOversizeDatagramInsteadOfForwardingTruncated(t *testing.T) {
+	dc := &fakeDataChannel{sent: make(chan []byte, 16)}
+	p := policy.NewDevDestinationPolicy()
+	cfg := DefaultConfig()
+	cfg.InboundFilterMode = InboundFilterAny
+	cfg.UDPBindingIdleTimeout = time.Minute
+	cfg.DataChannelSendQueueBytes = 1 << 20
+
+	// Intentionally configure the socket buffer smaller than MaxDatagramPayloadBytes+1.
+	// Older code would allocate exactly UDPReadBufferBytes, ReadFromUDP would truncate
+	// the datagram, and the truncated payload could be forwarded.
+	cfg.MaxDatagramPayloadBytes = 5
+	cfg.UDPReadBufferBytes = 5
+
+	r := NewSessionRelay(dc, cfg, p, nil)
+	t.Cleanup(r.Close)
+
+	remote, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("listen remote: %v", err)
+	}
+	defer remote.Close()
+	remoteAddr := remote.LocalAddr().(*net.UDPAddr)
+
+	// Create the UDP binding.
+	r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+		GuestPort:  1234,
+		RemoteIP:   [4]byte{127, 0, 0, 1},
+		RemotePort: uint16(remoteAddr.Port),
+		Payload:    []byte("x"),
+	}))
+
+	var bindingAddr *net.UDPAddr
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		b := r.bindings[1234]
+		r.mu.Unlock()
+		if b != nil {
+			localPort := b.conn4.LocalAddr().(*net.UDPAddr).Port
+			bindingAddr = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: localPort}
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if bindingAddr == nil {
+		t.Fatalf("binding was not created")
+	}
+
+	// Send an oversized datagram (max payload + 1). The relay must drop it, not
+	// forward a truncated payload.
+	if _, err := remote.WriteToUDP([]byte("abcdef"), bindingAddr); err != nil {
+		t.Fatalf("remote write oversize: %v", err)
+	}
+
+	select {
+	case pkt := <-dc.sent:
+		// Show what would have been forwarded to make debugging easy.
+		f, err := udpproto.Decode(pkt)
+		if err != nil {
+			t.Fatalf("unexpected forwarded packet (decode failed): %v", err)
+		}
+		t.Fatalf("unexpected forwarded oversize packet: len=%d payload=%q", len(f.Payload), f.Payload)
+	case <-time.After(150 * time.Millisecond):
+		// ok
+	}
+}
+
 func TestSessionRelay_IPv6EchoV2(t *testing.T) {
 	echoConn, echoAddr := startIPv6UDPEchoServer(t)
 	defer echoConn.Close()

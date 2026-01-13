@@ -175,7 +175,23 @@ func (b *UdpPortBinding) readLoopConn(conn *net.UDPConn) {
 		metricsSink = b.session.metrics
 	}
 
-	buf := make([]byte, b.cfg.UDPReadBufferBytes)
+	// Allocate enough space to reliably detect oversized UDP datagrams.
+	//
+	// Go's UDPConn.ReadFromUDP silently truncates datagrams larger than the
+	// provided buffer. If we were to forward the truncated bytes, the client
+	// would observe a corrupted payload. To prevent this, ensure the read buffer
+	// is at least MaxDatagramPayloadBytes+1 and drop any datagram whose observed
+	// length exceeds MaxDatagramPayloadBytes.
+	//
+	// Note: Config validation in internal/config ensures UDPReadBufferBytes is
+	// never < MaxDatagramPayloadBytes+1 in production, but keep this guard to
+	// avoid surprising behavior in tests or standalone usage.
+	bufLen := b.cfg.UDPReadBufferBytes
+	minBufLen := b.cfg.MaxDatagramPayloadBytes + 1
+	if bufLen < minBufLen {
+		bufLen = minBufLen
+	}
+	buf := make([]byte, bufLen)
 	for {
 		n, remote, err := conn.ReadFromUDP(buf)
 		if err != nil {
@@ -187,6 +203,17 @@ func (b *UdpPortBinding) readLoopConn(conn *net.UDPConn) {
 		}
 		now := time.Now()
 		b.touch(now)
+
+		// Drop oversized datagrams instead of forwarding a truncated payload.
+		// When bufLen == MaxDatagramPayloadBytes+1, n==bufLen implies the peer sent
+		// at least MaxDatagramPayloadBytes+1 bytes, which is always oversized.
+		if n > b.cfg.MaxDatagramPayloadBytes {
+			if metricsSink != nil {
+				metricsSink.Inc(metrics.WebRTCUDPDropped)
+				metricsSink.Inc(metrics.WebRTCUDPDroppedOversized)
+			}
+			continue
+		}
 
 		if !b.remoteAllowed(remote, now) {
 			continue

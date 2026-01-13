@@ -80,10 +80,16 @@ const (
 	DefaultMode             Mode = ModeDev
 
 	DefaultUDPBindingIdleTimeout     = 60 * time.Second
-	DefaultUDPReadBufferBytes        = 65535
 	DefaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
 	DefaultMaxUDPBindingsPerSession  = 128
 	DefaultMaxDatagramPayloadBytes   = udpproto.DefaultMaxPayload
+	// DefaultUDPReadBufferBytes is the default UDP socket read buffer size for
+	// each UDP port binding (per IP family).
+	//
+	// The buffer is intentionally sized to MaxDatagramPayloadBytes+1, so the
+	// relay can detect and drop oversized UDP datagrams instead of forwarding a
+	// silently truncated payload.
+	DefaultUDPReadBufferBytes        = DefaultMaxDatagramPayloadBytes + 1
 	DefaultL2MaxMessageBytes         = 4096
 
 	DefaultAuthMode AuthMode = AuthModeAPIKey
@@ -342,15 +348,20 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		udpBindingIdleTimeout = d
 	}
 
-	udpReadBufferBytes, err := envIntOrDefault(lookup, EnvUDPReadBufferBytes, DefaultUDPReadBufferBytes)
+	maxDatagramPayloadBytes, err := envIntOrDefault(lookup, EnvMaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
+	if err != nil {
+		return Config{}, err
+	}
+	// Track whether the UDP read buffer size was explicitly configured so we can
+	// derive a default from MAX_DATAGRAM_PAYLOAD_BYTES when unset.
+	envUDPReadBufferBytes, envUDPReadBufferBytesOK := lookup(EnvUDPReadBufferBytes)
+	envUDPReadBufferBytesSet := envUDPReadBufferBytesOK && strings.TrimSpace(envUDPReadBufferBytes) != ""
+
+	udpReadBufferBytes, err := envIntOrDefault(lookup, EnvUDPReadBufferBytes, maxDatagramPayloadBytes+1)
 	if err != nil {
 		return Config{}, err
 	}
 	dataChannelSendQueueBytes, err := envIntOrDefault(lookup, EnvDataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
-	if err != nil {
-		return Config{}, err
-	}
-	maxDatagramPayloadBytes, err := envIntOrDefault(lookup, EnvMaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
 	if err != nil {
 		return Config{}, err
 	}
@@ -593,6 +604,12 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		setFlags[f.Name] = true
 	})
 
+	// If UDP_READ_BUFFER_BYTES/--udp-read-buffer-bytes is unset, derive it from
+	// the (possibly overridden) max payload after flag parsing.
+	if !envUDPReadBufferBytesSet && !setFlags["udp-read-buffer-bytes"] {
+		udpReadBufferBytes = maxDatagramPayloadBytes + 1
+	}
+
 	mode, err := parseMode(modeStr)
 	if err != nil {
 		return Config{}, err
@@ -645,6 +662,15 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if maxDatagramPayloadBytes <= 0 {
 		return Config{}, fmt.Errorf("%s/--max-datagram-payload-bytes must be > 0", EnvMaxDatagramPayloadBytes)
+	}
+	minReadBuf := maxDatagramPayloadBytes + 1
+	if udpReadBufferBytes < minReadBuf {
+		return Config{}, fmt.Errorf("%s/--udp-read-buffer-bytes must be >= %s+1 (%d); got %d",
+			EnvUDPReadBufferBytes,
+			EnvMaxDatagramPayloadBytes,
+			minReadBuf,
+			udpReadBufferBytes,
+		)
 	}
 	if l2MaxMessageBytes <= 0 {
 		return Config{}, fmt.Errorf("%s/--l2-max-message-bytes must be > 0", EnvL2MaxMessageBytes)

@@ -86,9 +86,11 @@ func DefaultConfig() Config {
 	return Config{
 		MaxUDPBindingsPerSession:  128,
 		UDPBindingIdleTimeout:     60 * time.Second,
-		UDPReadBufferBytes:        65535,
 		DataChannelSendQueueBytes: 1 << 20, // 1MiB
 		MaxDatagramPayloadBytes:   udpproto.DefaultMaxPayload,
+		// Allocate only enough to detect oversized payloads (Max+1), rather than a
+		// full 64KiB UDP payload per binding.
+		UDPReadBufferBytes:        udpproto.DefaultMaxPayload + 1,
 		L2BackendAuthForwardMode:  config.L2BackendAuthForwardModeQuery,
 		L2MaxMessageBytes:         4096,
 		InboundFilterMode:         InboundFilterAddressAndPort,
@@ -103,14 +105,16 @@ func (c Config) withDefaults() Config {
 	if c.UDPBindingIdleTimeout <= 0 {
 		c.UDPBindingIdleTimeout = d.UDPBindingIdleTimeout
 	}
-	if c.UDPReadBufferBytes <= 0 {
-		c.UDPReadBufferBytes = d.UDPReadBufferBytes
-	}
 	if c.DataChannelSendQueueBytes <= 0 {
 		c.DataChannelSendQueueBytes = d.DataChannelSendQueueBytes
 	}
 	if c.MaxDatagramPayloadBytes <= 0 {
 		c.MaxDatagramPayloadBytes = d.MaxDatagramPayloadBytes
+	}
+	// Default the UDP read buffer to MaxDatagramPayloadBytes+1 so we can detect
+	// oversized payloads without allocating ~64KiB per binding.
+	if c.UDPReadBufferBytes <= 0 {
+		c.UDPReadBufferBytes = c.MaxDatagramPayloadBytes + 1
 	}
 	if c.L2MaxMessageBytes <= 0 {
 		c.L2MaxMessageBytes = d.L2MaxMessageBytes
@@ -198,6 +202,7 @@ func ConfigFromEnv() Config {
 			c.MaxDatagramPayloadBytes = i
 		}
 	}
+	udpReadBufferSet := false
 	if v := os.Getenv("MAX_UDP_BINDINGS_PER_SESSION"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
 			c.MaxUDPBindingsPerSession = i
@@ -211,12 +216,18 @@ func ConfigFromEnv() Config {
 	if v := os.Getenv("UDP_READ_BUFFER_BYTES"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
 			c.UDPReadBufferBytes = i
+			udpReadBufferSet = true
 		}
 	}
 	if v := os.Getenv("DATACHANNEL_SEND_QUEUE_BYTES"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
 			c.DataChannelSendQueueBytes = i
 		}
+	}
+	// When UDP_READ_BUFFER_BYTES is unset, default it relative to the (possibly
+	// overridden) max payload.
+	if !udpReadBufferSet {
+		c.UDPReadBufferBytes = c.MaxDatagramPayloadBytes + 1
 	}
 	return c
 }
