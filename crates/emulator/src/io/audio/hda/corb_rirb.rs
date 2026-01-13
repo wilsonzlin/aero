@@ -116,10 +116,11 @@ impl Corb {
         if self.rp == self.wp {
             return None;
         }
-        self.rp = (self.rp + 1) % entries;
-
-        let addr = self.base() + (self.rp as u64) * 4;
+        let next_rp = (self.rp + 1) % entries;
+        let offset = (next_rp as u64).checked_mul(4)?;
+        let addr = self.base().checked_add(offset)?;
         let cmd = mem.read_u32(addr);
+        self.rp = next_rp;
         Some(CodecCmd::decode(cmd))
     }
 }
@@ -212,12 +213,18 @@ impl Rirb {
         intsts: &mut u32,
     ) {
         let entries = rirb_entries(self.size);
-        self.wp = (self.wp + 1) % entries;
+        let next_wp = (self.wp + 1) % entries;
 
-        let addr = self.base() + (self.wp as u64) * 8;
+        let Some(offset) = (next_wp as u64).checked_mul(8) else {
+            return;
+        };
+        let Some(addr) = self.base().checked_add(offset) else {
+            return;
+        };
         let encoded = resp.encode();
         write_u64(mem, addr, encoded);
 
+        self.wp = next_wp;
         self.responses_since_irq = self.responses_since_irq.wrapping_add(1);
         let threshold = self.rintcnt.max(1);
         if (self.ctl & RIRBCTL_INTCTL != 0) && self.responses_since_irq >= threshold {
@@ -331,7 +338,6 @@ mod tests {
         rirb.mmio_write(RirbReg::Lbase, 4, 0x1000);
         rirb.mmio_write(RirbReg::Ubase, 4, 0);
         rirb.mmio_write(RirbReg::Size, 1, 0x0); // 2 entries
-
         let mut intsts = 0u32;
         rirb.push_response(
             &mut mem,
@@ -392,5 +398,56 @@ mod tests {
         assert_eq!(intsts & INTSTS_CIS, INTSTS_CIS);
         assert_eq!(rirb.sts & 0x01, 0x01);
         assert_eq!(rirb.responses_since_irq, 0);
+    }
+
+    #[derive(Default)]
+    struct PanicMem;
+
+    impl MemoryBus for PanicMem {
+        fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+            panic!("unexpected guest memory read");
+        }
+
+        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+            panic!("unexpected guest memory write");
+        }
+    }
+
+    #[test]
+    fn corb_pop_command_overflow_returns_none_without_memory_access() {
+        let mut corb = Corb::new();
+        // CORB base is 128-byte aligned, so use a large ring index (rp=31 -> next_rp=32) to make
+        // base + rp*4 overflow.
+        corb.mmio_write(CorbReg::Ubase, 4, 0xFFFF_FFFF);
+        corb.mmio_write(CorbReg::Lbase, 4, 0xFFFF_FFFF);
+        corb.mmio_write(CorbReg::Size, 1, 0x2); // 256 entries
+        corb.mmio_write(CorbReg::Rp, 2, 31);
+        corb.mmio_write(CorbReg::Wp, 2, 32);
+
+        let mut mem = PanicMem;
+        assert!(corb.pop_command(&mut mem).is_none());
+    }
+
+    #[test]
+    fn rirb_push_response_overflow_drops_write_and_does_not_interrupt() {
+        let mut rirb = Rirb::new();
+        // RIRB base is 128-byte aligned, so use a large ring index (wp=15 -> next_wp=16) to make
+        // base + wp*8 overflow.
+        rirb.mmio_write(RirbReg::Ubase, 4, 0xFFFF_FFFF);
+        rirb.mmio_write(RirbReg::Lbase, 4, 0xFFFF_FFFF);
+        rirb.mmio_write(RirbReg::Size, 1, 0x2); // 256 entries
+        rirb.wp = 15;
+        rirb.mmio_write(RirbReg::Ctl, 1, (RIRBCTL_INTCTL | RIRBCTL_RUN) as u64);
+        rirb.mmio_write(RirbReg::RintCnt, 2, 1);
+
+        let mut mem = PanicMem;
+        let mut intsts = 0u32;
+        rirb.push_response(
+            &mut mem,
+            HdaVerbResponse { data: 0, ext: 0 },
+            &mut intsts,
+        );
+        assert_eq!(intsts, 0);
+        assert_eq!(rirb.sts, 0);
     }
 }

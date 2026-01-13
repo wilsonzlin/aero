@@ -446,6 +446,19 @@ fn mask_for_size(size: usize) -> u64 {
 mod tests {
     use super::*;
 
+    #[derive(Default)]
+    struct PanicMem;
+
+    impl MemoryBus for PanicMem {
+        fn read_physical(&mut self, _addr: u64, _dst: &mut [u8]) {
+            panic!("unexpected guest memory read");
+        }
+
+        fn write_physical(&mut self, _addr: u64, _src: &[u8]) {
+            panic!("unexpected guest memory write");
+        }
+    }
+
     #[test]
     fn mask_for_size_supports_non_pow2_sizes() {
         assert_eq!(mask_for_size(0), 0);
@@ -927,5 +940,29 @@ mod tests {
         // Clear stream status.
         hda.mmio_write(HDA_SD1CTL, 4, (SD_STS_BCIS as u64) << 24);
         assert_eq!(hda.mmio_read(HDA_INTSTS, 4) as u32 & INTSTS_SIS1, 0);
+    }
+
+    #[test]
+    fn poll_corb_overflow_does_not_touch_guest_memory() {
+        let mut mem = PanicMem;
+        let mut hda = HdaController::new();
+
+        // Leave reset.
+        hda.mmio_write(HDA_GCTL, 4, GCTL_CRST as u64);
+
+        // CORB base is 128-byte aligned; use a large ring index (rp=31 -> next_rp=32) so that
+        // base + rp*4 overflows.
+        hda.mmio_write(HDA_CORBUBASE, 4, 0xFFFF_FFFF);
+        hda.mmio_write(HDA_CORBLBASE, 4, 0xFFFF_FFFF);
+        hda.mmio_write(HDA_CORBSIZE, 1, 0x2); // 256 entries
+        hda.mmio_write(HDA_CORBRP, 2, 31);
+        hda.mmio_write(HDA_CORBWP, 2, 32);
+
+        // Start rings so `poll()` enters the CORB processing loop.
+        hda.mmio_write(HDA_CORBCTL, 1, CORBCTL_RUN as u64);
+        hda.mmio_write(HDA_RIRBCTL, 1, RIRBCTL_RUN as u64);
+
+        // With hardened address math, this should not panic and should not touch guest memory.
+        hda.poll(&mut mem);
     }
 }

@@ -485,10 +485,20 @@ impl HdaStream {
 
             let bytes = take as usize;
             self.dma_scratch.resize(bytes, 0);
-            mem.read_physical(
-                entry.addr + self.bdl_offset as u64,
-                &mut self.dma_scratch[..bytes],
-            );
+            let Some(dma_addr) = entry.addr.checked_add(self.bdl_offset as u64) else {
+                // Guest programmed an address that overflows u64 arithmetic.
+                // Treat this entry as zero-length and do not touch guest memory.
+                self.finish_bdl_entry(
+                    BdlEntry {
+                        addr: 0,
+                        len: 0,
+                        ioc: false,
+                    },
+                    intsts,
+                );
+                continue;
+            };
+            mem.read_physical(dma_addr, &mut self.dma_scratch[..bytes]);
             audio.push(&self.dma_scratch[..bytes]);
 
             self.bdl_offset += take;
@@ -529,15 +539,26 @@ impl HdaStream {
             let bytes = take as usize;
             self.dma_scratch.resize(bytes, 0);
 
+            let Some(dma_addr) = entry.addr.checked_add(self.bdl_offset as u64) else {
+                // Guest programmed an address that overflows u64 arithmetic.
+                // Treat this entry as zero-length and do not touch guest memory.
+                self.finish_bdl_entry(
+                    BdlEntry {
+                        addr: 0,
+                        len: 0,
+                        ioc: false,
+                    },
+                    intsts,
+                );
+                continue;
+            };
+
             // Fill from capture buffer; any missing bytes remain as zero (silence).
             let read = capture.pop_into(&mut self.dma_scratch[..bytes]);
             if read < bytes {
                 self.dma_scratch[read..bytes].fill(0);
             }
-            mem.write_physical(
-                entry.addr + self.bdl_offset as u64,
-                &self.dma_scratch[..bytes],
-            );
+            mem.write_physical(dma_addr, &self.dma_scratch[..bytes]);
 
             self.bdl_offset += take;
             self.lpib = self.lpib.wrapping_add(take) % self.cbl;
@@ -573,10 +594,38 @@ impl HdaStream {
     }
 
     fn read_bdl_entry(&self, mem: &mut dyn MemoryBus, index: u16) -> BdlEntry {
-        let addr = self.bdl_base() + (index as u64) * 16;
+        let Some(offset) = (index as u64).checked_mul(16) else {
+            return BdlEntry {
+                addr: 0,
+                len: 0,
+                ioc: false,
+            };
+        };
+        let Some(addr) = self.bdl_base().checked_add(offset) else {
+            return BdlEntry {
+                addr: 0,
+                len: 0,
+                ioc: false,
+            };
+        };
+        let Some(len_addr) = addr.checked_add(8) else {
+            return BdlEntry {
+                addr: 0,
+                len: 0,
+                ioc: false,
+            };
+        };
+        let Some(flags_addr) = addr.checked_add(12) else {
+            return BdlEntry {
+                addr: 0,
+                len: 0,
+                ioc: false,
+            };
+        };
+
         let buf_addr = read_u64(mem, addr);
-        let len = mem.read_u32(addr + 8);
-        let flags = mem.read_u32(addr + 12);
+        let len = mem.read_u32(len_addr);
+        let flags = mem.read_u32(flags_addr);
         BdlEntry {
             addr: buf_addr,
             len,
@@ -603,8 +652,10 @@ mod tests {
     use super::AudioRingBuffer;
     use super::HdaStream;
     use super::StreamFormat;
+    use super::{SD_CTL_RUN, SD_CTL_SRST, StreamId};
     use crate::io::audio::dsp::pcm::PcmSampleFormat;
     use memory::MemoryBus;
+    use std::collections::BTreeMap;
 
     #[derive(Clone, Debug)]
     struct CountingMem {
@@ -779,5 +830,159 @@ mod tests {
             max_bdl_index <= 0xff,
             "BDL index exceeded architectural 8-bit range: {max_bdl_index:#x}"
         );
+        assert!(capture.is_empty());
+    }
+
+    #[derive(Default)]
+    struct PanicMem;
+
+    impl MemoryBus for PanicMem {
+        fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+            panic!("unexpected guest memory read");
+        }
+
+        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+            panic!("unexpected guest memory write");
+        }
+    }
+
+    #[test]
+    fn stream_process_bdl_address_overflow_does_not_touch_memory() {
+        let mut stream = HdaStream::new(StreamId::Out0);
+        stream.ctl = SD_CTL_SRST | SD_CTL_RUN;
+        stream.cbl = 1;
+        stream.lvi = 0;
+
+        // Align BDPL to 128 and choose a base that overflows when adding index*16 (index=8).
+        stream.bdpl = 0xFFFF_FF80;
+        stream.bdpu = 0xFFFF_FFFF;
+        stream.bdl_index = 8;
+
+        let mut mem = PanicMem;
+        let mut audio = AudioRingBuffer::new(16);
+        let mut intsts = 0u32;
+
+        stream.process(&mut mem, &mut audio, &mut intsts);
+        assert!(audio.is_empty());
+        assert_eq!(intsts, 0);
+    }
+
+    #[test]
+    fn stream_process_capture_bdl_address_overflow_does_not_touch_memory() {
+        let mut stream = HdaStream::new(StreamId::In0);
+        stream.ctl = SD_CTL_SRST | SD_CTL_RUN;
+        stream.cbl = 1;
+        stream.lvi = 0;
+
+        stream.bdpl = 0xFFFF_FF80;
+        stream.bdpu = 0xFFFF_FFFF;
+        stream.bdl_index = 8;
+
+        let mut mem = PanicMem;
+        let mut capture = AudioRingBuffer::new(16);
+        capture.push(&[1, 2, 3, 4]);
+        let before = capture.len();
+        let mut intsts = 0u32;
+
+        stream.process_capture(&mut mem, &mut capture, &mut intsts);
+        assert_eq!(capture.len(), before);
+        assert_eq!(intsts, 0);
+    }
+
+    struct StrictReadMem {
+        bytes: BTreeMap<u64, u8>,
+    }
+
+    impl StrictReadMem {
+        fn new() -> Self {
+            Self {
+                bytes: BTreeMap::new(),
+            }
+        }
+
+        fn write(&mut self, addr: u64, buf: &[u8]) {
+            for (i, b) in buf.iter().copied().enumerate() {
+                self.bytes.insert(addr + i as u64, b);
+            }
+        }
+    }
+
+    impl MemoryBus for StrictReadMem {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            for (i, slot) in buf.iter_mut().enumerate() {
+                let addr = paddr
+                    .checked_add(i as u64)
+                    .expect("unexpected overflow while reading descriptor");
+                *slot = *self
+                    .bytes
+                    .get(&addr)
+                    .unwrap_or_else(|| panic!("unexpected read at {addr:#x}"));
+            }
+        }
+
+        fn write_physical(&mut self, paddr: u64, _buf: &[u8]) {
+            panic!("unexpected guest memory write at {paddr:#x}");
+        }
+    }
+
+    #[test]
+    fn stream_process_dma_address_overflow_does_not_read_buffer() {
+        let mut mem = StrictReadMem::new();
+
+        let bdl_base = 0x1000u64;
+        let entry_addr = u64::MAX - 1;
+        let entry_len = 8u32;
+        let entry_flags = 0u32;
+        mem.write(bdl_base, &entry_addr.to_le_bytes());
+        mem.write(bdl_base + 8, &entry_len.to_le_bytes());
+        mem.write(bdl_base + 12, &entry_flags.to_le_bytes());
+
+        let mut stream = HdaStream::new(StreamId::Out0);
+        stream.ctl = SD_CTL_SRST | SD_CTL_RUN;
+        stream.cbl = 1;
+        stream.lvi = 0;
+        stream.bdpl = bdl_base as u32;
+        stream.bdpu = 0;
+        stream.bdl_index = 0;
+        stream.bdl_offset = 4; // entry_addr + 4 overflows for entry_addr=u64::MAX-1
+
+        let mut audio = AudioRingBuffer::new(16);
+        let mut intsts = 0u32;
+
+        stream.process(&mut mem, &mut audio, &mut intsts);
+        assert!(audio.is_empty());
+        assert_eq!(intsts, 0);
+    }
+
+    #[test]
+    fn stream_process_capture_dma_address_overflow_does_not_write_buffer_or_consume_capture() {
+        let mut mem = StrictReadMem::new();
+
+        let bdl_base = 0x2000u64;
+        let entry_addr = u64::MAX - 1;
+        let entry_len = 8u32;
+        let entry_flags = 0u32;
+        mem.write(bdl_base, &entry_addr.to_le_bytes());
+        mem.write(bdl_base + 8, &entry_len.to_le_bytes());
+        mem.write(bdl_base + 12, &entry_flags.to_le_bytes());
+
+        let mut stream = HdaStream::new(StreamId::In0);
+        stream.ctl = SD_CTL_SRST | SD_CTL_RUN;
+        stream.cbl = 1;
+        stream.lvi = 0;
+        stream.bdpl = bdl_base as u32;
+        stream.bdpu = 0;
+        stream.bdl_index = 0;
+        stream.bdl_offset = 4;
+
+        let mut capture = AudioRingBuffer::new(16);
+        capture.push(&[1, 2, 3, 4]);
+        let before = capture.len();
+
+        let mut intsts = 0u32;
+        stream.process_capture(&mut mem, &mut capture, &mut intsts);
+
+        assert_eq!(capture.len(), before);
+        assert_eq!(intsts, 0);
     }
 }
