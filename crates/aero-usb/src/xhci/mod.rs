@@ -133,7 +133,7 @@ impl XhciController {
         // to touch the memory bus when bus mastering is enabled so the emulator wrapper can gate
         // the access.
         let mut buf = [0u8; 4];
-        mem.read_physical(self.crcr, &mut buf);
+        mem.read_bytes(self.crcr, &mut buf);
         self.usbsts |= regs::USBSTS_EINT;
     }
 }

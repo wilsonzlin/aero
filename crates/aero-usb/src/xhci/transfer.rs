@@ -100,12 +100,12 @@ impl Trb {
 
 pub fn read_trb<M: MemoryBus + ?Sized>(mem: &mut M, paddr: u64) -> Trb {
     let mut bytes = [0u8; 16];
-    mem.read_physical(paddr, &mut bytes);
+    mem.read_bytes(paddr, &mut bytes);
     Trb::from_bytes(bytes)
 }
 
 pub fn write_trb<M: MemoryBus + ?Sized>(mem: &mut M, paddr: u64, trb: Trb) {
-    mem.write_physical(paddr, &trb.to_bytes());
+    mem.write_bytes(paddr, &trb.to_bytes());
 }
 
 /// A completion notification emitted by the transfer executor.

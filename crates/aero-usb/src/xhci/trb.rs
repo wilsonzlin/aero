@@ -107,13 +107,13 @@ impl Trb {
     #[inline]
     pub fn read_from(mem: &mut impl MemoryBus, paddr: u64) -> Self {
         let mut buf = [0u8; TRB_LEN];
-        mem.read_physical(paddr, &mut buf);
+        mem.read_bytes(paddr, &mut buf);
         Self::from_bytes(buf)
     }
 
     #[inline]
     pub fn write_to(&self, mem: &mut impl MemoryBus, paddr: u64) {
-        mem.write_physical(paddr, &self.to_bytes());
+        mem.write_bytes(paddr, &self.to_bytes());
     }
 
     #[inline]
@@ -325,4 +325,3 @@ impl TrbType {
         }
     }
 }
-
