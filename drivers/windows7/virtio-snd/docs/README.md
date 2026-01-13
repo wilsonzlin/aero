@@ -148,7 +148,7 @@ You can also use `aero-virtio-selftest.exe`:
 - The selftest also emits a `virtio-snd-irq|INFO|...` line indicating which interrupt mode Windows assigned:
   - `virtio-snd-irq|INFO|mode=intx`
   - `virtio-snd-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
-- See `drivers/windows7/tests/guest-selftest/README.md`.
+- See `../../tests/guest-selftest/README.md`.
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
 
