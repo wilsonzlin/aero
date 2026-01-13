@@ -35,7 +35,7 @@ pub use shared_disk::SharedDisk;
 pub use shared_iso_disk::SharedIsoDisk;
 use shared_iso_disk::SharedIsoDiskWeak;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, Cursor, Read, Seek, Write};
@@ -2514,6 +2514,11 @@ const AEROGPU_VRAM_ALLOC_SIZE: usize = aero_devices::pci::profile::AEROGPU_VRAM_
 struct AeroGpuDevice {
     /// Dedicated VRAM backing store exposed via AeroGPU BAR1.
     vram: Vec<u8>,
+    /// Number of BAR1 MMIO reads routed through the PCI MMIO window.
+    ///
+    /// This is a debug/testing hook used to assert scanout presentation uses the direct VRAM
+    /// fast-path instead of going through the MMIO router for every pixel.
+    vram_mmio_reads: Cell<u64>,
 
     /// Whether a VBE mode is currently active.
     ///
@@ -2623,6 +2628,7 @@ impl AeroGpuDevice {
     fn new() -> Self {
         Self {
             vram: vec![0u8; AEROGPU_VRAM_ALLOC_SIZE],
+            vram_mmio_reads: Cell::new(0),
             vbe_mode_active: false,
             vbe_bank: 0,
             misc_output: 0,
@@ -2647,6 +2653,7 @@ impl AeroGpuDevice {
 
     fn reset(&mut self) {
         self.vram.fill(0);
+        self.vram_mmio_reads.set(0);
         self.vbe_mode_active = false;
         self.vbe_bank = 0;
         self.misc_output = 0;
@@ -2749,11 +2756,17 @@ impl AeroGpuDevice {
     }
 
     fn vram_read(&self, offset: u64, size: usize) -> u64 {
+        self.vram_mmio_reads
+            .set(self.vram_mmio_reads.get().wrapping_add(1));
         Self::read_linear(&self.vram, offset, size)
     }
 
     fn vram_write(&mut self, offset: u64, size: usize, value: u64) {
         Self::write_linear(&mut self.vram, offset, size, value);
+    }
+
+    fn vram_mmio_read_count(&self) -> u64 {
+        self.vram_mmio_reads.get()
     }
 
     fn legacy_vga_read(&self, offset: u64, size: usize) -> u64 {
@@ -5070,22 +5083,91 @@ impl Machine {
         self.display_fb
             .resize(width.saturating_mul(height) as usize, 0);
 
+        let width_usize = usize::try_from(width).unwrap_or(0);
+        let height_usize = usize::try_from(height).unwrap_or(0);
+        let pitch_usize = usize::try_from(pitch).unwrap_or(0);
+        let row_bytes = match width_usize.checked_mul(bytes_per_pixel) {
+            Some(n) if n != 0 => n,
+            _ => return false,
+        };
+
+        // Fast-path: if the VBE LFB base falls within AeroGPU BAR1, read directly from the
+        // device's `Vec<u8>` VRAM backing store rather than routing through the PCI MMIO router.
+        //
+        // This avoids millions of tiny MMIO read operations when presenting a large scanout.
+        let vram_fast = if pitch_usize != 0 && pitch_usize >= row_bytes {
+            match (self.aerogpu.clone(), self.aerogpu_bar1_base()) {
+                (Some(aerogpu), Some(bar1_base)) => {
+                    let bar1_end =
+                        bar1_base.saturating_add(aero_devices::pci::profile::AEROGPU_VRAM_SIZE);
+                    if base < bar1_base || base >= bar1_end {
+                        None
+                    } else {
+                        let vram_off_u64 = base - bar1_base;
+                        let Ok(vram_off) = usize::try_from(vram_off_u64) else {
+                            return false;
+                        };
+                        let Some(buf_len) = pitch_usize.checked_mul(height_usize) else {
+                            return false;
+                        };
+                        let Some(end) = vram_off.checked_add(buf_len) else {
+                            return false;
+                        };
+                        let vram_len = aerogpu.borrow().vram.len();
+                        if end <= vram_len {
+                            Some((aerogpu, vram_off, pitch_usize))
+                        } else {
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         // Render row-by-row to avoid allocating large intermediate buffers (and to keep the MMIO
         // read path incremental for BAR-backed apertures).
-        let mut row = vec![0u8; width as usize * bytes_per_pixel];
+        let mut row = vec![0u8; row_bytes];
 
         match mode.bpp {
             32 => {
-                for y in 0..height {
-                    let row_addr = base.saturating_add(u64::from(y).saturating_mul(pitch));
-                    self.mem.read_physical(row_addr, &mut row);
-                    for x in 0..width as usize {
-                        let i = x * 4;
-                        let b = row.get(i).copied().unwrap_or(0);
-                        let g = row.get(i + 1).copied().unwrap_or(0);
-                        let r = row.get(i + 2).copied().unwrap_or(0);
-                        self.display_fb[y as usize * width as usize + x] =
-                            0xFF00_0000 | (u32::from(b) << 16) | (u32::from(g) << 8) | u32::from(r);
+                if let Some((aerogpu, vram_off, pitch_bytes)) = vram_fast.as_ref() {
+                    let dev = aerogpu.borrow();
+                    let vram = &dev.vram;
+                    for y in 0..height_usize {
+                        let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
+                        let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
+                        let dst_row =
+                            &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
+                        for x in 0..width_usize {
+                            let i = x * 4;
+                            let b = src_row.get(i).copied().unwrap_or(0);
+                            let g = src_row.get(i + 1).copied().unwrap_or(0);
+                            let r = src_row.get(i + 2).copied().unwrap_or(0);
+                            dst_row[x] = 0xFF00_0000
+                                | (u32::from(b) << 16)
+                                | (u32::from(g) << 8)
+                                | u32::from(r);
+                        }
+                    }
+                } else {
+                    for y in 0..height_usize {
+                        let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
+                        self.mem.read_physical(row_addr, &mut row);
+                        let dst_row =
+                            &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
+                        for x in 0..width_usize {
+                            let i = x * 4;
+                            let b = row.get(i).copied().unwrap_or(0);
+                            let g = row.get(i + 1).copied().unwrap_or(0);
+                            let r = row.get(i + 2).copied().unwrap_or(0);
+                            dst_row[x] = 0xFF00_0000
+                                | (u32::from(b) << 16)
+                                | (u32::from(g) << 8)
+                                | u32::from(r);
+                        }
                     }
                 }
                 true
@@ -5107,17 +5189,39 @@ impl Machine {
                     .unwrap_or(([[0u8; 3]; 256], 0xFF));
                 let scale_6bit_to_8bit = |c: u8| -> u8 { (c << 2) | (c >> 4) };
 
-                for y in 0..height {
-                    let row_addr = base.saturating_add(u64::from(y).saturating_mul(pitch));
-                    self.mem.read_physical(row_addr, &mut row);
-                    for x in 0..width as usize {
-                        let idx = (row.get(x).copied().unwrap_or(0) & pel_mask) as usize;
-                        let [r6, g6, b6] = pal[idx];
-                        let b = scale_6bit_to_8bit(b6);
-                        let g = scale_6bit_to_8bit(g6);
-                        let r = scale_6bit_to_8bit(r6);
-                        self.display_fb[y as usize * width as usize + x] =
-                            0xFF00_0000 | (u32::from(b) << 16) | (u32::from(g) << 8) | u32::from(r);
+                if let Some((aerogpu, vram_off, pitch_bytes)) = vram_fast.as_ref() {
+                    let dev = aerogpu.borrow();
+                    let vram = &dev.vram;
+                    for y in 0..height_usize {
+                        let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
+                        let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
+                        for x in 0..width_usize {
+                            let idx = (src_row.get(x).copied().unwrap_or(0) & pel_mask) as usize;
+                            let [r6, g6, b6] = pal[idx];
+                            let b = scale_6bit_to_8bit(b6);
+                            let g = scale_6bit_to_8bit(g6);
+                            let r = scale_6bit_to_8bit(r6);
+                            self.display_fb[y * width_usize + x] = 0xFF00_0000
+                                | (u32::from(b) << 16)
+                                | (u32::from(g) << 8)
+                                | u32::from(r);
+                        }
+                    }
+                } else {
+                    for y in 0..height_usize {
+                        let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
+                        self.mem.read_physical(row_addr, &mut row);
+                        for x in 0..width_usize {
+                            let idx = (row.get(x).copied().unwrap_or(0) & pel_mask) as usize;
+                            let [r6, g6, b6] = pal[idx];
+                            let b = scale_6bit_to_8bit(b6);
+                            let g = scale_6bit_to_8bit(g6);
+                            let r = scale_6bit_to_8bit(r6);
+                            self.display_fb[y * width_usize + x] = 0xFF00_0000
+                                | (u32::from(b) << 16)
+                                | (u32::from(g) << 8)
+                                | u32::from(r);
+                        }
                     }
                 }
                 true
@@ -5425,6 +5529,16 @@ impl Machine {
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
     pub fn set_cursor_state_static(&mut self, state: Option<&'static CursorState>) {
         self.cursor_state = state.map(SharedStateHandle::Static);
+    }
+
+    /// Debug/testing helper: returns the number of MMIO reads routed through AeroGPU BAR1 (VRAM),
+    /// if AeroGPU is enabled.
+    ///
+    /// This is primarily intended for performance regression tests to ensure scanout presentation
+    /// uses a direct VRAM read fast-path rather than dispatching millions of small MMIO reads
+    /// through the PCI router.
+    pub fn aerogpu_bar1_mmio_read_count(&self) -> Option<u64> {
+        Some(self.aerogpu.as_ref()?.borrow().vram_mmio_read_count())
     }
 
     /// Returns the shared manual clock backing platform timer devices, if the PC platform is
@@ -8115,7 +8229,6 @@ impl Machine {
                 }
             };
             register_pci_config_ports(&mut self.io, pci_cfg.clone());
-
             if use_legacy_vga {
                 // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
                 // MMIO window.
