@@ -359,6 +359,10 @@ bool TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders() {
   if (!CreateDummyTexture(&cleanup, &hTex)) {
     return false;
   }
+  auto* tex = reinterpret_cast<Resource*>(hTex.pDrvPrivate);
+  if (!Check(tex != nullptr, "texture resource pointer")) {
+    return false;
+  }
 
   hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
   if (!Check(hr == S_OK, "SetTexture(stage0)")) {
@@ -414,7 +418,16 @@ bool TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders() {
   if (!Check(st->slot == 0, "SET_TEXTURE slot == 0")) {
     return false;
   }
-  if (!Check(st->texture != 0, "SET_TEXTURE texture handle non-zero")) {
+  if (!Check(st->texture == tex->handle, "SET_TEXTURE uses created texture handle")) {
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "BIND_SHADERS packets collected")) {
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->vs != 0 && last_bind->ps != 0, "BIND_SHADERS binds non-zero VS/PS")) {
     return false;
   }
 
