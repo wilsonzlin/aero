@@ -27,6 +27,7 @@ Same-origin for UI + APIs (no CORS needed).
 The gateway (`backend/aero-gateway`) covers **TCP** (WebSocket) and **DNS-over-HTTPS**. Guest **UDP** requires a separate relay service:
 
 - [`proxy/webrtc-udp-relay`](../proxy/webrtc-udp-relay/) — WebRTC DataChannel (`label="udp"`) with a `GET /udp` WebSocket fallback, using the versioned v1/v2 datagram framing in [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
+  - Security note: `GET /webrtc/ice` responses may include sensitive TURN credentials (especially TURN REST ephemeral creds) and are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`). Reverse proxies should preserve these headers.
 
 To integrate the relay with the gateway (recommended for production):
 
