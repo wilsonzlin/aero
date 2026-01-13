@@ -276,6 +276,7 @@ static void PrintUsage() {
            L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
            L"      [--csv <path>]  (write CreateAllocation trace as CSV)\n"
+           L"      [--json <path>] (write CreateAllocation trace as JSON)\n"
            L"  --dump-vblank  (alias: --query-vblank)\n"
            L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
            L"  --query-scanline  (D3DKMTGetScanLine)\n"
@@ -1364,9 +1365,10 @@ static bool WriteCreateAllocationCsv(const wchar_t *path, const aerogpu_escape_d
     return false;
   }
 
-  FILE *fp = _wfopen(path, L"w");
-  if (!fp) {
-    fwprintf(stderr, L"Failed to open CSV file for writing: %s (errno=%d)\n", path, errno);
+  FILE *fp = NULL;
+  errno_t ferr = _wfopen_s(&fp, path, L"w");
+  if (ferr != 0 || !fp) {
+    fwprintf(stderr, L"Failed to open CSV file for writing: %s (errno=%d)\n", path, (int)ferr);
     return false;
   }
 
@@ -1395,6 +1397,52 @@ static bool WriteCreateAllocationCsv(const wchar_t *path, const aerogpu_escape_d
             (unsigned long)e.flags_in,
             (unsigned long)e.flags_out);
   }
+
+  fclose(fp);
+  return true;
+}
+
+static bool WriteCreateAllocationJson(const wchar_t *path, const aerogpu_escape_dump_createallocation_inout &q) {
+  if (!path) {
+    return false;
+  }
+
+  FILE *fp = NULL;
+  errno_t ferr = _wfopen_s(&fp, path, L"w");
+  if (ferr != 0 || !fp) {
+    fwprintf(stderr, L"Failed to open JSON file for writing: %s (errno=%d)\n", path, (int)ferr);
+    return false;
+  }
+
+  const uint32_t n = (q.entry_count < q.entry_capacity) ? q.entry_count : q.entry_capacity;
+  const uint32_t count = (n < AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS) ? n : AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS;
+
+  // Stable, machine-parseable JSON document.
+  fprintf(fp, "{\n");
+  fprintf(fp, "  \"write_index\": %lu,\n", (unsigned long)q.write_index);
+  fprintf(fp, "  \"entry_count\": %lu,\n", (unsigned long)q.entry_count);
+  fprintf(fp, "  \"entry_capacity\": %lu,\n", (unsigned long)q.entry_capacity);
+  fprintf(fp, "  \"entries\": [\n");
+  for (uint32_t i = 0; i < count; ++i) {
+    const aerogpu_dbgctl_createallocation_desc &e = q.entries[i];
+    const char *comma = (i + 1 < count) ? "," : "";
+    fprintf(fp, "    {\n");
+    fprintf(fp, "      \"seq\": %lu,\n", (unsigned long)e.seq);
+    fprintf(fp, "      \"call_seq\": %lu,\n", (unsigned long)e.call_seq);
+    fprintf(fp, "      \"alloc_index\": %lu,\n", (unsigned long)e.alloc_index);
+    fprintf(fp, "      \"num_allocations\": %lu,\n", (unsigned long)e.num_allocations);
+    fprintf(fp, "      \"create_flags\": \"0x%08lx\",\n", (unsigned long)e.create_flags);
+    fprintf(fp, "      \"alloc_id\": %lu,\n", (unsigned long)e.alloc_id);
+    fprintf(fp, "      \"priv_flags\": \"0x%08lx\",\n", (unsigned long)e.priv_flags);
+    fprintf(fp, "      \"pitch_bytes\": %lu,\n", (unsigned long)e.pitch_bytes);
+    fprintf(fp, "      \"share_token\": \"0x%016I64x\",\n", (unsigned long long)e.share_token);
+    fprintf(fp, "      \"size_bytes\": %I64u,\n", (unsigned long long)e.size_bytes);
+    fprintf(fp, "      \"flags_in\": \"0x%08lx\",\n", (unsigned long)e.flags_in);
+    fprintf(fp, "      \"flags_out\": \"0x%08lx\"\n", (unsigned long)e.flags_out);
+    fprintf(fp, "    }%s\n", comma);
+  }
+  fprintf(fp, "  ]\n");
+  fprintf(fp, "}\n");
 
   fclose(fp);
   return true;
@@ -1802,7 +1850,10 @@ static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   return 0;
 }
 
-static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const wchar_t *csvPath) {
+static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f,
+                                  D3DKMT_HANDLE hAdapter,
+                                  const wchar_t *csvPath,
+                                  const wchar_t *jsonPath) {
   aerogpu_escape_dump_createallocation_inout q;
   ZeroMemory(&q, sizeof(q));
   q.hdr.version = AEROGPU_ESCAPE_VERSION;
@@ -1824,15 +1875,24 @@ static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter,
     return 2;
   }
 
-  if (csvPath) {
-    if (!WriteCreateAllocationCsv(csvPath, q)) {
+  if (csvPath || jsonPath) {
+    if (csvPath && !WriteCreateAllocationCsv(csvPath, q)) {
       return 2;
     }
+    if (jsonPath && !WriteCreateAllocationJson(jsonPath, q)) {
+      return 2;
+    }
+
     wprintf(L"CreateAllocation trace: write_index=%lu entry_count=%lu entry_capacity=%lu\n",
             (unsigned long)q.write_index,
             (unsigned long)q.entry_count,
             (unsigned long)q.entry_capacity);
-    wprintf(L"Wrote CSV: %s\n", csvPath);
+    if (csvPath) {
+      wprintf(L"Wrote CSV: %s\n", csvPath);
+    }
+    if (jsonPath) {
+      wprintf(L"Wrote JSON: %s\n", jsonPath);
+    }
     return 0;
   }
 
@@ -2799,6 +2859,7 @@ int wmain(int argc, wchar_t **argv) {
   bool watchIntervalSet = false;
   uint64_t mapSharedHandle = 0;
   const wchar_t *createAllocCsvPath = NULL;
+  const wchar_t *createAllocJsonPath = NULL;
   const wchar_t *dumpScanoutBmpPath = NULL;
   enum {
     CMD_NONE = 0,
@@ -2945,6 +3006,21 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
 
+    if (wcscmp(a, L"--json") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--json requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      if (createAllocJsonPath) {
+        fwprintf(stderr, L"--json specified multiple times\n");
+        PrintUsage();
+        return 1;
+      }
+      createAllocJsonPath = argv[++i];
+      continue;
+    }
+
     if (wcscmp(a, L"--query-version") == 0 || wcscmp(a, L"--query-device") == 0) {
       if (!SetCommand(CMD_QUERY_VERSION)) {
         return 1;
@@ -3071,8 +3147,8 @@ int wmain(int argc, wchar_t **argv) {
     return 1;
   }
 
-  if (createAllocCsvPath && cmd != CMD_DUMP_CREATEALLOCATION) {
-    fwprintf(stderr, L"--csv is only supported with --dump-createalloc\n");
+  if ((createAllocCsvPath || createAllocJsonPath) && cmd != CMD_DUMP_CREATEALLOCATION) {
+    fwprintf(stderr, L"--csv/--json is only supported with --dump-createalloc\n");
     PrintUsage();
     return 1;
   }
@@ -3160,7 +3236,7 @@ int wmain(int argc, wchar_t **argv) {
     rc = DoWatchRing(&f, open.hAdapter, ringId, watchSamples, watchIntervalMs);
     break;
   case CMD_DUMP_CREATEALLOCATION:
-    rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath);
+    rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath, createAllocJsonPath);
     break;
   case CMD_DUMP_VBLANK:
     rc = DoDumpVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs);

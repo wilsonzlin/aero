@@ -103,6 +103,7 @@ Minimum supported commands:
 
   Structured export:
   - `--csv <path>` writes a stable, machine-parseable CSV file (header row + one row per trace entry), including `write_index` and `entry_capacity` metadata for wrap-around detection.
+  - `--json <path>` writes a stable, machine-parseable JSON file with top-level ring metadata (`write_index`, `entry_count`, `entry_capacity`) and an `entries` array.
 
 - `aerogpu_dbgctl --dump-vblank`  
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
@@ -157,6 +158,7 @@ aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --watch-ring --ring-id 0 --samples 200 --interval-ms 50
 aerogpu_dbgctl --dump-createalloc
 aerogpu_dbgctl --dump-createalloc --csv C:\createalloc.csv
+aerogpu_dbgctl --dump-createalloc --json C:\createalloc.json
 aerogpu_dbgctl --dump-vblank
 aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
 aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
