@@ -103,7 +103,7 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
 
     // Header line.
     assert!(listing.contains("header magic=0x444D4341"));
-    assert!(listing.contains("abi=1.2"));
+    assert!(listing.contains("abi=1.3"));
 
     // Packet listing includes offsets, opcode names, and packet sizes.
     assert!(listing.contains("0x00000018 CreateBuffer size_bytes=40"));
