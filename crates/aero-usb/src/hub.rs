@@ -131,8 +131,8 @@ impl Port {
         if let Some(dev) = self.device.as_ref() {
             match dev.speed() {
                 UsbSpeed::Low => v |= LSDA,
-                // UHCI is USB 1.1 and cannot signal at high-speed. Treat high-speed devices as
-                // full-speed for the purpose of LSDA reporting (i.e. LSDA=0).
+                // UHCI is USB 1.1 (low/full speed). The root hub PORTSC LSDA bit only reports
+                // low-speed; treat high-speed devices as full-speed here.
                 UsbSpeed::Full | UsbSpeed::High => {}
             }
         }

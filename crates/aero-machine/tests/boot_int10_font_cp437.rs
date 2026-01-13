@@ -1,57 +1,135 @@
-use aero_cpu_core::state::gpr;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bios::{BIOS_SEGMENT, VGA_FONT_8X16_OFFSET};
 
-const CP437_GLYPH: u8 = 0xC3; // "├"
-const GLYPH_HEIGHT_BYTES: u16 = 16;
+const RESULT_BASE: u64 = 0x0500;
+const RESULT_OR: u64 = RESULT_BASE + 0;
+const RESULT_AND: u64 = RESULT_BASE + 1;
+const RESULT_ES: u64 = RESULT_BASE + 2;
+const RESULT_CX: u64 = RESULT_BASE + 4;
+const RESULT_BP: u64 = RESULT_BASE + 6;
 
-fn build_int10_get_font_and_read_cp437_glyph_boot_sector() -> [u8; 512] {
-    // This boot sector:
-    // 1. Calls INT 10h AX=1130h (Get Font Information) requesting the 8x16 ROM font table.
-    // 2. Reads the first byte of the CP437 box-drawing glyph at index 0xC3 ("├" in CP437).
-    // 3. Stores that byte to physical address 0x0500.
-    // 4. Halts.
-    //
-    // The host-side test asserts the value written at 0x0500 is non-zero, which validates that:
-    // - the BIOS ROM is mapped into guest address space,
-    // - INT 10h returns a correct, guest-visible ES:BP pointer, and
-    // - the embedded ROM font includes non-blank CP437 drawing glyphs.
+fn build_int10_font_cp437_boot_sector() -> [u8; 512] {
     let mut sector = [0u8; 512];
     let mut i = 0usize;
 
-    // mov ax, 0x1130  ; AH=11h AL=30h Get Font Information
+    // xor ax, ax
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+    i += 2;
+    // mov ds, ax  ; DS=0 so we can store results to known physical addresses.
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+    i += 2;
+
+    // mov ax, 0x0003 ; INT 10h AH=00h Set Video Mode (mode 03h)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x03, 0x00]);
+    i += 3;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // mov ax, 0x1130 ; INT 10h AH=11h AL=30h Get Font Information
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x30, 0x11]);
     i += 3;
-    // mov bh, 0x06    ; request 8x16 font (any non-0x03 value uses 8x16 in this BIOS)
+    // mov bh, 0x06 ; request 8x16 font
     sector[i..i + 2].copy_from_slice(&[0xB7, 0x06]);
     i += 2;
     // int 0x10
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
     i += 2;
 
-    // ES:BP now points at the start of the font table. Each glyph is 16 bytes.
-    // add bp, 0x0C30  ; 0xC3 * 16
-    sector[i..i + 4].copy_from_slice(&[0x81, 0xC5, 0x30, 0x0C]);
-    i += 4;
-    // mov al, [es:bp]
-    sector[i..i + 4].copy_from_slice(&[0x26, 0x8A, 0x46, 0x00]);
-    i += 4;
-
-    // Ensure DS=0 so [0x0500] is physical 0x0500.
-    // xor bx, bx
-    sector[i..i + 2].copy_from_slice(&[0x31, 0xDB]);
+    // Restore DS=0 (BIOS does not guarantee DS preservation).
+    // xor ax, ax
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
     i += 2;
-    // mov ds, bx
-    sector[i..i + 2].copy_from_slice(&[0x8E, 0xDB]);
+    // mov ds, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
     i += 2;
 
-    // mov [0x0500], al
-    sector[i..i + 3].copy_from_slice(&[0xA2, 0x00, 0x05]);
+    // Persist returned ES:BP and CX for host-side assertions.
+    //
+    // mov ax, es
+    sector[i..i + 2].copy_from_slice(&[0x8C, 0xC0]);
+    i += 2;
+    // mov [0x0502], ax
+    sector[i..i + 3].copy_from_slice(&[0xA3, 0x02, 0x05]);
     i += 3;
+    // mov [0x0504], cx
+    sector[i..i + 4].copy_from_slice(&[0x89, 0x0E, 0x04, 0x05]);
+    i += 4;
+    // mov [0x0506], bp
+    sector[i..i + 4].copy_from_slice(&[0x89, 0x2E, 0x06, 0x05]);
+    i += 4;
+
+    // Load DS=ES (AX currently holds ES) so DS:SI can dereference the BIOS ROM font table.
+    // mov ds, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+    i += 2;
+
+    // Compute DS:SI = ES:(BP + (0xC4 * CX)).
+    // mov ax, 0x00C4 ; CP437 box drawing '─' codepoint
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0xC4, 0x00]);
+    i += 3;
+    // mul cx ; DX:AX = AX * CX
+    sector[i..i + 2].copy_from_slice(&[0xF7, 0xE1]);
+    i += 2;
+    // mov si, bp
+    sector[i..i + 2].copy_from_slice(&[0x89, 0xEE]);
+    i += 2;
+    // add si, ax
+    sector[i..i + 2].copy_from_slice(&[0x01, 0xC6]);
+    i += 2;
+
+    // cld ; ensure LODSB increments SI
+    sector[i] = 0xFC;
+    i += 1;
+
+    // OR accumulator in BL, AND accumulator in BH.
+    // xor bl, bl
+    sector[i..i + 2].copy_from_slice(&[0x30, 0xDB]);
+    i += 2;
+    // mov bh, 0xFF
+    sector[i..i + 2].copy_from_slice(&[0xB7, 0xFF]);
+    i += 2;
+
+    let loop_start = i;
+    // lodsb ; AL = [DS:SI], SI++
+    sector[i] = 0xAC;
+    i += 1;
+    // or bl, al
+    sector[i..i + 2].copy_from_slice(&[0x08, 0xC3]);
+    i += 2;
+    // and bh, al
+    sector[i..i + 2].copy_from_slice(&[0x20, 0xC7]);
+    i += 2;
+    // loop rel8
+    sector[i] = 0xE2;
+    i += 1;
+    let next_ip = i + 1;
+    let rel = (loop_start as i32 - next_ip as i32) as i8;
+    sector[i] = rel as u8;
+    i += 1;
+
+    // Restore DS=0 so stores land in low RAM.
+    // xor ax, ax
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+    i += 2;
+    // mov ds, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+    i += 2;
+
+    // Store the OR accumulator at 0x0500 (required) and AND accumulator at 0x0501 (helps detect
+    // unmapped ROM reads returning all 1s).
+    // mov [0x0500], bl
+    sector[i..i + 4].copy_from_slice(&[0x88, 0x1E, 0x00, 0x05]);
+    i += 4;
+    // mov [0x0501], bh
+    sector[i..i + 4].copy_from_slice(&[0x88, 0x3E, 0x01, 0x05]);
+    i += 4;
 
     // hlt
     sector[i] = 0xF4;
+    i += 1;
 
+    assert!(i <= 510, "boot sector too large (len={i})");
     sector[510] = 0x55;
     sector[511] = 0xAA;
     sector
@@ -69,43 +147,42 @@ fn run_until_halt(m: &mut Machine) {
 }
 
 #[test]
-fn boot_int10_font_cp437() {
+fn boot_int10_font_cp437_glyph_is_non_blank_and_rom_is_mapped() {
+    let boot = build_int10_font_cp437_boot_sector();
+
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        // Keep the test deterministic.
+        enable_serial: false,
+        enable_i8042: false,
         ..Default::default()
     })
     .unwrap();
 
-    m.set_disk_image(build_int10_get_font_and_read_cp437_glyph_boot_sector().to_vec())
-        .unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
     m.reset();
     run_until_halt(&mut m);
 
-    // Validate that INT 10h returned a pointer into the BIOS ROM segment, and that CX advertises
-    // the expected glyph height (bytes per character) for the 8x16 font.
-    assert_eq!(
-        m.cpu().segments.es.selector, BIOS_SEGMENT,
-        "INT 10h AX=1130h returned ES != BIOS segment"
-    );
-    let bp = (m.cpu().gpr[gpr::RBP] & 0xFFFF) as u16;
-    let expected_bp =
-        VGA_FONT_8X16_OFFSET.wrapping_add(u16::from(CP437_GLYPH).saturating_mul(GLYPH_HEIGHT_BYTES));
-    assert_eq!(
-        bp, expected_bp,
-        "INT 10h AX=1130h returned unexpected font pointer (ES:BP)"
-    );
-    let cx = (m.cpu().gpr[gpr::RCX] & 0xFFFF) as u16;
-    assert_eq!(
-        cx, GLYPH_HEIGHT_BYTES,
-        "INT 10h AX=1130h returned unexpected glyph height in CX"
+    // OR-reduction of the glyph bytes must be non-zero => glyph isn't blank.
+    let glyph_or = m.read_physical_u8(RESULT_OR);
+    assert_ne!(glyph_or, 0, "CP437 glyph 0xC4 read as all-zero bytes");
+
+    // AND-reduction must not be 0xFF => detect unmapped memory reads returning all 1s.
+    let glyph_and = m.read_physical_u8(RESULT_AND);
+    assert_ne!(
+        glyph_and, 0xFF,
+        "CP437 glyph bytes read as all-ones (BIOS ROM not mapped/readable?)"
     );
 
-    let glyph_byte = m.read_physical_u8(0x0500);
-    assert!(
-        glyph_byte != 0 && glyph_byte != 0xFF,
-        "INT 10h AX=1130h returned an unexpected glyph byte 0x{glyph_byte:02X} \
-         (0x00 = blank glyph; 0xFF usually indicates open-bus/unmapped ROM reads)"
-    );
+    // Validate the INT10 handler returned a BIOS ROM pointer for the 8x16 font table.
+    let es = m.read_physical_u16(RESULT_ES);
+    let cx = m.read_physical_u16(RESULT_CX);
+    let bp = m.read_physical_u16(RESULT_BP);
+
+    assert_eq!(es, BIOS_SEGMENT);
+    assert_eq!(cx, 16);
+    assert_eq!(bp, VGA_FONT_8X16_OFFSET);
 }
+
