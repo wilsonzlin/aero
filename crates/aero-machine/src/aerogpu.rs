@@ -16,6 +16,17 @@ const FENCE_PAGE_ABI_VERSION_OFFSET: u64 = offset_of!(ring::AerogpuFencePage, ab
 const FENCE_PAGE_COMPLETED_FENCE_OFFSET: u64 =
     offset_of!(ring::AerogpuFencePage, completed_fence) as u64;
 
+#[derive(Debug, Clone, Copy)]
+pub struct AeroGpuScanout0State {
+    pub wddm_scanout_active: bool,
+    pub enable: bool,
+    pub width: u32,
+    pub height: u32,
+    pub format: u32,
+    pub pitch_bytes: u32,
+    pub fb_gpa: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct AeroGpuMmioDevice {
     abi_version: u32,
@@ -40,6 +51,9 @@ pub struct AeroGpuMmioDevice {
     scanout0_vblank_seq: u64,
     scanout0_vblank_time_ns: u64,
     scanout0_vblank_period_ns: u32,
+    vblank_interval_ns: Option<u64>,
+    next_vblank_ns: Option<u64>,
+    wddm_scanout_active: bool,
 
     cursor_enable: bool,
     cursor_x: i32,
@@ -58,14 +72,18 @@ pub struct AeroGpuMmioDevice {
 
 impl Default for AeroGpuMmioDevice {
     fn default() -> Self {
+        // Default vblank pacing is 60Hz.
+        let vblank_period_ns = 1_000_000_000u64.div_ceil(60);
+        let scanout0_vblank_period_ns = vblank_period_ns.min(u64::from(u32::MAX)) as u32;
         Self {
             abi_version: pci::AEROGPU_ABI_VERSION_U32,
-            // Keep the advertised feature surface conservative: vblank pacing and transfer command
-            // execution are not implemented in `aero-machine` yet, but scanout/cursor register
-            // storage exists so the Win7 KMD can discover/configure them without crashing.
+            // Keep the advertised feature surface conservative: transfer command execution is not
+            // implemented in `aero-machine` yet, but scanout/cursor register storage (and vblank
+            // pacing) exist so the Win7 KMD can discover/configure them without crashing.
             features: pci::AEROGPU_FEATURE_FENCE_PAGE
                 | pci::AEROGPU_FEATURE_CURSOR
-                | pci::AEROGPU_FEATURE_SCANOUT,
+                | pci::AEROGPU_FEATURE_SCANOUT
+                | pci::AEROGPU_FEATURE_VBLANK,
 
             ring_gpa: 0,
             ring_size_bytes: 0,
@@ -85,7 +103,10 @@ impl Default for AeroGpuMmioDevice {
             scanout0_fb_gpa: 0,
             scanout0_vblank_seq: 0,
             scanout0_vblank_time_ns: 0,
-            scanout0_vblank_period_ns: 0,
+            scanout0_vblank_period_ns,
+            vblank_interval_ns: Some(vblank_period_ns),
+            next_vblank_ns: None,
+            wddm_scanout_active: false,
 
             cursor_enable: false,
             cursor_x: 0,
@@ -117,6 +138,60 @@ impl AeroGpuMmioDevice {
 
     pub fn irq_level(&self) -> bool {
         (self.irq_status & self.irq_enable) != 0
+    }
+
+    pub fn scanout0_state(&self) -> AeroGpuScanout0State {
+        AeroGpuScanout0State {
+            wddm_scanout_active: self.wddm_scanout_active,
+            enable: self.scanout0_enable,
+            width: self.scanout0_width,
+            height: self.scanout0_height,
+            format: self.scanout0_format,
+            pitch_bytes: self.scanout0_pitch_bytes,
+            fb_gpa: self.scanout0_fb_gpa,
+        }
+    }
+
+    pub fn tick_vblank(&mut self, now_ns: u64) {
+        let Some(interval_ns) = self.vblank_interval_ns else {
+            return;
+        };
+
+        // When scanout is disabled, stop vblank scheduling and clear any pending vblank IRQ.
+        if !self.scanout0_enable {
+            self.next_vblank_ns = None;
+            self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
+            return;
+        }
+
+        let mut next = self.next_vblank_ns.unwrap_or(now_ns.saturating_add(interval_ns));
+        if now_ns < next {
+            self.next_vblank_ns = Some(next);
+            return;
+        }
+
+        let mut ticks = 0u32;
+        while now_ns >= next {
+            self.scanout0_vblank_seq = self.scanout0_vblank_seq.wrapping_add(1);
+            self.scanout0_vblank_time_ns = next;
+
+            // Only latch the vblank IRQ status bit while the guest has it enabled.
+            // This prevents an immediate "stale" interrupt on re-enable.
+            if (self.irq_enable & pci::AEROGPU_IRQ_SCANOUT_VBLANK) != 0 {
+                self.irq_status |= pci::AEROGPU_IRQ_SCANOUT_VBLANK;
+            }
+
+            next = next.saturating_add(interval_ns);
+            ticks += 1;
+
+            // Avoid unbounded catch-up work if the host stalls for a very long time.
+            if ticks >= 1024 {
+                next = now_ns.saturating_add(interval_ns);
+                break;
+            }
+        }
+
+        self.next_vblank_ns = Some(next);
     }
 
     pub fn process(&mut self, mem: &mut dyn MemoryBus, dma_enabled: bool) {
@@ -337,7 +412,15 @@ impl AeroGpuMmioDevice {
             }
 
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64 => {
-                self.scanout0_enable = value != 0;
+                let new_enable = value != 0;
+                if self.scanout0_enable && !new_enable {
+                    self.next_vblank_ns = None;
+                    self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
+                }
+                if new_enable && !self.scanout0_enable {
+                    self.wddm_scanout_active = true;
+                }
+                self.scanout0_enable = new_enable;
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64 => {
                 self.scanout0_width = value;
