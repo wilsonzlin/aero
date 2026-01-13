@@ -259,9 +259,17 @@ export const CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH = 640;
 export const CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT = 480;
 export const CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE = 32;
 
-// Early VGA/VBE framebuffer sizing. The buffer is reused across mode changes;
-// the active dimensions live in the framebuffer header.
-const VGA_FRAMEBUFFER_MAX_WIDTH = 1024;
+// Early VGA/VBE framebuffer sizing.
+//
+// The buffer is reused across mode changes; the active dimensions live in the
+// framebuffer header. Allocate enough space for the largest VBE mode we expose
+// in the BIOS mode list, including the required 0x160 mode (1280x720x32bpp).
+//
+// Keep this reasonably small: this SharedArrayBuffer is always allocated during
+// worker bring-up, regardless of guest RAM size.
+const VGA_FRAMEBUFFER_MAX_WIDTH = 1280;
+// Keep a bit of vertical slack over 720p so minor mode-list tweaks don't require
+// reallocating or rejecting frames.
 const VGA_FRAMEBUFFER_MAX_HEIGHT = 768;
 
 function mibToBytes(mib: number): number {
@@ -602,9 +610,11 @@ export function allocateSharedMemorySegments(options?: {
   return {
     control,
     guestMemory,
-    // A single shared RGBA8888 framebuffer region used for early VGA/VBE display.
-    // This is sized for a modest SVGA mode; actual modes are communicated via the
-    // framebuffer protocol header.
+    // A single shared 32bpp framebuffer region used for early VGA/VBE display.
+    //
+    // Sized to accommodate the required VBE mode list (including 1280x720x32bpp),
+    // with a small amount of slack so the emulator can switch modes without
+    // reallocating the backing store.
     vgaFramebuffer: new SharedArrayBuffer(
       requiredFramebufferBytes(VGA_FRAMEBUFFER_MAX_WIDTH, VGA_FRAMEBUFFER_MAX_HEIGHT, VGA_FRAMEBUFFER_MAX_WIDTH * 4),
     ),
