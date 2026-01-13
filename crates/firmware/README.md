@@ -80,6 +80,12 @@ The BIOS uses the following **drive numbers** in `DL`:
 > INT 13h note: for CD drive numbers, the BIOS implements **INT 13h Extensions** (at minimum
 > AH=41h/42h/48h) and treats the DAP `LBA` and `count` fields as **2048-byte logical blocks**
 > (ISO LBAs), even though the host-side backing store is exposed as 512-byte sectors.
+>
+> When booting via El Torito, the BIOS also captures boot-catalog metadata during POST and exposes
+> it via **INT 13h AH=4Bh** ("El Torito disk emulation services"), which some CD boot images use.
+>
+> For the detailed El Torito + INT 13h Extensions behavior expected by Windows install media, see
+> [`docs/09b-eltorito-cd-boot.md`](../../docs/09b-eltorito-cd-boot.md).
 
 #### Firmware lifecycle wiring
 
