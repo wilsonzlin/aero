@@ -112,6 +112,22 @@ describe("hid_gamepad_report_vectors fixture", () => {
 
     for (const [idx, v] of vectors.entries()) {
       expect(v.bytes, v.name ?? `vector ${idx}`).toHaveLength(8);
+      expect(Number.isInteger(v.buttons), v.name ?? `vector ${idx}`).toBe(true);
+      expect(v.buttons, v.name ?? `vector ${idx}`).toBeGreaterThanOrEqual(0);
+      expect(v.buttons, v.name ?? `vector ${idx}`).toBeLessThanOrEqual(0xffff);
+      expect(Number.isInteger(v.hat), v.name ?? `vector ${idx}`).toBe(true);
+      expect(v.hat, v.name ?? `vector ${idx}`).toBeGreaterThanOrEqual(0);
+      expect(v.hat, v.name ?? `vector ${idx}`).toBeLessThanOrEqual(GAMEPAD_HAT_NEUTRAL);
+      for (const [axisName, axis] of [
+        ["x", v.x],
+        ["y", v.y],
+        ["rx", v.rx],
+        ["ry", v.ry],
+      ] as const) {
+        expect(Number.isInteger(axis), v.name ?? `vector ${idx}`).toBe(true);
+        expect(axis, v.name ?? `vector ${idx}`).toBeGreaterThanOrEqual(-127);
+        expect(axis, v.name ?? `vector ${idx}`).toBeLessThanOrEqual(127);
+      }
 
       const { packedLo, packedHi } = packGamepadReport({
         buttons: v.buttons,
@@ -125,17 +141,14 @@ describe("hid_gamepad_report_vectors fixture", () => {
       const bytes = Array.from(unpackGamepadReport(packedLo, packedHi));
       expect(bytes, v.name ?? `vector ${idx}`).toEqual(v.bytes);
 
-      const clampI8 = (n: number): number => Math.max(-127, Math.min(127, n | 0)) | 0;
-      const clampHat = (n: number): number =>
-        Number.isFinite(n) && n >= 0 && n <= GAMEPAD_HAT_NEUTRAL ? (n | 0) : GAMEPAD_HAT_NEUTRAL;
       const decoded = decodeGamepadReport(packedLo, packedHi);
       expect(decoded, v.name ?? `vector ${idx}`).toEqual({
         buttons: v.buttons & 0xffff,
-        hat: clampHat(v.hat),
-        x: clampI8(v.x),
-        y: clampI8(v.y),
-        rx: clampI8(v.rx),
-        ry: clampI8(v.ry),
+        hat: v.hat | 0,
+        x: v.x | 0,
+        y: v.y | 0,
+        rx: v.rx | 0,
+        ry: v.ry | 0,
       });
     }
   });

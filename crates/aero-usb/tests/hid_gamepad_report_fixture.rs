@@ -32,6 +32,21 @@ fn hid_gamepad_report_vectors_match_fixture() {
     );
 
     for (idx, v) in vectors.iter().enumerate() {
+        assert!(
+            v.hat <= 8,
+            "fixture vector {idx} ({}) has out-of-range hat value {} (expected 0..=8)",
+            if v.name.is_empty() { "<unnamed>" } else { &v.name },
+            v.hat
+        );
+        for (axis_name, axis) in [("x", v.x), ("y", v.y), ("rx", v.rx), ("ry", v.ry)] {
+            assert!(
+                (-127..=127).contains(&axis),
+                "fixture vector {idx} ({}) has out-of-range axis {axis_name}={} (expected -127..=127)",
+                if v.name.is_empty() { "<unnamed>" } else { &v.name },
+                axis
+            );
+        }
+
         let report = GamepadReport {
             buttons: v.buttons,
             hat: v.hat,
@@ -48,4 +63,3 @@ fn hid_gamepad_report_vectors_match_fixture() {
         );
     }
 }
-
