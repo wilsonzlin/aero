@@ -47,6 +47,10 @@ pub struct HdaCodecCaptureState {
     pub input_stream_id: u8,
     pub input_channel: u8,
     pub input_format: u16,
+    pub amp_gain_left: u8,
+    pub amp_gain_right: u8,
+    pub amp_mute_left: bool,
+    pub amp_mute_right: bool,
     pub mic_pin_conn_select: u8,
     pub mic_pin_ctl: u8,
     pub mic_pin_power_state: u8,
@@ -152,6 +156,10 @@ impl Default for HdaControllerState {
                 input_stream_id: 0,
                 input_channel: 0,
                 input_format: 0x0010,
+                amp_gain_left: 0x7f,
+                amp_gain_right: 0x7f,
+                amp_mute_left: false,
+                amp_mute_right: false,
                 mic_pin_conn_select: 0,
                 mic_pin_ctl: 0,
                 mic_pin_power_state: 0,
@@ -167,7 +175,7 @@ impl Default for HdaControllerState {
 
 impl IoSnapshot for HdaControllerState {
     const DEVICE_ID: [u8; 4] = *b"HDA0";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(2, 4);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(2, 5);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_GCTL: u16 = 1;
@@ -204,6 +212,7 @@ impl IoSnapshot for HdaControllerState {
         const TAG_CODEC: u16 = 40;
         const TAG_CODEC_CAPTURE: u16 = 41;
         const TAG_CODEC_PIN_POWER: u16 = 42;
+        const TAG_CODEC_CAPTURE_AMP: u16 = 43;
         const TAG_WORKLET_RING: u16 = 50;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
@@ -293,6 +302,14 @@ impl IoSnapshot for HdaControllerState {
             .finish();
         w.field_bytes(TAG_CODEC_CAPTURE, codec_capture);
 
+        let codec_capture_amp = Encoder::new()
+            .u8(self.codec_capture.amp_gain_left)
+            .u8(self.codec_capture.amp_gain_right)
+            .bool(self.codec_capture.amp_mute_left)
+            .bool(self.codec_capture.amp_mute_right)
+            .finish();
+        w.field_bytes(TAG_CODEC_CAPTURE_AMP, codec_capture_amp);
+
         let codec_pins = Encoder::new()
             .u8(self.codec.output_pin_power_state)
             .u8(self.codec_capture.mic_pin_power_state)
@@ -350,6 +367,7 @@ impl IoSnapshot for HdaControllerState {
         const TAG_CODEC: u16 = 40;
         const TAG_CODEC_CAPTURE: u16 = 41;
         const TAG_CODEC_PIN_POWER: u16 = 42;
+        const TAG_CODEC_CAPTURE_AMP: u16 = 43;
         const TAG_WORKLET_RING: u16 = 50;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
@@ -538,6 +556,15 @@ impl IoSnapshot for HdaControllerState {
             self.codec_capture.input_format = d.u16()?;
             self.codec_capture.mic_pin_conn_select = d.u8()?;
             self.codec_capture.mic_pin_ctl = d.u8()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_CODEC_CAPTURE_AMP) {
+            let mut d = Decoder::new(buf);
+            self.codec_capture.amp_gain_left = d.u8()?;
+            self.codec_capture.amp_gain_right = d.u8()?;
+            self.codec_capture.amp_mute_left = d.bool()?;
+            self.codec_capture.amp_mute_right = d.bool()?;
             d.finish()?;
         }
 

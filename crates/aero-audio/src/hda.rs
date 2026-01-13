@@ -394,6 +394,10 @@ struct CodecInputWidget {
     stream_id: u8,
     channel: u8,
     format: u16,
+    amp_gain_left: u8,
+    amp_gain_right: u8,
+    amp_mute_left: bool,
+    amp_mute_right: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -460,6 +464,10 @@ impl HdaCodec {
                 channel: 0,
                 // Default to 48kHz, 16-bit, mono.
                 format: 0x0010,
+                amp_gain_left: 0x7f,
+                amp_gain_right: 0x7f,
+                amp_mute_left: false,
+                amp_mute_right: false,
             },
             mic_pin: CodecPinWidget {
                 conn_select: 0,
@@ -501,6 +509,22 @@ impl HdaCodec {
 
     pub fn input_stream_id(&self) -> u8 {
         self.input.stream_id
+    }
+
+    fn input_gain_scalar_mono(&self) -> f32 {
+        // Treat anything other than D0 as powered down.
+        if self.afg_power_state != 0 {
+            return 0.0;
+        }
+
+        // For our minimal model the capture stream is always mono. Windows will typically configure
+        // the ADC amp for both channels, but if either channel is muted, treat the mono stream as
+        // muted and return silence.
+        if self.input.amp_mute_left || self.input.amp_mute_right {
+            return 0.0;
+        }
+        let avg_gain = (self.input.amp_gain_left as f32 + self.input.amp_gain_right as f32) * 0.5;
+        avg_gain / 0x7f as f32
     }
 
     pub fn execute_verb(&mut self, nid: u8, verb_20: u32) -> u32 {
@@ -579,6 +603,11 @@ impl HdaCodec {
             0x200..=0x2ff => {
                 // SET_CONVERTER_FORMAT (4-bit verb encoded in low 16 bits)
                 self.input.format = payload16;
+                0
+            }
+            0xB00..=0xBFF => self.get_input_amp_gain_mute(payload16),
+            0x300..=0x3ff => {
+                self.set_input_amp_gain_mute(payload16);
                 0
             }
             _ => 0,
@@ -685,6 +714,10 @@ impl HdaCodec {
             }
             0x0A => supported_pcm_caps(),
             0x0B => 1,
+            0x0D => {
+                // AMP_IN_CAP: 0..0x7f steps, 0 offset, 7-bit, mute supported.
+                (0x7f) | (1 << 31)
+            }
             _ => 0,
         }
     }
@@ -795,6 +828,68 @@ impl HdaCodec {
             (self.output.amp_mute_right, self.output.amp_gain_right)
         } else {
             (self.output.amp_mute_left, self.output.amp_gain_left)
+        };
+
+        ((mute as u32) << 7) | gain as u32
+    }
+
+    fn set_input_amp_gain_mute(&mut self, payload: u16) {
+        // Payload matches the HDA spec:
+        // [15] direction (0=out,1=in) - we only support in amps
+        // [13] left, [12] right (if neither set, apply to both)
+        // [11:8] index (we only support index 0)
+        // [7] mute, [6:0] gain
+        if (payload & (1 << 15)) == 0 {
+            return;
+        }
+        if ((payload >> 8) & 0x0f) != 0 {
+            return;
+        }
+
+        let mute = (payload & (1 << 7)) != 0;
+        let gain = (payload & 0x7f) as u8;
+        let left = (payload & (1 << 13)) != 0;
+        let right = (payload & (1 << 12)) != 0;
+
+        match (left, right) {
+            (false, false) => {
+                self.input.amp_mute_left = mute;
+                self.input.amp_mute_right = mute;
+                self.input.amp_gain_left = gain;
+                self.input.amp_gain_right = gain;
+            }
+            (true, false) => {
+                self.input.amp_mute_left = mute;
+                self.input.amp_gain_left = gain;
+            }
+            (false, true) => {
+                self.input.amp_mute_right = mute;
+                self.input.amp_gain_right = gain;
+            }
+            (true, true) => {
+                self.input.amp_mute_left = mute;
+                self.input.amp_mute_right = mute;
+                self.input.amp_gain_left = gain;
+                self.input.amp_gain_right = gain;
+            }
+        }
+    }
+
+    fn get_input_amp_gain_mute(&self, payload: u16) -> u32 {
+        if (payload & (1 << 15)) == 0 {
+            return 0;
+        }
+        if ((payload >> 8) & 0x0f) != 0 {
+            return 0;
+        }
+        let left = (payload & (1 << 13)) != 0;
+        let right = (payload & (1 << 12)) != 0;
+
+        // If neither side specified, return left.
+        let (mute, gain) = if right && !left {
+            (self.input.amp_mute_right, self.input.amp_gain_right)
+        } else {
+            (self.input.amp_mute_left, self.input.amp_gain_left)
         };
 
         ((mute as u32) << 7) | gain as u32
@@ -1873,6 +1968,26 @@ impl HdaController {
         }
     }
 
+    fn apply_codec_input_controls(samples: &mut [f32], gain: f32) {
+        if samples.is_empty() {
+            return;
+        }
+        if gain == 1.0 {
+            return;
+        }
+
+        if gain == 0.0 {
+            samples.fill(0.0);
+            return;
+        }
+
+        for sample in samples {
+            let mut sample_val = if sample.is_finite() { *sample } else { 0.0 };
+            sample_val *= gain;
+            *sample = sample_val.clamp(-1.0, 1.0);
+        }
+    }
+
     fn process_capture_stream(
         &mut self,
         mem: &mut dyn MemoryAccess,
@@ -1900,6 +2015,7 @@ impl HdaController {
         }
 
         let fmt = StreamFormat::from_hda_format(fmt_raw);
+        let gain = self.codec.input_gain_scalar_mono();
 
         let dst_frames = {
             let rt = &mut self.stream_rt[stream];
@@ -1996,6 +2112,7 @@ impl HdaController {
                 for i in 0..produced_frames {
                     rt.capture_mono_scratch[i] = rt.resample_out_scratch[i * 2];
                 }
+                Self::apply_codec_input_controls(&mut rt.capture_mono_scratch, gain);
                 encode_mono_f32_to_pcm_into(&rt.capture_mono_scratch, fmt, &mut rt.dma_scratch);
 
                 let sd = &mut self.streams[stream];
@@ -2094,6 +2211,10 @@ impl HdaController {
                 input_stream_id: self.codec.input.stream_id,
                 input_channel: self.codec.input.channel,
                 input_format: self.codec.input.format,
+                amp_gain_left: self.codec.input.amp_gain_left,
+                amp_gain_right: self.codec.input.amp_gain_right,
+                amp_mute_left: self.codec.input.amp_mute_left,
+                amp_mute_right: self.codec.input.amp_mute_right,
                 mic_pin_conn_select: self.codec.mic_pin.conn_select,
                 mic_pin_ctl: self.codec.mic_pin.pin_ctl,
                 mic_pin_power_state: self.codec.mic_pin.power_state,
@@ -2221,6 +2342,10 @@ impl HdaController {
         self.codec.input.stream_id = state.codec_capture.input_stream_id;
         self.codec.input.channel = state.codec_capture.input_channel;
         self.codec.input.format = state.codec_capture.input_format;
+        self.codec.input.amp_gain_left = state.codec_capture.amp_gain_left;
+        self.codec.input.amp_gain_right = state.codec_capture.amp_gain_right;
+        self.codec.input.amp_mute_left = state.codec_capture.amp_mute_left;
+        self.codec.input.amp_mute_right = state.codec_capture.amp_mute_right;
         self.codec.mic_pin.conn_select = state.codec_capture.mic_pin_conn_select;
         self.codec.mic_pin.pin_ctl = state.codec_capture.mic_pin_ctl;
         self.codec.mic_pin.power_state = state.codec_capture.mic_pin_power_state;
@@ -2294,6 +2419,12 @@ mod tests {
         assert_eq!(codec.execute_verb(4, verb_12(0xF06, 0)), 0x20);
         assert_eq!(codec.execute_verb(4, verb_4(0x2, 0x0010)), 0);
         assert_eq!(codec.execute_verb(4, verb_12(0xA00, 0)), 0x0010);
+        // Input amp gain/mute (direction=in).
+        let set_in_left = (1 << 15) | (1 << 13) | (1 << 7) | 0x33;
+        assert_eq!(codec.execute_verb(4, verb_4(0x3, set_in_left)), 0);
+        let got = codec.execute_verb(4, verb_4(0xB, (1 << 15) | (1 << 13)));
+        assert_eq!(got & 0x7f, 0x33);
+        assert_eq!((got >> 7) & 1, 1);
         assert_eq!(codec.execute_verb(5, verb_12(0xF02, 0)), 4);
     }
 

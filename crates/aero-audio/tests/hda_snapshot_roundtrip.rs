@@ -255,6 +255,12 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
     let fmt_raw: u16 = (1 << 14) | (1 << 4);
     hda.codec_mut().execute_verb(4, verb_4(0x2, fmt_raw));
 
+    // Configure input amp: set both channels to gain 0x22, then mute the right channel and set gain 0x11.
+    let set_amp_both = (1 << 15) | 0x22;
+    hda.codec_mut().execute_verb(4, verb_4(0x3, set_amp_both));
+    let set_amp_right = (1 << 15) | (1 << 12) | (1 << 7) | 0x11;
+    hda.codec_mut().execute_verb(4, verb_4(0x3, set_amp_right));
+
     // Give mic pin (NID 5) a non-default control value so we can verify codec capture state restores.
     hda.codec_mut().execute_verb(5, verb_12(0x701, 1));
     hda.codec_mut().execute_verb(5, verb_12(0x707, 0x55));
@@ -329,6 +335,16 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
     assert_eq!(
         restored.codec_mut().execute_verb(4, verb_12(0xA00, 0)),
         fmt_raw as u32
+    );
+    assert_eq!(
+        restored.codec_mut()
+            .execute_verb(4, verb_4(0xB, (1 << 15) | (1 << 13))),
+        0x22
+    );
+    assert_eq!(
+        restored.codec_mut()
+            .execute_verb(4, verb_4(0xB, (1 << 15) | (1 << 12))),
+        (1 << 7) | 0x11
     );
     assert_eq!(restored.codec_mut().execute_verb(5, verb_12(0xF01, 0)), 1);
     assert_eq!(
