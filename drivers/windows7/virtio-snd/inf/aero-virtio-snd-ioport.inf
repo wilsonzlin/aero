@@ -69,6 +69,7 @@ HKR,,CLSID,,%KSProxy.CLSID%
 HKR,,FriendlyName,,%AeroVirtioSndIoPort.DeviceDesc%
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,virtiosnd_ioport.sys
+HKR,Parameters,ForceNullBackend,0x00010001,0
 HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
 HKR,Drivers,SubClasses,,"wave,topology"
 HKR,Drivers,Driver,,wdmaud.sys

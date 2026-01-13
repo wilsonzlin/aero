@@ -262,6 +262,15 @@ This signs:
 `virtio-snd.inf`. It installs the same driver/service and matches the same contract-v1 HWIDs as `aero_virtio_snd.inf`, but
 is disabled by default to avoid accidentally installing **two** INFs that match the same HWIDs.
 
+## Bring-up toggles (registry)
+
+For diagnostics, the driver exposes a per-device bring-up switch:
+
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\ForceNullBackend` (`REG_DWORD`)
+  - Default: `0` (use virtio backend; bring-up failures surface as Code 10)
+  - Set to `1` to force the silent “null” backend, allowing the PortCls/WaveRT stack to start even if virtio transport bring-up fails.
+  - Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
+
 ## Offline / slipstream installation (optional)
 
 If you want virtio-snd to bind automatically on first boot (for example when building unattended Win7 images), see:
