@@ -354,9 +354,10 @@ export class AeroIpcIoServer implements IrqSink {
         const bytes = this.#cmdQ.tryPop();
         if (!bytes) break;
         const cmd = this.#safeDecodeCommand(bytes);
-        if (!cmd) continue;
-        if (cmd.kind === "shutdown") return;
-        this.#handleCommand(cmd);
+        if (cmd) {
+          if (cmd.kind === "shutdown") return;
+          this.#handleCommand(cmd);
+        }
 
         const now = this.#nowMs();
         if (now >= nextTickAt) {
@@ -401,9 +402,10 @@ export class AeroIpcIoServer implements IrqSink {
         const bytes = this.#cmdQ.tryPop();
         if (!bytes) break;
         const cmd = this.#safeDecodeCommand(bytes);
-        if (!cmd) continue;
-        if (cmd.kind === "shutdown") return;
-        this.#handleCommand(cmd);
+        if (cmd) {
+          if (cmd.kind === "shutdown") return;
+          this.#handleCommand(cmd);
+        }
 
         const now = this.#nowMs();
         if (now >= nextTickAt) {
@@ -411,15 +413,17 @@ export class AeroIpcIoServer implements IrqSink {
           nextTickAt = now + this.#tickIntervalMs;
         }
 
-        drained++;
-        if (opts.yieldEveryNCommands && drained >= opts.yieldEveryNCommands) {
-          drained = 0;
-          // Yield to allow other tasks (e.g. worker `onmessage`) to run.
-          await new Promise((resolve) => {
-            const timer = setTimeout(resolve, 0);
-            (timer as unknown as { unref?: () => void }).unref?.();
-          });
-          if (opts.signal?.aborted) return;
+        if (cmd) {
+          drained++;
+          if (opts.yieldEveryNCommands && drained >= opts.yieldEveryNCommands) {
+            drained = 0;
+            // Yield to allow other tasks (e.g. worker `onmessage`) to run.
+            await new Promise((resolve) => {
+              const timer = setTimeout(resolve, 0);
+              (timer as unknown as { unref?: () => void }).unref?.();
+            });
+            if (opts.signal?.aborted) return;
+          }
         }
       }
 
