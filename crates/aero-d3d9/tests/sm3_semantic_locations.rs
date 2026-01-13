@@ -9,8 +9,10 @@ fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
     prefix | ((major as u32) << 8) | (minor as u32)
 }
 
-fn opcode_token(op: u16, length: u8) -> u32 {
-    (op as u32) | ((length as u32) << 24)
+fn opcode_token(op: u16, operand_count: u8) -> u32 {
+    // SM2/3 encode the *total* instruction length in tokens (including the opcode token) in
+    // bits 24..27.
+    (op as u32) | (((operand_count as u32) + 1) << 24)
 }
 
 fn reg_token(regtype: u8, index: u32) -> u32 {
@@ -40,10 +42,10 @@ fn sm3_vertex_shader_semantic_locations_remap_to_standard_map() {
     let tokens = vec![
         version_token(ShaderStage::Vertex, 2, 0),
         // dcl_positiont v0
-        31u32 | (1u32 << 24) | (9u32 << 16),
+        31u32 | (2u32 << 24) | (9u32 << 16),
         dst_token(1, 0, 0xF),
         // dcl_color0 v7
-        31u32 | (1u32 << 24) | (10u32 << 16),
+        31u32 | (2u32 << 24) | (10u32 << 16),
         dst_token(1, 7, 0xF),
         // mov oPos, v0
         opcode_token(1, 2),
@@ -92,10 +94,10 @@ fn sm3_vertex_shader_duplicate_semantic_locations_are_an_error() {
     let tokens = vec![
         version_token(ShaderStage::Vertex, 2, 0),
         // dcl_position v0
-        31u32 | (1u32 << 24) | (0u32 << 16),
+        31u32 | (2u32 << 24) | (0u32 << 16),
         dst_token(1, 0, 0xF),
         // dcl_positiont v1
-        31u32 | (1u32 << 24) | (9u32 << 16) | (0u32 << 20),
+        31u32 | (2u32 << 24) | (9u32 << 16) | (0u32 << 20),
         dst_token(1, 1, 0xF),
         // add r0, v0, v1
         opcode_token(2, 3),

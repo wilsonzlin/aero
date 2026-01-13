@@ -36,8 +36,28 @@ fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
     v
 }
 
+// SM2/3 token streams encode the *total* instruction length in tokens (including the opcode
+// token) in bits 24..27.
+//
+// The legacy translator tests in this module use a simplified encoding (operand count in the
+// length field), but the SM3 decoder is strict about the real encoding. Keep a dedicated helper
+// for SM3 tests so we can exercise the real token format without rewriting the legacy tests.
+fn enc_inst_sm3(opcode: u16, params: &[u32]) -> Vec<u32> {
+    let token = (opcode as u32) | (((params.len() as u32) + 1) << 24);
+    let mut v = vec![token];
+    v.extend_from_slice(params);
+    v
+}
+
 fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
     let token = (opcode as u32) | ((params.len() as u32) << 24) | extra;
+    let mut v = vec![token];
+    v.extend_from_slice(params);
+    v
+}
+
+fn enc_inst_with_extra_sm3(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
+    let token = (opcode as u32) | (((params.len() as u32) + 1) << 24) | extra;
     let mut v = vec![token];
     v.extend_from_slice(params);
     v
@@ -53,6 +73,25 @@ fn assemble_vs_passthrough() -> Vec<u32> {
     // mov oD0, v2
     out.extend(enc_inst(0x0001, &[enc_dst(5, 0, 0xF), enc_src(1, 2, 0xE4)]));
     // end
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_vs_passthrough_sm3_decoder() -> Vec<u32> {
+    // vs_2_0 (encoded with SM2/3's real instruction length field, as used by the SM3 decoder).
+    let mut out = vec![0xFFFE0200];
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
+    ));
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(6, 0, 0xF), enc_src(1, 1, 0xE4)],
+    ));
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(5, 0, 0xF), enc_src(1, 2, 0xE4)],
+    ));
     out.push(0x0000FFFF);
     out
 }
@@ -171,12 +210,12 @@ fn assemble_ps2_src_modifiers_bias_x2neg_dz() -> Vec<u32> {
     // ps_2_0
     let mut out = vec![0xFFFF0200];
     // mov r0, c0_bias
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0001,
         &[enc_dst(0, 0, 0xF), enc_src_mod(2, 0, 0xE4, 2)],
     ));
     // add r0, r0, c1_x2neg
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0002,
         &[
             enc_dst(0, 0, 0xF),
@@ -185,7 +224,7 @@ fn assemble_ps2_src_modifiers_bias_x2neg_dz() -> Vec<u32> {
         ],
     ));
     // mul r0, r0, c2_dz
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0005,
         &[
             enc_dst(0, 0, 0xF),
@@ -194,7 +233,10 @@ fn assemble_ps2_src_modifiers_bias_x2neg_dz() -> Vec<u32> {
         ],
     ));
     // mov oC0, r0
-    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
     out.push(0x0000FFFF);
     out
 }
@@ -262,7 +304,7 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
     let mut out = vec![0xFFFF0300];
 
     // def c0, 0.25, 0.25, 0.25, 0.25
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 0, 0xF),
@@ -273,7 +315,7 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
         ],
     ));
     // def c1, 1.0, 0.0, 0.0, 1.0
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 1, 0xF),
@@ -284,7 +326,7 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
         ],
     ));
     // def c2, 0.0, 1.0, 0.0, 1.0
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 2, 0xF),
@@ -296,7 +338,7 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
     ));
 
     // setp_eq p0, c0, c0  (compare op 1 = eq)
-    out.extend(enc_inst_with_extra(
+    out.extend(enc_inst_with_extra_sm3(
         0x004E,
         1u32 << 16,
         &[
@@ -310,7 +352,7 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
     // - opcode 0x12 (lrp)
     // - predicated flag = bit 28 (0x1000_0000)
     // - result modifier: saturate + x2 shift => mod_bits = 0b0011 => 3<<20
-    out.extend(enc_inst_with_extra(
+    out.extend(enc_inst_with_extra_sm3(
         0x0012,
         0x1000_0000 | (3u32 << 20),
         &[
@@ -323,7 +365,10 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
     ));
 
     // mov oC0, r0
-    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
     out.push(0x0000FFFF);
     out
 }
@@ -332,7 +377,7 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
     // def c0, 0.5, 0.0, 0.0, 0.0 (threshold)
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 0, 0xF),
@@ -343,7 +388,7 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
         ],
     ));
     // def c1, 1.0, 0.0, 0.0, 1.0 (red)
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 1, 0xF),
@@ -354,7 +399,7 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
         ],
     ));
     // def c2, 0.0, 0.0, 1.0, 1.0 (blue)
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 2, 0xF),
@@ -366,7 +411,7 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
     ));
 
     // setp_gt p0.x, v0.x, c0.x (compare op 0 = gt)
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x004E,
         &[
             enc_dst(19, 0, 0x1), // p0.x
@@ -376,10 +421,13 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
     ));
 
     // mov oC0, c2 (default blue)
-    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 2, 0xE4)]));
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(2, 2, 0xE4)],
+    ));
 
     // (p0.x) mov oC0, c1 (predicated)
-    out.extend(enc_inst_with_extra(
+    out.extend(enc_inst_with_extra_sm3(
         0x0001,
         0x1000_0000, // predicated flag
         &[
@@ -397,7 +445,7 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
     // def c0, 0.0, 0.0, 0.0, 1.0 (base)
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 0, 0xF),
@@ -408,7 +456,7 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
         ],
     ));
     // def c1, 0.1, 0.2, 0.3, 0.0 (increment)
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 1, 0xF),
@@ -419,7 +467,7 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
         ],
     ));
     // def c2, 1.0, 0.0, 0.0, 0.0 (counter step)
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 2, 0xF),
@@ -430,7 +478,7 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
         ],
     ));
     // def c3, 4.0, 0.0, 0.0, 0.0 (loop count)
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 3, 0xF),
@@ -442,12 +490,18 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
     ));
 
     // mov r0, c0
-    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
+    ));
     // mov r1.x, c0.x
-    out.extend(enc_inst(0x0001, &[enc_dst(0, 1, 0x1), enc_src(2, 0, 0x00)]));
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(0, 1, 0x1), enc_src(2, 0, 0x00)],
+    ));
 
     // loop aL, i0 (operands ignored by IR builder for now)
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x001B,
         &[
             enc_src(15, 0, 0xE4), // aL
@@ -455,7 +509,7 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
         ],
     ));
     // add r0, r0, c1
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0002,
         &[
             enc_dst(0, 0, 0xF),
@@ -464,7 +518,7 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
         ],
     ));
     // add r1.x, r1.x, c2.x
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0002,
         &[
             enc_dst(0, 1, 0x1),
@@ -473,16 +527,19 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
         ],
     ));
     // breakc_ge r1.x, c3.x (compare op 2 = ge)
-    out.extend(enc_inst_with_extra(
+    out.extend(enc_inst_with_extra_sm3(
         0x002D,
         2u32 << 16,
         &[enc_src(0, 1, 0x00), enc_src(2, 3, 0x00)],
     ));
     // endloop
-    out.extend(enc_inst(0x001D, &[]));
+    out.extend(enc_inst_sm3(0x001D, &[]));
 
     // mov oC0, r0
-    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
 
     out.push(0x0000FFFF);
     out
@@ -933,7 +990,7 @@ fn micro_ps3_ifc_def_pixel_compare() {
 
 #[test]
 fn sm3_predicated_mov_pixel_compare() {
-    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let vs = build_sm3_ir(&assemble_vs_passthrough_sm3_decoder());
     let ps = build_sm3_ir(&assemble_ps3_predicated_mov());
 
     let decl = build_vertex_decl_pos_tex_color();
@@ -984,7 +1041,7 @@ fn sm3_predicated_mov_pixel_compare() {
 
 #[test]
 fn sm3_bounded_loop_accumulate_pixel_compare() {
-    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let vs = build_sm3_ir(&assemble_vs_passthrough_sm3_decoder());
     let ps = build_sm3_ir(&assemble_ps3_loop_accumulate());
 
     let decl = build_vertex_decl_pos_tex_color();

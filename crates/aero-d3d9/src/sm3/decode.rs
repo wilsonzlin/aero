@@ -65,6 +65,7 @@ pub enum Opcode {
     Dp4,
     Exp,
     Log,
+    M4x4,
     Rcp,
     Rsq,
     Frc,
@@ -126,6 +127,7 @@ impl Opcode {
             14 => Self::Exp,
             15 => Self::Log,
             19 => Self::Frc, // 0x13
+            20 => Self::M4x4, // 0x14
             25 => Self::Call,
             27 => Self::Loop,
             28 => Self::Ret,
@@ -177,6 +179,7 @@ impl Opcode {
             Self::Dp4 => "dp4",
             Self::Exp => "exp",
             Self::Log => "log",
+            Self::M4x4 => "m4x4",
             Self::Rcp => "rcp",
             Self::Rsq => "rsq",
             Self::Frc => "frc",
@@ -625,8 +628,15 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             break;
         }
 
-        let param_count = ((opcode_token >> 24) & 0x0F) as usize;
-        let length = 1usize + param_count;
+        // D3D9 SM2/3 encodes the *total* instruction length (in DWORD tokens),
+        // including the opcode token itself, in bits 24..27.
+        //
+        // Many instructions that take no operands encode this length as `0`,
+        // which is interpreted as a 1-token instruction.
+        let mut length = ((opcode_token >> 24) & 0x0F) as usize;
+        if length == 0 {
+            length = 1;
+        }
         if token_index + length > tokens.len() {
             return Err(DecodeError {
                 token_index,
@@ -816,7 +826,8 @@ fn decode_operands_and_extras(
         | Opcode::Dp2
         | Opcode::Dp3
         | Opcode::Dp4
-        | Opcode::Pow => {
+        | Opcode::Pow
+        | Opcode::M4x4 => {
             parse_fixed_operands(
                 opcode,
                 stage,

@@ -11,8 +11,10 @@ fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
     prefix | ((major as u32) << 8) | (minor as u32)
 }
 
-fn opcode_token(op: u16, length: u8) -> u32 {
-    (op as u32) | ((length as u32) << 24)
+fn opcode_token(op: u16, operand_count: u8) -> u32 {
+    // SM2/3 encode the *total* instruction length in tokens (including the opcode token) in
+    // bits 24..27.
+    (op as u32) | (((operand_count as u32) + 1) << 24)
 }
 
 fn reg_token(regtype: u8, index: u32) -> u32 {
@@ -53,10 +55,10 @@ fn ir_snapshot_ps3_tex_ifc() {
     let tokens = vec![
         version_token(ShaderStage::Pixel, 3, 0),
         // dcl_texcoord0 v0.xy
-        31u32 | (1u32 << 24) | (5u32 << 16),
+        31u32 | (2u32 << 24) | (5u32 << 16),
         dst_token(1, 0, 0x3),
         // dcl_2d s0
-        31u32 | (1u32 << 24) | (2u32 << 16),
+        31u32 | (2u32 << 24) | (2u32 << 16),
         dst_token(10, 0, 0xF),
         // def c0, 0.5, 0, 0, 0
         opcode_token(81, 5),

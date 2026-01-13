@@ -248,6 +248,7 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 src1,
                 modifiers,
             })?,
+            Opcode::M4x4 => push_m4x4(&mut stack, inst)?,
             Opcode::Rcp => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Rcp {
                 dst,
                 src,
@@ -1214,6 +1215,59 @@ where
     let src = extract_src(inst, 1)?;
     let modifiers = build_modifiers(inst)?;
     push_stmt(stack, Stmt::Op(ctor(dst, src, modifiers)))
+}
+
+fn push_m4x4(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), BuildError> {
+    // `m4x4 dst, v, cN` is equivalent to:
+    //   dp4 dst.x, v, cN
+    //   dp4 dst.y, v, c(N+1)
+    //   dp4 dst.z, v, c(N+2)
+    //   dp4 dst.w, v, c(N+3)
+    //
+    // with each dot replicated across components (the normal dp4 semantics) and written via
+    // per-component masks.
+    let dst_full = extract_dst(inst, 0)?;
+    let v = extract_src(inst, 1)?;
+    let base = extract_src(inst, 2)?;
+
+    if base.reg.file != RegFile::Const {
+        return Err(err(inst, "m4x4 matrix base must be a const register"));
+    }
+
+    let modifiers = build_modifiers(inst)?;
+
+    // Emit dp4 ops only for components included in the destination write mask.
+    for (component, mask_bit, offset) in [
+        (crate::sm3::decode::SwizzleComponent::X, 0x1u8, 0u32),
+        (crate::sm3::decode::SwizzleComponent::Y, 0x2u8, 1u32),
+        (crate::sm3::decode::SwizzleComponent::Z, 0x4u8, 2u32),
+        (crate::sm3::decode::SwizzleComponent::W, 0x8u8, 3u32),
+    ] {
+        if !dst_full.mask.contains(component) {
+            continue;
+        }
+        let dst = Dst {
+            reg: dst_full.reg.clone(),
+            mask: crate::sm3::decode::WriteMask(mask_bit),
+        };
+        let mut row = base.clone();
+        row.reg.index = row
+            .reg
+            .index
+            .checked_add(offset)
+            .ok_or_else(|| err(inst, "m4x4 constant register index overflow"))?;
+        push_stmt(
+            stack,
+            Stmt::Op(IrOp::Dp4 {
+                dst,
+                src0: v.clone(),
+                src1: row,
+                modifiers: modifiers.clone(),
+            }),
+        )?;
+    }
+
+    Ok(())
 }
 
 fn push_cmpop(
