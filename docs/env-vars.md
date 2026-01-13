@@ -99,6 +99,10 @@ These are not required for the core build/test pipeline, but are common when run
 | `AERO_WEBRTC_UDP_RELAY_PUBLIC_BASE_URL` | Public base URL for the WebRTC UDP relay (logging only). Must be a valid URL. | *(unset)* | `proxy/webrtc-udp-relay` | `AERO_WEBRTC_UDP_RELAY_PUBLIC_BASE_URL=https://relay.example.com` |
 | `AERO_STUN_URLS` | Comma-separated STUN URLs (e.g. `stun:stun.l.google.com:19302`). | *(unset)* | `proxy/webrtc-udp-relay` | `AERO_STUN_URLS=stun:stun.l.google.com:19302` |
 | `AERO_TURN_URLS` | Comma-separated TURN URLs. | *(unset)* | `proxy/webrtc-udp-relay` | `AERO_TURN_URLS=turn:turn.example.com:3478?transport=udp` |
+| `UDP_BINDING_IDLE_TIMEOUT` | Close idle UDP port bindings after this duration (Go duration, e.g. `60s`). | `60s` | `proxy/webrtc-udp-relay` | `UDP_BINDING_IDLE_TIMEOUT=30s` |
+| `UDP_INBOUND_FILTER_MODE` | Inbound UDP filtering mode (`address_and_port` or `any`). `any` behaves like full-cone NAT and is less safe. | `address_and_port` | `proxy/webrtc-udp-relay` | `UDP_INBOUND_FILTER_MODE=address_and_port` / `UDP_INBOUND_FILTER_MODE=any` |
+| `UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT` | Expire inactive remote allowlist entries after this duration (only applies when `UDP_INBOUND_FILTER_MODE=address_and_port`). | Defaults to `UDP_BINDING_IDLE_TIMEOUT` | `proxy/webrtc-udp-relay` | `UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT=30s` |
+| `MAX_ALLOWED_REMOTES_PER_BINDING` | Cap the number of remote endpoints tracked per UDP binding allowlist (DoS hardening). | `1024` | `proxy/webrtc-udp-relay` | `MAX_ALLOWED_REMOTES_PER_BINDING=1024` |
 
 ## L2 tunnel proxy variables (`crates/aero-l2-proxy`)
 
