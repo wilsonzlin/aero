@@ -927,7 +927,8 @@ pub struct AerogpuD3d11Executor {
 
 impl AerogpuD3d11Executor {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, backend: wgpu::Backend) -> Self {
-        Self::new_with_supports_compute(device, queue, backend, true)
+        let caps = GpuCapabilities::from_device(&device);
+        Self::new_with_caps(device, queue, backend, caps)
     }
 
     /// Construct an executor with an explicit compute capability override.
@@ -941,6 +942,17 @@ impl AerogpuD3d11Executor {
         queue: wgpu::Queue,
         backend: wgpu::Backend,
         supports_compute: bool,
+    ) -> Self {
+        let mut caps = GpuCapabilities::from_device(&device);
+        caps.supports_compute = supports_compute;
+        Self::new_with_caps(device, queue, backend, caps)
+    }
+
+    pub fn new_with_caps(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        backend: wgpu::Backend,
+        caps: GpuCapabilities,
     ) -> Self {
         let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aerogpu_cmd dummy texture"),
@@ -1003,9 +1015,6 @@ impl AerogpuD3d11Executor {
             mapped.fill(0);
         }
         dummy_storage.unmap();
-
-        let mut caps = GpuCapabilities::from_device(&device);
-        caps.supports_compute = supports_compute;
         let pipeline_cache = PipelineCache::new(PipelineCacheConfig::default(), caps);
 
         let mut sampler_cache = SamplerCache::new();
@@ -1141,11 +1150,12 @@ impl AerogpuD3d11Executor {
         }
         .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
-        let backend = adapter.get_info().backend;
         let supports_compute = adapter
             .get_downlevel_capabilities()
             .flags
             .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+
+        let backend = adapter.get_info().backend;
         let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
             .request_device(
@@ -1158,12 +1168,11 @@ impl AerogpuD3d11Executor {
             )
             .await
             .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-        Ok(Self::new_with_supports_compute(
-            device,
-            queue,
-            backend,
-            supports_compute,
-        ))
+
+        let mut caps = GpuCapabilities::from_device(&device);
+        caps.supports_compute = supports_compute;
+
+        Ok(Self::new_with_caps(device, queue, backend, caps))
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -10819,6 +10828,8 @@ fn anyhow_guest_mem(err: GuestMemoryError) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_gpu::pipeline_key::{ComputePipelineKey, PipelineLayoutKey};
+    use aero_gpu::GpuError;
     use aero_gpu::guest_memory::VecGuestMemory;
     use aero_protocol::aerogpu::aerogpu_cmd::AerogpuPrimitiveTopology;
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -10891,6 +10902,105 @@ mod tests {
                 exec.state.primitive_topology,
                 CmdPrimitiveTopology::PatchList { control_points: 3 }
             );
+        });
+    }
+
+    #[test]
+    fn pipeline_cache_compute_support_is_derived_from_downlevel_flags() {
+        pollster::block_on(async {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+
+                let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                    .ok()
+                    .map(|v| v.is_empty())
+                    .unwrap_or(true);
+
+                if needs_runtime_dir {
+                    let dir = std::env::temp_dir()
+                        .join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                    std::env::set_var("XDG_RUNTIME_DIR", &dir);
+                }
+            }
+
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+                backends: if cfg!(target_os = "linux") {
+                    wgpu::Backends::GL
+                } else {
+                    // Prefer "native" backends; this avoids noisy platform warnings from
+                    // initializing GL/WAYLAND stacks in headless CI environments.
+                    wgpu::Backends::PRIMARY
+                },
+                ..Default::default()
+            });
+
+            let adapter = match instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: true,
+                })
+                .await
+            {
+                Some(adapter) => Some(adapter),
+                None => {
+                    instance
+                        .request_adapter(&wgpu::RequestAdapterOptions {
+                            power_preference: wgpu::PowerPreference::LowPower,
+                            compatible_surface: None,
+                            force_fallback_adapter: false,
+                        })
+                        .await
+                }
+            };
+            let Some(adapter) = adapter else {
+                skip_or_panic(module_path!(), "wgpu unavailable (no suitable adapter found)");
+                return;
+            };
+
+            let expected_supports_compute = adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // `GpuCapabilities::from_device` currently reports supports_compute=true unconditionally.
+            // `new_for_tests` must override this using adapter downlevel flags so that
+            // `PipelineCache` rejects compute pipelines deterministically on downlevel backends.
+            let shader_hash = 0x1234_u128;
+            let key = ComputePipelineKey {
+                shader: shader_hash,
+                layout: PipelineLayoutKey::empty(),
+            };
+            let err = exec
+                .pipeline_cache
+                .get_or_create_compute_pipeline(&exec.device, key, |_device, _cs| unreachable!())
+                .unwrap_err();
+
+            match (expected_supports_compute, err) {
+                (false, GpuError::Unsupported("compute")) => {}
+                (
+                    true,
+                    GpuError::MissingShaderModule {
+                        stage: aero_gpu::pipeline_key::ShaderStage::Compute,
+                        hash,
+                    },
+                ) if hash == shader_hash => {}
+                (expected, err) => panic!(
+                    "expected supports_compute={expected} based on DownlevelFlags, got error {err:?}"
+                ),
+            }
         });
     }
 
