@@ -316,7 +316,7 @@ See `aerogpu_cmd.h` for the full opcode list and packet layouts.
 ### Debugging: decoding raw command stream dumps
 
 When debugging Win7 guest driver issues it’s often useful to inspect the **raw AeroGPU command stream** that was most recently submitted
-(for example, a dump captured via `aerogpu_dbgctl --dump-last-cmd` or any other mechanism that writes the byte stream to disk).
+(for example, a dump captured via kernel/UMD instrumentation or any other mechanism that writes the byte stream to disk).
 
 The host-side tool `aero-gpu-trace-replay` includes a small decoder that prints a stable, grep-friendly opcode listing:
 
