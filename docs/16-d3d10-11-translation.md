@@ -243,7 +243,14 @@ Mapping to WebGPU:
 
 ### Compute
 
-`Dispatch(x, y, z)` maps directly to `dispatchWorkgroups(x, y, z)` once SM5 compute shader translation is available.
+`Dispatch(x, y, z)` maps directly to `dispatchWorkgroups(x, y, z)`.
+
+Compute shader translation is implemented for a subset of SM5 (`cs_5_0`) and is still evolving. The translator currently supports the core thread-ID system values:
+
+- `SV_DispatchThreadID` → `@builtin(global_invocation_id)`
+- `SV_GroupID` → `@builtin(workgroup_id)`
+- `SV_GroupThreadID` → `@builtin(local_invocation_id)`
+- `SV_GroupIndex` → `@builtin(local_invocation_index)`
 
 ---
 
@@ -327,6 +334,7 @@ The base offsets are defined in `crates/aero-d3d11/src/binding_model.rs`:
 - `BINDING_BASE_CBUFFER = 0` for constant buffers (`cb#` / `b#`)
 - `BINDING_BASE_TEXTURE = 32` for SRV textures (`t#`)
 - `BINDING_BASE_SAMPLER = 160` for samplers (`s#`)
+- `BINDING_BASE_UAV` for UAV buffers/textures (`u#`, SM5)
 
 The chosen bases intentionally carve out disjoint ranges that align with D3D11 per-stage slot
 counts:
@@ -334,6 +342,8 @@ counts:
 - Constant buffers: 14 slots (0–13) fit within `[0, 32)`.
 - SRVs: 128 slots (0–127) map to `[32, 160)`.
 - Samplers: 16 slots (0–15) map to `[160, 176)`.
+- UAVs: `MAX_UAV_SLOTS` slots (0..`MAX_UAV_SLOTS - 1`) map to
+  `[BINDING_BASE_UAV, BINDING_BASE_UAV + MAX_UAV_SLOTS)`.
 
 Examples:
 
@@ -341,6 +351,7 @@ Examples:
 - PS `cb0` → `@group(1) @binding(0)` (same slot/binding, different stage group)
 - PS `t0`  → `@group(1) @binding(32)`
 - PS `s0`  → `@group(1) @binding(160)`
+- CS `u0`  → `@group(2) @binding(BINDING_BASE_UAV + 0)`
 
 This keeps bindings stable (derived directly from D3D slot indices) without requiring per-shader
 rebinding logic.
@@ -356,11 +367,21 @@ The runtime then builds bind group layouts / bind groups from the reflected set 
 which keeps the implementation within WebGPU’s per-stage binding limits even if the application
 binds many unused D3D resources.
 
-#### Future work: UAVs and additional resource types
+#### Resource types: what’s supported vs. still missing
 
-SM5 UAVs (`u#`), SRV buffers, structured buffers, storage textures, and additional texture
-dimensions will need additional WGSL types and likely another disjoint `@binding` range per stage.
-This is planned for P2 (compute/UAV-heavy workloads) but is not part of the current implementation.
+The current SM5 translation + binding model supports the D3D11-era buffer view types that show up in real compute workloads:
+
+- **SRV buffers** (`t#` with `StructuredBuffer` / `ByteAddressBuffer`-like access) map to
+  `var<storage, read>` bindings in WGSL, using the `BINDING_BASE_TEXTURE + slot` binding-number
+  scheme.
+- **UAV buffers** (`u#` with `RWStructuredBuffer` / `RWByteAddressBuffer`-like access) map to
+  `var<storage, read_write>` bindings in WGSL, using `BINDING_BASE_UAV + slot`.
+
+Remaining gaps (planned follow-ups) include:
+
+- **Typed UAV textures** (`RWTexture*` / `u#` storage textures) and the required format plumbing.
+- **Atomics** (`Interlocked*`) and the necessary WGSL atomic type mapping.
+- **Explicit ordering/barriers** (D3D UAV barriers, `GroupMemoryBarrier*` / `DeviceMemoryBarrier*` semantics).
 
 ---
 
@@ -400,11 +421,11 @@ WebGPU does not expose fixed-function tessellation. Emulate HS/DS by:
 
 This aligns with the GS emulation strategy and can share the same intermediate-buffer allocator.
 
-Compute shaders (CS) are directly supported once SM5 bytecode translation is complete, with attention to:
+Compute shaders (CS) translate to WGSL `@compute` entry points, with attention to:
 
 - Thread group shared memory mapping
-- Atomics mapping (`Interlocked*` ops → WGSL atomics)
-- UAV barriers and ordering constraints (see Synchronization)
+- Atomics mapping (`Interlocked*` ops → WGSL atomics) (not yet complete)
+- UAV barriers and ordering constraints (see Synchronization) (not yet complete)
 
 ---
 
