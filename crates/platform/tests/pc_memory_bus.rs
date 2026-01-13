@@ -213,6 +213,135 @@ fn a20_masking_does_not_apply_to_direct_ram_backend_access() {
 }
 
 #[test]
+fn a20_disabled_bulk_reads_match_byte_wise_across_1mib_boundary() {
+    let mut bus = new_bus(false, 2 * 1024 * 1024);
+
+    // Fill the first MiB with a deterministic pattern and the second MiB with a different one so
+    // incorrect non-wrapping reads are visible.
+    let mut low = vec![0u8; 1 << 20];
+    for (i, byte) in low.iter_mut().enumerate() {
+        *byte = i as u8;
+    }
+    bus.ram_mut().write_from(0, &low).unwrap();
+    bus.ram_mut().write_from(1 << 20, &vec![0xEEu8; 1 << 20]).unwrap();
+
+    // Start just below the 1MiB boundary so the access wraps when A20 is disabled.
+    let start = 0x0FFF_00u64;
+    let len = 0x3000usize;
+
+    let mut bulk = vec![0u8; len];
+    bus.read_physical(start, &mut bulk);
+
+    // Reference behaviour: byte-wise reads with per-address A20 masking.
+    let mut expected = vec![0u8; len];
+    for i in 0..len {
+        expected[i] = bus.read_u8(start + i as u64);
+    }
+
+    assert_eq!(bulk, expected);
+}
+
+#[test]
+fn a20_disabled_bulk_writes_match_byte_wise_across_1mib_boundary() {
+    let start = 0x0FFF_00u64;
+    let len = 0x3000usize;
+    let data: Vec<u8> = (0..len)
+        .map(|i| (i as u8).wrapping_mul(7).wrapping_add(3))
+        .collect();
+
+    let mut bulk = new_bus(false, 2 * 1024 * 1024);
+    let mut bytewise = new_bus(false, 2 * 1024 * 1024);
+
+    // Pre-fill the second MiB with a sentinel so incorrect non-aliased writes are visible.
+    bulk.ram_mut()
+        .write_from(1 << 20, &vec![0xEEu8; 1 << 20])
+        .unwrap();
+    bytewise
+        .ram_mut()
+        .write_from(1 << 20, &vec![0xEEu8; 1 << 20])
+        .unwrap();
+
+    bulk.write_physical(start, &data);
+    for (i, byte) in data.iter().copied().enumerate() {
+        bytewise.write_u8(start + i as u64, byte);
+    }
+
+    // Compare true physical RAM contents. The guest-visible behaviour should be identical, even
+    // though the bulk path uses chunked reads/writes instead of a byte loop.
+    let mut bulk_snapshot = vec![0u8; 2 << 20];
+    let mut byte_snapshot = vec![0u8; 2 << 20];
+    bulk.ram().read_into(0, &mut bulk_snapshot).unwrap();
+    bytewise.ram().read_into(0, &mut byte_snapshot).unwrap();
+    assert_eq!(bulk_snapshot, byte_snapshot);
+}
+
+#[test]
+fn a20_disabled_wraparound_preserves_mmio_and_rom_priority() {
+    let mut bus = new_bus(false, 2 * 1024 * 1024);
+
+    // Seed low RAM so ROM reads are distinguishable from the underlying RAM contents.
+    bus.ram_mut().write_from(0, &[0xAA; 0x100]).unwrap();
+    // Also seed the second MiB with a different value so incorrect non-wrapping accesses show up.
+    bus.ram_mut()
+        .write_from(1 << 20, &[0xEE; 0x100])
+        .unwrap();
+
+    // Map a ROM window and overlay part of it with MMIO. Priority must remain:
+    // MMIO > ROM > RAM.
+    let rom = (0..0x20u8).map(|v| v.wrapping_add(0x10)).collect::<Vec<_>>();
+    bus.map_rom(0x10, Arc::<[u8]>::from(rom)).unwrap();
+
+    let (mmio, mmio_state) = RecordingMmio::new(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    bus.map_mmio(0x18, 4, Box::new(mmio)).unwrap();
+
+    // Bulk read across the 1MiB boundary (wrap-around in the A20-disabled case).
+    let start = 0x0FFF_F0u64;
+    let len = 0x40usize;
+    let mut bulk = vec![0u8; len];
+    bus.read_physical(start, &mut bulk);
+
+    // Verify against byte-granular reads, which naturally apply A20 masking per address.
+    let mut expected = vec![0u8; len];
+    for i in 0..len {
+        expected[i] = bus.read_u8(start + i as u64);
+    }
+    assert_eq!(bulk, expected);
+
+    // The bytes after wrap-around should observe MMIO and ROM priority.
+    // - 0x10..0x18: ROM
+    // - 0x18..0x1C: MMIO overrides ROM
+    assert_eq!(bus.read_u8(0x1_00010), bus.read_u8(0x10));
+    assert_eq!(bus.read_u8(0x1_00018), 0xDE);
+    assert_eq!(bus.read_u8(0x1_0001B), 0xEF);
+
+    // Bulk writes must route to MMIO (not ROM/RAM), ignore ROM, and update RAM elsewhere, even
+    // when the write wraps at 1MiB.
+    let write_len = 0x100usize;
+    let data: Vec<u8> = (0..write_len).map(|v| v as u8).collect();
+    let write_start = 0x0FFF_F0u64;
+    bus.write_physical(write_start, &data);
+
+    // Wrapped portion lands at 0.. in the A20-masked address space.
+    // Offsets relative to 0 correspond to indices starting at `0x10` (because the first 0x10 bytes
+    // of the write are still in the high region below 1MiB).
+    let wrapped_base = 0x10usize;
+
+    // RAM region at 0x00..0x10 should be written.
+    let mut ram_low = [0u8; 0x10];
+    bus.ram().read_into(0, &mut ram_low).unwrap();
+    assert_eq!(&ram_low, &data[wrapped_base..wrapped_base + 0x10]);
+
+    // ROM region (0x10..0x18) must not write through to RAM.
+    let mut rom_ram_view = [0u8; 0x08];
+    bus.ram().read_into(0x10, &mut rom_ram_view).unwrap();
+    assert_eq!(&rom_ram_view, &[0xAA; 0x08]);
+
+    // MMIO region (0x18..0x1C) should receive the write.
+    let state = mmio_state.lock().unwrap();
+    assert_eq!(state.mem, data[wrapped_base + 0x18..wrapped_base + 0x1C]);
+}
+
+#[test]
 fn dirty_tracking_marks_ram_writes_from_non_cpu_paths() {
     let chipset = ChipsetState::new(true);
     let filter = AddressFilter::new(chipset.a20());

@@ -19,8 +19,13 @@ impl AddressFilter {
     }
 
     #[inline]
+    pub fn a20_enabled(&self) -> bool {
+        self.a20.enabled()
+    }
+
+    #[inline]
     pub fn filter_paddr(&self, paddr: u64) -> u64 {
-        if self.a20.enabled() {
+        if self.a20_enabled() {
             paddr
         } else {
             // When A20 is disabled, the A20 address line is forced low, aliasing addresses

@@ -236,7 +236,7 @@ impl MemoryBus {
             return;
         }
 
-        if self.filter.a20().enabled() {
+        if self.filter.a20_enabled() {
             self.bus.read_physical(paddr, dst);
             return;
         }
@@ -248,16 +248,14 @@ impl MemoryBus {
                 break;
             };
 
-            // Split on 1MiB boundaries because A20 masking changes bit 20 (the 1MiB bit), so
-            // a linear physical access may become non-contiguous after masking.
-            let next_boundary = (addr | A20_BOUNDARY_MASK).saturating_add(1);
-            let max_len = next_boundary.saturating_sub(addr);
-            let remaining = (dst.len() - pos) as u64;
-
-            let mut chunk_len = std::cmp::min(max_len, remaining) as usize;
-            if chunk_len == 0 {
-                chunk_len = dst.len() - pos;
-            }
+            // Split on 1MiB boundaries because A20 masking changes bit 20 (the 1MiB bit), so a
+            // linear physical access may become non-contiguous after masking.
+            //
+            // Within a single 1MiB window, bit 20 is constant, so we can mask once at the start
+            // of the chunk and issue a bulk read to the underlying physical bus.
+            let offset_in_1mib = addr & A20_BOUNDARY_MASK;
+            let to_boundary = A20_BIT - offset_in_1mib;
+            let chunk_len = std::cmp::min(to_boundary as usize, dst.len() - pos);
 
             let filtered = addr & !A20_BIT;
             self.bus
@@ -271,7 +269,7 @@ impl MemoryBus {
             return;
         }
 
-        if self.filter.a20().enabled() {
+        if self.filter.a20_enabled() {
             self.bus.write_physical(paddr, src);
             return;
         }
@@ -282,14 +280,9 @@ impl MemoryBus {
                 break;
             };
 
-            let next_boundary = (addr | A20_BOUNDARY_MASK).saturating_add(1);
-            let max_len = next_boundary.saturating_sub(addr);
-            let remaining = (src.len() - pos) as u64;
-
-            let mut chunk_len = std::cmp::min(max_len, remaining) as usize;
-            if chunk_len == 0 {
-                chunk_len = src.len() - pos;
-            }
+            let offset_in_1mib = addr & A20_BOUNDARY_MASK;
+            let to_boundary = A20_BIT - offset_in_1mib;
+            let chunk_len = std::cmp::min(to_boundary as usize, src.len() - pos);
 
             let filtered = addr & !A20_BIT;
             self.bus
