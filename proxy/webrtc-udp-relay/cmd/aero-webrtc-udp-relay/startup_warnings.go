@@ -69,7 +69,7 @@ func logStartupSecurityWarnings(logger *slog.Logger, cfg config.Config, destPoli
 
 	if cfg.L2BackendAuthForwardMode == config.L2BackendAuthForwardModeQuery &&
 		cfg.AuthMode != config.AuthModeNone {
-		logger.Warn("startup security warning: L2_BACKEND_AUTH_FORWARD_MODE=query may leak credentials via URLs when L2 bridging is enabled (prefer subprotocol)",
+		logger.Warn("startup security warning: L2_BACKEND_AUTH_FORWARD_MODE=query forwards credentials via query params (leak risk; prefer subprotocol)",
 			"warning_code", "l2_backend_auth_forward_mode_query",
 			"l2_backend_ws_url_set", strings.TrimSpace(cfg.L2BackendWSURL) != "",
 			"l2_backend_ws_host", safeURLHost(cfg.L2BackendWSURL),

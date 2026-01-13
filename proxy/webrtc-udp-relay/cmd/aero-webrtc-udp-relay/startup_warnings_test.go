@@ -366,7 +366,9 @@ func TestStartupSecurityWarnings_SafeConfig_NoWarnings(t *testing.T) {
 		AuthMode:    config.AuthModeAPIKey,
 		APIKey:      "secret",
 		MaxSessions: 10,
-		// L2 defaults: disabled, so no L2 warning.
+		// Explicitly avoid query-string auth forwarding mode (the default in config.Load)
+		// so we assert a truly "safe" config produces no warnings.
+		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,
 	}
 	destPolicy := policy.NewProductionDestinationPolicy()
 
