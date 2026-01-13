@@ -9,6 +9,8 @@ import {
   usbErrorCompletion,
   type UsbActionMessage,
   type UsbCompletionMessage,
+  type UsbGuestControllerMode,
+  type UsbGuestControllerModeMessage,
   type UsbGuestWebUsbSnapshot,
   type UsbGuestWebUsbStatusMessage,
   type UsbHostAction,
@@ -131,6 +133,7 @@ export class UsbBroker {
   private backendNoOtherSpeed: WebUsbBackend | null = null;
   private selectedInfo: UsbDeviceInfo | null = null;
   private guestStatus: UsbGuestWebUsbSnapshot | null = null;
+  private guestControllerMode: UsbGuestControllerMode = "uhci";
 
   private disconnectError: string | null = null;
   private disconnectSignal = createDeferred<string>();
@@ -232,6 +235,16 @@ export class UsbBroker {
     const msg: UsbSelectedMessage = { type: "usb.selected", ok: true, info: this.selectedInfo };
     this.broadcast(msg);
     return this.selectedInfo;
+  }
+
+  getGuestControllerMode(): UsbGuestControllerMode {
+    return this.guestControllerMode;
+  }
+
+  setGuestControllerMode(mode: UsbGuestControllerMode): void {
+    if (mode === this.guestControllerMode) return;
+    this.guestControllerMode = mode;
+    this.broadcastGuestControllerMode({ type: "usb.guest.controller", mode } satisfies UsbGuestControllerModeMessage);
   }
 
   async detachSelectedDevice(reason = "WebUSB device detached."): Promise<void> {
@@ -444,6 +457,10 @@ export class UsbBroker {
       }
 
       // Newly attached ports should learn the current selection/disconnect state.
+      this.postToPort(
+        port,
+        { type: "usb.guest.controller", mode: this.guestControllerMode } satisfies UsbGuestControllerModeMessage,
+      );
       if (this.selectedInfo && !this.disconnectError) {
         this.postToPort(port, { type: "usb.selected", ok: true, info: this.selectedInfo } satisfies UsbSelectedMessage);
       } else if (this.disconnectError) {
@@ -754,7 +771,13 @@ export class UsbBroker {
 
   private postToPort(
     port: MessagePort | Worker,
-    msg: UsbCompletionMessage | UsbSelectedMessage | UsbGuestWebUsbStatusMessage | UsbRingAttachMessage | UsbRingDetachMessage,
+    msg:
+      | UsbCompletionMessage
+      | UsbSelectedMessage
+      | UsbGuestControllerModeMessage
+      | UsbGuestWebUsbStatusMessage
+      | UsbRingAttachMessage
+      | UsbRingDetachMessage,
   ): void {
     const transfer = msg.type === "usb.completion" ? getTransferablesForUsbCompletionMessage(msg) : undefined;
     if (transfer) {
@@ -782,6 +805,12 @@ export class UsbBroker {
   }
 
   private broadcast(msg: UsbSelectedMessage): void {
+    for (const port of this.ports) {
+      this.postToPort(port, msg);
+    }
+  }
+
+  private broadcastGuestControllerMode(msg: UsbGuestControllerModeMessage): void {
     for (const port of this.ports) {
       this.postToPort(port, msg);
     }

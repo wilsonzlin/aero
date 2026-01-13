@@ -804,7 +804,15 @@ impl RootHub {
         }
         None
     }
+}
 
+impl Default for RootHub {
+    fn default() -> Self {
+        Self::new(6)
+    }
+}
+
+impl RootHub {
     pub(crate) fn save_snapshot_ports(&self) -> Vec<u8> {
         let mut port_records = Vec::with_capacity(self.ports.len());
         for port in &self.ports {
@@ -818,7 +826,14 @@ impl RootHub {
         let mut d = Decoder::new(buf);
         let count = d.u32()? as usize;
         if count != self.ports.len() {
-            return Err(SnapshotError::InvalidFieldEncoding("root hub ports"));
+            // Preserve as many existing port objects (and attached device instances) as possible so
+            // host-provided handles (e.g. WebUSB passthrough devices) survive snapshot restore.
+            if count > self.ports.len() {
+                self.ports
+                    .extend((self.ports.len()..count).map(|_| RootHubPortSlot::Local(Port::new())));
+            } else {
+                self.ports.truncate(count);
+            }
         }
 
         for port in &mut self.ports {
@@ -829,11 +844,5 @@ impl RootHub {
         d.finish()?;
 
         Ok(())
-    }
-}
-
-impl Default for RootHub {
-    fn default() -> Self {
-        Self::new(6)
     }
 }

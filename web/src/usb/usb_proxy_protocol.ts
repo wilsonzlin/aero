@@ -57,6 +57,17 @@ export type UsbSelectedMessage =
 
 export type UsbGuestWebUsbControllerKind = "xhci" | "ehci" | "uhci";
 
+export type UsbGuestControllerMode = UsbGuestWebUsbControllerKind;
+
+/**
+ * Select which guest-visible USB controller should host the WebUSB passthrough device.
+ *
+ * - `"uhci"`: full-speed (USB 1.1) controller path (default).
+ * - `"ehci"`: high-speed (USB 2.0) controller path (when available).
+ * - `"xhci"`: high-speed/superspeed controller path (when available).
+ */
+export type UsbGuestControllerModeMessage = { type: "usb.guest.controller"; mode: UsbGuestControllerMode };
+
 export type UsbGuestWebUsbSnapshot = {
   /** WASM exports are present and the guest-visible passthrough device can be attached. */
   available: boolean;
@@ -87,6 +98,7 @@ export type UsbProxyMessage =
   | UsbSelectDeviceMessage
   | UsbQuerySelectedMessage
   | UsbSelectedMessage
+  | UsbGuestControllerModeMessage
   | UsbGuestWebUsbStatusMessage;
 
 function transferablesForBytes(bytes: Uint8Array): Transferable[] | undefined {
@@ -302,6 +314,11 @@ export function isUsbGuestWebUsbStatusMessage(value: unknown): value is UsbGuest
   return true;
 }
 
+export function isUsbGuestControllerModeMessage(value: unknown): value is UsbGuestControllerModeMessage {
+  if (!isRecord(value) || value.type !== "usb.guest.controller") return false;
+  return value.mode === "uhci" || value.mode === "ehci" || value.mode === "xhci";
+}
+
 export function isUsbProxyMessage(value: unknown): value is UsbProxyMessage {
   return (
     isUsbActionMessage(value) ||
@@ -312,6 +329,7 @@ export function isUsbProxyMessage(value: unknown): value is UsbProxyMessage {
     isUsbSelectDeviceMessage(value) ||
     isUsbQuerySelectedMessage(value) ||
     isUsbSelectedMessage(value) ||
+    isUsbGuestControllerModeMessage(value) ||
     isUsbGuestWebUsbStatusMessage(value)
   );
 }

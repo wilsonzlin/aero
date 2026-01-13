@@ -88,9 +88,11 @@ import {
   isUsbRingAttachMessage,
   isUsbRingDetachMessage,
   isUsbCompletionMessage,
+  isUsbGuestControllerModeMessage,
   isUsbSelectedMessage,
   type UsbActionMessage,
   type UsbCompletionMessage,
+  type UsbGuestControllerMode,
   type UsbGuestWebUsbSnapshot,
   type UsbGuestWebUsbStatusMessage,
   type UsbHostAction,
@@ -558,6 +560,7 @@ let virtioInputMouse: VirtioInputPciFunction | null = null;
 type WebUsbGuestBridge = UsbPassthroughBridgeLike & { set_connected(connected: boolean): void };
 let webUsbGuestBridge: WebUsbGuestBridge | null = null;
 let webUsbGuestControllerKind: WebUsbGuestControllerKind | null = null;
+let webUsbGuestControllerMode: UsbGuestControllerMode = "uhci";
 let lastUsbSelected: UsbSelectedMessage | null = null;
 let usbRingAttach: UsbRingAttachMessage | null = null;
 
@@ -692,13 +695,14 @@ ctx.addEventListener(
     // Input batches are queued separately so buffers can be recycled after processing.
     if ((data as Partial<InputBatchMessage>)?.type === "in:input-batch") return;
 
-    const shouldQueue =
-      isUsbCompletionMessage(data) ||
-      isUsbSelectedMessage(data) ||
-      isUsbRingAttachMessage(data) ||
-      isUsbRingDetachMessage(data) ||
-      isHidProxyMessage(data) ||
-      isHidPassthroughAttachHubMessage(data) ||
+      const shouldQueue =
+        isUsbCompletionMessage(data) ||
+        isUsbSelectedMessage(data) ||
+        isUsbGuestControllerModeMessage(data) ||
+        isUsbRingAttachMessage(data) ||
+        isUsbRingDetachMessage(data) ||
+        isHidProxyMessage(data) ||
+        isHidPassthroughAttachHubMessage(data) ||
       isHidPassthroughAttachMessage(data) ||
       isHidPassthroughDetachMessage(data) ||
       isHidPassthroughInputReportMessage(data) ||
@@ -1344,6 +1348,48 @@ function emitWebUsbGuestStatus(): void {
   ctx.postMessage({ type: "usb.guest.status", snapshot } satisfies UsbGuestWebUsbStatusMessage);
 }
 
+function destroyUsbPassthroughRuntime(): void {
+  if (usbPassthroughDebugTimer !== undefined) {
+    clearInterval(usbPassthroughDebugTimer);
+    usbPassthroughDebugTimer = undefined;
+  }
+  if (usbPassthroughRuntime) {
+    usbPassthroughRuntime.destroy();
+    usbPassthroughRuntime = null;
+  }
+}
+
+function disconnectWebUsbBridge(bridge: WebUsbGuestBridge): void {
+  try {
+    bridge.set_connected(false);
+  } catch {
+    // ignore
+  }
+  try {
+    bridge.reset();
+  } catch {
+    // ignore
+  }
+}
+
+function applyWebUsbGuestControllerMode(mode: UsbGuestControllerMode): void {
+  if (webUsbGuestControllerMode === mode) return;
+  webUsbGuestControllerMode = mode;
+
+  if (webUsbGuestBridge) {
+    disconnectWebUsbBridge(webUsbGuestBridge);
+  }
+  webUsbGuestBridge = null;
+  webUsbGuestControllerKind = null;
+  webUsbGuestAttached = false;
+  webUsbGuestLastError = null;
+  destroyUsbPassthroughRuntime();
+
+  // Force re-init of the WebUSB guest bridge for the new mode.
+  maybeInitUhciDevice();
+  emitWebUsbGuestStatus();
+}
+
 const uhciHidTopology = new UhciHidTopologyManager();
 const xhciHidTopology = new XhciHidTopologyManager();
 // Source object currently wired into {@link uhciHidTopology}. This is typically the WASM
@@ -1735,72 +1781,92 @@ function maybeInitUhciDevice(): void {
   // a guest-visible UHCI controller exists.
   maybeInitSyntheticUsbHidDevices();
 
+  // WebUSB passthrough is routed based on the selected guest controller mode. Even when the user
+  // selects EHCI/xHCI, we keep UHCI initialized for Win7 HID / other legacy paths.
   if (!webUsbGuestBridge) {
-    // Deterministic policy: when xHCI/EHCI passthrough is available, prefer it for guest-visible WebUSB.
-    // Keep UHCI initialized for Win7 HID + other legacy paths.
-    const hsPick = chooseWebUsbGuestBridge({ xhciBridge: xhciControllerBridge, ehciBridge: ehciControllerBridge, uhciBridge: null });
-    if (hsPick && (hsPick.kind === "xhci" || hsPick.kind === "ehci")) {
-      const ctrl = hsPick.bridge;
-      const label = hsPick.kind === "xhci" ? "xHCI" : "EHCI";
-      // The PCI device owns the WASM bridge and calls `free()` during shutdown; wrap with a
-      // no-op `free()` so `WebUsbPassthroughRuntime` does not double-free.
-      const wrapped: WebUsbGuestBridge = {
-        set_connected: (connected) => ctrl.set_connected(connected),
-        drain_actions: () => ctrl.drain_actions(),
-        push_completion: (completion) => ctrl.push_completion(completion),
-        reset: () => ctrl.reset(),
-        pending_summary: () => {
-          const fn = (ctrl as unknown as { pending_summary?: unknown }).pending_summary;
-          if (typeof fn !== "function") return null;
-          return fn.call(ctrl) as unknown;
-        },
-        free: () => {},
-      };
+    const mode = webUsbGuestControllerMode;
 
-      webUsbGuestBridge = wrapped;
-      webUsbGuestControllerKind = hsPick.kind;
+    if (mode === "xhci" || mode === "ehci") {
+      const pick =
+        mode === "xhci"
+          ? chooseWebUsbGuestBridge({ xhciBridge: xhciControllerBridge, ehciBridge: null, uhciBridge: null })
+          : chooseWebUsbGuestBridge({ xhciBridge: null, ehciBridge: ehciControllerBridge, uhciBridge: null });
+      const label = mode === "xhci" ? "xHCI" : "EHCI";
 
-      if (!usbPassthroughRuntime) {
-        // xHCI/EHCI are high/super-speed controllers: disable the UHCI-only CONFIGURATION→OTHER_SPEED_CONFIGURATION
-        // translation in the WebUSB backend so the guest sees the device's real current-speed descriptors.
-        //
-        // The main-thread UsbBroker routes actions based on the MessagePort they arrive on, so create a
-        // dedicated port for the passthrough runtime with translation disabled.
-        const port = createUsbBrokerSubportNoOtherSpeedTranslation(ctx);
+      if (pick && pick.kind === mode) {
+        const ctrl = pick.bridge;
+        // The PCI device owns the WASM bridge and calls `free()` during shutdown; wrap with a
+        // no-op `free()` so `WebUsbPassthroughRuntime` does not double-free.
+        const wrapped: WebUsbGuestBridge = {
+          set_connected: (connected) => ctrl.set_connected(connected),
+          drain_actions: () => ctrl.drain_actions(),
+          push_completion: (completion) => ctrl.push_completion(completion),
+          reset: () => ctrl.reset(),
+          pending_summary: () => {
+            const fn = (ctrl as unknown as { pending_summary?: unknown }).pending_summary;
+            if (typeof fn !== "function") return null;
+            return fn.call(ctrl) as unknown;
+          },
+          free: () => {},
+        };
 
-        usbPassthroughRuntime = new WebUsbPassthroughRuntime({
-          bridge: wrapped,
-          port,
-          pollIntervalMs: 0,
-          initiallyBlocked: !usbAvailable,
-          // Ring handles received on the main worker channel are not compatible with the dedicated port.
-          initialRingAttach: port === ctx ? (usbRingAttach ?? undefined) : undefined,
-        });
-        usbPassthroughRuntime.start();
-        if (IS_DEV) {
-          const timer = setInterval(() => {
-            console.debug(`[io.worker] ${label} WebUSB pending_summary()`, usbPassthroughRuntime?.pendingSummary());
-          }, 1000) as unknown as number;
-          (timer as unknown as { unref?: () => void }).unref?.();
-          usbPassthroughDebugTimer = timer;
+        webUsbGuestBridge = wrapped;
+        webUsbGuestControllerKind = pick.kind;
+
+        if (!usbPassthroughRuntime) {
+          // xHCI/EHCI are high/super-speed controllers: disable the UHCI-only CONFIGURATION→OTHER_SPEED_CONFIGURATION
+          // translation in the WebUSB backend so the guest sees the device's real current-speed descriptors.
+          //
+          // The main-thread UsbBroker routes actions based on the MessagePort they arrive on, so create a
+          // dedicated port for the passthrough runtime with translation disabled.
+          const port = createUsbBrokerSubportNoOtherSpeedTranslation(ctx);
+
+          usbPassthroughRuntime = new WebUsbPassthroughRuntime({
+            bridge: wrapped,
+            port,
+            pollIntervalMs: 0,
+            initiallyBlocked: !usbAvailable,
+            // Ring handles received on the main worker channel are not compatible with the dedicated port.
+            initialRingAttach: port === ctx ? (usbRingAttach ?? undefined) : undefined,
+          });
+          usbPassthroughRuntime.start();
+          if (IS_DEV) {
+            const timer = setInterval(() => {
+              console.debug(`[io.worker] ${label} WebUSB pending_summary()`, usbPassthroughRuntime?.pendingSummary());
+            }, 1000) as unknown as number;
+            (timer as unknown as { unref?: () => void }).unref?.();
+            usbPassthroughDebugTimer = timer;
+          }
         }
+
+        if (lastUsbSelected) {
+          try {
+            applyUsbSelectedToWebUsbGuestBridge(pick.kind, wrapped, lastUsbSelected);
+            webUsbGuestAttached = lastUsbSelected.ok;
+            webUsbGuestLastError = null;
+          } catch (err) {
+            console.warn(`[io.worker] Failed to apply usb.selected to ${label} WebUSB bridge`, err);
+            webUsbGuestAttached = false;
+            webUsbGuestLastError = `Failed to apply usb.selected to ${label} WebUSB bridge: ${formatWebUsbGuestError(err)}`;
+          }
+        } else {
+          webUsbGuestAttached = false;
+          webUsbGuestLastError = null;
+        }
+
+        emitWebUsbGuestStatus();
+        return;
       }
 
-      if (lastUsbSelected) {
-        try {
-          applyUsbSelectedToWebUsbGuestBridge(hsPick.kind, wrapped, lastUsbSelected);
-          webUsbGuestAttached = lastUsbSelected.ok;
-          webUsbGuestLastError = null;
-        } catch (err) {
-          console.warn(`[io.worker] Failed to apply usb.selected to ${label} WebUSB bridge`, err);
-          webUsbGuestAttached = false;
-          webUsbGuestLastError = `Failed to apply usb.selected to ${label} WebUSB bridge: ${formatWebUsbGuestError(err)}`;
-        }
+      webUsbGuestAttached = false;
+      if (usbAvailable) {
+        webUsbGuestLastError =
+          mode === "xhci"
+            ? "XhciControllerBridge unavailable (guest-visible WebUSB passthrough unsupported in this WASM build)."
+            : "EhciControllerBridge unavailable (guest-visible WebUSB passthrough unsupported in this WASM build).";
       } else {
-        webUsbGuestAttached = false;
         webUsbGuestLastError = null;
       }
-
       emitWebUsbGuestStatus();
       return;
     }
@@ -5187,6 +5253,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       } catch (err) {
         handleUsbDemoFailure("run", err);
       }
+      return;
+    }
+
+    if (isUsbGuestControllerModeMessage(data)) {
+      applyWebUsbGuestControllerMode(data.mode);
       return;
     }
 

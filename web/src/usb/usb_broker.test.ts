@@ -190,6 +190,9 @@ describe("usb/UsbBroker", () => {
     const port = new FakePort();
     broker.attachWorkerPort(port as unknown as MessagePort);
 
+    // Ignore the initial controller-mode broadcast during attachment.
+    port.posted.length = 0;
+
     port.emit({ type: "usb.querySelected" });
     expect(port.posted).toEqual([{ type: "usb.selected", ok: false }]);
 
@@ -535,6 +538,8 @@ describe("usb/UsbBroker", () => {
 
     const port = new FakePort();
     broker.attachWorkerPort(port as unknown as MessagePort);
+    // Ignore the initial controller-mode broadcast during attachment.
+    port.posted.length = 0;
 
     port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 1.5, endpoint: 0x81, length: "bad" } });
     await Promise.resolve();

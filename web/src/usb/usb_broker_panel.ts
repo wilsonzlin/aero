@@ -211,6 +211,29 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
     },
   }) as HTMLButtonElement;
 
+  const controllerModeSelect = el(
+    "select",
+    {
+      onchange: () => {
+        try {
+          const value = controllerModeSelect.value;
+          if (value === "uhci" || value === "ehci") {
+            broker.setGuestControllerMode(value);
+          }
+        } catch {
+          // ignore
+        }
+      },
+    },
+    el("option", { value: "uhci", text: "UHCI (full-speed)" }),
+    el("option", { value: "ehci", text: "EHCI (high-speed)" }),
+  ) as HTMLSelectElement;
+  try {
+    controllerModeSelect.value = broker.getGuestControllerMode();
+  } catch {
+    controllerModeSelect.value = "uhci";
+  }
+
   setStatus(null);
 
   if (!supported) {
@@ -286,6 +309,7 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
     { class: "panel" },
     el("h2", { text: "WebUSB passthrough broker" }),
     hint,
+    el("div", { class: "row" }, el("span", { text: "Guest controller:" }), controllerModeSelect),
     el("div", { class: "row" }, selectButton, refreshButton),
     el("div", { class: "row" }, detachButton, forgetButton),
     status,

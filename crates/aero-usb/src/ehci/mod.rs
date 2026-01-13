@@ -670,12 +670,14 @@ impl IoSnapshot for EhciController {
         if let Some(async_addr) = r.u32(TAG_ASYNCLISTADDR)? {
             self.regs.asynclistaddr = async_addr & ASYNCLISTADDR_MASK;
         }
-        if let Some(cf) = r.u32(TAG_CONFIGFLAG)? {
-            self.regs.configflag = cf & CONFIGFLAG_CF;
+        if let Some(config) = r.u32(TAG_CONFIGFLAG)? {
+            // Avoid calling `write_configflag` here: it mutates PORTSC ownership bits. The snapshot contains
+            // the per-port owner state already.
+            self.regs.configflag = config & CONFIGFLAG_CF;
         }
         self.hub
             .set_configflag_for_restore(self.regs.configflag & CONFIGFLAG_CF != 0);
-        // We currently model a 32-bit addressing controller; CTRLDSSEGMENT is unused.
+        // We currently model a 32-bit addressing controller (HCCPARAMS.AC64=0); CTRLDSSEGMENT is unused.
         if let Some(seg) = r.u32(TAG_CTRLDSSEGMENT)? {
             self.write_ctrldssegment(seg);
         }
@@ -696,7 +698,6 @@ impl IoSnapshot for EhciController {
         }
 
         self.update_irq();
-
         Ok(())
     }
 }

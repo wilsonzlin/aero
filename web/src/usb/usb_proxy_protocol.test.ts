@@ -7,6 +7,7 @@ import {
   isUsbCompletionMessage,
   isUsbHostAction,
   isUsbHostCompletion,
+  isUsbGuestControllerModeMessage,
   isUsbProxyMessage,
   isUsbRingAttachMessage,
   isUsbRingAttachRequestMessage,
@@ -168,6 +169,10 @@ describe("usb/usb_proxy_protocol", () => {
     expect(isUsbProxyMessage(ringDetach)).toBe(true);
     expect(isUsbProxyMessage({ type: "usb.ringDetach" })).toBe(true);
     expect(isUsbProxyMessage({ type: "usb.ringDetach", reason: 123 })).toBe(false);
+    expect(isUsbGuestControllerModeMessage({ type: "usb.guest.controller", mode: "uhci" })).toBe(true);
+    expect(isUsbProxyMessage({ type: "usb.guest.controller", mode: "uhci" })).toBe(true);
+    expect(isUsbGuestControllerModeMessage({ type: "usb.guest.controller", mode: "ehci" })).toBe(true);
+    expect(isUsbGuestControllerModeMessage({ type: "usb.guest.controller", mode: "nope" })).toBe(false);
     expect(
       isUsbProxyMessage({
         type: "usb.guest.status",

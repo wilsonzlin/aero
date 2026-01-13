@@ -85,10 +85,8 @@ pub use uhci_controller_bridge::UhciControllerBridge;
 
 #[cfg(target_arch = "wasm32")]
 mod ehci_controller_bridge;
-
 #[cfg(target_arch = "wasm32")]
 pub use ehci_controller_bridge::EhciControllerBridge;
-
 #[cfg(target_arch = "wasm32")]
 mod xhci_controller_bridge;
 #[cfg(target_arch = "wasm32")]
@@ -2593,7 +2591,6 @@ impl<'a> AudioSink for WorkletBridgeStatsSink<'a> {
             .wrapping_add(requested_frames.saturating_sub(written));
     }
 }
-
 #[cfg(all(test, target_arch = "wasm32"))]
 mod hda_dma_oob_tests {
     use super::*;
