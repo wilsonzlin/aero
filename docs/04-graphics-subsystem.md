@@ -145,7 +145,8 @@ For Windows 7 specifically, the **primary boot display** must be provided by the
 
 Current status: the canonical `aero_machine::Machine` boot display is still provided by the
 standalone `aero_gpu_vga` VGA/VBE implementation (with a minimal “Standard VGA”-like PCI stub at
-`00:0c.0` for VBE LFB routing) when `MachineConfig::enable_vga=true`.
+`00:0c.0` for VBE LFB routing; the LFB base follows the stub’s BIOS-assigned BAR) when
+`MachineConfig::enable_vga=true`.
 
 The canonical AeroGPU PCI identity (`A3A0:0001` at `00:07.0`) can be enabled via
 `MachineConfig::enable_aerogpu=true`. In `aero_machine` today this wires BAR1-backed VRAM and

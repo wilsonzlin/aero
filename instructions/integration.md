@@ -363,10 +363,11 @@ With `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`), the canonica
 * Legacy VGA ports: `0x3B0..0x3DF` (includes both mono and color decode ranges; common subset `0x3C0..0x3DF`)
 * VBE ports: `0x01CE/0x01CF`
 * Legacy VRAM window: `0xA0000..0xBFFFF`
-* Fixed SVGA linear framebuffer (LFB): `0xE000_0000` (within the reserved below-4 GiB PCI/MMIO hole)
+* SVGA linear framebuffer (LFB): base is **configurable** and should match the VGA PCI stub’s
+  BIOS-assigned BAR (often near `0xE000_0000` with the current default PCI MMIO allocator base)
 
-To make the LFB reachable via the canonical PCI MMIO window (`0xE000_0000..`), the machine also
-exposes a **minimal PCI VGA function** (Bochs/QEMU "Standard VGA"-like IDs) at `00:0c.0`.
+To make the LFB reachable via PCI MMIO, the machine also exposes a **minimal PCI VGA function**
+(Bochs/QEMU "Standard VGA"-like IDs) at `00:0c.0`.
 
 This PCI stub is intentionally *not* at `00:07.0`: that BDF is reserved for the long-term AeroGPU
 WDDM device identity (`PCI\VEN_A3A0&DEV_0001`; see

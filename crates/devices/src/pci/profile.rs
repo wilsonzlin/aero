@@ -669,8 +669,9 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 ///   VGA decode); the full BAR0 WDDM/MMIO/ring protocol is integrated separately.
 /// - Boot display in the canonical machine is still provided by the standalone `aero_gpu_vga`
 ///   VGA/VBE device model when `MachineConfig::enable_vga=true`. In that mode the machine also
-///   exposes a separate Bochs/QEMU-compatible VGA PCI stub at `00:0c.0` so the fixed VBE linear
-///   framebuffer (LFB) can be routed through the PCI MMIO window.
+///   exposes a separate Bochs/QEMU-compatible VGA PCI stub at `00:0c.0` so the VBE linear
+///   framebuffer (LFB) aperture can be routed through the PCI MMIO window (with an LFB base derived
+///   from the BIOS/PCI BAR assignment, not hard-coded).
 pub const AEROGPU: PciDeviceProfile = PciDeviceProfile {
     name: "aerogpu",
     bdf: PciBdf::new(0, 7, 0),

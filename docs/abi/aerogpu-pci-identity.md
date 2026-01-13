@@ -23,7 +23,7 @@ The canonical machine supports **two mutually-exclusive** display configurations
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): provide boot display via the
   standalone `aero_gpu_vga` VGA/VBE implementation, plus a minimal Bochs/QEMU “Standard VGA”-like
   PCI stub at `00:0c.0` (`1234:1111`) used only to route the VBE linear framebuffer through the PCI
-  MMIO window.
+  MMIO window (the LFB base follows the stub’s BIOS/PCI BAR assignment, not a fixed constant).
 
 See also:
 

@@ -25,8 +25,9 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   command submission + scanout + VBE mode set) is integrated separately.
 - **Legacy VGA/VBE (transitional):** `MachineConfig::enable_vga=true` uses the standalone
   `aero_gpu_vga` VGA/VBE device model for boot display, and exposes a minimal Bochs/QEMU “Standard
-  VGA”-like PCI stub at `00:0c.0` (`1234:1111`) solely so the VBE linear framebuffer can be routed
-  through the PCI MMIO router.
+  VGA”-like PCI stub at `00:0c.0` (`1234:1111`) so the VBE linear framebuffer (LFB) aperture is
+  routable via the PCI MMIO router. The LFB base follows the stub’s BIOS-assigned BAR (often near
+  the start of the PCI MMIO window in the current PC profile).
 
 `enable_aerogpu` and `enable_vga` are **mutually exclusive** (the machine rejects configurations
 that enable both).
