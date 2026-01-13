@@ -256,17 +256,51 @@ pub fn decode_one(
 
     // Best-effort prefix parsing for consumers that want raw prefix info.
     // This does not affect the backend decode.
-    let bytes = if bytes.len() > MAX_INSTRUCTION_LEN {
-        &bytes[..MAX_INSTRUCTION_LEN]
-    } else {
-        bytes
-    };
-    let prefixes = parse_prefixes(mode, bytes).map_err(|_| DecodeError::UnexpectedEof)?;
+    let prefixes = decode_prefixes(mode, bytes)?;
 
     Ok(DecodedInstruction {
         prefixes,
         instruction,
     })
+}
+
+/// Scan legacy/REX/VEX/EVEX/XOP prefixes and return the parsed prefix state and
+/// number of bytes consumed as prefixes.
+///
+/// This is a fast, allocation-free helper for consumers that only need prefix
+/// metadata (e.g. "has address-size override?") without performing a full
+/// [`iced_x86`] decode.
+///
+/// The scan honors the architectural [`MAX_INSTRUCTION_LEN`] cap: if `bytes` is
+/// longer than 15 bytes, only the first 15 bytes are considered.
+///
+/// # Errors
+///
+/// - [`DecodeError::EmptyInput`] if `bytes` is empty.
+/// - [`DecodeError::UnexpectedEof`] if a VEX/EVEX/XOP prefix lead byte is present
+///   but the full prefix sequence is truncated by `bytes` (or by the 15-byte cap).
+#[inline]
+pub fn scan_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<(Prefixes, usize), DecodeError> {
+    if bytes.is_empty() {
+        return Err(DecodeError::EmptyInput);
+    }
+
+    let bytes = if bytes.len() > MAX_INSTRUCTION_LEN {
+        &bytes[..MAX_INSTRUCTION_LEN]
+    } else {
+        bytes
+    };
+
+    parse_prefixes(mode, bytes).map_err(|_| DecodeError::UnexpectedEof)
+}
+
+/// Scan legacy/REX/VEX/EVEX/XOP prefixes and return the parsed prefix state.
+///
+/// This is equivalent to [`scan_prefixes`] but discards the returned prefix
+/// length.
+#[inline]
+pub fn decode_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, DecodeError> {
+    Ok(scan_prefixes(mode, bytes)?.0)
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -275,7 +309,10 @@ enum PrefixParseError {
 }
 
 /// Parse legacy/REX/VEX/EVEX/XOP prefixes (best-effort, for metadata only).
-fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixParseError> {
+fn parse_prefixes(
+    mode: DecodeMode,
+    bytes: &[u8],
+) -> Result<(Prefixes, usize), PrefixParseError> {
     let mut p = Prefixes::default();
     let mut i = 0usize;
 
@@ -364,6 +401,7 @@ fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixPars
                     bytes: [bytes[i], bytes[i + 1], 0],
                     len: 2,
                 });
+                i += 2;
                 break;
             }
             0xC4 => {
@@ -383,6 +421,7 @@ fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixPars
                     bytes: [bytes[i], bytes[i + 1], bytes[i + 2]],
                     len: 3,
                 });
+                i += 3;
                 break;
             }
             0x62 => {
@@ -401,6 +440,7 @@ fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixPars
                 p.evex = Some(Evex {
                     bytes: [bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]],
                 });
+                i += 4;
                 break;
             }
             0x8F => {
@@ -419,6 +459,7 @@ fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixPars
                 p.xop = Some(Xop {
                     bytes: [bytes[i], bytes[i + 1], bytes[i + 2]],
                 });
+                i += 3;
                 break;
             }
 
@@ -432,5 +473,5 @@ fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixPars
         }
     }
 
-    Ok(p)
+    Ok((p, i))
 }

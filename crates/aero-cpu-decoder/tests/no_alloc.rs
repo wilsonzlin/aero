@@ -1,4 +1,4 @@
-use aero_cpu_decoder::{decode_one, DecodeMode};
+use aero_cpu_decoder::{decode_one, scan_prefixes, DecodeMode};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -29,10 +29,14 @@ fn decode_one_does_not_allocate_per_instruction() {
     // to happen before we begin counting.
     let bytes = [0x48, 0x89, 0xD8]; // MOV RAX, RBX
     let _ = decode_one(DecodeMode::Bits64, 0x1000, &bytes).expect("warmup decode");
+    let _ = scan_prefixes(DecodeMode::Bits64, &bytes).expect("warmup scan");
 
     ALLOCATIONS.store(0, Ordering::Relaxed);
 
     for _ in 0..10_000 {
+        let (_prefixes, consumed) = scan_prefixes(DecodeMode::Bits64, &bytes).expect("scan");
+        assert_eq!(consumed, 1);
+
         let inst = decode_one(DecodeMode::Bits64, 0x1000, &bytes).expect("decode");
         assert_eq!(inst.len(), 3);
     }
