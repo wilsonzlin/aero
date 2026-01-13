@@ -611,6 +611,13 @@ VirtIoSndHwDrainEventqUsed(
     ULONG_PTR off;
     VIRTIOSND_SG sg;
     NTSTATUS status;
+    EVT_VIRTIOSND_EVENTQ_EVENT* cb;
+    void* cbCtx;
+    KIRQL oldIrql;
+    PUCHAR bufVa;
+    BOOLEAN haveEvent;
+    ULONG evtType;
+    ULONG evtData;
 
     UNREFERENCED_PARAMETER(QueueIndex);
 
@@ -672,6 +679,12 @@ VirtIoSndHwDrainEventqUsed(
      */
     InterlockedIncrement(&dx->EventqStats.Completions);
 
+    haveEvent = FALSE;
+    evtType = 0;
+    evtData = 0;
+
+    bufVa = (PUCHAR)dx->EventqBufferPool.Va + off;
+
     if (UsedLen >= (UINT32)sizeof(VIRTIO_SND_EVENT)) {
         const UINT32 cappedLen = (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) ? (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE : UsedLen;
         VIRTIO_SND_EVENT_PARSED evt;
@@ -679,8 +692,11 @@ VirtIoSndHwDrainEventqUsed(
         /* Ensure device DMA writes are visible before inspecting the buffer. */
         KeMemoryBarrier();
 
-        status = VirtioSndParseEvent(Cookie, cappedLen, &evt);
+        status = VirtioSndParseEvent(bufVa, cappedLen, &evt);
         if (NT_SUCCESS(status)) {
+            haveEvent = TRUE;
+            evtType = evt.Type;
+            evtData = evt.Data;
             InterlockedIncrement(&dx->EventqStats.Parsed);
 
             switch (evt.Kind) {
@@ -708,6 +724,22 @@ VirtIoSndHwDrainEventqUsed(
         }
     } else if (UsedLen != 0) {
         InterlockedIncrement(&dx->EventqStats.ShortBuffers);
+    }
+
+    /* Best-effort dispatch to the optional higher-level callback (WaveRT). */
+    if (haveEvent && dx->Started) {
+        cb = NULL;
+        cbCtx = NULL;
+        KeAcquireSpinLock(&dx->EventqLock, &oldIrql);
+        cb = dx->EventqCallback;
+        cbCtx = dx->EventqCallbackContext;
+        KeReleaseSpinLock(&dx->EventqLock, oldIrql);
+
+        if (cb != NULL) {
+            InterlockedIncrement(&dx->EventqCallbackInFlight);
+            cb(cbCtx, evtType, evtData);
+            InterlockedDecrement(&dx->EventqCallbackInFlight);
+        }
     }
 
     sg.addr = dx->EventqBufferPool.DmaAddr + (UINT64)off;
@@ -926,6 +958,10 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
      */
     Dx->Started = FALSE;
 
+    /* Best-effort: disable eventq callbacks during teardown. */
+    Dx->EventqCallback = NULL;
+    Dx->EventqCallbackContext = NULL;
+
     cancelStatus = Dx->Removed ? STATUS_DEVICE_REMOVED : STATUS_CANCELLED;
 
     /*
@@ -1056,6 +1092,18 @@ NTSTATUS VirtIoSndStartHardware(
     }
 
     VirtIoSndStopHardware(Dx);
+
+    /*
+     * Initialize eventq callback plumbing. StopHardware may be invoked as a
+     * best-effort cleanup path on a partially-initialized Dx, so avoid relying
+     * on these fields being initialized there.
+     */
+    KeInitializeSpinLock(&Dx->EventqLock);
+    Dx->EventqCallback = NULL;
+    Dx->EventqCallbackContext = NULL;
+    Dx->EventqCallbackInFlight = 0;
+    Dx->PcmXrunWorkQueued = 0;
+    Dx->PcmXrunPendingMask = 0;
 
     status = VirtIoSndAcquireBusInterface(Dx->LowerDeviceObject, &Dx->PciInterface, &Dx->PciInterfaceAcquired);
     if (!NT_SUCCESS(status)) {
@@ -1705,4 +1753,23 @@ ULONG VirtIoSndHwDrainRxCompletions(PVIRTIOSND_DEVICE_EXTENSION Dx, EVT_VIRTIOSN
     }
 
     return VirtIoSndRxDrainCompletions(&Dx->Rx, Callback, Context);
+}
+
+_Use_decl_annotations_
+VOID
+VirtIoSndHwSetEventCallback(
+    PVIRTIOSND_DEVICE_EXTENSION Dx,
+    EVT_VIRTIOSND_EVENTQ_EVENT* Callback,
+    void* Context)
+{
+    KIRQL oldIrql;
+
+    if (Dx == NULL) {
+        return;
+    }
+
+    KeAcquireSpinLock(&Dx->EventqLock, &oldIrql);
+    Dx->EventqCallback = Callback;
+    Dx->EventqCallbackContext = Context;
+    KeReleaseSpinLock(&Dx->EventqLock, oldIrql);
 }

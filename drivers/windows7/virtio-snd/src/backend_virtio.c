@@ -174,6 +174,7 @@ static NTSTATUS
 VirtIoSndBackendVirtio_Stop(_In_ PVOID Context)
 {
     PVIRTIOSND_BACKEND_VIRTIO ctx;
+    NTSTATUS status;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
@@ -193,7 +194,12 @@ VirtIoSndBackendVirtio_Stop(_In_ PVOID Context)
         return STATUS_SUCCESS;
     }
 
-    return VirtioSndCtrlStop(&ctx->Dx->Control);
+    status = VirtioSndCtrlStop(&ctx->Dx->Control);
+    if (status == STATUS_INVALID_DEVICE_STATE) {
+        /* Best-effort: treat "already stopped" as success. */
+        return STATUS_SUCCESS;
+    }
+    return status;
 }
 
 static NTSTATUS
@@ -227,6 +233,10 @@ VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
     VirtIoSndUninitTxEngine(ctx->Dx);
     ctx->RenderBufferBytes = 0;
     ctx->RenderPeriodBytes = 0;
+    if (status == STATUS_INVALID_DEVICE_STATE) {
+        /* Best-effort: RELEASE is idempotent for WaveRT teardown paths. */
+        return STATUS_SUCCESS;
+    }
     return status;
 }
 
@@ -638,6 +648,7 @@ static NTSTATUS
 VirtIoSndBackendVirtio_StopCapture(_In_ PVOID Context)
 {
     PVIRTIOSND_BACKEND_VIRTIO ctx;
+    NTSTATUS status;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
@@ -652,7 +663,11 @@ VirtIoSndBackendVirtio_StopCapture(_In_ PVOID Context)
         return STATUS_SUCCESS;
     }
 
-    return VirtioSndCtrlStop1(&ctx->Dx->Control);
+    status = VirtioSndCtrlStop1(&ctx->Dx->Control);
+    if (status == STATUS_INVALID_DEVICE_STATE) {
+        return STATUS_SUCCESS;
+    }
+    return status;
 }
 
 static NTSTATUS
@@ -681,6 +696,9 @@ VirtIoSndBackendVirtio_ReleaseCapture(_In_ PVOID Context)
     VirtIoSndUninitRxEngine(ctx->Dx);
     ctx->CaptureBufferBytes = 0;
     ctx->CapturePeriodBytes = 0;
+    if (status == STATUS_INVALID_DEVICE_STATE) {
+        return STATUS_SUCCESS;
+    }
     return status;
 }
 

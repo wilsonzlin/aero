@@ -49,6 +49,13 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
     ULONG_PTR off;
     VIRTIOSND_SG sg;
     NTSTATUS status;
+    EVT_VIRTIOSND_EVENTQ_EVENT* cb;
+    void* cbCtx;
+    KIRQL oldIrql;
+    PUCHAR bufVa;
+    BOOLEAN haveEvent;
+    ULONG evtType;
+    ULONG evtData;
 
     UNREFERENCED_PARAMETER(QueueIndex);
 
@@ -122,6 +129,20 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
 
     InterlockedIncrement(&dx->EventqStats.Completions);
 
+    haveEvent = FALSE;
+    evtType = 0;
+    evtData = 0;
+
+    /*
+     * Parse the buffer before reposting it.
+     *
+     * Ensure device writes are visible before reading. The split-ring virtqueue
+     * implementation already issues a read barrier after observing used->idx,
+     * but keep the eventq path self-contained and robust to alternate queue
+     * implementations.
+     */
+    bufVa = (PUCHAR)dx->EventqBufferPool.Va + off;
+
     /*
      * Best-effort parse/log. Never let parsing affect reposting; starving eventq
      * would make it impossible for a device to deliver future events.
@@ -133,8 +154,11 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
         /* Ensure device DMA writes are visible before inspecting the buffer. */
         KeMemoryBarrier();
 
-        status = VirtioSndParseEvent(Cookie, cappedLen, &evt);
+        status = VirtioSndParseEvent(bufVa, cappedLen, &evt);
         if (NT_SUCCESS(status)) {
+            haveEvent = TRUE;
+            evtType = evt.Type;
+            evtData = evt.Data;
             InterlockedIncrement(&dx->EventqStats.Parsed);
 
             switch (evt.Kind) {
@@ -186,6 +210,27 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
             "eventq: short completion ignored (%lu < %Iu)\n",
             (ULONG)UsedLen,
             sizeof(VIRTIO_SND_EVENT));
+    }
+
+    /*
+     * Dispatch parsed events to the optional higher-level callback (WaveRT).
+     *
+     * Contract v1 must remain correct without eventq; treat this as best-effort
+     * and skip dispatch during teardown.
+     */
+    if (haveEvent && dx->Started) {
+        cb = NULL;
+        cbCtx = NULL;
+        KeAcquireSpinLock(&dx->EventqLock, &oldIrql);
+        cb = dx->EventqCallback;
+        cbCtx = dx->EventqCallbackContext;
+        KeReleaseSpinLock(&dx->EventqLock, oldIrql);
+
+        if (cb != NULL) {
+            InterlockedIncrement(&dx->EventqCallbackInFlight);
+            cb(cbCtx, evtType, evtData);
+            InterlockedDecrement(&dx->EventqCallbackInFlight);
+        }
     }
 
     sg.addr = dx->EventqBufferPool.DmaAddr + (UINT64)off;

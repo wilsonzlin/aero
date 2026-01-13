@@ -16,6 +16,15 @@
 #endif
 #include "wavert.h"
 
+/*
+ * Eventq handling:
+ *
+ * Aero contract v1 defines no eventq messages, but virtio-snd specifies
+ * asynchronous PCM events (period-elapsed / XRUN). Newer device models may emit
+ * these events; handle them defensively to avoid crashes and best-effort recover
+ * from XRUN without relying on eventq for correctness.
+ */
+
 #ifndef KSAUDIO_SPEAKER_MONO
 // Some WDK environments may not define KSAUDIO_SPEAKER_MONO; it maps to FRONT_CENTER.
 #define KSAUDIO_SPEAKER_MONO SPEAKER_FRONT_CENTER
@@ -105,6 +114,24 @@ static const IMiniportWaveRTStreamVtbl g_VirtIoSndWaveRtStreamVtbl;
 #if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
 static EVT_VIRTIOSND_RX_COMPLETION VirtIoSndWaveRtRxCompletion;
 #endif
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+static VOID VirtIoSndWaveRtPcmXrunWorkItem(_In_ PVOID Context);
+static VOID VirtIoSndWaveRtEventqCallback(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULONG Data);
+#endif
+
+static __forceinline VOID VirtIoSndWaveRtInterlockedOr(_Inout_ volatile LONG* Target, _In_ LONG Mask)
+{
+    LONG oldValue;
+    LONG newValue;
+    for (;;) {
+        oldValue = *Target;
+        newValue = oldValue | Mask;
+        if (InterlockedCompareExchange(Target, newValue, oldValue) == oldValue) {
+            break;
+        }
+    }
+}
 
 static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_AddRef(_In_ IMiniportWaveRT *This);
 static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWaveRT *This);
@@ -351,6 +378,153 @@ VirtIoSndWaveRtStartTimer(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
     dueTime.QuadPart = -(LONGLONG)period100ns;
     KeSetTimerEx(&Stream->Timer, dueTime, (LONG)periodMs, &Stream->TimerDpc);
 }
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+static __forceinline VOID
+VirtIoSndWaveRtSchedulePcmXrunRecovery(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx, _In_ ULONG StreamId)
+{
+    LONG bit;
+
+    if (Dx == NULL) {
+        return;
+    }
+
+    /*
+     * Only the two contract streams are supported by this driver. Ignore any
+     * out-of-range stream ids (malformed/spoofed events).
+     */
+    if (StreamId == VIRTIO_SND_PLAYBACK_STREAM_ID) {
+        bit = 0x1;
+    } else if (StreamId == VIRTIO_SND_CAPTURE_STREAM_ID) {
+        bit = 0x2;
+    } else {
+        return;
+    }
+
+    VirtIoSndWaveRtInterlockedOr(&Dx->PcmXrunPendingMask, bit);
+
+    /*
+     * Coalesce XRUN recoveries into a single work item. If events are spammed we
+     * still perform bounded control-plane work.
+     */
+    if (InterlockedCompareExchange(&Dx->PcmXrunWorkQueued, 1, 0) == 0) {
+        /*
+         * The work item is stored in the device extension; ensure the device
+         * object stays alive until it runs (STOP/REMOVE can delete the device
+         * object soon after StopHardware returns).
+         */
+        if (Dx->Self != NULL) {
+            ObReferenceObject(Dx->Self);
+        }
+        ExInitializeWorkItem(&Dx->PcmXrunWorkItem, VirtIoSndWaveRtPcmXrunWorkItem, Dx);
+        ExQueueWorkItem(&Dx->PcmXrunWorkItem, DelayedWorkQueue);
+    }
+}
+
+static VOID
+VirtIoSndWaveRtPcmXrunWorkItem(_In_ PVOID Context)
+{
+    PVIRTIOSND_DEVICE_EXTENSION dx;
+    LONG mask;
+    BOOLEAN requeued;
+    PDEVICE_OBJECT selfObject;
+
+    dx = (PVIRTIOSND_DEVICE_EXTENSION)Context;
+    if (dx == NULL) {
+        return;
+    }
+
+    requeued = FALSE;
+    selfObject = dx->Self;
+
+    for (;;) {
+        mask = InterlockedExchange(&dx->PcmXrunPendingMask, 0);
+        if (mask == 0) {
+            break;
+        }
+
+        if (dx->Removed || !dx->Started || dx->Control.DmaCtx == NULL) {
+            break;
+        }
+
+        /*
+         * Best-effort XRUN recovery:
+         *  - Re-issue PCM_START for the affected stream.
+         *
+         * virtiosnd_control intentionally sends START even when the local state
+         * machine believes the stream is already Running, so this can recover
+         * from device-side XRUN handling that implicitly stops a stream.
+         */
+        if ((mask & 0x1) != 0) {
+            (VOID)VirtioSndCtrlStop(&dx->Control);
+            (VOID)VirtioSndCtrlStart(&dx->Control);
+        }
+        if ((mask & 0x2) != 0) {
+            (VOID)VirtioSndCtrlStop1(&dx->Control);
+            (VOID)VirtioSndCtrlStart1(&dx->Control);
+        }
+    }
+
+    InterlockedExchange(&dx->PcmXrunWorkQueued, 0);
+
+    /*
+     * If additional XRUNs arrived while we were running, re-queue once. This is
+     * bounded by the single outstanding work item guarantee.
+     */
+    if (InterlockedCompareExchange(&dx->PcmXrunPendingMask, 0, 0) != 0) {
+        if (InterlockedCompareExchange(&dx->PcmXrunWorkQueued, 1, 0) == 0) {
+            ExInitializeWorkItem(&dx->PcmXrunWorkItem, VirtIoSndWaveRtPcmXrunWorkItem, dx);
+            ExQueueWorkItem(&dx->PcmXrunWorkItem, DelayedWorkQueue);
+            requeued = TRUE;
+        }
+    }
+
+    if (!requeued && selfObject != NULL) {
+        ObDereferenceObject(selfObject);
+    }
+}
+
+static VOID
+VirtIoSndWaveRtEventqCallback(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULONG Data)
+{
+    PVIRTIOSND_DEVICE_EXTENSION dx;
+
+    dx = (PVIRTIOSND_DEVICE_EXTENSION)Context;
+    if (dx == NULL) {
+        return;
+    }
+
+    if (dx->Removed || !dx->Started) {
+        return;
+    }
+
+    switch (Type) {
+    case VIRTIO_SND_EVT_PCM_XRUN: {
+        static volatile LONG xrunLog;
+        LONG n;
+
+        n = InterlockedIncrement(&xrunLog);
+        if ((n & 0xFu) == 1) {
+            VIRTIOSND_TRACE_ERROR("wavert: eventq: PCM XRUN (stream=%lu)\n", Data);
+        }
+
+        VirtIoSndWaveRtSchedulePcmXrunRecovery(dx, Data);
+        break;
+    }
+    case VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED:
+        /*
+         * Optional pacing signal.
+         *
+         * The WaveRT miniport keeps timer-based pacing to remain compatible with
+         * contract v1 devices that emit no events. Period-elapsed events are
+         * therefore treated as a no-op today.
+         */
+        break;
+    default:
+        break;
+    }
+}
+#endif /* !defined(AERO_VIRTIO_SND_IOPORT_LEGACY) */
 
 static VOID
 VirtIoSndWaveRtWaitForRxIdle(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream, _In_opt_ VIRTIOSND_PORTCLS_DX Dx)
@@ -1124,6 +1298,14 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
             VIRTIOSND_TRACE("wavert: using legacy-ioport virtio backend\n");
 #else
             VIRTIOSND_TRACE("wavert: using virtio backend\n");
+            /*
+             * Best-effort eventq hook: register for virtio-snd PCM events (XRUN /
+             * period-elapsed) for robustness. Contract v1 does not emit events;
+             * the miniport must remain correct without them.
+             */
+            if (dx != NULL && dx->Started && !dx->Removed) {
+                VirtIoSndHwSetEventCallback(dx, VirtIoSndWaveRtEventqCallback, dx);
+            }
 #endif
             return STATUS_SUCCESS;
         }

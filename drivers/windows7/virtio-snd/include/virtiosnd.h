@@ -112,6 +112,15 @@ typedef struct _VIRTIOSND_EVENTQ_STATS {
     volatile LONG CtlNotify;
 } VIRTIOSND_EVENTQ_STATS, *PVIRTIOSND_EVENTQ_STATS;
 
+/*
+ * Optional eventq callback type (WaveRT).
+ *
+ * The callback is invoked from the interrupt/DPC path after parsing a virtio-snd
+ * event (type/data). Higher layers must treat it as best-effort: contract v1
+ * devices emit no events and drivers must not depend on them.
+ */
+typedef VOID EVT_VIRTIOSND_EVENTQ_EVENT(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULONG Data);
+
 typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     ULONG Signature;
 
@@ -212,6 +221,34 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     VIRTIOSND_DMA_BUFFER EventqBufferPool;
     ULONG EventqBufferCount;
     VIRTIOSND_EVENTQ_STATS EventqStats;
+
+    /*
+     * Optional eventq callback hook (WaveRT).
+     *
+     * Contract v1 drivers must not depend on eventq, but future device models
+     * may emit virtio-snd spec events (PCM period-elapsed / XRUN). The INTx DPC
+     * parses eventq buffers and dispatches events via this callback.
+     *
+     * IRQL: callback is invoked at <= DISPATCH_LEVEL.
+     */
+    KSPIN_LOCK EventqLock;
+    EVT_VIRTIOSND_EVENTQ_EVENT* EventqCallback;
+    void* EventqCallbackContext;
+    volatile LONG EventqCallbackInFlight;
+
+    /*
+     * Best-effort WaveRT XRUN recovery work item (coalesced).
+     *
+     * XRUN events are delivered at DISPATCH_LEVEL; WaveRT recovery may require
+     * PASSIVE_LEVEL control-plane operations (PCM_START). To avoid allocating or
+     * queueing unbounded work items when events are spammed, we coalesce pending
+     * XRUN notifications into a bitmask and process them on a single work item.
+     *
+     * Pending mask bit 0: stream 0 (playback), bit 1: stream 1 (capture).
+     */
+    WORK_QUEUE_ITEM PcmXrunWorkItem;
+    volatile LONG PcmXrunWorkQueued;
+    volatile LONG PcmXrunPendingMask;
 
     BOOLEAN Started;
     BOOLEAN Removed;
@@ -368,6 +405,17 @@ _IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG VirtIoSndHwDrainRxCompletions(
     _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
     _In_opt_ EVT_VIRTIOSND_RX_COMPLETION* Callback,
+    _In_opt_ void* Context);
+
+/*
+ * Set the eventq callback invoked from the INTx DPC for parsed virtio-snd events.
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID VirtIoSndHwSetEventCallback(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_opt_ EVT_VIRTIOSND_EVENTQ_EVENT* Callback,
     _In_opt_ void* Context);
 
 #ifdef __cplusplus
