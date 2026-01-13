@@ -1089,7 +1089,8 @@ fn protocol_parses_all_opcodes() {
 fn protocol_preserves_stage_ex_for_stage_bound_packets() {
     let stage_compute = AerogpuShaderStage::Compute as u32;
 
-    // Use distinct non-zero values per opcode so copy/paste mistakes are caught.
+    // Use non-zero values per opcode so copy/paste mistakes are caught (only a small set of
+    // stage_ex values exist, so some reuse is unavoidable).
     let stage_ex_create_shader = AerogpuShaderStageEx::Hull as u32;
     let stage_ex_set_texture = AerogpuShaderStageEx::Domain as u32;
     let stage_ex_set_samplers = AerogpuShaderStageEx::Geometry as u32;

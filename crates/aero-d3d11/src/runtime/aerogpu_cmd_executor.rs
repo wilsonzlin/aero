@@ -26,15 +26,15 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_set_shader_resource_buffers_bindings_le,
     decode_cmd_set_unordered_access_buffers_bindings_le, decode_cmd_set_vertex_buffers_bindings_le,
     decode_cmd_upload_resource_payload_le,
-    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR,
-    AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
+    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuShaderStage,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
     AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
     AEROGPU_RESOURCE_USAGE_STORAGE, AEROGPU_RESOURCE_USAGE_TEXTURE,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
-use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+use aero_protocol::aerogpu::aerogpu_pci::{abi_minor as aerogpu_abi_minor, AerogpuFormat};
 use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG_READONLY};
 use anyhow::{anyhow, bail, Context, Result};
 
@@ -1231,6 +1231,13 @@ pub struct AerogpuD3d11Executor {
     queue: wgpu::Queue,
     backend: wgpu::Backend,
 
+    /// ABI minor version of the command stream currently being executed.
+    ///
+    /// This gates interpretation of the `stage_ex` encoding that overloads `reserved0` when
+    /// `shader_stage == COMPUTE`. Older guests/streams may not reliably zero `reserved0`, so we
+    /// must ignore it when `cmd_stream_abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR`.
+    cmd_stream_abi_minor: u16,
+
     resources: AerogpuD3d11Resources,
     state: AerogpuD3d11State,
     shared_surfaces: SharedSurfaceTable,
@@ -1512,6 +1519,7 @@ impl AerogpuD3d11Executor {
             device,
             queue,
             backend,
+            cmd_stream_abi_minor: AEROGPU_STAGE_EX_MIN_ABI_MINOR,
             resources: AerogpuD3d11Resources::default(),
             state: AerogpuD3d11State::default(),
             shared_surfaces: SharedSurfaceTable::default(),
@@ -2543,6 +2551,7 @@ impl AerogpuD3d11Executor {
         self.gpu_scratch.reset();
         let iter = AerogpuCmdStreamIter::new(stream_bytes)
             .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
+        self.cmd_stream_abi_minor = aerogpu_abi_minor(iter.header().abi_version);
         let stream_size = iter.header().size_bytes as usize;
         let mut iter = iter.peekable();
 
@@ -2670,6 +2679,7 @@ impl AerogpuD3d11Executor {
         self.destroyed_textures.clear();
         let iter = AerogpuCmdStreamIter::new(stream_bytes)
             .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
+        self.cmd_stream_abi_minor = aerogpu_abi_minor(iter.header().abi_version);
         let stream_size = iter.header().size_bytes as usize;
         let mut iter = iter.peekable();
 
@@ -3097,6 +3107,25 @@ impl AerogpuD3d11Executor {
             return;
         }
         self.submit_encoder(encoder, label);
+    }
+
+    fn decode_shader_stage_for_packet(
+        &self,
+        stage_raw: u32,
+        stage_ex: u32,
+        opcode: &'static str,
+    ) -> Result<ShaderStage> {
+        let stage_ex = if self.cmd_stream_abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR
+            && stage_raw == AerogpuShaderStage::Compute as u32
+        {
+            0
+        } else {
+            stage_ex
+        };
+
+        ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
+            anyhow!("{opcode}: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6414,9 +6443,13 @@ impl AerogpuD3d11Executor {
                 }
                 let stage_raw = read_u32_le(cmd_bytes, 8)?;
                 let stage_ex = read_u32_le(cmd_bytes, 20)?;
-                let Some(stage) = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
-                else {
-                    break;
+                let stage = match self.decode_shader_stage_for_packet(
+                    stage_raw,
+                    stage_ex,
+                    "SET_SHADER_CONSTANTS_F",
+                ) {
+                    Ok(stage) => stage,
+                    Err(_) => break,
                 };
                 let legacy_id = legacy_constants_buffer_id(stage);
                 let stage_index = stage.as_bind_group_index() as usize;
@@ -6650,11 +6683,12 @@ impl AerogpuD3d11Executor {
                         let texture = self
                             .shared_surfaces
                             .resolve_cmd_handle(texture, "SET_TEXTURE")?;
-                        let Some(stage) =
-                            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
-                        else {
-                            break;
-                        };
+                        let stage =
+                            match self.decode_shader_stage_for_packet(stage_raw, stage_ex, "SET_TEXTURE")
+                            {
+                                Ok(stage) => stage,
+                                Err(_) => break,
+                            };
                         let used_slots = match stage {
                             ShaderStage::Vertex => &used_textures_vs,
                             ShaderStage::Pixel => &used_textures_ps,
@@ -6820,10 +6854,13 @@ impl AerogpuD3d11Executor {
                     if cmd_bytes.len() >= expected {
                         let uniform_align =
                             self.device.limits().min_uniform_buffer_offset_alignment as u64;
-                        let Some(stage) =
-                            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
-                        else {
-                            break;
+                        let stage = match self.decode_shader_stage_for_packet(
+                            stage_raw,
+                            stage_ex,
+                            "SET_CONSTANT_BUFFERS",
+                        ) {
+                            Ok(stage) => stage,
+                            Err(_) => break,
                         };
                         let used_slots = match stage {
                             ShaderStage::Vertex => &used_cb_vs,
@@ -7554,12 +7591,11 @@ impl AerogpuD3d11Executor {
                         .get(24..data_end)
                         .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: missing payload data"))?;
 
-                    let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
-                            )
-                        })?;
+                    let stage = self.decode_shader_stage_for_packet(
+                        stage_raw,
+                        stage_ex,
+                        "SET_SHADER_CONSTANTS_F",
+                    )?;
                     let dst = self
                         .legacy_constants
                         .get(&stage)
@@ -7765,12 +7801,8 @@ impl AerogpuD3d11Executor {
                             let texture = self
                                 .shared_surfaces
                                 .resolve_cmd_handle(texture_raw, "SET_TEXTURE")?;
-                            let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
-                                .ok_or_else(|| {
-                                    anyhow!(
-                                        "SET_TEXTURE: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
-                                    )
-                                })?;
+                            let stage = self
+                                .decode_shader_stage_for_packet(stage_raw, stage_ex, "SET_TEXTURE")?;
                             let used_slots = match stage {
                                 ShaderStage::Vertex => &used_textures_vs,
                                 ShaderStage::Pixel => &used_textures_ps,
@@ -7838,9 +7870,11 @@ impl AerogpuD3d11Executor {
                                 })?)
                                 .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: size overflow"))?;
                         if cmd_bytes.len() >= expected {
-                            if let Some(stage) =
-                                ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
-                            {
+                            if let Ok(stage) = self.decode_shader_stage_for_packet(
+                                stage_raw,
+                                stage_ex,
+                                "SET_CONSTANT_BUFFERS",
+                            ) {
                                 let used_slots = match stage {
                                     ShaderStage::Vertex => &used_cb_vs,
                                     ShaderStage::Pixel => &used_cb_ps,
@@ -7907,14 +7941,11 @@ impl AerogpuD3d11Executor {
                             })?)
                             .ok_or_else(|| anyhow!("SET_SHADER_RESOURCE_BUFFERS: size overflow"))?;
                         if cmd_bytes.len() >= expected {
-                            let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(
-                                stage_raw, stage_ex,
-                            )
-                            .ok_or_else(|| {
-                                anyhow!(
-                                    "SET_SHADER_RESOURCE_BUFFERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
-                                )
-                            })?;
+                            let stage = self.decode_shader_stage_for_packet(
+                                stage_raw,
+                                stage_ex,
+                                "SET_SHADER_RESOURCE_BUFFERS",
+                            )?;
                             let used_slots = match stage {
                                 ShaderStage::Vertex => &used_textures_vs,
                                 ShaderStage::Pixel => &used_textures_ps,
@@ -7978,14 +8009,11 @@ impl AerogpuD3d11Executor {
                                 anyhow!("SET_UNORDERED_ACCESS_BUFFERS: size overflow")
                             })?;
                         if cmd_bytes.len() >= expected {
-                            let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(
-                                stage_raw, stage_ex,
-                            )
-                            .ok_or_else(|| {
-                                anyhow!(
-                                    "SET_UNORDERED_ACCESS_BUFFERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
-                                )
-                            })?;
+                            let stage = self.decode_shader_stage_for_packet(
+                                stage_raw,
+                                stage_ex,
+                                "SET_UNORDERED_ACCESS_BUFFERS",
+                            )?;
                             let used_slots = match stage {
                                 ShaderStage::Vertex => &used_uavs_vs,
                                 ShaderStage::Pixel => &used_uavs_ps,
@@ -10224,12 +10252,7 @@ impl AerogpuD3d11Executor {
             other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
         };
 
-        let stage =
-            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
-                anyhow!(
-                    "CREATE_SHADER_DXBC: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
-                )
-            })?;
+        let stage = self.decode_shader_stage_for_packet(stage_raw, stage_ex, "CREATE_SHADER_DXBC")?;
         if parsed_stage != stage {
             bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
@@ -10411,15 +10434,12 @@ impl AerogpuD3d11Executor {
         let stage_ex = cmd.reserved0;
 
         // Geometry/tessellation shaders are carried through the `stage_ex` ABI extension (or the
-        // legacy `stage=Geometry` encoding) on the WebGPU-backed executor. Keep the persistent cache
-        // focused on VS/PS/CS translation; GS/HS/DS are not stored in the persistent cache, but
-        // they must still be retained in `resources.shaders` for state tracking.
-        let stage =
-            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
-                anyhow!(
-                    "CREATE_SHADER_DXBC: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
-                )
-            })?;
+        // legacy `stage=Geometry` encoding) on the WebGPU-backed executor.
+        //
+        // Keep the persistent cache focused on VS/PS/CS translation; GS/HS/DS are currently
+        // accepted-but-not-translated and compile as placeholder compute shaders, but they must
+        // still be retained in `resources.shaders` for state tracking.
+        let stage = self.decode_shader_stage_for_packet(stage_raw, stage_ex, "CREATE_SHADER_DXBC")?;
 
         // The persistent shader cache only caches DXBC -> WGSL translations for stages that the
         // WebGPU pipeline can execute directly (VS/PS/CS). Geometry/tessellation stages are
@@ -10751,12 +10771,11 @@ impl AerogpuD3d11Executor {
             .get(24..data_end)
             .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: missing payload data"))?;
 
-        let stage =
-            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
-                anyhow!(
-                    "SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
-                )
-            })?;
+        let stage = self.decode_shader_stage_for_packet(
+            stage_raw,
+            stage_ex,
+            "SET_SHADER_CONSTANTS_F",
+        )?;
         let dst = self.legacy_constants.get(&stage).ok_or_else(|| {
             anyhow!("SET_SHADER_CONSTANTS_F: missing legacy constants buffer for stage {stage}")
         })?;
@@ -10828,10 +10847,7 @@ impl AerogpuD3d11Executor {
             );
         }
 
-        let stage =
-            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
-                anyhow!("SET_TEXTURE: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
-            })?;
+        let stage = self.decode_shader_stage_for_packet(stage_raw, stage_ex, "SET_TEXTURE")?;
         let texture = if texture == 0 {
             None
         } else {
@@ -10966,10 +10982,7 @@ impl AerogpuD3d11Executor {
         let sampler_count_u32 = read_u32_le(cmd_bytes, 16)?;
         let stage_ex = read_u32_le(cmd_bytes, 20)?;
 
-        let stage =
-            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
-                anyhow!("SET_SAMPLERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
-            })?;
+        let stage = self.decode_shader_stage_for_packet(stage_raw, stage_ex, "SET_SAMPLERS")?;
         let start_slot: u32 = start_slot_u32;
         let sampler_count: usize = sampler_count_u32
             .try_into()
@@ -11024,11 +11037,7 @@ impl AerogpuD3d11Executor {
         let stage_ex = read_u32_le(cmd_bytes, 20)?;
 
         let stage =
-            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
-                anyhow!(
-                    "SET_CONSTANT_BUFFERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
-                )
-            })?;
+            self.decode_shader_stage_for_packet(stage_raw, stage_ex, "SET_CONSTANT_BUFFERS")?;
         let start_slot: u32 = start_slot_u32;
         let buffer_count: usize = buffer_count_u32
             .try_into()
@@ -11089,12 +11098,10 @@ impl AerogpuD3d11Executor {
         let stage_raw = cmd.shader_stage;
         let stage_ex = cmd.reserved0;
 
-        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
-            || {
-                anyhow!(
-                    "SET_SHADER_RESOURCE_BUFFERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
-                )
-            },
+        let stage = self.decode_shader_stage_for_packet(
+            stage_raw,
+            stage_ex,
+            "SET_SHADER_RESOURCE_BUFFERS",
         )?;
         let start_slot = cmd.start_slot;
         let buffer_count_u32 = cmd.buffer_count;
@@ -11154,12 +11161,10 @@ impl AerogpuD3d11Executor {
         let stage_raw = cmd.shader_stage;
         let stage_ex = cmd.reserved0;
 
-        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
-            || {
-                anyhow!(
-                    "SET_UNORDERED_ACCESS_BUFFERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
-                )
-            },
+        let stage = self.decode_shader_stage_for_packet(
+            stage_raw,
+            stage_ex,
+            "SET_UNORDERED_ACCESS_BUFFERS",
         )?;
         // D3D11 exposes UAVs primarily via the compute stage, but Aero's GS/HS/DS emulation also
         // needs UAV-like bindings in the extended-stage buckets so state can be tracked without
@@ -16083,7 +16088,7 @@ mod tests {
     use aero_gpu::pipeline_key::{ComputePipelineKey, PipelineLayoutKey};
     use aero_gpu::GpuError;
     use aero_protocol::aerogpu::aerogpu_cmd::{
-        AerogpuCmdOpcode, AerogpuPrimitiveTopology, AerogpuShaderStage,
+        AerogpuCmdOpcode, AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuShaderStageEx,
     };
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
     use std::collections::BTreeMap;
@@ -17357,6 +17362,95 @@ mod tests {
                 exec.encoder_used_buffers
                     .contains(&legacy_constants_buffer_id(ShaderStage::Geometry)),
                 "SET_SHADER_CONSTANTS_F should mark geometry legacy constants as used by the encoder"
+            );
+        });
+    }
+
+    #[test]
+    fn stage_ex_is_gated_by_cmd_stream_abi_minor_for_set_texture() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const TEX_LEGACY: u32 = 1;
+            const TEX_EX: u32 = 2;
+
+            let mut guest_mem = VecGuestMemory::new(0);
+
+            // Legacy stream (ABI minor=2): stage_ex must be ignored, even if reserved0 contains
+            // garbage.
+            let mut legacy_writer = AerogpuCmdWriter::new();
+            legacy_writer.create_texture2d(
+                TEX_LEGACY,
+                AEROGPU_RESOURCE_USAGE_TEXTURE,
+                AEROGPU_FORMAT_R8G8B8A8_UNORM,
+                1,
+                1,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            legacy_writer.set_texture_ex(AerogpuShaderStageEx::Geometry, 0, TEX_LEGACY);
+            let mut legacy_stream = legacy_writer.finish();
+            // Patch cmd stream header ABI version from 1.3 (current) to 1.2.
+            legacy_stream[4..8].copy_from_slice(&0x0001_0002u32.to_le_bytes());
+            exec.execute_cmd_stream(&legacy_stream, None, &mut guest_mem)
+                .expect("execute_cmd_stream (ABI minor=2) should succeed");
+
+            assert_eq!(
+                exec.bindings
+                    .stage(ShaderStage::Compute)
+                    .texture(0)
+                    .map(|t| t.texture),
+                Some(TEX_LEGACY),
+                "ABI minor=2 must ignore stage_ex and bind to Compute"
+            );
+            assert!(
+                exec.bindings.stage(ShaderStage::Geometry).texture(0).is_none(),
+                "ABI minor=2 must not interpret reserved0 as stage_ex"
+            );
+
+            // ABI 1.3+ stream: stage_ex must be honored.
+            let mut ex_writer = AerogpuCmdWriter::new();
+            ex_writer.create_texture2d(
+                TEX_EX,
+                AEROGPU_RESOURCE_USAGE_TEXTURE,
+                AEROGPU_FORMAT_R8G8B8A8_UNORM,
+                1,
+                1,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            ex_writer.set_texture_ex(AerogpuShaderStageEx::Geometry, 0, TEX_EX);
+            let ex_stream = ex_writer.finish();
+            exec.execute_cmd_stream(&ex_stream, None, &mut guest_mem)
+                .expect("execute_cmd_stream (ABI minor=3) should succeed");
+
+            assert_eq!(
+                exec.bindings
+                    .stage(ShaderStage::Compute)
+                    .texture(0)
+                    .map(|t| t.texture),
+                Some(TEX_LEGACY),
+                "ABI minor=3 stage_ex binding must not overwrite Compute-stage state"
+            );
+            assert_eq!(
+                exec.bindings
+                    .stage(ShaderStage::Geometry)
+                    .texture(0)
+                    .map(|t| t.texture),
+                Some(TEX_EX),
+                "ABI minor=3 must honor stage_ex and bind to Geometry"
             );
         });
     }

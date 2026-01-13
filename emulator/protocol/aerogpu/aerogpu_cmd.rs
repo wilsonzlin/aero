@@ -247,6 +247,28 @@ pub fn decode_stage_ex(shader_stage: u32, reserved0: u32) -> Option<AerogpuShade
     }
 }
 
+/// ABI minor version that introduced the `stage_ex` encoding in `reserved0`.
+///
+/// Older guests (command stream ABI minor < this value) may not reliably zero `reserved0`, so
+/// hosts must ignore it to avoid misinterpreting garbage as a `stage_ex` selector.
+pub const AEROGPU_STAGE_EX_MIN_ABI_MINOR: u16 = 3;
+
+/// Decode an extended shader stage encoded in a packet's `reserved0` field, gated by ABI minor.
+///
+/// For command streams older than [`AEROGPU_STAGE_EX_MIN_ABI_MINOR`], `reserved0` is ignored when
+/// `shader_stage == Compute` to preserve legacy behavior.
+pub fn decode_stage_ex_gated(
+    abi_minor: u16,
+    shader_stage: u32,
+    reserved0: u32,
+) -> Option<AerogpuShaderStageEx> {
+    if abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR && shader_stage == AerogpuShaderStage::Compute as u32
+    {
+        return decode_stage_ex(shader_stage, 0);
+    }
+    decode_stage_ex(shader_stage, reserved0)
+}
+
 /// Encode the extended shader stage ("stage_ex") into `(shader_stage, reserved0)`.
 ///
 /// The returned `shader_stage` is always `AEROGPU_SHADER_STAGE_COMPUTE`.
@@ -384,6 +406,23 @@ pub fn resolve_shader_stage_with_ex(
             stage_ex: reserved0,
         },
     }
+}
+
+/// Resolve the effective stage from `(shader_stage, reserved0)`, gated by command stream ABI minor.
+///
+/// For command streams older than [`AEROGPU_STAGE_EX_MIN_ABI_MINOR`], `reserved0` is ignored when
+/// `shader_stage == Compute` to preserve legacy behavior.
+pub fn resolve_shader_stage_with_ex_gated(
+    abi_minor: u16,
+    shader_stage: u32,
+    reserved0: u32,
+) -> AerogpuShaderStageResolved {
+    if abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR
+        && shader_stage == AerogpuShaderStage::Compute as u32
+    {
+        return resolve_shader_stage_with_ex(shader_stage, 0);
+    }
+    resolve_shader_stage_with_ex(shader_stage, reserved0)
 }
 
 /// Encode the `reserved0` value for packets that support `stage_ex`.

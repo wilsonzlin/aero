@@ -324,6 +324,31 @@ export function decodeStageEx(shaderStage: number, reserved0: number): AerogpuSh
 }
 
 /**
+ * ABI minor version that introduced the `stage_ex` encoding in `reserved0`.
+ *
+ * Older guests (command stream ABI minor < this value) may not reliably zero `reserved0`, so
+ * hosts/tooling must ignore it to avoid misinterpreting garbage as a stage selector.
+ */
+export const AEROGPU_STAGE_EX_MIN_ABI_MINOR = 3;
+
+/**
+ * Decode an extended shader stage encoded in a packet's `reserved0` field, gated by ABI minor.
+ *
+ * For command streams older than {@link AEROGPU_STAGE_EX_MIN_ABI_MINOR}, this always returns
+ * {@link AerogpuShaderStageEx.None} when `shaderStage == Compute` (legacy behavior).
+ */
+export function decodeStageExGated(
+  abiMinor: number,
+  shaderStage: number,
+  reserved0: number,
+): AerogpuShaderStageEx | undefined {
+  if ((abiMinor >>> 0) < AEROGPU_STAGE_EX_MIN_ABI_MINOR && (shaderStage >>> 0) === AerogpuShaderStage.Compute) {
+    return decodeStageEx(shaderStage, 0);
+  }
+  return decodeStageEx(shaderStage, reserved0);
+}
+
+/**
  * Encode the extended shader stage ("stage_ex") into `(shaderStage, reserved0)`.
  */
 export function encodeStageEx(stageEx: AerogpuShaderStageEx): [shaderStage: number, reserved0: number] {
@@ -441,7 +466,33 @@ export function resolveShaderStageWithEx(shaderStage: number, reserved0: number)
 }
 
 /**
+ * Resolve the effective shader stage from `(shaderStage, reserved0)`, gated by command stream ABI minor.
+ *
+ * For command streams older than {@link AEROGPU_STAGE_EX_MIN_ABI_MINOR}, `reserved0` is ignored when
+ * `shaderStage == Compute` to preserve legacy behavior.
+ */
+export function resolveShaderStageWithExGated(
+  abiMinor: number,
+  shaderStage: number,
+  reserved0: number,
+): AerogpuShaderStageResolved {
+  const minorU32 = abiMinor >>> 0;
+  const stageU32 = shaderStage >>> 0;
+  const reserved0U32 = reserved0 >>> 0;
+  if (minorU32 < AEROGPU_STAGE_EX_MIN_ABI_MINOR && stageU32 === AerogpuShaderStage.Compute) {
+    return resolveShaderStageWithEx(shaderStage, 0);
+  }
+  return resolveShaderStageWithEx(shaderStage, reserved0U32);
+}
+
+/**
  * Decode a legacy `(shaderStage, reserved0)` pair into a single extended stage enum.
+ *
+ * Encoding rules (mirrors `drivers/aerogpu/protocol/aerogpu_cmd.h`):
+ * - If `shaderStage` is Vertex, Pixel, or Geometry, `reserved0` MUST be 0.
+ * - If `shaderStage` is Compute:
+ *   - `reserved0 == 0` means legacy compute stage (no stage_ex specified).
+ *   - `reserved0 != 0` is interpreted as `AerogpuShaderStageEx` (DXBC program type ID).
  *
  * Returns `null` if the pair violates the encoding rules.
  *
