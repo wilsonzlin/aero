@@ -9,9 +9,12 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
   // Use a large ring buffer so that "no discard" behaviour would require hundreds of ms of real-time
   // playback to drain, making the regression easy to detect.
   const url = new URL(`${PREVIEW_ORIGIN}/`);
-  // 131072 frames is ~2.7s @ 48kHz, ensuring the backlog cannot naturally drain within the
-  // bounded resume window even on higher-sample-rate devices.
-  url.searchParams.set("ringBufferFrames", "131072");
+  // Use a multi-second ring so that even at unusually high `AudioContext.sampleRate` values, a
+  // large backlog cannot naturally drain within the bounded resume window (without an explicit
+  // `ring.reset` discard).
+  //
+  // 262144 frames is ~5.5s @ 48kHz and ~1.4s @ 192kHz.
+  url.searchParams.set("ringBufferFrames", "262144");
   await page.goto(url.toString(), { waitUntil: "load" });
 
   const support = await page.evaluate(() => {
@@ -80,8 +83,8 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     { timeout: 20_000 },
   );
 
-  const CAPACITY_FRAMES = 131_072;
-  const BACKLOG_TARGET_FRAMES = 120_000;
+  const CAPACITY_FRAMES = 262_144;
+  const BACKLOG_TARGET_FRAMES = 250_000;
   const BACKLOG_DISCARDED_THRESHOLD_FRAMES = 512;
 
   const setupResult = await page.evaluate(({ CAPACITY_FRAMES }) => {
