@@ -1066,6 +1066,11 @@ impl SnapshotSource for BiosDeviceSource {
         // rsdp_addr absent.
         data.push(0);
 
+        // v4 extension: `BiosConfig::vbe_lfb_base` override.
+        data.push(3);
+        data.push(1); // present
+        data.extend_from_slice(&0x1234_5678u32.to_le_bytes());
+
         vec![DeviceState {
             id: DeviceId::BIOS,
             version: 1,
@@ -1109,6 +1114,7 @@ fn snapshot_inspect_decodes_bios_device_state() {
         .stdout(predicate::str::contains("BIOS(10)"))
         .stdout(predicate::str::contains("boot_drive=0x80"))
         .stdout(predicate::str::contains("mem_size_bytes=67108864"))
+        .stdout(predicate::str::contains("vbe_lfb_base=0x12345678"))
         .stdout(predicate::str::contains(
             "rtc=2026-01-02 03:04:05.000000000",
         ))

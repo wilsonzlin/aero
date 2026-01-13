@@ -1035,6 +1035,7 @@ fn decode_bios_device_detail(
     // Optional extension blocks (best-effort).
     let mut last_int13_status: Option<u8> = None;
     let mut vbe_mode: Option<u16> = None;
+    let mut vbe_lfb_base: Option<u32> = None;
     let mut cpu_count: Option<u8> = None;
     let mut enable_acpi: Option<bool> = None;
 
@@ -1094,6 +1095,18 @@ fn decode_bios_device_detail(
                     skip_to(file, data_end, 4)?;
                 }
             }
+            // v4 extension: BIOS config video overrides.
+            3 => {
+                let present = match read_u8_lossy(file) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                vbe_lfb_base = if present != 0 {
+                    read_u32_le_lossy(file).ok()
+                } else {
+                    None
+                };
+            }
             _ => break,
         }
     }
@@ -1109,6 +1122,9 @@ fn decode_bios_device_detail(
     }
     if let Some(mode) = vbe_mode {
         s.push_str(&format!(" vbe_mode=0x{mode:04x}"));
+    }
+    if let Some(base) = vbe_lfb_base {
+        s.push_str(&format!(" vbe_lfb_base=0x{base:08x}"));
     }
     if let Some(count) = cpu_count {
         s.push_str(&format!(" cpu_count={count}"));

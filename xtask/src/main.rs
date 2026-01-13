@@ -104,7 +104,11 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
     let cfg = AcpiConfig::default();
     let placement = AcpiPlacement::default();
     let acpi_tables = AcpiTables::build(&cfg, placement);
-    ensure_file(&root.join("crates/firmware/acpi/dsdt.aml"), &acpi_tables.dsdt, check)?;
+    ensure_file(
+        &root.join("crates/firmware/acpi/dsdt.aml"),
+        &acpi_tables.dsdt,
+        check,
+    )?;
 
     // BIOS ROM image.
     let bios_rom = firmware::bios::build_bios_rom();
