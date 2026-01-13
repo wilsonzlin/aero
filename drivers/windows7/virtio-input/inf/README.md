@@ -28,7 +28,7 @@ Optional legacy filename alias:
 `..\scripts\verify-inf.ps1` performs a lightweight, regex-based validation of
 `aero_virtio_input.inf` to ensure it continues to match Aero's packaging/contract
 expectations (HID class, catalog filename, KMDF version, required contract v1 HWIDs,
-and MSI interrupt settings).
+distinct keyboard vs mouse `DeviceDesc` strings, and MSI interrupt settings).
 
 Run it from any PowerShell prompt:
 

@@ -182,6 +182,62 @@ foreach ($sect in $modelSections) {
 }
 
 #------------------------------------------------------------------------------
+# Device descriptions (distinct keyboard vs mouse in Device Manager)
+#------------------------------------------------------------------------------
+# The INF is expected to bind both PCI functions (keyboard + mouse) to the same
+# install sections, but with distinct DeviceDesc strings so they appear as
+# separate named devices in Device Manager.
+$requiredModelMappings = @(
+  @{
+    Name = 'NTx86 keyboard mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioKeyboard.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01') + '$')
+    Message = 'Missing x86 keyboard model line (expected %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...SUBSYS_00101AF4... ).'
+  },
+  @{
+    Name = 'NTx86 mouse mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioMouse.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01') + '$')
+    Message = 'Missing x86 mouse model line (expected %AeroVirtioMouse.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...SUBSYS_00111AF4... ).'
+  },
+  @{
+    Name = 'NTx86 fallback mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
+    Message = 'Missing x86 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...&REV_01).'
+  },
+  @{
+    Name = 'NTamd64 keyboard mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioKeyboard.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01') + '$')
+    Message = 'Missing x64 keyboard model line (expected %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...SUBSYS_00101AF4... ).'
+  },
+  @{
+    Name = 'NTamd64 mouse mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioMouse.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01') + '$')
+    Message = 'Missing x64 mouse model line (expected %AeroVirtioMouse.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...SUBSYS_00111AF4... ).'
+  },
+  @{
+    Name = 'NTamd64 fallback mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
+    Message = 'Missing x64 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...&REV_01).'
+  }
+)
+
+foreach ($m in $requiredModelMappings) {
+  if ((Get-MatchingLines -Lines $lines -Regex $m.Regex).Count -eq 0) {
+    Add-Failure -Failures $failures -Message $m.Message
+  }
+}
+
+$requiredStrings = @(
+  @{ Name = 'AeroVirtioKeyboard.DeviceDesc'; Regex = '(?i)^AeroVirtioKeyboard\.DeviceDesc\s*=\s*".*"$' },
+  @{ Name = 'AeroVirtioMouse.DeviceDesc';    Regex = '(?i)^AeroVirtioMouse\.DeviceDesc\s*=\s*".*"$' }
+)
+
+foreach ($s in $requiredStrings) {
+  if ((Get-MatchingLines -Lines $lines -Regex $s.Regex).Count -eq 0) {
+    Add-Failure -Failures $failures -Message ("Missing required [Strings] entry: {0}" -f $s.Name)
+  }
+}
+
+#------------------------------------------------------------------------------
 # Interrupt Management (MSI/MSI-X)
 #------------------------------------------------------------------------------
 # Verify the AddReg section contents (ensures removal of the section or one line fails fast).
