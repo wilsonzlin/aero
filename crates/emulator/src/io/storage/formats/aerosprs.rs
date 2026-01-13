@@ -662,7 +662,11 @@ fn write_zeroes<S: ByteStorage>(storage: &mut S, mut offset: u64, mut len: u64) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::storage::disk::ByteStorage;
+    use crate::io::storage::disk::{ByteStorage, DiskBackend};
+
+    const TEST_SECTOR_SIZE: u32 = 512;
+    const TEST_TOTAL_SECTORS: u64 = 128;
+    const TEST_BLOCK_SIZE: u32 = 4096;
 
     #[derive(Default, Clone)]
     struct MemStorage {
@@ -671,18 +675,20 @@ mod tests {
 
     impl ByteStorage for MemStorage {
         fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
-            let offset = offset as usize;
-            let end = offset + buf.len();
-            if end > self.data.len() {
-                return Err(DiskError::Io("read past end".into()));
-            }
-            buf.copy_from_slice(&self.data[offset..end]);
+            let offset: usize = offset.try_into().map_err(|_| DiskError::OutOfBounds)?;
+            let end = offset
+                .checked_add(buf.len())
+                .ok_or(DiskError::OutOfBounds)?;
+            let slice = self.data.get(offset..end).ok_or(DiskError::OutOfBounds)?;
+            buf.copy_from_slice(slice);
             Ok(())
         }
 
         fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
-            let offset = offset as usize;
-            let end = offset + buf.len();
+            let offset: usize = offset.try_into().map_err(|_| DiskError::OutOfBounds)?;
+            let end = offset
+                .checked_add(buf.len())
+                .ok_or(DiskError::OutOfBounds)?;
             if end > self.data.len() {
                 self.data.resize(end, 0);
             }
@@ -699,9 +705,25 @@ mod tests {
         }
 
         fn set_len(&mut self, len: u64) -> DiskResult<()> {
-            self.data.resize(len as usize, 0);
+            let len: usize = len.try_into().map_err(|_| DiskError::OutOfBounds)?;
+            self.data.resize(len, 0);
             Ok(())
         }
+    }
+
+    fn write_reference(reference: &mut [u8], lba: u64, data: &[u8]) {
+        let start = (lba * TEST_SECTOR_SIZE as u64) as usize;
+        let end = start + data.len();
+        reference[start..end].copy_from_slice(data);
+    }
+
+    fn make_pattern(len: usize, seed: u8) -> Vec<u8> {
+        let mut buf = vec![0u8; len];
+        for (idx, b) in buf.iter_mut().enumerate() {
+            // Simple deterministic pattern; guaranteed not to be all-zero for seed != 0.
+            *b = seed.wrapping_add((idx as u8).wrapping_mul(31));
+        }
+        buf
     }
 
     #[test]
@@ -801,64 +823,207 @@ mod tests {
     #[test]
     fn unallocated_reads_zero() {
         let storage = MemStorage::default();
-        let mut disk = SparseDisk::create(storage, 512, 2048, 1024 * 1024).unwrap();
+        let mut disk = SparseDisk::create(
+            storage,
+            TEST_SECTOR_SIZE,
+            TEST_TOTAL_SECTORS,
+            TEST_BLOCK_SIZE,
+        )
+        .unwrap();
         let mut buf = vec![0xAA; 512 * 4];
         disk.read_sectors(0, &mut buf).unwrap();
         assert!(buf.iter().all(|b| *b == 0));
     }
 
     #[test]
-    fn writes_persist_across_open() {
+    fn create_open_read_write_roundtrip() {
         let storage = MemStorage::default();
-        let mut disk = SparseDisk::create(storage, 512, 4096, 1024 * 1024).unwrap();
-        let mut data = vec![0u8; 512 * 8];
-        for (i, b) in data.iter_mut().enumerate() {
-            *b = (i as u8).wrapping_mul(3);
-        }
-        disk.write_sectors(10, &data).unwrap();
+        let mut disk = SparseDisk::create(
+            storage,
+            TEST_SECTOR_SIZE,
+            TEST_TOTAL_SECTORS,
+            TEST_BLOCK_SIZE,
+        )
+        .unwrap();
+
+        let disk_bytes = (TEST_TOTAL_SECTORS * TEST_SECTOR_SIZE as u64) as usize;
+        let mut reference = vec![0u8; disk_bytes];
+
+        // Within one block (block 0, sectors 1..3).
+        let write1_lba = 1;
+        let write1 = make_pattern(TEST_SECTOR_SIZE as usize * 2, 0x11);
+        disk.write_sectors(write1_lba, &write1).unwrap();
+        write_reference(&mut reference, write1_lba, &write1);
+
+        // Across a block boundary (block 0 -> 1).
+        //
+        // block_size=4096 and sector_size=512 => 8 sectors per block, so lba=7 straddles the
+        // boundary between block 0 and block 1.
+        let write2_lba = 7;
+        let write2 = make_pattern(TEST_SECTOR_SIZE as usize * 3, 0x55);
+        disk.write_sectors(write2_lba, &write2).unwrap();
+        write_reference(&mut reference, write2_lba, &write2);
+
+        // Non-contiguous LBA (block 5).
+        let write3_lba = 40;
+        let write3 = make_pattern(TEST_SECTOR_SIZE as usize, 0xA3);
+        disk.write_sectors(write3_lba, &write3).unwrap();
+        write_reference(&mut reference, write3_lba, &write3);
+
         disk.flush().unwrap();
 
         let storage = disk.into_storage();
         let mut disk = SparseDisk::open(storage).unwrap();
-        let mut read_back = vec![0u8; data.len()];
-        disk.read_sectors(10, &mut read_back).unwrap();
-        assert_eq!(data, read_back);
+
+        // Verify sparse semantics: unwritten blocks should read back as zeroes.
+        let mut hole = vec![0xCC; TEST_SECTOR_SIZE as usize * 2];
+        disk.read_sectors(20, &mut hole).unwrap();
+        assert!(hole.iter().all(|b| *b == 0));
+
+        // Verify the entire logical image matches our reference bytes.
+        let mut read_back = vec![0u8; reference.len()];
+        disk.read_sectors(0, &mut read_back).unwrap();
+        assert_eq!(read_back, reference);
+
+        // Sanity-check that only the touched logical blocks are allocated.
+        let allocated: Vec<_> = disk.allocated_blocks().collect();
+        assert_eq!(allocated.len(), 3);
     }
 
     #[test]
-    fn journal_replays_on_open() {
-        let mut storage = MemStorage::default();
-        {
-            let disk = SparseDisk::create(storage.clone(), 512, 4096, 1024 * 1024).unwrap();
-            storage = disk.into_storage();
-        }
+    fn journal_replay_on_open_updates_table_and_clears_journal() {
+        let storage = MemStorage::default();
+        let disk = SparseDisk::create(
+            storage,
+            TEST_SECTOR_SIZE,
+            TEST_TOTAL_SECTORS,
+            TEST_BLOCK_SIZE,
+        )
+        .unwrap();
+        let mut storage = disk.into_storage();
 
-        // Manually allocate the first data block and write a pattern, then write a journal record
-        // mapping logical block 0 to it without updating the allocation table.
-        let mut header_buf = vec![0u8; HEADER_SIZE as usize];
+        let mut header_buf = [0u8; HEADER_SIZE as usize];
         storage.read_at(0, &mut header_buf).unwrap();
         let header = SparseHeader::decode(&header_buf).unwrap();
-        let block_offset = header.data_offset;
 
+        let logical_block = 3u64;
+        let physical_offset = header.data_offset;
+
+        // Ensure the backing file contains the referenced physical block.
         storage
-            .write_at(block_offset, &vec![0x5A; header.block_size as usize])
+            .set_len(physical_offset + header.block_size as u64)
             .unwrap();
         storage
-            .set_len(block_offset + header.block_size as u64)
+            .write_at(
+                physical_offset,
+                &vec![0x5Au8; header.block_size as usize],
+            )
             .unwrap();
 
+        // Confirm the allocation table entry starts empty (we're simulating a crash after writing
+        // the journal record but before committing the table entry).
+        let mut table_entry = [0u8; 8];
+        storage
+            .read_at(header.table_offset + logical_block * 8, &mut table_entry)
+            .unwrap();
+        assert_eq!(u64::from_le_bytes(table_entry), 0);
+
+        // Inject a journal record that should be replayed on open.
         let rec = JournalRecord {
             state: 1,
-            logical_block: 0,
-            physical_offset: block_offset,
+            logical_block,
+            physical_offset,
         };
         storage
             .write_at(header.journal_offset, &rec.encode())
             .unwrap();
 
         let mut disk = SparseDisk::open(storage).unwrap();
-        let mut buf = vec![0u8; 512];
-        disk.read_sectors(0, &mut buf).unwrap();
+        assert!(
+            disk.allocated_blocks()
+                .any(|(l, p)| l == logical_block && p == physical_offset),
+            "expected journal record to be replayed into allocation table"
+        );
+
+        // Verify reads go through the replayed mapping.
+        let sectors_per_block = header.block_size as u64 / header.sector_size as u64;
+        let lba = logical_block * sectors_per_block;
+        let mut buf = vec![0u8; header.sector_size as usize];
+        disk.read_sectors(lba, &mut buf).unwrap();
         assert!(buf.iter().all(|b| *b == 0x5A));
+
+        let header = disk.header().clone();
+        let mut storage = disk.into_storage();
+
+        // The allocation table should have been updated on disk.
+        let mut table_entry = [0u8; 8];
+        storage
+            .read_at(header.table_offset + logical_block * 8, &mut table_entry)
+            .unwrap();
+        assert_eq!(u64::from_le_bytes(table_entry), physical_offset);
+
+        // The journal should have been cleared.
+        let mut jbuf = [0u8; JOURNAL_SIZE as usize];
+        storage.read_at(header.journal_offset, &mut jbuf).unwrap();
+        assert_eq!(jbuf, JournalRecord::empty().encode());
+
+        // Reopen once more to ensure the cleared journal doesn't get re-applied and the mapping
+        // persists via the table entry.
+        let disk = SparseDisk::open(storage).unwrap();
+        assert!(
+            disk.allocated_blocks()
+                .any(|(l, p)| l == logical_block && p == physical_offset),
+            "expected allocation table entry to persist after journal replay"
+        );
+    }
+
+    #[test]
+    fn journal_conflict_detection() {
+        let storage = MemStorage::default();
+        let mut disk = SparseDisk::create(
+            storage,
+            TEST_SECTOR_SIZE,
+            TEST_TOTAL_SECTORS,
+            TEST_BLOCK_SIZE,
+        )
+        .unwrap();
+
+        // Allocate logical block 0 normally.
+        disk.write_sectors(0, &make_pattern(TEST_SECTOR_SIZE as usize, 0xF0))
+            .unwrap();
+        disk.flush().unwrap();
+
+        let existing_phys = disk
+            .allocated_blocks()
+            .find(|(l, _)| *l == 0)
+            .expect("logical block 0 should be allocated")
+            .1;
+
+        let header = disk.header().clone();
+        let mut storage = disk.into_storage();
+
+        // Inject a conflicting journal record for the same logical block, pointing at a different
+        // physical offset.
+        let conflicting_phys = existing_phys + header.block_size as u64;
+        storage
+            .set_len(conflicting_phys + header.block_size as u64)
+            .unwrap();
+        let rec = JournalRecord {
+            state: 1,
+            logical_block: 0,
+            physical_offset: conflicting_phys,
+        };
+        storage
+            .write_at(header.journal_offset, &rec.encode())
+            .unwrap();
+
+        let err = match SparseDisk::open(storage) {
+            Ok(_) => panic!("expected open to fail due to journal/table conflict"),
+            Err(err) => err,
+        };
+        assert!(matches!(
+            err,
+            DiskError::CorruptImage("journal conflicts with allocation table")
+        ));
     }
 }
