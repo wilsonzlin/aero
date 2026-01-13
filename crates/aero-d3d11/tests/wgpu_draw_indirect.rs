@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use aero_d3d11::runtime::indirect_args::DrawIndirectArgs;
 use anyhow::{anyhow, Context, Result};
 
-async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
+async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, bool)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -57,6 +57,11 @@ async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
     }
     .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
+    let supports_compute = adapter
+        .get_downlevel_capabilities()
+        .flags
+        .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
@@ -69,7 +74,7 @@ async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
         .await
         .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
-    Ok((device, queue))
+    Ok((device, queue, supports_compute))
 }
 
 async fn read_texture_rgba8(
@@ -157,13 +162,17 @@ fn wgpu_draw_indirect_uses_args_written_by_compute() {
             "::wgpu_draw_indirect_uses_args_written_by_compute"
         );
 
-        let (device, queue) = match create_device_queue().await {
+        let (device, queue, supports_compute) = match create_device_queue().await {
             Ok(v) => v,
             Err(err) => {
                 common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
                 return;
             }
         };
+        if !supports_compute {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
 
         let (args_size, args_align) = DrawIndirectArgs::layout();
         assert_eq!(args_size, 16);

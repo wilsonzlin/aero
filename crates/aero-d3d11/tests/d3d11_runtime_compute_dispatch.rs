@@ -19,6 +19,10 @@ fn d3d11_runtime_compute_dispatch_writes_storage_buffer() {
                 return;
             }
         };
+        if !rt.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
 
         const STORAGE_BUF: u32 = 1;
         const READBACK_BUF: u32 = 2;
@@ -87,4 +91,3 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         assert_eq!(got, expected);
     });
 }
-

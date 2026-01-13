@@ -4,7 +4,7 @@ use aero_d3d11::input_layout::{InputLayoutBinding, InputLayoutDesc, VsInputSigna
 use aero_d3d11::runtime::vertex_pulling::{VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP};
 use anyhow::{anyhow, Context, Result};
 
-async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
+async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, bool)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -54,6 +54,11 @@ async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
     }
     .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
+    let supports_compute = adapter
+        .get_downlevel_capabilities()
+        .flags
+        .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
@@ -66,7 +71,7 @@ async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
         .await
         .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
-    Ok((device, queue))
+    Ok((device, queue, supports_compute))
 }
 
 async fn read_buffer(
@@ -113,7 +118,7 @@ async fn read_buffer(
 #[test]
 fn compute_vertex_pulling_reads_pos3_color4() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
+        let (device, queue, supports_compute) = match create_device_queue().await {
             Ok(v) => v,
             Err(e) => {
                 common::skip_or_panic(
@@ -123,6 +128,10 @@ fn compute_vertex_pulling_reads_pos3_color4() {
                 return Ok(());
             }
         };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return Ok(());
+        }
 
         // ILAY_POS3_COLOR fixture: POSITION0 (float3) + COLOR0 (float4).
         let layout = InputLayoutDesc::parse(include_bytes!("fixtures/ilay_pos3_color.bin"))
@@ -343,7 +352,7 @@ fn compute_vertex_pulling_reads_unorm8x4() {
     }
 
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
+        let (device, queue, supports_compute) = match create_device_queue().await {
             Ok(v) => v,
             Err(e) => {
                 common::skip_or_panic(
@@ -353,6 +362,10 @@ fn compute_vertex_pulling_reads_unorm8x4() {
                 return Ok(());
             }
         };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return Ok(());
+        }
 
         // Build a tiny ILAY: COLOR0 as R8G8B8A8_UNORM at offset 0 in slot 0.
         let color_hash = aero_d3d11::input_layout::fnv1a_32(b"COLOR");
