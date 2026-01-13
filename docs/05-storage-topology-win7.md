@@ -81,7 +81,9 @@ enables the same canonical controller set in the full-system `Machine` integrati
 
 Implementation note (Rust): in `aero_machine`, `Machine::set_boot_drive(0xE0)` selects CD-first boot
 for install (plumbed to `firmware::bios::BiosConfig::boot_drive` during `Machine::reset()`), and
-switching back to `Machine::set_boot_drive(0x80)` selects HDD boot for post-install boots.
+switching back to `Machine::set_boot_drive(0x80)` selects HDD boot for post-install boots. Since the
+BIOS boot drive is re-applied during reset/POST, callers should set the desired boot drive number
+and then invoke `Machine::reset()` before starting the boot.
 
 ### 2) Normal boot (after installation)
 
