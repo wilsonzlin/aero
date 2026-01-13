@@ -110,8 +110,8 @@ fn parse_prt_entries(aml: &[u8]) -> Option<Vec<(u32, u8, u32)>> {
     offset += 1;
 
     let (pkg_len, pkg_len_bytes) = parse_pkg_length(aml, offset)?;
-    offset += pkg_len_bytes;
     let pkg_end = offset + pkg_len;
+    offset += pkg_len_bytes;
 
     let count = *aml.get(offset)? as usize;
     offset += 1;
@@ -123,8 +123,8 @@ fn parse_prt_entries(aml: &[u8]) -> Option<Vec<(u32, u8, u32)>> {
         }
         offset += 1;
         let (entry_len, entry_len_bytes) = parse_pkg_length(aml, offset)?;
-        offset += entry_len_bytes;
         let entry_end = offset + entry_len;
+        offset += entry_len_bytes;
 
         let entry_count = *aml.get(offset)? as usize;
         if entry_count != 4 {
@@ -513,9 +513,9 @@ fn dsdt_contains_pci_routing_and_resources() {
         find_subslice(aml, &imcr_opregion).is_some(),
         "DSDT AML missing IMCR SystemIO OperationRegion for ports 0x22..0x23"
     );
-
+ 
     let imcr_field = [
-        &[0x5B, 0x81, 0x0F][..], // FieldOp + pkglen
+        &[0x5B, 0x81, 0x10][..], // FieldOp + pkglen (15 byte payload + 1 pkglen byte)
         &b"IMCR"[..],
         &[0x01][..], // ByteAcc + NoLock + Preserve
         &b"IMCS"[..],

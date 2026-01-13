@@ -804,10 +804,14 @@ fn aml_pkg_length_for_payload(payload_len: usize) -> Vec<u8> {
     // This is self-referential: the length value determines how many bytes the
     // PkgLength encoding takes. Resolve it by iterating; it converges quickly
     // because the encoding is at most 4 bytes.
-    let mut total_len = payload_len + 1;
+    let mut total_len = payload_len
+        .checked_add(1)
+        .expect("AML PkgLength overflow");
     loop {
         let enc = aml_pkg_length(total_len);
-        let new_total_len = payload_len + enc.len();
+        let new_total_len = payload_len
+            .checked_add(enc.len())
+            .expect("AML PkgLength overflow");
         if new_total_len == total_len {
             return enc;
         }
@@ -962,21 +966,8 @@ fn aml_method_pic() -> Vec<u8> {
 }
 
 fn aml_s5() -> Vec<u8> {
-    // Name (_S5_, Package (2) { 5, 5 })
-    let mut pkg = Vec::new();
-    pkg.push(0x12); // PackageOp
-    let mut pkg_payload = Vec::new();
-    pkg_payload.push(0x02); // element count
-    pkg_payload.extend_from_slice(&aml_integer(5));
-    pkg_payload.extend_from_slice(&aml_integer(5));
-    pkg.extend_from_slice(&aml_pkg_length_for_payload(pkg_payload.len()));
-    pkg.extend_from_slice(&pkg_payload);
-
-    let mut out = Vec::new();
-    out.push(0x08); // NameOp
-    out.extend_from_slice(b"_S5_");
-    out.extend_from_slice(&pkg);
-    out
+    let elements = [aml_integer(5), aml_integer(5)];
+    aml_name_pkg(*b"_S5_", &elements)
 }
 
 fn sys0_crs(cfg: &AcpiConfig) -> Vec<u8> {
@@ -1463,6 +1454,44 @@ mod tests {
         assert_eq!(aml_pkg_length(0x70), vec![0x40, 0x07]);
         assert_eq!(aml_pkg_length(0x0FFF), vec![0x4F, 0xFF]);
         assert_eq!(aml_pkg_length(0x1000), vec![0x80, 0x00, 0x01]);
+    }
+
+    fn parse_pkg_length(bytes: &[u8]) -> (usize, usize) {
+        let b0 = bytes[0];
+        let follow_bytes = (b0 >> 6) as usize;
+        let mut len: usize = (b0 & 0x3F) as usize;
+        for i in 0..follow_bytes {
+            len |= (bytes[1 + i] as usize) << (4 + i * 8);
+        }
+        (len, 1 + follow_bytes)
+    }
+
+    #[test]
+    fn pkg_length_for_payload_is_self_inclusive_fixed_point() {
+        // Regression: ACPICA expects PkgLength to include the bytes of the
+        // PkgLength encoding itself, not just the following payload.
+        for payload_len in [0usize, 4, 62, 63, 64, 4093, 4094] {
+            let enc = aml_pkg_length_for_payload(payload_len);
+            let (decoded, consumed) = parse_pkg_length(&enc);
+            assert_eq!(consumed, enc.len());
+            assert_eq!(decoded, payload_len + enc.len());
+        }
+    }
+
+    #[test]
+    fn scope_and_device_pkg_length_match_iasl_for_empty_bodies() {
+        // iasl encodes: Scope (_SB_) {} as:
+        //   10 05 5F 53 42 5F
+        assert_eq!(
+            aml_scope(*b"_SB_", &[]),
+            [&[0x10, 0x05][..], &b"_SB_"[..]].concat()
+        );
+
+        // Empty Device is: ExtOpPrefix + DeviceOp + PkgLength + NameSeg.
+        assert_eq!(
+            aml_device(*b"DEV0", &[]),
+            [&[0x5B, 0x82, 0x05][..], &b"DEV0"[..]].concat()
+        );
     }
 
     #[test]
