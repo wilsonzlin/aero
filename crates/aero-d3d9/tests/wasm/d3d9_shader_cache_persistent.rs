@@ -503,3 +503,126 @@ async fn persistence_is_disabled_after_get_error() {
     assert_eq!(put_calls.get(), 0);
     assert_eq!(translate_calls.get(), 1);
 }
+
+#[wasm_bindgen_test(async)]
+async fn corrupted_persistent_entry_is_deleted_and_retranslated() {
+    let open_calls = Rc::new(Cell::new(0u32));
+    let get_calls = Rc::new(Cell::new(0u32));
+    let delete_calls = Rc::new(Cell::new(0u32));
+    let put_calls = Rc::new(Cell::new(0u32));
+    let translate_calls = Rc::new(Cell::new(0u32));
+
+    let api = Object::new();
+
+    let compute =
+        Closure::wrap(
+            Box::new(move |_dxbc: JsValue, _flags: JsValue| JsValue::from_str("test-key"))
+                as Box<dyn FnMut(JsValue, JsValue) -> JsValue>,
+        );
+    Reflect::set(
+        &api,
+        &JsValue::from_str("computeShaderCacheKey"),
+        compute.as_ref(),
+    )
+    .unwrap();
+    compute.forget();
+
+    // PersistentGpuCache.open: return an inner object with get/put/delete.
+    let persistent = Object::new();
+    let open_calls_cb = open_calls.clone();
+    let get_calls_cb = get_calls.clone();
+    let delete_calls_cb = delete_calls.clone();
+    let put_calls_cb = put_calls.clone();
+
+    // Corrupted entry: missing `wgsl` (deserialization should fail).
+    let corrupt_val = Object::new();
+    Reflect::set(
+        &corrupt_val,
+        &JsValue::from_str("reflection"),
+        &JsValue::NULL,
+    )
+    .unwrap();
+
+    let open = Closure::wrap(Box::new(move || {
+        open_calls_cb.set(open_calls_cb.get() + 1);
+
+        let inner = Object::new();
+
+        let get_calls_inner = get_calls_cb.clone();
+        let corrupt_val_inner = corrupt_val.clone();
+        let get_shader = Closure::wrap(Box::new(move |key: JsValue| {
+            get_calls_inner.set(get_calls_inner.get() + 1);
+            assert_eq!(key.as_string().as_deref(), Some("test-key"));
+            corrupt_val_inner.clone().into()
+        }) as Box<dyn FnMut(JsValue) -> JsValue>);
+        Reflect::set(&inner, &JsValue::from_str("getShader"), get_shader.as_ref()).unwrap();
+        get_shader.forget();
+
+        let delete_calls_inner = delete_calls_cb.clone();
+        let delete_shader = Closure::wrap(Box::new(move |key: JsValue| {
+            delete_calls_inner.set(delete_calls_inner.get() + 1);
+            assert_eq!(key.as_string().as_deref(), Some("test-key"));
+            JsValue::UNDEFINED
+        }) as Box<dyn FnMut(JsValue) -> JsValue>);
+        Reflect::set(
+            &inner,
+            &JsValue::from_str("deleteShader"),
+            delete_shader.as_ref(),
+        )
+        .unwrap();
+        delete_shader.forget();
+
+        let put_calls_inner = put_calls_cb.clone();
+        let put_shader = Closure::wrap(Box::new(move |key: JsValue, _value: JsValue| {
+            put_calls_inner.set(put_calls_inner.get() + 1);
+            assert_eq!(key.as_string().as_deref(), Some("test-key"));
+            JsValue::UNDEFINED
+        }) as Box<dyn FnMut(JsValue, JsValue) -> JsValue>);
+        Reflect::set(&inner, &JsValue::from_str("putShader"), put_shader.as_ref()).unwrap();
+        put_shader.forget();
+
+        inner.into()
+    }) as Box<dyn FnMut() -> JsValue>);
+    Reflect::set(&persistent, &JsValue::from_str("open"), open.as_ref()).unwrap();
+    open.forget();
+
+    Reflect::set(
+        &api,
+        &JsValue::from_str("PersistentGpuCache"),
+        persistent.as_ref(),
+    )
+    .unwrap();
+
+    let _guard = PersistentCacheApiGuard::install(&api.into());
+
+    let mut cache = ShaderCache::new();
+    let dxbc = b"fake dxbc";
+    let flags = make_flags();
+
+    let translate_calls_cb = translate_calls.clone();
+    let (_artifact, source) = cache
+        .get_or_translate_with_source(dxbc, flags.clone(), move || {
+            let translate_calls_cb = translate_calls_cb.clone();
+            async move {
+                translate_calls_cb.set(translate_calls_cb.get() + 1);
+                Ok(make_artifact("translated"))
+            }
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        source,
+        ShaderCacheSource::Translated,
+        "corrupt persistent payload should be treated as a cache miss"
+    );
+    assert_eq!(open_calls.get(), 1);
+    assert_eq!(get_calls.get(), 1);
+    assert_eq!(
+        delete_calls.get(),
+        1,
+        "corrupt entry should be deleted to avoid repeated failures"
+    );
+    assert_eq!(translate_calls.get(), 1);
+    assert_eq!(put_calls.get(), 1, "translated shader should be persisted");
+}

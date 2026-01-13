@@ -281,8 +281,10 @@ impl ShaderCache {
         }
 
         // Best-effort persistent lookup:
-        // - Any error (missing APIs, permission errors, quota issues, deserialization failures,
-        //   etc.) disables persistence for the remainder of the session.
+        // - Errors interacting with the persistent backing store (missing APIs, permission errors,
+        //   quota issues, etc.) disable persistence for the remainder of the session.
+        // - Corrupt/unreadable entries are treated as cache misses (with a best-effort delete),
+        //   but do not disable persistence so a fresh translation can repair the entry.
         let mut persistent_key: Option<ShaderCacheKey> = None;
         if self.persistent_state != PersistentCacheState::Disabled {
             match compute_persistent_key(dxbc, &flags).await {
@@ -309,12 +311,9 @@ impl ShaderCache {
                                 Err(_err) => {
                                     // Cached entry is unreadable/corrupt/out-of-date; best-effort
                                     // delete and retranslate.
-                                    if let Err(_err) = persistent
+                                    let _ = persistent
                                         .js_persistent_delete_shader(persistent_key.0.clone())
-                                        .await
-                                    {
-                                        self.disable_persistent();
-                                    }
+                                        .await;
                                 }
                             }
                         }
