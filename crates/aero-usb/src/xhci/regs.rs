@@ -15,7 +15,6 @@ pub const REG_HCSPARAMS1: u64 = 0x04;
 pub const REG_HCCPARAMS1: u64 = 0x10;
 pub const REG_USBCMD: u64 = 0x40;
 pub const REG_USBSTS: u64 = 0x44;
-
 /// Command Ring Control Register (CRCR), 64-bit (low/high dwords).
 pub const REG_CRCR_LO: u64 = 0x58;
 pub const REG_CRCR_HI: u64 = 0x5c;

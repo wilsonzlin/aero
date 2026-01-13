@@ -6841,6 +6841,9 @@ impl Machine {
                             vga.port_write(0x01CF, 2, u32::from(x_off));
                             vga.port_write(0x01CE, 2, 0x0009);
                             vga.port_write(0x01CF, 2, u32::from(y_off));
+                            vga.set_vbe_bytes_per_scan_line_override(
+                                self.bios.video.vbe.bytes_per_scan_line,
+                            );
 
                             // Palette updates: INT 10h AX=4F09 "Set Palette Data".
                             //

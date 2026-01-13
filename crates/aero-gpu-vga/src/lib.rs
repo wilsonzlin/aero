@@ -208,6 +208,17 @@ pub struct VgaDevice {
     // Bochs VBE.
     vbe_index: u16,
     pub vbe: VbeRegs,
+    /// Optional override for the logical scanline length (bytes per scan line).
+    ///
+    /// The Bochs VBE_DISPI interface represents the logical scanline length in *pixels* via the
+    /// `virt_width` register. BIOS VBE (INT 10h AX=4F06) can set the scanline length in *bytes*
+    /// and does not require it to be a multiple of bytes-per-pixel.
+    ///
+    /// When this value is non-zero, the SVGA scanout renderer uses it as the exact scanline
+    /// stride in bytes (instead of deriving stride from `virt_width`). This keeps BIOS-driven
+    /// panning/stride semantics (`4F06`/`4F07`) faithful even when the requested stride is not
+    /// representable by `virt_width`.
+    vbe_bytes_per_scan_line_override: u16,
 
     // VRAM: the first 256KiB are treated as planar VGA memory (4 planes).
     // VBE/SVGA packed-pixel modes are backed by the same allocation starting at
@@ -267,6 +278,7 @@ impl VgaDevice {
             dac: [Rgb::BLACK; 256],
             vbe_index: 0,
             vbe: VbeRegs::default(),
+            vbe_bytes_per_scan_line_override: 0,
             vram: vec![0; DEFAULT_VRAM_SIZE],
             latches: [0; 4],
             front: Vec::new(),
@@ -338,6 +350,7 @@ impl VgaDevice {
         self.crtc[0x0F] = 0x00;
 
         self.vbe.enable = 0;
+        self.vbe_bytes_per_scan_line_override = 0;
         self.ensure_buffers(80 * 9, 25 * 16);
         self.dirty = true;
     }
@@ -364,6 +377,7 @@ impl VgaDevice {
         self.graphics[4] = 0x00;
 
         self.vbe.enable = 0;
+        self.vbe_bytes_per_scan_line_override = 0;
         self.ensure_buffers(320, 200);
         self.dirty = true;
     }
@@ -378,9 +392,22 @@ impl VgaDevice {
         self.vbe.x_offset = 0;
         self.vbe.y_offset = 0;
         self.vbe.bank = 0;
+        self.vbe_bytes_per_scan_line_override = 0;
 
         self.vbe.enable = 0x0001 | if lfb { 0x0040 } else { 0 };
         self.ensure_buffers(width as u32, height as u32);
+        self.dirty = true;
+    }
+
+    /// Override the VBE scanline length in bytes for SVGA scanout.
+    ///
+    /// This is intended for the BIOS VBE (INT 10h 4F06) compatibility path, where the logical
+    /// scanline length is specified in bytes (`bios.video.vbe.bytes_per_scan_line`).
+    ///
+    /// A value of 0 clears the override and restores the default Bochs behavior of deriving stride
+    /// from `virt_width` and `bpp`.
+    pub fn set_vbe_bytes_per_scan_line_override(&mut self, bytes: u16) {
+        self.vbe_bytes_per_scan_line_override = bytes;
         self.dirty = true;
     }
 
@@ -954,9 +981,8 @@ impl VgaDevice {
 
     fn render_svga(&mut self, width: u32, height: u32, bpp: u16) {
         self.back.fill(0);
-        let stride_pixels = self.vbe.effective_stride_pixels();
-        let x_off = self.vbe.x_offset as u32;
-        let y_off = self.vbe.y_offset as u32;
+        let x_off = usize::from(self.vbe.x_offset);
+        let y_off = usize::from(self.vbe.y_offset);
         let fb_base = VBE_FRAMEBUFFER_OFFSET;
 
         let bytes_per_pixel = match bpp {
@@ -967,16 +993,50 @@ impl VgaDevice {
             _ => 4,
         } as u32;
 
-        let stride_bytes = stride_pixels.saturating_mul(bytes_per_pixel) as usize;
+        let stride_bytes = if self.vbe_bytes_per_scan_line_override != 0 {
+            u32::from(self.vbe_bytes_per_scan_line_override)
+        } else {
+            let stride_pixels = self.vbe.effective_stride_pixels();
+            stride_pixels.saturating_mul(bytes_per_pixel)
+        };
+        let Ok(stride_bytes) = usize::try_from(stride_bytes) else {
+            return;
+        };
+        let bytes_per_pixel_usize = bytes_per_pixel as usize;
+        if stride_bytes == 0 || bytes_per_pixel_usize == 0 {
+            return;
+        }
+
+        // Compute the displayed base address within VRAM:
+        //   base = fb_base + y_offset * bytes_per_scan_line + x_offset * bytes_per_pixel
+        //
+        // Clamp/fail gracefully if the arithmetic overflows or if the computed base is outside VRAM.
+        let Some(base) = y_off
+            .checked_mul(stride_bytes)
+            .and_then(|v| v.checked_add(x_off.checked_mul(bytes_per_pixel_usize)?))
+            .and_then(|v| fb_base.checked_add(v))
+        else {
+            return;
+        };
+        if base >= self.vram.len() {
+            return;
+        }
+
         for y in 0..height {
-            let src_y = y_off + y;
             let dst_row = (y * width) as usize;
-            let src_row_base = (src_y as usize).saturating_mul(stride_bytes);
+            let Some(src_row_base) = (y as usize)
+                .checked_mul(stride_bytes)
+                .and_then(|v| base.checked_add(v))
+            else {
+                continue;
+            };
             for x in 0..width {
-                let src_x = x_off + x;
-                let src = fb_base
-                    .saturating_add(src_row_base)
-                    .saturating_add((src_x as usize).saturating_mul(bytes_per_pixel as usize));
+                let Some(src) = (x as usize)
+                    .checked_mul(bytes_per_pixel_usize)
+                    .and_then(|v| src_row_base.checked_add(v))
+                else {
+                    continue;
+                };
                 let px = match bpp {
                     32 => {
                         // VBE packed pixels: little-endian B,G,R,X
@@ -1103,15 +1163,31 @@ impl VgaDevice {
 
     fn vbe_write_reg(&mut self, index: u16, value: u16) {
         match index {
-            0x0001 => self.vbe.xres = value,
-            0x0002 => self.vbe.yres = value,
-            0x0003 => self.vbe.bpp = value,
+            0x0001 => {
+                self.vbe.xres = value;
+                self.vbe_bytes_per_scan_line_override = 0;
+            }
+            0x0002 => {
+                self.vbe.yres = value;
+                self.vbe_bytes_per_scan_line_override = 0;
+            }
+            0x0003 => {
+                self.vbe.bpp = value;
+                self.vbe_bytes_per_scan_line_override = 0;
+            }
             0x0004 => {
                 self.vbe.enable = value;
+                self.vbe_bytes_per_scan_line_override = 0;
             }
             0x0005 => self.vbe.bank = value,
-            0x0006 => self.vbe.virt_width = value,
-            0x0007 => self.vbe.virt_height = value,
+            0x0006 => {
+                self.vbe.virt_width = value;
+                self.vbe_bytes_per_scan_line_override = 0;
+            }
+            0x0007 => {
+                self.vbe.virt_height = value;
+                self.vbe_bytes_per_scan_line_override = 0;
+            }
             0x0008 => self.vbe.x_offset = value,
             0x0009 => self.vbe.y_offset = value,
             _ => {}
@@ -1409,6 +1485,8 @@ impl PortIO for VgaDevice {
 #[cfg(any(test, feature = "io-snapshot"))]
 impl IoSnapshot for VgaDevice {
     const DEVICE_ID: [u8; 4] = *b"VGAD";
+    // This device uses TLV-encoded optional fields, so new state can be added without bumping the
+    // major version as long as defaults are sensible.
     const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
@@ -1435,6 +1513,7 @@ impl IoSnapshot for VgaDevice {
         const TAG_LATCHES: u16 = 21;
         const TAG_DAC_WRITE_LATCH: u16 = 22;
         const TAG_VBLANK_TIME_NS: u16 = 23;
+        const TAG_VBE_BYTES_PER_SCAN_LINE_OVERRIDE: u16 = 24;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -1485,6 +1564,10 @@ impl IoSnapshot for VgaDevice {
                 .u16(self.vbe.y_offset)
                 .finish(),
         );
+        w.field_u16(
+            TAG_VBE_BYTES_PER_SCAN_LINE_OVERRIDE,
+            self.vbe_bytes_per_scan_line_override,
+        );
 
         // VRAM is the main framebuffer backing store; include it verbatim for deterministic output.
         w.field_bytes(TAG_VRAM, self.vram.clone());
@@ -1519,6 +1602,7 @@ impl IoSnapshot for VgaDevice {
         const TAG_LATCHES: u16 = 21;
         const TAG_DAC_WRITE_LATCH: u16 = 22;
         const TAG_VBLANK_TIME_NS: u16 = 23;
+        const TAG_VBE_BYTES_PER_SCAN_LINE_OVERRIDE: u16 = 24;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -1627,6 +1711,9 @@ impl IoSnapshot for VgaDevice {
             self.vbe.x_offset = d.u16()?;
             self.vbe.y_offset = d.u16()?;
             d.finish()?;
+        }
+        if let Some(v) = r.u16(TAG_VBE_BYTES_PER_SCAN_LINE_OVERRIDE)? {
+            self.vbe_bytes_per_scan_line_override = v;
         }
 
         if let Some(buf) = r.bytes(TAG_VRAM) {

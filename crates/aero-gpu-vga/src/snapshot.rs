@@ -110,6 +110,11 @@ pub struct VgaSnapshotV1 {
     pub vbe_virt_height: u16,
     pub vbe_x_offset: u16,
     pub vbe_y_offset: u16,
+    /// Optional override for bytes per scan line, used by the BIOS VBE compatibility path.
+    ///
+    /// This is appended at the end of the v1 snapshot payload so older decoders (which stop after
+    /// reading VRAM) can ignore it.
+    pub vbe_bytes_per_scan_line_override: u16,
 
     pub latches: [u8; 4],
     pub vram: Vec<u8>,
@@ -172,6 +177,14 @@ impl VgaSnapshotV1 {
         vram.resize(vram_len, 0);
         r.read_exact(&mut vram)?;
 
+        // Optional trailing fields (forward compatible).
+        let trailing = bytes.len().saturating_sub(r.position() as usize);
+        let vbe_bytes_per_scan_line_override = if trailing >= 2 {
+            read_u16_le(&mut r)?
+        } else {
+            0
+        };
+
         Ok(Self {
             misc_output,
             sequencer_index,
@@ -200,6 +213,7 @@ impl VgaSnapshotV1 {
             vbe_virt_height,
             vbe_x_offset,
             vbe_y_offset,
+            vbe_bytes_per_scan_line_override,
             latches,
             vram,
         })
@@ -257,6 +271,9 @@ impl VgaSnapshotV1 {
         out.extend_from_slice(&vram_len.to_le_bytes());
         out.extend_from_slice(&self.vram);
 
+        // Optional trailing fields (forward compatible).
+        out.extend_from_slice(&self.vbe_bytes_per_scan_line_override.to_le_bytes());
+
         out
     }
 }
@@ -299,6 +316,7 @@ impl VgaDevice {
             vbe_virt_height: self.vbe.virt_height,
             vbe_x_offset: self.vbe.x_offset,
             vbe_y_offset: self.vbe.y_offset,
+            vbe_bytes_per_scan_line_override: self.vbe_bytes_per_scan_line_override,
             latches: self.latches,
             vram: self.vram.clone(),
         }
@@ -355,6 +373,9 @@ impl VgaDevice {
         out.extend_from_slice(&vram_len.to_le_bytes());
         out.extend_from_slice(&self.vram);
 
+        // Optional trailing fields (forward compatible).
+        out.extend_from_slice(&self.vbe_bytes_per_scan_line_override.to_le_bytes());
+
         out
     }
 
@@ -399,6 +420,7 @@ impl VgaDevice {
         self.vbe.virt_height = snap.vbe_virt_height;
         self.vbe.x_offset = snap.vbe_x_offset;
         self.vbe.y_offset = snap.vbe_y_offset;
+        self.vbe_bytes_per_scan_line_override = snap.vbe_bytes_per_scan_line_override;
 
         self.latches = snap.latches;
 
