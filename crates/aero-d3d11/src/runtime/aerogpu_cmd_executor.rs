@@ -51,6 +51,9 @@ use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchDescri
 use super::indirect_args::DrawIndexedIndirectArgs;
 use super::pipeline_layout_cache::PipelineLayoutCache;
 use super::reflection_bindings;
+use super::vertex_pulling::{
+    VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP,
+};
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 // D3D11 exposes 128 SRV slots per stage. Our shader translation keeps the D3D register index as the
@@ -2387,7 +2390,7 @@ impl AerogpuD3d11Executor {
         let cmd_end = (*stream.cursor)
             .checked_add(cmd_size)
             .ok_or_else(|| anyhow!("aerogpu_cmd: cmd size overflow"))?;
-        let _cmd_bytes = stream
+        let cmd_bytes = stream
             .bytes
             .get(*stream.cursor..cmd_end)
             .ok_or_else(|| {
@@ -2398,6 +2401,40 @@ impl AerogpuD3d11Executor {
                     stream.size
                 )
             })?;
+
+        let vertex_pulling_draw = match opcode {
+            OPCODE_DRAW => {
+                // struct aerogpu_cmd_draw (24 bytes)
+                if cmd_bytes.len() < 24 {
+                    bail!(
+                        "DRAW: expected at least 24 bytes, got {}",
+                        cmd_bytes.len()
+                    );
+                }
+                VertexPullingDrawParams {
+                    first_vertex: read_u32_le(cmd_bytes, 16)?,
+                    first_instance: read_u32_le(cmd_bytes, 20)?,
+                    base_vertex: 0,
+                    first_index: 0,
+                }
+            }
+            OPCODE_DRAW_INDEXED => {
+                // struct aerogpu_cmd_draw_indexed (28 bytes)
+                if cmd_bytes.len() < 28 {
+                    bail!(
+                        "DRAW_INDEXED: expected at least 28 bytes, got {}",
+                        cmd_bytes.len()
+                    );
+                }
+                VertexPullingDrawParams {
+                    first_vertex: 0,
+                    first_instance: read_u32_le(cmd_bytes, 24)?,
+                    base_vertex: read_i32_le(cmd_bytes, 20)?,
+                    first_index: read_u32_le(cmd_bytes, 16)?,
+                }
+            }
+            _ => unreachable!(),
+        };
 
         // Consume the draw packet now so errors include consistent cursor information.
         stream.iter.next().expect("peeked Some").map_err(|err| {
@@ -2456,7 +2493,7 @@ impl AerogpuD3d11Executor {
 
         // Require VS/PS bindings to match the normal draw path (the VS will be consumed by the
         // eventual emulation compute shader, even though the placeholder prepass does not).
-        let _vs_handle = self
+        let vs_handle = self
             .state
             .vs
             .ok_or_else(|| anyhow!("render draw without bound VS"))?;
@@ -2559,6 +2596,111 @@ impl AerogpuD3d11Executor {
         }
         params_buffer.unmap();
 
+        // Optionally set up vertex pulling bindings for the compute prepass. This is needed for the
+        // eventual VS-as-compute implementation, but we only enable it when an input layout is
+        // bound (some placeholder tests bind VS/PS but omit ILAY/VBs because the current prepass
+        // doesn't execute the VS yet).
+        let mut vertex_pulling_bgl: Option<aero_gpu::bindings::layout_cache::CachedBindGroupLayout> =
+            None;
+        let mut vertex_pulling_bg: Option<wgpu::BindGroup> = None;
+        let mut vertex_pulling_cs_wgsl: Option<String> = None;
+        if let Some(layout_handle) = self.state.input_layout {
+            let vs = self
+                .resources
+                .shaders
+                .get(&vs_handle)
+                .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?
+                .clone();
+            if vs.stage != ShaderStage::Vertex {
+                bail!("shader {vs_handle} is not a vertex shader");
+            }
+            let layout = self
+                .resources
+                .input_layouts
+                .get(&layout_handle)
+                .ok_or_else(|| anyhow!("unknown input layout {layout_handle}"))?;
+
+            // Strides come from IASetVertexBuffers state, not from ILAY.
+            let slot_strides: Vec<u32> = self
+                .state
+                .vertex_buffers
+                .iter()
+                .map(|vb| vb.as_ref().map(|b| b.stride_bytes).unwrap_or(0))
+                .collect();
+            let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
+            let pulling =
+                VertexPullingLayout::new(&binding, &vs.vs_input_signature).map_err(|e| {
+                    anyhow!("failed to build vertex pulling layout for input layout {layout_handle}: {e}")
+                })?;
+
+            // Build per-slot uniform data + bind group.
+            let mut slots: Vec<VertexPullingSlot> =
+                Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+            let mut buffers: Vec<&wgpu::Buffer> =
+                Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+            for &d3d_slot in &pulling.pulling_slot_to_d3d_slot {
+                let vb = self
+                    .state
+                    .vertex_buffers
+                    .get(d3d_slot as usize)
+                    .and_then(|v| *v)
+                    .ok_or_else(|| anyhow!("missing vertex buffer binding for slot {d3d_slot}"))?;
+                if (vb.offset_bytes % 4) != 0 {
+                    bail!(
+                        "vertex buffer slot {d3d_slot} has unaligned offset {} (expected multiple of 4 for u32-based vertex pulling)",
+                        vb.offset_bytes
+                    );
+                }
+                if (vb.stride_bytes % 4) != 0 {
+                    bail!(
+                        "vertex buffer slot {d3d_slot} has stride {} not multiple of 4 (unsupported for u32-based vertex pulling)",
+                        vb.stride_bytes
+                    );
+                }
+                let base_offset_bytes: u32 = vb.offset_bytes.try_into().map_err(|_| {
+                    anyhow!("vertex buffer slot {d3d_slot} offset {} out of range", vb.offset_bytes)
+                })?;
+
+                let buf = self
+                    .resources
+                    .buffers
+                    .get(&vb.buffer)
+                    .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+                slots.push(VertexPullingSlot {
+                    base_offset_bytes,
+                    stride_bytes: vb.stride_bytes,
+                });
+                buffers.push(&buf.buffer);
+            }
+
+            let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
+            let uniform_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aerogpu_cmd vertex pulling uniform"),
+                size: uniform_bytes.len() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            });
+            {
+                let mut mapped = uniform_buffer.slice(..).get_mapped_range_mut();
+                mapped.copy_from_slice(&uniform_bytes);
+            }
+            uniform_buffer.unmap();
+
+            let vp_bgl_entries = pulling.bind_group_layout_entries();
+            let vp_bgl = self
+                .bind_group_layout_cache
+                .get_or_create(&self.device, &vp_bgl_entries);
+            let vp_bg = pulling.create_bind_group(
+                &self.device,
+                vp_bgl.layout.as_ref(),
+                &buffers,
+                &uniform_buffer,
+            );
+            vertex_pulling_cs_wgsl = Some(format!("{}\n{}", pulling.wgsl_prelude(), GEOMETRY_PREPASS_CS_WGSL));
+            vertex_pulling_bgl = Some(vp_bgl);
+            vertex_pulling_bg = Some(vp_bg);
+        }
+
         // Build compute prepass pipeline + bind group.
         let compute_bgl_entries = [
             wgpu::BindGroupLayoutEntry {
@@ -2608,15 +2750,40 @@ impl AerogpuD3d11Executor {
         let compute_bgl = self
             .bind_group_layout_cache
             .get_or_create(&self.device, &compute_bgl_entries);
-        let compute_layout_key = PipelineLayoutKey {
-            bind_group_layout_hashes: vec![compute_bgl.hash],
+        let empty_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &[]);
+        let (compute_layout_key, compute_pipeline_layout) = if let Some(vp_bgl) = &vertex_pulling_bgl
+        {
+            let key = PipelineLayoutKey {
+                bind_group_layout_hashes: vec![compute_bgl.hash, empty_bgl.hash, empty_bgl.hash, vp_bgl.hash],
+            };
+            let layouts = [
+                compute_bgl.layout.as_ref(),
+                empty_bgl.layout.as_ref(),
+                empty_bgl.layout.as_ref(),
+                vp_bgl.layout.as_ref(),
+            ];
+            let layout = self.pipeline_layout_cache.get_or_create(
+                &self.device,
+                &key,
+                &layouts,
+                Some("aerogpu_cmd geometry prepass pipeline layout (vertex pulling)"),
+            );
+            (key, layout)
+        } else {
+            let key = PipelineLayoutKey {
+                bind_group_layout_hashes: vec![compute_bgl.hash],
+            };
+            let layouts = [compute_bgl.layout.as_ref()];
+            let layout = self.pipeline_layout_cache.get_or_create(
+                &self.device,
+                &key,
+                &layouts,
+                Some("aerogpu_cmd geometry prepass pipeline layout"),
+            );
+            (key, layout)
         };
-        let compute_pipeline_layout = self.pipeline_layout_cache.get_or_create(
-            &self.device,
-            &compute_layout_key,
-            &[compute_bgl.layout.as_ref()],
-            Some("aerogpu_cmd geometry prepass pipeline layout"),
-        );
 
         let compute_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aerogpu_cmd geometry prepass bind group"),
@@ -2661,7 +2828,9 @@ impl AerogpuD3d11Executor {
             let (cs_hash, _module) = self.pipeline_cache.get_or_create_shader_module(
                 &self.device,
                 aero_gpu::pipeline_key::ShaderStage::Compute,
-                GEOMETRY_PREPASS_CS_WGSL,
+                vertex_pulling_cs_wgsl
+                    .as_deref()
+                    .unwrap_or(GEOMETRY_PREPASS_CS_WGSL),
                 Some("aerogpu_cmd geometry prepass CS"),
             );
             let key = ComputePipelineKey {
@@ -2692,6 +2861,9 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(compute_pipeline);
             pass.set_bind_group(0, &compute_bind_group, &[]);
+            if let Some(bg) = vertex_pulling_bg.as_ref() {
+                pass.set_bind_group(VERTEX_PULLING_GROUP, bg, &[]);
+            }
             pass.dispatch_workgroups(1, 1, 1);
         }
 

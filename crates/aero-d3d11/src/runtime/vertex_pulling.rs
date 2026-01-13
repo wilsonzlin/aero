@@ -383,6 +383,17 @@ impl VertexPullingLayout {
 
     /// Create a bind-group layout matching the resources declared by [`Self::wgsl_prelude`].
     pub fn create_bind_group_layout(&self, device: &wgpu::Device) -> wgpu::BindGroupLayout {
+        let entries = self.bind_group_layout_entries();
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("aero vertex pulling bind group layout"),
+            entries: &entries,
+        })
+    }
+
+    /// Bind group layout entries matching [`Self::wgsl_prelude`].
+    ///
+    /// This is useful when callers want to use an external bind-group-layout cache.
+    pub fn bind_group_layout_entries(&self) -> Vec<wgpu::BindGroupLayoutEntry> {
         let slot_count = self.slot_count();
         let mut entries: Vec<wgpu::BindGroupLayoutEntry> =
             Vec::with_capacity(slot_count as usize + 1);
@@ -408,11 +419,7 @@ impl VertexPullingLayout {
             },
             count: None,
         });
-
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("aero vertex pulling bind group layout"),
-            entries: &entries,
-        })
+        entries
     }
 
     /// Create a bind group for IA vertex pulling.
