@@ -1010,6 +1010,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         "signature_mode",
         "driver_packages",
         "bound_devices",
+        "installed_driver_signatures",
         "installed_driver_binding_summary",
         "device_binding_storage",
         "device_binding_network",
@@ -2685,6 +2686,112 @@ try {
         devcon_raw = (if ($devcon) { $devcon.output } else { $null })
     }
     Add-Check "bound_devices" "Bound Devices (WMI Win32_PnPEntity)" $devStatus $devSummary $devData $devDetails
+
+    # --- Installed driver signatures (Win32_PnPSignedDriver) ---
+    # This complements ConfigManagerErrorCode (e.g. Code 52) by reporting whether the currently
+    # bound driver package is actually signed (IsSigned) and what signer/provider WMI reports.
+    #
+    # WARNING/PASS semantics:
+    # - PASS when no relevant devices are present (skip) OR all relevant devices with a signed_driver record are signed.
+    # - WARN when any relevant device is unsigned, or when signer/provider metadata is missing (high-signal for trust issues).
+    try {
+        $sigStatus = "PASS"
+        $sigSummary = ""
+        $sigDetails = @()
+
+        $sigData = @{
+            relevant_devices = (if ($devices) { $devices.Count } else { 0 })
+            devices_with_signed_driver = 0
+            unsigned_devices = 0
+            missing_provider = 0
+            missing_signer = 0
+            unknown_is_signed = 0
+            issue_devices = @()
+        }
+
+        if (-not $devices -or $devices.Count -eq 0) {
+            # Don't add additional WARN noise; "bound_devices" already reports this condition.
+            $sigSummary = "Skipped: no Aero-related devices detected."
+        } else {
+            $withSd = @($devices | Where-Object { $_.signed_driver })
+            $sigData.devices_with_signed_driver = $withSd.Count
+
+            if ($withSd.Count -eq 0) {
+                $sigStatus = "WARN"
+                $sigSummary = "No Win32_PnPSignedDriver records matched relevant devices; cannot verify signature state."
+                $sigDetails += "Run as Administrator and ensure the WMI service is functioning."
+            } else {
+                foreach ($d in $withSd) {
+                    $sd = $d.signed_driver
+
+                    $rawIsSigned = (if ($sd.ContainsKey("is_signed")) { $sd.is_signed } else { $null })
+                    $isSigned = $null
+                    if ($rawIsSigned -eq $true) { $isSigned = $true }
+                    elseif ($rawIsSigned -eq $false) { $isSigned = $false }
+                    elseif ($rawIsSigned -ne $null) {
+                        $t = ("" + $rawIsSigned).Trim().ToLower()
+                        if ($t -match '^(true|yes|on|1)$') { $isSigned = $true }
+                        elseif ($t -match '^(false|no|off|0)$') { $isSigned = $false }
+                    }
+
+                    $inf = $null
+                    $provider = $null
+                    $signer = $null
+                    if ($sd) {
+                        if ($sd.inf_name) { $inf = ("" + $sd.inf_name).Trim() }
+                        if ($sd.driver_provider_name) { $provider = ("" + $sd.driver_provider_name).Trim() }
+                        if ($sd.signer) { $signer = ("" + $sd.signer).Trim() }
+                    }
+
+                    $missingProvider = (-not $provider -or $provider.Length -eq 0)
+                    $missingSigner = (-not $signer -or $signer.Length -eq 0)
+                    $unsigned = ($isSigned -eq $false)
+                    $unknownSigned = ($isSigned -eq $null)
+
+                    if ($unsigned) { $sigData.unsigned_devices++ }
+                    if ($missingProvider) { $sigData.missing_provider++ }
+                    if ($missingSigner) { $sigData.missing_signer++ }
+                    if ($unknownSigned) { $sigData.unknown_is_signed++ }
+
+                    if ($unsigned -or $unknownSigned -or $missingProvider -or $missingSigner) {
+                        $sigStatus = "WARN"
+                        $sigData.issue_devices += @{
+                            name = "" + $d.name
+                            pnp_device_id = "" + $d.pnp_device_id
+                            inf_name = $inf
+                            is_signed = $isSigned
+                            driver_provider_name = $provider
+                            signer = $signer
+                            missing_provider = $missingProvider
+                            missing_signer = $missingSigner
+                        }
+
+                        $line = "" + $d.name
+                        if ($d.pnp_device_id) { $line += " (PNPDeviceID=" + $d.pnp_device_id + ")" }
+                        if ($inf) { $line += ", INF=" + $inf }
+                        $line += ", IsSigned=" + (if ($isSigned -eq $null) { "Unknown" } else { $isSigned })
+                        $line += ", Provider=" + (if ($provider) { $provider } else { "<missing>" })
+                        $line += ", Signer=" + (if ($signer) { $signer } else { "<missing>" })
+                        $sigDetails += $line
+                    }
+                }
+
+                if ($sigStatus -eq "PASS") {
+                    $sigSummary = "All relevant devices with signed driver data report IsSigned=True (" + $withSd.Count + " device(s))."
+                } else {
+                    $sigSummary = "Signature issues: unsigned=" + $sigData.unsigned_devices + ", unknown IsSigned=" + $sigData.unknown_is_signed + ", missing provider=" + $sigData.missing_provider + ", missing signer=" + $sigData.missing_signer + " (devices with signed driver data: " + $withSd.Count + ")."
+                    $sigDetails += "Remediation:"
+                    $sigDetails += "  - If signing_policy=test: re-run Guest Tools setup as Administrator to install the driver certificate(s) (see Certificate Store check)."
+                    $sigDetails += "  - Verify SHA-256 support hotfixes are installed (KB3033929; KB4474419 once available)."
+                    $sigDetails += "  - Verify the system clock/timezone is correct (invalid clocks can break signature validation)."
+                }
+            }
+        }
+
+        Add-Check "installed_driver_signatures" "Installed Driver Signatures (Win32_PnPSignedDriver)" $sigStatus $sigSummary $sigData $sigDetails
+    } catch {
+        Add-Check "installed_driver_signatures" "Installed Driver Signatures (Win32_PnPSignedDriver)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+    }
 
     # Per-device-class binding checks (best-effort).
     # These are intentionally WARN (not FAIL) when missing, since the guest might still be
