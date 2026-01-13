@@ -3258,9 +3258,27 @@ mod tests {
             first_out.iter().any(|&s| s.abs() > 1e-6),
             "first TX should produce non-zero audio"
         );
+        assert!(
+            snd.resampler.queued_source_frames() > 0,
+            "precondition: first TX should leave queued resampler state"
+        );
 
         // Stop and restart the playback stream without providing any new non-zero audio.
         control_simple(&mut snd, VIRTIO_SND_R_PCM_STOP, PLAYBACK_STREAM_ID);
+        assert_eq!(snd.playback.state, StreamState::Prepared);
+        assert!(
+            snd.playback.params.is_some(),
+            "PCM_STOP should preserve playback params"
+        );
+        assert_eq!(
+            snd.resampler.queued_source_frames(),
+            0,
+            "PCM_STOP should clear queued playback resampler frames"
+        );
+        assert!(
+            snd.decoded_frames_scratch.is_empty() && snd.resampled_scratch.is_empty(),
+            "PCM_STOP should clear playback scratch buffers"
+        );
         control_simple(&mut snd, VIRTIO_SND_R_PCM_START, PLAYBACK_STREAM_ID);
 
         // Process the second TX and ensure the queued frame from the first TX was not replayed.
@@ -3396,11 +3414,37 @@ mod tests {
             0,
             "capture source should be drained after first RX"
         );
+        assert!(
+            snd.capture_resampler.queued_source_frames() > 0,
+            "precondition: first RX should leave queued resampler state"
+        );
+        assert!(
+            !snd.capture_frames_scratch.is_empty()
+                && !snd.capture_interleaved_scratch.is_empty()
+                && !snd.capture_samples_scratch.is_empty(),
+            "precondition: capture scratch buffers should contain resampler state"
+        );
 
         // Stop and restart capture, then issue another RX request. With an empty capture source,
         // the response should be pure silence; any non-zero samples indicate stale resampler state
         // leaking across STOP/START.
         control_simple(&mut snd, VIRTIO_SND_R_PCM_STOP, CAPTURE_STREAM_ID);
+        assert_eq!(snd.capture.state, StreamState::Prepared);
+        assert!(
+            snd.capture.params.is_some(),
+            "PCM_STOP should preserve capture params"
+        );
+        assert_eq!(
+            snd.capture_resampler.queued_source_frames(),
+            0,
+            "PCM_STOP should clear queued capture resampler frames"
+        );
+        assert!(
+            snd.capture_frames_scratch.is_empty()
+                && snd.capture_interleaved_scratch.is_empty()
+                && snd.capture_samples_scratch.is_empty(),
+            "PCM_STOP should clear capture scratch buffers"
+        );
         control_simple(&mut snd, VIRTIO_SND_R_PCM_START, CAPTURE_STREAM_ID);
 
         let chain = pop_chain(&mut queue, &mem);
