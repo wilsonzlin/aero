@@ -72,7 +72,7 @@ pub fn dispatch_interrupt(
     bus.write_u16(flags_addr, new_flags);
 }
 
-fn sync_keyboard_bda(bios: &Bios, bus: &mut dyn BiosBus) {
+pub(super) fn sync_keyboard_bda(bios: &Bios, bus: &mut dyn BiosBus) {
     // Mirror the BIOS keyboard queue into the conventional BIOS Data Area ring buffer so software
     // that probes 0x40:0x1A/0x1C (head/tail) can observe pending keys without using INT 16h.
     //

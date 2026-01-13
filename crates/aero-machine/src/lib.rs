@@ -3301,6 +3301,23 @@ impl Machine {
         }
     }
 
+    /// Inject a classic BIOS keyboard word into the firmware INT 16h queue.
+    ///
+    /// `key` uses the historical BIOS encoding: `(scan_code << 8) | ascii`.
+    ///
+    /// This is intentionally separate from [`Machine::inject_browser_key`] /
+    /// [`Machine::inject_key_scancode_bytes`], which target the PS/2 i8042 controller path used by
+    /// modern OSes.
+    pub fn inject_bios_key(&mut self, key: u16) {
+        self.bios.push_key(key);
+
+        // Keep the BIOS Data Area keyboard ring buffer mirror coherent for guests that probe it
+        // directly (e.g. DOS bootloaders/UI code that checks the head/tail pointers without
+        // invoking INT 16h).
+        let bus: &mut dyn BiosBus = &mut self.mem;
+        self.bios.sync_keyboard_bda(bus);
+    }
+
     /// Inject relative mouse motion into the i8042 controller, if present.
     ///
     /// `dx` is positive to the right and `dy` is positive down (browser-style). The underlying PS/2

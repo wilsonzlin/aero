@@ -385,6 +385,15 @@ impl Bios {
         self.keyboard_queue.push_back(key);
     }
 
+    /// Synchronize the BIOS keyboard queue into the conventional BIOS Data Area (BDA) keyboard
+    /// ring buffer.
+    ///
+    /// This is a best-effort compatibility mirror so software that polls the BDA head/tail pointers
+    /// (0x40:0x1A/0x1C) can observe pending keys without invoking INT 16h.
+    pub fn sync_keyboard_bda(&self, bus: &mut dyn BiosBus) {
+        interrupts::sync_keyboard_bda(self, bus);
+    }
+
     pub fn post(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
         self.post_with_pci(cpu, bus, disk, None);
     }
