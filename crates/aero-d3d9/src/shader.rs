@@ -198,8 +198,8 @@ pub struct ShaderProgram {
     pub used_samplers: BTreeSet<u16>,
     /// Texture type declared for each sampler register (`dcl_2d`, `dcl_cube`, etc).
     ///
-    /// Aero's current D3D9 executor only supports sampling `texture_2d<f32>`; cube/3D/1D
-    /// declarations are rejected during translation.
+    /// The AeroGPU D3D9 executor supports `texture_2d<f32>` and `texture_cube<f32>` samplers.
+    /// Other declarations (3D/1D/unknown) are rejected during translation.
     pub sampler_texture_types: HashMap<u16, TextureType>,
     pub used_consts: BTreeSet<u16>,
     pub used_inputs: BTreeSet<u16>,
@@ -254,7 +254,7 @@ pub enum ShaderError {
         second: u16,
     },
     #[error(
-        "unsupported sampler texture type {ty:?} for s{sampler} (aero currently only supports 2D textures)"
+        "unsupported sampler texture type {ty:?} for s{sampler} (aero currently only supports 2D and cube textures)"
     )]
     UnsupportedSamplerTextureType { sampler: u32, ty: TextureType },
 }
@@ -542,9 +542,8 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             // Values match `D3DSAMPLER_TEXTURE_TYPE`:
             //   1 = 1d, 2 = 2d, 3 = cube, 4 = volume (3d)
             //
-            // The current AeroGPU D3D9 executor bind group layout is hard-coded to `texture_2d`,
-            // so reject non-2D declarations early with a deterministic error instead of producing
-            // WGSL that will fail `wgpu` validation later.
+            // Reject unsupported texture types early with a deterministic error instead of
+            // producing WGSL that will fail `wgpu` validation later.
             let dst_reg_type = decode_reg_type(dst_token);
             if dst_reg_type == 10 {
                 let sampler = decode_reg_num(dst_token);
@@ -557,7 +556,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     other => TextureType::Unknown(other),
                 };
                 sampler_texture_types.insert(sampler, ty);
-                if ty != TextureType::Texture2D {
+                if !matches!(ty, TextureType::Texture2D | TextureType::TextureCube) {
                     return Err(ShaderError::UnsupportedSamplerTextureType {
                         sampler: sampler as u32,
                         ty,
@@ -1090,11 +1089,10 @@ pub fn generate_wgsl_with_options(
     // Derive binding numbers from the D3D9 sampler register index for stability:
     //   texture binding = 2*s
     //   sampler binding = 2*s + 1
-    // The executor currently only supports 2D texture bindings. If the shader declared a non-2D
-    // sampler, reject before generating WGSL to avoid `wgpu` validation errors from mismatched
-    // `texture_*` types / bind group layouts.
+    // If the shader declared an unsupported sampler texture type, reject before generating WGSL
+    // to avoid `wgpu` validation errors from mismatched `texture_*` types / bind group layouts.
     for (&sampler, &ty) in &ir.sampler_texture_types {
-        if ty != TextureType::Texture2D {
+        if !matches!(ty, TextureType::Texture2D | TextureType::TextureCube) {
             return Err(ShaderError::UnsupportedSamplerTextureType {
                 sampler: sampler as u32,
                 ty,
@@ -1105,9 +1103,19 @@ pub fn generate_wgsl_with_options(
         let tex_binding = u32::from(s) * 2;
         let samp_binding = tex_binding + 1;
         sampler_bindings.insert(s, (tex_binding, samp_binding));
+        let ty = ir
+            .sampler_texture_types
+            .get(&s)
+            .copied()
+            .unwrap_or(TextureType::Texture2D);
+        let wgsl_tex_ty = match ty {
+            TextureType::Texture2D => "texture_2d<f32>",
+            TextureType::TextureCube => "texture_cube<f32>",
+            _ => unreachable!("unsupported sampler texture types are rejected above"),
+        };
         wgsl.push_str(&format!(
-            "@group({}) @binding({}) var tex{}: texture_2d<f32>;\n",
-            sampler_group, tex_binding, s
+            "@group({}) @binding({}) var tex{}: {};\n",
+            sampler_group, tex_binding, s, wgsl_tex_ty
         ));
         wgsl.push_str(&format!(
             "@group({}) @binding({}) var samp{}: sampler;\n",
@@ -1207,6 +1215,7 @@ pub fn generate_wgsl_with_options(
                     &ir.const_defs_f32,
                     const_base,
                     ir.version.stage,
+                    &ir.sampler_texture_types,
                 );
             }
             debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
@@ -1337,6 +1346,7 @@ pub fn generate_wgsl_with_options(
                     &ir.const_defs_f32,
                     const_base,
                     ir.version.stage,
+                    &ir.sampler_texture_types,
                 );
             }
             debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
@@ -1371,6 +1381,7 @@ fn emit_inst(
     const_defs_f32: &BTreeMap<u16, [f32; 4]>,
     const_base: u32,
     stage: ShaderStage,
+    sampler_texture_types: &HashMap<u16, TextureType>,
 ) {
     match inst.op {
         Op::Nop => {}
@@ -1537,17 +1548,37 @@ fn emit_inst(
             let dst_name = reg_var_name(dst.reg);
             let coord_expr = src_expr(&coord, const_defs_f32, const_base);
             let project = inst.imm.unwrap_or(0) != 0;
-            let uv = if project {
-                format!("(({}).xy / ({}).w)", coord_expr, coord_expr)
-            } else {
-                format!("({}).xy", coord_expr)
+            let ty = sampler_texture_types
+                .get(&s)
+                .copied()
+                .unwrap_or(TextureType::Texture2D);
+            let coords = match ty {
+                TextureType::TextureCube => {
+                    if project {
+                        format!("(({}).xyz / ({}).w)", coord_expr, coord_expr)
+                    } else {
+                        format!("({}).xyz", coord_expr)
+                    }
+                }
+                TextureType::Texture2D => {
+                    if project {
+                        format!("(({}).xy / ({}).w)", coord_expr, coord_expr)
+                    } else {
+                        format!("({}).xy", coord_expr)
+                    }
+                }
+                _ => {
+                    unreachable!(
+                        "unsupported sampler texture types are rejected during WGSL generation"
+                    )
+                }
             };
             let mut sample = match stage {
                 // Vertex stage has no implicit derivatives, so use an explicit LOD.
                 ShaderStage::Vertex => {
-                    format!("textureSampleLevel(tex{}, samp{}, {}, 0.0)", s, s, uv)
+                    format!("textureSampleLevel(tex{}, samp{}, {}, 0.0)", s, s, coords)
                 }
-                ShaderStage::Pixel => format!("textureSample(tex{}, samp{}, {})", s, s, uv),
+                ShaderStage::Pixel => format!("textureSample(tex{}, samp{}, {})", s, s, coords),
             };
             sample = apply_result_modifier(sample, inst.result_modifier);
             if let Some(mask) = mask_suffix(dst.mask) {

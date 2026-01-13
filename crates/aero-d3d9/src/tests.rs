@@ -8,8 +8,8 @@ use aero_dxbc::{
 };
 
 use crate::shader_limits::{MAX_D3D9_SHADER_BLOB_BYTES, MAX_D3D9_SHADER_BYTECODE_BYTES};
-use crate::{dxbc, shader, sm3, software, state};
 use crate::sm3::decode::TextureType;
+use crate::{dxbc, shader, sm3, software, state};
 
 fn enc_reg_type(ty: u8) -> u32 {
     let low = (ty & 0x7) as u32;
@@ -411,11 +411,11 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
         0x0012,
         0x1000_0000 | (3u32 << 20),
         &[
-            enc_dst(0, 0, 0xF),    // r0
-            enc_src(2, 0, 0xE4),   // c0 (t)
-            enc_src(2, 1, 0xE4),   // c1 (a)
-            enc_src(2, 2, 0xE4),   // c2 (b)
-            enc_src(19, 0, 0x00),  // p0.x predicate token
+            enc_dst(0, 0, 0xF),   // r0
+            enc_src(2, 0, 0xE4),  // c0 (t)
+            enc_src(2, 1, 0xE4),  // c1 (a)
+            enc_src(2, 2, 0xE4),  // c2 (b)
+            enc_src(19, 0, 0x00), // p0.x predicate token
         ],
     ));
 
@@ -633,20 +633,12 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
     // add r0, r0, c1
     out.extend(enc_inst_sm3(
         0x0002,
-        &[
-            enc_dst(0, 0, 0xF),
-            enc_src(0, 0, 0xE4),
-            enc_src(2, 1, 0xE4),
-        ],
+        &[enc_dst(0, 0, 0xF), enc_src(0, 0, 0xE4), enc_src(2, 1, 0xE4)],
     ));
     // add r1.x, r1.x, c2.x
     out.extend(enc_inst_sm3(
         0x0002,
-        &[
-            enc_dst(0, 1, 0x1),
-            enc_src(0, 1, 0x00),
-            enc_src(2, 2, 0x00),
-        ],
+        &[enc_dst(0, 1, 0x1), enc_src(0, 1, 0x00), enc_src(2, 2, 0x00)],
     ));
     // breakc_ge r1.x, c3.x (compare op 2 = ge)
     out.extend(enc_inst_with_extra_sm3(
@@ -1272,10 +1264,26 @@ fn sm3_predicated_mov_pixel_compare() {
     let decl = build_vertex_decl_pos_tex_color();
 
     let quad = [
-        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 0.0, 0.0, 1.0)), // bottom-left red
-        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(0.0, 0.0, 0.0, 1.0)),  // bottom-right black
-        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(0.0, 0.0, 0.0, 1.0)),   // top-right black
-        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 0.0, 0.0, 1.0)),   // top-left red
+        (
+            software::Vec4::new(-1.0, -1.0, 0.0, 1.0),
+            (0.0, 1.0),
+            software::Vec4::new(1.0, 0.0, 0.0, 1.0),
+        ), // bottom-left red
+        (
+            software::Vec4::new(1.0, -1.0, 0.0, 1.0),
+            (1.0, 1.0),
+            software::Vec4::new(0.0, 0.0, 0.0, 1.0),
+        ), // bottom-right black
+        (
+            software::Vec4::new(1.0, 1.0, 0.0, 1.0),
+            (1.0, 0.0),
+            software::Vec4::new(0.0, 0.0, 0.0, 1.0),
+        ), // top-right black
+        (
+            software::Vec4::new(-1.0, 1.0, 0.0, 1.0),
+            (0.0, 0.0),
+            software::Vec4::new(1.0, 0.0, 0.0, 1.0),
+        ), // top-left red
     ];
     let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
@@ -1372,10 +1380,26 @@ fn sm3_bounded_loop_accumulate_pixel_compare() {
     let decl = build_vertex_decl_pos_tex_color();
 
     let quad = [
-        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (
+            software::Vec4::new(-1.0, -1.0, 0.0, 1.0),
+            (0.0, 1.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, -1.0, 0.0, 1.0),
+            (1.0, 1.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, 1.0, 0.0, 1.0),
+            (1.0, 0.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(-1.0, 1.0, 0.0, 1.0),
+            (0.0, 0.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
     ];
     let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
@@ -1743,7 +1767,7 @@ fn dxbc_container_does_not_panic_on_huge_chunk_offset() {
 }
 
 #[test]
-fn rejects_cube_sampler_declarations_until_executor_supports_them() {
+fn accepts_cube_sampler_declarations() {
     // ps_3_0 with a `dcl_cube s0` declaration.
     let mut words = vec![0xFFFF_0300];
     let decl_token = 3u32 << 27; // texture type = cube
@@ -1751,16 +1775,10 @@ fn rejects_cube_sampler_declarations_until_executor_supports_them() {
     words.push(0x0000_FFFF);
 
     let bytes = to_bytes(&words);
-    let err = shader::parse(&bytes).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            shader::ShaderError::UnsupportedSamplerTextureType {
-                sampler: 0,
-                ty: TextureType::TextureCube
-            }
-        ),
-        "unexpected error: {err:?}"
+    let program = shader::parse(&bytes).unwrap();
+    assert_eq!(
+        program.sampler_texture_types.get(&0).copied(),
+        Some(TextureType::TextureCube)
     );
 }
 
