@@ -362,6 +362,22 @@ fn handle_int13(
     let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
     let drive = (cpu.gpr[gpr::RDX] & 0xFF) as u8;
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum DriveKind {
+        Floppy,
+        Hdd,
+        Cd,
+    }
+
+    fn classify_drive(drive: u8) -> Option<DriveKind> {
+        match drive {
+            0x00..=0x7F => Some(DriveKind::Floppy),
+            0x80..=0xDF => Some(DriveKind::Hdd),
+            0xE0..=0xEF => Some(DriveKind::Cd),
+            _ => None,
+        }
+    }
+
     fn set_error(bios: &mut Bios, cpu: &mut CpuState, status: u8) {
         bios.last_int13_status = status;
         cpu.rflags |= FLAG_CF;
@@ -383,12 +399,15 @@ fn handle_int13(
         bus.read_u8(BDA_BASE + 0x75)
     }
 
-    fn drive_present(bus: &mut dyn BiosBus, drive: u8) -> bool {
-        if drive < 0x80 {
-            drive < floppy_drive_count(bus)
-        } else {
-            let idx = drive.wrapping_sub(0x80);
-            idx < fixed_drive_count(bus)
+    fn drive_present(bios: &Bios, bus: &mut dyn BiosBus, drive: u8) -> bool {
+        match classify_drive(drive) {
+            Some(DriveKind::Floppy) => drive < floppy_drive_count(bus),
+            Some(DriveKind::Hdd) => {
+                let idx = drive.wrapping_sub(0x80);
+                idx < fixed_drive_count(bus)
+            }
+            Some(DriveKind::Cd) => bios.config.boot_drive == drive,
+            None => false,
         }
     }
 
@@ -416,10 +435,205 @@ fn handle_int13(
         }
     }
 
+    let drive_kind = classify_drive(drive);
+    if drive_kind == Some(DriveKind::Cd) {
+        match ah {
+            0x00 => {
+                // Reset disk system.
+                if !drive_present(bios, bus, drive) {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+                bios.last_int13_status = 0;
+                cpu.rflags &= !FLAG_CF;
+                cpu.gpr[gpr::RAX] &= !0xFF00u64;
+            }
+            0x01 => {
+                // Get status of last disk operation.
+                if !drive_present(bios, bus, drive) {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+                let status = bios.last_int13_status;
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | ((status as u64) << 8);
+                if status == 0 {
+                    cpu.rflags &= !FLAG_CF;
+                } else {
+                    cpu.rflags |= FLAG_CF;
+                }
+            }
+            0x03 | 0x05 => {
+                // CHS write / format track.
+                if !drive_present(bios, bus, drive) {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+                bios.last_int13_status = 0x03; // write protected
+                cpu.rflags |= FLAG_CF;
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x03u64 << 8);
+            }
+            0x41 => {
+                // Extensions check.
+                if !drive_present(bios, bus, drive) {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+                if (cpu.gpr[gpr::RBX] & 0xFFFF) == 0x55AA {
+                    // Report EDD 3.0 (AH=0x30) and that we support 42h + 48h.
+                    cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x30u64 << 8);
+                    cpu.gpr[gpr::RBX] = (cpu.gpr[gpr::RBX] & !0xFFFF) | 0xAA55;
+                    cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | 0x0005;
+                    bios.last_int13_status = 0;
+                    cpu.rflags &= !FLAG_CF;
+                } else {
+                    set_error(bios, cpu, 0x01);
+                }
+            }
+            0x42 => {
+                // Extended read via Disk Address Packet (DAP) at DS:SI.
+                if !drive_present(bios, bus, drive) {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+
+                let si = cpu.gpr[gpr::RSI] & 0xFFFF;
+                let dap_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
+                let dap_size = bus.read_u8(dap_addr);
+                if dap_size != 0x10 && dap_size != 0x18 {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+
+                if bus.read_u8(dap_addr + 1) != 0 {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+
+                let count_2048 = bus.read_u16(dap_addr + 2) as u64;
+                if count_2048 == 0 {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+                let buf_off = bus.read_u16(dap_addr + 4);
+                let buf_seg = bus.read_u16(dap_addr + 6);
+                let lba_2048 = bus.read_u64(dap_addr + 8);
+                let mut dst =
+                    cpu.apply_a20(((buf_seg as u64) << 4).wrapping_add(buf_off as u64));
+
+                if dap_size == 0x18 {
+                    // 24-byte DAP includes a 64-bit flat pointer at offset 16.
+                    let buf64 = bus.read_u64(dap_addr + 16);
+                    if buf64 != 0 {
+                        dst = cpu.apply_a20(buf64);
+                    }
+                }
+
+                let iso_total_2048 = disk.size_in_sectors() / 4;
+                let Some(end_2048) = lba_2048.checked_add(count_2048) else {
+                    set_error(bios, cpu, 0x04);
+                    return;
+                };
+                if end_2048 > iso_total_2048 {
+                    set_error(bios, cpu, 0x04);
+                    return;
+                }
+
+                let Some(lba_512) = lba_2048.checked_mul(4) else {
+                    set_error(bios, cpu, 0x04);
+                    return;
+                };
+                let Some(count_512) = count_2048.checked_mul(4) else {
+                    set_error(bios, cpu, 0x04);
+                    return;
+                };
+
+                for i in 0..count_512 {
+                    let mut buf = [0u8; 512];
+                    match disk.read_sector(lba_512 + i, &mut buf) {
+                        Ok(()) => bus.write_physical(dst + i * 512, &buf),
+                        Err(e) => {
+                            let status = disk_err_to_int13_status(e);
+                            set_error(bios, cpu, status);
+                            return;
+                        }
+                    }
+                }
+
+                bios.last_int13_status = 0;
+                cpu.rflags &= !FLAG_CF;
+                cpu.gpr[gpr::RAX] &= !0xFF00u64;
+            }
+            0x43 => {
+                // Extended write via Disk Address Packet (EDD): CD media is write-protected.
+                if !drive_present(bios, bus, drive) {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+
+                bios.last_int13_status = 0x03; // write protected
+                cpu.rflags |= FLAG_CF;
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x03u64 << 8);
+            }
+            0x48 => {
+                // Extended get drive parameters (EDD) for CD-ROM media (2048-byte sectors).
+                if !drive_present(bios, bus, drive) {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+
+                let si = cpu.gpr[gpr::RSI] & 0xFFFF;
+                let table_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
+                let buf_size = bus.read_u16(table_addr) as usize;
+                if buf_size < 0x1A {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+
+                let write_len = buf_size.min(0x1E) as u16;
+                bus.write_u16(table_addr, write_len);
+                if buf_size >= 4 {
+                    bus.write_u16(table_addr + 2, 0); // flags
+                }
+                if buf_size >= 8 {
+                    bus.write_u32(table_addr + 4, 1024); // cylinders (placeholder)
+                }
+                if buf_size >= 12 {
+                    bus.write_u32(table_addr + 8, 16); // heads (placeholder)
+                }
+                if buf_size >= 16 {
+                    bus.write_u32(table_addr + 12, 63); // sectors/track (placeholder)
+                }
+                if buf_size >= 24 {
+                    bus.write_u64(table_addr + 16, disk.size_in_sectors() / 4);
+                }
+                if buf_size >= 26 {
+                    bus.write_u16(table_addr + 24, 2048); // bytes/sector
+                }
+                if buf_size >= 30 {
+                    bus.write_u32(table_addr + 26, 0); // DPTE pointer (unused)
+                }
+
+                bios.last_int13_status = 0;
+                cpu.rflags &= !FLAG_CF;
+                cpu.gpr[gpr::RAX] &= !0xFF00u64;
+            }
+            _ => {
+                // Legacy CHS functions are not supported for CD-ROM drives; extensions are
+                // sufficient for El Torito boot paths.
+                if !drive_present(bios, bus, drive) {
+                    set_error(bios, cpu, 0x01);
+                    return;
+                }
+                set_error(bios, cpu, 0x01);
+            }
+        }
+        return;
+    }
+
     match ah {
         0x00 => {
             // Reset disk system.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -429,7 +643,7 @@ fn handle_int13(
         }
         0x01 => {
             // Get status of last disk operation.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -443,7 +657,7 @@ fn handle_int13(
         }
         0x02 => {
             // Read sectors (CHS).
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -521,7 +735,7 @@ fn handle_int13(
             // The BIOS disk interface is currently backed by a read-only [`BlockDevice`]. Report
             // write-protect rather than "function unsupported" so DOS-era software can degrade
             // gracefully.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -534,7 +748,7 @@ fn handle_int13(
             //
             // Like other write operations, formatting is not supported with the current read-only
             // [`BlockDevice`] implementation.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -548,7 +762,7 @@ fn handle_int13(
             //
             // Verify is like a read without transferring data into memory. We implement it by
             // reading sectors and discarding the contents.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -595,7 +809,7 @@ fn handle_int13(
         0x08 => {
             // Get drive parameters (very small subset).
             // Return: CF clear, AH=0, CH/CL/DH describe geometry.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -646,7 +860,7 @@ fn handle_int13(
             // Real BIOS implementations may use this to configure controller timing based on drive
             // type. Our disk interface is fully emulated in software, so this is a no-op that
             // validates drive presence.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -659,7 +873,7 @@ fn handle_int13(
             //
             // Real hardware performs a mechanical seek; we model disk I/O synchronously so this is
             // a validation/no-op path.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -685,7 +899,7 @@ fn handle_int13(
             // Check drive ready.
             //
             // We model disk I/O synchronously; if the drive exists, it is always ready.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -698,7 +912,7 @@ fn handle_int13(
             //
             // Real hardware would seek back to cylinder 0. We model disk I/O synchronously, so this
             // is a no-op that validates drive presence.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -710,7 +924,7 @@ fn handle_int13(
             // Alternate disk reset (often used for hard disks).
             //
             // Treat this as equivalent to AH=00h reset.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -723,7 +937,7 @@ fn handle_int13(
             //
             // Hardware BIOSes use this to run controller self-tests. We treat the emulated
             // controller as always healthy.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -733,7 +947,7 @@ fn handle_int13(
         }
         0x15 => {
             // Get disk type.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -757,7 +971,7 @@ fn handle_int13(
             //
             // DOS programs use this to detect when a floppy disk is swapped. We do not model a
             // disk-change line; always report "not changed" and succeed.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -767,7 +981,7 @@ fn handle_int13(
         }
         0x41 => {
             // Extensions check.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -784,7 +998,7 @@ fn handle_int13(
         }
         0x42 => {
             // Extended read via Disk Address Packet (DAP) at DS:SI.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -853,7 +1067,7 @@ fn handle_int13(
             // Extended write via Disk Address Packet (EDD).
             //
             // Not supported with the current read-only [`BlockDevice`] implementation.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -871,7 +1085,7 @@ fn handle_int13(
             //
             // DS:SI points to a caller-supplied buffer; the first WORD is the
             // buffer size in bytes.
-            if !drive_present(bus, drive) {
+            if !drive_present(bios, bus, drive) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1561,6 +1775,77 @@ mod tests {
 
         assert_eq!(mem.read_u64(table_addr + 16), sectors);
         assert_eq!(mem.read_u16(table_addr + 24), 512);
+    }
+
+    #[test]
+    fn int13_ext_get_drive_params_cd_reports_2048_bytes_per_sector() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let disk_bytes = vec![0u8; 2048 * 4];
+        let iso_sectors = (disk_bytes.len() / 2048) as u64;
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0600;
+        cpu.gpr[gpr::RDX] = 0xE0; // DL = CD0
+        cpu.gpr[gpr::RAX] = 0x4800; // AH=48h
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+        cpu.a20_enabled = mem.a20_enabled();
+        let table_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0600);
+        mem.write_u16(table_addr, 0x1E); // buffer size
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+        assert_eq!(mem.read_u64(table_addr + 16), iso_sectors);
+        assert_eq!(mem.read_u16(table_addr + 24), 2048);
+    }
+
+    #[test]
+    fn int13_ext_read_cd_reads_2048b_sector_into_memory() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+
+        let mut disk_bytes = vec![0u8; 2048 * 4];
+        let mut expected = vec![0u8; 2048];
+        expected[0..512].fill(0x11);
+        expected[512..1024].fill(0x22);
+        expected[1024..1536].fill(0x33);
+        expected[1536..2048].fill(0x44);
+        disk_bytes[2048..4096].copy_from_slice(&expected); // ISO LBA 1
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0500;
+        cpu.gpr[gpr::RDX] = 0xE0; // DL = CD0
+        cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+        cpu.a20_enabled = mem.a20_enabled();
+        let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
+        mem.write_u8(dap_addr, 0x10);
+        mem.write_u8(dap_addr + 1, 0x00);
+        mem.write_u16(dap_addr + 2, 1); // count (2048-byte sectors)
+        mem.write_u16(dap_addr + 4, 0x2000); // offset
+        mem.write_u16(dap_addr + 6, 0x0000); // segment
+        mem.write_u64(dap_addr + 8, 1); // ISO LBA
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+        let buf = mem.read_bytes(0x2000, 2048);
+        assert_eq!(buf, expected);
     }
 
     #[test]

@@ -114,8 +114,11 @@ pub fn init_bda(bus: &mut dyn BiosBus, boot_drive: u8) {
     // This BIOS currently models exactly one boot device (backed by the single [`BlockDevice`]
     // passed to POST/interrupt handlers). Reflect that in the BDA:
     // - If booting from a floppy (`DL < 0x80`), report *no* hard disks installed.
-    // - If booting from a hard disk (`DL >= 0x80`), report enough drives to include the boot drive.
-    let hard_disk_count = if boot_drive >= 0x80 {
+    // - If booting from a hard disk (`DL 0x80..=0xDF`), report enough drives to include the boot
+    //   drive.
+    // - If booting from a CD-ROM (`DL 0xE0..=0xEF`), this BIOS still only models the boot device,
+    //   so report no fixed disks.
+    let hard_disk_count = if (0x80..=0xDF).contains(&boot_drive) {
         boot_drive.wrapping_sub(0x80).saturating_add(1)
     } else {
         0
