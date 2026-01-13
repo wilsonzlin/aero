@@ -92,7 +92,7 @@ import {
   type UsbSelectedMessage,
 } from "../usb/usb_proxy_protocol";
 import { setUsbProxyCompletionRingDispatchPaused } from "../usb/usb_proxy_ring_dispatcher";
-import { applyUsbSelectedToWebUsbUhciBridge, type WebUsbUhciHotplugBridgeLike } from "../usb/uhci_webusb_bridge";
+import { applyUsbSelectedToWebUsbUhciBridge } from "../usb/uhci_webusb_bridge";
 import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
 import { WebUsbUhciHarnessRuntime } from "../usb/webusb_harness_runtime";
 import type {
@@ -109,6 +109,7 @@ import type {
 import { WebUsbEhciHarnessRuntime } from "../usb/webusb_ehci_harness_runtime";
 import { WebUsbPassthroughRuntime, type UsbPassthroughBridgeLike } from "../usb/webusb_passthrough_runtime";
 import { hex16 } from "../usb/usb_hex";
+import { applyUsbSelectedToWebUsbXhciBridge } from "../usb/xhci_webusb_bridge";
 import {
   UsbPassthroughDemoRuntime,
   isUsbPassthroughDemoRunMessage,
@@ -182,6 +183,7 @@ import { drainIoHidInputRing } from "./io_hid_input_ring";
 import { forwardHidSendReportToMainThread } from "./io_hid_output_report_forwarding";
 import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs } from "./io_worker_vm_snapshot";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
+import { applyUsbSelectedToWebUsbGuestBridge, chooseWebUsbGuestBridge, type WebUsbGuestControllerKind } from "./io_webusb_guest_selection";
 import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
   VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND,
@@ -492,8 +494,9 @@ let hdaControllerBridge: HdaControllerBridge | null = null;
 type VirtioInputPciDevice = VirtioInputPciDeviceLike;
 let virtioInputKeyboard: VirtioInputPciFunction | null = null;
 let virtioInputMouse: VirtioInputPciFunction | null = null;
-type WebUsbGuestBridge = WebUsbUhciHotplugBridgeLike & UsbPassthroughBridgeLike;
+type WebUsbGuestBridge = UsbPassthroughBridgeLike & { set_connected(connected: boolean): void };
 let webUsbGuestBridge: WebUsbGuestBridge | null = null;
+let webUsbGuestControllerKind: WebUsbGuestControllerKind | null = null;
 let lastUsbSelected: UsbSelectedMessage | null = null;
 let usbRingAttach: UsbRingAttachMessage | null = null;
 
@@ -1589,6 +1592,10 @@ function maybeInitUhciDevice(): void {
     maybeInitUhciRuntime();
   }
 
+  // Initialize xHCI early so guest WebUSB passthrough can prefer it deterministically when available.
+  // UHCI remains initialized for Win7 HID / legacy devices.
+  maybeInitXhciDevice();
+
   if (!uhciDevice) {
     const Bridge = api.UhciControllerBridge;
     if (Bridge) {
@@ -1629,6 +1636,66 @@ function maybeInitUhciDevice(): void {
   maybeInitSyntheticUsbHidDevices();
 
   if (!webUsbGuestBridge) {
+    // Deterministic policy: when xHCI passthrough is available, prefer it for guest-visible WebUSB.
+    // Keep UHCI initialized for Win7 HID + other legacy paths.
+    const xhciPick = chooseWebUsbGuestBridge({ xhciBridge: xhciControllerBridge, uhciBridge: null });
+    if (xhciPick?.kind === "xhci") {
+      const xhci = xhciPick.bridge;
+      // `XhciPciDevice` owns the WASM bridge and calls `free()` during shutdown; wrap with a
+      // no-op `free()` so `WebUsbPassthroughRuntime` does not double-free.
+      const wrapped: WebUsbGuestBridge = {
+        set_connected: (connected) => xhci.set_connected(connected),
+        drain_actions: () => xhci.drain_actions(),
+        push_completion: (completion) => xhci.push_completion(completion),
+        reset: () => xhci.reset(),
+        pending_summary: () => {
+          const fn = (xhci as unknown as { pending_summary?: unknown }).pending_summary;
+          if (typeof fn !== "function") return null;
+          return fn.call(xhci) as unknown;
+        },
+        free: () => {},
+      };
+
+      webUsbGuestBridge = wrapped;
+      webUsbGuestControllerKind = xhciPick.kind;
+
+      if (!usbPassthroughRuntime) {
+        usbPassthroughRuntime = new WebUsbPassthroughRuntime({
+          bridge: wrapped,
+          port: ctx,
+          pollIntervalMs: 0,
+          initiallyBlocked: !usbAvailable,
+          initialRingAttach: usbRingAttach ?? undefined,
+        });
+        usbPassthroughRuntime.start();
+        if (import.meta.env.DEV) {
+          const timer = setInterval(() => {
+            console.debug("[io.worker] xHCI WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
+          }, 1000) as unknown as number;
+          (timer as unknown as { unref?: () => void }).unref?.();
+          usbPassthroughDebugTimer = timer;
+        }
+      }
+
+      if (lastUsbSelected) {
+        try {
+          applyUsbSelectedToWebUsbXhciBridge(wrapped, lastUsbSelected);
+          webUsbGuestAttached = lastUsbSelected.ok;
+          webUsbGuestLastError = null;
+        } catch (err) {
+          console.warn("[io.worker] Failed to apply usb.selected to xHCI WebUSB bridge", err);
+          webUsbGuestAttached = false;
+          webUsbGuestLastError = `Failed to apply usb.selected to xHCI WebUSB bridge: ${formatWebUsbGuestError(err)}`;
+        }
+      } else {
+        webUsbGuestAttached = false;
+        webUsbGuestLastError = null;
+      }
+
+      emitWebUsbGuestStatus();
+      return;
+    }
+
     if (uhciRuntime) {
       let runtimeBridge: UhciRuntimeWebUsbBridge;
       runtimeBridge = new UhciRuntimeWebUsbBridge({
@@ -1641,6 +1708,7 @@ function maybeInitUhciDevice(): void {
         },
       });
       webUsbGuestBridge = runtimeBridge;
+      webUsbGuestControllerKind = "uhci";
       uhciRuntimeWebUsbBridge = runtimeBridge;
 
       if (!usbPassthroughRuntime) {
@@ -1703,6 +1771,7 @@ function maybeInitUhciDevice(): void {
       };
 
       webUsbGuestBridge = wrapped;
+      webUsbGuestControllerKind = "uhci";
 
       if (!usbPassthroughRuntime) {
         usbPassthroughRuntime = new WebUsbPassthroughRuntime({
@@ -4239,8 +4308,9 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       lastUsbSelected = msg;
       if (webUsbGuestBridge) {
         try {
-          applyUsbSelectedToWebUsbUhciBridge(webUsbGuestBridge, msg);
-          if (uhciRuntimeWebUsbBridge && webUsbGuestBridge === uhciRuntimeWebUsbBridge) {
+          const kind: WebUsbGuestControllerKind = webUsbGuestControllerKind ?? "uhci";
+          applyUsbSelectedToWebUsbGuestBridge(kind, webUsbGuestBridge, msg);
+          if (kind === "uhci" && uhciRuntimeWebUsbBridge && webUsbGuestBridge === uhciRuntimeWebUsbBridge) {
             webUsbGuestAttached = uhciRuntimeWebUsbBridge.is_connected();
             webUsbGuestLastError = uhciRuntimeWebUsbBridge.last_error();
           } else {
@@ -4256,9 +4326,9 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         webUsbGuestAttached = false;
         if (!msg.ok) {
           webUsbGuestLastError = null;
-        } else if (wasmApi && !wasmApi.UhciControllerBridge && !wasmApi.UhciRuntime) {
+        } else if (wasmApi && !wasmApi.XhciControllerBridge && !wasmApi.UhciControllerBridge && !wasmApi.UhciRuntime) {
           webUsbGuestLastError =
-            "UhciControllerBridge export unavailable (guest-visible WebUSB passthrough unsupported in this WASM build).";
+            "USB controller exports unavailable (guest-visible WebUSB passthrough unsupported in this WASM build).";
         } else {
           webUsbGuestLastError = null;
         }
@@ -5254,6 +5324,7 @@ function shutdown(): void {
       mouseButtonsMask = 0;
 
       webUsbGuestBridge = null;
+      webUsbGuestControllerKind = null;
 
       if (usbPassthroughRuntime) {
         usbPassthroughRuntime.destroy();
