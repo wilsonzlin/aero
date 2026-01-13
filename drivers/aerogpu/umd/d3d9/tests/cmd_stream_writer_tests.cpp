@@ -1177,6 +1177,9 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
     return false;
   }
 
+  std::vector<uint32_t> formats;
+  formats.reserve(format_count);
+
   for (uint32_t i = 0; i < format_count; ++i) {
     GetFormatPayload payload{};
     payload.index = i;
@@ -1194,24 +1197,86 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
     if (!Check(payload.format == expected_formats[i], "format enumeration matches expected list")) {
       return false;
     }
+    formats.push_back(payload.format);
 
-    uint32_t expected_ops = kD3DUsageRenderTarget;
+    uint32_t expected_ops = 0;
     if (payload.format == 75u) {
       expected_ops = kD3DUsageDepthStencil;
-    }
-    if (payload.format == 23u || payload.format == 24u || payload.format == 25u) {
-      expected_ops = 0u;
-    }
-    if (payload.format == static_cast<uint32_t>(kD3dFmtDxt1) ||
-        payload.format == static_cast<uint32_t>(kD3dFmtDxt2) ||
-        payload.format == static_cast<uint32_t>(kD3dFmtDxt3) ||
-        payload.format == static_cast<uint32_t>(kD3dFmtDxt4) ||
-        payload.format == static_cast<uint32_t>(kD3dFmtDxt5)) {
+    } else if (payload.format == 23u || payload.format == 24u || payload.format == 25u) {
+      // 16-bit formats are texture-only for now.
       expected_ops = 0;
+    } else if (payload.format == static_cast<uint32_t>(kD3dFmtDxt1) ||
+               payload.format == static_cast<uint32_t>(kD3dFmtDxt2) ||
+               payload.format == static_cast<uint32_t>(kD3dFmtDxt3) ||
+               payload.format == static_cast<uint32_t>(kD3dFmtDxt4) ||
+               payload.format == static_cast<uint32_t>(kD3dFmtDxt5)) {
+      expected_ops = 0;
+    } else {
+      expected_ops = kD3DUsageRenderTarget;
     }
     if (!Check(payload.ops == expected_ops, "format ops mask matches expected usage")) {
       return false;
     }
+  }
+
+  // Validate the format list is exactly the expected set (no duplicates, no
+  // missing entries).
+  std::sort(formats.begin(), formats.end());
+  formats.erase(std::unique(formats.begin(), formats.end()), formats.end());
+  if (!Check(formats.size() == format_count, "format list contains no duplicates")) {
+    return false;
+  }
+  for (uint32_t expected : expected_formats) {
+    if (!Check(std::binary_search(formats.begin(), formats.end(), expected), "format list contains expected entry")) {
+      return false;
+    }
+  }
+
+  // Unknown caps types should not fail device bring-up; validate the driver
+  // returns deterministic (zeroed) output.
+  uint8_t unknown_buf[32];
+  std::memset(unknown_buf, 0xCD, sizeof(unknown_buf));
+  D3D9DDIARG_GETCAPS unknown_caps{};
+  unknown_caps.Type = 0xDEADBEEFu;
+  unknown_caps.pData = unknown_buf;
+  unknown_caps.DataSize = sizeof(unknown_buf);
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &unknown_caps);
+  if (!Check(hr == S_OK, "GetCaps(unknown type) returns S_OK")) {
+    return false;
+  }
+  for (uint8_t b : unknown_buf) {
+    if (!Check(b == 0, "unknown caps type zeroes output buffer")) {
+      return false;
+    }
+  }
+
+  // Size validation: the UMD should not write past caller-provided buffers.
+  D3D9DDIARG_GETCAPS invalid_size{};
+  invalid_size.Type = D3DDDICAPS_GETD3D9CAPS;
+  invalid_size.pData = &caps;
+  invalid_size.DataSize = sizeof(caps) - 1;
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &invalid_size);
+  if (!Check(hr == E_INVALIDARG, "GetCaps(GETD3D9CAPS) rejects undersized buffer")) {
+    return false;
+  }
+
+  uint32_t too_small_u32 = 0;
+  invalid_size.Type = D3DDDICAPS_GETFORMATCOUNT;
+  invalid_size.pData = &too_small_u32;
+  invalid_size.DataSize = sizeof(too_small_u32) - 1;
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &invalid_size);
+  if (!Check(hr == E_INVALIDARG, "GetCaps(GETFORMATCOUNT) rejects undersized buffer")) {
+    return false;
+  }
+
+  GetFormatPayload too_small_fmt{};
+  too_small_fmt.index = 0;
+  invalid_size.Type = D3DDDICAPS_GETFORMAT;
+  invalid_size.pData = &too_small_fmt;
+  invalid_size.DataSize = sizeof(uint32_t); // smaller than required payload
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &invalid_size);
+  if (!Check(hr == E_INVALIDARG, "GetCaps(GETFORMAT) rejects undersized buffer")) {
+    return false;
   }
 
   D3DADAPTER_IDENTIFIER9 ident{};
@@ -1322,6 +1387,18 @@ bool TestAdapterMultisampleQualityLevels() {
     return false;
   }
 
+  // Texture-only formats should not report multisample quality levels.
+  payload.format = 23u; // D3DFMT_R5G6B5 (supported, but not renderable)
+  payload.multisample_type = 0;
+  payload.quality_levels = 0xCDCDCDCDu;
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &get_caps);
+  if (!Check(hr == S_OK, "GetCaps(GETMULTISAMPLEQUALITYLEVELS) texture-only format")) {
+    return false;
+  }
+  if (!Check(payload.quality_levels == 0, "quality_levels==0 for texture-only format")) {
+    return false;
+  }
+
   struct GetMultisampleQualityLevelsPayloadV1 {
     uint32_t format;
     uint32_t multisample_type;
@@ -1339,7 +1416,16 @@ bool TestAdapterMultisampleQualityLevels() {
   if (!Check(hr == S_OK, "GetCaps(GETMULTISAMPLEQUALITYLEVELS) v1 payload")) {
     return false;
   }
-  return Check(payload_v1.quality_levels == 1, "quality_levels==1 for v1 payload");
+  if (!Check(payload_v1.quality_levels == 1, "quality_levels==1 for v1 payload")) {
+    return false;
+  }
+
+  // Undersized payload should be rejected.
+  uint32_t too_small[2] = {0, 0};
+  get_caps.pData = too_small;
+  get_caps.DataSize = sizeof(too_small);
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &get_caps);
+  return Check(hr == E_INVALIDARG, "GetCaps(GETMULTISAMPLEQUALITYLEVELS) rejects undersized buffer");
 }
 
 bool TestAdapterCachingUpdatesCallbacks() {

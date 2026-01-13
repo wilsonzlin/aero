@@ -2606,6 +2606,7 @@ static void force_x1r5g5b5_alpha1_locked_range(
                               /*offset_bytes=*/static_cast<uint32_t>(start),
                               /*size_bytes=*/static_cast<uint32_t>(end - start));
 }
+
 static bool SupportsBcFormats(const Device* dev) {
   if (!dev || !dev->adapter) {
     return false;
@@ -2628,6 +2629,23 @@ static bool SupportsBcFormats(const Device* dev) {
   (void)dev;
   return true;
 #endif
+}
+
+static bool is_supported_backbuffer_format(D3DDDIFORMAT fmt) {
+  // Keep swapchain backbuffer formats conservative: only advertise/accept the
+  // 32-bit color formats used by DWM and typical D3D9Ex apps.
+  switch (static_cast<uint32_t>(fmt)) {
+    case 21u: // D3DFMT_A8R8G8B8
+    case 22u: // D3DFMT_X8R8G8B8
+    case 32u: // D3DFMT_A8B8G8R8
+      return true;
+    default:
+      return false;
+  }
+}
+
+static bool is_supported_depth_stencil_format(D3DDDIFORMAT fmt) {
+  return static_cast<uint32_t>(fmt) == 75u; // D3DFMT_D24S8
 }
 
 // D3DLOCK_* flags (numeric values from d3d9.h). Only the bits we care about are
@@ -7713,6 +7731,9 @@ HRESULT create_backbuffer_locked(Device* dev, Resource* res, uint32_t format, ui
   if (!dev || !dev->adapter || !res) {
     return E_INVALIDARG;
   }
+  if (!is_supported_backbuffer_format(static_cast<D3DDDIFORMAT>(format))) {
+    return E_INVALIDARG;
+  }
 
   const uint32_t bpp = bytes_per_pixel(format);
   width = std::max(1u, width);
@@ -7878,7 +7899,8 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   {
     const D3DDDIRESTYPE create_type = static_cast<D3DDDIRESTYPE>(d3d9_resource_type(*pCreateResource));
     if (create_size_bytes == 0 &&
-        (create_type == D3DDDIRESTYPE_VOLUMETEXTURE || create_type == D3DDDIRESTYPE_VOLUME)) {
+        (create_type == D3DDDIRESTYPE_CUBETEXTURE || create_type == D3DDDIRESTYPE_VOLUMETEXTURE ||
+         create_type == D3DDDIRESTYPE_VOLUME)) {
       return trace.ret(D3DERR_INVALIDCALL);
     }
   }
@@ -7897,6 +7919,18 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->wddm_hAllocation = get_wddm_allocation_from_create_resource(pCreateResource);
   res->is_shared = wants_shared;
   res->is_shared_alias = open_existing_shared;
+
+  // Keep format support conservative and consistent with GetCaps() format ops.
+  // In particular:
+  // - Do not accept render-target usage for formats that are only supported as
+  //   textures (e.g. 16-bit formats and BC formats).
+  // - Only accept depth/stencil usage for formats the host executor supports.
+  if ((res->usage & kD3DUsageRenderTarget) && !is_supported_backbuffer_format(res->format)) {
+    return trace.ret(D3DERR_INVALIDCALL);
+  }
+  if ((res->usage & kD3DUsageDepthStencil) && !is_supported_depth_stencil_format(res->format)) {
+    return trace.ret(D3DERR_INVALIDCALL);
+  }
 
   /*
    * Only treat KMD allocation private data as an INPUT when opening an existing
@@ -8047,6 +8081,9 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 
     // WRITEBACK_DST requires the destination to have a host resource.
     if (d3d9_format_to_aerogpu(res->format) == AEROGPU_FORMAT_INVALID) {
+      return trace.ret(D3DERR_INVALIDCALL);
+    }
+    if (is_block_compressed_format(res->format) && !SupportsBcFormats(dev)) {
       return trace.ret(D3DERR_INVALIDCALL);
     }
 
@@ -9023,6 +9060,10 @@ HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
   if (!pp) {
     return trace.ret(E_INVALIDARG);
   }
+  const D3DDDIFORMAT bb_fmt = static_cast<D3DDDIFORMAT>(d3d9_pp_backbuffer_format(*pp));
+  if (!is_supported_backbuffer_format(bb_fmt)) {
+    return trace.ret(E_INVALIDARG);
+  }
   if (d3d9_format_to_aerogpu(d3d9_pp_backbuffer_format(*pp)) == AEROGPU_FORMAT_INVALID) {
     return trace.ret(E_INVALIDARG);
   }
@@ -9454,6 +9495,10 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const D3D9DDI_PRESEN
   // a later submission.
   (void)submit(dev);
 
+  const D3DDDIFORMAT bb_fmt = static_cast<D3DDDIFORMAT>(d3d9_pp_backbuffer_format(pp));
+  if (!is_supported_backbuffer_format(bb_fmt)) {
+    return E_INVALIDARG;
+  }
   if (d3d9_format_to_aerogpu(d3d9_pp_backbuffer_format(pp)) == AEROGPU_FORMAT_INVALID) {
     return E_INVALIDARG;
   }
