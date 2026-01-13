@@ -259,6 +259,22 @@ This signs:
 - `inf\aero_virtio_input.sys`
 - `inf\aero_virtio_input.cat`
 
+## Verifying signatures (SYS + CAT)
+
+From `drivers/windows7/virtio-input/`:
+
+```cmd
+.\scripts\verify-signature.cmd
+```
+
+By default the script verifies the staged package under `inf\`. You can pass an alternate package directory as the first argument:
+
+```cmd
+.\scripts\verify-signature.cmd C:\path\to\driver-package
+```
+
+The script exits non-zero if `signtool.exe` is not available in `PATH` or if either file is unsigned/invalid.
+
 ## Installation
 
 ### Device Manager (“Have Disk…”)
