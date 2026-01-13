@@ -1,10 +1,38 @@
-//! Legacy audio subsystem (AC97/HDA/DSP + capture plumbing).
+//! Legacy emulator audio stack (AC'97 / HDA device models + DSP utilities).
 //!
-//! This code path is retained for reference and targeted testing, but it is not
-//! used by the browser/WASM runtime. The canonical audio stack lives in
-//! `crates/aero-audio`, `crates/aero-virtio`, and `crates/platform::audio`.
+//! ## Status / feature gate
 //!
-//! Enable the `emulator/legacy-audio` crate feature to compile this module.
+//! This directory is **legacy**: it is retained for reference and for targeted unit/integration
+//! testing, but it is **not** used by the browser/WASM runtime path.
+//!
+//! The entire module is gated behind the `emulator/legacy-audio` feature (i.e. the `legacy-audio`
+//! crate feature on `emulator`). It is intentionally disabled by default.
+//!
+//! If you are looking for the current, canonical implementation, see:
+//! - `crates/aero-audio`
+//! - `crates/aero-virtio`
+//! - `crates/platform::audio`
+//!
+//! ## Inventory
+//!
+//! - `ac97`: AC'97 controller model and DMA plumbing.
+//! - `hda`: Intel High Definition Audio (HDA) controller/codec model.
+//! - `dsp`: PCM decode/convert + channel remixing + resampling (`sinc-resampler` optional).
+//! - `input`: microphone capture helpers (single-producer/single-consumer `f32` ring buffer).
+//! - `mixer`: small conversion/resampling helpers used by the legacy stack.
+//!
+//! ## Running tests
+//!
+//! ```bash
+//! cargo test -p emulator --features legacy-audio
+//! cargo test -p emulator --features "legacy-audio sinc-resampler"
+//! ```
+//!
+//! ## DSP benchmark
+//!
+//! ```bash
+//! cargo bench -p emulator --bench dsp --features legacy-audio
+//! ```
 
 pub mod ac97;
 pub mod dsp;
