@@ -66,6 +66,7 @@ import { E1000PciDevice } from "../io/devices/e1000";
 import { HdaPciDevice, type HdaControllerBridgeLike } from "../io/devices/hda";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
+import { EhciPciDevice } from "../io/devices/ehci";
 import { XhciPciDevice } from "../io/devices/xhci";
 import { VirtioInputPciFunction, hidUsageToLinuxKeyCode, type VirtioInputPciDeviceLike } from "../io/devices/virtio_input";
 import { VirtioNetPciDevice } from "../io/devices/virtio_net";
@@ -468,6 +469,7 @@ let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 let usbEhciHarnessRuntime: WebUsbEhciHarnessRuntime | null = null;
 let uhciDevice: UhciPciDevice | null = null;
+let ehciDevice: EhciPciDevice | null = null;
 let xhciDevice: XhciPciDevice | null = null;
 let virtioNetDevice: VirtioNetPciDevice | null = null;
 let virtioSndDevice: VirtioSndPciDevice | null = null;
@@ -1761,6 +1763,67 @@ function maybeInitXhciDevice(): void {
 
   xhciControllerBridge = res.bridge;
   xhciDevice = res.device;
+}
+
+function maybeInitEhciDevice(): void {
+  if (ehciDevice) return;
+  const api = wasmApi;
+  const mgr = deviceManager;
+  if (!api || !mgr) return;
+  if (!guestBase) return;
+
+  // `EhciControllerBridge` is optional and not yet present in all WASM builds, so resolve it via a
+  // dynamic lookup (rather than strict typing on `WasmApi`).
+  const Bridge = (api as unknown as { EhciControllerBridge?: unknown }).EhciControllerBridge;
+  if (typeof Bridge !== "function") return;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Ctor = Bridge as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let bridge: any;
+  try {
+    const base = guestBase >>> 0;
+    const size = guestSize >>> 0;
+
+    // wasm-bindgen glue may enforce constructor arity; try a few common layouts:
+    // - `new (guestBase, guestSize)`
+    // - `new (guestBase)`
+    // - `new ()`
+    try {
+      if (Ctor.length >= 2) {
+        bridge = new Ctor(base, size);
+      } else if (Ctor.length >= 1) {
+        bridge = new Ctor(base);
+      } else {
+        bridge = new Ctor();
+      }
+    } catch {
+      // Retry with alternate arities to support older/newer bindings.
+      try {
+        bridge = new Ctor(base, size);
+      } catch {
+        try {
+          bridge = new Ctor(base);
+        } catch {
+          bridge = new Ctor();
+        }
+      }
+    }
+
+    const dev = new EhciPciDevice({ bridge, irqSink: mgr.irqSink });
+    mgr.registerPciDevice(dev);
+    mgr.addTickable(dev);
+
+    ehciControllerBridge = bridge;
+    ehciDevice = dev;
+  } catch (err) {
+    console.warn("[io.worker] Failed to initialize EHCI controller bridge", err);
+    try {
+      bridge?.free?.();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 function maybeInitHdaDevice(): void {
@@ -3643,9 +3706,10 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         mgr.registerPortIo(0x0060, 0x0060, i8042Ts);
         mgr.registerPortIo(0x0064, 0x0064, i8042Ts);
       }
-
+ 
       mgr.registerPciDevice(new PciTestDevice());
       maybeInitUhciDevice();
+      maybeInitEhciDevice();
       maybeInitXhciDevice();
       maybeInitVirtioNetDevice();
       if (!virtioNetDevice) maybeInitE1000Device();
@@ -5178,11 +5242,14 @@ function shutdown(): void {
       usbEhciHarnessRuntime = null;
       uhciDevice?.destroy();
       uhciDevice = null;
+      ehciDevice?.destroy();
+      ehciDevice = null;
       xhciDevice?.destroy();
       xhciDevice = null;
       virtioNetDevice?.destroy();
       virtioNetDevice = null;
       uhciControllerBridge = null;
+      ehciControllerBridge = null;
       xhciControllerBridge = null;
       e1000Device?.destroy();
       e1000Device = null;
