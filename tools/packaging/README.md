@@ -145,6 +145,25 @@ To reproduce CI packaging locally (assuming you already have `out/packages/` + `
 pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1 -SpecPath tools/packaging/specs/win7-signed.json
 ```
 
+## AeroGPU-only Guest Tools (dev)
+
+For development/debug flows where you want to package **only the AeroGPU driver** (no virtio
+storage/network/input/audio), use the GPU-only spec:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1 `
+  -SpecPath tools/packaging/specs/win7-aerogpu-only.json
+```
+
+In-guest, run:
+
+```bat
+setup.cmd /skipstorage
+```
+
+to avoid boot-critical virtio-blk pre-seeding (the GPU-only payload intentionally does not ship
+virtio-blk).
+
 ## Building Guest Tools from in-tree aero virtio drivers (Win7 aero_virtio_blk + aero_virtio_net)
 
 If you want Guest Tools to include Aero's in-tree Windows 7 virtio drivers (`aero_virtio_blk`, `aero_virtio_net`),

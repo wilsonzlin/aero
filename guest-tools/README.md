@@ -166,7 +166,7 @@ Optional flags:
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 - `setup.cmd /skipstorage` (alias: `/skip-storage`)  
-  Skip boot-critical virtio-blk storage pre-seeding. This is intended for partial Guest Tools payloads (for example AeroGPU-only development builds).  
+  Skip boot-critical virtio-blk storage pre-seeding. This is intended for partial Guest Tools payloads (for example AeroGPU-only development builds). The canonical GPU-only media payload is built using `tools/packaging/specs/win7-aerogpu-only.json`.  
   **Do not switch the boot disk from AHCI → virtio-blk** unless you later re-run `setup.cmd` without `/skipstorage` using Guest Tools media that includes the virtio-blk driver; otherwise Windows may BSOD with `0x0000007B INACCESSIBLE_BOOT_DEVICE`.
 
 Exit codes (for automation):

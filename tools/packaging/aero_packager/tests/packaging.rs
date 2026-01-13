@@ -363,6 +363,73 @@ fn aero_virtio_spec_packages_expected_drivers() -> anyhow::Result<()> {
 }
 
 #[test]
+fn aerogpu_only_spec_packages_without_virtio_drivers() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let guest_tools_dir = testdata.join("guest-tools");
+    let spec_path = repo_root
+        .join("..")
+        .join("specs")
+        .join("win7-aerogpu-only.json");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    let drivers_dir = drivers_tmp.path();
+
+    // Minimal driver payload: only aerogpu (x86 + amd64).
+    for arch in ["x86", "amd64"] {
+        write_stub_pci_driver(
+            &drivers_dir.join(arch).join("aerogpu"),
+            "aerogpu",
+            // Must match the canonical device contract (`AERO_GPU_HWIDS`).
+            r"PCI\VEN_A3A0&DEV_0001",
+        )?;
+    }
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_dir.to_path_buf(),
+        guest_tools_dir,
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let outputs = aero_packager::package_guest_tools(&config)?;
+    let iso_bytes = fs::read(&outputs.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+
+    for required in [
+        "drivers/x86/aerogpu/aerogpu.inf",
+        "drivers/x86/aerogpu/aerogpu.sys",
+        "drivers/x86/aerogpu/aerogpu.cat",
+        "drivers/amd64/aerogpu/aerogpu.inf",
+        "drivers/amd64/aerogpu/aerogpu.sys",
+        "drivers/amd64/aerogpu/aerogpu.cat",
+    ] {
+        assert!(
+            tree.contains(required),
+            "ISO is missing required file: {required}"
+        );
+    }
+
+    assert!(
+        !tree
+            .paths
+            .iter()
+            .any(|p| p.starts_with("drivers/x86/virtio-") || p.starts_with("drivers/amd64/virtio-")),
+        "unexpected virtio driver payload present in AeroGPU-only spec output"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn win7_aero_guest_tools_spec_rejects_transitional_virtio_ids_in_infs() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");

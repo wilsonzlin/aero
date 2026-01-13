@@ -111,6 +111,26 @@ Notes:
   `drivers/aerogpu/packaging/win7/legacy/` and build the emulator with the legacy device model enabled
   (feature `emulator/aerogpu-legacy`).
 
+## `win7-aerogpu-only.json`
+
+Intended for **development/debug** Guest Tools media that ships **only the AeroGPU driver** and
+omits all virtio storage/network/input/audio drivers.
+
+This is useful when you want to iterate on the AeroGPU driver without doing a full "switch the VM
+to virtio" flow (and without shipping the boot-critical virtio-blk driver).
+
+- Requires: `aerogpu`
+- Does **not** include: `virtio-blk`, `virtio-net`, `virtio-input`, `virtio-snd`
+
+In-guest, run the installer with:
+
+```bat
+setup.cmd /skipstorage
+```
+
+so `setup.cmd` does not attempt virtio-blk pre-seeding (which would fail without the storage
+driver present).
+
 ## `win7-signed.json`
 
 Intended for packaging Guest Tools from **CI-built, signed driver packages** (`out/packages` + `out/certs`)
