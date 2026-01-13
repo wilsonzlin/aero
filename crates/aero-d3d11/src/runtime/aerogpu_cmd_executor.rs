@@ -53,6 +53,12 @@ const DEFAULT_MAX_SAMPLER_SLOTS: usize = MAX_SAMPLER_SLOTS as usize;
 const DEFAULT_MAX_CONSTANT_BUFFER_SLOTS: usize = 14;
 const LEGACY_CONSTANTS_SIZE_BYTES: u64 = 4096 * 16;
 
+// WebGPU pipelines must declare at least one color target when a fragment shader writes a color
+// output. D3D11 commonly executes depth-only passes (no RTVs bound) while a PS is still present.
+// Our current DXBC→WGSL translation always emits `@location(0)` output, so we bind an internal
+// dummy color attachment for depth-only passes to satisfy validation.
+const DEPTH_ONLY_DUMMY_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
 // Opcode constants from `aerogpu_cmd.h` (via the canonical `aero-protocol` enum).
 const OPCODE_NOP: u32 = AerogpuCmdOpcode::Nop as u32;
 const OPCODE_DEBUG_MARKER: u32 = AerogpuCmdOpcode::DebugMarker as u32;
@@ -583,6 +589,12 @@ pub struct AerogpuD3d11Executor {
     dummy_uniform: wgpu::Buffer,
     dummy_texture_view: wgpu::TextureView,
 
+    /// Cache of internal dummy color targets for depth-only render passes.
+    ///
+    /// Keyed by `(width, height, format)` so repeated depth-only draws (e.g. shadow passes) do not
+    /// allocate a new host texture every time.
+    depth_only_dummy_color_targets: HashMap<(u32, u32, wgpu::TextureFormat), wgpu::Texture>,
+
     sampler_cache: SamplerCache,
     default_sampler: aero_gpu::bindings::samplers::CachedSampler,
 
@@ -730,6 +742,7 @@ impl AerogpuD3d11Executor {
             expansion_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default()),
             dummy_uniform,
             dummy_texture_view,
+            depth_only_dummy_color_targets: HashMap::new(),
             sampler_cache,
             default_sampler,
             bind_group_layout_cache: BindGroupLayoutCache::new(),
@@ -1853,9 +1866,11 @@ impl AerogpuD3d11Executor {
         guest_mem: &mut dyn GuestMemory,
         report: &mut ExecuteReport,
     ) -> Result<()> {
-        if self.state.render_targets.is_empty() {
-            bail!("aerogpu_cmd: draw without bound render target");
+        if self.state.render_targets.is_empty() && self.state.depth_stencil.is_none() {
+            bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
+
+        let depth_only_pass = self.state.render_targets.is_empty() && self.state.depth_stencil.is_some();
 
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
@@ -1986,8 +2001,9 @@ impl AerogpuD3d11Executor {
 
         // Create local texture views so we can continue mutating `self` while the render pass is
         // active.
-        let mut color_views: Vec<wgpu::TextureView> =
-            Vec::with_capacity(self.state.render_targets.len());
+        let mut color_views: Vec<wgpu::TextureView> = Vec::with_capacity(
+            self.state.render_targets.len() + usize::from(depth_only_pass),
+        );
         for &tex_id in &self.state.render_targets {
             let tex = self
                 .resources
@@ -1998,6 +2014,21 @@ impl AerogpuD3d11Executor {
                 tex.texture
                     .create_view(&wgpu::TextureViewDescriptor::default()),
             );
+        }
+        if depth_only_pass {
+            let ds_id = self
+                .state
+                .depth_stencil
+                .expect("depth_only_pass implies depth_stencil.is_some()");
+            let (ds_w, ds_h) = {
+                let tex = self
+                    .resources
+                    .textures
+                    .get(&ds_id)
+                    .ok_or_else(|| anyhow!("unknown depth stencil texture {ds_id}"))?;
+                (tex.desc.width, tex.desc.height)
+            };
+            color_views.push(self.depth_only_dummy_color_view(ds_w, ds_h));
         }
         let depth_stencil_view: Option<(wgpu::TextureView, wgpu::TextureFormat)> =
             if let Some(ds_id) = self.state.depth_stencil {
@@ -2017,13 +2048,24 @@ impl AerogpuD3d11Executor {
 
         let mut color_attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> =
             Vec::with_capacity(color_views.len());
-        for view in &color_views {
+        for (idx, view) in color_views.iter().enumerate() {
+            let is_dummy = depth_only_pass && idx == render_targets.len();
+            let load = if is_dummy {
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+            } else {
+                wgpu::LoadOp::Load
+            };
+            let store = if is_dummy {
+                wgpu::StoreOp::Discard
+            } else {
+                wgpu::StoreOp::Store
+            };
             color_attachments.push(Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
+                    load,
+                    store,
                 },
             }));
         }
@@ -2057,7 +2099,13 @@ impl AerogpuD3d11Executor {
             .render_targets
             .first()
             .and_then(|rt| self.resources.textures.get(rt))
-            .map(|tex| (tex.desc.width, tex.desc.height));
+            .map(|tex| (tex.desc.width, tex.desc.height))
+            .or_else(|| {
+                self.state
+                    .depth_stencil
+                    .and_then(|ds| self.resources.textures.get(&ds))
+                    .map(|tex| (tex.desc.width, tex.desc.height))
+            });
 
         if let Some(vp) = self.state.viewport {
             if vp.x.is_finite()
@@ -7478,6 +7526,32 @@ impl AerogpuD3d11Executor {
 
         self.upload_texture_from_guest_memory(texture_handle, allocs, guest_mem)
     }
+
+    fn depth_only_dummy_color_view(&mut self, width: u32, height: u32) -> wgpu::TextureView {
+        let key = (width, height, DEPTH_ONLY_DUMMY_COLOR_FORMAT);
+        if !self.depth_only_dummy_color_targets.contains_key(&key) {
+            let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("aerogpu_cmd depth-only dummy color target"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: DEPTH_ONLY_DUMMY_COLOR_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            self.depth_only_dummy_color_targets.insert(key, tex);
+        }
+
+        self.depth_only_dummy_color_targets
+            .get(&key)
+            .expect("dummy color target inserted above")
+            .create_view(&wgpu::TextureViewDescriptor::default())
+    }
 }
 
 fn build_render_pass_attachments<'a>(
@@ -7801,31 +7875,60 @@ fn get_or_create_render_pipeline_for_state<'a>(
         &vs_input_signature,
     )?;
 
-    let mut color_targets = Vec::with_capacity(state.render_targets.len());
-    let mut color_target_states = Vec::with_capacity(state.render_targets.len());
-    for &rt in &state.render_targets {
-        let tex = resources
-            .textures
-            .get(&rt)
-            .ok_or_else(|| anyhow!("unknown render target texture {rt}"))?;
-        let mut write_mask = state.color_write_mask;
-        if aerogpu_format_is_x8(tex.format_u32) {
-            // X8 formats treat alpha as always opaque; ignore alpha writes so shaders can't
-            // accidentally stomp the stored alpha channel (wgpu uses RGBA/BGRA textures for X8
-            // formats).
-            write_mask &= !wgpu::ColorWrites::ALPHA;
-        }
+    let depth_only_pass = state.render_targets.is_empty() && state.depth_stencil.is_some();
+
+    let mut color_targets = if depth_only_pass {
+        Vec::with_capacity(1)
+    } else {
+        Vec::with_capacity(state.render_targets.len())
+    };
+    let mut color_target_states = if depth_only_pass {
+        Vec::with_capacity(1)
+    } else {
+        Vec::with_capacity(state.render_targets.len())
+    };
+
+    if depth_only_pass {
+        // Depth-only render pass: bind a dummy color target so the fragment shader's `@location(0)`
+        // output is accepted by wgpu/WebGPU validation.
+        //
+        // Use a fixed format and a disabled write mask so the color result is discarded.
         let ct = wgpu::ColorTargetState {
-            format: tex.desc.format,
-            blend: state.blend,
-            write_mask,
+            format: DEPTH_ONLY_DUMMY_COLOR_FORMAT,
+            blend: None,
+            write_mask: wgpu::ColorWrites::empty(),
         };
         color_targets.push(ColorTargetKey {
             format: ct.format,
-            blend: ct.blend.map(Into::into),
+            blend: None,
             write_mask: ct.write_mask,
         });
         color_target_states.push(Some(ct));
+    } else {
+        for &rt in &state.render_targets {
+            let tex = resources
+                .textures
+                .get(&rt)
+                .ok_or_else(|| anyhow!("unknown render target texture {rt}"))?;
+            let mut write_mask = state.color_write_mask;
+            if aerogpu_format_is_x8(tex.format_u32) {
+                // X8 formats treat alpha as always opaque; ignore alpha writes so shaders can't
+                // accidentally stomp the stored alpha channel (wgpu uses RGBA/BGRA textures for X8
+                // formats).
+                write_mask &= !wgpu::ColorWrites::ALPHA;
+            }
+            let ct = wgpu::ColorTargetState {
+                format: tex.desc.format,
+                blend: state.blend,
+                write_mask,
+            };
+            color_targets.push(ColorTargetKey {
+                format: ct.format,
+                blend: ct.blend.map(Into::into),
+                write_mask: ct.write_mask,
+            });
+            color_target_states.push(Some(ct));
+        }
     }
 
     let depth_stencil_state = if let Some(ds_id) = state.depth_stencil {
