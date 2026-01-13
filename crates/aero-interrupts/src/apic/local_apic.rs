@@ -416,8 +416,8 @@ impl LocalApic {
     /// cleared without changing the [`Arc<LocalApic>`] identity (e.g. because an IOAPIC routes
     /// interrupts to existing sinks).
     ///
-    /// Note: Any registered EOI/ICR notifiers are preserved so IOAPIC Remote-IRR wiring continues
-    /// to function across LAPIC resets.
+    /// Note: Any registered EOI/ICR notifiers are preserved so IOAPIC Remote-IRR wiring and
+    /// interrupt routing continues to function across LAPIC resets.
     pub fn reset_state(&self, apic_id: u8) {
         *self.state.lock().unwrap() = LapicState::new(apic_id);
     }

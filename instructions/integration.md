@@ -35,7 +35,7 @@ This is the **coordination hub**. You wire together the work from all other work
 | `crates/aero-machine/` | Machine state, VM control |
 | `crates/aero-snapshot/` | VM snapshot/restore |
 | `crates/emulator/` | Main emulator wiring |
-| `assets/bios.bin` | Compiled BIOS binary |
+| `assets/bios.bin` | Generated BIOS ROM fixture (canonical ROM is `firmware::bios::build_bios_rom()`) |
 
 ---
 
