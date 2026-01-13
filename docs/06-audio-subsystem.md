@@ -271,6 +271,8 @@ Key options (in addition to the existing `sampleRate`/`latencyHint`/`ringBufferF
       listeners), `createAudioOutput` also exposes `audioOutput.discardBufferedFrames()` to manually request a ring reset.
     - Control message: `{ type: "ring.reset" }` posted to `AudioWorkletNode.port` (the worklet atomically applies
       `readFrameIndex := writeFrameIndex`).
+  - **CI coverage:** `tests/e2e/audio-worklet-suspend-resume-discard.spec.ts` validates in a real Chromium browser that an
+    `AudioContext` suspend/resume cycle triggers a prompt playback ring discard (prevents stale buffered playback after resume).
 
 Related diagnostics knobs (not latency controls, but useful when tuning):
 
