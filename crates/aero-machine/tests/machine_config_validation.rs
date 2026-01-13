@@ -203,8 +203,8 @@ fn browser_defaults_preset_is_valid_and_stable() {
     assert!(cfg.enable_uhci);
 
     // Deterministic core devices.
-    assert!(cfg.enable_vga);
-    assert!(!cfg.enable_aerogpu);
+    assert!(!cfg.enable_vga);
+    assert!(cfg.enable_aerogpu);
     assert!(cfg.enable_serial);
     assert!(cfg.enable_i8042);
     assert!(cfg.enable_a20_gate);

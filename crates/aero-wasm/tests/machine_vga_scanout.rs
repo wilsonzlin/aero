@@ -215,7 +215,10 @@ fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
     // Keep the RAM size small-ish for a fast smoke test while still being large enough for the
     // canonical PC machine configuration.
     let boot = boot_sector_write_a_to_b8000();
-    let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+    // `Machine::new` uses the browser-default canonical configuration which now defaults to
+    // AeroGPU; explicitly request legacy VGA for this scanout test.
+    let mut m = Machine::new_with_config(16 * 1024 * 1024, false, Some(true), None)
+        .expect("Machine::new_with_config should succeed");
     m.set_disk_image(&boot)
         .expect("set_disk_image should accept a 512-byte boot sector");
     m.reset();
@@ -314,7 +317,10 @@ fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
 #[test]
 fn machine_vbe_scanout_reflects_programmed_mode_and_pixels() {
     let boot = boot_sector_vbe_64x64x32_red_pixel();
-    let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+    // `Machine::new` defaults to AeroGPU; this test specifically targets the legacy VGA/VBE
+    // scanout path.
+    let mut m = Machine::new_with_config(16 * 1024 * 1024, false, Some(true), None)
+        .expect("Machine::new_with_config should succeed");
     m.set_disk_image(&boot)
         .expect("set_disk_image should accept a 512-byte boot sector");
     m.reset();

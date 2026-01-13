@@ -460,7 +460,7 @@ impl MachineConfig {
     ///
     /// - E1000 NIC enabled (virtio-net disabled)
     /// - UHCI (USB 1.1) enabled
-    /// - VGA enabled (transitional; AeroGPU disabled)
+    /// - AeroGPU enabled (`00:07.0`, `A3A0:0001`) for Windows driver binding
     ///
     /// See `docs/05-storage-topology-win7.md` for the normative storage BDFs and media attachment
     /// mapping.
@@ -480,8 +480,8 @@ impl MachineConfig {
         cfg.enable_virtio_blk = false;
 
         // Keep deterministic core devices explicit.
-        cfg.enable_vga = true;
-        cfg.enable_aerogpu = false;
+        cfg.enable_vga = false;
+        cfg.enable_aerogpu = true;
         cfg.enable_serial = true;
         cfg.enable_i8042 = true;
         cfg.enable_a20_gate = true;
@@ -6567,7 +6567,11 @@ Track progress: docs/21-smp.md\n\
                     }
                     if let Some(aerogpu) = aerogpu.clone() {
                         let bdf = aero_devices::pci::profile::AEROGPU.bdf;
-                        router.register_handler(bdf, 1, AeroGpuBar1Mmio { dev: aerogpu });
+                        router.register_handler(
+                            bdf,
+                            aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
+                            AeroGpuBar1Mmio { dev: aerogpu },
+                        );
                     }
                     if let Some(e1000) = e1000.clone() {
                         router.register_shared_handler(

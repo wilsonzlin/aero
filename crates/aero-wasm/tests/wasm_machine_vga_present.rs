@@ -197,7 +197,10 @@ fn fnv1a_blank_rgba8(len: usize) -> u64 {
 #[wasm_bindgen_test]
 fn wasm_machine_vga_present_exposes_nonblank_framebuffer() {
     let boot = boot_sector_write_a_to_b8000();
-    let mut machine = Machine::new(16 * 1024 * 1024).expect("Machine::new");
+    // `Machine::new` defaults to the browser canonical configuration (AeroGPU). This test targets
+    // the legacy VGA/VBE scanout path, so explicitly enable VGA.
+    let mut machine = Machine::new_with_config(16 * 1024 * 1024, false, Some(true), None)
+        .expect("Machine::new_with_config");
     machine
         .set_disk_image(&boot)
         .expect("set_disk_image should accept a 512-byte boot sector");
@@ -218,7 +221,6 @@ fn wasm_machine_vga_present_exposes_nonblank_framebuffer() {
     assert!(halted, "guest never reached HLT");
 
     // Ensure the VGA/SVGA front buffer is up to date before reading it via ptr/len.
-    // (In the canonical machine configuration VGA is always present.)
     machine.vga_present();
 
     let width = machine.vga_width();
@@ -267,7 +269,9 @@ fn wasm_machine_vga_present_exposes_nonblank_framebuffer() {
 #[wasm_bindgen_test]
 fn wasm_machine_vbe_present_reports_expected_pixel() {
     let boot = boot_sector_vbe_64x64x32_red_pixel();
-    let mut machine = Machine::new(16 * 1024 * 1024).expect("Machine::new");
+    // `Machine::new` defaults to AeroGPU; this test specifically targets the legacy VGA/VBE path.
+    let mut machine = Machine::new_with_config(16 * 1024 * 1024, false, Some(true), None)
+        .expect("Machine::new_with_config");
     machine
         .set_disk_image(&boot)
         .expect("set_disk_image should accept a 512-byte boot sector");

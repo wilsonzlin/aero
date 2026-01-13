@@ -5604,3 +5604,30 @@ mod reattach_restored_disks_from_opfs_tests {
             .expect("reattach should succeed when referenced OPFS files exist");
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod aerogpu_defaults_tests {
+    use super::*;
+
+    use aero_devices::pci::PciBdf;
+    use aero_devices::pci::profile::{PCI_DEVICE_ID_AERO_AEROGPU, PCI_VENDOR_ID_AERO};
+
+    #[test]
+    fn machine_new_exposes_aerogpu_pci_identity_at_00_07_0() {
+        let m = Machine::new(2 * 1024 * 1024).expect("Machine::new should succeed");
+
+        let pci_cfg = m
+            .inner
+            .pci_config_ports()
+            .expect("canonical Machine::new enables the PC platform");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+
+        let bdf = PciBdf::new(0, 0x07, 0);
+        let vendor = bus.read_config(bdf, 0x00, 2) as u16;
+        let device = bus.read_config(bdf, 0x02, 2) as u16;
+
+        assert_eq!(vendor, PCI_VENDOR_ID_AERO);
+        assert_eq!(device, PCI_DEVICE_ID_AERO_AEROGPU);
+    }
+}
