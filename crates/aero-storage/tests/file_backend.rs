@@ -105,3 +105,23 @@ fn file_backend_write_extends_file_and_zero_fills_gap() {
     backend.read_at(6, &mut tail).unwrap();
     assert_eq!(tail, [0xAA, 0xBB]);
 }
+
+#[test]
+fn file_backend_read_only_rejects_writes() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("disk.img");
+
+    let mut backend = StdFileBackend::create(&path, 4).unwrap();
+    backend.write_at(0, &[1, 2, 3, 4]).unwrap();
+    backend.flush().unwrap();
+
+    let mut backend = StdFileBackend::open(&path, true).unwrap();
+    let err = backend.write_at(0, &[9]).unwrap_err();
+    match err {
+        DiskError::Io(msg) => {
+            assert!(msg.contains("write_at failed"), "unexpected error: {msg}");
+            assert!(msg.contains("path="), "unexpected error: {msg}");
+        }
+        other => panic!("expected DiskError::Io, got {other:?}"),
+    }
+}
