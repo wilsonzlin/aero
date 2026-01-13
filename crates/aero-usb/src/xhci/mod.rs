@@ -77,6 +77,9 @@ const MAX_CONTROL_DATA_LEN: usize = 64 * 1024;
 /// Maximum number of event TRBs written into the guest event ring per controller tick.
 pub const EVENT_ENQUEUE_BUDGET_PER_TICK: usize = 64;
 
+const COMMAND_BUDGET_PER_MMIO: usize = 16;
+const COMMAND_RING_STEP_BUDGET: usize = 64;
+
 use self::context::{
     Dcbaa, DeviceContext32, EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE,
 };
@@ -280,8 +283,13 @@ pub struct XhciController {
     // Root hub ports.
     ports: Vec<XhciPort>,
 
-    // Command ring cursor (host-side harness until a full guest-facing command ring model exists).
+    // Command ring cursor + doorbell kick.
+    //
+    // Guest software programs CRCR with a dequeue pointer + cycle state and rings doorbell 0 to
+    // notify the controller. We keep a small "kick" flag so command processing can continue across
+    // subsequent MMIO accesses without requiring the guest to ring doorbell 0 for every TRB.
     command_ring: Option<RingCursor>,
+    cmd_kick: bool,
 
     // Runtime registers: interrupter 0 + guest event ring delivery.
     interrupter0: InterrupterRegs,
@@ -308,6 +316,7 @@ impl fmt::Debug for XhciController {
             .field("dcbaap", &self.dcbaap)
             .field("slots", &self.slots.len())
             .field("command_ring", &self.command_ring)
+            .field("cmd_kick", &self.cmd_kick)
             .field("pending_events", &self.pending_events.len())
             .field("dropped_event_trbs", &self.dropped_event_trbs)
             .field("interrupter0", &self.interrupter0)
@@ -350,6 +359,7 @@ impl XhciController {
             crcr: 0,
             dcbaap: 0,
             slots,
+            cmd_kick: false,
             ports: (0..port_count).map(|_| XhciPort::new()).collect(),
             command_ring: None,
             interrupter0: InterrupterRegs::default(),
@@ -491,7 +501,7 @@ impl XhciController {
     /// slot ID and initialises controller-local state.
     ///
     /// The method is defensive: missing/zero DCBAAP returns a completion code instead of panicking.
-    pub fn enable_slot(&mut self, mem: &mut impl MemoryBus) -> CommandCompletion {
+    pub fn enable_slot<M: MemoryBus + ?Sized>(&mut self, mem: &mut M) -> CommandCompletion {
         if self.dcbaap().is_none() {
             return CommandCompletion::failure(CommandCompletionCode::ContextStateError);
         }
@@ -520,6 +530,23 @@ impl XhciController {
         CommandCompletion::success(slot_id)
     }
 
+    fn disable_slot<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, slot_id: u8) -> CompletionCode {
+        let idx = usize::from(slot_id);
+        if idx == 0 || idx >= self.slots.len() {
+            return CompletionCode::ParameterError;
+        }
+        if !self.slots[idx].enabled {
+            return CompletionCode::SlotNotEnabledError;
+        }
+
+        if let Some(entry) = self.dcbaap_entry_paddr(slot_id) {
+            mem.write_physical(entry, &0u64.to_le_bytes());
+        }
+
+        self.slots[idx] = SlotState::default();
+        CompletionCode::Success
+    }
+
     /// Configure the command ring cursor (dequeue pointer + cycle state).
     ///
     /// This is a host-side harness used by unit tests and early bring-up while a full guest-facing
@@ -529,26 +556,35 @@ impl XhciController {
     }
 
     /// Process up to `max_trbs` command TRBs from the configured command ring.
-    pub fn process_command_ring(&mut self, mem: &mut impl MemoryBus, max_trbs: usize) {
+    ///
+    /// Returns `true` when the ring appears empty (cycle mismatch or fatal ring error).
+    pub fn process_command_ring<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, max_trbs: usize) -> bool {
         let Some(mut cursor) = self.command_ring else {
-            return;
+            return true;
         };
 
-        const STEP_BUDGET: usize = 256;
         for _ in 0..max_trbs {
-            match cursor.poll(mem, STEP_BUDGET) {
+            match cursor.poll(mem, COMMAND_RING_STEP_BUDGET) {
                 RingPoll::Ready(item) => self.handle_command(mem, item.paddr, item.trb),
-                RingPoll::NotReady => break,
-                RingPoll::Err(_) => break,
+                RingPoll::NotReady => {
+                    self.command_ring = Some(cursor);
+                    return true;
+                }
+                RingPoll::Err(_) => {
+                    self.command_ring = Some(cursor);
+                    return true;
+                }
             }
         }
 
         self.command_ring = Some(cursor);
+        false
     }
 
-    fn handle_command(&mut self, mem: &mut impl MemoryBus, cmd_paddr: u64, trb: Trb) {
+    fn handle_command<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
         match trb.trb_type() {
             TrbType::EnableSlotCommand => self.cmd_enable_slot(mem, cmd_paddr),
+            TrbType::DisableSlotCommand => self.cmd_disable_slot(mem, cmd_paddr, trb),
             TrbType::AddressDeviceCommand => self.cmd_address_device(mem, cmd_paddr, trb),
             TrbType::NoOpCommand => self.queue_command_completion_event(
                 cmd_paddr,
@@ -559,7 +595,7 @@ impl XhciController {
         }
     }
 
-    fn cmd_enable_slot(&mut self, mem: &mut impl MemoryBus, cmd_paddr: u64) {
+    fn cmd_enable_slot<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64) {
         let result = self.enable_slot(mem);
         let (code, slot_id) = match result.completion_code {
             CommandCompletionCode::Success => (CompletionCode::Success, result.slot_id),
@@ -571,7 +607,13 @@ impl XhciController {
         self.queue_command_completion_event(cmd_paddr, code, slot_id);
     }
 
-    fn cmd_address_device(&mut self, mem: &mut impl MemoryBus, cmd_paddr: u64, trb: Trb) {
+    fn cmd_disable_slot<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
+        let slot_id = trb.slot_id();
+        let code = self.disable_slot(mem, slot_id);
+        self.queue_command_completion_event(cmd_paddr, code, slot_id);
+    }
+
+    fn cmd_address_device<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
         const CONTROL_BSR: u32 = 1 << 9;
         let slot_id = trb.slot_id();
         let slot_idx = usize::from(slot_id);
@@ -1046,10 +1088,57 @@ impl XhciController {
 
         let slot = &mut self.slots[slot_idx];
         slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
-        slot.transfer_rings[usize::from(endpoint_id - 1)] = Some(RingCursor::new(tr_dequeue_ptr, dcs));
+        slot.transfer_rings[usize::from(endpoint_id - 1)] =
+            Some(RingCursor::new(tr_dequeue_ptr, dcs));
         slot.device_context_ptr = dev_ctx_ptr;
 
         CommandCompletion::success(slot_id)
+    }
+
+    fn sync_command_ring_from_crcr(&mut self) {
+        // CRCR bits 63:6 contain the ring pointer; bits 3:0 contain flags (RCS/CS/CA/CRR).
+        // Preserve the low flag bits while masking the pointer to the required alignment.
+        let flags = self.crcr & 0x0f;
+        let cycle = (flags & 0x1) != 0;
+        let ptr = self.crcr & !0x3f;
+        self.crcr = ptr | flags;
+        self.command_ring = if ptr == 0 {
+            None
+        } else {
+            Some(RingCursor::new(ptr, cycle))
+        };
+    }
+
+    fn sync_crcr_from_command_ring(&mut self) {
+        if let Some(ring) = self.command_ring {
+            let ptr = ring.dequeue_ptr() & !0x3f;
+            let mut flags = self.crcr & 0x0e;
+            if ring.cycle_state() {
+                flags |= 0x1;
+            }
+            self.crcr = ptr | flags;
+        }
+    }
+
+    fn ring_doorbell0(&mut self) {
+        self.cmd_kick = true;
+    }
+
+    fn maybe_process_command_ring(&mut self, mem: &mut dyn MemoryBus) {
+        if !self.cmd_kick {
+            return;
+        }
+        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
+            return;
+        }
+        // Process a bounded number of command TRBs and flush completion events to the guest event
+        // ring.
+        let ring_empty = self.process_command_ring(mem, COMMAND_BUDGET_PER_MMIO);
+        self.sync_crcr_from_command_ring();
+        self.service_event_ring(mem);
+        if ring_empty {
+            self.cmd_kick = false;
+        }
     }
 
     /// Return the USB device currently bound to a slot, if any.
@@ -1435,7 +1524,7 @@ impl XhciController {
     }
 
     /// Read from the controller's MMIO register space.
-    pub fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+    pub fn mmio_read(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
         // Treat out-of-range reads as open bus.
         let open_bus = match size {
             1 => 0xff,
@@ -1452,6 +1541,8 @@ impl XhciController {
         if end > u64::from(Self::MMIO_SIZE) {
             return open_bus;
         }
+
+        self.maybe_process_command_ring(mem);
 
         // Read per-byte so unaligned/cross-dword reads behave like normal little-endian memory.
         // This is more robust against guests doing odd-sized or misaligned accesses.
@@ -1565,10 +1656,12 @@ impl XhciController {
             regs::REG_CRCR_LO => {
                 let lo = merge(self.crcr as u32) as u64;
                 self.crcr = (self.crcr & 0xffff_ffff_0000_0000) | lo;
+                self.sync_command_ring_from_crcr();
             }
             regs::REG_CRCR_HI => {
                 let hi = merge((self.crcr >> 32) as u32) as u64;
                 self.crcr = (self.crcr & 0x0000_0000_ffff_ffff) | (hi << 32);
+                self.sync_command_ring_from_crcr();
             }
             regs::REG_DCBAAP_LO => {
                 let lo = merge(self.dcbaap as u32) as u64;
@@ -1614,8 +1707,16 @@ impl XhciController {
                 self.interrupter0.write_erdp(v);
             }
 
+            off if off == u64::from(regs::DBOFF_VALUE) => {
+                // Doorbell 0: notify controller that command ring contains new commands.
+                let _ = value_shifted;
+                self.ring_doorbell0();
+            }
+
             _ => {}
         }
+
+        self.maybe_process_command_ring(mem);
     }
 
     fn reset_controller(&mut self) {
@@ -1624,6 +1725,8 @@ impl XhciController {
         self.host_controller_error = false;
         self.crcr = 0;
         self.dcbaap = 0;
+        self.command_ring = None;
+        self.cmd_kick = false;
 
         for slot in self.slots.iter_mut() {
             *slot = SlotState::default();
@@ -1914,8 +2017,9 @@ impl XhciController {
         // Read a dword from CRCR and surface an interrupt. The data itself is ignored; the goal is
         // to touch the memory bus when bus mastering is enabled so the emulator wrapper can gate
         // the access.
+        let paddr = self.crcr & !0x3f;
         let mut buf = [0u8; 4];
-        mem.read_bytes(self.crcr, &mut buf);
+        mem.read_bytes(paddr, &mut buf);
         self.usbsts |= regs::USBSTS_EINT;
     }
 }
@@ -2009,6 +2113,7 @@ impl IoSnapshot for XhciController {
         self.host_controller_error = r.bool(TAG_HOST_CONTROLLER_ERROR)?.unwrap_or(false);
         self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0);
         self.dcbaap = r.u64(TAG_DCBAAP)?.unwrap_or(0) & !0x3f;
+        self.sync_command_ring_from_crcr();
 
         if let Some(v) = r.u32(TAG_INTR0_IMAN)? {
             self.interrupter0.restore_iman(v);

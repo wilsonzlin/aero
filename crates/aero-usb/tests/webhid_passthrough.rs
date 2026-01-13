@@ -11,6 +11,13 @@ fn parse_fixture_collections(json: &str) -> Vec<HidCollectionInfo> {
     serde_json::from_str(json).expect("fixture JSON should deserialize")
 }
 
+fn fixture_mouse_collections() -> Vec<HidCollectionInfo> {
+    parse_fixture_collections(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/hid/webhid_normalized_mouse.json"
+    )))
+}
+
 fn make_minimal_item(usage_page: u32, usage: u32) -> HidReportItem {
     HidReportItem {
         usage_page,

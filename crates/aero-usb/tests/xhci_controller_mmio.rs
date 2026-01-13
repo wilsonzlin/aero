@@ -235,7 +235,11 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
     restored.load_state(&bytes).expect("load snapshot");
 
     assert_eq!(restored.mmio_read(&mut mem, regs::REG_USBCMD, 4), regs::USBCMD_RUN);
-    assert_eq!(restored.mmio_read(&mut mem, regs::REG_CRCR_LO, 4), 0x1234);
+    // CRCR stores a 64-byte-aligned ring pointer; low bits hold flags/cycle state.
+    assert_eq!(
+        restored.mmio_read(&mut mem, regs::REG_CRCR_LO, 4),
+        (0x1234 & !0x3f) | (0x1234 & 0x0f)
+    );
     assert!(restored.irq_level());
 }
 
