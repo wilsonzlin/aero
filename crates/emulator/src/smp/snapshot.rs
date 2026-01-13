@@ -9,7 +9,7 @@ use std::io::{Cursor, Read};
 
 use aero_snapshot::{
     CpuState as SnapshotCpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, Result,
-    SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget, VcpuSnapshot,
+    SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget, VcpuMmuSnapshot, VcpuSnapshot,
 };
 
 use super::lapic::APIC_REG_ICR_HIGH;
@@ -196,6 +196,26 @@ impl SnapshotSource for Machine {
         MmuState::default()
     }
 
+    fn mmu_states(&self) -> Vec<VcpuMmuSnapshot> {
+        // The minimal SMP machine doesn't track real per-vCPU MMU state (TLBs, etc) yet, but the
+        // snapshot format supports a per-vCPU MMU list (`MMUS`). Emit one default MMU entry per
+        // vCPU so multi-vCPU snapshot roundtrips exercise that path.
+        let mut seen = HashSet::with_capacity(self.cpus.len());
+        let mut mmus = Vec::with_capacity(self.cpus.len());
+        for vcpu in &self.cpus {
+            let apic_id = vcpu.cpu.apic_id as u32;
+            if !seen.insert(apic_id) {
+                // Avoid emitting duplicates even if the machine is misconfigured.
+                continue;
+            }
+            mmus.push(VcpuMmuSnapshot {
+                apic_id,
+                mmu: MmuState::default(),
+            });
+        }
+        mmus
+    }
+
     fn device_states(&self) -> Vec<DeviceState> {
         vec![DeviceState {
             id: DeviceId::BIOS,
@@ -289,6 +309,33 @@ impl SnapshotTarget for Machine {
     }
 
     fn restore_mmu_state(&mut self, _state: MmuState) {}
+
+    fn restore_mmu_states(&mut self, states: Vec<VcpuMmuSnapshot>) -> Result<()> {
+        if states.len() != self.cpus.len() {
+            return Err(SnapshotError::Corrupt("MMU state count mismatch"));
+        }
+
+        let mut seen = HashSet::with_capacity(states.len());
+        for mmu in states {
+            let apic_id: u8 = mmu
+                .apic_id
+                .try_into()
+                .map_err(|_| SnapshotError::Corrupt("APIC ID out of range"))?;
+            if !seen.insert(apic_id) {
+                return Err(SnapshotError::Corrupt(
+                    "duplicate APIC ID in MMU list (apic_id must be unique)",
+                ));
+            }
+
+            // Validate that the APIC ID maps to an existing vCPU. The minimal SMP machine doesn't
+            // currently model MMU/TLB state, so we ignore the decoded payload.
+            let _idx = self
+                .cpu_index_by_apic_id(apic_id)
+                .ok_or(SnapshotError::Corrupt("unknown APIC ID"))?;
+        }
+
+        Ok(())
+    }
 
     fn restore_device_states(&mut self, states: Vec<DeviceState>) {
         for state in states {

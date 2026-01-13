@@ -27,7 +27,7 @@ pub use crate::inspect::{
 pub use crate::ram::{Compression, RamMode, RamWriteOptions};
 pub use crate::types::{
     CpuInternalState, CpuMode, CpuState, DeviceState, DiskOverlayRef, DiskOverlayRefs, FpuState,
-    MmuState, SegmentState, SnapshotMeta, VcpuSnapshot,
+    MmuState, SegmentState, SnapshotMeta, VcpuMmuSnapshot, VcpuSnapshot,
 };
 
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -68,6 +68,17 @@ pub trait SnapshotSource {
         }]
     }
     fn mmu_state(&self) -> MmuState;
+    /// Snapshot representation of MMU state for all vCPUs in the guest.
+    ///
+    /// Ordering note: implementations may return vCPU entries in any order.
+    /// [`save_snapshot`] canonicalizes the list by sorting on `apic_id` and rejects duplicate
+    /// `apic_id` values.
+    fn mmu_states(&self) -> Vec<VcpuMmuSnapshot> {
+        vec![VcpuMmuSnapshot {
+            apic_id: 0,
+            mmu: self.mmu_state(),
+        }]
+    }
     /// Snapshot representation of device state entries.
     ///
     /// Ordering note: implementations may return device entries in any order.
@@ -130,6 +141,24 @@ pub trait SnapshotTarget {
         Ok(())
     }
     fn restore_mmu_state(&mut self, state: MmuState);
+    /// Restore MMU state for multiple vCPUs.
+    ///
+    /// Ordering note: when restoring snapshots from [`restore_snapshot`] (and variants), vCPU
+    /// entries are sorted by `apic_id` before being passed to targets to ensure deterministic
+    /// restore behavior even when snapshot producers emit entries in arbitrary order.
+    fn restore_mmu_states(&mut self, states: Vec<VcpuMmuSnapshot>) -> Result<()> {
+        if states.len() != 1 {
+            return Err(SnapshotError::Corrupt(
+                "snapshot contains multiple MMU states but target only supports one",
+            ));
+        }
+        let mmu = states
+            .into_iter()
+            .next()
+            .ok_or(SnapshotError::Corrupt("missing MMU entry"))?;
+        self.restore_mmu_state(mmu.mmu);
+        Ok(())
+    }
     /// Restore device state entries.
     ///
     /// Ordering note: when restoring snapshots from [`restore_snapshot`] (and variants), device

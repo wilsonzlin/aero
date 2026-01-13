@@ -642,6 +642,38 @@ impl VcpuSnapshot {
     }
 }
 
+/// Snapshot representation of MMU state for one virtual CPU.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct VcpuMmuSnapshot {
+    /// vCPU identifier used to map snapshot entries back to a runtime CPU.
+    ///
+    /// For x86 this is typically the local APIC ID.
+    pub apic_id: u32,
+    pub mmu: MmuState,
+}
+
+impl VcpuMmuSnapshot {
+    pub fn encode_v2<W: Write>(&self, w: &mut W) -> Result<()> {
+        w.write_u32_le(self.apic_id)?;
+        self.mmu.encode_v2(w)?;
+        Ok(())
+    }
+
+    pub fn decode_v2<R: Read>(r: &mut R) -> Result<Self> {
+        let apic_id = r.read_u32_le()?;
+        let mmu = MmuState::decode_v2(r)?;
+        Ok(Self { apic_id, mmu })
+    }
+
+    pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+        self.encode_v2(w)
+    }
+
+    pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
+        Self::decode_v2(r)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MmuState {
     pub cr0: u64,
