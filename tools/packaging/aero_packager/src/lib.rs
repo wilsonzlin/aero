@@ -180,11 +180,11 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
     let mut manifest = manifest;
     manifest.inputs = Some(ManifestInputs {
         packaging_spec: Some(ManifestInputFile {
-            path: manifest_input_path(&config.spec_path),
+            path: manifest_input_path(&config.spec_path)?,
             sha256: spec_sha256,
         }),
         windows_device_contract: Some(ManifestWindowsDeviceContractInput {
-            path: manifest_input_path(&config.windows_device_contract_path),
+            path: manifest_input_path(&config.windows_device_contract_path)?,
             sha256: contract_sha256,
             contract_name: contract.contract_name.clone(),
             contract_version: contract.contract_version.clone(),
@@ -245,18 +245,16 @@ fn ensure_no_case_insensitive_path_collisions(files: &[FileToPackage]) -> Result
             .or_default()
             .insert(rel_path.to_string());
 
-        let path = Path::new(rel_path);
-        for ancestor in path.ancestors().skip(1) {
-            if ancestor.as_os_str().is_empty() {
-                break;
+        let parts: Vec<&str> = rel_path.split('/').collect();
+        if parts.len() > 1 {
+            for i in 1..parts.len() {
+                let dir = parts[..i].join("/");
+                let key = dir.to_ascii_lowercase();
+                by_lower
+                    .entry(key)
+                    .or_default()
+                    .insert(format!("{dir}/"));
             }
-
-            let dir = ancestor.to_string_lossy().replace('\\', "/");
-            let key = dir.to_ascii_lowercase();
-            by_lower
-                .entry(key)
-                .or_default()
-                .insert(format!("{dir}/"));
         }
     }
 
@@ -1832,11 +1830,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
-fn manifest_input_path(path: &Path) -> String {
-    path.file_name()
-        .unwrap_or_else(|| path.as_os_str())
-        .to_string_lossy()
-        .to_string()
+fn manifest_input_path(path: &Path) -> Result<String> {
+    let name = path.file_name().unwrap_or_else(|| path.as_os_str());
+    let s = name
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("manifest input path is not valid UTF-8: {:?}", path))?;
+    Ok(s.to_string())
 }
 
 fn path_to_slash(path: &Path, full_path: &Path) -> Result<String> {
@@ -1862,17 +1861,14 @@ mod tests {
     fn collect_dirs_for_zip(files: &[FileToPackage]) -> BTreeSet<String> {
         let mut dirs = BTreeSet::new();
         for f in files {
-            let mut path = Path::new(&f.rel_path);
-            while let Some(parent) = path.parent() {
-                if parent.as_os_str().is_empty() {
-                    break;
-                }
-                let mut s = parent.to_string_lossy().replace('\\', "/");
-                if !s.ends_with('/') {
-                    s.push('/');
-                }
+            let parts: Vec<&str> = f.rel_path.split('/').collect();
+            if parts.len() <= 1 {
+                continue;
+            }
+            for i in 1..parts.len() {
+                let mut s = parts[..i].join("/");
+                s.push('/');
                 dirs.insert(s);
-                path = parent;
             }
         }
         dirs
