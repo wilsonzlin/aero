@@ -609,11 +609,18 @@ fn validate_drivers(
                 if !file_type.is_dir() {
                     continue;
                 }
-                let name = entry.file_name().to_string_lossy().to_string();
-                if is_known_non_driver_entry(&name) {
+                let name_os = entry.file_name();
+                let name = name_os.to_str().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "drivers_dir contains a directory name that is not valid UTF-8 ({}): {:?}",
+                        arch_dir.display(),
+                        entry.path()
+                    )
+                })?;
+                if is_known_non_driver_entry(name) {
                     continue;
                 }
-                let normalized = spec::normalize_driver_name(&name).to_ascii_lowercase();
+                let normalized = spec::normalize_driver_name(name).to_ascii_lowercase();
                 if !listed_driver_names.contains(&normalized) {
                     extras
                         .entry(normalized)
