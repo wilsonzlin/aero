@@ -3,6 +3,16 @@ import { WebHidPassthroughRuntime, type WebHidPassthroughBridgeLike } from "./we
 
 type Listener = (event: unknown) => void;
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 class FakeHidDevice {
   opened = false;
   readonly vendorId: number;
@@ -160,11 +170,50 @@ describe("WebHidPassthroughRuntime", () => {
     await runtime.attachDevice(device as unknown as HIDDevice);
 
     runtime.pollOnce();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(device.sendReport).toHaveBeenCalledTimes(1);
     expect(device.sendReport).toHaveBeenCalledWith(1, outputData);
     expect(device.sendFeatureReport).toHaveBeenCalledTimes(1);
     expect(device.sendFeatureReport).toHaveBeenCalledWith(2, featureData);
+  });
+
+  it("executes output reports sequentially per device", async () => {
+    const device = new FakeHidDevice();
+
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+
+    const drain = vi
+      .fn()
+      .mockReturnValueOnce({ reportType: "output", reportId: 1, data: new Uint8Array([1]) })
+      .mockReturnValueOnce({ reportType: "output", reportId: 2, data: new Uint8Array([2]) })
+      .mockReturnValueOnce(null);
+
+    const bridge: WebHidPassthroughBridgeLike = {
+      push_input_report: vi.fn(),
+      drain_next_output_report: drain,
+      configured: vi.fn(() => true),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebHidPassthroughRuntime({
+      createBridge: () => bridge,
+      pollIntervalMs: 0,
+    });
+    await runtime.attachDevice(device as unknown as HIDDevice);
+
+    runtime.pollOnce();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+    expect(device.sendReport.mock.calls[0]![0]).toBe(1);
+
+    first.resolve(undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(device.sendReport).toHaveBeenCalledTimes(2);
+    expect(device.sendReport.mock.calls[1]![0]).toBe(2);
   });
 
   it("cleans up listeners and frees wasm bridge on detach", async () => {

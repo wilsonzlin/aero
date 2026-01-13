@@ -72,6 +72,8 @@ type DeviceSession = {
   device: HidDeviceLike;
   bridge: WebHidPassthroughBridgeLike;
   onInputReport: (event: HIDInputReportEvent) => void;
+  outputQueue: WebHidPassthroughOutputReport[];
+  outputRunnerToken: number | null;
 };
 
 function defaultLogger(level: "debug" | "info" | "warn" | "error", message: string, err?: unknown): void {
@@ -120,6 +122,7 @@ export class WebHidPassthroughRuntime {
   readonly #log: WebHidPassthroughRuntimeLogger;
   #pollTimer: ReturnType<typeof setInterval> | undefined;
   #unsubscribe: (() => void) | undefined;
+  #nextOutputRunnerToken = 1;
 
   constructor(options: WebHidPassthroughRuntimeOptions) {
     this.#createBridge = options.createBridge;
@@ -186,7 +189,7 @@ export class WebHidPassthroughRuntime {
       };
 
       device.addEventListener("inputreport", onInputReport);
-      this.#sessions.set(device, { device, bridge, onInputReport });
+      this.#sessions.set(device, { device, bridge, onInputReport, outputQueue: [], outputRunnerToken: null });
       this.#onDeviceReady?.(device, bridge);
 
       this.ensurePolling();
@@ -203,6 +206,10 @@ export class WebHidPassthroughRuntime {
   async detachDevice(device: HidDeviceLike): Promise<void> {
     const session = this.#sessions.get(device);
     if (!session) return;
+
+    // Drop any queued output reports to avoid retaining buffers after detach.
+    session.outputQueue.length = 0;
+    session.outputRunnerToken = null;
 
     this.#sessions.delete(device);
 
@@ -236,6 +243,10 @@ export class WebHidPassthroughRuntime {
     // Best-effort synchronous cleanup; callers that care about close semantics
     // should call `detachDevice` explicitly and await it.
     for (const [device, session] of this.#sessions) {
+      // Drop any queued output reports; if a sendReport is already in-flight we can't cancel it,
+      // but clearing the queue avoids retaining unbounded buffers.
+      session.outputQueue.length = 0;
+      session.outputRunnerToken = null;
       try {
         device.removeEventListener("inputreport", session.onInputReport);
       } catch {
@@ -271,19 +282,42 @@ export class WebHidPassthroughRuntime {
           // wasm-bindgen views may be backed by SharedArrayBuffer (threaded WASM);
           // WebHID expects an ArrayBuffer-backed BufferSource.
           const data = ensureArrayBufferBacked(new Uint8Array(report.data));
-
-          if (report.reportType === "feature") {
-            void session.device.sendFeatureReport(report.reportId, data).catch((err) => {
-              this.#log("warn", "WebHID sendFeatureReport() failed", err);
-            });
-          } else {
-            void session.device.sendReport(report.reportId, data).catch((err) => {
-              this.#log("warn", "WebHID sendReport() failed", err);
-            });
-          }
+          this.#enqueueOutputReport(session, { reportType: report.reportType, reportId: report.reportId, data });
         } catch (err) {
           this.#log("warn", "WebHID output report forwarding failed", err);
         }
+      }
+    }
+  }
+
+  #enqueueOutputReport(session: DeviceSession, report: WebHidPassthroughOutputReport): void {
+    session.outputQueue.push(report);
+    if (session.outputRunnerToken !== null) return;
+    const token = this.#nextOutputRunnerToken++;
+    session.outputRunnerToken = token;
+    void this.#runOutputReportQueue(session, token);
+  }
+
+  async #runOutputReportQueue(session: DeviceSession, token: number): Promise<void> {
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (session.outputRunnerToken !== token) break;
+        const next = session.outputQueue.shift();
+        if (!next) break;
+        try {
+          if (next.reportType === "feature") {
+            await session.device.sendFeatureReport(next.reportId, next.data);
+          } else {
+            await session.device.sendReport(next.reportId, next.data);
+          }
+        } catch (err) {
+          this.#log("warn", `WebHID ${next.reportType === "feature" ? "sendFeatureReport" : "sendReport"}() failed`, err);
+        }
+      }
+    } finally {
+      if (session.outputRunnerToken === token) {
+        session.outputRunnerToken = null;
       }
     }
   }
