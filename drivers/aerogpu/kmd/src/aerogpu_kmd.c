@@ -1810,6 +1810,17 @@ static NTSTATUS AeroGpuWaitForAllocationIdle(_Inout_ AEROGPU_ADAPTER* Adapter,
         return STATUS_INVALID_DEVICE_STATE;
     }
 
+    /*
+     * If the adapter is not in D0, avoid touching MMIO for fence polling.
+     * The call sites for this helper are CPU-mapping paths (DxgkDdiLock) which
+     * must not hang or fault when the device is powered down.
+     */
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
+            DxgkDevicePowerStateD0 ||
+        InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+        return DoNotWait ? STATUS_GRAPHICS_GPU_BUSY : STATUS_DEVICE_NOT_READY;
+    }
+
     for (;;) {
         ULONGLONG busyFence = 0;
         if (!AeroGpuGetAllocationBusyFence(Adapter, Alloc, &busyFence)) {
