@@ -125,14 +125,16 @@ For Windows 7 and Linux to bind drivers predictably:
 
 1. **Vendor ID / Device ID** must match the expected device model.
 2. **Class/Subclass/ProgIF** must match:
-   - IDE: `01/01/*` (PIIX3 uses `prog-if=0x8A` for legacy-compat + bus-master IDE)
-   - AHCI: `01/06/01`
-   - NVMe: `01/08/02`
-   - HDA: `04/03/00`
-   - UHCI: `0C/03/00`
+    - IDE: `01/01/*` (PIIX3 uses `prog-if=0x8A` for legacy-compat + bus-master IDE)
+    - AHCI: `01/06/01`
+    - NVMe: `01/08/02`
+    - HDA: `04/03/00`
+    - UHCI: `0C/03/00`
+    - EHCI: `0C/03/20`
+    - xHCI: `0C/03/30`
 3. **Header type** must be `0x00` (type-0 endpoint), except when a device intentionally exposes
-    multiple functions on the same slot:
-   - PIIX3 (function 0 at `00:01.0`) must set `header_type = 0x80` so guests enumerate the IDE
+     multiple functions on the same slot:
+    - PIIX3 (function 0 at `00:01.0`) must set `header_type = 0x80` so guests enumerate the IDE
       and UHCI functions at `00:01.1` and `00:01.2`.
    - `virtio-input` keyboard (function 0) must set `header_type = 0x80` (multi-function bit) so
       guests enumerate the paired mouse function (function 1).

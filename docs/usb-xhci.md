@@ -49,7 +49,12 @@ class drivers predictably.
 Notes:
 
 - The canonical PCI identity is defined in `crates/devices/src/pci/profile.rs` as `USB_XHCI_QEMU`.
-- We currently target **legacy INTx** (level-triggered) by default instead of MSI/MSI-X (see [Unsupported features / known gaps](#unsupported-features--known-gaps)).
+- The canonical PCI profile reserves a 64KiB BAR0 even though current controller stubs implement
+  only a small subset of registers.
+- Interrupt delivery is **platform-dependent**:
+  - Web runtime: INTx only.
+  - Native integrations may choose INTx or MSI (the native PCI wrapper exposes an MSI capability),
+    but MSI-X is not implemented yet.
 - The IRQ line observed by the guest depends on platform routing (PIRQ swizzle); see [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) and [`docs/irq-semantics.md`](./irq-semantics.md).
 - `aero_machine::Machine` does not yet expose an xHCI controller by default (today it wires UHCI for
   USB). Treat the native PCI profile as an intended contract for future wiring.
