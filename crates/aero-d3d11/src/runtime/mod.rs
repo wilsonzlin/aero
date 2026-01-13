@@ -14,6 +14,8 @@ pub mod state;
 pub mod vertex_pulling;
 mod wgsl_link;
 
+use anyhow::{bail, Result};
+
 fn wgpu_texture_compression_disabled() -> bool {
     // CI sometimes uses flaky/buggy software adapters. Allow forcing compression features off so
     // tests remain stable.
@@ -79,6 +81,24 @@ fn negotiated_features_for_available(
     requested
 }
 
+fn supports_indirect_execution_from_downlevel_flags(flags: wgpu::DownlevelFlags) -> bool {
+    flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION)
+}
+
+/// Geometry-shader emulation relies on GPU-written draw arguments and `draw_indirect`.
+///
+/// Some downlevel backends/devices (notably wgpu's GL/WebGL paths) do not support indirect
+/// execution (`DownlevelFlags::INDIRECT_EXECUTION`). Until a CPU-readback slow-path is
+/// implemented, fail fast to avoid silent rendering corruption.
+#[allow(dead_code)]
+fn require_indirect_execution_for_gs_emulation(supports_indirect_execution: bool) -> Result<()> {
+    if supports_indirect_execution {
+        Ok(())
+    } else {
+        bail!("geometry shader emulation requires indirect draws on this backend (wgpu DownlevelFlags::INDIRECT_EXECUTION is not supported)")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +114,28 @@ mod tests {
             !requested.intersects(compression),
             "compression features must not be requested on the wgpu GL backend"
         );
+    }
+
+    #[test]
+    fn supports_indirect_execution_is_derived_from_downlevel_flags() {
+        assert!(
+            !supports_indirect_execution_from_downlevel_flags(wgpu::DownlevelFlags::empty())
+        );
+        assert!(
+            supports_indirect_execution_from_downlevel_flags(wgpu::DownlevelFlags::INDIRECT_EXECUTION)
+        );
+    }
+
+    #[test]
+    fn gs_emulation_indirect_execution_policy_errors_when_unsupported() {
+        let err =
+            require_indirect_execution_for_gs_emulation(false).expect_err("should fail fast");
+        assert!(
+            err.to_string().contains("geometry shader emulation requires indirect draws"),
+            "unexpected error: {err:#}"
+        );
+
+        require_indirect_execution_for_gs_emulation(true)
+            .expect("should succeed when indirect execution is supported");
     }
 }

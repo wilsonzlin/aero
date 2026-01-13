@@ -967,6 +967,9 @@ impl AerogpuD3d11Executor {
     /// that have a `wgpu::Adapter` should pass
     /// `adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)`
     /// here to ensure compute is deterministically enabled/disabled.
+    ///
+    /// This assumes indirect execution is available; callers that need to override indirect support
+    /// should use [`Self::new_with_supports`] / [`Self::new_with_caps`].
     pub fn new_with_supports_compute(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -2985,6 +2988,7 @@ impl AerogpuD3d11Executor {
         let (color_attachments, depth_stencil_attachment) =
             build_render_pass_attachments(&self.resources, &self.state, wgpu::LoadOp::Load)?;
 
+        self.encoder_has_commands = true;
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("aerogpu_cmd expanded draw render pass"),

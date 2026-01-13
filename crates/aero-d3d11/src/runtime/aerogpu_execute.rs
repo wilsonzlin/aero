@@ -83,6 +83,7 @@ const DUMMY_UNIFORM_SIZE_BYTES: u64 = 4096 * 16;
 pub struct AerogpuCmdRuntime {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    supports_indirect_execution: bool,
 
     pub state: D3D11ShadowState,
     pub resources: AerogpuResources,
@@ -154,6 +155,8 @@ impl AerogpuCmdRuntime {
         let supports_compute = downlevel
             .flags
             .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+        let supports_indirect_execution =
+            super::supports_indirect_execution_from_downlevel_flags(downlevel.flags);
         let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
             .request_device(
@@ -250,6 +253,7 @@ impl AerogpuCmdRuntime {
         Ok(Self {
             device,
             queue,
+            supports_indirect_execution,
             state: D3D11ShadowState::default(),
             resources: AerogpuResources::default(),
             pipelines,
@@ -266,6 +270,10 @@ impl AerogpuCmdRuntime {
 
     pub fn device(&self) -> &wgpu::Device {
         &self.device
+    }
+
+    pub fn supports_indirect_execution(&self) -> bool {
+        self.supports_indirect_execution
     }
 
     pub fn poll_wait(&self) {
