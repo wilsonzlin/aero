@@ -291,7 +291,7 @@ See:
 Notes:
 
 - On Windows, trace dumps are emitted via `OutputDebugStringA` by default (view with DebugView/WinDbg). If you want to capture trace output to a console/CI log, set `AEROGPU_D3D9_TRACE_STDERR=1` to also echo the output to `stderr`.
-- `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` is useful for early bring-up: it dumps once on the first stubbed DDI hit (i.e. a missing/unsupported DDI entrypoint).
+- `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` dumps once when the trace sees a call whose name is explicitly tagged with `(stub)`. Host tests use the trace-only `TraceTestStub` entrypoint to exercise this behavior without mislabeling real DDIs.
 
 ## Crash-proof D3D9UMDDI vtables (Win7 runtime)
 
