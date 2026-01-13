@@ -7261,8 +7261,8 @@ static int DoSelftestJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
   w.Key("features_known");
   w.Bool(haveFeatures ? true : false);
   if (haveFeatures) {
-    w.Key("features_lo");
-    w.Uint64(features);
+    w.Key("features_lo_hex");
+    w.String(HexU64(features));
   }
 
   w.Key("scanout_known");
