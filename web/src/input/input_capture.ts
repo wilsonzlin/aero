@@ -1,4 +1,4 @@
-import { InputEventQueue, type InputBatchRecycleMessage, type InputBatchTarget } from "./event_queue";
+import { InputEventQueue, type InputBatchFlushHook, type InputBatchRecycleMessage, type InputBatchTarget } from "./event_queue";
 import { GamepadCapture } from "./gamepad";
 import { PointerLock } from "./pointer_lock";
 import { keyboardCodeToHidUsage } from "./hid_usage";
@@ -64,6 +64,14 @@ export interface InputCaptureOptions {
    */
   enableGamepad?: boolean;
   /**
+   * Optional hook invoked immediately before each input batch is posted to the
+   * I/O worker.
+   *
+   * This is intended for debug tooling (e.g. deterministic record/replay) and
+   * must not allocate on the hot path when disabled.
+   */
+  onBeforeSendBatch?: InputBatchFlushHook;
+  /**
    * Analog stick deadzone in normalized units ([0, 1]).
    */
   gamepadDeadzone?: number;
@@ -91,6 +99,9 @@ export class InputCapture {
   private readonly releaseChord?: PointerLockReleaseChord;
   private readonly logCaptureLatency: boolean;
   private readonly recycleBuffers: boolean;
+  private readonly onBeforeSendBatch?: InputBatchFlushHook;
+  private readonly flushOpts: { recycle?: boolean; onBeforeSend?: InputBatchFlushHook };
+  private readonly flushOptsNoRecycle: { recycle?: boolean; onBeforeSend?: InputBatchFlushHook };
 
   private readonly recycledBuffersBySize = new Map<number, ArrayBuffer[]>();
   private readonly handleWorkerMessage = (event: MessageEvent<unknown>): void => {
@@ -158,7 +169,7 @@ export class InputCapture {
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, nowUs);
-    this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
+    this.queue.flush(this.ioWorker, this.flushOpts);
   };
 
   private readonly handleClick = (event: MouseEvent): void => {
@@ -186,7 +197,7 @@ export class InputCapture {
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
     // Flush immediately; timers may be throttled in the background and we don't
     // want the guest to observe "stuck" inputs.
-    this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
+    this.queue.flush(this.ioWorker, this.flushOpts);
   };
 
   private readonly handleWindowBlur = (): void => {
@@ -198,7 +209,7 @@ export class InputCapture {
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
-    this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
+    this.queue.flush(this.ioWorker, this.flushOpts);
   };
 
   private readonly handleWindowFocus = (): void => {
@@ -218,7 +229,7 @@ export class InputCapture {
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
-    this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
+    this.queue.flush(this.ioWorker, this.flushOpts);
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -582,6 +593,7 @@ export class InputCapture {
       logCaptureLatency = false,
       recycleBuffers = true,
       enableGamepad = true,
+      onBeforeSendBatch,
       gamepadDeadzone = 0.12,
       gamepadPollHz,
     }: InputCaptureOptions = {}
@@ -592,6 +604,9 @@ export class InputCapture {
     this.releaseChord = releasePointerLockChord;
     this.logCaptureLatency = logCaptureLatency;
     this.recycleBuffers = recycleBuffers;
+    this.onBeforeSendBatch = onBeforeSendBatch;
+    this.flushOpts = { recycle: this.recycleBuffers, onBeforeSend: this.onBeforeSendBatch };
+    this.flushOptsNoRecycle = { recycle: false, onBeforeSend: this.onBeforeSendBatch };
 
     this.gamepad = enableGamepad ? new GamepadCapture({ deadzone: gamepadDeadzone }) : null;
     const effectivePollHz = Math.max(1, Math.round(gamepadPollHz ?? flushHz));
@@ -675,7 +690,7 @@ export class InputCapture {
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
-    this.queue.flush(this.ioWorker, { recycle: false });
+    this.queue.flush(this.ioWorker, this.flushOptsNoRecycle);
 
     const workerWithEvents = this.ioWorker as unknown as MessageEventTarget;
     workerWithEvents.removeEventListener?.("message", this.handleWorkerMessage);
@@ -710,7 +725,7 @@ export class InputCapture {
 
   flushNow(): void {
     this.pollGamepad();
-    const latencyUs = this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
+    const latencyUs = this.queue.flush(this.ioWorker, this.flushOpts);
     if (latencyUs === null || !this.logCaptureLatency) {
       return;
     }

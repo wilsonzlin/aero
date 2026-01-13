@@ -77,6 +77,22 @@ export type InputBatchTarget = {
   postMessage: (msg: InputBatchMessage, transfer: Transferable[]) => void;
 };
 
+/**
+ * Optional hook invoked immediately before an input batch is transferred to a target.
+ *
+ * This is intended for debug tooling (e.g. deterministic record/replay). It is structured
+ * to avoid allocations on the hot path when disabled:
+ * - The hook itself is optional.
+ * - When installed but inactive, callers should return early without allocating.
+ * - The queue passes raw arguments (not an object) to avoid per-flush allocations.
+ */
+export type InputBatchFlushHook = (
+  buffer: ArrayBuffer,
+  words: Int32Array,
+  count: number,
+  recycle: boolean,
+) => void;
+
 const HEADER_WORDS = 2;
 const WORDS_PER_EVENT = 4;
 
@@ -163,7 +179,7 @@ export class InputEventQueue {
    * Returns the host-side latency in microseconds from the first event in the
    * batch to when the batch is sent, or `null` if the queue was empty.
    */
-  flush(target: InputBatchTarget, opts: { recycle?: boolean } = {}): number | null {
+  flush(target: InputBatchTarget, opts: { recycle?: boolean; onBeforeSend?: InputBatchFlushHook } = {}): number | null {
     if (this.count === 0) {
       return null;
     }
@@ -197,7 +213,16 @@ export class InputEventQueue {
 
     const byteLength = this.buf.byteLength;
     const buffer = this.buf;
-    if (opts.recycle) {
+    const recycle = opts.recycle === true;
+
+    const onBeforeSend = opts.onBeforeSend;
+    if (onBeforeSend) {
+      // `words` is the queue's internal view over `buffer` (no new allocations).
+      // `buffer` must still be attached here; it will be detached by `postMessage`.
+      onBeforeSend(buffer, this.words, this.count, recycle);
+    }
+
+    if (recycle) {
       target.postMessage({ type: "in:input-batch", buffer, recycle: true }, [buffer]);
     } else {
       target.postMessage({ type: "in:input-batch", buffer }, [buffer]);

@@ -21,6 +21,7 @@ import { initAeroStatusApi } from "./api/status";
 import { AeroConfigManager } from "./config/manager";
 import { InputCapture } from "./input/input_capture";
 import { InputEventType, type InputBatchTarget } from "./input/event_queue";
+import { inputRecordReplay, installInputRecordReplayGlobalApi } from "./input/record_replay";
 import { decodeGamepadReport, formatGamepadHat } from "./input/gamepad";
 import { installPerfHud } from "./perf/hud_entry";
 import {
@@ -78,6 +79,7 @@ initAeroStatusApi("booting");
 installPerfHud({ guestRamBytes: configManager.getState().effective.guestMemoryMiB * 1024 * 1024 });
 installAeroGlobal();
 perf.installGlobalApi();
+installInputRecordReplayGlobalApi();
 
 if (new URLSearchParams(location.search).has("trace")) perf.traceStart();
 perf.instant("boot:main:start", "p");
@@ -901,6 +903,7 @@ function renderMachinePanel(): HTMLElement {
         const capture = new InputCapture(canvas, inputTarget, {
           enableGamepad: false,
           recycleBuffers: true,
+          onBeforeSendBatch: inputRecordReplay.captureHook,
         });
         capture.start();
         inputCapture = capture;
@@ -3944,7 +3947,7 @@ function renderInputPanel(): HTMLElement {
     },
   };
 
-  const capture = new InputCapture(canvas, inputTarget);
+  const capture = new InputCapture(canvas, inputTarget, { onBeforeSendBatch: inputRecordReplay.captureHook });
   capture.start();
 
   const hint = el("div", {

@@ -6,6 +6,7 @@ import type { WebGpuBenchOptions, WebGpuBenchResult } from './bench/webgpu_bench
 import type { NetTraceBackend } from './net/trace_ui.ts';
 import type { ByteSizedCacheTracker, GpuAllocationTracker, MemoryTelemetry } from './perf/memory';
 import type { PerfApi } from './perf/types';
+import type { InputRecordReplayJson } from './input/record_replay';
 
 export {};
 
@@ -34,6 +35,17 @@ declare global {
         traceStop?: () => void;
         exportTrace?: (opts?: { asString?: boolean }) => Promise<unknown>;
         traceEnabled?: boolean;
+      };
+      input?: {
+        startRecording?: () => void;
+        stopRecording?: () => InputRecordReplayJson;
+        replay?: (target: unknown, opts?: { recycle?: boolean }) => void;
+        exportRecording?: () => InputRecordReplayJson;
+        importRecording?: (json: InputRecordReplayJson) => void;
+        clearRecording?: () => void;
+        lastRecording?: InputRecordReplayJson;
+        readonly recording?: boolean;
+        readonly size?: number;
       };
     };
 

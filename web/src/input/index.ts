@@ -17,3 +17,4 @@ export * from "./queue";
 export * from "./scancodes";
 export * from "./types";
 export * from "./worker_consumer";
+export * from "./record_replay";
