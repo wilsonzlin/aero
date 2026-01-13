@@ -561,6 +561,73 @@ fn validate_drivers(
     let drivers_amd64_dir = resolve_input_arch_dir(drivers_dir, "amd64")
         .with_context(|| "resolve driver input directory for amd64")?;
 
+    if spec.fail_on_unlisted_driver_dirs {
+        fn is_known_non_driver_entry(name: &str) -> bool {
+            // Ignore hidden metadata dirs/files (`.git`, `.DS_Store`, `._*`, etc) and
+            // common macOS zip extraction artifacts.
+            if name.starts_with('.') {
+                return true;
+            }
+            name.eq_ignore_ascii_case("__MACOSX")
+        }
+
+        let listed_driver_names: HashSet<String> = spec
+            .drivers
+            .iter()
+            .map(|d| spec::normalize_driver_name(d.name.trim()).to_ascii_lowercase())
+            .collect();
+
+        let mut extras: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for (arch, arch_dir) in [("x86", &drivers_x86_dir), ("amd64", &drivers_amd64_dir)] {
+            for entry in fs::read_dir(arch_dir)
+                .with_context(|| format!("read driver input directory {}", arch_dir.display()))?
+            {
+                let entry = entry?;
+                let file_type = entry.file_type()?;
+                if !file_type.is_dir() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if is_known_non_driver_entry(&name) {
+                    continue;
+                }
+                let normalized = spec::normalize_driver_name(&name).to_ascii_lowercase();
+                if !listed_driver_names.contains(&normalized) {
+                    extras
+                        .entry(normalized)
+                        .or_default()
+                        .insert(arch.to_string());
+                }
+            }
+        }
+
+        if !extras.is_empty() {
+            let mut msg = format!(
+                "drivers_dir contains driver directories that are not listed in the packaging spec \
+                 (fail_on_unlisted_driver_dirs=true).\n\
+                 \n\
+                 This usually means `--drivers-dir` points at the wrong root (for example, a parent \
+                 directory containing multiple driver bundles) and the extra folders would be \
+                 silently ignored by the spec.\n\
+                 \n\
+                 drivers_dir: {}\n\
+                 x86 driver input dir: {}\n\
+                 amd64 driver input dir: {}\n\
+                 \n\
+                 Unlisted driver directories:",
+                drivers_dir.display(),
+                drivers_x86_dir.display(),
+                drivers_amd64_dir.display(),
+            );
+
+            for (name, archs) in extras {
+                let archs = archs.into_iter().collect::<Vec<_>>().join(", ");
+                msg.push_str(&format!("\n- {name} (found under: {archs})"));
+            }
+            bail!("{msg}");
+        }
+    }
+
     let mut plan = DriverPlan {
         x86: Vec::new(),
         amd64: Vec::new(),
@@ -1693,5 +1760,71 @@ mod tests {
 
         let dirs: Vec<_> = collect_dirs_for_zip(&files).into_iter().collect();
         assert_eq!(dirs, vec!["drivers/", "drivers/x86/", "drivers/x86/a/"]);
+    }
+
+    fn write_test_driver(dir: &Path) {
+        fs::create_dir_all(dir).expect("create driver dir");
+        fs::write(
+            dir.join("test.inf"),
+            b"[Version]\nSignature=\"$Windows NT$\"\n",
+        )
+        .expect("write INF");
+        fs::write(dir.join("test.sys"), b"").expect("write SYS");
+        fs::write(dir.join("test.cat"), b"").expect("write CAT");
+    }
+
+    fn make_test_spec(fail_on_unlisted_driver_dirs: bool) -> PackagingSpec {
+        PackagingSpec {
+            drivers: vec![DriverSpec {
+                name: "testdrv".to_string(),
+                required: true,
+                expected_hardware_ids: Vec::new(),
+                expected_hardware_ids_from_devices_cmd_var: None,
+                allow_extensions: Vec::new(),
+                allow_path_regexes: Vec::new(),
+            }],
+            fail_on_unlisted_driver_dirs,
+        }
+    }
+
+    #[test]
+    fn packaging_ignores_unlisted_driver_dirs_when_disabled() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let drivers_dir = tmp.path();
+
+        write_test_driver(&drivers_dir.join("x86").join("testdrv"));
+        write_test_driver(&drivers_dir.join("amd64").join("testdrv"));
+        fs::create_dir_all(drivers_dir.join("x86").join("extra_driver"))
+            .expect("create extra x86 driver dir");
+        fs::create_dir_all(drivers_dir.join("amd64").join("extra_driver"))
+            .expect("create extra amd64 driver dir");
+
+        let spec = make_test_spec(false);
+        let plan = validate_drivers(&spec, drivers_dir, &HashMap::new())
+            .expect("validate_drivers succeeds");
+        assert_eq!(plan.x86.len(), 1);
+        assert_eq!(plan.amd64.len(), 1);
+    }
+
+    #[test]
+    fn packaging_fails_on_unlisted_driver_dirs_when_enabled() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let drivers_dir = tmp.path();
+
+        write_test_driver(&drivers_dir.join("x86").join("testdrv"));
+        write_test_driver(&drivers_dir.join("amd64").join("testdrv"));
+        fs::create_dir_all(drivers_dir.join("x86").join("extra_driver"))
+            .expect("create extra x86 driver dir");
+        fs::create_dir_all(drivers_dir.join("amd64").join("extra_driver"))
+            .expect("create extra amd64 driver dir");
+
+        let spec = make_test_spec(true);
+        let err = validate_drivers(&spec, drivers_dir, &HashMap::new()).unwrap_err();
+        let err_str = format!("{err:#}");
+        assert!(err_str.contains("extra_driver"), "{err_str}");
+        assert!(
+            err_str.contains("fail_on_unlisted_driver_dirs"),
+            "{err_str}"
+        );
     }
 }

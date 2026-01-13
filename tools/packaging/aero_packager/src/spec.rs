@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
-fn normalize_driver_name(name: &str) -> String {
+pub(crate) fn normalize_driver_name(name: &str) -> String {
     // Guest Tools historically shipped the AeroGPU driver under `drivers/<arch>/aero-gpu/`.
     // The canonical directory name is now `aerogpu` to match the in-tree driver location and
     // INF naming (`drivers/aerogpu/...`, `aerogpu.inf`). Keep the legacy dashed form as an
@@ -25,6 +25,8 @@ fn normalize_driver_name(name: &str) -> String {
 #[serde(from = "PackagingSpecRaw")]
 pub struct PackagingSpec {
     pub drivers: Vec<DriverSpec>,
+    #[serde(default)]
+    pub fail_on_unlisted_driver_dirs: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -82,6 +84,8 @@ pub struct DriverSpec {
 
 #[derive(Debug, Clone, Deserialize)]
 struct PackagingSpecRaw {
+    #[serde(default)]
+    fail_on_unlisted_driver_dirs: bool,
     /// New schema: unified driver list containing both required and optional drivers.
     #[serde(default)]
     drivers: Vec<DriverSpec>,
@@ -102,6 +106,7 @@ struct LegacyRequiredDriver {
 
 impl From<PackagingSpecRaw> for PackagingSpec {
     fn from(raw: PackagingSpecRaw) -> Self {
+        let fail_on_unlisted_driver_dirs = raw.fail_on_unlisted_driver_dirs;
         // Merge legacy `required_drivers` into the unified `drivers` list while
         // preserving the (already stable) JSON ordering:
         // - entries from `drivers` first
@@ -158,7 +163,10 @@ impl From<PackagingSpecRaw> for PackagingSpec {
             });
         }
 
-        PackagingSpec { drivers: out }
+        PackagingSpec {
+            drivers: out,
+            fail_on_unlisted_driver_dirs,
+        }
     }
 }
 

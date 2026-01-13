@@ -6,6 +6,29 @@ driver artifacts before producing `aero-guest-tools.iso` / `aero-guest-tools.zip
 `drivers[].name` is the **driver directory name** under the packager input tree:
 `drivers/{x86,amd64}/<name>/`.
 
+## Optional spec flags
+
+- `fail_on_unlisted_driver_dirs` (default: `false`)
+  - When enabled, the packager enumerates the top-level directories under the input
+    `drivers_dir/x86` and `drivers_dir/amd64|x64` and fails if it finds any directories that are
+    **not** listed in `drivers[]` (case-insensitive, after legacy alias normalization like
+    `aero-gpu` → `aerogpu`).
+  - This catches a common CI misconfiguration: pointing `--drivers-dir` at the wrong root (extra
+    driver folders are otherwise silently ignored by the spec).
+  - Recommended: set this to `true` in CI-owned specs so packaging fails fast if the staged driver
+    payload drifts.
+
+Example:
+
+```json
+{
+  "fail_on_unlisted_driver_dirs": true,
+  "drivers": [
+    { "name": "aerogpu", "required": true }
+  ]
+}
+```
+
 All virtio HWID patterns in these specs are expected to follow the **Aero virtio contract v1**
 (`AERO-W7-VIRTIO`, virtio-pci **modern-only**).
 
@@ -34,8 +57,10 @@ python3 tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-a
 Intended for packaging Guest Tools using a driver payload extracted from **virtio-win**.
 
 - Requires: `viostor` (virtio-blk) + `netkvm` (virtio-net)
-- Includes only the drivers listed in the spec (other driver directories present in the input
-  are ignored).
+- Includes only the drivers listed in the spec.
+  - By default, other driver directories present in the input are ignored.
+  - To fail fast on unexpected input directories (recommended in CI), set
+    `fail_on_unlisted_driver_dirs=true`.
 - When packaging virtio-win drivers, `config/devices.cmd` must be generated from the **virtio-win**
   Windows device contract (`docs/windows-device-contract-virtio-win.json`) so:
   - `AERO_VIRTIO_*_SERVICE` matches the upstream INF `AddService` names (`viostor`, `netkvm`, ...)
