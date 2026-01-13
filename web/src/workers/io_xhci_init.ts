@@ -47,7 +47,23 @@ export function tryInitXhciDevice(opts: {
 
   try {
     const dev = new XhciPciDevice({ bridge: bridge as unknown as any, irqSink: mgr.irqSink });
-    mgr.registerPciDevice(dev);
+    // Prefer the canonical BDF requested by the device (00:02.0). If that slot is occupied,
+    // fall back to auto allocation so xHCI can still attach in test/experimental setups.
+    const anyDev = dev as unknown as { bdf?: { bus: number; device: number; function: number } };
+    try {
+      const addr = mgr.registerPciDevice(dev);
+      anyDev.bdf = addr;
+    } catch (err) {
+      const prevBdf = anyDev.bdf;
+      try {
+        anyDev.bdf = undefined;
+        const addr = mgr.registerPciDevice(dev);
+        anyDev.bdf = addr;
+      } catch (err2) {
+        anyDev.bdf = prevBdf;
+        throw err2;
+      }
+    }
     mgr.addTickable(dev);
     return { device: dev, bridge };
   } catch (err) {
@@ -60,4 +76,3 @@ export function tryInitXhciDevice(opts: {
     return null;
   }
 }
-

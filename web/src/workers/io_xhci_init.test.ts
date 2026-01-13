@@ -77,4 +77,42 @@ describe("workers/io_xhci_init", () => {
     mgr.tick(124);
     expect(tickCalls).toBeGreaterThan(0);
   });
+
+  it("falls back to auto-allocation when the canonical xHCI BDF is already occupied", () => {
+    class FakeXhciControllerBridge {
+      mmio_read(_offset: number, _size: number): number {
+        return 0;
+      }
+      mmio_write(_offset: number, _size: number, _value: number): void {}
+      irq_asserted(): boolean {
+        return false;
+      }
+      free(): void {}
+    }
+
+    const api = { XhciControllerBridge: FakeXhciControllerBridge } as unknown as WasmApi;
+    const mgr = new DeviceManager({ raiseIrq: () => {}, lowerIrq: () => {} });
+
+    // Occupy the canonical 00:02.0 slot.
+    mgr.registerPciDevice({
+      name: "occupied",
+      vendorId: 0x1111,
+      deviceId: 0x2222,
+      classCode: 0,
+      bdf: { bus: 0, device: 2, function: 0 },
+    });
+
+    const res = tryInitXhciDevice({ api, mgr, guestBase: 0x1000_0000, guestSize: 0x0200_0000 });
+    expect(res).not.toBeNull();
+    const { device: dev } = res!;
+    const cfg = makeCfgIo(mgr);
+
+    // The canonical slot should still contain the pre-registered device.
+    expect(cfg.readU32(2, 0, 0x00)).toBe(0x2222_1111);
+
+    // xHCI should have been placed elsewhere.
+    expect(dev.bdf).toBeTruthy();
+    expect(dev.bdf).not.toEqual({ bus: 0, device: 2, function: 0 });
+    expect(cfg.readU32(dev.bdf!.device, dev.bdf!.function, 0x00)).toBe(((dev.deviceId & 0xffff) << 16) | (dev.vendorId & 0xffff));
+  });
 });
