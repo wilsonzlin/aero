@@ -454,12 +454,12 @@ pub async fn vm_snapshot_save_to_opfs(
 ) -> Result<(), JsValue> {
     let mut file = aero_opfs::OpfsSyncFile::create(&path)
         .await
-        .map_err(|e| js_error(format!("Failed to create OPFS snapshot file '{path}': {e}")))?;
+        .map_err(|e| crate::opfs_io_error_to_js("vm_snapshot_save_to_opfs", &path, e))?;
 
     snapshot_save_to(&mut file, cpu, mmu, devices)?;
 
     file.close()
-        .map_err(|e| js_error(format!("Failed to close OPFS snapshot file '{path}': {e}")))?;
+        .map_err(|e| crate::opfs_io_error_to_js("vm_snapshot_save_to_opfs", &path, e))?;
     Ok(())
 }
 
@@ -467,12 +467,12 @@ pub async fn vm_snapshot_save_to_opfs(
 pub async fn vm_snapshot_restore_from_opfs(path: String) -> Result<JsValue, JsValue> {
     let mut file = aero_opfs::OpfsSyncFile::open(&path, false)
         .await
-        .map_err(|e| js_error(format!("Failed to open OPFS snapshot file '{path}': {e}")))?;
+        .map_err(|e| crate::opfs_io_error_to_js("vm_snapshot_restore_from_opfs", &path, e))?;
 
     let (cpu, mmu, devices) = snapshot_restore_from(&mut file)?;
 
     file.close()
-        .map_err(|e| js_error(format!("Failed to close OPFS snapshot file '{path}': {e}")))?;
+        .map_err(|e| crate::opfs_io_error_to_js("vm_snapshot_restore_from_opfs", &path, e))?;
 
     build_restore_result(cpu, mmu, devices)
 }
