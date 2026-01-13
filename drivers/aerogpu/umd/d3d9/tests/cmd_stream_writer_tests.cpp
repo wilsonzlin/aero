@@ -150,6 +150,34 @@ CmdLoc FindLastOpcodeBefore(const uint8_t* buf, size_t capacity, size_t end_offs
   return loc;
 }
 
+CmdLoc FindLastUploadResourceBefore(const uint8_t* buf, size_t capacity, size_t end_offset, uint32_t resource_handle) {
+  CmdLoc loc{};
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return loc;
+  }
+  if (end_offset > stream_len) {
+    end_offset = stream_len;
+  }
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len && offset < end_offset) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (upload->resource_handle == resource_handle) {
+        loc.hdr = hdr;
+        loc.offset = offset;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return loc;
+}
+
 size_t CountOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
   const size_t stream_len = StreamBytesUsed(buf, capacity);
   if (stream_len == 0) {
@@ -7712,6 +7740,9 @@ bool TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb() {
   if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
     return false;
   }
+  if (!Check(dev->up_index_buffer != nullptr, "up_index_buffer allocated")) {
+    return false;
+  }
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
@@ -7731,26 +7762,24 @@ bool TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb() {
     return false;
   }
 
-  // Verify a scratch VB upload targeting the UP vertex buffer handle occurred before the draw.
+  // Verify scratch VB/IB uploads targeting the UP buffers occurred before the draw.
   const uint32_t up_vb_handle = dev->up_vertex_buffer->handle;
-  bool found_up_vb_upload = false;
-  const size_t stream_len = StreamBytesUsed(buf, len);
-  size_t offset = sizeof(aerogpu_cmd_stream_header);
-  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
-    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
-    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
-      const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
-      if (upload->resource_handle == up_vb_handle && offset < draw.offset) {
-        found_up_vb_upload = true;
-        break;
-      }
-    }
-    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
-      break;
-    }
-    offset += hdr->size_bytes;
+  const uint32_t up_ib_handle = dev->up_index_buffer->handle;
+  const CmdLoc vb_upload = FindLastUploadResourceBefore(buf, len, draw.offset, up_vb_handle);
+  const CmdLoc ib_upload = FindLastUploadResourceBefore(buf, len, draw.offset, up_ib_handle);
+  if (!Check(vb_upload.hdr != nullptr, "upload_resource targeting UP VB emitted before draw")) {
+    return false;
   }
-  return Check(found_up_vb_upload, "upload_resource targeting UP VB emitted before draw");
+  if (!Check(ib_upload.hdr != nullptr, "upload_resource targeting UP IB emitted before draw")) {
+    return false;
+  }
+
+  const CmdLoc set_ib = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!Check(set_ib.hdr != nullptr, "set_index_buffer emitted before draw")) {
+    return false;
+  }
+  const auto* set_ib_cmd = reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(set_ib.hdr);
+  return Check(set_ib_cmd->buffer == up_ib_handle, "patch draw binds UP IB");
 }
 
 bool TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb() {
@@ -7930,6 +7959,9 @@ bool TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb() {
   if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
     return false;
   }
+  if (!Check(dev->up_index_buffer != nullptr, "up_index_buffer allocated")) {
+    return false;
+  }
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
@@ -7949,26 +7981,494 @@ bool TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb() {
     return false;
   }
 
-  // Verify a scratch VB upload targeting the UP vertex buffer handle occurred before the draw.
+  // Verify scratch VB/IB uploads targeting the UP buffers occurred before the draw.
   const uint32_t up_vb_handle = dev->up_vertex_buffer->handle;
-  bool found_up_vb_upload = false;
-  const size_t stream_len = StreamBytesUsed(buf, len);
-  size_t offset = sizeof(aerogpu_cmd_stream_header);
-  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
-    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
-    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
-      const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
-      if (upload->resource_handle == up_vb_handle && offset < draw.offset) {
-        found_up_vb_upload = true;
-        break;
+  const uint32_t up_ib_handle = dev->up_index_buffer->handle;
+  const CmdLoc vb_upload = FindLastUploadResourceBefore(buf, len, draw.offset, up_vb_handle);
+  const CmdLoc ib_upload = FindLastUploadResourceBefore(buf, len, draw.offset, up_ib_handle);
+  if (!Check(vb_upload.hdr != nullptr, "upload_resource targeting UP VB emitted before draw")) {
+    return false;
+  }
+  if (!Check(ib_upload.hdr != nullptr, "upload_resource targeting UP IB emitted before draw")) {
+    return false;
+  }
+
+  const CmdLoc set_ib = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!Check(set_ib.hdr != nullptr, "set_index_buffer emitted before draw")) {
+    return false;
+  }
+  const auto* set_ib_cmd = reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(set_ib.hdr);
+  return Check(set_ib_cmd->buffer == up_ib_handle, "tri patch draw binds UP IB");
+}
+
+bool TestDrawRectPatchTex1UploadsTexcoords() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hVb{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_vb = false;
+
+    ~Cleanup() {
+      if (has_vb && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hVb);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
       }
     }
-    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
-      break;
-    }
-    offset += hdr->size_bytes;
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
   }
-  return Check(found_up_vb_upload, "upload_resource targeting UP VB emitted before draw");
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawRectPatch != nullptr, "DrawRectPatch must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x144u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  Vertex cps[16]{};
+  for (uint32_t y = 0; y < 4; ++y) {
+    for (uint32_t x = 0; x < 4; ++x) {
+      const float fx = static_cast<float>(x) / 3.0f;
+      const float fy = static_cast<float>(y) / 3.0f;
+      cps[y * 4 + x] = {
+          256.0f * (0.25f + 0.5f * fx),
+          256.0f * (0.25f + 0.5f * fy),
+          0.5f,
+          1.0f,
+          0xFF000000u,
+          fx,
+          fy,
+      };
+    }
+  }
+
+  D3D9DDIARG_CREATERESOURCE create_vb{};
+  create_vb.type = 0;
+  create_vb.format = 0;
+  create_vb.width = 0;
+  create_vb.height = 0;
+  create_vb.depth = 0;
+  create_vb.mip_levels = 1;
+  create_vb.usage = 0;
+  create_vb.pool = 0;
+  create_vb.size = sizeof(cps);
+  create_vb.hResource.pDrvPrivate = nullptr;
+  create_vb.pSharedHandle = nullptr;
+  create_vb.pKmdAllocPrivateData = nullptr;
+  create_vb.KmdAllocPrivateDataSize = 0;
+  create_vb.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_vb);
+  if (!Check(hr == S_OK, "CreateResource(control point VB)")) {
+    return false;
+  }
+  cleanup.hVb = create_vb.hResource;
+  cleanup.has_vb = true;
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_vb.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(VB)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, cps, sizeof(cps));
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_vb.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(VB)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, create_vb.hResource, 0, sizeof(Vertex));
+  if (!Check(hr == S_OK, "SetStreamSource")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->topology = AEROGPU_TOPOLOGY_TRIANGLESTRIP;
+
+  float segs[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  D3DRECTPATCH_INFO info{};
+  info.StartVertexOffset = 0;
+  info.NumVertices = 16;
+  info.Basis = D3DBASIS_BEZIER;
+  info.Degree = D3DDEGREE_CUBIC;
+
+  D3DDDIARG_DRAWRECTPATCH draw_rect{};
+  draw_rect.Handle = 1;
+  draw_rect.pNumSegs = segs;
+  draw_rect.pRectPatchInfo = &info;
+
+  hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw_rect);
+  if (!Check(hr == S_OK, "DrawRectPatch")) {
+    return false;
+  }
+
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  if (!Check(dev->up_index_buffer != nullptr, "up_index_buffer allocated")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED);
+  if (!Check(draw.hdr != nullptr, "draw_indexed emitted")) {
+    return false;
+  }
+
+  const uint32_t up_vb_handle = dev->up_vertex_buffer->handle;
+  const CmdLoc vb_upload = FindLastUploadResourceBefore(buf, len, draw.offset, up_vb_handle);
+  if (!Check(vb_upload.hdr != nullptr, "upload_resource targeting UP VB emitted before draw")) {
+    return false;
+  }
+
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(vb_upload.hdr);
+  if (!Check(upload_cmd->size_bytes == 4u * sizeof(Vertex), "rect patch tex1 upload size matches tessellated vertex data")) {
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float u0 = 0.0f;
+  float v0 = 0.0f;
+  float u1 = 0.0f;
+  float v1 = 0.0f;
+  float u3 = 0.0f;
+  float v3 = 0.0f;
+  std::memcpy(&u0, payload + 20, sizeof(float));
+  std::memcpy(&v0, payload + 24, sizeof(float));
+  std::memcpy(&u1, payload + sizeof(Vertex) + 20, sizeof(float));
+  std::memcpy(&v1, payload + sizeof(Vertex) + 24, sizeof(float));
+  std::memcpy(&u3, payload + 3 * sizeof(Vertex) + 20, sizeof(float));
+  std::memcpy(&v3, payload + 3 * sizeof(Vertex) + 24, sizeof(float));
+
+  if (!Check(std::fabs(u0 - cps[0].u) < 1e-6f, "rect patch tex1: u0 preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0 - cps[0].v) < 1e-6f, "rect patch tex1: v0 preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u1 - cps[3].u) < 1e-6f, "rect patch tex1: u1 preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v1 - cps[3].v) < 1e-6f, "rect patch tex1: v1 preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u3 - cps[15].u) < 1e-6f, "rect patch tex1: u3 preserved")) {
+    return false;
+  }
+  return Check(std::fabs(v3 - cps[15].v) < 1e-6f, "rect patch tex1: v3 preserved");
+}
+
+bool TestDrawTriPatchTex1UploadsTexcoords() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hVb{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_vb = false;
+
+    ~Cleanup() {
+      if (has_vb && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hVb);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawTriPatch != nullptr, "DrawTriPatch must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x144u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  Vertex cps[10]{};
+  for (uint32_t i = 0; i < 10; ++i) {
+    cps[i].x = 64.0f + static_cast<float>(i);
+    cps[i].y = 64.0f + static_cast<float>(i);
+    cps[i].z = 0.5f;
+    cps[i].rhw = 1.0f;
+    cps[i].color = 0xFF000000u;
+    cps[i].u = static_cast<float>(i) / 9.0f;
+    cps[i].v = 1.0f - static_cast<float>(i) / 9.0f;
+  }
+
+  D3D9DDIARG_CREATERESOURCE create_vb{};
+  create_vb.type = 0;
+  create_vb.format = 0;
+  create_vb.width = 0;
+  create_vb.height = 0;
+  create_vb.depth = 0;
+  create_vb.mip_levels = 1;
+  create_vb.usage = 0;
+  create_vb.pool = 0;
+  create_vb.size = sizeof(cps);
+  create_vb.hResource.pDrvPrivate = nullptr;
+  create_vb.pSharedHandle = nullptr;
+  create_vb.pKmdAllocPrivateData = nullptr;
+  create_vb.KmdAllocPrivateDataSize = 0;
+  create_vb.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_vb);
+  if (!Check(hr == S_OK, "CreateResource(control point VB)")) {
+    return false;
+  }
+  cleanup.hVb = create_vb.hResource;
+  cleanup.has_vb = true;
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_vb.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(VB)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, cps, sizeof(cps));
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_vb.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(VB)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, create_vb.hResource, 0, sizeof(Vertex));
+  if (!Check(hr == S_OK, "SetStreamSource")) {
+    return false;
+  }
+
+  float segs[3] = {1.0f, 1.0f, 1.0f};
+  D3DTRIPATCH_INFO info{};
+  info.StartVertexOffset = 0;
+  info.NumVertices = 10;
+  info.Basis = D3DBASIS_BEZIER;
+  info.Degree = D3DDEGREE_CUBIC;
+
+  D3DDDIARG_DRAWTRIPATCH draw_tri{};
+  draw_tri.Handle = 1;
+  draw_tri.pNumSegs = segs;
+  draw_tri.pTriPatchInfo = &info;
+
+  hr = cleanup.device_funcs.pfnDrawTriPatch(create_dev.hDevice, &draw_tri);
+  if (!Check(hr == S_OK, "DrawTriPatch")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED);
+  if (!Check(draw.hdr != nullptr, "draw_indexed emitted")) {
+    return false;
+  }
+
+  const uint32_t up_vb_handle = dev->up_vertex_buffer->handle;
+  const CmdLoc vb_upload = FindLastUploadResourceBefore(buf, len, draw.offset, up_vb_handle);
+  if (!Check(vb_upload.hdr != nullptr, "upload_resource targeting UP VB emitted before draw")) {
+    return false;
+  }
+
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(vb_upload.hdr);
+  if (!Check(upload_cmd->size_bytes == 3u * sizeof(Vertex), "tri patch tex1 upload size matches tessellated vertex data")) {
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float u0 = 0.0f;
+  float v0 = 0.0f;
+  float u1 = 0.0f;
+  float v1 = 0.0f;
+  float u2 = 0.0f;
+  float v2 = 0.0f;
+  std::memcpy(&u0, payload + 20, sizeof(float));
+  std::memcpy(&v0, payload + 24, sizeof(float));
+  std::memcpy(&u1, payload + sizeof(Vertex) + 20, sizeof(float));
+  std::memcpy(&v1, payload + sizeof(Vertex) + 24, sizeof(float));
+  std::memcpy(&u2, payload + 2 * sizeof(Vertex) + 20, sizeof(float));
+  std::memcpy(&v2, payload + 2 * sizeof(Vertex) + 24, sizeof(float));
+
+  // For segs=1, the tessellator emits 3 vertices in this order: cp[9] (w corner), cp[3] (v corner), cp[0] (u corner).
+  if (!Check(std::fabs(u0 - cps[9].u) < 1e-6f, "tri patch tex1: u0 preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0 - cps[9].v) < 1e-6f, "tri patch tex1: v0 preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u1 - cps[3].u) < 1e-6f, "tri patch tex1: u1 preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v1 - cps[3].v) < 1e-6f, "tri patch tex1: v1 preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u2 - cps[0].u) < 1e-6f, "tri patch tex1: u2 preserved")) {
+    return false;
+  }
+  return Check(std::fabs(v2 - cps[0].v) < 1e-6f, "tri patch tex1: v2 preserved");
 }
 
 bool TestDrawPatchInvalidInfoReturnsInvalidCall() {
@@ -11680,6 +12180,8 @@ int main() {
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices();
   failures += !aerogpu::TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb();
   failures += !aerogpu::TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb();
+  failures += !aerogpu::TestDrawRectPatchTex1UploadsTexcoords();
+  failures += !aerogpu::TestDrawTriPatchTex1UploadsTexcoords();
   failures += !aerogpu::TestDrawPatchInvalidInfoReturnsInvalidCall();
   failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();
   failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
