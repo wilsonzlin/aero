@@ -155,13 +155,19 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
         Invariant(
             description="Supports /check (or /validate) dry-run validation mode (no system changes)",
             expected_hint='Parses "/check"/"/validate" and jumps to :check_mode (e.g. if "%ARG_CHECK%"=="1" goto :check_mode)',
-            predicate=_all_regex(
-                [
-                    r'(?i)"%%~?A"\s*==\s*"/check"\s+set\s+"?ARG_CHECK=1"?',
-                    r'(?i)"%%~?A"\s*==\s*"/validate"\s+set\s+"?ARG_CHECK=1"?',
-                    r'(?i)\bif\b\s+"%ARG_CHECK%"\s*==\s*"1"\s+goto\s+:check_mode\b',
-                    r"(?im)^:check_mode\b",
-                ]
+            predicate=lambda text: (
+                _any_regex(
+                    [
+                        r'(?i)"%%~?A"\s*==\s*"/check"\s+set\s+"?ARG_CHECK=1"?',
+                        r'(?i)"%%~?A"\s*==\s*"/validate"\s+set\s+"?ARG_CHECK=1"?',
+                    ]
+                )(text)
+                and _all_regex(
+                    [
+                        r'(?i)\bif\b\s+"%ARG_CHECK%"\s*==\s*"1"\s+goto\s+:check_mode\b',
+                        r"(?im)^:check_mode\b",
+                    ]
+                )(text)
             ),
         ),
         Invariant(
