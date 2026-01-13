@@ -91,10 +91,15 @@ test.describe("gpu worker presented color policy", () => {
   test("webgl2_wgpu matches expected presented output (sRGB + opaque)", async ({ page, browserName }) => {
     test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
 
+    const webgl2 = await runBackend(page, "webgl2_raw");
+    expect(webgl2.error).toBeNull();
+    expect(webgl2.backend).toBe("webgl2_raw");
+
     const result = await runBackend(page, "webgl2_wgpu");
 
     expect(result.error).toBeNull();
     expect(result.backend).toBe("webgl2_wgpu");
+    expect(result.hash).toBe(webgl2.hash);
 
     const samples = result.samples;
     expect(samples).not.toBeNull();
