@@ -2611,6 +2611,262 @@ bool TestLockInfersMipLevelPitchFromOffsetBytes() {
   return lock_check(create_dxt1.hResource, /*offset_bytes=*/40, /*row=*/8, /*slice=*/8, "Lock(DXT1 level2)");
 }
 
+bool TestCreateResourceMipLevelsZeroAllocatesFullMipChain() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResA{};
+    D3DDDI_HRESOURCE hResB{};
+    D3DDDI_HRESOURCE hResC{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_res_a = false;
+    bool has_res_b = false;
+    bool has_res_c = false;
+
+    ~Cleanup() {
+      if (has_res_c && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResC);
+      }
+      if (has_res_b && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResB);
+      }
+      if (has_res_a && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResA);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+
+  // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
+  constexpr uint32_t kD3dRTypeTexture = 3u;
+
+  // Non-shared texture (4x4) with MipLevels == 0 should allocate the full chain:
+  // 4x4, 2x2, 1x1 => 3 levels.
+  {
+    D3D9DDIARG_CREATERESOURCE create_res{};
+    create_res.type = kD3dRTypeTexture;
+    create_res.format = 22u; // D3DFMT_X8R8G8B8
+    create_res.width = 4;
+    create_res.height = 4;
+    create_res.depth = 1;
+    create_res.mip_levels = 0;
+    create_res.usage = 0;
+    create_res.pool = 0;
+    create_res.size = 0;
+    create_res.hResource.pDrvPrivate = nullptr;
+    create_res.pSharedHandle = nullptr;
+    create_res.pPrivateDriverData = nullptr;
+    create_res.PrivateDriverDataSize = 0;
+    create_res.wddm_hAllocation = 0;
+
+    hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+    if (!Check(hr == S_OK, "CreateResource(MipLevels==0, 4x4)")) {
+      return false;
+    }
+    cleanup.hResA = create_res.hResource;
+    cleanup.has_res_a = true;
+
+    auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+    if (!Check(res != nullptr, "resource pointer")) {
+      return false;
+    }
+    if (!Check(res->mip_levels == 3u, "MipLevels==0 expands to full chain (4x4 => 3)")) {
+      return false;
+    }
+
+    Texture2dLayout expected{};
+    if (!Check(calc_texture2d_layout(static_cast<D3DDDIFORMAT>(create_res.format),
+                                     create_res.width,
+                                     create_res.height,
+                                     /*mip_levels=*/3,
+                                     create_res.depth,
+                                     &expected),
+               "calc_texture2d_layout(4x4 full chain)")) {
+      return false;
+    }
+    if (!Check(res->row_pitch == expected.row_pitch_bytes, "row_pitch matches layout (4x4)")) {
+      return false;
+    }
+    if (!Check(res->slice_pitch == expected.slice_pitch_bytes, "slice_pitch matches layout (4x4)")) {
+      return false;
+    }
+    if (!Check(res->size_bytes == expected.total_size_bytes, "size_bytes matches layout (4x4 full chain)")) {
+      return false;
+    }
+  }
+
+  // Non-shared texture (8x4) with MipLevels == 0 should allocate the full chain:
+  // 8x4, 4x2, 2x1, 1x1 => 4 levels.
+  {
+    D3D9DDIARG_CREATERESOURCE create_res{};
+    create_res.type = kD3dRTypeTexture;
+    create_res.format = 22u; // D3DFMT_X8R8G8B8
+    create_res.width = 8;
+    create_res.height = 4;
+    create_res.depth = 1;
+    create_res.mip_levels = 0;
+    create_res.usage = 0;
+    create_res.pool = 0;
+    create_res.size = 0;
+    create_res.hResource.pDrvPrivate = nullptr;
+    create_res.pSharedHandle = nullptr;
+    create_res.pPrivateDriverData = nullptr;
+    create_res.PrivateDriverDataSize = 0;
+    create_res.wddm_hAllocation = 0;
+
+    hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+    if (!Check(hr == S_OK, "CreateResource(MipLevels==0, 8x4)")) {
+      return false;
+    }
+    cleanup.hResB = create_res.hResource;
+    cleanup.has_res_b = true;
+
+    auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+    if (!Check(res != nullptr, "resource pointer")) {
+      return false;
+    }
+    if (!Check(res->mip_levels == 4u, "MipLevels==0 expands to full chain (8x4 => 4)")) {
+      return false;
+    }
+
+    Texture2dLayout expected{};
+    if (!Check(calc_texture2d_layout(static_cast<D3DDDIFORMAT>(create_res.format),
+                                     create_res.width,
+                                     create_res.height,
+                                     /*mip_levels=*/4,
+                                     create_res.depth,
+                                     &expected),
+               "calc_texture2d_layout(8x4 full chain)")) {
+      return false;
+    }
+    if (!Check(res->size_bytes == expected.total_size_bytes, "size_bytes matches layout (8x4 full chain)")) {
+      return false;
+    }
+  }
+
+  // Non-shared texture with MipLevels == 1 must remain a single-level surface.
+  {
+    D3D9DDIARG_CREATERESOURCE create_res{};
+    create_res.type = kD3dRTypeTexture;
+    create_res.format = 22u; // D3DFMT_X8R8G8B8
+    create_res.width = 4;
+    create_res.height = 4;
+    create_res.depth = 1;
+    create_res.mip_levels = 1;
+    create_res.usage = 0;
+    create_res.pool = 0;
+    create_res.size = 0;
+    create_res.hResource.pDrvPrivate = nullptr;
+    create_res.pSharedHandle = nullptr;
+    create_res.pPrivateDriverData = nullptr;
+    create_res.PrivateDriverDataSize = 0;
+    create_res.wddm_hAllocation = 0;
+
+    hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+    if (!Check(hr == S_OK, "CreateResource(MipLevels==1, 4x4)")) {
+      return false;
+    }
+    cleanup.hResC = create_res.hResource;
+    cleanup.has_res_c = true;
+
+    auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+    if (!Check(res != nullptr, "resource pointer")) {
+      return false;
+    }
+    if (!Check(res->mip_levels == 1u, "MipLevels==1 remains 1")) {
+      return false;
+    }
+
+    Texture2dLayout expected{};
+    if (!Check(calc_texture2d_layout(static_cast<D3DDDIFORMAT>(create_res.format),
+                                     create_res.width,
+                                     create_res.height,
+                                     /*mip_levels=*/1,
+                                     create_res.depth,
+                                     &expected),
+               "calc_texture2d_layout(4x4 mip_levels=1)")) {
+      return false;
+    }
+    if (!Check(res->size_bytes == expected.total_size_bytes, "size_bytes matches layout (mip_levels=1)")) {
+      return false;
+    }
+  }
+
+  // Shared textures must reject MipLevels != 1.
+  {
+    aerogpu_wddm_alloc_priv priv{};
+    std::memset(&priv, 0, sizeof(priv));
+    HANDLE shared_handle = nullptr;
+
+    D3D9DDIARG_CREATERESOURCE create_shared{};
+    create_shared.type = 0;
+    create_shared.format = 22u; // D3DFMT_X8R8G8B8
+    create_shared.width = 32;
+    create_shared.height = 32;
+    create_shared.depth = 1;
+    create_shared.mip_levels = 0;
+    create_shared.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+    create_shared.pool = 0;
+    create_shared.size = 0;
+    create_shared.hResource.pDrvPrivate = nullptr;
+    create_shared.pSharedHandle = &shared_handle;
+    create_shared.pPrivateDriverData = &priv;
+    create_shared.PrivateDriverDataSize = sizeof(priv);
+    create_shared.wddm_hAllocation = 0;
+
+    hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_shared);
+    if (!Check(hr == D3DERR_INVALIDCALL, "CreateResource(shared, MipLevels==0) rejects")) {
+      return false;
+    }
+    if (!Check(create_shared.hResource.pDrvPrivate == nullptr, "CreateResource(shared) failure does not return a handle")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestRgb16FormatMappingAndLayout() {
   constexpr uint32_t kD3dFmtR5G6B5 = 23u;
   constexpr uint32_t kD3dFmtX1R5G5B5 = 24u;
@@ -16682,6 +16938,7 @@ int main() {
   failures += !aerogpu::TestCreateResourceComputesBcTexturePitchAndSize();
   failures += !aerogpu::TestCreateResourceMipmappedTextureEmitsMipLevels();
   failures += !aerogpu::TestCreateResourceMipLevelsZeroAllocatesFullMipChainForNonShared();
+  failures += !aerogpu::TestCreateResourceMipLevelsZeroAllocatesFullMipChain();
   failures += !aerogpu::TestLockSizeZeroClampsToMipSubresource();
   failures += !aerogpu::TestCreateResourceArrayTextureEmitsArrayLayers();
   failures += !aerogpu::TestLockInfersMipLevelPitchFromOffsetBytes();
