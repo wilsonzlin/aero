@@ -808,12 +808,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             Sm4Inst::If { cond, .. } => scan_src_regs(cond, &mut scan_reg),
             Sm4Inst::Else | Sm4Inst::EndIf => {}
             Sm4Inst::Mov { dst: _, src } => scan_src_regs(src, &mut scan_reg),
-            Sm4Inst::Movc {
-                dst: _,
-                cond,
-                a,
-                b,
-            } => {
+            Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src_regs(cond, &mut scan_reg);
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);

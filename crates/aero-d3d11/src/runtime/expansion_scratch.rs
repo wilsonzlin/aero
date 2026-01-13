@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use aero_gpu::BufferArena;
 
+use super::indirect_args::{DrawIndexedIndirectArgs, DrawIndirectArgs};
+
 /// Configuration for [`ExpansionScratchAllocator`].
 #[derive(Debug, Clone, Copy)]
 pub struct ExpansionScratchDescriptor {
@@ -420,14 +422,26 @@ impl ExpansionScratchAllocator {
         &mut self,
         device: &wgpu::Device,
     ) -> Result<ExpansionScratchAlloc, ExpansionScratchError> {
-        self.alloc_inner(device, 16, 4)
+        if !self.desc.usage.contains(wgpu::BufferUsages::INDIRECT) {
+            return Err(ExpansionScratchError::InvalidDescriptor(
+                "scratch buffer usage must include INDIRECT for indirect draw arguments",
+            ));
+        }
+        let (size, align) = DrawIndirectArgs::layout();
+        self.alloc_inner(device, size, align)
     }
 
     pub fn alloc_indirect_draw_indexed(
         &mut self,
         device: &wgpu::Device,
     ) -> Result<ExpansionScratchAlloc, ExpansionScratchError> {
-        self.alloc_inner(device, 20, 4)
+        if !self.desc.usage.contains(wgpu::BufferUsages::INDIRECT) {
+            return Err(ExpansionScratchError::InvalidDescriptor(
+                "scratch buffer usage must include INDIRECT for indirect draw arguments",
+            ));
+        }
+        let (size, align) = DrawIndexedIndirectArgs::layout();
+        self.alloc_inner(device, size, align)
     }
 
     pub fn alloc_counter_u32(
@@ -450,6 +464,16 @@ impl ExpansionScratchAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_descriptor_includes_indirect_usage() {
+        assert!(
+            ExpansionScratchDescriptor::default()
+                .usage
+                .contains(wgpu::BufferUsages::INDIRECT),
+            "ExpansionScratchDescriptor::default must include INDIRECT so alloc_indirect_* is usable"
+        );
+    }
 
     #[test]
     fn segmented_arena_separates_frames_and_wraps() {
