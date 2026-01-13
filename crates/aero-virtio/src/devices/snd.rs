@@ -2144,6 +2144,141 @@ mod tests {
     }
 
     #[test]
+    fn tx_process_queue_writes_pcm_status_ok_into_response_descriptor() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        drive_playback_to_running(&mut snd);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let hdr_addr = 0x4000;
+        let resp_addr = 0x5000;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        write_bytes(&mut mem, hdr_addr, &hdr);
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            hdr_addr,
+            8,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            resp_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_TX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        let expected = virtio_snd_pcm_status(VIRTIO_SND_S_OK, 0);
+        assert_eq!(mem.get_slice(resp_addr, 8).unwrap(), &expected);
+
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+        assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
+
+        assert_eq!(snd.output_mut().available_frames(), 0);
+    }
+
+    #[test]
+    fn tx_process_queue_writes_pcm_status_io_err_when_stream_not_running() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        drive_playback_to_prepared(&mut snd);
+        assert_eq!(snd.playback.state, StreamState::Prepared);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let hdr_addr = 0x4000;
+        let resp_addr = 0x5000;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        write_bytes(&mut mem, hdr_addr, &hdr);
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            hdr_addr,
+            8,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            resp_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_TX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        let expected = virtio_snd_pcm_status(VIRTIO_SND_S_IO_ERR, 0);
+        assert_eq!(mem.get_slice(resp_addr, 8).unwrap(), &expected);
+
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+        assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
+
+        assert_eq!(snd.output_mut().available_frames(), 0);
+    }
+
+    #[test]
     fn tx_valid_running_writes_non_silent_audio_into_sink() {
         let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
         drive_playback_to_running(&mut snd);

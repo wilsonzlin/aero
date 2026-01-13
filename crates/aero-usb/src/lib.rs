@@ -66,8 +66,6 @@ pub enum UsbSpeed {
     Full,
     /// USB 1.1 low-speed (1.5Mbps).
     Low,
-    /// USB 2.0 high-speed (480Mbps).
-    High,
 }
 
 /// USB control transfer SETUP packet.
