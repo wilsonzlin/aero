@@ -130,6 +130,87 @@ fn mul_by_pow2_with_const_on_lhs_is_strength_reduced_to_shift() {
 }
 
 #[test]
+fn nested_and_const_masks_are_collapsed() {
+    // Lowering frequently produces nested masks like:
+    //   tmp = x & 0xff
+    //   dst = tmp & 0x0f
+    // which can be collapsed to a single `x & 0x0f`.
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rax,
+            },
+            Instr::BinOp {
+                dst: v(1),
+                op: BinOp::And,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Const(0xff),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::And,
+                lhs: Operand::Value(v(1)),
+                rhs: Operand::Const(0x0f),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(v(2)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let env = RuntimeEnv::default();
+    let mut bus0 = SimpleBus::new(64);
+    let mut bus1 = bus0.clone();
+
+    let mut base_state = T2State::default();
+    base_state.cpu.rflags = aero_jit_x86::abi::RFLAGS_RESERVED1;
+    base_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0x1234_5678_9abc_def0;
+    let mut opt_state = base_state.clone();
+
+    let base = run_trace(&trace, &env, &mut bus0, &mut base_state, 1);
+
+    let mut optimized = trace.clone();
+    optimize_trace(&mut optimized, &OptConfig::default());
+
+    let ands: Vec<(Operand, Operand)> = optimized
+        .iter_instrs()
+        .filter_map(|i| match i {
+            Instr::BinOp {
+                op: BinOp::And,
+                lhs,
+                rhs,
+                flags,
+                ..
+            } if flags.is_empty() => Some((*lhs, *rhs)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ands.len(), 1, "expected nested masks to collapse to one And");
+    assert!(
+        matches!(ands[0], (Operand::Const(0x0f), _) | (_, Operand::Const(0x0f))),
+        "expected collapsed mask of 0x0f, got {ands:?}"
+    );
+    assert!(
+        !ands
+            .iter()
+            .any(|(l, r)| matches!((l, r), (Operand::Const(0xff), _) | (_, Operand::Const(0xff)))),
+        "unexpected remaining 0xff mask: {ands:?}"
+    );
+
+    let opt = run_trace(&optimized, &env, &mut bus1, &mut opt_state, 1);
+    assert_eq!(base.exit, RunExit::Returned);
+    assert_eq!(opt.exit, RunExit::Returned);
+    assert_eq!(base_state, opt_state);
+    assert_eq!(bus0.mem(), bus1.mem());
+}
+
+#[test]
 fn add_sub_const_is_strength_reduced_to_addr() {
     let trace = TraceIr {
         prologue: vec![],
