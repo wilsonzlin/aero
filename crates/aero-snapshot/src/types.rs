@@ -642,7 +642,9 @@ impl VcpuSnapshot {
     }
 }
 
-/// Snapshot representation of MMU state for one virtual CPU.
+/// Per-vCPU MMU state entry keyed by `apic_id`.
+///
+/// This is stored in the `MMUS` section payload (see `docs/16-snapshots.md`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct VcpuMmuSnapshot {
     /// vCPU identifier used to map snapshot entries back to a runtime CPU.
@@ -677,10 +679,12 @@ impl VcpuMmuSnapshot {
         Ok(Self { apic_id, mmu })
     }
 
+    /// Encode using the latest supported MMU entry version.
     pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
         self.encode_v2(w)
     }
 
+    /// Decode using the latest supported MMU entry version.
     pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
         Self::decode_v2(r)
     }

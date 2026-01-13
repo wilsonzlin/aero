@@ -710,6 +710,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                 }
             }
             id if id == SectionId::MMU => {
+                if seen_mmus_section {
+                    return Err(SnapshotError::Corrupt("snapshot contains both MMU and MMUS"));
+                }
                 if header.version == 1 {
                     if seen_mmus_section {
                         return Err(SnapshotError::Corrupt(

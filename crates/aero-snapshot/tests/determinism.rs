@@ -3,9 +3,9 @@
 use std::io::Cursor;
 
 use aero_snapshot::{
-    save_snapshot, Compression, CpuMode, CpuState, DeviceId, DeviceState, DiskOverlayRef,
-    DiskOverlayRefs, MmuState, RamMode, RamWriteOptions, SaveOptions, SegmentState, SnapshotMeta,
-    SnapshotSource, VcpuMmuSnapshot, VcpuSnapshot,
+    inspect_snapshot, save_snapshot, Compression, CpuMode, CpuState, DeviceId, DeviceState,
+    DiskOverlayRef, DiskOverlayRefs, MmuState, RamMode, RamWriteOptions, SaveOptions, SectionId,
+    SegmentState, SnapshotMeta, SnapshotSource, VcpuMmuSnapshot, VcpuSnapshot,
 };
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 
@@ -13,7 +13,7 @@ use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 struct RandomOrderSource {
     meta: SnapshotMeta,
     cpus: Vec<VcpuSnapshot>,
-    mmu: MmuState,
+    mmus: Vec<VcpuMmuSnapshot>,
     devices: Vec<DeviceState>,
     disks: Vec<DiskOverlayRef>,
     ram: Vec<u8>,
@@ -38,17 +38,15 @@ impl SnapshotSource for RandomOrderSource {
     }
 
     fn mmu_state(&self) -> MmuState {
-        self.mmu.clone()
+        self.mmus
+            .iter()
+            .find(|mmu| mmu.apic_id == 0)
+            .map(|mmu| mmu.mmu.clone())
+            .unwrap_or_default()
     }
 
     fn mmu_states(&self) -> Vec<VcpuMmuSnapshot> {
-        self.cpus
-            .iter()
-            .map(|cpu| VcpuMmuSnapshot {
-                apic_id: cpu.apic_id,
-                mmu: self.mmu.clone(),
-            })
-            .collect()
+        self.mmus.clone()
     }
 
     fn device_states(&self) -> Vec<DeviceState> {
@@ -148,7 +146,7 @@ fn make_source(seed: u64) -> RandomOrderSource {
         ..CpuState::default()
     };
 
-    let mmu = MmuState {
+    let mmu0 = MmuState {
         cr0: 0x8000_0011,
         cr2: 0x1234,
         cr3: 0x5678,
@@ -158,6 +156,20 @@ fn make_source(seed: u64) -> RandomOrderSource {
         gdtr_base: 0x1000,
         gdtr_limit: 0x30,
         idtr_base: 0x2000,
+        idtr_limit: 0x40,
+        ..MmuState::default()
+    };
+
+    let mmu1 = MmuState {
+        cr0: 0x8000_0011,
+        cr2: 0xABCD,
+        cr3: 0x5678 + 0x1000,
+        cr4: 0x2000,
+        cr8: 0,
+        efer: 0x500 + 1,
+        gdtr_base: 0x1000 + 0x100,
+        gdtr_limit: 0x30,
+        idtr_base: 0x2000 + 0x100,
         idtr_limit: 0x40,
         ..MmuState::default()
     };
@@ -219,6 +231,12 @@ fn make_source(seed: u64) -> RandomOrderSource {
     let mut dirty_pages = vec![4u64, 2, 0, 4, 1, 2];
     dirty_pages.shuffle(&mut rng);
 
+    let mut mmus = vec![
+        VcpuMmuSnapshot { apic_id: 0, mmu: mmu0 },
+        VcpuMmuSnapshot { apic_id: 1, mmu: mmu1 },
+    ];
+    mmus.shuffle(&mut rng);
+
     let mut cpus = vec![
         VcpuSnapshot {
             apic_id: 0,
@@ -236,7 +254,7 @@ fn make_source(seed: u64) -> RandomOrderSource {
     RandomOrderSource {
         meta,
         cpus,
-        mmu,
+        mmus,
         devices,
         disks,
         ram,
@@ -245,7 +263,7 @@ fn make_source(seed: u64) -> RandomOrderSource {
 }
 
 #[test]
-fn save_snapshot_is_deterministic_across_input_orders() {
+fn determinism_save_snapshot_is_deterministic_across_input_orders() {
     let options = SaveOptions {
         ram: RamWriteOptions {
             mode: RamMode::Dirty,
@@ -262,6 +280,18 @@ fn save_snapshot_is_deterministic_across_input_orders() {
         save_snapshot(&mut cursor, &mut source, options).unwrap();
 
         let bytes = cursor.into_inner();
+
+        // Ensure this test actually exercises MMUS canonicalization (not legacy single-MMU).
+        let index = inspect_snapshot(&mut Cursor::new(bytes.as_slice())).unwrap();
+        assert!(
+            index.sections.iter().any(|s| s.id == SectionId::MMUS),
+            "snapshot missing MMUS section"
+        );
+        assert!(
+            index.sections.iter().all(|s| s.id != SectionId::MMU),
+            "snapshot unexpectedly used legacy MMU section"
+        );
+
         match &canonical {
             Some(expected) => assert_eq!(&bytes, expected),
             None => canonical = Some(bytes),
