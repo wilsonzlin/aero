@@ -129,7 +129,7 @@ const UCHAR VirtioInputMouseReportDescriptor[] = {
 /*
  * Keep in sync with tools/hidtest (VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN).
  */
-C_ASSERT(sizeof(VirtioInputMouseReportDescriptor) == 54);
+C_ASSERT(sizeof(VirtioInputMouseReportDescriptor) == 48);
 
 const USHORT VirtioInputMouseReportDescriptorLength = (USHORT)sizeof(VirtioInputMouseReportDescriptor);
 
