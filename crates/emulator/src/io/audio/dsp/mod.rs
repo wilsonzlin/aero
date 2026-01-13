@@ -5,6 +5,8 @@ pub mod resample;
 
 pub use pcm::{convert_f32_to_i16, f32_to_i16};
 
+use core::fmt;
+
 use pcm::{decode_interleaved_to_f32, PcmSpec};
 use remix::remix_interleaved;
 use resample::{Resampler, ResamplerKind};
@@ -14,6 +16,26 @@ pub enum DspError {
     Pcm(pcm::PcmError),
     Remix(remix::RemixError),
     Resample(resample::ResampleError),
+}
+
+impl fmt::Display for DspError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pcm(e) => write!(f, "pcm: {e}"),
+            Self::Remix(e) => write!(f, "remix: {e}"),
+            Self::Resample(e) => write!(f, "resample: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for DspError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Pcm(e) => Some(e),
+            Self::Remix(e) => Some(e),
+            Self::Resample(e) => Some(e),
+        }
+    }
 }
 
 impl From<pcm::PcmError> for DspError {
