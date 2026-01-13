@@ -18,6 +18,15 @@
     "tests/host/README.md",
     "tests/offline-install/README.md",
     "tests/qemu/README.md",
-    "tests/qemu/run-virtio-snd.sh"
+    "tests/qemu/run-virtio-snd.sh",
+    "cert/README.md",
+    "release/README.md",
+    "scripts/build-release.ps1",
+    "scripts/install-test-cert.ps1",
+    "scripts/make-cat.cmd",
+    "scripts/make-cert.ps1",
+    "scripts/package-release.ps1",
+    "scripts/sign-driver.cmd",
+    "scripts/stage-built-sys.ps1"
   ]
 }
