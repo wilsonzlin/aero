@@ -327,3 +327,201 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
     })
     .unwrap();
 }
+
+#[test]
+fn compute_vertex_pulling_reads_unorm8x4() {
+    fn push_u32(buf: &mut Vec<u8>, v: u32) {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    fn assert_approx(a: f32, b: f32, eps: f32) {
+        let d = (a - b).abs();
+        assert!(
+            d <= eps,
+            "expected {a} ~= {b} (eps={eps}), abs diff {d}"
+        );
+    }
+
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(e) => {
+                common::skip_or_panic(
+                    module_path!(),
+                    &format!("wgpu unavailable ({e:#})"),
+                );
+                return Ok(());
+            }
+        };
+
+        // Build a tiny ILAY: COLOR0 as R8G8B8A8_UNORM at offset 0 in slot 0.
+        let color_hash = aero_d3d11::input_layout::fnv1a_32(b"COLOR");
+        let mut blob = Vec::new();
+        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut blob, 1); // element_count
+        push_u32(&mut blob, 0); // reserved0
+
+        push_u32(&mut blob, color_hash);
+        push_u32(&mut blob, 0); // semantic index
+        push_u32(&mut blob, 28); // DXGI_FORMAT_R8G8B8A8_UNORM
+        push_u32(&mut blob, 0); // input_slot
+        push_u32(&mut blob, 0); // offset
+        push_u32(&mut blob, 0); // per-vertex
+        push_u32(&mut blob, 0); // step rate
+
+        let layout = InputLayoutDesc::parse(&blob).context("parse ILAY")?;
+
+        let signature = [VsInputSignatureElement {
+            semantic_name_hash: color_hash,
+            semantic_index: 0,
+            input_register: 0,
+            mask: 0xF,
+            shader_location: 0,
+        }];
+
+        let stride = 4u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &signature).context("build pulling")?;
+
+        let vb_bytes = [0u8, 127u8, 255u8, 1u8]; // RGBA
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling unorm vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams::default(),
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling unorm uniform"),
+            size: uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &uniform_bytes);
+
+        // Output buffer: 4 f32s (RGBA).
+        let out_size = 16u64;
+        let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling unorm out"),
+            size: out_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let prelude = pulling.wgsl_prelude();
+        let wgsl = format!(
+            r#"
+{prelude}
+
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+  let vertex: u32 = aero_vp_ia.first_vertex + gid.x;
+  let base: u32 = aero_vp_ia.slots[0].base_offset_bytes + vertex * aero_vp_ia.slots[0].stride_bytes;
+  let col: vec4<f32> = load_attr_unorm8x4(0u, base);
+  out[0] = col.x;
+  out[1] = col.y;
+  out[2] = col.z;
+  out[3] = col.w;
+}}
+"#
+        );
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("vertex pulling unorm shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        let out_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex pulling unorm out bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let out_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling unorm out bg"),
+            layout: &out_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: out_buf.as_entire_binding(),
+            }],
+        });
+
+        let empty_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex pulling unorm empty bgl"),
+            entries: &[],
+        });
+
+        let ia_bgl = pulling.create_bind_group_layout(&device);
+        let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
+
+        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("vertex pulling unorm pipeline layout"),
+            bind_group_layouts: &layouts,
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("vertex pulling unorm pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+            compilation_options: Default::default(),
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("vertex pulling unorm encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("vertex pulling unorm pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &out_bg, &[]);
+            pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_buffer(&device, &queue, &out_buf, out_size).await?;
+        let mut got = Vec::new();
+        for chunk in bytes.chunks_exact(4) {
+            got.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        assert_eq!(got.len(), 4);
+
+        // Compare with a small epsilon: the only nontrivial values come from division by 255.
+        let expected = [
+            0.0f32,
+            127.0f32 / 255.0,
+            1.0f32,
+            1.0f32 / 255.0,
+        ];
+        for (a, b) in got.iter().copied().zip(expected) {
+            assert_approx(a, b, 1e-6);
+        }
+
+        Ok::<_, anyhow::Error>(())
+    })
+    .unwrap();
+}
