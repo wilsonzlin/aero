@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ringCtrl } from "./layout";
 import { RingBuffer } from "./ring_buffer";
@@ -142,5 +142,49 @@ describe("ipc/ring_buffer", () => {
   it("waitForConsumeAsync times out when nothing is consumed", async () => {
     const ring = makeRing(64);
     await expect(ring.waitForConsumeAsync(10)).resolves.toBe("timed-out");
+  });
+
+  it("waitForDataAsync polling fallback times out near the deadline", async () => {
+    const originalWaitAsync = (Atomics as unknown as { waitAsync?: unknown }).waitAsync;
+    (Atomics as unknown as { waitAsync?: unknown }).waitAsync = undefined;
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      const ring = makeRing(64);
+
+      const start = performance.now();
+      await expect(ring.waitForDataAsync(10)).resolves.toBe("timed-out");
+      const elapsed = performance.now() - start;
+
+      // We expect to overshoot slightly due to scheduler jitter, but the polling
+      // fallback should not burn CPU or drift wildly.
+      expect(elapsed).toBeGreaterThanOrEqual(8);
+      expect(elapsed).toBeLessThan(100);
+
+      // Optional sanity check: the fallback should not schedule thousands of
+      // 0ms timers while waiting.
+      expect(timeoutSpy.mock.calls.length).toBeLessThan(50);
+    } finally {
+      timeoutSpy.mockRestore();
+      (Atomics as unknown as { waitAsync?: unknown }).waitAsync = originalWaitAsync;
+    }
+  });
+
+  it("waitForDataAsync polling fallback resolves when data is pushed", async () => {
+    const originalWaitAsync = (Atomics as unknown as { waitAsync?: unknown }).waitAsync;
+    (Atomics as unknown as { waitAsync?: unknown }).waitAsync = undefined;
+    try {
+      const ring = makeRing(64);
+
+      const waitTask = ring.waitForDataAsync(100);
+      // Give the waiter a chance to enter its polling loop before pushing.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      setTimeout(() => {
+        ring.tryPush(Uint8Array.of(1, 2, 3));
+      }, 5);
+
+      await expect(waitTask).resolves.toBe("ok");
+    } finally {
+      (Atomics as unknown as { waitAsync?: unknown }).waitAsync = originalWaitAsync;
+    }
   });
 });

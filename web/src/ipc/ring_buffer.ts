@@ -8,6 +8,17 @@ function canAtomicsWait(): boolean {
   return typeof Atomics.wait === "function" && (globalThis as any).document === undefined;
 }
 
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
+
+function sleepAsync(timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
+  });
+}
+
 function u32(n: number): number {
   return n >>> 0;
 }
@@ -45,19 +56,33 @@ async function waitForStateChangeAsync(
     return res.async ? await res.value : res.value;
   }
 
-  const start = typeof performance !== "undefined" ? performance.now() : Date.now();
+  // Polling fallback (e.g. browsers without Atomics.waitAsync).
+  //
+  // The legacy implementation used `setTimeout(0)` in a tight loop which can
+  // consume substantial CPU (Node) and introduce jitter (browsers with timer
+  // clamping). Prefer sleeping in small slices with a backoff when no deadline
+  // is provided.
+  const start = nowMs();
+  const pollSliceMs = 4;
+  const backoffCapMs = 8;
+  let backoffMs = 1;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const cur = Atomics.load(arr, index);
     if (cur !== expected) return "not-equal";
     if (timeoutMs != null) {
-      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-      if (now - start > timeoutMs) return "timed-out";
+      const elapsed = nowMs() - start;
+      if (elapsed >= timeoutMs) return "timed-out";
+      const remaining = timeoutMs - elapsed;
+      // Avoid pathological busy polling; never schedule a 0ms timeout in Node,
+      // and limit jitter by polling in short slices.
+      const sleepMs = Math.max(1, Math.min(remaining, pollSliceMs));
+      await sleepAsync(sleepMs);
+      continue;
     }
-    await new Promise((resolve) => {
-      const timer = setTimeout(resolve, 0);
-      (timer as unknown as { unref?: () => void }).unref?.();
-    });
+
+    await sleepAsync(backoffMs);
+    backoffMs = Math.min(backoffMs * 2, backoffCapMs);
   }
 }
 
