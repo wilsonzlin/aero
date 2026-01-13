@@ -486,15 +486,29 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     return false;
   }
 
-  // If stage-state-driven shader selection is implemented, we expect a second
-  // BIND_SHADERS packet (different shader handles, or at least a re-bind).
-  if (binds.size() >= 2) {
-    const auto* first = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.front());
-    const auto* last = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
-    (void)first;
-    if (!Check(last->vs != 0 && last->ps != 0, "rebind binds non-zero VS/PS")) {
-      return false;
-    }
+  // The driver implements stage0 texture-stage-state-based pixel shader
+  // selection. Changing the cached stage state should therefore force a new
+  // fixed-function pixel shader to be created and bound.
+  if (!Check(binds.size() >= 2, "stage-state change rebinds shaders (BIND_SHADERS count >= 2)")) {
+    return false;
+  }
+
+  const auto* first = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.front());
+  const auto* last = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(first->vs != 0 && first->ps != 0, "first bind uses non-zero VS/PS")) {
+    return false;
+  }
+  if (!Check(last->vs != 0 && last->ps != 0, "rebind uses non-zero VS/PS")) {
+    return false;
+  }
+  if (!Check(first->ps != last->ps, "stage-state change binds a different PS handle")) {
+    return false;
+  }
+
+  // Expect a new shader creation for the new PS variant (VS + PS1 + PS2).
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 3,
+             "stage-state change creates a new shader (CREATE_SHADER_DXBC >= 3)")) {
+    return false;
   }
 
   return true;
@@ -515,4 +529,3 @@ int main() {
   }
   return 0;
 }
-
