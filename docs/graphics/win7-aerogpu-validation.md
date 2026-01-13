@@ -462,25 +462,35 @@ And if you suspect scanline/vblank state queries are broken, sample `D3DKMTGetSc
 aerogpu_dbgctl --query-scanline --vblank-samples 50 --vblank-interval-ms 10
 ```
 
-### 5.2 Suggested `aerogpu_dbgctl` commands (baseline feature set)
+### 5.2 Suggested `aerogpu_dbgctl` commands (implemented today)
+
+For the canonical, up-to-date command list and global options, see:
+`drivers/aerogpu/tools/win7_dbgctl/README.md`.
 
 | Command | What it should report/do | When to use |
 |---|---|---|
-| `--status` (alias: `--query-version`) | combined snapshot (device/ABI + fences + scanout + vblank) | first command in any bug report |
+| `--status` / `--query-version` (alias: `--query-device`) | combined snapshot: device/ABI + UMDRIVERPRIVATE summary + fences + ring0 + scanout0 + vblank + CreateAllocation trace summary | first command in any bug report |
 | `--query-umd-private` | KMD-provided `UMDRIVERPRIVATE` blob (ABI + feature discovery used by UMDs) | diagnosing ABI/feature mismatches |
-| `--dump-ring` | ring head/tail, queued packet types, last N submissions | hangs/TDR triage |
-| `--query-fence` | last submitted, last completed, per-context fences | “fence stuck” diagnosis |
+| `--query-fence` | last submitted + last completed fence | “fence stuck” diagnosis |
+| `--dump-ring --ring-id N` | ring head/tail + recent submission descriptors (newest-at-tail window on AGPU) | hangs/TDR triage |
 | `--query-scanout` | cached scanout mode/visibility vs best-effort MMIO snapshot (`SCANOUT0_*`, including framebuffer GPA) | diagnosing blank output, mode/pitch mismatches, scanline bounds issues |
-| `--dump-createalloc` | recent `DxgkDdiCreateAllocation` trace entries (requested flags, final flags, alloc_id/share_token/pitch) | diagnosing allocation flag mismatches and shared-surface ID issues |
-| `--dump-vblank` | IRQ enable/status + vblank seq/time/period (optionally sampled with deltas/observed Hz). Also prints `vblank_interrupt_type` when dxgkrnl has enabled vblank delivery via `DxgkDdiControlInterrupt`. | DWM stutter / Basic fallback |
-| `--wait-vblank` | WDDM vblank wait pacing via `D3DKMTWaitForVerticalBlankEvent` | verifying vblank interrupts/waits work |
+| `--dump-createalloc` *(aliases: `--dump-createallocation`, `--dump-allocations`)* | recent `DxgkDdiCreateAllocation` trace entries | diagnosing allocation flag mismatches and shared-surface ID issues |
+| `--dump-vblank` (alias: `--query-vblank`) | IRQ enable/status + vblank seq/time/period; prints `vblank_interrupt_type` when dxgkrnl has enabled vblank delivery via `DxgkDdiControlInterrupt` | DWM stutter / Basic fallback |
+| `--wait-vblank` | WDDM vblank wait pacing via `D3DKMTWaitForVerticalBlankEvent` (bounded by `--timeout-ms`) | verifying vblank interrupts/waits work |
 | `--query-scanline` | `D3DKMTGetScanLine` (scanline + vblank state) | sanity-check scanline/vblank state queries |
-| `log level <err|warn|info|trace>` | sets runtime verbosity | enable before repro |
-| `perf start <file>` / `perf stop` | lightweight counters (present rate, bytes/sec, latency histograms) | baseline collection |
-| `inject hang <ms>` *(dev)* | intentionally stall completions to validate TDR handling | validates reset path |
-| `force reset` *(dev)* | triggers internal reset path (not OS TDR) | reproducing device-lost handling |
 
-The exact surface area is up to implementation, but the key is: **one command to capture “where are my fences and why aren’t they moving?”**
+Common global options:
+
+- `--timeout-ms N` bounds driver-private escape calls (and each `--wait-vblank` wait).
+- `--vblank-samples N` + `--vblank-interval-ms N` let you sample `--dump-vblank` / `--query-scanline` over time.
+- `--display \\.\DISPLAY1` selects which adapter to query (use `--list-displays` to enumerate).
+
+The key is: **one command to capture “where are my fences and why aren’t they moving?”**
+
+#### Future work / optional extensions (not implemented by `aerogpu_dbgctl` today)
+
+Some bring-up playbooks mention additional “debug knobs” (log verbosity control, lightweight perf capture, hang injection, forced reset, etc.).
+Those are **not implemented** by the in-tree Win7 dbgctl tool today; treat them as driver-specific extensions if/when added.
 
 ### 5.3 Common error codes and likely causes
 

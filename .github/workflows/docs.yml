@@ -10,6 +10,7 @@ on:
       - ".markdownlint-cli2.jsonc"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - "scripts/ci/check-aerogpu-share-token-contract.py"
+      - "scripts/ci/check-aerogpu-win7-dbgctl-readme-flags.py"
       - "scripts/ci/check-usb-doc-paths.py"
       - "scripts/ci/check-virtio-win-guest-tools-docs.py"
       - "scripts/ci/gen-guest-tools-devices-cmd.py"
@@ -39,6 +40,8 @@ on:
       - "drivers/aerogpu/tests/win7/README.md"
       - "drivers/aerogpu/umd/d3d9/README.md"
       - "drivers/aerogpu/umd/d3d10_11/README.md"
+      - "drivers/aerogpu/tools/win7_dbgctl/README.md"
+      - "drivers/aerogpu/tools/win7_dbgctl/src/aerogpu_dbgctl.cpp"
       - "tools/packaging/README.md"
       - "tools/packaging/specs/README.md"
       - ".github/workflows/docs.yml"
@@ -52,6 +55,7 @@ on:
       - ".markdownlint-cli2.jsonc"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - "scripts/ci/check-aerogpu-share-token-contract.py"
+      - "scripts/ci/check-aerogpu-win7-dbgctl-readme-flags.py"
       - "scripts/ci/check-usb-doc-paths.py"
       - "scripts/ci/check-virtio-win-guest-tools-docs.py"
       - "scripts/ci/gen-guest-tools-devices-cmd.py"
@@ -81,6 +85,8 @@ on:
       - "drivers/aerogpu/tests/win7/README.md"
       - "drivers/aerogpu/umd/d3d9/README.md"
       - "drivers/aerogpu/umd/d3d10_11/README.md"
+      - "drivers/aerogpu/tools/win7_dbgctl/README.md"
+      - "drivers/aerogpu/tools/win7_dbgctl/src/aerogpu_dbgctl.cpp"
       - "tools/packaging/README.md"
       - "tools/packaging/specs/README.md"
       - ".github/workflows/docs.yml"
@@ -124,6 +130,9 @@ jobs:
 
       - name: Check AeroGPU shared surface ShareToken contract
         run: python3 scripts/ci/check-aerogpu-share-token-contract.py
+
+      - name: Check AeroGPU Win7 dbgctl README flags match implementation
+        run: python3 scripts/ci/check-aerogpu-win7-dbgctl-readme-flags.py
 
       - name: Check Guest Tools devices.cmd is generated from contract
         run: python3 scripts/ci/gen-guest-tools-devices-cmd.py --check

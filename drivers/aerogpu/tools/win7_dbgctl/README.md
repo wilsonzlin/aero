@@ -107,17 +107,17 @@ Examples:
 ```
 aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --status
-aerogpu_dbgctl --query-device
- aerogpu_dbgctl --query-umd-private
- aerogpu_dbgctl --query-fence
- aerogpu_dbgctl --query-scanout
- aerogpu_dbgctl --dump-ring --ring-id 0
- aerogpu_dbgctl --dump-createalloc
- aerogpu_dbgctl --dump-vblank
- aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
- aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
- aerogpu_dbgctl --query-scanline --vblank-samples 20 --vblank-interval-ms 10
- aerogpu_dbgctl --map-shared-handle 0x1234
+aerogpu_dbgctl --query-version
+aerogpu_dbgctl --query-umd-private
+aerogpu_dbgctl --query-fence
+aerogpu_dbgctl --query-scanout
+aerogpu_dbgctl --dump-ring --ring-id 0
+aerogpu_dbgctl --dump-createalloc
+aerogpu_dbgctl --dump-vblank
+aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
+aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
+aerogpu_dbgctl --query-scanline --vblank-samples 20 --vblank-interval-ms 10
+aerogpu_dbgctl --map-shared-handle 0x1234
 aerogpu_dbgctl --selftest --timeout-ms 2000
 ```
 
@@ -186,3 +186,14 @@ Additional WDDM queries (do not use the escape channel):
 - If `D3DKMTOpenAdapterFromHdc` or `D3DKMTEscape` cannot be resolved from `gdi32.dll`, the OS is too old or the environment is not WDDM-capable.
 - If `D3DKMTEscape` returns an error, ensure the AeroGPU driver is installed and exposes the required escapes.
 - If `--wait-vblank` times out, the process may skip `D3DKMTCloseAdapter` to avoid deadlocking on broken vblank implementations.
+
+## Not implemented (intentional)
+
+The in-tree Win7 dbgctl tool is focused on snapshots/queries and compatibility with older KMD builds.
+It does **not** currently provide:
+
+- runtime log verbosity controls
+- perf capture / start-stop commands
+- hang injection or forced reset helpers
+
+If/when we add those as new driver-private escape ops, this README should be updated alongside the implementation.
