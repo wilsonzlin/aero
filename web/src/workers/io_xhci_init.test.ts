@@ -48,7 +48,11 @@ describe("workers/io_xhci_init", () => {
         return false;
       }
 
-      tick(_nowMs?: number): void {
+      step_frames(frames: number): void {
+        tickCalls += frames;
+      }
+
+      step_frame(): void {
         tickCalls++;
       }
 

@@ -16,11 +16,12 @@ export type XhciControllerBridgeLike = {
    *
    * The JS wrapper treats one "frame" as 1ms of guest time (USB frame). WASM builds may expose
    * either a batched stepping API (`step_frames`) or an older per-frame API (`tick`), with
-   * `step_frame` as a slow fallback.
+   * `step_frame`/`tick_1ms` as a slow fallback.
    */
   step_frames?: (frames: number) => void;
   tick?: (frames: number) => void;
   step_frame?: () => void;
+  tick_1ms?: () => void;
   irq_asserted(): boolean;
   free(): void;
 };
@@ -187,6 +188,8 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
           bridge.tick(frames);
         } else if (typeof bridge.step_frame === "function") {
           for (let i = 0; i < frames; i++) bridge.step_frame();
+        } else if (typeof bridge.tick_1ms === "function") {
+          for (let i = 0; i < frames; i++) bridge.tick_1ms();
         }
       } catch {
         // ignore device errors during tick
@@ -232,4 +235,3 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
     else this.#irqSink.lowerIrq(this.irqLine);
   }
 }
-

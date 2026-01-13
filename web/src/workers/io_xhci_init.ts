@@ -29,16 +29,12 @@ export function tryInitXhciDevice(opts: {
     // - legacy: `new (guestBase)`
     // - current: `new (guestBase, guestSize)` (guestSize=0 means "use remainder of linear memory")
     //
-    // wasm-bindgen glue sometimes enforces constructor arity, so pick based on `length` and
-    // fall back to the other variant if instantiation fails.
     const base = opts.guestBase >>> 0;
     const size = opts.guestSize >>> 0;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const Ctor = Bridge as any;
     try {
-      bridge = (Ctor.length >= 2 ? new Ctor(base, size) : new Ctor(base)) as typeof bridge;
+      bridge = new Bridge(base, size);
     } catch {
-      bridge = (Ctor.length >= 2 ? new Ctor(base) : new Ctor(base, size)) as typeof bridge;
+      bridge = new Bridge(base);
     }
   } catch (err) {
     console.warn("[io.worker] Failed to initialize xHCI controller bridge", err);
@@ -46,7 +42,7 @@ export function tryInitXhciDevice(opts: {
   }
 
   try {
-    const dev = new XhciPciDevice({ bridge: bridge as unknown as any, irqSink: mgr.irqSink });
+    const dev = new XhciPciDevice({ bridge, irqSink: mgr.irqSink });
     // Prefer the canonical BDF requested by the device (00:02.0). If that slot is occupied,
     // fall back to auto allocation so xHCI can still attach in test/experimental setups.
     const anyDev = dev as unknown as { bdf?: { bus: number; device: number; function: number } };

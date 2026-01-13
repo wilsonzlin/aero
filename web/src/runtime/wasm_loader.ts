@@ -308,19 +308,27 @@ export type UhciControllerBridgeHandle = {
     free(): void;
 };
 
+/**
+ * Guest-visible xHCI controller bridge handle.
+ *
+ * Stepping contract:
+ * - The JS PCI wrapper treats one "frame" as 1ms of guest USB time.
+ * - Prefer {@link step_frames} for deterministic, batched stepping.
+ * - {@link step_frame} steps exactly one 1ms frame.
+ * - Legacy aliases may be present for older call sites/builds:
+ *   - {@link tick} steps `frames` 1ms frames.
+ *   - {@link tick_1ms} steps exactly one 1ms frame.
+ * - `poll()` (if present) must not advance time; it should only process already-due work and can
+ *   be treated as `step_frames(0)` by legacy wrappers.
+ */
 export type XhciControllerBridgeHandle = {
     mmio_read(offset: number, size: number): number;
     mmio_write(offset: number, size: number, value: number): void;
-    /**
-     * Optional stepping APIs.
-     *
-     * WASM builds may expose either a batched stepping API (`step_frames`) or an older API (`tick`)
-     * that advances the device by some notion of time/frames.
-     */
-    step_frames?: (frames: number) => void;
-    step_frame?: () => void;
-    tick?: (frames?: number) => void;
-    poll?: () => void;
+    step_frames?(frames: number): void;
+    step_frame?(): void;
+    tick_1ms?(): void;
+    tick?(frames: number): void;
+    poll?(): void;
     irq_asserted(): boolean;
     /**
      * Update the device model's PCI command register (offset 0x04, low 16 bits).
@@ -649,6 +657,10 @@ export interface WasmApi {
 
     /**
      * Guest-visible xHCI controller bridge.
+     *
+     * Stepping is deterministic and expressed in 1ms "frames" (USB frames). Prefer the UHCI-style
+     * {@link XhciControllerBridgeHandle.step_frames} / {@link XhciControllerBridgeHandle.step_frame}
+     * exports when available.
      *
      * Optional and has multiple constructor signatures depending on the deployed WASM build:
      * - `new (guestBase)` for legacy builds.
