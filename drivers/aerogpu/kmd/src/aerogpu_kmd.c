@@ -1811,6 +1811,17 @@ static NTSTATUS AeroGpuWaitForAllocationIdle(_Inout_ AEROGPU_ADAPTER* Adapter,
          * VA while the emulator may still be writing the allocation.
          */
         while (AeroGpuReadCompletedFence(Adapter) < busyFence) {
+            /*
+             * If the adapter is leaving D0 (sleep/hibernate, PnP disable, etc),
+             * the completed fence value may stop advancing. Avoid hanging a
+             * user-mode thread in a tight wait loop while the device is powered
+             * down.
+             */
+            if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
+                    DxgkDevicePowerStateD0 ||
+                InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+                return STATUS_DEVICE_NOT_READY;
+            }
             LARGE_INTEGER interval;
             interval.QuadPart = -10000; /* 1ms */
             KeDelayExecutionThread(KernelMode, FALSE, &interval);
