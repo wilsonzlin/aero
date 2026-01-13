@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   L2_TUNNEL_DATA_CHANNEL_LABEL,
@@ -114,6 +114,12 @@ function resetFakeWebSocket(): void {
 }
 
 describe("net/l2Tunnel", () => {
+  // Safety net: a failing test that forgets to restore fake timers can poison
+  // the rest of the suite (e.g. tests that await real `setTimeout`).
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("rejects unreliable RTCDataChannels", () => {
     const channel = new FakeRtcDataChannel();
     channel.maxRetransmits = 0;
@@ -334,6 +340,7 @@ describe("net/l2Tunnel", () => {
   });
 
   it("sends keepalive PINGs with empty payload when maxControlSize < 4", async () => {
+    vi.useFakeTimers();
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -349,15 +356,15 @@ describe("net/l2Tunnel", () => {
     });
 
     try {
-      // Make the keepalive timer deterministic and avoid flakiness under heavy CPU load when Vitest
-      // runs many test files in parallel.
-      vi.useFakeTimers();
+      // Keepalive delay is randomized within [min,max]; we set them equal for determinism.
+      // `sendPing()` enqueues, then flushes via `queueMicrotask`, so await a microtask after
+      // advancing fake time.
       client.connect();
       FakeWebSocket.last?.open();
       await microtask();
       expect(events[0]?.type).toBe("open");
 
-      await vi.advanceTimersByTimeAsync(20);
+      await vi.advanceTimersByTimeAsync(10);
       await microtask();
 
       expect(FakeWebSocket.last?.sent.length).toBeGreaterThan(0);
@@ -376,6 +383,12 @@ describe("net/l2Tunnel", () => {
   });
 
   it("closes the tunnel when keepalive pings go unanswered", async () => {
+    vi.useFakeTimers();
+    // `BaseL2TunnelClient` uses `performance.now()` for idle/RTT timing when available. Ensure
+    // the clock source advances with fake timers even in environments where `performance.now`
+    // is not patched by the timer shim.
+    const perfNowSpy =
+      typeof performance !== "undefined" ? vi.spyOn(performance, "now").mockImplementation(() => Date.now()) : null;
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -395,10 +408,11 @@ describe("net/l2Tunnel", () => {
       await microtask();
       expect(events[0]?.type).toBe("open");
 
-      const deadline = Date.now() + 500;
-      while (!events.some((ev) => ev.type === "close") && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
+      // The client closes when it has been idle for `keepaliveMaxMs * 2` without receiving
+      // any inbound traffic. With keepaliveMinMs=keepaliveMaxMs=10, the timeout is 20ms,
+      // checked on each ping tick: at 30ms it becomes > 20ms and closes.
+      await vi.advanceTimersByTimeAsync(31);
+      await microtask();
 
       expect(events.some((ev) => ev.type === "close")).toBe(true);
       const errEv = events.find((ev) => ev.type === "error") as { error?: unknown } | undefined;
@@ -406,6 +420,8 @@ describe("net/l2Tunnel", () => {
       expect((errEv?.error as Error | undefined)?.message).toContain("keepalive timeout");
     } finally {
       client.close();
+      perfNowSpy?.mockRestore();
+      vi.useRealTimers();
       if (original === undefined) {
         delete (g as { WebSocket?: unknown }).WebSocket;
       } else {
