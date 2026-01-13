@@ -1456,15 +1456,6 @@ export class AerogpuCmdWriter {
     this.bindShadersWithGs(vs, 0, ps, cs);
   }
 
-  bindShadersWithGs(vs: AerogpuHandle, gs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
-    const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE);
-    this.view.setUint32(base + 8, vs, true);
-    this.view.setUint32(base + 12, ps, true);
-    this.view.setUint32(base + 16, cs, true);
-    // Historically reserved; now used to carry the geometry shader handle.
-    this.view.setUint32(base + 20, gs, true);
-  }
-
   setShaderConstantsF(stage: AerogpuShaderStage, startRegister: number, data: Float32Array | readonly number[]): void {
     if (data.length % 4 !== 0) {
       throw new Error(`SET_SHADER_CONSTANTS_F data must be float4-aligned (got ${data.length} floats)`);
