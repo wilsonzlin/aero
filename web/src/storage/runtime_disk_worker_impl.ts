@@ -629,11 +629,25 @@ async function openDiskFromMetadata(
 
   const localMeta = meta;
   const readOnly = localMeta.kind === "cd" || localMeta.format === "iso";
+  const hasRemoteBase = !!localMeta.remote;
   if (localMeta.backend === "opfs") {
     const fileName = localMeta.fileName;
     const sizeBytes = localMeta.sizeBytes;
 
     async function openBase(): Promise<AsyncSectorDisk> {
+      if (localMeta.remote) {
+        const url = String(localMeta.remote.url ?? "").trim();
+        if (!url) throw new Error("remote disk metadata missing remote.url");
+        // Legacy remote-streaming local disks always use RemoteStreamingDisk + OPFS chunk cache.
+        // The base image is treated as read-only; HDD writes go to a runtime COW overlay.
+        return await RemoteStreamingDisk.open(url, {
+          blockSize: localMeta.remote.blockSizeBytes,
+          cacheLimitBytes: localMeta.remote.cacheLimitBytes,
+          prefetchSequentialBlocks: localMeta.remote.prefetchSequentialBlocks,
+          cacheBackend: "opfs",
+          expectedSizeBytes: sizeBytes,
+        });
+      }
       switch (localMeta.format) {
         case "aerospar": {
           const disk = await OpfsAeroSparseDisk.open(fileName);
@@ -669,23 +683,32 @@ async function openDiskFromMetadata(
         return {
           disk: new OpfsCowDisk(base, overlay),
           readOnly: false,
-          backendSnapshot: {
-            kind: "local",
-            backend: "opfs",
-            key: localMeta.fileName,
-            format: localMeta.format,
-            diskKind: localMeta.kind,
-            sizeBytes: localMeta.sizeBytes,
-            overlay: {
-              fileName: overlayName,
-              diskSizeBytes: localMeta.sizeBytes,
-              blockSizeBytes: overlay.blockSizeBytes,
-            },
-          },
+          // Remote-streaming local disks cannot currently be snapshotted because the backend snapshot
+          // format does not capture the remote base URL/options.
+          backendSnapshot: localMeta.remote
+            ? null
+            : {
+                kind: "local",
+                backend: "opfs",
+                key: localMeta.fileName,
+                format: localMeta.format,
+                diskKind: localMeta.kind,
+                sizeBytes: localMeta.sizeBytes,
+                overlay: {
+                  fileName: overlayName,
+                  diskSizeBytes: localMeta.sizeBytes,
+                  blockSizeBytes: overlay.blockSizeBytes,
+                },
+              },
         };
       } catch (err) {
         await overlay?.close?.();
         await base?.close?.();
+        if (localMeta.remote) {
+          // The remote base is read-only, so we cannot fall back to direct writes.
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(`failed to open COW overlay for remote-streaming disk (id=${localMeta.id}): ${msg}`);
+        }
         // If SyncAccessHandle isn't available, sparse overlays can't work efficiently.
         // Fall back to direct raw writes (still in a worker, but slower).
         if (localMeta.format !== "raw" && localMeta.format !== "iso" && localMeta.format !== "unknown") throw err;
@@ -695,15 +718,21 @@ async function openDiskFromMetadata(
     const disk = await openBase();
     return {
       disk,
-      readOnly,
-      backendSnapshot: {
-        kind: "local",
-        backend: "opfs",
-        key: localMeta.fileName,
-        format: localMeta.format,
-        diskKind: localMeta.kind,
-        sizeBytes: localMeta.sizeBytes,
-      },
+      // Treat remote-streaming local disks as read-only unless explicitly opened with a
+      // COW overlay above.
+      readOnly: readOnly || hasRemoteBase,
+      // Remote-streaming local disks cannot currently be snapshotted because the backend snapshot
+      // format does not capture the remote base URL/options.
+      backendSnapshot: localMeta.remote
+        ? null
+        : {
+            kind: "local",
+            backend: "opfs",
+            key: localMeta.fileName,
+            format: localMeta.format,
+            diskKind: localMeta.kind,
+            sizeBytes: localMeta.sizeBytes,
+          },
     };
   }
 

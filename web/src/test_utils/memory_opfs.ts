@@ -80,6 +80,63 @@ export class MemoryFileHandle {
     return new MemoryFile(this.data);
   }
 
+  async createSyncAccessHandle(): Promise<FileSystemSyncAccessHandle> {
+    let closed = false;
+    const assertOpen = () => {
+      if (closed) throw new Error("SyncAccessHandle closed");
+    };
+
+    return {
+      read: (buffer: ArrayBufferView, options?: { at?: number }) => {
+        assertOpen();
+        const at = options?.at ?? 0;
+        if (!Number.isSafeInteger(at) || at < 0) throw new Error("invalid read offset");
+        const dst = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+        if (at >= this.data.byteLength) return 0;
+        const src = this.data.subarray(at, at + dst.byteLength);
+        dst.set(src);
+        return src.byteLength;
+      },
+      write: (buffer: ArrayBufferView, options?: { at?: number }) => {
+        assertOpen();
+        const at = options?.at ?? 0;
+        if (!Number.isSafeInteger(at) || at < 0) throw new Error("invalid write offset");
+        const src = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+        const end = at + src.byteLength;
+        if (!Number.isSafeInteger(end) || end < 0) throw new Error("write overflow");
+        if (end > this.data.byteLength) {
+          const next = new Uint8Array(end);
+          next.set(this.data);
+          this.data = next;
+        }
+        this.data.set(src, at);
+        return src.byteLength;
+      },
+      flush: () => {
+        assertOpen();
+      },
+      close: () => {
+        closed = true;
+      },
+      getSize: () => {
+        assertOpen();
+        return this.data.byteLength;
+      },
+      truncate: (newSize: number) => {
+        assertOpen();
+        if (!Number.isSafeInteger(newSize) || newSize < 0) throw new Error("invalid truncate size");
+        if (newSize === this.data.byteLength) return;
+        if (newSize < this.data.byteLength) {
+          this.data = this.data.subarray(0, newSize).slice();
+          return;
+        }
+        const next = new Uint8Array(newSize);
+        next.set(this.data);
+        this.data = next;
+      },
+    } satisfies FileSystemSyncAccessHandle;
+  }
+
   async createWritable(options?: { keepExistingData?: boolean }): Promise<MemoryWritable> {
     const base = options?.keepExistingData ? this.data : undefined;
     return new MemoryWritable(
@@ -160,4 +217,3 @@ export async function getDir(root: MemoryDirectoryHandle, parts: string[]): Prom
   }
   return dir;
 }
-
