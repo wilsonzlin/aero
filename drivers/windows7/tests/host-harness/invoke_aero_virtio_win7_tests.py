@@ -603,6 +603,31 @@ def _qemu_quote_keyval_value(value: str) -> str:
     return '"' + escaped + '"'
 
 
+def _qemu_device_arg_add_vectors(device_arg: str, vectors: Optional[int]) -> str:
+    """
+    Optionally append `,vectors=<N>` to a QEMU `-device` argument string.
+
+    This is used by the host harness to request more MSI-X vectors from virtio-pci
+    devices (when the running QEMU build exposes the `vectors` property).
+    """
+
+    if vectors is None:
+        return device_arg
+    if int(vectors) <= 0:
+        raise ValueError(f"vectors must be a positive integer (got {vectors})")
+
+    # Avoid generating malformed args if callers accidentally include a trailing comma.
+    arg = device_arg.rstrip()
+    while arg.endswith(","):
+        arg = arg[:-1]
+
+    # If the device arg already specifies vectors, do not add a duplicate key.
+    if ",vectors=" in ("," + arg):
+        return arg
+
+    return f"{arg},vectors={int(vectors)}"
+
+
 def _virtio_snd_skip_failure_message(tail: bytes) -> str:
     # The guest selftest's virtio-snd marker is intentionally strict and machine-friendly:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS/FAIL/SKIP
@@ -897,10 +922,22 @@ def main() -> int:
         action="store_true",
         help="Stream newly captured COM1 serial output to stdout while waiting",
     )
+    parser.add_argument(
+        "--virtio-msix-vectors",
+        type=int,
+        default=None,
+        help=(
+            "If set, append ',vectors=N' to virtio-pci devices created by the harness "
+            "(virtio-net/blk/input/snd) to exercise MSI-X multi-vector paths. "
+            "Support varies by QEMU build; disabled by default."
+        ),
+    )
 
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
     need_input_events = bool(args.with_input_events)
+    if args.virtio_msix_vectors is not None and args.virtio_msix_vectors <= 0:
+        parser.error("--virtio-msix-vectors must be a positive integer")
 
     if not args.enable_virtio_snd:
         if args.virtio_snd_audio_backend != "none" or args.virtio_snd_wav_path is not None:
@@ -1059,11 +1096,19 @@ def main() -> int:
             if _qemu_has_device(args.qemu_system, "virtio-keyboard-pci") and _qemu_has_device(
                 args.qemu_system, "virtio-mouse-pci"
             ):
+                kbd = _qemu_device_arg_add_vectors(
+                    f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID}",
+                    args.virtio_msix_vectors,
+                )
+                mouse = _qemu_device_arg_add_vectors(
+                    f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID}",
+                    args.virtio_msix_vectors,
+                )
                 virtio_input_args = [
                     "-device",
-                    f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID}",
+                    kbd,
                     "-device",
-                    f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID}",
+                    mouse,
                 ]
             else:
                 print(
@@ -1119,7 +1164,7 @@ def main() -> int:
                 "-netdev",
                 "user,id=net0",
                 "-device",
-                "virtio-net-pci,netdev=net0",
+                _qemu_device_arg_add_vectors("virtio-net-pci,netdev=net0", args.virtio_msix_vectors),
             ] + virtio_input_args + [
                 "-drive",
                 drive,
@@ -1138,13 +1183,21 @@ def main() -> int:
             if args.snapshot:
                 drive += ",snapshot=on"
 
-            virtio_net = f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}"
-            virtio_blk = f"virtio-blk-pci,drive={drive_id},disable-legacy=on,x-pci-revision={aero_pci_rev}"
-            virtio_kbd = (
-                f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}"
+            virtio_net = _qemu_device_arg_add_vectors(
+                f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}",
+                args.virtio_msix_vectors,
             )
-            virtio_mouse = (
-                f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}"
+            virtio_blk = _qemu_device_arg_add_vectors(
+                f"virtio-blk-pci,drive={drive_id},disable-legacy=on,x-pci-revision={aero_pci_rev}",
+                args.virtio_msix_vectors,
+            )
+            virtio_kbd = _qemu_device_arg_add_vectors(
+                f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
+                args.virtio_msix_vectors,
+            )
+            virtio_mouse = _qemu_device_arg_add_vectors(
+                f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
+                args.virtio_msix_vectors,
             )
 
             virtio_snd_args: list[str] = []
@@ -1153,6 +1206,7 @@ def main() -> int:
                     device_arg = _get_qemu_virtio_sound_device_arg(
                         args.qemu_system, disable_legacy=True, pci_revision=aero_pci_rev
                     )
+                    device_arg = _qemu_device_arg_add_vectors(device_arg, args.virtio_msix_vectors)
                 except RuntimeError as e:
                     print(f"ERROR: {e}", file=sys.stderr)
                     return 2

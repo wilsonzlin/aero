@@ -38,6 +38,14 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$VirtioTransitional,
 
+  # Optional MSI-X vector count to request from virtio-pci devices via the QEMU
+  # `vectors=` device property (when supported by the running QEMU build).
+  #
+  # When set (> 0), the harness appends `,vectors=<N>` to the virtio-net/blk/input/snd
+  # `-device` args that it creates.
+  [Parameter(Mandatory = $false)]
+  [int]$VirtioMsixVectors = 0,
+
   # If set, inject deterministic keyboard/mouse events via QMP (`input-send-event`) and require the guest
   # virtio-input end-to-end event delivery marker (`virtio-input-events`) to PASS.
   #
@@ -128,6 +136,10 @@ if ($VerifyVirtioSndWav) {
 
 if ($VirtioTransitional -and $WithVirtioSnd) {
   throw "-VirtioTransitional is incompatible with -WithVirtioSnd (virtio-snd testing requires modern-only virtio-pci + contract revision overrides)."
+}
+
+if ($VirtioMsixVectors -lt 0) {
+  throw "-VirtioMsixVectors must be a positive integer."
 }
 
 function Start-AeroSelftestHttpServer {
@@ -697,7 +709,10 @@ function Get-AeroVirtioSoundDeviceArg {
   param(
     [Parameter(Mandatory = $true)] [string]$QemuSystem,
     # If true, require modern-only virtio-pci enumeration (disable-legacy=on) and contract revision (x-pci-revision=0x01).
-    [Parameter(Mandatory = $true)] [bool]$ModernOnly
+    [Parameter(Mandatory = $true)] [bool]$ModernOnly,
+
+    # Optional MSI-X vector count (`vectors=` device property).
+    [Parameter(Mandatory = $false)] [int]$MsixVectors = 0
   )
 
   # Determine which QEMU virtio-snd PCI device name is available and validate it supports
@@ -717,7 +732,11 @@ function Get-AeroVirtioSoundDeviceArg {
     throw "QEMU device '$deviceName' does not expose 'x-pci-revision'. AERO-W7-VIRTIO v1 virtio-snd requires PCI Revision ID 0x01 (REV_01). Upgrade QEMU."
   }
 
-  return "$deviceName,disable-legacy=on,x-pci-revision=0x01,audiodev=snd0"
+  $arg = "$deviceName,disable-legacy=on,x-pci-revision=0x01,audiodev=snd0"
+  if ($MsixVectors -gt 0) {
+    $arg += ",vectors=$MsixVectors"
+  }
+  return $arg
 }
 
 function Sanitize-AeroMarkerValue {
@@ -1324,6 +1343,7 @@ try {
   }
   if ($VirtioTransitional) {
     $nic = "virtio-net-pci,netdev=net0"
+    if ($VirtioMsixVectors -gt 0) { $nic += ",vectors=$VirtioMsixVectors" }
     $drive = "file=$(Quote-AeroWin7QemuKeyvalValue $DiskImagePath),if=virtio,cache=writeback"
     if ($Snapshot) { $drive += ",snapshot=on" }
 
@@ -1343,9 +1363,15 @@ try {
     } catch { }
 
     if ($haveVirtioKbd -and $haveVirtioMouse) {
+      $kbdArg = "virtio-keyboard-pci,id=$($script:VirtioInputKeyboardQmpId)"
+      $mouseArg = "virtio-mouse-pci,id=$($script:VirtioInputMouseQmpId)"
+      if ($VirtioMsixVectors -gt 0) {
+        $kbdArg += ",vectors=$VirtioMsixVectors"
+        $mouseArg += ",vectors=$VirtioMsixVectors"
+      }
       $virtioInputArgs = @(
-        "-device", "virtio-keyboard-pci,id=$($script:VirtioInputKeyboardQmpId)",
-        "-device", "virtio-mouse-pci,id=$($script:VirtioInputMouseQmpId)"
+        "-device", $kbdArg,
+        "-device", $mouseArg
       )
     } else {
       if ($needInputEvents) {
@@ -1384,7 +1410,7 @@ try {
         }
       }
 
-      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $false
+      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $false -MsixVectors $VirtioMsixVectors
       $virtioSndArgs = @(
         "-audiodev", $audiodev,
         "-device", $virtioSndDevice
@@ -1412,13 +1438,13 @@ try {
     # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042/DEV_1052) per AERO-W7-VIRTIO v1.
     # The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
     # drivers bind under QEMU.
-    $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0"
+    $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0" -MsixVectors $VirtioMsixVectors
     $driveId = "drive0"
     $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
-    $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId
+    $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId -MsixVectors $VirtioMsixVectors
 
-    $kbd = "$(New-AeroWin7VirtioKeyboardDeviceArg),id=$($script:VirtioInputKeyboardQmpId)"
-    $mouse = "$(New-AeroWin7VirtioMouseDeviceArg),id=$($script:VirtioInputMouseQmpId)"
+    $kbd = "$(New-AeroWin7VirtioKeyboardDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputKeyboardQmpId)"
+    $mouse = "$(New-AeroWin7VirtioMouseDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputMouseQmpId)"
 
     $virtioSndArgs = @()
     if ($WithVirtioSnd) {
@@ -1450,7 +1476,7 @@ try {
         }
       }
 
-      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $true
+      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $true -MsixVectors $VirtioMsixVectors
       $virtioSndArgs = @(
         "-audiodev", $audiodev,
         "-device", $virtioSndDevice

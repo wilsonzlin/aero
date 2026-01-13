@@ -92,10 +92,18 @@ function New-AeroWin7VirtioNetDeviceArg {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory = $false)]
-    [string]$NetdevId = "net0"
+    [string]$NetdevId = "net0",
+
+    # Optional MSI-X vector count (`vectors=` device property).
+    [Parameter(Mandatory = $false)]
+    [int]$MsixVectors = 0
   )
 
-  return "virtio-net-pci,netdev=$NetdevId,disable-legacy=on,x-pci-revision=0x01"
+  $arg = "virtio-net-pci,netdev=$NetdevId,disable-legacy=on,x-pci-revision=0x01"
+  if ($MsixVectors -gt 0) {
+    $arg += ",vectors=$MsixVectors"
+  }
+  return $arg
 }
 
 function New-AeroWin7VirtioBlkDriveArg {
@@ -123,22 +131,46 @@ function New-AeroWin7VirtioBlkDeviceArg {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory = $false)]
-    [string]$DriveId = "drive0"
+    [string]$DriveId = "drive0",
+
+    # Optional MSI-X vector count (`vectors=` device property).
+    [Parameter(Mandatory = $false)]
+    [int]$MsixVectors = 0
   )
 
-  return "virtio-blk-pci,drive=$DriveId,disable-legacy=on,x-pci-revision=0x01"
+  $arg = "virtio-blk-pci,drive=$DriveId,disable-legacy=on,x-pci-revision=0x01"
+  if ($MsixVectors -gt 0) {
+    $arg += ",vectors=$MsixVectors"
+  }
+  return $arg
 }
 
 function New-AeroWin7VirtioKeyboardDeviceArg {
   [CmdletBinding()]
-  param()
+  param(
+    # Optional MSI-X vector count (`vectors=` device property).
+    [Parameter(Mandatory = $false)]
+    [int]$MsixVectors = 0
+  )
 
-  return "virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01"
+  $arg = "virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01"
+  if ($MsixVectors -gt 0) {
+    $arg += ",vectors=$MsixVectors"
+  }
+  return $arg
 }
 
 function New-AeroWin7VirtioMouseDeviceArg {
   [CmdletBinding()]
-  param()
+  param(
+    # Optional MSI-X vector count (`vectors=` device property).
+    [Parameter(Mandatory = $false)]
+    [int]$MsixVectors = 0
+  )
 
-  return "virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01"
+  $arg = "virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01"
+  if ($MsixVectors -gt 0) {
+    $arg += ",vectors=$MsixVectors"
+  }
+  return $arg
 }
