@@ -3,6 +3,11 @@
 
 set -eu
 
+# Ensure predictable ASCII-only case folding for `tr`/`awk tolower()` and stable
+# `[[:space:]]` behavior across locales.
+LC_ALL=C
+export LC_ALL
+
 fail() {
   echo "lint-inf: error: $*" >&2
   exit 1
@@ -201,6 +206,19 @@ section_contains_norm \
   'AeroVirtioSnd_Install.NT.Interfaces' \
   'addinterface=%kscategory_capture%' \
   "inf/aero_virtio_snd.inf must AddInterface for KSCATEGORY_CAPTURE"
+
+note "checking KS category GUID constants..."
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'Strings' \
+  'kscategory_render="{65e8773e-8f56-11d0-a3b9-00a0c9223196}"' \
+  "inf/aero_virtio_snd.inf must define KSCATEGORY_RENDER GUID in [Strings]"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'Strings' \
+  'kscategory_capture="{65e8773d-8f56-11d0-a3b9-00a0c9223196}"' \
+  "inf/aero_virtio_snd.inf must define KSCATEGORY_CAPTURE GUID in [Strings]"
 
 note "checking MSI interrupt management registrations..."
 section_contains_norm \
