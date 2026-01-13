@@ -442,6 +442,9 @@ Packaged locations:
 
 You can run it in-place from those directories, copy it somewhere on `PATH`, or pass the full path to callers like `aerogpu_test_runner.exe --dbgctl=<path>`.
 
+**Bitness policy:** dbgctl is shipped as a single **x86** binary and copied into both the x86 and x64 driver packages.
+On Windows 7 x64 it runs via **WOW64**. This ensures Windows 7 x86 users can always run the shipped tool.
+
 ### 5.1 Typical workflow
 
 1. **Turn on verbose logs** (checked build via WinDbg / `DbgPrintEx` filtering; dbgctl log-level control is optional/driver-specific)

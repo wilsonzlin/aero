@@ -41,12 +41,14 @@ Builds the standalone Win7 AeroGPU debug/control tool (`aerogpu_dbgctl.exe`) usi
 - Build script: `drivers/aerogpu/tools/win7_dbgctl/build_vs2010.cmd`
 - Output (in-tree): `drivers/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
 
-Bitness policy:
+Bitness policy (important):
 
 - `aerogpu_dbgctl.exe` is intentionally shipped as an **x86 (32-bit)** PE executable.
-- The same x86 binary is staged into both `out/drivers/aerogpu/x86/tools/` and `out/drivers/aerogpu/x64/tools/`.
-  - On Windows 7/Windows x64 it runs under **WOW64**.
-- `ci/build-aerogpu-dbgctl.ps1` validates the produced binary is `IMAGE_FILE_MACHINE_I386 (0x014c)` and fails if it is not.
+- The same x86 binary is staged into both the x86 and x64 driver outputs under:
+  - `out/drivers/aerogpu/<arch>/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
+  - On Windows x64 it runs under **WOW64**.
+- `ci/build-aerogpu-dbgctl.ps1` imports an x86 Visual Studio developer environment (VsDevCmd/vcvarsall) and
+  validates the produced binary is `IMAGE_FILE_MACHINE_I386 (0x014c)`, failing fast if it is x64 (0x8664) or unknown.
 
 In CI, this script is run after `ci/build-drivers.ps1` so it can also copy the built tool into
 `out/drivers/aerogpu/<arch>/tools/aerogpu_dbgctl.exe`, allowing downstream catalog/sign/package steps to

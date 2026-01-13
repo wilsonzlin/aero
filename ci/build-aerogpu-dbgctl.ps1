@@ -8,18 +8,23 @@
   The Win7 AeroGPU dbgctl tool is built via the in-tree batch file:
     drivers/aerogpu/tools/win7_dbgctl/build_vs2010.cmd
 
+  Bitness policy (important): dbgctl is shipped as a single x86 executable
+  (PE Machine=0x014c) so it can run on both Windows 7 x86 and Windows 7 x64
+  (via WOW64). If CI accidentally produces an x64 dbgctl binary, it will not
+  run on Windows 7 x86.
+
   This script loads a toolchain manifest (default: out/toolchain.json) produced by
-  `ci/install-wdk.ps1`, imports a Visual Studio developer environment for an x86 target so
-  `cl.exe` is available, invokes the build script, and verifies the expected output exists:
-    drivers/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe
+  `ci/install-wdk.ps1`, imports a Visual Studio developer environment targeting x86
+  (VsDevCmd/vcvarsall), invokes the dbgctl build script, and then hard-validates the
+  output's PE header to ensure it is an x86 PE (Machine=0x014c).
 
   For CI/local packaging runs, if `out/drivers/aerogpu/<arch>/` exists (i.e. after
   `ci/build-drivers.ps1`), the tool is copied into:
     out/drivers/aerogpu/x86/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe
     out/drivers/aerogpu/x64/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe
 
-  so downstream `ci/make-catalogs.ps1` stages it into `out/packages/**` and Guest Tools / driver
-  bundle packaging can ship it.
+  so downstream `ci/make-catalogs.ps1` stages it into `out/packages/**` and Guest Tools /
+  driver bundle packaging can ship it.
 
 .PARAMETER ToolchainJson
   Path to a toolchain manifest produced by `ci/install-wdk.ps1` (default: out/toolchain.json).
@@ -139,7 +144,13 @@ function Initialize-VcEnvironmentX86 {
   $vcVarsAll = if ($vcVarsAllRaw) { [Environment]::ExpandEnvironmentVariables($vcVarsAllRaw).Trim() } else { $null }
 
   if (-not [string]::IsNullOrWhiteSpace($vsDevCmd) -and (Test-Path -LiteralPath $vsDevCmd -PathType Leaf)) {
-    $args = @('-arch=x86', '-host_arch=x64')
+    $hostVsArch = 'x64'
+    $procArch = ([string]$env:PROCESSOR_ARCHITECTURE).Trim().ToLowerInvariant()
+    if ($procArch -eq 'x86') {
+      $hostVsArch = 'x86'
+    }
+
+    $args = @('-arch=x86', "-host_arch=$hostVsArch")
     Write-Host "Importing Visual Studio environment via VsDevCmd.bat: $vsDevCmd ($($args -join ' '))"
     Import-EnvironmentFromBatchFile -BatchPath $vsDevCmd -Arguments $args
     return [pscustomobject]@{
@@ -254,7 +265,7 @@ function Get-PeCoffMachine {
     $fs.Position = $peOffset
     $peSig = $br.ReadUInt32()
     if ($peSig -ne 0x00004550) {
-      throw ("File is not a PE executable (missing 'PE\0\0' signature at offset 0x{0:X8}): {1}" -f $peOffset, $absPath)
+      throw ("File is not a PE executable (missing 'PE\\0\\0' signature at offset 0x{0:X8}): {1}" -f $peOffset, $absPath)
     }
 
     # COFF File Header follows the 4-byte PE signature; Machine is the first field (2 bytes).
@@ -274,10 +285,17 @@ function Assert-PeMachineI386 {
 
   # IMAGE_FILE_MACHINE_I386 = 0x014c (x86 / 32-bit). The dbgctl tool is intentionally shipped as x86
   # and used on x64 via WOW64.
-  if ($machine -ne 0x014c) {
-    $absPath = (Resolve-Path -LiteralPath $Path).Path
-    throw ("AeroGPU dbgctl must be an x86 (32-bit) PE executable (IMAGE_FILE_MACHINE_I386 0x014c), but '{0}' has COFF Machine 0x{1:X4}. Ensure the dbgctl build uses the x86 toolchain/target, then re-run ci/build-aerogpu-dbgctl.ps1." -f $absPath, $machine)
+  if ($machine -eq 0x014c) {
+    return
   }
+
+  $absPath = (Resolve-Path -LiteralPath $Path).Path
+
+  if ($machine -eq 0x8664) {
+    throw ("AeroGPU dbgctl must be an x86 (32-bit) PE executable (IMAGE_FILE_MACHINE_I386 0x014c), but '{0}' is x64 (IMAGE_FILE_MACHINE_AMD64 0x8664). Ensure the dbgctl build uses the x86 toolchain/target, then re-run ci/build-aerogpu-dbgctl.ps1." -f $absPath)
+  }
+
+  throw ("AeroGPU dbgctl must be an x86 (32-bit) PE executable (IMAGE_FILE_MACHINE_I386 0x014c), but '{0}' has an unexpected COFF Machine 0x{1:X4}. Ensure the dbgctl build uses the x86 toolchain/target, then re-run ci/build-aerogpu-dbgctl.ps1." -f $absPath, $machine)
 }
 
 $repoRoot = Resolve-RepoRoot
@@ -309,16 +327,21 @@ if (-not (Test-Path -LiteralPath $buildCmd -PathType Leaf)) {
   throw "Expected dbgctl build script not found: $buildCmd"
 }
 
-Write-Host "Building AeroGPU dbgctl tool..."
+$dbgctlExe = Join-Path $repoRoot 'drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe'
+if (Test-Path -LiteralPath $dbgctlExe -PathType Leaf) {
+  Remove-Item -LiteralPath $dbgctlExe -Force
+}
+
+Write-Host "Building AeroGPU dbgctl tool (x86)..."
 & $buildCmd
 if ($LASTEXITCODE -ne 0) {
   throw "Dbgctl build script failed with exit code $LASTEXITCODE: $buildCmd"
 }
 
-$dbgctlExe = Join-Path $repoRoot 'drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe'
 if (-not (Test-Path -LiteralPath $dbgctlExe -PathType Leaf)) {
   throw "Expected dbgctl output was not produced: $dbgctlExe"
 }
+
 $dbgctlFile = Get-Item -LiteralPath $dbgctlExe
 if ($dbgctlFile.Length -le 0) {
   throw "Dbgctl output exists but is empty: $dbgctlExe"
@@ -346,4 +369,3 @@ foreach ($arch in @('x86', 'x64')) {
   $destFile = Get-Item -LiteralPath $dest
   Write-Host ("Staged dbgctl for packaging: {0} ({1} bytes)" -f $destFile.FullName, $destFile.Length)
 }
-

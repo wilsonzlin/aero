@@ -4,6 +4,9 @@
 
 It talks to the installed AeroGPU driver via **`DxgkDdiEscape`** using `D3DKMTEscape` (driver-private escape packets).
 
+**Bitness policy:** dbgctl is built and shipped as a single **x86** executable so it runs on both Win7 x86 and Win7 x64
+(via WOW64). Do not ship an x64-only dbgctl binary; it will not run on Win7 x86.
+
 ## Supported device models / ABIs
 
 The in-tree AeroGPU Win7 KMD supports both the **versioned** and **legacy bring-up** AeroGPU PCI devices, auto-detected

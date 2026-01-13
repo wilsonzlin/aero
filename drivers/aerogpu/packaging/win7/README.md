@@ -402,6 +402,11 @@ For bring-up and debugging, you can use the Escape-based dbgctl tool:
 - Tool: `drivers/aerogpu/tools/win7_dbgctl/`
 - Docs/build: `drivers/aerogpu/tools/win7_dbgctl/README.md`
 
+**Bitness policy (important):** dbgctl is built and shipped as a single **x86** executable
+(`Machine=0x014c`) so it works on both Windows 7 x86 and Windows 7 x64. On x64 it runs via **WOW64**.
+The same `aerogpu_dbgctl.exe` binary is copied into both the x86 and x64 driver packages (and therefore
+onto Guest Tools media).
+
 If `drivers\aerogpu\build\stage_packaging_win7.cmd` finds an already-built dbgctl
 binary at `drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`, it will copy
 it into this packaging directory as `aerogpu_dbgctl.exe`.
