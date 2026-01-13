@@ -500,6 +500,12 @@ impl AhciController {
         if port.regs.clb == 0 || port.regs.fb == 0 {
             return;
         }
+        // If the SATA link is down/resetting or the device is still busy, commands must not run.
+        // Drivers (notably Windows' AHCI miniports) will COMRESET a port by toggling PxSCTL.DET and
+        // only start issuing commands once PxSSTS reports DET=3 and PxTFD.BSY is clear.
+        if (port.regs.ssts & 0xF) != 3 || (port.regs.tfd & (ATA_STATUS_BSY as u32)) != 0 {
+            return;
+        }
 
         while port.regs.ci != 0 {
             let slot = port.regs.ci.trailing_zeros() as usize;
@@ -1252,6 +1258,48 @@ mod tests {
         ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
         assert!(!irq.level());
         assert_eq!(irq.transitions(), vec![true, false]);
+    }
+
+    #[test]
+    fn comreset_blocks_command_processing_until_deassert() {
+        let (mut ctl, _irq, mut mem, drive) = setup_controller();
+        ctl.attach_drive(0, drive);
+
+        let clb = 0x1000;
+        let fb = 0x2000;
+        let ctba = 0x3000;
+        let data_buf = 0x4000;
+
+        ctl.write_u32(PORT_BASE + PORT_REG_CLB, clb as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CLBU, 0);
+        ctl.write_u32(PORT_BASE + PORT_REG_FB, fb as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_FBU, 0);
+        ctl.write_u32(PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+
+        write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+        write_cfis(&mut mem, ctba, ATA_CMD_IDENTIFY, 0, 0);
+        write_prdt(&mut mem, ctba, 0, data_buf, SECTOR_SIZE as u32);
+
+        // Fill the destination buffer with a marker so we can detect unexpected DMA.
+        mem.write_physical(data_buf, &vec![0xAA; SECTOR_SIZE]);
+
+        // Assert COMRESET and issue a command while the link is down.
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 1);
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        // Command must remain pending while the port is resetting.
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_CI) & 1, 1);
+        let mut out = [0u8; SECTOR_SIZE];
+        mem.read_physical(data_buf, &mut out);
+        assert_eq!(out[0], 0xAA);
+
+        // Deassert COMRESET and process again; the command should now complete.
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 0);
+        ctl.process(&mut mem);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_CI), 0);
+        mem.read_physical(data_buf, &mut out);
+        assert_eq!(out[0], 0x40);
     }
 
     #[test]
