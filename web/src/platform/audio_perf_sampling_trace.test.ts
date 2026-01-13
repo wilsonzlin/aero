@@ -30,6 +30,8 @@ describe("startAudioPerfSampling trace integration", () => {
         overrunCount: 2,
         sampleRate: 48_000,
         state: "running" as const,
+        baseLatencySeconds: 0.123,
+        outputLatencySeconds: 0.456,
       }),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
@@ -53,5 +55,7 @@ describe("startAudioPerfSampling trace integration", () => {
     expect(keys.has("audio.underrunFrames")).toBe(true);
     expect(keys.has("audio.overrunFrames")).toBe(true);
     expect(keys.has("audio.sampleRate")).toBe(true);
+    expect(keys.has("audio.baseLatencySeconds")).toBe(true);
+    expect(keys.has("audio.outputLatencySeconds")).toBe(true);
   });
 });

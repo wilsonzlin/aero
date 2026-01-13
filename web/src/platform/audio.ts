@@ -856,6 +856,13 @@ export function startAudioPerfSampling(
     perf.counter("audio.underrunFrames", underrunFrames);
     perf.counter("audio.overrunFrames", metrics.overrunCount);
     perf.counter("audio.sampleRate", metrics.sampleRate);
+
+    // These are optional introspection fields; emit only when valid so consumers can surface
+    // real output latency in traces/HUDs across browsers.
+    const baseLatencySeconds = finiteNonNegative(metrics.baseLatencySeconds);
+    if (baseLatencySeconds !== undefined) perf.counter("audio.baseLatencySeconds", baseLatencySeconds);
+    const outputLatencySeconds = finiteNonNegative(metrics.outputLatencySeconds);
+    if (outputLatencySeconds !== undefined) perf.counter("audio.outputLatencySeconds", outputLatencySeconds);
   };
 
   sample();

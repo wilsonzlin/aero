@@ -3165,6 +3165,8 @@ function renderAudioPanel(): HTMLElement {
       status.textContent =
         `AudioContext: ${metrics.state}\n` +
         `sampleRate: ${metrics.sampleRate}\n` +
+        `baseLatencySeconds: ${metrics.baseLatencySeconds ?? "n/a"}\n` +
+        `outputLatencySeconds: ${metrics.outputLatencySeconds ?? "n/a"}\n` +
         `capacityFrames: ${metrics.capacityFrames}\n` +
         `targetFrames: ${target}\n` +
         `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
@@ -3280,6 +3282,8 @@ function renderAudioPanel(): HTMLElement {
         status.textContent =
           `AudioContext: ${metrics.state}\n` +
           `sampleRate: ${metrics.sampleRate}\n` +
+          `baseLatencySeconds: ${metrics.baseLatencySeconds ?? "n/a"}\n` +
+          `outputLatencySeconds: ${metrics.outputLatencySeconds ?? "n/a"}\n` +
           `capacityFrames: ${metrics.capacityFrames}\n` +
           `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
           `underrunFrames: ${metrics.underrunCount}\n` +
@@ -3440,6 +3444,8 @@ function renderAudioPanel(): HTMLElement {
         status.textContent =
           `AudioContext: ${metrics.state}\n` +
           `sampleRate: ${metrics.sampleRate}\n` +
+          `baseLatencySeconds: ${metrics.baseLatencySeconds ?? "n/a"}\n` +
+          `outputLatencySeconds: ${metrics.outputLatencySeconds ?? "n/a"}\n` +
           `capacityFrames: ${metrics.capacityFrames}\n` +
           `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
           `underrunFrames: ${metrics.underrunCount}\n` +
