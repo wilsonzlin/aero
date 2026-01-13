@@ -121,7 +121,7 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
         self.queue.push_back(rip);
         Some(id)
     }
-
+ 
     fn lower_block(&mut self, id: BlockId, bb: &BasicBlock) -> Block {
         // `code_len` tracks the byte span of *guest code bytes that are executed by the block* for
         // code version guards.
@@ -541,6 +541,9 @@ impl BlockLowerer<'_> {
         match op {
             BinOp::Add | BinOp::Sub | BinOp::And | BinOp::Or | BinOp::Xor => {
                 let shift = 64 - width.bits();
+                let pf_af_mask = FlagSet::PF.union(FlagSet::AF);
+                let flags_shift = flags.without(pf_af_mask);
+                let flags_pf_af = flags.without(flags_shift);
 
                 let lhs_s = self.fresh_temp();
                 self.instrs.push(Instr::BinOp {
@@ -565,8 +568,22 @@ impl BlockLowerer<'_> {
                     op,
                     lhs: Operand::Value(lhs_s),
                     rhs: Operand::Value(rhs_s),
-                    flags,
+                    // For narrow ops, the shift-left trick yields correct CF/OF/SF/ZF semantics,
+                    // but it breaks PF/AF because the low byte is forced to 0. Compute PF/AF using
+                    // an unshifted operation below.
+                    flags: flags_shift,
                 });
+
+                if !flags_pf_af.is_empty() {
+                    let tmp = self.fresh_temp();
+                    self.instrs.push(Instr::BinOp {
+                        dst: tmp,
+                        op,
+                        lhs: self.value(lhs),
+                        rhs: self.value(rhs),
+                        flags: flags_pf_af,
+                    });
+                }
 
                 self.instrs.push(Instr::BinOp {
                     dst,
@@ -710,31 +727,50 @@ impl BlockLowerer<'_> {
         }
 
         let shift = 64 - width.bits();
+        let pf_af_mask = FlagSet::PF.union(FlagSet::AF);
+        let flags_shift = flags.without(pf_af_mask);
+        let flags_pf_af = flags.without(flags_shift);
 
-        let lhs_s = self.fresh_temp();
-        self.instrs.push(Instr::BinOp {
-            dst: lhs_s,
-            op: BinOp::Shl,
-            lhs: self.value(lhs),
-            rhs: Operand::Const(shift as u64),
-            flags: FlagSet::EMPTY,
-        });
-        let rhs_s = self.fresh_temp();
-        self.instrs.push(Instr::BinOp {
-            dst: rhs_s,
-            op: BinOp::Shl,
-            lhs: self.value(rhs),
-            rhs: Operand::Const(shift as u64),
-            flags: FlagSet::EMPTY,
-        });
+        if !flags_shift.is_empty() {
+            let lhs_s = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: lhs_s,
+                op: BinOp::Shl,
+                lhs: self.value(lhs),
+                rhs: Operand::Const(shift as u64),
+                flags: FlagSet::EMPTY,
+            });
+            let rhs_s = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: rhs_s,
+                op: BinOp::Shl,
+                lhs: self.value(rhs),
+                rhs: Operand::Const(shift as u64),
+                flags: FlagSet::EMPTY,
+            });
 
-        self.instrs.push(Instr::BinOp {
-            dst,
-            op,
-            lhs: Operand::Value(lhs_s),
-            rhs: Operand::Value(rhs_s),
-            flags,
-        });
+            self.instrs.push(Instr::BinOp {
+                dst,
+                op,
+                lhs: Operand::Value(lhs_s),
+                rhs: Operand::Value(rhs_s),
+                // PF/AF are computed from the low byte / nibble of the *truncated* result; the
+                // shift-left trick breaks those computations. Update PF/AF in a second BinOp using
+                // unshifted operands below.
+                flags: flags_shift,
+            });
+        }
+
+        if !flags_pf_af.is_empty() {
+            let tmp = self.fresh_temp();
+            self.instrs.push(Instr::BinOp {
+                dst: tmp,
+                op,
+                lhs: self.value(lhs),
+                rhs: self.value(rhs),
+                flags: flags_pf_af,
+            });
+        }
     }
 
     fn lower_eval_cond(&mut self, dst: T1ValueId, cond: Cond) {
