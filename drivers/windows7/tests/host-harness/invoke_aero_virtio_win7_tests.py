@@ -1400,6 +1400,7 @@ def main() -> int:
             pos = 0
             tail = b""
             irq_diag_markers: dict[str, dict[str, str]] = {}
+            irq_diag_carry = b""
             saw_virtio_blk_pass = False
             saw_virtio_blk_fail = False
             saw_virtio_input_pass = False
@@ -1438,11 +1439,12 @@ def main() -> int:
                         sys.stdout.write(chunk.decode("utf-8", errors="replace"))
                         sys.stdout.flush()
 
-                    tail += chunk
                     # Capture standalone guest IRQ diagnostics markers (`virtio-<dev>-irq|INFO/WARN|...`)
-                    # before the rolling tail buffer is truncated so early markers are not lost.
-                    for dev, fields in _parse_virtio_irq_markers(tail).items():
-                        irq_diag_markers[dev] = fields
+                    # incrementally so they are not lost if the rolling tail buffer is truncated.
+                    irq_diag_carry = _update_virtio_irq_markers_from_chunk(
+                        irq_diag_markers, chunk, carry=irq_diag_carry
+                    )
+                    tail += chunk
                     if len(tail) > 131072:
                         tail = tail[-131072:]
 
@@ -1964,9 +1966,10 @@ def main() -> int:
                     # One last read after exit in case QEMU shut down immediately after writing the marker.
                     chunk2, pos = _read_new_bytes(serial_log, pos)
                     if chunk2:
+                        irq_diag_carry = _update_virtio_irq_markers_from_chunk(
+                            irq_diag_markers, chunk2, carry=irq_diag_carry
+                        )
                         tail += chunk2
-                        for dev, fields in _parse_virtio_irq_markers(tail).items():
-                            irq_diag_markers[dev] = fields
                         if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
                             saw_virtio_blk_pass = True
                         if not saw_virtio_blk_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL" in tail:
@@ -2367,6 +2370,10 @@ def main() -> int:
         _emit_virtio_net_irq_host_marker(tail)
         _emit_virtio_snd_irq_host_marker(tail)
         _emit_virtio_input_irq_host_marker(tail)
+        # Flush any pending non-newline-terminated IRQ diagnostic line so it can still be surfaced.
+        if irq_diag_carry:
+            for dev, fields in _parse_virtio_irq_markers(irq_diag_carry).items():
+                irq_diag_markers[dev] = fields
         _emit_virtio_irq_host_markers(tail, markers=irq_diag_markers)
 
         return result_code if result_code is not None else 2
@@ -2821,6 +2828,42 @@ def _parse_marker_kv_fields(marker_line: str) -> dict[str, str]:
 _VIRTIO_IRQ_MARKER_RE = re.compile(r"^virtio-(?P<dev>.+)-irq\|(?P<level>INFO|WARN)(?:\|(?P<rest>.*))?$")
 
 
+def _try_parse_virtio_irq_marker_line(line: str) -> Optional[tuple[str, dict[str, str]]]:
+    """
+    Parse a single `virtio-<dev>-irq|INFO/WARN|...` line.
+
+    Returns `(device_key, fields)` on success (device_key includes the `virtio-` prefix), otherwise `None`.
+    """
+    m = _VIRTIO_IRQ_MARKER_RE.match(line.strip())
+    if not m:
+        return None
+    dev = m.group("dev")
+    level = m.group("level")
+    rest = m.group("rest") or ""
+
+    fields: dict[str, str] = {"level": level}
+    extra_parts: list[str] = []
+    for tok in rest.split("|") if rest else []:
+        tok = tok.strip()
+        if not tok:
+            continue
+        if "=" not in tok:
+            extra_parts.append(tok)
+            continue
+        k, v = tok.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        if not k:
+            continue
+        fields[k] = v
+    if extra_parts:
+        # Preserve non key/value tokens in a best-effort field so callers can still surface
+        # diagnostics even if the guest marker format changes slightly.
+        fields["msg"] = "|".join(extra_parts)
+
+    return f"virtio-{dev}", fields
+
+
 def _parse_virtio_irq_markers(tail: bytes) -> dict[str, dict[str, str]]:
     """
     Parse guest IRQ diagnostics markers.
@@ -2844,35 +2887,43 @@ def _parse_virtio_irq_markers(tail: bytes) -> dict[str, dict[str, str]]:
             line = raw.decode("utf-8", errors="replace").strip()
         except Exception:
             continue
-        m = _VIRTIO_IRQ_MARKER_RE.match(line)
-        if not m:
+        parsed = _try_parse_virtio_irq_marker_line(line)
+        if parsed is None:
             continue
-        dev = m.group("dev")
-        level = m.group("level")
-        rest = m.group("rest") or ""
-
-        fields: dict[str, str] = {"level": level}
-        extra_parts: list[str] = []
-        for tok in rest.split("|") if rest else []:
-            tok = tok.strip()
-            if not tok:
-                continue
-            if "=" not in tok:
-                extra_parts.append(tok)
-                continue
-            k, v = tok.split("=", 1)
-            k = k.strip()
-            v = v.strip()
-            if not k:
-                continue
-            fields[k] = v
-        if extra_parts:
-            # Preserve non key/value tokens in a best-effort field so callers can still surface
-            # diagnostics even if the guest marker format changes slightly.
-            fields["msg"] = "|".join(extra_parts)
-
-        out[f"virtio-{dev}"] = fields
+        dev, fields = parsed
+        out[dev] = fields
     return out
+
+
+def _update_virtio_irq_markers_from_chunk(
+    markers: dict[str, dict[str, str]], chunk: bytes, *, carry: bytes = b""
+) -> bytes:
+    """
+    Incrementally parse `virtio-<dev>-irq|...` markers from a newly read serial chunk.
+
+    Returns the updated `carry` bytes that represent a potentially incomplete last line
+    (i.e. the text after the last `\\n`).
+    """
+    if not chunk and not carry:
+        return b""
+    data = carry + chunk
+    parts = data.split(b"\n")
+    new_carry = parts.pop() if parts else b""
+    for raw in parts:
+        if raw.endswith(b"\r"):
+            raw = raw[:-1]
+        if not raw or not raw.startswith(b"virtio-") or b"-irq|" not in raw:
+            continue
+        try:
+            line = raw.decode("utf-8", errors="replace").strip()
+        except Exception:
+            continue
+        parsed = _try_parse_virtio_irq_marker_line(line)
+        if parsed is None:
+            continue
+        dev, fields = parsed
+        markers[dev] = fields
+    return new_carry
 
 
 def _emit_virtio_irq_host_markers(

@@ -89,6 +89,22 @@ class VirtioIrqMarkerTests(unittest.TestCase):
             ],
         )
 
+    def test_incremental_parser_handles_split_lines(self) -> None:
+        markers: dict[str, dict[str, str]] = {}
+        carry = b""
+        carry = self.harness._update_virtio_irq_markers_from_chunk(
+            markers, b"virtio-net-irq|INFO|mode=ms", carry=carry
+        )
+        self.assertEqual(carry, b"virtio-net-irq|INFO|mode=ms")
+        self.assertEqual(markers, {})
+
+        carry = self.harness._update_virtio_irq_markers_from_chunk(
+            markers, b"ix|vectors=4\n", carry=carry
+        )
+        self.assertEqual(carry, b"")
+        self.assertEqual(markers["virtio-net"]["mode"], "msix")
+        self.assertEqual(markers["virtio-net"]["vectors"], "4")
+
     def test_emits_msg_field_for_non_kv_tokens(self) -> None:
         tail = b"virtio-net-irq|WARN|msix disabled by policy\n"
         buf = io.StringIO()
