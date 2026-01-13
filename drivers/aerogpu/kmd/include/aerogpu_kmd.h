@@ -171,6 +171,8 @@ typedef struct _AEROGPU_CONTEXT {
 typedef struct _AEROGPU_ADAPTER {
     PDEVICE_OBJECT PhysicalDeviceObject;
 
+    ULONGLONG NonLocalMemorySizeBytes;
+
     DXGK_START_INFO StartInfo;
     DXGKRNL_INTERFACE DxgkInterface;
     BOOLEAN InterruptRegistered; /* True once DxgkCbRegisterInterrupt succeeds. */
