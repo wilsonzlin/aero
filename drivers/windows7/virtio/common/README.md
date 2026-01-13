@@ -8,7 +8,7 @@ x86/x64 virtio drivers.
 ## Virtio-pci modern transport (AERO-W7-VIRTIO v1)
 
 Aero’s contract-v1 devices use the virtio-pci **modern** transport (virtio 1.0+)
-with a fixed BAR0 MMIO layout and INTx interrupts.
+with a fixed BAR0 MMIO layout and PCI interrupts (**INTx required**, **MSI/MSI-X optional**).
 
 Depending on driver model, this repo provides two WDF-free ways to talk to these
 devices:
