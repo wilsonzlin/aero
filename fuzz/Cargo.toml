@@ -51,6 +51,15 @@ path = "../crates/aero-virtio"
 [dependencies.aero-protocol]
 path = "../emulator/protocol"
 
+[dependencies.aero-l2-protocol]
+path = "../crates/aero-l2-protocol"
+
+[dependencies.aero-net-stack]
+path = "../crates/aero-net-stack"
+
+[dependencies.aero-net-e1000]
+path = "../crates/aero-net-e1000"
+
 [[bin]]
 name = "fuzz_mmu_translate"
 path = "fuzz_targets/fuzz_mmu_translate.rs"
@@ -174,5 +183,29 @@ doc = false
 [[bin]]
 name = "fuzz_virtio_snd_queues"
 path = "fuzz_targets/fuzz_virtio_snd_queues.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_l2_protocol_decode"
+path = "fuzz_targets/fuzz_l2_protocol_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_net_stack_outbound_ethernet"
+path = "fuzz_targets/fuzz_net_stack_outbound_ethernet.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_e1000_mmio_poll"
+path = "fuzz_targets/fuzz_e1000_mmio_poll.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_virtio_net_queue"
+path = "fuzz_targets/fuzz_virtio_net_queue.rs"
 test = false
 doc = false

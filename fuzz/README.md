@@ -5,9 +5,13 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 - MMU page walking / translation
 - Physical bus routing logic
 - Storage controller emulation (AHCI + IDE + ATAPI + PIIX3 PCI wrapper)
+- L2 tunnel protocol codec (`aero-l2-protocol`)
+- User-space network stack Ethernet ingress (`aero-net-stack`)
+- NIC device models (E1000 + virtio-net)
 - HTTP `Range` header parsing (`aero-http-range`)
 - AeroSparse disk image parsing/open (`aero-storage`)
 - AeroGPU command stream + alloc-table parsing (`aero-gpu` / `aero-protocol`)
+- DXBC container + shader bytecode parsing (`aero-dxbc`)
 
 ## Prereqs
 
@@ -35,7 +39,17 @@ cargo +"$nightly" fuzz run fuzz_aerosparse_open
 cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
 cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
 cargo +"$nightly" fuzz run fuzz_aerogpu_parse
+
+# DXBC / shaders
 cargo +"$nightly" fuzz run fuzz_dxbc_sm4_parse
+cargo +"$nightly" fuzz run fuzz_dxbc_parse
+cargo +"$nightly" fuzz run fuzz_d3d9_sm3_decode
+
+# Networking
+cargo +"$nightly" fuzz run fuzz_l2_protocol_decode
+cargo +"$nightly" fuzz run fuzz_net_stack_outbound_ethernet
+cargo +"$nightly" fuzz run fuzz_e1000_mmio_poll
+cargo +"$nightly" fuzz run fuzz_virtio_net_queue
 ```
 
 To run time-bounded:
@@ -132,4 +146,14 @@ cd fuzz && cargo fuzz run fuzz_aerogpu_parse -- -runs=10000
 
 # DXBC container + signature + SM4/SM5 token parsing
 cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000
+cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000
+
+# D3D9 shader model 3 decode
+cd fuzz && cargo fuzz run fuzz_d3d9_sm3_decode -- -runs=10000
+
+# Networking (quick sanity)
+cd fuzz && cargo fuzz run fuzz_l2_protocol_decode -- -runs=1000
+cd fuzz && cargo fuzz run fuzz_net_stack_outbound_ethernet -- -runs=1000
+cd fuzz && cargo fuzz run fuzz_e1000_mmio_poll -- -runs=1000
+cd fuzz && cargo fuzz run fuzz_virtio_net_queue -- -runs=1000
 ```
