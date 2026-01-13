@@ -1,4 +1,4 @@
-use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE, VBE_FRAMEBUFFER_OFFSET};
+use aero_gpu_vga::{DisplayOutput, VBE_FRAMEBUFFER_OFFSET};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bda::BDA_SCREEN_COLS_ADDR;
 use pretty_assertions::assert_eq;
@@ -210,8 +210,11 @@ fn bios_vbe_sync_mode_and_lfb_base() {
     };
 
     let mut m = Machine::new(cfg).unwrap();
-    for (mode, (w, h)) in [(0x115u16, (800, 600)), (0x118u16, (1024, 768)), (0x160u16, (1280, 720))]
-    {
+    for (mode, (w, h)) in [
+        (0x115u16, (800, 600)),
+        (0x118u16, (1024, 768)),
+        (0x160u16, (1280, 720)),
+    ] {
         m.set_disk_image(build_vbe_boot_sector(mode).to_vec()).unwrap();
         m.reset();
         run_until_halt(&mut m);
@@ -245,10 +248,12 @@ fn bios_vbe_sync_mode_and_lfb_base() {
         assert_eq!(m.read_physical_u8(mode_info_addr + 37), 8); // ReservedMaskSize
         assert_eq!(m.read_physical_u8(mode_info_addr + 38), 24); // ReservedFieldPosition
 
-        let phys_base_ptr = m.read_physical_u32(mode_info_addr + 40);
-        assert_eq!(phys_base_ptr, SVGA_LFB_BASE);
-
         let vga = m.vga().expect("pc platform should include VGA");
+        let lfb_base = vga.borrow().lfb_base();
+
+        let phys_base_ptr = m.read_physical_u32(mode_info_addr + 40);
+        assert_eq!(phys_base_ptr, lfb_base);
+
         {
             let mut vga = vga.borrow_mut();
             vga.present();
@@ -256,7 +261,7 @@ fn bios_vbe_sync_mode_and_lfb_base() {
         }
 
         // Write a single red pixel at (0,0) in packed 32bpp BGRX.
-        m.write_physical_u32(u64::from(SVGA_LFB_BASE), 0x00FF_0000);
+        m.write_physical_u32(u64::from(lfb_base), 0x00FF_0000);
         let pixel0 = {
             let mut vga = vga.borrow_mut();
             vga.present();
@@ -321,7 +326,8 @@ fn bios_vbe_palette_sync_updates_vga_dac() {
     run_until_halt(&mut m);
 
     // Write palette index 1 to the first pixel in the 8bpp framebuffer.
-    m.write_physical_u8(u64::from(SVGA_LFB_BASE), 1);
+    let lfb_base = u64::from(m.vga().expect("machine should include VGA").borrow().lfb_base());
+    m.write_physical_u8(lfb_base, 1);
 
     let vga = m.vga().expect("machine should include VGA");
     let pixel0 = {

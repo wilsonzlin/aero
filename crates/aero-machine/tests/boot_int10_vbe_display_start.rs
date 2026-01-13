@@ -1,8 +1,8 @@
-use aero_gpu_vga::{DisplayOutput, PortIO, SVGA_LFB_BASE};
+use aero_gpu_vga::{DisplayOutput, PortIO};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
-fn build_int10_vbe_display_start_boot_sector() -> [u8; 512] {
+fn build_int10_vbe_display_start_boot_sector(lfb_base: u32) -> [u8; 512] {
     let mut sector = [0u8; 512];
     let mut i = 0usize;
 
@@ -26,10 +26,10 @@ fn build_int10_vbe_display_start_boot_sector() -> [u8; 512] {
     sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
     i += 2;
 
-    // mov edi, SVGA_LFB_BASE (66 BF imm32)
+    // mov edi, lfb_base (66 BF imm32)
     sector[i..i + 2].copy_from_slice(&[0x66, 0xBF]);
     i += 2;
-    sector[i..i + 4].copy_from_slice(&SVGA_LFB_BASE.to_le_bytes());
+    sector[i..i + 4].copy_from_slice(&lfb_base.to_le_bytes());
     i += 4;
 
     // pixel(0,0) = red (B,G,R,X = 00,00,FF,00)
@@ -85,8 +85,6 @@ fn run_until_halt(m: &mut Machine) {
 
 #[test]
 fn boot_int10_vbe_display_start() {
-    let boot = build_int10_vbe_display_start_boot_sector();
-
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
@@ -97,6 +95,9 @@ fn boot_int10_vbe_display_start() {
     })
     .unwrap();
 
+    let boot = build_int10_vbe_display_start_boot_sector(
+        u32::try_from(m.vbe_lfb_base()).expect("VGA LFB base should fit in u32"),
+    );
     m.set_disk_image(boot.to_vec()).unwrap();
     m.reset();
     run_until_halt(&mut m);

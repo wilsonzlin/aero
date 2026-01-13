@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
+use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
@@ -38,7 +38,7 @@ fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
     m.io_write(0x01CE, 2, 0x0004);
     m.io_write(0x01CF, 2, 0x0041);
 
-    let base = u64::from(SVGA_LFB_BASE);
+    let base = u64::from(vga.borrow().lfb_base());
     // Write a red pixel at (0,0) in BGRX format via *machine memory*.
     m.write_physical_u8(base, 0x00); // B
     m.write_physical_u8(base + 1, 0x00); // G

@@ -1,8 +1,8 @@
-use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
+use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
-fn build_int10_vbe_logical_scanline_boot_sector() -> [u8; 512] {
+fn build_int10_vbe_logical_scanline_boot_sector(lfb_base: u32) -> [u8; 512] {
     let mut sector = [0u8; 512];
     let mut i = 0usize;
 
@@ -51,8 +51,7 @@ fn build_int10_vbe_logical_scanline_boot_sector() -> [u8; 512] {
     sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
     i += 2;
 
-    // Switch to protected mode (32-bit flat segments) so we can write to the VBE LFB at
-    // 0xE0000000.
+    // Switch to protected mode (32-bit flat segments) so we can write to the VBE LFB.
     //
     // cli
     sector[i] = 0xFA;
@@ -112,10 +111,10 @@ fn build_int10_vbe_logical_scanline_boot_sector() -> [u8; 512] {
     sector[i..i + 5].copy_from_slice(&[0xBC, 0x00, 0x7C, 0x00, 0x00]);
     i += 5;
 
-    // Write BGRX=00 00 FF 00 to SVGA_LFB_BASE + 8192 (row 1 with stride_pixels=2048).
+    // Write BGRX=00 00 FF 00 to LFB_BASE + 8192 (row 1 with stride_pixels=2048).
     //
     // mov dword ptr [addr32], imm32
-    let lfb_row1 = SVGA_LFB_BASE.wrapping_add(2048 * 4);
+    let lfb_row1 = lfb_base.wrapping_add(2048 * 4);
     sector[i..i + 2].copy_from_slice(&[0xC7, 0x05]);
     i += 2;
     sector[i..i + 4].copy_from_slice(&lfb_row1.to_le_bytes());
@@ -180,8 +179,6 @@ fn run_until_halt(m: &mut Machine) {
 
 #[test]
 fn boot_int10_vbe_logical_scanline_updates_stride_and_renderer_uses_it() {
-    let boot = build_int10_vbe_logical_scanline_boot_sector();
-
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
@@ -191,6 +188,10 @@ fn boot_int10_vbe_logical_scanline_updates_stride_and_renderer_uses_it() {
         ..Default::default()
     })
     .unwrap();
+
+    let boot = build_int10_vbe_logical_scanline_boot_sector(
+        u32::try_from(m.vbe_lfb_base()).expect("VGA LFB base should fit in u32"),
+    );
 
     m.set_disk_image(boot.to_vec()).unwrap();
     m.reset();

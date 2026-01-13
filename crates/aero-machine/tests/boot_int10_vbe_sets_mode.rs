@@ -1,5 +1,5 @@
-use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
 use aero_cpu_core::state::gpr;
+use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -77,7 +77,8 @@ fn assert_vbe_mode_set_and_lfb_visible(vbe_mode_with_flags: u16, expected_res: (
     assert_eq!(vga.borrow().get_resolution(), expected_res);
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
-    m.write_physical_u32(u64::from(SVGA_LFB_BASE), 0x00FF_0000);
+    let base = u64::from(vga.borrow().lfb_base());
+    m.write_physical_u32(base, 0x00FF_0000);
 
     vga.borrow_mut().present();
     assert_eq!(vga.borrow().get_framebuffer()[0], 0xFF00_00FF);

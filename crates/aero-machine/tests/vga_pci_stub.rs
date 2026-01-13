@@ -1,5 +1,5 @@
 use aero_devices::pci::PciBdf;
-use aero_gpu_vga::{DisplayOutput, DEFAULT_VRAM_SIZE, SVGA_LFB_BASE};
+use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
@@ -18,6 +18,10 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
     };
     let mut m = Machine::new(cfg).unwrap();
     let vga = m.vga().expect("VGA enabled");
+    let (expected_lfb_base, expected_vram_size) = {
+        let vga = vga.borrow();
+        (vga.lfb_base(), vga.vram_size())
+    };
 
     // The canonical machine exposes a transitional VGA/VBE PCI stub at this fixed BDF:
     // `00:0c.0` (see `docs/pci-device-compatibility.md`).
@@ -44,12 +48,12 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
 
         let bar0 = bus.read_config(bdf, 0x10, 4);
         let bar0_base = bar0 & 0xFFFF_FFF0;
-        assert_eq!(bar0_base, SVGA_LFB_BASE);
+        assert_eq!(bar0_base, expected_lfb_base);
 
         // BAR sizing probe: write all 1s then read back the size mask.
         bus.write_config(bdf, 0x10, 4, 0xFFFF_FFFF);
         let mask = bus.read_config(bdf, 0x10, 4);
-        let size = u32::try_from(DEFAULT_VRAM_SIZE).expect("DEFAULT_VRAM_SIZE fits in u32");
+        let size = u32::try_from(expected_vram_size).expect("VRAM size fits in u32");
         let expected_mask = !(size.saturating_sub(1)) & 0xFFFF_FFF0;
         assert_eq!(mask & 0xFFFF_FFF0, expected_mask);
 
@@ -89,4 +93,3 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
     assert_eq!(vga.get_resolution(), (64, 64));
     assert_eq!(vga.get_framebuffer()[0], 0xFF00_00FF);
 }
-

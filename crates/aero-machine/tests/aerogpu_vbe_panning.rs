@@ -1,4 +1,3 @@
-use aero_gpu_vga::SVGA_LFB_BASE;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -120,7 +119,7 @@ fn int10_vbe_display_start_pans_linear_framebuffer() {
     // - backing framebuffer (1,0) = green
     //
     // With display start X=1, the displayed (0,0) should come from backing (1,0).
-    let base = u64::from(SVGA_LFB_BASE);
+    let base = u64::from(m.vbe_lfb_base());
     m.write_physical_u32(base, 0x00FF_0000); // red (BGRX)
     m.write_physical_u32(base + 4, 0x0000_FF00); // green (BGRX)
 
@@ -157,7 +156,7 @@ fn int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
     run_until_halt(&mut m);
 
     let bytes_per_pixel = 4u64;
-    let base = u64::from(SVGA_LFB_BASE);
+    let base = u64::from(m.vbe_lfb_base());
 
     // Correct mapping per VBE contract:
     //   base = lfb_base + y_off * bytes_per_scan_line + x_off * bytes_per_pixel
@@ -184,4 +183,3 @@ fn int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
     assert_eq!(m.display_resolution(), (1024, 768));
     assert_eq!(m.display_framebuffer()[0], 0xFF00_FF00);
 }
-

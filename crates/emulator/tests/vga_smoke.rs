@@ -1,4 +1,4 @@
-use emulator::devices::vga::{DisplayOutput, PortIO, VgaDevice, SVGA_LFB_BASE};
+use emulator::devices::vga::{DisplayOutput, PortIO, VgaDevice};
 
 #[test]
 fn vga_mode13h_renders_via_canonical_device() {
@@ -28,13 +28,13 @@ fn bochs_vbe_lfb_write_renders() {
     dev.port_write(0x01CF, 2, 0x0041);
 
     // Write a single red pixel at (0,0) in BGRX format.
-    dev.mem_write_u8(SVGA_LFB_BASE, 0x00); // B
-    dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x00); // G
-    dev.mem_write_u8(SVGA_LFB_BASE + 2, 0xFF); // R
-    dev.mem_write_u8(SVGA_LFB_BASE + 3, 0x00); // X
+    let lfb_base = dev.lfb_base();
+    dev.mem_write_u8(lfb_base, 0x00); // B
+    dev.mem_write_u8(lfb_base.wrapping_add(1), 0x00); // G
+    dev.mem_write_u8(lfb_base.wrapping_add(2), 0xFF); // R
+    dev.mem_write_u8(lfb_base.wrapping_add(3), 0x00); // X
 
     dev.present();
     assert_eq!(dev.get_resolution(), (64, 64));
     assert_eq!(dev.get_framebuffer()[0], 0xFF00_00FF);
 }
-

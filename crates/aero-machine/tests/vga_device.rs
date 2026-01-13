@@ -1,5 +1,4 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
-use aero_gpu_vga::SVGA_LFB_BASE;
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
@@ -26,7 +25,12 @@ fn program_vbe_linear_64x64x32(m: &mut Machine) {
 
 fn write_pixel_bgrx(m: &mut Machine, width: u32, x: u32, y: u32, b: u8, g: u8, r: u8) {
     let off = (y * width + x) * 4;
-    let base = u64::from(SVGA_LFB_BASE) + u64::from(off);
+    let lfb_base = {
+        let vga = m.vga().expect("VGA enabled");
+        let base = u64::from(vga.borrow().lfb_base());
+        base
+    };
+    let base = lfb_base + u64::from(off);
     m.write_physical_u8(base, b);
     m.write_physical_u8(base + 1, g);
     m.write_physical_u8(base + 2, r);

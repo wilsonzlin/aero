@@ -26,7 +26,7 @@ use aero_shared::scanout_state::{
     SCANOUT_SOURCE_LEGACY_VBE_LFB,
 };
 use palette::{rgb_to_rgba_u32, Rgb};
-pub use snapshot::{VgaSnapshotError, VgaSnapshotV1};
+pub use snapshot::{VgaSnapshotError, VgaSnapshotV1, VgaSnapshotV2};
 pub use text_font::FONT8X8_CP437;
 
 #[cfg(feature = "integration-memory")]
@@ -106,6 +106,29 @@ pub const VBE_FRAMEBUFFER_OFFSET: usize = VGA_VRAM_SIZE;
 /// Default total VRAM for the device (16MiB), enough for common VBE modes.
 pub const DEFAULT_VRAM_SIZE: usize = 16 * 1024 * 1024;
 
+/// Configuration for [`VgaDevice`].
+///
+/// This primarily controls how the device's VRAM is exposed into the guest physical address
+/// space:
+/// - the physical base address of the VBE linear framebuffer (LFB), and
+/// - the total VRAM backing size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VgaConfig {
+    /// Physical base address of the VBE linear framebuffer (LFB).
+    pub lfb_base: u32,
+    /// Total VRAM backing size in bytes.
+    pub vram_size: usize,
+}
+
+impl Default for VgaConfig {
+    fn default() -> Self {
+        Self {
+            lfb_base: SVGA_LFB_BASE,
+            vram_size: DEFAULT_VRAM_SIZE,
+        }
+    }
+}
+
 fn io_all_ones(size: usize) -> u32 {
     match size {
         0 => 0,
@@ -176,6 +199,7 @@ impl VbeRegs {
 
 /// VGA/SVGA device.
 pub struct VgaDevice {
+    // Configuration.
     svga_lfb_base: u32,
 
     // Core VGA registers.
@@ -270,8 +294,18 @@ impl VgaDevice {
     const VBLANK_PULSE_NS: u64 = Self::VBLANK_PERIOD_NS / 20;
 
     pub fn new() -> Self {
+        Self::new_with_config(VgaConfig::default())
+    }
+
+    pub fn new_with_config(config: VgaConfig) -> Self {
+        let vram_size = config.vram_size.max(VGA_VRAM_SIZE);
+        assert!(
+            vram_size <= u32::MAX as usize,
+            "vram_size {vram_size} exceeds u32::MAX; aero-gpu-vga uses 32-bit guest physical addresses"
+        );
+
         let mut device = Self {
-            svga_lfb_base: SVGA_LFB_BASE,
+            svga_lfb_base: config.lfb_base,
             misc_output: 0,
             sequencer_index: 0,
             sequencer: [0; 5],
@@ -298,7 +332,7 @@ impl VgaDevice {
             vbe_index: 0,
             vbe: VbeRegs::default(),
             vbe_bytes_per_scan_line_override: 0,
-            vram: vec![0; DEFAULT_VRAM_SIZE],
+            vram: vec![0; vram_size],
             latches: [0; 4],
             front: Vec::new(),
             back: Vec::new(),
@@ -335,6 +369,24 @@ impl VgaDevice {
 
     pub fn set_svga_lfb_base(&mut self, base: u32) {
         self.svga_lfb_base = base;
+    }
+
+    /// Return the configuration used to construct this device.
+    pub fn config(&self) -> VgaConfig {
+        VgaConfig {
+            lfb_base: self.svga_lfb_base,
+            vram_size: self.vram.len(),
+        }
+    }
+
+    /// Physical base address of the VBE linear framebuffer (LFB).
+    pub fn lfb_base(&self) -> u32 {
+        self.svga_lfb_base
+    }
+
+    /// Total VRAM backing size in bytes.
+    pub fn vram_size(&self) -> usize {
+        self.vram.len()
     }
 
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -468,7 +520,6 @@ impl VgaDevice {
             format: SCANOUT_FORMAT_B8G8R8X8,
         }
     }
-
     /// Resets the DAC to a sensible default VGA palette (EGA 16-color + 256-color cube).
     pub fn reset_palette(&mut self) {
         self.dac = palette::default_vga_palette();
@@ -1677,6 +1728,8 @@ impl IoSnapshot for VgaDevice {
         const TAG_GRAPHICS_EXT: u16 = 26;
         const TAG_CRTC_EXT: u16 = 27;
         const TAG_ATTRIBUTE_EXT: u16 = 28;
+        const TAG_LFB_BASE: u16 = 29;
+        const TAG_VRAM_LEN: u16 = 30;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -1736,6 +1789,13 @@ impl IoSnapshot for VgaDevice {
             self.vbe_bytes_per_scan_line_override,
         );
 
+        // Device configuration.
+        w.field_u32(TAG_LFB_BASE, self.svga_lfb_base);
+        w.field_u32(
+            TAG_VRAM_LEN,
+            u32::try_from(self.vram.len()).unwrap_or(u32::MAX),
+        );
+
         // VRAM is the main framebuffer backing store; include it verbatim for deterministic output.
         w.field_bytes(TAG_VRAM, self.vram.clone());
         w.field_bytes(TAG_LATCHES, self.latches.to_vec());
@@ -1774,15 +1834,29 @@ impl IoSnapshot for VgaDevice {
         const TAG_GRAPHICS_EXT: u16 = 26;
         const TAG_CRTC_EXT: u16 = 27;
         const TAG_ATTRIBUTE_EXT: u16 = 28;
+        const TAG_LFB_BASE: u16 = 29;
+        const TAG_VRAM_LEN: u16 = 30;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
         let snapshot_minor = r.header().device_version.minor;
 
-        // Reset to a deterministic baseline.
-        let svga_lfb_base = self.svga_lfb_base;
-        *self = Self::new();
-        self.svga_lfb_base = svga_lfb_base;
+        // Reset to a deterministic baseline while preserving config unless the snapshot provides
+        // an explicit override.
+        let cfg = self.config();
+        let lfb_base = r.u32(TAG_LFB_BASE)?.unwrap_or(cfg.lfb_base);
+        let vram_len = r
+            .u32(TAG_VRAM_LEN)?
+            .map(|v| v as usize)
+            .or_else(|| r.bytes(TAG_VRAM).map(|b| b.len()))
+            .unwrap_or(cfg.vram_size);
+        if vram_len < VGA_VRAM_SIZE || vram_len > u32::MAX as usize {
+            return Err(SnapshotError::InvalidFieldEncoding("vram_len"));
+        }
+        *self = Self::new_with_config(VgaConfig {
+            lfb_base,
+            vram_size: vram_len,
+        });
 
         if let Some(v) = r.u8(TAG_MISC_OUTPUT)? {
             self.misc_output = v;
@@ -2228,10 +2302,11 @@ mod tests {
         dev.port_write(0x01CF, 2, 0x0041);
 
         // Write a red pixel at (0,0) in BGRX format.
-        dev.mem_write_u8(SVGA_LFB_BASE, 0x00); // B
-        dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x00); // G
-        dev.mem_write_u8(SVGA_LFB_BASE + 2, 0xFF); // R
-        dev.mem_write_u8(SVGA_LFB_BASE + 3, 0x00); // X
+        let base = dev.lfb_base();
+        dev.mem_write_u8(base, 0x00); // B
+        dev.mem_write_u8(base + 1, 0x00); // G
+        dev.mem_write_u8(base + 2, 0xFF); // R
+        dev.mem_write_u8(base + 3, 0x00); // X
 
         dev.present();
         assert_eq!(dev.get_resolution(), (64, 64));
@@ -2295,10 +2370,11 @@ mod tests {
         dev.port_write(0x01CF, 2, 0x0041);
 
         // Write a red pixel at (0,0) in BGRX format.
-        dev.mem_write_u8(SVGA_LFB_BASE, 0x00); // B
-        dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x00); // G
-        dev.mem_write_u8(SVGA_LFB_BASE + 2, 0xFF); // R
-        dev.mem_write_u8(SVGA_LFB_BASE + 3, 0x00); // X
+        let lfb_base = dev.lfb_base();
+        dev.mem_write_u8(lfb_base, 0x00); // B
+        dev.mem_write_u8(lfb_base.wrapping_add(1), 0x00); // G
+        dev.mem_write_u8(lfb_base.wrapping_add(2), 0xFF); // R
+        dev.mem_write_u8(lfb_base.wrapping_add(3), 0x00); // X
 
         let snapshot = dev.save_state();
 

@@ -259,8 +259,8 @@ pub struct MachineConfig {
     /// integration tests.
     ///
     /// When enabled, guest physical accesses to the legacy VGA window (`0xA0000..0xC0000`), the
-    /// Bochs VBE linear framebuffer (LFB) (legacy default base: [`aero_gpu_vga::SVGA_LFB_BASE`]),
-    /// and VGA/VBE port I/O are routed to an [`aero_gpu_vga::VgaDevice`].
+    /// Bochs VBE linear framebuffer (LFB) at [`aero_gpu_vga::VgaDevice::lfb_base`], and VGA/VBE
+    /// port I/O are routed to an [`aero_gpu_vga::VgaDevice`].
     ///
     /// When the PC platform is enabled ([`MachineConfig::enable_pc_platform`]), the canonical
     /// machine also exposes a transitional Bochs/QEMU-compatible VGA PCI function (currently at
@@ -1978,7 +1978,7 @@ struct VgaPciConfigDevice {
 }
 
 impl VgaPciConfigDevice {
-    fn new() -> Self {
+    fn new(lfb_base: u64, vram_size: usize) -> Self {
         // Bochs/QEMU-compatible IDs for "Standard VGA".
         let mut cfg = aero_devices::pci::PciConfigSpace::new(
             aero_gpu_vga::VGA_PCI_VENDOR_ID,
@@ -1991,16 +1991,17 @@ impl VgaPciConfigDevice {
             0x00,
         );
 
+        let size: u32 = vram_size.try_into().unwrap_or(u32::MAX);
         cfg.set_bar_definition(
             VGA_PCI_BAR_INDEX,
             aero_devices::pci::PciBarDefinition::Mmio32 {
-                size: aero_gpu_vga::DEFAULT_VRAM_SIZE as u32,
+                size,
                 prefetchable: false,
             },
         );
         // Use a deterministic BAR base so it is preserved across `PciBus::reset` + `bios_post`
-        // runs. (Legacy default: `SVGA_LFB_BASE`.)
-        cfg.set_bar_base(VGA_PCI_BAR_INDEX, aero_gpu_vga::SVGA_LFB_BASE as u64);
+        // runs. Mirror the configured LFB base (legacy default: `SVGA_LFB_BASE`).
+        cfg.set_bar_base(VGA_PCI_BAR_INDEX, lfb_base);
 
         Self { cfg }
     }
@@ -5923,7 +5924,8 @@ impl Machine {
             // identities stable.
             let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
                 Some(vga) => {
-                    *vga.borrow_mut() = VgaDevice::new();
+                    let cfg = vga.borrow().config();
+                    *vga.borrow_mut() = VgaDevice::new_with_config(cfg);
                     vga.clone()
                 }
                 None => {
@@ -5950,10 +5952,11 @@ impl Machine {
             self.io
                 .register_range(0x01CE, 0x0002, Box::new(VgaPortIoDevice { dev: vga.clone() }));
 
-            // Map the VBE/SVGA linear framebuffer at the configured LFB base (legacy default:
-            // `SVGA_LFB_BASE`).
-            let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
-            let lfb_len = vga.borrow().vram().len() as u64;
+            // Map the VBE/SVGA linear framebuffer (LFB) at the VGA device's configured base.
+            let (lfb_base, lfb_len) = {
+                let vga = vga.borrow();
+                (u64::from(vga.lfb_base()), vga.vram_size() as u64)
+            };
             self.mem.map_mmio_once(lfb_base, lfb_len, || {
                 Box::new(VgaLfbMmioHandler { dev: vga.clone() })
             });
@@ -6073,7 +6076,8 @@ impl Machine {
                 // remains valid.
                 let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
                     Some(vga) => {
-                        *vga.borrow_mut() = VgaDevice::new();
+                        let cfg = vga.borrow().config();
+                        *vga.borrow_mut() = VgaDevice::new_with_config(cfg);
                         vga.clone()
                     }
                     None => {
@@ -6200,11 +6204,16 @@ impl Machine {
 
             if use_legacy_vga {
                 // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
-                // MMIO router (within the ACPI-reported PCI MMIO window).
+                // MMIO window.
+                let (lfb_base, vram_size) = {
+                    let vga = self.vga.as_ref().expect("VGA enabled");
+                    let vga = vga.borrow();
+                    (u64::from(vga.lfb_base()), vga.vram_size())
+                };
                 pci_cfg
                     .borrow_mut()
                     .bus_mut()
-                    .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new()));
+                    .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new(lfb_base, vram_size)));
             }
             if self.cfg.enable_aerogpu {
                 // Canonical AeroGPU PCI identity contract (`00:07.0`, `A3A0:0001`).
@@ -7047,20 +7056,28 @@ impl Machine {
         // The BIOS is HLE and by default keeps the VBE linear framebuffer inside guest RAM so the
         // firmware-only tests can access it without MMIO routing.
         //
-        // When VGA is enabled, configure the BIOS to report the Bochs/QEMU-compatible LFB base
-        // that our VGA device is mapped at (legacy default: `SVGA_LFB_BASE`) so OSes and
-        // bootloaders see an MMIO-safe framebuffer address.
+        // When legacy VGA is enabled, configure the BIOS to report the (MMIO-safe) LFB base that
+        // our VGA device is mapped at (legacy default: `SVGA_LFB_BASE`) so OSes and bootloaders
+        // see a stable framebuffer address.
         //
         // When VGA is disabled, keep the default LFB base in conventional RAM: pointing the BIOS
-        // at `SVGA_LFB_BASE` would overlap the canonical PCI MMIO window (and could cause BIOS VBE
+        // at the VGA MMIO LFB base would overlap the canonical PCI MMIO window (and could cause BIOS VBE
         // helpers like `int 0x10, ax=0x4F02` to scribble over PCI device BARs).
+        let legacy_vga_lfb_base = if use_legacy_vga {
+            self.vga
+                .as_ref()
+                .map(|vga| vga.borrow().lfb_base())
+                .unwrap_or(aero_gpu_vga::SVGA_LFB_BASE)
+        } else {
+            0
+        };
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
             boot_drive,
             cpu_count: self.cfg.cpu_count,
             smbios_uuid_seed: self.cfg.smbios_uuid_seed,
             enable_acpi: self.cfg.enable_pc_platform && self.cfg.enable_acpi,
-            vbe_lfb_base: use_legacy_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE),
+            vbe_lfb_base: use_legacy_vga.then_some(legacy_vga_lfb_base),
             ..Default::default()
         });
         // Patch the BIOS's VBE controller `TotalMemory` reporting when the active framebuffer is
@@ -7070,7 +7087,11 @@ impl Machine {
             let blocks = aero_devices::pci::profile::AEROGPU_VRAM_SIZE.div_ceil(64 * 1024);
             self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
         } else if use_legacy_vga {
-            let vram_bytes = aero_gpu_vga::DEFAULT_VRAM_SIZE as u64;
+            let vram_bytes = self
+                .vga
+                .as_ref()
+                .map(|vga| vga.borrow().vram_size() as u64)
+                .unwrap_or(aero_gpu_vga::DEFAULT_VRAM_SIZE as u64);
             let blocks = vram_bytes.div_ceil(64 * 1024);
             self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
         }
@@ -7781,7 +7802,10 @@ impl Machine {
         // - Headless: default RAM-backed base (safe, avoids overlap with PCI MMIO window).
         let use_legacy_vga = self.cfg.enable_vga && !self.cfg.enable_aerogpu;
         let lfb_base = if use_legacy_vga {
-            aero_gpu_vga::SVGA_LFB_BASE
+            self.vga
+                .as_ref()
+                .map(|vga| vga.borrow().lfb_base())
+                .unwrap_or(aero_gpu_vga::SVGA_LFB_BASE)
         } else if self.cfg.enable_aerogpu {
             self.aerogpu_bar1_base()
                 .and_then(|base| u32::try_from(base.saturating_add(VBE_LFB_OFFSET as u64)).ok())
@@ -9105,8 +9129,12 @@ impl snapshot::SnapshotTarget for Machine {
                 {
                     // `vbe_lfb_base` is a firmware configuration knob; treat the machine wiring as
                     // the source of truth when restoring.
-                    snapshot.config.vbe_lfb_base =
-                        use_legacy_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE);
+                    let legacy_vga_lfb_base = self
+                        .vga
+                        .as_ref()
+                        .map(|vga| vga.borrow().lfb_base())
+                        .unwrap_or(aero_gpu_vga::SVGA_LFB_BASE);
+                    snapshot.config.vbe_lfb_base = use_legacy_vga.then_some(legacy_vga_lfb_base);
                     self.bios.restore_snapshot(snapshot, &mut self.mem);
                 }
             }
@@ -9118,7 +9146,11 @@ impl snapshot::SnapshotTarget for Machine {
             let blocks = aero_devices::pci::profile::AEROGPU_VRAM_SIZE.div_ceil(64 * 1024);
             self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
         } else if use_legacy_vga {
-            let vram_bytes = aero_gpu_vga::DEFAULT_VRAM_SIZE as u64;
+            let vram_bytes = self
+                .vga
+                .as_ref()
+                .map(|vga| vga.borrow().vram_size() as u64)
+                .unwrap_or(aero_gpu_vga::DEFAULT_VRAM_SIZE as u64);
             let blocks = vram_bytes.div_ceil(64 * 1024);
             self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
         }
@@ -9148,7 +9180,7 @@ impl snapshot::SnapshotTarget for Machine {
             //
             // The machine's physical memory bus persists across `reset()` and does not support
             // unmapping MMIO regions. When VGA is disabled we map the canonical PCI MMIO window at
-            // 0xE0000000, which overlaps `SVGA_LFB_BASE`. Attempting to restore a VGA snapshot would
+            // 0xE0000000, which overlaps the VGA MMIO LFB base. Attempting to restore a VGA snapshot would
             // therefore panic due to MMIO overlap.
             if !use_legacy_vga {
                 // Treat this as a config mismatch (snapshot taken with VGA enabled, restored into a
@@ -9191,8 +9223,10 @@ impl snapshot::SnapshotTarget for Machine {
                                 })
                             }
                         });
-                        let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
-                        let lfb_len = vga.borrow().vram().len() as u64;
+                        let (lfb_base, lfb_len) = {
+                            let vga = vga.borrow();
+                            (u64::from(vga.lfb_base()), vga.vram_size() as u64)
+                        };
                         self.mem.map_mmio_once(lfb_base, lfb_len, {
                             let vga = vga.clone();
                             move || {
@@ -9205,14 +9239,20 @@ impl snapshot::SnapshotTarget for Machine {
                 };
 
                 // Prefer the io-snapshot (`VGAD`) encoding; fall back to the legacy `VgaSnapshotV1`
-                // payload for backward compatibility.
+                // / `VgaSnapshotV2` payloads for backward compatibility.
                 let io_result = {
                     let mut vga_mut = vga.borrow_mut();
                     snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *vga_mut)
                 };
-                if io_result.is_err() && state.version == aero_gpu_vga::VgaSnapshotV1::VERSION {
-                    if let Ok(vga_snap) = aero_gpu_vga::VgaSnapshotV1::decode(&state.data) {
-                        vga.borrow_mut().restore_snapshot_v1(&vga_snap);
+                if io_result.is_err() {
+                    if state.version == aero_gpu_vga::VgaSnapshotV2::VERSION {
+                        if let Ok(vga_snap) = aero_gpu_vga::VgaSnapshotV2::decode(&state.data) {
+                            vga.borrow_mut().restore_snapshot_v2(&vga_snap);
+                        }
+                    } else if state.version == aero_gpu_vga::VgaSnapshotV1::VERSION {
+                        if let Ok(vga_snap) = aero_gpu_vga::VgaSnapshotV1::decode(&state.data) {
+                            vga.borrow_mut().restore_snapshot_v1(&vga_snap);
+                        }
                     }
                 }
             }
@@ -12606,7 +12646,7 @@ mod tests {
     #[test]
     fn bios_vbe_lfb_base_uses_svga_base_only_when_vga_is_enabled() {
         // When VGA is disabled, the BIOS should keep its default RAM-backed LFB base instead of
-        // pointing at `SVGA_LFB_BASE` (which overlaps the canonical PCI MMIO window).
+        // pointing at the VGA MMIO LFB base (which overlaps the canonical PCI MMIO window).
         let headless = Machine::new(MachineConfig {
             ram_size_bytes: 64 * 1024 * 1024,
             enable_pc_platform: true,
@@ -12637,7 +12677,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             vga.vbe_lfb_base(),
-            u64::from(aero_gpu_vga::SVGA_LFB_BASE)
+            u64::from(vga.vga.as_ref().unwrap().borrow().lfb_base())
         );
     }
 
@@ -12671,7 +12711,7 @@ mod tests {
     fn restore_snapshot_ignores_vga_state_when_vga_is_disabled() {
         // Restoring a VGA-enabled snapshot into a headless machine should not panic due to MMIO
         // overlap (the headless PC platform maps its PCI MMIO window at 0xE0000000, which overlaps
-        // `SVGA_LFB_BASE`).
+        // the VGA MMIO LFB base).
         let mut src = Machine::new(MachineConfig {
             ram_size_bytes: 64 * 1024 * 1024,
             enable_pc_platform: true,

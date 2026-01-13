@@ -1,4 +1,4 @@
-use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
+use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
@@ -48,7 +48,11 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     vm.io_write(0x01CF, 2, 0x0041);
 
     // Write a few pixels (packed 32bpp BGRX).
-    let base = u64::from(SVGA_LFB_BASE);
+    let base = {
+        let vga = vm.vga().expect("pc platform should include VGA");
+        let base = u64::from(vga.borrow().lfb_base());
+        base
+    };
     vm.write_physical_u32(base, 0x00FF_0000); // (0,0) red
     vm.write_physical_u32(base + 4, 0x0000_FF00); // (1,0) green
     vm.write_physical_u32(base + 8, 0x0000_00FF); // (2,0) blue
