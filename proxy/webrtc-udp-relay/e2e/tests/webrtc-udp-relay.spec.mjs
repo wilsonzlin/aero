@@ -733,6 +733,7 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
         const unauth = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`);
         assertNoStoreHeaders(unauth);
         const unauthStatus = unauth.status;
+        const unauthBody = await unauth.json().catch(() => null);
 
         const invalidAuth = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
           headers: {
@@ -741,6 +742,7 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
         });
         assertNoStoreHeaders(invalidAuth);
         const invalidAuthStatus = invalidAuth.status;
+        const invalidAuthBody = await invalidAuth.json().catch(() => null);
 
         const apiKeyAuth = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
           headers: {
@@ -921,7 +923,9 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
         pc.close();
         return {
           unauthStatus,
+          unauthBody,
           invalidAuthStatus,
+          invalidAuthBody,
           apiKeyAuthStatus,
           authHeaderAPIKeyAuthStatus: authHeaderAPIKeyAuthStatusCode,
           queryTokenAuthStatus: queryTokenAuthStatusCode,
@@ -934,7 +938,9 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
     );
 
     expect(res.unauthStatus).toBe(401);
+    expect(res.unauthBody?.code).toBe("unauthorized");
     expect(res.invalidAuthStatus).toBe(401);
+    expect(res.invalidAuthBody?.code).toBe("unauthorized");
     expect(res.apiKeyAuthStatus).toBe(200);
     expect(res.authHeaderAPIKeyAuthStatus).toBe(200);
     expect(res.queryTokenAuthStatus).toBe(200);
