@@ -2021,6 +2021,7 @@ def main() -> int:
                 # Surface host-side audio failures even if the guest selftest passed.
                 result_code = 4
 
+        _emit_virtio_blk_irq_host_marker(tail)
         _emit_virtio_net_large_host_marker(tail)
 
         return result_code if result_code is not None else 2
@@ -2507,6 +2508,36 @@ def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
 
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|{status}"]
     for k in ("large_ok", "large_bytes", "large_fnv1a64", "large_mbps", "upload_ok", "upload_bytes", "upload_mbps"):
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_blk_irq_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker describing the guest's virtio-blk interrupt mode/vectors.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+    if marker_line is None:
+        return
+
+    fields = _parse_marker_kv_fields(marker_line)
+    # Backward compatible: older guest selftests will not include these fields. Emit nothing
+    # unless we see at least one interrupt-related key.
+    interesting_keys = ("irq_mode", "msi_vector", "msix_config_vector", "msix_queue_vector")
+    if not any(k in fields for k in interesting_keys):
+        return
+
+    status = "INFO"
+    if "FAIL" in marker_line.split("|"):
+        status = "FAIL"
+    elif "PASS" in marker_line.split("|"):
+        status = "PASS"
+
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|{status}"]
+    for k in interesting_keys:
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))
