@@ -408,6 +408,9 @@ Remaining gaps (planned follow-ups) include:
 WebGPU exposes only **vertex** + **fragment** (render) and **compute** pipelines. D3D10/11’s
 **GS/HS/DS** stages are therefore implemented by an explicit **compute-expansion pipeline** that:
 
+> Quick overview + current limitations: see
+> [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
+
 1. Pulls vertices in compute (using the bound IA state and input layout).
 2. Runs the missing D3D stages (VS → HS/DS → GS) as compute kernels, writing expanded vertices (and
     optional indices) into scratch buffers.
@@ -430,13 +433,17 @@ Many AeroGPU binding packets already carry a `shader_stage` plus a trailing `res
 - `AEROGPU_CMD_SET_TEXTURE`
 - `AEROGPU_CMD_SET_SAMPLERS`
 - `AEROGPU_CMD_SET_CONSTANT_BUFFERS`
+- `AEROGPU_CMD_SET_SHADER_CONSTANTS_F`
 
-For GS/HS/DS we need to bind D3D resources **per stage**, but the D3D11 executor’s stable binding
-model only has stage-scoped bind groups for **VS/PS/CS** (`@group(0..2)`). We therefore treat GS/HS/DS
-as “compute-like” stages and bind their resources through the existing compute bind group, using a
-small `stage_ex` tag carried in the trailing reserved field.
+For GS/HS/DS we need to bind D3D resources **per stage**, but the executor’s stable binding model only
+has stage-scoped bind groups for **VS/PS/CS** (`@group(0..2)`). We therefore treat GS/HS/DS as
+“compute-like” stages and route their resource bindings through the existing compute bind group, using
+the trailing reserved field as a small `stage_ex` tag.
 
-**Definition (conceptual):**
+This is implemented in the emulator-side protocol mirror as `AerogpuShaderStageEx` + helpers
+`encode_stage_ex`/`decode_stage_ex` (see `emulator/protocol/aerogpu/aerogpu_cmd.rs`).
+
+**Definition (matches DXBC program type values):**
 
 ```c
 // New: used when binding resources for GS/HS/DS (and optionally compute).
@@ -472,9 +479,10 @@ struct aerogpu_cmd_set_texture {
 - Legacy VS/PS bindings: use the existing `shader_stage` field and write `stage_ex = 0`:
   - VS: `shader_stage = VERTEX`, `stage_ex = 0`
   - PS: `shader_stage = PIXEL`,  `stage_ex = 0`
-- For compute, `stage_ex = 0` remains valid legacy encoding:
+- For compute, `stage_ex = 0` remains valid legacy encoding (old guests write zeros for reserved
+  fields):
   - CS: `shader_stage = COMPUTE`, `stage_ex = 0`
-- `stage_ex` encoding is enabled by setting `shader_stage = COMPUTE` and `stage_ex != 0`:
+- `stage_ex` encoding is enabled by setting `shader_stage = COMPUTE` and a non-zero `stage_ex`:
   - GS resources: `shader_stage = COMPUTE`, `stage_ex = GEOMETRY` (2)
   - HS resources: `shader_stage = COMPUTE`, `stage_ex = HULL`     (3)
   - DS resources: `shader_stage = COMPUTE`, `stage_ex = DOMAIN`   (4)
