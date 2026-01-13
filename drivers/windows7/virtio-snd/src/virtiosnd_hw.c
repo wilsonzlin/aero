@@ -1415,6 +1415,23 @@ NTSTATUS VirtIoSndStartHardware(
         VirtioSndQueueDisableInterrupts(&Dx->Queues[VIRTIOSND_QUEUE_RX]);
     }
 
+    /*
+     * Minimal runtime logging: record which interrupt mode was selected.
+     *
+     * Keep this always-enabled (error log) so MSI/MSI-X bring-up can be verified
+     * without needing a DBG build.
+     */
+    if (Dx->MessageInterruptsActive) {
+        VIRTIOSND_TRACE_ERROR(
+            "interrupt mode: MSI/MSI-X (messages=%lu, all_on_vector0=%u)\n",
+            Dx->MessageInterruptCount,
+            Dx->MsixAllOnVector0 ? 1u : 0u);
+    } else if (Dx->Intx.InterruptObject != NULL) {
+        VIRTIOSND_TRACE_ERROR("interrupt mode: INTx\n");
+    } else if (Dx->AllowPollingOnly) {
+        VIRTIOSND_TRACE_ERROR("interrupt mode: polling-only\n");
+    }
+
     /* The device is now ready for normal operation. */
     VirtioPciModernTransportAddStatus(&Dx->Transport, VIRTIO_STATUS_DRIVER_OK);
 
