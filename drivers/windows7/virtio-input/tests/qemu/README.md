@@ -331,6 +331,8 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    hidtest.exe --counters
    hidtest.exe --reset-counters
    ```
+   For how to interpret the counters output (normal increments vs drops/overruns), see:
+   - `drivers/windows7/virtio-input/tools/hidtest/README.md` → **Counters interpretation**
 
 8. (Optional) negative tests (invalid user pointers; should fail cleanly without crashing the guest):
    ```bat
