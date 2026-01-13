@@ -389,6 +389,12 @@ impl FrameParser {
     }
 }
 
+impl Default for FrameParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn encode_open_payload(host: &str, port: u16, metadata: Option<&str>) -> Result<Vec<u8>, Error> {
     let host_bytes = host.as_bytes();
     if host_bytes.len() > u16::MAX as usize {

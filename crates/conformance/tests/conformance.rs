@@ -23,7 +23,7 @@ const VECTORS_V2_JSON: &str = include_str!("../test-vectors/aero-vectors-v2.json
 
 fn decode_hex(hex: &str) -> Vec<u8> {
     assert!(
-        hex.len() % 2 == 0,
+        hex.len().is_multiple_of(2),
         "hex length must be even, got {}",
         hex.len()
     );

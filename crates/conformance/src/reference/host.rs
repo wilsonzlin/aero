@@ -323,7 +323,7 @@ struct GuardedMemory {
 impl GuardedMemory {
     fn new() -> Result<Self, &'static str> {
         let page_size = page_size()?;
-        let data_pages = (crate::corpus::MAX_TEST_MEMORY_LEN + page_size - 1) / page_size;
+        let data_pages = crate::corpus::MAX_TEST_MEMORY_LEN.div_ceil(page_size);
         let len = page_size * (data_pages + 2);
 
         let mapping = unsafe {
