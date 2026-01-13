@@ -1986,6 +1986,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);
         }
 
+        virtio_input_device_reset_state(&deviceContext->InputDevice, emitResetReports ? true : false);
+        deviceContext->InD0 = TRUE;
+
         (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 1);
 
         status = VirtioInputInterruptsResumeAfterReset(deviceContext);
@@ -1995,13 +1998,11 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 "VirtioPciInterruptsResume failed: %!STATUS!\n",
                 status);
             (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
+            deviceContext->InD0 = FALSE;
             VirtioPciResetDevice(&deviceContext->PciDevice);
             return status;
         }
         VirtioPciAddStatus(&deviceContext->PciDevice, VIRTIO_STATUS_DRIVER_OK);
-
-        virtio_input_device_reset_state(&deviceContext->InputDevice, emitResetReports ? true : false);
-        deviceContext->InD0 = TRUE;
 
         if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 0) {
             WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[0]);
