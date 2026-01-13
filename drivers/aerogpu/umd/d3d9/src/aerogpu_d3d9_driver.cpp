@@ -158,6 +158,17 @@ struct StateBlock {
   bool n_patch_mode_set = false;
   float n_patch_mode = 0.0f;
 
+  // Device cursor state (SetCursorProperties/SetCursorPosition/ShowCursor).
+  bool cursor_properties_set = false;
+  Resource* cursor_bitmap = nullptr;
+  uint32_t cursor_hot_x = 0;
+  uint32_t cursor_hot_y = 0;
+  bool cursor_position_set = false;
+  int32_t cursor_x = 0;
+  int32_t cursor_y = 0;
+  bool cursor_visible_set = false;
+  BOOL cursor_visible = FALSE;
+
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   // Fixed-function lighting/material state. Cached-only and not currently
   // consumed by the AeroGPU shader pipeline, but tracked for Get*/state-block
@@ -1342,11 +1353,8 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceSetConvolutionMonoKernel, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnGenerateMipSubLevels, D3d9TraceFunc::DeviceGenerateMipSubLevels, S_OK);
 
-// Cursor management is not implemented yet, but these can be treated as benign
-// no-ops for bring-up.
-AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorProperties, D3d9TraceFunc::DeviceSetCursorProperties, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorPosition, D3d9TraceFunc::DeviceSetCursorPosition, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnShowCursor, D3d9TraceFunc::DeviceShowCursor, S_OK);
+// Cursor management is implemented as a software overlay composited at Present
+// time (see device_set_cursor_* and the Present paths).
 
 // Patch rendering is implemented (DrawRectPatch/DrawTriPatch/DeletePatch).
 // ProcessVertices is implemented for a small fixed-function subset elsewhere.
@@ -1607,6 +1615,25 @@ AEROGPU_D3D9_DEFINE_HAS_MEMBER(SyncInterval);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(sync_interval);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(hSrc);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(hSrcResource);
+
+// Cursor arg fields (SetCursorProperties/SetCursorPosition/ShowCursor).
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(XHotSpot);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(xHotSpot);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(YHotSpot);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(yHotSpot);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(hCursor);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(hCursorBitmap);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(hCursorBitmapResource);
+// SetCursorPosition struct spellings.
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(X);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(x);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(Y);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(y);
+// ShowCursor struct spellings.
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(Show);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(show);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(bShow);
+
 // Query arg fields (member names vary across header sets).
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(QueryType);
 
@@ -2929,6 +2956,36 @@ inline void stateblock_record_npatch_mode_locked(Device* dev, float mode) {
   StateBlock* sb = dev->recording_state_block;
   sb->n_patch_mode_set = true;
   sb->n_patch_mode = mode;
+}
+
+inline void stateblock_record_cursor_properties_locked(Device* dev, Resource* bitmap, uint32_t hot_x, uint32_t hot_y) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->cursor_properties_set = true;
+  sb->cursor_bitmap = bitmap;
+  sb->cursor_hot_x = hot_x;
+  sb->cursor_hot_y = hot_y;
+}
+
+inline void stateblock_record_cursor_position_locked(Device* dev, int32_t x, int32_t y) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->cursor_position_set = true;
+  sb->cursor_x = x;
+  sb->cursor_y = y;
+}
+
+inline void stateblock_record_show_cursor_locked(Device* dev, BOOL visible) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->cursor_visible_set = true;
+  sb->cursor_visible = visible ? TRUE : FALSE;
 }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
@@ -8845,6 +8902,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
     }
   }
 
+  if (dev->cursor_bitmap == res) {
+    dev->cursor_bitmap = nullptr;
+    dev->cursor_visible = FALSE;
+  }
+
   for (uint32_t stream = 0; stream < 16; ++stream) {
     if (dev->streams[stream].vb != res) {
       continue;
@@ -11753,6 +11815,18 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     sb->render_state_values[i] = dev->render_states[i];
   }
 
+  if (is_all) {
+    sb->cursor_properties_set = true;
+    sb->cursor_bitmap = dev->cursor_bitmap;
+    sb->cursor_hot_x = dev->cursor_hot_x;
+    sb->cursor_hot_y = dev->cursor_hot_y;
+    sb->cursor_position_set = true;
+    sb->cursor_x = dev->cursor_x;
+    sb->cursor_y = dev->cursor_y;
+    sb->cursor_visible_set = true;
+    sb->cursor_visible = dev->cursor_visible ? TRUE : FALSE;
+  }
+
   if (is_pixel) {
     for (uint32_t stage = 0; stage < 16; ++stage) {
       sb->texture_mask.set(stage);
@@ -11929,6 +12003,18 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
   }
   if (sb->n_patch_mode_set) {
     sb->n_patch_mode = dev->n_patch_mode;
+  }
+  if (sb->cursor_properties_set) {
+    sb->cursor_bitmap = dev->cursor_bitmap;
+    sb->cursor_hot_x = dev->cursor_hot_x;
+    sb->cursor_hot_y = dev->cursor_hot_y;
+  }
+  if (sb->cursor_position_set) {
+    sb->cursor_x = dev->cursor_x;
+    sb->cursor_y = dev->cursor_y;
+  }
+  if (sb->cursor_visible_set) {
+    sb->cursor_visible = dev->cursor_visible ? TRUE : FALSE;
   }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
@@ -12276,6 +12362,22 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   if (sb->n_patch_mode_set) {
     dev->n_patch_mode = sb->n_patch_mode;
     stateblock_record_npatch_mode_locked(dev, dev->n_patch_mode);
+  }
+
+  if (sb->cursor_properties_set) {
+    dev->cursor_bitmap = sb->cursor_bitmap;
+    dev->cursor_hot_x = sb->cursor_hot_x;
+    dev->cursor_hot_y = sb->cursor_hot_y;
+    stateblock_record_cursor_properties_locked(dev, dev->cursor_bitmap, dev->cursor_hot_x, dev->cursor_hot_y);
+  }
+  if (sb->cursor_position_set) {
+    dev->cursor_x = sb->cursor_x;
+    dev->cursor_y = sb->cursor_y;
+    stateblock_record_cursor_position_locked(dev, dev->cursor_x, dev->cursor_y);
+  }
+  if (sb->cursor_visible_set) {
+    dev->cursor_visible = sb->cursor_visible ? TRUE : FALSE;
+    stateblock_record_show_cursor_locked(dev, dev->cursor_visible);
   }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
@@ -14042,6 +14144,268 @@ HRESULT device_get_software_vertex_processing_dispatch(Args... args) {
   return D3DERR_NOTAVAILABLE;
 }
 
+// -----------------------------------------------------------------------------
+// Device cursor DDIs (SetCursorProperties/SetCursorPosition/ShowCursor)
+// -----------------------------------------------------------------------------
+// The D3D9 runtime exposes a device-managed cursor API (distinct from the Win32
+// cursor). Apps/games frequently use it for custom cursors. AeroGPU implements
+// a minimal software cursor by compositing the cursor bitmap over the present
+// source surface just before AEROGPU_CMD_PRESENT_EX is issued.
+//
+// Cursor coordinates are in client pixels. The hotspot (SetCursorProperties) is
+// subtracted from the position (SetCursorPosition) when building the overlay
+// destination rect.
+namespace {
+// D3D9 format subset (numeric values from d3d9types.h).
+constexpr uint32_t kD3d9FmtA8R8G8B8 = 21u;
+constexpr uint32_t kD3d9FmtX8R8G8B8 = 22u;
+constexpr uint32_t kD3d9FmtA8B8G8R8 = 32u;
+} // namespace
+
+template <typename T, typename = void>
+struct aerogpu_cursor_has_member_pDrvPrivate : std::false_type {};
+template <typename T>
+struct aerogpu_cursor_has_member_pDrvPrivate<T, std::void_t<decltype(std::declval<T>().pDrvPrivate)>> : std::true_type {};
+
+template <typename CursorHandleT>
+Resource* cursor_handle_as_resource(CursorHandleT hCursor) {
+  if constexpr (aerogpu_cursor_has_member_pDrvPrivate<CursorHandleT>::value) {
+    return reinterpret_cast<Resource*>(hCursor.pDrvPrivate);
+  } else if constexpr (std::is_pointer_v<CursorHandleT>) {
+    // Some header vintages may pass the cursor bitmap as a raw driver-private
+    // pointer (non-handle). Be permissive.
+    return reinterpret_cast<Resource*>(hCursor);
+  } else {
+    return nullptr;
+  }
+}
+
+template <typename XHotT, typename YHotT, typename CursorHandleT>
+HRESULT device_set_cursor_properties_values_impl(D3DDDI_HDEVICE hDevice,
+                                                 XHotT x_hot,
+                                                 YHotT y_hot,
+                                                 CursorHandleT hCursor) {
+  auto* cursor = cursor_handle_as_resource(hCursor);
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetCursorProperties,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_pack_u32_u32(d3d9_to_u32(x_hot), d3d9_to_u32(y_hot)),
+                      d3d9_trace_arg_ptr(cursor),
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (!cursor) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  const uint32_t fmt = static_cast<uint32_t>(cursor->format);
+  if (fmt != kD3d9FmtA8R8G8B8 && fmt != kD3d9FmtX8R8G8B8 && fmt != kD3d9FmtA8B8G8R8) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  const uint32_t hot_x = d3d9_to_u32(x_hot);
+  const uint32_t hot_y = d3d9_to_u32(y_hot);
+  if (hot_x >= cursor->width || hot_y >= cursor->height) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->cursor_bitmap = cursor;
+  dev->cursor_hot_x = hot_x;
+  dev->cursor_hot_y = hot_y;
+  dev->cursor_bitmap_serial++;
+  stateblock_record_cursor_properties_locked(dev, dev->cursor_bitmap, dev->cursor_hot_x, dev->cursor_hot_y);
+  return trace.ret(S_OK);
+}
+
+template <typename ArgsT>
+HRESULT device_set_cursor_properties_from_args_impl(D3DDDI_HDEVICE hDevice, const ArgsT* pArgs) {
+  if (!pArgs) {
+    D3d9TraceCall trace(D3d9TraceFunc::DeviceSetCursorProperties,
+                        d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                        0,
+                        0,
+                        0);
+    return trace.ret(E_INVALIDARG);
+  }
+
+  // Common WDK member spellings.
+  const uint32_t hot_x = [&] {
+    if constexpr (aerogpu_d3d9_has_member_XHotSpot<ArgsT>::value) {
+      return static_cast<uint32_t>(pArgs->XHotSpot);
+    } else if constexpr (aerogpu_d3d9_has_member_xHotSpot<ArgsT>::value) {
+      return static_cast<uint32_t>(pArgs->xHotSpot);
+    } else {
+      return 0u;
+    }
+  }();
+
+  const uint32_t hot_y = [&] {
+    if constexpr (aerogpu_d3d9_has_member_YHotSpot<ArgsT>::value) {
+      return static_cast<uint32_t>(pArgs->YHotSpot);
+    } else if constexpr (aerogpu_d3d9_has_member_yHotSpot<ArgsT>::value) {
+      return static_cast<uint32_t>(pArgs->yHotSpot);
+    } else {
+      return 0u;
+    }
+  }();
+
+  auto* cursor = [&]() -> Resource* {
+    if constexpr (aerogpu_d3d9_has_member_hCursor<ArgsT>::value) {
+      return cursor_handle_as_resource(pArgs->hCursor);
+    } else if constexpr (aerogpu_d3d9_has_member_hCursorBitmap<ArgsT>::value) {
+      return cursor_handle_as_resource(pArgs->hCursorBitmap);
+    } else if constexpr (aerogpu_d3d9_has_member_hCursorBitmapResource<ArgsT>::value) {
+      return cursor_handle_as_resource(pArgs->hCursorBitmapResource);
+    } else {
+      return nullptr;
+    }
+  }();
+
+  return device_set_cursor_properties_values_impl(hDevice, hot_x, hot_y, cursor);
+}
+
+template <typename... Args>
+HRESULT device_set_cursor_properties_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 4) {
+    return device_set_cursor_properties_values_impl(args...);
+  } else if constexpr (sizeof...(Args) == 2) {
+    return device_set_cursor_properties_from_args_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename X, typename Y, typename FlagsT>
+HRESULT device_set_cursor_position_values_impl(D3DDDI_HDEVICE hDevice, X x, Y y, FlagsT /*flags*/) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetCursorPosition,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_pack_u32_u32(static_cast<uint32_t>(static_cast<int32_t>(x)),
+                                              static_cast<uint32_t>(static_cast<int32_t>(y))),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->cursor_x = static_cast<int32_t>(x);
+  dev->cursor_y = static_cast<int32_t>(y);
+  stateblock_record_cursor_position_locked(dev, dev->cursor_x, dev->cursor_y);
+  return trace.ret(S_OK);
+}
+
+template <typename ArgsT>
+HRESULT device_set_cursor_position_from_args_impl(D3DDDI_HDEVICE hDevice, const ArgsT* pArgs) {
+  if (!pArgs) {
+    D3d9TraceCall trace(D3d9TraceFunc::DeviceSetCursorPosition,
+                        d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                        0,
+                        0,
+                        0);
+    return trace.ret(E_INVALIDARG);
+  }
+
+  const int32_t x = [&] {
+    if constexpr (aerogpu_d3d9_has_member_X<ArgsT>::value) {
+      return static_cast<int32_t>(pArgs->X);
+    } else if constexpr (aerogpu_d3d9_has_member_x<ArgsT>::value) {
+      return static_cast<int32_t>(pArgs->x);
+    } else {
+      return 0;
+    }
+  }();
+
+  const int32_t y = [&] {
+    if constexpr (aerogpu_d3d9_has_member_Y<ArgsT>::value) {
+      return static_cast<int32_t>(pArgs->Y);
+    } else if constexpr (aerogpu_d3d9_has_member_y<ArgsT>::value) {
+      return static_cast<int32_t>(pArgs->y);
+    } else {
+      return 0;
+    }
+  }();
+
+  const uint32_t flags = [&] {
+    if constexpr (aerogpu_d3d9_has_member_Flags<ArgsT>::value) {
+      return static_cast<uint32_t>(pArgs->Flags);
+    } else if constexpr (aerogpu_d3d9_has_member_flags<ArgsT>::value) {
+      return static_cast<uint32_t>(pArgs->flags);
+    } else {
+      return 0u;
+    }
+  }();
+
+  return device_set_cursor_position_values_impl(hDevice, x, y, flags);
+}
+
+template <typename... Args>
+HRESULT device_set_cursor_position_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 4) {
+    return device_set_cursor_position_values_impl(args...);
+  } else if constexpr (sizeof...(Args) == 2) {
+    return device_set_cursor_position_from_args_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename ShowT>
+HRESULT device_show_cursor_impl(D3DDDI_HDEVICE hDevice, ShowT show) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceShowCursor,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(show)),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->cursor_visible = d3d9_to_u32(show) ? TRUE : FALSE;
+  stateblock_record_show_cursor_locked(dev, dev->cursor_visible);
+  return trace.ret(S_OK);
+}
+
+template <typename ArgsT>
+HRESULT device_show_cursor_from_args_impl(D3DDDI_HDEVICE hDevice, const ArgsT* pArgs) {
+  if (!pArgs) {
+    D3d9TraceCall trace(D3d9TraceFunc::DeviceShowCursor,
+                        d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                        0,
+                        0,
+                        0);
+    return trace.ret(E_INVALIDARG);
+  }
+
+  const uint32_t show = [&] {
+    if constexpr (aerogpu_d3d9_has_member_Show<ArgsT>::value) {
+      return static_cast<uint32_t>(pArgs->Show);
+    } else if constexpr (aerogpu_d3d9_has_member_show<ArgsT>::value) {
+      return static_cast<uint32_t>(pArgs->show);
+    } else if constexpr (aerogpu_d3d9_has_member_bShow<ArgsT>::value) {
+      return static_cast<uint32_t>(pArgs->bShow);
+    } else {
+      return 0u;
+    }
+  }();
+
+  return device_show_cursor_impl(hDevice, show);
+}
+
+template <typename ShowT>
+HRESULT device_show_cursor_dispatch(D3DDDI_HDEVICE hDevice, ShowT show) {
+  if constexpr (std::is_pointer_v<ShowT>) {
+    return device_show_cursor_from_args_impl(hDevice, show);
+  } else {
+    return device_show_cursor_impl(hDevice, show);
+  }
+}
+
+template <typename... Args>
+HRESULT device_show_cursor_dispatch(Args... /*args*/) {
+  return D3DERR_NOTAVAILABLE;
+}
+
 template <typename ValueT>
 HRESULT device_set_npatch_mode_impl(D3DDDI_HDEVICE hDevice, ValueT mode) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetNPatchMode,
@@ -15130,6 +15494,51 @@ template <typename Ret, typename... Args>
 struct aerogpu_d3d9_impl_pfnSetSoftwareVertexProcessing<Ret(*)(Args...)> {
   static Ret pfnSetSoftwareVertexProcessing(Args... args) {
     return static_cast<Ret>(device_set_software_vertex_processing_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetCursorProperties;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetCursorProperties<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetCursorProperties(Args... args) {
+    return static_cast<Ret>(device_set_cursor_properties_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetCursorProperties<Ret(*)(Args...)> {
+  static Ret pfnSetCursorProperties(Args... args) {
+    return static_cast<Ret>(device_set_cursor_properties_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetCursorPosition;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetCursorPosition<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetCursorPosition(Args... args) {
+    return static_cast<Ret>(device_set_cursor_position_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetCursorPosition<Ret(*)(Args...)> {
+  static Ret pfnSetCursorPosition(Args... args) {
+    return static_cast<Ret>(device_set_cursor_position_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnShowCursor;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnShowCursor<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnShowCursor(Args... args) {
+    return static_cast<Ret>(device_show_cursor_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnShowCursor<Ret(*)(Args...)> {
+  static Ret pfnShowCursor(Args... args) {
+    return static_cast<Ret>(device_show_cursor_dispatch(args...));
   }
 };
 
@@ -17729,6 +18138,79 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   return trace.ret(S_OK);
 }
 
+// Callers must hold `Device::mutex`.
+static void overlay_device_cursor_locked(Device* dev, Resource* present_src) {
+  if (!dev || !present_src) {
+    return;
+  }
+  if (!dev->cursor_visible) {
+    return;
+  }
+  Resource* cursor = dev->cursor_bitmap;
+  if (!cursor) {
+    return;
+  }
+  // Avoid self-sampling hazards: only overlay cursors sourced from a distinct resource.
+  if (cursor == present_src) {
+    return;
+  }
+  if (cursor->width == 0 || cursor->height == 0) {
+    return;
+  }
+
+  const long dst_w = static_cast<long>(present_src->width);
+  const long dst_h = static_cast<long>(present_src->height);
+  if (dst_w <= 0 || dst_h <= 0) {
+    return;
+  }
+
+  RECT src_rect{};
+  src_rect.left = 0;
+  src_rect.top = 0;
+  src_rect.right = static_cast<long>(cursor->width);
+  src_rect.bottom = static_cast<long>(cursor->height);
+
+  RECT dst_rect{};
+  const long dst_left = static_cast<long>(dev->cursor_x) - static_cast<long>(dev->cursor_hot_x);
+  const long dst_top = static_cast<long>(dev->cursor_y) - static_cast<long>(dev->cursor_hot_y);
+  dst_rect.left = dst_left;
+  dst_rect.top = dst_top;
+  dst_rect.right = dst_left + src_rect.right;
+  dst_rect.bottom = dst_top + src_rect.bottom;
+
+  // Clip to destination bounds, adjusting the source rect to preserve 1:1 mapping.
+  if (dst_rect.left < 0) {
+    const long dx = -dst_rect.left;
+    dst_rect.left = 0;
+    src_rect.left += dx;
+  }
+  if (dst_rect.top < 0) {
+    const long dy = -dst_rect.top;
+    dst_rect.top = 0;
+    src_rect.top += dy;
+  }
+  if (dst_rect.right > dst_w) {
+    const long dx = dst_rect.right - dst_w;
+    dst_rect.right = dst_w;
+    src_rect.right -= dx;
+  }
+  if (dst_rect.bottom > dst_h) {
+    const long dy = dst_rect.bottom - dst_h;
+    dst_rect.bottom = dst_h;
+    src_rect.bottom -= dy;
+  }
+
+  if (dst_rect.right <= dst_rect.left || dst_rect.bottom <= dst_rect.top) {
+    return;
+  }
+  if (src_rect.right <= src_rect.left || src_rect.bottom <= src_rect.top) {
+    return;
+  }
+
+  constexpr uint32_t kD3d9TexFilterPoint = 1u; // D3DTEXF_POINT
+  (void)blit_alpha_locked(dev, present_src, &dst_rect, cursor, &src_rect, kD3d9TexFilterPoint);
+}
+
 HRESULT AEROGPU_D3D9_CALL device_present_ex(
     D3DDDI_HDEVICE hDevice,
     const D3D9DDIARG_PRESENTEX* pPresentEx) {
@@ -17805,6 +18287,10 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       if (device_is_lost(dev)) {
         return trace.ret(kD3dErrDeviceLost);
       }
+
+      // Composite the device-managed cursor (if enabled) over the present
+      // source surface before we emit the PRESENT_EX packet.
+      overlay_device_cursor_locked(dev, as_resource(src_handle));
 
       // Track the present source allocation so the KMD can resolve the backing
       // `alloc_id` via the per-submit allocation table even though we keep the
@@ -18213,6 +18699,10 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     if (device_is_lost(dev)) {
       return trace.ret(kD3dErrDeviceLost);
     }
+
+    // Composite the device-managed cursor (if enabled) over the present source
+    // surface before we emit the PRESENT_EX packet.
+    overlay_device_cursor_locked(dev, as_resource(src_handle));
 
     // Track the present source allocation so the KMD can resolve it when the
     // Present callback hands the DMA buffer to the kernel.
@@ -19637,17 +20127,17 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetCursorProperties<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetCursorProperties,
-        aerogpu_d3d9_noop_pfnSetCursorProperties<decltype(pDeviceFuncs->pfnSetCursorProperties)>::pfnSetCursorProperties);
+        aerogpu_d3d9_impl_pfnSetCursorProperties<decltype(pDeviceFuncs->pfnSetCursorProperties)>::pfnSetCursorProperties);
   }
   if constexpr (aerogpu_has_member_pfnSetCursorPosition<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetCursorPosition,
-        aerogpu_d3d9_noop_pfnSetCursorPosition<decltype(pDeviceFuncs->pfnSetCursorPosition)>::pfnSetCursorPosition);
+        aerogpu_d3d9_impl_pfnSetCursorPosition<decltype(pDeviceFuncs->pfnSetCursorPosition)>::pfnSetCursorPosition);
   }
   if constexpr (aerogpu_has_member_pfnShowCursor<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnShowCursor,
-        aerogpu_d3d9_noop_pfnShowCursor<decltype(pDeviceFuncs->pfnShowCursor)>::pfnShowCursor);
+        aerogpu_d3d9_impl_pfnShowCursor<decltype(pDeviceFuncs->pfnShowCursor)>::pfnShowCursor);
   }
   if constexpr (aerogpu_has_member_pfnSetPaletteEntries<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(

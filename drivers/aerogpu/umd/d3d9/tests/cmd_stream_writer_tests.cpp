@@ -12,6 +12,7 @@
 #include <condition_variable>
 
 #include "aerogpu_d3d9_objects.h"
+#include "aerogpu_d3d9_blit.h"
 #include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_submit.h"
 #include "aerogpu_kmd_query.h"
@@ -12858,6 +12859,117 @@ bool TestKmdQueryGetScanLineClearsOutputsOnFailure() {
   return Check(scan_line == 0, "GetScanLine clears scan_line on failure");
 }
 
+bool TestBlitAlphaLockedUsesSrcAlphaBlend() {
+  Adapter adapter{};
+  Device dev(&adapter);
+
+  Resource dst{};
+  dst.handle = allocate_global_handle(&adapter);
+  dst.kind = ResourceKind::Texture2D;
+  dst.format = static_cast<D3DDDIFORMAT>(21u); // D3DFMT_A8R8G8B8
+  dst.width = 64;
+  dst.height = 64;
+
+  Resource src{};
+  src.handle = allocate_global_handle(&adapter);
+  src.kind = ResourceKind::Texture2D;
+  src.format = static_cast<D3DDDIFORMAT>(21u); // D3DFMT_A8R8G8B8
+  src.width = 32;
+  src.height = 32;
+
+  RECT dst_rect{0, 0, 32, 32};
+  RECT src_rect{0, 0, 32, 32};
+
+  HRESULT hr = S_OK;
+  {
+    std::lock_guard<std::mutex> lock(dev.mutex);
+    hr = blit_alpha_locked(&dev, &dst, &dst_rect, &src, &src_rect, /*filter=*/1u);
+  }
+  if (!Check(hr == S_OK, "blit_alpha_locked")) {
+    return false;
+  }
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(blit_alpha_locked)")) {
+    return false;
+  }
+
+  // D3D9 render state IDs (numeric values from d3d9types.h).
+  constexpr uint32_t kRsAlphaBlendEnable = 27;
+  constexpr uint32_t kRsSrcBlend = 19;
+  constexpr uint32_t kRsDestBlend = 20;
+  constexpr uint32_t kRsBlendOp = 171;
+
+  // D3DBLEND / D3DBLENDOP (numeric values from d3d9types.h).
+  constexpr uint32_t kBlendSrcAlpha = 5;
+  constexpr uint32_t kBlendInvSrcAlpha = 6;
+  constexpr uint32_t kBlendOpAdd = 1;
+
+  bool saw_alpha_enable = false;
+  bool saw_src_blend = false;
+  bool saw_dst_blend = false;
+  bool saw_blend_op = false;
+  uint32_t alpha_enable_val = 0;
+  uint32_t src_blend_val = 0;
+  uint32_t dst_blend_val = 0;
+  uint32_t blend_op_val = 0;
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_SET_RENDER_STATE && hdr->size_bytes >= sizeof(aerogpu_cmd_set_render_state)) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_render_state*>(hdr);
+      if (cmd->state == kRsAlphaBlendEnable && !saw_alpha_enable) {
+        saw_alpha_enable = true;
+        alpha_enable_val = cmd->value;
+      }
+      if (cmd->state == kRsSrcBlend && !saw_src_blend) {
+        saw_src_blend = true;
+        src_blend_val = cmd->value;
+      }
+      if (cmd->state == kRsDestBlend && !saw_dst_blend) {
+        saw_dst_blend = true;
+        dst_blend_val = cmd->value;
+      }
+      if (cmd->state == kRsBlendOp && !saw_blend_op) {
+        saw_blend_op = true;
+        blend_op_val = cmd->value;
+      }
+    }
+
+    if (hdr->size_bytes == 0 || hdr->size_bytes > len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+
+  if (!Check(saw_alpha_enable, "blit_alpha_locked emits D3DRS_ALPHABLENDENABLE")) {
+    return false;
+  }
+  if (!Check(saw_src_blend, "blit_alpha_locked emits D3DRS_SRCBLEND")) {
+    return false;
+  }
+  if (!Check(saw_dst_blend, "blit_alpha_locked emits D3DRS_DESTBLEND")) {
+    return false;
+  }
+  if (!Check(saw_blend_op, "blit_alpha_locked emits D3DRS_BLENDOP")) {
+    return false;
+  }
+
+  if (!Check(alpha_enable_val == 1u, "D3DRS_ALPHABLENDENABLE == TRUE")) {
+    return false;
+  }
+  if (!Check(src_blend_val == kBlendSrcAlpha, "D3DRS_SRCBLEND == SRCALPHA")) {
+    return false;
+  }
+  if (!Check(dst_blend_val == kBlendInvSrcAlpha, "D3DRS_DESTBLEND == INVSRCALPHA")) {
+    return false;
+  }
+  return Check(blend_op_val == kBlendOpAdd, "D3DRS_BLENDOP == ADD");
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -12947,6 +13059,7 @@ int main() {
   failures += !aerogpu::TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload();
   failures += !aerogpu::TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload();
   failures += !aerogpu::TestGetRenderTargetData16BitEmitsDirtyRangeOrUpload();
+  failures += !aerogpu::TestBlitAlphaLockedUsesSrcAlphaBlend();
   failures += !aerogpu::TestKmdQueryGetScanLineClearsOutputsOnFailure();
   return failures ? 1 : 0;
 }

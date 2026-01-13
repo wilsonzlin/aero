@@ -798,6 +798,19 @@ struct Device {
   uint32_t current_texture_palette = 0;
 #endif
 
+  // D3D9 device cursor state (software cursor composited at Present time).
+  //
+  // Win7-era D3D9 applications frequently rely on IDirect3DDevice9 cursor APIs
+  // (SetCursorProperties/SetCursorPosition/ShowCursor) instead of the Win32
+  // cursor. AeroGPU implements these as a minimal software overlay in the UMD.
+  BOOL cursor_visible = FALSE;
+  int32_t cursor_x = 0;
+  int32_t cursor_y = 0;
+  uint32_t cursor_hot_x = 0;
+  uint32_t cursor_hot_y = 0;
+  Resource* cursor_bitmap = nullptr;
+  uint64_t cursor_bitmap_serial = 0;
+
   // Built-in resources used for blit/copy operations (StretchRect/Blt).
   Shader* builtin_copy_vs = nullptr;
   Shader* builtin_copy_ps = nullptr;

@@ -22,6 +22,12 @@ The command stream does **not** reference resources by a per-submission “alloc
   - For **shared** allocations, dxgkrnl preserves and replays the private-data blob on `OpenResource`/`OpenAllocation` so all guest processes observe consistent IDs.
   - `backing_alloc_id = 0` means “host allocated” (no guest backing). Portable/non-WDDM builds typically use host-allocated resources and leave `backing_alloc_id = 0`. In Win7/WDDM builds, most default-pool resources are backed by WDDM allocations and use non-zero `alloc_id` values so the KMD can build a per-submit `alloc_id → GPA` table for the emulator.
 
+## D3D9 device cursor (software overlay)
+
+The Win7 D3D9 runtime exposes a device-managed cursor API (`SetCursorProperties`, `SetCursorPosition`, `ShowCursor`).
+AeroGPU implements this as a **software cursor overlay** composited over the present source surface immediately before emitting
+`AEROGPU_CMD_PRESENT_EX`. Supported cursor bitmap formats: `A8R8G8B8`, `X8R8G8B8`, `A8B8G8R8`.
+
 ## Win7/WDDM submission callbacks (render vs present)
 
 On Win7/WDDM 1.1, the D3D9 runtime provides a `D3DDDI_DEVICECALLBACKS` table during `CreateDevice`. The UMD must submit DMA buffers back to dxgkrnl via these callbacks so the KMD can:

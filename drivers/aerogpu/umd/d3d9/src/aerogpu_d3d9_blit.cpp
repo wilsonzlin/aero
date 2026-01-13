@@ -52,6 +52,8 @@ constexpr uint32_t kD3d9RsSeparateAlphaBlendEnable = 206;
 // D3DBLEND / D3DBLENDOP / D3DCULL subset.
 constexpr uint32_t kD3d9BlendZero = 1;
 constexpr uint32_t kD3d9BlendOne = 2;
+constexpr uint32_t kD3d9BlendSrcAlpha = 5;
+constexpr uint32_t kD3d9BlendInvSrcAlpha = 6;
 constexpr uint32_t kD3d9BlendOpAdd = 1;
 constexpr uint32_t kD3d9CullNone = 1;
 
@@ -789,12 +791,13 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
 
 } // namespace
 
-HRESULT blit_locked(Device* dev,
-                    Resource* dst,
-                    const RECT* dst_rect_in,
-                    Resource* src,
-                    const RECT* src_rect_in,
-                    uint32_t filter) {
+static HRESULT blit_locked_impl(Device* dev,
+                                Resource* dst,
+                                const RECT* dst_rect_in,
+                                Resource* src,
+                                const RECT* src_rect_in,
+                                uint32_t filter,
+                                bool alpha_blend) {
   if (!dev || !dst || !src) {
     return E_INVALIDARG;
   }
@@ -901,10 +904,10 @@ HRESULT blit_locked(Device* dev,
 
   // Configure a conservative copy state.
   if (!set_render_state_locked(dev, kD3d9RsScissorTestEnable, TRUE) ||
-      !set_render_state_locked(dev, kD3d9RsAlphaBlendEnable, FALSE) ||
+      !set_render_state_locked(dev, kD3d9RsAlphaBlendEnable, alpha_blend ? TRUE : FALSE) ||
       !set_render_state_locked(dev, kD3d9RsSeparateAlphaBlendEnable, FALSE) ||
-      !set_render_state_locked(dev, kD3d9RsSrcBlend, kD3d9BlendOne) ||
-      !set_render_state_locked(dev, kD3d9RsDestBlend, kD3d9BlendZero) ||
+      !set_render_state_locked(dev, kD3d9RsSrcBlend, alpha_blend ? kD3d9BlendSrcAlpha : kD3d9BlendOne) ||
+      !set_render_state_locked(dev, kD3d9RsDestBlend, alpha_blend ? kD3d9BlendInvSrcAlpha : kD3d9BlendZero) ||
       !set_render_state_locked(dev, kD3d9RsBlendOp, kD3d9BlendOpAdd) ||
       !set_render_state_locked(dev, kD3d9RsColorWriteEnable, 0xFu) ||
       !set_render_state_locked(dev, kD3d9RsZEnable, 0u) ||
@@ -1045,6 +1048,24 @@ HRESULT blit_locked(Device* dev,
   draw->first_instance = 0;
   (void)restore;
   return S_OK;
+}
+
+HRESULT blit_locked(Device* dev,
+                    Resource* dst,
+                    const RECT* dst_rect_in,
+                    Resource* src,
+                    const RECT* src_rect_in,
+                    uint32_t filter) {
+  return blit_locked_impl(dev, dst, dst_rect_in, src, src_rect_in, filter, /*alpha_blend=*/false);
+}
+
+HRESULT blit_alpha_locked(Device* dev,
+                          Resource* dst,
+                          const RECT* dst_rect_in,
+                          Resource* src,
+                          const RECT* src_rect_in,
+                          uint32_t filter) {
+  return blit_locked_impl(dev, dst, dst_rect_in, src, src_rect_in, filter, /*alpha_blend=*/true);
 }
 
 HRESULT color_fill_locked(Device* dev, Resource* dst, const RECT* dst_rect_in, uint32_t color_argb) {
