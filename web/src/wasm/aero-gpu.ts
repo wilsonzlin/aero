@@ -199,9 +199,15 @@ export function upload_rgba8888_dirty_rects(frame: Uint8Array, strideBytes: numb
 /**
  * Request a screenshot from the wasm presenter backend.
  *
- * Semantics: returns a tight-packed RGBA8 buffer for the **source framebuffer**
- * (top-left origin, `width*height*4` bytes). This is *not* a capture of the
- * presented/canvas output (no scaling/letterboxing/color-management is applied).
+ * Semantics (tight-packed RGBA8, top-left origin):
+ *
+ * - If the AeroGPU D3D9 executor is initialized (via `init_aerogpu_d3d9()`), this captures the
+ *   last-presented **scanout**.
+ * - Otherwise, this captures the legacy presenter's **source framebuffer** (the last RGBA8 frame
+ *   uploaded via `present_rgba8888*()` / `upload_rgba8888*()`).
+ *
+ * In both cases, this is *not* a readback of the browser's presented canvas output (no
+ * scaling/letterboxing/browser color management is involved).
  *
  * Prefer `request_screenshot_info()` if you also need the dimensions.
  */
@@ -296,10 +302,14 @@ export type ScreenshotInfo = {
   width: number;
   height: number;
   /**
-   * RGBA8 bytes for the **source framebuffer** (tight-packed, top-left origin).
+   * Screenshot RGBA8 bytes (tight-packed, top-left origin).
+   *
+   * Semantics:
+   * - D3D9 executor initialized: last-presented **scanout**.
+   * - Otherwise: legacy presenter's **source framebuffer**.
    *
    * This is intended for deterministic hashing / test automation; it is not a
-   * "what the user sees" capture of the presented canvas.
+   * "what the user sees on the browser canvas" capture.
    */
   rgba8: ArrayBuffer;
   origin?: "top-left";
@@ -308,7 +318,7 @@ export type ScreenshotInfo = {
 /**
  * Request a screenshot along with its dimensions.
  *
- * See `ScreenshotInfo.rgba8` for the screenshot contract (source framebuffer readback).
+ * See `ScreenshotInfo.rgba8` for the screenshot contract (scanout vs source framebuffer).
  */
 export async function request_screenshot_info(): Promise<ScreenshotInfo> {
   const mod = requireLoaded();

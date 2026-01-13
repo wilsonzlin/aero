@@ -3362,21 +3362,13 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             syncCursorToPresenter();
           }
 
-           try {
-             const shot = await (async () => {
-               if (!presenter) {
-                 throw new PresenterError("not_initialized", "Presenter not initialized");
-               }
-               const p = presenter as Presenter & {
-                 screenshotPresented?: () => Promise<{ width: number; height: number; pixels: ArrayBuffer }>;
-               };
-               if (typeof p.screenshotPresented === "function") {
-                 return await p.screenshotPresented();
-               }
-
-               // Best-effort fallback when a backend can't read back presented output yet.
-               return await presenter.screenshot();
-             })();
+          try {
+            // Capture a snapshot of the presenter reference so we don't race with teardown/re-init.
+            const p = presenter;
+            if (!p) {
+              throw new PresenterError("not_initialized", "Presenter not initialized");
+            }
+            const shot = p.screenshotPresented ? await p.screenshotPresented() : await p.screenshot();
 
             postToMain(
               {
