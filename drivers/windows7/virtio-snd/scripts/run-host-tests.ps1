@@ -25,7 +25,8 @@
   full suite.
 
 .PARAMETER Clean
-  Delete the build directory before configuring.
+  Delete the build directory before configuring. This is useful when switching generators/toolchains
+  (for example Ninja <-> Visual Studio) or after upgrading CMake/Visual Studio.
 
 .PARAMETER BuildDir
   Build directory to use. If relative, it is interpreted relative to the repo root.

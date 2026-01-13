@@ -446,6 +446,15 @@ Visual Studio). For single-config generators (Ninja/Makefiles), the script confi
 `CMAKE_BUILD_TYPE=Release`; to do a Debug build in that mode, configure/build manually with
 `-DCMAKE_BUILD_TYPE=Debug`.
 
+Troubleshooting (Windows):
+
+- If you see “`cl.exe` not found” / CMake cannot compile, open a **Developer PowerShell/Command Prompt
+  for VS** (so MSVC environment variables are set).
+- To force a specific CMake generator, set `CMAKE_GENERATOR` and re-run with `-Clean`:
+  - PowerShell: `$env:CMAKE_GENERATOR = 'Ninja'` or `$env:CMAKE_GENERATOR = 'Visual Studio 17 2022'`
+- If script execution is blocked by policy, use `-ExecutionPolicy Bypass` (as shown) or run
+  `Set-ExecutionPolicy -Scope Process Bypass`.
+
 Or run directly:
 
 ```sh
