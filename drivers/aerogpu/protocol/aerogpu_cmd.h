@@ -477,7 +477,7 @@ struct aerogpu_cmd_bind_shaders {
   aerogpu_handle_t vs; /* 0 = unbound */
   aerogpu_handle_t ps; /* 0 = unbound */
   aerogpu_handle_t cs; /* 0 = unbound */
-  /* If non-zero, interpreted as the geometry shader (GS) handle. */
+  /* If non-zero, interpreted as the geometry shader (GS) handle. Struct remains a packed 24 bytes. */
   uint32_t reserved0;
 };
 #pragma pack(pop)

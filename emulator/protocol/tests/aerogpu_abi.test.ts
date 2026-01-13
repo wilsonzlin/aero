@@ -1069,6 +1069,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_SHADER_STAGE_VERTEX"), BigInt(AerogpuShaderStage.Vertex));
   assert.equal(konst("AEROGPU_SHADER_STAGE_PIXEL"), BigInt(AerogpuShaderStage.Pixel));
   assert.equal(konst("AEROGPU_SHADER_STAGE_COMPUTE"), BigInt(AerogpuShaderStage.Compute));
+  assert.equal(konst("AEROGPU_SHADER_STAGE_GEOMETRY"), BigInt(AerogpuShaderStage.Geometry));
 
   assert.equal(konst("AEROGPU_INDEX_FORMAT_UINT16"), BigInt(AerogpuIndexFormat.Uint16));
   assert.equal(konst("AEROGPU_INDEX_FORMAT_UINT32"), BigInt(AerogpuIndexFormat.Uint32));
