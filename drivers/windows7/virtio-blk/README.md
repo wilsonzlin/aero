@@ -71,9 +71,10 @@ In **Device Manager** → device **Properties** → **Resources**:
 You can also use `aero-virtio-selftest.exe`:
 
 - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|...` markers on stdout/COM1.
-- The `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|...` marker includes `irq_mode=<intx|msi|msix>` and the currently programmed
-  virtio MSI-X vectors (`msix_config_vector`, `msix_queue_vector`), so you can confirm whether message-signaled interrupts
-  were used and what mapping the driver ended up programming.
+- The `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|...` marker includes interrupt diagnostics from the miniport IOCTL query:
+  - `irq_mode=<intx|msi|msix>`
+  - `msix_config_vector=0x....`
+  - `msix_queue_vector=0x....` (queue0)
 - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).

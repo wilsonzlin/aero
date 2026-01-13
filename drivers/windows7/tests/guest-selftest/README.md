@@ -131,9 +131,10 @@ The host harness parses these markers from COM1 serial:
 
 ```
  AERO_VIRTIO_SELFTEST|START|...
- AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
- # Optional: virtio-blk interrupt diagnostics (from IOCTL query):
- # AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=intx/msi/msix|msix_config_vector=0x....|msix_queue_vector=0x....
+ # virtio-blk includes interrupt diagnostics (from the miniport IOCTL query) as key/value fields so the
+ # host harness can mirror them into a host-side marker (VIRTIO_BLK_IRQ). Older guests may emit just
+ # `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS` with no extra fields.
+ AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001
  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
 

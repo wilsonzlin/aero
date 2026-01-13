@@ -53,12 +53,13 @@ drivers/windows7/tests/
   - `C:\aero-virtio-selftest.log`
   - `COM1` (serial)
 
-The selftest emits machine-parseable markers:
-
-```
- AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
- AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
- AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+ The selftest emits machine-parseable markers:
+ 
+ ```
+ # virtio-blk includes interrupt diagnostics (from the miniport IOCTL query) as key/value fields:
+ AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001
+  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
+  AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
 
  # Optional: end-to-end virtio-input event delivery (requires `--test-input-events` in the guest and host-side QMP injection):
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
@@ -67,9 +68,9 @@ The selftest emits machine-parseable markers:
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
  # or:
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
- AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
+  AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
