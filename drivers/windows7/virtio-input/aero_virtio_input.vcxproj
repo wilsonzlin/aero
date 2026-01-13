@@ -89,6 +89,7 @@
     <ClCompile Include="src\hid_read.c" />
     <ClCompile Include="src\hid_translate.c" />
     <ClCompile Include="src\hid_write.c" />
+    <ClCompile Include="src\led_report_parse.c" />
     <ClCompile Include="src\log.c" />
     <ClCompile Include="src\power.c" />
     <ClCompile Include="src\queue.c" />
@@ -108,6 +109,7 @@
   <ItemGroup>
     <ClInclude Include="src\descriptor.h" />
     <ClInclude Include="src\hid_translate.h" />
+    <ClInclude Include="src\led_report_parse.h" />
     <ClInclude Include="src\log.h" />
     <ClInclude Include="src\virtio_input.h" />
     <ClInclude Include="src\virtio_input_proto.h" />

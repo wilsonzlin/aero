@@ -30,6 +30,9 @@
     <ClCompile Include="src\hid_translate.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\led_report_parse.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\power.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -78,6 +81,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\hid_translate.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\led_report_parse.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\virtio_input.h">

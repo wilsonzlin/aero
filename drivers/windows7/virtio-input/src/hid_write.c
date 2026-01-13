@@ -1,4 +1,5 @@
 #include "virtio_input.h"
+#include "led_report_parse.h"
 
 typedef struct _VIRTIO_INPUT_WRITE_REQUEST_CONTEXT {
     PHID_XFER_PACKET XferPacket;
@@ -135,23 +136,14 @@ static NTSTATUS VirtioInputParseKeyboardLedReport(_In_ const HID_XFER_PACKET *Pa
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (Packet->reportBuffer == NULL || Packet->reportBufferLen == 0) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     if (ReportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD) {
         return STATUS_NOT_SUPPORTED;
     }
-
-    const UCHAR *buf = (const UCHAR *)Packet->reportBuffer;
-
-    if (Packet->reportBufferLen >= 2 && buf[0] == ReportId) {
-        *LedBitfield = buf[1];
-        return STATUS_SUCCESS;
-    }
-
-    *LedBitfield = buf[0];
-    return STATUS_SUCCESS;
+    return virtio_input_parse_keyboard_led_output_report(
+        (unsigned char)ReportId,
+        (const unsigned char *)Packet->reportBuffer,
+        (size_t)Packet->reportBufferLen,
+        (unsigned char *)LedBitfield);
 }
 
 NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t InputBufferLength)
