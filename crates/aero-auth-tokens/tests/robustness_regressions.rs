@@ -151,3 +151,43 @@ fn jwt_rejects_malformed_json_payload_even_with_valid_signature() {
         "expected malformed-json payload to be rejected"
     );
 }
+
+#[test]
+fn session_token_valid_signature_but_huge_non_json_payload_is_rejected_without_panicking() {
+    let secret = b"unit-test-secret";
+    let now_ms = 0;
+
+    // Force the verifier to:
+    // - accept the signature
+    // - base64url-decode a large payload
+    // - reject it safely when JSON parsing fails
+    //
+    // Use a payload that decodes to lots of NUL bytes (never valid JSON).
+    let payload_b64 = "A".repeat(256_000);
+    let sig = hmac_sha256(secret, payload_b64.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{payload_b64}.{sig_b64}");
+
+    let res = std::panic::catch_unwind(|| verify_gateway_session_token(&token, secret, now_ms));
+    assert!(res.is_ok(), "verify_gateway_session_token panicked");
+    assert!(res.unwrap().is_none(), "expected huge non-json payload to be rejected");
+}
+
+#[test]
+fn jwt_valid_signature_but_huge_non_json_payload_is_rejected_without_panicking() {
+    let secret = b"unit-test-secret";
+    let now_sec = 0;
+
+    // See session_token_valid_signature_but_huge_non_json_payload_is_rejected_without_panicking.
+    let header = br#"{"alg":"HS256"}"#;
+    let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+    let payload_b64 = "A".repeat(256_000);
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = hmac_sha256(secret, signing_input.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{signing_input}.{sig_b64}");
+
+    let res = std::panic::catch_unwind(|| verify_hs256_jwt(&token, secret, now_sec));
+    assert!(res.is_ok(), "verify_hs256_jwt panicked");
+    assert!(res.unwrap().is_none(), "expected huge non-json payload to be rejected");
+}
