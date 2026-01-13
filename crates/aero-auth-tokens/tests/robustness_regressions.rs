@@ -220,3 +220,73 @@ fn jwt_rejects_payloads_over_internal_size_cap() {
 
     assert!(verify_hs256_jwt(&token, secret, 0).is_none());
 }
+
+#[test]
+fn session_token_rejects_signature_over_internal_size_cap() {
+    let secret = b"unit-test-secret";
+
+    let payload = br#"{"v":1,"sid":"abc","exp":12345}"#;
+    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    // Over the verifier's signature cap (keep divisible-by-4 so it is well-formed base64).
+    let sig_b64 = "A".repeat(132);
+    let token = format!("{payload_b64}.{sig_b64}");
+
+    assert!(verify_gateway_session_token(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_signature_over_internal_size_cap() {
+    let secret = b"unit-test-secret";
+
+    let header = br#"{"alg":"HS256"}"#;
+    let payload = br#"{"sid":"abc","exp":1,"iat":0}"#;
+    let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    // Over the verifier's signature cap.
+    let sig_b64 = "A".repeat(132);
+    let token = format!("{header_b64}.{payload_b64}.{sig_b64}");
+
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_header_over_internal_size_cap() {
+    let secret = b"unit-test-secret";
+
+    // Over the verifier's header cap.
+    let header_b64 = "A".repeat(4 * 1024 + 4);
+    let payload_b64 = "AA".repeat(8);
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(hmac_sha256(secret, b"dummy"));
+    let token = format!("{header_b64}.{payload_b64}.{sig_b64}");
+
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
+}
+
+#[test]
+fn session_token_rejects_non_base64url_payload_even_if_signature_matches() {
+    let secret = b"unit-test-secret";
+
+    // Base64url segment with an invalid character ('!'), but provide a matching signature for the
+    // raw bytes to ensure we exercise the pre-validation path.
+    let payload_b64 = "ab!cd";
+    let sig = hmac_sha256(secret, payload_b64.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{payload_b64}.{sig_b64}");
+
+    assert!(verify_gateway_session_token(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_non_base64url_payload_even_if_signature_matches() {
+    let secret = b"unit-test-secret";
+
+    let header = br#"{"alg":"HS256"}"#;
+    let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+    let payload_b64 = "ab!cd";
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = hmac_sha256(secret, signing_input.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{signing_input}.{sig_b64}");
+
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
+}
