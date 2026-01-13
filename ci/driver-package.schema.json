@@ -30,6 +30,15 @@
       },
       "uniqueItems": true
     },
+    "requiredBuildOutputFiles": {
+      "type": "array",
+      "description": "Optional list of additional files (paths relative to the per-arch build output directory under out/drivers/<driver>/<arch>/) that must exist after building. CI will fail packaging if any listed path is missing. Intended for auxiliary build products that should ship alongside the driver (for example, in-guest debug utilities such as aerogpu_dbgctl.exe). Paths must be relative (no absolute paths; cannot escape the build output directory).",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
     "additionalFiles": {
       "type": "array",
       "description": "Additional files (paths relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts. Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory). CI refuses to include common binary extensions via this mechanism (currently: .sys, .dll, .exe, .cat, .msi, .cab).",

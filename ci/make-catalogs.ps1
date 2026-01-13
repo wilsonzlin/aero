@@ -215,6 +215,7 @@ function Read-DriverPackageManifest {
       ManifestPath = $manifestPath
       InfFiles = $null
       Wow64Files = @()
+      RequiredBuildOutputFiles = @()
       AdditionalFiles = @()
       WdfCoInstaller = $null
     }
@@ -282,6 +283,26 @@ function Read-DriverPackageManifest {
     }
   }
 
+  $requiredBuildOutFiles = @()
+  if ($null -ne $data.requiredBuildOutputFiles) {
+    $seen = @{}
+    foreach ($entry in @($data.requiredBuildOutputFiles)) {
+      if ($null -eq $entry) { continue }
+      $s = ([string]$entry).Trim()
+      if ($s.Length -eq 0) { continue }
+
+      if ([System.IO.Path]::IsPathRooted($s)) {
+        throw "Invalid manifest '$manifestPath': requiredBuildOutputFiles entry '$s' must be a relative path."
+      }
+
+      $key = $s.ToLowerInvariant()
+      if ($seen.ContainsKey($key)) { continue }
+      $seen[$key] = $true
+
+      $requiredBuildOutFiles += $s
+    }
+  }
+
   $additional = @()
   if ($null -ne $data.additionalFiles) {
     foreach ($entry in @($data.additionalFiles)) {
@@ -322,6 +343,7 @@ function Read-DriverPackageManifest {
     ManifestPath = $manifestPath
     InfFiles = $infFiles
     Wow64Files = $wow64Files
+    RequiredBuildOutputFiles = $requiredBuildOutFiles
     AdditionalFiles = $additional
     WdfCoInstaller = $wdf
   }
@@ -551,6 +573,13 @@ foreach ($driverBuildDir in $driverBuildDirs) {
 
     $buildOutDir = Resolve-DriverBuildOutputDir -DriverBuildDir $driverBuildDir.FullName -Arch $arch -OsListForArch $osListForArch
     Write-Host "     Using build outputs: $buildOutDir"
+
+    foreach ($relPath in $manifest.RequiredBuildOutputFiles) {
+      $src = Resolve-ChildPathUnderRoot -Root $buildOutDir -ChildPath $relPath
+      if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+        throw "Driver '$driverNameForLog' declares requiredBuildOutputFiles '$relPath' via '$($manifest.ManifestPath)', but it was not found in build output directory: $src"
+      }
+    }
 
     Copy-Item -Path (Join-Path -Path $buildOutDir -ChildPath '*') -Destination $packageDir -Recurse -Force -ErrorAction Stop
 

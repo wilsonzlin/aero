@@ -44,6 +44,64 @@ function Invoke-Capture([string]$file, [string[]]$args) {
     }
 }
 
+function Get-TextExcerpt([string]$text, [int]$maxLines, [int]$maxChars) {
+    if (-not $text) { return "" }
+    $t = "" + $text
+    if ($maxChars -gt 0 -and $t.Length -gt $maxChars) {
+        $t = $t.Substring(0, $maxChars)
+    }
+    $lines = $t -split "`r?`n"
+    $out = @()
+    $count = 0
+    foreach ($line in $lines) {
+        if ($count -ge $maxLines) { break }
+        $s = ("" + $line).TrimEnd()
+        if ($s.Length -eq 0) { continue }
+        $out += $s
+        $count++
+    }
+    return ($out -join "`r`n")
+}
+
+function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
+    $searched = @()
+
+    # Prefer a binary matching the OS bitness, but fall back to the other one (x86 runs under WOW64).
+    $preferred = @()
+    $fallback = @()
+
+    $preferred += (Join-Path $scriptDir "aerogpu_dbgctl.exe")
+    $fallback += (Join-Path $scriptDir "aerogpu_dbgctl.exe")
+
+    if ($is64) {
+        $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe")
+        $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\aerogpu_dbgctl.exe")
+    } else {
+        $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe")
+        $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "drivers\amd64\aerogpu\aerogpu_dbgctl.exe")
+    }
+
+    foreach ($p in $preferred) { $searched += $p }
+    foreach ($p in $fallback) { $searched += $p }
+
+    foreach ($p in $preferred) {
+        if (Test-Path $p) {
+            return @{ found = $true; path = $p; searched = $searched }
+        }
+    }
+    foreach ($p in $fallback) {
+        if (Test-Path $p) {
+            return @{ found = $true; path = $p; searched = $searched }
+        }
+    }
+
+    return @{ found = $false; path = $null; searched = $searched }
+}
+
 function Parse-CmdQuotedList([string]$value) {
     # Parse a CMD-style list of quoted values:
     #   "A" "B" "C"
@@ -630,6 +688,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         "smoke_disk",
         "smoke_network",
         "smoke_graphics",
+        "aerogpu_dbgctl",
         "smoke_audio",
         "smoke_input"
     )
@@ -761,9 +820,9 @@ $storagePreseedSkipped = (Test-Path $storagePreseedSkipMarker)
 
 $report = @{
     schema_version = 1
-    tool = @{
-         name = "Aero Guest Tools Verify"
-         version = "2.4.1"
+     tool = @{
+          name = "Aero Guest Tools Verify"
+         version = "2.5.0"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -2893,6 +2952,77 @@ try {
     Add-Check "smoke_graphics" "Smoke Test: Graphics" $gfxStatus $gfxSummary @{ video_controllers = $controllers } $gfxDetails
 } catch {
     Add-Check "smoke_graphics" "Smoke Test: Graphics" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- AeroGPU dbgctl (optional in-guest diagnostics) ---
+try {
+    $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
+    $dbgctlInfo = Find-AeroGpuDbgctl $scriptDir $is64
+    $dbgctlPath = $dbgctlInfo.path
+
+    if (-not $dbgctlInfo.found -or -not $dbgctlPath) {
+        $data = @{
+            found = $false
+            searched = $dbgctlInfo.searched
+        }
+        Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" "WARN" "aerogpu_dbgctl.exe not found on Guest Tools media; skipping AeroGPU dbgctl diagnostics." $data @()
+    } else {
+        $statusFile = Join-Path $outDir "dbgctl_status.txt"
+        $ringFile = Join-Path $outDir "dbgctl_dump_ring.txt"
+        $vblankFile = Join-Path $outDir "dbgctl_dump_vblank.txt"
+
+        $statusCap = Invoke-Capture $dbgctlPath @("--timeout-ms", "2000", "--status")
+        $ringCap = Invoke-Capture $dbgctlPath @("--timeout-ms", "2000", "--dump-ring", "--ring-id", "0")
+        $vblankCap = Invoke-Capture $dbgctlPath @("--timeout-ms", "2000", "--dump-vblank")
+
+        try { Set-Content -Path $statusFile -Value $statusCap.output -Encoding UTF8 } catch { }
+        try { Set-Content -Path $ringFile -Value $ringCap.output -Encoding UTF8 } catch { }
+        try { Set-Content -Path $vblankFile -Value $vblankCap.output -Encoding UTF8 } catch { }
+
+        $dbgStatus = "PASS"
+        if ($statusCap.exit_code -ne 0) { $dbgStatus = "WARN" }
+        if ($ringCap.exit_code -ne 0) { $dbgStatus = Merge-Status $dbgStatus "WARN" }
+        if ($vblankCap.exit_code -ne 0) { $dbgStatus = Merge-Status $dbgStatus "WARN" }
+
+        $summary = "aerogpu_dbgctl --status exit_code=" + $statusCap.exit_code
+        if ($statusCap.exit_code -ne 0) {
+            $summary += " (AeroGPU may not be installed/bound yet; see dbgctl_*.txt outputs)."
+        }
+
+        $details = @()
+        $details += "Tool: " + $dbgctlPath
+        $details += "Saved: " + $statusFile
+        $details += "Saved: " + $ringFile
+        $details += "Saved: " + $vblankFile
+        $excerpt = Get-TextExcerpt $statusCap.output 20 4000
+        if ($excerpt -and $excerpt.Length -gt 0) {
+            foreach ($line in $excerpt -split "`r?`n") {
+                $details += ("status: " + $line)
+            }
+        }
+
+        $data = @{
+            found = $true
+            path = $dbgctlPath
+            searched = $dbgctlInfo.searched
+            status = @{
+                exit_code = $statusCap.exit_code
+                output_path = $statusFile
+            }
+            dump_ring = @{
+                exit_code = $ringCap.exit_code
+                output_path = $ringFile
+            }
+            dump_vblank = @{
+                exit_code = $vblankCap.exit_code
+                output_path = $vblankFile
+            }
+        }
+
+        Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" $dbgStatus $summary $data $details
+    }
+} catch {
+    Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Smoke test: audio ---

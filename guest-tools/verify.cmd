@@ -44,5 +44,6 @@ if "%EXITCODE%"=="0" (
 echo Reports:
 echo   C:\AeroGuestTools\report.json
 echo   C:\AeroGuestTools\report.txt
+echo   C:\AeroGuestTools\dbgctl_*.txt  (if aerogpu_dbgctl.exe is present)
 exit /b %EXITCODE%
 

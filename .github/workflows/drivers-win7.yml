@@ -559,6 +559,16 @@ jobs:
           }
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\build-drivers.ps1' -ToolchainJson 'out\toolchain.json'
 
+      - name: Build AeroGPU dbgctl tool (ci/build-aerogpu-dbgctl.ps1)
+        if: steps.detect.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'ci\build-aerogpu-dbgctl.ps1')) {
+            throw "Expected script ci\build-aerogpu-dbgctl.ps1 to exist."
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\build-aerogpu-dbgctl.ps1' -ToolchainJson 'out\toolchain.json'
+
       - name: Detect built driver binaries
         id: built
         if: steps.detect.outputs.skip != 'true'
@@ -620,6 +630,15 @@ jobs:
             throw "Expected signing certificate to exist at out/certs/aero-test.cer."
           }
 
+          foreach ($p in @(
+            'out/packages/aerogpu/x86/tools/aerogpu_dbgctl.exe',
+            'out/packages/aerogpu/x64/tools/aerogpu_dbgctl.exe'
+          )) {
+            if (!(Test-Path -LiteralPath $p -PathType Leaf)) {
+              throw "Expected AeroGPU dbgctl tool to be staged in signed package output: $p"
+            }
+          }
+
       - name: Upload signed packages (out/packages + aero-test.cer)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
         uses: actions/upload-artifact@v4
@@ -670,6 +689,19 @@ jobs:
             }
             $f = Get-Item -LiteralPath $p
             Write-Host ("{0} - {1} bytes" -f $f.Name, $f.Length)
+          }
+
+          $manifestPath = 'out\artifacts\manifest.json'
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          $paths = @()
+          foreach ($f in $manifest.files) { $paths += ("" + $f.path) }
+          foreach ($required in @(
+            'drivers/x86/aerogpu/tools/aerogpu_dbgctl.exe',
+            'drivers/amd64/aerogpu/tools/aerogpu_dbgctl.exe'
+          )) {
+            if (-not ($paths -contains $required)) {
+              throw "Guest Tools manifest is missing required dbgctl payload: $required"
+            }
           }
 
       - name: Upload artifacts (out/artifacts/)
