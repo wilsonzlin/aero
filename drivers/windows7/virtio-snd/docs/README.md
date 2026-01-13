@@ -246,7 +246,10 @@ Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):
 Notes:
 
 * **Queues:** `controlq`/`eventq`/`txq`/`rxq` are initialized per contract v1; render uses `controlq` (0) + `txq` (2), capture uses `controlq` (0) + `rxq` (3).
-  - `eventq` is initialized for contract conformance but is not currently used by the PortCls endpoints.
+  - `eventq` is initialized for contract conformance and is drained best-effort. While the Aero contract v1 does not define
+    any required event messages, the driver parses standard virtio-snd **jack** events (when present) and exposes the
+    resulting plug/unplug state via topology jack properties (`KSPROPERTY_JACK_DESCRIPTION*`).
+    Audio streaming remains correct even if eventq is silent or absent.
 * **Interrupts:** **INTx** is required by contract v1. MSI/MSI-X is an optional enhancement that requires Windows 7 INF opt-in and driver-side virtio MSI-X vector programming.
 * **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32) and `VIRTIO_F_RING_INDIRECT_DESC` (bit 28).
 
