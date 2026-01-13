@@ -317,6 +317,12 @@ enum hid_translate_report_mask {
 };
 
 /* Sizes (bytes) of input reports emitted by the translator. */
+/*
+ * NOTE: `HID_TRANSLATE_MAX_REPORT_SIZE` is used by both the host-side unit tests
+ * and the in-driver report ring. Keep it derived from the per-report sizes so
+ * adding a new (larger) report type can't silently truncate buffers.
+ */
+#define HID_TRANSLATE_MAX2(a, b) ((a) > (b) ? (a) : (b))
 enum hid_translate_report_size {
   HID_TRANSLATE_KEYBOARD_REPORT_SIZE = 9,
   HID_TRANSLATE_MOUSE_REPORT_SIZE = 6,
@@ -324,8 +330,11 @@ enum hid_translate_report_size {
   HID_TRANSLATE_TABLET_REPORT_SIZE = 6,
 
   /* Max report size across all supported report IDs. */
-  HID_TRANSLATE_MAX_REPORT_SIZE = HID_TRANSLATE_KEYBOARD_REPORT_SIZE,
+  HID_TRANSLATE_MAX_REPORT_SIZE =
+      HID_TRANSLATE_MAX2(HID_TRANSLATE_MAX2(HID_TRANSLATE_KEYBOARD_REPORT_SIZE, HID_TRANSLATE_MOUSE_REPORT_SIZE),
+                         HID_TRANSLATE_MAX2(HID_TRANSLATE_CONSUMER_REPORT_SIZE, HID_TRANSLATE_TABLET_REPORT_SIZE)),
 };
+#undef HID_TRANSLATE_MAX2
 
 C_ASSERT(HID_TRANSLATE_KEYBOARD_REPORT_SIZE == 9);
 C_ASSERT(HID_TRANSLATE_MOUSE_REPORT_SIZE == 6);
