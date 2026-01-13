@@ -1,5 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+mod common;
+
 use std::fs;
 use std::io::Cursor;
 use std::io::{Seek, Write};
@@ -816,10 +818,33 @@ fn snapshot_validate_supports_multi_cpu_and_rejects_corrupt_internal_len() {
     let mut cursor = Cursor::new(Vec::new());
     aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
     let bytes = cursor.into_inner();
+    let mmus_entries = vec![
+        (
+            0u32,
+            MmuState {
+                cr3: 0x1111,
+                efer: 0x2222,
+                ..Default::default()
+            },
+        ),
+        (
+            1u32,
+            MmuState {
+                cr3: 0x3333,
+                efer: 0x4444,
+                ..Default::default()
+            },
+        ),
+    ];
+    let bytes = common::with_mmus_section(&bytes, 2, &mmus_entries);
 
     // Sanity: snapshot should contain a CPUS section.
     let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&bytes)).unwrap();
     assert!(index.sections.iter().any(|s| s.id == SectionId::CPUS));
+    assert!(index
+        .sections
+        .iter()
+        .any(|s| s.id == common::MMUS_SECTION_ID));
 
     fs::write(&good, &bytes).unwrap();
 
@@ -921,6 +946,48 @@ fn snapshot_validate_rejects_duplicate_mmu_sections() {
 }
 
 #[test]
+fn snapshot_validate_rejects_duplicate_mmus_sections() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_mmus.aerosnap");
+
+    let mut source = MultiCpuSource::new(4096);
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let bytes = cursor.into_inner();
+    let mmus_entries = vec![(0u32, MmuState::default()), (1u32, MmuState::default())];
+    let mut bytes = common::with_mmus_section(&bytes, 2, &mmus_entries);
+
+    append_duplicate_section(&mut bytes, common::MMUS_SECTION_ID);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate MMUS section"));
+}
+
+#[test]
+fn snapshot_validate_rejects_snapshots_with_both_mmu_and_mmus_sections() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("mmu_and_mmus.aerosnap");
+    write_snapshot(&snap);
+
+    let mut bytes = fs::read(&snap).unwrap();
+    let mmus_section = common::encode_mmus_section(2, &[(0u32, MmuState::default())]);
+    bytes.extend_from_slice(&mmus_section);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "snapshot contains both MMU and MMUS",
+        ));
+}
+
+#[test]
 fn snapshot_validate_rejects_duplicate_devices_sections() {
     let tmp = tempfile::tempdir().unwrap();
     let snap = tmp.path().join("dup_devices_section.aerosnap");
@@ -962,7 +1029,9 @@ fn snapshot_validate_rejects_duplicate_apic_ids_in_cpus_section() {
     let mut source = MultiCpuSource::new(4096);
     let mut cursor = Cursor::new(Vec::new());
     aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
-    let mut bytes = cursor.into_inner();
+    let bytes = cursor.into_inner();
+    let mmus_entries = vec![(0u32, MmuState::default()), (1u32, MmuState::default())];
+    let mut bytes = common::with_mmus_section(&bytes, 2, &mmus_entries);
     corrupt_second_vcpu_apic_id(&mut bytes, 0);
     fs::write(&snap, &bytes).unwrap();
 
@@ -1435,7 +1504,9 @@ fn snapshot_validate_rejects_zero_cpu_count() {
     let mut source = MultiCpuSource::new(4096);
     let mut cursor = Cursor::new(Vec::new());
     aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
-    let mut bytes = cursor.into_inner();
+    let bytes = cursor.into_inner();
+    let mmus_entries = vec![(0u32, MmuState::default()), (1u32, MmuState::default())];
+    let mut bytes = common::with_mmus_section(&bytes, 2, &mmus_entries);
     corrupt_cpus_count_to_zero(&mut bytes);
     fs::write(&snap, &bytes).unwrap();
 

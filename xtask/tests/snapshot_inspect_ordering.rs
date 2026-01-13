@@ -1,5 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+mod common;
+
 use std::fs;
 use std::io::{Cursor, Read};
 
@@ -406,6 +408,11 @@ fn snapshot_inspect_notes_unsorted_cpus_section() {
     let mut bytes = cursor.into_inner();
 
     rewrite_cpus_section_reverse(&mut bytes);
+    let bytes = common::with_mmus_section(
+        &bytes,
+        2,
+        &[(0u32, MmuState::default()), (1u32, MmuState::default())],
+    );
     fs::write(&snap, &bytes).unwrap();
 
     Command::new(env!("CARGO_BIN_EXE_xtask"))
@@ -415,6 +422,103 @@ fn snapshot_inspect_notes_unsorted_cpus_section() {
         .stdout(predicate::str::contains(
             "note: CPUS entries are not sorted by apic_id; displaying sorted order",
         ));
+}
+
+#[test]
+fn snapshot_inspect_notes_unsorted_mmus_section() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("unsorted_mmus.aerosnap");
+
+    let mut source = TwoCpuSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let bytes = cursor.into_inner();
+
+    // Provide MMU entries out of order.
+    let bytes = common::with_mmus_section(
+        &bytes,
+        2,
+        &[(1u32, MmuState::default()), (0u32, MmuState::default())],
+    );
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "note: MMUS entries are not sorted by apic_id; displaying sorted order",
+        ));
+}
+
+#[test]
+fn snapshot_inspect_warns_duplicate_mmus_apic_id_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dup_mmus_apic.aerosnap");
+
+    let mut source = TwoCpuSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let bytes = cursor.into_inner();
+
+    let bytes = common::with_mmus_section(
+        &bytes,
+        2,
+        &[(0u32, MmuState::default()), (0u32, MmuState::default())],
+    );
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "warning: duplicate apic_id entries (snapshot restore would reject this file)",
+        ));
+}
+
+#[test]
+fn snapshot_inspect_shows_mmus_entry_hints_when_decodable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("mmus_hints.aerosnap");
+
+    let mut source = TwoCpuSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let bytes = cursor.into_inner();
+
+    let entries = [
+        (
+            0u32,
+            MmuState {
+                cr3: 0x1111,
+                efer: 0x2222,
+                ..Default::default()
+            },
+        ),
+        (
+            1u32,
+            MmuState {
+                cr3: 0x3333,
+                efer: 0x4444,
+                ..Default::default()
+            },
+        ),
+    ];
+    let bytes = common::with_mmus_section(&bytes, 2, &entries);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("MMUS:"))
+        .stdout(predicate::str::contains("apic_id=0"))
+        .stdout(predicate::str::contains("cr3=0x1111"))
+        .stdout(predicate::str::contains("efer=0x2222"))
+        .stdout(predicate::str::contains("apic_id=1"))
+        .stdout(predicate::str::contains("cr3=0x3333"))
+        .stdout(predicate::str::contains("efer=0x4444"));
 }
 
 struct CpuEntrySummarySource;
@@ -491,7 +595,13 @@ fn snapshot_inspect_decodes_basic_cpus_entry_cpu_state() {
     let mut source = CpuEntrySummarySource;
     let mut cursor = Cursor::new(Vec::new());
     save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
-    fs::write(&snap, cursor.into_inner()).unwrap();
+    let bytes = cursor.into_inner();
+    let bytes = common::with_mmus_section(
+        &bytes,
+        2,
+        &[(0u32, MmuState::default()), (1u32, MmuState::default())],
+    );
+    fs::write(&snap, bytes).unwrap();
 
     Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["snapshot", "inspect", snap.to_str().unwrap()])
