@@ -528,6 +528,8 @@ impl IoSnapshot for EhciController {
         const TAG_CONFIGFLAG: u16 = 7;
         const TAG_ROOT_HUB_PORTS: u16 = 8;
         const TAG_CTRLDSSEGMENT: u16 = 9;
+        const TAG_USBLEGSUP: u16 = 10;
+        const TAG_USBLEGCTLSTS: u16 = 11;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.regs.usbcmd);
@@ -539,6 +541,8 @@ impl IoSnapshot for EhciController {
         w.field_u32(TAG_CONFIGFLAG, self.regs.configflag);
         w.field_bytes(TAG_ROOT_HUB_PORTS, self.hub.save_snapshot_ports());
         w.field_u32(TAG_CTRLDSSEGMENT, self.regs.ctrldssegment);
+        w.field_u32(TAG_USBLEGSUP, self.usblegsup);
+        w.field_u32(TAG_USBLEGCTLSTS, self.usblegctlsts);
         w.finish()
     }
 
@@ -552,6 +556,8 @@ impl IoSnapshot for EhciController {
         const TAG_CONFIGFLAG: u16 = 7;
         const TAG_ROOT_HUB_PORTS: u16 = 8;
         const TAG_CTRLDSSEGMENT: u16 = 9;
+        const TAG_USBLEGSUP: u16 = 10;
+        const TAG_USBLEGCTLSTS: u16 = 11;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -559,6 +565,8 @@ impl IoSnapshot for EhciController {
         // Reset controller-local derived state without disturbing attached device instances.
         self.regs = EhciRegs::new();
         self.irq_level = false;
+        self.usblegsup = USBLEGSUP_HEADER | USBLEGSUP_BIOS_SEM;
+        self.usblegctlsts = 0;
 
         if let Some(usbcmd) = r.u32(TAG_USBCMD)? {
             self.regs.usbcmd = usbcmd & USBCMD_WRITE_MASK;
@@ -584,6 +592,15 @@ impl IoSnapshot for EhciController {
         // We currently model a 32-bit addressing controller; CTRLDSSEGMENT is unused.
         if r.u32(TAG_CTRLDSSEGMENT)?.is_some() {
             self.regs.ctrldssegment = 0;
+        }
+        if let Some(v) = r.u32(TAG_USBLEGSUP)? {
+            self.usblegsup = (v & USBLEGSUP_RW_MASK) | USBLEGSUP_HEADER;
+            if self.usblegsup & USBLEGSUP_OS_SEM != 0 {
+                self.usblegsup &= !USBLEGSUP_BIOS_SEM;
+            }
+        }
+        if let Some(v) = r.u32(TAG_USBLEGCTLSTS)? {
+            self.usblegctlsts = v;
         }
 
         if let Some(buf) = r.bytes(TAG_ROOT_HUB_PORTS) {
