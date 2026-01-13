@@ -9077,7 +9077,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     const uint64_t maybeFeatures = (uint64_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
                                                    ((uint64_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
                     const uint64_t knownFeatures = AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT |
-                                                  AEROGPU_FEATURE_VBLANK | AEROGPU_FEATURE_TRANSFER;
+                                                  AEROGPU_FEATURE_VBLANK | AEROGPU_FEATURE_TRANSFER | AEROGPU_FEATURE_ERROR_INFO;
                     if ((maybeFeatures & ~knownFeatures) == 0) {
                         features = maybeFeatures;
                     }
@@ -10815,6 +10815,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         const ULONG abiMinor = (ULONG)(adapter->DeviceAbiVersion & 0xFFFFu);
         const BOOLEAN haveErrorRegs =
             (adapter->AbiKind == AEROGPU_ABI_KIND_V1) &&
+            ((adapter->DeviceFeatures & AEROGPU_FEATURE_ERROR_INFO) != 0) &&
             (abiMinor >= 3) &&
             (adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG)));
         if (poweredOn && haveErrorRegs) {

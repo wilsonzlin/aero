@@ -602,11 +602,13 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, fb_gpa);
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, pitch_bytes);
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, reserved1);
+
   PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, flags);
   PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, error_code);
   PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, error_fence);
   PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, error_count);
   PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, reserved0);
+
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, shared_handle);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, debug_token);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, share_token);
@@ -690,6 +692,7 @@ int main(void) {
   PRINT_CONST(AEROGPU_FEATURE_SCANOUT);
   PRINT_CONST(AEROGPU_FEATURE_VBLANK);
   PRINT_CONST(AEROGPU_FEATURE_TRANSFER);
+  PRINT_CONST(AEROGPU_FEATURE_ERROR_INFO);
   PRINT_CONST(AEROGPU_RING_CONTROL_ENABLE);
   PRINT_CONST(AEROGPU_RING_CONTROL_RESET);
   PRINT_CONST(AEROGPU_IRQ_FENCE);
@@ -928,6 +931,7 @@ int main(void) {
   PRINT_CONST(AEROGPU_UMDPRIV_FEATURE_SCANOUT);
   PRINT_CONST(AEROGPU_UMDPRIV_FEATURE_VBLANK);
   PRINT_CONST(AEROGPU_UMDPRIV_FEATURE_TRANSFER);
+  PRINT_CONST(AEROGPU_UMDPRIV_FEATURE_ERROR_INFO);
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_IS_LEGACY);
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_HAS_VBLANK);
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE);

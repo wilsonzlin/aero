@@ -128,8 +128,12 @@ typedef struct aerogpu_escape_query_fence_out {
   /*
    * Sticky error IRQ diagnostics (best-effort; 0 if not supported by this KMD build).
    *
-   * These fields are appended to the original struct (hdr + last_submitted + last_completed)
-   * to keep the layout backwards compatible with older bring-up tooling.
+   * These fields are appended to the original struct (hdr + last_submitted + last_completed) to
+   * keep the layout backwards compatible with older bring-up tooling.
+   *
+   * When the device/emulator signals a submission failure (AEROGPU_IRQ_ERROR), the KMD increments
+   * `error_irq_count` and records the most recent fence value associated with an error in
+   * `last_error_fence`.
    */
   aerogpu_escape_u64 error_irq_count;
   aerogpu_escape_u64 last_error_fence;

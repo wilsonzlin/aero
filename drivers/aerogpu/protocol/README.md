@@ -125,6 +125,10 @@ The key MMIO responsibilities are:
    - Scanout0 configuration (width/height/format/pitch/framebuffer GPA).
    - Optional vblank timing registers + vblank IRQ (required for Win7 DWM pacing when `AEROGPU_FEATURE_VBLANK` is set; see `vblank.md`).
    - Cursor configuration is reserved and feature-gated.
+5. **Error reporting**
+    - `IRQ_ERROR` indicates a device-side validation/execution failure.
+    - When `AEROGPU_FEATURE_ERROR_INFO` is present, additional read-only MMIO registers expose the
+      most recent error code/fence (`ERROR_*`) for low-bandwidth diagnostics from the guest.
 
 See `aerogpu_pci.h` for exact offsets and bit definitions.
 
@@ -138,6 +142,29 @@ Notable bits include:
 - `AEROGPU_FEATURE_TRANSFER`: supports transfer/copy commands (e.g. `COPY_BUFFER`,
   `COPY_TEXTURE2D`), including optional **writeback into guest backing memory**
   for GPU→CPU readback. (Introduced in ABI 1.1.)
+- `AEROGPU_FEATURE_ERROR_INFO`: exposes additional MMIO registers describing why
+  `AEROGPU_IRQ_ERROR` was raised (last error code + fence + count). (Introduced in ABI 1.3.)
+
+## Error reporting (IRQ_ERROR + error-info registers)
+
+`IRQ_ERROR` (`AEROGPU_IRQ_ERROR`) is raised by the device when a submission fails validation or
+execution. Since the IRQ bit is only a boolean, the device may optionally expose *error info*
+registers when `AEROGPU_FEATURE_ERROR_INFO` is set in `FEATURES_LO/HI`:
+
+- `AEROGPU_MMIO_REG_ERROR_CODE` (`u32`)
+- `AEROGPU_MMIO_REG_ERROR_FENCE_LO/HI` (`u64`)
+- `AEROGPU_MMIO_REG_ERROR_COUNT` (`u32`, saturating)
+
+### Semantics
+
+- On each error, the device updates:
+  - `ERROR_CODE` to a stable `enum aerogpu_error_code` (`AEROGPU_ERROR_*`) value,
+  - `ERROR_FENCE` to the associated submission fence (or `0` if not applicable), and
+  - `ERROR_COUNT` (monotonic, saturating at `0xffffffff`).
+- The values are **sticky**: they persist until overwritten by a subsequent error or until the
+  device is reset (e.g. VM/emulator restart). They are not cleared by `IRQ_ACK`.
+
+Guest drivers/tools must only read these registers when `AEROGPU_FEATURE_ERROR_INFO` is present.
 
 ## Command submission transport
 

@@ -52,6 +52,7 @@ inline std::vector<std::wstring> DecodeDeviceFeatureBits(uint64_t features_lo, u
       {3, L"vblank"},
       {0, L"fence_page"},
       {4, L"transfer"},
+      {5, L"error_info"},
   };
 
   uint64_t known_mask_lo = 0;

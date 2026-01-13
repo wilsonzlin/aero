@@ -37,7 +37,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuErrorCode, AerogpuFormat,
     AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE,
-    AEROGPU_FEATURE_TRANSFER, AEROGPU_FEATURE_VBLANK, AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC,
+    AEROGPU_FEATURE_ERROR_INFO, AEROGPU_FEATURE_TRANSFER, AEROGPU_FEATURE_VBLANK,
+    AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC,
     AEROGPU_MMIO_REG_DOORBELL, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS,
     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
     AEROGPU_PCI_BAR0_INDEX, AEROGPU_PCI_BAR0_SIZE_BYTES, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER,
@@ -53,7 +54,8 @@ use aero_protocol::aerogpu::aerogpu_ring::{
 };
 use aero_protocol::aerogpu::aerogpu_umd_private::{
     AerogpuUmdPrivateV1, AEROGPU_UMDPRIV_FEATURE_CURSOR, AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE,
-    AEROGPU_UMDPRIV_FEATURE_SCANOUT, AEROGPU_UMDPRIV_FEATURE_TRANSFER,
+    AEROGPU_UMDPRIV_FEATURE_ERROR_INFO, AEROGPU_UMDPRIV_FEATURE_SCANOUT,
+    AEROGPU_UMDPRIV_FEATURE_TRANSFER,
     AEROGPU_UMDPRIV_FEATURE_VBLANK, AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE,
     AEROGPU_UMDPRIV_FLAG_HAS_VBLANK, AEROGPU_UMDPRIV_FLAG_IS_LEGACY,
     AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP, AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU,
@@ -3354,6 +3356,11 @@ fn rust_layout_matches_c_headers() {
         "AEROGPU_FEATURE_TRANSFER",
         AEROGPU_FEATURE_TRANSFER,
     );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FEATURE_ERROR_INFO",
+        AEROGPU_FEATURE_ERROR_INFO,
+    );
 
     check_const(
         &mut pci_consts_seen,
@@ -4225,6 +4232,10 @@ fn rust_layout_matches_c_headers() {
         AEROGPU_UMDPRIV_FEATURE_TRANSFER
     );
     assert_eq!(
+        abi.konst("AEROGPU_UMDPRIV_FEATURE_ERROR_INFO"),
+        AEROGPU_UMDPRIV_FEATURE_ERROR_INFO
+    );
+    assert_eq!(
         abi.konst("AEROGPU_UMDPRIV_FLAG_IS_LEGACY"),
         AEROGPU_UMDPRIV_FLAG_IS_LEGACY as u64
     );
@@ -4306,6 +4317,8 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_SCANOUT"), 10);
 
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_FENCE"), 2);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_PERF"), 12);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_READ_GPA"), 13);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_DUMP_RING"), 3);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_SELFTEST"), 4);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_VBLANK"), 5);

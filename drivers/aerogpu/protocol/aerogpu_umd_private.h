@@ -62,6 +62,8 @@ typedef uint64_t aerogpu_umdpriv_u64;
 #define AEROGPU_UMDPRIV_FEATURE_VBLANK (1ull << 3)
 /* Supports transfer/copy commands (ABI 1.1+, e.g. COPY_BUFFER/COPY_TEXTURE2D). */
 #define AEROGPU_UMDPRIV_FEATURE_TRANSFER (1ull << 4)
+/* Implements error-info MMIO registers (ABI 1.3+). */
+#define AEROGPU_UMDPRIV_FEATURE_ERROR_INFO (1ull << 5)
 
 /* ------------------------------ Blob layout -------------------------------- */
 

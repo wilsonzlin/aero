@@ -25,6 +25,7 @@ pub const AEROGPU_UMDPRIV_FEATURE_CURSOR: u64 = 1u64 << 1;
 pub const AEROGPU_UMDPRIV_FEATURE_SCANOUT: u64 = 1u64 << 2;
 pub const AEROGPU_UMDPRIV_FEATURE_VBLANK: u64 = 1u64 << 3;
 pub const AEROGPU_UMDPRIV_FEATURE_TRANSFER: u64 = 1u64 << 4;
+pub const AEROGPU_UMDPRIV_FEATURE_ERROR_INFO: u64 = 1u64 << 5;
 
 /// `flags` bitfield values for [`AerogpuUmdPrivateV1`].
 pub const AEROGPU_UMDPRIV_FLAG_IS_LEGACY: u32 = 1u32 << 0;

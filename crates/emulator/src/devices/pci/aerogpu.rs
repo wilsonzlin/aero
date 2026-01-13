@@ -654,6 +654,8 @@ impl MmioDevice for AeroGpuPciDevice {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use super::*;
 
     use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -661,8 +663,10 @@ mod tests {
         AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
     };
     use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
-    use crate::devices::aerogpu_regs::AerogpuErrorCode;
-    use crate::gpu_worker::aerogpu_backend::{AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission};
+    use crate::devices::aerogpu_regs::{AerogpuErrorCode, FEATURE_ERROR_INFO};
+    use crate::gpu_worker::aerogpu_backend::{
+        AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    };
     use memory::bus::PhysicalMemoryBus;
     use memory::phys::DenseMemory;
 
@@ -700,6 +704,33 @@ mod tests {
 
         fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
             self.completed.drain(..).collect()
+        }
+
+        fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
+            None
+        }
+    }
+
+    #[derive(Default)]
+    struct TestErrorBackend {
+        completions: VecDeque<AeroGpuBackendCompletion>,
+    }
+
+    impl AeroGpuCommandBackend for TestErrorBackend {
+        fn reset(&mut self) {
+            self.completions.clear();
+        }
+
+        fn submit(
+            &mut self,
+            _mem: &mut dyn MemoryBus,
+            _submission: AeroGpuBackendSubmission,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
+            self.completions.drain(..).collect()
         }
 
         fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
@@ -756,7 +787,8 @@ mod tests {
         let ring_size_bytes: u32 = (crate::devices::aerogpu_ring::AEROGPU_RING_HEADER_SIZE_BYTES
             + u64::from(entry_count) * u64::from(entry_stride)) as u32;
 
-        let mut ring_hdr = [0u8; crate::devices::aerogpu_ring::AeroGpuRingHeader::SIZE_BYTES as usize];
+        let mut ring_hdr =
+            [0u8; crate::devices::aerogpu_ring::AeroGpuRingHeader::SIZE_BYTES as usize];
         ring_hdr[0..4].copy_from_slice(&crate::devices::aerogpu_ring::AEROGPU_RING_MAGIC.to_le_bytes());
         ring_hdr[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
         ring_hdr[8..12].copy_from_slice(&ring_size_bytes.to_le_bytes());
@@ -769,7 +801,8 @@ mod tests {
         mem.write_physical(ring_gpa, &ring_hdr);
 
         // Submission descriptor at slot 0.
-        let mut desc = [0u8; crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES as usize];
+        let mut desc =
+            [0u8; crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES as usize];
         desc[0..4].copy_from_slice(&crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES.to_le_bytes());
         desc[4..8].copy_from_slice(&0u32.to_le_bytes()); // flags
         desc[8..12].copy_from_slice(&0u32.to_le_bytes()); // context_id
@@ -939,5 +972,45 @@ mod tests {
         assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
         assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
         assert!(dev.irq_level());
+    }
+
+    #[test]
+    fn mmio_error_info_regs_update_on_backend_error() {
+        let ram = Box::new(DenseMemory::new(1024 * 1024).unwrap());
+        let mut mem = PhysicalMemoryBus::new(ram);
+
+        let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+
+        // Enable PCI memory space and bus mastering so MMIO reads decode and the device is allowed
+        // to poll backend completions.
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+
+        let mut backend = TestErrorBackend::default();
+        backend.completions.push_back(AeroGpuBackendCompletion {
+            fence: 0x1234_5678_9abc_def0,
+            error: Some("boom".to_string()),
+        });
+        dev.set_backend(Box::new(backend));
+
+        dev.tick(&mut mem, Instant::now());
+
+        let features_lo = dev.mmio_read(&mut mem, mmio::FEATURES_LO, 4) as u64;
+        let features_hi = dev.mmio_read(&mut mem, mmio::FEATURES_HI, 4) as u64;
+        let features = features_lo | (features_hi << 32);
+        assert_ne!(features & FEATURE_ERROR_INFO, 0);
+
+        let irq_status = dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4);
+        assert_ne!(irq_status & irq_bits::ERROR, 0);
+
+        let code = dev.mmio_read(&mut mem, mmio::ERROR_CODE, 4);
+        assert_eq!(code, AerogpuErrorCode::Backend as u32);
+
+        let fence_lo = dev.mmio_read(&mut mem, mmio::ERROR_FENCE_LO, 4) as u64;
+        let fence_hi = dev.mmio_read(&mut mem, mmio::ERROR_FENCE_HI, 4) as u64;
+        let fence = fence_lo | (fence_hi << 32);
+        assert_eq!(fence, 0x1234_5678_9abc_def0);
+
+        let count = dev.mmio_read(&mut mem, mmio::ERROR_COUNT, 4);
+        assert_eq!(count, 1);
     }
 }
