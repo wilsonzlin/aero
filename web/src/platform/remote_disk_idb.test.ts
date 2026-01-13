@@ -266,6 +266,44 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     mock.restore();
   });
 
+  it("tolerates IndexedDB quota errors when updating access metadata for cached blocks", async () => {
+    const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
+    const image = makeTestImage(blockSize * 2);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
+      blockSize,
+      cacheBackend: "idb",
+      cacheLimitBytes,
+      prefetchSequentialBlocks: 0,
+    });
+
+    // Prime the persistent cache with block 0.
+    await disk.read(0, 16);
+    expect(mock.stats.chunkRangeCalls).toBe(1);
+
+    // Force subsequent reads to consult IndexedDB by disabling the in-memory LRU.
+    const idbCache = (disk as unknown as { idbCache?: any }).idbCache;
+    if (!idbCache) throw new Error("expected idb cache");
+    idbCache.maxCachedChunks = 0;
+    idbCache.cache?.clear?.();
+
+    // Simulate quota errors on the access-metadata update path (`remote_chunks.put()`).
+    const quota = installQuotaExceededOnRemoteChunksPut(disk);
+
+    const before = mock.stats.chunkRangeCalls;
+    const bytes = await disk.read(0, 16);
+    expect(Array.from(bytes)).toEqual(Array.from(image.subarray(0, 16)));
+    // Still a cache hit: should not re-fetch from the network.
+    expect(mock.stats.chunkRangeCalls).toBe(before);
+    expect(quota.putCalls.count).toBe(1);
+
+    quota.restore();
+    disk.close();
+    mock.restore();
+  });
+
   it("does not wipe telemetry for reads that occur while clearCache is in-flight", async () => {
     const blockSize = 1024 * 1024;
     const cacheLimitBytes = blockSize * 8;

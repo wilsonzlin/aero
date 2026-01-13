@@ -265,6 +265,78 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     await disk.close();
   });
 
+  it("tolerates IndexedDB quota errors when updating access metadata for cached chunks", async () => {
+    const chunkSize = 512 * 1024;
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunk0 = img.slice(0, chunkSize);
+
+    const { baseUrl, hits, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.setHeader("etag", '"m1"');
+        res.end(
+          JSON.stringify({
+            schema: "aero.chunked-disk-image.v1",
+            imageId: "test",
+            version: "v1",
+            mimeType: "application/octet-stream",
+            totalSize,
+            chunkSize,
+            chunkCount,
+            chunkIndexWidth: 8,
+          }),
+        );
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunk0);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const cacheLimitBytes = chunkSize * 8;
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      cacheBackend: "idb",
+      cacheLimitBytes,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    });
+
+    // Prime the persistent cache.
+    await disk.readSectors(0, new Uint8Array(512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+
+    // Force subsequent reads to consult IndexedDB by disabling the in-memory LRU.
+    const chunkCache = (disk as unknown as { chunkCache?: any }).chunkCache;
+    if (!chunkCache?.cache) throw new Error("expected IDB chunk cache");
+    chunkCache.cache.maxCachedChunks = 0;
+    chunkCache.cache.cache?.clear?.();
+
+    // Simulate quota errors on the access-metadata update path (`remote_chunks.put()`).
+    const quota = installQuotaExceededOnRemoteChunksPut(disk);
+
+    await disk.readSectors(0, new Uint8Array(512));
+    // Still a cache hit: should not re-fetch from the network.
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    expect(quota.putCalls.count).toBe(1);
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(cacheLimitBytes);
+
+    quota.restore();
+    await disk.close();
+  });
+
   it("disables persistent caching entirely when cacheLimitBytes is 0", async () => {
     const chunkSize = 512 * 1024;
     const totalSize = chunkSize;

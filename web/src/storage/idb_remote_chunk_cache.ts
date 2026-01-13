@@ -331,7 +331,13 @@ export class IdbRemoteChunkCache {
     }
 
     metaStore.put(meta);
-    await idbTxDone(tx);
+    try {
+      await idbTxDone(tx);
+    } catch (err) {
+      // Updating access metadata is best-effort. If the cache is at quota, the read path must
+      // still succeed (and can fall back to network reads for misses).
+      if (!isQuotaExceededError(err)) throw err;
+    }
 
     for (const [idx, bytes] of out) {
       if (!this.cache.has(idx)) {
