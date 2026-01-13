@@ -13,11 +13,18 @@ struct Vertex {
   DWORD color;
 };
 
+struct VertexXyzDiffuse {
+  float x;
+  float y;
+  float z;
+  DWORD color;
+};
+
 static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
-                                         HWND hwnd,
-                                         D3DPRESENT_PARAMETERS* pp,
-                                         DWORD create_flags,
-                                         IDirect3DDevice9Ex** out_dev) {
+                                          HWND hwnd,
+                                          D3DPRESENT_PARAMETERS* pp,
+                                          DWORD create_flags,
+                                          IDirect3DDevice9Ex** out_dev) {
   if (!d3d || !pp || !out_dev) {
     return E_INVALIDARG;
   }
@@ -251,6 +258,109 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
     return reporter.Fail("ProcessVertices output bytes did not match expected output");
   }
 
+  // Also validate a simple XYZ->XYZRHW fixed-function transform case.
+  //
+  // Use identity transforms and a tiny viewport so the expected output is
+  // deterministic and exactly representable as IEEE floats.
+  {
+    const D3DVIEWPORT9 vp = {0u, 0u, 2u, 2u, 0.0f, 1.0f};
+    hr = dev->SetViewport(&vp);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetViewport", hr);
+    }
+
+    D3DMATRIX ident;
+    ZeroMemory(&ident, sizeof(ident));
+    ident.m[0][0] = 1.0f;
+    ident.m[1][1] = 1.0f;
+    ident.m[2][2] = 1.0f;
+    ident.m[3][3] = 1.0f;
+    hr = dev->SetTransform(D3DTS_WORLD, &ident);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTransform(WORLD)", hr);
+    }
+    hr = dev->SetTransform(D3DTS_VIEW, &ident);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTransform(VIEW)", hr);
+    }
+    hr = dev->SetTransform(D3DTS_PROJECTION, &ident);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTransform(PROJECTION)", hr);
+    }
+
+    const VertexXyzDiffuse src = {0.0f, 0.0f, 0.5f, D3DCOLOR_XRGB(1, 2, 3)};
+
+    ComPtr<IDirect3DVertexBuffer9> src_xyz_vb;
+    hr = dev->CreateVertexBuffer(sizeof(src),
+                                 0,
+                                 D3DFVF_XYZ | D3DFVF_DIFFUSE,
+                                 D3DPOOL_DEFAULT,
+                                 src_xyz_vb.put(),
+                                 NULL);
+    if (FAILED(hr) || !src_xyz_vb) {
+      return reporter.FailHresult("CreateVertexBuffer(src_xyz)", hr);
+    }
+
+    void* src_xyz_ptr = NULL;
+    hr = src_xyz_vb->Lock(0, sizeof(src), &src_xyz_ptr, 0);
+    if (FAILED(hr) || !src_xyz_ptr) {
+      return reporter.FailHresult("src_xyz_vb->Lock", hr);
+    }
+    memcpy(src_xyz_ptr, &src, sizeof(src));
+    hr = src_xyz_vb->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("src_xyz_vb->Unlock", hr);
+    }
+
+    ComPtr<IDirect3DVertexBuffer9> dst_xyz_vb;
+    hr = dev->CreateVertexBuffer(sizeof(Vertex),
+                                 0,
+                                 D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
+                                 D3DPOOL_SYSTEMMEM,
+                                 dst_xyz_vb.put(),
+                                 NULL);
+    if (FAILED(hr) || !dst_xyz_vb) {
+      return reporter.FailHresult("CreateVertexBuffer(dst_xyz)", hr);
+    }
+
+    hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetFVF(XYZ|DIFFUSE)", hr);
+    }
+    hr = dev->SetStreamSource(0, src_xyz_vb.get(), 0, sizeof(VertexXyzDiffuse));
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSource(src_xyz)", hr);
+    }
+
+    hr = dev->ProcessVertices(/*SrcStartIndex=*/0,
+                              /*DestIndex=*/0,
+                              /*VertexCount=*/1,
+                              dst_xyz_vb.get(),
+                              decl.get(),
+                              /*Flags=*/0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(xyz->xyzrhw)", hr);
+    }
+
+    void* dst_xyz_ptr = NULL;
+    hr = dst_xyz_vb->Lock(0, sizeof(Vertex), &dst_xyz_ptr, D3DLOCK_READONLY);
+    if (FAILED(hr) || !dst_xyz_ptr) {
+      return reporter.FailHresult("dst_xyz_vb->Lock", hr);
+    }
+
+    const Vertex expected = {0.5f, 0.5f, 0.5f, 1.0f, src.color};
+    const bool xyz_bytes_match = (memcmp(dst_xyz_ptr, &expected, sizeof(expected)) == 0);
+
+    hr = dst_xyz_vb->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("dst_xyz_vb->Unlock", hr);
+    }
+
+    if (!xyz_bytes_match) {
+      return reporter.Fail("ProcessVertices XYZ->XYZRHW output bytes did not match expected output");
+    }
+  }
+
   aerogpu_test::PrintfStdout("INFO: %s: ProcessVertices OK", kTestName);
   return reporter.Pass();
 }
@@ -259,4 +369,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunD3D9ProcessVerticesSanity(argc, argv);
 }
-
