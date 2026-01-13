@@ -351,8 +351,8 @@ VOID VirtIoSndInterruptInitialize(PVIRTIOSND_DEVICE_EXTENSION Dx)
     Dx->MessageInterruptsConnected = FALSE;
     Dx->MessageInterruptsActive = FALSE;
 
+    Dx->MessageInterruptInfo = NULL;
     Dx->MessageInterruptConnectionContext = NULL;
-    Dx->MessageInterruptObjects = NULL;
     Dx->MessageInterruptCount = 0;
 
     RtlZeroMemory(&Dx->MessageDpc, sizeof(Dx->MessageDpc));
@@ -429,6 +429,7 @@ NTSTATUS VirtIoSndInterruptConnectMessage(PVIRTIOSND_DEVICE_EXTENSION Dx)
     NTSTATUS status;
     IO_CONNECT_INTERRUPT_PARAMETERS params;
     ULONG msgCount;
+    ULONG usedVectorCount;
 
     if (Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -450,13 +451,27 @@ NTSTATUS VirtIoSndInterruptConnectMessage(PVIRTIOSND_DEVICE_EXTENSION Dx)
     Dx->MessageDpcInFlight = 0;
     KeInitializeDpc(&Dx->MessageDpc, VirtIoSndMessageDpc, Dx);
 
+    msgCount = (ULONG)Dx->MessageInterruptDesc.u.MessageInterrupt.MessageCount;
+    if (msgCount == 0) {
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    usedVectorCount = 1;
+    if (msgCount >= (ULONG)(1u + VIRTIOSND_QUEUE_COUNT)) {
+        usedVectorCount = (ULONG)(1u + VIRTIOSND_QUEUE_COUNT);
+    }
+
     RtlZeroMemory(&params, sizeof(params));
     params.Version = CONNECT_MESSAGE_BASED;
     params.MessageBased.PhysicalDeviceObject = Dx->Pdo;
-    params.MessageBased.MessageServiceRoutine = VirtIoSndMessageIsr;
+    params.MessageBased.ServiceRoutine = VirtIoSndMessageIsr;
     params.MessageBased.ServiceContext = Dx;
     params.MessageBased.SpinLock = NULL;
+    params.MessageBased.SynchronizeIrql = 0;
     params.MessageBased.FloatingSave = FALSE;
+    params.MessageBased.MessageCount = usedVectorCount;
+    params.MessageBased.MessageInfo = NULL;
+    params.MessageBased.ConnectionContext = NULL;
 
     status = IoConnectInterruptEx(&params);
     if (!NT_SUCCESS(status)) {
@@ -464,9 +479,12 @@ NTSTATUS VirtIoSndInterruptConnectMessage(PVIRTIOSND_DEVICE_EXTENSION Dx)
         return status;
     }
 
+    Dx->MessageInterruptInfo = params.MessageBased.MessageInfo;
     Dx->MessageInterruptConnectionContext = params.MessageBased.ConnectionContext;
-    Dx->MessageInterruptObjects = params.MessageBased.InterruptObject;
-    Dx->MessageInterruptCount = params.MessageBased.MessageCount;
+    Dx->MessageInterruptCount = usedVectorCount;
+    if (Dx->MessageInterruptInfo != NULL && Dx->MessageInterruptInfo->MessageCount != 0) {
+        Dx->MessageInterruptCount = Dx->MessageInterruptInfo->MessageCount;
+    }
 
     msgCount = Dx->MessageInterruptCount;
     if (msgCount == 0 || msgCount > 32) {
@@ -567,8 +585,8 @@ static VOID VirtIoSndDisconnectMessageInternal(_Inout_ PVIRTIOSND_DEVICE_EXTENSI
         IoDisconnectInterruptEx(&params);
     }
 
+    Dx->MessageInterruptInfo = NULL;
     Dx->MessageInterruptConnectionContext = NULL;
-    Dx->MessageInterruptObjects = NULL;
     Dx->MessageInterruptCount = 0;
 
     /* Cancel any DPC that is queued but not yet running. */
@@ -739,4 +757,3 @@ out:
         (VOID)InterlockedExchange(&dx->MessageDpcInFlight, 0);
     }
 }
-

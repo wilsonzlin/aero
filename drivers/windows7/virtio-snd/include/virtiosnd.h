@@ -192,8 +192,8 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     BOOLEAN MessageInterruptsActive; /* TRUE when using MSI/MSI-X instead of INTx. */
 
     /* IoConnectInterruptEx(CONNECT_MESSAGE_BASED) outputs. */
+    PIO_INTERRUPT_MESSAGE_INFO MessageInterruptInfo;
     PVOID MessageInterruptConnectionContext;
-    PKINTERRUPT* MessageInterruptObjects;
     ULONG MessageInterruptCount;
 
     /* MSI/MSI-X DPC coalescing (similar semantics to VIRTIO_INTX::DpcInFlight). */
