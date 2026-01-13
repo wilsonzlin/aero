@@ -211,3 +211,69 @@ fn mul_with_live_flags_is_not_strength_reduced() {
     assert_eq!(base_state, opt_state);
     assert_eq!(bus0.mem(), bus1.mem());
 }
+
+#[test]
+fn add_with_live_flags_is_not_strength_reduced_to_addr() {
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rax,
+            },
+            Instr::BinOp {
+                dst: v(1),
+                op: BinOp::Add,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Const(16),
+                flags: FlagSet::ALU,
+            },
+            // Consume a flag so the add's flags remain live.
+            Instr::LoadFlag {
+                dst: v(2),
+                flag: aero_types::Flag::Zf,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(v(1)),
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rcx,
+                src: Operand::Value(v(2)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let env = RuntimeEnv::default();
+    let mut bus0 = SimpleBus::new(64);
+    let mut bus1 = bus0.clone();
+
+    let mut base_state = T2State::default();
+    base_state.cpu.rflags = aero_jit_x86::abi::RFLAGS_RESERVED1;
+    base_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0x1234;
+    let mut opt_state = base_state.clone();
+
+    let base = run_trace(&trace, &env, &mut bus0, &mut base_state, 1);
+
+    let mut optimized = trace.clone();
+    optimize_trace(&mut optimized, &OptConfig::default());
+
+    // The add should not become an Addr, because its flags remain live.
+    assert!(
+        optimized
+            .iter_instrs()
+            .any(|i| matches!(i, Instr::BinOp { op: BinOp::Add, flags, .. } if !flags.is_empty())),
+        "expected add with flags to remain a BinOp::Add"
+    );
+    assert!(
+        !optimized.iter_instrs().any(|i| matches!(i, Instr::Addr { .. })),
+        "unexpected Addr introduced for add-with-flags"
+    );
+
+    let opt = run_trace(&optimized, &env, &mut bus1, &mut opt_state, 1);
+    assert_eq!(base.exit, RunExit::Returned);
+    assert_eq!(opt.exit, RunExit::Returned);
+    assert_eq!(base_state, opt_state);
+    assert_eq!(bus0.mem(), bus1.mem());
+}
