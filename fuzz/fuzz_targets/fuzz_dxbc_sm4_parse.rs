@@ -93,39 +93,85 @@ fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-fn build_min_signature_chunk(seed: &[u8]) -> Vec<u8> {
-    // Minimal valid v0 signature chunk containing a single entry.
+fn build_signature_chunk(seed: &[u8], entry_size: usize, param_count: usize) -> Vec<u8> {
+    // Minimal signature chunk that is either:
+    // - v0 layout (24-byte entries), or
+    // - v1 layout (32-byte entries)
     //
-    // Keep the semantic name short and always NUL-terminated so the parser can reach both success
-    // and error paths without large allocations.
-    let name_len = (seed.get(0).copied().unwrap_or(0) % 16) as usize + 1;
-    let total_len = 32 + name_len + 1; // header(8) + entry(24) + name + NUL
-    let mut out = vec![0u8; total_len];
+    // The chunk is always self-consistent (offsets are in-bounds and strings are NUL terminated),
+    // but many fields are derived from the seed so libFuzzer can influence parsing.
+    let header_len = 8usize;
+    let entry_size = if entry_size == 32 { 32usize } else { 24usize };
+    let param_count = param_count.clamp(1, 4);
+    let table_len = param_count * entry_size;
 
-    // Header: param_count=1, param_offset=8.
-    out[0..4].copy_from_slice(&1u32.to_le_bytes());
-    out[4..8].copy_from_slice(&8u32.to_le_bytes());
-
-    // Single v0 entry at offset 8.
-    let semantic_off = 32u32;
-    out[8..12].copy_from_slice(&semantic_off.to_le_bytes());
-    // Other fields can be arbitrary; they do not affect bounds checks.
-    out[12..16].copy_from_slice(&u32::from(seed.get(1).copied().unwrap_or(0)).to_le_bytes()); // semantic_index
-    out[16..20].copy_from_slice(&u32::from(seed.get(2).copied().unwrap_or(0)).to_le_bytes()); // system_value_type
-    out[20..24].copy_from_slice(&u32::from(seed.get(3).copied().unwrap_or(0)).to_le_bytes()); // component_type
-    out[24..28].copy_from_slice(&u32::from(seed.get(4).copied().unwrap_or(0)).to_le_bytes()); // register
-    let mask = seed.get(5).copied().unwrap_or(0xF) as u32;
-    let rw_mask = seed.get(6).copied().unwrap_or(0xF) as u32;
-    let stream = (seed.get(7).copied().unwrap_or(0) % 4) as u32;
-    let packed = (mask & 0xFF) | ((rw_mask & 0xFF) << 8) | ((stream & 0xFF) << 16);
-    out[28..32].copy_from_slice(&packed.to_le_bytes());
-
-    // Semantic name at offset 32.
-    for i in 0..name_len {
-        let b = seed.get(8 + i).copied().unwrap_or(b'A');
-        out[32 + i] = if b == 0 { b'A' } else { b };
+    // Precompute string payloads.
+    let mut strings = Vec::new();
+    for entry_index in 0..param_count {
+        let base = 16 * entry_index;
+        let name_len = (seed.get(base).copied().unwrap_or(0) % 16) as usize + 1;
+        for i in 0..name_len {
+            let b = seed.get(base + 1 + i).copied().unwrap_or(b'A');
+            strings.push(if b == 0 { b'A' } else { b });
+        }
+        strings.push(0);
     }
-    out[32 + name_len] = 0;
+
+    let mut out = vec![0u8; header_len + table_len + strings.len()];
+    out[0..4].copy_from_slice(&(param_count as u32).to_le_bytes());
+    out[4..8].copy_from_slice(&(header_len as u32).to_le_bytes());
+
+    let mut string_cursor = header_len + table_len;
+    for entry_index in 0..param_count {
+        let entry_start = header_len + entry_index * entry_size;
+        let name_offset = string_cursor as u32;
+        out[entry_start..entry_start + 4].copy_from_slice(&name_offset.to_le_bytes());
+
+        // Entry fields (these are common between v0/v1 for the first 20 bytes).
+        out[entry_start + 4..entry_start + 8].copy_from_slice(
+            &u32::from(seed.get(2 + entry_index).copied().unwrap_or(0)).to_le_bytes(),
+        ); // semantic_index
+        out[entry_start + 8..entry_start + 12].copy_from_slice(
+            &u32::from(seed.get(6 + entry_index).copied().unwrap_or(0)).to_le_bytes(),
+        ); // system_value_type
+        out[entry_start + 12..entry_start + 16].copy_from_slice(
+            &u32::from(seed.get(10 + entry_index).copied().unwrap_or(0)).to_le_bytes(),
+        ); // component_type
+        out[entry_start + 16..entry_start + 20].copy_from_slice(
+            &u32::from(seed.get(14 + entry_index).copied().unwrap_or(0)).to_le_bytes(),
+        ); // register
+
+        let mask = seed.get(32 + entry_index).copied().unwrap_or(0xF);
+        let rw_mask = seed.get(36 + entry_index).copied().unwrap_or(0xF);
+        let stream = (seed.get(40 + entry_index).copied().unwrap_or(0) % 4) as u32;
+
+        match entry_size {
+            24 => {
+                let packed = (mask as u32 & 0xFF)
+                    | ((rw_mask as u32 & 0xFF) << 8)
+                    | ((stream & 0xFF) << 16);
+                out[entry_start + 20..entry_start + 24].copy_from_slice(&packed.to_le_bytes());
+            }
+            32 => {
+                out[entry_start + 20] = mask;
+                out[entry_start + 21] = rw_mask;
+                out[entry_start + 24..entry_start + 28].copy_from_slice(&stream.to_le_bytes());
+                // min_precision at entry_start+28..32 is left as 0.
+            }
+            _ => unreachable!(),
+        }
+
+        // Copy this entry's semantic string (already built/terminated).
+        let base = 16 * entry_index;
+        let name_len = (seed.get(base).copied().unwrap_or(0) % 16) as usize + 1;
+        let str_total = name_len + 1;
+        let str_start = string_cursor;
+        let str_end = str_start + str_total;
+        out[str_start..str_end].copy_from_slice(
+            &strings[str_start - (header_len + table_len)..str_end - (header_len + table_len)],
+        );
+        string_cursor = str_end;
+    }
 
     out
 }
@@ -233,9 +279,51 @@ fn build_patched_dxbc(data: &[u8]) -> Option<Vec<u8>> {
     // This helps libFuzzer reach signature parsing and SM4/SM5 token parsing even when the raw
     // input does not already look like a DXBC container.
 
-    let sig_isgn = build_min_signature_chunk(data);
-    let sig_osgn = build_min_signature_chunk(data.get(16..).unwrap_or(data));
-    let sig_psgn = build_min_signature_chunk(data.get(32..).unwrap_or(data));
+    let sig_isgn_seed = data;
+    let sig_osgn_seed = data.get(16..).unwrap_or(data);
+    let sig_psgn_seed = data.get(32..).unwrap_or(data);
+
+    let isgn_fourcc = if sig_isgn_seed.get(0).copied().unwrap_or(0) & 1 != 0 {
+        FourCC(*b"ISG1")
+    } else {
+        FourCC(*b"ISGN")
+    };
+    let osgn_fourcc = if sig_osgn_seed.get(0).copied().unwrap_or(0) & 1 != 0 {
+        FourCC(*b"OSG1")
+    } else {
+        FourCC(*b"OSGN")
+    };
+    let psgn_fourcc = if sig_psgn_seed.get(0).copied().unwrap_or(0) & 1 != 0 {
+        FourCC(*b"PSG1")
+    } else {
+        FourCC(*b"PSGN")
+    };
+
+    // Allow independent selection of the entry layout (24 vs 32 bytes), regardless of the FourCC.
+    // This exercises both the preferred layout and the fallback layout.
+    let isgn_entry_size = if sig_isgn_seed.get(1).copied().unwrap_or(0) & 1 != 0 {
+        32usize
+    } else {
+        24usize
+    };
+    let osgn_entry_size = if sig_osgn_seed.get(1).copied().unwrap_or(0) & 1 != 0 {
+        32usize
+    } else {
+        24usize
+    };
+    let psgn_entry_size = if sig_psgn_seed.get(1).copied().unwrap_or(0) & 1 != 0 {
+        32usize
+    } else {
+        24usize
+    };
+
+    let isgn_param_count = (sig_isgn_seed.get(2).copied().unwrap_or(0) % 4) as usize + 1;
+    let osgn_param_count = (sig_osgn_seed.get(2).copied().unwrap_or(0) % 4) as usize + 1;
+    let psgn_param_count = (sig_psgn_seed.get(2).copied().unwrap_or(0) % 4) as usize + 1;
+
+    let sig_isgn = build_signature_chunk(sig_isgn_seed, isgn_entry_size, isgn_param_count);
+    let sig_osgn = build_signature_chunk(sig_osgn_seed, osgn_entry_size, osgn_param_count);
+    let sig_psgn = build_signature_chunk(sig_psgn_seed, psgn_entry_size, psgn_param_count);
     let rdef = build_min_rdef_chunk(data.get(48..).unwrap_or(data));
     let ctab = build_min_ctab_chunk(data.get(64..).unwrap_or(data));
 
@@ -269,9 +357,9 @@ fn build_patched_dxbc(data: &[u8]) -> Option<Vec<u8>> {
     shdr[4..8].copy_from_slice(&(shader_dwords as u32).to_le_bytes());
 
     build_dxbc(&[
-        (FourCC(*b"ISGN"), &sig_isgn),
-        (FourCC(*b"OSGN"), &sig_osgn),
-        (FourCC(*b"PSGN"), &sig_psgn),
+        (isgn_fourcc, &sig_isgn),
+        (osgn_fourcc, &sig_osgn),
+        (psgn_fourcc, &sig_psgn),
         (FourCC(*b"RDEF"), &rdef),
         (FourCC(*b"CTAB"), &ctab),
         (shader_fourcc, &shdr),
