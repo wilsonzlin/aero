@@ -48,7 +48,8 @@ impl Corb {
     }
 
     fn base(&self) -> u64 {
-        ((self.ubase as u64) << 32) | (self.lbase as u64 & !0x3)
+        // CORB base is 128-byte aligned in the Intel HDA spec; bits 6:0 are reserved.
+        ((self.ubase as u64) << 32) | (self.lbase as u64 & !0x7f)
     }
 
     pub fn mmio_read(&self, reg: CorbReg, size: usize) -> u64 {
@@ -158,7 +159,8 @@ impl Rirb {
     }
 
     fn base(&self) -> u64 {
-        ((self.ubase as u64) << 32) | (self.lbase as u64 & !0x7)
+        // RIRB base is 128-byte aligned in the Intel HDA spec; bits 6:0 are reserved.
+        ((self.ubase as u64) << 32) | (self.lbase as u64 & !0x7f)
     }
 
     pub fn mmio_read(&self, reg: RirbReg, size: usize) -> u64 {

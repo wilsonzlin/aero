@@ -618,6 +618,48 @@ mod tests {
     }
 
     #[test]
+    fn corb_rirb_base_ignores_low_reserved_bits() {
+        let mut mem = TestMem::new(0x10_000);
+        let mut hda = HdaController::new();
+
+        // Leave reset.
+        hda.mmio_write(HDA_GCTL, 4, GCTL_CRST as u64);
+
+        // Enable controller interrupt + global interrupt.
+        hda.mmio_write(HDA_INTCTL, 4, (INTCTL_GIE | INTCTL_CIE) as u64);
+
+        // Program CORB/RIRB base addresses with low bits set; per spec these are
+        // reserved (128-byte alignment) and must be ignored by the DMA engines.
+        let corb_base = 0x2000u64;
+        let rirb_base = 0x3000u64;
+        hda.mmio_write(HDA_CORBLBASE, 4, corb_base | 0x7f);
+        hda.mmio_write(HDA_CORBUBASE, 4, 0);
+        hda.mmio_write(HDA_CORBSIZE, 1, 0);
+        hda.mmio_write(HDA_RIRBLBASE, 4, rirb_base | 0x7f);
+        hda.mmio_write(HDA_RIRBUBASE, 4, 0);
+        hda.mmio_write(HDA_RIRBSIZE, 1, 0);
+        hda.mmio_write(HDA_RINTCNT, 2, 1);
+
+        // Start rings (RIRB interrupt enable too).
+        hda.mmio_write(HDA_CORBCTL, 1, CORBCTL_RUN as u64);
+        hda.mmio_write(HDA_RIRBCTL, 1, (RIRBCTL_RUN | RIRBCTL_INTCTL) as u64);
+
+        // Write a GET_PARAMETER(VENDOR_ID) verb to CORB entry 1 at the aligned
+        // base address and advance WP to 1.
+        let verb = 0xF00u32 << 8;
+        mem.write_u32(corb_base + 4, verb);
+        hda.mmio_write(HDA_CORBWP, 2, 1);
+
+        hda.poll(&mut mem);
+
+        // Response must appear at aligned base address too.
+        let resp0 = mem.read_u64(rirb_base + 8);
+        assert_eq!(resp0 as u32, hda.codec.vendor_id());
+        assert!(hda.mmio_read(HDA_INTSTS, 4) as u32 & INTSTS_CIS != 0);
+        assert!(hda.irq_line());
+    }
+
+    #[test]
     fn stream_bdl_processing_advances_lpib_and_queues_bytes() {
         let mut mem = TestMem::new(0x20_000);
         let mut hda = HdaController::new();
