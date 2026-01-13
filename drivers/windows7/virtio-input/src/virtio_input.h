@@ -364,6 +364,23 @@ typedef struct _DEVICE_CONTEXT {
 
     volatile LONG ConfigInterruptCount;
     volatile LONG QueueInterruptCount[VIRTIO_INPUT_QUEUE_COUNT];
+
+    /*
+     * Virtio config-change interrupt handling.
+     *
+     * virtio-pci's config-change interrupt is delivered from an interrupt DPC at
+     * DISPATCH_LEVEL. We only do lightweight bookkeeping in the DPC path and
+     * schedule a PASSIVE_LEVEL work item for any heavy config reads or device
+     * reset/re-initialization (e.g. if the device was reset/reconfigured and our
+     * virtqueue state is now stale).
+     */
+    WDFWORKITEM ConfigChangeWorkItem;
+    volatile LONG ConfigChangeWorkItemActive;
+    volatile LONG ConfigChangePending;
+    volatile LONG ConfigChangeWorkItemRuns;
+    volatile LONG ConfigChangeResetAttempts;
+    volatile LONG ConfigChangeResetFailures;
+    UCHAR LastConfigGeneration;
 } DEVICE_CONTEXT, *PDEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, VirtioInputGetDeviceContext);
@@ -386,6 +403,9 @@ EVT_WDF_DEVICE_PREPARE_HARDWARE VirtioInputEvtDevicePrepareHardware;
 EVT_WDF_DEVICE_RELEASE_HARDWARE VirtioInputEvtDeviceReleaseHardware;
 EVT_WDF_DEVICE_D0_ENTRY VirtioInputEvtDeviceD0Entry;
 EVT_WDF_DEVICE_D0_EXIT VirtioInputEvtDeviceD0Exit;
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS VirtioInputHandleVirtioConfigChange(_In_ WDFDEVICE Device);
 
 EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL VirtioInputEvtIoInternalDeviceControl;
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL VirtioInputEvtIoDeviceControl;

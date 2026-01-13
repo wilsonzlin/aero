@@ -26,6 +26,14 @@ static VOID VioInputSetDeviceKind(_Inout_ PDEVICE_CONTEXT Ctx, _In_ VIOINPUT_DEV
 static VOID VirtioInputInterruptsQuiesceForReset(_Inout_ PDEVICE_CONTEXT DeviceContext);
 static NTSTATUS VirtioInputInterruptsResumeAfterReset(_Inout_ PDEVICE_CONTEXT DeviceContext);
 
+typedef struct _VIOINPUT_CONFIG_WORKITEM_CONTEXT {
+    WDFDEVICE Device;
+} VIOINPUT_CONFIG_WORKITEM_CONTEXT, *PVIOINPUT_CONFIG_WORKITEM_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VIOINPUT_CONFIG_WORKITEM_CONTEXT, VioInputGetConfigWorkItemContext);
+
+static EVT_WDF_WORKITEM VioInputEvtConfigChangeWorkItem;
+
 /*
  * virtio-input EV_BITS parsing/validation.
  *
@@ -658,24 +666,125 @@ static VOID VioInputEventQProcessUsedBuffersLocked(_Inout_ PDEVICE_CONTEXT Ctx)
     }
 }
 
+static VOID VioInputEvtConfigChangeWorkItem(_In_ WDFWORKITEM WorkItem)
+{
+    PVIOINPUT_CONFIG_WORKITEM_CONTEXT wiCtx;
+    WDFDEVICE device;
+    PDEVICE_CONTEXT devCtx;
+    LONG run;
+
+    PAGED_CODE();
+
+    wiCtx = VioInputGetConfigWorkItemContext(WorkItem);
+    device = (wiCtx != NULL) ? wiCtx->Device : NULL;
+    if (device == NULL) {
+        return;
+    }
+
+    devCtx = VirtioInputGetDeviceContext(device);
+    run = InterlockedIncrement(&devCtx->ConfigChangeWorkItemRuns);
+
+    for (;;) {
+        LONG pending;
+        LONG started;
+        UCHAR gen;
+        UCHAR devStatus;
+        NTSTATUS status;
+
+        pending = InterlockedExchange(&devCtx->ConfigChangePending, 0);
+        if (pending == 0) {
+            break;
+        }
+
+        started = InterlockedCompareExchange(&devCtx->VirtioStarted, 0, 0);
+
+        gen = 0;
+        devStatus = 0;
+        if (devCtx->PciDevice.CommonCfg != NULL) {
+            gen = READ_REGISTER_UCHAR(&devCtx->PciDevice.CommonCfg->config_generation);
+            devStatus = READ_REGISTER_UCHAR(&devCtx->PciDevice.CommonCfg->device_status);
+        }
+
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "virtio config change: attempting transport reinit (run=%ld gen=%u lastGen=%u status=0x%02X started=%ld inD0=%u)\n",
+            run,
+            (ULONG)gen,
+            (ULONG)devCtx->LastConfigGeneration,
+            (ULONG)devStatus,
+            started,
+            devCtx->InD0 ? 1u : 0u);
+
+        InterlockedIncrement(&devCtx->ConfigChangeResetAttempts);
+
+        status = VirtioInputHandleVirtioConfigChange(device);
+        if (!NT_SUCCESS(status)) {
+            InterlockedIncrement(&devCtx->ConfigChangeResetFailures);
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "virtio config change: transport reinit failed: %!STATUS! (attempt=%ld failures=%ld)\n",
+                status,
+                devCtx->ConfigChangeResetAttempts,
+                devCtx->ConfigChangeResetFailures);
+        }
+    }
+
+    InterlockedExchange(&devCtx->ConfigChangeWorkItemActive, 0);
+
+    //
+    // If a config-change interrupt raced with the tail end of this work item
+    // (after we drained ConfigChangePending but before we cleared Active),
+    // re-queue ourselves.
+    //
+    if (InterlockedCompareExchange(&devCtx->ConfigChangePending, 0, 0) != 0 && devCtx->ConfigChangeWorkItem != NULL) {
+        if (InterlockedCompareExchange(&devCtx->ConfigChangeWorkItemActive, 1, 0) == 0) {
+            WdfWorkItemEnqueue(devCtx->ConfigChangeWorkItem);
+        }
+    }
+}
+
 static VOID VioInputEvtConfigChange(_In_ WDFDEVICE Device, _In_opt_ PVOID Context)
 {
     UNREFERENCED_PARAMETER(Device);
     PDEVICE_CONTEXT devCtx = (PDEVICE_CONTEXT)Context;
     LONG cfgCount = -1;
     UCHAR gen = 0;
+    UCHAR devStatus = 0;
+    UCHAR lastGen = 0;
+    BOOLEAN schedule = FALSE;
 
     if (devCtx != NULL) {
         cfgCount = InterlockedIncrement(&devCtx->ConfigInterruptCount);
         if (devCtx->PciDevice.CommonCfg != NULL) {
             gen = READ_REGISTER_UCHAR(&devCtx->PciDevice.CommonCfg->config_generation);
+            devStatus = READ_REGISTER_UCHAR(&devCtx->PciDevice.CommonCfg->device_status);
+            lastGen = devCtx->LastConfigGeneration;
+        }
+
+        //
+        // The virtio-input config space is expected to be static. A config-change
+        // interrupt while the device is started may indicate that the device has
+        // been reset/reconfigured and that our virtqueue programming is stale.
+        //
+        if (InterlockedCompareExchange(&devCtx->VirtioStarted, 0, 0) != 0 && devCtx->InD0) {
+            schedule = (gen != lastGen) || ((devStatus & VIRTIO_STATUS_DRIVER_OK) == 0);
+        }
+
+        if (schedule && devCtx->ConfigChangeWorkItem != NULL) {
+            InterlockedExchange(&devCtx->ConfigChangePending, 1);
+            if (InterlockedCompareExchange(&devCtx->ConfigChangeWorkItemActive, 1, 0) == 0) {
+                WdfWorkItemEnqueue(devCtx->ConfigChangeWorkItem);
+            }
         }
     }
 
     VIOINPUT_LOG(
         VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
-        "config change interrupt: gen=%u cfgIrqs=%ld interrupts=%ld dpcs=%ld\n",
+        "config change interrupt: gen=%u lastGen=%u status=0x%02X schedule=%u cfgIrqs=%ld interrupts=%ld dpcs=%ld\n",
         (ULONG)gen,
+        (ULONG)lastGen,
+        (ULONG)devStatus,
+        schedule ? 1u : 0u,
         cfgCount,
         devCtx ? devCtx->Counters.VirtioInterrupts : -1,
         devCtx ? devCtx->Counters.VirtioDpcs : -1);
@@ -904,6 +1013,13 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
         deviceContext->EventRxVa = NULL;
         deviceContext->EventRxPa = 0;
         deviceContext->EventQueueSize = 0;
+        deviceContext->ConfigChangeWorkItem = NULL;
+        deviceContext->ConfigChangeWorkItemActive = 0;
+        deviceContext->ConfigChangePending = 0;
+        deviceContext->ConfigChangeWorkItemRuns = 0;
+        deviceContext->ConfigChangeResetAttempts = 0;
+        deviceContext->ConfigChangeResetFailures = 0;
+        deviceContext->LastConfigGeneration = 0;
 
         {
             WDF_OBJECT_ATTRIBUTES lockAttributes;
@@ -914,6 +1030,25 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
             if (!NT_SUCCESS(status)) {
                 return status;
             }
+        }
+
+        {
+            WDF_WORKITEM_CONFIG wiConfig;
+            WDF_OBJECT_ATTRIBUTES wiAttributes;
+            PVIOINPUT_CONFIG_WORKITEM_CONTEXT wiCtx;
+
+            WDF_WORKITEM_CONFIG_INIT(&wiConfig, VioInputEvtConfigChangeWorkItem);
+
+            WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&wiAttributes, VIOINPUT_CONFIG_WORKITEM_CONTEXT);
+            wiAttributes.ParentObject = device;
+
+            status = WdfWorkItemCreate(&wiConfig, &wiAttributes, &deviceContext->ConfigChangeWorkItem);
+            if (!NT_SUCCESS(status)) {
+                return status;
+            }
+
+            wiCtx = VioInputGetConfigWorkItemContext(deviceContext->ConfigChangeWorkItem);
+            wiCtx->Device = device;
         }
 
         virtio_input_device_init(
@@ -993,6 +1128,12 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
     deviceContext->InD0 = FALSE;
     (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
     (VOID)InterlockedExchange64(&deviceContext->NegotiatedFeatures, 0);
+    deviceContext->ConfigChangeWorkItemActive = 0;
+    deviceContext->ConfigChangePending = 0;
+    deviceContext->ConfigChangeWorkItemRuns = 0;
+    deviceContext->ConfigChangeResetAttempts = 0;
+    deviceContext->ConfigChangeResetFailures = 0;
+    deviceContext->LastConfigGeneration = 0;
 
     status = VirtioPciModernInit(Device, &deviceContext->PciDevice);
     if (!NT_SUCCESS(status)) {
@@ -1205,6 +1346,9 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
 
     deviceContext->HardwareReady = TRUE;
     VirtioInputUpdateStatusQActiveState(deviceContext);
+    if (deviceContext->PciDevice.CommonCfg != NULL) {
+        deviceContext->LastConfigGeneration = READ_REGISTER_UCHAR(&deviceContext->PciDevice.CommonCfg->config_generation);
+    }
     return STATUS_SUCCESS;
 }
 
@@ -1218,6 +1362,12 @@ NTSTATUS VirtioInputEvtDeviceReleaseHardware(_In_ WDFDEVICE Device, _In_ WDFCMRE
 
     {
         PDEVICE_CONTEXT deviceContext = VirtioInputGetDeviceContext(Device);
+        if (deviceContext->ConfigChangeWorkItem != NULL) {
+            WdfWorkItemFlush(deviceContext->ConfigChangeWorkItem);
+        }
+        deviceContext->ConfigChangeWorkItemActive = 0;
+        deviceContext->ConfigChangePending = 0;
+
         deviceContext->HardwareReady = FALSE;
         deviceContext->InD0 = FALSE;
         deviceContext->HidActivated = FALSE;
@@ -2014,6 +2164,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
     }
 
     VirtioInputUpdateStatusQActiveState(deviceContext);
+    if (deviceContext->PciDevice.CommonCfg != NULL) {
+        deviceContext->LastConfigGeneration = READ_REGISTER_UCHAR(&deviceContext->PciDevice.CommonCfg->config_generation);
+    }
     return STATUS_SUCCESS;
 }
 
