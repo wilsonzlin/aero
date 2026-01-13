@@ -222,6 +222,14 @@ fn ipv4_l3_l4_header_len(frame: &[u8], ip_off: usize) -> Option<usize> {
 
     let proto = frame[ip_off + 9];
     let l4_off = ip_off + ip_header_len;
+
+    // If this is a non-initial IPv4 fragment (fragment offset != 0), we can't reliably parse L4
+    // headers without accidentally capturing payload bytes. Keep only the IP header.
+    let flags_fragment = u16::from_be_bytes([frame[ip_off + 6], frame[ip_off + 7]]);
+    if (flags_fragment & 0x1fff) != 0 {
+        return Some(l4_off);
+    }
+
     match proto {
         // TCP
         6 => tcp_header_len(frame, l4_off),
@@ -302,6 +310,7 @@ pub struct NetTraceConfig {
     ///         max_tcp_proxy_bytes: 256,
     ///         max_udp_proxy_bytes: 256,
     ///     })),
+    ///     ..NetTraceConfig::default()
     /// };
     /// ```
     pub redactor: Option<Arc<dyn NetTraceRedactor>>,
@@ -968,6 +977,42 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    fn make_ipv4_tcp_frame(payload: &[u8], flags_fragment: u16) -> Vec<u8> {
+        let ip_header_len = 20usize;
+        let tcp_header_len = 20usize;
+        let total_len = ip_header_len + tcp_header_len + payload.len();
+
+        let mut buf = Vec::with_capacity(14 + total_len);
+
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst mac
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src mac
+        buf.extend_from_slice(&0x0800u16.to_be_bytes()); // ethertype: IPv4
+
+        buf.push(0x45); // version + IHL
+        buf.push(0); // dscp/ecn
+        buf.extend_from_slice(&(total_len as u16).to_be_bytes());
+        buf.extend_from_slice(&0u16.to_be_bytes()); // identification
+        buf.extend_from_slice(&flags_fragment.to_be_bytes());
+        buf.push(64); // ttl
+        buf.push(6); // protocol: TCP
+        buf.extend_from_slice(&0u16.to_be_bytes()); // hdr checksum (ignored)
+        buf.extend_from_slice(&[10, 0, 2, 15]); // src ip
+        buf.extend_from_slice(&[93, 184, 216, 34]); // dst ip
+
+        buf.extend_from_slice(&12345u16.to_be_bytes()); // src port
+        buf.extend_from_slice(&80u16.to_be_bytes()); // dst port
+        buf.extend_from_slice(&0u32.to_be_bytes()); // seq
+        buf.extend_from_slice(&0u32.to_be_bytes()); // ack
+        buf.push((tcp_header_len as u8 / 4) << 4); // data offset
+        buf.push(0x18); // PSH+ACK
+        buf.extend_from_slice(&0u16.to_be_bytes()); // window
+        buf.extend_from_slice(&0u16.to_be_bytes()); // checksum (ignored)
+        buf.extend_from_slice(&0u16.to_be_bytes()); // urgent
+
+        buf.extend_from_slice(payload);
+        buf
+    }
+
     #[test]
     fn truncate_redactor_truncates_each_record_type() {
         let tracer = NetTracer::new(NetTraceConfig {
@@ -980,6 +1025,7 @@ mod tests {
                 max_tcp_proxy_bytes: 3,
                 max_udp_proxy_bytes: 2,
             })),
+            max_bytes: 1024,
         });
         tracer.enable();
 
@@ -1047,6 +1093,7 @@ mod tests {
             capture_tcp_proxy: true,
             capture_udp_proxy: true,
             redactor: Some(Arc::new(DropAll)),
+            max_bytes: 1024,
         });
         tracer.enable();
 
@@ -1069,6 +1116,73 @@ mod tests {
                 .records
                 .is_empty(),
             "records should be dropped when redactor returns None"
+        );
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_l3_l4_headers_for_tcp_ipv4() {
+        let frame = make_ipv4_tcp_frame(b"hello world", 0);
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestTx, &frame)
+            .expect("expected parseable IPv4/TCP frame");
+
+        assert_eq!(out.len(), 14 + 20 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_does_not_capture_payload_for_non_initial_ipv4_fragments() {
+        // Fragment offset != 0 (lower 13 bits). Even though the frame contains bytes after the IPv4
+        // header, the redactor must not treat them as a TCP header.
+        let frame = make_ipv4_tcp_frame(b"sensitive payload", 1);
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestRx, &frame)
+            .expect("expected parseable IPv4 fragment");
+
+        assert_eq!(out.len(), 14 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_drops_unparseable_frames_and_proxy_payloads() {
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        assert!(
+            redactor
+                .redact_ethernet(FrameDirection::GuestTx, &[0u8; 13])
+                .is_none(),
+            "should drop truncated ethernet frames"
+        );
+
+        assert!(
+            redactor
+                .redact_tcp_proxy(ProxyDirection::GuestToRemote, 1, b"secret")
+                .is_none(),
+            "should drop TCP proxy payloads"
+        );
+
+        assert!(
+            redactor
+                .redact_udp_proxy(
+                    ProxyDirection::GuestToRemote,
+                    UdpTransport::Proxy,
+                    Ipv4Addr::new(1, 1, 1, 1),
+                    1,
+                    2,
+                    b"secret"
+                )
+                .is_none(),
+            "should drop UDP proxy payloads"
         );
     }
 }
