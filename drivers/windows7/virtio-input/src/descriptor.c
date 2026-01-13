@@ -131,7 +131,7 @@ const UCHAR VirtioInputMouseReportDescriptor[] = {
 /*
  * Keep in sync with tools/hidtest (VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN).
  *
- * Total: 48 bytes (8 buttons + X/Y/Wheel).
+ * Total: 57 bytes (8 buttons + X/Y/Wheel + AC Pan).
  */
 C_ASSERT(sizeof(VirtioInputMouseReportDescriptor) == 57);
 

@@ -1942,6 +1942,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
              * Contract v1: mouse devices MUST implement:
              *   - EV_BITS(EV_REL) with REL_X, REL_Y, REL_WHEEL
              *   - EV_BITS(EV_KEY) with BTN_LEFT, BTN_RIGHT, BTN_MIDDLE
+             *
+             * Devices may also advertise additional relative axes (e.g. REL_HWHEEL)
+             * but they are not required for contract v1.
              */
             static const VIOINPUT_REQUIRED_EV_CODE kRequiredRel[] = {
                 {VIRTIO_INPUT_REL_X, "REL_X"},

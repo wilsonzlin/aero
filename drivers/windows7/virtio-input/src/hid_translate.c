@@ -534,8 +534,8 @@ static void hid_translate_emit_mouse_reports(struct hid_translate *t) {
     return;
   }
 
-  bool need_report =
-      t->mouse_dirty || (t->mouse_rel_x != 0) || (t->mouse_rel_y != 0) || (t->mouse_wheel != 0) || (t->mouse_hwheel != 0);
+  bool need_report = t->mouse_dirty || (t->mouse_rel_x != 0) || (t->mouse_rel_y != 0) || (t->mouse_wheel != 0) ||
+                     (t->mouse_hwheel != 0);
   if (!need_report) {
     return;
   }

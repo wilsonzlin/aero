@@ -2983,9 +2983,9 @@ static void ProcessMouseReport(VirtioInputEventsTestResult& out, const uint8_t* 
   if (!buf || len == 0) return;
 
   size_t off = 0;
-  // virtio-input mouse input report is typically 5 bytes with ReportID=2:
-  //   [2][buttons][dx][dy][wheel]
-  if (len >= 5 && buf[0] == 2) off = 1;
+  // virtio-input mouse input report is typically 6 bytes with ReportID=2:
+  //   [2][buttons][dx][dy][wheel][hwheel]
+  if (len >= 6 && buf[0] == 2) off = 1;
   if (len < off + 3) return;
 
   const uint8_t buttons = buf[off + 0];

@@ -200,6 +200,13 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_ABS_Y == 1);
 }
 
+static void test_linux_rel_code_abi_values(void) {
+  assert(VIRTIO_INPUT_REL_X == 0);
+  assert(VIRTIO_INPUT_REL_Y == 1);
+  assert(VIRTIO_INPUT_REL_HWHEEL == 6);
+  assert(VIRTIO_INPUT_REL_WHEEL == 8);
+}
+
 static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_A) == 0x04);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_Z) == 0x1D);
@@ -844,6 +851,36 @@ static void test_mouse_buttons_reports_le(void) {
   expect_report(&cap, 7, expect8, sizeof(expect8));
 }
 
+static void test_mouse_hwheel_reports(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Horizontal wheel (AC Pan). */
+  send_rel(&t, VIRTIO_INPUT_REL_HWHEEL, 7);
+  send_syn(&t);
+
+  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0x00, 0x07};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
+static void test_mouse_wheel_and_hwheel_one_syn(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  send_rel(&t, VIRTIO_INPUT_REL_WHEEL, 2);
+  send_rel(&t, VIRTIO_INPUT_REL_HWHEEL, -1);
+  send_syn(&t);
+
+  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0x02, 0xFF};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
 static void test_keyboard_overflow_queue(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -1388,6 +1425,7 @@ static void test_tablet_scaling_reports(void) {
 
 int main(void) {
   test_linux_keycode_abi_values();
+  test_linux_rel_code_abi_values();
   test_mapping();
   test_keyboard_modifier_reports();
   test_keyboard_all_modifier_bits_report();
@@ -1404,6 +1442,8 @@ int main(void) {
   test_mouse_reports();
   test_mouse_horizontal_wheel_reports();
   test_mouse_reports_le();
+  test_mouse_hwheel_reports();
+  test_mouse_wheel_and_hwheel_one_syn();
   test_mouse_buttons_reports();
   test_mouse_buttons_reports_le();
   test_consumer_control_reports();
