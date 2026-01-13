@@ -767,6 +767,7 @@ dependencies = [
  "aero-mmu",
  "aero-net-backend",
  "aero-net-e1000",
+ "aero-net-pump",
  "aero-opfs",
  "aero-pc-constants",
  "aero-platform",

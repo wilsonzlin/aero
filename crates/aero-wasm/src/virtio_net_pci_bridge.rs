@@ -30,8 +30,9 @@ use aero_ipc::layout::io_ipc_queue_kind::{NET_RX, NET_TX};
 use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
 use aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD;
 use aero_net_backend::L2TunnelRingBackend;
+use aero_net_pump::{tick_virtio_net, VirtioNetBackendAdapter, DEFAULT_MAX_FRAMES_PER_POLL};
 use aero_platform::interrupts::msi::MsiMessage;
-use aero_virtio::devices::net::{NetBackend, VirtioNet};
+use aero_virtio::devices::net::VirtioNet;
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
 use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
 
@@ -292,11 +293,9 @@ impl VirtioNetPciBridge {
         let net_tx = open_ring_by_kind(io_ipc_sab.clone(), NET_TX, 0)?;
         let net_rx = open_ring_by_kind(io_ipc_sab, NET_RX, 0)?;
 
-        let backend = NetRingBackend::with_max_frame_bytes(
-            net_tx,
-            net_rx,
-            L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
-        );
+        let backend = VirtioNetBackendAdapter::new(Some(Box::new(
+            NetRingBackend::with_max_frame_bytes(net_tx, net_rx, L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD),
+        )));
 
         // Deterministic locally-administered MAC.
         let net = VirtioNet::new(backend, [0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
@@ -399,7 +398,14 @@ impl VirtioNetPciBridge {
         if offset as u64 == VIRTIO_PCI_LEGACY_QUEUE_NOTIFY {
             // Only DMA when PCI Bus Master Enable is set (command bit 2).
             if (self.pci_command & (1 << 2)) != 0 {
-                self.dev.process_notified_queues(&mut self.mem);
+                // Clamp per-call work so a guest cannot force unbounded processing from inside a
+                // synchronous legacy queue notify write.
+                tick_virtio_net(
+                    &mut self.dev,
+                    &mut self.mem,
+                    DEFAULT_MAX_FRAMES_PER_POLL,
+                    DEFAULT_MAX_FRAMES_PER_POLL,
+                );
             }
         }
     }
@@ -429,7 +435,12 @@ impl VirtioNetPciBridge {
         if (self.pci_command & (1 << 2)) == 0 {
             return;
         }
-        self.dev.poll(&mut self.mem);
+        tick_virtio_net(
+            &mut self.dev,
+            &mut self.mem,
+            DEFAULT_MAX_FRAMES_PER_POLL,
+            DEFAULT_MAX_FRAMES_PER_POLL,
+        );
     }
 
     /// Whether the PCI INTx line should be raised.
@@ -441,7 +452,10 @@ impl VirtioNetPciBridge {
     ///
     /// Values are exposed as JS `BigInt` so callers do not lose precision for long-running VMs.
     pub fn virtio_net_stats(&mut self) -> JsValue {
-        let Some(dev) = self.dev.device_mut::<VirtioNet<NetRingBackend>>() else {
+        let Some(dev) = self
+            .dev
+            .device_mut::<VirtioNet<VirtioNetBackendAdapter>>()
+        else {
             return JsValue::NULL;
         };
         let Some(stats) = dev.backend_mut().l2_ring_stats() else {
