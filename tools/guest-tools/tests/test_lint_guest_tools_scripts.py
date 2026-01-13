@@ -26,6 +26,7 @@ lint_guest_tools_scripts = _load_linter_module()
 def _synthetic_setup_text(
     *,
     include_cdd_base_path: bool = True,
+    include_check_mode: bool = True,
     include_skipstorage_flag: bool = True,
     include_storage_skip_marker: bool = True,
     include_cert_policy_gating: bool = True,
@@ -50,6 +51,16 @@ def _synthetic_setup_text(
             "/forcesigningpolicy:none /forcesigningpolicy:test /forcesigningpolicy:production",
         ]
     )
+
+    if include_check_mode:
+        lines.extend(
+            [
+                r'if /i "%%~A"=="/check" set "ARG_CHECK=1"',
+                r'if /i "%%~A"=="/validate" set "ARG_CHECK=1"',
+                r'if "%ARG_CHECK%"=="1" goto :check_mode',
+                r":check_mode",
+            ]
+        )
 
     if include_skipstorage_flag:
         lines.append("/skipstorage")
@@ -171,6 +182,26 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             self.assertTrue(
                 any("/skipstorage" in e for e in errs),
                 msg="expected missing /skipstorage error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_check_mode(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_check_mode=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("dry-run validation mode" in e for e in errs),
+                msg="expected missing /check mode error. Errors:\n" + "\n".join(errs),
             )
 
     def test_linter_fails_when_setup_missing_storage_skip_marker(self) -> None:
