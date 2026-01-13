@@ -115,6 +115,46 @@ pub enum DiskError {
     OutOfRange,
 }
 
+/// El Torito boot media type (as reported by INT 13h AH=4Bh).
+///
+/// This is a subset of the classic El Torito BIOS boot specification media type encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+#[allow(dead_code)]
+pub(super) enum ElToritoBootMediaType {
+    /// El Torito "no emulation" mode.
+    NoEmulation = 0x00,
+    /// 1.2MiB floppy emulation.
+    Floppy1200KiB = 0x01,
+    /// 1.44MiB floppy emulation.
+    Floppy1440KiB = 0x02,
+    /// 2.88MiB floppy emulation.
+    Floppy2880KiB = 0x03,
+    /// Hard disk emulation.
+    HardDisk = 0x04,
+}
+
+/// Cached El Torito CD boot metadata captured during POST.
+///
+/// When the BIOS boots via an El Torito boot catalog entry, boot images (e.g. ISOLINUX) may query
+/// this information via INT 13h AH=4Bh ("El Torito disk emulation services").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ElToritoBootInfo {
+    pub(super) media_type: ElToritoBootMediaType,
+    /// Boot drive number passed to the boot image (DL).
+    pub(super) boot_drive: u8,
+    /// BIOS controller index for the boot device (usually 0).
+    pub(super) controller_index: u8,
+    /// Boot catalog sector (LBA) on the CD-ROM image (if known).
+    pub(super) boot_catalog_lba: Option<u32>,
+    /// Boot image start sector (RBA/LBA) on the CD-ROM image (if known).
+    pub(super) boot_image_lba: Option<u32>,
+    /// Real-mode segment the boot image was loaded to (if known).
+    pub(super) load_segment: Option<u16>,
+    /// Number of 512-byte sectors loaded for the initial boot image (if known).
+    pub(super) sector_count: Option<u16>,
+}
+
 /// Minimal 512-byte-sector read interface used by the legacy BIOS INT 13h implementation.
 ///
 /// # Canonical trait note
@@ -333,6 +373,8 @@ pub struct Bios {
     tty_output_start: usize,
     /// INT 13h status code from the most recent disk operation (AH=01h).
     last_int13_status: u8,
+    /// El Torito CD boot metadata captured during POST.
+    el_torito_boot_info: Option<ElToritoBootInfo>,
 
     /// RSDP physical address (if ACPI tables were built).
     rsdp_addr: Option<u64>,
@@ -368,6 +410,7 @@ impl Bios {
             tty_output: Vec::new(),
             tty_output_start: 0,
             last_int13_status: 0,
+            el_torito_boot_info: None,
             rsdp_addr: None,
             acpi_reclaimable: None,
             acpi_nvs: None,
