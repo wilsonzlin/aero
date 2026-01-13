@@ -44,6 +44,31 @@
 #define VIRTIO_NET_F_MQ         (1u << 22)
 #define VIRTIO_NET_F_CTRL_MAC_ADDR (1u << 23)
 
+// virtio-net control virtqueue (VIRTIO_NET_F_CTRL_VQ) protocol.
+#define VIRTIO_NET_OK 0u
+#define VIRTIO_NET_ERR 1u
+
+#define VIRTIO_NET_CTRL_RX 0u
+#define VIRTIO_NET_CTRL_MAC 1u
+#define VIRTIO_NET_CTRL_VLAN 2u
+#define VIRTIO_NET_CTRL_ANNOUNCE 3u
+#define VIRTIO_NET_CTRL_MQ 4u
+
+#define VIRTIO_NET_CTRL_MAC_TABLE_SET 0u
+#define VIRTIO_NET_CTRL_MAC_ADDR_SET 1u
+
+#define VIRTIO_NET_CTRL_VLAN_ADD 0u
+#define VIRTIO_NET_CTRL_VLAN_DEL 1u
+
+#pragma pack(push, 1)
+typedef struct _VIRTIO_NET_CTRL_HDR {
+  UCHAR Class;
+  UCHAR Command;
+} VIRTIO_NET_CTRL_HDR;
+
+C_ASSERT(sizeof(VIRTIO_NET_CTRL_HDR) == 2);
+#pragma pack(pop)
+
 // virtio-net device status bits (config.status) if VIRTIO_NET_F_STATUS is negotiated.
 #define VIRTIO_NET_S_LINK_UP 1u
 
@@ -154,11 +179,13 @@ typedef struct _AEROVNET_ADAPTER {
 
   // Virtio-pci modern transport (vendor caps + BAR0 MMIO).
   VIRTIO_PCI_DEVICE Vdev;
-  volatile UINT16* QueueNotifyAddrCache[2];
+  volatile UINT16* QueueNotifyAddrCache[8];
 
   // Virtqueues
   AEROVNET_VQ RxVq;
   AEROVNET_VQ TxVq;
+  AEROVNET_VQ CtrlVq;
+  LIST_ENTRY CtrlPendingList;
 
   // virtqueue_split OS shim
   virtio_os_ops_t VirtioOps;
@@ -217,6 +244,10 @@ typedef struct _AEROVNET_ADAPTER {
   ULONGLONG StatTxErrors;
   ULONGLONG StatRxErrors;
   ULONGLONG StatRxNoBuffers;
+  ULONGLONG StatCtrlVqCmdSent;
+  ULONGLONG StatCtrlVqCmdOk;
+  ULONGLONG StatCtrlVqCmdErr;
+  ULONGLONG StatCtrlVqCmdTimeout;
 } AEROVNET_ADAPTER;
 
 // Helpers for per-NBL bookkeeping via MiniportReserved.
