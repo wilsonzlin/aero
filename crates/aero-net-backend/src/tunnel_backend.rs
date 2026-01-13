@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD;
+
 use crate::NetworkBackend;
 
 /// Stats for [`L2TunnelBackend`].
@@ -48,7 +50,7 @@ pub struct L2TunnelBackend {
 impl L2TunnelBackend {
     pub const DEFAULT_MAX_TX_FRAMES: usize = 1024;
     pub const DEFAULT_MAX_RX_FRAMES: usize = 1024;
-    pub const DEFAULT_MAX_FRAME_BYTES: usize = 2048;
+    pub const DEFAULT_MAX_FRAME_BYTES: usize = L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD;
 
     /// Create a backend with default queue limits.
     pub fn new() -> Self {

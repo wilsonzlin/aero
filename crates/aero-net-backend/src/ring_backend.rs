@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex, RwLock};
 
+use aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD;
 use aero_ipc::ring::{PopError, PushError};
 
 use crate::NetworkBackend;
@@ -291,7 +292,7 @@ pub struct L2TunnelRingBackend<TX, RX> {
 }
 
 impl<TX: FrameRing, RX: FrameRing> L2TunnelRingBackend<TX, RX> {
-    pub const DEFAULT_MAX_FRAME_BYTES: usize = 2048;
+    pub const DEFAULT_MAX_FRAME_BYTES: usize = L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD;
 
     pub fn new(tx: TX, rx: RX) -> Self {
         Self::with_max_frame_bytes(tx, rx, Self::DEFAULT_MAX_FRAME_BYTES)
