@@ -12,7 +12,8 @@
 //! - I/O queues (submission/completion)
 //! - Admin commands: IDENTIFY, CREATE IO SQ/CQ
 //! - NVM commands: READ, WRITE, FLUSH
-//! - PRP (PRP1/PRP2 + PRP lists). SGL is not supported.
+//! - PRP (PRP1/PRP2 + PRP lists)
+//! - Limited SGL support for READ/WRITE (Data Block + Segment/Last Segment chaining)
 //!
 //! Interrupts:
 //! - Only legacy INTx is modelled here (via [`NvmeController::intx_level`]).
@@ -52,6 +53,11 @@ const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
 // DoS guard: cap per-request DMA buffers. This should match the MDTS value we advertise in
 // Identify Controller (4MiB for 4KiB pages).
 const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
+// DoS guard: cap the number of SGL descriptors processed for a single command.
+//
+// The maximum transfer is 4MiB; even with highly fragmented 512-byte segments this would be ~8192
+// descriptors, so 16384 provides headroom while still bounding worst-case work.
+const NVME_MAX_SGL_DESCRIPTORS: usize = 16 * 1024;
 // Maximum number of entries per submission/completion queue supported by this controller.
 //
 // This must match CAP.MQES (0-based), which we currently hard-code to 128 entries.
@@ -966,12 +972,15 @@ impl NvmeController {
     }
 
     fn execute_admin(&mut self, cmd: NvmeCommand, memory: &mut dyn MemoryBus) -> (NvmeStatus, u32) {
-        if cmd.psdt != 0 {
-            return (NvmeStatus::INVALID_FIELD, 0);
-        }
-
         match cmd.opc {
-            0x06 => self.cmd_identify(cmd, memory),
+            0x06 => {
+                // IDENTIFY transfers data. Some guests may use SGL even for admin commands, so
+                // accept both PRP and SGL data pointer formats here.
+                if cmd.psdt > 1 {
+                    return (NvmeStatus::INVALID_FIELD, 0);
+                }
+                self.cmd_identify(cmd, memory)
+            }
             0x05 => self.cmd_create_io_cq(cmd),
             0x01 => self.cmd_create_io_sq(cmd),
             _ => (NvmeStatus::INVALID_OPCODE, 0),
@@ -979,7 +988,8 @@ impl NvmeController {
     }
 
     fn execute_io(&mut self, cmd: NvmeCommand, memory: &mut dyn MemoryBus) -> (NvmeStatus, u32) {
-        if cmd.psdt != 0 {
+        // Support both PRP (PSDT=0) and SGL (PSDT=1) for data transfer commands.
+        if cmd.psdt > 1 {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
 
@@ -999,11 +1009,15 @@ impl NvmeController {
             _ => return (NvmeStatus::INVALID_FIELD, 0),
         };
 
-        let status = self.dma_write_prp(memory, cmd.prp1, cmd.prp2, &data);
+        let status = self.dma_write(memory, cmd.psdt, cmd.prp1, cmd.prp2, &data);
         (status, 0)
     }
 
     fn cmd_create_io_cq(&mut self, cmd: NvmeCommand) -> (NvmeStatus, u32) {
+        if cmd.psdt != 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+
         let qid = (cmd.cdw10 & 0xffff) as u16;
         if qid == 0 {
             return (NvmeStatus::INVALID_FIELD, 0);
@@ -1045,6 +1059,10 @@ impl NvmeController {
     }
 
     fn cmd_create_io_sq(&mut self, cmd: NvmeCommand) -> (NvmeStatus, u32) {
+        if cmd.psdt != 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+
         let qid = (cmd.cdw10 & 0xffff) as u16;
         if qid == 0 {
             return (NvmeStatus::INVALID_FIELD, 0);
@@ -1129,7 +1147,7 @@ impl NvmeController {
             return (status, 0);
         }
 
-        let status = self.dma_write_prp(memory, cmd.prp1, cmd.prp2, &data);
+        let status = self.dma_write(memory, cmd.psdt, cmd.prp1, cmd.prp2, &data);
         (status, 0)
     }
 
@@ -1168,7 +1186,7 @@ impl NvmeController {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
         data.resize(len, 0);
-        let status = self.dma_read_prp(memory, cmd.prp1, cmd.prp2, &mut data);
+        let status = self.dma_read(memory, cmd.psdt, cmd.prp1, cmd.prp2, &mut data);
         if status != NvmeStatus::SUCCESS {
             return (status, 0);
         }
@@ -1189,14 +1207,15 @@ impl NvmeController {
         (status, 0)
     }
 
-    fn dma_write_prp(
+    fn dma_write(
         &self,
         memory: &mut dyn MemoryBus,
-        prp1: u64,
-        prp2: u64,
+        psdt: u8,
+        dptr1: u64,
+        dptr2: u64,
         data: &[u8],
     ) -> NvmeStatus {
-        let segs = match prp_segments(memory, prp1, prp2, data.len()) {
+        let segs = match dma_segments(memory, psdt, dptr1, dptr2, data.len()) {
             Ok(segs) => segs,
             Err(status) => return status,
         };
@@ -1208,14 +1227,15 @@ impl NvmeController {
         NvmeStatus::SUCCESS
     }
 
-    fn dma_read_prp(
+    fn dma_read(
         &self,
         memory: &mut dyn MemoryBus,
-        prp1: u64,
-        prp2: u64,
+        psdt: u8,
+        dptr1: u64,
+        dptr2: u64,
         data: &mut [u8],
     ) -> NvmeStatus {
-        let segs = match prp_segments(memory, prp1, prp2, data.len()) {
+        let segs = match dma_segments(memory, psdt, dptr1, dptr2, data.len()) {
             Ok(segs) => segs,
             Err(status) => return status,
         };
@@ -1566,6 +1586,60 @@ fn write_ascii_padded(dst: &mut [u8], s: &str) {
     dst[..len].copy_from_slice(&bytes[..len]);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SglDescriptorType {
+    DataBlock,
+    Segment,
+    LastSegment,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SglDescriptor {
+    addr: u64,
+    length: u32,
+    dtype: SglDescriptorType,
+    subtype: u8,
+}
+
+impl SglDescriptor {
+    fn parse(bytes: [u8; 16]) -> Result<Self, NvmeStatus> {
+        let addr = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        let length = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let type_byte = bytes[15];
+        let dtype = match type_byte & 0x0f {
+            0x0 => SglDescriptorType::DataBlock,
+            0x2 => SglDescriptorType::Segment,
+            0x3 => SglDescriptorType::LastSegment,
+            _ => return Err(NvmeStatus::INVALID_FIELD),
+        };
+        Ok(SglDescriptor {
+            addr,
+            length,
+            dtype,
+            subtype: type_byte >> 4,
+        })
+    }
+
+    fn from_dptr(dptr1: u64, dptr2: u64) -> Result<Self, NvmeStatus> {
+        // NVMe SGL descriptor: 8-byte address, 4-byte length, 3 bytes reserved, 1 byte type.
+        let addr = dptr1;
+        let length = (dptr2 & 0xffff_ffff) as u32;
+        let type_byte = (dptr2 >> 56) as u8;
+        let dtype = match type_byte & 0x0f {
+            0x0 => SglDescriptorType::DataBlock,
+            0x2 => SglDescriptorType::Segment,
+            0x3 => SglDescriptorType::LastSegment,
+            _ => return Err(NvmeStatus::INVALID_FIELD),
+        };
+        Ok(SglDescriptor {
+            addr,
+            length,
+            dtype,
+            subtype: type_byte >> 4,
+        })
+    }
+}
+
 fn prp_segments(
     memory: &mut dyn MemoryBus,
     prp1: u64,
@@ -1643,6 +1717,123 @@ fn prp_segments(
     }
 
     Ok(segs)
+}
+
+fn sgl_segments(
+    memory: &mut dyn MemoryBus,
+    dptr1: u64,
+    dptr2: u64,
+    len: usize,
+) -> Result<Vec<(u64, usize)>, NvmeStatus> {
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Parse the inline SGL descriptor in the NVMe command's DPTR field.
+    let root = SglDescriptor::from_dptr(dptr1, dptr2)?;
+
+    let mut segs = Vec::new();
+    let mut remaining = len;
+
+    // Total SGL descriptors "seen" (including those queued but not yet processed).
+    let mut descriptors_seen: usize = 1;
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(root);
+
+    while let Some(desc) = queue.pop_front() {
+        if remaining == 0 {
+            break;
+        }
+
+        // Subtype 0 = address; other subtypes are not supported.
+        if desc.subtype != 0 {
+            return Err(NvmeStatus::INVALID_FIELD);
+        }
+
+        match desc.dtype {
+            SglDescriptorType::DataBlock => {
+                if desc.addr == 0 {
+                    return Err(NvmeStatus::INVALID_FIELD);
+                }
+                let desc_len = desc.length as usize;
+                if desc_len == 0 {
+                    return Err(NvmeStatus::INVALID_FIELD);
+                }
+                let chunk = remaining.min(desc_len);
+                segs.push((desc.addr, chunk));
+                remaining -= chunk;
+            }
+            SglDescriptorType::Segment | SglDescriptorType::LastSegment => {
+                if desc.addr == 0 {
+                    return Err(NvmeStatus::INVALID_FIELD);
+                }
+                // Segment address should be 16-byte aligned (descriptor alignment).
+                if desc.addr & 0xf != 0 {
+                    return Err(NvmeStatus::INVALID_FIELD);
+                }
+                let seg_bytes = desc.length as usize;
+                if seg_bytes == 0 || seg_bytes % 16 != 0 {
+                    return Err(NvmeStatus::INVALID_FIELD);
+                }
+                let count = seg_bytes / 16;
+
+                // Enforce a hard cap on total descriptors processed for this command.
+                if descriptors_seen
+                    .checked_add(count)
+                    .is_none_or(|v| v > NVME_MAX_SGL_DESCRIPTORS)
+                {
+                    return Err(NvmeStatus::INVALID_FIELD);
+                }
+                descriptors_seen += count;
+
+                // Read the segment descriptor list and enqueue its entries in order.
+                for idx in 0..count {
+                    let offset = (idx as u64) * 16;
+                    let addr = desc
+                        .addr
+                        .checked_add(offset)
+                        .ok_or(NvmeStatus::INVALID_FIELD)?;
+                    let mut buf = [0u8; 16];
+                    memory.read_physical(addr, &mut buf);
+                    let child = SglDescriptor::parse(buf)?;
+
+                    // Segment chaining descriptors are only supported as the final entry of a
+                    // segment list (matches typical OS usage and keeps parsing bounded).
+                    if matches!(
+                        child.dtype,
+                        SglDescriptorType::Segment | SglDescriptorType::LastSegment
+                    ) && idx + 1 != count
+                    {
+                        return Err(NvmeStatus::INVALID_FIELD);
+                    }
+                    queue.push_back(child);
+                }
+            }
+        }
+    }
+
+    if remaining != 0 {
+        return Err(NvmeStatus::INVALID_FIELD);
+    }
+
+    Ok(segs)
+}
+
+fn dma_segments(
+    memory: &mut dyn MemoryBus,
+    psdt: u8,
+    dptr1: u64,
+    dptr2: u64,
+    len: usize,
+) -> Result<Vec<(u64, usize)>, NvmeStatus> {
+    if len > NVME_MAX_DMA_BYTES {
+        return Err(NvmeStatus::INVALID_FIELD);
+    }
+    match psdt {
+        0 => prp_segments(memory, dptr1, dptr2, len),
+        1 => sgl_segments(memory, dptr1, dptr2, len),
+        _ => Err(NvmeStatus::INVALID_FIELD),
+    }
 }
 
 /// NVMe PCI device model (PCI config space + BAR0 MMIO registers).
