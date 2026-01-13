@@ -571,7 +571,45 @@ func (b *l2Bridge) sanitizeStringForLog(msg string) string {
 		}
 	}
 
+	// Redact common credential-shaped query parameters even when we don't know the
+	// value in advance (e.g. when L2_BACKEND_WS_URL embeds a static token).
+	msg = redactQueryParamValue(msg, "token")
+	msg = redactQueryParamValue(msg, "apiKey")
+
 	return msg
+}
+
+func redactQueryParamValue(msg, key string) string {
+	if msg == "" || key == "" {
+		return msg
+	}
+
+	needle := key + "="
+	const replacement = "<redacted>"
+
+	i := 0
+	for {
+		j := strings.Index(msg[i:], needle)
+		if j == -1 {
+			return msg
+		}
+		j += i
+
+		start := j + len(needle)
+		end := start
+		for end < len(msg) {
+			switch msg[end] {
+			case '&', ' ', '\n', '\r', '\t', '"', '\'', '>', '<', ')', ']', '}', ';':
+				goto replace
+			default:
+				end++
+			}
+		}
+
+	replace:
+		msg = msg[:start] + replacement + msg[end:]
+		i = start + len(replacement)
+	}
 }
 
 func sanitizeWSURLForLog(raw string) string {

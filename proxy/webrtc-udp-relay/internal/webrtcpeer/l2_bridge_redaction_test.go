@@ -37,3 +37,14 @@ func TestL2Bridge_SanitizeStringForLog_RedactsCredentialAndEscapedCredential(t *
 	}
 }
 
+func TestL2Bridge_SanitizeStringForLog_RedactsQueryTokenEvenWhenValueUnknown(t *testing.T) {
+	b := &l2Bridge{}
+	msg := "dial ws://example.com/l2?token=sekrit&foo=bar: 403"
+	s := b.sanitizeStringForLog(msg)
+	if strings.Contains(s, "sekrit") {
+		t.Fatalf("sanitized message still contains query token value: %q", s)
+	}
+	if !strings.Contains(s, "token=<redacted>") {
+		t.Fatalf("expected token query param to be redacted: %q", s)
+	}
+}
