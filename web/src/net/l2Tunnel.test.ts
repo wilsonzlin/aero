@@ -278,6 +278,7 @@ describe("net/l2Tunnel", () => {
   });
 
   it("disables keepalive when keepaliveMinMs=keepaliveMaxMs=0", async () => {
+    vi.useFakeTimers();
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -297,11 +298,13 @@ describe("net/l2Tunnel", () => {
       await microtask();
       expect(events[0]?.type).toBe("open");
 
-      // Allow a brief delay; with keepalive disabled we should not emit any PINGs.
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      // Advance fake time; with keepalive disabled we should not emit any PINGs.
+      await vi.advanceTimersByTimeAsync(50);
+      await microtask();
       expect(FakeWebSocket.last?.sent.length).toBe(0);
     } finally {
       client.close();
+      vi.useRealTimers();
       if (original === undefined) {
         delete (g as { WebSocket?: unknown }).WebSocket;
       } else {
@@ -737,6 +740,7 @@ describe("net/l2Tunnel", () => {
   });
 
   it("queues outbound frames while bufferedAmount exceeds maxBufferedAmount", async () => {
+    vi.useFakeTimers();
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -763,13 +767,16 @@ describe("net/l2Tunnel", () => {
       expect(FakeWebSocket.last!.sent.length).toBe(0);
 
       FakeWebSocket.last!.bufferedAmount = 0;
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      // Drain retry is scheduled via `setTimeout` in the tunnel client; advance fake timers
+      // past the retry delay and then flush the queued microtask that performs the send.
+      await vi.advanceTimersByTimeAsync(20);
       await microtask();
 
       // Frame should flush once the socket drains.
       expect(FakeWebSocket.last!.sent.length).toBe(1);
     } finally {
       client.close();
+      vi.useRealTimers();
       if (original === undefined) {
         delete (g as { WebSocket?: unknown }).WebSocket;
       } else {
