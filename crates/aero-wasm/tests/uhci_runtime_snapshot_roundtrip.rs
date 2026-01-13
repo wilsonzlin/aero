@@ -546,11 +546,9 @@ fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
     // duplicates while the TD retries.
     rt.step_frame();
     let drained_again = rt.webusb_drain_actions().expect("drain_actions ok");
-    let actions_again: Vec<UsbHostAction> =
-        serde_wasm_bindgen::from_value(drained_again).expect("deserialize UsbHostAction[]");
     assert!(
-        actions_again.is_empty(),
-        "expected inflight WebUSB transfer to suppress duplicate actions"
+        drained_again.is_null(),
+        "expected inflight WebUSB transfer to suppress duplicate actions (null drain)"
     );
 
     let snapshot = rt.save_state();
@@ -563,17 +561,25 @@ fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
     }
 
     let drained_after_restore = rt2.webusb_drain_actions().expect("drain_actions ok");
-    let actions_after_restore: Vec<UsbHostAction> =
-        serde_wasm_bindgen::from_value(drained_after_restore).expect("deserialize UsbHostAction[]");
     assert!(
-        actions_after_restore.is_empty(),
-        "expected WebUSB host queues to be cleared on restore"
+        drained_after_restore.is_null(),
+        "expected WebUSB host queues to be cleared on restore (null drain)"
     );
 
     // The guest TD remains active and is retried; with host state cleared, the next retry should
     // re-emit host actions.
-    rt2.step_frame();
-    let drained_retry = rt2.webusb_drain_actions().expect("drain_actions ok");
+    let mut drained_retry = JsValue::NULL;
+    for _ in 0..8 {
+        rt2.step_frame();
+        drained_retry = rt2.webusb_drain_actions().expect("drain_actions ok");
+        if !drained_retry.is_null() {
+            break;
+        }
+    }
+    assert!(
+        !drained_retry.is_null(),
+        "expected WebUSB host action to be re-emitted after restore"
+    );
     let actions_retry: Vec<UsbHostAction> =
         serde_wasm_bindgen::from_value(drained_retry).expect("deserialize UsbHostAction[]");
     let retry_id = match actions_retry.first() {
