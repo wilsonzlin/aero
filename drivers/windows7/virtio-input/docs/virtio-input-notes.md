@@ -61,69 +61,20 @@ QEMU typically exposes virtio-input over PCI using devices such as:
 
 All of these should enumerate as a virtio-input PCI function.
 
-### Driver device-kind classification (strict vs compat)
+### Driver device-kind classification (strict)
 
 The in-tree Windows 7 virtio-input driver is **strict by default** (Aero contract v1):
 
 - It queries `VIRTIO_INPUT_CFG_ID_NAME` and only accepts the exact strings:
   - `Aero Virtio Keyboard`
   - `Aero Virtio Mouse`
-  - `Aero Virtio Tablet`
-- If the name is not recognized, the driver fails start (Code 10) rather than guessing (except that tablets may still be identified via `VIRTIO_INPUT_CFG_ID_DEVIDS.Product`).
+- If the name is not recognized, the driver fails start (Code 10) rather than guessing.
 - If the PCI **Subsystem Device ID** indicates a contract kind (`0x0010` keyboard, `0x0011` mouse),
   it is cross-checked against `ID_NAME` and mismatches fail start (Code 10). Unknown subsystem IDs
   (`0` or other values) are allowed.
 
-This keeps the contract deterministic, but it means QEMU virtio-input devices (which usually report names like `QEMU Virtio Keyboard`) won’t start unless compatibility mode is enabled.
-
-#### Enabling compat mode (per-device registry DWORD)
-
-Set a DWORD value under the device instance’s **Device Parameters** key:
-
-```
-HKLM\SYSTEM\CurrentControlSet\Enum\<your device instance>\Device Parameters\CompatDeviceKind = 1 (DWORD)
-```
-
-For example, from an elevated command prompt:
-
-```bat
-reg add "HKLM\SYSTEM\CurrentControlSet\Enum\PCI\VEN_1AF4&DEV_1052&REV_01\...\Device Parameters" ^
-  /v CompatDeviceKind /t REG_DWORD /d 1 /f
-```
-
-Compat mode can also be enabled at build time by defining `VIOINPUT_COMPAT_DEVICE_KIND_DEFAULT=1`.
-
-#### What compat mode does
-
-When `CompatDeviceKind` is enabled, device kind is determined as follows:
-
-1. **Case-insensitive prefix match** on `ID_NAME` for commonly-seen QEMU strings:
-   - `QEMU Virtio Keyboard*`
-   - `QEMU Virtio Mouse*`
-   - `QEMU Virtio Tablet*`
-2. **Fallback heuristic** (only if `ID_NAME` didn’t match) using `EV_BITS(types)`:
-   - If `EV_ABS` is present → **tablet**
-   - Else if `EV_REL` is present → **mouse**
-   - Else if `EV_KEY` + `EV_LED` are present → **keyboard**
-
-## Tablet / EV_ABS support (absolute pointer)
-
-In addition to keyboard (`EV_KEY`) and relative mouse (`EV_REL`), the driver also supports
-**tablet-style absolute pointers** (`EV_ABS`).
-
-At minimum, a tablet device must advertise:
-
-- `EV_SYN` + `EV_ABS` in `EV_BITS(types)`
-- `ABS_X` + `ABS_Y` in `EV_BITS(EV_ABS)`
-- `ABS_INFO` for `ABS_X` and `ABS_Y` (used to scale into the HID logical range)
-
-The HID report emitted for tablets is:
-
-- **Report ID 4** (6 bytes total)
-  - Byte 0: `0x04` (Report ID)
-  - Byte 1: Buttons bitmask (bit0=left/touch, bit1=right, bit2=middle, bit3=side, bit4=extra, bit5=forward, bit6=back, bit7=task)
-  - Byte 2..3: X (uint16 LE, logical range `[0, 32767]`)
-  - Byte 4..5: Y (uint16 LE, logical range `[0, 32767]`)
+This keeps the contract deterministic: device kind is derived from `ID_NAME` and is not guessed from
+other fields.
 
 ## Specification pointers
 
