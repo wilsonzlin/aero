@@ -5,10 +5,11 @@ use std::process;
 
 use aero_d3d11::sm4::decode::{decode_decl, decode_instruction};
 use aero_d3d11::sm4::opcode::{
-    OPCODE_CUSTOMDATA, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK, OPCODE_NOP,
+    OPCODE_CUSTOMDATA, OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
+    OPCODE_NOP,
 };
 use aero_d3d11::sm4::{FOURCC_SHDR, FOURCC_SHEX};
-use aero_d3d11::{DxbcFile, Sm4Program};
+use aero_d3d11::{DxbcFile, Sm4Decl, Sm4Program};
 use anyhow::{bail, Context};
 
 const DEFAULT_HEAD_DWORDS: usize = 32;
@@ -200,12 +201,27 @@ fn real_main() -> anyhow::Result<()> {
 
         let inst_toks = &toks[i..end];
 
-        // Preserve declaration/instruction splitting rules from the main decoder: comment blocks and
-        // nops can appear anywhere and do not terminate the declaration section.
-        let is_comment = opcode == OPCODE_CUSTOMDATA
-            && inst_toks.get(1).copied() == Some(CUSTOMDATA_CLASS_COMMENT);
-        if is_comment {
-            println!("  ; customdata(comment)");
+        // Preserve declaration/instruction splitting rules from the main decoder: `customdata`
+        // blocks and `nop`s can appear anywhere and do not terminate the declaration section.
+        if opcode == OPCODE_CUSTOMDATA {
+            let mut class_pos = 1usize;
+            let mut extended = (opcode_token & OPCODE_EXTENDED_BIT) != 0;
+            while extended {
+                let Some(ext) = inst_toks.get(class_pos).copied() else {
+                    break;
+                };
+                class_pos += 1;
+                extended = (ext & OPCODE_EXTENDED_BIT) != 0;
+            }
+            let class = inst_toks
+                .get(class_pos)
+                .copied()
+                .unwrap_or(CUSTOMDATA_CLASS_COMMENT);
+            let decl = Sm4Decl::CustomData {
+                class,
+                len_dwords: len as u32,
+            };
+            println!("  => decl {decl:?}");
         } else if opcode == OPCODE_NOP {
             println!("  ; nop");
         } else if in_decls && opcode >= DECLARATION_OPCODE_MIN {
