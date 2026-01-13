@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aero_storage::{AeroSparseConfig, AeroSparseDisk, DiskImage, StdFileBackend, VirtualDisk};
+use aero_storage::{AeroSparseConfig, AeroSparseDisk, DiskImage, FileBackend, VirtualDisk};
 use anyhow::{anyhow, bail, Context};
 use clap::Parser;
 use serde::Serialize;
@@ -101,7 +101,7 @@ fn main() -> anyhow::Result<()> {
 fn run(args: Args) -> anyhow::Result<()> {
     validate_block_size(args.block_size_bytes)?;
 
-    let input_backend = StdFileBackend::open(&args.input, true)
+    let input_backend = FileBackend::open_read_only(&args.input)
         .with_context(|| format!("open input {}", args.input.display()))?;
     let mut input_disk =
         DiskImage::open_auto(input_backend).context("open input disk (auto-detect)")?;
@@ -422,7 +422,7 @@ fn is_all_zero(buf: &[u8]) -> bool {
         && suffix.iter().all(|&b| b == 0)
 }
 
-fn open_output_file(path: &Path, force: bool) -> anyhow::Result<StdFileBackend> {
+fn open_output_file(path: &Path, force: bool) -> anyhow::Result<FileBackend> {
     let mut opts = OpenOptions::new();
     opts.read(true).write(true);
     if force {
@@ -431,7 +431,7 @@ fn open_output_file(path: &Path, force: bool) -> anyhow::Result<StdFileBackend> 
         opts.create_new(true);
     }
     let file = opts.open(path)?;
-    Ok(StdFileBackend::from_file_with_path(file, path))
+    Ok(FileBackend::from_file_with_path(file, path))
 }
 
 fn default_overlay_path(base: &Path, disk_id: &str) -> PathBuf {

@@ -230,6 +230,16 @@ impl StdFileBackend {
         })
     }
 
+    /// Open an existing file read-only.
+    pub fn open_read_only<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::open(path, true)
+    }
+
+    /// Open an existing file for reading and writing.
+    pub fn open_rw<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::open(path, false)
+    }
+
     /// Create/truncate a file and set its length to `size` bytes.
     pub fn create<P: AsRef<Path>>(path: P, size: u64) -> Result<Self> {
         let path_ref = path.as_ref();
@@ -330,6 +340,13 @@ impl StdFileBackend {
         use std::io::{Seek, SeekFrom, Write};
         self.file.seek(SeekFrom::Start(offset))?;
         self.file.write(buf)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<File> for StdFileBackend {
+    fn from(file: File) -> Self {
+        Self::from_file(file)
     }
 }
 
