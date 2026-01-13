@@ -469,7 +469,8 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     let id_buf = 0xB000;
     mem.write(id_buf, &[0u8; 20]).unwrap();
     mem.write(status, &[0xff]).unwrap();
-    write_u32_le(&mut mem, header, 8).unwrap();
+    // Use an undefined opcode (GET_ID is 8 and is supported).
+    write_u32_le(&mut mem, header, 99).unwrap();
     write_u64_le(&mut mem, header + 8, 0).unwrap();
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
     write_desc(&mut mem, DESC_TABLE, 1, id_buf, 20, 0x0001 | 0x0002, 2);

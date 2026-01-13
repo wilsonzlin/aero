@@ -16,6 +16,7 @@ pub const VIRTIO_BLK_F_FLUSH: u64 = 1 << 9;
 pub const VIRTIO_BLK_T_IN: u32 = 0;
 pub const VIRTIO_BLK_T_OUT: u32 = 1;
 pub const VIRTIO_BLK_T_FLUSH: u32 = 4;
+pub const VIRTIO_BLK_T_GET_ID: u32 = 8;
 
 pub const VIRTIO_BLK_S_OK: u8 = 0;
 pub const VIRTIO_BLK_S_IOERR: u8 = 1;
@@ -467,6 +468,41 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                         status = VIRTIO_BLK_S_IOERR;
                     }
                 }
+                VIRTIO_BLK_T_GET_ID => {
+                    // The driver supplies a single data buffer (write-only) and expects up to 20
+                    // bytes back. If the buffer is smaller, we write as much as fits; if larger, we
+                    // truncate and still succeed.
+                    if data_segs.is_empty() || data_segs.iter().all(|(_, _, len)| *len == 0) {
+                        status = VIRTIO_BLK_S_IOERR;
+                    } else {
+                        let id = self.backend.device_id();
+                        let mut remaining: &[u8] = &id;
+
+                        for (d, seg_off, seg_len) in &data_segs {
+                            if remaining.is_empty() {
+                                break;
+                            }
+                            if !d.is_write_only() {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            }
+                            let write_len = (*seg_len).min(remaining.len());
+                            if write_len == 0 {
+                                continue;
+                            }
+                            let Some(addr) = d.addr.checked_add(*seg_off as u64) else {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            };
+                            let Ok(dst) = mem.get_slice_mut(addr, write_len) else {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            };
+                            dst.copy_from_slice(&remaining[..write_len]);
+                            remaining = &remaining[write_len..];
+                        }
+                    }
+                }
                 _ => status = VIRTIO_BLK_S_UNSUPP,
             }
         }
@@ -504,8 +540,30 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 
 #[cfg(test)]
 mod tests {
-    use super::{BlockBackend, VirtioBlk};
+    use super::{
+        BlockBackend, MemDisk, VirtioBlk, VIRTIO_BLK_S_OK, VIRTIO_BLK_T_GET_ID,
+        VIRTIO_BLK_T_OUT,
+    };
     use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
+    use crate::devices::VirtioDevice;
+    use crate::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
+    use crate::queue::{VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
+
+    fn write_desc(
+        mem: &mut GuestRam,
+        table: u64,
+        index: u16,
+        addr: u64,
+        len: u32,
+        flags: u16,
+        next: u16,
+    ) {
+        let base = table + u64::from(index) * 16;
+        write_u64_le(mem, base, addr).unwrap();
+        write_u32_le(mem, base + 8, len).unwrap();
+        write_u16_le(mem, base + 12, flags).unwrap();
+        write_u16_le(mem, base + 14, next).unwrap();
+    }
 
     #[test]
     fn doc_example_open_raw_disk_as_virtio_blk_backend() {
@@ -514,5 +572,162 @@ mod tests {
 
         // Sanity-check that the adapter exposes the underlying disk capacity.
         assert_eq!(blk.backend_mut().len(), (1024 * SECTOR_SIZE) as u64);
+    }
+
+    #[test]
+    fn virtio_blk_get_id_writes_backend_id_and_truncates() {
+        let disk = MemDisk::new(4096);
+        let expected_id = disk.device_id();
+        let mut blk = VirtioBlk::new(disk);
+
+        let desc_table: u64 = 0x1000;
+        let avail_ring: u64 = 0x2000;
+        let used_ring: u64 = 0x3000;
+
+        let header: u64 = 0x4000;
+        let data: u64 = 0x5000;
+        let status: u64 = 0x6000;
+
+        let mut mem = GuestRam::new(0x10000);
+
+        // Request header: type + reserved + sector.
+        write_u32_le(&mut mem, header, VIRTIO_BLK_T_GET_ID).unwrap();
+        write_u32_le(&mut mem, header + 4, 0).unwrap();
+        write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+        // Data buffer is larger than 20 bytes to ensure we don't write past the ID length.
+        mem.write(data, &[0xccu8; 32]).unwrap();
+        mem.write(status, &[0xaau8]).unwrap();
+
+        // Descriptor chain: header (ro) -> data (wo) -> status (wo).
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            header,
+            16,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            data,
+            32,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            2,
+        );
+        write_desc(&mut mem, desc_table, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+        // Avail ring: one entry pointing at descriptor 0.
+        write_u16_le(&mut mem, avail_ring, 0).unwrap(); // flags
+        write_u16_le(&mut mem, avail_ring + 2, 1).unwrap(); // idx
+        write_u16_le(&mut mem, avail_ring + 4, 0).unwrap(); // ring[0]
+
+        // Used ring initial state.
+        write_u16_le(&mut mem, used_ring, 0).unwrap(); // flags
+        write_u16_le(&mut mem, used_ring + 2, 0).unwrap(); // idx
+
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: 8,
+                desc_addr: desc_table,
+                avail_addr: avail_ring,
+                used_addr: used_ring,
+            },
+            false,
+        )
+        .unwrap();
+
+        let chain = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+            crate::queue::PoppedDescriptorChain::Chain(c) => c,
+            crate::queue::PoppedDescriptorChain::Invalid { .. } => panic!("invalid chain"),
+        };
+
+        blk.process_queue(0, chain, &mut queue, &mut mem)
+            .expect("process_queue failed");
+
+        let written = mem.get_slice(data, 20).unwrap();
+        assert_eq!(written, &expected_id);
+        let untouched = mem.get_slice(data + 20, 12).unwrap();
+        assert!(untouched.iter().all(|&b| b == 0xcc));
+        assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_OK);
+    }
+
+    #[test]
+    fn virtio_blk_get_id_rejects_readonly_data_buffer() {
+        let disk = MemDisk::new(4096);
+        let mut blk = VirtioBlk::new(disk);
+
+        let desc_table: u64 = 0x1000;
+        let avail_ring: u64 = 0x2000;
+        let used_ring: u64 = 0x3000;
+
+        let header: u64 = 0x4000;
+        let data: u64 = 0x5000;
+        let status: u64 = 0x6000;
+
+        let mut mem = GuestRam::new(0x10000);
+
+        // Header says GET_ID, but make the data descriptor read-only. Device should fail the
+        // request and leave the data bytes unchanged.
+        write_u32_le(&mut mem, header, VIRTIO_BLK_T_GET_ID).unwrap();
+        write_u32_le(&mut mem, header + 4, 0).unwrap();
+        write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+        mem.write(data, &[0xccu8; 20]).unwrap();
+
+        // Status shares the same last descriptor semantics as other request types.
+        mem.write(status, &[0xaau8]).unwrap();
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            header,
+            16,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        // Data descriptor is read-only (no VIRTQ_DESC_F_WRITE).
+        write_desc(&mut mem, desc_table, 1, data, 20, VIRTQ_DESC_F_NEXT, 2);
+        write_desc(&mut mem, desc_table, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+        write_u16_le(&mut mem, avail_ring, 0).unwrap(); // flags
+        write_u16_le(&mut mem, avail_ring + 2, 1).unwrap(); // idx
+        write_u16_le(&mut mem, avail_ring + 4, 0).unwrap(); // ring[0]
+
+        write_u16_le(&mut mem, used_ring, 0).unwrap(); // flags
+        write_u16_le(&mut mem, used_ring + 2, 0).unwrap(); // idx
+
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: 8,
+                desc_addr: desc_table,
+                avail_addr: avail_ring,
+                used_addr: used_ring,
+            },
+            false,
+        )
+        .unwrap();
+
+        let chain = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+            crate::queue::PoppedDescriptorChain::Chain(c) => c,
+            crate::queue::PoppedDescriptorChain::Invalid { .. } => panic!("invalid chain"),
+        };
+
+        blk.process_queue(0, chain, &mut queue, &mut mem)
+            .expect("process_queue failed");
+
+        assert!(mem.get_slice(data, 20).unwrap().iter().all(|&b| b == 0xcc));
+        assert_ne!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_OK);
+    }
+
+    #[test]
+    fn virtio_blk_get_id_is_not_confused_with_out_opcode() {
+        // Regression guard: ensure we didn't accidentally reuse the OUT opcode constant when adding
+        // GET_ID support.
+        assert_ne!(VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT);
     }
 }
