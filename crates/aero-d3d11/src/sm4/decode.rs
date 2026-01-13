@@ -604,6 +604,38 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Max { dst, a, b })
         }
+        OPCODE_UDIV => {
+            // `udiv dst_quot, dst_rem, a, b`
+            // Note: integer division does not support saturate; ignore the opcode modifier if
+            // present (it should not be emitted for valid DXBC).
+            let dst_quot = decode_dst(&mut r)?;
+            let dst_rem = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::UDiv {
+                dst_quot,
+                dst_rem,
+                a,
+                b,
+            })
+        }
+        OPCODE_IDIV => {
+            // `idiv dst_quot, dst_rem, a, b`
+            // Note: integer division does not support saturate; ignore the opcode modifier if
+            // present (it should not be emitted for valid DXBC).
+            let dst_quot = decode_dst(&mut r)?;
+            let dst_rem = decode_dst(&mut r)?;
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::IDiv {
+                dst_quot,
+                dst_rem,
+                a,
+                b,
+            })
+        }
         OPCODE_RCP => {
             let mut dst = decode_dst(&mut r)?;
             dst.saturate = saturate;

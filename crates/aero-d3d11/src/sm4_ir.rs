@@ -172,6 +172,29 @@ pub enum Sm4Inst {
         a: SrcOperand,
         b: SrcOperand,
     },
+    /// Unsigned integer division.
+    ///
+    /// DXBC encodes `udiv` with two destination operands:
+    /// - `dst_quot`: quotient
+    /// - `dst_rem`: remainder
+    ///
+    /// Both sources and destinations are represented as raw 32-bit register bits; the WGSL
+    /// backend bitcasts through `u32`/`i32` and writes results back as raw bits.
+    UDiv {
+        dst_quot: DstOperand,
+        dst_rem: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Signed integer division (truncating toward zero) with a remainder.
+    ///
+    /// Like [`Sm4Inst::UDiv`], `idiv` has two destination operands.
+    IDiv {
+        dst_quot: DstOperand,
+        dst_rem: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
     Rcp {
         dst: DstOperand,
         src: SrcOperand,

@@ -30,6 +30,11 @@ pub const OPCODE_DP4: u32 = 0x09;
 pub const OPCODE_MIN: u32 = 0x0a;
 pub const OPCODE_MAX: u32 = 0x0b;
 
+/// `udiv dst_quot, dst_rem, a, b` (unsigned integer quotient + remainder).
+pub const OPCODE_UDIV: u32 = 0x3c;
+/// `idiv dst_quot, dst_rem, a, b` (signed integer quotient + remainder).
+pub const OPCODE_IDIV: u32 = 0x3d;
+
 // ---- Control flow (structured) ----
 //
 // Canonical opcode IDs from `d3d10tokenizedprogramformat.hpp` / `d3d11tokenizedprogramformat.hpp`.

@@ -818,7 +818,19 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             | Sm4Inst::Dp3 { dst: _, a, b }
             | Sm4Inst::Dp4 { dst: _, a, b }
             | Sm4Inst::Min { dst: _, a, b }
-            | Sm4Inst::Max { dst: _, a, b } => {
+            | Sm4Inst::Max { dst: _, a, b }
+            | Sm4Inst::UDiv {
+                dst_quot: _,
+                dst_rem: _,
+                a,
+                b,
+            }
+            | Sm4Inst::IDiv {
+                dst_quot: _,
+                dst_rem: _,
+                a,
+                b,
+            } => {
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
             }
@@ -1573,6 +1585,17 @@ fn apply_modifier(expr: String, modifier: OperandModifier) -> String {
     }
 }
 
+fn apply_modifier_u32(expr: String, modifier: OperandModifier) -> String {
+    match modifier {
+        OperandModifier::None => expr,
+        // WGSL does not support unary negation on `u32`. DXBC operand modifiers are defined over
+        // raw 32-bit values, so model `-x` as wrapping subtraction.
+        OperandModifier::Neg | OperandModifier::AbsNeg => format!("(0u - ({expr}))"),
+        // `abs` is a no-op for unsigned integers.
+        OperandModifier::Abs => expr,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ResourceUsage {
     cbuffers: BTreeMap<u32, u32>,
@@ -1777,7 +1800,19 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
             | Sm4Inst::Dp3 { dst: _, a, b }
             | Sm4Inst::Dp4 { dst: _, a, b }
             | Sm4Inst::Min { dst: _, a, b }
-            | Sm4Inst::Max { dst: _, a, b } => {
+            | Sm4Inst::Max { dst: _, a, b }
+            | Sm4Inst::UDiv {
+                dst_quot: _,
+                dst_rem: _,
+                a,
+                b,
+            }
+            | Sm4Inst::IDiv {
+                dst_quot: _,
+                dst_rem: _,
+                a,
+                b,
+            } => {
                 scan_src(a)?;
                 scan_src(b)?;
             }
@@ -1959,6 +1994,23 @@ fn emit_temp_and_output_decls(
             | Sm4Inst::Min { dst, a, b }
             | Sm4Inst::Max { dst, a, b } => {
                 scan_reg(dst.reg);
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+            }
+            Sm4Inst::UDiv {
+                dst_quot,
+                dst_rem,
+                a,
+                b,
+            }
+            | Sm4Inst::IDiv {
+                dst_quot,
+                dst_rem,
+                a,
+                b,
+            } => {
+                scan_reg(dst_quot.reg);
+                scan_reg(dst_rem.reg);
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
             }
@@ -2226,6 +2278,104 @@ fn emit_instructions(
                 let expr = maybe_saturate(dst, format!("max(({a}), ({b}))"));
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "max", ctx)?;
             }
+            Sm4Inst::UDiv {
+                dst_quot,
+                dst_rem,
+                a,
+                b,
+            } => {
+                // DXBC integer ops write raw bits into the untyped register file. Model that by
+                // bitcasting through `u32`, performing the arithmetic, then bitcasting back to
+                // `f32` before writing.
+                let a_u = emit_src_vec4_u32(a, inst_index, "udiv", ctx)?;
+                let b_u = emit_src_vec4_u32(b, inst_index, "udiv", ctx)?;
+                let a_name = format!("udiv_a{inst_index}");
+                let b_name = format!("udiv_b{inst_index}");
+                let q_name = format!("udiv_q{inst_index}");
+                let r_name = format!("udiv_r{inst_index}");
+                let q_f_name = format!("udiv_qf{inst_index}");
+                let r_f_name = format!("udiv_rf{inst_index}");
+                w.line(&format!("let {a_name}: vec4<u32> = {a_u};"));
+                w.line(&format!("let {b_name}: vec4<u32> = {b_u};"));
+                w.line(&format!(
+                    "let {q_name}: vec4<u32> = ({a_name}) / ({b_name});"
+                ));
+                w.line(&format!(
+                    "let {r_name}: vec4<u32> = ({a_name}) % ({b_name});"
+                ));
+                w.line(&format!(
+                    "let {q_f_name}: vec4<f32> = bitcast<vec4<f32>>({q_name});"
+                ));
+                w.line(&format!(
+                    "let {r_f_name}: vec4<f32> = bitcast<vec4<f32>>({r_name});"
+                ));
+                emit_write_masked(
+                    w,
+                    dst_quot.reg,
+                    dst_quot.mask,
+                    q_f_name,
+                    inst_index,
+                    "udiv",
+                    ctx,
+                )?;
+                emit_write_masked(
+                    w,
+                    dst_rem.reg,
+                    dst_rem.mask,
+                    r_f_name,
+                    inst_index,
+                    "udiv",
+                    ctx,
+                )?;
+            }
+            Sm4Inst::IDiv {
+                dst_quot,
+                dst_rem,
+                a,
+                b,
+            } => {
+                // Same idea as `udiv`, but operate on signed integers.
+                let a_i = emit_src_vec4_i32(a, inst_index, "idiv", ctx)?;
+                let b_i = emit_src_vec4_i32(b, inst_index, "idiv", ctx)?;
+                let a_name = format!("idiv_a{inst_index}");
+                let b_name = format!("idiv_b{inst_index}");
+                let q_name = format!("idiv_q{inst_index}");
+                let r_name = format!("idiv_r{inst_index}");
+                let q_f_name = format!("idiv_qf{inst_index}");
+                let r_f_name = format!("idiv_rf{inst_index}");
+                w.line(&format!("let {a_name}: vec4<i32> = {a_i};"));
+                w.line(&format!("let {b_name}: vec4<i32> = {b_i};"));
+                w.line(&format!(
+                    "let {q_name}: vec4<i32> = ({a_name}) / ({b_name});"
+                ));
+                w.line(&format!(
+                    "let {r_name}: vec4<i32> = ({a_name}) % ({b_name});"
+                ));
+                w.line(&format!(
+                    "let {q_f_name}: vec4<f32> = bitcast<vec4<f32>>({q_name});"
+                ));
+                w.line(&format!(
+                    "let {r_f_name}: vec4<f32> = bitcast<vec4<f32>>({r_name});"
+                ));
+                emit_write_masked(
+                    w,
+                    dst_quot.reg,
+                    dst_quot.mask,
+                    q_f_name,
+                    inst_index,
+                    "idiv",
+                    ctx,
+                )?;
+                emit_write_masked(
+                    w,
+                    dst_rem.reg,
+                    dst_rem.mask,
+                    r_f_name,
+                    inst_index,
+                    "idiv",
+                    ctx,
+                )?;
+            }
             Sm4Inst::Rcp { dst, src } => {
                 let src = emit_src_vec4(src, inst_index, "rcp", ctx)?;
                 let expr = maybe_saturate(dst, format!("1.0 / ({src})"));
@@ -2476,6 +2626,43 @@ fn emit_src_vec4(
         expr = format!("({expr}).{s}");
     }
     expr = apply_modifier(expr, src.modifier);
+    Ok(expr)
+}
+
+fn emit_src_vec4_u32(
+    src: &crate::sm4_ir::SrcOperand,
+    _inst_index: usize,
+    _opcode: &'static str,
+    ctx: &EmitCtx<'_>,
+) -> Result<String, ShaderTranslateError> {
+    let base = match &src.kind {
+        SrcKind::Register(reg) => {
+            let expr = match reg.file {
+                RegFile::Temp => format!("r{}", reg.index),
+                RegFile::Output => format!("o{}", reg.index),
+                RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
+            };
+            format!("bitcast<vec4<u32>>({expr})")
+        }
+        SrcKind::ConstantBuffer { slot, reg } => {
+            let _ = ctx.resources.cbuffers.get(slot);
+            format!("cb{slot}.regs[{reg}]")
+        }
+        SrcKind::ImmediateF32(vals) => {
+            let lanes: Vec<String> = vals.iter().map(|v| format!("0x{v:08x}u")).collect();
+            format!(
+                "vec4<u32>({}, {}, {}, {})",
+                lanes[0], lanes[1], lanes[2], lanes[3]
+            )
+        }
+    };
+
+    let mut expr = base;
+    if !src.swizzle.is_identity() {
+        let s = swizzle_suffix(src.swizzle);
+        expr = format!("({expr}).{s}");
+    }
+    expr = apply_modifier_u32(expr, src.modifier);
     Ok(expr)
 }
 

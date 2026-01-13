@@ -1139,6 +1139,71 @@ fn decodes_ubfe_ibfe_bfi_bitfield_ops() {
 }
 
 #[test]
+fn decodes_udiv_and_idiv_with_two_dest_operands() {
+    let mut body = Vec::<u32>::new();
+
+    // udiv r0, r1, r2, r3
+    let mut udiv = vec![opcode_token(OPCODE_UDIV, 1 + 2 + 2 + 2 + 2)];
+    udiv.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    udiv.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    udiv.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    udiv.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[3],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&udiv);
+
+    // idiv r4, r5, r6, r7
+    let mut idiv = vec![opcode_token(OPCODE_IDIV, 1 + 2 + 2 + 2 + 2)];
+    idiv.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    idiv.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 5, WriteMask::XYZW));
+    idiv.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[6],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    idiv.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[7],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&idiv);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert!(matches!(
+        &module.instructions[0],
+        Sm4Inst::UDiv {
+            dst_quot,
+            dst_rem,
+            ..
+        } if dst_quot.reg.index == 0 && dst_rem.reg.index == 1
+    ));
+    assert!(matches!(
+        &module.instructions[1],
+        Sm4Inst::IDiv {
+            dst_quot,
+            dst_rem,
+            ..
+        } if dst_quot.reg.index == 4 && dst_rem.reg.index == 5
+    ));
+}
+
+#[test]
 fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     // These constants are used by upcoming compute/UAV decoding work. Keep this test in sync with
     // `d3d11tokenizedprogramformat.h` (`D3D11_SB_*` enums).

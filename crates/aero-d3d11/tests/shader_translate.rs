@@ -1309,6 +1309,90 @@ fn rejects_sampler_slot_out_of_range() {
 }
 
 #[test]
+fn translates_udiv_and_idiv_to_integer_division_and_modulo() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let udiv_a = SrcOperand {
+        kind: SrcKind::ImmediateF32([7, 7, 7, 7]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let udiv_b = SrcOperand {
+        kind: SrcKind::ImmediateF32([3, 3, 3, 3]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let idiv_a = SrcOperand {
+        kind: SrcKind::ImmediateF32([0xfffffff9, 0xfffffff9, 0xfffffff9, 0xfffffff9]), // -7
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let idiv_b = SrcOperand {
+        kind: SrcKind::ImmediateF32([2, 2, 2, 2]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::UDiv {
+                dst_quot: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                dst_rem: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                a: udiv_a,
+                b: udiv_b,
+            },
+            Sm4Inst::IDiv {
+                dst_quot: dst(RegFile::Temp, 2, WriteMask::XYZW),
+                dst_rem: dst(RegFile::Temp, 3, WriteMask::XYZW),
+                a: idiv_a,
+                b: idiv_b,
+            },
+            // Ensure at least one result flows to the output.
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Integer division should be performed on integer vectors, not floats.
+    assert!(
+        translated.wgsl.contains("vec4<u32>"),
+        "expected udiv to operate on vec4<u32>:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("vec4<i32>"),
+        "expected idiv to operate on vec4<i32>:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains(" / "),
+        "expected integer division operator in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains(" % "),
+        "expected integer modulo operator in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_ubfe_to_extract_bits() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[
