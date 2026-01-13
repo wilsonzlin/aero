@@ -122,10 +122,11 @@ NTSTATUS VirtioInputHandleHidIoctl(
     case IOCTL_HID_GET_COLLECTION_DESCRIPTOR:
         /*
          * Some newer HIDCLASS consumers query a "collection descriptor" separately
-         * from the report descriptor. For virtio-input devices we expose a single
-         * top-level collection per PDO (keyboard/mouse/tablet), so returning the
-         * same bytes as IOCTL_HID_GET_REPORT_DESCRIPTOR is sufficient and keeps the
-         * implementation compatible with older WDKs where the IOCTL isn't defined.
+         * from the report descriptor. For virtio-input devices we do not have a
+         * separate collection-descriptor format; returning the raw HID report
+         * descriptor bytes (same payload as IOCTL_HID_GET_REPORT_DESCRIPTOR) is
+         * sufficient and keeps the implementation compatible with older WDKs where
+         * the IOCTL isn't defined.
          */
         if (devCtx->DeviceKind == VioInputDeviceKindKeyboard) {
             status = VirtioInputWriteRequestOutputBuffer(
