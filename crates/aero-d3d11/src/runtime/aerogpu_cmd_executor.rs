@@ -941,19 +941,28 @@ pub struct AerogpuD3d11Executor {
 }
 
 impl AerogpuD3d11Executor {
+    /// Construct an executor.
+    ///
+    /// This constructor does not have access to the originating `wgpu::Adapter`, so it
+    /// conservatively assumes compute is unsupported. Callers that have an adapter should instead
+    /// derive `supports_compute` from downlevel flags and use [`Self::new_with_supports_compute`]
+    /// (or [`Self::new_with_supports`] if indirect execution support is also needed).
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, backend: wgpu::Backend) -> Self {
-        let caps = GpuCapabilities::from_device(&device);
-        // The public constructor does not have access to the originating adapter, so we assume
-        // indirect execution is available and rely on `GpuCapabilities::from_device` for the rest.
+        let mut caps = GpuCapabilities::from_device(&device);
+        // Conservative default: without the adapter's downlevel caps, assume compute is not
+        // available (e.g. wgpu's WebGL2 backend).
+        caps.supports_compute = false;
+        // We don't currently have a downlevel signal for indirect execution here; assume it is
+        // available.
         Self::new_with_caps(device, queue, backend, caps, true)
     }
 
     /// Construct an executor with an explicit compute capability override.
     ///
-    /// `wgpu::Device` does not currently expose whether compute pipelines are supported (notably
-    /// wgpu's GL/WebGL2 backends lack compute), so callers that have an `wgpu::Adapter` should pass
+    /// `wgpu::Device` does not currently expose whether compute pipelines are supported, so callers
+    /// that have a `wgpu::Adapter` should pass
     /// `adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)`
-    /// here to ensure compute pipelines are deterministically disabled.
+    /// here to ensure compute is deterministically enabled/disabled.
     pub fn new_with_supports_compute(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -967,8 +976,8 @@ impl AerogpuD3d11Executor {
 
     /// Construct an executor with explicit downlevel capability overrides.
     ///
-    /// This is used for downlevel/compatibility backends (notably wgpu's WebGL2 path) where
-    /// compute and/or indirect execution may be unavailable.
+    /// This is used for downlevel/compatibility backends where compute and/or indirect execution
+    /// may be unavailable.
     pub fn new_with_supports(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -981,6 +990,7 @@ impl AerogpuD3d11Executor {
         Self::new_with_caps(device, queue, backend, caps, supports_indirect)
     }
 
+    /// Construct an executor with explicitly-provided GPU capabilities.
     pub fn new_with_caps(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -1193,7 +1203,6 @@ impl AerogpuD3d11Executor {
         let supports_indirect = downlevel
             .flags
             .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
-
         let backend = adapter.get_info().backend;
         let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
@@ -11698,9 +11707,8 @@ mod tests {
     use aero_gpu::pipeline_key::{ComputePipelineKey, PipelineLayoutKey};
     use aero_gpu::GpuError;
     use aero_gpu::guest_memory::VecGuestMemory;
-    use aero_protocol::aerogpu::aerogpu_cmd::AerogpuPrimitiveTopology;
+    use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdOpcode, AerogpuPrimitiveTopology};
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
-    use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdOpcode;
     use std::sync::Arc;
 
     fn require_webgpu() -> bool {

@@ -154,7 +154,6 @@ impl AerogpuCmdRuntime {
         let supports_compute = downlevel
             .flags
             .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
-
         let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
             .request_device(

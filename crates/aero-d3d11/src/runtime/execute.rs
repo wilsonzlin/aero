@@ -11,6 +11,7 @@ use aero_gpu::protocol_d3d11::{
     BindingType, BufferUsage, CmdPacket, CmdStream, D3D11Opcode, DxgiFormat, IndexFormat,
     PipelineKind, PrimitiveTopology, ShaderStageFlags, TextureUsage, VertexFormat, VertexStepMode,
 };
+use aero_gpu::GpuError;
 use anyhow::{anyhow, bail, Context, Result};
 
 use super::pipeline_layout_cache::PipelineLayoutCache;
@@ -1041,6 +1042,10 @@ impl D3D11Runtime {
     }
 
     fn exec_create_compute_pipeline(&mut self, payload: &[u32]) -> Result<()> {
+        if !self.supports_compute {
+            bail!(GpuError::Unsupported("compute"));
+        }
+
         let mut cursor = 0usize;
         let take = |payload: &[u32], cursor: &mut usize| -> Result<u32> {
             if *cursor >= payload.len() {
@@ -1503,6 +1508,10 @@ impl D3D11Runtime {
         encoder: &mut wgpu::CommandEncoder,
         stream: &mut CmdStream<'_>,
     ) -> Result<()> {
+        if !self.supports_compute {
+            bail!(GpuError::Unsupported("compute"));
+        }
+
         self.encoder_has_commands = true;
         let device = &self.device;
         let resources = &self.resources;
@@ -2039,6 +2048,7 @@ fn binding_def_to_layout_entry(def: &BindingDef) -> wgpu::BindGroupLayoutEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_gpu::protocol_d3d11::CmdWriter;
 
     #[test]
     fn take_bytes_extracts_prefix() {
@@ -2055,5 +2065,32 @@ mod tests {
         let w0 = u32::from_ne_bytes([1, 2, 3, 4]);
         let payload = [0u32, 0, 0, 5, w0];
         assert!(D3D11Runtime::take_bytes(&payload, 3).is_err());
+    }
+
+    #[test]
+    fn dispatch_errors_cleanly_when_compute_is_unsupported() {
+        pollster::block_on(async {
+            let mut rt = match D3D11Runtime::new_for_tests().await {
+                Ok(rt) => rt,
+                Err(err) => {
+                    eprintln!("skipping {}: wgpu unavailable ({err:#})", module_path!());
+                    return;
+                }
+            };
+
+            // Force-disable compute so the error path is deterministic regardless of the host GPU.
+            rt.supports_compute = false;
+
+            let mut writer = CmdWriter::new();
+            writer.begin_compute_pass();
+            writer.dispatch(1, 1, 1);
+            writer.end_compute_pass();
+
+            let err = rt.execute(&writer.finish()).unwrap_err();
+            assert_eq!(
+                err.downcast_ref::<GpuError>(),
+                Some(&GpuError::Unsupported("compute"))
+            );
+        });
     }
 }
