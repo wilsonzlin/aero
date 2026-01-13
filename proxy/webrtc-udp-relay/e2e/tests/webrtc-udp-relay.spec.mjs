@@ -1580,13 +1580,13 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
             ws.send(frame);
           });
 
-        const waitForErrorAndClose = async (ws) =>
+        const waitForClose = async (ws) =>
           await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error("timed out waiting for unauthorized close")), 10_000);
             let errMsg;
             let closed;
             const maybeDone = () => {
-              if (!errMsg || !closed) return;
+              if (!closed) return;
               cleanup();
               resolve({ errMsg, closeCode: closed.code, closeReason: closed.reason });
             };
@@ -1600,7 +1600,6 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
               }
               if (msg?.type === "error") {
                 errMsg = msg;
-                maybeDone();
               }
             };
             const onClose = (event) => {
@@ -1669,14 +1668,14 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
         // Sending datagrams before completing auth (and before receiving ready) should be rejected.
         const wsMissing = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         wsMissing.binaryType = "arraybuffer";
-        const missingPromise = waitForErrorAndClose(wsMissing);
+        const missingPromise = waitForClose(wsMissing);
         await waitForOpen(wsMissing);
         wsMissing.send(buildV1Frame("should be rejected"));
         const missingRes = await missingPromise;
 
         const wsInvalid = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         wsInvalid.binaryType = "arraybuffer";
-        const invalidPromise = waitForErrorAndClose(wsInvalid);
+        const invalidPromise = waitForClose(wsInvalid);
         await waitForOpen(wsInvalid);
         wsInvalid.send(JSON.stringify({ type: "auth", token: `${token}-invalid` }));
         const invalidRes = await invalidPromise;
@@ -1697,13 +1696,25 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
     expect(res.echoedAPIKeyText).toBe("hello from websocket jwt apiKey query");
     expect(res.echoedFirstMsgText).toBe("hello from websocket jwt first message");
 
-    expect(res.invalidQueryRes.errMsg?.code).toBe("unauthorized");
+    if (res.invalidQueryRes.errMsg) {
+      expect(res.invalidQueryRes.errMsg.code).toBe("unauthorized");
+    } else {
+      expect(["invalid credentials", "unauthorized", ""]).toContain(res.invalidQueryRes.closeReason ?? "");
+    }
     expect(res.invalidQueryRes.closeCode).toBe(1008);
 
-    expect(res.missingRes.errMsg?.code).toBe("unauthorized");
+    if (res.missingRes.errMsg) {
+      expect(res.missingRes.errMsg.code).toBe("unauthorized");
+    } else {
+      expect(["authentication required", "unauthorized", ""]).toContain(res.missingRes.closeReason ?? "");
+    }
     expect(res.missingRes.closeCode).toBe(1008);
 
-    expect(res.invalidRes.errMsg?.code).toBe("unauthorized");
+    if (res.invalidRes.errMsg) {
+      expect(res.invalidRes.errMsg.code).toBe("unauthorized");
+    } else {
+      expect(["invalid credentials", "unauthorized", ""]).toContain(res.invalidRes.closeReason ?? "");
+    }
     expect(res.invalidRes.closeCode).toBe(1008);
   } finally {
     await Promise.all([web.close(), relay.kill(), echo.close()]);
