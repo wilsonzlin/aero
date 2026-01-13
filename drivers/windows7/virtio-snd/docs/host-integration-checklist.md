@@ -55,6 +55,7 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 
 - [ ] Virtqueues **0..3** exist.
 - [ ] `COMMON_CFG.num_queues >= 4`.
+- [ ] Each queue’s `queue_size` is a power-of-two (driver validates this).
 - [ ] Queue sizes are **exactly**:
   - [ ] `0 controlq`: `64`
   - [ ] `1 eventq`: `64`
