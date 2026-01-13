@@ -676,7 +676,7 @@ static void test_mouse_reports_le(void) {
   send_key_le(&t, VIRTIO_INPUT_BTN_LEFT, 1);
   send_syn_le(&t);
 
-  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x00, 0x00, 0x00};
+  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 0, expect1, sizeof(expect1));
 
   /* Move and wheel. */
@@ -685,51 +685,51 @@ static void test_mouse_reports_le(void) {
   send_rel_le(&t, VIRTIO_INPUT_REL_WHEEL, 1);
   send_syn_le(&t);
 
-  uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01};
+  uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01, 0x00};
   expect_report(&cap, 1, expect2, sizeof(expect2));
 
   /* Side/back button down. */
   send_key_le(&t, VIRTIO_INPUT_BTN_SIDE, 1);
   send_syn_le(&t);
-  uint8_t expect3[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x09, 0x00, 0x00, 0x00};
+  uint8_t expect3[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x09, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 2, expect3, sizeof(expect3));
 
   /* Extra/forward button down. */
   send_key_le(&t, VIRTIO_INPUT_BTN_EXTRA, 1);
   send_syn_le(&t);
-  uint8_t expect4[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x19, 0x00, 0x00, 0x00};
+  uint8_t expect4[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x19, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 3, expect4, sizeof(expect4));
 
   /* Additional buttons (6..8). */
   send_key_le(&t, VIRTIO_INPUT_BTN_FORWARD, 1);
   send_syn_le(&t);
-  uint8_t expect_forward_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x39, 0x00, 0x00, 0x00};
+  uint8_t expect_forward_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x39, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 4, expect_forward_down, sizeof(expect_forward_down));
 
   send_key_le(&t, VIRTIO_INPUT_BTN_BACK, 1);
   send_syn_le(&t);
-  uint8_t expect_back_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x79, 0x00, 0x00, 0x00};
+  uint8_t expect_back_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x79, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 5, expect_back_down, sizeof(expect_back_down));
 
   send_key_le(&t, VIRTIO_INPUT_BTN_TASK, 1);
   send_syn_le(&t);
-  uint8_t expect_task_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0xF9, 0x00, 0x00, 0x00};
+  uint8_t expect_task_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0xF9, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 6, expect_task_down, sizeof(expect_task_down));
 
   /* Release in reverse order. */
   send_key_le(&t, VIRTIO_INPUT_BTN_FORWARD, 0);
   send_syn_le(&t);
-  uint8_t expect_forward_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0xD9, 0x00, 0x00, 0x00};
+  uint8_t expect_forward_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0xD9, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 7, expect_forward_up, sizeof(expect_forward_up));
 
   send_key_le(&t, VIRTIO_INPUT_BTN_BACK, 0);
   send_syn_le(&t);
-  uint8_t expect_back_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x99, 0x00, 0x00, 0x00};
+  uint8_t expect_back_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x99, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 8, expect_back_up, sizeof(expect_back_up));
 
   send_key_le(&t, VIRTIO_INPUT_BTN_TASK, 0);
   send_syn_le(&t);
-  uint8_t expect_task_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x19, 0x00, 0x00, 0x00};
+  uint8_t expect_task_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x19, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 9, expect_task_up, sizeof(expect_task_up));
 }
 
@@ -921,7 +921,7 @@ static void test_mouse_reports(void) {
   send_key(&t, VIRTIO_INPUT_BTN_LEFT, 1);
   send_syn(&t);
 
-  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x00, 0x00, 0x00};
+  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 0, expect1, sizeof(expect1));
 
   /* Move and wheel. */
@@ -930,51 +930,51 @@ static void test_mouse_reports(void) {
   send_rel(&t, VIRTIO_INPUT_REL_WHEEL, 1);
   send_syn(&t);
 
-  uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01};
+  uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01, 0x00};
   expect_report(&cap, 1, expect2, sizeof(expect2));
 
   /* Side/back button down. */
   send_key(&t, VIRTIO_INPUT_BTN_SIDE, 1);
   send_syn(&t);
-  uint8_t expect3[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x09, 0x00, 0x00, 0x00};
+  uint8_t expect3[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x09, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 2, expect3, sizeof(expect3));
 
   /* Extra/forward button down. */
   send_key(&t, VIRTIO_INPUT_BTN_EXTRA, 1);
   send_syn(&t);
-  uint8_t expect4[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x19, 0x00, 0x00, 0x00};
+  uint8_t expect4[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x19, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 3, expect4, sizeof(expect4));
 
   /* Additional buttons (6..8). */
   send_key(&t, VIRTIO_INPUT_BTN_FORWARD, 1);
   send_syn(&t);
-  uint8_t expect_forward_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x39, 0x00, 0x00, 0x00};
+  uint8_t expect_forward_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x39, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 4, expect_forward_down, sizeof(expect_forward_down));
 
   send_key(&t, VIRTIO_INPUT_BTN_BACK, 1);
   send_syn(&t);
-  uint8_t expect_back_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x79, 0x00, 0x00, 0x00};
+  uint8_t expect_back_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x79, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 5, expect_back_down, sizeof(expect_back_down));
 
   send_key(&t, VIRTIO_INPUT_BTN_TASK, 1);
   send_syn(&t);
-  uint8_t expect_task_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0xF9, 0x00, 0x00, 0x00};
+  uint8_t expect_task_down[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0xF9, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 6, expect_task_down, sizeof(expect_task_down));
 
   /* Release in reverse order. */
   send_key(&t, VIRTIO_INPUT_BTN_FORWARD, 0);
   send_syn(&t);
-  uint8_t expect_forward_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0xD9, 0x00, 0x00, 0x00};
+  uint8_t expect_forward_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0xD9, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 7, expect_forward_up, sizeof(expect_forward_up));
 
   send_key(&t, VIRTIO_INPUT_BTN_BACK, 0);
   send_syn(&t);
-  uint8_t expect_back_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x99, 0x00, 0x00, 0x00};
+  uint8_t expect_back_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x99, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 8, expect_back_up, sizeof(expect_back_up));
 
   send_key(&t, VIRTIO_INPUT_BTN_TASK, 0);
   send_syn(&t);
-  uint8_t expect_task_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x19, 0x00, 0x00, 0x00};
+  uint8_t expect_task_up[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x19, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 9, expect_task_up, sizeof(expect_task_up));
 
   /* Large delta is split into multiple reports. */
@@ -985,8 +985,8 @@ static void test_mouse_reports(void) {
   send_syn(&t);
 
   assert(cap.count == 2);
-  uint8_t expect5[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x7F, 0x00, 0x00};
-  uint8_t expect6[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x49, 0x00, 0x00};
+  uint8_t expect5[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x7F, 0x00, 0x00, 0x00};
+  uint8_t expect6[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x49, 0x00, 0x00, 0x00};
   expect_report(&cap, 0, expect5, sizeof(expect5));
   expect_report(&cap, 1, expect6, sizeof(expect6));
 
@@ -1069,6 +1069,20 @@ static void test_consumer_control_reports(void) {
   expect_report(&cap, 6, expect7, sizeof(expect7));
 }
 
+static void test_mouse_horizontal_wheel_reports(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  send_rel(&t, VIRTIO_INPUT_REL_HWHEEL, -4);
+  send_syn(&t);
+
+  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0x00, 0xFC};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
 static void test_reset_emits_release_reports(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -1088,7 +1102,7 @@ static void test_reset_emits_release_reports(void) {
 
   uint8_t expect_kb[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
   uint8_t expect_cc[HID_TRANSLATE_CONSUMER_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_CONSUMER, 0};
-  uint8_t expect_mouse[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0, 0, 0, 0};
+  uint8_t expect_mouse[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0, 0, 0, 0, 0};
   expect_report(&cap, 0, expect_kb, sizeof(expect_kb));
   expect_report(&cap, 1, expect_cc, sizeof(expect_cc));
   expect_report(&cap, 2, expect_mouse, sizeof(expect_mouse));
@@ -1144,14 +1158,14 @@ static void test_mouse_only_enable(void) {
   send_syn(&t);
   assert(cap.count == 1);
 
-  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x00};
+  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x00, 0x00};
   expect_report(&cap, 0, expect1, sizeof(expect1));
 
   /* Reset emits only the enabled report types. */
   cap_clear(&cap);
   hid_translate_reset(&t, true);
   assert(cap.count == 1);
-  uint8_t expect_release[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0, 0, 0, 0};
+  uint8_t expect_release[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0, 0, 0, 0, 0};
   expect_report(&cap, 0, expect_release, sizeof(expect_release));
 }
 
@@ -1345,6 +1359,7 @@ int main(void) {
   test_keyboard_overflow_queue();
   test_keyboard_overflow_queue_does_not_emit_on_queued_press();
   test_mouse_reports();
+  test_mouse_horizontal_wheel_reports();
   test_mouse_reports_le();
   test_mouse_buttons_reports();
   test_mouse_buttons_reports_le();

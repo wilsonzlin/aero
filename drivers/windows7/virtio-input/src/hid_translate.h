@@ -19,6 +19,7 @@
  *       Byte 2: X (int8)
  *       Byte 3: Y (int8)
  *       Byte 4: Wheel (int8)
+ *       Byte 5: HWheel / AC Pan (int8)
  *   - ReportID 3: Consumer Control (media keys)
  *       Byte 0: ReportID = 0x03
  *       Byte 1: Bitmask
@@ -123,6 +124,7 @@ enum virtio_input_syn_code {
 enum virtio_input_rel_code {
   VIRTIO_INPUT_REL_X = 0x00,
   VIRTIO_INPUT_REL_Y = 0x01,
+  VIRTIO_INPUT_REL_HWHEEL = 0x06,
   VIRTIO_INPUT_REL_WHEEL = 0x08,
 };
 
@@ -312,13 +314,15 @@ enum hid_translate_report_mask {
 /* Sizes (bytes) of input reports emitted by the translator. */
 enum hid_translate_report_size {
   HID_TRANSLATE_KEYBOARD_REPORT_SIZE = 9,
-  HID_TRANSLATE_MOUSE_REPORT_SIZE = 5,
+  HID_TRANSLATE_MOUSE_REPORT_SIZE = 6,
   HID_TRANSLATE_CONSUMER_REPORT_SIZE = 2,
   HID_TRANSLATE_TABLET_REPORT_SIZE = 6,
 };
 
 C_ASSERT(HID_TRANSLATE_KEYBOARD_REPORT_SIZE == 9);
-C_ASSERT(HID_TRANSLATE_MOUSE_REPORT_SIZE == 5);
+C_ASSERT(HID_TRANSLATE_MOUSE_REPORT_SIZE == 6);
+C_ASSERT(HID_TRANSLATE_CONSUMER_REPORT_SIZE == 2);
+C_ASSERT(HID_TRANSLATE_TABLET_REPORT_SIZE == 6);
 
 /*
  * Optional: keep additional pressed keys beyond the 6-key boot protocol
@@ -352,6 +356,7 @@ struct hid_translate {
   int32_t mouse_rel_x;
   int32_t mouse_rel_y;
   int32_t mouse_wheel;
+  int32_t mouse_hwheel;
   bool mouse_dirty;
 
   /* Tablet (absolute pointer) state. */

@@ -93,7 +93,7 @@ const HID_DESCRIPTOR VirtioInputKeyboardHidDescriptor = {
 
 const UCHAR VirtioInputMouseReportDescriptor[] = {
     //
-    // Report ID 2: Mouse (8 buttons + X/Y/Wheel)
+    // Report ID 2: Mouse (8 buttons + X/Y/Wheel + AC Pan)
     //
     0x05, 0x01,        // Usage Page (Generic Desktop)
     0x09, 0x02,        // Usage (Mouse)
@@ -118,6 +118,10 @@ const UCHAR VirtioInputMouseReportDescriptor[] = {
     0x75, 0x08,        //     Report Size (8)
     0x95, 0x03,        //     Report Count (3)
     0x81, 0x06,        //     Input (Data,Var,Rel) ; X, Y, Wheel
+    0x05, 0x0C,        //     Usage Page (Consumer)
+    0x0A, 0x38, 0x02,  //     Usage (AC Pan)
+    0x95, 0x01,        //     Report Count (1)
+    0x81, 0x06,        //     Input (Data,Var,Rel) ; AC Pan (horizontal wheel)
     0xC0,              //   End Collection
     0xC0,              // End Collection
 };

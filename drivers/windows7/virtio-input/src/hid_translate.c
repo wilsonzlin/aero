@@ -481,10 +481,12 @@ static void hid_translate_emit_mouse_reports(struct hid_translate *t) {
     t->mouse_rel_x = 0;
     t->mouse_rel_y = 0;
     t->mouse_wheel = 0;
+    t->mouse_hwheel = 0;
     return;
   }
 
-  bool need_report = t->mouse_dirty || (t->mouse_rel_x != 0) || (t->mouse_rel_y != 0) || (t->mouse_wheel != 0);
+  bool need_report =
+      t->mouse_dirty || (t->mouse_rel_x != 0) || (t->mouse_rel_y != 0) || (t->mouse_wheel != 0) || (t->mouse_hwheel != 0);
   if (!need_report) {
     return;
   }
@@ -493,6 +495,7 @@ static void hid_translate_emit_mouse_reports(struct hid_translate *t) {
     int8_t dx = hid_translate_take_rel_chunk(&t->mouse_rel_x);
     int8_t dy = hid_translate_take_rel_chunk(&t->mouse_rel_y);
     int8_t wheel = hid_translate_take_rel_chunk(&t->mouse_wheel);
+    int8_t hwheel = hid_translate_take_rel_chunk(&t->mouse_hwheel);
 
     uint8_t report[HID_TRANSLATE_MOUSE_REPORT_SIZE];
     report[0] = HID_TRANSLATE_REPORT_ID_MOUSE;
@@ -500,6 +503,7 @@ static void hid_translate_emit_mouse_reports(struct hid_translate *t) {
     report[2] = (uint8_t)dx;
     report[3] = (uint8_t)dy;
     report[4] = (uint8_t)wheel;
+    report[5] = (uint8_t)hwheel;
 
     if (t->emit_report) {
       t->emit_report(t->emit_report_context, report, sizeof(report));
@@ -507,7 +511,7 @@ static void hid_translate_emit_mouse_reports(struct hid_translate *t) {
 
     /* Button changes are represented in the first emitted report. */
     t->mouse_dirty = false;
-  } while ((t->mouse_rel_x != 0) || (t->mouse_rel_y != 0) || (t->mouse_wheel != 0));
+  } while ((t->mouse_rel_x != 0) || (t->mouse_rel_y != 0) || (t->mouse_wheel != 0) || (t->mouse_hwheel != 0));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -605,6 +609,7 @@ void hid_translate_reset(struct hid_translate *t, bool emit_reports) {
   t->mouse_rel_x = 0;
   t->mouse_rel_y = 0;
   t->mouse_wheel = 0;
+  t->mouse_hwheel = 0;
   t->mouse_dirty = false;
 
   t->tablet_buttons = 0;
@@ -728,6 +733,9 @@ void hid_translate_handle_event(struct hid_translate *t, const struct virtio_inp
       break;
     case VIRTIO_INPUT_REL_Y:
       t->mouse_rel_y += delta;
+      break;
+    case VIRTIO_INPUT_REL_HWHEEL:
+      t->mouse_hwheel += delta;
       break;
     case VIRTIO_INPUT_REL_WHEEL:
       t->mouse_wheel += delta;
