@@ -155,6 +155,7 @@ mod guest_phys {
 mod wasm {
     use std::cell::RefCell;
     use std::collections::HashSet;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, OnceLock};
 
     use crate::drain_queue::DrainQueue;
@@ -233,6 +234,40 @@ mod wasm {
             &obj,
             &JsValue::from_str("surface_reconfigures"),
             &JsValue::from_f64(snapshot.surface_reconfigures as f64),
+        );
+
+        // Best-effort presentation upload bandwidth counters (RGBA8 source framebuffer).
+        let rgba8_upload_full_bytes = RGBA8_UPLOAD_BYTES_FULL.load(Ordering::Relaxed);
+        let rgba8_upload_dirty_bytes = RGBA8_UPLOAD_BYTES_DIRTY.load(Ordering::Relaxed);
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rgba8_upload_bytes_full"),
+            &JsValue::from_f64(rgba8_upload_full_bytes as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rgba8_upload_bytes_dirty_rects"),
+            &JsValue::from_f64(rgba8_upload_dirty_bytes as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rgba8_upload_bytes"),
+            &JsValue::from_f64((rgba8_upload_full_bytes + rgba8_upload_dirty_bytes) as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rgba8_upload_full_calls"),
+            &JsValue::from_f64(RGBA8_UPLOAD_FULL_CALLS.load(Ordering::Relaxed) as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rgba8_upload_dirty_calls"),
+            &JsValue::from_f64(RGBA8_UPLOAD_DIRTY_CALLS.load(Ordering::Relaxed) as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rgba8_upload_dirty_rects"),
+            &JsValue::from_f64(RGBA8_UPLOAD_DIRTY_RECTS.load(Ordering::Relaxed) as f64),
         );
 
         // ---------------------------------------------------------------------
@@ -410,6 +445,23 @@ mod wasm {
     static GPU_STATS: OnceLock<Arc<GpuStats>> = OnceLock::new();
     static GPU_EVENT_QUEUE: OnceLock<DrainQueue<GpuErrorEvent>> = OnceLock::new();
     const MAX_GPU_EVENTS: usize = 1024;
+
+    // -----------------------------------------------------------------------------
+    // Presentation upload bandwidth counters (best-effort)
+    // -----------------------------------------------------------------------------
+    //
+    // These counters measure how many *tight* RGBA8 bytes are uploaded into the internal
+    // framebuffer texture. This approximates the bandwidth we push over the WASM<->GPU boundary
+    // and lets us quantify savings from dirty-rect uploads.
+    //
+    // Note: this intentionally does not include bytes-per-row padding inserted to satisfy
+    // `COPY_BYTES_PER_ROW_ALIGNMENT`; those padding bytes are an implementation detail that may
+    // vary across backends.
+    static RGBA8_UPLOAD_BYTES_FULL: AtomicU64 = AtomicU64::new(0);
+    static RGBA8_UPLOAD_BYTES_DIRTY: AtomicU64 = AtomicU64::new(0);
+    static RGBA8_UPLOAD_FULL_CALLS: AtomicU64 = AtomicU64::new(0);
+    static RGBA8_UPLOAD_DIRTY_CALLS: AtomicU64 = AtomicU64::new(0);
+    static RGBA8_UPLOAD_DIRTY_RECTS: AtomicU64 = AtomicU64::new(0);
 
     fn gpu_stats() -> &'static Arc<GpuStats> {
         GPU_STATS.get_or_init(|| Arc::new(GpuStats::new()))
@@ -1506,6 +1558,10 @@ mod wasm {
                 },
             );
 
+            let bytes = u64::from(tight_row_bytes).saturating_mul(u64::from(height));
+            RGBA8_UPLOAD_BYTES_FULL.fetch_add(bytes, Ordering::Relaxed);
+            RGBA8_UPLOAD_FULL_CALLS.fetch_add(1, Ordering::Relaxed);
+
             Ok(())
         }
 
@@ -1543,6 +1599,8 @@ mod wasm {
             if rects.is_empty() {
                 return self.upload_rgba8_strided(rgba8, stride_bytes);
             }
+
+            RGBA8_UPLOAD_DIRTY_CALLS.fetch_add(1, Ordering::Relaxed);
 
             let stride_aligned = stride_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0;
             let mut any_uploaded = false;
@@ -1646,6 +1704,12 @@ mod wasm {
                         },
                     );
                 }
+
+                let bytes = u64::from(w)
+                    .saturating_mul(4)
+                    .saturating_mul(u64::from(h));
+                RGBA8_UPLOAD_BYTES_DIRTY.fetch_add(bytes, Ordering::Relaxed);
+                RGBA8_UPLOAD_DIRTY_RECTS.fetch_add(1, Ordering::Relaxed);
 
                 any_uploaded = true;
             }

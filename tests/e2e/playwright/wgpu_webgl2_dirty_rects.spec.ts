@@ -40,6 +40,8 @@ test('aero-gpu-wasm upload_rgba8888_dirty_rects only uploads dirty region', asyn
     const wasm = await import('/web/src/wasm/aero-gpu.ts');
     await wasm.default();
 
+    const beforeStats = (wasm.get_gpu_stats?.() as any) ?? {};
+
     const width = 16;
     const height = 16;
     const htmlCanvas = document.createElement('canvas');
@@ -95,6 +97,8 @@ test('aero-gpu-wasm upload_rgba8888_dirty_rects only uploads dirty region', asyn
 
     wasm.upload_rgba8888_dirty_rects(frame1, stride, new Uint32Array([rect.x, rect.y, rect.w, rect.h]));
 
+    const afterStats = (wasm.get_gpu_stats?.() as any) ?? {};
+
     const rgba = await wasm.request_screenshot();
     const rgbaBase64 = uint8ToBase64(rgba);
 
@@ -104,12 +108,31 @@ test('aero-gpu-wasm upload_rgba8888_dirty_rects only uploads dirty region', asyn
       // Ignore.
     }
 
-    return { backend, width, height, rgbaBase64 };
+    return {
+      backend,
+      width,
+      height,
+      rgbaBase64,
+      statsDelta: {
+        fullBytes: (afterStats.rgba8_upload_bytes_full ?? 0) - (beforeStats.rgba8_upload_bytes_full ?? 0),
+        dirtyBytes:
+          (afterStats.rgba8_upload_bytes_dirty_rects ?? 0) -
+          (beforeStats.rgba8_upload_bytes_dirty_rects ?? 0),
+        fullCalls: (afterStats.rgba8_upload_full_calls ?? 0) - (beforeStats.rgba8_upload_full_calls ?? 0),
+        dirtyCalls: (afterStats.rgba8_upload_dirty_calls ?? 0) - (beforeStats.rgba8_upload_dirty_calls ?? 0),
+        dirtyRects: (afterStats.rgba8_upload_dirty_rects ?? 0) - (beforeStats.rgba8_upload_dirty_rects ?? 0),
+      },
+    };
   });
 
   expect(result.backend).toBe('webgl2');
   expect(result.width).toBe(16);
   expect(result.height).toBe(16);
+  expect(result.statsDelta.fullCalls).toBe(1);
+  expect(result.statsDelta.dirtyCalls).toBe(1);
+  expect(result.statsDelta.dirtyRects).toBe(1);
+  expect(result.statsDelta.fullBytes).toBe(16 * 16 * 4);
+  expect(result.statsDelta.dirtyBytes).toBe(3 * 2 * 4);
 
   const actual = Buffer.from(result.rgbaBase64, 'base64');
   expect(actual.byteLength).toBe(16 * 16 * 4);
