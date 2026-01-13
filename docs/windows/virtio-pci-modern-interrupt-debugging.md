@@ -231,7 +231,14 @@ You should treat it as:
   - MSI-X isn’t enabled at the PCI layer.
   - The device has fewer MSI-X table entries than you assumed.
 
-For queue interrupts specifically: leaving `queue_msix_vector = VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) means *that queue will not interrupt* (you’ll either poll or never see completions depending on your design).
+For queue interrupts specifically:
+
+- **Virtio spec / QEMU-like behavior:** leaving `queue_msix_vector = VIRTIO_PCI_MSI_NO_VECTOR`
+  (`0xFFFF`) disables MSI-X delivery for that queue (you’ll either poll or never see completions,
+  depending on whether you have an INTx path wired).
+- **Aero Win7 virtio contract behavior:** when vectors are unassigned/unusable (`0xFFFF`, masked,
+  unprogrammed entry, etc), devices fall back to **INTx + ISR** rather than fully suppressing
+  interrupts. In other words, `0xFFFF` means “no MSI-X vector assigned”, not “no interrupts”.
 
 ### 3.4 Reset sequencing: MSI-X vectors must be re-programmed after *every* reset
 
@@ -239,7 +246,9 @@ Virtio feature negotiation typically involves a reset (`device_status = 0`) at l
 
 Common pitfall:
 
-- Vectors are programmed once early, then a reset happens, vectors revert to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`), and from that point onward **no interrupts ever fire**.
+- Vectors are programmed once early, then a reset happens, vectors revert to
+  `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`), and from that point onward **no MSI-X interrupts** ever
+  fire. (On Aero contract devices, this typically means the device is now interrupting via INTx.)
 
 Rule of thumb:
 
@@ -281,7 +290,10 @@ Rule of thumb:
 
 **How to prove**
 
-- Read back `common_cfg.msix_config` and/or `queue_msix_vector` and they are still `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) after the device is “running”.
+- Read back `common_cfg.msix_config` and/or `queue_msix_vector` and they are still
+  `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) after the device is “running”.
+  - On Aero contract devices this means the device will fall back to INTx+ISR unless you
+    successfully reprogram MSI-X vectors.
 - You can correlate this with a recent reset/status transition in your logs.
 
 **Fix**
