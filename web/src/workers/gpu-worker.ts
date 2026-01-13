@@ -2627,10 +2627,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           }
           const includeCursor = req.includeCursor === true;
 
-          // Ensure the screenshot reflects the latest presented pixels. The shared
-          // framebuffer producer can advance `frameSeq` before the presenter runs,
-          // so relying on the header sequence alone can lead to mismatched
-          // (seq, pixels) pairs in smoke tests and automation.
+          // Ensure the screenshot corresponds to the latest frame the presenter has actually
+          // consumed. The shared framebuffer producer can advance `frameSeq` before the presenter
+          // runs, so relying on the header sequence alone can lead to mismatched (seq, pixels)
+          // pairs in smoke tests and automation.
           if (frameState) {
             if (!(await waitForNotPresenting(1000))) {
               const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
