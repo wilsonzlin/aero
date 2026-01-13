@@ -157,7 +157,7 @@ Windows 7 boot graphics and installer UI will draw directly into this linear fra
 The recommended rule is:
 
 - **Legacy VGA uses a fixed reserved planar subregion of VRAM** (`0x00000..0x3FFFF`).
-- **The VBE packed-pixel linear framebuffer starts at `0x40000`** and consumes `width × height × bytes_per_pixel` bytes (depending on the active VBE mode).
+- **The VBE packed-pixel linear framebuffer starts at `0x40000`** and consumes `width * height * bytes_per_pixel` bytes (depending on the active VBE mode).
 - **WDDM allocations may use the remaining VRAM space** (not overlapping the active legacy/VBE region), or may live in pinned guest RAM (system memory), depending on the design of AeroGPU-EMU-DEV-001.
 
 To keep the handoff simple, the scanout logic treats the WDDM-programmed scanout base as a *guest physical address* that can point to either:
