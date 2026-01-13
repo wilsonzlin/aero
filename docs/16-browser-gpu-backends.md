@@ -350,10 +350,9 @@ Directly rendering every translated pipeline into the canvas surface is undesira
 
 - The surface format is chosen by the browser and may not match the internal “guest” format.
 - Resizing the canvas would force invalidation and reconfiguration complexity across the entire render graph.
-- We want a stable “final frame” texture that can be used for:
-  - screenshots
-  - readback tests
-  - post-processing (scaling, color conversion, cursor compositing)
+- We want a stable “final frame” texture (`present_src`) that can be used for:
+  - deterministic screenshots / readback tests (read back `present_src` bytes, not the canvas)
+  - the input to presentation-time post-processing (scaling, color conversion, cursor compositing) when blitting to the surface
 
 Therefore:
 
