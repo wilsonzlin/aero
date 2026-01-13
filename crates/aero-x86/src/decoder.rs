@@ -2295,3 +2295,556 @@ mod yaxpeax_shape_smoke {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{decode, DecodeError, DecodeMode};
+    use crate::inst::{Operand, OperandSize, RepPrefix, SegmentReg};
+
+    #[test]
+    fn prefixes_precedence_and_rex_high8() {
+        // REP prefixes: last one wins.
+        let inst = decode(&[0xF3, 0xF2, 0x90], DecodeMode::Bits32, 0).unwrap();
+        assert_eq!(inst.prefixes.rep, Some(RepPrefix::Repne));
+
+        // REX presence disables AH/CH/DH/BH and enables SPL/BPL/SIL/DIL.
+        let inst = decode(&[0x40, 0x88, 0xC4], DecodeMode::Bits64, 0).unwrap();
+        assert!(inst.prefixes.rex.is_some());
+        assert!(inst.operands.iter().any(|op| matches!(
+            op,
+            Operand::Gpr {
+                reg,
+                size: OperandSize::Bits8,
+                high8: false
+            } if reg.index == 4
+        )));
+
+        let inst = decode(&[0x88, 0xC4], DecodeMode::Bits64, 0).unwrap();
+        assert!(inst.prefixes.rex.is_none());
+        assert!(inst.operands.iter().any(|op| matches!(
+            op,
+            Operand::Gpr {
+                reg,
+                size: OperandSize::Bits8,
+                high8: true
+            } if reg.index == 0
+        )));
+
+        // REX.W takes precedence over 0x66 in long mode when selecting the effective operand size.
+        let inst = decode(&[0x66, 0x48, 0x90], DecodeMode::Bits64, 0).unwrap();
+        assert_eq!(inst.operand_size, OperandSize::Bits64);
+    }
+
+    #[test]
+    fn modrm_sib_addressing_and_rip_relative() {
+        // mov eax, [rax+rcx*4+0x10]
+        let inst = decode(&[0x8B, 0x44, 0x88, 0x10], DecodeMode::Bits64, 0).unwrap();
+        let mem = inst
+            .operands
+            .iter()
+            .find_map(|op| match op {
+                Operand::Memory(m) => Some(m),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(mem.base.map(|r| r.index), Some(0));
+        assert_eq!(mem.index.map(|r| r.index), Some(1));
+        assert_eq!(mem.scale, 4);
+        assert_eq!(mem.disp, 16);
+        assert!(!mem.rip_relative);
+
+        // mov eax, [rip+0x1234]
+        let inst = decode(&[0x8B, 0x05, 0x34, 0x12, 0x00, 0x00], DecodeMode::Bits64, 0).unwrap();
+        let mem = inst
+            .operands
+            .iter()
+            .find_map(|op| match op {
+                Operand::Memory(m) => Some(m),
+                _ => None,
+            })
+            .unwrap();
+        assert!(mem.rip_relative);
+        assert_eq!(mem.base, None);
+        assert_eq!(mem.index, None);
+        assert_eq!(mem.disp, 0x1234);
+
+        // mov eax, [rcx*4 + 0x10] (no base)
+        let inst = decode(
+            &[0x8B, 0x04, 0x8D, 0x10, 0x00, 0x00, 0x00],
+            DecodeMode::Bits64,
+            0,
+        )
+        .unwrap();
+        let mem = inst
+            .operands
+            .iter()
+            .find_map(|op| match op {
+                Operand::Memory(m) => Some(m),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(mem.base, None);
+        assert_eq!(mem.index.map(|r| r.index), Some(1));
+        assert_eq!(mem.scale, 4);
+        assert_eq!(mem.disp, 16);
+
+        // 16-bit addressing: mov ax, [bx+si+0x10]
+        let inst = decode(&[0x8B, 0x40, 0x10], DecodeMode::Bits16, 0).unwrap();
+        let mem = inst
+            .operands
+            .iter()
+            .find_map(|op| match op {
+                Operand::Memory(m) => Some(m),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(mem.base.map(|r| r.index), Some(3)); // BX
+        assert_eq!(mem.index.map(|r| r.index), Some(6)); // SI
+        assert_eq!(mem.scale, 1);
+        assert_eq!(mem.disp, 16);
+    }
+
+    #[test]
+    fn enforces_15_byte_max_len() {
+        // A valid 15-byte instruction (4 prefixes + 11-byte `imul r32, r/m32, imm32` with
+        // SIB+disp32).
+        //
+        // Prefixes: multiple segment overrides are permitted; only the last one is effective.
+        let bytes = [
+            0x2E, 0x36, 0x3E, 0x26, // CS, SS, DS, ES (effective = ES)
+            0x69, 0x84, 0x8A, // imul r32, r/m32, imm32 + ModRM + SIB
+            0x00, 0x00, 0x00, 0x00, // disp32
+            0x00, 0x00, 0x00, 0x00, // imm32
+        ];
+        let inst = decode(&bytes, DecodeMode::Bits32, 0).unwrap();
+        assert_eq!(inst.length, 15);
+        assert!(inst.prefixes.segment.is_some());
+
+        // 15 prefixes leaves no room for an opcode.
+        let bytes = vec![0x66u8; 15];
+        assert!(matches!(
+            decode(&bytes, DecodeMode::Bits32, 0),
+            Err(DecodeError::TooLong)
+        ));
+
+        // 15 prefixes + 1 opcode => 16-byte instruction => reject.
+        let mut bytes = vec![0x66u8; 15];
+        bytes.push(0x90);
+        assert!(matches!(
+            decode(&bytes, DecodeMode::Bits32, 0),
+            Err(DecodeError::TooLong)
+        ));
+    }
+
+    #[test]
+    fn decodes_large_buffer_without_panics() {
+        // Deterministic pseudo-random byte stream.
+        let mut buf = [0u8; 8192];
+        let mut x = 0x1234_5678u32;
+        for b in &mut buf {
+            x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+            *b = (x >> 24) as u8;
+        }
+
+        let mut off = 0usize;
+        while off < buf.len() {
+            let end = (off + 15).min(buf.len());
+            let slice = &buf[off..end];
+            match decode(slice, DecodeMode::Bits64, off as u64) {
+                Ok(inst) if inst.length > 0 => off += inst.length as usize,
+                _ => off += 1,
+            }
+        }
+    }
+
+    #[test]
+    fn decodes_simple_reg_reg_operands_in_16bit_mode() {
+        // add al, al
+        let inst = decode(&[0x00, 0xC0], DecodeMode::Bits16, 0).unwrap();
+        assert_eq!(inst.operands.len(), 2);
+        assert!(matches!(inst.operands[0], Operand::Gpr { .. }));
+        assert!(matches!(inst.operands[1], Operand::Gpr { .. }));
+    }
+
+    #[test]
+    fn unary_group_ops_collapse_dst_dst() {
+        // not al (F6 /2)
+        let inst = decode(&[0xF6, 0xD0], DecodeMode::Bits16, 0).unwrap();
+        assert_eq!(inst.operands.len(), 1);
+    }
+
+    #[test]
+    fn regression_cases_are_stable() {
+        // 16-bit relative branches wrap the IP like real hardware (iced-x86 behaviour).
+        let inst = decode(&[0x70, 0x80], DecodeMode::Bits16, 0).unwrap();
+        assert!(inst
+            .operands
+            .iter()
+            .any(|op| matches!(op, Operand::Relative { target: 0xFF82, .. })));
+        // With an operand-size override, the branch uses EIP semantics (wraps to 32-bit).
+        let inst = decode(&[0x66, 0x70, 0x80, 0x00], DecodeMode::Bits16, 0).unwrap();
+        assert!(inst.operands.iter().any(|op| matches!(
+            op,
+            Operand::Relative {
+                target: 0xFFFF_FF83,
+                ..
+            }
+        )));
+
+        // In 64-bit mode, REX participates in the same prefix stream as legacy prefixes.
+        let inst = decode(&[0x40, 0x64, 0x70, 0x00], DecodeMode::Bits64, 0).unwrap();
+        assert_eq!(inst.length, 4);
+        assert_eq!(inst.prefixes.segment, Some(SegmentReg::FS));
+        assert!(inst.prefixes.rex.is_some());
+        assert!(inst
+            .operands
+            .iter()
+            .any(|op| matches!(op, Operand::Relative { target: 4, .. })));
+
+        // XLAT, INT3, IRET, and ICEBP have implicit operands that must be normalised.
+        let inst = decode(&[0xD7], DecodeMode::Bits16, 0).unwrap();
+        assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
+
+        let inst = decode(&[0xCC], DecodeMode::Bits16, 0).unwrap();
+        assert!(inst.operands.is_empty());
+
+        let inst = decode(&[0xCF], DecodeMode::Bits16, 0).unwrap();
+        assert!(inst.operands.is_empty());
+
+        let inst = decode(&[0xF1], DecodeMode::Bits16, 0).unwrap();
+        assert!(inst.operands.is_empty());
+
+        // Far call/jmp are used during boot and mode transitions; the decoder must at least recover
+        // length even if the upstream decoder rejects the opcode.
+        let inst = decode(&[0x9A, 0, 0, 0, 0, 0, 0], DecodeMode::Bits16, 0).unwrap();
+        assert_eq!(inst.length, 5);
+        let inst = decode(&[0xEA, 0, 0, 0, 0, 0, 0], DecodeMode::Bits16, 0).unwrap();
+        assert_eq!(inst.length, 5);
+
+        // 0x82 is an obsolete alias of Group1; it is accepted in 16/32-bit modes but is invalid in
+        // 64-bit mode.
+        assert!(decode(&[0x82, 0x07, 0x00], DecodeMode::Bits16, 0).is_ok());
+        assert!(matches!(
+            decode(&[0x82, 0xC0, 0x00], DecodeMode::Bits64, 0),
+            Err(DecodeError::Invalid)
+        ));
+
+        // MOV r/m8, imm8 requires ModRM.reg == 0.
+        assert!(matches!(
+            decode(&[0xC6, 0xE0, 0x00], DecodeMode::Bits16, 0),
+            Err(DecodeError::Invalid)
+        ));
+
+        // Operand-size override changes the displacement width of CALL/JMP rel16/rel32 in 16-bit
+        // mode.
+        assert!(decode(&[0x66, 0xE8, 0x00, 0x00], DecodeMode::Bits16, 0).is_err());
+
+        // REP prefixes are accepted (and ignored) on near CALL/JMP encodings.
+        let inst = decode(&[0xF2, 0xE8, 0x00, 0x00, 0x00, 0x00], DecodeMode::Bits16, 0).unwrap();
+        assert_eq!(inst.length, 4);
+        assert!(inst
+            .operands
+            .iter()
+            .any(|op| matches!(op, Operand::Relative { target: 4, .. })));
+
+        // In 64-bit mode, CS/DS/ES/SS segment overrides are accepted but ignored (effective segment
+        // = none).
+        let inst = decode(&[0x2E, 0x8B, 0x00], DecodeMode::Bits64, 0).unwrap();
+        assert_eq!(inst.length, 3);
+        assert_eq!(inst.prefixes.segment, None);
+        let mem = inst
+            .operands
+            .iter()
+            .find_map(|op| match op {
+                Operand::Memory(m) => Some(m),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(mem.segment, None);
+
+        let inst = decode(&[0x44, 0x8C, 0xC0], DecodeMode::Bits64, 0).unwrap();
+        assert_eq!(inst.length, 3);
+        assert!(inst.prefixes.rex.is_some());
+        assert!(inst.operands.iter().any(|op| matches!(
+            op,
+            Operand::Segment { reg: SegmentReg::ES }
+        )));
+        assert!(inst.operands.iter().any(|op| matches!(
+            op,
+            Operand::Gpr {
+                reg,
+                size: OperandSize::Bits16,
+                ..
+            } if reg.index == 0
+        )));
+    }
+
+    #[test]
+    fn decodes_mov_segment_reg_in_long_mode() {
+        // yaxpeax-x86 rejects this in long mode, but iced-x86 accepts it:
+        //   mov word ptr [rsi], ss
+        let inst = decode(&[0x44, 0x8C, 0x16], DecodeMode::Bits64, 0).unwrap();
+        assert_eq!(inst.length, 3);
+        assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
+        assert!(inst.operands.iter().any(|op| matches!(
+            op,
+            Operand::Segment { reg: SegmentReg::SS }
+        )));
+    }
+
+    #[test]
+    fn reserved_nop_0f18_models_rm_and_reg_operands() {
+        // iced-x86 exposes `0F 18 /r` as a "reserved NOP" with two operands (`r/m`, `r`).
+        for bytes in [[0x0F, 0x18, 0x60, 0x00], [0x0F, 0x19, 0x07, 0x00]] {
+            let inst = decode(&bytes, DecodeMode::Bits16, 0).unwrap();
+            assert_eq!(inst.operands.len(), 2);
+            assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
+            assert!(inst.operands.iter().any(|op| matches!(op, Operand::Gpr { .. })));
+        }
+    }
+
+    #[test]
+    fn decodes_vex_encoded_instruction_via_iced_backend() {
+        // A VEX-encoded SIMD instruction. `yaxpeax-x86` has gaps in 16/32-bit AVX/VEX decoding, so
+        // the structured decoder falls back to the project-standard iced-x86 backend for these
+        // cases.
+        let bytes = [0xC4, 0xE3, 0xE9, 0x5C, 0x06, 0x00];
+        let inst = decode(&bytes, DecodeMode::Bits32, 0).unwrap();
+        assert_eq!(inst.length, 6);
+        assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
+        assert!(inst
+            .operands
+            .iter()
+            .any(|op| matches!(op, Operand::Xmm { .. } | Operand::OtherReg { .. })));
+    }
+
+    #[test]
+    fn decodes_xop_encoded_instruction_via_iced_backend() {
+        // An XOP-encoded SIMD instruction. Like VEX, the XOP prefix shares its first byte with a
+        // legacy opcode (`POP r/m16/32/64`), so the decoder must disambiguate and route to the iced
+        // backend when the prefix is present.
+        let bytes = [0x8F, 0xA9, 0xA8, 0x90, 0xC0];
+        let inst = decode(&bytes, DecodeMode::Bits16, 0).unwrap();
+        assert_eq!(inst.length, 5);
+        assert!(inst.operands.iter().any(|op| matches!(op, Operand::Xmm { .. })));
+    }
+
+    #[test]
+    fn rep_prefix_is_ignored_on_far_jmp_in_16bit_mode() {
+        // `REPNE; JMPF ptr16:16` is accepted (and REPNE is ignored) by real hardware + iced-x86.
+        // Some third-party decoders reject it; our decoder should stay aligned with iced-x86 since
+        // we use it as the project-standard reference.
+        let bytes = [0xF2, 0xEA, 0x00, 0x00, 0x00, 0x00];
+        let inst = decode(&bytes, DecodeMode::Bits16, 0).unwrap();
+        assert_eq!(inst.length, 6);
+        assert_eq!(inst.prefixes.rep, Some(RepPrefix::Repne));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    mod decoder_against_iced {
+        use super::{decode, DecodeMode};
+        use iced_x86::{Code, Decoder, DecoderError, DecoderOptions, OpKind};
+        use proptest::prelude::*;
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum BasicOpKind {
+            Reg,
+            Mem,
+            Imm,
+            Rel,
+            Other,
+        }
+
+        fn iced_valid_and_info(
+            bitness: u32,
+            bytes: &[u8],
+        ) -> (bool, usize, Vec<(BasicOpKind, Option<u64>)>) {
+            let mut decoder = Decoder::with_ip(bitness, bytes, 0, DecoderOptions::NONE);
+            let inst = decoder.decode();
+
+            let valid = decoder.last_error() == DecoderError::None && inst.code() != Code::INVALID;
+            if !valid {
+                return (false, 0, Vec::new());
+            }
+
+            let len = inst.len();
+
+            let mut ops = Vec::new();
+            for i in 0..inst.op_count() {
+                let kind = inst.op_kind(i);
+                let dbg_kind = format!("{kind:?}");
+                let (basic, rel) = match kind {
+                    OpKind::Register => (BasicOpKind::Reg, None),
+                    OpKind::Memory => (BasicOpKind::Mem, None),
+
+                    OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64 => {
+                        (BasicOpKind::Rel, Some(inst.near_branch_target()))
+                    }
+
+                    // Far branches are modelled as "other" for now.
+                    OpKind::FarBranch16 | OpKind::FarBranch32 => (BasicOpKind::Other, None),
+
+                    OpKind::Immediate8
+                    | OpKind::Immediate8_2nd
+                    | OpKind::Immediate16
+                    | OpKind::Immediate32
+                    | OpKind::Immediate64
+                    | OpKind::Immediate8to16
+                    | OpKind::Immediate8to32
+                    | OpKind::Immediate8to64
+                    | OpKind::Immediate32to64 => (BasicOpKind::Imm, None),
+
+                    _ if dbg_kind.starts_with("Memory") => (BasicOpKind::Mem, None),
+                    _ => (BasicOpKind::Other, None),
+                };
+                ops.push((basic, rel));
+            }
+
+            (true, len, ops)
+        }
+
+        fn ours_valid_and_info(
+            mode: DecodeMode,
+            bytes: &[u8],
+        ) -> (bool, usize, Vec<(BasicOpKind, Option<u64>)>) {
+            let inst = match decode(bytes, mode, 0) {
+                Ok(inst) => inst,
+                Err(_) => return (false, 0, Vec::new()),
+            };
+
+            let mut ops = Vec::new();
+            for op in &inst.operands {
+                use crate::inst::Operand as O;
+                let (kind, rel) = match op {
+                    O::Gpr { .. }
+                    | O::Xmm { .. }
+                    | O::OtherReg { .. }
+                    | O::Segment { .. }
+                    | O::Control { .. }
+                    | O::Debug { .. } => (BasicOpKind::Reg, None),
+                    O::Memory(_) => (BasicOpKind::Mem, None),
+                    O::Immediate(_) => (BasicOpKind::Imm, None),
+                    O::Relative { target, .. } => (BasicOpKind::Rel, Some(*target)),
+                };
+                ops.push((kind, rel));
+            }
+
+            (true, inst.length as usize, ops)
+        }
+
+        fn arb_mode() -> impl Strategy<Value = DecodeMode> {
+            prop_oneof![
+                Just(DecodeMode::Bits16),
+                Just(DecodeMode::Bits32),
+                Just(DecodeMode::Bits64),
+            ]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig { cases: 2000, .. ProptestConfig::default() })]
+
+            #[test]
+            fn differential_decode_matches_iced(
+                bytes in proptest::collection::vec(any::<u8>(), 1..=15),
+                mode in arb_mode(),
+            ) {
+                let bitness = match mode {
+                    DecodeMode::Bits16 => 16,
+                    DecodeMode::Bits32 => 32,
+                    DecodeMode::Bits64 => 64,
+                };
+
+                let (iced_ok, iced_len, iced_ops) = iced_valid_and_info(bitness, &bytes);
+                let (ours_ok, ours_len, ours_ops) = ours_valid_and_info(mode, &bytes);
+
+                prop_assert_eq!(ours_ok, iced_ok);
+                if !iced_ok {
+                    return Ok(());
+                }
+
+                prop_assert_eq!(ours_len, iced_len);
+
+                let mut ours_counts = [0u32; 5];
+                let mut iced_counts = [0u32; 5];
+                for (k, _) in &ours_ops {
+                    ours_counts[*k as usize] += 1;
+                }
+                for (k, _) in &iced_ops {
+                    iced_counts[*k as usize] += 1;
+                }
+                // Only validate the basic operand kinds (reg/mem/imm/rel). "Other" operands include far
+                // pointers, special string-op memory kinds, etc, and are intentionally not compared here.
+                for i in 0..4 {
+                    prop_assert!(ours_counts[i] >= iced_counts[i], "missing operand kind {i}: ours={:?} iced={:?}", ours_counts, iced_counts);
+                }
+
+                let mut ours_rels: Vec<u64> = ours_ops.iter().filter_map(|(_, t)| *t).collect();
+                let mut iced_rels: Vec<u64> = iced_ops.iter().filter_map(|(_, t)| *t).collect();
+                ours_rels.sort_unstable();
+                iced_rels.sort_unstable();
+                prop_assert_eq!(ours_rels, iced_rels);
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    mod maskmov_implicit_operands {
+        use super::{decode, DecodeMode};
+        use crate::inst::{AddressSize, MemoryOperand, Operand, SegmentReg};
+
+        fn decode_maskmov_mem(bytes: &[u8]) -> MemoryOperand {
+            let inst = decode(bytes, DecodeMode::Bits64, 0).expect("decode");
+            inst.operands
+                .iter()
+                .find_map(|op| match op {
+                    Operand::Memory(mem) => Some(mem.clone()),
+                    _ => None,
+                })
+                .expect("expected memory operand")
+        }
+
+        #[test]
+        fn maskmov_includes_implicit_memory_operand() {
+            // 66 0F F7 C1 => MASKMOVDQU xmm0, xmm1
+            // Destination address is implicit: [DI/EDI/RDI].
+            let bytes = [0x66, 0x0F, 0xF7, 0xC1];
+
+            let inst = decode(&bytes, DecodeMode::Bits64, 0).expect("decode");
+            assert_eq!(
+                inst.operands
+                    .iter()
+                    .filter(|op| matches!(op, Operand::Memory(_)))
+                    .count(),
+                1,
+                "expected implicit memory operand for MASKMOV*"
+            );
+
+            let mem = decode_maskmov_mem(&bytes);
+            assert_eq!(mem.addr_size, AddressSize::Bits64);
+            assert_eq!(mem.base.map(|r| r.index), Some(7));
+            assert_eq!(mem.index.map(|r| r.index), None);
+            assert_eq!(mem.scale, 1);
+            assert_eq!(mem.disp, 0);
+            assert!(!mem.rip_relative);
+            // No explicit segment override prefix => default segment selection (DS for DI/EDI/RDI).
+            assert_eq!(mem.segment, None);
+        }
+
+        #[test]
+        fn ignored_segment_prefixes_do_not_clear_fs_gs_in_long_mode() {
+            // In long mode, CS/DS/ES/SS overrides are accepted but ignored, and must not clear an
+            // earlier FS/GS override (mirrors real hardware + iced-x86).
+            //
+            // 64    => FS override (effective)
+            // 3E    => DS override (ignored in long mode; must NOT clear FS)
+            // 66 0F F7 C1 => MASKMOVDQU xmm0, xmm1 (implicit mem operand at [RDI])
+            let bytes = [0x64, 0x3E, 0x66, 0x0F, 0xF7, 0xC1];
+
+            let inst = decode(&bytes, DecodeMode::Bits64, 0).expect("decode");
+            assert_eq!(inst.prefixes.segment, Some(SegmentReg::FS));
+
+            let mem = decode_maskmov_mem(&bytes);
+            assert_eq!(mem.segment, Some(SegmentReg::FS));
+        }
+    }
+}

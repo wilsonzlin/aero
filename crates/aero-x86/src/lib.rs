@@ -1522,7 +1522,12 @@ pub mod tier1 {
     }
 }
 
-/// Production-oriented instruction decoder and operand model.
+// The structured decoder (`decoder` / `inst` / `opcode_tables`) is only used by
+// correctness tests and intentionally kept out of non-test builds to avoid pulling
+// in the `yaxpeax-*` decoder dependencies during production builds.
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub mod decoder;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub mod inst;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub mod opcode_tables;
