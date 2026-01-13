@@ -618,6 +618,25 @@ static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
     return AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_LO, AEROGPU_MMIO_REG_COMPLETED_FENCE_HI);
 }
 
+static const char* AeroGpuErrorCodeName(_In_ ULONG Code)
+{
+    switch (Code) {
+        case AEROGPU_ERROR_NONE:
+            return "NONE";
+        case AEROGPU_ERROR_CMD_DECODE:
+            return "CMD_DECODE";
+        case AEROGPU_ERROR_OOB:
+            return "OOB";
+        case AEROGPU_ERROR_BACKEND:
+            return "BACKEND";
+        case AEROGPU_ERROR_INTERNAL:
+            return "INTERNAL";
+        default:
+            break;
+    }
+    return "UNKNOWN";
+}
+
 static VOID AeroGpuLogSubmission(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG Fence, _In_ ULONG Type, _In_ ULONG DmaSize)
 {
     ULONG idx = Adapter->SubmissionLog.WriteIndex++ % AEROGPU_SUBMISSION_LOG_SIZE;
@@ -5849,12 +5868,31 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
 #if DBG
             /* Keep a breadcrumb trail without spamming the kernel debugger. */
             if (n <= 4 || ((n & (n - 1)) == 0)) {
-                DbgPrintEx(DPFLTR_IHVVIDEO_ID,
-                           DPFLTR_ERROR_LEVEL,
-                           "aerogpu-kmd: device IRQ error (IRQ_STATUS=0x%08lx fence=%lu count=%I64u)\n",
-                           status,
-                           (ULONG)errorFence,
-                           (unsigned long long)n);
+                const ULONG abiMinor = (ULONG)(adapter->DeviceAbiVersion & 0xFFFFu);
+                if (abiMinor >= 3 && adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG))) {
+                    const ULONG code = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_CODE);
+                    const ULONGLONG mmioFence = AeroGpuReadRegU64HiLoHi(adapter,
+                                                                       AEROGPU_MMIO_REG_ERROR_FENCE_LO,
+                                                                       AEROGPU_MMIO_REG_ERROR_FENCE_HI);
+                    const ULONG mmioCount = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_COUNT);
+                    DbgPrintEx(DPFLTR_IHVVIDEO_ID,
+                               DPFLTR_ERROR_LEVEL,
+                               "aerogpu-kmd: device IRQ error (IRQ_STATUS=0x%08lx fence=%lu count=%I64u mmio_code=%lu(%s) mmio_fence=0x%I64x mmio_count=%lu)\n",
+                               status,
+                               (ULONG)errorFence,
+                               (unsigned long long)n,
+                               code,
+                               AeroGpuErrorCodeName(code),
+                               (unsigned long long)mmioFence,
+                               mmioCount);
+                } else {
+                    DbgPrintEx(DPFLTR_IHVVIDEO_ID,
+                               DPFLTR_ERROR_LEVEL,
+                               "aerogpu-kmd: device IRQ error (IRQ_STATUS=0x%08lx fence=%lu count=%I64u)\n",
+                               status,
+                               (ULONG)errorFence,
+                               (unsigned long long)n);
+                }
             }
 #endif
 
@@ -8406,6 +8444,43 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         /* Not within any allowed/tracked device GPA region. */
         io->status = (uint32_t)STATUS_ACCESS_DENIED;
+        return STATUS_SUCCESS;
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_ERROR) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_query_error_out)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        aerogpu_escape_query_error_out* out = (aerogpu_escape_query_error_out*)pEscape->pPrivateDriverData;
+        out->hdr.version = AEROGPU_ESCAPE_VERSION;
+        out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+        out->hdr.size = sizeof(*out);
+        out->hdr.reserved0 = 0;
+        out->flags = AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID;
+        out->error_code = 0;
+        out->error_fence = 0;
+        out->error_count = 0;
+        out->reserved0 = 0;
+ 
+        if (!adapter->Bar0) {
+            return STATUS_SUCCESS;
+        }
+ 
+        const ULONG abiMinor = (ULONG)(adapter->DeviceAbiVersion & 0xFFFFu);
+        const BOOLEAN haveErrorRegs =
+            (adapter->AbiKind == AEROGPU_ABI_KIND_V1) &&
+            (abiMinor >= 3) &&
+            (adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG)));
+        if (!haveErrorRegs) {
+            return STATUS_SUCCESS;
+        }
+ 
+        out->flags |= AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED;
+        out->error_code = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_CODE);
+        out->error_fence = AeroGpuReadRegU64HiLoHi(adapter,
+                                                   AEROGPU_MMIO_REG_ERROR_FENCE_LO,
+                                                   AEROGPU_MMIO_REG_ERROR_FENCE_HI);
+        out->error_count = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_COUNT);
         return STATUS_SUCCESS;
     }
 

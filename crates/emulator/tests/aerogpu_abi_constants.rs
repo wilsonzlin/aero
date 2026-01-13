@@ -64,6 +64,22 @@ fn aerogpu_abi_constants_match_aero_protocol() {
         proto::AEROGPU_MMIO_REG_IRQ_ENABLE as u64
     );
     assert_eq!(emu::mmio::IRQ_ACK, proto::AEROGPU_MMIO_REG_IRQ_ACK as u64);
+    assert_eq!(
+        emu::mmio::ERROR_CODE,
+        proto::AEROGPU_MMIO_REG_ERROR_CODE as u64
+    );
+    assert_eq!(
+        emu::mmio::ERROR_FENCE_LO,
+        proto::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64
+    );
+    assert_eq!(
+        emu::mmio::ERROR_FENCE_HI,
+        proto::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64
+    );
+    assert_eq!(
+        emu::mmio::ERROR_COUNT,
+        proto::AEROGPU_MMIO_REG_ERROR_COUNT as u64
+    );
 
     assert_eq!(
         emu::mmio::SCANOUT0_ENABLE,

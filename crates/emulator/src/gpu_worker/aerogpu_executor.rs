@@ -7,7 +7,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 };
 use memory::MemoryBus;
 
-use crate::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs, FEATURE_VBLANK};
+use crate::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs, AerogpuErrorCode, FEATURE_VBLANK};
 use crate::devices::aerogpu_ring::{
     AeroGpuAllocEntry, AeroGpuAllocTableHeader, AeroGpuRingHeader, AeroGpuSubmitDesc,
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
@@ -277,7 +277,7 @@ impl AeroGpuExecutor {
         for AeroGpuBackendCompletion { fence, error } in completions {
             if error.is_some() {
                 regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
-                regs.irq_status |= irq_bits::ERROR;
+                regs.record_error(AerogpuErrorCode::Backend, fence);
             }
 
             // Present writeback (deferred mode only): copy the last-presented scanout into the guest
@@ -295,7 +295,7 @@ impl AeroGpuExecutor {
                             eprintln!("aerogpu: scanout writeback failed: {err}");
                         }
                         regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
-                        regs.irq_status |= irq_bits::ERROR;
+                        regs.record_error(AerogpuErrorCode::Backend, fence);
                     }
                 }
             }
@@ -387,14 +387,14 @@ impl AeroGpuExecutor {
         }
         if regs.ring_gpa == 0 || regs.ring_size_bytes == 0 {
             regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
-            regs.irq_status |= irq_bits::ERROR;
+            regs.record_error(AerogpuErrorCode::CmdDecode, 0);
             return;
         }
 
         let ring = AeroGpuRingHeader::read_from(mem, regs.ring_gpa);
         if !ring.is_valid(regs.ring_size_bytes) {
             regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
-            regs.irq_status |= irq_bits::ERROR;
+            regs.record_error(AerogpuErrorCode::CmdDecode, 0);
             return;
         }
 
@@ -442,7 +442,24 @@ impl AeroGpuExecutor {
             if !decode_errors.is_empty() {
                 regs.stats.malformed_submissions =
                     regs.stats.malformed_submissions.saturating_add(1);
-                regs.irq_status |= irq_bits::ERROR;
+                let mut code = AerogpuErrorCode::CmdDecode;
+                for err in &decode_errors {
+                    match err {
+                        AeroGpuSubmissionDecodeError::AllocTable(
+                            AeroGpuAllocTableDecodeError::AddressOverflow
+                            | AeroGpuAllocTableDecodeError::EntriesOutOfBounds,
+                        )
+                        | AeroGpuSubmissionDecodeError::CmdStream(
+                            AeroGpuCmdStreamDecodeError::AddressOverflow
+                            | AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
+                        ) => {
+                            code = AerogpuErrorCode::Oob;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                regs.record_error(code, desc.signal_fence);
             }
 
             let alloc_count = allocs.len();
@@ -543,7 +560,7 @@ impl AeroGpuExecutor {
                         if self.backend.submit(mem, submit).is_err() {
                             regs.stats.gpu_exec_errors =
                                 regs.stats.gpu_exec_errors.saturating_add(1);
-                            regs.irq_status |= irq_bits::ERROR;
+                            regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
                         }
 
                         let wants_present = (desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT) != 0;
@@ -555,7 +572,7 @@ impl AeroGpuExecutor {
                                     }
                                     regs.stats.gpu_exec_errors =
                                         regs.stats.gpu_exec_errors.saturating_add(1);
-                                    regs.irq_status |= irq_bits::ERROR;
+                                    regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
                                 }
                             }
                         }
@@ -660,7 +677,7 @@ impl AeroGpuExecutor {
 
                     if self.backend.submit(mem, submit).is_err() {
                         regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
-                        regs.irq_status |= irq_bits::ERROR;
+                        regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
                         // If the backend rejects the submission, still unblock the fence.
                         if let Some(entry) = self.in_flight.get_mut(&desc.signal_fence) {
                             entry.vblank_ready = true;

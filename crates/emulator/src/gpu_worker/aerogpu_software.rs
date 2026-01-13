@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use aero_protocol::aerogpu::{aerogpu_cmd as cmd, aerogpu_ring as ring};
 use memory::MemoryBus;
 
-use crate::devices::aerogpu_regs::{irq_bits, AeroGpuRegs};
+use crate::devices::aerogpu_regs::{AeroGpuRegs, AerogpuErrorCode};
 use crate::devices::aerogpu_ring::AeroGpuSubmitDesc;
 use crate::devices::aerogpu_scanout::AeroGpuFormat;
 
@@ -538,7 +538,7 @@ impl AeroGpuSoftwareExecutor {
 
     fn record_error(regs: &mut AeroGpuRegs) {
         regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
-        regs.irq_status |= irq_bits::ERROR;
+        regs.record_error(AerogpuErrorCode::CmdDecode, regs.current_submission_fence);
     }
 
     fn resolve_guest_backing_gpa(
@@ -2463,6 +2463,7 @@ impl AeroGpuSoftwareExecutor {
         mem: &mut dyn MemoryBus,
         desc: &AeroGpuSubmitDesc,
     ) {
+        regs.current_submission_fence = desc.signal_fence;
         if desc.cmd_gpa == 0 && desc.cmd_size_bytes == 0 {
             return;
         }
@@ -4149,6 +4150,7 @@ impl AeroGpuSoftwareExecutor {
 mod tests {
     use super::*;
 
+    use crate::devices::aerogpu_regs::irq_bits;
     use memory::Bus;
     use std::collections::HashMap;
 

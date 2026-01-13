@@ -34,16 +34,10 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION 9u
 #define AEROGPU_ESCAPE_OP_QUERY_SCANOUT 10u
 #define AEROGPU_ESCAPE_OP_QUERY_CURSOR 11u
-/* Query performance/health counters snapshot. */
-#define AEROGPU_ESCAPE_OP_QUERY_PERF 12u
-/* Debug-only: read guest physical memory. */
-#define AEROGPU_ESCAPE_OP_READ_GPA 13u
+#define AEROGPU_ESCAPE_OP_QUERY_ERROR 12u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 #define AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS 32u
-
-/* Maximum payload size for AEROGPU_ESCAPE_OP_READ_GPA (bounded guest physical reads). */
-#define AEROGPU_DBGCTL_READ_GPA_MAX_BYTES 4096u
 
 #define AEROGPU_DBGCTL_CONCAT2_(a, b) a##b
 #define AEROGPU_DBGCTL_CONCAT_(a, b) AEROGPU_DBGCTL_CONCAT2_(a, b)
@@ -118,86 +112,10 @@ typedef struct aerogpu_escape_query_fence_out {
    */
   aerogpu_escape_u64 last_submitted_fence;
   aerogpu_escape_u64 last_completed_fence;
-
-  /*
-   * Sticky error diagnostics.
-   *
-   * When the device/emulator signals a submission failure (AEROGPU_IRQ_ERROR),
-   * the KMD increments `error_irq_count` and records the most recent fence value
-   * observed at the time of the error in `last_error_fence`.
-   */
-  aerogpu_escape_u64 error_irq_count;
-  aerogpu_escape_u64 last_error_fence;
 } aerogpu_escape_query_fence_out;
 
 /* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_fence_out) == 48);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_fence_out, last_submitted_fence) == 16);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_fence_out, last_completed_fence) == 24);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_fence_out, error_irq_count) == 32);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_fence_out, last_error_fence) == 40);
-
-/*
- * Query performance/health counters snapshot.
- *
- * This is intended to be a low-friction, stable "first glance" dump that helps
- * diagnose:
- * - stuck fences / forward progress
- * - ring queue depth
- * - interrupt delivery (fence vsync) and unexpected/spurious interrupts
- * - TDR/reset frequency
- *
- * All counters are best-effort snapshots and may change concurrently while the
- * escape is being processed.
- */
-typedef struct aerogpu_escape_query_perf_out {
-  aerogpu_escape_header hdr;
-
-  aerogpu_escape_u64 last_submitted_fence;
-  aerogpu_escape_u64 last_completed_fence;
-
-  /* Ring 0 snapshot (AGPU ring when supported; 0 if unknown). */
-  aerogpu_escape_u32 ring0_head;
-  aerogpu_escape_u32 ring0_tail;
-  aerogpu_escape_u32 ring0_size_bytes;
-  aerogpu_escape_u32 ring0_entry_count;
-
-  /* Submission counters. */
-  aerogpu_escape_u64 total_submissions;
-  aerogpu_escape_u64 total_presents;
-  aerogpu_escape_u64 total_render_submits;
-  aerogpu_escape_u64 total_internal_submits;
-
-  /* Interrupt counters. */
-  aerogpu_escape_u64 irq_fence_delivered;
-  aerogpu_escape_u64 irq_vblank_delivered;
-  aerogpu_escape_u64 irq_spurious;
-
-  /* Reset/TDR counters. */
-  aerogpu_escape_u64 reset_from_timeout_count;
-  aerogpu_escape_u64 last_reset_time_100ns;
-
-  /* VBlank snapshot. */
-  aerogpu_escape_u64 vblank_seq;
-  aerogpu_escape_u64 last_vblank_time_ns;
-  aerogpu_escape_u32 vblank_period_ns;
-  aerogpu_escape_u32 reserved0;
-} aerogpu_escape_query_perf_out;
-
-/* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 144);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 32);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_tail) == 36);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_size_bytes) == 40);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_entry_count) == 44);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, total_submissions) == 48);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, irq_fence_delivered) == 80);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reset_from_timeout_count) == 104);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, vblank_seq) == 120);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, vblank_period_ns) == 136);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reserved0) == 140);
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_fence_out) == 32);
 
 /*
  * Must remain stable across x86/x64.
@@ -417,6 +335,31 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, fb_gpa) =
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, pitch_bytes) == 64);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, reserved1) == 68);
 
+typedef struct aerogpu_escape_query_error_out {
+  aerogpu_escape_header hdr;
+  /*
+   * Flags:
+   * - Bit 31: flags are valid (newer KMDs).
+   * - Bit 0: error MMIO registers are supported/valid.
+   */
+  aerogpu_escape_u32 flags;
+  aerogpu_escape_u32 error_code; /* enum aerogpu_error_code */
+  aerogpu_escape_u64 error_fence;
+  aerogpu_escape_u32 error_count;
+  aerogpu_escape_u32 reserved0;
+} aerogpu_escape_query_error_out;
+
+#define AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID (1u << 31)
+#define AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED (1u << 0)
+
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_error_out) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_error_out, flags) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_error_out, error_code) == 20);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_error_out, error_fence) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_error_out, error_count) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_error_out, reserved0) == 36);
+
 /*
  * Recent CreateAllocation trace entry (DxgkDdiCreateAllocation inputs/outputs).
  *
@@ -481,40 +424,6 @@ AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_map_shared_handle_inout) == 3
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_map_shared_handle_inout, shared_handle) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_map_shared_handle_inout, share_token) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_map_shared_handle_inout, reserved0) == 28);
-
-/*
- * Read a bounded slice of guest physical memory (GPA).
- *
- * Security model:
- * - The KMD must validate that `gpa` refers to a device/guest-owned buffer (for
- *   example: ring buffers, scanout framebuffer, driver-owned DMA buffers) and
- *   must never allow arbitrary physical memory reads.
- * - `size_bytes` is strictly bounded by AEROGPU_DBGCTL_READ_GPA_MAX_BYTES.
- *
- * Result reporting:
- * - The escape call itself may return STATUS_SUCCESS even if the read fails;
- *   consult `status` for the operation result (NTSTATUS value).
- * - `bytes_copied` is the number of bytes written into `data[]`.
- */
-typedef struct aerogpu_escape_read_gpa_inout {
-  aerogpu_escape_header hdr;
-  /* Input */
-  aerogpu_escape_u64 gpa;
-  aerogpu_escape_u32 size_bytes;
-  aerogpu_escape_u32 reserved0;
-  /* Output */
-  aerogpu_escape_u32 status; /* NTSTATUS */
-  aerogpu_escape_u32 bytes_copied;
-  unsigned char data[AEROGPU_DBGCTL_READ_GPA_MAX_BYTES];
-} aerogpu_escape_read_gpa_inout;
-
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_read_gpa_inout) == (40 + AEROGPU_DBGCTL_READ_GPA_MAX_BYTES));
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, gpa) == 16);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, size_bytes) == 24);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, reserved0) == 28);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, status) == 32);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, bytes_copied) == 36);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, data) == 40);
 
 #pragma pack(pop)
 

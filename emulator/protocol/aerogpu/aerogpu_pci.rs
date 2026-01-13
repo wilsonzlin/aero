@@ -5,7 +5,7 @@
 /// ABI major version (breaking changes).
 pub const AEROGPU_ABI_MAJOR: u32 = 1;
 /// ABI minor version (backwards-compatible extensions).
-pub const AEROGPU_ABI_MINOR: u32 = 2;
+pub const AEROGPU_ABI_MINOR: u32 = 3;
 
 pub const AEROGPU_ABI_VERSION_U32: u32 = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
 
@@ -97,6 +97,12 @@ pub const AEROGPU_IRQ_FENCE: u32 = 1u32 << 0;
 pub const AEROGPU_IRQ_SCANOUT_VBLANK: u32 = 1u32 << 1;
 pub const AEROGPU_IRQ_ERROR: u32 = 1u32 << 31;
 
+// Error reporting (ABI 1.3+).
+pub const AEROGPU_MMIO_REG_ERROR_CODE: u32 = 0x0310;
+pub const AEROGPU_MMIO_REG_ERROR_FENCE_LO: u32 = 0x0314;
+pub const AEROGPU_MMIO_REG_ERROR_FENCE_HI: u32 = 0x0318;
+pub const AEROGPU_MMIO_REG_ERROR_COUNT: u32 = 0x031C;
+
 pub const AEROGPU_MMIO_REG_SCANOUT0_ENABLE: u32 = 0x0400;
 pub const AEROGPU_MMIO_REG_SCANOUT0_WIDTH: u32 = 0x0404;
 pub const AEROGPU_MMIO_REG_SCANOUT0_HEIGHT: u32 = 0x0408;
@@ -124,6 +130,16 @@ pub const AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI: u32 = 0x0524;
 pub const AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES: u32 = 0x0528;
 
 /* ---------------------------------- Enums -------------------------------- */
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AerogpuErrorCode {
+    None = 0,
+    CmdDecode = 1,
+    Oob = 2,
+    Backend = 3,
+    Internal = 0xFFFF,
+}
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

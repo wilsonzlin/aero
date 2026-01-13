@@ -36,7 +36,7 @@ extern "C" {
  * The ABI version is reported by MMIO register `AEROGPU_MMIO_REG_ABI_VERSION`.
  */
 #define AEROGPU_ABI_MAJOR 1u
-#define AEROGPU_ABI_MINOR 2u
+#define AEROGPU_ABI_MINOR 3u
 #define AEROGPU_ABI_VERSION_U32 (((uint32_t)AEROGPU_ABI_MAJOR << 16) | (uint32_t)AEROGPU_ABI_MINOR)
 
 /* ------------------------------- PCI identity ---------------------------- */
@@ -122,6 +122,23 @@ extern "C" {
 #define AEROGPU_IRQ_SCANOUT_VBLANK (1u << 1) /* Scanout vblank tick (if AEROGPU_FEATURE_VBLANK) */
 #define AEROGPU_IRQ_ERROR (1u << 31) /* Fatal device error */
 
+/*
+ * Error reporting (ABI 1.3+).
+ *
+ * When `AEROGPU_IRQ_ERROR` is asserted, the device also latches a structured
+ * error payload into these read-only registers:
+ * - a stable error code (`enum aerogpu_error_code`)
+ * - the fence (submission) associated with the error, if known
+ * - a monotonically increasing error counter
+ *
+ * The registers remain valid until overwritten by a subsequent error. Clearing
+ * `IRQ_STATUS.ERROR` via `IRQ_ACK` does not clear the latched error payload.
+ */
+#define AEROGPU_MMIO_REG_ERROR_CODE 0x0310u /* RO: enum aerogpu_error_code */
+#define AEROGPU_MMIO_REG_ERROR_FENCE_LO 0x0314u /* RO */
+#define AEROGPU_MMIO_REG_ERROR_FENCE_HI 0x0318u /* RO */
+#define AEROGPU_MMIO_REG_ERROR_COUNT 0x031Cu /* RO */
+
 /* Scanout 0 configuration */
 #define AEROGPU_MMIO_REG_SCANOUT0_ENABLE 0x0400u /* RW */
 #define AEROGPU_MMIO_REG_SCANOUT0_WIDTH 0x0404u /* RW */
@@ -157,6 +174,20 @@ extern "C" {
 #define AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES 0x0528u /* RW */
 
 /* ------------------------------- Shared enums ---------------------------- */
+
+/*
+ * Device error codes reported via `AEROGPU_MMIO_REG_ERROR_CODE`.
+ *
+ * Values are stable once published. Unknown values should be treated as
+ * `AEROGPU_ERROR_INTERNAL` by consumers.
+ */
+enum aerogpu_error_code {
+  AEROGPU_ERROR_NONE = 0,
+  AEROGPU_ERROR_CMD_DECODE = 1,
+  AEROGPU_ERROR_OOB = 2,
+  AEROGPU_ERROR_BACKEND = 3,
+  AEROGPU_ERROR_INTERNAL = 0xFFFFu,
+};
 
 /*
  * Resource / scanout formats.
