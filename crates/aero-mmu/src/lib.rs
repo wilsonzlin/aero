@@ -27,8 +27,9 @@ pub trait MemoryBus {
 
     /// Read a byte slice from physical memory.
     ///
-    /// The default implementation falls back to byte-at-a-time reads via [`MemoryBus::read_u8`].
-    /// Backends are encouraged to override this with a more efficient bulk implementation.
+    /// The default implementation falls back to byte-at-a-time reads via
+    /// [`MemoryBus::read_u8`]. Backends are encouraged to override this with a
+    /// more efficient bulk implementation.
     #[inline]
     fn read_bytes(&mut self, paddr: u64, dst: &mut [u8]) {
         for (i, slot) in dst.iter_mut().enumerate() {
@@ -38,8 +39,9 @@ pub trait MemoryBus {
 
     /// Write a byte slice to physical memory.
     ///
-    /// The default implementation falls back to byte-at-a-time writes via [`MemoryBus::write_u8`].
-    /// Backends are encouraged to override this with a more efficient bulk implementation.
+    /// The default implementation falls back to byte-at-a-time writes via
+    /// [`MemoryBus::write_u8`]. Backends are encouraged to override this with a
+    /// more efficient bulk implementation.
     #[inline]
     fn write_bytes(&mut self, paddr: u64, src: &[u8]) {
         for (i, byte) in src.iter().copied().enumerate() {

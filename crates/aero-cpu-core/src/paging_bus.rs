@@ -68,6 +68,7 @@ pub struct PagingBus<B, IO = NoIo> {
     io: IO,
     cpl: u8,
     write_chunks: Vec<(u64, usize, usize)>,
+    scratch: Vec<u8>,
 }
 
 const PAGE_SIZE: u64 = 4096;
@@ -86,6 +87,7 @@ impl<B, IO> PagingBus<B, IO> {
             io,
             cpl: 0,
             write_chunks: Vec::new(),
+            scratch: Vec::with_capacity(PAGE_SIZE as usize),
         }
     }
 
@@ -609,10 +611,11 @@ where
                 let src_paddr = self.translate(src_chunk_addr, AccessType::Read)?;
                 let dst_paddr = self.translate(dst_chunk_addr, AccessType::Write)?;
 
-                for i in (0..chunk_len).rev() {
-                    let b = self.phys.read_u8(src_paddr + i as u64);
-                    self.phys.write_u8(dst_paddr + i as u64, b);
-                }
+                self.scratch.resize(chunk_len, 0);
+                self.phys
+                    .read_bytes(src_paddr, &mut self.scratch[..chunk_len]);
+                self.phys
+                    .write_bytes(dst_paddr, &self.scratch[..chunk_len]);
 
                 remaining -= chunk_len;
             }
@@ -630,10 +633,11 @@ where
                 let dst_page_rem = (PAGE_SIZE as usize) - dst_page_off;
                 let chunk_len = src_page_rem.min(dst_page_rem).min(len - offset);
 
-                for i in 0..chunk_len {
-                    let b = self.phys.read_u8(src_paddr + i as u64);
-                    self.phys.write_u8(dst_paddr + i as u64, b);
-                }
+                self.scratch.resize(chunk_len, 0);
+                self.phys
+                    .read_bytes(src_paddr, &mut self.scratch[..chunk_len]);
+                self.phys
+                    .write_bytes(dst_paddr, &self.scratch[..chunk_len]);
 
                 offset += chunk_len;
             }
@@ -676,10 +680,24 @@ where
             let page_rem = (PAGE_SIZE as usize) - page_off;
             let chunk_len = page_rem.min(total - offset);
 
-            for i in 0..chunk_len {
-                let byte = pattern[(offset + i) % pat_len];
-                self.phys.write_u8(paddr + i as u64, byte);
+            self.scratch.resize(chunk_len, 0);
+
+            if pat_len == 1 {
+                self.scratch[..chunk_len].fill(pattern[0]);
+            } else {
+                let mut filled = 0usize;
+                let mut pat_off = offset % pat_len;
+                while filled < chunk_len {
+                    let run = (pat_len - pat_off).min(chunk_len - filled);
+                    self.scratch[filled..filled + run]
+                        .copy_from_slice(&pattern[pat_off..pat_off + run]);
+                    filled += run;
+                    pat_off = 0;
+                }
             }
+
+            self.phys
+                .write_bytes(paddr, &self.scratch[..chunk_len]);
 
             offset += chunk_len;
         }

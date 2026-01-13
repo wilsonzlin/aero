@@ -245,6 +245,59 @@ fn pagingbus_bulk_copy_overlap_memmove_forward_multi_page() -> Result<(), Except
 }
 
 #[test]
+fn pagingbus_bulk_copy_overlap_memmove_backward_cross_page_start() -> Result<(), Exception> {
+    // Regression test: ensure memmove semantics are preserved when the source starts in one page
+    // and the destination starts in the next page (dst > src), forcing a backward copy across
+    // multiple translated chunks.
+    let mut phys = TestMemory::new(0x20000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page0 = 0x5000u64;
+    let page1 = 0x6000u64;
+
+    setup_long4_4k(
+        &mut phys,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        page0 | PTE_P | PTE_RW | PTE_US,
+        page1 | PTE_P | PTE_RW | PTE_US,
+    );
+
+    let mut initial = vec![0u8; PAGE_SIZE * 2];
+    for (i, b) in initial.iter_mut().enumerate() {
+        *b = i as u8;
+    }
+    phys.load(page0, &initial[..PAGE_SIZE]);
+    phys.load(page1, &initial[PAGE_SIZE..]);
+
+    // dst > src and the ranges overlap, but the start addresses are in different pages.
+    let src = PAGE_SIZE - 64;
+    let dst = PAGE_SIZE + 32;
+    let len = 256;
+
+    let mut expected = initial.clone();
+    expected.copy_within(src..src + len, dst);
+
+    let mut bus = PagingBus::new(phys);
+    bus.sync(&long_state(pml4_base));
+
+    assert!(bus.bulk_copy(dst as u64, src as u64, len)?);
+
+    let phys = bus.inner_mut();
+    let mut actual = Vec::with_capacity(PAGE_SIZE * 2);
+    actual.extend_from_slice(phys.slice(page0, PAGE_SIZE));
+    actual.extend_from_slice(phys.slice(page1, PAGE_SIZE));
+
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
+#[test]
 fn pagingbus_bulk_set_success_two_pages() -> Result<(), Exception> {
     let mut phys = TestMemory::new(0x20000);
 
