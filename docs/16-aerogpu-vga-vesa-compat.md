@@ -17,16 +17,16 @@ both the legacy VGA/VBE boot display path and the modern WDDM/MMIO/ring protocol
 
 The canonical `aero_machine::Machine` supports **two mutually-exclusive** display configurations:
 
-- **AeroGPU (canonical / long-term):** `MachineConfig::enable_aerogpu=true` exposes the full AeroGPU
-  PCI function at `00:07.0` (`A3A0:0001`). In this mode, AeroGPU is responsible for both:
-  - legacy VGA/VBE boot display compatibility, and
-  - the modern AeroGPU MMIO/WDDM protocol.
+- **AeroGPU (canonical / long-term):** `MachineConfig::enable_aerogpu=true` exposes the canonical
+  AeroGPU PCI identity at `00:07.0` (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1
+  VRAM aperture). In `aero_machine` today this is **PCI config-space exposure only**; wiring the
+  full AeroGPU device model (MMIO + VGA/VBE compatibility + scanout) is tracked separately.
 - **Legacy VGA/VBE (transitional):** `MachineConfig::enable_vga=true` uses the standalone
   `aero_gpu_vga` VGA/VBE device model for boot display, and exposes a minimal Bochs/QEMU “Standard
   VGA”-like PCI stub at `00:0c.0` (`1234:1111`) solely so the VBE linear framebuffer can be routed
   through the PCI MMIO router.
 
-`enable_aerogpu` and `enable_vga` are intended to be **mutually exclusive** (only one boot display
+`enable_aerogpu` and `enable_vga` are intended to be **mutually exclusive** (only one display
 device model active at a time).
 
 See:

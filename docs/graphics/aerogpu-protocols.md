@@ -10,10 +10,14 @@ Win7/WDDM ABI** described below.
 Note on the canonical machine (`aero_machine::Machine`):
 
 - The canonical full-system machine reserves `00:07.0` for the AeroGPU Windows driver contract
-  (`PCI\\VEN_A3A0&DEV_0001`), but does **not** yet expose the full AeroGPU PCI device model.
-- Today, boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports +
-  Bochs VBE) plus a minimal “Standard VGA”-like PCI stub at `00:0c.0` (`1234:1111`) used only for VBE
-  LFB MMIO routing.
+  (`PCI\\VEN_A3A0&DEV_0001`).
+- When `MachineConfig::enable_aerogpu=true`, the machine exposes the AeroGPU PCI identity at
+  `00:07.0` (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). In
+  `aero_machine` today this is PCI config-space exposure only; the full AeroGPU device model is
+  integrated separately.
+- Boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports + Bochs VBE)
+  when `MachineConfig::enable_vga=true`, plus a minimal “Standard VGA”-like PCI stub at `00:0c.0`
+  (`1234:1111`) used only for VBE LFB MMIO routing.
 
 See:
 

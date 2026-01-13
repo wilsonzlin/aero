@@ -12,13 +12,13 @@ The canonical full-system machine (`crates/aero-machine`, `aero_machine::Machine
 
 The canonical machine supports **two mutually-exclusive** display configurations:
 
-- `MachineConfig::enable_aerogpu=true`: expose the full AeroGPU PCI function at `00:07.0`
-  (`A3A0:0001`). In this mode, AeroGPU owns both:
-  - the WDDM/MMIO/ring protocol implied by its VID/DID, and
-  - the legacy VGA/VBE boot display compatibility path.
+- `MachineConfig::enable_aerogpu=true`: expose the canonical AeroGPU PCI identity at `00:07.0`
+  (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). In `aero_machine`
+  today this is **PCI config-space exposure only**; the full AeroGPU device model (MMIO + ring +
+  VGA/VBE scanout) is integrated separately.
 
-  Firmware derives the VBE linear framebuffer base from AeroGPU BAR1:
-  `PhysBasePtr = BAR1_BASE + 0x20000`.
+  When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
+  framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x20000`.
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): provide boot display via the
   standalone `aero_gpu_vga` VGA/VBE implementation, plus a minimal Bochs/QEMU “Standard VGA”-like
   PCI stub at `00:0c.0` (`1234:1111`) used only to route the VBE linear framebuffer through the PCI
@@ -26,8 +26,8 @@ The canonical machine supports **two mutually-exclusive** display configurations
 
 See also:
 
-- [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md) (VGA/VBE-compat boot
-  display behavior when AeroGPU is enabled)
+- [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md) (desired VGA/VBE-compat
+  boot display behavior of AeroGPU)
 - [`docs/pci-device-compatibility.md`](../pci-device-compatibility.md) (canonical BDF/ID table,
   including the transitional VGA stub)
 

@@ -442,10 +442,14 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 
 /// AeroGPU display controller (canonical Windows device contract).
 ///
-/// Note: this is a PCI identity/profile only. The canonical `aero_machine::Machine` does not yet
-/// expose the full AeroGPU WDDM device model; today it provides boot display via `aero_gpu_vga` and
-/// uses a separate Bochs/QEMU-compatible VGA PCI stub (currently at `00:0c.0`) so the fixed VBE
-/// linear framebuffer (LFB) can be routed through the PCI MMIO window.
+/// Note: this is a PCI identity/profile only (IDs/class/BAR definitions).
+///
+/// - `aero_machine::Machine` exposes this identity at `00:07.0` when
+///   `MachineConfig::enable_aerogpu=true` (PCI config-space exposure).
+/// - Boot display in the canonical machine is still provided by the standalone `aero_gpu_vga`
+///   VGA/VBE device model when `MachineConfig::enable_vga=true`. In that mode the machine also
+///   exposes a separate Bochs/QEMU-compatible VGA PCI stub at `00:0c.0` so the fixed VBE linear
+///   framebuffer (LFB) can be routed through the PCI MMIO window.
 pub const AEROGPU: PciDeviceProfile = PciDeviceProfile {
     name: "aerogpu",
     bdf: PciBdf::new(0, 7, 0),
