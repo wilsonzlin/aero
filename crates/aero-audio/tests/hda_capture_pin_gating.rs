@@ -97,3 +97,31 @@ fn capture_pin_power_state_d3_writes_silence_without_consuming() {
     assert_eq!(hda.stream_mut(1).lpib, 0);
 }
 
+#[test]
+fn capture_afg_power_state_d3_writes_silence_without_consuming() {
+    let mut hda = HdaController::new();
+    let mut mem = GuestMemory::new(0x20_000);
+
+    let frames = 8usize;
+    let (pcm_base, pcm_len_bytes) = setup_basic_capture(&mut hda, &mut mem, frames);
+
+    // Ensure the mic pin is enabled so capture gating is solely due to the AFG power state.
+    hda.codec_mut().execute_verb(5, (0x707u32 << 8) | 0x20);
+
+    // Power the Audio Function Group down to D3.
+    hda.codec_mut().execute_verb(1, (0x705u32 << 8) | 0x03);
+
+    mem.write_physical(pcm_base, &vec![0xAA; pcm_len_bytes]);
+
+    let mut capture = VecDequeCaptureSource::new();
+    capture.push_samples(&[0.5; 64]);
+    let before_len = capture.len();
+
+    hda.process_with_capture(&mut mem, frames, &mut capture);
+
+    let mut out = vec![0u8; pcm_len_bytes];
+    mem.read_physical(pcm_base, &mut out);
+    assert!(out.iter().all(|&b| b == 0));
+    assert_eq!(capture.len(), before_len);
+    assert_eq!(hda.stream_mut(1).lpib, 0);
+}

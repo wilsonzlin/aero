@@ -167,6 +167,23 @@ Windows 7 uses the inbox `hdaudio.sys` and `HdAudBus.sys` drivers.
 
 Reference: Intel HDA specification (publicly available).
 
+### Pin/power gating semantics (playback + capture)
+
+The `aero-audio` HDA codec model enforces a minimal subset of widget power + pin control semantics:
+
+- **Playback is silenced** when:
+  - AFG `power_state != D0`, OR
+  - output pin `pin_ctl == 0`, OR
+  - output pin `power_state != D0`.
+- **Capture DMA still advances**, but the guest receives **silence** when:
+  - AFG `power_state != D0`, OR
+  - mic pin `power_state != D0`, OR
+  - mic pin `pin_ctl == 0`.
+  - In these capture-muted cases, the device model must **not** consume microphone samples from the host ring (so we don’t drop mic
+    audio while the guest endpoint is disabled).
+
+See [`docs/06-audio-subsystem.md`](../docs/06-audio-subsystem.md) for the canonical write-up + unit test pointers.
+
 ---
 
 ## AudioWorklet Integration

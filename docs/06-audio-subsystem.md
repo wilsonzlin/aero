@@ -284,6 +284,43 @@ The canonical `aero-audio` HDA model exposes one capture stream and a microphone
 Host code provides microphone samples via `aero_audio::capture::AudioCaptureSource` (implemented for
 `aero_platform::audio::mic_bridge::MicBridge` on wasm) and advances the device model via the HDA capture processing path.
 
+### HDA pin/power gating semantics (playback + capture)
+
+The minimal HDA codec model enforces a subset of widget **power state** + **pin widget control** semantics that Windows uses to
+mute endpoints. This primarily affects whether the guest hears audio / records audio, while keeping DMA timing consistent.
+
+#### Playback gating (line-out)
+
+Playback is forced to **silence** when any of the following are true:
+
+- AFG power state (`NID 1`) is not `D0`
+- output pin (`NID 3`) `pin_ctl == 0`
+- output pin (`NID 3`) power state is not `D0`
+
+This is implemented by applying 0 gain at the codec output stage (guest playback DMA still advances as normal).
+
+Unit tests:
+
+- [`crates/aero-audio/tests/hda_volume_mute.rs`](../crates/aero-audio/tests/hda_volume_mute.rs)
+  (`afg_power_state_d3_silences_output`, `pin_ctl_zero_silences_output`, `output_pin_power_state_d3_silences_output`)
+
+#### Capture gating (microphone)
+
+The capture stream DMA engine still advances, but the guest receives **silence** when any of the following are true:
+
+- AFG power state (`NID 1`) is not `D0`
+- mic pin (`NID 5`) power state is not `D0`
+- mic pin (`NID 5`) `pin_ctl == 0`
+
+In the capture-muted cases above, the device model must **not** consume microphone samples from the host ring
+(`AudioCaptureSource`). (This avoids dropping mic audio while the guest endpoint is disabled.)
+
+Unit tests:
+
+- [`crates/aero-audio/tests/hda_capture_pin_gating.rs`](../crates/aero-audio/tests/hda_capture_pin_gating.rs)
+  (`capture_pin_ctl_zero_writes_silence_without_consuming`, `capture_pin_power_state_d3_writes_silence_without_consuming`,
+  `capture_afg_power_state_d3_writes_silence_without_consuming`)
+
 ### virtio-snd capture exposure (guest)
 
 Guest-visible virtio-snd behaviour (stream ids, queues, formats) is specified by the
@@ -324,11 +361,13 @@ In the outer `aero-snapshot` `DEVICES` table, HDA audio state is stored under:
 ### What must be captured
 
 - Guest-visible device state (HDA registers, CORB/RIRB, stream descriptors, codec verb-visible state, DMA progress, etc).
+  - Includes codec pin/power gating state (AFG `power_state`, pin widget `pin_ctl`/`power_state`), which controls whether
+    playback/capture are silenced and (for capture) whether the device model consumes host microphone samples.
 - Host sample rates used by the device model (e.g. HDA `output_rate_hz` / `capture_sample_rate_hz`) so resampler state can be restored deterministically.
 - Host-side ring **indices** (but not audio content):
    - playback ring `readFrameIndex` / `writeFrameIndex` + `capacityFrames`
    - helpers:
-     - `WorkletBridge::snapshot_state()` / `WorkletBridge::restore_state()` (wasm; the real SAB-backed ring)
+      - `WorkletBridge::snapshot_state()` / `WorkletBridge::restore_state()` (wasm; the real SAB-backed ring)
      - `InterleavedRingBuffer::snapshot_state()` (pure Rust helper used by unit tests)
      - `web/src/platform/audio_ring_restore.ts`: `restoreAudioWorkletRing()` (JS helper used when restoring rings on the web side)
    - Note: ring underrun/overrun counters are host-side telemetry and are not part of the snapshot; restore intentionally leaves
@@ -346,6 +385,9 @@ Implementation references:
 
 - The browser `AudioContext` / `AudioWorkletNode` is not serializable; on restore the host audio graph is recreated.
 - Ring buffer **contents** are not restored. Producers clear the ring to silence on restore to avoid replaying stale samples.
+- Host microphone rings are not serializable and may continue producing while the VM is paused; capture consumers are expected to
+  discard stale data on attach/resume boundaries. If the guest capture endpoint is gated (pin/power state), the HDA model will DMA
+  silence without consuming any host mic samples until the endpoint is re-enabled.
 - Any host-time-derived audio clocks (e.g. `AudioFrameClock`-driven schedulers) must be reset on snapshot resume so devices do not
   "fast-forward" by wall-clock time spent paused during save/restore.
 - virtio-snd snapshot/restore is supported in the browser runtime under kind `"audio.virtio_snd"` (`DeviceId::VIRTIO_SND = 22`).
