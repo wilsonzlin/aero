@@ -5,6 +5,11 @@ export interface ProxyConfig {
   allow: string;
   connectTimeoutMs: number;
   dnsTimeoutMs: number;
+  dohMaxQueryBytes: number;
+  dohMaxQnameLength: number;
+  dohAnswerTtlSeconds: number;
+  dohMaxAnswerTtlSeconds: number;
+  dohMaxAnswers: number;
   wsMaxPayloadBytes: number;
   wsStreamHighWaterMarkBytes: number;
   udpWsBufferedAmountLimitBytes: number;
@@ -43,6 +48,20 @@ export function loadConfigFromEnv(): ProxyConfig {
     throw new Error(`Invalid AERO_PROXY_TCP_MUX_MAX_STREAMS=${tcpMuxMaxStreams} (must be >= 1)`);
   }
 
+  const dohMaxQueryBytes = readEnvInt("AERO_PROXY_DOH_MAX_QUERY_BYTES", 512);
+  if (dohMaxQueryBytes < 1) {
+    throw new Error(`Invalid AERO_PROXY_DOH_MAX_QUERY_BYTES=${dohMaxQueryBytes} (must be >= 1)`);
+  }
+
+  const dohMaxQnameLength = readEnvInt("AERO_PROXY_DOH_MAX_QNAME_LENGTH", 253);
+  if (dohMaxQnameLength < 1 || dohMaxQnameLength > 253) {
+    throw new Error(`Invalid AERO_PROXY_DOH_MAX_QNAME_LENGTH=${dohMaxQnameLength} (must be 1..253)`);
+  }
+
+  const dohAnswerTtlSeconds = readEnvInt("AERO_PROXY_DOH_ANSWER_TTL_SECONDS", 60);
+  const dohMaxAnswerTtlSeconds = readEnvInt("AERO_PROXY_DOH_MAX_ANSWER_TTL_SECONDS", 300);
+  const dohMaxAnswers = readEnvInt("AERO_PROXY_DOH_MAX_ANSWERS", 16);
+
   const udpRelayInboundFilterModeRaw = (process.env.AERO_PROXY_UDP_RELAY_INBOUND_FILTER_MODE ?? "address_and_port")
     .trim()
     .toLowerCase();
@@ -68,6 +87,11 @@ export function loadConfigFromEnv(): ProxyConfig {
     allow: process.env.AERO_PROXY_ALLOW ?? "",
     connectTimeoutMs: readEnvInt("AERO_PROXY_CONNECT_TIMEOUT_MS", 10_000),
     dnsTimeoutMs: readEnvInt("AERO_PROXY_DNS_TIMEOUT_MS", 5_000),
+    dohMaxQueryBytes,
+    dohMaxQnameLength,
+    dohAnswerTtlSeconds,
+    dohMaxAnswerTtlSeconds,
+    dohMaxAnswers,
     wsMaxPayloadBytes: readEnvInt("AERO_PROXY_WS_MAX_PAYLOAD_BYTES", 1 * 1024 * 1024),
     wsStreamHighWaterMarkBytes: readEnvInt("AERO_PROXY_WS_STREAM_HWM_BYTES", 64 * 1024),
     udpWsBufferedAmountLimitBytes: readEnvInt("AERO_PROXY_UDP_WS_BUFFER_LIMIT_BYTES", 1 * 1024 * 1024),

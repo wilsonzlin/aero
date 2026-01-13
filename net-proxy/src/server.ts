@@ -1,12 +1,14 @@
 import http from "node:http";
 import net from "node:net";
 import dgram from "node:dgram";
+import dns from "node:dns/promises";
 import { PassThrough, type Duplex } from "node:stream";
 import { createWebSocketStream, WebSocketServer, type WebSocket } from "ws";
 import ipaddr from "ipaddr.js";
 import { loadConfigFromEnv, type ProxyConfig } from "./config";
 import { formatError, log } from "./logger";
 import { resolveAndAuthorizeTarget } from "./security";
+import { decodeBase64UrlToBuffer, decodeDnsHeader, decodeFirstQuestion, encodeDnsResponse, normalizeDnsName, type DnsAnswer } from "./dnsMessage";
 import {
   TCP_MUX_HEADER_BYTES,
   TCP_MUX_SUBPROTOCOL,
@@ -209,45 +211,307 @@ function parseTargetQuery(url: URL): { host: string; port: number; portRaw: stri
   return { host: stripOptionalIpv6Brackets(host), port, portRaw: portPart };
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let handle: NodeJS.Timeout | null = null;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    handle = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    handle.unref();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (handle) clearTimeout(handle);
+  }
+}
+
+async function readRequestBodyWithLimit(
+  req: http.IncomingMessage,
+  maxBytes: number
+): Promise<{ body: Buffer; tooLarge: boolean }> {
+  const chunks: Buffer[] = [];
+  let storedBytes = 0;
+  let totalBytes = 0;
+
+  return await new Promise((resolve, reject) => {
+    req.on("error", reject);
+    req.on("data", (chunk: Buffer) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buf.length;
+      const remaining = maxBytes - storedBytes;
+      if (remaining <= 0) return;
+      const slice = buf.length > remaining ? buf.subarray(0, remaining) : buf;
+      chunks.push(slice);
+      storedBytes += slice.length;
+    });
+    req.on("end", () => {
+      resolve({ body: Buffer.concat(chunks, storedBytes), tooLarge: totalBytes > maxBytes });
+    });
+  });
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
+function sendDnsMessage(res: http.ServerResponse, statusCode: number, message: Buffer): void {
+  res.writeHead(statusCode, {
+    "content-type": "application/dns-message",
+    "cache-control": "no-store",
+    "content-length": message.length
+  });
+  res.end(message);
+}
+
+async function handleDnsQuery(req: http.IncomingMessage, res: http.ServerResponse, url: URL, config: ProxyConfig): Promise<void> {
+  if (req.method !== "GET" && req.method !== "POST") {
+    sendDnsMessage(res, 405, encodeDnsResponse({ id: 0, rcode: 1 }));
+    return;
+  }
+
+  let query: Buffer;
+  let tooLarge = false;
+  try {
+    if (req.method === "GET") {
+      const dnsParam = url.searchParams.get("dns");
+      if (!dnsParam) {
+        sendDnsMessage(res, 400, encodeDnsResponse({ id: 0, rcode: 1 }));
+        return;
+      }
+      query = decodeBase64UrlToBuffer(dnsParam);
+    } else {
+      const contentType = (req.headers["content-type"] ?? "").split(";", 1)[0]?.trim().toLowerCase();
+      if (contentType !== "application/dns-message") {
+        sendDnsMessage(res, 415, encodeDnsResponse({ id: 0, rcode: 1 }));
+        return;
+      }
+      const bodyResult = await readRequestBodyWithLimit(req, config.dohMaxQueryBytes);
+      query = bodyResult.body;
+      tooLarge = bodyResult.tooLarge;
+    }
+  } catch {
+    sendDnsMessage(res, 400, encodeDnsResponse({ id: 0, rcode: 1 }));
+    return;
+  }
+
+  if (tooLarge || query.length > config.dohMaxQueryBytes) {
+    let id = 0;
+    let queryFlags = 0;
+    try {
+      const header = decodeDnsHeader(query);
+      id = header.id;
+      queryFlags = header.flags;
+    } catch {
+      if (query.length >= 2) id = query.readUInt16BE(0);
+      if (query.length >= 4) queryFlags = query.readUInt16BE(2);
+    }
+    sendDnsMessage(res, 413, encodeDnsResponse({ id, queryFlags, rcode: 1 }));
+    return;
+  }
+
+  let id = 0;
+  let queryFlags = 0;
+  try {
+    const header = decodeDnsHeader(query);
+    id = header.id;
+    queryFlags = header.flags;
+  } catch {
+    if (query.length >= 2) id = query.readUInt16BE(0);
+    if (query.length >= 4) queryFlags = query.readUInt16BE(2);
+  }
+
+  let question;
+  try {
+    question = decodeFirstQuestion(query, { maxQnameLength: config.dohMaxQnameLength });
+  } catch {
+    // FORMERR
+    sendDnsMessage(res, 400, encodeDnsResponse({ id, queryFlags, rcode: 1 }));
+    return;
+  }
+
+  // Only IN is supported.
+  if (question.class !== 1) {
+    sendDnsMessage(res, 200, encodeDnsResponse({ id, queryFlags, rcode: 0, question: question.wire, answers: [] }));
+    return;
+  }
+
+  const qtype = question.type;
+  // Supported: A (1) and AAAA (28). Other qtypes return NOERROR with no answers.
+  if (qtype !== 1 && qtype !== 28) {
+    sendDnsMessage(res, 200, encodeDnsResponse({ id, queryFlags, rcode: 0, question: question.wire, answers: [] }));
+    return;
+  }
+
+  const ttl = clampInt(config.dohAnswerTtlSeconds, 0, config.dohMaxAnswerTtlSeconds);
+  const maxAnswers = clampInt(config.dohMaxAnswers, 0, 256);
+
+  let answers: DnsAnswer[] = [];
+  try {
+    const qname = normalizeDnsName(question.name);
+    const family = qtype === 1 ? 4 : 6;
+    const resolved = await withTimeout(dns.lookup(qname, { family, all: true, verbatim: true }), config.dnsTimeoutMs, "dns lookup");
+    for (const addr of resolved) {
+      if (answers.length >= maxAnswers) break;
+      try {
+        const parsed = ipaddr.parse(stripIpv6ZoneIndex(addr.address));
+        const bytes = Buffer.from(parsed.toByteArray());
+        if (qtype === 1 && bytes.length !== 4) continue;
+        if (qtype === 28 && bytes.length !== 16) continue;
+        answers.push({ type: qtype, class: 1, ttl, rdata: bytes });
+      } catch {
+        // ignore bad addresses
+      }
+    }
+
+    if (answers.length === 0) {
+      sendDnsMessage(res, 200, encodeDnsResponse({ id, queryFlags, rcode: 2, question: question.wire, answers: [] }));
+      return;
+    }
+  } catch {
+    // SERVFAIL (DNS error, not HTTP error)
+    sendDnsMessage(res, 200, encodeDnsResponse({ id, queryFlags, rcode: 2, question: question.wire, answers: [] }));
+    return;
+  }
+
+  sendDnsMessage(res, 200, encodeDnsResponse({ id, queryFlags, rcode: 0, question: question.wire, answers }));
+}
+
+async function handleDnsJson(req: http.IncomingMessage, res: http.ServerResponse, url: URL, config: ProxyConfig): Promise<void> {
+  const rawName = url.searchParams.get("name") ?? "";
+  const rawType = url.searchParams.get("type") ?? "A";
+  const name = normalizeDnsName(rawName);
+  if (!name) {
+    const body = JSON.stringify({ error: "missing name" });
+    res.writeHead(400, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
+    res.end(body);
+    return;
+  }
+  if (Buffer.byteLength(name, "utf8") > config.dohMaxQnameLength) {
+    const body = JSON.stringify({ error: "name too long" });
+    res.writeHead(400, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
+    res.end(body);
+    return;
+  }
+
+  let qtype: number;
+  const typeNorm = rawType.trim().toUpperCase();
+  if (typeNorm === "A" || typeNorm === "1") {
+    qtype = 1;
+  } else if (typeNorm === "AAAA" || typeNorm === "28") {
+    qtype = 28;
+  } else if (typeNorm === "CNAME" || typeNorm === "5") {
+    qtype = 5;
+  } else {
+    const body = JSON.stringify({ error: "unsupported type" });
+    res.writeHead(400, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
+    res.end(body);
+    return;
+  }
+
+  const ttl = clampInt(config.dohAnswerTtlSeconds, 0, config.dohMaxAnswerTtlSeconds);
+  const maxAnswers = clampInt(config.dohMaxAnswers, 0, 256);
+
+  let status = 0;
+  let answer: Array<{ name: string; type: number; TTL: number; data: string }> = [];
+  try {
+    if (qtype === 1) {
+      const resolved = await withTimeout(dns.lookup(name, { family: 4, all: true, verbatim: true }), config.dnsTimeoutMs, "dns lookup");
+      for (const addr of resolved.slice(0, maxAnswers)) {
+        answer.push({ name, type: 1, TTL: ttl, data: addr.address });
+      }
+    } else if (qtype === 28) {
+      const resolved = await withTimeout(dns.lookup(name, { family: 6, all: true, verbatim: true }), config.dnsTimeoutMs, "dns lookup");
+      for (const addr of resolved.slice(0, maxAnswers)) {
+        answer.push({ name, type: 28, TTL: ttl, data: addr.address });
+      }
+    } else {
+      const resolved = await withTimeout(dns.resolveCname(name), config.dnsTimeoutMs, "dns cname lookup");
+      for (const cname of resolved.slice(0, maxAnswers)) {
+        answer.push({ name, type: 5, TTL: ttl, data: cname });
+      }
+    }
+  } catch {
+    status = 2; // SERVFAIL
+    answer = [];
+  }
+
+  const payload = JSON.stringify({
+    Status: status,
+    TC: false,
+    RD: true,
+    RA: true,
+    AD: false,
+    CD: false,
+    Question: [{ name, type: qtype }],
+    Answer: answer
+  });
+  res.writeHead(200, {
+    "content-type": "application/dns-json; charset=utf-8",
+    "cache-control": "no-store",
+    "content-length": Buffer.byteLength(payload)
+  });
+  res.end(payload);
+}
+
 export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Promise<RunningProxyServer> {
   const config: ProxyConfig = { ...loadConfigFromEnv(), ...overrides };
   const metrics = createProxyServerMetrics();
 
   const server = http.createServer((req, res) => {
-    let url: URL;
-    try {
-      url = new URL(req.url ?? "/", "http://localhost");
-    } catch {
-      const body = JSON.stringify({ error: "invalid url" });
-      res.writeHead(400, {
-        "content-type": "application/json; charset=utf-8",
-        "content-length": Buffer.byteLength(body)
-      });
-      res.end(body);
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/healthz") {
-      const body = JSON.stringify({ ok: true });
-      res.writeHead(200, {
-        "content-type": "application/json; charset=utf-8",
-        "content-length": Buffer.byteLength(body)
-      });
-      res.end(body);
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/metrics") {
-      const body = metrics.prometheusText();
-      res.writeHead(200, {
-        "content-type": "text/plain; version=0.0.4; charset=utf-8",
-        "content-length": Buffer.byteLength(body),
-        "cache-control": "no-store"
-      });
-      res.end(body);
-      return;
-    }
+    void (async () => {
+      let url: URL;
+      try {
+        url = new URL(req.url ?? "/", "http://localhost");
+      } catch {
+        const body = JSON.stringify({ error: "invalid url" });
+        res.writeHead(400, {
+          "content-type": "application/json; charset=utf-8",
+          "content-length": Buffer.byteLength(body)
+        });
+        res.end(body);
+        return;
+      }
 
-    res.writeHead(404, { "content-type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ error: "not found" }));
+      if (req.method === "GET" && url.pathname === "/healthz") {
+        const body = JSON.stringify({ ok: true });
+        res.writeHead(200, {
+          "content-type": "application/json; charset=utf-8",
+          "content-length": Buffer.byteLength(body)
+        });
+        res.end(body);
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/metrics") {
+        const body = metrics.prometheusText();
+        res.writeHead(200, {
+          "content-type": "text/plain; version=0.0.4; charset=utf-8",
+          "content-length": Buffer.byteLength(body),
+          "cache-control": "no-store"
+        });
+        res.end(body);
+        return;
+      }
+
+      if (url.pathname === "/dns-query") {
+        await handleDnsQuery(req, res, url, config);
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/dns-json") {
+        await handleDnsJson(req, res, url, config);
+        return;
+      }
+
+      res.writeHead(404, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "not found" }));
+    })().catch((err) => {
+      log("error", "connect_error", { proto: "http", err: formatError(err) });
+      if (!res.headersSent) {
+        res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+      }
+      res.end(JSON.stringify({ error: "internal server error" }));
+    });
   });
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: config.wsMaxPayloadBytes });
