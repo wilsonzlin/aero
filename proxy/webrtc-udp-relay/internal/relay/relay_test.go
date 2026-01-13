@@ -221,6 +221,94 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 	}
 }
 
+func TestUdpPortBinding_InboundFilterAny_AllowsAnyRemote(t *testing.T) {
+	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
+	p := policy.NewDevDestinationPolicy()
+	cfg := DefaultConfig()
+	cfg.InboundFilterMode = InboundFilterAny
+	cfg.UDPBindingIdleTimeout = time.Minute
+	cfg.UDPReadBufferBytes = 2048
+	cfg.DataChannelSendQueueBytes = 1 << 20
+
+	r := NewSessionRelay(dc, cfg, p, nil, nil)
+	t.Cleanup(r.Close)
+
+	remote1, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("listen remote1: %v", err)
+	}
+	defer remote1.Close()
+	remote1Addr := remote1.LocalAddr().(*net.UDPAddr)
+
+	const guestPort = uint16(1234)
+	ip4 := remote1Addr.IP.To4()
+	if ip4 == nil {
+		t.Fatalf("remote1 must be ipv4: %v", remote1Addr.IP)
+	}
+	var remote1IP [4]byte
+	copy(remote1IP[:], ip4)
+
+	// Create the UDP binding by sending to remote1.
+	r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+		GuestPort:  guestPort,
+		RemoteIP:   remote1IP,
+		RemotePort: uint16(remote1Addr.Port),
+		Payload:    []byte("ping"),
+	}))
+
+	var bindingAddr *net.UDPAddr
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		b := r.bindings[guestPort]
+		r.mu.Unlock()
+		if b != nil {
+			localPort := b.conn4.LocalAddr().(*net.UDPAddr).Port
+			bindingAddr = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: localPort}
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if bindingAddr == nil {
+		t.Fatalf("binding was not created")
+	}
+
+	remote2, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("listen remote2: %v", err)
+	}
+	defer remote2.Close()
+	remote2Addr := remote2.LocalAddr().(*net.UDPAddr)
+
+	if _, err := remote2.WriteToUDP([]byte("pong"), bindingAddr); err != nil {
+		t.Fatalf("remote2 write: %v", err)
+	}
+
+	var got []byte
+	select {
+	case got = <-dc.sent:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("timed out waiting for forwarded packet from remote2")
+	}
+
+	d, err := udpproto.DecodeDatagram(got)
+	if err != nil {
+		t.Fatalf("decode forwarded packet: %v", err)
+	}
+	if d.GuestPort != guestPort {
+		t.Fatalf("guest port mismatch: %d != %d", d.GuestPort, guestPort)
+	}
+	if d.RemotePort != uint16(remote2Addr.Port) {
+		t.Fatalf("remote port mismatch: %d != %d", d.RemotePort, remote2Addr.Port)
+	}
+	if d.RemoteIP != ([4]byte{127, 0, 0, 1}) {
+		t.Fatalf("remote ip mismatch: %v", d.RemoteIP)
+	}
+	if string(d.Payload) != "pong" {
+		t.Fatalf("payload mismatch: %q", d.Payload)
+	}
+}
+
 func TestUdpPortBinding_DropsOversizeDatagramInsteadOfForwardingTruncated(t *testing.T) {
 	dc := &fakeDataChannel{sent: make(chan []byte, 16)}
 	p := policy.NewDevDestinationPolicy()
