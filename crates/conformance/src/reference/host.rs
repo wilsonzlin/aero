@@ -317,12 +317,14 @@ struct GuardedMemory {
     mapping: *mut u8,
     len: usize,
     base: *mut u8,
+    data_len: usize,
 }
 
 impl GuardedMemory {
     fn new() -> Result<Self, &'static str> {
         let page_size = page_size()?;
-        let len = page_size * 3;
+        let data_pages = (crate::corpus::MAX_TEST_MEMORY_LEN + page_size - 1) / page_size;
+        let len = page_size * (data_pages + 2);
 
         let mapping = unsafe {
             libc::mmap(
@@ -339,10 +341,11 @@ impl GuardedMemory {
         }
 
         let base = unsafe { (mapping as *mut u8).add(page_size) };
+        let data_len = page_size * data_pages;
         let rc = unsafe {
             libc::mprotect(
                 base as *mut libc::c_void,
-                page_size,
+                data_len,
                 libc::PROT_READ | libc::PROT_WRITE,
             )
         };
@@ -357,10 +360,17 @@ impl GuardedMemory {
             mapping: mapping as *mut u8,
             len,
             base,
+            data_len,
         })
     }
 
     fn write(&mut self, bytes: &[u8]) {
+        assert!(
+            bytes.len() <= self.data_len,
+            "testcase memory too large ({} > {})",
+            bytes.len(),
+            self.data_len
+        );
         unsafe {
             core::ptr::write_bytes(self.base, 0, self.page_len());
             core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.base, bytes.len());
@@ -376,7 +386,7 @@ impl GuardedMemory {
     }
 
     fn page_len(&self) -> usize {
-        self.len / 3
+        self.data_len
     }
 }
 

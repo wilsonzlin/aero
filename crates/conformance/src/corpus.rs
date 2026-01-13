@@ -1,5 +1,7 @@
 use crate::{CpuState, FLAG_AF, FLAG_CF, FLAG_FIXED_1, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
 
+pub(crate) const MAX_TEST_MEMORY_LEN: usize = 64 * 1024;
+
 pub struct XorShift64 {
     state: u64,
 }
@@ -572,6 +574,11 @@ impl TestCase {
         let mut memory_len = 64usize.max(template.mem_compare_len);
         if let Some(required) = template.init.required_memory_len() {
             memory_len = memory_len.max(required);
+        }
+        if memory_len > MAX_TEST_MEMORY_LEN {
+            panic!(
+                "testcase memory length {memory_len} exceeds MAX_TEST_MEMORY_LEN={MAX_TEST_MEMORY_LEN}"
+            );
         }
         let mut memory = vec![0u8; memory_len];
         for byte in &mut memory {
