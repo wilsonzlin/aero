@@ -2,6 +2,7 @@
 #include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
+#include <algorithm>
 #include <cstring>
 
 using aerogpu_test::ComPtr;
@@ -91,10 +92,10 @@ static void DumpBackbufferBmpIfEnabled(const char* test_name,
 }
 
 static HRESULT ReadBackbufferCenterPixel(IDirect3DDevice9Ex* dev,
-                                         bool dump,
-                                         aerogpu_test::TestReporter* reporter,
-                                         const wchar_t* dump_bmp_name,
-                                         D3DCOLOR* out_pixel) {
+                                          bool dump,
+                                          aerogpu_test::TestReporter* reporter,
+                                          const wchar_t* dump_bmp_name,
+                                          D3DCOLOR* out_pixel) {
   if (!dev || !out_pixel) {
     return E_INVALIDARG;
   }
@@ -130,8 +131,14 @@ static HRESULT ReadBackbufferCenterPixel(IDirect3DDevice9Ex* dev,
     return hr;
   }
 
-  const int cx = (int)desc.Width / 2;
+  // Sample a pixel slightly off-center so we don't accidentally hit the shared
+  // diagonal edge of our fullscreen triangle strip (which can be sensitive to
+  // rasterization edge rules if culling/state changes).
+  int cx = (int)desc.Width / 2;
   const int cy = (int)desc.Height / 2;
+  if (desc.Width > 1) {
+    cx = std::min(cx + 4, (int)desc.Width - 1);
+  }
   const uint32_t px = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
   *out_pixel = (D3DCOLOR)px;
 
@@ -475,6 +482,25 @@ static int RunD3D9MipmappedTextureSmoke(int argc, char** argv) {
     return reporter.FailHresult("SetSamplerState(MIPFILTER)", hr);
   }
 
+  // Make quad rendering deterministic: triangle strips alternate winding, so
+  // default culling can drop half the quad.
+  hr = dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_CULLMODE)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_ZENABLE)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_ZWRITEENABLE)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_ALPHABLENDENABLE)", hr);
+  }
+
   // Draw fullscreen quad -> should sample mip0 (magnification).
   hr = DrawQuad(dev.get(), vb_full.get(), D3DCOLOR_XRGB(0, 0, 0));
   if (FAILED(hr)) {
@@ -521,4 +547,3 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
-
