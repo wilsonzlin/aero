@@ -10,3 +10,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [dev-dependencies]
+aero-auth-tokens = { path = "../aero-auth-tokens" }
+aero-l2-protocol = { path = "../aero-l2-protocol" }
+aero-tcp-mux-protocol = { path = "../aero-tcp-mux-protocol" }
+aero-udp-relay-protocol = { path = "../aero-udp-relay-protocol" }

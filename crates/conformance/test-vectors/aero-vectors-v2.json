@@ -1,0 +1,351 @@
+{
+  "version": 2,
+  "aero-l2-tunnel-v1": {
+    "valid": [
+      {
+        "name": "frame.small",
+        "msgType": 0,
+        "flags": 0,
+        "payloadHex": "ffffffffffff001122334455080001020304",
+        "wireHex": "a2030000ffffffffffff001122334455080001020304"
+      },
+      {
+        "name": "ping.u64be_timestamp_ms",
+        "msgType": 1,
+        "flags": 0,
+        "payloadHex": "0000018bcfe56800",
+        "wireHex": "a20301000000018bcfe56800"
+      },
+      {
+        "name": "pong.echo_u64be_timestamp_ms",
+        "msgType": 2,
+        "flags": 0,
+        "payloadHex": "0000018bcfe56800",
+        "wireHex": "a20302000000018bcfe56800"
+      },
+      {
+        "name": "error.unstructured_utf8",
+        "msgType": 127,
+        "flags": 0,
+        "payloadHex": "636166c3a9",
+        "wireHex": "a2037f00636166c3a9"
+      },
+      {
+        "name": "error.structured_binary",
+        "msgType": 127,
+        "flags": 0,
+        "payloadHex": "00010009626164206672616d65",
+        "structured": {
+          "code": 1,
+          "message": "bad frame"
+        },
+        "wireHex": "a2037f0000010009626164206672616d65"
+      }
+    ],
+    "invalid": [
+      {
+        "name": "too_short.header_truncated",
+        "wireHex": "a20300",
+        "errorCode": "too_short"
+      },
+      {
+        "name": "invalid_magic",
+        "wireHex": "00030000",
+        "errorCode": "invalid_magic"
+      },
+      {
+        "name": "unsupported_version",
+        "wireHex": "a2ff0000",
+        "errorCode": "unsupported_version"
+      },
+      {
+        "name": "payload_too_large.frame",
+        "wireHex": "a2030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "errorCode": "payload_too_large"
+      },
+      {
+        "name": "payload_too_large.control",
+        "wireHex": "a20301000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "errorCode": "payload_too_large"
+      }
+    ]
+  },
+  "aero-tcp-mux-v1": {
+    "schema": 1,
+    "frames": [
+      {
+        "name": "frame_open_example.com_with_metadata",
+        "msgType": 1,
+        "streamId": 1,
+        "payloadHex": "000b6578616d706c652e636f6d01bb00097b226b223a2276227d",
+        "frameHex": "01000000010000001a000b6578616d706c652e636f6d01bb00097b226b223a2276227d"
+      },
+      {
+        "name": "frame_data_hi",
+        "msgType": 2,
+        "streamId": 1,
+        "payloadHex": "6869",
+        "frameHex": "0200000001000000026869"
+      },
+      {
+        "name": "frame_close_fin",
+        "msgType": 3,
+        "streamId": 1,
+        "payloadHex": "01",
+        "frameHex": "03000000010000000101"
+      },
+      {
+        "name": "frame_error_policy_denied_nope",
+        "msgType": 4,
+        "streamId": 1,
+        "payloadHex": "000100046e6f7065",
+        "frameHex": "040000000100000008000100046e6f7065"
+      },
+      {
+        "name": "frame_ping_stream0_payload_010203",
+        "msgType": 5,
+        "streamId": 0,
+        "payloadHex": "010203",
+        "frameHex": "050000000000000003010203"
+      },
+      {
+        "name": "frame_pong_stream0_empty",
+        "msgType": 6,
+        "streamId": 0,
+        "payloadHex": "",
+        "frameHex": "060000000000000000"
+      }
+    ],
+    "openPayloads": [
+      {
+        "name": "open_short_host_no_metadata",
+        "host": "a",
+        "port": 1,
+        "payloadHex": "00016100010000"
+      },
+      {
+        "name": "open_dotted_host_with_metadata",
+        "host": "example.com",
+        "port": 443,
+        "metadata": "{\"k\":\"v\"}",
+        "payloadHex": "000b6578616d706c652e636f6d01bb00097b226b223a2276227d"
+      },
+      {
+        "name": "open_ipv6_literal_no_metadata",
+        "host": "2001:db8::1",
+        "port": 80,
+        "payloadHex": "000b323030313a6462383a3a3100500000"
+      }
+    ],
+    "closePayloads": [
+      {
+        "name": "close_fin",
+        "flags": 1,
+        "payloadHex": "01"
+      },
+      {
+        "name": "close_rst",
+        "flags": 2,
+        "payloadHex": "02"
+      }
+    ],
+    "errorPayloads": [
+      {
+        "name": "error_policy_denied_nope",
+        "payloadHex": "000100046e6f7065",
+        "code": 1,
+        "message": "nope"
+      },
+      {
+        "name": "error_length_mismatch_truncated_message",
+        "payloadHex": "000100046e6f70",
+        "expectError": true,
+        "errorContains": "length mismatch"
+      }
+    ],
+    "parserStreams": [
+      {
+        "name": "stream_split_across_chunks_open_then_data",
+        "chunksHex": [
+          "010000",
+          "00010000001a000b6578616d706c652e636f6d01",
+          "bb00097b226b223a2276227d0200000001000000026869"
+        ],
+        "expectFrames": [
+          {
+            "msgType": 1,
+            "streamId": 1,
+            "payloadHex": "000b6578616d706c652e636f6d01bb00097b226b223a2276227d"
+          },
+          {
+            "msgType": 2,
+            "streamId": 1,
+            "payloadHex": "6869"
+          }
+        ]
+      },
+      {
+        "name": "stream_concatenated_frames_single_chunk_open_then_data",
+        "chunksHex": [
+          "01000000010000001a000b6578616d706c652e636f6d01bb00097b226b223a2276227d0200000001000000026869"
+        ],
+        "expectFrames": [
+          {
+            "msgType": 1,
+            "streamId": 1,
+            "payloadHex": "000b6578616d706c652e636f6d01bb00097b226b223a2276227d"
+          },
+          {
+            "msgType": 2,
+            "streamId": 1,
+            "payloadHex": "6869"
+          }
+        ]
+      },
+      {
+        "name": "stream_truncated_frame_at_eof",
+        "chunksHex": [
+          "02000000010000000268"
+        ],
+        "expectError": true,
+        "errorContains": "truncated tcp-mux frame stream"
+      }
+    ]
+  },
+  "aero-udp-relay-v1v2": {
+    "schema": 1,
+    "vectors": [
+      {
+        "name": "v1_ipv4_example_abc",
+        "frameHex": "2710c00002010035616263",
+        "version": 1,
+        "guestPort": 10000,
+        "remoteIp": "192.0.2.1",
+        "remotePort": 53,
+        "payloadHex": "616263"
+      },
+      {
+        "name": "v2_ipv6_example_010203",
+        "frameHex": "a2020600beef20010db8000000000000000000000001cafe010203",
+        "version": 2,
+        "guestPort": 48879,
+        "remoteIp": "2001:db8::1",
+        "remotePort": 51966,
+        "payloadHex": "010203"
+      },
+      {
+        "name": "v2_ipv4_example_hello",
+        "frameHex": "a20204001092c0000202270f68656c6c6f",
+        "version": 2,
+        "guestPort": 4242,
+        "remoteIp": "192.0.2.2",
+        "remotePort": 9999,
+        "payloadHex": "68656c6c6f"
+      },
+      {
+        "name": "err_truncated_frame_too_short_v1",
+        "frameHex": "00000000000000",
+        "expectError": true,
+        "errorContains": "too short"
+      },
+      {
+        "name": "err_truncated_frame_too_short_v2_prefix_only",
+        "frameHex": "a202",
+        "expectError": true,
+        "errorContains": "too short"
+      },
+      {
+        "name": "err_v2_unsupported_message_type",
+        "frameHex": "a20204010001c00002010035",
+        "expectError": true,
+        "errorContains": "message type"
+      },
+      {
+        "name": "err_v2_unknown_address_family",
+        "frameHex": "a202ff000001000000000000",
+        "expectError": true,
+        "errorContains": "unknown address family"
+      },
+      {
+        "name": "err_v2_truncated_ip",
+        "frameHex": "a2020600000120010db8000000000000",
+        "expectError": true,
+        "errorContains": "too short"
+      },
+      {
+        "name": "err_v2_truncated_port",
+        "frameHex": "a2020600000120010db8000000000000000000000001ca",
+        "expectError": true,
+        "errorContains": "too short"
+      }
+    ]
+  },
+  "aero_session": {
+    "secret": "test-session-secret",
+    "nowMs": 1700000000000,
+    "ttlSeconds": 60,
+    "tokens": {
+      "valid": {
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.zcesNltUxXmW1SpDGWoATMZj1GLX1LMz0TIdVRzO8l8",
+        "claims": {
+          "sid": "sid-1234567890",
+          "exp": 1700000060
+        }
+      },
+      "expired": {
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTY5OTk5OTk5OX0.CwC51wLWfrZdFrFA-3E4JSPLbDjqYrgcJe6dgUU0eYI",
+        "claims": {
+          "sid": "sid-1234567890",
+          "exp": 1699999999
+        }
+      },
+      "badSignature": {
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.zcesNltUxXmW1SpDGWoATMZj1GLX1LMz0TIdVRzO8lA",
+        "claims": {
+          "sid": "sid-1234567890",
+          "exp": 1700000060
+        }
+      }
+    }
+  },
+  "aero-udp-relay-jwt-hs256": {
+    "secret": "test-jwt-secret",
+    "nowUnix": 1700000000,
+    "ttlSeconds": 60,
+    "tokens": {
+      "valid": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.tVuxJptb-YWFqluNxv89qG0sd_jFcDIzVGn2ojD9wGg",
+        "claims": {
+          "iat": 1700000000,
+          "exp": 1700000060,
+          "sid": "sid-1234567890",
+          "origin": "https://app.example.test",
+          "aud": "aero-udp-relay",
+          "iss": "aero-gateway"
+        }
+      },
+      "expired": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTY5OTk5OTk5OSwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.R3mPvJyzjde3jDsJiIkzzGxRAyAzTB3akVnV1GZMUkc",
+        "claims": {
+          "iat": 1700000000,
+          "exp": 1699999999,
+          "sid": "sid-1234567890",
+          "origin": "https://app.example.test",
+          "aud": "aero-udp-relay",
+          "iss": "aero-gateway"
+        }
+      },
+      "badSignature": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.tVuxJptb-YWFqluNxv89qG0sd_jFcDIzVGn2ojD9wGA",
+        "claims": {
+          "iat": 1700000000,
+          "exp": 1700000060,
+          "sid": "sid-1234567890",
+          "origin": "https://app.example.test",
+          "aud": "aero-udp-relay",
+          "iss": "aero-gateway"
+        }
+      }
+    }
+  }
+}

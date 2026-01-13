@@ -43,3 +43,16 @@ These vectors are referenced by tests in:
 - Node (gateway): `backend/aero-gateway/test/sessionToken.vectors.test.ts` and `backend/aero-gateway/test/udpRelayJwt.vectors.test.ts` (cross-checks)
 - Go (relay): `proxy/webrtc-udp-relay/internal/auth/jwt_vectors_test.go`
 - Go (relay): `proxy/webrtc-udp-relay/internal/l2tunnel/protocol_test.go`
+
+## `aero-vectors-v2.json`
+
+`aero-vectors-v2.json` is a **superset** of v1, intended to cover the full set of
+browser-facing networking protocols used by the gateway:
+
+- `aero-l2-tunnel-v1` — L2 tunnel framing (same structure as v1).
+- `aero-tcp-mux-v1` — WebSocket TCP multiplexing framing.
+- `aero-udp-relay-v1v2` — UDP relay framing (v1 + v2).
+- `aero_session` and `aero-udp-relay-jwt-hs256` — minimal auth token vectors.
+
+Unlike v1, this file is currently consumed primarily by the Rust conformance harness in
+`crates/conformance/tests/conformance.rs`.
