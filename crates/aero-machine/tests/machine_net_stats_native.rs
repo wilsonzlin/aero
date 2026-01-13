@@ -469,8 +469,11 @@ fn machine_virtio_net_l2_tunnel_rings_tx_rx_stats_smoke() {
         .network_backend_l2_ring_stats()
         .expect("expected ring backend stats");
     assert_eq!(stats.tx_pushed_frames, 1);
+    assert_eq!(stats.tx_pushed_bytes, payload.len() as u64);
     assert_eq!(stats.tx_dropped_oversize, 0);
+    assert_eq!(stats.tx_dropped_oversize_bytes, 0);
     assert_eq!(stats.tx_dropped_full, 0);
+    assert_eq!(stats.tx_dropped_full_bytes, 0);
 
     // --------------------------------
     // Host -> guest (NET_RX -> RX virtqueue DMA)
@@ -535,7 +538,9 @@ fn machine_virtio_net_l2_tunnel_rings_tx_rx_stats_smoke() {
         .network_backend_l2_ring_stats()
         .expect("expected ring backend stats");
     assert_eq!(stats.rx_popped_frames, 1);
+    assert_eq!(stats.rx_popped_bytes, rx_frame.len() as u64);
     assert_eq!(stats.rx_dropped_oversize, 0);
+    assert_eq!(stats.rx_dropped_oversize_bytes, 0);
     assert_eq!(stats.rx_corrupt, 0);
 
     // --------------------------------
@@ -585,7 +590,9 @@ fn machine_virtio_net_l2_tunnel_rings_tx_rx_stats_smoke() {
         .network_backend_l2_ring_stats()
         .expect("expected ring backend stats");
     assert_eq!(stats.tx_pushed_frames, 1);
+    assert_eq!(stats.tx_pushed_bytes, payload.len() as u64);
     assert_eq!(stats.tx_dropped_full, 1);
+    assert_eq!(stats.tx_dropped_full_bytes, payload2.len() as u64);
 
     // --------------------------------
     // Host -> guest drop when NET_RX contains an oversize frame
@@ -605,7 +612,9 @@ fn machine_virtio_net_l2_tunnel_rings_tx_rx_stats_smoke() {
         .network_backend_l2_ring_stats()
         .expect("expected ring backend stats");
     assert_eq!(stats.rx_popped_frames, 1);
+    assert_eq!(stats.rx_popped_bytes, rx_frame.len() as u64);
     assert_eq!(stats.rx_dropped_oversize, 1);
+    assert_eq!(stats.rx_dropped_oversize_bytes, 3000);
 
     // Detaching the backend should make ring stats unavailable.
     m.detach_network();
