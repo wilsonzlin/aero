@@ -8,6 +8,7 @@ const ENTRY_HEADER_BYTES = 8; // tag:4 bytes + len:u32
 export const USB_SNAPSHOT_CONTAINER_VERSION = 1;
 export const USB_SNAPSHOT_TAG_UHCI = "UHCI";
 export const USB_SNAPSHOT_TAG_EHCI = "EHCI";
+export const USB_SNAPSHOT_TAG_XHCI = "XHCI";
 
 function readU32LE(bytes: Uint8Array, offset: number): number {
   return (

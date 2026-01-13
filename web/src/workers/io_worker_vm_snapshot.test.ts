@@ -47,6 +47,7 @@ describe("workers/io_worker_vm_snapshot", () => {
         usbUhciRuntime,
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
+        usbXhciControllerBridge: null,
         i8042,
         audioHda,
         netE1000,
@@ -108,6 +109,7 @@ describe("workers/io_worker_vm_snapshot", () => {
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
+        usbXhciControllerBridge: null,
         i8042: { load_state: i8042Load },
         audioHda: { load_state: hdaLoad },
         netE1000: { load_state: e1000Load },
@@ -171,6 +173,7 @@ describe("workers/io_worker_vm_snapshot", () => {
         usbUhciRuntime: { save_state: () => usbState },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
+        usbXhciControllerBridge: null,
         i8042: { save_state: () => i8042State },
         audioHda: { save_state: () => hdaState },
         netE1000: { save_state: () => e1000State },
@@ -234,6 +237,7 @@ describe("workers/io_worker_vm_snapshot", () => {
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
+        usbXhciControllerBridge: null,
         i8042: { load_state: i8042Load },
         audioHda: { load_state: hdaLoad },
         netE1000: { load_state: e1000Load },
@@ -273,6 +277,7 @@ describe("workers/io_worker_vm_snapshot", () => {
             usbUhciRuntime: null,
             usbUhciControllerBridge: null,
             usbEhciControllerBridge: null,
+            usbXhciControllerBridge: null,
             netE1000: null,
             netStack: null,
           },
@@ -285,14 +290,16 @@ describe("workers/io_worker_vm_snapshot", () => {
     }
   });
 
-  it("round-trips a synthetic USB snapshot container with both UHCI + EHCI controller blobs", () => {
+  it("round-trips a synthetic USB snapshot container with UHCI + EHCI + xHCI controller blobs", () => {
     const uhciBytes = new Uint8Array([0x01, 0x02, 0x03]);
     const ehciBytes = new Uint8Array([0x04, 0x05]);
+    const xhciBytes = new Uint8Array([0x06]);
 
     const usbBlob = snapshotUsbDeviceState({
       usbUhciRuntime: { save_state: () => uhciBytes },
       usbUhciControllerBridge: null,
       usbEhciControllerBridge: { save_state: () => ehciBytes },
+      usbXhciControllerBridge: { save_state: () => xhciBytes },
     });
 
     expect(usbBlob?.kind).toBe("usb.uhci");
@@ -300,11 +307,13 @@ describe("workers/io_worker_vm_snapshot", () => {
 
     const uhciLoad = vi.fn();
     const ehciLoad = vi.fn();
+    const xhciLoad = vi.fn();
     restoreUsbDeviceState(
       {
         usbUhciRuntime: { load_state: uhciLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: { load_state: ehciLoad },
+        usbXhciControllerBridge: { load_state: xhciLoad },
       },
       usbBlob!.bytes,
     );
@@ -313,6 +322,8 @@ describe("workers/io_worker_vm_snapshot", () => {
     expect((uhciLoad.mock.calls[0]![0] as Uint8Array)).toEqual(uhciBytes);
     expect(ehciLoad).toHaveBeenCalledWith(expect.any(Uint8Array));
     expect((ehciLoad.mock.calls[0]![0] as Uint8Array)).toEqual(ehciBytes);
+    expect(xhciLoad).toHaveBeenCalledWith(expect.any(Uint8Array));
+    expect((xhciLoad.mock.calls[0]![0] as Uint8Array)).toEqual(xhciBytes);
   });
 
   it("preserves unknown device blobs across restore → save (device list merge semantics)", async () => {
@@ -348,6 +359,7 @@ describe("workers/io_worker_vm_snapshot", () => {
         usbUhciRuntime: null,
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
+        usbXhciControllerBridge: null,
         netE1000: null,
         netStack: null,
       },
@@ -364,6 +376,7 @@ describe("workers/io_worker_vm_snapshot", () => {
         usbUhciRuntime: { save_state: () => usbFresh },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
+        usbXhciControllerBridge: null,
         netE1000: null,
         netStack: null,
       },
