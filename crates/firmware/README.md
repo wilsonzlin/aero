@@ -9,7 +9,7 @@ This crate contains clean-room firmware components used by the Aero emulator.
 - `build_bios_rom()` → a 64KiB BIOS ROM image containing interrupt stubs.
 - A host-side [`Bios`] implementation for POST and a minimal INT service surface
   (INT 10h/11h/12h/13h/14h/15h/16h/17h/18h/19h/1Ah, plus ACPI + SMBIOS publication, and El Torito
-  CD-ROM boot + INT 13h CD reads when a [`CdromDevice`] is supplied).
+  no-emulation CD-ROM boot + INT 13h Extensions reads when `BiosConfig::boot_drive` is a CD drive).
 
 ### Dispatch contract (HLT-in-ROM-stub hypercall)
 
@@ -33,9 +33,7 @@ The BIOS is dispatched without trapping `INT xx` in the CPU core:
    it is reached from an `INT` stub. Tier-0 surfaces this as a `BiosInterrupt`
    exit that includes the vector number (recorded by the core when `INT imm8` is
    executed).
-5. On that exit the host calls the BIOS interrupt dispatcher with the vector number
-   ([`Bios::dispatch_interrupt`] for HDD-only wiring, or [`Bios::dispatch_interrupt_with_cdrom`] when
-   a CD-ROM device is also wired),
+5. On that exit the host calls [`Bios::dispatch_interrupt`] with the vector number,
    then resumes the CPU. The next instruction is `IRET`, which returns to the
    original caller.
 
@@ -44,37 +42,42 @@ allowing BIOS services to live in Rust.
 
 ### VM integration checklist
 
-#### Storage devices (multi-boot: HDD/floppy + CD-ROM)
+#### Boot device wiring (HDD/floppy vs CD-ROM/ISO)
 
-The BIOS can expose (and boot from) multiple INT 13h devices:
+The BIOS uses a single host-side [`BlockDevice`] (512-byte sectors) as its boot medium.
 
-- **HDD/floppy**: a 512-byte-sector [`BlockDevice`] (read-only) used for legacy INT 13h reads and
-  MBR/boot-sector boot.
-- **CD-ROM / ISO**: a 2048-byte-sector [`CdromDevice`] (read-only) used for **El Torito** boot and
-  for INT 13h CD reads (typically via INT 13h Extensions).
+To boot from different kinds of media, configure [`BiosConfig::boot_drive`] and provide the
+corresponding bytes through that [`BlockDevice`]:
+
+- **HDD/floppy (MBR/boot sector):** pass a disk image as a 512-byte-sector [`BlockDevice`] and set
+  `boot_drive` to a floppy number (`0x00..=0x7F`) or HDD number (`0x80..=0xDF`).
+- **CD-ROM / ISO (El Torito, no-emulation):** pass the **raw ISO bytes** through the same
+  512-byte-sector [`BlockDevice`] and set `boot_drive` to a CD drive number (`0xE0..=0xEF`).
+  Internally, the BIOS reads 2048-byte ISO logical blocks by issuing four 512-byte `read_sector`
+  calls.
 
 The BIOS uses the following **drive numbers** in `DL`:
 
 - First HDD: `DL = 0x80`
-- First CD-ROM: `DL = 0xE0`
+- First CD-ROM: `DL = 0xE0` (range `0xE0..=0xEF`)
 
 > Note: The configured [`BiosConfig::boot_drive`] determines which device’s boot path is executed
 > during POST (HDD/MBR vs El Torito) and what value is passed to the boot image in `DL`.
+>
+> Also note that this BIOS currently models **exactly one boot device** (backed by the single
+> [`BlockDevice`] passed to POST/interrupt handlers). In particular, when booting from a CD-ROM
+> drive number, the BIOS reports no fixed disks in the BDA (see `bios::ivt::init_bda`).
 
 #### Firmware lifecycle wiring
 
 - On reset:
-  - Call the appropriate BIOS POST entrypoint:
-    - **HDD-only (legacy convenience wrappers):** [`Bios::post`] / [`Bios::post_with_pci`]
-    - **HDD + CD-ROM (El Torito + INT 13h CD reads):** [`Bios::post_with_cdrom`] (or
-      [`Bios::post_with_pci_and_cdrom`] if you also want PCI enumeration).
-  - Begin execution at the boot image/sector (`CS:IP = 0000:7C00`).
+  - Call [`Bios::post`] (or [`Bios::post_with_pci`] if you want PCI IRQ routing).
+  - Resume execution at the CPU state configured by POST:
+    - MBR boot: `CS:IP = 0000:7C00`
+    - El Torito no-emulation: `CS:IP = <boot_catalog_load_segment>:0000` (commonly `07C0:0000`,
+      i.e. physical `0x7C00`)
 - On CPU exit:
-  - If the CPU exits due to a BIOS stub `HLT`, call the corresponding interrupt dispatcher:
-    - **HDD-only (legacy convenience wrapper):** [`Bios::dispatch_interrupt`]
-    - **HDD + CD-ROM:** [`Bios::dispatch_interrupt_with_cdrom`]
-  - The HDD-only wrappers remain for call sites that only wire a [`BlockDevice`]; they do **not**
-    provide CD-ROM services.
+  - If the CPU exits due to a BIOS stub `HLT`, call [`Bios::dispatch_interrupt`].
 - Keyboard input:
   - Push keys into the BIOS buffer via [`Bios::push_key`] (`(scan_code << 8) | ascii`).
 
