@@ -1452,6 +1452,19 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
     }
 
     /*
+     * Reset LED capability mask on each bring-up. If we fail to rediscover
+     * EV_BITS(EV_LED), StatusQ will fall back to emitting only the required LEDs
+     * (NumLock/CapsLock/ScrollLock).
+     */
+    if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 1) {
+        WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[1]);
+        VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, 0);
+        WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[1]);
+    } else {
+        VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, 0);
+    }
+
+    /*
      * Transport bring-up:
      *  - Negotiate features (includes reset, ACKNOWLEDGE|DRIVER, FEATURES_OK).
      *  - Configure queues.
@@ -1883,6 +1896,47 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             if (!NT_SUCCESS(status)) {
                 VirtioPciResetDevice(&deviceContext->PciDevice);
                 return status;
+            }
+
+            /*
+             * Cache the subset of LED codes we might emit from HID output reports
+             * (NumLock/CapsLock/ScrollLock/Compose/Kana => codes 0..4).
+             *
+             * The contract requires at least Num/Caps/Scroll; other LED codes may
+             * not be advertised by the device and must not be emitted.
+             */
+            {
+                UCHAR ledSupportedMask;
+
+                ledSupportedMask = 0;
+                if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_NUML)) {
+                    ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_NUML);
+                }
+                if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_CAPSL)) {
+                    ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_CAPSL);
+                }
+                if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_SCROLLL)) {
+                    ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_SCROLLL);
+                }
+                if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_COMPOSE)) {
+                    ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_COMPOSE);
+                }
+                if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_KANA)) {
+                    ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_KANA);
+                }
+
+                if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 1) {
+                    WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[1]);
+                    VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, ledSupportedMask);
+                    WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[1]);
+                } else {
+                    VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, ledSupportedMask);
+                }
+
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_VIRTQ,
+                    "virtio-input keyboard EV_BITS(EV_LED): supported_mask=0x%02X (codes 0..4)\n",
+                    (ULONG)ledSupportedMask);
             }
         } else if (deviceContext->DeviceKind == VioInputDeviceKindMouse) {
             /*

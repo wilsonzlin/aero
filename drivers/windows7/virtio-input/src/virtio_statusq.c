@@ -33,6 +33,16 @@ typedef struct _VIRTIO_STATUSQ {
     BOOLEAN Active;
     BOOLEAN DropOnFull;
 
+    /*
+     * Mask of virtio-input EV_LED codes (0..4) advertised by the device via
+     * EV_BITS(EV_LED). Used to filter HID LED output reports so we only emit
+     * supported LED events.
+     *
+     * If this is 0 (unknown), the translation helper falls back to emitting
+     * only the required LEDs (NumLock/CapsLock/ScrollLock).
+     */
+    UCHAR KeyboardLedSupportedMask;
+
     BOOLEAN PendingValid;
     UCHAR PendingLedBitfield;
 } VIRTIO_STATUSQ, *PVIRTIO_STATUSQ;
@@ -170,7 +180,10 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
     bufVa = VirtioStatusQTxBufVa(Q, idx);
     bufPa = VirtioStatusQTxBufPa(Q, idx);
 
-    eventCount = (ULONG)led_translate_build_virtio_events((uint8_t)Q->PendingLedBitfield, (struct virtio_input_event_le*)bufVa);
+    eventCount = (ULONG)led_translate_build_virtio_events(
+        (uint8_t)Q->PendingLedBitfield,
+        (uint8_t)Q->KeyboardLedSupportedMask,
+        (struct virtio_input_event_le*)bufVa);
     bytes = (UINT32)(eventCount * sizeof(struct virtio_input_event_le));
 
     sg.addr = bufPa;
@@ -426,6 +439,16 @@ VirtioStatusQSetDropOnFull(_In_ PVIRTIO_STATUSQ StatusQ, _In_ BOOLEAN DropOnFull
     }
 
     StatusQ->DropOnFull = DropOnFull;
+}
+
+VOID
+VirtioStatusQSetKeyboardLedSupportedMask(_In_ PVIRTIO_STATUSQ StatusQ, _In_ UCHAR LedSupportedMask)
+{
+    if (StatusQ == NULL) {
+        return;
+    }
+
+    StatusQ->KeyboardLedSupportedMask = LedSupportedMask;
 }
 
 NTSTATUS

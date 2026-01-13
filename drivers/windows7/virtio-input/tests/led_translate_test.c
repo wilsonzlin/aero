@@ -19,52 +19,64 @@ static uint32_t to_le32(uint32_t v) {
 #endif
 }
 
-static void assert_led_events(uint8_t bitfield, uint32_t expect_numl, uint32_t expect_capsl, uint32_t expect_scrolll, uint32_t expect_compose,
-                              uint32_t expect_kana) {
+static void assert_led_events_filtered(uint8_t bitfield, uint8_t supported_mask, size_t expect_led_count, const uint16_t *expect_codes,
+                                       const uint32_t *expect_values) {
   struct virtio_input_event_le events[LED_TRANSLATE_EVENT_COUNT];
 
-  size_t n = led_translate_build_virtio_events(bitfield, events);
-  assert(n == LED_TRANSLATE_EVENT_COUNT);
+  size_t n = led_translate_build_virtio_events(bitfield, supported_mask, events);
 
-  /* 5x EV_LED, fixed order. */
-  assert(events[0].type == to_le16((uint16_t)VIRTIO_INPUT_EV_LED));
-  assert(events[0].code == to_le16((uint16_t)VIRTIO_INPUT_LED_NUML));
-  assert(events[0].value == to_le32(expect_numl));
+  /* +1 for the mandatory EV_SYN flush. */
+  assert(n == expect_led_count + 1);
 
-  assert(events[1].type == to_le16((uint16_t)VIRTIO_INPUT_EV_LED));
-  assert(events[1].code == to_le16((uint16_t)VIRTIO_INPUT_LED_CAPSL));
-  assert(events[1].value == to_le32(expect_capsl));
+  for (size_t i = 0; i < expect_led_count; ++i) {
+    assert(events[i].type == to_le16((uint16_t)VIRTIO_INPUT_EV_LED));
+    assert(events[i].code == to_le16(expect_codes[i]));
+    assert(events[i].value == to_le32(expect_values[i]));
+  }
 
-  assert(events[2].type == to_le16((uint16_t)VIRTIO_INPUT_EV_LED));
-  assert(events[2].code == to_le16((uint16_t)VIRTIO_INPUT_LED_SCROLLL));
-  assert(events[2].value == to_le32(expect_scrolll));
-
-  assert(events[3].type == to_le16((uint16_t)VIRTIO_INPUT_EV_LED));
-  assert(events[3].code == to_le16((uint16_t)VIRTIO_INPUT_LED_COMPOSE));
-  assert(events[3].value == to_le32(expect_compose));
-
-  assert(events[4].type == to_le16((uint16_t)VIRTIO_INPUT_EV_LED));
-  assert(events[4].code == to_le16((uint16_t)VIRTIO_INPUT_LED_KANA));
-  assert(events[4].value == to_le32(expect_kana));
-
-  /* Final flush. */
-  assert(events[5].type == to_le16((uint16_t)VIRTIO_INPUT_EV_SYN));
-  assert(events[5].code == to_le16((uint16_t)VIRTIO_INPUT_SYN_REPORT));
-  assert(events[5].value == to_le32(0));
+  /* Final flush (always present). */
+  assert(events[expect_led_count].type == to_le16((uint16_t)VIRTIO_INPUT_EV_SYN));
+  assert(events[expect_led_count].code == to_le16((uint16_t)VIRTIO_INPUT_SYN_REPORT));
+  assert(events[expect_led_count].value == to_le32(0));
 }
 
 static void test_bit_mapping(void) {
-  /* Single-bit cases. */
-  assert_led_events(0x01u, 1, 0, 0, 0, 0);
-  assert_led_events(0x02u, 0, 1, 0, 0, 0);
-  assert_led_events(0x04u, 0, 0, 1, 0, 0);
-  assert_led_events(0x08u, 0, 0, 0, 1, 0);
-  assert_led_events(0x10u, 0, 0, 0, 0, 1);
+  /* Baseline: device advertises all 5 LED codes => 5x EV_LED + EV_SYN. */
+  {
+    const uint16_t codes[] = {VIRTIO_INPUT_LED_NUML, VIRTIO_INPUT_LED_CAPSL, VIRTIO_INPUT_LED_SCROLLL, VIRTIO_INPUT_LED_COMPOSE, VIRTIO_INPUT_LED_KANA};
+    const uint32_t values[] = {1, 1, 1, 1, 1};
+    assert_led_events_filtered(0x1Fu, 0x1Fu, 5, codes, values);
+  }
 
-  /* Multi-bit and empty cases. */
-  assert_led_events(0x00u, 0, 0, 0, 0, 0);
-  assert_led_events(0x1Fu, 1, 1, 1, 1, 1);
-  assert_led_events(0xFFu, 1, 1, 1, 1, 1);
+  /*
+   * Filtering: only required LEDs advertised (Num/Caps/Scroll) => only emit
+   * those 3 EV_LED events (+ EV_SYN).
+   */
+  {
+    const uint16_t codes[] = {VIRTIO_INPUT_LED_NUML, VIRTIO_INPUT_LED_CAPSL, VIRTIO_INPUT_LED_SCROLLL};
+    const uint32_t values[] = {1, 1, 1};
+    assert_led_events_filtered(0x1Fu, 0x07u, 3, codes, values);
+  }
+
+  /*
+   * Edge case: Compose/Kana bits set in the HID report, but not advertised by
+   * the device => must not emit LED_COMPOSE/LED_KANA events.
+   */
+  {
+    const uint16_t codes[] = {VIRTIO_INPUT_LED_NUML, VIRTIO_INPUT_LED_CAPSL, VIRTIO_INPUT_LED_SCROLLL};
+    const uint32_t values[] = {0, 0, 0};
+    assert_led_events_filtered(0x18u /* Compose|Kana */, 0x07u, 3, codes, values);
+  }
+
+  /*
+   * Unknown supported mask (0) should fall back to emitting only required LEDs
+   * (Num/Caps/Scroll) rather than all 5.
+   */
+  {
+    const uint16_t codes[] = {VIRTIO_INPUT_LED_NUML, VIRTIO_INPUT_LED_CAPSL, VIRTIO_INPUT_LED_SCROLLL};
+    const uint32_t values[] = {1, 1, 1};
+    assert_led_events_filtered(0x1Fu, 0x00u, 3, codes, values);
+  }
 }
 
 int main(void) {

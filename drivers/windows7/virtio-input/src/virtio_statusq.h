@@ -31,6 +31,14 @@ VirtioStatusQSetActive(_In_ PVIRTIO_STATUSQ StatusQ, _In_ BOOLEAN Active);
 VOID
 VirtioStatusQSetDropOnFull(_In_ PVIRTIO_STATUSQ StatusQ, _In_ BOOLEAN DropOnFull);
 
+/*
+ * Sets the supported EV_LED code mask for keyboard LED output reports.
+ *
+ * Mask is interpreted as: bit N => LED code N supported (codes 0..4).
+ */
+VOID
+VirtioStatusQSetKeyboardLedSupportedMask(_In_ PVIRTIO_STATUSQ StatusQ, _In_ UCHAR LedSupportedMask);
+
 NTSTATUS
 VirtioStatusQWriteKeyboardLedReport(_In_ PVIRTIO_STATUSQ StatusQ, _In_ UCHAR LedBitfield);
 
