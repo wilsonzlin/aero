@@ -59,6 +59,7 @@ dependencies = [
  "aero-devices-input",
  "aero-interrupts",
  "aero-io-snapshot",
+ "aero-pci-routing",
  "aero-platform",
  "aero-storage",
  "aero-storage-adapters",
@@ -172,6 +173,10 @@ dependencies = [
 
 [[package]]
 name = "aero-pc-constants"
+version = "0.1.0"
+
+[[package]]
+name = "aero-pci-routing"
 version = "0.1.0"
 
 [[package]]
