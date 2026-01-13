@@ -1,5 +1,8 @@
 use aero_d3d11::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, FourCC};
-use aero_d3d11::{ShaderModel, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module};
+use aero_d3d11::{
+    BufferKind, BufferRef, DstOperand, OperandModifier, RegFile, RegisterRef, ShaderModel,
+    ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, WriteMask,
+};
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 
@@ -65,3 +68,49 @@ fn translates_compute_thread_group_size_and_entry_point() {
     assert!(translated.wgsl.contains("@workgroup_size(8, 4, 1)"));
 }
 
+#[test]
+fn translates_ld_raw_from_srv_buffer() {
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let dst = DstOperand {
+        reg: RegisterRef {
+            file: RegFile::Temp,
+            index: 0,
+        },
+        mask: WriteMask::XYZW,
+        saturate: false,
+    };
+    let addr = SrcOperand {
+        kind: SrcKind::ImmediateF32([0u32; 4]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::ResourceBuffer {
+                slot: 0,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::LdRaw {
+                dst,
+                addr,
+                buffer: BufferRef { slot: 0 },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("var<storage, read> t0"));
+    assert!(translated.wgsl.contains("t0.data"));
+}

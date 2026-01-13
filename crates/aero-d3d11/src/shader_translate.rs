@@ -2591,11 +2591,26 @@ fn emit_instructions(
                 let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld", ctx)?;
             }
-            Sm4Inst::LdRaw { .. } => {
-                return Err(ShaderTranslateError::UnsupportedInstruction {
-                    inst_index,
-                    opcode: "ld_raw".to_owned(),
-                });
+            Sm4Inst::LdRaw { dst, addr, buffer } => {
+                let addr_vec = emit_src_vec4(addr, inst_index, "ld_raw", ctx)?;
+
+                // `addr` is a raw byte offset into the SRV buffer. Our internal register model is
+                // `vec4<f32>`, so interpret the lane as a raw u32 bit pattern.
+                //
+                // SRV buffers are bound as `AeroStorageBufferU32` (array<u32>), so divide the byte
+                // address by 4 to get the element index.
+                let base_index = format!("(bitcast<u32>(({addr_vec}).x) >> 2u)");
+
+                let slot = buffer.slot;
+                let expr = format!(
+                    "vec4<f32>(\
+                        bitcast<f32>(t{slot}.data[{base_index} + 0u]), \
+                        bitcast<f32>(t{slot}.data[{base_index} + 1u]), \
+                        bitcast<f32>(t{slot}.data[{base_index} + 2u]), \
+                        bitcast<f32>(t{slot}.data[{base_index} + 3u])\
+                    )"
+                );
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld_raw", ctx)?;
             }
             Sm4Inst::StoreRaw {
                 uav,
