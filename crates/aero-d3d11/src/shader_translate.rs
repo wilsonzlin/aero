@@ -793,6 +793,8 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             }
         };
         match inst {
+            Sm4Inst::If { cond, .. } => scan_src_regs(cond, &mut scan_reg),
+            Sm4Inst::Else | Sm4Inst::EndIf => {}
             Sm4Inst::Mov { dst: _, src } => scan_src_regs(src, &mut scan_reg),
             Sm4Inst::Movc {
                 dst: _,
@@ -1727,6 +1729,8 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
             Ok(())
         };
         match inst {
+            Sm4Inst::If { cond, .. } => scan_src(cond)?,
+            Sm4Inst::Else | Sm4Inst::EndIf => {}
             Sm4Inst::Mov { dst: _, src } => scan_src(src)?,
             Sm4Inst::Movc {
                 dst: _,
@@ -1904,6 +1908,10 @@ fn emit_temp_and_output_decls(
         };
 
         match inst {
+            Sm4Inst::If { cond, .. } => {
+                scan_src_regs(cond, &mut scan_reg);
+            }
+            Sm4Inst::Else | Sm4Inst::EndIf => {}
             Sm4Inst::Mov { dst, src } => {
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
@@ -2062,6 +2070,13 @@ fn emit_instructions(
     module: &Sm4Module,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), ShaderTranslateError> {
+    #[derive(Debug, Clone, Copy)]
+    enum BlockKind {
+        If { has_else: bool },
+    }
+
+    let mut blocks: Vec<BlockKind> = Vec::new();
+
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         let maybe_saturate = |dst: &crate::sm4_ir::DstOperand, expr: String| {
             if dst.saturate {
@@ -2072,6 +2087,48 @@ fn emit_instructions(
         };
 
         match inst {
+            Sm4Inst::If { cond, test } => {
+                let cond_vec = emit_src_vec4(cond, inst_index, "if", ctx)?;
+                let cond_scalar = format!("({cond_vec}).x");
+                let expr = match test {
+                    crate::sm4_ir::Sm4TestBool::Zero => format!("{cond_scalar} == 0.0"),
+                    crate::sm4_ir::Sm4TestBool::NonZero => format!("{cond_scalar} != 0.0"),
+                };
+                w.line(&format!("if ({expr}) {{"));
+                w.indent();
+                blocks.push(BlockKind::If { has_else: false });
+            }
+            Sm4Inst::Else => {
+                match blocks.last_mut() {
+                    Some(BlockKind::If { has_else }) if !*has_else => {
+                        *has_else = true;
+                    }
+                    _ => {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "else".to_owned(),
+                        })
+                    }
+                }
+
+                w.dedent();
+                w.line("} else {");
+                w.indent();
+            }
+            Sm4Inst::EndIf => {
+                match blocks.pop() {
+                    Some(BlockKind::If { .. }) => {}
+                    None => {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "endif".to_owned(),
+                        })
+                    }
+                }
+
+                w.dedent();
+                w.line("}");
+            }
             Sm4Inst::Mov { dst, src } => {
                 let rhs = emit_src_vec4(src, inst_index, "mov", ctx)?;
                 let rhs = maybe_saturate(dst, rhs);
@@ -2309,8 +2366,46 @@ fn emit_instructions(
                     opcode: format!("opcode_{opcode}"),
                 });
             }
-            Sm4Inst::Ret => break,
+            Sm4Inst::Ret => {
+                // DXBC `ret` returns from the current shader invocation. We only need to emit an
+                // explicit WGSL `return` when it appears inside a structured control-flow block;
+                // at top-level the translation already emits a stage-appropriate return sequence.
+                if blocks.is_empty() {
+                    break;
+                }
+
+                match ctx.stage {
+                    ShaderStage::Vertex => ctx.io.emit_vs_return(w)?,
+                    ShaderStage::Pixel => {
+                        let target_reg = ctx
+                            .io
+                            .ps_sv_target0_register
+                            .ok_or(ShaderTranslateError::PixelShaderMissingSvTarget0)?;
+                        let target_param = ctx.io.outputs.get(&target_reg).ok_or(
+                            ShaderTranslateError::SignatureMissingRegister {
+                                io: "output",
+                                register: target_reg,
+                            },
+                        )?;
+                        let return_expr = apply_sig_mask_to_vec4(
+                            &format!("o{target_reg}"),
+                            target_param.param.mask,
+                        );
+                        w.line(&format!("return {return_expr};"));
+                    }
+                    other => {
+                        return Err(ShaderTranslateError::UnsupportedStage(other));
+                    }
+                }
+            }
         }
+    }
+
+    if !blocks.is_empty() {
+        return Err(ShaderTranslateError::UnsupportedInstruction {
+            inst_index: module.instructions.len(),
+            opcode: "unbalanced_if".to_owned(),
+        });
     }
     Ok(())
 }

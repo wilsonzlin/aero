@@ -185,6 +185,34 @@ fn assert_wgsl_validates(wgsl: &str) {
         .expect("generated WGSL failed to validate");
 }
 
+fn imm32_vec4(values: [u32; 4]) -> Vec<u32> {
+    let mut out = Vec::with_capacity(1 + 4);
+    out.push(operand_token(
+        OPERAND_TYPE_IMMEDIATE32,
+        2,
+        OPERAND_SEL_SWIZZLE,
+        swizzle_bits(Swizzle::XYZW.0),
+        0,
+        false,
+    ));
+    out.extend_from_slice(&values);
+    out
+}
+
+fn imm32_scalar(value: u32) -> Vec<u32> {
+    vec![
+        operand_token(
+            OPERAND_TYPE_IMMEDIATE32,
+            1,
+            OPERAND_SEL_SELECT1,
+            0,
+            0,
+            false,
+        ),
+        value,
+    ]
+}
+
 #[test]
 fn translates_signature_driven_vs_with_empty_input_signature_without_empty_struct() {
     // WGSL forbids empty structs. DXBC vertex shaders can have an empty input signature (e.g. when
@@ -571,4 +599,163 @@ fn decodes_and_translates_minimal_compute_shader_without_signatures() {
     assert!(translated.wgsl.contains("@compute"));
     assert!(translated.wgsl.contains("@workgroup_size(8, 4, 1)"));
     assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
+fn decodes_and_translates_if_else_endif() {
+    let mut body = Vec::<u32>::new();
+
+    // if_nz l(1.0)
+    let cond = imm32_scalar(1.0f32.to_bits());
+    body.push(
+        OPCODE_IF
+            | ((1 + cond.len() as u32) << OPCODE_LEN_SHIFT)
+            | (1 << OPCODE_TEST_BOOLEAN_SHIFT),
+    );
+    body.extend_from_slice(&cond);
+
+    // mov o0, l(1,0,0,1)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + red.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&red);
+
+    // else
+    body.push(opcode_token(OPCODE_ELSE, 1));
+
+    // mov o0, l(0,1,0,1)
+    let green = imm32_vec4([
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + green.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&green);
+
+    // endif
+    body.push(opcode_token(OPCODE_ENDIF, 1));
+
+    // ret
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::If { .. })),
+        "expected IF instruction in decoded module: {:#?}",
+        module.instructions
+    );
+    assert!(module.instructions.iter().all(|i| {
+        !matches!(
+            i,
+            Sm4Inst::Unknown { opcode }
+                if *opcode == OPCODE_IF || *opcode == OPCODE_ELSE || *opcode == OPCODE_ENDIF
+        )
+    }));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("if ("));
+    assert!(translated.wgsl.contains("} else {"));
+    assert!(
+        translated.wgsl.contains("}"),
+        "expected closing braces in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn ret_inside_if_does_not_break_brace_balancing() {
+    let mut body = Vec::<u32>::new();
+
+    // if_nz l(0.0) (false at runtime, but exercises codegen)
+    let cond = imm32_scalar(0.0f32.to_bits());
+    body.push(
+        OPCODE_IF
+            | ((1 + cond.len() as u32) << OPCODE_LEN_SHIFT)
+            | (1 << OPCODE_TEST_BOOLEAN_SHIFT),
+    );
+    body.extend_from_slice(&cond);
+
+    // mov o0, l(1,0,0,1)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + red.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&red);
+
+    // ret (inside if)
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // endif
+    body.push(opcode_token(OPCODE_ENDIF, 1));
+
+    // mov o0, l(0,1,0,1)
+    let green = imm32_vec4([
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + green.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&green);
+
+    // ret (top-level)
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(module.instructions.iter().any(|i| matches!(i, Sm4Inst::Ret)));
+    assert!(module.instructions.iter().any(|i| matches!(i, Sm4Inst::If { .. })));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("if ("));
+    assert!(translated.wgsl.contains("return "));
+    assert!(
+        translated.wgsl.matches('{').count() == translated.wgsl.matches('}').count(),
+        "expected balanced braces in WGSL:\n{}",
+        translated.wgsl
+    );
 }

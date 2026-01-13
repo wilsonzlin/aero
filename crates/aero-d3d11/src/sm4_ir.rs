@@ -24,6 +24,15 @@ pub struct Sm4Module {
     pub instructions: Vec<Sm4Inst>,
 }
 
+/// Boolean test mode used by structured control-flow instructions (e.g. `if`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sm4TestBool {
+    /// Execute the block when the condition is exactly zero (`if_z`).
+    Zero,
+    /// Execute the block when the condition is non-zero (`if_nz`).
+    NonZero,
+}
+
 /// A single SM4/SM5 declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sm4Decl {
@@ -106,6 +115,16 @@ pub enum BufferKind {
 /// A single SM4/SM5 instruction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sm4Inst {
+    /// Structured `if` (`if_z` / `if_nz`).
+    ///
+    /// The source operand is scalar; the current IR still models everything as a `vec4`, so it is
+    /// typically represented via a replicated swizzle (e.g. `.xxxx`).
+    If {
+        cond: SrcOperand,
+        test: Sm4TestBool,
+    },
+    Else,
+    EndIf,
     Mov {
         dst: DstOperand,
         src: SrcOperand,

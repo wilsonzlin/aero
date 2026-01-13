@@ -2,7 +2,7 @@ use core::fmt;
 
 use crate::sm4_ir::{
     BufferKind, BufferRef, DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Decl,
-    Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
+    Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 use super::opcode::*;
@@ -474,6 +474,26 @@ pub fn decode_instruction(
     let saturate = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
 
     match opcode {
+        OPCODE_IF => {
+            let test_raw =
+                (opcode_token >> OPCODE_TEST_BOOLEAN_SHIFT) & OPCODE_TEST_BOOLEAN_MASK;
+            let test = match test_raw {
+                0 => Sm4TestBool::Zero,
+                1 => Sm4TestBool::NonZero,
+                _ => return Ok(Sm4Inst::Unknown { opcode }),
+            };
+            let cond = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::If { cond, test })
+        }
+        OPCODE_ELSE => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::Else)
+        }
+        OPCODE_ENDIF => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::EndIf)
+        }
         OPCODE_MOV => {
             let mut dst = decode_dst(&mut r)?;
             dst.saturate = saturate;

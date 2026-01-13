@@ -30,6 +30,13 @@ pub const OPCODE_DP4: u32 = 0x09;
 pub const OPCODE_MIN: u32 = 0x0a;
 pub const OPCODE_MAX: u32 = 0x0b;
 
+// ---- Control flow (structured) ----
+//
+// Canonical opcode IDs from `d3d10tokenizedprogramformat.hpp` / `d3d11tokenizedprogramformat.hpp`.
+pub const OPCODE_IF: u32 = 0x28;
+pub const OPCODE_ELSE: u32 = 0x29;
+pub const OPCODE_ENDIF: u32 = 0x2a;
+
 /// `bfi` (bitfield insert).
 pub const OPCODE_BFI: u32 = 0x67;
 /// `ubfe` (unsigned bitfield extract).
@@ -87,6 +94,13 @@ pub const OPCODE_DCL_UAV_RAW: u32 = 0x207;
 ///
 /// Upstream: `D3D11_SB_OPCODE_DCL_UAV_STRUCTURED`.
 pub const OPCODE_DCL_UAV_STRUCTURED: u32 = 0x208;
+
+// ---- Opcode token bitfields ----
+//
+// Certain control-flow opcodes (e.g. `if`) encode a "test boolean" (zero vs non-zero) in the
+// opcode token itself rather than using distinct opcode IDs for `if_z`/`if_nz`.
+pub const OPCODE_TEST_BOOLEAN_SHIFT: u32 = 24;
+pub const OPCODE_TEST_BOOLEAN_MASK: u32 = 0x3;
 
 // ---- Operand token bitfields ----
 
