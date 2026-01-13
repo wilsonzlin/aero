@@ -249,10 +249,31 @@ After installation, reboot (or restart the display driver) and confirm:
 
 ## Supported feature subset (bring-up)
 
-The initial implementation focuses on the minimum D3D9Ex feature set needed for:
+The current implementation targets:
 
-- DWM/Aero composition
-- a basic triangle app (VB/IB, shaders, textures, alpha blend, present)
+- **DWM/Aero composition** (D3D9Ex)
+- the in-tree Win7 validation programs under `drivers/aerogpu/tests/win7/`
+
+### Core rendering / formats
+
+- **Render targets**: `D3DFMT_X8R8G8B8`, `D3DFMT_A8R8G8B8`, `D3DFMT_A8B8G8R8`
+- **Depth/stencil**: `D3DFMT_D24S8`
+- **BC/DXT textures**: `D3DFMT_DXT1..DXT5` are only exposed when the active device reports
+  ABI minor `>= 2` via `KMTQAITYPE_UMDRIVERPRIVATE` (`aerogpu_umd_private_v1.device_abi_version_u32`).
+  - When unsupported, `GetCaps(GETFORMAT*)` omits them and `CreateResource` rejects them to avoid emitting
+    packets older hosts can't decode.
+
+### Draw calls
+
+- VB/IB draws: `DrawPrimitive*` / `DrawIndexedPrimitive*` with DEFAULT-pool buffers, including dynamic
+  `Lock/Unlock` dirty-range tracking (`d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`).
+- User-pointer draws: `DrawPrimitiveUP` / `DrawIndexedPrimitiveUP` (`d3d9ex_triangle`,
+  `d3d9ex_draw_indexed_primitive_up`).
+
+### Blit / compositor operations
+
+- `ColorFill`, `UpdateSurface`, `UpdateTexture` and `StretchRect`-style copies (validated by `d3d9ex_stretchrect`).
+- `GetRenderTargetData` readback into `D3DPOOL_SYSTEMMEM` surfaces (used by most rendering tests).
 
 Unsupported states are handled defensively; unknown state enums are accepted and forwarded as generic “set render/sampler state” commands so the emulator can decide how to interpret them.
 
@@ -264,6 +285,13 @@ Supported FVF combinations (tested):
 
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE`
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
+
+Implementation notes (bring-up):
+
+- The fallback path binds a tiny built-in `vs_2_0`/`ps_2_0` pair and converts `POSITIONT` (screen-space `XYZRHW`)
+  vertices to clip-space on the CPU.
+- For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
+  for bring-up).
 
 Limitations (bring-up):
 
@@ -277,7 +305,10 @@ Limitations (bring-up):
 This subset is validated via:
 
 - **Host-side unit tests** under `drivers/aerogpu/umd/d3d9/tests/` (command-stream and fixed-function/FVF translation coverage).
-- **Win7 guest tests** under `drivers/aerogpu/tests/win7/` (recommended smoke tests: `d3d9ex_triangle`, `d3d9ex_draw_indexed_primitive_up`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
+- **Win7 guest tests** under `drivers/aerogpu/tests/win7/` (recommended smoke tests:
+  `d3d9ex_triangle`, `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`,
+  `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`, and the DWM-focused
+  `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
 
 ## Call tracing (bring-up / debugging)
 
@@ -341,3 +372,10 @@ These cached values participate in D3D9 state blocks:
 ### Caps/feature gating
 
 Some bring-up entrypoints correspond primarily to **fixed-function** and legacy code paths. Keep the reported D3D9 caps conservative so the runtime and apps prefer the shader/VB/IB paths that the UMD does implement (while still enabling the fixed-function subset above for DWM/legacy apps).
+
+In particular:
+
+- **Patch caps**: until `Draw*Patch`/`ProcessVertices` are implemented, do not advertise N-patch/patch support
+  (e.g. `D3DDEVCAPS_NPATCHES`, `MaxNpatchTessellationLevel`, etc.).
+- **Format caps**: BC/DXT formats are only advertised when the device ABI minor version indicates the
+  guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `SupportsBcFormats()`).
