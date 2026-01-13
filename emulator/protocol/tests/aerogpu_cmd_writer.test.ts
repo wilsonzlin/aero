@@ -123,6 +123,35 @@ test("AerogpuCmdWriter emits aligned packets and updates stream header size", ()
   assert.deepEqual(Array.from(bytes.subarray(shader1Base + 24, shader1Base + 26)), [0xdd, 0xee]);
 });
 
+test("AerogpuCmdWriter.createShaderDxbcEx encodes stage in reserved0 and pads to 4-byte alignment", () => {
+  const w = new AerogpuCmdWriter();
+  const stageEx = 4;
+  const dxbc = new Uint8Array([0xaa, 0xbb, 0xcc]);
+
+  w.createShaderDxbcEx(7, stageEx, dxbc);
+  w.flush();
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.CreateShaderDxbc);
+  const sizeBytes = view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true);
+  assert.equal(sizeBytes, alignUp(24 + dxbc.byteLength, 4));
+
+  assert.equal(view.getUint32(pkt0 + 8, true), 7);
+  assert.equal(view.getUint32(pkt0 + 12, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(pkt0 + 16, true), dxbc.byteLength);
+  assert.equal(view.getUint32(pkt0 + 20, true), stageEx);
+
+  assert.deepEqual(bytes.subarray(pkt0 + 24, pkt0 + 24 + dxbc.byteLength), dxbc);
+
+  // Padding must be zero-filled.
+  for (let i = pkt0 + 24 + dxbc.byteLength; i < pkt0 + sizeBytes; i++) {
+    assert.equal(bytes[i], 0);
+  }
+});
+
 test("AerogpuCmdWriter emits pipeline and binding packets", () => {
   const w = new AerogpuCmdWriter();
 

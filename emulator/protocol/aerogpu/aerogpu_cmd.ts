@@ -1577,17 +1577,15 @@ export class AerogpuCmdWriter {
    * Stage-ex aware variant of {@link createShaderDxbc}.
    *
    * Encodes `stageEx` into `reserved0` and sets the legacy `stage` field to `COMPUTE`.
+   *
+   * Note: `stageEx = 0` (DXBC Pixel program-type) cannot be encoded here because `reserved0 == 0`
+   * is reserved for legacy/default "no stage_ex".
    */
   createShaderDxbcEx(shaderHandle: AerogpuHandle, stageEx: AerogpuShaderStageEx, dxbcBytes: Uint8Array): void {
-    if ((stageEx >>> 0) === AerogpuShaderStageEx.Pixel) {
-      throw new Error(
-        "CREATE_SHADER_DXBC stageEx cannot encode DXBC Pixel program type (0); use createShaderDxbc(stage=Pixel) instead",
-      );
-    }
+    const [stage, reserved0] = encodeStageEx(stageEx);
     const unpadded = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + dxbcBytes.byteLength;
     const base = this.appendRaw(AerogpuCmdOpcode.CreateShaderDxbc, unpadded);
     this.view.setUint32(base + 8, shaderHandle, true);
-    const [stage, reserved0] = encodeStageEx(stageEx);
     this.view.setUint32(base + 12, stage, true);
     this.view.setUint32(base + 16, dxbcBytes.byteLength, true);
     this.view.setUint32(base + 20, reserved0, true);

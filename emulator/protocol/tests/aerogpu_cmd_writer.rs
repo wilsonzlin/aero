@@ -6,7 +6,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdExportSharedSurface, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
     AerogpuCmdPresentEx, AerogpuCmdReleaseSharedSurface, AerogpuCmdSetShaderConstantsF,
     AerogpuCmdSetTexture, AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
-    AerogpuCullMode, AerogpuFillMode, AerogpuShaderStage, AerogpuVertexBufferBinding,
+    AerogpuCullMode, AerogpuFillMode, AerogpuShaderStage, AerogpuShaderStageEx,
+    AerogpuVertexBufferBinding,
     AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
@@ -217,6 +218,66 @@ fn cmd_writer_emits_aligned_packets_and_updates_stream_size() {
         seen_opcodes,
         expected_sizes.iter().map(|(op, _)| *op).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn cmd_writer_create_shader_dxbc_ex_sets_stage_and_reserved0_and_padding() {
+    let mut w = AerogpuCmdWriter::new();
+    let stage_ex = AerogpuShaderStageEx::Domain;
+    let dxbc = [0xAAu8, 0xBB, 0xCC];
+
+    w.create_shader_dxbc_ex(7, stage_ex, &dxbc);
+    w.flush();
+
+    let buf = w.finish();
+    let pkt0_base = AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    let hdr0 = decode_cmd_hdr_le(&buf[pkt0_base..]).unwrap();
+    let opcode0 = hdr0.opcode;
+    let size0 = hdr0.size_bytes;
+    assert_eq!(opcode0, AerogpuCmdOpcode::CreateShaderDxbc as u32);
+    let expected_size = align_up(size_of::<AerogpuCmdCreateShaderDxbc>() + dxbc.len(), 4);
+    assert_eq!(size0 as usize, expected_size);
+
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt0_base + offset_of!(AerogpuCmdCreateShaderDxbc, stage)
+                ..pkt0_base + offset_of!(AerogpuCmdCreateShaderDxbc, stage) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStage::Compute as u32,
+        "legacy stage field forced to Compute for forward-compat",
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt0_base + offset_of!(AerogpuCmdCreateShaderDxbc, reserved0)
+                ..pkt0_base + offset_of!(AerogpuCmdCreateShaderDxbc, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        stage_ex as u32,
+        "extended stage encoding stored in reserved0",
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt0_base + offset_of!(AerogpuCmdCreateShaderDxbc, dxbc_size_bytes)
+                ..pkt0_base + offset_of!(AerogpuCmdCreateShaderDxbc, dxbc_size_bytes) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        dxbc.len() as u32,
+    );
+
+    let dxbc_base = pkt0_base + size_of::<AerogpuCmdCreateShaderDxbc>();
+    assert_eq!(&buf[dxbc_base..dxbc_base + dxbc.len()], &dxbc);
+
+    // Packet is 4-byte aligned; ensure trailing padding bytes are zero.
+    let pkt0_end = pkt0_base + expected_size;
+    assert!(pkt0_end >= dxbc_base + dxbc.len());
+    for &b in &buf[dxbc_base + dxbc.len()..pkt0_end] {
+        assert_eq!(b, 0, "CREATE_SHADER_DXBC_EX padding must be zero");
+    }
 }
 
 #[test]

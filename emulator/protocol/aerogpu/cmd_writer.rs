@@ -466,16 +466,16 @@ impl AerogpuCmdWriter {
     /// Stage-ex aware variant of [`Self::create_shader_dxbc`].
     ///
     /// Encodes `stage_ex` into `reserved0` and sets the legacy `stage` field to `COMPUTE`.
+    ///
+    /// Note: `stage_ex = 0` (DXBC Pixel program-type) cannot be encoded here because
+    /// `reserved0 == 0` is reserved for legacy/default "no stage_ex".
     pub fn create_shader_dxbc_ex(
         &mut self,
         shader_handle: AerogpuHandle,
         stage_ex: AerogpuShaderStageEx,
         dxbc_bytes: &[u8],
     ) {
-        assert!(
-            stage_ex != AerogpuShaderStageEx::Pixel,
-            "CREATE_SHADER_DXBC stage_ex cannot encode DXBC Pixel program type (0); use the legacy stage=PIXEL encoding"
-        );
+        let (stage, reserved0) = encode_stage_ex(stage_ex);
         assert!(dxbc_bytes.len() <= u32::MAX as usize);
         let unpadded_size = size_of::<AerogpuCmdCreateShaderDxbc>()
             .checked_add(dxbc_bytes.len())
@@ -485,8 +485,10 @@ impl AerogpuCmdWriter {
             base + offset_of!(AerogpuCmdCreateShaderDxbc, shader_handle),
             shader_handle,
         );
-        let (stage, reserved0) = encode_stage_ex(stage_ex);
-        self.write_u32_at(base + offset_of!(AerogpuCmdCreateShaderDxbc, stage), stage);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateShaderDxbc, stage),
+            stage,
+        );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateShaderDxbc, dxbc_size_bytes),
             dxbc_bytes.len() as u32,
