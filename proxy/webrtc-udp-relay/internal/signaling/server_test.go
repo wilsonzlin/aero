@@ -576,3 +576,102 @@ func TestServer_Close_ClosesPreallocatedSessions(t *testing.T) {
 		t.Fatalf("ActiveSessions=%d, want 0 after server.Close", got)
 	}
 }
+
+func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
+	cfg := config.Config{}
+	m := metrics.New()
+	sm := relay.NewSessionManager(cfg, m, nil)
+
+	mediaEngine := &webrtc.MediaEngine{}
+	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
+		t.Fatalf("register codecs: %v", err)
+	}
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
+
+	srv := NewServer(Config{
+		Sessions:                    sm,
+		WebRTC:                      api,
+		RelayConfig:                 relay.DefaultConfig(),
+		Policy:                      policy.NewDevDestinationPolicy(),
+		Authorizer:                  AllowAllAuthorizer{},
+		ICEGatheringTimeout:         10 * time.Millisecond,
+		WebRTCSessionConnectTimeout: 100 * time.Millisecond,
+	})
+	t.Cleanup(srv.Close)
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	// Create a valid offer SDP that negotiates a DataChannel, but do not proceed
+	// with ICE/DTLS (i.e. never apply the returned answer).
+	pc, err := api.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new pc: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	if _, err := pc.CreateDataChannel("udp", nil); err != nil {
+		t.Fatalf("create datachannel: %v", err)
+	}
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatalf("create offer: %v", err)
+	}
+	if err := pc.SetLocalDescription(offer); err != nil {
+		t.Fatalf("set local offer: %v", err)
+	}
+	local := pc.LocalDescription()
+	if local == nil {
+		t.Fatalf("missing local description")
+	}
+
+	body, err := json.Marshal(httpOfferRequest{
+		SDP: SDPFromPion(*local),
+	})
+	if err != nil {
+		t.Fatalf("marshal offer: %v", err)
+	}
+
+	resp, err := http.Post(ts.URL+"/webrtc/offer", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var out httpOfferResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.SessionID == "" {
+		t.Fatalf("expected non-empty sessionId")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		srv.mu.Lock()
+		webrtcSessions := len(srv.webrtcSessions)
+		srv.mu.Unlock()
+
+		if sm.ActiveSessions() == 0 && webrtcSessions == 0 && m.Get(metrics.WebRTCSessionConnectTimeout) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if got := sm.ActiveSessions(); got != 0 {
+		t.Fatalf("ActiveSessions=%d, want 0", got)
+	}
+	srv.mu.Lock()
+	gotWebRTCSessions := len(srv.webrtcSessions)
+	srv.mu.Unlock()
+	if gotWebRTCSessions != 0 {
+		t.Fatalf("server webrtcSessions=%d, want 0", gotWebRTCSessions)
+	}
+	if got := m.Get(metrics.WebRTCSessionConnectTimeout); got != 1 {
+		t.Fatalf("%s=%d, want 1", metrics.WebRTCSessionConnectTimeout, got)
+	}
+}

@@ -15,6 +15,11 @@ const (
 	// SessionHardClosed counts relay sessions that were hard-closed due to repeated
 	// rate/quota violations.
 	SessionHardClosed = "session_hard_closed"
+
+	// WebRTCSessionConnectTimeout counts server-side PeerConnections that were
+	// closed because they failed to reach a connected state within the configured
+	// connect timeout.
+	WebRTCSessionConnectTimeout = "webrtc_session_connect_timeout"
 )
 
 // WebSocket UDP relay (/udp) counters.

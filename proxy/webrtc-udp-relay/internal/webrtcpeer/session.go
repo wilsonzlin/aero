@@ -3,6 +3,7 @@ package webrtcpeer
 import (
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/pion/webrtc/v4"
 
@@ -19,6 +20,15 @@ import (
 //	magic+version+af+type (4) + guest_port (2) + ipv6 (16) + remote_port (2) = 24
 const webrtcDataChannelUDPFrameOverheadBytes = 24
 
+type SessionOptions struct {
+	// ConnectTimeout bounds how long the session is allowed to remain in a
+	// non-connected state before being closed. Values <= 0 disable the timeout.
+	ConnectTimeout time.Duration
+
+	// RemoteAddr is optional caller-provided connection info used for logging.
+	RemoteAddr string
+}
+
 // Session owns a server-side PeerConnection and binds relay adapters to specific
 // DataChannel labels:
 //   - "udp": WebRTC UDP relay
@@ -32,6 +42,8 @@ type Session struct {
 	credential string
 	onClose    func()
 
+	remoteAddr string
+
 	maxDataChannelMessageBytes int
 
 	aeroSessionCookie    string
@@ -41,6 +53,9 @@ type Session struct {
 	r     *relay.SessionRelay
 	l2    *l2Bridge
 	close sync.Once
+
+	connectTimerMu sync.Mutex
+	connectTimer   *time.Timer
 }
 
 func (s *Session) incMetric(name string) {
@@ -62,7 +77,7 @@ func rejectDataChannel(dc *webrtc.DataChannel) {
 	_ = dc.Close()
 }
 
-func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, origin, credential string, aeroSessionCookie *string, maxDataChannelMessageBytes int, onClose func()) (*Session, error) {
+func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, origin, credential string, aeroSessionCookie *string, maxDataChannelMessageBytes int, opts SessionOptions, onClose func()) (*Session, error) {
 	if api == nil {
 		api = webrtc.NewAPI()
 	}
@@ -82,6 +97,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 		quota:                      quota,
 		origin:                     origin,
 		credential:                 credential,
+		remoteAddr:                 opts.RemoteAddr,
 		maxDataChannelMessageBytes: maxDataChannelMessageBytes,
 		onClose:                    onClose,
 	}
@@ -357,10 +373,50 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		switch state {
+		case webrtc.PeerConnectionStateConnected:
+			s.stopConnectTimer()
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
 			_ = s.Close()
 		}
 	})
+
+	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		switch state {
+		case webrtc.ICEConnectionStateConnected, webrtc.ICEConnectionStateCompleted:
+			s.stopConnectTimer()
+		}
+	})
+
+	if opts.ConnectTimeout > 0 {
+		connectTimeout := opts.ConnectTimeout
+		s.connectTimerMu.Lock()
+		s.connectTimer = time.AfterFunc(connectTimeout, func() {
+			// Avoid tearing down sessions that did manage to connect just before the
+			// timeout fired but after any state-change callbacks were scheduled.
+			if s.pc.ConnectionState() == webrtc.PeerConnectionStateConnected {
+				return
+			}
+			switch s.pc.ICEConnectionState() {
+			case webrtc.ICEConnectionStateConnected, webrtc.ICEConnectionStateCompleted:
+				return
+			}
+
+			var sessionID any
+			if s.quota != nil {
+				sessionID = s.quota.ID()
+				s.incMetric(metrics.WebRTCSessionConnectTimeout)
+			}
+
+			slog.Warn("webrtc session connect timeout",
+				"session_id", sessionID,
+				"origin", s.origin,
+				"remote_addr", s.remoteAddr,
+				"timeout", connectTimeout.String(),
+			)
+			_ = s.Close()
+		})
+		s.connectTimerMu.Unlock()
+	}
 
 	return s, nil
 }
@@ -369,9 +425,19 @@ func (s *Session) PeerConnection() *webrtc.PeerConnection {
 	return s.pc
 }
 
+func (s *Session) stopConnectTimer() {
+	s.connectTimerMu.Lock()
+	if s.connectTimer != nil {
+		s.connectTimer.Stop()
+		s.connectTimer = nil
+	}
+	s.connectTimerMu.Unlock()
+}
+
 func (s *Session) Close() error {
 	var err error
 	s.close.Do(func() {
+		s.stopConnectTimer()
 		s.mu.Lock()
 		if s.r != nil {
 			s.r.Close()

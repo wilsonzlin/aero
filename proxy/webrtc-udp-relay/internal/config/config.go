@@ -86,11 +86,12 @@ const (
 	EnvTURNRESTUsernamePrefix = "TURN_REST_USERNAME_PREFIX"
 	EnvTURNRESTRealm          = "TURN_REST_REALM"
 
-	DefaultListenAddr            = "127.0.0.1:8080"
-	DefaultShutdown              = 15 * time.Second
-	DefaultICEGatherTimeout      = 2 * time.Second
-	DefaultViolationWindow       = 10 * time.Second
-	DefaultMode             Mode = ModeDev
+	DefaultListenAddr                       = "127.0.0.1:8080"
+	DefaultShutdown                         = 15 * time.Second
+	DefaultICEGatherTimeout                 = 2 * time.Second
+	DefaultWebRTCSessionConnectTimeout      = 30 * time.Second
+	DefaultViolationWindow                  = 10 * time.Second
+	DefaultMode                        Mode = ModeDev
 	// DefaultSessionPreallocTTL is a safety bound for POST /session to avoid
 	// permanently consuming session quota due to buggy or malicious callers.
 	// Must be non-zero to avoid unbounded session leaks by default.
@@ -139,6 +140,11 @@ const (
 	EnvWebRTCUDPPortMin = "WEBRTC_UDP_PORT_MIN"
 	EnvWebRTCUDPPortMax = "WEBRTC_UDP_PORT_MAX"
 
+	// EnvWebRTCSessionConnectTimeout bounds how long a server-side PeerConnection
+	// may remain in a non-connected state before being closed. This prevents
+	// clients from leaking PeerConnections via HTTP offer endpoints.
+	EnvWebRTCSessionConnectTimeout = "WEBRTC_SESSION_CONNECT_TIMEOUT"
+
 	EnvWebRTCNAT1To1IPs             = "WEBRTC_NAT_1TO1_IPS"
 	EnvWebRTCNAT1To1IPCandidateType = "WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE"
 
@@ -156,6 +162,8 @@ const (
 const (
 	FlagWebRTCUDPPortMin = "webrtc-udp-port-min"
 	FlagWebRTCUDPPortMax = "webrtc-udp-port-max"
+
+	FlagWebRTCSessionConnectTimeout = "webrtc-session-connect-timeout"
 
 	FlagWebRTCNAT1To1IPs             = "webrtc-nat-1to1-ips"
 	FlagWebRTCNAT1To1IPCandidateType = "webrtc-nat-1to1-ip-candidate-type"
@@ -240,7 +248,10 @@ type Config struct {
 	LogLevel            slog.Level
 	ShutdownTimeout     time.Duration
 	ICEGatheringTimeout time.Duration
-	Mode                Mode
+	// WebRTCSessionConnectTimeout bounds how long a server-side PeerConnection may
+	// remain unconnected before being closed.
+	WebRTCSessionConnectTimeout time.Duration
+	Mode                        Mode
 
 	// Signaling / WebSocket auth + hardening.
 	AuthMode  AuthMode
@@ -522,6 +533,15 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		iceGatherTimeout = d
 	}
 
+	webrtcSessionConnectTimeout := DefaultWebRTCSessionConnectTimeout
+	if raw, ok := lookup(EnvWebRTCSessionConnectTimeout); ok && strings.TrimSpace(raw) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvWebRTCSessionConnectTimeout, raw, err)
+		}
+		webrtcSessionConnectTimeout = d
+	}
+
 	maxSessions, err := envIntOrDefault(lookup, EnvMaxSessions, 0)
 	if err != nil {
 		return Config{}, err
@@ -696,6 +716,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.StringVar(&logLevelStr, "log-level", logLevelDefault, "Log level: debug, info, warn, error")
 	fs.DurationVar(&shutdownTimeout, "shutdown-timeout", shutdownTimeout, "Graceful shutdown timeout (e.g. 15s)")
 	fs.DurationVar(&iceGatherTimeout, "ice-gather-timeout", iceGatherTimeout, "Max time to wait for ICE gathering on /webrtc/offer (e.g. 2s)")
+	fs.DurationVar(&webrtcSessionConnectTimeout, FlagWebRTCSessionConnectTimeout, webrtcSessionConnectTimeout, "Max time to wait for WebRTC sessions to connect before closing (env "+EnvWebRTCSessionConnectTimeout+")")
 	fs.StringVar(&iceServersJSON, "ice-servers-json", iceServersJSON, "ICE server JSON config (AERO_ICE_SERVERS_JSON)")
 	fs.StringVar(&stunURLs, "stun-urls", stunURLs, "comma-separated STUN URLs (AERO_STUN_URLS)")
 	fs.StringVar(&turnURLs, "turn-urls", turnURLs, "comma-separated TURN URLs (AERO_TURN_URLS)")
@@ -829,6 +850,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if iceGatherTimeout <= 0 {
 		return Config{}, fmt.Errorf("%s/--ice-gather-timeout must be > 0", EnvICEGatheringTimeout)
+	}
+	if webrtcSessionConnectTimeout <= 0 {
+		return Config{}, fmt.Errorf("%s/--%s must be > 0", EnvWebRTCSessionConnectTimeout, FlagWebRTCSessionConnectTimeout)
 	}
 	if udpBindingIdleTimeout <= 0 {
 		return Config{}, fmt.Errorf("%s/--udp-binding-idle-timeout must be > 0", EnvUDPBindingIdleTimeout)
@@ -1077,14 +1101,15 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 
 	cfg := Config{
-		ListenAddr:          listenAddr,
-		PublicBaseURL:       publicBaseURL,
-		AllowedOrigins:      allowedOrigins,
-		LogFormat:           logFormat,
-		LogLevel:            level,
-		ShutdownTimeout:     shutdownTimeout,
-		ICEGatheringTimeout: iceGatherTimeout,
-		Mode:                mode,
+		ListenAddr:                  listenAddr,
+		PublicBaseURL:               publicBaseURL,
+		AllowedOrigins:              allowedOrigins,
+		LogFormat:                   logFormat,
+		LogLevel:                    level,
+		ShutdownTimeout:             shutdownTimeout,
+		ICEGatheringTimeout:         iceGatherTimeout,
+		WebRTCSessionConnectTimeout: webrtcSessionConnectTimeout,
+		Mode:                        mode,
 
 		AuthMode:                      authMode,
 		APIKey:                        apiKey,

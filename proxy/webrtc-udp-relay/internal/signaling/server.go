@@ -55,6 +55,13 @@ type Config struct {
 	// on non-trickle HTTP endpoints (e.g. /webrtc/offer).
 	ICEGatheringTimeout time.Duration
 
+	// WebRTCSessionConnectTimeout bounds how long a newly-created PeerConnection
+	// is allowed to remain unconnected before being closed. This is particularly
+	// important for HTTP offer endpoints, which otherwise return immediately and
+	// may leave PeerConnections running indefinitely if the client never
+	// completes ICE/DTLS.
+	WebRTCSessionConnectTimeout time.Duration
+
 	// SessionPreallocTTL controls how long sessions allocated via POST /session
 	// remain reserved before being automatically released.
 	SessionPreallocTTL time.Duration
@@ -105,6 +112,8 @@ type Server struct {
 	ICEGatheringTimeout time.Duration
 	SessionPreallocTTL  time.Duration
 
+	WebRTCSessionConnectTimeout time.Duration
+
 	SignalingAuthTimeout time.Duration
 
 	SignalingWSIdleTimeout  time.Duration
@@ -129,18 +138,19 @@ var gatheringCompletePromise = webrtc.GatheringCompletePromise
 
 func NewServer(cfg Config) *Server {
 	return &Server{
-		Sessions:                cfg.Sessions,
-		WebRTC:                  cfg.WebRTC,
-		ICEServers:              cfg.ICEServers,
-		RelayConfig:             cfg.RelayConfig,
-		Policy:                  cfg.Policy,
-		AllowedOrigins:          cfg.AllowedOrigins,
-		Authorizer:              cfg.Authorizer,
-		ICEGatheringTimeout:     cfg.ICEGatheringTimeout,
-		SessionPreallocTTL:      cfg.SessionPreallocTTL,
-		SignalingAuthTimeout:    cfg.SignalingAuthTimeout,
-		SignalingWSIdleTimeout:  cfg.SignalingWSIdleTimeout,
-		SignalingWSPingInterval: cfg.SignalingWSPingInterval,
+		Sessions:                    cfg.Sessions,
+		WebRTC:                      cfg.WebRTC,
+		ICEServers:                  cfg.ICEServers,
+		RelayConfig:                 cfg.RelayConfig,
+		Policy:                      cfg.Policy,
+		AllowedOrigins:              cfg.AllowedOrigins,
+		Authorizer:                  cfg.Authorizer,
+		ICEGatheringTimeout:         cfg.ICEGatheringTimeout,
+		WebRTCSessionConnectTimeout: cfg.WebRTCSessionConnectTimeout,
+		SessionPreallocTTL:          cfg.SessionPreallocTTL,
+		SignalingAuthTimeout:        cfg.SignalingAuthTimeout,
+		SignalingWSIdleTimeout:      cfg.SignalingWSIdleTimeout,
+		SignalingWSPingInterval:     cfg.SignalingWSPingInterval,
 
 		MaxSignalingMessageBytes:         cfg.MaxSignalingMessageBytes,
 		MaxSignalingMessagesPerSecond:    cfg.MaxSignalingMessagesPerSecond,
@@ -248,6 +258,13 @@ func (s *Server) iceGatheringTimeout() time.Duration {
 		return 2 * time.Second
 	}
 	return s.ICEGatheringTimeout
+}
+
+func (s *Server) webrtcSessionConnectTimeout() time.Duration {
+	if s.WebRTCSessionConnectTimeout <= 0 {
+		return 30 * time.Second
+	}
+	return s.WebRTCSessionConnectTimeout
 }
 
 func (s *Server) signalingAuthTimeout() time.Duration {
@@ -461,7 +478,22 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, aeroSessionCookieFromRequest(r), s.WebRTCDataChannelMaxMessageBytes, cleanup)
+	sess, err = webrtcpeer.NewSession(
+		s.WebRTC,
+		s.ICEServers,
+		s.RelayConfig,
+		s.Policy,
+		relaySession,
+		clientOrigin,
+		clientCredential,
+		aeroSessionCookieFromRequest(r),
+		s.WebRTCDataChannelMaxMessageBytes,
+		webrtcpeer.SessionOptions{
+			ConnectTimeout: s.webrtcSessionConnectTimeout(),
+			RemoteAddr:     r.RemoteAddr,
+		},
+		cleanup,
+	)
 	if err != nil {
 		cleanupRelaySession()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
@@ -599,7 +631,22 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, aeroSessionCookieFromRequest(r), s.WebRTCDataChannelMaxMessageBytes, cleanup)
+	sess, err = webrtcpeer.NewSession(
+		s.WebRTC,
+		s.ICEServers,
+		s.RelayConfig,
+		s.Policy,
+		relaySession,
+		clientOrigin,
+		clientCredential,
+		aeroSessionCookieFromRequest(r),
+		s.WebRTCDataChannelMaxMessageBytes,
+		webrtcpeer.SessionOptions{
+			ConnectTimeout: s.webrtcSessionConnectTimeout(),
+			RemoteAddr:     r.RemoteAddr,
+		},
+		cleanup,
+	)
 	if err != nil {
 		cleanupRelaySession()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
@@ -1116,7 +1163,22 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(wss.srv.WebRTC, wss.srv.ICEServers, wss.srv.RelayConfig, wss.srv.Policy, relaySession, wss.origin, wss.credential, aeroSessionCookieFromRequest(wss.req), wss.srv.WebRTCDataChannelMaxMessageBytes, cleanup)
+	sess, err = webrtcpeer.NewSession(
+		wss.srv.WebRTC,
+		wss.srv.ICEServers,
+		wss.srv.RelayConfig,
+		wss.srv.Policy,
+		relaySession,
+		wss.origin,
+		wss.credential,
+		aeroSessionCookieFromRequest(wss.req),
+		wss.srv.WebRTCDataChannelMaxMessageBytes,
+		webrtcpeer.SessionOptions{
+			ConnectTimeout: wss.srv.webrtcSessionConnectTimeout(),
+			RemoteAddr:     wss.req.RemoteAddr,
+		},
+		cleanup,
+	)
 	if err != nil {
 		cleanupRelaySession()
 		return err

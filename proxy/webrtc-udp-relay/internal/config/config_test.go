@@ -27,6 +27,9 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.LogFormat != LogFormatText {
 		t.Fatalf("logFormat=%q, want %q", cfg.LogFormat, LogFormatText)
 	}
+	if cfg.WebRTCSessionConnectTimeout != DefaultWebRTCSessionConnectTimeout {
+		t.Fatalf("WebRTCSessionConnectTimeout=%v, want %v", cfg.WebRTCSessionConnectTimeout, DefaultWebRTCSessionConnectTimeout)
+	}
 	if cfg.WebRTCUDPPortRange != nil {
 		t.Fatalf("expected WebRTCUDPPortRange unset, got %+v", *cfg.WebRTCUDPPortRange)
 	}

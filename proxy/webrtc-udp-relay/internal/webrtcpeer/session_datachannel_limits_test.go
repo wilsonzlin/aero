@@ -95,7 +95,7 @@ func TestSession_RejectsUnknownAndDuplicateDataChannels(t *testing.T) {
 	serverSession, err := NewSession(api, nil, relay.Config{
 		L2BackendWSURL:           wsURL,
 		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeNone,
-	}, nil, quota, "", "", nil, 0, nil)
+	}, nil, quota, "", "", nil, 0, SessionOptions{}, nil)
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}

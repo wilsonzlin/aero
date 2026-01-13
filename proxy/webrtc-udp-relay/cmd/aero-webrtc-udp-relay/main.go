@@ -111,6 +111,7 @@ func main() {
 		AllowedOrigins:                   cfg.AllowedOrigins,
 		Authorizer:                       authz,
 		ICEGatheringTimeout:              cfg.ICEGatheringTimeout,
+		WebRTCSessionConnectTimeout:      cfg.WebRTCSessionConnectTimeout,
 		SessionPreallocTTL:               cfg.SessionPreallocTTL,
 
 		SignalingAuthTimeout:          cfg.SignalingAuthTimeout,
