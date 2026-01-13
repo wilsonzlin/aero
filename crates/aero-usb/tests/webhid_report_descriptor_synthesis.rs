@@ -1,4 +1,4 @@
-use emulator::io::usb::hid::webhid::{synthesize_report_descriptor, HidCollectionInfo};
+use aero_usb::hid::webhid::{synthesize_report_descriptor, HidCollectionInfo};
 
 fn deserialize_collection(json: &str) -> HidCollectionInfo {
     serde_json::from_str::<HidCollectionInfo>(json).expect("collection JSON should deserialize")
@@ -224,3 +224,4 @@ fn webhid_report_item_deserializes_without_is_relative_field() {
 
     assert!(!collection.input_reports[0].items[0].is_absolute);
 }
+
