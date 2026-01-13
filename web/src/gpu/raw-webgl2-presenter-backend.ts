@@ -485,7 +485,22 @@ export class RawWebGl2Presenter implements Presenter {
     gl.disable(gl.DITHER);
     // Deterministic presentation: we do manual sRGB encoding in the blit shader, so ensure
     // fixed-function framebuffer sRGB conversion (when present) is disabled to avoid double-gamma.
-    gl.disable((gl as any).FRAMEBUFFER_SRGB ?? 0x8DB9);
+    const srgbWriteControl = gl.getExtension('EXT_sRGB_write_control') as { FRAMEBUFFER_SRGB_EXT?: number } | null;
+    const framebufferSrgbCap =
+      typeof (gl as any).FRAMEBUFFER_SRGB === 'number'
+        ? ((gl as any).FRAMEBUFFER_SRGB as number)
+        : typeof srgbWriteControl?.FRAMEBUFFER_SRGB_EXT === 'number'
+          ? (srgbWriteControl.FRAMEBUFFER_SRGB_EXT as number)
+          : null;
+    if (typeof framebufferSrgbCap === 'number') {
+      gl.disable(framebufferSrgbCap);
+      const err = gl.getError();
+      // Some environments do not expose sRGB framebuffer write control; avoid failing init
+      // on a best-effort disable attempt.
+      if (err !== gl.NO_ERROR && err !== gl.INVALID_ENUM) {
+        throw new PresenterError('webgl_error', `disable FRAMEBUFFER_SRGB: WebGL error ${glEnumToString(gl, err)} (${err})`);
+      }
+    }
 
     assertWebGlOk(gl, 'recreateResources');
 
